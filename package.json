@@ -1,0 +1,34 @@
+{
+  "name": "synapse",
+  "version": "0.1.0",
+  "description": "Agent-driven project management platform — connecting humans and agents through synaptic collaboration",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsup src/server.ts --format esm --dts",
+    "start": "node dist/server.js",
+    "web:dev": "cd web && npm run dev",
+    "web:build": "cd web && npm run build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@hono/node-server": "^1.13.0",
+    "drizzle-orm": "^0.38.0",
+    "better-sqlite3": "^11.8.0",
+    "zod": "^3.24.0",
+    "nanoid": "^5.0.0",
+    "pino": "^9.6.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "tsup": "^8.4.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "vitest": "^3.0.0"
+  }
+}
