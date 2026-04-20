@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 4%;
+    --foreground: 220 14% 96%;
+    --card: 240 6% 7%;
+    --card-foreground: 220 14% 96%;
+    --popover: 240 6% 7%;
+    --popover-foreground: 220 14% 96%;
+    --primary: 239 84% 67%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4% 12%;
+    --secondary-foreground: 220 14% 96%;
+    --muted: 240 4% 12%;
+    --muted-foreground: 220 10% 46%;
+    --accent: 240 4% 12%;
+    --accent-foreground: 220 14% 96%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 220 14% 96%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 239 84% 67%;
+    --radius: 0.5rem;
+    --agent: 160 84% 39%;
+    --agent-foreground: 0 0% 100%;
+    --human: 38 92% 50%;
+    --human-foreground: 0 0% 0%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 0%;
+    --wiki: 217 91% 60%;
+    --wiki-foreground: 0 0% 100%;
+    --arch: 262 83% 58%;
+    --arch-foreground: 0 0% 100%;
+    --req: 25 95% 53%;
+    --req-foreground: 0 0% 0%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer utilities {
+  .font-mono { font-family: 'JetBrains Mono', 'SF Mono', monospace; }
+  .glow-primary { box-shadow: 0 0 20px hsl(var(--primary) / 0.15); }
+  .glow-agent { box-shadow: 0 0 12px hsl(var(--agent) / 0.3); }
+  .glow-human { box-shadow: 0 0 12px hsl(var(--human) / 0.3); }
+  .glow-wiki { box-shadow: 0 0 12px hsl(var(--wiki) / 0.2); }
+  .glow-arch { box-shadow: 0 0 12px hsl(var(--arch) / 0.2); }
+  .glow-req { box-shadow: 0 0 12px hsl(var(--req) / 0.2); }
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: hsl(var(--background)); }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+/* Notion-like editable blocks */
+[contenteditable]:focus { outline: none; }
+[contenteditable]:empty::before {
+  content: attr(data-placeholder);
+  color: hsl(var(--muted-foreground));
+}
+.prose-block { @apply leading-relaxed text-sm; }
+.prose-block h1 { @apply text-xl font-semibold mb-3 mt-6; }
+.prose-block h2 { @apply text-lg font-semibold mb-2 mt-5; }
+.prose-block h3 { @apply text-base font-medium mb-1.5 mt-4; }
+.prose-block p { @apply mb-2; }
+.prose-block ul { @apply ml-4 mb-2 list-disc; }
+.prose-block ol { @apply ml-4 mb-2 list-decimal; }
+.prose-block li { @apply mb-0.5; }
+.prose-block code { @apply font-mono text-xs bg-secondary px-1 py-0.5 rounded; }
+.prose-block pre { @apply bg-secondary p-3 rounded-lg mb-3 overflow-x-auto; }
+.prose-block pre code { @apply bg-transparent p-0; }
+.prose-block blockquote { @apply border-l-2 border-primary/30 pl-4 italic text-muted-foreground mb-2; }
+.prose-block a { @apply text-primary underline decoration-primary/30 hover:decoration-primary; }
