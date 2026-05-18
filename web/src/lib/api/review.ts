@@ -1,4 +1,5 @@
 import type { CoordinatesContextIndex, CoordForest, CorrectionReason } from '../coordinates'
+import { apiFetch } from './origin'
 
 export type ReviewRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'discarded' | 'applied'
 export type ReviewOverallVerdict = 'accepted' | 'rejected' | 'blocked'
@@ -82,7 +83,7 @@ function openSseStream(
   const controller = new AbortController()
   ;(async () => {
     try {
-      const resp = await fetch(`${API_BASE}${path}`, {
+      const resp = await apiFetch(`${API_BASE}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
         body: JSON.stringify(input),

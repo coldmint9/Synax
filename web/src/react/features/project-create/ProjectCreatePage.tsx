@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../../state/shellStore'
 import { projectApi, type DuplicateCheckResult } from '../../../lib/api/project'
+import { apiFetch } from '../../../lib/api/origin'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -168,7 +169,7 @@ export default function ProjectCreatePage() {
     setError(null)
 
     try {
-      const resp = await fetch('/api/projects', {
+      const resp = await apiFetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

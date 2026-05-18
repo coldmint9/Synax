@@ -5,6 +5,7 @@ import type {
   DispatchIntentResult,
   ProviderId,
 } from '../contracts'
+import { apiFetch } from '../../api/origin'
 
 /**
  * Parses an SSE (text/event-stream) ReadableStream into an AsyncIterable of
@@ -57,7 +58,7 @@ export class CursorAcpApiAdapter implements CursorAgentAdapter {
   }
 
   async dispatchIntent(input: DispatchIntentInput): Promise<DispatchIntentResult> {
-    const response = await fetch('/api/coordinates/dispatch/stream', {
+    const response = await apiFetch('/api/coordinates/dispatch/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),

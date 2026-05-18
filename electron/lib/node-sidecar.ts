@@ -29,7 +29,7 @@ async function findFreePort(): Promise<number> {
 
 function getServerEntry(): string {
   if (app.isPackaged) {
-    return getResourcePath('server-dist', 'server.js');
+    return getResourcePath('server-dist', 'server.cjs');
   }
   return path.resolve(app.getAppPath(), 'api', 'server.ts');
 }

@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startSidecar, stopSidecar, getSidecarPort } from './lib/node-sidecar.js';
+import { getResourcePath } from './lib/data-paths.js';
 import { loadWindowState, saveWindowState } from './lib/window-state.js';
 import { buildAppMenu, updateProjectsMenu } from './menu.js';
 
@@ -41,7 +42,28 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  win.on('ready-to-show', () => win.show());
+  const showWindow = () => {
+    if (!win.isDestroyed() && !win.isVisible()) {
+      win.show();
+    }
+  };
+
+  win.on('ready-to-show', showWindow);
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error('[electron] renderer failed to load', {
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+    showWindow();
+  });
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[electron] renderer process gone', details);
+    showWindow();
+  });
+
+  const fallbackTimer = setTimeout(showWindow, 5000);
+  fallbackTimer.unref?.();
 
   win.on('close', () => {
     const bounds = win.getBounds();
@@ -82,11 +104,15 @@ async function bootstrap(): Promise<void> {
     mainWindow.loadURL(`http://localhost:${webPort}`);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'web', 'dist', 'index.html'));
+    const indexPath = getResourcePath('dist', 'index.html');
+    await mainWindow.loadFile(indexPath);
   }
 }
 
-app.whenReady().then(bootstrap);
+app.whenReady().then(bootstrap).catch((err) => {
+  console.error('[electron] failed to bootstrap', err);
+  dialog.showErrorBox('Synapse failed to start', err instanceof Error ? err.stack ?? err.message : String(err));
+});
 
 app.on('window-all-closed', () => {
   stopSidecar();

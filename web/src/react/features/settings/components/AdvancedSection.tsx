@@ -4,6 +4,7 @@ import { SettingsSection } from './SettingsSection'
 import { SaveIndicator } from './SaveIndicator'
 import { CapsuleSwitch } from './CapsuleSwitch'
 import { useAutoSave } from '../useAutoSave'
+import { apiFetch } from '../../../../lib/api/origin'
 import type { GlobalConfig } from '../../../../lib/contracts/config'
 
 interface AdvancedSectionProps {
@@ -24,7 +25,7 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
 
   const openConfigFile = async () => {
     try {
-      await fetch('/api/config/open-file', { method: 'POST' })
+      await apiFetch('/api/config/open-file', { method: 'POST' })
     } catch {
       // silently fail if endpoint not available
     }

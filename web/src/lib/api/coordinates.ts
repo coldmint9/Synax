@@ -27,6 +27,7 @@ import {
   type CoordNodePositions,
 } from '../coordinates'
 import type { CoordinatesRunEvent } from '../agents/contracts'
+import { apiFetch } from './origin'
 
 export interface CoordinatesSnapshot {
   version: number
@@ -424,7 +425,7 @@ async function parseJson<T>(resp: Response): Promise<T> {
 }
 
 export async function fetchCoordinatesState(projectId: string): Promise<CoordinatesStateResponse> {
-  return fetch(`${COORD_API_BASE}/${encodeURIComponent(projectId)}/state`).then(parseJson<CoordinatesStateResponse>)
+  return apiFetch(`${COORD_API_BASE}/${encodeURIComponent(projectId)}/state`).then(parseJson<CoordinatesStateResponse>)
 }
 
 export async function saveCoordinatesState(
@@ -432,7 +433,7 @@ export async function saveCoordinatesState(
   forest: CoordForest,
   actorId = 'web',
 ): Promise<CoordinatesSaveStateResponse> {
-  return fetch(`${COORD_API_BASE}/${encodeURIComponent(projectId)}/state`, {
+  return apiFetch(`${COORD_API_BASE}/${encodeURIComponent(projectId)}/state`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ forest, actorId }),
@@ -440,7 +441,7 @@ export async function saveCoordinatesState(
 }
 
 export async function scanCodeMap(input: CodeMapScanRequest): Promise<CodeMapScanResult> {
-  return fetch(`${COORD_API_BASE}/code-map/scan`, {
+  return apiFetch(`${COORD_API_BASE}/code-map/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -452,12 +453,12 @@ export async function fetchCoordEvents(
   afterRevision = 0,
 ): Promise<{ items: CoordEventLogEntry[]; headRevision: number }> {
   const qs = new URLSearchParams({ projectId, afterRevision: String(afterRevision) })
-  return fetch(`${COORD_API_BASE}/events?${qs.toString()}`).then(parseJson<{ items: CoordEventLogEntry[]; headRevision: number }>)
+  return apiFetch(`${COORD_API_BASE}/events?${qs.toString()}`).then(parseJson<{ items: CoordEventLogEntry[]; headRevision: number }>)
 }
 
 export async function fetchRunLoop(projectId: string, runId: string): Promise<AgentLoopRecord> {
   const qs = new URLSearchParams({ projectId })
-  return fetch(`${COORD_API_BASE}/runs/${encodeURIComponent(runId)}/loop?${qs.toString()}`).then(parseJson<AgentLoopRecord>)
+  return apiFetch(`${COORD_API_BASE}/runs/${encodeURIComponent(runId)}/loop?${qs.toString()}`).then(parseJson<AgentLoopRecord>)
 }
 
 export async function fetchNodeLoops(
@@ -466,7 +467,7 @@ export async function fetchNodeLoops(
   limit = 20,
 ): Promise<{ items: AgentLoopRecord[] }> {
   const qs = new URLSearchParams({ projectId, limit: String(limit) })
-  return fetch(`${COORD_API_BASE}/nodes/${encodeURIComponent(nodeId)}/loops?${qs.toString()}`).then(parseJson<{ items: AgentLoopRecord[] }>)
+  return apiFetch(`${COORD_API_BASE}/nodes/${encodeURIComponent(nodeId)}/loops?${qs.toString()}`).then(parseJson<{ items: AgentLoopRecord[] }>)
 }
 
 export async function fetchSynapseNodeContext(
@@ -474,7 +475,7 @@ export async function fetchSynapseNodeContext(
   nodeId: string,
 ): Promise<SynapseNodeContext> {
   const qs = new URLSearchParams({ projectId })
-  return fetch(`${COORD_API_BASE}/nodes/${encodeURIComponent(nodeId)}/synapse-context?${qs.toString()}`).then(parseJson<SynapseNodeContext>)
+  return apiFetch(`${COORD_API_BASE}/nodes/${encodeURIComponent(nodeId)}/synapse-context?${qs.toString()}`).then(parseJson<SynapseNodeContext>)
 }
 
 export async function acceptContextSuggestion(input: {
@@ -482,7 +483,7 @@ export async function acceptContextSuggestion(input: {
   suggestionId: string
   actorId?: string | null
 }): Promise<ContextDisclosureSuggestion> {
-  return fetch(`${COORD_API_BASE}/context-suggestions/${encodeURIComponent(input.suggestionId)}/accept`, {
+  return apiFetch(`${COORD_API_BASE}/context-suggestions/${encodeURIComponent(input.suggestionId)}/accept`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectId: input.projectId, actorId: input.actorId ?? 'web' }),
@@ -494,7 +495,7 @@ export async function dismissContextSuggestion(input: {
   suggestionId: string
   actorId?: string | null
 }): Promise<ContextDisclosureSuggestion> {
-  return fetch(`${COORD_API_BASE}/context-suggestions/${encodeURIComponent(input.suggestionId)}/dismiss`, {
+  return apiFetch(`${COORD_API_BASE}/context-suggestions/${encodeURIComponent(input.suggestionId)}/dismiss`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectId: input.projectId, actorId: input.actorId ?? 'web' }),
@@ -507,7 +508,7 @@ export async function shareContextSignal(input: {
   targetNodeId?: string | null
   actorId?: string | null
 }): Promise<{ items: ContextDisclosureSuggestion[] }> {
-  return fetch(`${COORD_API_BASE}/context-signals/${encodeURIComponent(input.signalId)}/share`, {
+  return apiFetch(`${COORD_API_BASE}/context-signals/${encodeURIComponent(input.signalId)}/share`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -527,7 +528,7 @@ export async function createNodeContextBinding(input: {
   metadata?: Record<string, unknown>
   createdBy?: string | null
 }): Promise<ContextBinding> {
-  return fetch(`${COORD_API_BASE}/nodes/${encodeURIComponent(input.nodeId)}/context-bindings`, {
+  return apiFetch(`${COORD_API_BASE}/nodes/${encodeURIComponent(input.nodeId)}/context-bindings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -550,7 +551,7 @@ export async function recordRunVerdict(input: {
   reasons?: string[]
   actorId?: string | null
 }): Promise<{ block: unknown }> {
-  return fetch(`${COORD_API_BASE}/runs/${encodeURIComponent(input.runId)}/verdict`, {
+  return apiFetch(`${COORD_API_BASE}/runs/${encodeURIComponent(input.runId)}/verdict`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

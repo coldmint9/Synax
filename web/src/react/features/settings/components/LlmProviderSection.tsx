@@ -1,21 +1,21 @@
-import { useState, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { KeyRound, Plus } from 'lucide-react'
 import { SettingsSection } from './SettingsSection'
 import { SaveIndicator } from './SaveIndicator'
 import { LlmProviderCard } from './LlmProviderCard'
-import { useAutoSave } from '../useAutoSave'
 import {
   type ApiProviderDraft,
   API_PROVIDER_PRESETS,
-  PRESET_BY_PROVIDER_ID,
   buildApiDrafts,
   createDraftFromPreset,
   createCustomDraft,
   draftToProviderDef,
   draftToConnection,
+  isBuiltinApiProviderId,
   isConfiguredProvider,
   upsertDraft,
 } from '../lib/providerPresets'
+import { validateProviderDraft } from '../lib/validation'
 import { configApi } from '../../../../lib/api/config'
 import type { GlobalConfig, ProviderDef } from '../../../../lib/contracts/config'
 
@@ -26,45 +26,243 @@ interface LlmProviderSectionProps {
   onReload: () => Promise<void>
 }
 
+type LlmProviderSaveState = {
+  drafts: ApiProviderDraft[]
+  defaultId: string
+  clearedProviderIds?: string[]
+  providerIdsToPersist: Set<string>
+}
+
+function isOfficialProvider(provider: ProviderDef): boolean {
+  return provider.kind === 'acp' || isBuiltinApiProviderId(provider.id)
+}
+
+function hasStoredApiKey(config: GlobalConfig, providerId: string): boolean {
+  const connection = config.providerConnections[providerId]
+  return Boolean(connection?.apiKey?.trim() || connection?.apiKeyMasked?.trim())
+}
+
+function storedApiProviderIds(config: GlobalConfig): Set<string> {
+  return new Set(
+    config.providers
+      .filter(provider => provider.kind === 'api' && hasStoredApiKey(config, provider.id))
+      .map(provider => provider.id),
+  )
+}
+
+function buildApiProviderPatch(
+  config: GlobalConfig,
+  nextDrafts: ApiProviderDraft[],
+  nextDefaultId: string,
+  clearedProviderIds: string[] = [],
+  providerIdsToPersist = storedApiProviderIds(config),
+): Record<string, unknown> {
+  const configuredDrafts = nextDrafts.filter(draft => providerIdsToPersist.has(draft.id) && isConfiguredProvider(draft))
+  const configuredIds = new Set(configuredDrafts.map(d => d.id))
+  const nextDraftById = new Map(nextDrafts.map(d => [d.id, d]))
+  const providerMap = new Map<string, ProviderDef>()
+
+  for (const provider of config.providers) {
+    if (isOfficialProvider(provider)) providerMap.set(provider.id, provider)
+  }
+  for (const draft of configuredDrafts) {
+    providerMap.set(draft.id, draftToProviderDef(draft))
+  }
+
+  const providerConnections = Object.fromEntries(
+    configuredDrafts.map(draft => [draft.id, draftToConnection(draft)]),
+  )
+
+  for (const providerId of clearedProviderIds) {
+    if (!isBuiltinApiProviderId(providerId) || configuredIds.has(providerId)) continue
+    const draft = nextDraftById.get(providerId)
+    const current = config.providerConnections[providerId]
+    if (!draft && !current) continue
+    providerConnections[providerId] = draft
+      ? draftToConnection({ ...draft, apiKey: '', apiKeyMasked: '' })
+      : {
+          providerId,
+          baseUrl: current?.baseUrl,
+          extra: current?.extra,
+        }
+  }
+
+  const providers = Array.from(providerMap.values())
+  const patch: Record<string, unknown> = {
+    providers,
+    providerConnections,
+  }
+
+  const defaultExists = providers.some(provider => provider.kind === 'api' && provider.id === nextDefaultId)
+  if (nextDefaultId && nextDefaultId !== config.defaultApiProviderId && defaultExists) {
+    patch.defaultApiProviderId = nextDefaultId
+  }
+
+  return patch
+}
+
 export function LlmProviderSection({ config, providers, onUpdate, onReload }: LlmProviderSectionProps) {
   const [drafts, setDrafts] = useState(() => buildApiDrafts(config, providers))
   const [defaultId, setDefaultId] = useState(config.defaultApiProviderId)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [showAddMenu, setShowAddMenu] = useState(false)
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const saveFn = useCallback(async (nextDrafts: ApiProviderDraft[]) => {
-    const apiProviders = nextDrafts.map(draftToProviderDef)
-    const connections = Object.fromEntries(nextDrafts.map(d => [d.id, draftToConnection(d)]))
-    await onUpdate({
-      providers: [...config.providers.filter(p => p.kind === 'acp'), ...apiProviders],
-      providerConnections: connections,
-      defaultApiProviderId: defaultId,
-    })
-  }, [config.providers, defaultId, onUpdate])
+  useEffect(() => {
+    setDrafts(buildApiDrafts(config, providers))
+    setDefaultId(config.defaultApiProviderId)
+  }, [config, providers])
 
-  const { save, saving, saved, error } = useAutoSave(saveFn, { debounceMs: 400 })
+  useEffect(() => () => {
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
+  }, [])
+
+  const markSaved = useCallback(() => {
+    setSaved(true)
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
+    savedTimerRef.current = setTimeout(() => setSaved(false), 1500)
+  }, [])
+
+  const saveProviderPatch = useCallback(async (next: LlmProviderSaveState) => {
+    await onUpdate(buildApiProviderPatch(
+      config,
+      next.drafts,
+      next.defaultId,
+      next.clearedProviderIds,
+      next.providerIdsToPersist,
+    ))
+    markSaved()
+  }, [config, markSaved, onUpdate])
 
   const configuredDrafts = drafts.filter(isConfiguredProvider)
 
   const handleDraftChange = (updated: ApiProviderDraft) => {
     const next = drafts.map(d => d.id === updated.id ? updated : d)
     setDrafts(next)
-    save(next)
   }
 
-  const handleSetDefault = (draft: ApiProviderDraft) => {
-    setDefaultId(draft.id)
-    save(drafts)
+  const handleSetDefault = async (draft: ApiProviderDraft) => {
+    if (!hasStoredApiKey(config, draft.id)) return
+    setSavingId(draft.id)
+    setSaveError(null)
+    try {
+      await onUpdate({ defaultApiProviderId: draft.id })
+      setDefaultId(draft.id)
+      markSaved()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  const discardDraft = (draft: ApiProviderDraft) => {
+    if (isBuiltinApiProviderId(draft.id)) {
+      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, apiKey: '', apiKeyMasked: '' } : d))
+    } else {
+      setDrafts(prev => prev.filter(d => d.id !== draft.id))
+    }
+    setExpandedId(null)
+  }
+
+  const handleSave = async (draft: ApiProviderDraft) => {
+    const errors = validateProviderDraft(draft)
+    if (errors.length > 0) {
+      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validationMessage: errors[0].message } : d))
+      return
+    }
+
+    setSavingId(draft.id)
+    setSaveError(null)
+    setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: true, validationMessage: null } : d))
+    try {
+      const result = await configApi.validateAiApi({
+        providerId: draft.apiKey.trim() ? undefined : draft.id,
+        format: draft.format,
+        baseUrl: draft.baseUrl,
+        apiKey: draft.apiKey || undefined,
+        model: draft.model,
+      })
+
+      if (!result.ok) {
+        setDrafts(prev => prev.map(d => d.id === draft.id ? {
+          ...d,
+          validating: false,
+          validationMessage: result.error || '连接失败，未保存',
+        } : d))
+        return
+      }
+
+      const next = drafts.map(d => d.id === draft.id ? draft : d)
+      const providerIdsToPersist = storedApiProviderIds(config)
+      providerIdsToPersist.add(draft.id)
+      await saveProviderPatch({ drafts: next, defaultId, providerIdsToPersist })
+      setDrafts(prev => prev.map(d => d.id === draft.id ? {
+        ...d,
+        validating: false,
+        validationMessage: '✓ 连接成功，已保存',
+      } : d))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存失败'
+      setSaveError(message)
+      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: false, validationMessage: message } : d))
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  const handleToggleDraft = (draft: ApiProviderDraft) => {
+    if (expandedId !== draft.id) {
+      setExpandedId(draft.id)
+      return
+    }
+
+    if (!hasStoredApiKey(config, draft.id)) {
+      discardDraft(draft)
+      return
+    }
+
+    setExpandedId(null)
   }
 
   const handleRemove = async (draft: ApiProviderDraft) => {
-    const next = drafts.filter(d => d.id !== draft.id)
-    setDrafts(next)
-    if (defaultId === draft.id) {
-      const newDefault = next.find(isConfiguredProvider)?.id ?? ''
-      setDefaultId(newDefault)
+    if (!hasStoredApiKey(config, draft.id)) {
+      discardDraft(draft)
+      return
     }
-    save(next)
+
+    const clearsBuiltinConnection = isBuiltinApiProviderId(draft.id)
+    const next = clearsBuiltinConnection
+      ? drafts.map(d => d.id === draft.id ? { ...d, apiKey: '', apiKeyMasked: '' } : d)
+      : drafts.filter(d => d.id !== draft.id)
+    const nextConfigured = next.filter(isConfiguredProvider)
+    const nextDefaultId = defaultId === draft.id
+      ? nextConfigured[0]?.id ?? config.providers.find(p => p.kind === 'api')?.id ?? 'openai'
+      : defaultId
+    const providerIdsToPersist = storedApiProviderIds(config)
+    providerIdsToPersist.delete(draft.id)
+
+    setSavingId(draft.id)
+    setSaveError(null)
+    setDrafts(next)
+    setDefaultId(nextDefaultId)
+    setExpandedId(expandedId === draft.id ? null : expandedId)
+    try {
+      await saveProviderPatch({
+        drafts: next,
+        defaultId: nextDefaultId,
+        clearedProviderIds: clearsBuiltinConnection ? [draft.id] : undefined,
+        providerIdsToPersist,
+      })
+      setDefaultId(nextDefaultId)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSavingId(null)
+    }
   }
 
   const handleValidate = async (draft: ApiProviderDraft) => {
@@ -103,6 +301,13 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
   }
 
   const handleAddPreset = (preset: typeof API_PROVIDER_PRESETS[number]) => {
+    const existing = drafts.find(d => d.id === preset.providerId)
+    if (existing) {
+      setExpandedId(existing.id)
+      setShowAddMenu(false)
+      return
+    }
+
     const newDraft = createDraftFromPreset(preset)
     setDrafts(prev => upsertDraft(prev, newDraft))
     setExpandedId(newDraft.id)
@@ -122,7 +327,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       icon={KeyRound}
       trailing={
         <div className="flex items-center gap-2">
-          <SaveIndicator saving={saving} saved={saved} error={error} />
+          <SaveIndicator saving={Boolean(savingId)} saved={saved} error={saveError} />
           <div className="relative">
             <button
               type="button"
@@ -167,10 +372,13 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
             key={draft.id}
             draft={draft}
             isDefault={draft.id === defaultId}
+            isSaved={hasStoredApiKey(config, draft.id)}
+            saving={savingId === draft.id}
             expanded={expandedId === draft.id}
-            onToggleExpand={() => setExpandedId(expandedId === draft.id ? null : draft.id)}
+            onToggleExpand={() => handleToggleDraft(draft)}
             onChange={handleDraftChange}
-            onSetDefault={() => handleSetDefault(draft)}
+            onSave={() => void handleSave(draft)}
+            onSetDefault={() => void handleSetDefault(draft)}
             onRemove={() => void handleRemove(draft)}
             onValidate={() => void handleValidate(draft)}
             onDiscoverModels={() => void handleDiscoverModels(draft)}

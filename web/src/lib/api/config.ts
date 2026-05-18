@@ -11,11 +11,12 @@ import type {
   UpdateGlobalConfigRequest,
   UpdateProjectConfigRequest,
 } from '../contracts/config'
+import { apiFetch } from './origin'
 
 const BASE = '/api/config'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(url, {
+  const resp = await apiFetch(url, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })
@@ -54,7 +55,7 @@ export const configApi = {
   },
 
   async validateAiApi(payload: AiApiValidateRequest): Promise<AiApiValidateResponse> {
-    const resp = await fetch(`${BASE}/ai-api/validate`, {
+    const resp = await apiFetch(`${BASE}/ai-api/validate`, {
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
       body: JSON.stringify(payload),
@@ -64,7 +65,7 @@ export const configApi = {
   },
 
   async discoverAiModels(payload: AiApiModelsDiscoverRequest): Promise<AiApiModelsDiscoverResponse> {
-    const resp = await fetch(`${BASE}/ai-api/models/discover`, {
+    const resp = await apiFetch(`${BASE}/ai-api/models/discover`, {
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
       body: JSON.stringify(payload),

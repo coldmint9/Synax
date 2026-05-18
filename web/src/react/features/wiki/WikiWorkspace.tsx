@@ -8,6 +8,8 @@ import WikiSourcePanel from './WikiSourcePanel'
 import WikiPatchQueue from './WikiPatchQueue'
 import WikiDesignMappingPanel from './WikiDesignMappingPanel'
 import { wikiApi } from '../../../lib/api/wiki'
+import { apiFetch } from '../../../lib/api/origin'
+import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
 type RightTab = 'source' | 'patches' | 'mapping'
 
@@ -81,10 +83,16 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
         </p>
 
         {error && (
-          <div className="mt-3 flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-left">
-            <AlertCircle size={12} className="shrink-0 text-destructive mt-0.5" />
-            <p className="text-[11px] text-destructive leading-snug">{error}</p>
-          </div>
+          isProviderNotConfiguredError(error) ? (
+            <div className="mt-3">
+              <LlmProviderRequiredBanner error={error} onDismiss={() => setError(null)} />
+            </div>
+          ) : (
+            <div className="mt-3 flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-left">
+              <AlertCircle size={12} className="shrink-0 text-destructive mt-0.5" />
+              <p className="text-[11px] text-destructive leading-snug">{error}</p>
+            </div>
+          )
         )}
 
         {generating && phase && (
@@ -172,10 +180,16 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
         </p>
 
         {error && (
-          <div className="mt-3 flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-left">
-            <AlertCircle size={12} className="shrink-0 text-destructive mt-0.5" />
-            <p className="text-[11px] text-destructive leading-snug">{error}</p>
-          </div>
+          isProviderNotConfiguredError(error) ? (
+            <div className="mt-3">
+              <LlmProviderRequiredBanner error={error} onDismiss={() => setError(null)} />
+            </div>
+          ) : (
+            <div className="mt-3 flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-left">
+              <AlertCircle size={12} className="shrink-0 text-destructive mt-0.5" />
+              <p className="text-[11px] text-destructive leading-snug">{error}</p>
+            </div>
+          )
         )}
 
         {retrying && phase && (
@@ -255,7 +269,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
     setRefreshing(true)
     try {
-      const res = await fetch(`/api/wiki/snapshots/${snapshot.id}/refresh`, {
+      const res = await apiFetch(`/api/wiki/snapshots/${snapshot.id}/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workDir }),
@@ -266,7 +280,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       const deadline = Date.now() + 60_000
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 1500))
-        const taskRes = await fetch(`/api/wiki/refresh-tasks/${task.id}`)
+        const taskRes = await apiFetch(`/api/wiki/refresh-tasks/${task.id}`)
         const taskData = await taskRes.json() as { status: string }
         if (taskData.status === 'completed' || taskData.status === 'failed') break
       }

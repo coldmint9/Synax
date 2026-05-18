@@ -67,11 +67,11 @@ function withLocalNoProxy(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 export async function ensureBuiltServer() {
-  if (existsSync(join(ROOT_DIR, 'server-dist', 'server.js'))) {
+  if (existsSync(join(ROOT_DIR, 'server-dist', 'server.cjs'))) {
     return
   }
 
-  console.log('[bootstrap] server-dist/server.js missing, building...')
+  console.log('[bootstrap] server-dist/server.cjs missing, building...')
   const proc = spawnProcess(['npm', 'run', 'build'])
   const code = await waitForExit(proc)
 

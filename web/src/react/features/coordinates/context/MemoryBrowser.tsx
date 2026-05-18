@@ -11,6 +11,7 @@
 import { Archive, BookOpen, Pin, PinOff, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { MemoryType, ProjectMemory } from '../../../../lib/api/context'
+import { apiFetch } from '../../../../lib/api/origin'
 import { useContextStore } from '../../../state/contextStore'
 
 const TYPE_COLORS: Record<MemoryType, string> = {
@@ -68,7 +69,7 @@ export default function MemoryBrowser() {
     setExtractError(null)
     try {
       // 使用全局 fetch，避免在 store 上挂新 action
-      await fetch('/api/context/memories/extract', {
+      await apiFetch('/api/context/memories/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: currentSessionId }),

@@ -299,4 +299,47 @@ describe('config routes ai api provider auth', () => {
     expect(removeBody.config.defaultApiProviderId).toBe('openai')
     expect(removeBody.config.providers.some((provider: { id: string }) => provider.id === 'custom-api:deepseek')).toBe(false)
   })
+
+  it('does not require the current default API provider key when only adding another provider', async () => {
+    const { getGlobalConfig } = await import('../../lib/config/config-store.js')
+    const { configRoutes } = await import('../config.js')
+    const current = getGlobalConfig()
+    const deepseekProvider = {
+      id: 'custom-api:deepseek',
+      label: 'DeepSeek',
+      description: 'DeepSeek OpenAI-compatible API',
+      status: 'live' as const,
+      kind: 'api' as const,
+      caps: { canFollowUp: true, canCancel: true },
+      models: [{ id: 'deepseek-chat', label: 'deepseek-chat', isDefault: true }],
+    }
+
+    const res = await configRoutes.request('http://localhost/global', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providers: [...current.providers, deepseekProvider],
+        providerConnections: {
+          'custom-api:deepseek': {
+            providerId: 'custom-api:deepseek',
+            baseUrl: 'https://api.deepseek.com',
+            apiKey: 'sk-deepseek',
+            extra: {
+              kind: 'api',
+              apiFormat: 'openai',
+              model: 'deepseek-chat',
+            },
+          },
+        },
+      }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.config.defaultApiProviderId).toBe('openai')
+    expect(body.config.providerConnections.openai.apiKeyMasked).toBeUndefined()
+    expect(body.config.providers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'custom-api:deepseek' })]),
+    )
+  })
 })

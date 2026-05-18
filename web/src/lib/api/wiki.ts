@@ -7,18 +7,28 @@ import type {
   WikiBlock,
   WikiPatch,
 } from '../contracts/wiki';
+import { apiFetch } from './origin';
 
 const BASE = '/api/wiki';
 
+async function parseApiError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json() as { error?: string; code?: string }
+    if (body.code) return `[${body.code}] ${body.error ?? fallback}`
+    if (body.error) return body.error
+  } catch { /* ignore parse failure */ }
+  return `${fallback}: ${res.status}`
+}
+
 export const wikiApi = {
   async getLatest(projectId: string): Promise<WikiSnapshotTree> {
-    const res = await fetch(`${BASE}/projects/${projectId}/latest`);
+    const res = await apiFetch(`${BASE}/projects/${projectId}/latest`);
     if (!res.ok) throw new Error(`wiki/latest failed: ${res.status}`);
     return res.json() as Promise<WikiSnapshotTree>;
   },
 
   async getSnapshot(snapshotId: string): Promise<WikiSnapshotTree> {
-    const res = await fetch(`${BASE}/snapshots/${snapshotId}`);
+    const res = await apiFetch(`${BASE}/snapshots/${snapshotId}`);
     if (!res.ok) throw new Error(`wiki/snapshot failed: ${res.status}`);
     return res.json() as Promise<WikiSnapshotTree>;
   },
@@ -27,7 +37,7 @@ export const wikiApi = {
     blockId: string,
     body: { content: unknown; manualState?: 'edited' | 'locked'; actorId?: string },
   ): Promise<WikiBlock> {
-    const res = await fetch(`${BASE}/blocks/${blockId}`, {
+    const res = await apiFetch(`${BASE}/blocks/${blockId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -40,7 +50,7 @@ export const wikiApi = {
     const url = status
       ? `${BASE}/projects/${projectId}/patches?status=${status}`
       : `${BASE}/projects/${projectId}/patches`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) throw new Error(`wiki/patches failed: ${res.status}`);
     const data = await res.json() as { patches: WikiPatch[] };
     return data.patches;
@@ -58,12 +68,15 @@ export const wikiApi = {
     projectId: string,
     body: { workDir: string; locale?: 'zh' | 'en' },
   ): Promise<{ status: string }> {
-    const res = await fetch(`${BASE}/projects/${projectId}/generate`, {
+    const res = await apiFetch(`${BASE}/projects/${projectId}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`wiki/generate failed: ${res.status}`);
+    if (!res.ok) {
+      const err = await parseApiError(res, 'wiki/generate failed')
+      throw new Error(err)
+    }
     return res.json() as Promise<{ status: string }>;
   },
 
@@ -71,12 +84,15 @@ export const wikiApi = {
     projectId: string,
     body: { workDir: string; locale?: 'zh' | 'en' },
   ): Promise<{ status: string }> {
-    const res = await fetch(`${BASE}/projects/${projectId}/reinitialize`, {
+    const res = await apiFetch(`${BASE}/projects/${projectId}/reinitialize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`wiki/reinitialize failed: ${res.status}`);
+    if (!res.ok) {
+      const err = await parseApiError(res, 'wiki/reinitialize failed')
+      throw new Error(err)
+    }
     return res.json() as Promise<{ status: string }>;
   },
 
@@ -90,7 +106,7 @@ export const wikiApi = {
     ideUri?: string;
     fallbackSearchQuery?: string;
   }> {
-    const res = await fetch(`${BASE}/source-bindings/${bindingId}/resolve`);
+    const res = await apiFetch(`${BASE}/source-bindings/${bindingId}/resolve`);
     if (!res.ok) throw new Error(`wiki/resolve failed: ${res.status}`);
     return res.json();
   },

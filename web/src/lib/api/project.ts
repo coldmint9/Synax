@@ -4,6 +4,7 @@ import type {
   CreateProjectFromRepoRequest,
   CreateProjectFromScratchRequest,
 } from '../contracts/project'
+import { apiFetch } from './origin'
 
 const API_BASE = '/api/projects'
 
@@ -49,7 +50,7 @@ export const projectApi = {
       if (params?.sort) qs.set('sort', params.sort)
       if (params?.order) qs.set('order', params.order)
       const url = qs.toString() ? `${API_BASE}?${qs.toString()}` : API_BASE
-      const resp = await fetch(url)
+      const resp = await apiFetch(url)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
       const items = (data.items ?? []).map((p: Record<string, unknown>) => mapToProjectSummary(p))
@@ -62,7 +63,7 @@ export const projectApi = {
   /** Get a single project by ID */
   async getProject(id: string): Promise<ProjectSummary | null> {
     try {
-      const resp = await fetch(`${API_BASE}/${id}`)
+      const resp = await apiFetch(`${API_BASE}/${id}`)
       if (!resp.ok) return null
       const p = await resp.json() as Record<string, unknown>
       return mapToProjectSummary(p)
@@ -74,7 +75,7 @@ export const projectApi = {
   /** Check if a project with the same source already exists */
   async checkDuplicate(kind: string, repoUrl?: string, localPath?: string): Promise<DuplicateCheckResult> {
     try {
-      const resp = await fetch(`${API_BASE}/check-duplicate`, {
+      const resp = await apiFetch(`${API_BASE}/check-duplicate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind, repoUrl, localPath }),
@@ -93,7 +94,7 @@ export const projectApi = {
     source: { kind: string; repoUrl?: string; branch?: string; commitSha?: string; localPath?: string; provider?: string }
     overwriteExisting?: boolean
   }): Promise<{ project: ProjectSummary }> {
-    const resp = await fetch(API_BASE, {
+    const resp = await apiFetch(API_BASE, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -127,7 +128,7 @@ export const projectApi = {
     activeHumans?: number
     openRisks?: number
   }): Promise<ProjectSummary> {
-    const resp = await fetch(`${API_BASE}/${id}`, {
+    const resp = await apiFetch(`${API_BASE}/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -142,7 +143,7 @@ export const projectApi = {
 
   /** Delete project */
   async deleteProject(id: string): Promise<DeleteResult> {
-    const resp = await fetch(`${API_BASE}/${id}`, { method: 'DELETE' })
+    const resp = await apiFetch(`${API_BASE}/${id}`, { method: 'DELETE' })
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({ error: resp.statusText }))
       throw new Error(body.error || `HTTP ${resp.status}`)
@@ -153,7 +154,7 @@ export const projectApi = {
   /** Get real-time project stats */
   async getProjectStats(id: string): Promise<ProjectStats | null> {
     try {
-      const resp = await fetch(`${API_BASE}/${id}/stats`)
+      const resp = await apiFetch(`${API_BASE}/${id}/stats`)
       if (!resp.ok) return null
       return (await resp.json()) as ProjectStats
     } catch {

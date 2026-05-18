@@ -7,6 +7,7 @@ import {
   type PermissionDecision,
   type RuntimeEvent,
 } from '../../lib/api/agentRuntime'
+import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../components/LlmProviderRequiredBanner'
 
 type StreamChunk = {
   type?: string
@@ -200,9 +201,15 @@ export default function AgentLoopTestPage() {
               </div>
 
               {error && (
-                <div className="border-t border-destructive/30 bg-destructive/10 px-5 py-3 text-sm text-destructive">
-                  {error}
-                </div>
+                isProviderNotConfiguredError(error) ? (
+                  <div className="border-t border-destructive/30 px-5 py-3">
+                    <LlmProviderRequiredBanner error={error} onDismiss={() => setError(null)} />
+                  </div>
+                ) : (
+                  <div className="border-t border-destructive/30 bg-destructive/10 px-5 py-3 text-sm text-destructive">
+                    {error}
+                  </div>
+                )
               )}
 
               {pendingPermissions.length > 0 && (
