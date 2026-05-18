@@ -21,6 +21,7 @@ import {
   toHttpError,
 } from '../services/agent-runtime/index.js';
 import { logger } from '../lib/logger.js';
+import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 
 export const agentRuntimeRoutes = new Hono();
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
@@ -87,6 +88,7 @@ agentRuntimeRoutes.post('/sessions', async (c) => {
   const parsed = createSessionRequestSchema.safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
+    assertLlmProviderConfigured(parsed.data.projectId);
     const session = agentSessionRuntime.create(parsed.data);
     return c.json(withSessionPayload(session.id), 201);
   } catch (error) {
@@ -167,8 +169,14 @@ agentRuntimeRoutes.post('/sessions/:sessionId/turns/stream', async (c) => {
   const parsed = streamTurnRequestSchema.safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   const sessionId = c.req.param('sessionId');
+  let session: ReturnType<typeof agentSessionRuntime.get>;
   try {
-    agentSessionRuntime.get(sessionId);
+    session = agentSessionRuntime.get(sessionId);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+  try {
+    assertLlmProviderConfigured(session.projectId);
   } catch (error) {
     return runtimeError(c, error);
   }

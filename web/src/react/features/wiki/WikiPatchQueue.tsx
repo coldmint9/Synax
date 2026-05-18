@@ -2,6 +2,7 @@ import { AlertTriangle, Check, ChevronDown, ChevronUp, RefreshCw, X } from 'luci
 import { useState } from 'react'
 import { useWikiStore } from '../../state/wikiStore'
 import { wikiApi } from '../../../lib/api/wiki'
+import { apiFetch } from '../../../lib/api/origin'
 import type { WikiPatch } from '../../../lib/contracts/wiki'
 
 const RISK_STYLES = {
@@ -141,7 +142,7 @@ export default function WikiPatchQueue({ projectId }: { projectId: string }) {
 
   async function handleAccept(patchId: string, confirmManualOverride = false) {
     try {
-      await fetch(`/api/wiki/patches/${patchId}/accept`, {
+      await apiFetch(`/api/wiki/patches/${patchId}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirmManualOverride }),
@@ -160,7 +161,7 @@ export default function WikiPatchQueue({ projectId }: { projectId: string }) {
   }
 
   async function handleDismiss(patchId: string) {
-    await fetch(`/api/wiki/patches/${patchId}/dismiss`, {
+    await apiFetch(`/api/wiki/patches/${patchId}/dismiss`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),

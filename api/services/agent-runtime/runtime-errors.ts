@@ -27,6 +27,12 @@ export class AgentPermissionError extends AgentRuntimeError {
   }
 }
 
+export class AgentProviderNotConfiguredError extends AgentRuntimeError {
+  constructor(message = 'No LLM provider configured. Please configure a provider in Settings.') {
+    super(message, 'LLM_PROVIDER_NOT_CONFIGURED', 422);
+  }
+}
+
 export function toRuntimeError(error: unknown): AgentRuntimeError {
   if (error instanceof AgentRuntimeError) return error;
   if (error instanceof Error) return new AgentRuntimeError(error.message);

@@ -1,7 +1,9 @@
 import { ArrowRight, Check, ChevronDown, ChevronUp, Code2, FileText, Loader2, MousePointer2, X } from 'lucide-react'
 import { useState } from 'react'
 import { useWikiStore } from '../../state/wikiStore'
+import { apiFetch } from '../../../lib/api/origin'
 import type { WikiBlock } from '../../../lib/contracts/wiki'
+import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
 interface GoalPreview {
   label: string
@@ -110,7 +112,7 @@ export default function WikiDesignMappingPanel({ projectId }: { projectId: strin
     setPlanning(true)
     setError(null)
     try {
-      const res = await fetch('/api/wiki/design-mapping/plan', {
+      const res = await apiFetch('/api/wiki/design-mapping/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -140,7 +142,7 @@ export default function WikiDesignMappingPanel({ projectId }: { projectId: strin
     setConfirming(true)
     setStatus('running')
     try {
-      const res = await fetch(`/api/wiki/design-mapping/${taskId}/confirm`, {
+      const res = await apiFetch(`/api/wiki/design-mapping/${taskId}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -220,7 +222,11 @@ export default function WikiDesignMappingPanel({ projectId }: { projectId: strin
           </div>
 
           {error && (
-            <p className="text-[11px] text-destructive">{error}</p>
+            isProviderNotConfiguredError(error) ? (
+              <LlmProviderRequiredBanner error={error} onDismiss={() => setError(null)} />
+            ) : (
+              <p className="text-[11px] text-destructive">{error}</p>
+            )
           )}
 
           <button
@@ -270,7 +276,11 @@ export default function WikiDesignMappingPanel({ projectId }: { projectId: strin
             </div>
           )}
 
-          {error && <p className="text-[11px] text-destructive">{error}</p>}
+          {error && (
+            isProviderNotConfiguredError(error)
+              ? <LlmProviderRequiredBanner error={error} onDismiss={() => setError(null)} />
+              : <p className="text-[11px] text-destructive">{error}</p>
+          )}
 
           <div className="flex items-center gap-1.5">
             <button
@@ -322,7 +332,10 @@ export default function WikiDesignMappingPanel({ projectId }: { projectId: strin
 
       {status === 'error' && (
         <div className="space-y-2">
-          <p className="text-[11px] text-destructive">{error}</p>
+          {isProviderNotConfiguredError(error)
+            ? <LlmProviderRequiredBanner error={error} onDismiss={() => setError(null)} />
+            : <p className="text-[11px] text-destructive">{error}</p>
+          }
           <button
             type="button"
             onClick={handleReset}

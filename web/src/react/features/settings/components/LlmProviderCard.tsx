@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { ChevronDown, ChevronRight, Eye, EyeOff, Loader2, RefreshCw, ShieldCheck, Trash2, Wifi, WifiOff } from 'lucide-react'
+import { ChevronDown, ChevronRight, Eye, EyeOff, Loader2, RefreshCw, Save, ShieldCheck, Trash2, Wifi } from 'lucide-react'
 import { type ApiProviderDraft, PROVIDER_LOGO_ASSETS } from '../lib/providerPresets'
 import { validateProviderDraft } from '../lib/validation'
 import { useShellStore } from '../../../state/shellStore'
@@ -7,9 +6,12 @@ import { useShellStore } from '../../../state/shellStore'
 interface LlmProviderCardProps {
   draft: ApiProviderDraft
   isDefault: boolean
+  isSaved: boolean
+  saving: boolean
   expanded: boolean
   onToggleExpand: () => void
   onChange: (updated: ApiProviderDraft) => void
+  onSave: () => void
   onSetDefault: () => void
   onRemove: () => void
   onValidate: () => void
@@ -19,9 +21,12 @@ interface LlmProviderCardProps {
 export function LlmProviderCard({
   draft,
   isDefault,
+  isSaved,
+  saving,
   expanded,
   onToggleExpand,
   onChange,
+  onSave,
   onSetDefault,
   onRemove,
   onValidate,
@@ -59,7 +64,7 @@ export function LlmProviderCard({
           </div>
           <div className="text-[11px] text-muted-foreground truncate">{draft.model}</div>
         </div>
-        <StatusDot validating={draft.validating} hasKey={Boolean(draft.apiKey || draft.apiKeyMasked)} />
+        <StatusDot validating={draft.validating || saving} hasKey={isSaved} />
         {expanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
       </button>
 
@@ -138,6 +143,15 @@ export function LlmProviderCard({
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <button
               type="button"
+              className="inline-flex items-center gap-1 rounded-md border border-primary/50 px-2 py-1 text-[11px] text-primary hover:bg-primary/10 disabled:opacity-50"
+              onClick={onSave}
+              disabled={saving || draft.validating}
+            >
+              {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+              保存 Provider
+            </button>
+            <button
+              type="button"
               className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-50"
               onClick={onValidate}
               disabled={draft.validating}
@@ -145,7 +159,7 @@ export function LlmProviderCard({
               {draft.validating ? <Loader2 size={11} className="animate-spin" /> : <Wifi size={11} />}
               验证连接
             </button>
-            {!isDefault && (
+            {isSaved && !isDefault && (
               <button
                 type="button"
                 className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] hover:bg-muted"

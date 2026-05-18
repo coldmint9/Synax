@@ -38,7 +38,7 @@ function resolveDbPath(): string {
 }
 
 function resolveMigrationsDir(): string {
-  // 兼容直接运行源码与 build(esm) 两种路径
+  // 兼容直接运行源码、bundled sidecar 与 packaged resources 路径
   try {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const candidate = path.join(here, 'migrations');
@@ -46,7 +46,11 @@ function resolveMigrationsDir(): string {
   } catch {
     /* noop */
   }
-  return path.resolve(process.cwd(), 'api/db/migrations');
+  const cwdCandidates = [
+    path.resolve(process.cwd(), 'migrations'),
+    path.resolve(process.cwd(), 'api/db/migrations'),
+  ];
+  return cwdCandidates.find((candidate) => fs.existsSync(candidate)) ?? cwdCandidates[1];
 }
 
 function hasExecutableSql(sql: string): boolean {

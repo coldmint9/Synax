@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../../state/shellStore'
 import { projectApi, type DuplicateCheckResult } from '../../../lib/api/project'
+import { apiFetch } from '../../../lib/api/origin'
 
 type SourceKind = 'scratch' | 'localPath' | 'git'
 type GitProvider = 'github' | 'gitlab'
@@ -158,7 +159,7 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
     setSubmitting(true)
     setError(null)
     try {
-      const resp = await fetch('/api/projects', {
+      const resp = await apiFetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

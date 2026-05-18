@@ -12,6 +12,7 @@ process.env.NO_PROXY = [...new Set([...noProxy, ...localNoProxyHosts])].join(','
 process.env.no_proxy = process.env.NO_PROXY
 
 export default defineConfig({
+  base: './',
   plugins: [react()],
   resolve: {
     alias: {

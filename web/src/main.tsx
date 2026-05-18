@@ -6,15 +6,21 @@ import './index.css'
 import '@xyflow/react/dist/style.css'
 import 'streamdown/styles.css'
 import { hydrateShellPreferences, useShellStore } from './react/state/shellStore'
+import { initApiOrigin } from './lib/api/origin'
 
 hydrateShellPreferences()
 const theme = useShellStore.getState().preferences.theme
 document.documentElement.classList.toggle('dark', theme === 'dark')
 
-ReactDOM.createRoot(document.getElementById('app')!).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
-  </React.StrictMode>,
-)
+async function bootstrap() {
+  await initApiOrigin()
+  ReactDOM.createRoot(document.getElementById('app')!).render(
+    <React.StrictMode>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </React.StrictMode>,
+  )
+}
+
+bootstrap()

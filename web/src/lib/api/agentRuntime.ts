@@ -1,3 +1,5 @@
+import { apiFetch } from './origin'
+
 const BASE = '/api/agent-runtime'
 
 export type AgentProfileKind = 'planner' | 'executor' | 'reviewer' | 'explorer'
@@ -208,7 +210,7 @@ export interface StreamTurnRequest {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(`${BASE}${path}`, {
+  const resp = await apiFetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })
@@ -216,7 +218,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const text = await resp.text()
     let message = text
     try {
-      message = (JSON.parse(text) as { error?: string }).error ?? text
+      const parsed = JSON.parse(text) as { error?: string; code?: string }
+      if (parsed.code) message = `[${parsed.code}] ${parsed.error ?? text}`
+      else if (parsed.error) message = parsed.error
     } catch {
       /* keep raw body */
     }
@@ -281,13 +285,19 @@ export const agentRuntimeApi = {
     body: StreamTurnRequest,
     onChunk: (chunk: unknown) => void,
   ): Promise<void> => {
-    const response = await fetch(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/turns/stream`, {
+    const response = await apiFetch(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/turns/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
     if (!response.ok || !response.body) {
-      throw new Error(`Agent runtime turn stream error ${response.status}`)
+      let message = `Agent runtime turn stream error ${response.status}`
+      try {
+        const body = await response.json() as { error?: string; code?: string }
+        if (body.code) message = `[${body.code}] ${body.error ?? message}`
+        else if (body.error) message = body.error
+      } catch { /* keep default message */ }
+      throw new Error(message)
     }
 
     const reader = response.body.getReader()

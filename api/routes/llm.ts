@@ -3,6 +3,8 @@ import { streamSSE } from 'hono/streaming'
 import * as z from 'zod/v4'
 import { logger } from '../lib/logger.js'
 import { createGatewayStream, validateGatewayModel } from '../services/llm-runtime/stream.js'
+import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js'
+import { AgentProviderNotConfiguredError } from '../services/agent-runtime/runtime-errors.js'
 
 export const llmRoutes = new Hono()
 
@@ -65,6 +67,17 @@ llmRoutes.post('/stream', async (c) => {
   }
 
   const input = parsed.data
+
+  try {
+    assertLlmProviderConfigured(input.projectId)
+  } catch (err) {
+    if (err instanceof AgentProviderNotConfiguredError) {
+      logger.warn({ projectId: input.projectId, purpose: input.purpose }, '[llm] LLM provider not configured for stream')
+      return c.json({ error: err.message, code: err.code }, 422)
+    }
+    return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500)
+  }
+
   logger.info({ projectId: input.projectId, purpose: input.purpose, model: input.model }, '[llm] stream request')
 
   return streamSSE(c, async (stream) => {

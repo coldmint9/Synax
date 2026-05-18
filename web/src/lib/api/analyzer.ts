@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ForestPatch, CoordForest, SourceBinding } from '../coordinates'
+import { apiFetch } from './origin'
 
 export type SearchMode = 'keyword' | 'hybrid'
 
@@ -84,7 +85,7 @@ const API_BASE = '/api/coordinates'
 
 /** 低层 fetch 帮手：默认 JSON 请求，返回 parsed body。 */
 async function postJson<TRequest, TResponse>(path: string, body: TRequest): Promise<TResponse> {
-  const resp = await fetch(`${API_BASE}${path}`, {
+  const resp = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -116,7 +117,7 @@ export function suggestMount(projectId: string, intent: string): Promise<MountHi
 }
 
 export async function fetchForestSnapshot(projectId: string): Promise<CoordForest | null> {
-  const resp = await fetch(`${API_BASE}/forest/${encodeURIComponent(projectId)}`)
+  const resp = await apiFetch(`${API_BASE}/forest/${encodeURIComponent(projectId)}`)
   if (resp.status === 404) return null
   if (!resp.ok) throw new Error(`fetchForestSnapshot failed: ${resp.status}`)
   return (await resp.json()) as CoordForest
@@ -155,7 +156,7 @@ function openSseStream(
   const controller = new AbortController()
   ;(async () => {
     try {
-      const resp = await fetch(`${API_BASE}${path}`, {
+      const resp = await apiFetch(`${API_BASE}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
         body: JSON.stringify(input),

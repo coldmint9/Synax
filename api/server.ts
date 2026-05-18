@@ -52,6 +52,7 @@ function startServer(): void {
   serve({
     fetch: app.fetch,
     port: PORT,
+    hostname: "127.0.0.1",
   });
 
   pinoLogger.info(

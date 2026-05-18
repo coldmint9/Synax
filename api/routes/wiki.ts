@@ -9,6 +9,9 @@ import { wikiCoordinateService } from '../services/wiki/wiki-coordinate-service.
 import { wikiRefreshService } from '../services/wiki/wiki-refresh-service.js';
 import { wikiPatchService, WikiPatchConflictError } from '../services/wiki/wiki-patch-service.js';
 import { wikiDesignMappingService } from '../services/wiki/wiki-design-mapping-service.js';
+import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
+import { AgentProviderNotConfiguredError } from '../services/agent-runtime/runtime-errors.js';
+import { logger } from '../lib/logger.js';
 
 export const wikiRoutes = new Hono();
 
@@ -138,6 +141,16 @@ wikiRoutes.post('/projects/:projectId/generate', async (c) => {
   const parsed = await parseBody(c, generateBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
+  try {
+    assertLlmProviderConfigured(projectId);
+  } catch (err) {
+    if (err instanceof AgentProviderNotConfiguredError) {
+      logger.warn({ projectId }, '[wiki] LLM provider not configured for generate');
+      return c.json({ error: err.message, code: err.code }, 422);
+    }
+    return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
+  }
+
   // Fire-and-forget: client polls /latest for completion
   void wikiLoopService.generate({
     projectId,
@@ -153,6 +166,16 @@ wikiRoutes.post('/projects/:projectId/reinitialize', async (c) => {
   const { projectId } = c.req.param();
   const parsed = await parseBody(c, generateBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  try {
+    assertLlmProviderConfigured(projectId);
+  } catch (err) {
+    if (err instanceof AgentProviderNotConfiguredError) {
+      logger.warn({ projectId }, '[wiki] LLM provider not configured for reinitialize');
+      return c.json({ error: err.message, code: err.code }, 422);
+    }
+    return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
+  }
 
   await wikiStore.purgeProject(projectId);
 
@@ -181,6 +204,16 @@ wikiRoutes.post('/snapshots/:snapshotId/refresh', async (c) => {
 
   const snapshot = await wikiStore.getSnapshot(snapshotId);
   if (!snapshot) return c.json({ error: 'snapshot not found' }, 404);
+
+  try {
+    assertLlmProviderConfigured(snapshot.projectId);
+  } catch (err) {
+    if (err instanceof AgentProviderNotConfiguredError) {
+      logger.warn({ snapshotId, projectId: snapshot.projectId }, '[wiki] LLM provider not configured for refresh');
+      return c.json({ error: err.message, code: err.code }, 422);
+    }
+    return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
+  }
 
   try {
     const task = await wikiRefreshService.triggerRefresh(snapshot.projectId, snapshotId, parsed.data.workDir);
@@ -230,6 +263,16 @@ wikiRoutes.post('/design-mapping/plan', async (c) => {
   const parsed = await parseBody(c, designMappingPlanBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
+  try {
+    assertLlmProviderConfigured(parsed.data.projectId);
+  } catch (err) {
+    if (err instanceof AgentProviderNotConfiguredError) {
+      logger.warn({ projectId: parsed.data.projectId }, '[wiki] LLM provider not configured for design-mapping plan');
+      return c.json({ error: err.message, code: err.code }, 422);
+    }
+    return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
+  }
+
   const result = await wikiDesignMappingService.plan({
     projectId: parsed.data.projectId,
     snapshotId: parsed.data.snapshotId,
@@ -245,6 +288,16 @@ wikiRoutes.post('/design-mapping/:taskId/confirm', async (c) => {
   const { taskId } = c.req.param();
   const parsed = await parseBody(c, designMappingConfirmBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  try {
+    assertLlmProviderConfigured();
+  } catch (err) {
+    if (err instanceof AgentProviderNotConfiguredError) {
+      logger.warn({ taskId }, '[wiki] LLM provider not configured for design-mapping confirm');
+      return c.json({ error: err.message, code: err.code }, 422);
+    }
+    return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
+  }
 
   try {
     const result = await wikiDesignMappingService.confirm(taskId, parsed.data);

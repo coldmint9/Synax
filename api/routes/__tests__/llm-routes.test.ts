@@ -8,6 +8,10 @@ vi.mock('../../services/llm-runtime/stream.js', () => ({
   validateGatewayModel,
 }))
 
+vi.mock('../../services/llm-runtime/provider-check.js', () => ({
+  assertLlmProviderConfigured: vi.fn(),
+}))
+
 describe('llm routes', () => {
   beforeEach(() => {
     vi.clearAllMocks()

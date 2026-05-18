@@ -5,6 +5,8 @@
 // Python/TS \u53cc\u7aef\u624b\u52a8\u540c\u6b65\uff09\u3002
 // ---------------------------------------------------------------------------
 
+import { apiFetch, getApiOrigin } from './origin'
+
 const API_BASE = '/api/context'
 
 // ============================== \u9886\u57df\u7c7b\u578b ==============================
@@ -328,7 +330,7 @@ async function parseJson<T>(resp: Response): Promise<T> {
 }
 
 function postJson<T>(path: string, body: unknown): Promise<T> {
-  return fetch(`${API_BASE}${path}`, {
+  return apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -336,7 +338,7 @@ function postJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 function patchJson<T>(path: string, body: unknown): Promise<T> {
-  return fetch(`${API_BASE}${path}`, {
+  return apiFetch(`${API_BASE}${path}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -344,11 +346,11 @@ function patchJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 function getJson<T>(path: string): Promise<T> {
-  return fetch(`${API_BASE}${path}`).then(parseJson<T>)
+  return apiFetch(`${API_BASE}${path}`).then(parseJson<T>)
 }
 
 function deleteJson<T>(path: string): Promise<T> {
-  return fetch(`${API_BASE}${path}`, { method: 'DELETE' }).then(parseJson<T>)
+  return apiFetch(`${API_BASE}${path}`, { method: 'DELETE' }).then(parseJson<T>)
 }
 
 function buildQs(params: Record<string, unknown>): string {
@@ -606,7 +608,7 @@ export const contextApi = {
    * @returns \u89e3\u9664\u8ba2\u9605\u51fd\u6570
    */
   subscribeSync(projectId: string, onEvent: (event: SyncEvent) => void): () => void {
-    const url = `${API_BASE}/sync?projectId=${encodeURIComponent(projectId)}`
+    const url = `${getApiOrigin()}${API_BASE}/sync?projectId=${encodeURIComponent(projectId)}`
     const es = new EventSource(url)
     const types: SyncEventType[] = [
       'session_created',

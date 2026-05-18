@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
+"use strict";
+const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
     platform: process.platform,
     showOpenDialog: (options) => ipcRenderer.invoke('dialog:open', options),

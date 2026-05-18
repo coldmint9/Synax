@@ -31,7 +31,7 @@ const providerConnectionSchema = z
     baseUrl: z.string().optional(),
     apiKey: z.string().optional(),
     apiKeyMasked: z.string().optional(),
-    extra: z.record(z.unknown()).optional(),
+    extra: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough()
 
@@ -53,7 +53,7 @@ const providerDefSchema = z.object({
       maxTokens: z.number().optional(),
     }),
   ),
-  connectionSchema: z.record(z.unknown()).optional(),
+  connectionSchema: z.record(z.string(), z.unknown()).optional(),
 })
 
 const globalConfigPatchSchema = z
@@ -61,7 +61,7 @@ const globalConfigPatchSchema = z
     providers: z.array(providerDefSchema).optional(),
     defaultProviderId: z.enum(ACP_PROVIDER_IDS).optional(),
     defaultApiProviderId: z.string().min(1).optional(),
-    providerConnections: z.record(providerConnectionSchema).optional(),
+    providerConnections: z.record(z.string(), providerConnectionSchema).optional(),
     limits: z
       .object({
         maxAgentsPerProject: z.number().int().positive(),
@@ -320,7 +320,6 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
     current.providerConnections[defaultApiProviderId],
     Boolean(
       patch.defaultApiProviderId ||
-      patch.providers ||
       patch.providerConnections?.[defaultApiProviderId],
     ),
   )
