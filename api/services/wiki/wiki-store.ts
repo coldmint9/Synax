@@ -192,6 +192,15 @@ export const wikiStore = {
     await db.update(wikiSnapshots).set(updates).where(eq(wikiSnapshots.id, snapshotId));
   },
 
+  async recoverOrphanedSnapshots(): Promise<number> {
+    const db = getDb();
+    const result = await db
+      .update(wikiSnapshots)
+      .set({ status: 'failed' })
+      .where(inArray(wikiSnapshots.status, ['refreshing', 'outline_ready', 'writing']));
+    return result.rowsAffected ?? 0;
+  },
+
   // ── Documents ─────────────────────────────────────────────────────────────
 
   async getDocumentsBySnapshot(snapshotId: string): Promise<WikiDocument[]> {

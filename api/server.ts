@@ -14,6 +14,7 @@ import { wikiRoutes } from "./routes/wiki.js";
 import { logRoutes } from "./routes/logs.js";
 import { getDb } from "./db/index.js";
 import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
+import { wikiStore } from "./services/wiki/wiki-store.js";
 
 export const app = new Hono();
 
@@ -57,6 +58,16 @@ try {
   }
 } catch (err) {
   pinoLogger.error({ err }, "failed to recover orphaned sessions");
+}
+
+// --- 启动时恢复孤儿 wiki snapshot（服务器重启后卡在生成中状态）---
+try {
+  const recoveredSnapshots = await wikiStore.recoverOrphanedSnapshots();
+  if (recoveredSnapshots > 0) {
+    pinoLogger.warn({ count: recoveredSnapshots }, "recovered orphaned wiki snapshots on startup");
+  }
+} catch (err) {
+  pinoLogger.error({ err }, "failed to recover orphaned wiki snapshots");
 }
 
 function startServer(): void {
