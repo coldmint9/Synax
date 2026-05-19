@@ -92,6 +92,7 @@ export const runtimeEventTypeSchema = z.enum([
   'artifact_created',
   'progress_updated',
   'subsession_started',
+  'todo_updated',
 ]);
 export type RuntimeEventType = z.infer<typeof runtimeEventTypeSchema>;
 

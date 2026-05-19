@@ -13,6 +13,7 @@ import { agentRuntimeRoutes } from "./routes/agent-runtime.js";
 import { wikiRoutes } from "./routes/wiki.js";
 import { logRoutes } from "./routes/logs.js";
 import { getDb } from "./db/index.js";
+import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
 
 export const app = new Hono();
 
@@ -46,6 +47,16 @@ try {
   getDb();
 } catch (err) {
   pinoLogger.error({ err }, "failed to initialize context db");
+}
+
+// --- 启动时恢复孤儿 running session ---
+try {
+  const recovered = agentRuntimeStore.recoverOrphanedSessions();
+  if (recovered > 0) {
+    pinoLogger.warn({ count: recovered }, "recovered orphaned running sessions on startup");
+  }
+} catch (err) {
+  pinoLogger.error({ err }, "failed to recover orphaned sessions");
 }
 
 function startServer(): void {

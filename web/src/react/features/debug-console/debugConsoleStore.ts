@@ -6,6 +6,8 @@ import {
   type AgentRuntimeMessage,
   type AgentSession,
   type RuntimeEvent,
+  type SessionStats,
+  type TodoItem,
   type ToolCallRecord,
 } from '../../../lib/api/agentRuntime'
 
@@ -19,6 +21,8 @@ export interface DebugConsoleState {
   messages: AgentRuntimeMessage[]
   toolCalls: ToolCallRecord[]
   childSessions: Record<string, AgentSession[]>
+  sessionStats: SessionStats | null
+  sessionTodos: TodoItem[]
 
   refreshSessions: () => Promise<void>
   deleteSession: (sessionId: string) => Promise<string[]>
@@ -28,6 +32,8 @@ export interface DebugConsoleState {
   fetchChildSessions: (parentId: string) => Promise<void>
   pauseSession: (sessionId: string) => Promise<void>
   resumeSession: (sessionId: string, message?: string) => Promise<void>
+  fetchSessionStats: () => Promise<void>
+  fetchSessionTodos: () => Promise<void>
 }
 
 export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
@@ -40,6 +46,8 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   messages: [],
   toolCalls: [],
   childSessions: {},
+  sessionStats: null,
+  sessionTodos: [],
 
   refreshSessions: async () => {
     try {
@@ -93,6 +101,9 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
       if (session && session.childSessionIds.length > 0) {
         void get().fetchChildSessions(selectedSessionId)
       }
+      // Fetch stats and todos in parallel
+      void get().fetchSessionStats()
+      void get().fetchSessionTodos()
     } catch { /* silent */ }
   },
 
@@ -117,6 +128,24 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
       await agentRuntimeApi.resumeStream(sessionId, message ? { message } : {}, () => {})
       void get().refreshSessions()
       void get().refreshDetail()
+    } catch { /* silent */ }
+  },
+
+  fetchSessionStats: async () => {
+    const { selectedSessionId } = get()
+    if (!selectedSessionId) return
+    try {
+      const stats = await agentRuntimeApi.getSessionStats(selectedSessionId)
+      set({ sessionStats: stats })
+    } catch { /* silent */ }
+  },
+
+  fetchSessionTodos: async () => {
+    const { selectedSessionId } = get()
+    if (!selectedSessionId) return
+    try {
+      const { items } = await agentRuntimeApi.getSessionTodos(selectedSessionId)
+      set({ sessionTodos: items })
     } catch { /* silent */ }
   },
 }))

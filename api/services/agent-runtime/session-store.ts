@@ -576,7 +576,7 @@ export class AgentRuntimeStore {
         null,
         null,
         null,
-        stringify({}),
+        stringify(message.metadata?.usage ?? {}),
         stringify(message.metadata),
         message.createdAt,
       );
@@ -979,6 +979,78 @@ export class AgentRuntimeStore {
       compressedTokenCount: row.compressed_token_count,
       createdAt: row.created_at,
     };
+  }
+
+  getSessionStats(sessionId: string): {
+    tokenUsage: { input: number; output: number; total: number };
+    contextLimit: number;
+    contextUsedPercent: number;
+    toolCallCount: number;
+    runningDuration: number;
+    status: string;
+    activeSubAgentCount: number;
+  } {
+    const session = this.getSession(sessionId);
+    const db = getRawSqlite();
+
+    const usageRows = db
+      .prepare("SELECT usage_json FROM agent_runtime_messages WHERE session_id = ? AND role = 'assistant'")
+      .all(sessionId) as Array<{ usage_json: string }>;
+
+    let input = 0;
+    let output = 0;
+    for (const row of usageRows) {
+      try {
+        const u = JSON.parse(row.usage_json || '{}');
+        input += (u.promptTokens ?? u.input_tokens ?? 0);
+        output += (u.completionTokens ?? u.output_tokens ?? 0);
+      } catch { /* skip */ }
+    }
+    const total = input + output;
+
+    const contextLimit = 128_000;
+    const compaction = this.getLatestCompactionRecord(sessionId);
+    const contextUsed = compaction ? compaction.originalTokenCount : total;
+    const contextUsedPercent = Math.min(Math.round((contextUsed / contextLimit) * 100), 100);
+
+    const toolCountRow = db
+      .prepare('SELECT COUNT(*) as cnt FROM agent_runtime_tool_calls WHERE session_id = ?')
+      .get(sessionId) as { cnt: number };
+    const toolCallCount = toolCountRow?.cnt ?? 0;
+
+    const runningDuration = Date.now() - new Date(session.createdAt).getTime();
+
+    let activeSubAgentCount = 0;
+    if (session.childSessionIds.length > 0) {
+      for (const childId of session.childSessionIds) {
+        try {
+          const child = this.getSession(childId);
+          if (child.status === 'running') activeSubAgentCount++;
+        } catch { /* deleted or missing */ }
+      }
+    }
+
+    return {
+      tokenUsage: { input, output, total },
+      contextLimit,
+      contextUsedPercent,
+      toolCallCount,
+      runningDuration,
+      status: session.status,
+      activeSubAgentCount,
+    };
+  }
+
+  recoverOrphanedSessions(): number {
+    const db = getRawSqlite();
+    const result = db
+      .prepare(
+        `UPDATE agent_runtime_sessions
+         SET status = 'interrupted', updated_at = ?, active_run_id = NULL, blocked_reason = 'Server restarted.'
+         WHERE status IN ('running', 'queued')`,
+      )
+      .run(nowIso());
+    return Number(result.changes ?? 0);
   }
 
   reset(): void {

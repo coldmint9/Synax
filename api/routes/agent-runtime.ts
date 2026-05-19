@@ -373,6 +373,33 @@ agentRuntimeRoutes.get('/sessions/:sessionId/tool-calls', (c) => {
   }
 });
 
+agentRuntimeRoutes.get('/sessions/:sessionId/stats', (c) => {
+  try {
+    const stats = agentRuntimeStore.getSessionStats(c.req.param('sessionId'));
+    return c.json(stats);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.get('/sessions/:sessionId/todos', (c) => {
+  try {
+    const sessionId = c.req.param('sessionId');
+    agentSessionRuntime.get(sessionId);
+    const events = agentRuntimeStore.listEvents(sessionId);
+    let items: unknown[] = [];
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].type === 'todo_updated') {
+        items = (events[i].payload.items as unknown[]) ?? [];
+        break;
+      }
+    }
+    return c.json({ items });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 agentRuntimeRoutes.get('/sessions/:sessionId/permissions', (c) => {
   try {
     agentSessionRuntime.get(c.req.param('sessionId'));
