@@ -475,6 +475,7 @@ export class AgentLoopRuntime {
             blockedSummary,
             modelResult.model,
             input.purpose ?? profile.kind,
+            modelResult.step.usage,
           );
           const completedStep = this.store.updateRunStep(step.id, {
             status: "blocked",
@@ -537,6 +538,7 @@ export class AgentLoopRuntime {
             finalText,
             modelResult.model,
             input.purpose ?? profile.kind,
+            modelResult.step.usage,
           );
           const completedStep = this.store.updateRunStep(step.id, {
             status: "completed",
@@ -849,6 +851,7 @@ export class AgentLoopRuntime {
         summary,
         input.model ?? null,
         input.purpose ?? profile.kind,
+        undefined,
       );
       this.store.updateSession(sessionId, {
         status: "completed",
@@ -1260,6 +1263,7 @@ export class AgentLoopRuntime {
     content: string,
     model: string | null,
     purpose: string,
+    usage?: Record<string, unknown>,
   ): AgentRuntimeMessage {
     return this.store.appendMessage({
       id: makeRuntimeId("msg"),
@@ -1268,7 +1272,7 @@ export class AgentLoopRuntime {
       stepId,
       role: "assistant",
       content,
-      metadata: { model, purpose },
+      metadata: { model, purpose, usage },
       createdAt: nowIso(),
     });
   }

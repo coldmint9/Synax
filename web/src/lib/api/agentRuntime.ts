@@ -203,6 +203,22 @@ export interface DeleteSessionResult {
   deletedSessionIds: string[]
 }
 
+export interface SessionStats {
+  tokenUsage: { input: number; output: number; total: number }
+  contextLimit: number
+  contextUsedPercent: number
+  toolCallCount: number
+  runningDuration: number
+  status: AgentSessionStatus
+  activeSubAgentCount: number
+}
+
+export interface TodoItem {
+  id: string
+  label: string
+  status: 'pending' | 'in_progress' | 'done'
+}
+
 export interface StreamTurnRequest {
   message?: string
   model?: string
@@ -283,6 +299,10 @@ export const agentRuntimeApi = {
     request<{ items: EvidenceArtifact[] }>(`/sessions/${encodeURIComponent(sessionId)}/artifacts`),
   listToolCalls: (sessionId: string) =>
     request<{ items: ToolCallRecord[] }>(`/sessions/${encodeURIComponent(sessionId)}/tool-calls`),
+  getSessionStats: (sessionId: string) =>
+    request<SessionStats>(`/sessions/${encodeURIComponent(sessionId)}/stats`),
+  getSessionTodos: (sessionId: string) =>
+    request<{ items: TodoItem[] }>(`/sessions/${encodeURIComponent(sessionId)}/todos`),
   pauseSession: (sessionId: string) =>
     request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/pause`, { method: 'POST' }),
   resumeStream: async (
