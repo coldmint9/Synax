@@ -208,6 +208,7 @@ export const wikiLoopService = {
         profileId: 'wiki-planner',
         prompt: locale === 'zh' ? WIKI_PLANNER_PROMPT : `${WIKI_PLANNER_PROMPT}\n\nIMPORTANT: Write all document content in English.`,
       });
+      agentRuntimeStore.updateSession(plannerSession.id, { title: 'Wiki 初始化', updatedAt: nowIso() });
       sessionIds.push(plannerSession.id);
       setSessionWorkspaceRoot(plannerSession.id, workDir);
 
@@ -295,6 +296,7 @@ export const wikiLoopService = {
         profileId: 'wiki-writer',
         prompt: writerPrompt,
       });
+      agentRuntimeStore.updateSession(writerSession.id, { title: 'Wiki 生成', updatedAt: nowIso() });
       sessionIds.push(writerSession.id);
       setSessionWorkspaceRoot(writerSession.id, workDir);
 

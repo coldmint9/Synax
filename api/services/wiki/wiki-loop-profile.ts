@@ -149,13 +149,16 @@ export const wikiGeneratorProfile: AgentProfile = {
 
 let registered = false;
 
+const WIKI_PROFILE_TITLE: Record<string, string> = {
+  'wiki-planner': 'Wiki 初始化',
+  'wiki-writer': 'Wiki 生成',
+  'wiki-explorer': 'Wiki 探索',
+  'wiki-generator': 'Wiki 初始化',
+};
+
 const wikiTitleGenerator = {
-  generate() {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `Wiki 生成 ${y}${m}${day}`;
+  generate(ctx: { profileId: string }) {
+    return WIKI_PROFILE_TITLE[ctx.profileId] ?? 'Wiki';
   },
 };
 
