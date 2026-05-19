@@ -1,25 +1,50 @@
 import { useMemo, useState } from 'react'
-import { Bot, Loader2 } from 'lucide-react'
+import { Bot, Loader2, Pause, Play, BookOpen, XCircle } from 'lucide-react'
 import type { AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
-import { buildConversationTurns } from './buildConversationTurns'
-import { ToolCallCard } from './ToolCallCard'
+import { buildInterleavedTurns } from './buildInterleavedTurns'
+import { EnhancedToolCallCard } from './EnhancedToolCallCard'
+import { ThinkingBlock } from './ThinkingBlock'
+import { SubSessionCard } from './SubSessionCard'
+import { getSessionCategory } from './sessionGrouping'
 
 interface Props {
   session: AgentSession | undefined
   steps: AgentRunStep[]
   toolCalls: ToolCallRecord[]
   messages: AgentRuntimeMessage[]
+  childSessions?: AgentSession[]
+  onPause?: (sessionId: string) => void
+  onResume?: (sessionId: string) => void
+  onCancel?: (sessionId: string) => void
+  onExpandChild?: (sessionId: string) => void
 }
 
-export function AgentConversationView({ session, steps, toolCalls, messages }: Props) {
+const STATUS_LABEL: Record<string, { text: string; color: string }> = {
+  running: { text: 'running', color: 'text-[hsl(var(--agent))]' },
+  completed: { text: 'completed', color: 'text-[hsl(var(--success))]' },
+  failed: { text: 'failed', color: 'text-destructive' },
+  interrupted: { text: 'interrupted', color: 'text-amber-500' },
+  paused: { text: 'paused', color: 'text-sky-500' },
+  waiting_permission: { text: 'waiting', color: 'text-[hsl(var(--warning))]' },
+  blocked: { text: 'blocked', color: 'text-[hsl(var(--warning))]' },
+  cancelled: { text: 'cancelled', color: 'text-muted-foreground' },
+}
+
+export function AgentConversationView({
+  session, steps, toolCalls, messages, childSessions,
+  onPause, onResume, onCancel, onExpandChild,
+}: Props) {
   const [promptExpanded, setPromptExpanded] = useState(false)
 
   const turns = useMemo(
-    () => buildConversationTurns(steps, toolCalls, messages),
-    [steps, toolCalls, messages],
+    () => buildInterleavedTurns(steps, toolCalls, messages, childSessions),
+    [steps, toolCalls, messages, childSessions],
   )
 
   const isRunning = session?.status === 'running'
+  const isResumable = session?.status === 'interrupted' || session?.status === 'paused'
+  const cat = session ? getSessionCategory(session.profileId) : null
+  const statusInfo = session ? STATUS_LABEL[session.status] : null
 
   return (
     <div className="flex flex-col gap-6 p-4">
@@ -28,18 +53,48 @@ export function AgentConversationView({ session, steps, toolCalls, messages }: P
         <span className="rounded-md border border-[hsl(var(--agent))]/20 bg-[hsl(var(--agent))]/[0.06] px-2.5 py-0.5 text-[11px] font-semibold text-[hsl(var(--agent))]">
           {session?.profileId ?? 'agent'}
         </span>
-        {isRunning && (
-          <span className="flex items-center gap-1.5 text-xs text-[hsl(var(--agent))]">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[hsl(var(--agent))]" />
-            running
+        {cat?.isBuiltin && (
+          <span className="flex items-center gap-1 rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+            <BookOpen size={10} />
+            内建
           </span>
         )}
-        {session?.status === 'completed' && (
-          <span className="text-xs text-[hsl(var(--success))]">completed</span>
+        {statusInfo && (
+          <span className={`flex items-center gap-1.5 text-xs ${statusInfo.color}`}>
+            {isRunning && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
+            {statusInfo.text}
+          </span>
         )}
-        {session?.status === 'failed' && (
-          <span className="text-xs text-destructive">failed</span>
-        )}
+        {/* Actions */}
+        <div className="ml-auto flex items-center gap-1.5">
+          {isRunning && onPause && session && (
+            <button
+              type="button"
+              onClick={() => onPause(session.id)}
+              className="flex items-center gap-1 rounded-md border border-border/50 px-2 py-1 text-[10px] text-muted-foreground hover:bg-secondary/50"
+            >
+              <Pause size={10} /> 暂停
+            </button>
+          )}
+          {isResumable && onResume && session && (
+            <button
+              type="button"
+              onClick={() => onResume(session.id)}
+              className="flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] text-primary hover:bg-primary/10"
+            >
+              <Play size={10} /> 恢复
+            </button>
+          )}
+          {isRunning && onCancel && session && (
+            <button
+              type="button"
+              onClick={() => onCancel(session.id)}
+              className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-[10px] text-destructive/70 hover:bg-destructive/5"
+            >
+              <XCircle size={10} /> 取消
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Prompt */}
@@ -83,21 +138,28 @@ export function AgentConversationView({ session, steps, toolCalls, messages }: P
               <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
                 <Bot size={14} className="text-[hsl(var(--agent))]" />
               </div>
-              <div className="flex-1 min-w-0">
-                {turn.assistantText && (
-                  <div className="mb-3 text-sm leading-[1.75] text-foreground whitespace-pre-wrap">
-                    {turn.assistantText}
-                  </div>
-                )}
-                {turn.toolCalls.length > 0 && (
-                  <div className="flex flex-col gap-1.5">
-                    {turn.toolCalls.map(tc => (
-                      <ToolCallCard key={tc.id} call={tc} />
-                    ))}
-                  </div>
-                )}
+              <div className="flex-1 min-w-0 flex flex-col gap-2">
+                {turn.blocks.map((block, i) => {
+                  if (block.type === 'text') {
+                    return (
+                      <div key={i} className="text-sm leading-[1.75] text-foreground whitespace-pre-wrap">
+                        {block.content}
+                      </div>
+                    )
+                  }
+                  if (block.type === 'thinking') {
+                    return <ThinkingBlock key={i} content={block.content} />
+                  }
+                  if (block.type === 'tool_call') {
+                    return <EnhancedToolCallCard key={i} call={block.call} />
+                  }
+                  if (block.type === 'sub_session') {
+                    return <SubSessionCard key={i} session={block.session} onExpand={onExpandChild} />
+                  }
+                  return null
+                })}
                 {turn.duration && (
-                  <div className="mt-2 text-[11px] text-muted-foreground/50">
+                  <div className="mt-1 text-[11px] text-muted-foreground/50">
                     {turn.duration}
                   </div>
                 )}
@@ -126,6 +188,17 @@ export function AgentConversationView({ session, steps, toolCalls, messages }: P
           </div>
           <div className="text-[13px] leading-relaxed text-muted-foreground">
             {session.blockedReason ?? 'Agent execution failed'}
+          </div>
+        </div>
+      )}
+
+      {isResumable && (
+        <div className="rounded-lg border border-sky-500/15 bg-sky-500/[0.03] px-3.5 py-2.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-sky-500 mb-1">
+            {session?.status === 'paused' ? 'Paused' : 'Interrupted'}
+          </div>
+          <div className="text-[13px] leading-relaxed text-muted-foreground">
+            {session?.blockedReason ?? '会话已暂停，可随时恢复执行'}
           </div>
         </div>
       )}

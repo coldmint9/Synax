@@ -1,0 +1,58 @@
+import type { AgentSession, AgentSessionStatus } from '../../../lib/api/agentRuntime'
+import type { SessionTreeNode } from '../sessions/sessionGrouping'
+
+interface Props {
+  node: SessionTreeNode
+  depth?: number
+  selectedId: string | null
+  onSelect: (sessionId: string) => void
+}
+
+const STATUS_DOT: Record<AgentSessionStatus, string> = {
+  running: 'bg-[hsl(var(--run))] animate-pulse',
+  waiting_permission: 'bg-[hsl(var(--warning))]',
+  blocked: 'bg-[hsl(var(--warning))]',
+  completed: 'bg-[hsl(var(--success))]',
+  failed: 'bg-[hsl(var(--destructive))]',
+  interrupted: 'bg-amber-400',
+  paused: 'bg-sky-400',
+  queued: 'bg-muted-foreground/50',
+  cancelled: 'bg-muted-foreground/30',
+}
+
+export function SessionTreeItem({ node, depth = 0, selectedId, onSelect }: Props) {
+  const { session } = node
+  const active = session.id === selectedId
+
+  return (
+    <>
+      <li
+        className={`group cursor-pointer px-2 py-1.5 transition ${
+          active ? 'bg-primary/10 text-foreground' : 'hover:bg-secondary/40'
+        }`}
+        style={{ paddingLeft: `${8 + depth * 12}px` }}
+        onClick={() => onSelect(session.id)}
+      >
+        <div className="flex items-center gap-2">
+          <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[session.status] ?? 'bg-muted-foreground/30'}`} />
+          <span className="truncate font-medium" title={session.prompt}>
+            {session.prompt.slice(0, 40)}
+          </span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-2 pl-3.5 text-[9px] text-muted-foreground">
+          <span>{session.status}</span>
+          {session.model && <span className="font-mono">{session.model}</span>}
+        </div>
+      </li>
+      {node.children.map(child => (
+        <SessionTreeItem
+          key={child.session.id}
+          node={child}
+          depth={depth + 1}
+          selectedId={selectedId}
+          onSelect={onSelect}
+        />
+      ))}
+    </>
+  )
+}
