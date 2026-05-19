@@ -47,6 +47,7 @@ export interface AgentSession {
   nodeId: string | null
   profileId: string
   status: AgentSessionStatus
+  title: string | null
   prompt: string
   contextSnapshotId: string | null
   thinkingMode: ThinkingMode

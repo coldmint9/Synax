@@ -27,6 +27,7 @@ interface SessionRow {
   node_id: string | null;
   profile_id: string;
   status: AgentSession['status'];
+  title: string | null;
   prompt: string;
   context_snapshot_id: string | null;
   thinking_mode: AgentSession['thinkingMode'];
@@ -230,6 +231,7 @@ function mapSession(row: SessionRow): AgentSession {
     nodeId: row.node_id,
     profileId: row.profile_id,
     status: row.status,
+    title: row.title,
     prompt: row.prompt,
     contextSnapshotId: row.context_snapshot_id,
     thinkingMode: row.thinking_mode,
@@ -998,9 +1000,9 @@ export class AgentRuntimeStore {
       .prepare(
         `INSERT OR REPLACE INTO agent_runtime_sessions
          (id, project_id, parent_session_id, child_session_ids_json, node_id, profile_id, status,
-          prompt, context_snapshot_id, thinking_mode, permission_rules_json, created_at, updated_at,
+          title, prompt, context_snapshot_id, thinking_mode, permission_rules_json, created_at, updated_at,
           completed_at, result_summary, blocked_reason, skill_ids_json, active_run_id, pending_resume_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         session.id,
@@ -1010,6 +1012,7 @@ export class AgentRuntimeStore {
         session.nodeId,
         session.profileId,
         session.status,
+        session.title,
         session.prompt,
         session.contextSnapshotId,
         session.thinkingMode,
