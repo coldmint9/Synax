@@ -1,5 +1,5 @@
 import { AlertCircle, BookOpen, Download, Loader2, Map, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
@@ -233,8 +233,31 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const [refreshing, setRefreshing] = useState(false)
   const [showReinitConfirm, setShowReinitConfirm] = useState(false)
   const [reinitializing, setReinitializing] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(260)
 
   const selectedDoc = documents.find(d => d.id === selectedDocumentId)
+
+  const isResizing = useRef(false)
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isResizing.current = true
+    const startX = e.clientX
+    const startWidth = sidebarWidth
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isResizing.current) return
+      const delta = ev.clientX - startX
+      const newWidth = Math.max(180, Math.min(480, startWidth + delta))
+      setSidebarWidth(newWidth)
+    }
+    const onMouseUp = () => {
+      isResizing.current = false
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [sidebarWidth])
 
   useEffect(() => {
     const shouldPoll = snapshot?.status === 'refreshing'
@@ -342,8 +365,8 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden">
-      {/* ── Left: Document tree (200px) ── */}
-      <aside className="flex w-[200px] shrink-0 flex-col border-r border-border/30 bg-background/40">
+      {/* ── Left: Document tree (resizable) ── */}
+      <aside style={{ width: sidebarWidth }} className="flex shrink-0 flex-col border-r border-border/30 bg-background/40">
         <div className="flex h-9 shrink-0 items-center justify-between border-b border-border/20 px-3">
           <span className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider">
             文档
@@ -405,6 +428,12 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           <WikiDocumentTree />
         </div>
       </aside>
+
+      {/* ── Resize handle ── */}
+      <div
+        onMouseDown={handleMouseDown}
+        className="w-1 shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
+      />
 
       {/* ── Center: Block content ── */}
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

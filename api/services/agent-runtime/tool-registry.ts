@@ -61,27 +61,52 @@ export class ToolRegistry {
     this.register({
       id: 'task.run',
       label: 'Run Subtask',
-      description: 'Create a bounded child agent session and return a structured summary for the parent agent.',
+      description: 'Create a bounded child agent session that runs to completion before returning. Supports recursive delegation with depth and concurrency limits.',
       category: 'task',
       internalGate: 'task',
       mutability: 'task',
       resumeBehavior: 'wait_permission',
       progressiveDetails:
-        'Accepts { profileId?: "explorer" | "reviewer", prompt: string, nodeId?: string | null, thinkingMode?: "fast" | "standard" | "deep" }.',
+        'Accepts { profileId?: string, prompt: string, nodeId?: string | null, thinkingMode?: "fast" | "standard" | "deep" }. Max depth: 3, max concurrent: 5.',
       inputSchema: z.object({
-        profileId: z.enum(['explorer', 'reviewer']).optional().describe('Child agent profile. Defaults to explorer.'),
+        profileId: z.string().optional().describe('Child agent profile. Defaults to explorer. Must be a subagent-capable profile.'),
         prompt: z.string().min(1).describe('Bounded prompt for the child agent session.'),
         nodeId: z.string().min(1).nullable().optional().describe('Optional graph node context for the child session.'),
         thinkingMode: z.enum(['fast', 'standard', 'deep']).optional().describe('Child session thinking mode.'),
       }),
       execute: (input) => {
+        const MAX_RECURSION_DEPTH = 3;
+        const MAX_CONCURRENT_SUBTASKS = 5;
+
         const parent = this.store.getSession(input.sessionId);
         const args = input.args as { profileId?: string; prompt?: string; nodeId?: string | null; thinkingMode?: 'fast' | 'standard' | 'deep' };
         const profileId = args.profileId ?? 'explorer';
-        if (profileId !== 'explorer' && profileId !== 'reviewer') {
-          throw new AgentValidationError('Subtasks are limited to explorer or reviewer profiles in v1.');
+
+        const ALLOWED_SUBTASK_PROFILES = ['explorer', 'reviewer', 'wiki-explorer'];
+        if (!ALLOWED_SUBTASK_PROFILES.includes(profileId)) {
+          throw new AgentValidationError(`Subtask profile must be one of: ${ALLOWED_SUBTASK_PROFILES.join(', ')}. Got "${profileId}".`);
         }
         if (!args.prompt?.trim()) throw new AgentValidationError('prompt is required for task.run.');
+
+        // Depth check: walk parent chain
+        let depth = 0;
+        let current = parent;
+        while (current.parentSessionId) {
+          depth++;
+          try { current = this.store.getSession(current.parentSessionId); } catch { break; }
+        }
+        if (depth >= MAX_RECURSION_DEPTH) {
+          throw new AgentValidationError(`Maximum recursion depth (${MAX_RECURSION_DEPTH}) reached. Cannot create deeper sub-agents.`);
+        }
+
+        // Concurrency check: count active children of the immediate parent
+        const siblings = (parent.childSessionIds ?? [])
+          .map(id => { try { return this.store.getSession(id); } catch { return null; } })
+          .filter(s => s && s.status === 'running');
+        if (siblings.length >= MAX_CONCURRENT_SUBTASKS) {
+          throw new AgentValidationError(`Maximum concurrent subtasks (${MAX_CONCURRENT_SUBTASKS}) reached. Wait for existing subtasks to complete.`);
+        }
+
         const child = agentSessionRuntime.create({
           projectId: parent.projectId,
           nodeId: args.nodeId ?? parent.nodeId,
@@ -94,18 +119,18 @@ export class ToolRegistry {
           result: {
             taskId: child.id,
             session: child,
-            summary: `Child session ${child.id} (${profileId}) created.`,
+            summary: `Child session ${child.id} (${profileId}) created at depth ${depth + 1}.`,
           },
-          displaySummary: `Started ${profileId} subtask ${child.id}.`,
+          displaySummary: `Started ${profileId} subtask ${child.id} (depth ${depth + 1}/${MAX_RECURSION_DEPTH}).`,
           artifacts: [
             {
               kind: 'decision',
               title: 'Subtask created',
-              summary: `Started ${profileId} child session ${child.id}.`,
+              summary: `Started ${profileId} child session ${child.id} at depth ${depth + 1}.`,
               risk: 'low',
             },
           ],
-          followUpHints: ['Wait for the child session result and summarize it back into the parent run.'],
+          followUpHints: ['The parent agent blocks until this subtask completes and returns its summary.'],
         };
       },
     });
