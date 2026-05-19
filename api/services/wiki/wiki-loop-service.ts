@@ -109,7 +109,11 @@ const WIKI_WRITER_PROMPT_TEMPLATE = `你是一位资深技术文档工程师。�
 1. **根级文档**（directory_tree、overview、architecture）— 自己直接生成，需要全局视角
 2. **模块级文档**（module_spec 等）— 使用 task.run 委派子 agent 探索后，自己格式化并提交
 
-注意：最多同时运行 5 个子任务。如果达到上限，等待当前子任务完成后再创建新的。
+task.run 行为：
+- 子 agent 完成前，你会阻塞等待，不会继续下一步
+- 子 agent 可以递归调用 task.run 探索更深层子模块（最大深度 3 层）
+- 最多同时运行 5 个子任务
+- 使用 profileId: "wiki-explorer" 来委派探索任务
 
 ### 使用 task.run 委派探索：
 \`\`\`
@@ -270,27 +274,17 @@ export const wikiLoopService = {
         },
       });
 
-      const MAX_CONCURRENT_SUBAGENTS = 5;
-      let activeSubagents = 0;
-
       const taskRunHookId = `wiki-workspace-${snapshot.id}`;
       hookIds.push(taskRunHookId);
       toolRegistry.registerHook({
         id: taskRunHookId,
         toolId: 'task.run',
-        async beforeExecute() {
-          if (activeSubagents >= MAX_CONCURRENT_SUBAGENTS) {
-            return { blocked: true, reason: `已达到最大并发子任务数 (${MAX_CONCURRENT_SUBAGENTS})，请等待当前子任务完成后再创建新的。` };
-          }
-          activeSubagents++;
-          return { blocked: false };
-        },
         async afterExecute(ctx) {
-          activeSubagents--;
-          const result = ctx.result.result as { sessionId?: string };
-          if (result?.sessionId) {
-            setSessionWorkspaceRoot(result.sessionId, workDir);
-            sessionIds.push(result.sessionId);
+          const result = ctx.result.result as { taskId?: string; session?: { id?: string } };
+          const childId = result?.taskId ?? result?.session?.id;
+          if (childId) {
+            setSessionWorkspaceRoot(childId, workDir);
+            sessionIds.push(childId);
           }
         },
       });

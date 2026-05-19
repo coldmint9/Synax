@@ -69,10 +69,47 @@ export const wikiWriterProfile: AgentProfile = {
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   loopHints: [
     'Generate root-level documents (directory_tree, overview, architecture) yourself — they need global context.',
-    'For module_spec documents, use task.run to delegate exploration to sub-agents, then format and commit.',
+    'For module_spec documents, use task.run(profileId: "wiki-explorer") to spawn sub-agents for exploration, then format and commit.',
+    'task.run is recursive: sub-agents can further delegate via task.run to explore sub-modules (max depth 3).',
+    'Parent blocks until all sub-agents complete. Max 5 concurrent sub-agents.',
     'Always commit documents in topological order: parents before children.',
-    'If wiki.commit_document is rejected, fix the issues and resubmit.',
     'sourceHints should use qualifiedName (e.g. ClassName.methodName) for precise symbol-level tracing.',
+  ],
+};
+
+export const wikiExplorerProfile: AgentProfile = {
+  id: 'wiki-explorer',
+  label: 'Wiki Explorer',
+  kind: 'explorer',
+  mode: 'subagent',
+  description: 'Recursively explore code for wiki document generation. Can delegate deeper exploration to sub-agents.',
+  defaultThinkingMode: 'standard',
+  allowedCapabilities: [
+    'file.glob',
+    'file.list',
+    'file.read',
+    'grep.search',
+    'wiki.read_code_index',
+    'wiki.read_graph',
+    'wiki.read_modules',
+    'wiki.read_tree',
+    'task.run',
+    'tools.escalate',
+  ],
+  permissionDefaults: [
+    { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki explorer reads freely.' },
+    { gate: 'write', pattern: '*', action: 'deny', reason: 'Wiki explorer is read-only.' },
+    { gate: 'task', pattern: '*', action: 'allow', reason: 'Wiki explorer can delegate deeper exploration.' },
+    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Wiki explorer does not need shell.' },
+  ],
+  defaultSkills: [],
+  maxSteps: 15,
+  status: 'active',
+  toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
+  loopHints: [
+    'Read the specified files and answer the key questions with concrete technical details.',
+    'If a module is too large, use wiki.delegate to explore sub-modules recursively.',
+    'Return a structured summary with: interfaces, data models, flows, dependencies, and qualifiedName list.',
   ],
 };
 
@@ -115,6 +152,7 @@ export function ensureWikiProfileRegistered(): void {
   if (registered) return;
   profileService.register(wikiPlannerProfile);
   profileService.register(wikiWriterProfile);
+  profileService.register(wikiExplorerProfile);
   profileService.register(wikiGeneratorProfile);
   registered = true;
 }

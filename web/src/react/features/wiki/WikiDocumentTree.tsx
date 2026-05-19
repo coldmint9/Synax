@@ -3,20 +3,6 @@ import { useState } from 'react'
 import { useWikiStore } from '../../state/wikiStore'
 import type { WikiDocument } from '../../../lib/contracts/wiki'
 
-const DOC_TYPE_LABELS: Record<string, string> = {
-  overview: '概览',
-  architecture: '架构',
-  tech_stack: '技术栈',
-  module_design: '模块设计',
-  module_spec: '模块规格',
-  data_model: '数据模型',
-  api: 'API',
-  flow: '流程',
-  risk: '风险',
-  decision: '决策',
-  directory_tree: '目录树',
-}
-
 function DocItem({
   doc,
   isSelected,
@@ -39,8 +25,8 @@ function DocItem({
       <button
         type="button"
         onClick={onSelect}
-        style={{ paddingLeft: `${8 + depth * 12}px` }}
-        className={`group flex w-full items-center gap-1.5 rounded-lg pr-2.5 py-1.5 text-left text-[12px] transition-colors ${
+        style={{ paddingLeft: `${8 + depth * 14}px` }}
+        className={`group flex w-full items-center gap-1.5 rounded-md pr-2.5 py-1.5 text-left text-[12px] transition-colors ${
           isSelected
             ? 'bg-primary/15 text-primary'
             : isEmpty
@@ -60,14 +46,7 @@ function DocItem({
         ) : (
           <FileText size={11} className="shrink-0 opacity-60" />
         )}
-        <span className="min-w-0 flex-1 truncate leading-snug">{doc.title}</span>
-        <span
-          className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide ${
-            isSelected ? 'bg-primary/20 text-primary' : 'bg-secondary text-muted-foreground/70'
-          }`}
-        >
-          {DOC_TYPE_LABELS[doc.docType] ?? doc.docType}
-        </span>
+        <span className="min-w-0 flex-1 leading-snug break-words">{doc.title}</span>
       </button>
       {hasChildren && expanded && (
         <div>{children}</div>
@@ -127,7 +106,7 @@ export default function WikiDocumentTree() {
   const roots = documents.filter(d => !d.parentId).sort((a, b) => a.sortOrder - b.sortOrder)
 
   return (
-    <div className="flex h-full flex-col gap-1 overflow-y-auto px-2 py-3">
+    <div className="flex h-full flex-col gap-1 px-2 py-3">
       {/* Snapshot meta */}
       {snapshot && (
         <div className="mb-2 rounded-lg border border-border/40 bg-card/60 px-3 py-2">
