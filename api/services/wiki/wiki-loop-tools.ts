@@ -31,6 +31,16 @@ export interface WikiDocumentDraft {
   }>;
 }
 
+export interface WikiOutlineEntry {
+  id: string;
+  docType: WikiDocType;
+  title: string;
+  parentId?: string;
+  sortOrder?: number;
+  targetFiles: string[];
+  keyQuestions: string[];
+}
+
 export interface WikiPlanEntry {
   id: string;
   docType: WikiDocType;
@@ -40,11 +50,14 @@ export interface WikiPlanEntry {
   keyQuestions: string[];
 }
 
-export interface WikiToolsHandle {
+export interface WikiPlannerHandle {
+  tools: RegisteredTool[];
+  getOutline(): WikiOutlineEntry[] | null;
+}
+
+export interface WikiWriterHandle {
   tools: RegisteredTool[];
   getCommittedDocuments(): WikiDocumentDraft[];
-  getPlan(): WikiPlanEntry[] | null;
-  getPlanIdMapping(): Map<string, string>;
 }
 
 const PAGE_SIZE = 40;
@@ -98,11 +111,88 @@ function buildTreeString(files: string[], root: string, maxDepth: number): strin
   return lines.join('\n');
 }
 
-export function createWikiTools(scan: CodeMapScanResult): WikiToolsHandle {
-  const committedDocuments: WikiDocumentDraft[] = [];
-  let submittedPlan: WikiPlanEntry[] | null = null;
-  const planIdToDocId = new Map<string, string>();
+export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
+  let submittedOutline: WikiOutlineEntry[] | null = null;
 
+  const readTools = buildReadTools(scan);
+
+  const submitOutlineTool: RegisteredTool = {
+    id: 'wiki.submit_outline',
+    label: 'Submit Wiki Outline',
+    description: 'Submit a hierarchical document outline. Each entry has a unique id and optional parentId for nesting. Must include: 1+ directory_tree, 1+ overview, 3+ module_spec. Total >= 8. Max depth 3. targetFiles must be real file paths from the code index.',
+    category: 'write',
+    mutability: 'write',
+    resumeBehavior: 'auto',
+    internalGate: 'none',
+    inputSchema: z.object({
+      documents: z.array(z.object({
+        id: z.string().min(1).describe('Unique local ID (e.g. "root-overview", "mod-auth").'),
+        docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]).describe('Document type.'),
+        title: z.string().min(1).describe('Document title.'),
+        parentId: z.string().optional().describe('ID of parent document. Omit for root-level.'),
+        sortOrder: z.number().int().optional().describe('Display order among siblings (default 0).'),
+        targetFiles: z.array(z.string()).describe('File paths to read when writing this document.'),
+        keyQuestions: z.array(z.string()).min(1).describe('Core questions this document must answer.'),
+      })).min(1).describe('Planned documents with hierarchy.'),
+    }),
+    execute(input) {
+      const args = input.args as { documents: WikiOutlineEntry[] };
+      const errors: string[] = [];
+      if (!args?.documents || !Array.isArray(args.documents)) {
+        return { result: { ok: false, error: 'documents array is required.' }, displaySummary: 'Outline rejected.', artifacts: [] };
+      }
+
+      const idSet = new Set(args.documents.map(d => d.id));
+      if (args.documents.length - idSet.size > 0) errors.push('Duplicate document IDs detected.');
+
+      for (const doc of args.documents) {
+        if (doc.parentId && !idSet.has(doc.parentId)) {
+          errors.push(`"${doc.title}" references unknown parentId "${doc.parentId}".`);
+        }
+      }
+
+      const depthOf = (docId: string, visited = new Set<string>()): number => {
+        if (visited.has(docId)) return Infinity;
+        visited.add(docId);
+        const doc = args.documents.find(d => d.id === docId);
+        if (!doc?.parentId) return 0;
+        return 1 + depthOf(doc.parentId, visited);
+      };
+      for (const doc of args.documents) {
+        const depth = depthOf(doc.id);
+        if (depth === Infinity) errors.push(`Circular reference involving "${doc.title}".`);
+        else if (depth > 3) errors.push(`"${doc.title}" exceeds max depth 3.`);
+      }
+
+      const typeCount = (t: string) => args.documents.filter(d => d.docType === t).length;
+      if (typeCount('directory_tree') < 1) errors.push('Need at least 1 directory_tree.');
+      if (typeCount('overview') < 1) errors.push('Need at least 1 overview.');
+      if (typeCount('module_spec') < 3) errors.push(`Need at least 3 module_spec (found ${typeCount('module_spec')}).`);
+      if (args.documents.length < 8) errors.push(`Need at least 8 documents (found ${args.documents.length}).`);
+
+      if (errors.length > 0) {
+        return { result: { ok: false, error: errors.join(' ') }, displaySummary: `Outline rejected:\n${errors.map(e => '  - ' + e).join('\n')}`, artifacts: [] };
+      }
+
+      submittedOutline = args.documents;
+      const summary = args.documents.map(d => {
+        const indent = d.parentId ? '    ' : '  ';
+        return `${indent}- ${d.docType}: "${d.title}" [${d.id}]${d.parentId ? ` (child of ${d.parentId})` : ''}`;
+      }).join('\n');
+      return {
+        result: { ok: true, count: args.documents.length, documents: args.documents },
+        displaySummary: `Outline accepted: ${args.documents.length} documents.\n${summary}`,
+        artifacts: [{ kind: 'decision', title: 'Wiki outline submitted', summary: `${args.documents.length} documents planned.`, risk: 'low' }],
+      };
+    },
+  };
+
+  return {
+    tools: [...readTools, submitOutlineTool],
+    getOutline: () => submittedOutline,
+  };
+}
+function buildReadTools(scan: CodeMapScanResult): RegisteredTool[] {
   const readCodeIndexTool: RegisteredTool = {
     id: 'wiki.read_code_index',
     label: 'Read Code Index',
@@ -171,7 +261,7 @@ export function createWikiTools(scan: CodeMapScanResult): WikiToolsHandle {
       return { result: { communities }, displaySummary: `Returned ${communities.length} communities.`, artifacts: [] };
     },
   };
-
+  // PLACEHOLDER_READTOOLS_CONTINUE
   const readModulesTool: RegisteredTool = {
     id: 'wiki.read_modules',
     label: 'Read Module Structure',
@@ -219,172 +309,14 @@ export function createWikiTools(scan: CodeMapScanResult): WikiToolsHandle {
     },
   };
 
-  const submitPlanTool: RegisteredTool = {
-    id: 'wiki.submit_plan',
-    label: 'Submit Wiki Plan',
-    description: 'Submit a hierarchical document plan. Each entry has a unique id and optional parentId for nesting. Must include: 1+ directory_tree, 1+ overview, 3+ module_spec. Total >= 8. Max depth 3.',
-    category: 'write',
-    mutability: 'write',
-    resumeBehavior: 'auto',
-    internalGate: 'none',
-    inputSchema: z.object({
-      documents: z.array(z.object({
-        id: z.string().min(1).describe('Unique local ID for this entry (e.g. "root-overview", "mod-auth").'),
-        docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]).describe('Document type to generate.'),
-        title: z.string().min(1).describe('Document title.'),
-        parentId: z.string().optional().describe('ID of the parent document in this plan. Omit for root-level.'),
-        targetFiles: z.array(z.string()).describe('File paths to read before writing this document.'),
-        keyQuestions: z.array(z.string()).min(1).describe('Core questions this document must answer.'),
-      })).min(1).describe('Planned documents with hierarchy.'),
-    }),
-    execute(input) {
-      const args = input.args as { documents: WikiPlanEntry[] };
-      const errors: string[] = [];
-      if (!args?.documents || !Array.isArray(args.documents)) {
-        return {
-          result: { ok: false, error: 'Invalid input: documents array is required.' },
-          displaySummary: 'Plan rejected: documents array is required.',
-          artifacts: [],
-        };
-      }
+  return [readCodeIndexTool, readGraphTool, readModulesTool, readTreeTool];
+}
 
-      const idSet = new Set(args.documents.map(d => d.id));
-      const dupeIds = args.documents.length - idSet.size;
-      if (dupeIds > 0) errors.push(`Duplicate document IDs detected.`);
-
-      for (const doc of args.documents) {
-        if (doc.parentId && !idSet.has(doc.parentId)) {
-          errors.push(`Document "${doc.title}" references unknown parentId "${doc.parentId}".`);
-        }
-      }
-
-      const depthOf = (docId: string, visited = new Set<string>()): number => {
-        if (visited.has(docId)) return Infinity;
-        visited.add(docId);
-        const doc = args.documents.find(d => d.id === docId);
-        if (!doc?.parentId) return 0;
-        return 1 + depthOf(doc.parentId, visited);
-      };
-      for (const doc of args.documents) {
-        const depth = depthOf(doc.id);
-        if (depth === Infinity) {
-          errors.push(`Circular parentId reference involving "${doc.title}".`);
-        } else if (depth > 3) {
-          errors.push(`Document "${doc.title}" exceeds max nesting depth of 3.`);
-        }
-      }
-
-      const typeCount = (t: string) => args.documents.filter(d => d.docType === t).length;
-      if (typeCount('directory_tree') < 1) errors.push('Plan must include at least 1 directory_tree document.');
-      if (typeCount('overview') < 1) errors.push('Plan must include at least 1 overview document.');
-      if (typeCount('module_spec') < 3) errors.push(`Plan must include at least 3 module_spec documents (found ${typeCount('module_spec')}).`);
-      if (args.documents.length < 8) errors.push(`Plan must have at least 8 documents total (found ${args.documents.length}).`);
-
-      if (errors.length > 0) {
-        return {
-          result: { ok: false, error: errors.join(' ') },
-          displaySummary: `Plan rejected:\n${errors.map(e => '  - ' + e).join('\n')}`,
-          artifacts: [],
-        };
-      }
-      submittedPlan = args.documents;
-      const summary = args.documents.map(d => {
-        const indent = d.parentId ? '    ' : '  ';
-        return `${indent}- ${d.docType}: "${d.title}" [${d.id}]${d.parentId ? ` (child of ${d.parentId})` : ''}`;
-      }).join('\n');
-      return {
-        result: { ok: true, message: `Plan accepted with ${args.documents.length} documents. Execute in topological order (parents before children).`, documents: args.documents },
-        displaySummary: `Plan accepted: ${args.documents.length} documents planned.\n${summary}`,
-        artifacts: [{ kind: 'decision', title: 'Wiki plan submitted', summary: `${args.documents.length} documents planned.`, risk: 'low' }],
-      };
-    },
-  };
-
-  const commitDocumentTool: RegisteredTool = {
-    id: 'wiki.commit_document',
-    label: 'Commit Wiki Document',
-    description: 'Submit a completed wiki document. Pass parentPlanId to nest under a parent. Quality gates: min 3 blocks, paragraph/list/table content >= 100 chars, non-heading blocks must have sourceHints.',
-    category: 'write',
-    mutability: 'write',
-    resumeBehavior: 'auto',
-    internalGate: 'none',
-    inputSchema: z.object({
-      title: z.string().min(1).describe('Document title.'),
-      docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]).describe('Document type.'),
-      parentPlanId: z.string().optional().describe('Plan ID of the parent document (from submit_plan). Omit for root-level documents.'),
-      sortOrder: z.number().int().optional().describe('Display order among siblings.'),
-      blocks: z.array(z.object({
-        blockType: z.enum(WIKI_BLOCK_TYPES as [string, ...string[]]),
-        content: z.string().describe('Block content as a markdown string.'),
-        contentFormat: z.enum(['rich_text_json', 'markdown_fragment', 'diagram_json']).optional(),
-        sourceHints: z.array(z.string()).optional(),
-        confidence: z.number().min(0).max(1).optional(),
-      })).min(1).describe('Document blocks. content must be a markdown string.'),
-    }),
-    execute(input) {
-      const args = input.args as WikiDocumentDraft & { parentPlanId?: string; blocks: Array<{ blockType: WikiBlockType; content: string; contentFormat?: WikiBlockContentFormat; sourceHints?: string[]; confidence?: number }> };
-
-      if (!args?.blocks || !Array.isArray(args.blocks)) {
-        return {
-          result: { ok: false, errors: ['Invalid input: blocks array is required.'], message: 'Document rejected.' },
-          displaySummary: 'Document rejected: blocks array is required.',
-          artifacts: [],
-        };
-      }
-      if (!args?.title || !args?.docType) {
-        return {
-          result: { ok: false, errors: ['Invalid input: title and docType are required.'], message: 'Document rejected.' },
-          displaySummary: 'Document rejected: title and docType are required.',
-          artifacts: [],
-        };
-      }
-
-      const errors: string[] = [];
-
-      if (args.parentPlanId && submittedPlan) {
-        if (!submittedPlan.find(p => p.id === args.parentPlanId)) {
-          errors.push(`parentPlanId "${args.parentPlanId}" not found in submitted plan.`);
-        }
-      }
-
-      if (args.blocks.length < MIN_BLOCKS) {
-        errors.push(`Too few blocks: ${args.blocks.length} (minimum ${MIN_BLOCKS}).`);
-      }
-
-      for (let i = 0; i < args.blocks.length; i++) {
-        const block = args.blocks[i];
-        const needsContent = ['paragraph', 'list', 'table', 'code_ref'].includes(block.blockType);
-        const content = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
-        if (needsContent && content.length < MIN_CONTENT_LENGTH) {
-          errors.push(`Block ${i + 1} (${block.blockType}) content too short: ${content.length} chars (minimum ${MIN_CONTENT_LENGTH}). Add more detail.`);
-        }
-        const needsHints = block.blockType !== 'heading' && block.blockType !== 'task';
-        if (needsHints && (!block.sourceHints || block.sourceHints.length === 0)) {
-          errors.push(`Block ${i + 1} (${block.blockType}) is missing sourceHints. Reference at least one file path or symbol name.`);
-        }
-      }
-
-      if (errors.length > 0) {
-        return {
-          result: { ok: false, errors, message: 'Document rejected. Fix the issues and resubmit.' },
-          displaySummary: `Document "${args.title}" rejected: ${errors.length} issue(s).\n${errors.map(e => '  - ' + e).join('\n')}`,
-          artifacts: [],
-        };
-      }
-
-      committedDocuments.push(args);
-      return {
-        result: { ok: true, index: committedDocuments.length - 1, title: args.title, docType: args.docType, blockCount: args.blocks.length },
-        displaySummary: `Committed document "${args.title}" (${args.docType}, ${args.blocks.length} blocks). Total: ${committedDocuments.length}.`,
-        artifacts: [{ kind: 'evidence', title: `Wiki: ${args.title}`, summary: `Generated ${args.docType} document with ${args.blocks.length} blocks.`, risk: 'low' }],
-      };
-    },
-  };
-
-  const checkMermaidTool: RegisteredTool = {
+function buildCheckMermaidTool(): RegisteredTool {
+  return {
     id: 'wiki.check_mermaid',
     label: 'Check Mermaid Syntax',
-    description: 'Validate mermaid diagram syntax before committing. Returns parse errors with line/column info so you can fix them. Always check diagram blocks before commit.',
+    description: 'Validate mermaid diagram syntax before committing. Returns parse errors so you can fix them.',
     category: 'read',
     mutability: 'read',
     resumeBehavior: 'auto',
@@ -410,17 +342,147 @@ export function createWikiTools(scan: CodeMapScanResult): WikiToolsHandle {
           result: { ok: false, error: message },
           displaySummary: `Mermaid syntax error:\n${message}`,
           artifacts: [],
-          followUpHints: [
-            'Fix the syntax error and re-check before committing.',
-            'Common issues: parentheses () inside [] labels need quoting, special chars in node text need escaping.',
-          ],
+          followUpHints: ['Fix the syntax error and re-check before committing.'],
         };
       }
     },
   };
+}
+
+function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[], outline: WikiOutlineEntry[] | null): RegisteredTool {
+  return {
+    id: 'wiki.commit_document',
+    label: 'Commit Wiki Document',
+    description: 'Submit a completed wiki document. Pass parentPlanId to nest under a parent. Quality gates: min 3 blocks, paragraph/list/table content >= 100 chars, non-heading blocks must have sourceHints.',
+    category: 'write',
+    mutability: 'write',
+    resumeBehavior: 'auto',
+    internalGate: 'none',
+    inputSchema: z.object({
+      title: z.string().min(1).describe('Document title.'),
+      docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]).describe('Document type.'),
+      parentPlanId: z.string().optional().describe('Plan ID of the parent document from the outline. Omit for root-level.'),
+      sortOrder: z.number().int().optional().describe('Display order among siblings.'),
+      blocks: z.array(z.object({
+        blockType: z.enum(WIKI_BLOCK_TYPES as [string, ...string[]]),
+        content: z.string().describe('Block content as a markdown string.'),
+        contentFormat: z.enum(['rich_text_json', 'markdown_fragment', 'diagram_json']).optional(),
+        sourceHints: z.array(z.string()).optional(),
+        confidence: z.number().min(0).max(1).optional(),
+      })).min(1).describe('Document blocks.'),
+    }),
+    execute(input) {
+      const args = input.args as WikiDocumentDraft & { parentPlanId?: string; blocks: Array<{ blockType: WikiBlockType; content: string; contentFormat?: WikiBlockContentFormat; sourceHints?: string[]; confidence?: number }> };
+      if (!args?.blocks || !Array.isArray(args.blocks)) {
+        return { result: { ok: false, errors: ['blocks array is required.'], message: 'Document rejected.' }, displaySummary: 'Document rejected.', artifacts: [] };
+      }
+      if (!args?.title || !args?.docType) {
+        return { result: { ok: false, errors: ['title and docType are required.'], message: 'Document rejected.' }, displaySummary: 'Document rejected.', artifacts: [] };
+      }
+
+      const errors: string[] = [];
+      if (args.parentPlanId && outline) {
+        if (!outline.find(p => p.id === args.parentPlanId)) {
+          errors.push(`parentPlanId "${args.parentPlanId}" not found in outline.`);
+        }
+      }
+      if (args.blocks.length < MIN_BLOCKS) {
+        errors.push(`Too few blocks: ${args.blocks.length} (minimum ${MIN_BLOCKS}).`);
+      }
+      for (let i = 0; i < args.blocks.length; i++) {
+        const block = args.blocks[i];
+        const needsContent = ['paragraph', 'list', 'table', 'code_ref'].includes(block.blockType);
+        const content = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+        if (needsContent && content.length < MIN_CONTENT_LENGTH) {
+          errors.push(`Block ${i + 1} (${block.blockType}) too short: ${content.length} chars (min ${MIN_CONTENT_LENGTH}).`);
+        }
+        const needsHints = block.blockType !== 'heading' && block.blockType !== 'task';
+        if (needsHints && (!block.sourceHints || block.sourceHints.length === 0)) {
+          errors.push(`Block ${i + 1} (${block.blockType}) missing sourceHints.`);
+        }
+      }
+
+      if (errors.length > 0) {
+        return {
+          result: { ok: false, errors, message: 'Document rejected. Fix and resubmit.' },
+          displaySummary: `"${args.title}" rejected: ${errors.length} issue(s).\n${errors.map(e => '  - ' + e).join('\n')}`,
+          artifacts: [],
+        };
+      }
+
+      committedDocuments.push(args);
+      return {
+        result: { ok: true, index: committedDocuments.length - 1, title: args.title, docType: args.docType, blockCount: args.blocks.length },
+        displaySummary: `Committed "${args.title}" (${args.docType}, ${args.blocks.length} blocks). Total: ${committedDocuments.length}.`,
+        artifacts: [{ kind: 'evidence', title: `Wiki: ${args.title}`, summary: `Generated ${args.docType} with ${args.blocks.length} blocks.`, risk: 'low' }],
+      };
+    },
+  };
+}
+
+export function createWriterTools(scan: CodeMapScanResult, outline: WikiOutlineEntry[]): WikiWriterHandle {
+  const committedDocuments: WikiDocumentDraft[] = [];
+  const readTools = buildReadTools(scan);
+  const commitTool = buildCommitDocumentTool(committedDocuments, outline);
+  const checkMermaid = buildCheckMermaidTool();
 
   return {
-    tools: [readCodeIndexTool, readGraphTool, readModulesTool, readTreeTool, checkMermaidTool, submitPlanTool, commitDocumentTool],
+    tools: [...readTools, checkMermaid, commitTool],
+    getCommittedDocuments: () => committedDocuments,
+  };
+}
+
+export interface WikiToolsHandle {
+  tools: RegisteredTool[];
+  getCommittedDocuments(): WikiDocumentDraft[];
+  getPlan(): WikiPlanEntry[] | null;
+  getPlanIdMapping(): Map<string, string>;
+}
+
+/** Legacy single-phase tool set (backward compat) */
+export function createWikiTools(scan: CodeMapScanResult): WikiToolsHandle {
+  const committedDocuments: WikiDocumentDraft[] = [];
+  let submittedPlan: WikiPlanEntry[] | null = null;
+  const planIdToDocId = new Map<string, string>();
+
+  const readTools = buildReadTools(scan);
+  const checkMermaid = buildCheckMermaidTool();
+  const commitTool = buildCommitDocumentTool(committedDocuments, null);
+
+  const submitPlanTool: RegisteredTool = {
+    id: 'wiki.submit_plan',
+    label: 'Submit Wiki Plan',
+    description: 'Submit a hierarchical document plan. Must include: 1+ directory_tree, 1+ overview, 3+ module_spec. Total >= 8. Max depth 3.',
+    category: 'write',
+    mutability: 'write',
+    resumeBehavior: 'auto',
+    internalGate: 'none',
+    inputSchema: z.object({
+      documents: z.array(z.object({
+        id: z.string().min(1),
+        docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]),
+        title: z.string().min(1),
+        parentId: z.string().optional(),
+        targetFiles: z.array(z.string()),
+        keyQuestions: z.array(z.string()).min(1),
+      })).min(1),
+    }),
+    execute(input) {
+      const args = input.args as { documents: WikiPlanEntry[] };
+      if (!args?.documents || !Array.isArray(args.documents)) {
+        return { result: { ok: false, error: 'documents array required.' }, displaySummary: 'Plan rejected.', artifacts: [] };
+      }
+      submittedPlan = args.documents;
+      return {
+        result: { ok: true, message: `Plan accepted: ${args.documents.length} documents.`, documents: args.documents },
+        displaySummary: `Plan accepted: ${args.documents.length} documents.`,
+        artifacts: [],
+      };
+    },
+  };
+
+  return {
+    tools: [...readTools, checkMermaid, submitPlanTool, commitTool],
     getCommittedDocuments: () => committedDocuments,
     getPlan: () => submittedPlan,
     getPlanIdMapping: () => planIdToDocId,

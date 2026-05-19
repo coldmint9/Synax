@@ -36,6 +36,8 @@ export const ESCALATION_TOOL: RegisteredTool = {
   category: 'context',
   mutability: 'read',
   resumeBehavior: 'auto',
+  progressiveDetails:
+    'Accepts { reason: string }. Use it once exploration is complete and write-capable tools are needed.',
   inputSchema: z.object({
     reason: z.string().describe('Why write tools are needed now.'),
   }),

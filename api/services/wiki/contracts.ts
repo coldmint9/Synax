@@ -2,7 +2,7 @@
 // api/services/wiki/contracts.ts — Codebase Design Wiki 领域类型
 // ---------------------------------------------------------------------------
 
-export type WikiSnapshotStatus = 'ready' | 'refreshing' | 'partial' | 'failed';
+export type WikiSnapshotStatus = 'ready' | 'refreshing' | 'outline_ready' | 'writing' | 'partial' | 'failed';
 export type WikiDocType =
   | 'overview'
   | 'architecture'

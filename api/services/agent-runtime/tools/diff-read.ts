@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
+import { workspaceRoot } from './workspace.js';
 
 export const diffReadTool: RegisteredTool = {
   id: 'diff.read',
@@ -19,7 +20,7 @@ export const diffReadTool: RegisteredTool = {
     const gitArgs = ['diff', '--stat'];
     if (args.staged) gitArgs.splice(1, 0, '--cached');
     const summary = execFileSync('git', gitArgs, {
-      cwd: process.cwd(),
+      cwd: workspaceRoot(input.sessionId),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();

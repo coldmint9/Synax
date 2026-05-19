@@ -7,7 +7,7 @@ export default defineConfig({
   clean: true,
   dts: false,
   platform: 'node',
-  target: 'node22',
+  target: 'node24',
   splitting: false,
   noExternal: [/.*/],
   removeNodeProtocol: false,

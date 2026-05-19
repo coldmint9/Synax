@@ -10,6 +10,8 @@ export const INVALID_TOOL: RegisteredTool = {
   category: 'context',
   mutability: 'read',
   resumeBehavior: 'auto',
+  progressiveDetails:
+    'Fallback tool returned when a model requests an unavailable tool. Use the currently disclosed tool names instead.',
   inputSchema: z.object({
     tool: z.string().describe('The tool name that was attempted.'),
     error: z.string().describe('The error message.'),

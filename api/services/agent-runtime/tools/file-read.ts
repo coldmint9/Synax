@@ -28,20 +28,20 @@ export const fileReadTool: RegisteredTool = {
   execute(input) {
     const args = input.args as { path?: string; maxBytes?: number };
     if (!args?.path) throw new Error('path is required.');
-    const filePath = resolveWorkspacePath(args.path);
+    const filePath = resolveWorkspacePath(args.path, input.sessionId);
     const stat = fs.statSync(filePath);
     if (!stat.isFile()) throw new Error('path must point to a file.');
     const maxBytes = Math.min(Math.max(args.maxBytes ?? MAX_READ_BYTES, 1), MAX_READ_BYTES);
     const buffer = fs.readFileSync(filePath);
     const content = buffer.subarray(0, maxBytes).toString('utf8');
     return {
-      result: { path: toWorkspaceRelative(filePath), content, truncated: buffer.length > maxBytes },
-      displaySummary: `Read ${Math.min(buffer.length, maxBytes)} bytes from ${toWorkspaceRelative(filePath)}${buffer.length > maxBytes ? ' (truncated)' : ''}.`,
+      result: { path: toWorkspaceRelative(filePath, input.sessionId), content, truncated: buffer.length > maxBytes },
+      displaySummary: `Read ${Math.min(buffer.length, maxBytes)} bytes from ${toWorkspaceRelative(filePath, input.sessionId)}${buffer.length > maxBytes ? ' (truncated)' : ''}.`,
       artifacts: [
         {
           kind: 'evidence',
           title: 'File read',
-          summary: `Read ${toWorkspaceRelative(filePath)}.`,
+          summary: `Read ${toWorkspaceRelative(filePath, input.sessionId)}.`,
           risk: 'low',
         },
       ],

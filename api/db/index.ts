@@ -23,9 +23,94 @@ import { logger as pinoLogger } from '../lib/logger.js';
 import * as schema from './schema.js';
 
 export type ContextDb = NodeSQLiteDatabase<typeof schema>;
+export type SqliteTransaction = <Args extends unknown[], Result>(
+  fn: (...args: Args) => Result,
+) => (...args: Args) => Result;
+export type RawSqlite = DatabaseSync & {
+  transaction: SqliteTransaction;
+  query: DatabaseSync['prepare'];
+};
 
-let _sqlite: DatabaseSync | null = null;
+let _sqlite: RawSqlite | null = null;
 let _db: ContextDb | null = null;
+
+const transactionStates = new WeakMap<DatabaseSync, { depth: number; nextSavepointId: number }>();
+
+function getTransactionState(sqlite: DatabaseSync): { depth: number; nextSavepointId: number } {
+  let state = transactionStates.get(sqlite);
+  if (!state) {
+    state = { depth: 0, nextSavepointId: 0 };
+    transactionStates.set(sqlite, state);
+  }
+  return state;
+}
+
+function sqliteIsInTransaction(sqlite: DatabaseSync): boolean {
+  try {
+    return Boolean((sqlite as DatabaseSync & { isTransaction?: boolean }).isTransaction);
+  } catch {
+    return false;
+  }
+}
+
+function createTransaction(sqlite: DatabaseSync): SqliteTransaction {
+  return function transaction<Args extends unknown[], Result>(fn: (...args: Args) => Result) {
+    return (...args: Args): Result => {
+      const state = getTransactionState(sqlite);
+      const useSavepoint = state.depth > 0 || sqliteIsInTransaction(sqlite);
+
+      if (useSavepoint) {
+        const savepoint = `synapse_tx_${state.nextSavepointId++}`;
+        sqlite.exec(`SAVEPOINT ${savepoint}`);
+        state.depth++;
+        try {
+          const result = fn(...args);
+          sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+          return result;
+        } catch (err) {
+          try {
+            sqlite.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          } finally {
+            sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+          }
+          throw err;
+        } finally {
+          state.depth--;
+        }
+      }
+
+      sqlite.exec('BEGIN');
+      state.depth++;
+      try {
+        const result = fn(...args);
+        sqlite.exec('COMMIT');
+        return result;
+      } catch (err) {
+        sqlite.exec('ROLLBACK');
+        throw err;
+      } finally {
+        state.depth--;
+      }
+    };
+  };
+}
+
+function installSqliteCompat(sqlite: DatabaseSync): RawSqlite {
+  const compat = sqlite as RawSqlite;
+  if (typeof compat.transaction !== 'function') {
+    Object.defineProperty(compat, 'transaction', {
+      configurable: true,
+      value: createTransaction(sqlite),
+    });
+  }
+  if (typeof compat.query !== 'function') {
+    Object.defineProperty(compat, 'query', {
+      configurable: true,
+      value: sqlite.prepare.bind(sqlite),
+    });
+  }
+  return compat;
+}
 
 function resolveDbPath(): string {
   const dir = path.isAbsolute(DATA_ROOT)
@@ -146,7 +231,7 @@ export function getDb(): ContextDb {
   if (_db && _sqlite) return _db;
 
   const dbPath = resolveDbPath();
-  const sqlite = new DatabaseSync(dbPath);
+  const sqlite = installSqliteCompat(new DatabaseSync(dbPath));
   configureSqlite(sqlite);
 
   runMigrations(sqlite);
@@ -158,7 +243,7 @@ export function getDb(): ContextDb {
   return _db;
 }
 
-export function getRawSqlite(): DatabaseSync {
+export function getRawSqlite(): RawSqlite {
   if (!_sqlite) getDb();
   return _sqlite!;
 }

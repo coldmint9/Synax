@@ -1,21 +1,87 @@
 import type { AgentProfile } from '../agent-runtime/contracts.js';
 import { profileService } from '../agent-runtime/profile-service.js';
 
-const WIKI_LOOP_HINTS = [
-  'Phase 1 (steps 1-8): Explore — read tree, modules, code index, graph, then read 3-5 key source files.',
-  'Phase 2 (step 9): Plan — call wiki.submit_plan with directory_tree + overview + 3+ module_spec documents (total >= 6).',
-  'Phase 3 (remaining steps): Execute — generate directory_tree first, then overview, then module_spec documents.',
-  'If wiki.commit_document is rejected, fix the issues and resubmit before moving to the next document.',
-  'module_spec documents must include: interfaces, data models, flowcharts, sequence diagrams, and dependencies.',
-  'sourceHints should use qualifiedName (e.g. ClassName.methodName) for precise symbol-level tracing.',
-];
+export const wikiPlannerProfile: AgentProfile = {
+  id: 'wiki-planner',
+  label: 'Wiki Planner',
+  kind: 'planner',
+  mode: 'primary',
+  description: 'Explore a codebase and generate a hierarchical document outline for wiki generation.',
+  defaultThinkingMode: 'deep',
+  allowedCapabilities: [
+    'file.glob',
+    'file.list',
+    'file.read',
+    'grep.search',
+    'wiki.read_code_index',
+    'wiki.read_graph',
+    'wiki.read_modules',
+    'wiki.read_tree',
+    'wiki.submit_outline',
+    'tools.escalate',
+  ],
+  permissionDefaults: [
+    { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki planner reads freely.' },
+    { gate: 'write', pattern: '*', action: 'allow', reason: 'Wiki planner submits outline without approval.' },
+    { gate: 'task', pattern: '*', action: 'deny', reason: 'Planner does not delegate.' },
+    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Planner does not need shell.' },
+  ],
+  defaultSkills: [],
+  maxSteps: 20,
+  status: 'active',
+  toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
+  loopHints: [
+    'Steps 1-6: Explore — read tree, modules, code index, graph, then read 2-3 key source files.',
+    'Final step: Submit outline via wiki.submit_outline with hierarchical document plan (>= 8 docs).',
+  ],
+};
+
+export const wikiWriterProfile: AgentProfile = {
+  id: 'wiki-writer',
+  label: 'Wiki Writer',
+  kind: 'executor',
+  mode: 'primary',
+  description: 'Generate wiki document content by delegating to sub-agents based on a pre-built outline.',
+  defaultThinkingMode: 'standard',
+  allowedCapabilities: [
+    'file.glob',
+    'file.list',
+    'file.read',
+    'grep.search',
+    'wiki.read_code_index',
+    'wiki.read_graph',
+    'wiki.read_modules',
+    'wiki.read_tree',
+    'wiki.commit_document',
+    'wiki.check_mermaid',
+    'task.run',
+    'tools.escalate',
+  ],
+  permissionDefaults: [
+    { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki writer reads freely.' },
+    { gate: 'write', pattern: '*', action: 'allow', reason: 'Wiki writer commits documents without approval.' },
+    { gate: 'task', pattern: '*', action: 'allow', reason: 'Wiki writer delegates to sub-agents.' },
+    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Wiki writer does not need shell.' },
+  ],
+  defaultSkills: [],
+  maxSteps: 60,
+  status: 'active',
+  toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
+  loopHints: [
+    'Generate root-level documents (directory_tree, overview, architecture) yourself — they need global context.',
+    'For module_spec documents, use task.run to delegate exploration to sub-agents, then format and commit.',
+    'Always commit documents in topological order: parents before children.',
+    'If wiki.commit_document is rejected, fix the issues and resubmit.',
+    'sourceHints should use qualifiedName (e.g. ClassName.methodName) for precise symbol-level tracing.',
+  ],
+};
 
 export const wikiGeneratorProfile: AgentProfile = {
   id: 'wiki-generator',
-  label: 'Wiki Generator',
+  label: 'Wiki Generator (Legacy)',
   kind: 'executor',
   mode: 'primary',
-  description: 'Iteratively explore a codebase and generate structured wiki documentation.',
+  description: 'Legacy single-phase wiki generator. Use wiki-planner + wiki-writer instead.',
   defaultThinkingMode: 'deep',
   allowedCapabilities: [
     'file.glob',
@@ -40,13 +106,15 @@ export const wikiGeneratorProfile: AgentProfile = {
   maxSteps: 50,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
-  loopHints: WIKI_LOOP_HINTS,
+  loopHints: [],
 };
 
 let registered = false;
 
 export function ensureWikiProfileRegistered(): void {
   if (registered) return;
+  profileService.register(wikiPlannerProfile);
+  profileService.register(wikiWriterProfile);
   profileService.register(wikiGeneratorProfile);
   registered = true;
 }

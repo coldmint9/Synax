@@ -82,7 +82,7 @@ export const filePatchTool: RegisteredTool = {
     if (!args.patch && typeof args.content !== 'string') {
       throw new Error('patch or content is required.');
     }
-    const filePath = resolveWorkspacePath(args.path);
+    const filePath = resolveWorkspacePath(args.path, input.sessionId);
     const current = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
     let next = current;
     let deleted = false;
@@ -118,16 +118,16 @@ export const filePatchTool: RegisteredTool = {
     }
     return {
       result: {
-        path: toWorkspaceRelative(filePath),
+        path: toWorkspaceRelative(filePath, input.sessionId),
         bytes: deleted ? 0 : Buffer.byteLength(next, 'utf8'),
         deleted,
       },
-      displaySummary: `${deleted ? 'Deleted' : 'Patched'} ${toWorkspaceRelative(filePath)}.`,
+      displaySummary: `${deleted ? 'Deleted' : 'Patched'} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
       artifacts: [
         {
           kind: 'decision',
           title: 'File patch',
-          summary: `${deleted ? 'Deleted' : 'Patched'} ${toWorkspaceRelative(filePath)}.`,
+          summary: `${deleted ? 'Deleted' : 'Patched'} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
           risk: 'medium',
         },
       ],
