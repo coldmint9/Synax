@@ -21,7 +21,7 @@ export const fileListTool: RegisteredTool = {
   }),
   execute(input) {
     const args = (input.args ?? {}) as { path?: string; limit?: number };
-    const dir = resolveWorkspacePath(args.path ?? '.');
+    const dir = resolveWorkspacePath(args.path ?? '.', input.sessionId);
     const limit = Math.min(Math.max(args.limit ?? 100, 1), 300);
     const items = fs
       .readdirSync(dir, { withFileTypes: true })
@@ -29,12 +29,12 @@ export const fileListTool: RegisteredTool = {
       .slice(0, limit)
       .map((entry) => ({
         name: entry.name,
-        path: toWorkspaceRelative(path.join(dir, entry.name)),
+        path: toWorkspaceRelative(path.join(dir, entry.name), input.sessionId),
         kind: entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : 'other',
       }));
     return {
       result: { items },
-      displaySummary: `Listed ${items.length} entries under ${toWorkspaceRelative(dir)}.`,
+      displaySummary: `Listed ${items.length} entries under ${toWorkspaceRelative(dir, input.sessionId)}.`,
       artifacts: [],
     };
   },

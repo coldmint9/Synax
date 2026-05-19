@@ -156,7 +156,9 @@ wikiRoutes.post('/projects/:projectId/generate', async (c) => {
     projectId,
     workDir: parsed.data.workDir,
     locale: parsed.data.locale ?? 'zh',
-  }).catch(() => { /* logged inside service */ });
+  }).catch((err) => {
+    logger.error({ err, projectId }, '[wiki] generate task failed before service handler completed');
+  });
 
   return c.json({ status: 'queued', message: 'Wiki generation started. Poll /latest for status.' });
 });
@@ -183,7 +185,9 @@ wikiRoutes.post('/projects/:projectId/reinitialize', async (c) => {
     projectId,
     workDir: parsed.data.workDir,
     locale: parsed.data.locale ?? 'zh',
-  }).catch(() => { /* logged inside service */ });
+  }).catch((err) => {
+    logger.error({ err, projectId }, '[wiki] reinitialize task failed before service handler completed');
+  });
 
   return c.json({ status: 'queued', message: 'Wiki purged and regeneration started. Poll /latest for status.' });
 });

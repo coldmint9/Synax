@@ -2,7 +2,7 @@
 // web/src/lib/contracts/wiki.ts — 前端 Wiki 领域类型镜像
 // ---------------------------------------------------------------------------
 
-export type WikiSnapshotStatus = 'ready' | 'refreshing' | 'partial' | 'failed';
+export type WikiSnapshotStatus = 'ready' | 'refreshing' | 'outline_ready' | 'writing' | 'partial' | 'failed';
 export type WikiDocType =
   | 'overview'
   | 'architecture'
@@ -12,7 +12,9 @@ export type WikiDocType =
   | 'api'
   | 'flow'
   | 'risk'
-  | 'decision';
+  | 'decision'
+  | 'directory_tree'
+  | 'module_spec';
 export type WikiBlockType =
   | 'heading'
   | 'paragraph'

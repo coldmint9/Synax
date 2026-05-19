@@ -8,11 +8,13 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   architecture: '架构',
   tech_stack: '技术栈',
   module_design: '模块设计',
+  module_spec: '模块规格',
   data_model: '数据模型',
   api: 'API',
   flow: '流程',
   risk: '风险',
   decision: '决策',
+  directory_tree: '目录树',
 }
 
 function DocItem({
@@ -30,6 +32,7 @@ function DocItem({
 }) {
   const [expanded, setExpanded] = useState(true)
   const hasChildren = Boolean(children)
+  const isEmpty = doc.blockIds.length === 0
 
   return (
     <div>
@@ -40,7 +43,9 @@ function DocItem({
         className={`group flex w-full items-center gap-1.5 rounded-lg pr-2.5 py-1.5 text-left text-[12px] transition-colors ${
           isSelected
             ? 'bg-primary/15 text-primary'
-            : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
+            : isEmpty
+              ? 'text-muted-foreground/50 hover:bg-secondary/30 hover:text-muted-foreground'
+              : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
         }`}
       >
         {hasChildren ? (

@@ -2,18 +2,40 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const SECRET_SEGMENTS = new Set(['.env', '.ssh', '.git', 'node_modules', 'dist', 'build']);
+const sessionWorkspaceRoots = new Map<string, string>();
 
 function hasBlockedSegment(parts: string[]): boolean {
   return parts.some((part) => SECRET_SEGMENTS.has(part) || part.endsWith('.key') || part.endsWith('.pem'));
 }
 
-export function workspaceRoot(): string {
-  return path.resolve(process.cwd());
+export function workspaceRoot(sessionId?: string): string {
+  return sessionId ? sessionWorkspaceRoots.get(sessionId) ?? path.resolve(process.cwd()) : path.resolve(process.cwd());
 }
 
-export function resolveWorkspacePath(inputPath = '.'): string {
-  const root = workspaceRoot();
-  const resolved = path.resolve(root, inputPath);
+export function resolveWorkspaceRoot(inputPath = '.'): string {
+  const resolved = path.resolve(inputPath);
+  const stat = fs.statSync(resolved);
+  if (!stat.isDirectory()) throw new Error('Workspace root must point to a directory.');
+  return resolved;
+}
+
+export function setSessionWorkspaceRoot(sessionId: string, inputPath: string): string {
+  const root = resolveWorkspaceRoot(inputPath);
+  sessionWorkspaceRoots.set(sessionId, root);
+  return root;
+}
+
+export function clearSessionWorkspaceRoot(sessionId: string): void {
+  sessionWorkspaceRoots.delete(sessionId);
+}
+
+function workspaceRootForSession(sessionId?: string): string {
+  return workspaceRoot(sessionId);
+}
+
+export function resolveWorkspacePath(inputPath = '.', sessionId?: string): string {
+  const root = workspaceRootForSession(sessionId);
+  const resolved = path.isAbsolute(inputPath) ? path.resolve(inputPath) : path.resolve(root, inputPath);
   if (resolved !== root && !resolved.startsWith(root + path.sep)) {
     throw new Error('Path is outside the Synapse workspace.');
   }
@@ -24,8 +46,8 @@ export function resolveWorkspacePath(inputPath = '.'): string {
   return resolved;
 }
 
-export function toWorkspaceRelative(absPath: string): string {
-  return path.relative(workspaceRoot(), absPath).replace(/\\/g, '/') || '.';
+export function toWorkspaceRelative(absPath: string, sessionId?: string): string {
+  return path.relative(workspaceRootForSession(sessionId), absPath).replace(/\\/g, '/') || '.';
 }
 
 export function isWorkspaceRelativePathBlocked(relativePath: string): boolean {

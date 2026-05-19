@@ -8,7 +8,7 @@ import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import { runCodeMapScan } from '../analyzer/scan.js';
-import { resolveWorkspacePath } from '../agent-runtime/tools/workspace.js';
+import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { wikiStore } from './wiki-store.js';
 import { wikiAgentService } from './wiki-agent-service.js';
 import { wikiCoordinateService } from './wiki-coordinate-service.js';
@@ -62,8 +62,7 @@ export const wikiSnapshotService = {
   async generate(input: GenerateWikiInput): Promise<GenerateWikiResult> {
     const { projectId, locale = 'zh' } = input;
 
-    // workspace guard — refuse paths outside project root
-    const workDir = resolveWorkspacePath(input.workDir);
+    const workDir = resolveWorkspaceRoot(input.workDir);
 
     // 1. Read git state
     let gitState: WikiGitState;

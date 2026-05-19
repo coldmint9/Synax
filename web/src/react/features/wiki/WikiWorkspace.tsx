@@ -51,12 +51,15 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
             setPhase(null)
             return
           }
-          if (tree.snapshot?.status === 'refreshing') {
+          if (tree.snapshot?.status === 'outline_ready' || tree.snapshot?.status === 'writing') {
             if (tree.documents.length > 0) {
               onGenerated()
               return
             }
-            setPhase('Agent 正在生成文档内容…')
+            setPhase('目录结构已生成，正在填充内容…')
+          }
+          if (tree.snapshot?.status === 'refreshing') {
+            setPhase('Agent 正在分析代码库…')
           }
         } catch {
           // transient fetch error — keep polling
@@ -159,6 +162,10 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
             onRetry()
             return
           }
+          if ((tree.snapshot?.status === 'outline_ready' || tree.snapshot?.status === 'writing') && tree.documents.length > 0) {
+            onRetry()
+            return
+          }
         } catch { /* keep polling */ }
       }
       setError('生成超时，请稍后刷新页面。')
@@ -230,7 +237,10 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const selectedDoc = documents.find(d => d.id === selectedDocumentId)
 
   useEffect(() => {
-    if (snapshot?.status !== 'refreshing') return
+    const shouldPoll = snapshot?.status === 'refreshing'
+      || snapshot?.status === 'outline_ready'
+      || snapshot?.status === 'writing'
+    if (!shouldPoll) return
     let interval: ReturnType<typeof setInterval> | null = null
 
     const start = () => {
@@ -372,7 +382,23 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
               <Loader2 size={11} className="animate-spin text-primary" />
               <span className="text-[11px] text-primary">
-                文档生成中… ({documents.length} 篇已完成)
+                正在分析代码库…
+              </span>
+            </div>
+          )}
+          {snapshot?.status === 'outline_ready' && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/5 border-b border-amber-500/10">
+              <Loader2 size={11} className="animate-spin text-amber-600" />
+              <span className="text-[11px] text-amber-600">
+                目录结构已就绪，正在准备生成内容…
+              </span>
+            </div>
+          )}
+          {snapshot?.status === 'writing' && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
+              <Loader2 size={11} className="animate-spin text-primary" />
+              <span className="text-[11px] text-primary">
+                文档内容生成中… ({documents.filter(d => d.blockIds.length > 0).length}/{documents.length} 篇已完成)
               </span>
             </div>
           )}

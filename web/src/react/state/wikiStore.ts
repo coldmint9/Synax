@@ -46,31 +46,66 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   ...initialState,
 
   loadLatest: async (projectId: string) => {
-    set(s => ({ ...s, loading: { ...s.loading, snapshot: true }, error: null }));
+    const state = get();
+    const isInitialLoad = !state.snapshot;
+    if (isInitialLoad) {
+      set(s => ({ ...s, loading: { ...s.loading, snapshot: true }, error: null }));
+    }
     try {
       const tree = await wikiApi.getLatest(projectId);
-      const blocksById: Record<string, WikiBlock> = {};
-      for (const b of tree.blocks) blocksById[b.id] = b;
-      const bindingsById: Record<string, WikiSourceBinding> = {};
-      for (const b of tree.sourceBindings) bindingsById[b.id] = b;
+      const prev = get();
+
+      const nextBlocksById: Record<string, WikiBlock> = {};
+      let blocksChanged = false;
+      for (const b of tree.blocks) {
+        nextBlocksById[b.id] = b;
+        if (!prev.blocksById[b.id] || prev.blocksById[b.id].updatedAt !== b.updatedAt) {
+          blocksChanged = true;
+        }
+      }
+      if (Object.keys(prev.blocksById).length !== tree.blocks.length) blocksChanged = true;
+
+      const nextBindingsById: Record<string, WikiSourceBinding> = {};
+      let bindingsChanged = false;
+      for (const b of tree.sourceBindings) {
+        nextBindingsById[b.id] = b;
+        if (!prev.bindingsById[b.id]) bindingsChanged = true;
+      }
+      if (Object.keys(prev.bindingsById).length !== tree.sourceBindings.length) bindingsChanged = true;
+
+      const docsChanged = prev.documents.length !== tree.documents.length
+        || tree.documents.some((d, i) => {
+          const p = prev.documents[i];
+          return !p || p.id !== d.id || p.updatedAt !== d.updatedAt || p.blockIds.length !== d.blockIds.length;
+        });
+
+      const snapshotChanged = !prev.snapshot
+        || prev.snapshot.status !== tree.snapshot?.status
+        || prev.snapshot.revision !== tree.snapshot?.revision
+        || prev.snapshot.documentIds.length !== (tree.snapshot?.documentIds.length ?? 0);
+
+      const patchesChanged = prev.patchesSummary.pending !== tree.patchesSummary.pending
+        || prev.patchesSummary.conflict !== tree.patchesSummary.conflict;
 
       const firstDocId = tree.documents[0]?.id ?? null;
-      const currentSelected = get().selectedDocumentId;
+      const currentSelected = prev.selectedDocumentId;
       const selectedDocumentId =
         currentSelected && tree.documents.some(d => d.id === currentSelected)
           ? currentSelected
           : firstDocId;
 
-      set({
-        snapshot: tree.snapshot,
-        documents: tree.documents,
-        blocksById,
-        bindingsById,
-        patchesSummary: tree.patchesSummary,
-        selectedDocumentId,
-        loading: { snapshot: false, patches: false },
+      const patch: Partial<WikiState> = {
+        loading: { snapshot: false, patches: prev.loading.patches },
         error: null,
-      });
+      };
+      if (snapshotChanged) patch.snapshot = tree.snapshot;
+      if (docsChanged) patch.documents = tree.documents;
+      if (blocksChanged) patch.blocksById = nextBlocksById;
+      if (bindingsChanged) patch.bindingsById = nextBindingsById;
+      if (patchesChanged) patch.patchesSummary = tree.patchesSummary;
+      if (selectedDocumentId !== prev.selectedDocumentId) patch.selectedDocumentId = selectedDocumentId;
+
+      set(patch as WikiState);
     } catch (err) {
       set(s => ({
         ...s,

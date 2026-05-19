@@ -13,7 +13,7 @@ import { wikiStore } from './wiki-store.js';
 import { wikiRefreshService } from './wiki-refresh-service.js';
 import { generateGatewayObject } from '../llm-runtime/stream.js';
 import { createAcpClientFor, type ProviderId, type CoordinatesRunEvent } from '../acp/index.js';
-import { resolveWorkspacePath } from '../agent-runtime/tools/workspace.js';
+import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { logger } from '../../lib/logger.js';
 import type { WikiDesignMappingStatus } from './contracts.js';
 
@@ -310,7 +310,7 @@ generate a structured implementation plan as a Goal with Actions.
     // Validate workDir up-front (don't dispatch into an arbitrary directory)
     let workDirAbs: string | null = null;
     if (opts.workDir) {
-      workDirAbs = resolveWorkspacePath(opts.workDir);
+      workDirAbs = resolveWorkspaceRoot(opts.workDir);
     }
 
     // Build ACP prompt from bundle

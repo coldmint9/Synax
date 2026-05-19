@@ -28,20 +28,20 @@ export const fileWriteTool: RegisteredTool = {
     const args = input.args as { path?: string; content?: string };
     if (!args?.path) throw new Error('path is required.');
     if (typeof args.content !== 'string') throw new Error('content must be a string.');
-    const filePath = resolveWorkspacePath(args.path);
+    const filePath = resolveWorkspacePath(args.path, input.sessionId);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, args.content, 'utf8');
     return {
       result: {
-        path: toWorkspaceRelative(filePath),
+        path: toWorkspaceRelative(filePath, input.sessionId),
         bytes: Buffer.byteLength(args.content, 'utf8'),
       },
-      displaySummary: `Wrote ${Buffer.byteLength(args.content, 'utf8')} bytes to ${toWorkspaceRelative(filePath)}.`,
+      displaySummary: `Wrote ${Buffer.byteLength(args.content, 'utf8')} bytes to ${toWorkspaceRelative(filePath, input.sessionId)}.`,
       artifacts: [
         {
           kind: 'decision',
           title: 'File write',
-          summary: `Updated ${toWorkspaceRelative(filePath)}.`,
+          summary: `Updated ${toWorkspaceRelative(filePath, input.sessionId)}.`,
           risk: 'medium',
         },
       ],

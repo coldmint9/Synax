@@ -13,7 +13,7 @@ import { wikiRefreshTasks, wikiPatches } from '../../db/schema.js';
 import { wikiStore } from './wiki-store.js';
 import { wikiCoordinateService } from './wiki-coordinate-service.js';
 import { runCodeMapScan } from '../analyzer/scan.js';
-import { resolveWorkspacePath } from '../agent-runtime/tools/workspace.js';
+import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { generateGatewayObject } from '../llm-runtime/stream.js';
 import { logger } from '../../lib/logger.js';
 import type { WikiRefreshTask, WikiBlock } from './contracts.js';
@@ -75,8 +75,7 @@ export const wikiRefreshService = {
     const now = new Date().toISOString();
     const taskId = nanoid();
 
-    // workspace guard — refuse paths outside project root
-    const workDirAbs = resolveWorkspacePath(workDir);
+    const workDirAbs = resolveWorkspaceRoot(workDir);
 
     await db.insert(wikiRefreshTasks).values({
       id: taskId,

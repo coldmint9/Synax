@@ -25,7 +25,7 @@ export const grepSearchTool: RegisteredTool = {
   execute(input) {
     const args = input.args as { query?: string; path?: string; limit?: number; caseSensitive?: boolean };
     if (!args?.query) throw new Error('query is required.');
-    const requested = resolveWorkspacePath(args.path ?? '.');
+    const requested = resolveWorkspacePath(args.path ?? '.', input.sessionId);
     const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
     const hits: Array<{ path: string; line: number; preview: string }> = [];
     const stat = fs.statSync(requested);
@@ -58,7 +58,7 @@ export const grepSearchTool: RegisteredTool = {
       const fileInfo = fs.statSync(absolutePath);
       if (fileInfo.size > 256_000) continue;
       hits.push({
-        path: toWorkspaceRelative(absolutePath),
+        path: toWorkspaceRelative(absolutePath, input.sessionId),
         line: event.data.line_number,
         preview: (event.data.lines?.text ?? '').replace(/\r?\n$/, '').slice(0, 240),
       });

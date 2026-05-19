@@ -1,4 +1,4 @@
-import { AlertTriangle, Code2, FileText, Link2, Lock, Pencil, Maximize2, X } from 'lucide-react'
+import { AlertTriangle, Code2, FileText, Link2, Lock, Loader2, Pencil, Maximize2, X } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 import { Streamdown } from 'streamdown'
 import { streamdownPlugins } from '../../../lib/streamdown-plugins'
@@ -324,15 +324,26 @@ function WikiBlockItem({ block }: { block: WikiBlock }) {
 
 export default function WikiBlockRenderer({ document }: { document: WikiDocument }) {
   const blocksById = useWikiStore(s => s.blocksById)
+  const snapshot = useWikiStore(s => s.snapshot)
   const blocks = document.blockIds
     .map(id => blocksById[id])
     .filter((b): b is WikiBlock => Boolean(b))
 
   if (blocks.length === 0) {
+    const isGenerating = snapshot?.status === 'outline_ready' || snapshot?.status === 'writing'
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-        <FileText size={24} className="text-muted-foreground/20" />
-        <p className="text-[12px] text-muted-foreground/40">此文档暂无内容</p>
+        {isGenerating ? (
+          <>
+            <Loader2 size={20} className="animate-spin text-muted-foreground/30" />
+            <p className="text-[12px] text-muted-foreground/50">内容生成中，请稍候…</p>
+          </>
+        ) : (
+          <>
+            <FileText size={24} className="text-muted-foreground/20" />
+            <p className="text-[12px] text-muted-foreground/40">此文档暂无内容</p>
+          </>
+        )}
       </div>
     )
   }

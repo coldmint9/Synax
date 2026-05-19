@@ -24,7 +24,7 @@ export const fileGlobTool: RegisteredTool = {
   execute(input) {
     const args = input.args as { pattern?: string; path?: string; limit?: number };
     const pattern = args?.pattern ?? '**/*';
-    const base = resolveWorkspacePath(args?.path ?? '.');
+    const base = resolveWorkspacePath(args?.path ?? '.', input.sessionId);
     const baseStat = fs.statSync(base);
     if (!baseStat.isDirectory()) throw new Error('path must point to a directory.');
     const limit = Math.min(Math.max(args?.limit ?? 100, 1), 300);
@@ -40,11 +40,11 @@ export const fileGlobTool: RegisteredTool = {
       .split(/\r?\n/)
       .filter(Boolean)
       .map((relativePath) => path.resolve(base, relativePath))
-      .map((absolutePath) => toWorkspaceRelative(absolutePath))
+      .map((absolutePath) => toWorkspaceRelative(absolutePath, input.sessionId))
       .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath))
       .map((relativePath) => ({
         path: relativePath,
-        mtimeMs: fs.statSync(resolveWorkspacePath(relativePath)).mtimeMs,
+        mtimeMs: fs.statSync(resolveWorkspacePath(relativePath, input.sessionId)).mtimeMs,
       }))
       .sort((left, right) => right.mtimeMs - left.mtimeMs)
       .slice(0, limit)
