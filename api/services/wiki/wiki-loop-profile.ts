@@ -1,5 +1,6 @@
 import type { AgentProfile } from '../agent-runtime/contracts.js';
 import { profileService } from '../agent-runtime/profile-service.js';
+import { registerTitleGenerator } from '../agent-runtime/session-title-service.js';
 
 export const wikiPlannerProfile: AgentProfile = {
   id: 'wiki-planner',
@@ -148,11 +149,25 @@ export const wikiGeneratorProfile: AgentProfile = {
 
 let registered = false;
 
+const wikiTitleGenerator = {
+  generate() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `Wiki 生成 ${y}${m}${day}`;
+  },
+};
+
 export function ensureWikiProfileRegistered(): void {
   if (registered) return;
   profileService.register(wikiPlannerProfile);
   profileService.register(wikiWriterProfile);
   profileService.register(wikiExplorerProfile);
   profileService.register(wikiGeneratorProfile);
+  registerTitleGenerator('wiki-planner', wikiTitleGenerator);
+  registerTitleGenerator('wiki-writer', wikiTitleGenerator);
+  registerTitleGenerator('wiki-explorer', wikiTitleGenerator);
+  registerTitleGenerator('wiki-generator', wikiTitleGenerator);
   registered = true;
 }

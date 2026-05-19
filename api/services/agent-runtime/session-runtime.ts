@@ -30,6 +30,7 @@ export class AgentSessionRuntime {
       nodeId: input.nodeId ?? null,
       profileId: profile.id,
       status: 'running',
+      title: null,
       prompt: input.prompt,
       contextSnapshotId: null,
       thinkingMode: input.thinkingMode ?? profile.defaultThinkingMode,

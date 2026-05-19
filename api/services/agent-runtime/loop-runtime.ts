@@ -27,6 +27,7 @@ import { profileService, type ProfileService } from "./profile-service.js";
 import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
+import { generateSessionTitle } from "./session-title-service.js";
 import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
 import {
   type DisclosureState,
@@ -445,6 +446,14 @@ export class AgentLoopRuntime {
           },
           "[agent-runtime] model step completed",
         );
+
+        // Fire-and-forget title generation after first step
+        if (step.index === 1) {
+          const currentSession = this.store.getSession(sessionId);
+          if (!currentSession.title) {
+            generateSessionTitle(sessionId, currentSession.projectId, currentSession.profileId, currentSession.prompt);
+          }
+        }
 
         if (pendingPermission?.userReply === "reject") {
           const blockedSummary =
