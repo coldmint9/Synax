@@ -98,6 +98,38 @@ export class AgentLoopRuntime {
     }
   }
 
+  async *streamContinue(
+    sessionId: string,
+    input: StreamTurnRequest,
+    abortSignal?: AbortSignal,
+  ): AsyncGenerator<AgentRunStreamChunk> {
+    const session = this.store.getSession(sessionId);
+
+    const RESUMABLE: string[] = ['interrupted', 'paused', 'completed', 'blocked'];
+    if (!RESUMABLE.includes(session.status)) {
+      throw new AgentValidationError(
+        `Session status "${session.status}" cannot be resumed. Resumable statuses: ${RESUMABLE.join(', ')}`,
+      );
+    }
+
+    const hasNewMessage = Boolean(input.message?.trim());
+
+    if (!hasNewMessage && session.status === 'completed') {
+      throw new AgentValidationError(
+        'Completed sessions require a new message to continue. Provide input.message.',
+      );
+    }
+
+    if (hasNewMessage) {
+      yield* this.streamRun(sessionId, input, abortSignal, false);
+    } else {
+      const continuationPrompt = session.status === 'paused'
+        ? 'Session was paused by user. Continue from where you left off.'
+        : 'Session was interrupted. Continue from where you left off. Review previous tool calls and messages to understand current progress.';
+      yield* this.streamRun(sessionId, { ...input, message: continuationPrompt }, abortSignal, false);
+    }
+  }
+
   async *streamRun(
     sessionId: string,
     input: StreamTurnRequest,
@@ -853,15 +885,23 @@ export class AgentLoopRuntime {
         },
         "[agent-runtime] run failed",
       );
+      const isAbort = Boolean(runAbortSignal.aborted);
       const failedRun = this.store.updateRun(run.id, {
-        status: runAbortSignal.aborted ? "interrupted" : "failed",
+        status: isAbort ? "interrupted" : "failed",
         completedAt: nowIso(),
         stopReason: message,
       });
+
+      // If session was already set to 'paused' (by pause()), don't overwrite
+      const currentSession = this.store.getSession(sessionId);
+      const sessionStatus = currentSession.status === 'paused'
+        ? 'paused'
+        : isAbort ? 'interrupted' : 'failed';
+
       this.store.updateSession(sessionId, {
-        status: "failed",
+        status: sessionStatus,
         updatedAt: nowIso(),
-        completedAt: nowIso(),
+        completedAt: sessionStatus === 'failed' ? nowIso() : null,
         blockedReason: message,
         resultSummary: message,
         activeRunId: null,
@@ -871,7 +911,7 @@ export class AgentLoopRuntime {
         sessionId,
         type: "run_failed",
         summary: message,
-        payload: { runId: failedRun.id, error: message },
+        payload: { runId: failedRun.id, error: message, resumable: sessionStatus !== 'failed' },
       });
       yield {
         type: "run_failed",

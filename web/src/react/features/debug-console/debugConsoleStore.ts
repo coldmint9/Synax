@@ -18,12 +18,16 @@ export interface DebugConsoleState {
   events: RuntimeEvent[]
   messages: AgentRuntimeMessage[]
   toolCalls: ToolCallRecord[]
+  childSessions: Record<string, AgentSession[]>
 
   refreshSessions: () => Promise<void>
   deleteSession: (sessionId: string) => Promise<string[]>
   openPanel: (sessionId: string) => void
   closePanel: () => void
   refreshDetail: () => Promise<void>
+  fetchChildSessions: (parentId: string) => Promise<void>
+  pauseSession: (sessionId: string) => Promise<void>
+  resumeSession: (sessionId: string, message?: string) => Promise<void>
 }
 
 export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
@@ -35,6 +39,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   events: [],
   messages: [],
   toolCalls: [],
+  childSessions: {},
 
   refreshSessions: async () => {
     try {
@@ -83,6 +88,35 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
         const stepsRes = await agentRuntimeApi.listRunSteps(selectedSessionId, activeRun.id)
         set({ steps: stepsRes.items })
       }
+      // Fetch child sessions if any
+      const session = get().sessions.find(s => s.id === selectedSessionId)
+      if (session && session.childSessionIds.length > 0) {
+        void get().fetchChildSessions(selectedSessionId)
+      }
+    } catch { /* silent */ }
+  },
+
+  fetchChildSessions: async (parentId) => {
+    try {
+      const { items } = await agentRuntimeApi.listSessions()
+      const children = items.filter(s => s.parentSessionId === parentId)
+      set({ childSessions: { ...get().childSessions, [parentId]: children } })
+    } catch { /* silent */ }
+  },
+
+  pauseSession: async (sessionId) => {
+    try {
+      await agentRuntimeApi.pauseSession(sessionId)
+      void get().refreshSessions()
+      void get().refreshDetail()
+    } catch { /* silent */ }
+  },
+
+  resumeSession: async (sessionId, message) => {
+    try {
+      await agentRuntimeApi.resumeStream(sessionId, message ? { message } : {}, () => {})
+      void get().refreshSessions()
+      void get().refreshDetail()
     } catch { /* silent */ }
   },
 }))

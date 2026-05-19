@@ -23,6 +23,12 @@ export function SessionTranscript({ mode }: Props) {
   const steps = useDebugConsole((s) => s.steps)
   const toolCalls = useDebugConsole((s) => s.toolCalls)
   const messages = useDebugConsole((s) => s.messages)
+  const childSessions = useDebugConsole((s) => {
+    const id = s.selectedSessionId
+    return id ? s.childSessions[id] : undefined
+  })
+  const pauseSession = useDebugConsole((s) => s.pauseSession)
+  const resumeSession = useDebugConsole((s) => s.resumeSession)
 
   const orderedEntries = useMemo(
     () => [...entries].sort((a, b) => a.sequence - b.sequence),
@@ -43,6 +49,9 @@ export function SessionTranscript({ mode }: Props) {
           steps={steps}
           toolCalls={toolCalls}
           messages={messages}
+          childSessions={childSessions}
+          onPause={pauseSession}
+          onResume={(id) => resumeSession(id)}
         />
       </div>
     )

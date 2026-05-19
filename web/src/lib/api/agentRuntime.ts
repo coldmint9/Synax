@@ -13,6 +13,8 @@ export type AgentSessionStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
+  | 'interrupted'
+  | 'paused'
 
 export type AgentRunStatus =
   | 'running'
@@ -280,6 +282,48 @@ export const agentRuntimeApi = {
     request<{ items: EvidenceArtifact[] }>(`/sessions/${encodeURIComponent(sessionId)}/artifacts`),
   listToolCalls: (sessionId: string) =>
     request<{ items: ToolCallRecord[] }>(`/sessions/${encodeURIComponent(sessionId)}/tool-calls`),
+  pauseSession: (sessionId: string) =>
+    request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/pause`, { method: 'POST' }),
+  resumeStream: async (
+    sessionId: string,
+    body: StreamTurnRequest,
+    onChunk: (chunk: unknown) => void,
+  ): Promise<void> => {
+    const response = await apiFetch(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/resume/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok || !response.body) {
+      let message = `Agent runtime resume stream error ${response.status}`
+      try {
+        const b = await response.json() as { error?: string; code?: string }
+        if (b.code) message = `[${b.code}] ${b.error ?? message}`
+        else if (b.error) message = b.error
+      } catch { /* keep default message */ }
+      throw new Error(message)
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        const dataLine = frame.split('\n').find((line) => line.startsWith('data: '))
+        if (dataLine) {
+          const raw = dataLine.slice(6)
+          if (raw === '[DONE]') return
+          try { onChunk(JSON.parse(raw) as unknown) } catch { onChunk(raw) }
+        }
+        boundary = buffer.indexOf('\n\n')
+      }
+    }
+  },
   streamTurn: async (
     sessionId: string,
     body: StreamTurnRequest,

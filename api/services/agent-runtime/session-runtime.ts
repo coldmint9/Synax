@@ -1,6 +1,7 @@
 import type { AgentSession, CreateSessionRequest } from './contracts.js';
 import { agentContextBuilder } from './context-builder.js';
 import { agentEventService, type AgentEventService } from './event-service.js';
+import { agentLoopRuntime } from './loop-runtime.js';
 import { profileService, type ProfileService } from './profile-service.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { AgentValidationError } from './runtime-errors.js';
@@ -112,6 +113,26 @@ export class AgentSessionRuntime {
       type: 'progress_updated',
       summary: 'Session cancelled',
       payload: { reason: 'User cancelled run.', preservedEvents: true },
+    });
+    return session;
+  }
+
+  pause(sessionId: string): AgentSession {
+    const current = this.store.getSession(sessionId);
+    if (current.status !== 'running' && current.status !== 'waiting_permission') {
+      throw new AgentValidationError('Only running or waiting_permission sessions can be paused.');
+    }
+    const session = this.store.updateSession(sessionId, {
+      status: 'paused',
+      updatedAt: nowIso(),
+      blockedReason: 'User paused session.',
+    });
+    agentLoopRuntime.interruptSessions([sessionId], 'User paused session.');
+    this.events.append({
+      sessionId,
+      type: 'progress_updated',
+      summary: 'Session paused',
+      payload: { reason: 'User paused session.', resumable: true },
     });
     return session;
   }

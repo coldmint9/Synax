@@ -118,6 +118,14 @@ agentRuntimeRoutes.post('/sessions/:sessionId/cancel', (c) => {
   }
 });
 
+agentRuntimeRoutes.post('/sessions/:sessionId/pause', (c) => {
+  try {
+    return c.json(agentSessionRuntime.pause(c.req.param('sessionId')));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 agentRuntimeRoutes.delete('/sessions/:sessionId', async (c) => {
   try {
     const sessionIds = agentSessionRuntime.listSessionTree(c.req.param('sessionId')).map((session) => session.id);
@@ -286,6 +294,65 @@ agentRuntimeRoutes.get('/sessions/:sessionId/events', (c) => {
   } catch (error) {
     return runtimeError(c, error);
   }
+});
+
+agentRuntimeRoutes.post('/sessions/:sessionId/resume/stream', async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = streamTurnRequestSchema.safeParse(body.data ?? {});
+  if (!parsed.success) return validationError(c, parsed.error);
+  const sessionId = c.req.param('sessionId');
+  let session: ReturnType<typeof agentSessionRuntime.get>;
+  try {
+    session = agentSessionRuntime.get(sessionId);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+  try {
+    assertLlmProviderConfigured(session.projectId);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+
+  const abortController = new AbortController();
+  const abortWithReason = (reason: string) => {
+    if (!abortController.signal.aborted) {
+      abortController.abort(new Error(reason));
+    }
+  };
+
+  if (c.req.raw.signal.aborted) {
+    abortWithReason('Client disconnected before the agent runtime stream started.');
+  } else {
+    c.req.raw.signal.addEventListener('abort', () => abortWithReason('Client disconnected.'), { once: true });
+  }
+
+  return streamSSE(c, async (stream) => {
+    const heartbeat = setInterval(() => {
+      if (abortController.signal.aborted) return;
+      stream.writeSSE({ data: JSON.stringify({ type: 'heartbeat', sessionId, timestamp: Date.now() }) })
+        .catch((error) => {
+          logger.warn({ sessionId, err: error instanceof Error ? error.message : String(error) }, '[agent-runtime] resume heartbeat write failed');
+          abortWithReason('Agent runtime heartbeat failed.');
+        });
+    }, AGENT_RUNTIME_HEARTBEAT_MS);
+
+    stream.onAbort(() => {
+      clearInterval(heartbeat);
+      abortWithReason('Client disconnected.');
+    });
+
+    try {
+      for await (const chunk of agentLoopRuntime.streamContinue(sessionId, parsed.data, abortController.signal)) {
+        await stream.writeSSE({ data: JSON.stringify(chunk) });
+      }
+    } finally {
+      clearInterval(heartbeat);
+    }
+    if (!abortController.signal.aborted) {
+      await stream.writeSSE({ data: '[DONE]' });
+    }
+  });
 });
 
 agentRuntimeRoutes.get('/sessions/:sessionId/artifacts', (c) => {
