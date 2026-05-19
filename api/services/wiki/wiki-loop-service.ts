@@ -223,6 +223,10 @@ export const wikiLoopService = {
       const stream1 = agentLoopRuntime.streamRun(plannerSession.id, {});
       for await (const chunk of stream1) {
         if (chunk.type === 'run_failed') throw new Error(chunk.error ?? 'Planner agent failed');
+        if (chunk.type === 'done') {
+          const s = agentRuntimeStore.tryGetSession(plannerSession.id);
+          if (s && s.status === 'interrupted') throw new Error('Planner agent was interrupted');
+        }
       }
 
       const outline = plannerHandle.getOutline();
@@ -311,6 +315,10 @@ export const wikiLoopService = {
       const stream2 = agentLoopRuntime.streamRun(writerSession.id, {});
       for await (const chunk of stream2) {
         if (chunk.type === 'run_failed') throw new Error(chunk.error ?? 'Writer agent failed');
+        if (chunk.type === 'done') {
+          const s = agentRuntimeStore.tryGetSession(writerSession.id);
+          if (s && s.status === 'interrupted') throw new Error('Writer agent was interrupted');
+        }
       }
 
       await wikiStore.updateSnapshotStatus(snapshot.id, 'ready', persistedDocIds);
