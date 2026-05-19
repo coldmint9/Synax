@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
 // Unified Session Panel — merges context sessions and agent sessions into one
 // list with context/agent-specific selection and deletion flows.
+// Sub-agents are nested under their parent session with indentation.
 // ---------------------------------------------------------------------------
 
 import { Activity, AlertTriangle, Clock, MessageSquare, Plus, RefreshCw, Trash2 } from 'lucide-react'
@@ -9,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { useContextStore } from '../../../state/contextStore'
 import { useDebugConsole } from '../../debug-console/debugConsoleStore'
 import { useDebugPolling } from '../../debug-console/useDebugPolling'
-import type { AgentSessionStatus } from '../../../../lib/api/agentRuntime'
+import type { AgentSession, AgentSessionStatus } from '../../../../lib/api/agentRuntime'
 
 const AGENT_STATUS_DOT: Record<AgentSessionStatus, string> = {
   running: 'bg-[hsl(var(--run))] animate-pulse',
@@ -27,12 +28,15 @@ interface UnifiedSession {
   id: string
   kind: 'context' | 'agent'
   label: string
+  profileLabel: string | null
   status: string
   dotClass: string
   entryCount: number
   tokenCount: number
   updatedAt: string
   sourceAgent: string | null
+  depth: number
+  children: UnifiedSession[]
 }
 
 function fmtTime(iso: string): string {
@@ -47,6 +51,62 @@ function fmtTime(iso: string): string {
   } catch {
     return iso
   }
+}
+
+const PROFILE_LABELS: Record<string, string> = {
+  'wiki-planner': 'Planner',
+  'wiki-writer': 'Writer',
+  'wiki-explorer': 'Explorer',
+  'wiki-generator': 'Generator',
+  explorer: 'Explorer',
+  reviewer: 'Reviewer',
+}
+
+function buildAgentTree(sessions: AgentSession[], depth = 0): UnifiedSession[] {
+  const topLevel = sessions.filter(s => !s.parentSessionId)
+  const childMap = new Map<string, AgentSession[]>()
+  for (const s of sessions) {
+    if (s.parentSessionId) {
+      const arr = childMap.get(s.parentSessionId) ?? []
+      arr.push(s)
+      childMap.set(s.parentSessionId, arr)
+    }
+  }
+
+  function toNode(s: AgentSession, d: number): UnifiedSession {
+    const kids = (childMap.get(s.id) ?? [])
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .map(child => toNode(child, d + 1))
+    return {
+      id: s.id,
+      kind: 'agent',
+      label: (s.title ?? s.prompt).slice(0, 50),
+      profileLabel: PROFILE_LABELS[s.profileId] ?? s.profileId,
+      status: s.status,
+      dotClass: AGENT_STATUS_DOT[s.status] ?? 'bg-muted-foreground/40',
+      entryCount: 0,
+      tokenCount: 0,
+      updatedAt: s.updatedAt,
+      sourceAgent: null,
+      depth: d,
+      children: kids,
+    }
+  }
+
+  return topLevel
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .map(s => toNode(s, depth))
+}
+
+function flattenNodes(nodes: UnifiedSession[]): UnifiedSession[] {
+  const result: UnifiedSession[] = []
+  for (const node of nodes) {
+    result.push(node)
+    if (node.children.length > 0) {
+      result.push(...flattenNodes(node.children))
+    }
+  }
+  return result
 }
 
 export default function SessionList() {
@@ -77,33 +137,27 @@ export default function SessionList() {
   const [busy, setBusy] = useState(false)
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
 
-  // Merge into unified list sorted by updatedAt desc
+  // Merge into unified list: context sessions flat + agent sessions as tree
   const unified = useMemo<UnifiedSession[]>(() => {
     const ctx: UnifiedSession[] = ctxSessions.map((s) => ({
       id: s.id,
       kind: 'context',
       label: s.title ?? s.id.slice(-8),
+      profileLabel: null,
       status: s.status,
       dotClass: 'bg-primary/60',
       entryCount: s.entryCount,
       tokenCount: s.tokenCount,
       updatedAt: s.updatedAt,
       sourceAgent: s.sourceAgent,
+      depth: 0,
+      children: [],
     }))
-    const agent: UnifiedSession[] = agentSessions.map((s) => ({
-      id: s.id,
-      kind: 'agent',
-      label: s.prompt.slice(0, 50),
-      status: s.status,
-      dotClass: AGENT_STATUS_DOT[s.status] ?? 'bg-muted-foreground/40',
-      entryCount: 0,
-      tokenCount: 0,
-      updatedAt: s.updatedAt,
-      sourceAgent: null,
-    }))
-    return [...ctx, ...agent].sort(
+    const agentTree = buildAgentTree(agentSessions)
+    const topLevel = [...ctx, ...agentTree].sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     )
+    return flattenNodes(topLevel)
   }, [ctxSessions, agentSessions])
 
   // PLACEHOLDER_HANDLERS
@@ -208,42 +262,50 @@ export default function SessionList() {
               const isActive =
                 (s.kind === 'context' && s.id === currentSessionId) ||
                 (s.kind === 'agent' && s.id === selectedAgentId && agentPanelOpen)
+              const isChild = s.depth > 0
               return (
                 <li
                   key={`${s.kind}-${s.id}`}
-                  className={`group cursor-pointer px-2 py-1.5 transition ${
+                  className={`group cursor-pointer py-1.5 transition ${
                     isActive ? 'bg-primary/10 text-foreground' : 'hover:bg-secondary/40'
-                  }`}
+                  } ${isChild ? 'bg-secondary/10' : ''}`}
+                  style={{ paddingLeft: `${8 + s.depth * 16}px`, paddingRight: 8 }}
                   onClick={() => handleSelect(s)}
                 >
                   <div className="flex items-center gap-2">
-                    <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${s.dotClass}`} />
-                    <span className="min-w-0 flex-1 truncate font-medium" title={s.label}>
+                    <span className={`inline-block shrink-0 rounded-full ${s.dotClass} ${isChild ? 'h-1 w-1' : 'h-1.5 w-1.5'}`} />
+                    {isChild && <span className="text-[9px] text-muted-foreground/50">↳</span>}
+                    <span className={`min-w-0 flex-1 truncate ${isChild ? 'text-[11px] text-muted-foreground' : 'font-medium'}`} title={s.label}>
                       {s.label}
                     </span>
-                    <span className="shrink-0 rounded bg-secondary/60 px-1 py-px text-[8px] uppercase text-muted-foreground">
-                      {s.kind === 'context' ? 'ctx' : 'agent'}
-                    </span>
-                    <button
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.stopPropagation()
-                      }}
-                      onMouseDown={(e) => {
-                        e.stopPropagation()
-                      }}
-                      onClick={(e) => void handleDelete(s, e)}
-                      className={`shrink-0 rounded p-0.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive ${
-                        deletingIds.has(s.id) ? 'opacity-50' : 'opacity-70 group-hover:opacity-100 focus:opacity-100'
-                      }`}
-                      aria-label="Delete session"
-                      title={s.kind === 'agent' ? '删除 agent 会话' : '删除'}
-                      disabled={deletingIds.has(s.id)}
-                    >
-                      <Trash2 size={10} />
-                    </button>
+                    {isChild && s.profileLabel && (
+                      <span className="shrink-0 rounded bg-secondary/60 px-1 py-px text-[8px] text-muted-foreground/70">
+                        {s.profileLabel}
+                      </span>
+                    )}
+                    {!isChild && (
+                      <span className="shrink-0 rounded bg-secondary/60 px-1 py-px text-[8px] uppercase text-muted-foreground">
+                        {s.kind === 'context' ? 'ctx' : 'agent'}
+                      </span>
+                    )}
+                    {!isChild && (
+                      <button
+                        type="button"
+                        onPointerDown={(e) => { e.stopPropagation() }}
+                        onMouseDown={(e) => { e.stopPropagation() }}
+                        onClick={(e) => void handleDelete(s, e)}
+                        className={`shrink-0 rounded p-0.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive ${
+                          deletingIds.has(s.id) ? 'opacity-50' : 'opacity-70 group-hover:opacity-100 focus:opacity-100'
+                        }`}
+                        aria-label="Delete session"
+                        title={s.kind === 'agent' ? '删除 agent 会话' : '删除'}
+                        disabled={deletingIds.has(s.id)}
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    )}
                   </div>
-                  <div className="mt-0.5 flex items-center gap-2 pl-3.5 text-[9px] text-muted-foreground">
+                  <div className={`mt-0.5 flex items-center gap-2 text-[9px] text-muted-foreground ${isChild ? 'pl-5' : 'pl-3.5'}`}>
                     <span>{s.status}</span>
                     {s.kind === 'context' && (
                       <>

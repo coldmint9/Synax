@@ -10,6 +10,8 @@ const STATUS_DOT: Record<AgentSessionStatus, string> = {
   blocked: 'bg-[hsl(var(--warning))]',
   completed: 'bg-[hsl(var(--success))]',
   failed: 'bg-[hsl(var(--destructive))]',
+  interrupted: 'bg-amber-400',
+  paused: 'bg-sky-400',
   queued: 'bg-muted-foreground/50',
   cancelled: 'bg-muted-foreground/30',
 }
