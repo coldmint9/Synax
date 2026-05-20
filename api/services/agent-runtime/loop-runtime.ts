@@ -140,7 +140,7 @@ export class AgentLoopRuntime {
     const session = this.store.getSession(sessionId);
     const activeExecution = this.beginSessionExecution(sessionId, abortSignal);
     const runAbortSignal = activeExecution.signal;
-    const profile = this.profiles.get(session.profileId);
+    const profile = this.profiles.tryGet(session.profileId);
     const prompt = input.message?.trim() || session.prompt;
     let run: AgentRun;
     let pendingResume = resume

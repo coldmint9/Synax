@@ -118,6 +118,12 @@ export class ProfileService {
     return profile;
   }
 
+  tryGet(profileId: string): AgentProfile {
+    const profile = this.profiles.get(profileId);
+    if (!profile) return this.profiles.get('executor')!;
+    return profile;
+  }
+
   assertCanStart(profileId: string, input: { parentSessionId?: string | null } = {}): AgentProfile {
     const profile = this.get(profileId);
     if (profile.status !== 'active') throw new AgentValidationError(`Agent profile ${profileId} is disabled.`);
