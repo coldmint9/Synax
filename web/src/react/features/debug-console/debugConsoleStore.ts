@@ -124,10 +124,19 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   },
 
   resumeSession: async (sessionId, message) => {
+    set({
+      sessions: get().sessions.map(s =>
+        s.id === sessionId ? { ...s, status: 'running' as const } : s,
+      ),
+    })
     try {
-      await agentRuntimeApi.resumeStream(sessionId, message ? { message } : {}, () => {})
-      void get().refreshSessions()
-      void get().refreshDetail()
+      agentRuntimeApi.resumeStream(sessionId, message ? { message } : {}, () => {}).then(() => {
+        void get().refreshSessions()
+        void get().refreshDetail()
+      }).catch(() => {
+        void get().refreshSessions()
+        void get().refreshDetail()
+      })
     } catch { /* silent */ }
   },
 
