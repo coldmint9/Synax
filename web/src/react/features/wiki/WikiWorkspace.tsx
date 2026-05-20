@@ -467,19 +467,17 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           )}
           <WikiDocumentTree />
         </div>
-        {snapshot?.status !== 'failed' && (
-          <div className="shrink-0 border-t border-border/20 px-3 py-2">
-            <button
-              type="button"
-              onClick={() => setShowReinitConfirm(true)}
-              disabled={refreshing || reinitializing || continuing}
-              className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border/40 px-2 py-1.5 text-[10px] text-muted-foreground/60 hover:border-destructive/30 hover:text-destructive hover:bg-destructive/5 transition-colors disabled:opacity-40"
-            >
-              {reinitializing ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
-              {reinitializing ? '重新生成中…' : '重新生成'}
-            </button>
-          </div>
-        )}
+        <div className="shrink-0 border-t border-border/30 px-3 py-2.5">
+          <button
+            type="button"
+            onClick={() => setShowReinitConfirm(true)}
+            disabled={refreshing || reinitializing || continuing}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-[11px] font-medium text-destructive/70 hover:border-destructive/40 hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-40"
+          >
+            {reinitializing ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
+            {reinitializing ? '重新生成中…' : '重新生成'}
+          </button>
+        </div>
       </aside>
 
       {/* ── Resize handle ── */}

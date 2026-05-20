@@ -8,17 +8,18 @@ function DocItem({
   isSelected,
   onSelect,
   depth,
+  isEmpty,
   children,
 }: {
   doc: WikiDocument
   isSelected: boolean
   onSelect: () => void
   depth: number
+  isEmpty?: boolean
   children?: React.ReactNode
 }) {
   const [expanded, setExpanded] = useState(true)
   const hasChildren = Boolean(children)
-  const isEmpty = doc.blockIds.length === 0
 
   return (
     <div>
@@ -72,17 +73,29 @@ function DocTree({
     <>
       {docs.map(doc => {
         const children = allDocs.filter(d => d.parentId === doc.id).sort((a, b) => a.sortOrder - b.sortOrder)
+
+        const isCategoryShell = doc.blockIds.length === 0
+        const sameNameChild = isCategoryShell
+          ? children.find(c => c.title === doc.title)
+          : null
+
+        const effectiveDocId = sameNameChild ? sameNameChild.id : doc.id
+        const visibleChildren = sameNameChild
+          ? children.filter(c => c.id !== sameNameChild.id)
+          : children
+
         return (
           <DocItem
             key={doc.id}
             doc={doc}
-            isSelected={selectedDocumentId === doc.id}
-            onSelect={() => onSelect(doc.id)}
+            isSelected={selectedDocumentId === effectiveDocId}
+            onSelect={() => onSelect(effectiveDocId)}
             depth={depth}
+            isEmpty={isCategoryShell && !sameNameChild}
           >
-            {children.length > 0 ? (
+            {visibleChildren.length > 0 ? (
               <DocTree
-                docs={children}
+                docs={visibleChildren}
                 allDocs={allDocs}
                 selectedDocumentId={selectedDocumentId}
                 onSelect={onSelect}
