@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { getRawSqlite } from '../../db/index.js';
 import { nowIso } from './runtime-ids.js';
+import { runtimeBus } from './runtime-bus.js';
 import type {
   AgentContextBundle,
   AgentRun,
@@ -414,6 +415,7 @@ export class AgentRuntimeStore {
         });
       }
     }
+    runtimeBus.emit({ type: 'session_created', sessionId: session.id });
     return session;
   }
 
@@ -436,6 +438,7 @@ export class AgentRuntimeStore {
     const current = this.getSession(id);
     const next = { ...current, ...patch };
     this.upsertSession(next);
+    runtimeBus.emit({ type: 'session_changed', sessionId: id, patch: patch as Record<string, unknown> });
     return next;
   }
 
@@ -551,6 +554,9 @@ export class AgentRuntimeStore {
       }
     });
     tx();
+    for (const id of deleteIds) {
+      runtimeBus.emit({ type: 'session_deleted', sessionId: id });
+    }
     return deleteIds;
   }
 

@@ -42,7 +42,7 @@ export function AgentConversationView({
   )
 
   const isRunning = session?.status === 'running'
-  const isResumable = session?.status === 'interrupted' || session?.status === 'paused'
+  const isResumable = session?.status === 'interrupted' || session?.status === 'paused' || session?.status === 'failed'
   const cat = session ? getSessionCategory(session.profileId) : null
   const statusInfo = session ? STATUS_LABEL[session.status] : null
 

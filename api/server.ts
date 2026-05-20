@@ -61,14 +61,13 @@ try {
 }
 
 // --- 启动时恢复孤儿 wiki snapshot（服务器重启后卡在生成中状态）---
-try {
-  const recoveredSnapshots = await wikiStore.recoverOrphanedSnapshots();
-  if (recoveredSnapshots > 0) {
-    pinoLogger.warn({ count: recoveredSnapshots }, "recovered orphaned wiki snapshots on startup");
+wikiStore.recoverOrphanedSnapshots().then((count) => {
+  if (count > 0) {
+    pinoLogger.warn({ count }, "recovered orphaned wiki snapshots on startup");
   }
-} catch (err) {
+}).catch((err) => {
   pinoLogger.error({ err }, "failed to recover orphaned wiki snapshots");
-}
+});
 
 function startServer(): void {
   serve({

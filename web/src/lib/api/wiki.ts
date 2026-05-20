@@ -96,6 +96,22 @@ export const wikiApi = {
     return res.json() as Promise<{ status: string }>;
   },
 
+  async continueGeneration(
+    snapshotId: string,
+    body: { workDir: string; locale?: 'zh' | 'en' },
+  ): Promise<{ status: string }> {
+    const res = await apiFetch(`${BASE}/snapshots/${snapshotId}/continue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await parseApiError(res, 'wiki/continue failed')
+      throw new Error(err)
+    }
+    return res.json() as Promise<{ status: string }>;
+  },
+
   async resolveBinding(bindingId: string): Promise<{
     resolved: boolean;
     precision: string;

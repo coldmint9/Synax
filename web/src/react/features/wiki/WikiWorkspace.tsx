@@ -233,6 +233,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const [refreshing, setRefreshing] = useState(false)
   const [showReinitConfirm, setShowReinitConfirm] = useState(false)
   const [reinitializing, setReinitializing] = useState(false)
+  const [continuing, setContinuing] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(260)
 
   const selectedDoc = documents.find(d => d.id === selectedDocumentId)
@@ -344,6 +345,24 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
   }
 
+  async function handleContinue() {
+    if (!snapshot) return
+    const projects = useShellStore.getState().projects
+    const project = projects.find(p => p.id === projectId)
+    const workDir = project?.source?.localPath
+    if (!workDir) {
+      alert('项目未配置 localPath，无法继续生成')
+      return
+    }
+    setContinuing(true)
+    try {
+      await wikiApi.continueGeneration(snapshot.id, { workDir, locale: 'zh' })
+      await loadLatest(projectId)
+    } finally {
+      setContinuing(false)
+    }
+  }
+
   if (loading.snapshot) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -359,7 +378,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     return <EmptyState projectId={projectId} onGenerated={() => void loadLatest(projectId)} />
   }
 
-  if (snapshot.status === 'failed') {
+  if (snapshot.status === 'failed' && documents.length === 0) {
     return <FailedState projectId={projectId} onRetry={() => void loadLatest(projectId)} />
   }
 
@@ -377,18 +396,9 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               onClick={handleRefresh}
               disabled={refreshing || reinitializing}
               className="rounded p-1 text-muted-foreground/50 hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-40"
-              title="Refresh Wiki"
+              title="更新 Wiki（检测代码变更）"
             >
               <RefreshCw size={11} className={refreshing ? 'animate-spin' : ''} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowReinitConfirm(true)}
-              disabled={refreshing || reinitializing}
-              className="rounded p-1 text-muted-foreground/50 hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-40"
-              title="重新初始化 Wiki"
-            >
-              <RotateCcw size={11} className={reinitializing ? 'animate-spin' : ''} />
             </button>
             <button
               type="button"
@@ -401,6 +411,36 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
+          {snapshot?.status === 'failed' && documents.length > 0 && (
+            <div className="flex flex-col gap-2 px-3 py-2 bg-destructive/5 border-b border-destructive/20">
+              <div className="flex items-center gap-1.5">
+                <AlertCircle size={11} className="shrink-0 text-destructive" />
+                <span className="text-[11px] text-destructive">
+                  生成未完成 ({documents.filter(d => d.blockIds.length > 0).length}/{documents.length} 篇已完成)
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleContinue}
+                  disabled={continuing || reinitializing}
+                  className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {continuing ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                  继续生成
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowReinitConfirm(true)}
+                  disabled={continuing || reinitializing}
+                  className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-[10px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                >
+                  {reinitializing ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
+                  重新生成
+                </button>
+              </div>
+            </div>
+          )}
           {snapshot?.status === 'refreshing' && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
               <Loader2 size={11} className="animate-spin text-primary" />
@@ -427,6 +467,19 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           )}
           <WikiDocumentTree />
         </div>
+        {snapshot?.status !== 'failed' && (
+          <div className="shrink-0 border-t border-border/20 px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setShowReinitConfirm(true)}
+              disabled={refreshing || reinitializing || continuing}
+              className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border/40 px-2 py-1.5 text-[10px] text-muted-foreground/60 hover:border-destructive/30 hover:text-destructive hover:bg-destructive/5 transition-colors disabled:opacity-40"
+            >
+              {reinitializing ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
+              {reinitializing ? '重新生成中…' : '重新生成'}
+            </button>
+          </div>
+        )}
       </aside>
 
       {/* ── Resize handle ── */}

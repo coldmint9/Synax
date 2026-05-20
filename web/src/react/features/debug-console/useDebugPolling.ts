@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useDebugConsole } from './debugConsoleStore'
+import { useRuntimeSSE } from './useRuntimeSSE'
 
 export function useDebugPolling() {
   const refreshSessions = useDebugConsole(s => s.refreshSessions)
@@ -7,16 +8,17 @@ export function useDebugPolling() {
   const panelOpen = useDebugConsole(s => s.panelOpen)
   const selectedSessionId = useDebugConsole(s => s.selectedSessionId)
 
+  // SSE 驱动实时更新
+  useRuntimeSSE()
+
+  // 初始加载 session 列表
   useEffect(() => {
     void refreshSessions()
-    const timer = window.setInterval(() => void refreshSessions(), 5000)
-    return () => window.clearInterval(timer)
   }, [refreshSessions])
 
+  // 选中 session 时加载详情
   useEffect(() => {
     if (!panelOpen || !selectedSessionId) return
     void refreshDetail()
-    const timer = window.setInterval(() => void refreshDetail(), 2000)
-    return () => window.clearInterval(timer)
   }, [panelOpen, selectedSessionId, refreshDetail])
 }
