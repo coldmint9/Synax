@@ -346,6 +346,10 @@ agentRuntimeRoutes.post('/sessions/:sessionId/resume/stream', async (c) => {
       for await (const chunk of agentLoopRuntime.streamContinue(sessionId, parsed.data, abortController.signal)) {
         await stream.writeSSE({ data: JSON.stringify(chunk) });
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ sessionId, err: message }, '[agent-runtime] resume stream error');
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', error: message }) });
     } finally {
       clearInterval(heartbeat);
     }

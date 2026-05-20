@@ -129,15 +129,21 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
         s.id === sessionId ? { ...s, status: 'running' as const } : s,
       ),
     })
-    try {
-      agentRuntimeApi.resumeStream(sessionId, message ? { message } : {}, () => {}).then(() => {
+    agentRuntimeApi.resumeStream(sessionId, message ? { message } : {}, (chunk) => {
+      const c = chunk as { type?: string; error?: string }
+      if (c.type === 'error') {
+        console.error('[resume] backend error:', c.error)
         void get().refreshSessions()
         void get().refreshDetail()
-      }).catch(() => {
-        void get().refreshSessions()
-        void get().refreshDetail()
-      })
-    } catch { /* silent */ }
+      }
+    }).then(() => {
+      void get().refreshSessions()
+      void get().refreshDetail()
+    }).catch((err) => {
+      console.error('[resume] stream failed:', err)
+      void get().refreshSessions()
+      void get().refreshDetail()
+    })
   },
 
   fetchSessionStats: async () => {
