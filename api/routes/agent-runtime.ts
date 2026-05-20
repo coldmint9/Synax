@@ -20,6 +20,7 @@ import {
   streamTurnRequestSchema,
   toHttpError,
 } from '../services/agent-runtime/index.js';
+import { runtimeBus } from '../services/agent-runtime/runtime-bus.js';
 import { logger } from '../lib/logger.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 
@@ -472,4 +473,41 @@ agentRuntimeRoutes.post('/sessions/:sessionId/permissions/:permissionId/reply', 
   } catch (error) {
     return runtimeError(c, error);
   }
+});
+
+// ============================== SSE 事件流 ==============================
+
+agentRuntimeRoutes.get('/events/stream', (c) => {
+  return streamSSE(c, async (stream) => {
+    let closed = false;
+
+    const onEvent = (event: { type: string; sessionId: string; patch?: Record<string, unknown> }) => {
+      if (closed) return;
+      stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+        .catch(() => { closed = true; });
+    };
+
+    const unsubscribe = runtimeBus.subscribe(onEvent);
+
+    await stream.writeSSE({ event: 'connected', data: '{}' });
+
+    const heartbeat = setInterval(() => {
+      if (closed) return;
+      stream.writeSSE({ event: 'ping', data: String(Date.now()) })
+        .catch(() => { closed = true; });
+    }, 25_000);
+
+    c.req.raw.signal.addEventListener('abort', () => {
+      closed = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+
+    await new Promise<void>((resolve) => {
+      c.req.raw.signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
 });

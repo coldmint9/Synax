@@ -69,7 +69,7 @@ function buildRunMessages(
         assistantContent.push({
           type: 'tool-call',
           toolCallId: normalizeToolCallId(record.modelToolCallId ?? record.id),
-          toolName: toolSet.resolveModelToolName(record.toolId) ?? record.toolId,
+          toolName: toolSet.resolveModelToolName(record.toolId) ?? sanitizeToolName(record.toolId),
           input: record.inputRef ?? {},
         });
       }
@@ -86,7 +86,7 @@ function buildRunMessages(
       return {
         type: 'tool-result' as const,
         toolCallId: normalizeToolCallId(record.modelToolCallId ?? record.id),
-        toolName: toolSet.resolveModelToolName(record.toolId) ?? record.toolId,
+        toolName: toolSet.resolveModelToolName(record.toolId) ?? sanitizeToolName(record.toolId),
         output: toToolResultOutput(record),
       };
     });
@@ -154,6 +154,10 @@ function toToolResultOutput(record: ToolCallRecord): ToolResultOutput {
 
 function trimToolText(value: string): string {
   return value.length > MAX_TOOL_OUTPUT_TEXT ? `${value.slice(0, MAX_TOOL_OUTPUT_TEXT)}…` : value;
+}
+
+function sanitizeToolName(toolId: string): string {
+  return toolId.replace(/[^A-Za-z0-9_-]/g, '_').replace(/_+/g, '_') || 'tool';
 }
 
 function normalizeToolCallId(value: unknown): string {

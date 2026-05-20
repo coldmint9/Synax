@@ -335,6 +335,104 @@ export const wikiLoopService = {
       for (const tid of registeredToolIds) toolRegistry.unregister(tid);
     }
   },
+
+  async continueGeneration(input: { snapshotId: string; workDir: string; locale?: string }): Promise<GenerateWikiResult> {
+    const { snapshotId, locale = 'zh' } = input;
+    const workDir = resolveWorkspaceRoot(input.workDir);
+
+    const snapshot = await wikiStore.getSnapshot(snapshotId);
+    if (!snapshot) throw new Error(`Snapshot ${snapshotId} not found`);
+    if (snapshot.status !== 'failed') throw new Error(`Snapshot status must be "failed" to continue, got "${snapshot.status}"`);
+
+    const documents = await wikiStore.getDocumentsBySnapshot(snapshotId);
+    const unfilled = documents.filter(d => d.blockIds.length === 0);
+
+    if (unfilled.length === 0) {
+      await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
+      return { snapshotId, status: 'completed' };
+    }
+
+    await wikiStore.updateSnapshotStatus(snapshotId, 'writing', documents.map(d => d.id));
+
+    const sessionIds: string[] = [];
+    const registeredToolIds: string[] = [];
+    const hookIds: string[] = [];
+
+    try {
+      ensureWikiProfileRegistered();
+
+      const scan = await runCodeMapScan({ projectId: snapshot.projectId, workDir, include: ['all'] });
+
+      const outline: WikiOutlineEntry[] = unfilled.map(doc => ({
+        id: doc.id,
+        docType: doc.docType as WikiOutlineEntry['docType'],
+        title: doc.title,
+        parentId: doc.parentId ?? undefined,
+        sortOrder: doc.sortOrder,
+        targetFiles: [],
+        keyQuestions: [],
+      }));
+
+      const writerHandle = createWriterTools(scan, outline);
+      for (const tool of writerHandle.tools) {
+        toolRegistry.register(tool);
+        registeredToolIds.push(tool.id);
+      }
+
+      const commitHookId = `wiki-continue-commit-${snapshotId}`;
+      hookIds.push(commitHookId);
+
+      toolRegistry.registerHook({
+        id: commitHookId,
+        toolId: 'wiki.commit_document',
+        async afterExecute(ctx) {
+          const commitResult = ctx.result.result as { ok: boolean };
+          if (!commitResult?.ok) return;
+          const docs = writerHandle.getCommittedDocuments();
+          const latestDoc = docs[docs.length - 1];
+          if (!latestDoc) return;
+
+          const existingDoc = unfilled.find(d => d.title === latestDoc.title);
+          if (existingDoc) {
+            await fillDocumentContent(existingDoc.id, latestDoc, snapshot.projectId, scan);
+          }
+          logger.info({ projectId: snapshot.projectId, title: latestDoc.title }, 'wiki-loop: continue - document content committed');
+        },
+      });
+
+      const writerPrompt = buildWriterPrompt(outline, locale);
+      const writerSession = agentSessionRuntime.create({
+        projectId: snapshot.projectId,
+        profileId: 'wiki-writer',
+        prompt: writerPrompt,
+      });
+      agentRuntimeStore.updateSession(writerSession.id, { title: 'Wiki 继续生成', updatedAt: nowIso() });
+      sessionIds.push(writerSession.id);
+      setSessionWorkspaceRoot(writerSession.id, workDir);
+
+      const stream = agentLoopRuntime.streamRun(writerSession.id, {});
+      for await (const chunk of stream) {
+        if (chunk.type === 'run_failed') throw new Error(chunk.error ?? 'Writer agent failed');
+        if (chunk.type === 'done') {
+          const s = agentRuntimeStore.tryGetSession(writerSession.id);
+          if (s && s.status === 'interrupted') throw new Error('Writer agent was interrupted');
+        }
+      }
+
+      await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
+      logger.info({ snapshotId, unfilledCount: unfilled.length }, 'wiki-loop: continue generation complete');
+      return { snapshotId, status: 'completed' };
+    } catch (err) {
+      logger.error({ err, snapshotId }, 'wiki-loop: continue generation failed');
+      await failSession(sessionIds[sessionIds.length - 1], err);
+      await wikiStore.updateSnapshotStatus(snapshotId, 'failed');
+      return { snapshotId, status: 'failed', error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      for (const sid of sessionIds) clearSessionWorkspaceRoot(sid);
+      for (const hid of hookIds) toolRegistry.unregisterHook(hid);
+      for (const tid of registeredToolIds) toolRegistry.unregister(tid);
+    }
+  },
 };
 
 async function persistOutlineAsEmptyDocs(

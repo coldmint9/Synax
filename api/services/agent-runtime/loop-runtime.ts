@@ -106,7 +106,7 @@ export class AgentLoopRuntime {
   ): AsyncGenerator<AgentRunStreamChunk> {
     const session = this.store.getSession(sessionId);
 
-    const RESUMABLE: string[] = ['interrupted', 'paused', 'completed', 'blocked'];
+    const RESUMABLE: string[] = ['interrupted', 'paused', 'completed', 'blocked', 'failed'];
     if (!RESUMABLE.includes(session.status)) {
       throw new AgentValidationError(
         `Session status "${session.status}" cannot be resumed. Resumable statuses: ${RESUMABLE.join(', ')}`,
@@ -126,7 +126,9 @@ export class AgentLoopRuntime {
     } else {
       const continuationPrompt = session.status === 'paused'
         ? 'Session was paused by user. Continue from where you left off.'
-        : 'Session was interrupted. Continue from where you left off. Review previous tool calls and messages to understand current progress.';
+        : session.status === 'failed'
+          ? 'Session previously failed. Review the error and previous context, then retry the task from where it left off.'
+          : 'Session was interrupted. Continue from where you left off. Review previous tool calls and messages to understand current progress.';
       yield* this.streamRun(sessionId, { ...input, message: continuationPrompt }, abortSignal, false);
     }
   }
