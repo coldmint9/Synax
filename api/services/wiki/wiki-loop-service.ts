@@ -72,17 +72,17 @@ const WIKI_PLANNER_PROMPT = `你是一位资深软件架构师。你的唯一任
 
 Level 0（根级 — 全局视角）：
 - directory_tree: 项目目录结构与模块职责
-- overview: 项目概述（定位、技术栈、核心概念、部署架构）
-- architecture: 系统架构（分层、模块关系、数据流）
+- overview: 项目概述
+- architecture: 系统架构
 
 Level 1（模块级 — 每个核心子系统）：
-- module_spec: 每个核心模块的详细规格（接口、数据模型、流程）
+- module_spec: 每个核心模块的详细规格
 - data_model: 核心数据模型（可选，数据密集模块）
 - api: API 端点规格（可选，有对外接口的模块）
 
 Level 2（子模块/流程级 — 深入细节）：
 - module_spec: 子模块规格
-- flow: 关键业务流程（含时序图）
+- flow: 关键业务流程
 - decision: 重要架构决策记录
 
 约束：
@@ -91,6 +91,7 @@ Level 2（子模块/流程级 — 深入细节）：
 - 必须包含：1+ directory_tree、1+ overview、1+ architecture、3+ module_spec
 - 每个条目必须指定 targetFiles（真实存在的文件路径）和 keyQuestions（具体、可回答的问题）
 - sortOrder 决定同级文档的显示顺序
+- title 必须简洁，禁止使用括号补充说明（错误示例："系统架构（分层、模块关系、数据流）"，正确示例："系统架构"）
 
 ## 规则
 1. 每一步都必须包含至少一个工具调用
