@@ -416,7 +416,6 @@ export class AgentRuntimeStore {
         });
       }
     }
-    runtimeBus.emit({ type: 'session_created', sessionId: session.id });
     return session;
   }
 
