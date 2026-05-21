@@ -9,6 +9,8 @@ interface TodoItem {
   status: 'pending' | 'in_progress' | 'done';
 }
 
+const DRIFT_THRESHOLD = 3;
+
 function getLatestTodos(sessionId: string): TodoItem[] {
   const events = agentRuntimeStore.listEvents(sessionId);
   for (let i = events.length - 1; i >= 0; i--) {
@@ -17,6 +19,33 @@ function getLatestTodos(sessionId: string): TodoItem[] {
     }
   }
   return [];
+}
+
+export function buildTodoDriftReminder(sessionId: string): string | null {
+  const events = agentRuntimeStore.listEvents(sessionId);
+  let lastTodoIndex = -1;
+  let hasTodos = false;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === 'todo_updated') {
+      lastTodoIndex = i;
+      hasTodos = true;
+      break;
+    }
+  }
+  if (!hasTodos) return null;
+
+  const stepsSince = events
+    .slice(lastTodoIndex + 1)
+    .filter(e => e.type === 'tool_result').length;
+
+  if (stepsSince < DRIFT_THRESHOLD) return null;
+
+  const items = getLatestTodos(sessionId);
+  const pending = items.filter(i => i.status === 'pending').length;
+  const inProgress = items.filter(i => i.status === 'in_progress').length;
+  if (pending === 0 && inProgress === 0) return null;
+
+  return `Your TODO list has not been updated for ${stepsSince} steps. Review your progress and update it using todo.manage. Current: ${inProgress} in_progress, ${pending} pending.`;
 }
 
 export const todoManageTool: RegisteredTool = {
@@ -65,6 +94,11 @@ export const todoManageTool: RegisteredTool = {
         throw new Error(`TODO item "${args.itemId}" not found.`);
       }
       target.status = args.status;
+    }
+
+    const inProgressCount = items.filter(i => i.status === 'in_progress').length;
+    if (inProgressCount > 1) {
+      throw new Error(`Only one item can be in_progress at a time (found ${inProgressCount}). Focus on one task before starting another.`);
     }
 
     agentEventService.append({

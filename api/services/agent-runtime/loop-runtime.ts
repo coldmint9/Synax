@@ -42,6 +42,7 @@ import {
 } from "./tool-disclosure.js";
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
 import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
+import { buildTodoDriftReminder } from "./tools/todo-manage.js";
 import { logger } from "../../lib/logger.js";
 
 const LOG_TEXT_LIMIT = 2000;
@@ -1165,6 +1166,8 @@ export class AgentLoopRuntime {
         lastUserMessage.content.trim() === input.prompt.trim()
       );
 
+    const todoDriftReminder = input.stepIndex > 1 ? buildTodoDriftReminder(input.sessionId) : null;
+
     const request = {
       projectId: this.store.getSession(input.sessionId).projectId,
       purpose: input.input.purpose ?? input.profile.kind,
@@ -1175,6 +1178,14 @@ export class AgentLoopRuntime {
           content: systemPromptContent,
         },
         ...conversationMessages,
+        ...(todoDriftReminder
+          ? [
+              {
+                role: "user" as const,
+                content: `<system-reminder>\n${todoDriftReminder}\n</system-reminder>`,
+              },
+            ]
+          : []),
         ...(needsInstructionOverride
           ? [
               {

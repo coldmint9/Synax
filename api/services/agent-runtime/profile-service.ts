@@ -23,7 +23,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     mode: 'primary',
     description: 'Turn project intent into Synapse goals and actions.',
     defaultThinkingMode: 'standard',
-    allowedCapabilities: ['task.run', 'skill.load'],
+    allowedCapabilities: ['task.run', 'todo.manage', 'skill.load'],
     permissionDefaults: [
       allowRead(),
       { gate: 'task', pattern: '*', action: 'ask', reason: 'Planner subtask delegation requires approval.' },
@@ -50,6 +50,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
       'diff.read',
       'file.write',
       'file.patch',
+      'todo.manage',
       'task.run',
       'skill.load',
       'tools.escalate',
