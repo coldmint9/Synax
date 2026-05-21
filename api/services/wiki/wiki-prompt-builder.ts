@@ -70,17 +70,17 @@ function buildWorkflowSegment(role: 'planner' | 'writer'): string {
   return `## 工作策略
 
 1. **根级文档**（directory_tree、overview、architecture）— 自己直接生成，需要全局视角
-2. **模块级文档**（module_spec 等）— 使用 task.run 委派子 agent 探索后，自己格式化并提交
+2. **模块级文档**（module_spec 等）— 使用 subagent.delegate 委派子 agent 探索后，自己格式化并提交
 
-task.run 行为：
+subagent.delegate 行为：
 - 子 agent 完成前，你会阻塞等待，不会继续下一步
-- 子 agent 可以递归调用 task.run 探索更深层子模块（最大深度 3 层）
+- 子 agent 可以递归调用 subagent.delegate 探索更深层子模块（最大深度 3 层）
 - 最多同时运行 5 个子任务
 - 使用 profileId: "wiki-explorer" 来委派探索任务
 
-### 使用 task.run 委派探索：
+### 使用 subagent.delegate 委派探索：
 \`\`\`
-task.run({
+subagent.delegate({
   prompt: "分析以下文件并提供结构化技术摘要：\\n文件：{targetFiles}\\n问题：{keyQuestions}\\n\\n请用 file.read 读取每个文件，提取：1.模块概述 2.公开接口签名 3.核心数据模型 4.业务流程 5.依赖关系 6.所有引用的qualifiedName列表",
   profileId: "explorer"
 })
