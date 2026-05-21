@@ -36,3 +36,24 @@
 .wiki-prose [data-streamdown="code-block-actions"] button {
   padding: 2px;
 }
+
+/* Block navigation highlight */
+@keyframes wiki-block-glow {
+  0% { box-shadow: 0 0 0 0 rgba(143, 188, 143, 0); }
+  20% { box-shadow: 0 0 14px 3px rgba(143, 188, 143, 0.18); }
+  100% { box-shadow: 0 0 0 0 rgba(143, 188, 143, 0); }
+}
+
+@keyframes wiki-block-glow-light {
+  0% { box-shadow: 0 0 0 0 rgba(107, 142, 107, 0); }
+  20% { box-shadow: 0 0 14px 3px rgba(107, 142, 107, 0.15); }
+  100% { box-shadow: 0 0 0 0 rgba(107, 142, 107, 0); }
+}
+
+.wiki-block-highlight {
+  animation: wiki-block-glow 1.8s ease-out;
+}
+
+:root:not(.dark) .wiki-block-highlight {
+  animation: wiki-block-glow-light 1.8s ease-out;
+}

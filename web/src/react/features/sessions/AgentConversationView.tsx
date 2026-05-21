@@ -17,6 +17,10 @@ interface Props {
   onResume?: (sessionId: string) => void
   onCancel?: (sessionId: string) => void
   onExpandChild?: (sessionId: string) => void
+  streamingStepId?: string | null
+  streamingText?: string
+  streamingThinking?: string
+  streamingToolCalls?: ToolCallRecord[]
 }
 
 const STATUS_LABEL: Record<string, { text: string; color: string }> = {
@@ -33,6 +37,7 @@ const STATUS_LABEL: Record<string, { text: string; color: string }> = {
 export function AgentConversationView({
   session, steps, toolCalls, messages, childSessions,
   onPause, onResume, onCancel, onExpandChild,
+  streamingStepId, streamingText, streamingThinking, streamingToolCalls,
 }: Props) {
   const [promptExpanded, setPromptExpanded] = useState(false)
 
@@ -120,7 +125,7 @@ export function AgentConversationView({
       )}
 
       {/* Turns */}
-      {turns.length === 0 ? (
+      {turns.length === 0 && !streamingStepId ? (
         <div className="flex items-center justify-center py-8 text-sm text-muted-foreground/50">
           {isRunning ? (
             <span className="flex items-center gap-2">
@@ -166,6 +171,47 @@ export function AgentConversationView({
               </div>
             </div>
           ))}
+
+          {/* 流式进行中的 turn */}
+          {streamingStepId && !steps.find(s => s.id === streamingStepId) && (
+            <div className="flex gap-3.5">
+              <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
+                <Bot size={14} className="text-[hsl(var(--agent))]" />
+              </div>
+              <div className="flex-1 min-w-0 flex flex-col gap-2">
+                {streamingThinking && <ThinkingBlock content={streamingThinking} />}
+                {streamingText && (
+                  <div className="text-sm leading-[1.75] text-foreground whitespace-pre-wrap">
+                    {streamingText}
+                    <span className="inline-block w-0.5 h-[1em] bg-foreground/60 animate-pulse ml-0.5 align-text-bottom" />
+                  </div>
+                )}
+                {(streamingToolCalls ?? []).map(tc => (
+                  <EnhancedToolCallCard
+                    key={tc.id}
+                    call={{
+                      id: tc.id,
+                      toolId: tc.toolId,
+                      inputSummary: tc.inputSummary ?? '',
+                      outputSummary: tc.outputSummary ?? '',
+                      status: tc.status,
+                      category: tc.category,
+                      duration: tc.endedAt
+                        ? `${((new Date(tc.endedAt).getTime() - new Date(tc.startedAt).getTime()) / 1000).toFixed(1)}s`
+                        : null,
+                      mutability: tc.mutability,
+                    }}
+                  />
+                ))}
+                {!streamingText && !streamingThinking && (streamingToolCalls ?? []).length === 0 && (
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground/50">
+                    <Loader2 size={12} className="animate-spin" />
+                    思考中...
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -1,95 +1,61 @@
-import { Code2, ExternalLink, FileText, Hash, Layers, Loader2 } from 'lucide-react'
-import { useState } from 'react'
+import { FileText, Hash, Heading, List, Table, Code2, AlertTriangle, Lightbulb, Layers } from 'lucide-react'
 import { useWikiStore } from '../../state/wikiStore'
-import { wikiApi } from '../../../lib/api/wiki'
-import type { WikiBlock, WikiSourceBinding } from '../../../lib/contracts/wiki'
+import type { WikiBlock } from '../../../lib/contracts/wiki'
 
-const PRECISION_LABELS = {
-  ast: { label: 'AST', cls: 'bg-success/15 text-success' },
-  symbol: { label: 'Symbol', cls: 'bg-primary/15 text-primary' },
-  chunk: { label: 'Chunk', cls: 'bg-secondary text-muted-foreground' },
-  file: { label: 'File', cls: 'bg-secondary text-muted-foreground/70' },
-} as const
-
-function BindingItem({ binding }: { binding: WikiSourceBinding }) {
-  const { label, cls } = PRECISION_LABELS[binding.precision] ?? PRECISION_LABELS.file
-  const [jumping, setJumping] = useState(false)
-
-  const icon = binding.sourceType === 'file'
-    ? <FileText size={11} className="shrink-0 text-muted-foreground/60" />
-    : binding.sourceType === 'symbol'
-    ? <Hash size={11} className="shrink-0 text-muted-foreground/60" />
-    : <Code2 size={11} className="shrink-0 text-muted-foreground/60" />
-
-  async function handleJump() {
-    setJumping(true)
-    try {
-      const res = await wikiApi.resolveBinding(binding.id)
-      if (res.ideUri) {
-        window.open(res.ideUri, '_blank')
-      } else if (res.fallbackSearchQuery) {
-        // No IDE URI — copy the search query to clipboard as fallback
-        await navigator.clipboard.writeText(res.fallbackSearchQuery).catch(() => {})
-        alert(`无法生成 IDE 跳转链接。已复制搜索词：${res.fallbackSearchQuery}`)
-      } else {
-        alert('无法解析源码位置。')
-      }
-    } catch {
-      alert('解析失败，请稍后重试。')
-    } finally {
-      setJumping(false)
-    }
-  }
-
-  return (
-    <div className="rounded-lg border border-border/30 bg-card/50 p-2.5 space-y-1.5">
-      <div className="flex items-center gap-1.5">
-        {icon}
-        <span className="flex-1 min-w-0 truncate font-mono text-[11px] text-foreground/80">
-          {binding.sourceId}
-        </span>
-        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide ${cls}`}>
-          {label}
-        </span>
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-foreground/50">
-          confidence {Math.round(binding.confidence * 100)}%
-        </span>
-        <button
-          type="button"
-          onClick={handleJump}
-          disabled={jumping}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground/60 hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-40"
-          title="在 VS Code 中打开"
-        >
-          {jumping ? <Loader2 size={9} className="animate-spin" /> : <ExternalLink size={9} />}
-          jump
-        </button>
-      </div>
-    </div>
-  )
+const BLOCK_TYPE_META: Record<string, { icon: typeof FileText; label: string }> = {
+  heading: { icon: Heading, label: 'H' },
+  paragraph: { icon: FileText, label: 'P' },
+  list: { icon: List, label: 'List' },
+  table: { icon: Table, label: 'Table' },
+  diagram: { icon: Hash, label: 'Diagram' },
+  code_ref: { icon: Code2, label: 'Code' },
+  decision: { icon: Lightbulb, label: 'Decision' },
+  risk: { icon: AlertTriangle, label: 'Risk' },
 }
 
-function BlockSourcePanel({ block }: { block: WikiBlock }) {
-  const bindingsById = useWikiStore(s => s.bindingsById)
-  const bindings = block.sourceBindingIds
-    .map(id => bindingsById[id])
-    .filter((b): b is WikiSourceBinding => Boolean(b))
+function blockPreview(block: WikiBlock): string {
+  const c = block.content as Record<string, unknown>
+  if (typeof c === 'string') return c.slice(0, 60)
+  if (c?.text && typeof c.text === 'string') return c.text.slice(0, 60)
+  if (c?.title && typeof c.title === 'string') return c.title.slice(0, 60)
+  if (c?.decision && typeof c.decision === 'string') return c.decision.slice(0, 60)
+  if (c?.description && typeof c.description === 'string') return c.description.slice(0, 60)
+  if (Array.isArray(c?.items)) return (c.items as string[])[0]?.slice(0, 60) ?? ''
+  return block.blockType
+}
 
-  if (bindings.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-1.5 py-6 text-center">
-        <Layers size={16} className="text-muted-foreground/20" />
-        <p className="text-[11px] text-muted-foreground/40">无 source binding</p>
-      </div>
-    )
-  }
+function scrollToBlock(blockId: string) {
+  const el = document.getElementById(`wiki-block-${blockId}`)
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  el.classList.add('wiki-block-highlight')
+  setTimeout(() => el.classList.remove('wiki-block-highlight'), 1800)
+}
+
+function BlockIndexItem({ block, index }: { block: WikiBlock; index: number }) {
+  const meta = BLOCK_TYPE_META[block.blockType] ?? BLOCK_TYPE_META.paragraph
+  const Icon = meta.icon
+  const preview = blockPreview(block)
+  const isHeading = block.blockType === 'heading'
+  const level = isHeading ? ((block.content as { level?: number })?.level ?? 2) : 0
 
   return (
-    <div className="space-y-1.5">
-      {bindings.map(b => <BindingItem key={b.id} binding={b} />)}
-    </div>
+    <button
+      type="button"
+      onClick={() => scrollToBlock(block.id)}
+      className={`w-full text-left rounded-md px-2 py-1.5 hover:bg-secondary/60 transition-colors ${
+        isHeading && level === 1 ? 'font-semibold' : ''
+      }`}
+      style={{ paddingLeft: isHeading ? `${(level - 1) * 8 + 8}px` : '8px' }}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="shrink-0 text-[10px] text-muted-foreground/40 w-4 text-right">{index + 1}</span>
+        <Icon size={10} className="shrink-0 text-muted-foreground/50" />
+        <span className={`truncate text-[11px] ${isHeading ? 'text-foreground/90' : 'text-foreground/65'}`}>
+          {preview}
+        </span>
+      </div>
+    </button>
   )
 }
 
@@ -102,7 +68,7 @@ export default function WikiSourcePanel() {
   if (!doc) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-[11px] text-muted-foreground/40">选择文档查看 source</p>
+        <p className="text-[11px] text-muted-foreground/40">选择文档查看索引</p>
       </div>
     )
   }
@@ -110,29 +76,23 @@ export default function WikiSourcePanel() {
   const blocks = doc.blockIds
     .map(id => blocksById[id])
     .filter((b): b is WikiBlock => Boolean(b))
-    .filter(b => b.sourceBindingIds.length > 0)
 
   if (blocks.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2">
         <Layers size={20} className="text-muted-foreground/20" />
-        <p className="text-[11px] text-muted-foreground/40">此文档暂无 source binding</p>
+        <p className="text-[11px] text-muted-foreground/40">此文档暂无内容</p>
       </div>
     )
   }
 
   return (
-    <div className="flex h-full flex-col gap-3 overflow-y-auto px-3 py-3">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-        Source Evidence
+    <div className="flex h-full flex-col gap-1 overflow-y-auto px-2 py-3">
+      <div className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+        Block 索引
       </div>
-      {blocks.map(block => (
-        <div key={block.id} className="space-y-1.5">
-          <div className="text-[11px] font-medium text-foreground/60 truncate">
-            {(block.content as { text?: string })?.text?.slice(0, 40) ?? block.blockType}
-          </div>
-          <BlockSourcePanel block={block} />
-        </div>
+      {blocks.map((block, i) => (
+        <BlockIndexItem key={block.id} block={block} index={i} />
       ))}
     </div>
   )

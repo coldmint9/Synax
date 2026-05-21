@@ -8,10 +8,12 @@ export function LayoutSection() {
   const locale = useShellStore(s => s.preferences.locale)
   const defaultHome = useShellStore(s => s.preferences.defaultHome)
   const notifications = useShellStore(s => s.preferences.notifications)
+  const editor = useShellStore(s => s.preferences.editor)
   const setTheme = useShellStore(s => s.setTheme)
   const setLocale = useShellStore(s => s.setLocale)
   const setDefaultHome = useShellStore(s => s.setDefaultHome)
   const setNotifications = useShellStore(s => s.setNotifications)
+  const setEditor = useShellStore(s => s.setEditor)
 
   return (
     <SettingsSection title="布局与外观" icon={Palette}>
@@ -66,6 +68,24 @@ export function LayoutSection() {
             checked={notifications}
             onChange={setNotifications}
           />
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-xs font-medium text-foreground">文件查看器</div>
+            <div className="text-[11px] text-muted-foreground">点击源码链接时使用的编辑器</div>
+          </div>
+          <select
+            className="settings-select"
+            value={editor}
+            onChange={e => setEditor(e.target.value as typeof editor)}
+          >
+            <option value="system">系统默认</option>
+            <option value="vscode">VS Code</option>
+            <option value="cursor">Cursor</option>
+            <option value="windsurf">Windsurf</option>
+            <option value="webstorm">WebStorm</option>
+          </select>
         </div>
       </div>
     </SettingsSection>

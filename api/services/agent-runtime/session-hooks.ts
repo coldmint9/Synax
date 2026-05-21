@@ -75,6 +75,7 @@ export const sessionHooks = new SessionHookRegistry();
 // ── Built-in bridge: forward lifecycle events to runtimeBus (SSE) ────────────
 
 import { runtimeBus } from './runtime-bus.js';
+import { sessionLiveBus } from './session-live-bus.js';
 
 sessionHooks.register({
   id: 'runtime-bus-bridge',
@@ -89,6 +90,7 @@ sessionHooks.register({
         break;
       case 'session:deleted':
         runtimeBus.emit({ type: 'session_deleted', sessionId: event.sessionId });
+        sessionLiveBus.cleanup(event.sessionId);
         break;
       case 'step:after':
         runtimeBus.emit({ type: 'session_step_completed', sessionId: event.sessionId, runId: event.runId, stepIndex: event.stepIndex });

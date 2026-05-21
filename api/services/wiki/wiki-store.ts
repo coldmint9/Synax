@@ -379,6 +379,17 @@ export const wikiStore = {
 
   // ── Source Bindings ───────────────────────────────────────────────────────
 
+  async appendBindingIds(blockId: string, newIds: string[]): Promise<void> {
+    const db = getDb();
+    const block = await this.getBlock(blockId);
+    if (!block) return;
+    const merged = [...new Set([...block.sourceBindingIds, ...newIds])];
+    await db
+      .update(wikiBlocks)
+      .set({ sourceBindingIdsJson: JSON.stringify(merged), updatedAt: new Date().toISOString() })
+      .where(eq(wikiBlocks.id, blockId));
+  },
+
   async getBindingsByBlock(blockId: string): Promise<WikiSourceBinding[]> {
     const db = getDb();
     const rows = await db

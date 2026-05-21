@@ -1,5 +1,7 @@
 import { Hono } from 'hono'
 import * as z from 'zod/v4'
+import { existsSync } from 'node:fs'
+import { execFile, execSync } from 'node:child_process'
 import {
   deleteProjectConfig,
   getEffectiveConfigForDisplay,
@@ -254,6 +256,62 @@ configRoutes.get('/projects/:projectId/config/effective', (c) => {
     return c.json({ error: message }, 500)
   }
 })
+
+// ── Open file in system default editor ──────────────────────────────────────
+
+configRoutes.post('/open-file', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body || typeof body.filePath !== 'string' || !body.filePath) {
+    return c.json({ error: 'Missing filePath' }, 400)
+  }
+
+  const { filePath, line } = body as { filePath: string; line?: number }
+  if (!existsSync(filePath)) {
+    return c.json({ error: 'File not found' }, 404)
+  }
+
+  const cmd = buildOpenFileCommand(filePath, line ?? undefined)
+
+  return new Promise((resolve) => {
+    execFile(cmd.bin, cmd.args, (err) => {
+      if (err) {
+        logger.error({ err: err.message, filePath, line }, '[config] open-file failed')
+        resolve(c.json({ error: err.message }, 500))
+      } else {
+        resolve(c.json({ ok: true }))
+      }
+    })
+  })
+})
+
+function buildOpenFileCommand(filePath: string, line?: number): { bin: string; args: string[] } {
+  const platform = process.platform
+
+  function which(bin: string): string | null {
+    try {
+      return execSync(`which ${bin}`, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' }).trim()
+    } catch { return null }
+  }
+
+  const editorBins = ['code', 'cursor', 'windsurf'] as const
+  for (const bin of editorBins) {
+    const path = which(bin)
+    if (path) {
+      return line
+        ? { bin: path, args: ['--goto', `${filePath}:${line}`] }
+        : { bin: path, args: [filePath] }
+    }
+  }
+
+  const sublPath = which('subl')
+  if (sublPath) {
+    return { bin: sublPath, args: [line ? `${filePath}:${line}` : filePath] }
+  }
+
+  if (platform === 'darwin') return { bin: '/usr/bin/open', args: [filePath] }
+  if (platform === 'win32') return { bin: 'cmd', args: ['/c', 'start', '', filePath] }
+  return { bin: 'xdg-open', args: [filePath] }
+}
 
 function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
   const parsed = globalConfigPatchSchema.safeParse(body)

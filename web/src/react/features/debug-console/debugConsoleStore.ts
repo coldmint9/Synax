@@ -10,6 +10,7 @@ import {
   type TodoItem,
   type ToolCallRecord,
 } from '../../../lib/api/agentRuntime'
+import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
 
 export interface DebugConsoleState {
   sessions: AgentSession[]
@@ -24,6 +25,12 @@ export interface DebugConsoleState {
   sessionStats: SessionStats | null
   sessionTodos: TodoItem[]
 
+  // 流式进行中状态
+  streamingStepId: string | null
+  streamingText: string
+  streamingThinking: string
+  streamingToolCalls: ToolCallRecord[]
+
   refreshSessions: () => Promise<void>
   deleteSession: (sessionId: string) => Promise<string[]>
   openPanel: (sessionId: string) => void
@@ -34,6 +41,7 @@ export interface DebugConsoleState {
   resumeSession: (sessionId: string, message?: string) => Promise<void>
   fetchSessionStats: () => Promise<void>
   fetchSessionTodos: () => Promise<void>
+  applyLiveEvent: (event: SessionLiveEvent) => void
 }
 
 export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
@@ -48,6 +56,10 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   childSessions: {},
   sessionStats: null,
   sessionTodos: [],
+  streamingStepId: null,
+  streamingText: '',
+  streamingThinking: '',
+  streamingToolCalls: [],
 
   refreshSessions: async () => {
     try {
@@ -90,7 +102,16 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
         agentRuntimeApi.listMessages(selectedSessionId),
         agentRuntimeApi.listToolCalls(selectedSessionId),
       ])
-      set({ runs: runsRes.items, events: eventsRes.items, messages: messagesRes.items, toolCalls: toolCallsRes.items })
+      set({
+        runs: runsRes.items,
+        events: eventsRes.items,
+        messages: messagesRes.items,
+        toolCalls: toolCallsRes.items,
+        streamingStepId: null,
+        streamingText: '',
+        streamingThinking: '',
+        streamingToolCalls: [],
+      })
       const activeRun = runsRes.items.find(r => r.status === 'running') ?? runsRes.items[runsRes.items.length - 1]
       if (activeRun) {
         const stepsRes = await agentRuntimeApi.listRunSteps(selectedSessionId, activeRun.id)
@@ -162,5 +183,29 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
       const { items } = await agentRuntimeApi.getSessionTodos(selectedSessionId)
       set({ sessionTodos: items })
     } catch { /* silent */ }
+  },
+
+  applyLiveEvent: (event) => {
+    switch (event.type) {
+      case 'step_started':
+        set({ streamingStepId: event.stepId, streamingText: '', streamingThinking: '', streamingToolCalls: [] })
+        break
+      case 'message_delta':
+        set(s => ({ streamingText: s.streamingText + event.delta }))
+        break
+      case 'thought_delta':
+        set(s => ({ streamingThinking: s.streamingThinking + event.delta }))
+        break
+      case 'tool_call':
+        set(s => ({ streamingToolCalls: [...s.streamingToolCalls, event.toolCall] }))
+        break
+      case 'tool_result':
+        set(s => ({
+          streamingToolCalls: s.streamingToolCalls.map(tc =>
+            tc.id === event.toolCall.id ? event.toolCall : tc,
+          ),
+        }))
+        break
+    }
   },
 }))

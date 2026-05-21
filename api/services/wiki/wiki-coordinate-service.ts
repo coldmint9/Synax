@@ -12,6 +12,7 @@ import { getDb } from '../../db/index.js';
 import { wikiSourceBindings, wikiSourceBlockIndex } from '../../db/schema.js';
 import type { CodeIndex, SourceLink, FileEntry, SymbolEntry, ChunkEntry } from '../contracts/forest.js';
 import type { WikiSourceBinding, WikiSourcePrecision, WikiSourceType } from './contracts.js';
+import { wikiStore } from './wiki-store.js';
 
 export interface CoordinateResolution {
   resolved: boolean;
@@ -213,6 +214,18 @@ export const wikiCoordinateService = {
     }
 
     await this.rebuildSourceBlockIndex(projectId, repoIndexId, created);
+
+    // Back-fill block.sourceBindingIds so the frontend can also use the direct lookup path
+    const byBlock = new Map<string, string[]>();
+    for (const b of created) {
+      const arr = byBlock.get(b.wikiBlockId) ?? [];
+      arr.push(b.id);
+      byBlock.set(b.wikiBlockId, arr);
+    }
+    for (const [blockId, ids] of byBlock) {
+      await wikiStore.appendBindingIds(blockId, ids);
+    }
+
     return created;
   },
 
