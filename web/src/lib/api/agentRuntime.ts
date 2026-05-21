@@ -1,0 +1,320 @@
+const BASE = '/api/agent-runtime'
+
+export type AgentProfileKind = 'planner' | 'executor' | 'reviewer' | 'explorer'
+export type AgentMode = 'primary' | 'subagent'
+export type ThinkingMode = 'fast' | 'standard' | 'deep'
+export type AgentSessionStatus =
+  | 'queued'
+  | 'running'
+  | 'waiting_permission'
+  | 'blocked'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type AgentRunStatus =
+  | 'running'
+  | 'waiting_permission'
+  | 'blocked'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface AgentProfile {
+  id: string
+  label: string
+  kind: AgentProfileKind
+  mode: AgentMode
+  description: string
+  defaultThinkingMode: ThinkingMode
+  allowedCapabilities: string[]
+  defaultSkills: string[]
+  maxSteps: number
+  status: 'active' | 'disabled'
+  allowsSubsessions?: boolean
+}
+
+export interface AgentSession {
+  id: string
+  projectId: string
+  parentSessionId: string | null
+  childSessionIds: string[]
+  nodeId: string | null
+  profileId: string
+  status: AgentSessionStatus
+  prompt: string
+  contextSnapshotId: string | null
+  thinkingMode: ThinkingMode
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+  resultSummary: string | null
+  blockedReason: string | null
+  skillIds: string[]
+  activeRunId: string | null
+  pendingResumeToken: string | null
+  model: string | null
+}
+
+export interface AgentRun {
+  id: string
+  sessionId: string
+  status: AgentRunStatus
+  startedAt: string
+  completedAt: string | null
+  triggerMessageId: string | null
+  currentStep: number
+  stopReason: string | null
+  model: string | null
+  metadata: Record<string, unknown>
+}
+
+export interface AgentRunStep {
+  id: string
+  runId: string
+  sessionId: string
+  index: number
+  status: AgentRunStatus
+  model: string | null
+  startedAt: string
+  completedAt: string | null
+  finishReason: string | null
+  metadata: Record<string, unknown>
+}
+
+export type ToolCallStatus = 'pending' | 'running' | 'completed' | 'failed' | 'denied' | 'cancelled' | 'compacted'
+
+export interface ToolCallRecord {
+  id: string
+  sessionId: string
+  runId: string | null
+  stepId: string | null
+  toolId: string
+  category: string
+  mutability: 'read' | 'write' | 'task'
+  inputSummary: string
+  outputSummary: string | null
+  status: ToolCallStatus
+  startedAt: string
+  endedAt: string | null
+  error: string | null
+}
+
+export interface RuntimeEvent {
+  id: string
+  sessionId: string
+  type: string
+  timestamp: string
+  visibility: 'user_visible' | 'internal'
+  summary: string
+  payload: Record<string, unknown>
+}
+
+export interface AgentRuntimeMessage {
+  id: string
+  sessionId: string
+  runId: string | null
+  stepId: string | null
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
+export interface AgentSkillSummary {
+  id: string
+  label: string
+  description: string
+  source: 'system' | 'project' | 'plugin' | 'user'
+  version: string
+  appliesTo: AgentProfileKind[]
+  requiredCapabilities: string[]
+  permissionHints: string[]
+  contentRef: string
+  status: 'available' | 'unavailable' | 'invalid' | 'disabled'
+}
+
+export interface AgentContextBundle {
+  id: string
+  projectId: string
+  sessionId: string | null
+  nodeId: string | null
+  profileId: string | null
+  blocks: Array<{ id: string; kind: string; title: string; content: string }>
+  citations: Array<Record<string, unknown>>
+  warnings: string[]
+  createdAt: string
+}
+
+export interface PermissionDecision {
+  id: string
+  sessionId: string
+  runId: string | null
+  stepId: string | null
+  toolCallId: string | null
+  coarseCategory: 'read' | 'write' | 'external_execution' | 'high_risk'
+  internalGate: string
+  action: 'allow' | 'ask' | 'deny'
+  reason: string
+  patterns: string[]
+  userReply: 'once' | 'always' | 'reject' | null
+  createdAt: string
+  resolvedAt: string | null
+  resumeToken: string | null
+  metadata: Record<string, unknown>
+}
+
+export interface EvidenceArtifact {
+  id: string
+  sessionId: string
+  kind: string
+  title: string
+  summary: string
+  sourceRefs: Array<{ type: string; id?: string; path?: string }>
+  risk: 'low' | 'medium' | 'high' | 'unknown'
+  createdAt: string
+}
+
+export interface CreateSessionRequest {
+  projectId: string
+  nodeId?: string | null
+  profileId: string
+  parentSessionId?: string | null
+  prompt: string
+  thinkingMode?: ThinkingMode
+  skillIds?: string[]
+}
+
+export interface SessionPayload {
+  session: AgentSession
+  profile: AgentProfile
+  context: AgentContextBundle | null
+  candidateSkills: AgentSkillSummary[]
+}
+
+export interface DeleteSessionResult {
+  ok: true
+  deletedSessionIds: string[]
+}
+
+export interface StreamTurnRequest {
+  message?: string
+  model?: string
+  purpose?: string
+  temperature?: number
+  maxTokens?: number
+  maxSteps?: number
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const resp = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    let message = text
+    try {
+      message = (JSON.parse(text) as { error?: string }).error ?? text
+    } catch {
+      /* keep raw body */
+    }
+    throw new Error(message || `Agent runtime API error ${resp.status}`)
+  }
+  return resp.json() as Promise<T>
+}
+
+export const agentRuntimeApi = {
+  listProfiles: () => request<{ items: AgentProfile[] }>('/profiles'),
+  listSkills: (profileId?: string) =>
+    request<{ items: AgentSkillSummary[] }>(`/skills${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`),
+  buildContext: (projectId: string, body: { nodeId?: string | null; profileId?: string; include?: string[] }) =>
+    request<AgentContextBundle>(`/contexts/${encodeURIComponent(projectId)}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  createSession: (body: CreateSessionRequest) =>
+    request<SessionPayload>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  listSessions: (query: { projectId?: string; nodeId?: string; status?: AgentSessionStatus } = {}) => {
+    const qs = new URLSearchParams()
+    Object.entries(query).forEach(([key, value]) => {
+      if (value) qs.set(key, value)
+    })
+    return request<{ items: AgentSession[] }>(`/sessions${qs.size ? `?${qs.toString()}` : ''}`)
+  },
+  getSession: (sessionId: string) => request<SessionPayload>(`/sessions/${encodeURIComponent(sessionId)}`),
+  cancelSession: (sessionId: string) =>
+    request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: 'POST' }),
+  deleteSession: (sessionId: string) =>
+    request<DeleteSessionResult>(`/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
+  listMessages: (sessionId: string) =>
+    request<{ items: AgentRuntimeMessage[] }>(`/sessions/${encodeURIComponent(sessionId)}/messages`),
+  listRuns: (sessionId: string) =>
+    request<{ items: AgentRun[] }>(`/sessions/${encodeURIComponent(sessionId)}/runs`),
+  getRun: (sessionId: string, runId: string) =>
+    request<AgentRun>(`/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}`),
+  listRunSteps: (sessionId: string, runId: string) =>
+    request<{ items: AgentRunStep[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/steps`,
+    ),
+  listEvents: (sessionId: string, after?: string) =>
+    request<{ items: RuntimeEvent[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/events${after ? `?after=${encodeURIComponent(after)}` : ''}`,
+    ),
+  listPermissions: (sessionId: string) =>
+    request<{ items: PermissionDecision[] }>(`/sessions/${encodeURIComponent(sessionId)}/permissions`),
+  replyPermission: (sessionId: string, permissionId: string, reply: 'once' | 'always' | 'reject', message?: string) =>
+    request<PermissionDecision>(
+      `/sessions/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}/reply`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reply, message }),
+      },
+    ),
+  listArtifacts: (sessionId: string) =>
+    request<{ items: EvidenceArtifact[] }>(`/sessions/${encodeURIComponent(sessionId)}/artifacts`),
+  listToolCalls: (sessionId: string) =>
+    request<{ items: ToolCallRecord[] }>(`/sessions/${encodeURIComponent(sessionId)}/tool-calls`),
+  streamTurn: async (
+    sessionId: string,
+    body: StreamTurnRequest,
+    onChunk: (chunk: unknown) => void,
+  ): Promise<void> => {
+    const response = await fetch(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/turns/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok || !response.body) {
+      throw new Error(`Agent runtime turn stream error ${response.status}`)
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        const dataLine = frame
+          .split('\n')
+          .find((line) => line.startsWith('data: '))
+        if (dataLine) {
+          const raw = dataLine.slice(6)
+          if (raw === '[DONE]') return
+          try {
+            onChunk(JSON.parse(raw) as unknown)
+          } catch {
+            onChunk(raw)
+          }
+        }
+        boundary = buffer.indexOf('\n\n')
+      }
+    }
+  },
+}
