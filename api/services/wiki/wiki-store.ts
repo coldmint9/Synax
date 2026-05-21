@@ -102,6 +102,9 @@ function rowToBinding(r: typeof wikiSourceBindings.$inferSelect): WikiSourceBind
     lastVerifiedHash: r.lastVerifiedHash ?? null,
     precision: r.precision as WikiSourceBinding['precision'],
     confidence: r.confidence,
+    filePath: r.filePath ?? null,
+    startLine: r.startLine ?? null,
+    endLine: r.endLine ?? null,
     createdBy: r.createdBy as WikiSourceBinding['createdBy'],
     createdAt: r.createdAt,
   };
