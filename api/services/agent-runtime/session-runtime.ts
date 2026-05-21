@@ -6,6 +6,7 @@ import { profileService, type ProfileService } from './profile-service.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
+import { sessionHooks } from './session-hooks.js';
 
 export class AgentSessionRuntime {
   constructor(
@@ -65,7 +66,9 @@ export class AgentSessionRuntime {
         payload: { childSessionId: saved.id, profileId: profile.id, inheritedPermission: true },
       });
     }
-    return this.store.getSession(saved.id);
+    const created = this.store.getSession(saved.id);
+    void sessionHooks.emit({ type: 'session:created', session: created });
+    return created;
   }
 
   get(sessionId: string): AgentSession {
@@ -139,6 +142,7 @@ export class AgentSessionRuntime {
   }
 
   delete(sessionId: string): string[] {
+    void sessionHooks.emit({ type: 'session:deleted', sessionId });
     return this.store.deleteSessionTree(sessionId);
   }
 }

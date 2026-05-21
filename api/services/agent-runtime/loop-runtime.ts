@@ -43,6 +43,7 @@ import {
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
 import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
 import { buildTodoDriftReminder } from "./tools/todo-manage.js";
+import { sessionHooks } from "./session-hooks.js";
 import { logger } from "../../lib/logger.js";
 
 const LOG_TEXT_LIMIT = 2000;
@@ -245,6 +246,7 @@ export class AgentLoopRuntime {
         "[agent-runtime] run started",
       );
       yield { type: "run_started", run, event: startedEvent };
+      void sessionHooks.emit({ type: 'run:started', sessionId, runId: run.id });
     }
 
     try {
@@ -365,6 +367,7 @@ export class AgentLoopRuntime {
           : [];
 
         let modelResult: LoopStepModelResult | null = null;
+        void sessionHooks.emit({ type: 'step:before', sessionId, runId: run.id, stepIndex: step.index });
         for await (const event of this.generateStep({
           sessionId,
           prompt: currentPrompt,
@@ -449,8 +452,7 @@ export class AgentLoopRuntime {
           },
           "[agent-runtime] model step completed",
         );
-
-        // Fire-and-forget title generation after first step
+        void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
         if (step.index === 1) {
           const currentSession = this.store.getSession(sessionId);
           if (!currentSession.title) {
@@ -936,6 +938,12 @@ export class AgentLoopRuntime {
       };
       yield { type: "done", sessionId, runId: failedRun.id };
     } finally {
+      if (run) {
+        try {
+          const finalRun = this.store.getRun(run.id);
+          void sessionHooks.emit({ type: 'run:completed', sessionId, runId: run.id, status: finalRun.status });
+        } catch { /* run may not exist if creation failed */ }
+      }
       activeExecution.dispose();
     }
   }

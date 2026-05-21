@@ -8,6 +8,7 @@ import { AgentNotFoundError, AgentPermissionError, AgentValidationError } from '
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { agentSessionRuntime } from './session-runtime.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
+import { sessionHooks } from './session-hooks.js';
 import { logger } from '../../lib/logger.js';
 import { skillRegistry } from './skill-registry.js';
 import { ESCALATION_TOOL } from './tool-disclosure.js';
@@ -349,6 +350,8 @@ export class ToolRegistry {
         args,
         pattern: tool.getPattern?.(args) ?? tool.patterns?.[0] ?? tool.id,
       };
+      const hookCtx: ToolHookContext = { sessionId, runId: running.runId, stepId: running.stepId, toolCallId: running.id, toolId: running.toolId, args, result: null! };
+      void sessionHooks.emit({ type: 'tool:before', ctx: hookCtx });
       const result = await tool.execute(input);
       const outputSummary = result.displaySummary.slice(0, SUMMARY_LIMIT);
       const status = result.displaySummary.length > SUMMARY_LIMIT ? 'compacted' : 'completed';
@@ -381,6 +384,7 @@ export class ToolRegistry {
         args,
         result,
       });
+      void sessionHooks.emit({ type: 'tool:after', ctx: { sessionId, runId: running.runId, stepId: running.stepId, toolCallId: running.id, toolId: running.toolId, args, result } });
 
       this.events.append({
         sessionId,
