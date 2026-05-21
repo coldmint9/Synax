@@ -62,7 +62,8 @@ export class ToolRegistry {
     this.register({
       id: 'task.run',
       label: 'Run Subtask',
-      description: 'Create a bounded child agent session that runs to completion before returning. Supports recursive delegation with depth and concurrency limits.',
+      description:
+        'Delegate a focused subtask to a child agent with a clean context. Use this when a task would produce large intermediate noise (reading many files, searching, exploring) but the final useful result is just a short summary. The child runs in isolation — its intermediate steps do NOT enter your context, only the final summary returns. Do NOT delegate if: the task is simple (1-2 tool calls), you need the intermediate details for subsequent reasoning, or the task cannot be described in one focused prompt.',
       category: 'task',
       internalGate: 'task',
       mutability: 'task',
