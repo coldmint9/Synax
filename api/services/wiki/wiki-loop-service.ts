@@ -29,6 +29,7 @@ import type { GenerateWikiInput, GenerateWikiResult, WikiGitState } from './wiki
 import type { RegisteredTool } from '../agent-runtime/contracts.js';
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { buildWikiPrompt, extractProjectMeta } from './wiki-prompt-builder.js';
 
 function readGitState(workDir: string): WikiGitState {
   const run = (cmd: string) => {
@@ -47,123 +48,6 @@ function readGitState(workDir: string): WikiGitState {
     .digest('hex')
     .slice(0, 16);
   return { branch, headCommitSha, workingTreeHash, dirty };
-}
-
-const WIKI_PLANNER_PROMPT = `你是一位资深软件架构师。你的唯一任务是：分析代码库结构，输出一份层级化的文档目录树（outline）。
-
-你不需要写任何文档内容，只需要规划文档结构。
-
-## 工作流程
-
-### Step 1：探索（3-6 步）
-1. wiki.read_tree — 项目目录结构
-2. wiki.read_modules — 顶层模块、语言、核心符号
-3. wiki.read_code_index(kind: 'files') — 文件列表，关注 symbolCount 和 importCount 高的文件
-4. wiki.read_code_index(kind: 'symbols') — 核心符号，关注 degree 高的
-5. wiki.read_graph(section: 'communities') — 功能聚类
-6. file.read 读取 2-3 个核心入口文件（如 index.ts、main.ts、app.ts）
-
-### Step 2：提交目录树（1 步）
-调用 wiki.submit_outline，提交层级化文档计划。
-
-## 目录树结构要求
-
-遵循「概要设计 → 详细设计」的标准软件设计文档格式：
-
-Level 0（根级 — 全局视角）：
-- directory_tree: 项目目录结构与模块职责
-- overview: 项目概述
-- architecture: 系统架构
-
-Level 1（模块级 — 每个核心子系统）：
-- module_spec: 每个核心模块的详细规格
-- data_model: 核心数据模型（可选，数据密集模块）
-- api: API 端点规格（可选，有对外接口的模块）
-
-Level 2（子模块/流程级 — 深入细节）：
-- module_spec: 子模块规格
-- flow: 关键业务流程
-- decision: 重要架构决策记录
-
-约束：
-- 总文档数 >= 8（目标 12-20）
-- 最大嵌套深度 3 层
-- 必须包含：1+ directory_tree、1+ overview、1+ architecture、3+ module_spec
-- 每个条目必须指定 targetFiles（真实存在的文件路径）和 keyQuestions（具体、可回答的问题）
-- sortOrder 决定同级文档的显示顺序
-- title 必须简洁，禁止使用括号补充说明（错误示例："系统架构（分层、模块关系、数据流）"，正确示例："系统架构"）
-
-## 规则
-1. 每一步都必须包含至少一个工具调用
-2. targetFiles 必须是你在 wiki.read_code_index 中看到的真实文件路径
-3. keyQuestions 必须具体（如"AgentLoopRuntime.streamRun 的状态机有哪些转换？"），不要泛泛而谈
-4. 目录树应覆盖项目所有核心模块，不要遗漏重要子系统`;
-
-const WIKI_WRITER_PROMPT_TEMPLATE = `你是一位资深技术文档工程师。你已经收到一份文档目录树（outline），你的任务是为每个文档生成详细的技术规格内容。
-
-## 文档目录树
-
-{OUTLINE_JSON}
-
-## 工作策略
-
-1. **根级文档**（directory_tree、overview、architecture）— 自己直接生成，需要全局视角
-2. **模块级文档**（module_spec 等）— 使用 task.run 委派子 agent 探索后，自己格式化并提交
-
-task.run 行为：
-- 子 agent 完成前，你会阻塞等待，不会继续下一步
-- 子 agent 可以递归调用 task.run 探索更深层子模块（最大深度 3 层）
-- 最多同时运行 5 个子任务
-- 使用 profileId: "wiki-explorer" 来委派探索任务
-
-### 使用 task.run 委派探索：
-\`\`\`
-task.run({
-  prompt: "分析以下文件并提供结构化技术摘要：\\n文件：{targetFiles}\\n问题：{keyQuestions}\\n\\n请用 file.read 读取每个文件，提取：1.模块概述 2.公开接口签名 3.核心数据模型 4.业务流程 5.依赖关系 6.所有引用的qualifiedName列表",
-  profileId: "explorer"
-})
-\`\`\`
-
-收到子 agent 返回的摘要后，格式化为 blocks 并调用 wiki.commit_document。
-
-## 执行顺序（拓扑序）
-必须按父 → 子的顺序提交。parentPlanId 指向 outline 中的 id。
-
-## Block 类型规范
-- heading: "# 标题" 格式
-- paragraph: 至少 200 字，包含具体技术细节
-- list: 每项有解释
-- table: markdown 表格（字段|类型|说明|约束）
-- code_ref: 关键函数签名或代码片段
-- diagram: mermaid 图表（提交前必须用 wiki.check_mermaid 验证）
-- decision: 决策记录
-- risk: 风险记录
-
-## module_spec 文档必须包含（至少 6 个 block）：
-1. heading: "# {模块名} — {一句话职责}"
-2. paragraph: 概述（200+ 字，职责边界、设计目标）
-3. code_ref: 公开接口签名
-4. table: 数据模型字段表
-5. diagram: 业务流程图（mermaid flowchart）
-6. list: 依赖关系
-
-## sourceHints 溯源规范（极其重要）
-每个非 heading block 必须有 sourceHints，优先使用 qualifiedName（如 ClassName.methodName），其次文件路径。
-
-## 规则
-1. 每一步必须包含工具调用
-2. 按拓扑序提交：父文档先于子文档
-3. diagram block 提交前必须用 wiki.check_mermaid 验证
-4. 不要编造不存在的 API 或类型
-5. mermaid 节点标签中不要使用裸括号 ()，用引号包裹`;
-
-function buildWriterPrompt(outline: WikiOutlineEntry[], locale: string): string {
-  const outlineJson = JSON.stringify(outline, null, 2);
-  let prompt = WIKI_WRITER_PROMPT_TEMPLATE.replace('{OUTLINE_JSON}', outlineJson);
-  if (locale !== 'zh') {
-    prompt += '\n\nIMPORTANT: Write all document content in English.';
-  }
-  return prompt;
 }
 
 export const wikiLoopService = {
@@ -196,6 +80,7 @@ export const wikiLoopService = {
 
       logger.info({ projectId, workDir }, 'wiki-loop: running code map scan');
       const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
+      const projectMeta = extractProjectMeta(scan);
 
       // ═══ Phase 1: Outline Generation ═══
       const plannerHandle = createPlannerTools(scan);
@@ -204,10 +89,11 @@ export const wikiLoopService = {
         registeredToolIds.push(tool.id);
       }
 
+      const plannerPrompt = buildWikiPrompt({ role: 'planner', projectMeta, locale });
       const plannerSession = agentSessionRuntime.create({
         projectId,
         profileId: 'wiki-planner',
-        prompt: locale === 'zh' ? WIKI_PLANNER_PROMPT : `${WIKI_PLANNER_PROMPT}\n\nIMPORTANT: Write all document content in English.`,
+        prompt: plannerPrompt,
       });
       agentRuntimeStore.updateSession(plannerSession.id, { title: 'Wiki 初始化', updatedAt: nowIso() });
       sessionIds.push(plannerSession.id);
@@ -295,7 +181,7 @@ export const wikiLoopService = {
         },
       });
 
-      const writerPrompt = buildWriterPrompt(outline, locale);
+      const writerPrompt = buildWikiPrompt({ role: 'writer', projectMeta, locale, outline });
       const writerSession = agentSessionRuntime.create({
         projectId,
         profileId: 'wiki-writer',
@@ -337,7 +223,7 @@ export const wikiLoopService = {
     }
   },
 
-  async continueGeneration(input: { snapshotId: string; workDir: string; locale?: string }): Promise<GenerateWikiResult> {
+  async continueGeneration(input: { snapshotId: string; workDir: string; locale?: 'zh' | 'en' }): Promise<GenerateWikiResult> {
     const { snapshotId, locale = 'zh' } = input;
     const workDir = resolveWorkspaceRoot(input.workDir);
 
@@ -401,7 +287,16 @@ export const wikiLoopService = {
         },
       });
 
-      const writerPrompt = buildWriterPrompt(outline, locale);
+      const writerPrompt = buildWikiPrompt({
+        role: 'writer',
+        projectMeta: extractProjectMeta(scan),
+        locale,
+        outline,
+        continuation: {
+          completedTitles: documents.filter(d => d.blockIds.length > 0).map(d => d.title),
+          remainingCount: unfilled.length,
+        },
+      });
       const writerSession = agentSessionRuntime.create({
         projectId: snapshot.projectId,
         profileId: 'wiki-writer',
