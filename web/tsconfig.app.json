@@ -11,6 +11,7 @@
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "react-jsx",
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
     "strict": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
@@ -18,5 +19,5 @@
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src"]
+  "include": ["src/main.tsx", "src/react/**/*.ts", "src/react/**/*.tsx"]
 }

@@ -1,0 +1,85 @@
+# Dependencies
+node_modules
+/web/node_modules
+
+# Build output
+server-dist
+dist-electron
+/web/dist
+out/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
+lerna-debug.log*
+
+# Yarn
+.pnp.cjs
+yarn.lock
+
+# Bun
+bun.lockb
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Python (prototype phase)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# analyzer runtime data (per-project whoosh / meta / graph / cloned repos)
+/.data/
+/analyzer/.data/
+/analyzer/.env
+
+# Test
+coverage/
+tmp/
+
+# Misc
+.qoder
+graphify-out/
+.cursor
+.graphify_python
+.claude
+docs/
+.sisyphus/
+.vscode/
+.agents/
+.specify/
+specs/
+web/.vercel/
+vendor/
+out/
+.sidecar-staging/
+CLAUDE.md

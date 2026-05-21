@@ -1,0 +1,38 @@
+.wiki-prose [data-streamdown="code-block"] {
+  margin: 0.5rem 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  gap: 0.25rem;
+}
+
+.wiki-prose [data-streamdown="code-block-body"] {
+  border: none;
+  border-radius: 0.5rem;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 0.75rem 1rem;
+  font-size: 12px;
+}
+
+.wiki-prose [data-streamdown="code-block-header"] {
+  height: 1.25rem;
+  font-size: 10px;
+  opacity: 0.5;
+}
+
+.wiki-prose [data-streamdown="code-block-actions"] {
+  border: none;
+  background: transparent;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.wiki-prose:hover [data-streamdown="code-block-actions"] {
+  opacity: 0.6;
+}
+
+.wiki-prose [data-streamdown="code-block-actions"] button {
+  padding: 2px;
+}

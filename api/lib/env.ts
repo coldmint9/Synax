@@ -1,0 +1,43 @@
+import 'dotenv/config';
+import os from 'node:os';
+import path from 'node:path';
+
+/** 读取环境变量，支持默认值 */
+export function env(key: string, fallback?: string): string {
+  return process.env[key] ?? fallback ?? '';
+}
+
+/** 服务监听端口 */
+export const PORT = Number(env('PORT', '3210'));
+
+/** 运行环境 */
+export const NODE_ENV = env('NODE_ENV', 'development');
+
+/** 日志级别 */
+export const LOG_LEVEL = env('LOG_LEVEL', 'info');
+
+function defaultDataRoot(): string {
+  if (NODE_ENV === 'test' || process.env.VITEST_WORKER_ID || process.env.VITEST) {
+    return path.join(os.tmpdir(), `synapse-vitest-${process.env.VITEST_WORKER_ID ?? 'worker'}-${process.pid}`);
+  }
+  return '.data';
+}
+
+/** 数据根目录（与 analyzer .data 共用）用于项目元数据等持久化 */
+export const DATA_ROOT = env('DATA_ROOT', defaultDataRoot());
+
+/** 是否为开发环境 */
+export const isDev = NODE_ENV === 'development';
+
+/** 上下文会话 TTL（小时），SessionManager 用于判定过期 */
+export const CONTEXT_SESSION_TTL_HOURS = Number(env('CONTEXT_SESSION_TTL_HOURS', '72'));
+
+/** 单会话 token 预警阈值（到达则发出 session_token_warning） */
+export const CONTEXT_TOKEN_WARNING_THRESHOLD = Number(
+  env('CONTEXT_TOKEN_WARNING_THRESHOLD', '32000'),
+);
+
+/** 单项目记忆条目上限（超限进行 LRU 淘汰） */
+export const CONTEXT_MEMORY_MAX_PER_PROJECT = Number(
+  env('CONTEXT_MEMORY_MAX_PER_PROJECT', '500'),
+);

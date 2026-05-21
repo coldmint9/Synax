@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synapse Workbench Layout Preview v2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#f2f0ec;--fg:#1a2a24;--card:#faf8f5;--border:#e2ddd4;
+  --primary:#2d8a6e;--primary-light:rgba(45,138,110,0.12);
+  --secondary:#f0ebe3;--muted:#a89e8f;--muted-fg:#6b5f4f;
+  --island-radius:14px;--island-gap:8px;--ab-w:52px;--sp-w:280px;
+  --shadow:0 2px 8px rgba(0,0,0,0.04),0 8px 24px rgba(0,0,0,0.06);
+  --shadow-sm:0 1px 4px rgba(0,0,0,0.03),0 4px 12px rgba(0,0,0,0.04);
+}
+.dark{
+  --bg:#141210;--fg:#ede8df;--card:#1e1b18;--border:#332e29;
+  --primary:#4ecba0;--primary-light:rgba(78,203,160,0.14);
+  --secondary:#2a2622;--muted:#5a5248;--muted-fg:#9a9080;
+  --shadow:0 2px 8px rgba(0,0,0,0.2),0 8px 24px rgba(0,0,0,0.2);
+  --shadow-sm:0 1px 4px rgba(0,0,0,0.15),0 4px 12px rgba(0,0,0,0.12);
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Inter','SF Pro Display',sans-serif;background:var(--bg);color:var(--fg);height:100vh;overflow:hidden;transition:background .3s,color .3s}
+.shell{display:flex;height:100vh;padding:var(--island-gap);gap:var(--island-gap)}
+
+/* Activity Bar - Island */
+.activity-bar{
+  width:var(--ab-w);display:flex;flex-direction:column;align-items:center;
+  padding:10px 0;gap:4px;flex-shrink:0;
+  background:var(--card);border:1px solid var(--border);
+  border-radius:var(--island-radius);box-shadow:var(--shadow-sm);
+  transition:background .3s,border-color .3s;
+}
+.ab-top{display:flex;flex-direction:column;align-items:center;gap:4px}
+.ab-bottom{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:4px;padding-bottom:4px}
+.ab-item{position:relative;width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all 150ms;color:var(--muted-fg);border:none;background:transparent}
+.ab-item:hover{background:var(--secondary);color:var(--fg)}
+.ab-item.active{background:var(--primary-light);color:var(--primary)}
+.ab-item.active::before{content:'';position:absolute;left:-4px;top:50%;transform:translateY(-50%);width:3px;height:18px;border-radius:0 3px 3px 0;background:var(--primary)}
+.ab-item svg{width:20px;height:20px}
+.ab-sep{width:22px;height:1px;background:var(--border);margin:6px 0}
+
+/* Side Panel - Island */
+.side-panel{
+  width:0;overflow:hidden;flex-shrink:0;
+  background:var(--card);border:1px solid transparent;
+  border-radius:var(--island-radius);box-shadow:var(--shadow-sm);
+  display:flex;flex-direction:column;
+  transition:width 240ms cubic-bezier(0.16,1,0.3,1),border-color 240ms,opacity 200ms;
+  opacity:0;
+}
+.side-panel.open{width:var(--sp-w);border-color:var(--border);opacity:1}
+.side-panel.right{order:3}
+.sp-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 10px;border-bottom:1px solid var(--border);min-width:var(--sp-w)}
+.sp-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted-fg)}
+.sp-actions{display:flex;gap:2px}
+.sp-btn{width:24px;height:24px;border-radius:6px;border:none;background:transparent;color:var(--muted-fg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;transition:all 120ms}
+.sp-btn:hover{background:var(--secondary);color:var(--fg)}
+.sp-content{padding:14px;min-width:var(--sp-w);overflow-y:auto;flex:1;font-size:13px}
+
+/* Main Content - Island */
+.main-area{flex:1;min-width:0;display:flex;order:2}
+.island{
+  flex:1;border-radius:var(--island-radius);border:1px solid var(--border);
+  background:var(--card);box-shadow:var(--shadow);
+  overflow:hidden;display:flex;flex-direction:column;
+  transition:border-color .3s,background .3s,box-shadow .3s;
+}
+.island-header{
+  padding:10px 18px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;font-size:12px;font-weight:500;
+  background:var(--card);
+}
+.header-project{display:flex;align-items:center;gap:6px}
+.header-project svg{width:14px;height:14px;color:var(--primary)}
+.header-dot{width:4px;height:4px;border-radius:50%;background:var(--border);margin:0 4px}
+.header-branch{font-family:'SF Mono',monospace;font-size:10px;color:var(--muted-fg);background:var(--secondary);padding:2px 7px;border-radius:6px}
+.header-meta{margin-left:auto;font-size:11px;color:var(--muted-fg);display:flex;align-items:center;gap:8px}
+.island-body{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted-fg);font-size:14px;background:var(--bg);transition:background .3s}
+
+/* Panel content items */
+.panel-section{margin-bottom:16px}
+.panel-section-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:8px}
+.panel-item{padding:7px 10px;border-radius:8px;font-size:12px;color:var(--muted-fg);cursor:pointer;transition:all 120ms;display:flex;align-items:center;gap:8px}
+.panel-item:hover{background:var(--secondary);color:var(--fg)}
+.panel-item.active{background:var(--primary-light);color:var(--primary)}
+.panel-item svg{width:14px;height:14px;opacity:0.7}
+.panel-badge{font-size:9px;background:var(--primary-light);color:var(--primary);padding:1px 5px;border-radius:5px;margin-left:auto;font-weight:600}
+
+/* Position toggle */
+.pos-toggle{font-size:10px;color:var(--muted-fg);padding:6px 10px;border-radius:8px;background:var(--secondary);cursor:pointer;text-align:center;margin-top:auto;transition:all 120ms}
+.pos-toggle:hover{color:var(--fg)}
+
+.theme-label{font-size:9px;color:var(--muted);margin-top:2px;text-align:center}
+</style>
+</head>
+<body>
+<div class="shell" id="app">
+  <!-- Activity Bar - Island -->
+  <div class="activity-bar">
+    <div class="ab-top">
+      <button class="ab-item active" data-panel="coordinates" title="Coordinates">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><line x1="12" y1="9" x2="6" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
+      </button>
+      <button class="ab-item" data-panel="wiki" title="Wiki">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      </button>
+      <div class="ab-sep"></div>
+      <button class="ab-item" data-panel="sessions" title="Session 管理">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      </button>
+      <button class="ab-item" data-panel="search" title="搜索">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
+    </div>
+    <div class="ab-bottom">
+      <button class="ab-item" data-panel="settings" title="设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <button class="ab-item" id="theme-toggle" title="切换主题">
+        <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg id="icon-moon" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Side Panel - Island (position toggleable) -->
+  <div class="side-panel open" id="side-panel">
+    <div class="sp-header">
+      <span class="sp-title" id="sp-title">Coordinates</span>
+      <div class="sp-actions">
+        <button class="sp-btn" id="sp-flip" title="切换面板位置 (左/右)">⇄</button>
+        <button class="sp-btn" id="sp-close" title="关闭面板">✕</button>
+      </div>
+    </div>
+    <div class="sp-content" id="sp-content"></div>
+  </div>
+
+  <!-- Main Content - Island -->
+  <div class="main-area">
+    <div class="island">
+      <div class="island-header">
+        <div class="header-project">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><line x1="12" y1="9" x2="6" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
+          <span style="font-weight:600">synapse</span>
+        </div>
+        <div class="header-dot"></div>
+        <span class="header-branch">⎇ main</span>
+        <div class="header-dot"></div>
+        <span style="font-size:11px;color:var(--muted-fg)">Coordinates</span>
+        <div class="header-meta">
+          <span>12 nodes</span>
+          <span style="color:var(--primary)">● healthy</span>
+        </div>
+      </div>
+      <div class="island-body">
+        <div style="text-align:center;opacity:0.5">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" style="opacity:0.4;margin-bottom:12px"><circle cx="12" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><line x1="12" y1="9" x2="6" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
+          <div style="font-size:13px;color:var(--fg);opacity:0.7">ReactFlow Canvas</div>
+          <div style="font-size:11px;margin-top:4px">主内容区域 — Island 容器</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const panel = document.getElementById('side-panel');
+const spTitle = document.getElementById('sp-title');
+const spContent = document.getElementById('sp-content');
+const items = document.querySelectorAll('.ab-item[data-panel]');
+let activePanel = 'coordinates';
+let panelOpen = true;
+let panelRight = false;
+
+const panelData = {
+  explorer: { title: '资源管理器', content: `
+    <div class="panel-section"><div class="panel-section-title">工作区</div>
+      <div class="panel-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>api/</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>web/</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>scripts/</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>package.json</div>
+    </div>` },
+  coordinates: { title: 'Coordinates', content: `
+    <div class="panel-section"><div class="panel-section-title">节点视图</div>
+      <div class="panel-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>全部节点<span class="panel-badge">12</span></div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>收敛信号<span class="panel-badge">3</span></div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>健康度</div>
+    </div>
+    <div class="panel-section"><div class="panel-section-title">操作</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>重新分析</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>导出报告</div>
+    </div>` },
+  wiki: { title: 'Wiki', content: `
+    <div class="panel-section"><div class="panel-section-title">文档</div>
+      <div class="panel-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>架构概览</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>API 设计</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>部署指南</div>
+    </div>
+    <div class="panel-section"><div class="panel-section-title">最近编辑</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>架构概览 · 2h ago</div>
+    </div>` },
+  sessions: { title: 'Sessions', content: `
+    <div class="panel-section"><div class="panel-section-title">ACP Sessions</div>
+      <div class="panel-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span style="flex:1">claude-opus · wiki-gen</span><span style="width:6px;height:6px;border-radius:50%;background:#4ecba0"></span></div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span style="flex:1">claude-sonnet · review</span><span style="width:6px;height:6px;border-radius:50%;background:var(--muted)"></span></div>
+    </div>
+    <div class="panel-section"><div class="panel-section-title">内建 Agent Sessions</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.4"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/></svg><span style="flex:1">Coordinator</span><span class="panel-badge">running</span></div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.4"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/></svg><span style="flex:1">Analyzer</span><span class="panel-badge">idle</span></div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.4"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/></svg><span style="flex:1">Wiki Writer</span><span class="panel-badge">idle</span></div>
+    </div>` },
+    <div class="panel-section">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted-fg);margin-bottom:12px">搜索节点、文档...</div>
+      <div class="panel-section-title">最近搜索</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>wiki-agent-service</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>loop-model-stream</div>
+    </div>` },
+  settings: { title: '设置', content: `
+    <div class="panel-section"><div class="panel-section-title">项目配置</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>通用设置</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/></svg>Agent 配置</div>
+      <div class="panel-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>API Keys</div>
+    </div>` }
+};
+
+function renderPanel(key) {
+  const data = panelData[key];
+  if (!data) return;
+  spTitle.textContent = data.title;
+  spContent.innerHTML = data.content;
+}
+
+items.forEach(item => {
+  item.addEventListener('click', () => {
+    const p = item.dataset.panel;
+    if (p === activePanel && panelOpen) {
+      panelOpen = false;
+      panel.classList.remove('open');
+    } else {
+      activePanel = p;
+      panelOpen = true;
+      panel.classList.add('open');
+      renderPanel(p);
+      items.forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+    }
+  });
+});
+
+document.getElementById('sp-close').addEventListener('click', () => {
+  panelOpen = false;
+  panel.classList.remove('open');
+});
+
+document.getElementById('sp-flip').addEventListener('click', () => {
+  panelRight = !panelRight;
+  panel.classList.toggle('right', panelRight);
+});
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  document.documentElement.classList.toggle('dark');
+  const isDark = document.documentElement.classList.contains('dark');
+  document.getElementById('icon-sun').style.display = isDark ? 'none' : 'block';
+  document.getElementById('icon-moon').style.display = isDark ? 'block' : 'none';
+});
+
+renderPanel('coordinates');
+</script>
+</body>
+</html>

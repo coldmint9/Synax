@@ -1,0 +1,10 @@
+-- ---------------------------------------------------------------------------
+-- 0005_wiki_agent.sql
+--
+-- Deprecated no-op migration.
+--
+-- The legacy wiki_agent_* storage model has been removed from runtime schema
+-- because the Codebase Design Wiki will use dedicated structured wiki tables.
+-- This file is intentionally kept so migration numbering remains stable for
+-- environments that have already observed migration 0005.
+-- ---------------------------------------------------------------------------
