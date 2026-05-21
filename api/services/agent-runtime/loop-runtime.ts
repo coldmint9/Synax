@@ -659,7 +659,7 @@ export class AgentLoopRuntime {
             break;
           }
           const completedRecord =
-            call.toolId === "task.run" && toolExecution.toolResult?.result
+            call.toolId === "subagent.delegate" && toolExecution.toolResult?.result
               ? await this.awaitTaskResult(
                   toolExecution.record,
                   toolExecution.toolResult.result,
@@ -1410,7 +1410,7 @@ export class AgentLoopRuntime {
     this.events.append({
       sessionId: record.sessionId,
       type: "tool_result",
-      summary: `task.run: ${outputSummary}`,
+      summary: `subagent.delegate: ${outputSummary}`,
       payload: {
         runId: record.runId,
         stepId: record.stepId,

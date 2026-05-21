@@ -55,7 +55,7 @@ export const wikiWriterProfile: AgentProfile = {
     'wiki.read_tree',
     'wiki.commit_document',
     'wiki.check_mermaid',
-    'task.run',
+    'subagent.delegate',
     'tools.escalate',
   ],
   permissionDefaults: [
@@ -70,8 +70,8 @@ export const wikiWriterProfile: AgentProfile = {
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   loopHints: [
     'Generate root-level documents (directory_tree, overview, architecture) yourself — they need global context.',
-    'For module_spec documents, use task.run(profileId: "wiki-explorer") to spawn sub-agents for exploration, then format and commit.',
-    'task.run is recursive: sub-agents can further delegate via task.run to explore sub-modules (max depth 3).',
+    'For module_spec documents, use subagent.delegate(profileId: "wiki-explorer") to spawn sub-agents for exploration, then format and commit.',
+    'subagent.delegate is recursive: sub-agents can further delegate via subagent.delegate to explore sub-modules (max depth 3).',
     'Parent blocks until all sub-agents complete. Max 5 concurrent sub-agents.',
     'Always commit documents in topological order: parents before children.',
     'sourceHints should use qualifiedName (e.g. ClassName.methodName) for precise symbol-level tracing.',
@@ -94,7 +94,7 @@ export const wikiExplorerProfile: AgentProfile = {
     'wiki.read_graph',
     'wiki.read_modules',
     'wiki.read_tree',
-    'task.run',
+    'subagent.delegate',
     'tools.escalate',
   ],
   permissionDefaults: [

@@ -170,7 +170,7 @@ export const wikiLoopService = {
       hookIds.push(taskRunHookId);
       toolRegistry.registerHook({
         id: taskRunHookId,
-        toolId: 'task.run',
+        toolId: 'subagent.delegate',
         async afterExecute(ctx) {
           const result = ctx.result.result as { taskId?: string; session?: { id?: string } };
           const childId = result?.taskId ?? result?.session?.id;
