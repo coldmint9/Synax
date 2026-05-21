@@ -125,6 +125,9 @@ export interface WikiSourceBinding {
   lastVerifiedHash: string | null;
   precision: WikiSourcePrecision;
   confidence: number;
+  filePath: string | null;
+  startLine: number | null;
+  endLine: number | null;
   createdBy: 'agent' | 'analyzer' | 'human';
   createdAt: string;
 }

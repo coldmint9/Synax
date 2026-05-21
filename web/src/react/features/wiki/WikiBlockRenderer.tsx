@@ -1,10 +1,10 @@
-import { AlertTriangle, Code2, FileText, Link2, Lock, Loader2, Pencil, Maximize2, X } from 'lucide-react'
+import { AlertTriangle, Code2, FileText, Lock, Loader2, Pencil, Maximize2, X } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 import { Streamdown } from 'streamdown'
 import { streamdownPlugins } from '../../../lib/streamdown-plugins'
 import { useWikiStore } from '../../state/wikiStore'
 import WikiBlockEditor from './WikiBlockEditor'
-import type { WikiBlock, WikiDocument } from '../../../lib/contracts/wiki'
+import type { WikiBlock, WikiDocument, WikiSourceBinding } from '../../../lib/contracts/wiki'
 import './wiki-prose.css'
 
 // ── Stale badge ──────────────────────────────────────────────────────────────
@@ -272,6 +272,48 @@ function BlockContent({ block }: { block: WikiBlock }) {
   }
 }
 
+// ── Inline source file links ────────────────────────────────────────────────
+
+function InlineSourceLinks({ block }: { block: WikiBlock }) {
+  const bindingsById = useWikiStore(s => s.bindingsById)
+  const bindings = block.sourceBindingIds
+    .map(id => bindingsById[id])
+    .filter((b): b is WikiSourceBinding => Boolean(b) && Boolean(b.filePath))
+
+  const seen = new Map<string, WikiSourceBinding>()
+  for (const b of bindings) {
+    const existing = seen.get(b.filePath!)
+    if (!existing || (b.startLine && !existing.startLine)) {
+      seen.set(b.filePath!, b)
+    }
+  }
+  const uniqueBindings = [...seen.values()]
+
+  if (uniqueBindings.length === 0) return null
+
+  return (
+    <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <FileText size={10} className="text-muted-foreground/50 shrink-0" />
+      {uniqueBindings.map(b => {
+        const uri = b.startLine
+          ? `vscode://file/${b.filePath}:${b.startLine}`
+          : `vscode://file/${b.filePath}`
+        const displayName = b.filePath!.split('/').slice(-2).join('/')
+        return (
+          <a
+            key={b.id}
+            href={uri}
+            className="font-mono text-[11px] text-primary/70 hover:text-primary hover:underline"
+            title={b.filePath!}
+          >
+            {displayName}
+          </a>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── Block wrapper ────────────────────────────────────────────────────────────
 
 function WikiBlockItem({ block }: { block: WikiBlock }) {
@@ -307,14 +349,9 @@ function WikiBlockItem({ block }: { block: WikiBlock }) {
         <BlockContent block={block} />
       )}
 
-      {/* Source binding indicator */}
+      {/* Inline source file links */}
       {hasBindings && !editing && (
-        <div className="mt-2.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <Link2 size={10} className="text-muted-foreground/50" />
-          <span className="text-[10px] text-muted-foreground/50">
-            {block.sourceBindingIds.length} source{block.sourceBindingIds.length > 1 ? 's' : ''}
-          </span>
-        </div>
+        <InlineSourceLinks block={block} />
       )}
     </div>
   )

@@ -1,9 +1,11 @@
 import { useContextStore } from '../state/contextStore'
 import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
+import { useDebugPolling } from '../features/debug-console/useDebugPolling'
 import { SessionTranscript } from '../features/sessions/SessionTranscript'
 import { SessionWorkspace, useHasWorkspaceContent } from '../features/sessions/SessionWorkspace'
 
 export default function SessionsPage() {
+  useDebugPolling()
   const currentSessionId = useContextStore(s => s.currentSessionId)
   const agentSessionId = useDebugConsole(s => s.selectedSessionId)
   const agentPanelOpen = useDebugConsole(s => s.panelOpen)

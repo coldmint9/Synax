@@ -7,6 +7,8 @@ const RECONNECT_MAX_MS = 30_000
 export function useRuntimeSSE() {
   const refreshSessions = useDebugConsole(s => s.refreshSessions)
   const refreshDetail = useDebugConsole(s => s.refreshDetail)
+  const fetchSessionStats = useDebugConsole(s => s.fetchSessionStats)
+  const fetchSessionTodos = useDebugConsole(s => s.fetchSessionTodos)
   const retriesRef = useRef(0)
 
   useEffect(() => {
@@ -29,6 +31,15 @@ export function useRuntimeSSE() {
         const selected = useDebugConsole.getState().selectedSessionId
         if (sessionId === selected) {
           void refreshDetail()
+        }
+      })
+
+      es.addEventListener('session_step_completed', (e) => {
+        const { sessionId } = JSON.parse(e.data)
+        const selected = useDebugConsole.getState().selectedSessionId
+        if (sessionId === selected) {
+          void fetchSessionStats()
+          void fetchSessionTodos()
         }
       })
 
@@ -58,5 +69,5 @@ export function useRuntimeSSE() {
       es?.close()
       if (reconnectTimer) clearTimeout(reconnectTimer)
     }
-  }, [refreshSessions, refreshDetail])
+  }, [refreshSessions, refreshDetail, fetchSessionStats, fetchSessionTodos])
 }

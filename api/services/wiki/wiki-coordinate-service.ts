@@ -144,6 +144,9 @@ function rowToBinding(r: typeof wikiSourceBindings.$inferSelect): WikiSourceBind
     lastVerifiedHash: r.lastVerifiedHash ?? null,
     precision: r.precision as WikiSourcePrecision,
     confidence: r.confidence,
+    filePath: r.filePath ?? null,
+    startLine: r.startLine ?? null,
+    endLine: r.endLine ?? null,
     createdBy: r.createdBy as WikiSourceBinding['createdBy'],
     createdAt: r.createdAt,
   };
@@ -200,6 +203,9 @@ export const wikiCoordinateService = {
           lastVerifiedHash: locator.hash,
           precision,
           confidence: link.confidence,
+          filePath: locator.filePath ?? null,
+          startLine: locator.startLine ?? null,
+          endLine: locator.endLine ?? null,
           createdBy: 'analyzer',
           createdAt: now,
         });

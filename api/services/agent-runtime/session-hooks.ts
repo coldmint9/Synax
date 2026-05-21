@@ -78,7 +78,7 @@ import { runtimeBus } from './runtime-bus.js';
 
 sessionHooks.register({
   id: 'runtime-bus-bridge',
-  filter: { eventTypes: ['session:created', 'session:status_changed', 'session:deleted'] },
+  filter: { eventTypes: ['session:created', 'session:status_changed', 'session:deleted', 'step:after'] },
   handler: (event) => {
     switch (event.type) {
       case 'session:created':
@@ -89,6 +89,9 @@ sessionHooks.register({
         break;
       case 'session:deleted':
         runtimeBus.emit({ type: 'session_deleted', sessionId: event.sessionId });
+        break;
+      case 'step:after':
+        runtimeBus.emit({ type: 'session_step_completed', sessionId: event.sessionId, runId: event.runId, stepIndex: event.stepIndex });
         break;
     }
   },
