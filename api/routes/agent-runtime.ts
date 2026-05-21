@@ -21,6 +21,7 @@ import {
   toHttpError,
 } from '../services/agent-runtime/index.js';
 import { runtimeBus } from '../services/agent-runtime/runtime-bus.js';
+import { sessionLiveBus } from '../services/agent-runtime/session-live-bus.js';
 import { logger } from '../lib/logger.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 
@@ -488,6 +489,47 @@ agentRuntimeRoutes.get('/events/stream', (c) => {
     };
 
     const unsubscribe = runtimeBus.subscribe(onEvent);
+
+    await stream.writeSSE({ event: 'connected', data: '{}' });
+
+    const heartbeat = setInterval(() => {
+      if (closed) return;
+      stream.writeSSE({ event: 'ping', data: String(Date.now()) })
+        .catch(() => { closed = true; });
+    }, 25_000);
+
+    c.req.raw.signal.addEventListener('abort', () => {
+      closed = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+
+    await new Promise<void>((resolve) => {
+      c.req.raw.signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
+});
+
+agentRuntimeRoutes.get('/sessions/:sessionId/live', (c) => {
+  const sessionId = c.req.param('sessionId');
+  try {
+    agentSessionRuntime.get(sessionId);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+  return streamSSE(c, async (stream) => {
+    let closed = false;
+
+    const onEvent = (event: { type: string; stepId: string }) => {
+      if (closed) return;
+      stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+        .catch(() => { closed = true; });
+    };
+
+    const unsubscribe = sessionLiveBus.subscribe(sessionId, onEvent);
 
     await stream.writeSSE({ event: 'connected', data: '{}' });
 

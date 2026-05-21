@@ -15,6 +15,7 @@ import { logRoutes } from "./routes/logs.js";
 import { getDb } from "./db/index.js";
 import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
 import { wikiStore } from "./services/wiki/wiki-store.js";
+import { ensureWikiProfileRegistered } from "./services/wiki/wiki-loop-profile.js";
 
 export const app = new Hono();
 
@@ -49,6 +50,9 @@ try {
 } catch (err) {
   pinoLogger.error({ err }, "failed to initialize context db");
 }
+
+// --- 提前注册 wiki profiles，确保服务重启后能恢复 wiki session ---
+ensureWikiProfileRegistered();
 
 // --- 启动时恢复孤儿 running session ---
 try {

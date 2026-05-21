@@ -1,6 +1,7 @@
 import { useContextStore } from '../state/contextStore'
 import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
 import { useDebugPolling } from '../features/debug-console/useDebugPolling'
+import { useSessionLiveStream } from '../features/debug-console/useSessionLiveStream'
 import { SessionTranscript } from '../features/sessions/SessionTranscript'
 import { SessionWorkspace, useHasWorkspaceContent } from '../features/sessions/SessionWorkspace'
 
@@ -9,6 +10,8 @@ export default function SessionsPage() {
   const currentSessionId = useContextStore(s => s.currentSessionId)
   const agentSessionId = useDebugConsole(s => s.selectedSessionId)
   const agentPanelOpen = useDebugConsole(s => s.panelOpen)
+
+  useSessionLiveStream(agentPanelOpen ? agentSessionId : null)
 
   const mode: 'context' | 'agent' | null =
     agentPanelOpen && agentSessionId ? 'agent'

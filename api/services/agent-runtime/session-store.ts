@@ -1002,15 +1002,16 @@ export class AgentRuntimeStore {
     const session = this.getSession(sessionId);
     const db = getRawSqlite();
 
-    const usageRows = db
-      .prepare("SELECT usage_json FROM agent_runtime_messages WHERE session_id = ? AND role = 'assistant'")
-      .all(sessionId) as Array<{ usage_json: string }>;
+    const stepRows = db
+      .prepare("SELECT metadata_json FROM agent_runtime_run_steps WHERE session_id = ?")
+      .all(sessionId) as Array<{ metadata_json: string }>;
 
     let input = 0;
     let output = 0;
-    for (const row of usageRows) {
+    for (const row of stepRows) {
       try {
-        const u = JSON.parse(row.usage_json || '{}');
+        const meta = JSON.parse(row.metadata_json || '{}');
+        const u = meta.usage ?? {};
         input += (u.promptTokens ?? u.input_tokens ?? 0);
         output += (u.completionTokens ?? u.output_tokens ?? 0);
       } catch { /* skip */ }

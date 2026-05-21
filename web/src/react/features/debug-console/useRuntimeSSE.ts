@@ -38,8 +38,7 @@ export function useRuntimeSSE() {
         const { sessionId } = JSON.parse(e.data)
         const selected = useDebugConsole.getState().selectedSessionId
         if (sessionId === selected) {
-          void fetchSessionStats()
-          void fetchSessionTodos()
+          void refreshDetail()
         }
       })
 

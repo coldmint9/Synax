@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Streamdown } from 'streamdown'
 import { streamdownPlugins } from '../../../lib/streamdown-plugins'
 import { useWikiStore } from '../../state/wikiStore'
+import { useShellStore } from '../../state/shellStore'
 import WikiBlockEditor from './WikiBlockEditor'
 import type { WikiBlock, WikiDocument, WikiSourceBinding } from '../../../lib/contracts/wiki'
 import './wiki-prose.css'
@@ -276,9 +277,13 @@ function BlockContent({ block }: { block: WikiBlock }) {
 
 function InlineSourceLinks({ block }: { block: WikiBlock }) {
   const bindingsById = useWikiStore(s => s.bindingsById)
-  const bindings = block.sourceBindingIds
-    .map(id => bindingsById[id])
-    .filter((b): b is WikiSourceBinding => Boolean(b) && Boolean(b.filePath))
+  const projects = useShellStore(s => s.projects)
+  const editor = useShellStore(s => s.preferences.editor)
+  const project = projects.find(p => p.id === block.projectId)
+  const workDir = project?.source?.localPath ?? ''
+
+  const bindings = Object.values(bindingsById)
+    .filter((b): b is WikiSourceBinding => b.wikiBlockId === block.id && Boolean(b.filePath))
 
   const seen = new Map<string, WikiSourceBinding>()
   for (const b of bindings) {
@@ -291,23 +296,56 @@ function InlineSourceLinks({ block }: { block: WikiBlock }) {
 
   if (uniqueBindings.length === 0) return null
 
+  function buildUri(filePath: string, line?: number | null): string | null {
+    const absPath = workDir ? `${workDir}/${filePath}` : filePath
+    switch (editor) {
+      case 'vscode': return line ? `vscode://file/${absPath}:${line}` : `vscode://file/${absPath}`
+      case 'cursor': return line ? `cursor://file/${absPath}:${line}` : `cursor://file/${absPath}`
+      case 'windsurf': return line ? `windsurf://file/${absPath}:${line}` : `windsurf://file/${absPath}`
+      case 'webstorm': return line ? `jetbrains://webstorm/open?file=${absPath}&line=${line}` : `jetbrains://webstorm/open?file=${absPath}`
+      default: return null
+    }
+  }
+
+  async function handleSystemOpen(filePath: string, line?: number | null) {
+    const absPath = workDir ? `${workDir}/${filePath}` : filePath
+    await fetch('/api/config/open-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath: absPath, line: line ?? undefined }),
+    })
+  }
+
   return (
     <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
       <FileText size={10} className="text-muted-foreground/50 shrink-0" />
       {uniqueBindings.map(b => {
-        const uri = b.startLine
-          ? `vscode://file/${b.filePath}:${b.startLine}`
-          : `vscode://file/${b.filePath}`
         const displayName = b.filePath!.split('/').slice(-2).join('/')
+        const uri = buildUri(b.filePath!, b.startLine)
+
+        if (uri) {
+          return (
+            <a
+              key={b.id}
+              href={uri}
+              className="font-mono text-[11px] text-primary/70 hover:text-primary hover:underline"
+              title={b.filePath!}
+            >
+              {displayName}
+            </a>
+          )
+        }
+
         return (
-          <a
+          <button
             key={b.id}
-            href={uri}
+            type="button"
+            onClick={() => handleSystemOpen(b.filePath!, b.startLine)}
             className="font-mono text-[11px] text-primary/70 hover:text-primary hover:underline"
             title={b.filePath!}
           >
             {displayName}
-          </a>
+          </button>
         )
       })}
     </div>
@@ -317,11 +355,13 @@ function InlineSourceLinks({ block }: { block: WikiBlock }) {
 // ── Block wrapper ────────────────────────────────────────────────────────────
 
 function WikiBlockItem({ block }: { block: WikiBlock }) {
+  const bindingsById = useWikiStore(s => s.bindingsById)
   const hasBindings = block.sourceBindingIds.length > 0
+    || Object.values(bindingsById).some(b => b.wikiBlockId === block.id)
   const [editing, setEditing] = useState(false)
 
   return (
-    <div className="group relative rounded-xl border border-border/30 bg-card/40 p-4 transition-colors hover:border-border/60 hover:bg-card/60">
+    <div className="group relative rounded-xl border border-border/30 bg-card/40 p-4 transition-colors hover:border-border/60 hover:bg-card/60" id={`wiki-block-${block.id}`}>
       {/* Status badges */}
       {(block.staleState !== 'fresh' || block.manualState !== 'none') && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">

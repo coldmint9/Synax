@@ -44,6 +44,7 @@ import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from 
 import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
 import { buildTodoDriftReminder } from "./tools/todo-manage.js";
 import { sessionHooks } from "./session-hooks.js";
+import { sessionLiveBus } from "./session-live-bus.js";
 import { logger } from "../../lib/logger.js";
 
 const LOG_TEXT_LIMIT = 2000;
@@ -126,11 +127,23 @@ export class AgentLoopRuntime {
     if (hasNewMessage) {
       yield* this.streamRun(sessionId, input, abortSignal, false);
     } else {
-      const continuationPrompt = session.status === 'paused'
-        ? 'Session was paused by user. Continue from where you left off.'
-        : session.status === 'failed'
-          ? 'Session previously failed. Review the error and previous context, then retry the task from where it left off.'
-          : 'Session was interrupted. Continue from where you left off. Review previous tool calls and messages to understand current progress.';
+      if (session.status === 'interrupted') {
+        const runs = this.store.listRuns(sessionId);
+        const lastRun = runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+        if (lastRun?.status === 'completed') {
+          this.store.updateSession(sessionId, {
+            status: 'completed',
+            updatedAt: nowIso(),
+            completedAt: nowIso(),
+            resultSummary: lastRun.stopReason ?? 'Run completed before interruption.',
+            blockedReason: null,
+            activeRunId: null,
+          });
+          yield { type: 'done', sessionId, runId: lastRun.id };
+          return;
+        }
+      }
+      const continuationPrompt = this.buildContinuationPrompt(sessionId, session.status);
       yield* this.streamRun(sessionId, { ...input, message: continuationPrompt }, abortSignal, false);
     }
   }
@@ -349,6 +362,7 @@ export class AgentLoopRuntime {
           "[agent-runtime] step started",
         );
         yield { type: "step_started", step, event: stepStarted };
+        sessionLiveBus.emit(sessionId, { type: 'step_started', stepId: step.id, stepIndex: step.index });
 
         const history = this.store
           .listMessages(sessionId)
@@ -400,6 +414,7 @@ export class AgentLoopRuntime {
               delta: event.delta,
               event: evt,
             };
+            sessionLiveBus.emit(sessionId, { type: 'thought_delta', stepId: step.id, delta: event.delta });
           }
           if (event.type === "text_delta") {
             const evt = this.events.append({
@@ -416,6 +431,7 @@ export class AgentLoopRuntime {
               delta: event.delta,
               event: evt,
             };
+            sessionLiveBus.emit(sessionId, { type: 'message_delta', stepId: step.id, delta: event.delta });
           }
           if (event.type === "step_complete") {
             modelResult = { model: event.model, step: event.step };
@@ -452,7 +468,6 @@ export class AgentLoopRuntime {
           },
           "[agent-runtime] model step completed",
         );
-        void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
         if (step.index === 1) {
           const currentSession = this.store.getSession(sessionId);
           if (!currentSession.title) {
@@ -487,7 +502,9 @@ export class AgentLoopRuntime {
             completedAt: nowIso(),
             finishReason:
               modelResult.step.finishReason ?? "permission_rejected",
+            metadata: { usage: modelResult.step.usage },
           });
+          void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
           const blockedRun = this.store.updateRun(run.id, {
             status: "blocked",
             completedAt: nowIso(),
@@ -552,7 +569,9 @@ export class AgentLoopRuntime {
               modelResult.step.finishReason ??
               modelResult.step.stopReason ??
               "stop",
+            metadata: { usage: modelResult.step.usage },
           });
+          void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
           const completedRun = this.store.updateRun(run.id, {
             status: "completed",
             completedAt: nowIso(),
@@ -594,6 +613,18 @@ export class AgentLoopRuntime {
           permission: NonNullable<typeof pendingPermission>;
           record: ToolCallRecord;
         };
+        // 中间步骤有 text 时也创建 assistant message，确保前端能渲染
+        if (modelResult.step.message?.trim()) {
+          this.finishAssistantMessage(
+            sessionId,
+            run.id,
+            step.id,
+            modelResult.step.message.trim(),
+            modelResult.model,
+            input.purpose ?? profile.kind,
+            modelResult.step.usage,
+          );
+        }
         for (const call of withIds(modelResult.step.toolCalls)) {
           const toolExecution = await this.tools.execute(
             sessionId,
@@ -630,6 +661,7 @@ export class AgentLoopRuntime {
               },
             }),
           };
+          sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: toolExecution.record });
           logger.info(
             {
               sessionId,
@@ -709,6 +741,7 @@ export class AgentLoopRuntime {
             stepId: step.id,
             toolCall: completedRecord,
           };
+          sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
           if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
             disclosureState = promoteDisclosure(disclosureState);
           }
@@ -725,7 +758,9 @@ export class AgentLoopRuntime {
             ? "permission_required"
             : (modelResult.step.finishReason ?? "tool_calls"),
           model: modelResult.model,
+          metadata: { usage: modelResult.step.usage },
         });
+        void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
 
         if (waitingPermission) {
           const resumedRun = this.store.updateRun(run.id, {
@@ -1436,6 +1471,44 @@ export class AgentLoopRuntime {
     } catch {
       return null;
     }
+  }
+
+  private buildContinuationPrompt(sessionId: string, status: string): string {
+    if (status === 'paused') {
+      return 'Session was paused by user. Continue from where you left off.';
+    }
+    if (status === 'failed') {
+      return 'Session previously failed. Review the error and previous context, then retry the task from where it left off.';
+    }
+
+    const runs = this.store.listRuns(sessionId);
+    const lastRun = runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    if (!lastRun) {
+      return 'Session was interrupted. Continue working on the original task using tools.';
+    }
+
+    const incompleteTools = this.store
+      .listRunToolCalls(lastRun.id)
+      .filter(tc => tc.status === 'running' || tc.status === 'pending');
+
+    const parts: string[] = [
+      'Session was interrupted (server restarted). You MUST continue the original task — do NOT just summarize what happened.',
+    ];
+
+    if (incompleteTools.length > 0) {
+      const toolList = incompleteTools
+        .map(tc => `- ${tc.toolId}(${tc.inputSummary?.slice(0, 80) ?? ''})`)
+        .join('\n');
+      parts.push(
+        `The following tool calls were interrupted and did not complete:\n${toolList}\nRetry these operations as needed to continue the task.`,
+      );
+    } else {
+      parts.push(
+        'Review your previous tool calls and results. If the task is not fully complete, continue using tools. Only produce a final summary if ALL objectives from the original prompt have been achieved.',
+      );
+    }
+
+    return parts.join('\n\n');
   }
 
   private beginSessionExecution(

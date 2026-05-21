@@ -29,6 +29,10 @@ export function SessionTranscript({ mode }: Props) {
   })
   const pauseSession = useDebugConsole((s) => s.pauseSession)
   const resumeSession = useDebugConsole((s) => s.resumeSession)
+  const streamingStepId = useDebugConsole((s) => s.streamingStepId)
+  const streamingText = useDebugConsole((s) => s.streamingText)
+  const streamingThinking = useDebugConsole((s) => s.streamingThinking)
+  const streamingToolCalls = useDebugConsole((s) => s.streamingToolCalls)
 
   const orderedEntries = useMemo(
     () => [...entries].sort((a, b) => a.sequence - b.sequence),
@@ -39,7 +43,7 @@ export function SessionTranscript({ mode }: Props) {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [orderedEntries.length, steps.length])
+  }, [orderedEntries.length, steps.length, streamingText, streamingToolCalls.length])
 
   if (mode === 'agent') {
     return (
@@ -52,6 +56,10 @@ export function SessionTranscript({ mode }: Props) {
           childSessions={childSessions}
           onPause={pauseSession}
           onResume={(id) => resumeSession(id)}
+          streamingStepId={streamingStepId}
+          streamingText={streamingText}
+          streamingThinking={streamingThinking}
+          streamingToolCalls={streamingToolCalls}
         />
       </div>
     )

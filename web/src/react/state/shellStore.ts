@@ -28,6 +28,7 @@ export interface ShellPreferences {
   defaultHome: 'global-home' | 'last-project'
   notifications: boolean
   locale: 'zh' | 'en'
+  editor: 'system' | 'vscode' | 'cursor' | 'windsurf' | 'webstorm'
 }
 
 export interface ProjectSearchFilter {
@@ -54,6 +55,7 @@ interface ShellState {
   setLocale: (locale: ShellPreferences['locale']) => void
   setDefaultHome: (defaultHome: ShellPreferences['defaultHome']) => void
   setNotifications: (notifications: boolean) => void
+  setEditor: (editor: ShellPreferences['editor']) => void
   addProject: (project: ProjectSummary) => void
   setProjects: (projects: ProjectSummary[]) => void
   removeProject: (projectId: string) => void
@@ -73,6 +75,7 @@ export const useShellStore = create<ShellState>((set) => ({
     defaultHome: 'global-home',
     notifications: true,
     locale: 'zh',
+    editor: 'system',
   },
   currentProjectId: null,
   currentUser: {
@@ -103,6 +106,10 @@ export const useShellStore = create<ShellState>((set) => ({
   },
   setNotifications: (notifications) => {
     set((state) => ({ preferences: { ...state.preferences, notifications } }))
+    localStorage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences))
+  },
+  setEditor: (editor) => {
+    set((state) => ({ preferences: { ...state.preferences, editor } }))
     localStorage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences))
   },
   addProject: (project) => {
