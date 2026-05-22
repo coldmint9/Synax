@@ -9,6 +9,7 @@ function DocItem({
   onSelect,
   depth,
   isEmpty,
+  issueCount,
   children,
 }: {
   doc: WikiDocument
@@ -16,6 +17,7 @@ function DocItem({
   onSelect: () => void
   depth: number
   isEmpty?: boolean
+  issueCount?: number
   children?: React.ReactNode
 }) {
   const [expanded, setExpanded] = useState(true)
@@ -48,6 +50,11 @@ function DocItem({
           <FileText size={11} className="shrink-0 opacity-60" />
         )}
         <span className="min-w-0 flex-1 leading-snug break-words">{doc.title}</span>
+        {(issueCount ?? 0) > 0 && (
+          <span className="shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400/80 px-1 text-[9px] font-bold text-white">
+            {issueCount}
+          </span>
+        )}
       </button>
       {hasChildren && expanded && (
         <div>{children}</div>
@@ -62,12 +69,14 @@ function DocTree({
   selectedDocumentId,
   onSelect,
   depth,
+  issuesByDocId,
 }: {
   docs: WikiDocument[]
   allDocs: WikiDocument[]
   selectedDocumentId: string | null
   onSelect: (id: string) => void
   depth: number
+  issuesByDocId?: Map<string, number>
 }) {
   return (
     <>
@@ -92,6 +101,7 @@ function DocTree({
             onSelect={() => onSelect(effectiveDocId)}
             depth={depth}
             isEmpty={isCategoryShell && !sameNameChild}
+            issueCount={issuesByDocId?.get(effectiveDocId) ?? 0}
           >
             {visibleChildren.length > 0 ? (
               <DocTree
@@ -100,6 +110,7 @@ function DocTree({
                 selectedDocumentId={selectedDocumentId}
                 onSelect={onSelect}
                 depth={depth + 1}
+                issuesByDocId={issuesByDocId}
               />
             ) : undefined}
           </DocItem>
@@ -115,8 +126,24 @@ export default function WikiDocumentTree() {
   const selectDocument = useWikiStore(s => s.selectDocument)
   const snapshot = useWikiStore(s => s.snapshot)
   const patchesSummary = useWikiStore(s => s.patchesSummary)
+  const evaluations = useWikiStore(s => s.evaluations)
 
   const roots = documents.filter(d => !d.parentId).sort((a, b) => a.sortOrder - b.sortOrder)
+
+  // Compute issue counts per document
+  const issuesByDocId = new Map<string, number>()
+  if (evaluations.length > 0) {
+    const blockToDoc = new Map<string, string>()
+    for (const doc of documents) {
+      for (const blockId of doc.blockIds) {
+        blockToDoc.set(blockId, doc.id)
+      }
+    }
+    for (const ev of evaluations) {
+      const docId = blockToDoc.get(ev.blockId)
+      if (docId) issuesByDocId.set(docId, (issuesByDocId.get(docId) ?? 0) + 1)
+    }
+  }
 
   return (
     <div className="flex h-full flex-col gap-1 px-2 py-3">
@@ -153,6 +180,7 @@ export default function WikiDocumentTree() {
           selectedDocumentId={selectedDocumentId}
           onSelect={id => selectDocument(id)}
           depth={0}
+          issuesByDocId={issuesByDocId}
         />
       </div>
 

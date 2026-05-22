@@ -355,3 +355,95 @@ wikiRoutes.get('/projects/:projectId/patches', async (c) => {
   const patches = await wikiStore.getPatchesByProject(projectId, status);
   return c.json({ patches });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Evaluations & Plans
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import * as evalService from '../services/wiki/wiki-evaluation-service.js';
+import { generatePlan } from '../services/wiki/wiki-plan-generator.js';
+
+const createEvalBodySchema = z.object({
+  blockId: z.string().min(1).max(128),
+  content: z.string().min(1).max(4096),
+});
+
+// ── GET /api/wiki/projects/:projectId/evaluations ────────────────────────────
+wikiRoutes.get('/projects/:projectId/evaluations', async (c) => {
+  const { projectId } = c.req.param();
+  const status = c.req.query('status') || undefined;
+  const evaluations = await evalService.listEvaluations(projectId, status);
+  return c.json({ evaluations });
+});
+
+// ── POST /api/wiki/projects/:projectId/evaluations ───────────────────────────
+wikiRoutes.post('/projects/:projectId/evaluations', async (c) => {
+  const { projectId } = c.req.param();
+  const parsed = await parseBody(c, createEvalBodySchema);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const evaluation = await evalService.createEvaluation(projectId, parsed.data.blockId, parsed.data.content);
+  return c.json(evaluation, 201);
+});
+
+// ── DELETE /api/wiki/evaluations/:evalId ──────────────────────────────────────
+wikiRoutes.delete('/evaluations/:evalId', async (c) => {
+  const { evalId } = c.req.param();
+  await evalService.deleteEvaluation(evalId);
+  return c.json({ ok: true });
+});
+
+// ── PATCH /api/wiki/evaluations/:evalId/status ───────────────────────────────
+wikiRoutes.patch('/evaluations/:evalId/status', async (c) => {
+  const { evalId } = c.req.param();
+  const parsed = await parseBody(c, z.object({ status: z.enum(['active', 'planned', 'resolved']) }));
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  await evalService.updateEvaluationStatus(evalId, parsed.data.status);
+  return c.json({ ok: true });
+});
+
+// ── GET /api/wiki/blocks/:blockId/evaluations ────────────────────────────────
+wikiRoutes.get('/blocks/:blockId/evaluations', async (c) => {
+  const { blockId } = c.req.param();
+  const evaluations = await evalService.listEvaluationsByBlock(blockId);
+  return c.json({ evaluations });
+});
+
+// ── GET /api/wiki/projects/:projectId/plans/active ───────────────────────────
+wikiRoutes.get('/projects/:projectId/plans/active', async (c) => {
+  const { projectId } = c.req.param();
+  const plan = await evalService.getActivePlan(projectId);
+  if (!plan) return c.json({ plan: null, nodes: [] });
+  const nodes = await evalService.listPlanNodes(plan.id);
+  return c.json({ plan, nodes });
+});
+
+// ── POST /api/wiki/projects/:projectId/plans/:planId/confirm ─────────────────
+wikiRoutes.post('/projects/:projectId/plans/:planId/confirm', async (c) => {
+  const { planId } = c.req.param();
+  await evalService.confirmPlan(planId);
+  return c.json({ ok: true });
+});
+
+// ── POST /api/wiki/projects/:projectId/plans/generate ────────────────────────
+wikiRoutes.post('/projects/:projectId/plans/generate', async (c) => {
+  const { projectId } = c.req.param();
+  const parsed = await parseBody(c, z.object({
+    snapshotId: z.string().min(1).max(128),
+    workDir: z.string().min(1).max(4096),
+  }));
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  try {
+    assertLlmProviderConfigured(projectId);
+    const result = await generatePlan(projectId, parsed.data.snapshotId, parsed.data.workDir);
+    const plan = await evalService.getPlan(result.planId);
+    const nodes = await evalService.listPlanNodes(result.planId);
+    return c.json({ plan, nodes });
+  } catch (err) {
+    if (err instanceof AgentProviderNotConfiguredError) {
+      return c.json({ error: err.message, code: 'PROVIDER_NOT_CONFIGURED' }, 422);
+    }
+    logger.error({ err }, 'Plan generation failed');
+    return c.json({ error: err instanceof Error ? err.message : 'Plan generation failed' }, 500);
+  }
+});

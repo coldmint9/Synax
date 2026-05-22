@@ -354,14 +354,37 @@ function InlineSourceLinks({ block }: { block: WikiBlock }) {
 
 // ── Block wrapper ────────────────────────────────────────────────────────────
 
-function WikiBlockItem({ block }: { block: WikiBlock }) {
+function WikiBlockItem({ block, issueCount }: { block: WikiBlock; issueCount: number }) {
   const bindingsById = useWikiStore(s => s.bindingsById)
+  const selectedBlockId = useWikiStore(s => s.selectedBlockId)
+  const selectBlock = useWikiStore(s => s.selectBlock)
+  const isSelected = selectedBlockId === block.id
   const hasBindings = block.sourceBindingIds.length > 0
     || Object.values(bindingsById).some(b => b.wikiBlockId === block.id)
   const [editing, setEditing] = useState(false)
 
   return (
-    <div className="group relative rounded-xl border border-border/30 bg-card/40 p-4 transition-colors hover:border-border/60 hover:bg-card/60" id={`wiki-block-${block.id}`}>
+    <div
+      className={`group relative rounded-xl border p-4 transition-all cursor-pointer ${
+        isSelected
+          ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/20'
+          : 'border-border/30 bg-card/40 hover:border-border/60 hover:bg-card/60'
+      }`}
+      id={`wiki-block-${block.id}`}
+      onClick={() => selectBlock(block.id)}
+    >
+      {/* Issue badge */}
+      {issueCount > 0 && (
+        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-white shadow-sm">
+          {issueCount}
+        </span>
+      )}
+
+      {/* Selected indicator bar */}
+      {isSelected && (
+        <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-primary" />
+      )}
+
       {/* Status badges */}
       {(block.staleState !== 'fresh' || block.manualState !== 'none') && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
@@ -374,7 +397,7 @@ function WikiBlockItem({ block }: { block: WikiBlock }) {
       {!editing && (
         <button
           type="button"
-          onClick={() => setEditing(true)}
+          onClick={(e) => { e.stopPropagation(); setEditing(true) }}
           className="absolute right-2 top-2 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground/50 hover:bg-secondary hover:text-foreground"
           title="编辑此 block"
         >
@@ -399,7 +422,7 @@ function WikiBlockItem({ block }: { block: WikiBlock }) {
 
 // ── Main renderer ────────────────────────────────────────────────────────────
 
-export default function WikiBlockRenderer({ document }: { document: WikiDocument }) {
+export default function WikiBlockRenderer({ document, issuesByBlockId }: { document: WikiDocument; issuesByBlockId?: Map<string, number> }) {
   const blocksById = useWikiStore(s => s.blocksById)
   const snapshot = useWikiStore(s => s.snapshot)
   const blocks = document.blockIds
@@ -428,7 +451,7 @@ export default function WikiBlockRenderer({ document }: { document: WikiDocument
   return (
     <div className="space-y-3">
       {blocks.map(block => (
-        <WikiBlockItem key={block.id} block={block} />
+        <WikiBlockItem key={block.id} block={block} issueCount={issuesByBlockId?.get(block.id) ?? 0} />
       ))}
     </div>
   )
