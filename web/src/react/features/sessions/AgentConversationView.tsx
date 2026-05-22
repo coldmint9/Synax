@@ -24,13 +24,13 @@ interface Props {
 }
 
 const STATUS_LABEL: Record<string, { text: string; color: string }> = {
-  running: { text: 'running', color: 'text-[hsl(var(--agent))]' },
-  completed: { text: 'completed', color: 'text-[hsl(var(--success))]' },
+  running: { text: 'running', color: 'text-[var(--color-agent)]' },
+  completed: { text: 'completed', color: 'text-success' },
   failed: { text: 'failed', color: 'text-destructive' },
   interrupted: { text: 'interrupted', color: 'text-amber-500' },
   paused: { text: 'paused', color: 'text-sky-500' },
-  waiting_permission: { text: 'waiting', color: 'text-[hsl(var(--warning))]' },
-  blocked: { text: 'blocked', color: 'text-[hsl(var(--warning))]' },
+  waiting_permission: { text: 'waiting', color: 'text-warning' },
+  blocked: { text: 'blocked', color: 'text-warning' },
   cancelled: { text: 'cancelled', color: 'text-muted-foreground' },
 }
 
@@ -55,7 +55,7 @@ export function AgentConversationView({
     <div className="flex flex-col gap-6 p-4">
       {/* Session header */}
       <div className="flex items-center gap-2.5 border-b border-border/40 pb-3">
-        <span className="rounded-md border border-[hsl(var(--agent))]/20 bg-[hsl(var(--agent))]/[0.06] px-2.5 py-0.5 text-[11px] font-semibold text-[hsl(var(--agent))]">
+        <span className="rounded-md border border-[hsl(var(--agent))]/20 bg-[hsl(var(--agent))]/[0.06] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--color-agent)]">
           {session?.profileId ?? 'agent'}
         </span>
         {cat?.isBuiltin && (
@@ -141,7 +141,7 @@ export function AgentConversationView({
           {turns.map(turn => (
             <div key={turn.stepId} className="flex gap-3.5">
               <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
-                <Bot size={14} className="text-[hsl(var(--agent))]" />
+                <Bot size={14} className="text-[var(--color-agent)]" />
               </div>
               <div className="flex-1 min-w-0 flex flex-col gap-2">
                 {turn.blocks.map((block, i) => {
@@ -176,7 +176,7 @@ export function AgentConversationView({
           {streamingStepId && !steps.find(s => s.id === streamingStepId) && (
             <div className="flex gap-3.5">
               <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
-                <Bot size={14} className="text-[hsl(var(--agent))]" />
+                <Bot size={14} className="text-[var(--color-agent)]" />
               </div>
               <div className="flex-1 min-w-0 flex flex-col gap-2">
                 {streamingThinking && <ThinkingBlock content={streamingThinking} />}
@@ -217,8 +217,8 @@ export function AgentConversationView({
 
       {/* Result */}
       {session?.status === 'completed' && session.resultSummary && (
-        <div className="rounded-lg border border-[hsl(var(--success))]/15 bg-[hsl(var(--success))]/[0.03] px-3.5 py-2.5">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--success))] mb-1">
+        <div className="rounded-lg border border-[hsl(var(--success))]/15 bg-success/[0.03] px-3.5 py-2.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-success mb-1">
             Completed
           </div>
           <div className="text-[13px] leading-relaxed text-muted-foreground">

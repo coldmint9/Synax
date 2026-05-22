@@ -13,11 +13,11 @@ import { useDebugPolling } from '../../debug-console/useDebugPolling'
 import type { AgentSession, AgentSessionStatus } from '../../../../lib/api/agentRuntime'
 
 const AGENT_STATUS_DOT: Record<AgentSessionStatus, string> = {
-  running: 'bg-[hsl(var(--run))] animate-pulse',
-  waiting_permission: 'bg-[hsl(var(--warning))]',
-  blocked: 'bg-[hsl(var(--warning))]',
-  completed: 'bg-[hsl(var(--success))]',
-  failed: 'bg-[hsl(var(--destructive))]',
+  running: 'bg-[var(--color-run)] animate-pulse',
+  waiting_permission: 'bg-warning',
+  blocked: 'bg-warning',
+  completed: 'bg-success',
+  failed: 'bg-danger',
   interrupted: 'bg-amber-400',
   paused: 'bg-sky-400',
   queued: 'bg-muted-foreground/50',

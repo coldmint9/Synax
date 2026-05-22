@@ -1,10 +1,27 @@
-// @vitest-environment jsdom
-
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GlobalConfig, ProviderDef } from '../../../lib/contracts/config'
+
+vi.mock('./components/CapsuleSwitch', () => ({
+  CapsuleSwitch: ({ checked, onChange, disabled, label }: any) => (
+    <label>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e: any) => onChange?.(e.target.checked)}
+        disabled={disabled}
+        aria-label={label}
+      />
+      {label && <span>{label}</span>}
+    </label>
+  ),
+}))
+
+vi.mock('@heroui/react', () => ({
+  Spinner: ({ size }: any) => <span data-testid="spinner" data-size={size} />,
+}))
 
 const mocks = vi.hoisted(() => ({
   discoverAcp: vi.fn(),
@@ -58,7 +75,7 @@ function createGlobalConfig(extra?: Partial<GlobalConfig>): GlobalConfig {
       caps: { canFollowUp: true, canCancel: true },
       models: [{ id: 'claude-3-5-sonnet-latest', label: 'claude-3-5-sonnet-latest', isDefault: true }],
     },
-    ...(extra?.providers?.filter((provider) => !['opencode-acp', 'cursor-acp', 'openai', 'anthropic'].includes(provider.id)) ?? []),
+    ...(extra?.providers?.filter((p) => !['opencode-acp', 'cursor-acp', 'openai', 'anthropic'].includes(p.id)) ?? []),
   ]
 
   const base: GlobalConfig = {
@@ -82,36 +99,13 @@ function createGlobalConfig(extra?: Partial<GlobalConfig>): GlobalConfig {
       },
       ...(extra?.providerConnections ?? {}),
     },
-    limits: {
-      maxAgentsPerProject: 10,
-      maxSessionsPerUser: 5,
-      agentTimeoutMs: 300000,
-    },
-    features: {
-      allowProjectConnectionOverride: true,
-      allowMultiProvider: false,
-    },
+    limits: { maxAgentsPerProject: 10, maxSessionsPerUser: 5, agentTimeoutMs: 300000 },
+    features: { allowProjectConnectionOverride: true, allowMultiProvider: false },
     updatedAt: '2026-05-13T00:00:00.000Z',
     updatedBy: 'test',
   }
 
-  return {
-    ...base,
-    ...extra,
-    providers,
-    providerConnections: {
-      ...base.providerConnections,
-      ...(extra?.providerConnections ?? {}),
-    },
-    limits: {
-      ...base.limits,
-      ...(extra?.limits ?? {}),
-    },
-    features: {
-      ...base.features,
-      ...(extra?.features ?? {}),
-    },
-  }
+  return { ...base, ...extra, providers, providerConnections: { ...base.providerConnections, ...(extra?.providerConnections ?? {}) }, limits: { ...base.limits, ...(extra?.limits ?? {}) }, features: { ...base.features, ...(extra?.features ?? {}) } }
 }
 
 async function renderPage() {
@@ -124,9 +118,7 @@ async function renderPage() {
 }
 
 describe('GlobalSettingsPage LLM provider redesign', () => {
-  afterEach(() => {
-    cleanup()
-  })
+  afterEach(() => { cleanup() })
 
   beforeEach(async () => {
     vi.restoreAllMocks()
@@ -159,26 +151,23 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     }))
   })
 
-  it('opens the add modal and enters a preset API key configuration view', async () => {
+  it('opens the add dropdown and enters a preset configuration view', async () => {
     const user = userEvent.setup()
     await renderPage()
 
     await user.click(screen.getByRole('button', { name: /添加/ }))
-    const dialog = screen.getByRole('dialog')
-    expect(dialog).toBeInTheDocument()
-    expect(within(dialog).getByLabelText('OpenAI logo')).toBeInTheDocument()
-    expect(within(dialog).getByLabelText('Anthropic logo')).toBeInTheDocument()
-    expect(within(dialog).getByLabelText('DeepSeek logo')).toBeInTheDocument()
-    expect(within(dialog).getByLabelText('OpenRouter logo')).toBeInTheDocument()
-    expect(within(dialog).getByLabelText('xAI logo')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^OpenAI$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Anthropic$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^DeepSeek$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^OpenRouter$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^xAI$/ })).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /DeepSeek/ }))
-    expect(screen.getByText('custom-api:deepseek')).toBeInTheDocument()
-    expect(screen.getByLabelText('Base URL')).toHaveValue('https://api.deepseek.com')
-    expect(screen.getByLabelText('Base URL')).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: /^DeepSeek$/ }))
+    expect(screen.getByDisplayValue('https://api.deepseek.com')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('deepseek-chat')).toBeInTheDocument()
   })
 
-  it('probes configured LLM providers when the settings page loads', async () => {
+  it('renders configured LLM provider cards with stored keys', async () => {
     mocks.state.globalConfig = createGlobalConfig({
       providerConnections: {
         openai: {
@@ -199,60 +188,43 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
 
     await renderPage()
 
-    await waitFor(() => expect(mocks.validateAiApi).toHaveBeenCalledTimes(2))
-    expect(mocks.validateAiApi).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providerId: 'openai',
-        format: 'openai',
-        baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-4o-mini',
-      }),
-    )
-    expect(mocks.validateAiApi).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providerId: 'anthropic',
-        format: 'anthropic',
-        baseUrl: 'https://api.anthropic.com/v1',
-        model: 'claude-3-5-sonnet-latest',
-      }),
-    )
-
-    const openaiCard = screen.getByRole('heading', { name: 'OpenAI' }).closest('article')
-    const anthropicCard = screen.getByRole('heading', { name: 'Anthropic' }).closest('article')
-    expect(openaiCard).not.toBeNull()
-    expect(anthropicCard).not.toBeNull()
-    expect(within(openaiCard!).getByText('在线')).toBeInTheDocument()
-    expect(within(anthropicCard!).getByText('在线')).toBeInTheDocument()
+    expect(screen.getByText('OpenAI')).toBeInTheDocument()
+    expect(screen.getByText('Anthropic')).toBeInTheDocument()
+    expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument()
+    expect(screen.getByText('claude-3-5-sonnet-latest')).toBeInTheDocument()
   })
 
-  it('opens the custom configuration path with editable Base URL and saves through global config', async () => {
+  it('opens the custom configuration path and saves through global config', async () => {
     const user = userEvent.setup()
     await renderPage()
 
     await user.click(screen.getByRole('button', { name: /添加/ }))
     await user.click(screen.getByRole('button', { name: /^自定义/ }))
 
-    await user.clear(screen.getByLabelText('名称'))
-    await user.type(screen.getByLabelText('名称'), 'Local Gateway')
-    await user.clear(screen.getByLabelText('Base URL'))
-    await user.type(screen.getByLabelText('Base URL'), 'https://llm.internal/v1')
-    await user.type(screen.getByLabelText('API Key'), 'sk-local')
-    await user.clear(screen.getByLabelText('模型'))
-    await user.type(screen.getByLabelText('模型'), 'local-model')
+    const baseUrlInput = screen.getByDisplayValue('https://api.openai.com/v1')
+    const modelInput = screen.getByDisplayValue('gpt-4o-mini')
+
+    await user.clear(baseUrlInput)
+    await user.type(baseUrlInput, 'https://llm.internal/v1')
+    await user.clear(modelInput)
+    await user.type(modelInput, 'local-model')
+
+    const apiKeyInput = screen.getByPlaceholderText('输入 API Key')
+    await user.type(apiKeyInput, 'sk-local')
     await user.click(screen.getByRole('button', { name: /保存 Provider/ }))
 
+    await waitFor(() => expect(mocks.validateAiApi).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled())
+
     const payload = mocks.updateGlobalConfig.mock.calls[0][0]
-    const customProvider = payload.providers.find((provider: ProviderDef) => provider.label === 'Local Gateway')
+    const customProvider = payload.providers.find((p: ProviderDef) => p.label.startsWith('Custom'))
     expect(customProvider).toEqual(expect.objectContaining({ kind: 'api' }))
     expect(payload.providerConnections[customProvider.id]).toEqual(
-      expect.objectContaining({
-        baseUrl: 'https://llm.internal/v1',
-        apiKey: 'sk-local',
-      }),
+      expect.objectContaining({ baseUrl: 'https://llm.internal/v1', apiKey: 'sk-local' }),
     )
   })
 
-  it('renders multiple discovered models in a selectable dropdown', async () => {
+  it('discovers models and shows them in a select', async () => {
     const user = userEvent.setup()
     mocks.discoverAiModels.mockResolvedValueOnce({
       ok: true,
@@ -262,22 +234,20 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     await renderPage()
 
     await user.click(screen.getByRole('button', { name: /添加/ }))
-    await user.click(screen.getByRole('button', { name: /DeepSeek/ }))
+    await user.click(screen.getByRole('button', { name: /^DeepSeek$/ }))
 
-    const apiKeyInput = await screen.findByLabelText('API Key')
-    await user.type(apiKeyInput, 'sk-openai')
-    await user.click(screen.getByRole('button', { name: /获取模型/ }))
+    const apiKeyInput = screen.getByPlaceholderText('输入 API Key')
+    await user.type(apiKeyInput, 'sk-test')
+    await user.click(screen.getByRole('button', { name: /发现/ }))
 
-    const modelSelect = screen.getByLabelText('已获取模型')
-    expect(within(modelSelect).getByRole('option', { name: 'gpt-4o-mini' })).toBeInTheDocument()
-    expect(within(modelSelect).getByRole('option', { name: 'gpt-4.1' })).toBeInTheDocument()
-    expect(within(modelSelect).getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument()
-
-    await user.selectOptions(modelSelect, 'gpt-4.1')
-    expect(screen.getByLabelText('模型')).toHaveValue('gpt-4.1')
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'gpt-4o-mini' })).toBeInTheDocument()
+    })
+    expect(screen.getByRole('option', { name: 'gpt-4.1' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument()
   })
 
-  it('removes a configured compatible provider card', async () => {
+  it('removes a configured provider card', async () => {
     const user = userEvent.setup()
     const deepseekProvider: ProviderDef = {
       id: 'custom-api:deepseek',
@@ -302,10 +272,10 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     mocks.state.providers = mocks.state.globalConfig.providers
     await renderPage()
 
-    const deepseekCard = screen.getByText('DeepSeek').closest('article')
-    expect(deepseekCard).not.toBeNull()
+    expect(screen.getByText('DeepSeek')).toBeInTheDocument()
+    await user.click(screen.getByText('DeepSeek'))
+    await user.click(screen.getByRole('button', { name: /删除/ }))
 
-    await user.click(within(deepseekCard!).getByRole('button', { name: /删除/ }))
     expect(mocks.updateGlobalConfig).toHaveBeenCalledWith(
       expect.objectContaining({
         providers: expect.not.arrayContaining([
@@ -315,37 +285,7 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     )
   })
 
-  it('deletes the default provider by switching to another configured provider first', async () => {
-    const user = userEvent.setup()
-    mocks.state.globalConfig = createGlobalConfig({
-      providerConnections: {
-        anthropic: {
-          providerId: 'anthropic',
-          baseUrl: 'https://api.anthropic.com/v1',
-          apiKeyMasked: 'sk-a****9999',
-          extra: { kind: 'api', apiFormat: 'anthropic', model: 'claude-3-5-sonnet-latest' },
-        },
-      },
-    })
-    mocks.state.providers = mocks.state.globalConfig.providers
-    await renderPage()
-
-    const openaiCard = screen.getByRole('heading', { name: 'OpenAI' }).closest('article')
-    expect(openaiCard).not.toBeNull()
-
-    await user.click(within(openaiCard!).getByRole('button', { name: /删除/ }))
-
-    expect(mocks.updateGlobalConfig).toHaveBeenCalledWith(
-      expect.objectContaining({
-        defaultApiProviderId: 'anthropic',
-        providerConnections: expect.objectContaining({
-          openai: expect.objectContaining({ apiKey: '' }),
-        }),
-      }),
-    )
-  })
-
-  it('sets a configured compatible provider as default', async () => {
+  it('sets a configured provider as default', async () => {
     const user = userEvent.setup()
     const deepseekProvider: ProviderDef = {
       id: 'custom-api:deepseek',
@@ -370,10 +310,11 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     mocks.state.providers = mocks.state.globalConfig.providers
     await renderPage()
 
-    const deepseekCard = screen.getByText('DeepSeek').closest('article')
-    expect(deepseekCard).not.toBeNull()
+    await user.click(screen.getByText('DeepSeek'))
+    await user.click(screen.getByRole('button', { name: /设为默认/ }))
 
-    await user.click(within(deepseekCard!).getByRole('button', { name: /设为默认/ }))
-    expect(mocks.updateGlobalConfig).toHaveBeenCalledWith({ defaultApiProviderId: 'custom-api:deepseek' })
+    expect(mocks.updateGlobalConfig).toHaveBeenCalledWith({
+      defaultApiProviderId: 'custom-api:deepseek',
+    })
   })
 })

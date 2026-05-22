@@ -5,11 +5,11 @@ import { DebugPanel } from './DebugPanel'
 import type { AgentSessionStatus } from '../../../lib/api/agentRuntime'
 
 const STATUS_DOT: Record<AgentSessionStatus, string> = {
-  running: 'bg-[hsl(var(--run))] animate-pulse',
-  waiting_permission: 'bg-[hsl(var(--warning))]',
-  blocked: 'bg-[hsl(var(--warning))]',
-  completed: 'bg-[hsl(var(--success))]',
-  failed: 'bg-[hsl(var(--destructive))]',
+  running: 'bg-[var(--color-run)] animate-pulse',
+  waiting_permission: 'bg-warning',
+  blocked: 'bg-warning',
+  completed: 'bg-success',
+  failed: 'bg-danger',
   interrupted: 'bg-amber-400',
   paused: 'bg-sky-400',
   queued: 'bg-muted-foreground/50',
@@ -33,7 +33,7 @@ export function DebugToolbar() {
     <>
       <div className="debug-toolbar">
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <Radio size={12} className={runningCount > 0 ? 'text-[hsl(var(--run))]' : ''} />
+          <Radio size={12} className={runningCount > 0 ? 'text-[var(--color-run)]' : ''} />
           <span className="font-medium">{sessions.length}</span>
         </div>
 

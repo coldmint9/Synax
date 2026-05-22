@@ -91,7 +91,7 @@ export default function CoordinatesPage() {
   const flagCount = convergenceReport.flags.length
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[hsl(var(--background))]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/30 px-5">
         <div className="flex min-w-0 items-center gap-2.5">
           <Layers size={13} className="shrink-0 text-primary" />

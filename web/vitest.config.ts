@@ -10,9 +10,16 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'jsdom',
+    environment: 'happy-dom',
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
     css: true,
+    deps: {
+      optimizer: {
+        web: {
+          include: ['react-aria', 'react-aria-components', '@heroui/react', '@heroui/styles'],
+        },
+      },
+    },
   },
 })

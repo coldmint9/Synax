@@ -1,175 +1,258 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "@heroui/styles";
+@variant dark (&:where(.dark, .dark *));
 
-@layer base {
-  :root {
-    --background: 44 30% 97%;
-    --foreground: 160 12% 14%;
-    --card: 42 28% 98%;
-    --card-foreground: 160 12% 14%;
-    --popover: 42 28% 98%;
-    --popover-foreground: 160 12% 14%;
-    --primary: 158 44% 32%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 40 26% 92%;
-    --secondary-foreground: 160 12% 14%;
-    --muted: 38 20% 90%;
-    --muted-foreground: 28 10% 38%;
-    --accent: 30 44% 88%;
-    --accent-foreground: 160 12% 14%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 36 18% 84%;
-    --input: 36 18% 84%;
-    --ring: 158 44% 32%;
-    --radius: 0.5rem;
-    --agent: 162 68% 35%;
-    --agent-foreground: 0 0% 100%;
-    --human: 24 86% 52%;
-    --human-foreground: 0 0% 0%;
-    --success: 146 52% 38%;
-    --success-foreground: 0 0% 100%;
-    --warning: 38 88% 52%;
-    --warning-foreground: 0 0% 0%;
-    --wiki: 24 68% 48%;
-    --wiki-foreground: 0 0% 100%;
-    --arch: 14 42% 40%;
-    --arch-foreground: 0 0% 100%;
-    --req: 42 84% 48%;
-    --req-foreground: 0 0% 0%;
+@theme {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-agent: hsl(var(--agent));
+  --color-agent-foreground: hsl(var(--agent-foreground));
+  --color-human: hsl(var(--human));
+  --color-human-foreground: hsl(var(--human-foreground));
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-reality: hsl(var(--reality));
+  --color-reality-foreground: hsl(var(--reality-foreground));
+  --color-run: hsl(var(--run));
+  --color-run-foreground: hsl(var(--run-foreground));
+  --color-neural: hsl(var(--neural-blue));
+  --color-synaptic: hsl(var(--synaptic-green));
+  --color-electric: hsl(var(--electric-purple));
+  --color-role-pm: hsl(var(--role-pm));
+  --color-role-dev: hsl(var(--role-dev));
+  --color-role-qa: hsl(var(--role-qa));
+  --color-role-prod: hsl(var(--role-prod));
+  --color-role-design: hsl(var(--role-design));
+  --color-role-devops: hsl(var(--role-devops));
 
-    --neural-blue: 172 58% 38%;
-    --synaptic-green: 146 52% 38%;
-    --electric-purple: 28 72% 52%;
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
 
-    --reality: 190 62% 42%;
-    --reality-foreground: 0 0% 100%;
-    --run: 206 72% 46%;
-    --run-foreground: 0 0% 100%;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
 
-    /* Role Colors */
-    --role-pm: 34 78% 50%;
-    --role-dev: 170 54% 36%;
-    --role-qa: 146 44% 34%;
-    --role-prod: 18 52% 40%;
-    --role-design: 12 66% 52%;
-    --role-devops: 28 72% 46%;
-
-    /* Import flow */
-    --import-card-hover: 158 44% 32% / 0.08;
-    --import-card-selected: 158 44% 32% / 0.14;
-    --import-step-done: 158 44% 32%;
-    --import-step-active: 158 44% 32%;
-    --import-step-pending: 0 0% 60%;
-
-    /* Wiki workbench */
-    --wiki-surface: 44 34% 96%;
-    --wiki-surface-strong: 42 32% 93%;
-    --wiki-panel: 40 30% 98%;
-    --wiki-panel-foreground: 160 12% 14%;
-    --wiki-panel-muted: 40 22% 91%;
-    --wiki-accent: 158 34% 89%;
-    --wiki-accent-foreground: 160 18% 18%;
-    --wiki-warm: 28 58% 90%;
-    --wiki-shadow: 28 30% 28%;
-
-    /* Verdict Accent Colors (10-hue set, used for node accents only) */
-    --verdict-bug: 0 70% 52%;
-    --verdict-risk: 38 80% 52%;
-    --verdict-new-req: 258 70% 58%;
-    --verdict-scope: 24 80% 52%;
-    --verdict-debt: 215 15% 55%;
-    --verdict-knowledge: 214 80% 58%;
-    --verdict-team: 170 60% 42%;
-    --verdict-forecast: 190 70% 50%;
-    --verdict-decision: 270 60% 58%;
-    --verdict-adjust: 200 70% 52%;
-  }
-
-  .dark {
-    --background: 30 12% 8%;
-    --foreground: 44 22% 92%;
-    --card: 30 10% 11%;
-    --card-foreground: 44 22% 92%;
-    --popover: 30 10% 11%;
-    --popover-foreground: 44 22% 92%;
-    --primary: 158 46% 54%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 30 8% 18%;
-    --secondary-foreground: 44 22% 92%;
-    --muted: 30 8% 18%;
-    --muted-foreground: 34 12% 62%;
-    --accent: 26 14% 21%;
-    --accent-foreground: 44 22% 92%;
-    --destructive: 0 70% 42%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 30 8% 24%;
-    --input: 30 8% 24%;
-    --ring: 158 46% 54%;
-
-    --agent: 162 64% 44%;
-    --human: 24 82% 56%;
-    --success: 146 52% 46%;
-    --warning: 38 88% 56%;
-    --wiki: 24 72% 58%;
-    --arch: 14 52% 54%;
-    --req: 42 88% 54%;
-    --reality: 190 72% 58%;
-    --run: 206 82% 62%;
-    --neural-blue: 172 62% 52%;
-    --synaptic-green: 146 52% 46%;
-    --electric-purple: 28 76% 58%;
-
-    --role-pm: 34 80% 58%;
-    --role-dev: 170 56% 54%;
-    --role-qa: 146 46% 48%;
-    --role-prod: 18 54% 56%;
-    --role-design: 12 68% 58%;
-    --role-devops: 28 74% 56%;
-
-    /* Import flow (dark) */
-    --import-card-hover: 158 46% 54% / 0.10;
-    --import-card-selected: 158 46% 54% / 0.18;
-    --import-step-done: 158 46% 54%;
-    --import-step-active: 158 46% 54%;
-    --import-step-pending: 0 0% 48%;
-
-    --wiki-surface: 28 12% 10%;
-    --wiki-surface-strong: 28 11% 13%;
-    --wiki-panel: 28 10% 12%;
-    --wiki-panel-foreground: 44 22% 92%;
-    --wiki-panel-muted: 30 8% 18%;
-    --wiki-accent: 156 24% 22%;
-    --wiki-accent-foreground: 44 22% 92%;
-    --wiki-warm: 28 22% 18%;
-    --wiki-shadow: 0 0% 0%;
-  }
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-pulse-slow: pulse-slow 3s ease-in-out infinite;
+  --animate-slide-in: slide-in 0.2s ease-out;
+  --animate-ripple-out: ripple-out 1.5s cubic-bezier(0, 0.2, 0.8, 1) forwards;
+  --animate-neuron-fire: neuron-fire 0.6s ease-out;
+  --animate-rumbling-flow: rumbling-flow 1s linear infinite;
+  --animate-fade-up: fade-up 0.4s ease-out forwards;
+  --animate-status-ping: status-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-orbital-spin: orbital-spin 20s linear infinite;
+  --animate-orbit-reverse: orbit-reverse 25s linear infinite;
+  --animate-center-breathe: center-breathe 4s ease-in-out infinite;
+  --animate-gradient-shift: gradient-shift 3s ease infinite;
+  --animate-shimmer: shimmer 2s linear infinite;
+  --animate-float-in: float-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-ring-expand: ring-expand 1.2s cubic-bezier(0, 0, 0.2, 1) forwards;
+  --animate-cascade-node-appear: cascade-node-appear 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-cascade-line-draw: cascade-line-draw 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-cascade-pulse-ring: cascade-pulse-ring 3s ease-in-out infinite;
+  --animate-node-shake: node-shake 0.4s ease-out;
+  --animate-ripple-wave-bg: ripple-wave-bg 8s ease infinite;
+  --animate-minimap-viewport-pulse: minimap-viewport-pulse 2s ease-in-out infinite;
+  --animate-ripple-pulse: ripple-pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-origin-breathe: origin-breathe 3s ease-in-out infinite;
+  --animate-wave-ripple: wave-ripple 1.5s cubic-bezier(0, 0.2, 0.8, 1) forwards;
 }
 
+/* ── Keyframes ── */
+@keyframes pulse-slow { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@keyframes slide-in { from { transform: translateX(-10px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes ripple-out { 0% { transform: scale(0.3); opacity: 0.8; } 100% { transform: scale(2.5); opacity: 0; } }
+@keyframes neuron-fire { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: 0.7; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes rumbling-flow { 0% { stroke-dashoffset: 20; } 100% { stroke-dashoffset: 0; } }
+@keyframes fade-up { 0% { transform: translateY(8px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+@keyframes status-ping { 0% { transform: scale(1); opacity: 1; } 75% { transform: scale(1.8); opacity: 0; } 100% { transform: scale(1); opacity: 0; } }
+@keyframes orbital-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+@keyframes orbit-reverse { 0% { transform: rotate(360deg); } 100% { transform: rotate(0deg); } }
+@keyframes center-breathe { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.08); opacity: 1; } }
+@keyframes particle-flow { 0% { offset-distance: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; } }
+@keyframes gradient-shift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+@keyframes float-in { 0% { transform: translateY(12px) scale(0.96); opacity: 0; } 100% { transform: translateY(0) scale(1); opacity: 1; } }
+@keyframes ring-expand { 0% { transform: scale(0.8); opacity: 0.6; stroke-width: 2px; } 100% { transform: scale(2.2); opacity: 0; stroke-width: 0.5px; } }
+@keyframes cascade-node-appear { 0% { transform: scale(0) translateY(8px); opacity: 0; } 60% { transform: scale(1.05) translateY(-2px); opacity: 1; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
+@keyframes cascade-line-draw { 0% { stroke-dashoffset: var(--line-length, 200); } 100% { stroke-dashoffset: 0; } }
+@keyframes cascade-pulse-ring { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.15); opacity: 0.8; } }
+@keyframes thinking-dots { 0%, 20% { content: '·'; } 40% { content: '··'; } 60%, 100% { content: '···'; } }
+@keyframes node-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+@keyframes ripple-wave-bg { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+@keyframes minimap-viewport-pulse { 0%, 100% { border-color: hsl(var(--primary) / 0.4); } 50% { border-color: hsl(var(--primary) / 0.7); } }
+@keyframes ripple-pulse { 0% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.2); opacity: 0.1; } 100% { transform: scale(1.5); opacity: 0; } }
+@keyframes origin-breathe { 0%, 100% { transform: scale(1); box-shadow: 0 0 20px hsl(var(--primary) / 0.2); } 50% { transform: scale(1.04); box-shadow: 0 0 40px hsl(var(--primary) / 0.35), 0 0 80px hsl(var(--arch) / 0.14); } }
+@keyframes wave-ripple { 0% { transform: scale(0.8); opacity: 0.6; border-width: 2px; } 100% { transform: scale(2.5); opacity: 0; border-width: 0.5px; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── CSS Variables ── */
+:root {
+  --background: 44 30% 97%;
+  --foreground: 160 12% 14%;
+  --card: 42 28% 98%;
+  --card-foreground: 160 12% 14%;
+  --popover: 42 28% 98%;
+  --popover-foreground: 160 12% 14%;
+  --primary: 158 44% 32%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 40 26% 92%;
+  --secondary-foreground: 160 12% 14%;
+  --muted: 38 20% 90%;
+  --muted-foreground: 28 10% 38%;
+  --accent: 30 44% 88%;
+  --accent-foreground: 160 12% 14%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 36 18% 84%;
+  --input: 36 18% 84%;
+  --ring: 158 44% 32%;
+  --radius: 0.5rem;
+  --agent: 162 68% 35%;
+  --agent-foreground: 0 0% 100%;
+  --human: 24 86% 52%;
+  --human-foreground: 0 0% 0%;
+  --success: 146 52% 38%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 88% 52%;
+  --warning-foreground: 0 0% 0%;
+  --wiki: 24 68% 48%;
+  --wiki-foreground: 0 0% 100%;
+  --arch: 14 42% 40%;
+  --arch-foreground: 0 0% 100%;
+  --req: 42 84% 48%;
+  --req-foreground: 0 0% 0%;
+  --neural-blue: 172 58% 38%;
+  --synaptic-green: 146 52% 38%;
+  --electric-purple: 28 72% 52%;
+  --reality: 190 62% 42%;
+  --reality-foreground: 0 0% 100%;
+  --run: 206 72% 46%;
+  --run-foreground: 0 0% 100%;
+  --role-pm: 34 78% 50%;
+  --role-dev: 170 54% 36%;
+  --role-qa: 146 44% 34%;
+  --role-prod: 18 52% 40%;
+  --role-design: 12 66% 52%;
+  --role-devops: 28 72% 46%;
+  --import-card-hover: 158 44% 32% / 0.08;
+  --import-card-selected: 158 44% 32% / 0.14;
+  --import-step-done: 158 44% 32%;
+  --import-step-active: 158 44% 32%;
+  --import-step-pending: 0 0% 60%;
+  --wiki-surface: 44 34% 96%;
+  --wiki-surface-strong: 42 32% 93%;
+  --wiki-panel: 40 30% 98%;
+  --wiki-panel-foreground: 160 12% 14%;
+  --wiki-panel-muted: 40 22% 91%;
+  --wiki-accent: 158 34% 89%;
+  --wiki-accent-foreground: 160 18% 18%;
+  --wiki-warm: 28 58% 90%;
+  --wiki-shadow: 28 30% 28%;
+  --verdict-bug: 0 70% 52%;
+  --verdict-risk: 38 80% 52%;
+  --verdict-new-req: 258 70% 58%;
+  --verdict-scope: 24 80% 52%;
+  --verdict-debt: 215 15% 55%;
+  --verdict-knowledge: 214 80% 58%;
+  --verdict-team: 170 60% 42%;
+  --verdict-forecast: 190 70% 50%;
+  --verdict-decision: 270 60% 58%;
+  --verdict-adjust: 200 70% 52%;
+}
+
+.dark {
+  --background: 30 12% 8%;
+  --foreground: 44 22% 92%;
+  --card: 30 10% 11%;
+  --card-foreground: 44 22% 92%;
+  --popover: 30 10% 11%;
+  --popover-foreground: 44 22% 92%;
+  --primary: 158 46% 54%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 30 8% 18%;
+  --secondary-foreground: 44 22% 92%;
+  --muted: 30 8% 18%;
+  --muted-foreground: 34 12% 62%;
+  --accent: 26 14% 21%;
+  --accent-foreground: 44 22% 92%;
+  --destructive: 0 70% 42%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 30 8% 24%;
+  --input: 30 8% 24%;
+  --ring: 158 46% 54%;
+  --agent: 162 64% 44%;
+  --human: 24 82% 56%;
+  --success: 146 52% 46%;
+  --warning: 38 88% 56%;
+  --wiki: 24 72% 58%;
+  --arch: 14 52% 54%;
+  --req: 42 88% 54%;
+  --reality: 190 72% 58%;
+  --run: 206 82% 62%;
+  --neural-blue: 172 62% 52%;
+  --synaptic-green: 146 52% 46%;
+  --electric-purple: 28 76% 58%;
+  --role-pm: 34 80% 58%;
+  --role-dev: 170 56% 54%;
+  --role-qa: 146 46% 48%;
+  --role-prod: 18 54% 56%;
+  --role-design: 12 68% 58%;
+  --role-devops: 28 74% 56%;
+  --import-card-hover: 158 46% 54% / 0.10;
+  --import-card-selected: 158 46% 54% / 0.18;
+  --import-step-done: 158 46% 54%;
+  --import-step-active: 158 46% 54%;
+  --import-step-pending: 0 0% 48%;
+  --wiki-surface: 28 12% 10%;
+  --wiki-surface-strong: 28 11% 13%;
+  --wiki-panel: 28 10% 12%;
+  --wiki-panel-foreground: 44 22% 92%;
+  --wiki-panel-muted: 30 8% 18%;
+  --wiki-accent: 156 24% 22%;
+  --wiki-accent-foreground: 44 22% 92%;
+  --wiki-warm: 28 22% 18%;
+  --wiki-shadow: 0 0% 0%;
+}
+
+/* ── Base Styles ── */
 @layer base {
   * { @apply border-border; }
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    @apply bg-background text-foreground antialiased;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
   }
 }
 
+/* ── Utilities ── */
 @layer utilities {
   .font-mono { font-family: 'JetBrains Mono', 'SF Mono', monospace; }
 
-  /* Canvas dot grid background */
   .canvas-dot-bg {
     background-color: hsl(var(--background));
     background-image: radial-gradient(circle, hsl(var(--border) / 0.15) 1px, transparent 1px);
     background-size: 24px 24px;
   }
 
-  /* Subtle card shadow for node cards */
   .node-card-shadow { box-shadow: 0 1px 3px hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(var(--border) / 0.5); }
   .node-card-shadow-selected { box-shadow: 0 1px 3px hsl(0 0% 0% / 0.3), 0 0 0 1px hsl(var(--border) / 0.8); }
 
-  /* Coordinates: light grid canvas */
   .canvas-grid-light {
     background-color: hsl(var(--background));
     background-image:
@@ -185,7 +268,6 @@
       linear-gradient(90deg, hsl(var(--border) / 0.45) 1px, transparent 1px);
   }
 
-  /* Liquid glass (toolbar / frosted panels) */
   .liquid-glass {
     background: hsl(var(--card) / 0.55);
     backdrop-filter: blur(18px) saturate(1.35);
@@ -195,9 +277,7 @@
       inset 0 1px 0 hsl(0 0% 100% / 0.22);
   }
 
-  .toolbar-shell {
-    position: relative;
-  }
+  .toolbar-shell { position: relative; }
 
   .toolbar-shell::before {
     content: '';
@@ -210,7 +290,6 @@
       linear-gradient(140deg, hsl(0 0% 100% / 0.08), transparent 55%);
   }
 
-  /* ─── Workbench Layout ─── */
   .workbench-shell {
     display: flex;
     height: 100%;
@@ -218,10 +297,7 @@
     gap: 8px;
   }
 
-  /* ─── Electron macOS title bar adaptation ─── */
-  .electron .workbench-shell {
-    padding-top: 40px;
-  }
+  .electron .workbench-shell { padding-top: 40px; }
 
   .titlebar {
     position: fixed;
@@ -250,16 +326,8 @@
     pointer-events: none;
   }
 
-  .titlebar-project {
-    font-weight: 600;
-  }
-
-  .titlebar-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: hsl(var(--border));
-  }
+  .titlebar-project { font-weight: 600; }
+  .titlebar-dot { width: 4px; height: 4px; border-radius: 50%; background: hsl(var(--border)); }
 
   .titlebar-branch {
     display: inline-flex;
@@ -273,10 +341,7 @@
     border-radius: 6px;
   }
 
-  .titlebar-meta {
-    font-size: 11px;
-    color: hsl(var(--muted-foreground));
-  }
+  .titlebar-meta { font-size: 11px; color: hsl(var(--muted-foreground)); }
 
   .titlebar-actions {
     margin-left: auto;
@@ -319,7 +384,6 @@
     border-radius: 14px;
     box-shadow: 0 1px 4px hsl(0 0% 0% / 0.03), 0 4px 12px hsl(0 0% 0% / 0.04);
   }
-
   .dark .activity-bar {
     box-shadow: 0 1px 4px hsl(0 0% 0% / 0.15), 0 4px 12px hsl(0 0% 0% / 0.12);
   }
@@ -361,17 +425,9 @@
     background: hsl(var(--primary));
   }
 
-  .ab-item-disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
+  .ab-item-disabled { opacity: 0.3; cursor: not-allowed; }
+  .ab-item-disabled:hover { background: transparent; color: hsl(var(--muted-foreground)); }
 
-  .ab-item-disabled:hover {
-    background: transparent;
-    color: hsl(var(--muted-foreground));
-  }
-
-  /* Side Panel - Island */
   .side-panel {
     width: 0;
     overflow: hidden;
@@ -396,9 +452,7 @@
     opacity: 1;
   }
 
-  .side-panel-right {
-    order: 3;
-  }
+  .side-panel-right { order: 3; }
 
   .sp-header {
     display: flex;
@@ -431,23 +485,10 @@
     transition: background 120ms, color 120ms;
   }
 
-  .sp-btn:hover {
-    background: hsl(var(--secondary));
-    color: hsl(var(--foreground));
-  }
+  .sp-btn:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
 
-  .sp-content {
-    padding: 14px;
-    min-width: 280px;
-    overflow-y: auto;
-    flex: 1;
-  }
-
-  .sp-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
+  .sp-content { padding: 14px; min-width: 280px; overflow-y: auto; flex: 1; }
+  .sp-nav { display: flex; flex-direction: column; gap: 2px; }
 
   .sp-nav-item {
     display: flex;
@@ -461,43 +502,13 @@
     transition: background 120ms, color 120ms;
   }
 
-  .sp-nav-item:hover {
-    background: hsl(var(--secondary));
-    color: hsl(var(--foreground));
-  }
+  .sp-nav-item:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+  .sp-nav-item-active { background: hsl(var(--primary) / 0.12); color: hsl(var(--primary)); font-weight: 500; }
 
-  .sp-nav-item-active {
-    background: hsl(var(--primary) / 0.12);
-    color: hsl(var(--primary));
-    font-weight: 500;
-  }
-
-  .sp-section {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .sp-section-title {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: hsl(var(--muted-foreground) / 0.7);
-    margin-bottom: 4px;
-  }
-
-  .sp-empty {
-    font-size: 12px;
-    color: hsl(var(--muted-foreground) / 0.6);
-    padding: 8px 0;
-  }
-
-  .sp-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
+  .sp-section { display: flex; flex-direction: column; gap: 4px; }
+  .sp-section-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: hsl(var(--muted-foreground) / 0.7); margin-bottom: 4px; }
+  .sp-empty { font-size: 12px; color: hsl(var(--muted-foreground) / 0.6); padding: 8px 0; }
+  .sp-list { display: flex; flex-direction: column; gap: 1px; }
 
   .sp-list-item {
     display: flex;
@@ -515,32 +526,12 @@
     transition: background 120ms;
   }
 
-  .sp-list-item:hover {
-    background: hsl(var(--secondary));
-  }
+  .sp-list-item:hover { background: hsl(var(--secondary)); }
+  .sp-list-item-active { background: hsl(var(--primary) / 0.1); color: hsl(var(--primary)); }
 
-  .sp-list-item-active {
-    background: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary));
-  }
-
-  .sp-kv {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 4px 0;
-    font-size: 12px;
-  }
-
-  .sp-kv-label {
-    color: hsl(var(--muted-foreground));
-  }
-
-  .sp-kv-value {
-    color: hsl(var(--foreground));
-    max-width: 60%;
-    text-align: right;
-  }
+  .sp-kv { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+  .sp-kv-label { color: hsl(var(--muted-foreground)); }
+  .sp-kv-value { color: hsl(var(--foreground)); max-width: 60%; text-align: right; }
 
   .sp-search-input {
     width: 100%;
@@ -554,17 +545,9 @@
     transition: border-color 150ms;
   }
 
-  .sp-search-input:focus {
-    border-color: hsl(var(--primary) / 0.5);
-  }
+  .sp-search-input:focus { border-color: hsl(var(--primary) / 0.5); }
 
-  /* Main Content - Island */
-  .workbench-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    order: 2;
-  }
+  .workbench-main { flex: 1; min-width: 0; display: flex; order: 2; }
 
   .workbench-island {
     flex: 1;
@@ -591,16 +574,8 @@
     font-weight: 500;
   }
 
-  .island-header-name {
-    font-weight: 600;
-  }
-
-  .island-header-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: hsl(var(--border));
-  }
+  .island-header-name { font-weight: 600; }
+  .island-header-dot { width: 4px; height: 4px; border-radius: 50%; background: hsl(var(--border)); }
 
   .island-header-branch {
     display: inline-flex;
@@ -614,116 +589,54 @@
     border-radius: 6px;
   }
 
-  .island-header-meta {
-    margin-left: auto;
-    font-size: 11px;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .island-body {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
+  .island-header-meta { margin-left: auto; font-size: 11px; color: hsl(var(--muted-foreground)); }
+  .island-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
   .dark .liquid-glass {
     background: hsl(var(--card) / 0.45);
-    box-shadow:
-      0 8px 32px hsl(0 0% 0% / 0.35),
-      inset 0 1px 0 hsl(0 0% 100% / 0.08);
+    box-shadow: 0 8px 32px hsl(0 0% 0% / 0.35), inset 0 1px 0 hsl(0 0% 100% / 0.08);
   }
 
   .wiki-page-bg {
-    background:
-      radial-gradient(circle at top left, hsl(var(--wiki-warm) / 0.55), transparent 34%),
-      radial-gradient(circle at top right, hsl(var(--wiki-accent) / 0.52), transparent 28%),
-      linear-gradient(180deg, hsl(var(--wiki-surface)) 0%, hsl(var(--background)) 45%, hsl(var(--background)) 100%);
+    background: radial-gradient(circle at top left, hsl(var(--wiki-warm) / 0.55), transparent 34%), radial-gradient(circle at top right, hsl(var(--wiki-accent) / 0.52), transparent 28%), linear-gradient(180deg, hsl(var(--wiki-surface)) 0%, hsl(var(--background)) 45%, hsl(var(--background)) 100%);
   }
-
   .dark .wiki-page-bg {
-    background:
-      radial-gradient(circle at top left, hsl(var(--wiki-warm) / 0.34), transparent 34%),
-      radial-gradient(circle at top right, hsl(var(--wiki-accent) / 0.42), transparent 28%),
-      linear-gradient(180deg, hsl(var(--wiki-surface)) 0%, hsl(var(--background)) 42%, hsl(var(--background)) 100%);
+    background: radial-gradient(circle at top left, hsl(var(--wiki-warm) / 0.34), transparent 34%), radial-gradient(circle at top right, hsl(var(--wiki-accent) / 0.42), transparent 28%), linear-gradient(180deg, hsl(var(--wiki-surface)) 0%, hsl(var(--background)) 42%, hsl(var(--background)) 100%);
   }
 
   .wiki-workbench-card {
     border: 1px solid hsl(var(--border) / 0.72);
-    background:
-      linear-gradient(180deg, hsl(var(--wiki-panel) / 0.94) 0%, hsl(var(--card) / 0.86) 100%);
-    box-shadow:
-      0 18px 42px hsl(var(--wiki-shadow) / 0.08),
-      0 1px 0 hsl(0 0% 100% / 0.22) inset;
+    background: linear-gradient(180deg, hsl(var(--wiki-panel) / 0.94) 0%, hsl(var(--card) / 0.86) 100%);
+    box-shadow: 0 18px 42px hsl(var(--wiki-shadow) / 0.08), 0 1px 0 hsl(0 0% 100% / 0.22) inset;
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
   }
-
   .dark .wiki-workbench-card {
-    background:
-      linear-gradient(180deg, hsl(var(--wiki-panel) / 0.96) 0%, hsl(var(--card) / 0.88) 100%);
-    box-shadow:
-      0 20px 48px hsl(0 0% 0% / 0.28),
-      0 1px 0 hsl(0 0% 100% / 0.04) inset;
+    background: linear-gradient(180deg, hsl(var(--wiki-panel) / 0.96) 0%, hsl(var(--card) / 0.88) 100%);
+    box-shadow: 0 20px 48px hsl(0 0% 0% / 0.28), 0 1px 0 hsl(0 0% 100% / 0.04) inset;
   }
 
   .wiki-reading-surface {
     border: 1px solid hsl(var(--border) / 0.72);
-    background:
-      linear-gradient(180deg, hsl(var(--wiki-panel) / 0.98) 0%, hsl(var(--background) / 0.96) 100%);
-    box-shadow:
-      0 24px 60px hsl(var(--wiki-shadow) / 0.08),
-      0 1px 0 hsl(0 0% 100% / 0.22) inset;
+    background: linear-gradient(180deg, hsl(var(--wiki-panel) / 0.98) 0%, hsl(var(--background) / 0.96) 100%);
+    box-shadow: 0 24px 60px hsl(var(--wiki-shadow) / 0.08), 0 1px 0 hsl(0 0% 100% / 0.22) inset;
   }
-
   .dark .wiki-reading-surface {
-    background:
-      linear-gradient(180deg, hsl(var(--wiki-panel) / 0.98) 0%, hsl(var(--background) / 0.94) 100%);
-    box-shadow:
-      0 24px 60px hsl(0 0% 0% / 0.34),
-      0 1px 0 hsl(0 0% 100% / 0.04) inset;
+    background: linear-gradient(180deg, hsl(var(--wiki-panel) / 0.98) 0%, hsl(var(--background) / 0.94) 100%);
+    box-shadow: 0 24px 60px hsl(0 0% 0% / 0.34), 0 1px 0 hsl(0 0% 100% / 0.04) inset;
   }
 
-  .wiki-reading-copy {
-    font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  }
+  .wiki-reading-copy { font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif; }
+  .wiki-kicker { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
+  .wiki-soft-rule { border-color: hsl(var(--border) / 0.55); }
+  .wiki-fade-in { animation: float-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
-  .wiki-kicker {
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: hsl(var(--muted-foreground));
-  }
+  .toolbar-block { @apply rounded-xl border border-transparent bg-transparent p-0; }
+  .toolbar-quick-btn { @apply inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-background/60 px-2.5 py-1 text-xs text-foreground transition hover:bg-background/90 disabled:opacity-50; }
+  .toolbar-check-chip { @apply inline-flex h-8 items-center gap-2 rounded-lg border border-border/50 bg-background/60 px-2.5 text-xs text-foreground transition hover:bg-background/90; }
+  .context-menu-btn { @apply block w-full rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground; }
 
-  .wiki-soft-rule {
-    border-color: hsl(var(--border) / 0.55);
-  }
-
-  .wiki-fade-in {
-    animation: float-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-
-  .toolbar-block {
-    @apply rounded-xl border border-transparent bg-transparent p-0;
-  }
-
-  .toolbar-quick-btn {
-    @apply inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-background/60 px-2.5 py-1 text-xs text-foreground transition hover:bg-background/90 disabled:opacity-50;
-  }
-
-  .toolbar-check-chip {
-    @apply inline-flex h-8 items-center gap-2 rounded-lg border border-border/50 bg-background/60 px-2.5 text-xs text-foreground transition hover:bg-background/90;
-  }
-
-  .context-menu-btn {
-    @apply block w-full rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground;
-  }
-
-  .react-flow__pane {
-    background: transparent;
-  }
-
+  .react-flow__pane { background: transparent; }
   .react-flow__controls {
     @apply border border-border/60 bg-card/80 shadow;
     backdrop-filter: blur(6px);
@@ -731,80 +644,34 @@
     border-color: hsl(var(--border) / 0.6) !important;
     color: hsl(var(--foreground)) !important;
   }
-
   .react-flow__controls-button {
     @apply border-border/50 bg-card text-foreground hover:bg-secondary;
     background: transparent !important;
     border-color: hsl(var(--border) / 0.5) !important;
     color: hsl(var(--foreground)) !important;
   }
-
-  .react-flow__controls-button:hover {
-    background: hsl(var(--secondary) / 0.9) !important;
-  }
-
-  .react-flow__controls-button:active {
-    background: hsl(var(--secondary)) !important;
-  }
-
-  .react-flow__controls-button svg {
-    stroke: currentColor !important;
-    color: hsl(var(--foreground)) !important;
-  }
-
-  .react-flow__controls-button svg * {
-    stroke: currentColor !important;
-  }
-
-  .react-flow__controls-button path {
-    stroke: currentColor !important;
-    fill: none !important;
-  }
-
+  .react-flow__controls-button:hover { background: hsl(var(--secondary) / 0.9) !important; }
+  .react-flow__controls-button:active { background: hsl(var(--secondary)) !important; }
+  .react-flow__controls-button svg { stroke: currentColor !important; color: hsl(var(--foreground)) !important; }
+  .react-flow__controls-button svg * { stroke: currentColor !important; }
+  .react-flow__controls-button path { stroke: currentColor !important; fill: none !important; }
   .react-flow.light .react-flow__controls,
   .react-flow.dark .react-flow__controls,
   .react-flow.light .react-flow__controls-button,
-  .react-flow.dark .react-flow__controls-button {
-    color: hsl(var(--foreground)) !important;
-  }
-
+  .react-flow.dark .react-flow__controls-button { color: hsl(var(--foreground)) !important; }
   .react-flow__minimap {
     background: hsl(var(--card) / 0.82) !important;
     border-color: hsl(var(--border) / 0.6) !important;
-  }
-
-  .react-flow__minimap {
     @apply border border-border/60 bg-card/70 shadow;
   }
+  .react-flow__edge-path { transition: stroke 120ms ease, stroke-width 120ms ease, opacity 120ms ease; }
 
-  .react-flow__edge-path {
-    transition: stroke 120ms ease, stroke-width 120ms ease, opacity 120ms ease;
-  }
+  .coord-node-card { transition: box-shadow 120ms ease, border-color 120ms ease, transform 120ms ease; }
+  .coord-node-card:hover { box-shadow: 0 4px 16px hsl(0 0% 0% / 0.16); transform: translateY(-1px); }
+  .coord-node-card:hover .coord-handle { opacity: 1; }
+  .coord-handle { opacity: 0.6; transition: opacity 120ms ease, transform 120ms ease; }
+  .coord-handle:hover { opacity: 1; transform: scale(1.08); }
 
-  .coord-node-card {
-    transition: box-shadow 120ms ease, border-color 120ms ease, transform 120ms ease;
-  }
-
-  .coord-node-card:hover {
-    box-shadow: 0 4px 16px hsl(0 0% 0% / 0.16);
-    transform: translateY(-1px);
-  }
-
-  .coord-node-card:hover .coord-handle {
-    opacity: 1;
-  }
-
-  .coord-handle {
-    opacity: 0.6;
-    transition: opacity 120ms ease, transform 120ms ease;
-  }
-
-  .coord-handle:hover {
-    opacity: 1;
-    transform: scale(1.08);
-  }
-
-  /* ── Import flow cards ── */
   .import-source-card {
     position: relative;
     display: flex;
@@ -817,19 +684,16 @@
     cursor: pointer;
     transition: all 0.24s cubic-bezier(0.4, 0, 0.2, 1);
   }
-
   .import-source-card:hover {
     border-color: hsl(var(--primary) / 0.4);
     background: hsl(var(--import-card-hover));
     box-shadow: 0 0 0 1px hsl(var(--primary) / 0.08);
   }
-
   .import-source-card[data-selected="true"] {
     border-color: hsl(var(--primary) / 0.6);
     background: hsl(var(--import-card-selected));
     box-shadow: 0 0 0 1px hsl(var(--primary) / 0.2), 0 4px 16px hsl(var(--primary) / 0.08);
   }
-
   .import-source-card[data-selected="true"]::before {
     content: '';
     position: absolute;
@@ -844,7 +708,6 @@
     pointer-events: none;
   }
 
-  /* New project card on home page */
   .new-project-card {
     display: flex;
     flex-direction: column;
@@ -859,7 +722,6 @@
     cursor: pointer;
     transition: all 0.24s cubic-bezier(0.4, 0, 0.2, 1);
   }
-
   .new-project-card:hover {
     border-color: hsl(var(--primary) / 0.5);
     background: hsl(var(--primary) / 0.04);
@@ -867,7 +729,6 @@
     box-shadow: 0 0 24px hsl(var(--primary) / 0.06);
   }
 
-  /* Step indicator */
   .import-step-dot {
     width: 1.75rem;
     height: 1.75rem;
@@ -880,39 +741,14 @@
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     flex-shrink: 0;
   }
+  .import-step-dot[data-state="done"] { background: hsl(var(--import-step-done)); color: hsl(var(--primary-foreground)); }
+  .import-step-dot[data-state="active"] { background: hsl(var(--import-step-active)); color: hsl(var(--primary-foreground)); box-shadow: 0 0 0 3px hsl(var(--import-step-active) / 0.2); }
+  .import-step-dot[data-state="pending"] { background: hsl(var(--secondary)); color: hsl(var(--muted-foreground)); }
 
-  .import-step-dot[data-state="done"] {
-    background: hsl(var(--import-step-done));
-    color: hsl(var(--primary-foreground));
-  }
+  .import-step-line { width: 2px; flex: 1; min-height: 1.5rem; transition: background 0.3s ease; }
+  .import-step-line[data-state="done"] { background: hsl(var(--import-step-done)); }
+  .import-step-line[data-state="pending"] { background: hsl(var(--border)); }
 
-  .import-step-dot[data-state="active"] {
-    background: hsl(var(--import-step-active));
-    color: hsl(var(--primary-foreground));
-    box-shadow: 0 0 0 3px hsl(var(--import-step-active) / 0.2);
-  }
-
-  .import-step-dot[data-state="pending"] {
-    background: hsl(var(--secondary));
-    color: hsl(var(--muted-foreground));
-  }
-
-  .import-step-line {
-    width: 2px;
-    flex: 1;
-    min-height: 1.5rem;
-    transition: background 0.3s ease;
-  }
-
-  .import-step-line[data-state="done"] {
-    background: hsl(var(--import-step-done));
-  }
-
-  .import-step-line[data-state="pending"] {
-    background: hsl(var(--border));
-  }
-
-  /* Import form input */
   .import-input {
     height: 2.5rem;
     width: 100%;
@@ -924,16 +760,8 @@
     color: hsl(var(--foreground));
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
   }
-
-  .import-input:focus {
-    outline: none;
-    border-color: hsl(var(--primary) / 0.5);
-    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.12);
-  }
-
-  .import-input::placeholder {
-    color: hsl(var(--muted-foreground) / 0.6);
-  }
+  .import-input:focus { outline: none; border-color: hsl(var(--primary) / 0.5); box-shadow: 0 0 0 2px hsl(var(--primary) / 0.12); }
+  .import-input::placeholder { color: hsl(var(--muted-foreground) / 0.6); }
 
   .import-select {
     height: 2.5rem;
@@ -951,14 +779,8 @@
     background-position: right 0.5rem center;
     background-size: 1rem;
   }
+  .import-select:focus { outline: none; border-color: hsl(var(--primary) / 0.5); box-shadow: 0 0 0 2px hsl(var(--primary) / 0.12); }
 
-  .import-select:focus {
-    outline: none;
-    border-color: hsl(var(--primary) / 0.5);
-    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.12);
-  }
-
-  /* ── Enhanced Project Card ── */
   .project-card {
     position: relative;
     display: flex;
@@ -971,7 +793,6 @@
     cursor: pointer;
     transition: all 0.24s cubic-bezier(0.4, 0, 0.2, 1);
   }
-
   .project-card:hover {
     border-color: hsl(var(--primary) / 0.3);
     background: hsl(var(--card) / 0.8);
@@ -979,50 +800,17 @@
     transform: translateY(-1px);
   }
 
-  /* Project card: status indicator with ping animation */
-  .project-status-dot {
-    position: relative;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
+  .project-status-dot { position: relative; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .project-status-dot[data-status="healthy"] { background: hsl(var(--success)); box-shadow: 0 0 6px hsl(var(--success) / 0.4); }
+  .project-status-dot[data-status="at_risk"] { background: hsl(var(--warning)); box-shadow: 0 0 6px hsl(var(--warning) / 0.4); animation: status-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; }
+  .project-status-dot[data-status="blocked"] { background: hsl(var(--destructive)); box-shadow: 0 0 6px hsl(var(--destructive) / 0.4); }
 
-  .project-status-dot[data-status="healthy"] {
-    background: hsl(var(--success));
-    box-shadow: 0 0 6px hsl(var(--success) / 0.4);
-  }
-
-  .project-status-dot[data-status="at_risk"] {
-    background: hsl(var(--warning));
-    box-shadow: 0 0 6px hsl(var(--warning) / 0.4);
-    animation: status-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
-  }
-
-  .project-status-dot[data-status="blocked"] {
-    background: hsl(var(--destructive));
-    box-shadow: 0 0 6px hsl(var(--destructive) / 0.4);
-  }
-
-  /* Health score bar */
-  .health-bar {
-    height: 3px;
-    border-radius: 999px;
-    background: hsl(var(--secondary));
-    overflow: hidden;
-  }
-
-  .health-bar-fill {
-    height: 100%;
-    border-radius: 999px;
-    transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
+  .health-bar { height: 3px; border-radius: 999px; background: hsl(var(--secondary)); overflow: hidden; }
+  .health-bar-fill { height: 100%; border-radius: 999px; transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
   .health-bar-fill[data-level="high"] { background: hsl(var(--success)); }
   .health-bar-fill[data-level="medium"] { background: hsl(var(--warning)); }
   .health-bar-fill[data-level="low"] { background: hsl(var(--destructive)); }
 
-  /* Environment badge */
   .env-badge {
     display: inline-flex;
     align-items: center;
@@ -1037,7 +825,6 @@
     line-height: 1.4;
   }
 
-  /* Import state badge */
   .import-state-badge {
     display: inline-flex;
     align-items: center;
@@ -1048,38 +835,12 @@
     font-weight: 500;
     line-height: 1.4;
   }
+  .import-state-badge[data-state="syncing"] { background: hsl(var(--warning) / 0.12); color: hsl(var(--warning)); border: 1px solid hsl(var(--warning) / 0.3); }
+  .import-state-badge[data-state="ready"] { background: hsl(var(--success) / 0.12); color: hsl(var(--success)); border: 1px solid hsl(var(--success) / 0.3); }
+  .import-state-badge[data-state="failed"] { background: hsl(var(--destructive) / 0.12); color: hsl(var(--destructive)); border: 1px solid hsl(var(--destructive) / 0.3); }
+  .import-state-badge[data-state="idle"] { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); border: 1px solid hsl(var(--border)); }
 
-  .import-state-badge[data-state="syncing"] {
-    background: hsl(var(--warning) / 0.12);
-    color: hsl(var(--warning));
-    border: 1px solid hsl(var(--warning) / 0.3);
-  }
-
-  .import-state-badge[data-state="ready"] {
-    background: hsl(var(--success) / 0.12);
-    color: hsl(var(--success));
-    border: 1px solid hsl(var(--success) / 0.3);
-  }
-
-  .import-state-badge[data-state="failed"] {
-    background: hsl(var(--destructive) / 0.12);
-    color: hsl(var(--destructive));
-    border: 1px solid hsl(var(--destructive) / 0.3);
-  }
-
-  .import-state-badge[data-state="idle"] {
-    background: hsl(var(--muted));
-    color: hsl(var(--muted-foreground));
-    border: 1px solid hsl(var(--border));
-  }
-
-  /* ── Search & Filter Bar ── */
-  .search-input-wrapper {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
+  .search-input-wrapper { position: relative; display: flex; align-items: center; }
   .search-input {
     height: 2.25rem;
     width: 100%;
@@ -1092,19 +853,9 @@
     color: hsl(var(--foreground));
     transition: border-color 0.2s ease, box-shadow 0.2s ease, width 0.2s ease;
   }
+  .search-input:focus { outline: none; border-color: hsl(var(--primary) / 0.5); box-shadow: 0 0 0 2px hsl(var(--primary) / 0.1); max-width: 22rem; }
+  .search-input::placeholder { color: hsl(var(--muted-foreground) / 0.6); }
 
-  .search-input:focus {
-    outline: none;
-    border-color: hsl(var(--primary) / 0.5);
-    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.1);
-    max-width: 22rem;
-  }
-
-  .search-input::placeholder {
-    color: hsl(var(--muted-foreground) / 0.6);
-  }
-
-  /* Filter chip */
   .filter-chip {
     display: inline-flex;
     align-items: center;
@@ -1120,22 +871,9 @@
     transition: all 0.2s ease;
     white-space: nowrap;
   }
-
-  .filter-chip:hover {
-    border-color: hsl(var(--primary) / 0.3);
-    color: hsl(var(--foreground));
-    background: hsl(var(--accent) / 0.5);
-  }
-
-  .filter-chip[data-active="true"] {
-    border-color: hsl(var(--primary) / 0.5);
-    background: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary));
-  }
-
-  .filter-chip[data-active="true"]:hover {
-    background: hsl(var(--primary) / 0.15);
-  }
+  .filter-chip:hover { border-color: hsl(var(--primary) / 0.3); color: hsl(var(--foreground)); background: hsl(var(--accent) / 0.5); }
+  .filter-chip[data-active="true"] { border-color: hsl(var(--primary) / 0.5); background: hsl(var(--primary) / 0.1); color: hsl(var(--primary)); }
+  .filter-chip[data-active="true"]:hover { background: hsl(var(--primary) / 0.15); }
 
   .sort-select {
     height: 2rem;
@@ -1153,13 +891,8 @@
     background-size: 0.75rem;
     transition: border-color 0.2s ease;
   }
+  .sort-select:focus { outline: none; border-color: hsl(var(--primary) / 0.5); }
 
-  .sort-select:focus {
-    outline: none;
-    border-color: hsl(var(--primary) / 0.5);
-  }
-
-  /* ── Delete Confirmation Dialog ── */
   .dialog-overlay {
     position: fixed;
     inset: 0;
@@ -1184,50 +917,13 @@
     box-shadow: 0 20px 60px hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(var(--border) / 0.3);
     animation: float-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
+  .dialog-content h3 { font-size: 1rem; font-weight: 600; color: hsl(var(--foreground)); margin-bottom: 0.5rem; }
+  .dialog-content p { font-size: 0.8125rem; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem; }
 
-  .dialog-content h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: hsl(var(--foreground));
-    margin-bottom: 0.5rem;
-  }
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem 1.5rem; text-align: center; }
+  .empty-state-icon { width: 3rem; height: 3rem; border-radius: 0.75rem; background: hsl(var(--secondary)); display: flex; align-items: center; justify-content: center; margin-bottom: 1rem; color: hsl(var(--muted-foreground)); }
 
-  .dialog-content p {
-    font-size: 0.8125rem;
-    color: hsl(var(--muted-foreground));
-    line-height: 1.5;
-  }
-
-  .dialog-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    margin-top: 1.25rem;
-  }
-
-  /* ── Empty state ── */
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 3rem 1.5rem;
-    text-align: center;
-  }
-
-  .empty-state-icon {
-    width: 3rem;
-    height: 3rem;
-    border-radius: 0.75rem;
-    background: hsl(var(--secondary));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 1rem;
-    color: hsl(var(--muted-foreground));
-  }
-
-  /* ── Toast notification ── */
   .toast {
     position: fixed;
     bottom: 1.5rem;
@@ -1244,23 +940,10 @@
     animation: float-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     max-width: 24rem;
   }
+  .toast[data-type="success"] { border-color: hsl(var(--success) / 0.3); background: hsl(var(--success) / 0.08); }
+  .toast[data-type="error"] { border-color: hsl(var(--destructive) / 0.3); background: hsl(var(--destructive) / 0.08); }
+  .toast[data-type="warning"] { border-color: hsl(var(--warning) / 0.3); background: hsl(var(--warning) / 0.08); }
 
-  .toast[data-type="success"] {
-    border-color: hsl(var(--success) / 0.3);
-    background: hsl(var(--success) / 0.08);
-  }
-
-  .toast[data-type="error"] {
-    border-color: hsl(var(--destructive) / 0.3);
-    background: hsl(var(--destructive) / 0.08);
-  }
-
-  .toast[data-type="warning"] {
-    border-color: hsl(var(--warning) / 0.3);
-    background: hsl(var(--warning) / 0.08);
-  }
-
-  /* ── Git provider card ── */
   .provider-card {
     display: flex;
     flex-direction: column;
@@ -1272,19 +955,9 @@
     cursor: pointer;
     transition: all 0.2s ease;
   }
+  .provider-card:hover { border-color: hsl(var(--primary) / 0.3); box-shadow: 0 4px 16px hsl(var(--primary) / 0.04); }
+  .provider-card[data-selected="true"] { border-color: hsl(var(--primary) / 0.5); background: hsl(var(--primary) / 0.06); box-shadow: 0 0 0 1px hsl(var(--primary) / 0.15); }
 
-  .provider-card:hover {
-    border-color: hsl(var(--primary) / 0.3);
-    box-shadow: 0 4px 16px hsl(var(--primary) / 0.04);
-  }
-
-  .provider-card[data-selected="true"] {
-    border-color: hsl(var(--primary) / 0.5);
-    background: hsl(var(--primary) / 0.06);
-    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.15);
-  }
-
-  /* ── Duplicate dialog ── */
   .duplicate-warning {
     display: flex;
     align-items: flex-start;
@@ -1294,7 +967,6 @@
     background: hsl(var(--warning) / 0.08);
     border: 1px solid hsl(var(--warning) / 0.25);
   }
-
   .duplicate-warning-icon {
     flex-shrink: 0;
     width: 2rem;
@@ -1307,39 +979,19 @@
     color: hsl(var(--warning));
   }
 
-  /* ── Progress indicator for import ── */
-  .import-progress-bar {
-    height: 4px;
-    border-radius: 999px;
-    background: hsl(var(--secondary));
-    overflow: hidden;
-  }
-
-  .import-progress-fill {
-    height: 100%;
-    border-radius: 999px;
-    background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--neural-blue)));
-    animation: shimmer 2s linear infinite;
-    background-size: 200% 100%;
-  }
+  .import-progress-bar { height: 4px; border-radius: 999px; background: hsl(var(--secondary)); overflow: hidden; }
+  .import-progress-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--neural-blue))); animation: shimmer 2s linear infinite; background-size: 200% 100%; }
 }
-
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
+/* END_UTILITIES */
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: hsl(var(--background)); }
 ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
 
-/* Notion-like editable blocks */
 [contenteditable]:focus { outline: none; }
-[contenteditable]:empty::before {
-  content: attr(data-placeholder);
-  color: hsl(var(--muted-foreground));
-}
+[contenteditable]:empty::before { content: attr(data-placeholder); color: hsl(var(--muted-foreground)); }
+
 .prose-block { @apply leading-relaxed text-sm; }
 .prose-block h1 { @apply text-xl font-semibold mb-3 mt-6; }
 .prose-block h2 { @apply text-lg font-semibold mb-2 mt-5; }
@@ -1354,7 +1006,6 @@
 .prose-block blockquote { @apply border-l-2 border-primary/30 pl-4 italic text-muted-foreground mb-2; }
 .prose-block a { @apply text-primary underline decoration-primary/30 hover:decoration-primary; }
 
-/* Compact markdown for Coordinates LiveFeed (11px panel) */
 .feed-prose { @apply text-[11px] leading-relaxed text-foreground/90; }
 .feed-prose > :first-child { @apply mt-0; }
 .feed-prose > :last-child { @apply mb-0; }
@@ -1378,7 +1029,6 @@
 .feed-prose th { @apply bg-secondary/60 font-medium; }
 .feed-prose img { @apply max-w-full rounded; }
 
-/* ── Debug Console ── */
 .debug-toolbar {
   display: flex;
   align-items: center;
@@ -1393,11 +1043,7 @@
   flex-shrink: 0;
 }
 
-.debug-panel {
-  border-bottom: 1px solid hsl(var(--border) / 0.5);
-  z-index: 29;
-  flex-shrink: 0;
-}
+.debug-panel { border-bottom: 1px solid hsl(var(--border) / 0.5); z-index: 29; flex-shrink: 0; }
 
 .debug-pill {
   display: inline-flex;
@@ -1414,24 +1060,10 @@
   transition: background 120ms ease, border-color 120ms ease;
   white-space: nowrap;
 }
+.debug-pill:hover { background: hsl(var(--secondary) / 0.7); border-color: hsl(var(--border)); }
+.debug-pill-active { background: hsl(var(--primary) / 0.1); border-color: hsl(var(--primary) / 0.4); color: hsl(var(--foreground)); }
 
-.debug-pill:hover {
-  background: hsl(var(--secondary) / 0.7);
-  border-color: hsl(var(--border));
-}
-
-.debug-pill-active {
-  background: hsl(var(--primary) / 0.1);
-  border-color: hsl(var(--primary) / 0.4);
-  color: hsl(var(--foreground));
-}
-
-.debug-step-border {
-  border-left: 2px solid hsl(var(--border) / 0.5);
-  padding-left: 0.75rem;
-  margin-left: 0.25rem;
-}
-
+.debug-step-border { border-left: 2px solid hsl(var(--border) / 0.5); padding-left: 0.75rem; margin-left: 0.25rem; }
 .debug-step-border[data-status="running"] { border-color: hsl(var(--run)); }
 .debug-step-border[data-status="completed"] { border-color: hsl(var(--success)); }
 .debug-step-border[data-status="failed"] { border-color: hsl(var(--destructive)); }
@@ -1440,49 +1072,6 @@
 
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
-
-/* ── Capsule Switch ─────────────────────────────────────────────────────── */
-
-.capsule-switch-wrapper {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.capsule-switch {
-  position: relative;
-  width: 36px;
-  height: 20px;
-  border-radius: 10px;
-  background: hsl(var(--muted));
-  border: 1px solid hsl(var(--border) / 0.5);
-  transition: background 0.2s, border-color 0.2s;
-  cursor: pointer;
-}
-
-.capsule-switch[data-checked] {
-  background: hsl(var(--primary));
-  border-color: hsl(var(--primary));
-}
-
-.capsule-switch-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: white;
-  box-shadow: 0 1px 3px hsl(0 0% 0% / 0.15);
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.capsule-switch[data-checked] .capsule-switch-thumb {
-  transform: translateX(16px);
-}
-
-/* ── Settings Form Elements ────────────────────────────────────────────── */
 
 .settings-input {
   width: 100%;
@@ -1495,15 +1084,8 @@
   color: hsl(var(--foreground));
   transition: border-color 0.15s;
 }
-
-.settings-input:focus {
-  outline: none;
-  border-color: hsl(var(--primary));
-}
-
-.settings-input.border-destructive {
-  border-color: hsl(var(--destructive));
-}
+.settings-input:focus { outline: none; border-color: hsl(var(--primary)); }
+.settings-input.border-destructive { border-color: hsl(var(--destructive)); }
 
 .settings-select {
   height: 30px;
@@ -1518,11 +1100,7 @@
   background-repeat: no-repeat;
   background-position: right 6px center;
 }
-
-.settings-select:focus {
-  outline: none;
-  border-color: hsl(var(--primary));
-}
+.settings-select:focus { outline: none; border-color: hsl(var(--primary)); }
 
 .settings-number {
   width: 80px;
@@ -1535,12 +1113,5 @@
   color: hsl(var(--foreground));
   text-align: right;
 }
-
-.settings-number:focus {
-  outline: none;
-  border-color: hsl(var(--primary));
-}
-
-.settings-number.border-destructive {
-  border-color: hsl(var(--destructive));
-}
+.settings-number:focus { outline: none; border-color: hsl(var(--primary)); }
+.settings-number.border-destructive { border-color: hsl(var(--destructive)); }

@@ -75,9 +75,9 @@ export default function CoordNodeView({ data, selected }: NodeProps) {
         'transition-all duration-200 ease-out',
         'hover:shadow-md hover:border-primary/30 hover:-translate-y-0.5',
         selected
-          ? 'border-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.4),0_4px_20px_-6px_hsl(var(--primary)/0.25)]'
+          ? 'border-primary shadow-[0_0_0_1px_oklch(from var(--accent) l c h / 0.4),0_4px_20px_-6px_oklch(from var(--accent) l c h / 0.25)]'
           : glowBorder
-            ? 'border-primary/50 ring-1 ring-primary/20 shadow-[0_0_12px_-4px_hsl(var(--primary)/0.3)]'
+            ? 'border-primary/50 ring-1 ring-primary/20 shadow-[0_0_12px_-4px_oklch(from var(--accent) l c h / 0.3)]'
             : 'border-border/60',
       ].join(' ')}
     >

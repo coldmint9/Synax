@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Spinner } from '@heroui/react'
 import { useConfig } from './useConfig'
 import { LayoutSection } from './components/LayoutSection'
 import { LlmProviderSection } from './components/LlmProviderSection'
@@ -22,7 +22,7 @@ export default function GlobalSettingsPage() {
   if (loading || !globalConfig) {
     return (
       <div className="flex h-full items-center justify-center">
-        <Loader2 size={20} className="animate-spin text-muted-foreground" />
+        <Spinner size="sm" />
       </div>
     )
   }

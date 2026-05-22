@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Loader2, RefreshCw, Send, X } from 'lucide-react'
+import { Button, Spinner } from '@heroui/react'
 import {
   agentRuntimeApi,
   type AgentRuntimeMessage,
@@ -151,15 +152,16 @@ export default function AgentLoopTestPage() {
             <InfoRow label="Active run" value={shortId(session?.activeRunId) || '-'} />
           </div>
 
-          <button
-            type="button"
-            onClick={() => void refreshSessionData()}
-            disabled={!sessionIdRef.current}
-            className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-6 w-full"
+            onPress={() => void refreshSessionData()}
+            isDisabled={!sessionIdRef.current}
           >
             <RefreshCw size={14} />
             Refresh
-          </button>
+          </Button>
 
           <div className="mt-6 rounded-md border border-border bg-background/60 p-3 text-xs text-muted-foreground">
             Try a write prompt such as: write "hello" to tmp/agent-loop-ui-test.txt.
@@ -177,7 +179,7 @@ export default function AgentLoopTestPage() {
               </div>
               {streaming && (
                 <div className="inline-flex items-center gap-2 rounded-md bg-secondary px-3 py-1.5 text-xs text-muted-foreground">
-                  <Loader2 size={14} className="animate-spin" />
+                  <Spinner size="sm" />
                   running
                 </div>
               )}
@@ -224,24 +226,23 @@ export default function AgentLoopTestPage() {
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void replyPermission(permission.id, 'once')}
-                            disabled={approvingId === permission.id}
-                            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-60"
+                          <Button
+                            size="sm"
+                            onPress={() => void replyPermission(permission.id, 'once')}
+                            isDisabled={approvingId === permission.id}
                           >
                             <Check size={13} />
                             Allow once
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void replyPermission(permission.id, 'reject')}
-                            disabled={approvingId === permission.id}
-                            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-60"
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onPress={() => void replyPermission(permission.id, 'reject')}
+                            isDisabled={approvingId === permission.id}
                           >
                             <X size={13} />
                             Reject
-                          </button>
+                          </Button>
                         </div>
                       </div>
                     ))}
@@ -275,7 +276,7 @@ export default function AgentLoopTestPage() {
                     className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                     aria-label="Send"
                   >
-                    {streaming ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                    {streaming ? <Spinner size="sm" /> : <Send size={16} />}
                   </button>
                 </div>
               </form>
