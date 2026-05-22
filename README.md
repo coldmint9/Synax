@@ -1,4 +1,4 @@
-# Synx
+# Synax
 
 > AI-powered code intelligence platform with a multi-agent runtime, interactive code graph, and auto-generated design wiki.
 
