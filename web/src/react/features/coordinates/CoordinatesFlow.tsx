@@ -159,14 +159,14 @@ function ReactFlowGraph({
       onNodeContextMenu={onNodeContextMenu}
       onEdgeContextMenu={onEdgeContextMenu}
     >
-      <Background gap={24} size={1} color="hsl(var(--border) / 0.3)" />
+      <Background gap={24} size={1} color="var(--glass-border)" />
       <MiniMap
         pannable
         zoomable
         ariaLabel="Coordinates minimap"
         style={{
           backgroundColor: isDark ? 'hsl(30 10% 11% / 0.84)' : 'hsl(42 28% 98% / 0.84)',
-          border: '1px solid hsl(var(--border) / 0.6)',
+          border: '1px solid var(--glass-border)',
           backdropFilter: 'blur(6px)',
         }}
         maskColor={isDark ? 'rgb(8 10 12 / 0.6)' : 'rgb(255 255 255 / 0.6)'}
@@ -177,8 +177,8 @@ function ReactFlowGraph({
       <Controls
         style={{
           backgroundColor: isDark ? 'hsl(30 10% 11% / 0.82)' : 'hsl(42 28% 98% / 0.82)',
-          border: '1px solid hsl(var(--border) / 0.6)',
-          color: 'hsl(var(--foreground))',
+          border: '1px solid var(--glass-border)',
+          color: 'var(--foreground)',
           backdropFilter: 'blur(6px)',
         }}
       >

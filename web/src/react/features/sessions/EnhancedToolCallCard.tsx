@@ -23,7 +23,7 @@ function getToolIcon(category: string) {
 const STATUS_STYLES: Record<string, string> = {
   failed: 'text-destructive',
   denied: 'text-destructive',
-  running: 'text-[hsl(var(--agent))]',
+  running: 'text-[var(--color-agent)]',
   cancelled: 'text-muted-foreground/60',
   compacted: 'text-muted-foreground/60',
 }
@@ -39,7 +39,7 @@ export function EnhancedToolCallCard({ call }: Props) {
   return (
     <div
       className={`rounded-lg border transition-colors ${
-        expanded ? 'border-[hsl(var(--tool))]/20 bg-[hsl(var(--tool))]/[0.02]' : 'border-border/60 bg-background/40'
+        expanded ? 'border-accent/20 bg-accent/5' : 'border-border/60 bg-background/40'
       }`}
     >
       <button
@@ -47,7 +47,7 @@ export function EnhancedToolCallCard({ call }: Props) {
         onClick={() => hasOutput && setExpanded(!expanded)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left"
       >
-        <Icon size={13} className="shrink-0 text-[hsl(var(--tool))]" />
+        <Icon size={13} className="shrink-0 text-accent" />
         <span className="shrink-0 font-mono text-xs font-semibold text-foreground">
           {call.toolId}
         </span>

@@ -1,5 +1,6 @@
-import { AlertCircle, BookOpen, Download, Loader2, Map, MessageSquarePlus, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
+import { AlertCircle, BookOpen, Download, Loader2, Map as MapIcon, MessageSquarePlus, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Button, Spinner } from '@heroui/react'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
@@ -101,22 +102,21 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
 
         {generating && phase && (
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
-            <Loader2 size={12} className="shrink-0 animate-spin text-primary" />
+            <Spinner size="sm" className="text-primary" />
             <p className="text-[11px] text-primary">{phase}</p>
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={handleGenerate}
-          disabled={generating}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+        <Button
+          className="mt-4 w-full"
+          onPress={handleGenerate}
+          isDisabled={generating}
         >
           {generating
-            ? <Loader2 size={14} className="animate-spin" />
+            ? <Spinner size="sm" />
             : <Sparkles size={14} />}
           {generating ? '生成中…' : '生成 Wiki'}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -202,20 +202,19 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
 
         {retrying && phase && (
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
-            <Loader2 size={12} className="shrink-0 animate-spin text-primary" />
+            <Spinner size="sm" className="text-primary" />
             <p className="text-[11px] text-primary">{phase}</p>
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={handleRetry}
-          disabled={retrying}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+        <Button
+          className="mt-4 w-full"
+          onPress={handleRetry}
+          isDisabled={retrying}
         >
-          {retrying ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          {retrying ? <Spinner size="sm" /> : <RefreshCw size={14} />}
           {retrying ? '重新生成中…' : '重新生成'}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -576,7 +575,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             }`}
             title="Design Mapping"
           >
-            <Map size={11} className="mx-auto" />
+            <MapIcon size={11} className="mx-auto" />
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">

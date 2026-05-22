@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter, useNavigate } from 'react-router-dom'
+import { RouterProvider } from '@heroui/react'
 import App from './react/App'
 import './index.css'
 import '@xyflow/react/dist/style.css'
@@ -12,12 +13,23 @@ hydrateShellPreferences()
 const theme = useShellStore.getState().preferences.theme
 document.documentElement.classList.toggle('dark', theme === 'dark')
 
+function HeroUIRouter({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate()
+  return (
+    <RouterProvider navigate={navigate}>
+      {children}
+    </RouterProvider>
+  )
+}
+
 async function bootstrap() {
   await initApiOrigin()
   ReactDOM.createRoot(document.getElementById('app')!).render(
     <React.StrictMode>
       <BrowserRouter>
-        <App />
+        <HeroUIRouter>
+          <App />
+        </HeroUIRouter>
       </BrowserRouter>
     </React.StrictMode>,
   )

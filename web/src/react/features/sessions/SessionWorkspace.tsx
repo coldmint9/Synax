@@ -12,15 +12,15 @@ function fmtDuration(ms: number): string {
 }
 
 function progressColor(percent: number): string {
-  if (percent > 85) return 'bg-[hsl(var(--destructive))]'
-  if (percent > 60) return 'bg-[hsl(var(--warning))]'
-  return 'bg-[hsl(var(--success))]'
+  if (percent > 85) return 'bg-danger'
+  if (percent > 60) return 'bg-warning'
+  return 'bg-success'
 }
 
 const STATUS_BADGE: Record<string, string> = {
-  running: 'bg-[hsl(var(--run))]/15 text-[hsl(var(--run))]',
-  completed: 'bg-[hsl(var(--success))]/15 text-[hsl(var(--success))]',
-  failed: 'bg-[hsl(var(--destructive))]/15 text-[hsl(var(--destructive))]',
+  running: 'bg-[var(--color-run)]/15 text-[var(--color-run)]',
+  completed: 'bg-success/15 text-success',
+  failed: 'bg-danger/15 text-danger',
   paused: 'bg-sky-400/15 text-sky-400',
   interrupted: 'bg-amber-400/15 text-amber-400',
 }
@@ -31,9 +31,9 @@ interface FileChange {
 }
 const CHANGE_ICON = { added: FilePlus, modified: FileEdit, deleted: FileX, renamed: File, unknown: File }
 const CHANGE_COLOR = {
-  added: 'text-[hsl(var(--success))]',
-  modified: 'text-[hsl(var(--warning))]',
-  deleted: 'text-[hsl(var(--destructive))]',
+  added: 'text-success',
+  modified: 'text-warning',
+  deleted: 'text-danger',
   renamed: 'text-muted-foreground',
   unknown: 'text-muted-foreground',
 }
@@ -101,8 +101,8 @@ function TodoCard({ items }: { items: TodoItem[] }) {
       <ul className="mt-1 space-y-0.5">
         {items.map(item => (
           <li key={item.id} className="flex items-center gap-1.5 text-[10px]">
-            {item.status === 'done' && <CheckCircle2 size={10} className="shrink-0 text-[hsl(var(--success))]" />}
-            {item.status === 'in_progress' && <Loader2 size={10} className="shrink-0 animate-spin text-[hsl(var(--warning))]" />}
+            {item.status === 'done' && <CheckCircle2 size={10} className="shrink-0 text-success" />}
+            {item.status === 'in_progress' && <Loader2 size={10} className="shrink-0 animate-spin text-warning" />}
             {item.status === 'pending' && <Circle size={10} className="shrink-0 text-muted-foreground/40" />}
             <span className={item.status === 'done' ? 'line-through text-muted-foreground/60' : 'text-foreground/80'}>
               {item.label}

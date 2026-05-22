@@ -48,7 +48,7 @@ export function DebugToolCall({ event }: Props) {
           <span className="truncate text-muted-foreground">{inputSummary}</span>
         )}
         {status === 'failed' && (
-          <span className="text-[10px] text-[hsl(var(--destructive))]">failed</span>
+          <span className="text-[10px] text-danger">failed</span>
         )}
       </button>
 

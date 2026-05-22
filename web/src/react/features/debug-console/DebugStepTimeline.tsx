@@ -8,11 +8,11 @@ interface Props {
 }
 
 const STATUS_ICON = {
-  running: <Loader2 size={12} className="animate-spin text-[hsl(var(--run))]" />,
-  completed: <CheckCircle2 size={12} className="text-[hsl(var(--success))]" />,
-  failed: <XCircle size={12} className="text-[hsl(var(--destructive))]" />,
-  waiting_permission: <AlertCircle size={12} className="text-[hsl(var(--warning))]" />,
-  blocked: <AlertCircle size={12} className="text-[hsl(var(--warning))]" />,
+  running: <Loader2 size={12} className="animate-spin text-[var(--color-run)]" />,
+  completed: <CheckCircle2 size={12} className="text-success" />,
+  failed: <XCircle size={12} className="text-danger" />,
+  waiting_permission: <AlertCircle size={12} className="text-warning" />,
+  blocked: <AlertCircle size={12} className="text-warning" />,
   cancelled: <Circle size={12} className="text-muted-foreground/50" />,
   interrupted: <XCircle size={12} className="text-muted-foreground/50" />,
 }

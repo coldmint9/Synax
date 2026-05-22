@@ -47,7 +47,7 @@ export function ProjectCard({
     <div className={`project-card group ${className ?? ''}`.trim()}>
       <div className="flex items-center justify-between gap-2">
         <Link
-          to={`/projects/${project.id}/coordinates`}
+          to={`/projects/${project.id}/wiki`}
           className="flex min-w-0 flex-1 items-center gap-2"
         >
           <SourceIcon size={14} className="shrink-0 text-muted-foreground" />
@@ -108,7 +108,7 @@ export function ProjectCard({
           {stats?.lastActivity ? relativeTime(stats.lastActivity) : relativeTime(project.updatedAt === 'just now' ? new Date().toISOString() : project.updatedAt)}
         </div>
         <Link
-          to={`/projects/${project.id}/coordinates`}
+          to={`/projects/${project.id}/wiki`}
           className="inline-flex shrink-0 items-center text-[10px] text-muted-foreground/40 transition hover:text-primary"
         >
           进入

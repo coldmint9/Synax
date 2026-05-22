@@ -27,7 +27,7 @@ export function ToolCallCard({ call }: Props) {
   return (
     <div
       className={`rounded-lg border transition-colors ${
-        expanded ? 'border-[hsl(var(--tool))]/20 bg-[hsl(var(--tool))]/[0.02]' : 'border-border/60 bg-background/40'
+        expanded ? 'border-accent/20 bg-accent/5' : 'border-border/60 bg-background/40'
       }`}
     >
       <button
@@ -35,7 +35,7 @@ export function ToolCallCard({ call }: Props) {
         onClick={() => hasOutput && setExpanded(!expanded)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left"
       >
-        <Icon size={13} className="shrink-0 text-[hsl(var(--tool))]" />
+        <Icon size={13} className="shrink-0 text-accent" />
         <span className="shrink-0 font-mono text-xs font-semibold text-foreground">
           {call.toolId}
         </span>
@@ -49,7 +49,7 @@ export function ToolCallCard({ call }: Props) {
             <span className="text-[10px] font-medium text-destructive">failed</span>
           )}
           {call.status === 'running' && (
-            <span className="text-[10px] font-medium text-[hsl(var(--agent))]">running</span>
+            <span className="text-[10px] font-medium text-[var(--color-agent)]">running</span>
           )}
           {hasOutput && (
             expanded

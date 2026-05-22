@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { Link as RouterLink } from 'react-router-dom'
+import { Button, Modal, Link } from '@heroui/react'
 import { Plus, Search, Trash2, SlidersHorizontal, ArrowUpDown, X, FolderCode, Shield, Settings2, Bot } from 'lucide-react'
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
@@ -155,24 +156,15 @@ export default function HomePage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link
-              to="/projects/new"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition hover:bg-primary/90"
-            >
+            <Link href="/projects/new" className="button button--sm button--primary inline-flex items-center gap-1.5">
               <Plus size={14} />
               导入项目
             </Link>
-            <Link
-              to="/settings"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-xs font-medium text-foreground transition hover:bg-secondary"
-            >
+            <Link href="/settings" className="button button--sm button--outline inline-flex items-center gap-1.5">
               <Settings2 size={14} />
               系统配置
             </Link>
-            <Link
-              to="/agent-loop-test"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-xs font-medium text-foreground transition hover:bg-secondary"
-            >
+            <Link href="/agent-loop-test" className="button button--sm button--outline inline-flex items-center gap-1.5">
               <Bot size={14} />
               Loop 测试
             </Link>
@@ -321,10 +313,7 @@ export default function HomePage() {
             <p className="mt-1 text-xs text-muted-foreground max-w-xs">
               导入代码仓库或创建空白项目，启动 AI 协调分析
             </p>
-            <Link
-              to="/projects/new"
-              className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-medium text-primary-foreground"
-            >
+            <Link href="/projects/new" className="button button--sm button--primary inline-flex items-center gap-1.5 mt-4">
               <Plus size={13} />
               导入第一个项目
             </Link>
@@ -332,12 +321,12 @@ export default function HomePage() {
         ) : (
           <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {/* Import card (always first) */}
-            <Link to="/projects/new" className="new-project-card group">
+            <RouterLink to="/projects/new" className="new-project-card group">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-dashed border-current/30 transition group-hover:border-current/50 group-hover:bg-primary/10">
                 <Plus size={20} strokeWidth={1.5} />
               </div>
               <span className="text-xs font-medium">导入新项目</span>
-            </Link>
+            </RouterLink>
 
             {/* Project cards */}
             {filteredProjects.map(project => (
@@ -351,22 +340,28 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Delete Confirmation Dialog */}
-      {deleteTarget && (
-        <DeleteConfirmDialog
-          project={deleteTarget}
-          onConfirm={handleDelete}
-          onCancel={() => setDeleteTarget(null)}
-          loading={deleting}
-        />
-      )}
+      {/* Delete Confirmation Modal (controlled) */}
+      <Modal.Backdrop isOpen={!!deleteTarget} onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null) }}>
+        <Modal.Container>
+          <Modal.Dialog className="sm:max-w-[26rem]">
+            {deleteTarget && (
+              <DeleteConfirmContent
+                project={deleteTarget}
+                onConfirm={handleDelete}
+                onCancel={() => setDeleteTarget(null)}
+                loading={deleting}
+              />
+            )}
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
     </div>
   )
 }
 
-// ── Delete Confirmation Dialog ──────────────────────────────────────────────
+// ── Delete Confirmation Content (inside Modal) ───────────────────────────────
 
-function DeleteConfirmDialog({
+function DeleteConfirmContent({
   project,
   onConfirm,
   onCancel,
@@ -380,48 +375,37 @@ function DeleteConfirmDialog({
   const hasGitSource = project.source?.kind === 'github' || project.source?.kind === 'gitlab'
 
   return (
-    <div className="dialog-overlay" onClick={loading ? undefined : onCancel}>
-      <div className="dialog-content" onClick={e => e.stopPropagation()}>
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-destructive/10">
-            <Trash2 size={18} className="text-destructive" />
+    <>
+      <Modal.Header>
+        <Modal.Icon className="bg-destructive/10 text-destructive">
+          <Trash2 size={18} />
+        </Modal.Icon>
+        <Modal.Heading>删除项目「{project.name}」</Modal.Heading>
+      </Modal.Header>
+      <Modal.Body>
+        <p className="text-sm text-muted-foreground">
+          此操作不可撤销。项目将从列表中移除，关联的配置和元数据将被永久删除。
+        </p>
+        {hasGitSource && (
+          <div className="mt-3 rounded-lg border border-warning/25 bg-warning/5 px-3 py-2 text-[11px] text-warning">
+            <Shield size={12} className="inline mr-1" />
+            Git 工作目录（.data/repos/）中的克隆代码也将被清理。
           </div>
-          <div className="flex-1 min-w-0">
-            <h3>删除项目「{project.name}」</h3>
-            <p className="mt-1">
-              此操作不可撤销。项目将从列表中移除，关联的配置和元数据将被永久删除。
-            </p>
-            {hasGitSource && (
-              <div className="mt-3 rounded-lg border border-warning/25 bg-warning/5 px-3 py-2 text-[11px] text-warning">
-                <Shield size={12} className="inline mr-1" />
-                Git 工作目录（.data/repos/）中的克隆代码也将被清理。
-              </div>
-            )}
-            {project.source?.kind === 'scratch' && project.importState === 'syncing' && (
-              <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
-                该项目仍在同步中，删除可能导致数据不完整。
-              </div>
-            )}
+        )}
+        {project.source?.kind === 'scratch' && project.importState === 'syncing' && (
+          <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+            该项目仍在同步中，删除可能导致数据不完整。
           </div>
-        </div>
-
-        <div className="dialog-actions">
-          <button
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-background/60 px-4 py-2 text-xs text-foreground hover:bg-background/90 transition disabled:opacity-40"
-            onClick={onCancel}
-            disabled={loading}
-          >
-            取消
-          </button>
-          <button
-            className="inline-flex items-center gap-1.5 rounded-lg bg-destructive px-4 py-2 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition disabled:opacity-40"
-            onClick={onConfirm}
-            disabled={loading}
-          >
-            {loading ? '删除中…' : '确认删除'}
-          </button>
-        </div>
-      </div>
-    </div>
+        )}
+      </Modal.Body>
+      <Modal.Footer>
+        <Button variant="ghost" size="sm" onPress={onCancel} isDisabled={loading}>
+          取消
+        </Button>
+        <Button variant="danger" size="sm" onPress={onConfirm} isDisabled={loading}>
+          {loading ? '删除中…' : '确认删除'}
+        </Button>
+      </Modal.Footer>
+    </>
   )
 }

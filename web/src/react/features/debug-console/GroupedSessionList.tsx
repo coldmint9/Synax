@@ -56,7 +56,7 @@ export function GroupedSessionList() {
     <div className="flex flex-col text-xs">
       <div className="flex items-center justify-between border-b border-border/40 px-2 py-1.5">
         <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-          <Radio size={11} className={runningCount > 0 ? 'text-[hsl(var(--run))]' : ''} />
+          <Radio size={11} className={runningCount > 0 ? 'text-[var(--color-run)]' : ''} />
           Agent Sessions ({sessions.length})
         </div>
       </div>
