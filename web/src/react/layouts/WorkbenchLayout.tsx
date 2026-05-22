@@ -1,9 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Outlet, useNavigate, useParams } from 'react-router-dom'
-import { Circle, FileText } from 'lucide-react'
-import { headerGitBranchLabel } from '../../lib/projectGitBranch'
+import { FileText } from 'lucide-react'
 import { projectApi } from '../../lib/api/project'
-import { useCoordinatesState } from '../state/coordinatesStore'
 import { useWikiStore } from '../state/wikiStore'
 import { addProject, useShellStore } from '../state/shellStore'
 import { useContextStore } from '../state/contextStore'
@@ -61,29 +59,22 @@ export default function WorkbenchLayout() {
   }, [effectiveProjectId])
 
   const projectName = project?.name ?? (effectiveProjectId || 'Synapse')
-  const forestSource = useCoordinatesState(effectiveProjectId || '__none', projectName, s => s.forest.source)
-  const headerBranch = useMemo(
-    () => effectiveProjectId ? headerGitBranchLabel(project, forestSource) : null,
-    [project, forestSource, effectiveProjectId],
-  )
-  const nodeCount = useCoordinatesState(effectiveProjectId || '__none', projectName, s => Object.keys(s.forest.nodes).length)
 
   const navigate = useNavigate()
 
-  const [activePanel, setActivePanel] = useState<ActivityPanel | null>(effectiveProjectId ? 'coordinates' : null)
+  const [activePanel, setActivePanel] = useState<ActivityPanel | null>(effectiveProjectId ? 'wiki' : null)
   const [panelOpen, setPanelOpen] = useState(true)
   const [panelPosition, setPanelPosition] = useState<'left' | 'right'>('left')
 
   const panelRoutes: Record<ActivityPanel, string> = {
-    coordinates: `/projects/${effectiveProjectId}/coordinates`,
     wiki: `/projects/${effectiveProjectId}/wiki`,
     sessions: `/projects/${effectiveProjectId}/sessions`,
-    search: `/projects/${effectiveProjectId}/coordinates`,
+    search: `/projects/${effectiveProjectId}/wiki`,
     settings: `/projects/${effectiveProjectId}/settings`,
     projects: `/projects/${effectiveProjectId}`,
   }
 
-  const panelsWithSideContent: Set<ActivityPanel> = new Set(['coordinates', 'sessions', 'search'])
+  const panelsWithSideContent: Set<ActivityPanel> = new Set(['sessions', 'search'])
 
   const handlePanelToggle = (panel: ActivityPanel) => {
     if (panel === 'settings') {
@@ -109,8 +100,6 @@ export default function WorkbenchLayout() {
       {isElectron && (
         <TitleBar
           projectName={projectName}
-          headerBranch={headerBranch}
-          nodeCount={nodeCount}
           onPanelToggle={handlePanelToggle}
         />
       )}
@@ -157,8 +146,6 @@ function PanelContent({ panel, projectId }: { panel: ActivityPanel | null; proje
   if (!panel) return null
 
   switch (panel) {
-    case 'coordinates':
-      return <CoordinatesPanelContent projectId={projectId} />
     case 'wiki':
       return <WikiPanelContent projectId={projectId} />
     case 'sessions':
@@ -168,38 +155,6 @@ function PanelContent({ panel, projectId }: { panel: ActivityPanel | null; proje
     default:
       return null
   }
-}
-
-function CoordinatesPanelContent({ projectId }: { projectId: string }) {
-  const project = useShellStore(s => s.projects.find(p => p.id === projectId))
-  const projectName = project?.name ?? projectId
-  const nodes = useCoordinatesState(projectId, projectName, s => s.forest.nodes)
-  const selectedNodeId = useCoordinatesState(projectId, projectName, s => s.selectedNodeId)
-  const setSelectedNode = useCoordinatesState(projectId, projectName, s => s.setSelectedNode)
-
-  const nodeList = useMemo(() => Object.values(nodes), [nodes])
-
-  return (
-    <div className="sp-section">
-      <div className="sp-section-title">节点列表</div>
-      <div className="sp-list">
-        {nodeList.length === 0 && (
-          <div className="sp-empty">暂无节点</div>
-        )}
-        {nodeList.map(node => (
-          <button
-            key={node.id}
-            type="button"
-            className={`sp-list-item${selectedNodeId === node.id ? ' sp-list-item-active' : ''}`}
-            onClick={() => setSelectedNode(node.id)}
-          >
-            <Circle size={6} className={`shrink-0 ${node.type === 'goal' ? 'text-[hsl(var(--primary))]' : 'text-[hsl(var(--muted-foreground))]'}`} fill="currentColor" />
-            <span className="truncate">{node.label || node.id}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
 }
 
 function WikiPanelContent({ projectId }: { projectId: string }) {

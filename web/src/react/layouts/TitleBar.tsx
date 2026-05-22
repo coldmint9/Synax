@@ -1,14 +1,12 @@
-import { GitBranch, Search, Monitor, Bell } from 'lucide-react'
+import { Search, Monitor, Bell } from 'lucide-react'
 import type { ActivityPanel } from './ActivityBar'
 
 interface TitleBarProps {
   projectName: string
-  headerBranch: string | null
-  nodeCount: number
   onPanelToggle: (panel: ActivityPanel) => void
 }
 
-export function TitleBar({ projectName, headerBranch, nodeCount, onPanelToggle }: TitleBarProps) {
+export function TitleBar({ projectName, onPanelToggle }: TitleBarProps) {
   return (
     <div className="titlebar">
       <div className="titlebar-info">
@@ -19,21 +17,6 @@ export function TitleBar({ projectName, headerBranch, nodeCount, onPanelToggle }
         >
           {projectName}
         </button>
-        {headerBranch && (
-          <>
-            <span className="titlebar-dot" />
-            <span className="titlebar-branch">
-              <GitBranch size={10} />
-              {headerBranch}
-            </span>
-          </>
-        )}
-        {nodeCount > 0 && (
-          <>
-            <span className="titlebar-dot" />
-            <span className="titlebar-meta">节点 {nodeCount}</span>
-          </>
-        )}
       </div>
       <div className="titlebar-actions">
         <button

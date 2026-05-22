@@ -2,7 +2,6 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { useEffect } from 'react'
 import WorkbenchLayout from './layouts/WorkbenchLayout'
 import { WelcomeView } from './layouts/WelcomeView'
-import CoordinatesPage from './pages/CoordinatesPage'
 import WikiPage from './pages/WikiPage'
 import SessionsPage from './pages/SessionsPage'
 import AgentLoopTestPage from './pages/AgentLoopTestPage'
@@ -26,8 +25,7 @@ export default function App() {
           <Route element={<WorkbenchLayout />}>
             <Route path="/" element={<WelcomeView />} />
             <Route path="/settings" element={<GlobalSettingsPage />} />
-            <Route path="/projects/:projectId" element={<Navigate to="coordinates" replace />} />
-            <Route path="/projects/:projectId/coordinates" element={<CoordinatesPage />} />
+            <Route path="/projects/:projectId" element={<Navigate to="wiki" replace />} />
             <Route path="/projects/:projectId/wiki" element={<WikiPage />} />
             <Route path="/projects/:projectId/sessions" element={<SessionsPage />} />
             <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />

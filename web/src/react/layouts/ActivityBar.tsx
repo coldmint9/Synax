@@ -1,7 +1,7 @@
-import { BrainCircuit, BookOpen, Monitor, Search, Settings2, Sun, Moon, Home } from 'lucide-react'
+import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Home } from 'lucide-react'
 import { useShellStore } from '../state/shellStore'
 
-export type ActivityPanel = 'coordinates' | 'wiki' | 'sessions' | 'search' | 'settings' | 'projects'
+export type ActivityPanel = 'wiki' | 'sessions' | 'search' | 'settings' | 'projects'
 
 interface ActivityBarProps {
   activePanel: ActivityPanel | null
@@ -10,8 +10,7 @@ interface ActivityBarProps {
   hasProject: boolean
 }
 
-const topItems: { id: ActivityPanel; icon: typeof BrainCircuit; label: string }[] = [
-  { id: 'coordinates', icon: BrainCircuit, label: 'Coordinates' },
+const topItems: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
   { id: 'wiki', icon: BookOpen, label: 'Wiki' },
   { id: 'sessions', icon: Monitor, label: 'Sessions' },
   { id: 'search', icon: Search, label: '搜索' },
@@ -25,7 +24,7 @@ export function ActivityBar({ activePanel, onPanelToggle, onHome, hasProject }: 
   const theme = useShellStore(s => s.preferences.theme)
   const setTheme = useShellStore(s => s.setTheme)
 
-  const projectPanels: Set<ActivityPanel> = new Set(['coordinates', 'wiki', 'sessions'])
+  const projectPanels: Set<ActivityPanel> = new Set(['wiki', 'sessions'])
 
   return (
     <div className="activity-bar">
