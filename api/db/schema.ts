@@ -705,3 +705,53 @@ export type WikiPatchRow = typeof wikiPatches.$inferSelect;
 export type NewWikiPatchRow = typeof wikiPatches.$inferInsert;
 export type WikiRefreshTaskRow = typeof wikiRefreshTasks.$inferSelect;
 export type NewWikiRefreshTaskRow = typeof wikiRefreshTasks.$inferInsert;
+
+// ── Wiki Evaluations & Plans ────────────────────────────────────────────────
+
+export const wikiEvaluations = sqliteTable('wiki_evaluations', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  blockId: text('block_id').notNull(),
+  content: text('content').notNull(),
+  status: text('status').notNull().default('active'),
+  planNodeId: text('plan_node_id'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+  resolvedAt: text('resolved_at'),
+});
+
+export const wikiPlans = sqliteTable('wiki_plans', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  snapshotId: text('snapshot_id').notNull(),
+  evaluationIdsJson: text('evaluation_ids_json').notNull().default('[]'),
+  nodesJson: text('nodes_json').notNull().default('[]'),
+  status: text('status').notNull().default('draft'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+  confirmedAt: text('confirmed_at'),
+});
+
+export const wikiPlanNodes = sqliteTable('wiki_plan_nodes', {
+  id: text('id').primaryKey(),
+  planId: text('plan_id').notNull(),
+  projectId: text('project_id').notNull(),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  evaluationIdsJson: text('evaluation_ids_json').notNull().default('[]'),
+  dependsOnJson: text('depends_on_json').notNull().default('[]'),
+  expectedFilesJson: text('expected_files_json').notNull().default('[]'),
+  status: text('status').notNull().default('pending'),
+  sortOrder: integer('sort_order').notNull().default(0),
+  reviewResult: text('review_result'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+  completedAt: text('completed_at'),
+});
+
+export type WikiEvaluationRow = typeof wikiEvaluations.$inferSelect;
+export type NewWikiEvaluationRow = typeof wikiEvaluations.$inferInsert;
+export type WikiPlanRow = typeof wikiPlans.$inferSelect;
+export type NewWikiPlanRow = typeof wikiPlans.$inferInsert;
+export type WikiPlanNodeRow = typeof wikiPlanNodes.$inferSelect;
+export type NewWikiPlanNodeRow = typeof wikiPlanNodes.$inferInsert;

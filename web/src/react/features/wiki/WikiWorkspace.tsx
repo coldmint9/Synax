@@ -1,5 +1,5 @@
-import { AlertCircle, BookOpen, Download, Loader2, Map, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { AlertCircle, BookOpen, Download, Loader2, Map, MessageSquarePlus, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
@@ -7,11 +7,12 @@ import WikiBlockRenderer from './WikiBlockRenderer'
 import WikiSourcePanel from './WikiSourcePanel'
 import WikiPatchQueue from './WikiPatchQueue'
 import WikiDesignMappingPanel from './WikiDesignMappingPanel'
+import WikiEvaluationSidebar from './WikiEvaluationSidebar'
 import { wikiApi } from '../../../lib/api/wiki'
 import { apiFetch } from '../../../lib/api/origin'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
-type RightTab = 'source' | 'patches' | 'mapping'
+type RightTab = 'evaluations' | 'source' | 'patches' | 'mapping'
 
 function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated: () => void }) {
   const [generating, setGenerating] = useState(false)
@@ -223,13 +224,16 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
 export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const snapshot = useWikiStore(s => s.snapshot)
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
+  const selectedBlockId = useWikiStore(s => s.selectedBlockId)
   const documents = useWikiStore(s => s.documents)
+  const evaluations = useWikiStore(s => s.evaluations)
   const patchesSummary = useWikiStore(s => s.patchesSummary)
   const loading = useWikiStore(s => s.loading)
   const loadLatest = useWikiStore(s => s.loadLatest)
   const loadPatches = useWikiStore(s => s.loadPatches)
+  const loadEvaluations = useWikiStore(s => s.loadEvaluations)
 
-  const [rightTab, setRightTab] = useState<RightTab>('source')
+  const [rightTab, setRightTab] = useState<RightTab>('evaluations')
   const [refreshing, setRefreshing] = useState(false)
   const [showReinitConfirm, setShowReinitConfirm] = useState(false)
   const [reinitializing, setReinitializing] = useState(false)
@@ -237,6 +241,20 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const [sidebarWidth, setSidebarWidth] = useState(260)
 
   const selectedDoc = documents.find(d => d.id === selectedDocumentId)
+
+  // Load evaluations when projectId changes
+  useEffect(() => {
+    if (projectId) void loadEvaluations(projectId)
+  }, [projectId, loadEvaluations])
+
+  // Compute issuesByBlockId
+  const issuesByBlockId = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const ev of evaluations) {
+      map.set(ev.blockId, (map.get(ev.blockId) ?? 0) + 1)
+    }
+    return map
+  }, [evaluations])
 
   const isResizing = useRef(false)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -496,7 +514,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               </h1>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-              <WikiBlockRenderer document={selectedDoc} />
+              <WikiBlockRenderer document={selectedDoc} issuesByBlockId={issuesByBlockId} />
             </div>
           </>
         ) : (
@@ -506,10 +524,21 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
         )}
       </main>
 
-      {/* ── Right: Source / Patch panel (220px) ── */}
+      {/* ── Right: Evaluations / Source / Patch panel (220px) ── */}
       <aside className="flex w-[220px] shrink-0 flex-col border-l border-border/30 bg-background/40">
         {/* Tab bar */}
         <div className="flex h-9 shrink-0 items-center border-b border-border/20">
+          <button
+            type="button"
+            onClick={() => setRightTab('evaluations')}
+            className={`flex-1 h-full text-[11px] font-medium transition-colors ${
+              rightTab === 'evaluations'
+                ? 'border-b-2 border-primary text-primary'
+                : 'text-muted-foreground/60 hover:text-foreground'
+            }`}
+          >
+            <MessageSquarePlus size={11} className="mx-auto" />
+          </button>
           <button
             type="button"
             onClick={() => setRightTab('source')}
@@ -551,7 +580,9 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {rightTab === 'source' ? (
+          {rightTab === 'evaluations' ? (
+            <WikiEvaluationSidebar projectId={projectId} selectedBlockId={selectedBlockId} />
+          ) : rightTab === 'source' ? (
             <WikiSourcePanel />
           ) : rightTab === 'patches' ? (
             <WikiPatchQueue projectId={projectId} />

@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import { wikiApi } from '../../lib/api/wiki';
+import { evaluationApi, type WikiEvaluation } from '../../lib/api/evaluation';
 import type {
   WikiSnapshot,
   WikiDocument,
@@ -19,12 +20,16 @@ export interface WikiState {
   bindingsById: Record<string, WikiSourceBinding>;
   patchesById: Record<string, WikiPatch>;
   selectedDocumentId: string | null;
+  selectedBlockId: string | null;
+  evaluations: WikiEvaluation[];
   patchesSummary: { pending: number; conflict: number };
   loading: { snapshot: boolean; patches: boolean };
   error: string | null;
 
   loadLatest: (projectId: string) => Promise<void>;
   selectDocument: (documentId: string | null) => void;
+  selectBlock: (blockId: string | null) => void;
+  loadEvaluations: (projectId: string) => Promise<void>;
   updateBlockLocally: (block: WikiBlock) => void;
   loadPatches: (projectId: string, status?: string) => Promise<void>;
   reset: () => void;
@@ -37,6 +42,8 @@ const initialState = {
   bindingsById: {},
   patchesById: {},
   selectedDocumentId: null,
+  selectedBlockId: null,
+  evaluations: [] as WikiEvaluation[],
   patchesSummary: { pending: 0, conflict: 0 },
   loading: { snapshot: false, patches: false },
   error: null,
@@ -115,7 +122,16 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     }
   },
 
-  selectDocument: (documentId) => set({ selectedDocumentId: documentId }),
+  selectDocument: (documentId) => set({ selectedDocumentId: documentId, selectedBlockId: null }),
+
+  selectBlock: (blockId) => set({ selectedBlockId: blockId }),
+
+  loadEvaluations: async (projectId: string) => {
+    try {
+      const evals = await evaluationApi.list(projectId, 'active')
+      set({ evaluations: evals })
+    } catch { /* ignore */ }
+  },
 
   updateBlockLocally: (block) =>
     set(s => ({ blocksById: { ...s.blocksById, [block.id]: block } })),
