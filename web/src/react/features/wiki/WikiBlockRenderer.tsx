@@ -1,5 +1,6 @@
 import { AlertTriangle, Code2, FileText, Lock, Loader2, Pencil, Maximize2, X } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
+import { Card } from '@heroui/react'
 import { Streamdown } from 'streamdown'
 import { streamdownPlugins } from '../../../lib/streamdown-plugins'
 import { useWikiStore } from '../../state/wikiStore'
@@ -364,8 +365,8 @@ function WikiBlockItem({ block, issueCount }: { block: WikiBlock; issueCount: nu
   const [editing, setEditing] = useState(false)
 
   return (
-    <div
-      className={`group relative rounded-xl border p-4 transition-all cursor-pointer ${
+    <Card
+      className={`group relative cursor-pointer transition-all ${
         isSelected
           ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/20'
           : 'border-border/30 bg-card/40 hover:border-border/60 hover:bg-card/60'
@@ -385,38 +386,40 @@ function WikiBlockItem({ block, issueCount }: { block: WikiBlock; issueCount: nu
         <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-primary" />
       )}
 
-      {/* Status badges */}
-      {(block.staleState !== 'fresh' || block.manualState !== 'none') && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          <StaleBadge state={block.staleState} />
-          <ManualBadge state={block.manualState} />
-        </div>
-      )}
+      <Card.Content className="p-4">
+        {/* Status badges */}
+        {(block.staleState !== 'fresh' || block.manualState !== 'none') && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <StaleBadge state={block.staleState} />
+            <ManualBadge state={block.manualState} />
+          </div>
+        )}
 
-      {/* Edit button (hover) */}
-      {!editing && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setEditing(true) }}
-          className="absolute right-2 top-2 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground/50 hover:bg-secondary hover:text-foreground"
-          title="编辑此 block"
-        >
-          <Pencil size={11} />
-        </button>
-      )}
+        {/* Edit button (hover) */}
+        {!editing && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setEditing(true) }}
+            className="absolute right-2 top-2 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground/50 hover:bg-secondary hover:text-foreground"
+            title="编辑此 block"
+          >
+            <Pencil size={11} />
+          </button>
+        )}
 
-      {/* Content or Editor */}
-      {editing ? (
-        <WikiBlockEditor block={block} onClose={() => setEditing(false)} />
-      ) : (
-        <BlockContent block={block} />
-      )}
+        {/* Content or Editor */}
+        {editing ? (
+          <WikiBlockEditor block={block} onClose={() => setEditing(false)} />
+        ) : (
+          <BlockContent block={block} />
+        )}
 
-      {/* Inline source file links */}
-      {hasBindings && !editing && (
-        <InlineSourceLinks block={block} />
-      )}
-    </div>
+        {/* Inline source file links */}
+        {hasBindings && !editing && (
+          <InlineSourceLinks block={block} />
+        )}
+      </Card.Content>
+    </Card>
   )
 }
 
