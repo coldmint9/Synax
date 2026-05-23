@@ -1,8 +1,8 @@
-import { AlertTriangle, Code2, FileText, Lock, Loader2, Pencil, Maximize2, X } from 'lucide-react'
-import { useState, useEffect, useRef } from 'react'
+import { AlertTriangle, FileText, Lock, Loader2, Pencil, Maximize2, X } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import { Card, Typography } from '@heroui/react'
-import { Streamdown } from 'streamdown'
-import { streamdownPlugins } from '../../../lib/streamdown-plugins'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiBlockEditor from './WikiBlockEditor'
@@ -80,10 +80,10 @@ function TableBlock({ content }: { content: unknown }) {
   const headers = c.headers ?? []
   const rows = c.rows ?? []
   return (
-    <div className="overflow-x-auto rounded-lg border border-border/40">
+    <div className="overflow-x-auto">
       <table className="w-full text-[12px]">
-        <thead className="bg-secondary/40">
-          <tr>
+        <thead>
+          <tr className="border-b border-border/40">
             {headers.map((h, i) => (
               <th key={i} className="px-3 py-2 text-left font-medium text-foreground/80">{h}</th>
             ))}
@@ -91,7 +91,7 @@ function TableBlock({ content }: { content: unknown }) {
         </thead>
         <tbody>
           {rows.map((row, ri) => (
-            <tr key={ri} className="border-t border-border/30 hover:bg-secondary/20">
+            <tr key={ri} className="border-b border-border/20 last:border-0 hover:bg-secondary/20">
               {row.map((cell, ci) => (
                 <td key={ci} className="px-3 py-2 text-foreground/75">{cell}</td>
               ))}
@@ -105,17 +105,48 @@ function TableBlock({ content }: { content: unknown }) {
 
 function CodeRefBlock({ content }: { content: unknown }) {
   const c = content as { language?: string; code?: string; filePath?: string }
+  const [html, setHtml] = useState('')
+  const code = c.code ?? ''
+  const lang = c.language ?? 'text'
+
+  useEffect(() => {
+    if (!code) return
+    let cancelled = false
+    import('shiki').then(({ createHighlighter }) =>
+      createHighlighter({ themes: ['github-dark'], langs: [] })
+    ).then(async (highlighter) => {
+      try { await highlighter.loadLanguage(lang as any) } catch { /* fallback */ }
+      const result = highlighter.codeToHtml(code, {
+        lang: highlighter.getLoadedLanguages().includes(lang) ? lang : 'text',
+        theme: 'github-dark',
+      })
+      if (!cancelled) setHtml(result)
+    })
+    return () => { cancelled = true }
+  }, [code, lang])
+
   return (
-    <div className="rounded-lg border border-border/40 bg-card/60">
-      {c.filePath && (
-        <div className="flex items-center gap-1.5 border-b border-border/30 px-3 py-1.5">
-          <Code2 size={11} className="text-muted-foreground/60" />
-          <span className="font-mono text-[11px] text-muted-foreground/80">{c.filePath}</span>
+    <div className="rounded-lg overflow-hidden bg-[#0d1117]">
+      <div className="flex items-center h-8 px-3 bg-[#161b22]">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
         </div>
+        {c.filePath && (
+          <span className="ml-3 font-mono text-[11px] text-[#8b949e]">{c.filePath}</span>
+        )}
+      </div>
+      {html ? (
+        <div
+          className="overflow-x-auto p-3 text-[12px] leading-relaxed [&_pre]:!bg-transparent [&_pre]:!m-0 [&_pre]:!p-0 [&_code]:!bg-transparent"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      ) : (
+        <pre className="overflow-x-auto p-3 text-[12px] leading-relaxed text-[#c9d1d9]">
+          <code>{code}</code>
+        </pre>
       )}
-      <pre className="overflow-x-auto p-3 text-[12px] leading-relaxed text-foreground/85">
-        <code>{c.code ?? ''}</code>
-      </pre>
     </div>
   )
 }
@@ -167,23 +198,96 @@ function RiskBlock({ content }: { content: unknown }) {
   )
 }
 
-function MarkdownFragmentBlock({ content }: { content: unknown }) {
+// Module-level singleton — shared across all ShikiCodeBlock instances
+let _highlighterPromise: Promise<any> | null = null
+function getHighlighter() {
+  if (!_highlighterPromise) {
+    _highlighterPromise = import('shiki').then(({ createHighlighter }) =>
+      createHighlighter({ themes: ['github-dark'], langs: [] })
+    )
+  }
+  return _highlighterPromise
+}
+
+const ShikiCodeBlock = memo(function ShikiCodeBlock({ code, language }: { code: string; language: string }) {
+  const [html, setHtml] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    getHighlighter().then(async (highlighter) => {
+      try { await highlighter.loadLanguage(language as any) } catch { /* fallback to text */ }
+      const result = highlighter.codeToHtml(code, {
+        lang: highlighter.getLoadedLanguages().includes(language) ? language : 'text',
+        theme: 'github-dark',
+      })
+      if (!cancelled) setHtml(result)
+    })
+    return () => { cancelled = true }
+  }, [code, language])
+
+  if (!html) {
+    return <pre className="wiki-code-fallback"><code>{code}</code></pre>
+  }
+  return (
+    <div
+      className="wiki-code-highlighted"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+})
+
+const MermaidCodeBlock = memo(function MermaidCodeBlock({ code }: { code: string }) {
+  const [svgHtml, setSvgHtml] = useState<string>('')
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!code) return
+    let cancelled = false
+    const id = `mmd-${Math.random().toString(36).slice(2, 9)}`
+    import('mermaid').then(async ({ default: mermaid }) => {
+      mermaid.initialize({ startOnLoad: false, theme: 'dark' })
+      try {
+        const { svg } = await mermaid.render(id, code)
+        if (!cancelled) setSvgHtml(svg)
+      } catch {
+        if (!cancelled) setError(true)
+      }
+    })
+    return () => { cancelled = true }
+  }, [code])
+
+  if (error) return <pre className="wiki-code-fallback"><code>{code}</code></pre>
+  if (!svgHtml) return <div className="flex h-24 items-center justify-center text-[12px] text-muted-foreground/50">加载图表...</div>
+  return <div className="w-full overflow-x-auto" dangerouslySetInnerHTML={{ __html: svgHtml }} />
+})
+
+const mdComponents = {
+  pre({ children }: any) { return <>{children}</> },
+  code({ className, children }: any) {
+    const match = /language-(\w+)/.exec(className || '')
+    const codeStr = String(children).replace(/\n$/, '')
+    if (match) {
+      if (match[1] === 'mermaid') {
+        return <MermaidCodeBlock code={codeStr} />
+      }
+      return (
+        <figure className="wiki-code-figure">
+          <ShikiCodeBlock code={codeStr} language={match[1]} />
+        </figure>
+      )
+    }
+    return <code className={className}>{children}</code>
+  },
+}
+
+const MarkdownFragmentBlock = memo(function MarkdownFragmentBlock({ content }: { content: unknown }) {
   const text = typeof content === 'string' ? content : JSON.stringify(content)
   return (
     <div className="wiki-prose">
-      <Streamdown
-        className="feed-prose text-[13px] leading-relaxed text-foreground/85"
-        mode="static"
-        parseIncompleteMarkdown
-        plugins={streamdownPlugins}
-        controls={{ code: { copy: true, download: false }, table: false, mermaid: false }}
-        lineNumbers
-      >
-        {text}
-      </Streamdown>
+      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{text}</Markdown>
     </div>
   )
-}
+})
 
 function DiagramBlock({ content }: { content: unknown }) {
   const raw = typeof content === 'string' ? content : JSON.stringify(content)
@@ -258,6 +362,9 @@ function DiagramBlock({ content }: { content: unknown }) {
 }
 
 function BlockContent({ block }: { block: WikiBlock }) {
+  if (block.blockType === 'diagram') {
+    return <DiagramBlock content={block.content} />
+  }
   if (block.contentFormat === 'markdown_fragment' && typeof block.content === 'string') {
     return <MarkdownFragmentBlock content={block.content} />
   }
@@ -355,21 +462,21 @@ function InlineSourceLinks({ block }: { block: WikiBlock }) {
 
 // ── Block wrapper ────────────────────────────────────────────────────────────
 
-function WikiBlockItem({ block, issueCount }: { block: WikiBlock; issueCount: number }) {
+const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount }: { block: WikiBlock; issueCount: number }) {
   const bindingsById = useWikiStore(s => s.bindingsById)
-  const selectedBlockId = useWikiStore(s => s.selectedBlockId)
+  // Only re-render when THIS block's selection state changes, not when any other block is selected
+  const isSelected = useWikiStore(s => s.selectedBlockId === block.id)
   const selectBlock = useWikiStore(s => s.selectBlock)
-  const isSelected = selectedBlockId === block.id
   const hasBindings = block.sourceBindingIds.length > 0
     || Object.values(bindingsById).some(b => b.wikiBlockId === block.id)
   const [editing, setEditing] = useState(false)
 
   return (
-    <Card
-      className={`group relative cursor-pointer transition-all ${
+    <div
+      className={`group relative cursor-pointer rounded-lg p-4 transition-all ${
         isSelected
-          ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/20'
-          : 'border-border/30 bg-card/40 hover:border-border/60 hover:bg-card/60'
+          ? 'bg-primary/5 ring-1 ring-primary/20'
+          : 'hover:bg-card/60'
       }`}
       id={`wiki-block-${block.id}`}
       onClick={() => selectBlock(block.id)}
@@ -386,42 +493,40 @@ function WikiBlockItem({ block, issueCount }: { block: WikiBlock; issueCount: nu
         <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-primary" />
       )}
 
-      <Card.Content className="p-4">
-        {/* Status badges */}
-        {(block.staleState !== 'fresh' || block.manualState !== 'none') && (
-          <div className="mb-2 flex flex-wrap items-center gap-1.5">
-            <StaleBadge state={block.staleState} />
-            <ManualBadge state={block.manualState} />
-          </div>
-        )}
+      {/* Status badges */}
+      {(block.staleState !== 'fresh' || block.manualState !== 'none') && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <StaleBadge state={block.staleState} />
+          <ManualBadge state={block.manualState} />
+        </div>
+      )}
 
-        {/* Edit button (hover) */}
-        {!editing && (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setEditing(true) }}
-            className="absolute right-2 top-2 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground/50 hover:bg-secondary hover:text-foreground"
-            title="编辑此 block"
-          >
-            <Pencil size={11} />
-          </button>
-        )}
+      {/* Edit button (hover) */}
+      {!editing && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setEditing(true) }}
+          className="absolute right-2 top-2 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground/50 hover:bg-secondary hover:text-foreground"
+          title="编辑此 block"
+        >
+          <Pencil size={11} />
+        </button>
+      )}
 
-        {/* Content or Editor */}
-        {editing ? (
-          <WikiBlockEditor block={block} onClose={() => setEditing(false)} />
-        ) : (
-          <BlockContent block={block} />
-        )}
+      {/* Content or Editor */}
+      {editing ? (
+        <WikiBlockEditor block={block} onClose={() => setEditing(false)} />
+      ) : (
+        <BlockContent block={block} />
+      )}
 
-        {/* Inline source file links */}
-        {hasBindings && !editing && (
-          <InlineSourceLinks block={block} />
-        )}
-      </Card.Content>
-    </Card>
+      {/* Inline source file links */}
+      {hasBindings && !editing && (
+        <InlineSourceLinks block={block} />
+      )}
+    </div>
   )
-}
+})
 
 // ── Page title (first heading block) ────────────────────────────────────────
 
