@@ -1,5 +1,5 @@
 import { Tabs } from '@heroui/react'
-import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Home } from 'lucide-react'
+import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Home, Zap } from 'lucide-react'
 import { useShellStore } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
 import type { ActivityPanel } from './ActivityBar'
@@ -19,6 +19,8 @@ const navTabs: { id: ActivityPanel; icon: typeof BookOpen; label: string; requir
 function WikiToolbar() {
   const viewMode = useWikiStore(s => s.viewMode)
   const setViewMode = useWikiStore(s => s.setViewMode)
+  const patchesPending = useWikiStore(s => s.patchesSummary.pending)
+  const togglePatchPanel = useWikiStore(s => s.togglePatchPanel)
 
   const items: { id: WikiViewMode; label: string }[] = [
     { id: 'document', label: '文档' },
@@ -42,6 +44,14 @@ function WikiToolbar() {
         </button>
       ))}
       <div className="wh-divider" />
+      <button type="button" className="wh-btn relative" title="Patches" onClick={togglePatchPanel}>
+        <Zap size={13} />
+        {patchesPending > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-warning px-0.5 text-[8px] font-bold text-warning-foreground">
+            {patchesPending}
+          </span>
+        )}
+      </button>
       <button type="button" className="wh-btn" title="搜索">
         <Search size={13} />
       </button>

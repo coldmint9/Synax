@@ -1,19 +1,14 @@
-import { AlertCircle, BookOpen, Download, Loader2, Map as MapIcon, MessageSquarePlus, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
+import { AlertCircle, BookOpen, Download, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Spinner, Tabs } from '@heroui/react'
+import { Button, Drawer, Spinner } from '@heroui/react'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
 import WikiBlockRenderer from './WikiBlockRenderer'
-import WikiSourcePanel from './WikiSourcePanel'
 import WikiPatchQueue from './WikiPatchQueue'
-import WikiDesignMappingPanel from './WikiDesignMappingPanel'
-import WikiEvaluationSidebar from './WikiEvaluationSidebar'
 import { wikiApi } from '../../../lib/api/wiki'
 import { apiFetch } from '../../../lib/api/origin'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
-
-type RightTab = 'evaluations' | 'source' | 'patches' | 'mapping'
 
 function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated: () => void }) {
   const [generating, setGenerating] = useState(false)
@@ -226,13 +221,13 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const selectedBlockId = useWikiStore(s => s.selectedBlockId)
   const documents = useWikiStore(s => s.documents)
   const evaluations = useWikiStore(s => s.evaluations)
-  const patchesSummary = useWikiStore(s => s.patchesSummary)
   const loading = useWikiStore(s => s.loading)
   const loadLatest = useWikiStore(s => s.loadLatest)
-  const loadPatches = useWikiStore(s => s.loadPatches)
   const loadEvaluations = useWikiStore(s => s.loadEvaluations)
+  const patchPanelOpen = useWikiStore(s => s.patchPanelOpen)
+  const togglePatchPanel = useWikiStore(s => s.togglePatchPanel)
+  const loadPatches = useWikiStore(s => s.loadPatches)
 
-  const [rightTab, setRightTab] = useState<RightTab>('evaluations')
   const [refreshing, setRefreshing] = useState(false)
   const [showReinitConfirm, setShowReinitConfirm] = useState(false)
   const [reinitializing, setReinitializing] = useState(false)
@@ -245,6 +240,11 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (projectId) void loadEvaluations(projectId)
   }, [projectId, loadEvaluations])
+
+  // Load patches when panel opens
+  useEffect(() => {
+    if (patchPanelOpen && projectId) void loadPatches(projectId, 'pending')
+  }, [patchPanelOpen, projectId, loadPatches])
 
   // Compute issuesByBlockId
   const issuesByBlockId = useMemo(() => {
@@ -514,7 +514,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               </h1>
             </div> */}
             <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-14 pb-4">
-              <WikiBlockRenderer document={selectedDoc} issuesByBlockId={issuesByBlockId} />
+              <WikiBlockRenderer document={selectedDoc} issuesByBlockId={issuesByBlockId} projectId={projectId} />
             </div>
           </>
         ) : (
@@ -524,58 +524,20 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
         )}
       </main>
 
-      {/* ── Right: Evaluations / Source / Patch panel (220px) ── */}
-      <div className="wiki-separator shrink-0" />
-      <aside className="flex w-[220px] shrink-0 flex-col wiki-panel">
-        <div className="wiki-panel-header shrink-0">
-          <Tabs
-            selectedKey={rightTab}
-            onSelectionChange={(key) => {
-              const tab = key as RightTab
-              setRightTab(tab)
-              if (tab === 'patches') void loadPatches(projectId, 'pending')
-            }}
-            className="wiki-tabs"
-          >
-            <Tabs.ListContainer>
-              <Tabs.List aria-label="Wiki 右侧面板">
-                <Tabs.Tab key="evaluations" id="evaluations">
-                  <MessageSquarePlus size={11} />
-                  <Tabs.Indicator />
-                </Tabs.Tab>
-                <Tabs.Tab key="source" id="source">
-                  <span>Source</span>
-                  <Tabs.Indicator />
-                </Tabs.Tab>
-                <Tabs.Tab key="patches" id="patches">
-                  <span>Patches</span>
-                  {patchesSummary.pending > 0 && (
-                    <span className="ml-0.5 rounded-full bg-warning px-1 py-0.5 text-[8px] font-bold text-warning-foreground leading-none">
-                      {patchesSummary.pending}
-                    </span>
-                  )}
-                  <Tabs.Indicator />
-                </Tabs.Tab>
-                <Tabs.Tab key="mapping" id="mapping">
-                  <MapIcon size={11} />
-                  <Tabs.Indicator />
-                </Tabs.Tab>
-              </Tabs.List>
-            </Tabs.ListContainer>
-          </Tabs>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {rightTab === 'evaluations' ? (
-            <WikiEvaluationSidebar projectId={projectId} selectedBlockId={selectedBlockId} />
-          ) : rightTab === 'source' ? (
-            <WikiSourcePanel />
-          ) : rightTab === 'patches' ? (
-            <WikiPatchQueue projectId={projectId} />
-          ) : (
-            <WikiDesignMappingPanel projectId={projectId} />
-          )}
-        </div>
-      </aside>
+      {/* ── Patches Drawer (HeroUI) ── */}
+      <Drawer.Backdrop isOpen={patchPanelOpen} onOpenChange={(open) => { if (!open) togglePatchPanel() }} variant="transparent">
+        <Drawer.Content placement="right">
+          <Drawer.Dialog className="max-w-[320px]">
+            <Drawer.CloseTrigger />
+            <Drawer.Header>
+              <Drawer.Heading>Patches</Drawer.Heading>
+            </Drawer.Header>
+            <Drawer.Body>
+              <WikiPatchQueue projectId={projectId} />
+            </Drawer.Body>
+          </Drawer.Dialog>
+        </Drawer.Content>
+      </Drawer.Backdrop>
 
       {showReinitConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-background/60 p-4">

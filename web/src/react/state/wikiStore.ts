@@ -26,6 +26,7 @@ export interface WikiState {
   selectedBlockId: string | null;
   evaluations: WikiEvaluation[];
   patchesSummary: { pending: number; conflict: number };
+  patchPanelOpen: boolean;
   loading: { snapshot: boolean; patches: boolean };
   error: string | null;
 
@@ -36,6 +37,7 @@ export interface WikiState {
   loadEvaluations: (projectId: string) => Promise<void>;
   updateBlockLocally: (block: WikiBlock) => void;
   loadPatches: (projectId: string, status?: string) => Promise<void>;
+  togglePatchPanel: () => void;
   reset: () => void;
 }
 
@@ -50,6 +52,7 @@ const initialState = {
   selectedBlockId: null,
   evaluations: [] as WikiEvaluation[],
   patchesSummary: { pending: 0, conflict: 0 },
+  patchPanelOpen: false,
   loading: { snapshot: false, patches: false },
   error: null,
 };
@@ -156,4 +159,5 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   },
 
   reset: () => set(initialState),
+  togglePatchPanel: () => set(s => ({ patchPanelOpen: !s.patchPanelOpen })),
 }));

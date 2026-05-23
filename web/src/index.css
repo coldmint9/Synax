@@ -582,6 +582,32 @@
   .wiki-tabs .tabs__indicator { border-radius: 999px !important; background: hsl(var(--secondary)) !important; }
   .wiki-tabs .tabs__separator { display: none !important; }
 
+  .wiki-issue-popover {
+    position: fixed;
+    width: 320px;
+    max-height: 400px;
+    border-radius: 16px;
+    background: hsl(var(--card) / 0.82);
+    backdrop-filter: blur(20px) saturate(1.5);
+    -webkit-backdrop-filter: blur(20px) saturate(1.5);
+    border: 1px solid hsl(var(--border) / 0.3);
+    box-shadow:
+      0 8px 32px hsl(0 0% 0% / 0.15),
+      inset 0 1px 0 hsl(0 0% 100% / 0.1);
+    animation: float-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .dark .wiki-issue-popover {
+    background: hsl(var(--card) / 0.75);
+    box-shadow:
+      0 8px 32px hsl(0 0% 0% / 0.4),
+      inset 0 1px 0 hsl(0 0% 100% / 0.06);
+  }
+
   .dark .liquid-glass {
     background: hsl(var(--card) / 0.45);
     box-shadow: 0 8px 32px hsl(0 0% 0% / 0.35), inset 0 1px 0 hsl(0 0% 100% / 0.08);

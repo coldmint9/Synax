@@ -1,6 +1,0 @@
-interface:
-  display_name: "Tree Setter"
-  short_description: "Fast source-grounded code maps"
-  default_prompt: "Use $tree-setter to scan this repo and draft a source-grounded project wiki."
-policy:
-  allow_implicit_invocation: true
