@@ -83,3 +83,4 @@ vendor/
 out/
 .sidecar-staging/
 CLAUDE.md
+skills-lock.json
