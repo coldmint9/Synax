@@ -234,7 +234,7 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-foreground">导入项目</h2>
-          <button type="button" className="sp-btn" onClick={handleClose}>
+          <button type="button" className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors" onClick={handleClose}>
             <X size={16} />
           </button>
         </div>

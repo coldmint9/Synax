@@ -1,6 +1,6 @@
 import { AlertCircle, BookOpen, Download, Loader2, Map as MapIcon, MessageSquarePlus, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Spinner } from '@heroui/react'
+import { Button, Spinner, Tabs } from '@heroui/react'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
@@ -402,17 +402,17 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   return (
     <div className="flex h-full min-h-0 overflow-hidden">
       {/* ── Left: Document tree (resizable) ── */}
-      <aside style={{ width: sidebarWidth }} className="flex shrink-0 flex-col border-r border-border/30 bg-background/40">
-        <div className="flex h-9 shrink-0 items-center justify-between border-b border-border/20 px-3">
+      <aside style={{ width: sidebarWidth }} className="flex shrink-0 flex-col wiki-panel">
+        <div className="wiki-panel-header shrink-0 justify-between">
           <span className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider">
             文档
           </span>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <button
               type="button"
               onClick={handleRefresh}
               disabled={refreshing || reinitializing}
-              className="rounded p-1 text-muted-foreground/50 hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-40"
+              className="wh-btn !w-6 !h-6 disabled:opacity-40"
               title="更新 Wiki（检测代码变更）"
             >
               <RefreshCw size={11} className={refreshing ? 'animate-spin' : ''} />
@@ -420,7 +420,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             <button
               type="button"
               onClick={handleExport}
-              className="rounded p-1 text-muted-foreground/50 hover:bg-secondary hover:text-foreground transition-colors"
+              className="wh-btn !w-6 !h-6"
               title="导出 Markdown"
             >
               <Download size={11} />
@@ -484,35 +484,36 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           )}
           <WikiDocumentTree />
         </div>
-        <div className="shrink-0 border-t border-border/30 px-3 py-2.5">
-          <button
-            type="button"
-            onClick={() => setShowReinitConfirm(true)}
-            disabled={refreshing || reinitializing || continuing}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-[11px] font-medium text-destructive/70 hover:border-destructive/40 hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-40"
+        <div className="shrink-0 px-3 py-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full text-[11px] text-destructive/70 hover:text-destructive"
+            onPress={() => setShowReinitConfirm(true)}
+            isDisabled={refreshing || reinitializing || continuing}
           >
             {reinitializing ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
             {reinitializing ? '重新生成中…' : '重新生成'}
-          </button>
+          </Button>
         </div>
       </aside>
 
       {/* ── Resize handle ── */}
       <div
         onMouseDown={handleMouseDown}
-        className="w-1 shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
+        className="wiki-separator shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
       />
 
       {/* ── Center: Block content ── */}
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {selectedDoc ? (
           <>
-            <div className="flex h-9 shrink-0 items-center border-b border-border/20 px-5">
+            {/* <div className="wiki-panel-header shrink-0 px-5">
               <h1 className="truncate text-[13px] font-semibold text-foreground/90">
                 {selectedDoc.title}
               </h1>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            </div> */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-14 pb-4">
               <WikiBlockRenderer document={selectedDoc} issuesByBlockId={issuesByBlockId} />
             </div>
           </>
@@ -524,59 +525,44 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       </main>
 
       {/* ── Right: Evaluations / Source / Patch panel (220px) ── */}
-      <aside className="flex w-[220px] shrink-0 flex-col border-l border-border/30 bg-background/40">
-        {/* Tab bar */}
-        <div className="flex h-9 shrink-0 items-center border-b border-border/20">
-          <button
-            type="button"
-            onClick={() => setRightTab('evaluations')}
-            className={`flex-1 h-full text-[11px] font-medium transition-colors ${
-              rightTab === 'evaluations'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-muted-foreground/60 hover:text-foreground'
-            }`}
+      <div className="wiki-separator shrink-0" />
+      <aside className="flex w-[220px] shrink-0 flex-col wiki-panel">
+        <div className="wiki-panel-header shrink-0">
+          <Tabs
+            selectedKey={rightTab}
+            onSelectionChange={(key) => {
+              const tab = key as RightTab
+              setRightTab(tab)
+              if (tab === 'patches') void loadPatches(projectId, 'pending')
+            }}
+            className="wiki-tabs"
           >
-            <MessageSquarePlus size={11} className="mx-auto" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setRightTab('source')}
-            className={`flex-1 h-full text-[11px] font-medium transition-colors ${
-              rightTab === 'source'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-muted-foreground/60 hover:text-foreground'
-            }`}
-          >
-            Source
-          </button>
-          <button
-            type="button"
-            onClick={() => { setRightTab('patches'); void loadPatches(projectId, 'pending') }}
-            className={`relative flex-1 h-full text-[11px] font-medium transition-colors ${
-              rightTab === 'patches'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-muted-foreground/60 hover:text-foreground'
-            }`}
-          >
-            Patches
-            {patchesSummary.pending > 0 && (
-              <span className="absolute right-2 top-1.5 rounded-full bg-warning px-1 py-0.5 text-[8px] font-bold text-warning-foreground leading-none">
-                {patchesSummary.pending}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setRightTab('mapping')}
-            className={`flex-1 h-full text-[11px] font-medium transition-colors ${
-              rightTab === 'mapping'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-muted-foreground/60 hover:text-foreground'
-            }`}
-            title="Design Mapping"
-          >
-            <MapIcon size={11} className="mx-auto" />
-          </button>
+            <Tabs.ListContainer>
+              <Tabs.List aria-label="Wiki 右侧面板">
+                <Tabs.Tab key="evaluations" id="evaluations">
+                  <MessageSquarePlus size={11} />
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+                <Tabs.Tab key="source" id="source">
+                  <span>Source</span>
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+                <Tabs.Tab key="patches" id="patches">
+                  <span>Patches</span>
+                  {patchesSummary.pending > 0 && (
+                    <span className="ml-0.5 rounded-full bg-warning px-1 py-0.5 text-[8px] font-bold text-warning-foreground leading-none">
+                      {patchesSummary.pending}
+                    </span>
+                  )}
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+                <Tabs.Tab key="mapping" id="mapping">
+                  <MapIcon size={11} />
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+              </Tabs.List>
+            </Tabs.ListContainer>
+          </Tabs>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {rightTab === 'evaluations' ? (
@@ -592,7 +578,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       </aside>
 
       {showReinitConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-background/60 p-4">
           <div className="w-full max-w-sm rounded-2xl border border-border/40 bg-card p-6 shadow-xl">
             <h3 className="text-sm font-semibold text-foreground/90">确认重新初始化</h3>
             <p className="mt-2 text-[12px] text-muted-foreground leading-relaxed">
