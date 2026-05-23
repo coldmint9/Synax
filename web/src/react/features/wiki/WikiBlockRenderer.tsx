@@ -1,6 +1,6 @@
 import { AlertTriangle, Code2, FileText, Lock, Loader2, Pencil, Maximize2, X } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
-import { Card } from '@heroui/react'
+import { Card, Typography } from '@heroui/react'
 import { Streamdown } from 'streamdown'
 import { streamdownPlugins } from '../../../lib/streamdown-plugins'
 import { useWikiStore } from '../../state/wikiStore'
@@ -423,6 +423,23 @@ function WikiBlockItem({ block, issueCount }: { block: WikiBlock; issueCount: nu
   )
 }
 
+// ── Page title (first heading block) ────────────────────────────────────────
+
+function PageTitle({ block }: { block: WikiBlock }) {
+  let text = ''
+  if (block.contentFormat === 'markdown_fragment' && typeof block.content === 'string') {
+    text = block.content.replace(/^#{1,6}\s*/, '').trim()
+  } else {
+    const c = block.content as { text?: string; level?: number }
+    text = c.text ?? ''
+  }
+  return (
+    <div className="pt-6 pb-4 mb-3 border-b border-border/20">
+      <Typography.Heading level={1}>{text}</Typography.Heading>
+    </div>
+  )
+}
+
 // ── Main renderer ────────────────────────────────────────────────────────────
 
 export default function WikiBlockRenderer({ document, issuesByBlockId }: { document: WikiDocument; issuesByBlockId?: Map<string, number> }) {
@@ -451,9 +468,14 @@ export default function WikiBlockRenderer({ document, issuesByBlockId }: { docum
     )
   }
 
+  const firstBlock = blocks[0]
+  const isFirstHeading = firstBlock.blockType === 'heading'
+  const contentBlocks = isFirstHeading ? blocks.slice(1) : blocks
+
   return (
     <div className="space-y-3">
-      {blocks.map(block => (
+      {isFirstHeading && <PageTitle block={firstBlock} />}
+      {contentBlocks.map(block => (
         <WikiBlockItem key={block.id} block={block} issueCount={issuesByBlockId?.get(block.id) ?? 0} />
       ))}
     </div>

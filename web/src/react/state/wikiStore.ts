@@ -13,7 +13,10 @@ import type {
   WikiPatch,
 } from '../../lib/contracts/wiki';
 
+export type WikiViewMode = 'document' | 'plan';
+
 export interface WikiState {
+  viewMode: WikiViewMode;
   snapshot: WikiSnapshot | null;
   documents: WikiDocument[];
   blocksById: Record<string, WikiBlock>;
@@ -26,6 +29,7 @@ export interface WikiState {
   loading: { snapshot: boolean; patches: boolean };
   error: string | null;
 
+  setViewMode: (mode: WikiViewMode) => void;
   loadLatest: (projectId: string) => Promise<void>;
   selectDocument: (documentId: string | null) => void;
   selectBlock: (blockId: string | null) => void;
@@ -36,6 +40,7 @@ export interface WikiState {
 }
 
 const initialState = {
+  viewMode: 'document' as WikiViewMode,
   snapshot: null,
   documents: [],
   blocksById: {},
@@ -51,6 +56,8 @@ const initialState = {
 
 export const useWikiStore = create<WikiState>((set, get) => ({
   ...initialState,
+
+  setViewMode: (mode: WikiViewMode) => set({ viewMode: mode }),
 
   loadLatest: async (projectId: string) => {
     const state = get();
