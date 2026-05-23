@@ -12,7 +12,7 @@ export function CapsuleSwitch({ checked, onChange, disabled, label }: CapsuleSwi
     <Switch
       size="sm"
       isSelected={checked}
-      onValueChange={onChange}
+      onChange={onChange}
       isDisabled={disabled}
       aria-label={label}
     >

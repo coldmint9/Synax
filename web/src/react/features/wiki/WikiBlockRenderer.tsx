@@ -1,13 +1,13 @@
-import { AlertTriangle, FileText, Lock, Loader2, Pencil, Maximize2, X } from 'lucide-react'
+import { AlertTriangle, FileText, Lock, Loader2, Maximize2, Pencil, X, MessageCircle } from 'lucide-react'
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import { Card, Typography } from '@heroui/react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
-import WikiBlockEditor from './WikiBlockEditor'
 import type { WikiBlock, WikiDocument, WikiSourceBinding } from '../../../lib/contracts/wiki'
 import './wiki-prose.css'
+import IssuePopover from './WikiIssuePopover'
 
 // ── Stale badge ──────────────────────────────────────────────────────────────
 
@@ -373,7 +373,6 @@ function BlockContent({ block }: { block: WikiBlock }) {
     case 'paragraph': return <ParagraphBlock content={block.content} />
     case 'list': return <ListBlock content={block.content} />
     case 'table': return <TableBlock content={block.content} />
-    case 'diagram': return <DiagramBlock content={block.content} />
     case 'code_ref': return <CodeRefBlock content={block.content} />
     case 'decision': return <DecisionBlock content={block.content} />
     case 'risk': return <RiskBlock content={block.content} />
@@ -462,14 +461,14 @@ function InlineSourceLinks({ block }: { block: WikiBlock }) {
 
 // ── Block wrapper ────────────────────────────────────────────────────────────
 
-const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount }: { block: WikiBlock; issueCount: number }) {
+const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId }: { block: WikiBlock; issueCount: number; projectId: string }) {
   const bindingsById = useWikiStore(s => s.bindingsById)
-  // Only re-render when THIS block's selection state changes, not when any other block is selected
   const isSelected = useWikiStore(s => s.selectedBlockId === block.id)
   const selectBlock = useWikiStore(s => s.selectBlock)
   const hasBindings = block.sourceBindingIds.length > 0
     || Object.values(bindingsById).some(b => b.wikiBlockId === block.id)
-  const [editing, setEditing] = useState(false)
+  const [issueOpen, setIssueOpen] = useState(false)
+  const issueBtnRef = useRef<HTMLButtonElement>(null)
 
   return (
     <div
@@ -481,11 +480,32 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount }: { block
       id={`wiki-block-${block.id}`}
       onClick={() => selectBlock(block.id)}
     >
-      {/* Issue badge */}
-      {issueCount > 0 && (
-        <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-white shadow-sm">
-          {issueCount}
-        </span>
+      {/* Issue trigger */}
+      <button
+        ref={issueBtnRef}
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setIssueOpen(v => !v) }}
+        className={`absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-full px-1.5 py-1 text-muted-foreground/40 transition-all ${
+          issueCount > 0 || issueOpen
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100'
+        } hover:bg-secondary/80 hover:text-foreground`}
+        title="Issues"
+      >
+        <MessageCircle size={12} />
+        {issueCount > 0 && (
+          <span className="text-[9px] font-bold text-amber-400">{issueCount}</span>
+        )}
+      </button>
+
+      {/* Issue popover (portal) */}
+      {issueOpen && (
+        <IssuePopover
+          blockId={block.id}
+          projectId={projectId}
+          anchorRef={issueBtnRef}
+          onClose={() => setIssueOpen(false)}
+        />
       )}
 
       {/* Selected indicator bar */}
@@ -501,27 +521,11 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount }: { block
         </div>
       )}
 
-      {/* Edit button (hover) */}
-      {!editing && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setEditing(true) }}
-          className="absolute right-2 top-2 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground/50 hover:bg-secondary hover:text-foreground"
-          title="编辑此 block"
-        >
-          <Pencil size={11} />
-        </button>
-      )}
-
-      {/* Content or Editor */}
-      {editing ? (
-        <WikiBlockEditor block={block} onClose={() => setEditing(false)} />
-      ) : (
-        <BlockContent block={block} />
-      )}
+      {/* Content */}
+      <BlockContent block={block} />
 
       {/* Inline source file links */}
-      {hasBindings && !editing && (
+      {hasBindings && (
         <InlineSourceLinks block={block} />
       )}
     </div>
@@ -547,7 +551,7 @@ function PageTitle({ block }: { block: WikiBlock }) {
 
 // ── Main renderer ────────────────────────────────────────────────────────────
 
-export default function WikiBlockRenderer({ document, issuesByBlockId }: { document: WikiDocument; issuesByBlockId?: Map<string, number> }) {
+export default function WikiBlockRenderer({ document, issuesByBlockId, projectId }: { document: WikiDocument; issuesByBlockId?: Map<string, number>; projectId: string }) {
   const blocksById = useWikiStore(s => s.blocksById)
   const snapshot = useWikiStore(s => s.snapshot)
   const blocks = document.blockIds
@@ -581,7 +585,7 @@ export default function WikiBlockRenderer({ document, issuesByBlockId }: { docum
     <div className="space-y-3">
       {isFirstHeading && <PageTitle block={firstBlock} />}
       {contentBlocks.map(block => (
-        <WikiBlockItem key={block.id} block={block} issueCount={issuesByBlockId?.get(block.id) ?? 0} />
+        <WikiBlockItem key={block.id} block={block} issueCount={issuesByBlockId?.get(block.id) ?? 0} projectId={projectId} />
       ))}
     </div>
   )

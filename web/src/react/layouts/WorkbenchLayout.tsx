@@ -55,6 +55,7 @@ export default function WorkbenchLayout() {
   const [activePanel, setActivePanel] = useState<ActivityPanel | null>(effectiveProjectId ? 'wiki' : null)
 
   const panelRoutes: Record<ActivityPanel, string> = {
+    coordinates: `/projects/${effectiveProjectId}/coordinates`,
     wiki: `/projects/${effectiveProjectId}/wiki`,
     sessions: `/projects/${effectiveProjectId}/sessions`,
     search: `/projects/${effectiveProjectId}/wiki`,

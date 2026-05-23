@@ -14,7 +14,7 @@ const BLOCK_TYPE_META: Record<string, { icon: typeof FileText; label: string }> 
 }
 
 function blockPreview(block: WikiBlock): string {
-  const c = block.content as Record<string, unknown>
+  const c = block.content as string | Record<string, unknown>
   if (typeof c === 'string') return c.slice(0, 60)
   if (c?.text && typeof c.text === 'string') return c.text.slice(0, 60)
   if (c?.title && typeof c.title === 'string') return c.title.slice(0, 60)
