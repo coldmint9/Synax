@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react'
-import { Bot, Loader2, Pause, Play, BookOpen, XCircle } from 'lucide-react'
+import { useMemo, useRef, useEffect } from 'react'
+import { Chip, Progress, ScrollShadow, Skeleton, Card } from '@heroui/react'
+import { Bot, Pause, Play, XCircle } from 'lucide-react'
 import type { AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import { buildInterleavedTurns } from './buildInterleavedTurns'
 import { EnhancedToolCallCard } from './EnhancedToolCallCard'
 import { ThinkingBlock } from './ThinkingBlock'
+import { StreamingTextBlock } from './StreamingTextBlock'
 import { SubSessionCard } from './SubSessionCard'
 import { getSessionCategory } from './sessionGrouping'
 
@@ -23,15 +25,15 @@ interface Props {
   streamingToolCalls?: ToolCallRecord[]
 }
 
-const STATUS_LABEL: Record<string, { text: string; color: string }> = {
-  running: { text: 'running', color: 'text-[var(--color-agent)]' },
-  completed: { text: 'completed', color: 'text-success' },
-  failed: { text: 'failed', color: 'text-destructive' },
-  interrupted: { text: 'interrupted', color: 'text-amber-500' },
-  paused: { text: 'paused', color: 'text-sky-500' },
-  waiting_permission: { text: 'waiting', color: 'text-warning' },
-  blocked: { text: 'blocked', color: 'text-warning' },
-  cancelled: { text: 'cancelled', color: 'text-muted-foreground' },
+const STATUS_MAP: Record<string, { text: string; color: 'primary' | 'success' | 'danger' | 'warning' | 'default' }> = {
+  running: { text: 'running', color: 'primary' },
+  completed: { text: 'completed', color: 'success' },
+  failed: { text: 'failed', color: 'danger' },
+  interrupted: { text: 'warning', color: 'warning' },
+  paused: { text: 'paused', color: 'default' },
+  waiting_permission: { text: 'waiting', color: 'warning' },
+  blocked: { text: 'blocked', color: 'warning' },
+  cancelled: { text: 'cancelled', color: 'default' },
 }
 
 export function AgentConversationView({
@@ -39,7 +41,7 @@ export function AgentConversationView({
   onPause, onResume, onCancel, onExpandChild,
   streamingStepId, streamingText, streamingThinking, streamingToolCalls,
 }: Props) {
-  const [promptExpanded, setPromptExpanded] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   const turns = useMemo(
     () => buildInterleavedTurns(steps, toolCalls, messages, childSessions),
@@ -49,26 +51,30 @@ export function AgentConversationView({
   const isRunning = session?.status === 'running'
   const isResumable = session?.status === 'interrupted' || session?.status === 'paused' || session?.status === 'failed'
   const cat = session ? getSessionCategory(session.profileId) : null
-  const statusInfo = session ? STATUS_LABEL[session.status] : null
+  const statusInfo = session ? STATUS_MAP[session.status] : null
+
+  useEffect(() => {
+    if (isRunning && scrollRef.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+    }
+  }, [streamingText, streamingThinking, streamingToolCalls, isRunning])
 
   return (
-    <div className="flex flex-col gap-6 p-4">
+    <div className="flex flex-col gap-4 p-4">
       {/* Session header */}
-      <div className="flex items-center gap-2.5 border-b border-border/40 pb-3">
-        <span className="rounded-md border border-[hsl(var(--agent))]/20 bg-[hsl(var(--agent))]/[0.06] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--color-agent)]">
+      <div className="flex items-center gap-2 border-b border-border/40 pb-3">
+        <Chip size="sm" variant="flat" color="secondary" className="text-[11px]">
           {session?.profileId ?? 'agent'}
-        </span>
+        </Chip>
         {cat?.isBuiltin && (
-          <span className="flex items-center gap-1 rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-            <BookOpen size={10} />
+          <Chip size="sm" variant="bordered" color="primary" className="text-[10px]">
             内建
-          </span>
+          </Chip>
         )}
         {statusInfo && (
-          <span className={`flex items-center gap-1.5 text-xs ${statusInfo.color}`}>
-            {isRunning && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
+          <Chip size="sm" variant="dot" color={statusInfo.color} className="text-[11px]">
             {statusInfo.text}
-          </span>
+          </Chip>
         )}
         {/* Actions */}
         <div className="ml-auto flex items-center gap-1.5">
@@ -102,151 +108,141 @@ export function AgentConversationView({
         </div>
       </div>
 
+      {/* Progress bar when running */}
+      {isRunning && <Progress isIndeterminate size="sm" color="primary" className="w-full" />}
+
       {/* Prompt */}
       {session?.prompt && (
-        <div className="rounded-lg border border-border/50 bg-secondary/30 px-3.5 py-2.5">
-          <div
-            className={`text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap ${
-              !promptExpanded ? 'line-clamp-2' : ''
-            }`}
-          >
+        <Card className="shadow-none border-border/50 bg-secondary/30">
+          <div className="px-3.5 py-2.5 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap line-clamp-3">
             {session.prompt}
           </div>
-          {session.prompt.length > 120 && (
-            <button
-              type="button"
-              onClick={() => setPromptExpanded(!promptExpanded)}
-              className="mt-1 text-[11px] text-muted-foreground/60 hover:text-muted-foreground"
-            >
-              {promptExpanded ? '收起' : '展开全部'}
-            </button>
-          )}
-        </div>
+        </Card>
       )}
 
       {/* Turns */}
-      {turns.length === 0 && !streamingStepId ? (
-        <div className="flex items-center justify-center py-8 text-sm text-muted-foreground/50">
-          {isRunning ? (
-            <span className="flex items-center gap-2">
-              <Loader2 size={14} className="animate-spin" />
-              等待输出...
-            </span>
-          ) : (
-            '暂无执行记录'
-          )}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-6">
-          {turns.map(turn => (
-            <div key={turn.stepId} className="flex gap-3.5">
-              <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
-                <Bot size={14} className="text-[var(--color-agent)]" />
+      <ScrollShadow ref={scrollRef} className="flex-1 min-h-0">
+        {turns.length === 0 && !streamingStepId ? (
+          <div className="flex flex-col items-center justify-center py-8 gap-3">
+            {isRunning ? (
+              <>
+                <Skeleton className="h-4 w-3/4 rounded-lg" />
+                <Skeleton className="h-4 w-1/2 rounded-lg" />
+                <Skeleton className="h-4 w-2/3 rounded-lg" />
+              </>
+            ) : (
+              <span className="text-sm text-muted-foreground/50">暂无执行记录</span>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-5">
+            {turns.map(turn => (
+              <div key={turn.stepId} className="flex gap-3">
+                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
+                  <Bot size={14} className="text-[var(--color-agent)]" />
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col gap-2">
+                  {turn.blocks.map((block, i) => {
+                    if (block.type === 'text') {
+                      return (
+                        <StreamingTextBlock key={i} text={block.content} isStreaming={false} />
+                      )
+                    }
+                    if (block.type === 'thinking') {
+                      return <ThinkingBlock key={i} content={block.content} />
+                    }
+                    if (block.type === 'tool_call') {
+                      return <EnhancedToolCallCard key={i} call={block.call} />
+                    }
+                    if (block.type === 'sub_session') {
+                      return <SubSessionCard key={i} session={block.session} onExpand={onExpandChild} />
+                    }
+                    return null
+                  })}
+                  {turn.duration && (
+                    <div className="mt-1 text-[11px] text-muted-foreground/50">
+                      {turn.duration}
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex-1 min-w-0 flex flex-col gap-2">
-                {turn.blocks.map((block, i) => {
-                  if (block.type === 'text') {
-                    return (
-                      <div key={i} className="text-sm leading-[1.75] text-foreground whitespace-pre-wrap">
-                        {block.content}
-                      </div>
-                    )
-                  }
-                  if (block.type === 'thinking') {
-                    return <ThinkingBlock key={i} content={block.content} />
-                  }
-                  if (block.type === 'tool_call') {
-                    return <EnhancedToolCallCard key={i} call={block.call} />
-                  }
-                  if (block.type === 'sub_session') {
-                    return <SubSessionCard key={i} session={block.session} onExpand={onExpandChild} />
-                  }
-                  return null
-                })}
-                {turn.duration && (
-                  <div className="mt-1 text-[11px] text-muted-foreground/50">
-                    {turn.duration}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+            ))}
 
-          {/* 流式进行中的 turn */}
-          {streamingStepId && !steps.find(s => s.id === streamingStepId) && (
-            <div className="flex gap-3.5">
-              <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
-                <Bot size={14} className="text-[var(--color-agent)]" />
+            {/* Streaming turn */}
+            {streamingStepId && !steps.find(s => s.id === streamingStepId) && (
+              <div className="flex gap-3">
+                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
+                  <Bot size={14} className="text-[var(--color-agent)]" />
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col gap-2">
+                  {streamingThinking && <ThinkingBlock content={streamingThinking} isStreaming />}
+                  {streamingText && (
+                    <StreamingTextBlock text={streamingText} isStreaming />
+                  )}
+                  {(streamingToolCalls ?? []).map(tc => (
+                    <EnhancedToolCallCard
+                      key={tc.id}
+                      call={{
+                        id: tc.id,
+                        toolId: tc.toolId,
+                        inputSummary: tc.inputSummary ?? '',
+                        outputSummary: tc.outputSummary ?? '',
+                        status: tc.status,
+                        category: tc.category,
+                        duration: tc.endedAt
+                          ? `${((new Date(tc.endedAt).getTime() - new Date(tc.startedAt).getTime()) / 1000).toFixed(1)}s`
+                          : null,
+                        mutability: tc.mutability,
+                      }}
+                    />
+                  ))}
+                  {!streamingText && !streamingThinking && (streamingToolCalls ?? []).length === 0 && (
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-3 w-24 rounded-md" />
+                      <Skeleton className="h-3 w-16 rounded-md" />
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex-1 min-w-0 flex flex-col gap-2">
-                {streamingThinking && <ThinkingBlock content={streamingThinking} />}
-                {streamingText && (
-                  <div className="text-sm leading-[1.75] text-foreground whitespace-pre-wrap">
-                    {streamingText}
-                    <span className="inline-block w-0.5 h-[1em] bg-foreground/60 animate-pulse ml-0.5 align-text-bottom" />
-                  </div>
-                )}
-                {(streamingToolCalls ?? []).map(tc => (
-                  <EnhancedToolCallCard
-                    key={tc.id}
-                    call={{
-                      id: tc.id,
-                      toolId: tc.toolId,
-                      inputSummary: tc.inputSummary ?? '',
-                      outputSummary: tc.outputSummary ?? '',
-                      status: tc.status,
-                      category: tc.category,
-                      duration: tc.endedAt
-                        ? `${((new Date(tc.endedAt).getTime() - new Date(tc.startedAt).getTime()) / 1000).toFixed(1)}s`
-                        : null,
-                      mutability: tc.mutability,
-                    }}
-                  />
-                ))}
-                {!streamingText && !streamingThinking && (streamingToolCalls ?? []).length === 0 && (
-                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground/50">
-                    <Loader2 size={12} className="animate-spin" />
-                    思考中...
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </ScrollShadow>
 
       {/* Result */}
       {session?.status === 'completed' && session.resultSummary && (
-        <div className="rounded-lg border border-[hsl(var(--success))]/15 bg-success/[0.03] px-3.5 py-2.5">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-success mb-1">
-            Completed
+        <Card className="shadow-none border-success/15 bg-success/[0.03]">
+          <div className="px-3.5 py-2.5">
+            <Chip size="sm" color="success" variant="flat" className="mb-1 text-[10px]">Completed</Chip>
+            <div className="text-[13px] leading-relaxed text-muted-foreground">
+              {session.resultSummary}
+            </div>
           </div>
-          <div className="text-[13px] leading-relaxed text-muted-foreground">
-            {session.resultSummary}
-          </div>
-        </div>
+        </Card>
       )}
 
       {session?.status === 'failed' && (
-        <div className="rounded-lg border border-destructive/15 bg-destructive/[0.03] px-3.5 py-2.5">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-destructive mb-1">
-            Failed
+        <Card className="shadow-none border-destructive/15 bg-destructive/[0.03]">
+          <div className="px-3.5 py-2.5">
+            <Chip size="sm" color="danger" variant="flat" className="mb-1 text-[10px]">Failed</Chip>
+            <div className="text-[13px] leading-relaxed text-muted-foreground">
+              {session.blockedReason ?? 'Agent execution failed'}
+            </div>
           </div>
-          <div className="text-[13px] leading-relaxed text-muted-foreground">
-            {session.blockedReason ?? 'Agent execution failed'}
-          </div>
-        </div>
+        </Card>
       )}
 
       {isResumable && (
-        <div className="rounded-lg border border-sky-500/15 bg-sky-500/[0.03] px-3.5 py-2.5">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-sky-500 mb-1">
-            {session?.status === 'paused' ? 'Paused' : 'Interrupted'}
+        <Card className="shadow-none border-sky-500/15 bg-sky-500/[0.03]">
+          <div className="px-3.5 py-2.5">
+            <Chip size="sm" color="default" variant="flat" className="mb-1 text-[10px]">
+              {session?.status === 'paused' ? 'Paused' : 'Interrupted'}
+            </Chip>
+            <div className="text-[13px] leading-relaxed text-muted-foreground">
+              {session?.blockedReason ?? '会话已暂停，可随时恢复执行'}
+            </div>
           </div>
-          <div className="text-[13px] leading-relaxed text-muted-foreground">
-            {session?.blockedReason ?? '会话已暂停，可随时恢复执行'}
-          </div>
-        </div>
+        </Card>
       )}
     </div>
   )

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Card, Chip } from '@heroui/react'
 import { Terminal, FileEdit, FileSearch, Search, Wrench, GitBranch, ChevronRight, ChevronDown, Clock } from 'lucide-react'
 import type { ToolCallView } from './buildInterleavedTurns'
 
@@ -20,12 +21,13 @@ function getToolIcon(category: string) {
   return TOOL_ICONS[category] ?? Wrench
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  failed: 'text-destructive',
-  denied: 'text-destructive',
-  running: 'text-[var(--color-agent)]',
-  cancelled: 'text-muted-foreground/60',
-  compacted: 'text-muted-foreground/60',
+const STATUS_COLOR: Record<string, 'primary' | 'success' | 'danger' | 'warning' | 'default'> = {
+  running: 'primary',
+  completed: 'success',
+  failed: 'danger',
+  denied: 'warning',
+  cancelled: 'default',
+  compacted: 'default',
 }
 
 export function EnhancedToolCallCard({ call }: Props) {
@@ -35,10 +37,11 @@ export function EnhancedToolCallCard({ call }: Props) {
   const hasOutput = Boolean(call.outputSummary)
   const outputText = call.outputSummary ?? ''
   const isLong = outputText.length > 800
+  const chipColor = STATUS_COLOR[call.status] ?? 'default'
 
   return (
-    <div
-      className={`rounded-lg border transition-colors ${
+    <Card
+      className={`shadow-none transition-colors ${
         expanded ? 'border-accent/20 bg-accent/5' : 'border-border/60 bg-background/40'
       }`}
     >
@@ -63,11 +66,9 @@ export function EnhancedToolCallCard({ call }: Props) {
               {call.duration}
             </span>
           )}
-          {call.status in STATUS_STYLES && (
-            <span className={`text-[10px] font-medium ${STATUS_STYLES[call.status]}`}>
-              {call.status}
-            </span>
-          )}
+          <Chip size="sm" color={chipColor} variant="flat" className="h-4 text-[9px]">
+            {call.status}
+          </Chip>
           {hasOutput && (
             expanded
               ? <ChevronDown size={12} className="text-muted-foreground" />
@@ -92,6 +93,6 @@ export function EnhancedToolCallCard({ call }: Props) {
           )}
         </div>
       )}
-    </div>
+    </Card>
   )
 }

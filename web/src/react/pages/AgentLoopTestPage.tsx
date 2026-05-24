@@ -1,19 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Loader2, RefreshCw, Send, X } from 'lucide-react'
-import { Button, Spinner } from '@heroui/react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Check, RefreshCw, Send, X } from 'lucide-react'
+import { Button, Card, Chip, ScrollShadow, Spinner } from '@heroui/react'
 import {
   agentRuntimeApi,
-  type AgentRuntimeMessage,
   type AgentSession,
   type PermissionDecision,
   type RuntimeEvent,
 } from '../../lib/api/agentRuntime'
+import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
+import { useSessionLiveStream } from '../features/debug-console/useSessionLiveStream'
+import { AgentConversationView } from '../features/sessions/AgentConversationView'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../components/LlmProviderRequiredBanner'
 
 type StreamChunk = {
   type?: string
   event?: RuntimeEvent
-  message?: AgentRuntimeMessage
   permission?: PermissionDecision
 }
 
@@ -36,7 +37,6 @@ function shortId(value?: string | null): string {
 
 export default function AgentLoopTestPage() {
   const [session, setSession] = useState<AgentSession | null>(null)
-  const [messages, setMessages] = useState<AgentRuntimeMessage[]>([])
   const [events, setEvents] = useState<RuntimeEvent[]>([])
   const [permissions, setPermissions] = useState<PermissionDecision[]>([])
   const [input, setInput] = useState('Read package.json and summarize it in one sentence.')
@@ -45,21 +45,26 @@ export default function AgentLoopTestPage() {
   const [approvingId, setApprovingId] = useState<string | null>(null)
   const sessionIdRef = useRef<string | null>(null)
 
-  const pendingPermissions = useMemo(
-    () => permissions.filter((permission) => permission.action === 'ask' && !permission.resolvedAt),
-    [permissions],
+  // Wire up debugConsoleStore for rich rendering
+  const debugStore = useDebugConsole()
+  const { steps, toolCalls, messages: storeMessages, childSessions,
+    streamingStepId, streamingText, streamingThinking, streamingToolCalls } = debugStore
+
+  // Subscribe to SSE live events when session is active
+  useSessionLiveStream(sessionIdRef.current)
+
+  const pendingPermissions = permissions.filter(
+    (p) => p.action === 'ask' && !p.resolvedAt,
   )
 
   const refreshSessionData = useCallback(async (sessionId = sessionIdRef.current) => {
     if (!sessionId) return
-    const [payload, messageList, eventList, permissionList] = await Promise.all([
+    const [payload, eventList, permissionList] = await Promise.all([
       agentRuntimeApi.getSession(sessionId),
-      agentRuntimeApi.listMessages(sessionId),
       agentRuntimeApi.listEvents(sessionId),
       agentRuntimeApi.listPermissions(sessionId),
     ])
     setSession(payload.session)
-    setMessages(messageList.items)
     setEvents(eventList.items)
     setPermissions(permissionList.items)
   }, [])
@@ -84,11 +89,10 @@ export default function AgentLoopTestPage() {
     try {
       const activeSession = await ensureSession()
       sessionIdRef.current = activeSession.id
+      // Open panel in debugConsoleStore to load data and enable SSE rendering
+      debugStore.openPanel(activeSession.id)
       await agentRuntimeApi.streamTurn(activeSession.id, { message: text }, (raw) => {
         const chunk = raw as StreamChunk
-        if (chunk.message) {
-          setMessages((current) => [...current, chunk.message!])
-        }
         if (chunk.event) {
           setEvents((current) => [...current, chunk.event!])
         }
@@ -101,12 +105,13 @@ export default function AgentLoopTestPage() {
       })
       setInput('')
       await refreshSessionData(activeSession.id)
+      await debugStore.refreshDetail()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setStreaming(false)
     }
-  }, [ensureSession, input, refreshSessionData, streaming])
+  }, [ensureSession, input, refreshSessionData, streaming, debugStore])
 
   const replyPermission = useCallback(
     async (permissionId: string, reply: 'once' | 'reject') => {
@@ -116,29 +121,28 @@ export default function AgentLoopTestPage() {
       try {
         await agentRuntimeApi.replyPermission(sessionIdRef.current, permissionId, reply)
         await refreshSessionData(sessionIdRef.current)
-        window.setTimeout(() => void refreshSessionData(sessionIdRef.current), 700)
-        window.setTimeout(() => void refreshSessionData(sessionIdRef.current), 1600)
+        await debugStore.refreshDetail()
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
       } finally {
         setApprovingId(null)
       }
     },
-    [refreshSessionData],
+    [refreshSessionData, debugStore],
   )
 
+  // Sync session into store when sessionIdRef changes
   useEffect(() => {
-    if (!sessionIdRef.current) return
-    const timer = window.setInterval(() => {
-      void refreshSessionData(sessionIdRef.current)
-    }, 2500)
-    return () => window.clearInterval(timer)
-  }, [refreshSessionData])
+    if (sessionIdRef.current && !debugStore.selectedSessionId) {
+      debugStore.openPanel(sessionIdRef.current)
+    }
+  }, [session, debugStore])
 
   return (
     <div className="h-full overflow-hidden bg-background text-foreground">
       <div className="flex h-full">
-        <aside className="hidden w-80 shrink-0 border-r border-border bg-card/60 p-5 lg:block">
+        {/* Left sidebar */}
+        <aside className="hidden w-72 shrink-0 border-r border-border bg-card/60 p-5 lg:block">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Synapse Runtime</p>
             <h1 className="mt-2 text-xl font-semibold">Agent Loop Test</h1>
@@ -149,57 +153,37 @@ export default function AgentLoopTestPage() {
             <InfoRow label="Profile" value={PROFILE_ID} />
             <InfoRow label="Session" value={session ? shortId(session.id) : 'not created'} />
             <InfoRow label="Status" value={session?.status ?? 'idle'} />
-            <InfoRow label="Active run" value={shortId(session?.activeRunId) || '-'} />
           </div>
 
           <Button
-            variant="outline"
+            variant="bordered"
             size="sm"
             className="mt-6 w-full"
-            onPress={() => void refreshSessionData()}
+            onPress={() => { void refreshSessionData(); void debugStore.refreshDetail() }}
             isDisabled={!sessionIdRef.current}
           >
             <RefreshCw size={14} />
             Refresh
           </Button>
-
-          <div className="mt-6 rounded-md border border-border bg-background/60 p-3 text-xs text-muted-foreground">
-            Try a write prompt such as: write "hello" to tmp/agent-loop-ui-test.txt.
-          </div>
         </aside>
 
+        {/* Main content */}
         <main className="flex min-w-0 flex-1 flex-col">
-          <header className="border-b border-border px-5 py-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold">Chat</h2>
-                <p className="text-xs text-muted-foreground">
-                  {session ? `${session.status} · ${shortId(session.id)}` : 'A session is created on first send'}
-                </p>
-              </div>
-              {streaming && (
-                <div className="inline-flex items-center gap-2 rounded-md bg-secondary px-3 py-1.5 text-xs text-muted-foreground">
-                  <Spinner size="sm" />
-                  running
-                </div>
-              )}
-            </div>
-          </header>
-
-          <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px]">
+            {/* Conversation area */}
             <section className="flex min-h-0 flex-col border-r border-border">
-              <div className="min-h-0 flex-1 overflow-auto p-5">
-                <div className="mx-auto flex max-w-3xl flex-col gap-3">
-                  {messages.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                      No messages yet.
-                    </div>
-                  ) : (
-                    messages.map((message) => (
-                      <MessageBubble key={message.id} message={message} />
-                    ))
-                  )}
-                </div>
+              <div className="min-h-0 flex-1 overflow-auto">
+                <AgentConversationView
+                  session={session ?? undefined}
+                  steps={steps}
+                  toolCalls={toolCalls}
+                  messages={storeMessages}
+                  childSessions={childSessions[sessionIdRef.current ?? ''] ?? []}
+                  streamingStepId={streamingStepId}
+                  streamingText={streamingText}
+                  streamingThinking={streamingThinking}
+                  streamingToolCalls={streamingToolCalls}
+                />
               </div>
 
               {error && (
@@ -216,7 +200,7 @@ export default function AgentLoopTestPage() {
 
               {pendingPermissions.length > 0 && (
                 <div className="border-t border-warning/40 bg-warning/10 px-5 py-3">
-                  <div className="mx-auto max-w-3xl space-y-2">
+                  <div className="space-y-2">
                     {pendingPermissions.map((permission) => (
                       <div key={permission.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/40 bg-background px-3 py-2">
                         <div className="min-w-0">
@@ -226,22 +210,11 @@ export default function AgentLoopTestPage() {
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            onPress={() => void replyPermission(permission.id, 'once')}
-                            isDisabled={approvingId === permission.id}
-                          >
-                            <Check size={13} />
-                            Allow once
+                          <Button size="sm" onPress={() => void replyPermission(permission.id, 'once')} isDisabled={approvingId === permission.id}>
+                            <Check size={13} /> Allow
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onPress={() => void replyPermission(permission.id, 'reject')}
-                            isDisabled={approvingId === permission.id}
-                          >
-                            <X size={13} />
-                            Reject
+                          <Button size="sm" variant="bordered" onPress={() => void replyPermission(permission.id, 'reject')} isDisabled={approvingId === permission.id}>
+                            <X size={13} /> Reject
                           </Button>
                         </div>
                       </div>
@@ -251,22 +224,18 @@ export default function AgentLoopTestPage() {
               )}
 
               <form
-                className="border-t border-border p-5"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  void send()
-                }}
+                className="border-t border-border p-4"
+                onSubmit={(e) => { e.preventDefault(); void send() }}
               >
-                <div className="mx-auto flex max-w-3xl items-end gap-2">
+                <div className="flex items-end gap-2">
                   <textarea
                     value={input}
-                    onChange={(event) => setInput(event.target.value)}
+                    onChange={(e) => setInput(e.target.value)}
                     className="min-h-20 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition focus:ring-2"
-                    placeholder="Send a task to the built-in Synapse agent loop..."
-                    onKeyDown={(event) => {
-                      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                        event.preventDefault()
-                        void send()
+                    placeholder="Send a task to the agent loop..."
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                        e.preventDefault(); void send()
                       }
                     }}
                   />
@@ -282,25 +251,32 @@ export default function AgentLoopTestPage() {
               </form>
             </section>
 
-            <aside className="min-h-0 overflow-auto bg-card/50 p-4">
-              <h3 className="text-sm font-semibold">Runtime Events</h3>
-              <div className="mt-3 space-y-2">
+            {/* Events sidebar */}
+            <aside className="hidden min-h-0 overflow-auto bg-card/50 p-4 lg:block">
+              <h3 className="text-sm font-semibold mb-3">Runtime Events</h3>
+              <ScrollShadow className="flex-1">
                 {events.length === 0 ? (
                   <div className="rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground">
                     No events yet.
                   </div>
                 ) : (
-                  events.slice().reverse().map((event) => (
-                    <div key={event.id} className="rounded-md border border-border bg-background p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-medium">{event.type}</span>
-                        <span className="shrink-0 text-[10px] text-muted-foreground">{formatTime(event.timestamp)}</span>
-                      </div>
-                      <p className="mt-1 line-clamp-3 text-xs text-muted-foreground">{event.summary}</p>
-                    </div>
-                  ))
+                  <div className="space-y-2">
+                    {events.slice().reverse().slice(0, 50).map((event) => (
+                      <Card key={event.id} className="shadow-none border-border/60 bg-background/60">
+                        <div className="px-3 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <Chip size="sm" variant="flat" className="text-[9px] h-4">
+                              {event.type}
+                            </Chip>
+                            <span className="shrink-0 text-[10px] text-muted-foreground">{formatTime(event.timestamp)}</span>
+                          </div>
+                          <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{event.summary}</p>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
                 )}
-              </div>
+              </ScrollShadow>
             </aside>
           </div>
         </main>
@@ -314,28 +290,6 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="truncate text-xs font-medium">{value}</span>
-    </div>
-  )
-}
-
-function MessageBubble({ message }: { message: AgentRuntimeMessage }) {
-  const isUser = message.role === 'user'
-  return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={[
-          'max-w-[82%] rounded-md border px-3 py-2 text-sm leading-6',
-          isUser
-            ? 'border-primary/30 bg-primary text-primary-foreground'
-            : 'border-border bg-card text-card-foreground',
-        ].join(' ')}
-      >
-        <div className="mb-1 flex items-center justify-between gap-3 text-[10px] opacity-70">
-          <span>{message.role}</span>
-          <span>{formatTime(message.createdAt)}</span>
-        </div>
-        <div className="whitespace-pre-wrap break-words">{message.content}</div>
-      </div>
     </div>
   )
 }
