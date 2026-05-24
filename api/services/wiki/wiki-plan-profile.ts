@@ -30,6 +30,7 @@ export const planGeneratorProfile: AgentProfile = {
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
     'Read source files to understand the codebase relevant to the issues.',
+    'IMPORTANT: Batch multiple file reads in a single step. Call plan.read_source multiple times in one response to read several files at once instead of one file per step.',
     'Design plan nodes with clear dependencies and expected file changes.',
     'Call plan.submit_plan as soon as your plan is ready. Do not over-read.',
   ],

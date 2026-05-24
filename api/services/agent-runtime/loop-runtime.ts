@@ -613,137 +613,89 @@ export class AgentLoopRuntime {
           permission: NonNullable<typeof pendingPermission>;
           record: ToolCallRecord;
         };
-        // 中间步骤有 text 时也创建 assistant message，确保前端能渲染
-        if (modelResult.step.message?.trim()) {
-          this.finishAssistantMessage(
-            sessionId,
-            run.id,
-            step.id,
-            modelResult.step.message.trim(),
-            modelResult.model,
-            input.purpose ?? profile.kind,
-            modelResult.step.usage,
-          );
-        }
-        for (const call of withIds(modelResult.step.toolCalls.slice(0, 50))) {
-          const toolExecution = await this.tools.execute(
-            sessionId,
-            call.toolId,
-            call.args,
-            {
-              runId: run.id,
-              stepId: step.id,
-              modelToolCallId: call.id,
-              resumeToken: optionsResumeToken(run.id, step.id, call.id),
-            },
-          );
-          this.appendToolCallPart({
-            runId: run.id,
-            stepId: step.id,
-            sessionId,
-            record: toolExecution.record,
-            reason: call.reason,
+        const allCalls = withIds(modelResult.step.toolCalls.slice(0, 50));
+        const canParallelRead = profile.toolPolicy?.allowParallelReadTools &&
+          allCalls.length > 1 &&
+          allCalls.every((c) => {
+            try {
+              const t = this.tools.get(c.toolId);
+              return t.mutability === 'read' && c.toolId !== 'subagent.delegate';
+            } catch { return false; }
           });
-          yield {
-            type: "tool_call",
-            runId: run.id,
-            stepId: step.id,
-            toolCall: toolExecution.record,
-            event: this.events.append({
-              sessionId,
-              type: "tool_call",
-              summary: `${call.toolId} requested`,
-              payload: {
-                runId: run.id,
-                stepId: step.id,
-                toolCallId: toolExecution.record.id,
+
+        if (canParallelRead) {
+          const maxParallel = profile.toolPolicy!.maxParallelReadTools ?? 4;
+          const batch = allCalls.slice(0, maxParallel);
+          const executions = await Promise.all(
+            batch.map((call) =>
+              this.tools.execute(sessionId, call.toolId, call.args, {
+                runId: run.id, stepId: step.id,
                 modelToolCallId: call.id,
-              },
-            }),
-          };
-          sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: toolExecution.record });
-          logger.info(
-            {
-              sessionId,
-              runId: run.id,
-              stepId: step.id,
-              toolCallId: toolExecution.record.id,
-              toolId: call.toolId,
-              status: toolExecution.record.status,
-              permissionAction: toolExecution.permission?.action ?? null,
-            },
-            "[agent-runtime] tool call executed",
+                resumeToken: optionsResumeToken(run.id, step.id, call.id),
+              }).then((exec) => ({ call, exec })),
+            ),
           );
-          if (toolExecution.permission?.action === "ask") {
-            waitingPermission = {
-              permission: toolExecution.permission,
-              record: toolExecution.record,
+          for (const { call, exec } of executions) {
+            this.appendToolCallPart({ runId: run.id, stepId: step.id, sessionId, record: exec.record, reason: call.reason });
+            yield {
+              type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record,
+              event: this.events.append({ sessionId, type: "tool_call", summary: `${call.toolId} requested`, payload: { runId: run.id, stepId: step.id, toolCallId: exec.record.id, modelToolCallId: call.id } }),
             };
+            sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: exec.record });
+            this.appendToolResultPart({ runId: run.id, stepId: step.id, sessionId, record: exec.record });
+            yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: exec.record };
+            sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: exec.record });
+            if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
+              disclosureState = promoteDisclosure(disclosureState);
+            }
+          }
+        } else {
+          for (const call of allCalls) {
+            const toolExecution = await this.tools.execute(
+              sessionId, call.toolId, call.args,
+              { runId: run.id, stepId: step.id, modelToolCallId: call.id, resumeToken: optionsResumeToken(run.id, step.id, call.id) },
+            );
+            this.appendToolCallPart({ runId: run.id, stepId: step.id, sessionId, record: toolExecution.record, reason: call.reason });
+            yield {
+              type: "tool_call", runId: run.id, stepId: step.id, toolCall: toolExecution.record,
+              event: this.events.append({ sessionId, type: "tool_call", summary: `${call.toolId} requested`, payload: { runId: run.id, stepId: step.id, toolCallId: toolExecution.record.id, modelToolCallId: call.id } }),
+            };
+            sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: toolExecution.record });
             logger.info(
-              {
-                sessionId,
-                runId: run.id,
-                stepId: step.id,
-                permissionId: toolExecution.permission.id,
-                toolCallId: toolExecution.record.id,
-                reason: truncateLogText(toolExecution.permission.reason),
-              },
-              "[agent-runtime] permission requested",
+              { sessionId, runId: run.id, stepId: step.id, toolCallId: toolExecution.record.id, toolId: call.toolId, status: toolExecution.record.status, permissionAction: toolExecution.permission?.action ?? null },
+              "[agent-runtime] tool call executed",
             );
-            break;
-          }
-          const completedRecord =
-            call.toolId === "subagent.delegate" && toolExecution.toolResult?.result
-              ? await this.awaitTaskResult(
-                  toolExecution.record,
-                  toolExecution.toolResult.result,
-                  runAbortSignal,
-                )
-              : toolExecution.record;
-          this.appendToolResultPart({
-            runId: run.id,
-            stepId: step.id,
-            sessionId,
-            record: completedRecord,
-          });
-          if (completedRecord.status === "denied") {
-            logger.warn(
-              {
-                sessionId,
-                runId: run.id,
-                stepId: step.id,
-                toolCallId: completedRecord.id,
-                toolId: call.toolId,
-              },
-              "[agent-runtime] tool call denied",
+            if (toolExecution.permission?.action === "ask") {
+              waitingPermission = { permission: toolExecution.permission, record: toolExecution.record };
+              logger.info(
+                { sessionId, runId: run.id, stepId: step.id, permissionId: toolExecution.permission.id, toolCallId: toolExecution.record.id, reason: truncateLogText(toolExecution.permission.reason) },
+                "[agent-runtime] permission requested",
+              );
+              break;
+            }
+            const completedRecord =
+              call.toolId === "subagent.delegate" && toolExecution.toolResult?.result
+                ? await this.awaitTaskResult(toolExecution.record, toolExecution.toolResult.result, runAbortSignal)
+                : toolExecution.record;
+            this.appendToolResultPart({ runId: run.id, stepId: step.id, sessionId, record: completedRecord });
+            if (completedRecord.status === "denied") {
+              logger.warn(
+                { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId },
+                "[agent-runtime] tool call denied",
+              );
+              currentPrompt = `The attempted tool call ${call.toolId} was denied. Explain the blocker and finish without further writes.`;
+              pendingPermission = toolExecution.permission ?? null;
+              continue;
+            }
+            logger.info(
+              { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId, status: completedRecord.status, outputSummary: truncateLogText(completedRecord.outputSummary ?? completedRecord.error ?? "") },
+              "[agent-runtime] tool result recorded",
             );
-            currentPrompt = `The attempted tool call ${call.toolId} was denied. Explain the blocker and finish without further writes.`;
-            pendingPermission = toolExecution.permission ?? null;
-            continue;
-          }
-          logger.info(
-            {
-              sessionId,
-              runId: run.id,
-              stepId: step.id,
-              toolCallId: completedRecord.id,
-              toolId: call.toolId,
-              status: completedRecord.status,
-              outputSummary: truncateLogText(
-                completedRecord.outputSummary ?? completedRecord.error ?? "",
-              ),
-            },
-            "[agent-runtime] tool result recorded",
-          );
-          yield {
-            type: "tool_result",
-            runId: run.id,
-            stepId: step.id,
-            toolCall: completedRecord,
-          };
-          sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
-          if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
-            disclosureState = promoteDisclosure(disclosureState);
+            yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
+            sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
+            if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
+              disclosureState = promoteDisclosure(disclosureState);
+            }
           }
         }
 
@@ -1108,7 +1060,7 @@ export class AgentLoopRuntime {
       input.disclosureState && input.disclosureStrategy
         ? filterByDisclosure(availableTools, input.disclosureState, input.disclosureStrategy)
         : availableTools;
-    const toolSet = buildLoopToolSet(visibleTools);
+    const toolSet = buildLoopToolSet(availableTools, visibleTools);
     let conversationMessages = buildLoopModelMessages(
       this.store,
       input.sessionId,

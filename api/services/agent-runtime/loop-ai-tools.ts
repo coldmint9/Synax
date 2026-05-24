@@ -17,7 +17,10 @@ const genericInputSchema = jsonSchema<Record<string, unknown>>({
   additionalProperties: true,
 });
 
-export function buildLoopToolSet(definitions: LoopToolDefinition[]): LoopToolSet {
+export function buildLoopToolSet(
+  definitions: LoopToolDefinition[],
+  activeDefinitions?: LoopToolDefinition[],
+): LoopToolSet {
   const tools: ToolSet = {};
   const usedNames = new Set<string>();
   const modelToRuntime = new Map<string, string>();
@@ -41,12 +44,16 @@ export function buildLoopToolSet(definitions: LoopToolDefinition[]): LoopToolSet
     });
   }
 
+  const activeToolNames = activeDefinitions
+    ? activeDefinitions.map((d) => runtimeToModel.get(d.id)).filter((n): n is string => Boolean(n))
+    : [...usedNames];
+
   const resolveToolId = (modelToolName: string): string | null => modelToRuntime.get(modelToolName) ?? null;
   const resolveModelToolName = (toolId: string): string | null => runtimeToModel.get(toolId) ?? null;
 
   return {
     tools,
-    activeTools: [...usedNames],
+    activeTools: activeToolNames,
     resolveToolId,
     resolveModelToolName,
     repairToolCall: async (failed) => {
@@ -62,7 +69,6 @@ export function buildLoopToolSet(definitions: LoopToolDefinition[]): LoopToolSet
       });
       if (match) return { ...failed.toolCall, toolName: match[1] };
 
-      // Redirect unrecognized tool calls to the invalid tool for self-healing feedback
       const invalidModelName = runtimeToModel.get(INVALID_TOOL_ID);
       if (invalidModelName) {
         return {
