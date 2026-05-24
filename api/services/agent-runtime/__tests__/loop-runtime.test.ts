@@ -227,7 +227,7 @@ describe('agentLoopRuntime', () => {
       .mockResolvedValueOnce(
         makeToolStep({
           message: 'I am delegating this as a read-only subtask.',
-          toolName: 'task_run',
+          toolName: 'subagent_delegate',
           toolCallId: 'call-task',
           args: { profileId: 'explorer', prompt: 'Inspect the module and summarize the result.' },
         }),
@@ -249,7 +249,7 @@ describe('agentLoopRuntime', () => {
     expect(childSessions[0]?.status).toBe('completed');
     expect(childSessions[0]?.resultSummary).toBe('Child summary: the module is read-only and safe.');
 
-    const [taskCall] = agentRuntimeStore.listToolCalls(session.id).filter((call) => call.toolId === 'task.run');
+    const [taskCall] = agentRuntimeStore.listToolCalls(session.id).filter((call) => call.toolId === 'subagent.delegate');
     expect(taskCall.outputSummary).toContain(childSessions[0]!.id);
     expect(taskCall.outputSummary).toContain('Child summary: the module is read-only and safe.');
     expect((taskCall.outputRef as { childSummary?: string }).childSummary).toBe('Child summary: the module is read-only and safe.');
