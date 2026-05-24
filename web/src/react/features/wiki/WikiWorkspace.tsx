@@ -1,11 +1,14 @@
 import { AlertCircle, BookOpen, Download, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Drawer, Spinner } from '@heroui/react'
+import { Button, Drawer, Skeleton, Spinner } from '@heroui/react'
+import { useScrollRestore } from '../../../hooks/useScrollRestore'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
 import WikiBlockRenderer from './WikiBlockRenderer'
 import WikiPatchQueue from './WikiPatchQueue'
+import WikiEvaluationSidebar from './WikiEvaluationSidebar'
+import PlanView from './PlanView'
 import { wikiApi } from '../../../lib/api/wiki'
 import { apiFetch } from '../../../lib/api/origin'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
@@ -227,6 +230,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const patchPanelOpen = useWikiStore(s => s.patchPanelOpen)
   const togglePatchPanel = useWikiStore(s => s.togglePatchPanel)
   const loadPatches = useWikiStore(s => s.loadPatches)
+  const viewMode = useWikiStore(s => s.viewMode)
 
   const [refreshing, setRefreshing] = useState(false)
   const [showReinitConfirm, setShowReinitConfirm] = useState(false)
@@ -235,6 +239,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const [sidebarWidth, setSidebarWidth] = useState(260)
 
   const selectedDoc = documents.find(d => d.id === selectedDocumentId)
+  const scrollRef = useScrollRestore(selectedDocumentId)
 
   // Load evaluations when projectId changes
   useEffect(() => {
@@ -338,7 +343,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
       await loadLatest(projectId)
       await loadPatches(projectId, 'pending')
-      setRightTab('patches')
     } finally {
       setRefreshing(false)
     }
@@ -382,11 +386,31 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   if (loading.snapshot) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="flex items-center gap-2 text-[12px] text-muted-foreground/60">
-          <RefreshCw size={13} className="animate-spin" />
-          加载 Wiki…
-        </div>
+      <div className="flex h-full min-h-0 overflow-hidden">
+        <aside style={{ width: 260 }} className="flex shrink-0 flex-col wiki-panel">
+          <div className="wiki-panel-header shrink-0">
+            <Skeleton className="h-3 w-16 rounded-md" />
+          </div>
+          <div className="flex-1 px-3 py-3 space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-7 w-full rounded-lg" />
+            ))}
+          </div>
+        </aside>
+        <div className="wiki-separator shrink-0" />
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden pt-14 px-5">
+          <div className="max-w-2xl space-y-4">
+            <Skeleton className="h-6 w-48 rounded-lg" />
+            <Skeleton className="h-4 w-full rounded-md" />
+            <Skeleton className="h-4 w-3/4 rounded-md" />
+            <Skeleton className="h-4 w-5/6 rounded-md" />
+            <div className="pt-4 space-y-3">
+              <Skeleton className="h-5 w-40 rounded-lg" />
+              <Skeleton className="h-4 w-full rounded-md" />
+              <Skeleton className="h-4 w-2/3 rounded-md" />
+            </div>
+          </div>
+        </main>
       </div>
     )
   }
@@ -504,25 +528,28 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
         className="wiki-separator shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
       />
 
-      {/* ── Center: Block content ── */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {selectedDoc ? (
-          <>
-            {/* <div className="wiki-panel-header shrink-0 px-5">
-              <h1 className="truncate text-[13px] font-semibold text-foreground/90">
-                {selectedDoc.title}
-              </h1>
-            </div> */}
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-14 pb-4">
+      {/* ── Center: Block content or Plan view ── */}
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden pt-14">
+        <div className={`min-h-0 flex-1 flex flex-col overflow-hidden ${viewMode !== 'plan' ? 'hidden' : ''}`}>
+          <PlanView projectId={projectId} />
+        </div>
+        <div className={`min-h-0 flex-1 flex flex-col overflow-hidden ${viewMode !== 'document' ? 'hidden' : ''}`}>
+          {selectedDoc ? (
+            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
               <WikiBlockRenderer document={selectedDoc} issuesByBlockId={issuesByBlockId} projectId={projectId} />
             </div>
-          </>
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-[12px] text-muted-foreground/40">从左侧选择文档</p>
-          </div>
-        )}
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <p className="text-[12px] text-muted-foreground/40">从左侧选择文档</p>
+            </div>
+          )}
+        </div>
       </main>
+
+      {/* ── Right: Evaluation sidebar (issues + generate plan) ── */}
+      <aside className={`flex w-[220px] shrink-0 flex-col border-l border-border/15 ${viewMode !== 'document' ? 'hidden' : ''}`}>
+        <WikiEvaluationSidebar projectId={projectId} selectedBlockId={selectedBlockId} />
+      </aside>
 
       {/* ── Patches Drawer (HeroUI) ── */}
       <Drawer.Backdrop isOpen={patchPanelOpen} onOpenChange={(open) => { if (!open) togglePatchPanel() }} variant="transparent">

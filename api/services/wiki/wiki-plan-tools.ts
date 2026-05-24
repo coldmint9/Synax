@@ -71,7 +71,7 @@ export function createPlanTools(context: PlanContext) {
       if (!block) {
         return { result: { error: 'Block not found' }, displaySummary: `Block not found: ${args.blockId}`, artifacts: [] }
       }
-      return { result: { blockId: block.id, blockType: block.blockType, content: block.contentJson }, displaySummary: `Read block ${args.blockId.slice(0, 8)}`, artifacts: [] }
+      return { result: { blockId: block.id, blockType: block.blockType, content: block.content }, displaySummary: `Read block ${args.blockId.slice(0, 8)}`, artifacts: [] }
     },
   }
 

@@ -4,7 +4,8 @@
 
 import { create } from 'zustand';
 import { wikiApi } from '../../lib/api/wiki';
-import { evaluationApi, type WikiEvaluation } from '../../lib/api/evaluation';
+import { evaluationApi, type WikiEvaluation, type WikiPlan, type WikiPlanNode, type PlanNodeDraft, type PlanStreamEvent } from '../../lib/api/evaluation';
+import { useToastStore } from './toastStore';
 import type {
   WikiSnapshot,
   WikiDocument,
@@ -14,6 +15,7 @@ import type {
 } from '../../lib/contracts/wiki';
 
 export type WikiViewMode = 'document' | 'plan';
+export type PlanNavView = 'list' | 'detail';
 
 export interface WikiState {
   viewMode: WikiViewMode;
@@ -27,8 +29,26 @@ export interface WikiState {
   evaluations: WikiEvaluation[];
   patchesSummary: { pending: number; conflict: number };
   patchPanelOpen: boolean;
-  loading: { snapshot: boolean; patches: boolean };
+  loading: { snapshot: boolean; patches: boolean; plans: boolean };
   error: string | null;
+
+  // Plan state
+  plans: WikiPlan[];
+  activePlan: WikiPlan | null;
+  activePlanNodes: WikiPlanNode[];
+  planNav: PlanNavView;
+  selectedPlanId: string | null;
+
+  // Plan generation streaming state
+  planGeneration: {
+    status: 'idle' | 'generating' | 'completed' | 'failed'
+    phase: string | null
+    toolCalls: { tool: string; summary: string }[]
+    streamingText: string
+    previewNodes: PlanNodeDraft[]
+    sessionId: string | null
+    error: string | null
+  };
 
   setViewMode: (mode: WikiViewMode) => void;
   loadLatest: (projectId: string) => Promise<void>;
@@ -39,6 +59,19 @@ export interface WikiState {
   loadPatches: (projectId: string, status?: string) => Promise<void>;
   togglePatchPanel: () => void;
   reset: () => void;
+
+  // Plan actions
+  loadPlans: (projectId: string) => Promise<void>;
+  loadActivePlan: (projectId: string) => Promise<void>;
+  loadPlanNodes: (planId: string) => Promise<void>;
+  setPlanNav: (nav: PlanNavView) => void;
+  selectPlan: (planId: string | null) => void;
+  confirmPlan: (projectId: string, planId: string) => Promise<void>;
+  discardPlan: (planId: string) => Promise<void>;
+  updatePlanNode: (nodeId: string, updates: Partial<Pick<WikiPlanNode, 'title' | 'description' | 'expectedFiles'>>) => Promise<void>;
+  deletePlanNode: (nodeId: string) => Promise<void>;
+  startPlanGeneration: (projectId: string, snapshotId: string, workDir: string) => void;
+  resetPlanGeneration: () => void;
 }
 
 const initialState = {
@@ -53,8 +86,22 @@ const initialState = {
   evaluations: [] as WikiEvaluation[],
   patchesSummary: { pending: 0, conflict: 0 },
   patchPanelOpen: false,
-  loading: { snapshot: false, patches: false },
+  loading: { snapshot: false, patches: false, plans: false },
   error: null,
+  plans: [] as WikiPlan[],
+  activePlan: null as WikiPlan | null,
+  activePlanNodes: [] as WikiPlanNode[],
+  planNav: 'detail' as PlanNavView,
+  selectedPlanId: null as string | null,
+  planGeneration: {
+    status: 'idle' as 'idle' | 'generating' | 'completed' | 'failed',
+    phase: null as string | null,
+    toolCalls: [] as { tool: string; summary: string }[],
+    streamingText: '',
+    previewNodes: [] as PlanNodeDraft[],
+    sessionId: null as string | null,
+    error: null as string | null,
+  },
 };
 
 export const useWikiStore = create<WikiState>((set, get) => ({
@@ -106,10 +153,12 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
       const firstDocId = tree.documents[0]?.id ?? null;
       const currentSelected = prev.selectedDocumentId;
+      const savedDocId = !currentSelected ? (localStorage.getItem('wiki-selected-doc') ?? null) : null;
+      const restoredId = savedDocId && tree.documents.some(d => d.id === savedDocId) ? savedDocId : null;
       const selectedDocumentId =
         currentSelected && tree.documents.some(d => d.id === currentSelected)
           ? currentSelected
-          : firstDocId;
+          : (restoredId ?? firstDocId);
 
       const patch: Partial<WikiState> = {
         loading: { snapshot: false, patches: prev.loading.patches },
@@ -132,7 +181,12 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     }
   },
 
-  selectDocument: (documentId) => set({ selectedDocumentId: documentId, selectedBlockId: null }),
+  selectDocument: (documentId) => {
+    set({ selectedDocumentId: documentId, selectedBlockId: null })
+    if (documentId) {
+      try { localStorage.setItem('wiki-selected-doc', documentId) } catch {}
+    }
+  },
 
   selectBlock: (blockId) => set({ selectedBlockId: blockId }),
 
@@ -160,4 +214,143 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
   reset: () => set(initialState),
   togglePatchPanel: () => set(s => ({ patchPanelOpen: !s.patchPanelOpen })),
+
+  // Plan actions
+  loadPlans: async (projectId: string) => {
+    set(s => ({ ...s, loading: { ...s.loading, plans: true } }));
+    try {
+      const plans = await evaluationApi.listPlans(projectId)
+      const active = plans.find(p => p.status !== 'completed') ?? null
+      set(s => ({ ...s, plans, activePlan: active, loading: { ...s.loading, plans: false } }))
+    } catch {
+      set(s => ({ ...s, loading: { ...s.loading, plans: false } }))
+    }
+  },
+
+  loadActivePlan: async (projectId: string) => {
+    try {
+      const { plan, nodes } = await evaluationApi.getActivePlan(projectId)
+      set({ activePlan: plan, activePlanNodes: nodes })
+    } catch { /* ignore */ }
+  },
+
+  loadPlanNodes: async (planId: string) => {
+    try {
+      const nodes = await evaluationApi.getPlanNodes(planId)
+      set({ activePlanNodes: nodes })
+    } catch { /* ignore */ }
+  },
+
+  setPlanNav: (nav: PlanNavView) => set({ planNav: nav }),
+
+  selectPlan: (planId: string | null) => {
+    set({ selectedPlanId: planId, planNav: planId ? 'detail' : 'list' })
+  },
+
+  confirmPlan: async (projectId: string, planId: string) => {
+    await evaluationApi.confirmPlan(projectId, planId)
+    set(s => ({
+      activePlan: s.activePlan ? { ...s.activePlan, status: 'confirmed' as const } : null,
+    }))
+  },
+
+  discardPlan: async (planId: string) => {
+    await evaluationApi.discardPlan(planId)
+    set({ activePlan: null, activePlanNodes: [], planNav: 'list' })
+  },
+
+  updatePlanNode: async (nodeId: string, updates) => {
+    const { activePlan } = get()
+    if (!activePlan) return
+    await evaluationApi.updateNode(activePlan.id, nodeId, updates)
+    set(s => ({
+      activePlanNodes: s.activePlanNodes.map(n => n.id === nodeId ? { ...n, ...updates } : n),
+    }))
+  },
+
+  deletePlanNode: async (nodeId: string) => {
+    const { activePlan } = get()
+    if (!activePlan) return
+    await evaluationApi.deleteNode(activePlan.id, nodeId)
+    set(s => ({
+      activePlanNodes: s.activePlanNodes.filter(n => n.id !== nodeId),
+    }))
+  },
+
+  startPlanGeneration: (projectId: string, snapshotId: string, workDir: string) => {
+    const toast = useToastStore.getState()
+    set({
+      viewMode: 'plan',
+      planGeneration: {
+        status: 'generating',
+        phase: 'analyzing',
+        toolCalls: [],
+        streamingText: '',
+        previewNodes: [],
+        sessionId: null,
+        error: null,
+      },
+    })
+
+    toast.push({
+      type: 'info',
+      message: '规划生成已启动，Agent 正在分析 Issues…',
+      action: { label: '查看进度', onClick: () => set({ viewMode: 'plan' }) },
+      duration: 4000,
+    })
+
+    evaluationApi.streamGeneratePlan(projectId, snapshotId, workDir, (event) => {
+      const s = get()
+      switch (event.type) {
+        case 'started':
+          set({ planGeneration: { ...s.planGeneration, sessionId: event.sessionId } })
+          break
+        case 'phase':
+          set({ planGeneration: { ...s.planGeneration, phase: event.phase } })
+          break
+        case 'tool_call':
+          set({ planGeneration: { ...s.planGeneration, toolCalls: [...s.planGeneration.toolCalls, { tool: event.tool, summary: event.summary }] } })
+          break
+        case 'thought_delta':
+        case 'message_delta':
+          set({ planGeneration: { ...s.planGeneration, streamingText: s.planGeneration.streamingText + event.delta } })
+          break
+        case 'plan_submitted':
+          set({ planGeneration: { ...s.planGeneration, previewNodes: event.nodes } })
+          break
+        case 'completed':
+          get().loadActivePlan(projectId).then(() => {
+            get().loadPlans(projectId)
+            set({ planGeneration: { ...get().planGeneration, status: 'idle' } })
+            toast.push({
+              type: 'success',
+              message: '规划生成完成，可以开始审查节点。',
+              action: { label: '查看规划', onClick: () => set({ viewMode: 'plan' }) },
+            })
+          })
+          break
+        case 'failed':
+          set({ planGeneration: { ...s.planGeneration, status: 'failed', error: event.error } })
+          toast.push({
+            type: 'error',
+            message: `规划生成失败：${event.error}`,
+            action: { label: '查看详情', onClick: () => set({ viewMode: 'plan' }) },
+            duration: 8000,
+          })
+          break
+      }
+    }, (err) => {
+      set(s => ({ planGeneration: { ...s.planGeneration, status: 'failed', error: err instanceof Error ? err.message : 'Connection lost' } }))
+      toast.push({
+        type: 'error',
+        message: '与服务器的连接中断，规划可能仍在后台运行。',
+        action: { label: '查看状态', onClick: () => set({ viewMode: 'plan' }) },
+        duration: 8000,
+      })
+    })
+  },
+
+  resetPlanGeneration: () => {
+    set({ planGeneration: { status: 'idle', phase: null, toolCalls: [], streamingText: '', previewNodes: [], sessionId: null, error: null } })
+  },
 }));

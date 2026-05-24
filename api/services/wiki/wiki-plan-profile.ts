@@ -25,13 +25,13 @@ export const planGeneratorProfile: AgentProfile = {
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Planner does not need shell.' },
   ],
   defaultSkills: [],
-  maxSteps: 15,
+  maxSteps: 200,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'Steps 1-3: Analyze issues and read related source files for deeper context.',
-    'Steps 4-5: Design plan nodes with clear dependencies and expected file changes.',
-    'Final step: Submit plan via plan.submit_plan.',
+    'Read source files to understand the codebase relevant to the issues.',
+    'Design plan nodes with clear dependencies and expected file changes.',
+    'Call plan.submit_plan as soon as your plan is ready. Do not over-read.',
   ],
 }
 

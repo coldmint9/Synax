@@ -755,3 +755,21 @@ export type WikiPlanRow = typeof wikiPlans.$inferSelect;
 export type NewWikiPlanRow = typeof wikiPlans.$inferInsert;
 export type WikiPlanNodeRow = typeof wikiPlanNodes.$inferSelect;
 export type NewWikiPlanNodeRow = typeof wikiPlanNodes.$inferInsert;
+
+export const wikiPlanNodeArtifacts = sqliteTable('wiki_plan_node_artifacts', {
+  id: text('id').primaryKey(),
+  nodeId: text('node_id').notNull(),
+  planId: text('plan_id').notNull(),
+  sessionId: text('session_id'),
+  patchesJson: text('patches_json').notNull().default('[]'),
+  executionLog: text('execution_log'),
+  commitMessage: text('commit_message'),
+  status: text('status').notNull().default('pending'),
+  redoCount: integer('redo_count').notNull().default(0),
+  redoFeedback: text('redo_feedback'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export type WikiPlanNodeArtifactRow = typeof wikiPlanNodeArtifacts.$inferSelect;
+export type NewWikiPlanNodeArtifactRow = typeof wikiPlanNodeArtifacts.$inferInsert;

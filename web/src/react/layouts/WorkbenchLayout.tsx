@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Outlet, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useState, useCallback } from 'react'
+import { Outlet, useNavigate, useParams, useLocation } from 'react-router-dom'
 import { projectApi } from '../../lib/api/project'
 import { addProject, useShellStore } from '../state/shellStore'
 import { useContextStore } from '../state/contextStore'
@@ -8,6 +8,9 @@ import type { ActivityPanel } from './ActivityBar'
 import { WorkbenchHeader } from './WorkbenchHeader'
 import { TitleBar } from './TitleBar'
 import { ProjectCreateDialog } from '../features/project-create/ProjectCreateDialog'
+import { ToastContainer } from '../components/ToastContainer'
+import WikiPage from '../pages/WikiPage'
+import SessionsPage from '../pages/SessionsPage'
 
 const isElectron = document.documentElement.classList.contains('electron')
 
@@ -24,8 +27,15 @@ export default function WorkbenchLayout() {
     }
   }, [routeProjectId, currentProjectId, setCurrentProjectId])
 
-  const project = useShellStore(s => s.projects.find(p => p.id === effectiveProjectId) ?? null)
+  const projects = useShellStore(s => s.projects)
+  const projectsLoaded = useShellStore(s => s.projectsLoaded)
+  const fetchProjects = useShellStore(s => s.fetchProjects)
+  const project = projects.find(p => p.id === effectiveProjectId) ?? null
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+
+  useEffect(() => {
+    if (!projectsLoaded) void fetchProjects()
+  }, [projectsLoaded, fetchProjects])
 
   const bindContext = useContextStore(s => s.bind)
   const boundProjectId = useContextStore(s => s.projectId)
@@ -51,8 +61,16 @@ export default function WorkbenchLayout() {
 
   const projectName = project?.name ?? (effectiveProjectId || 'Synapse')
   const navigate = useNavigate()
+  const location = useLocation()
 
-  const [activePanel, setActivePanel] = useState<ActivityPanel | null>(effectiveProjectId ? 'wiki' : null)
+  // Derive activePanel from current route
+  const activePanel: ActivityPanel | null = (() => {
+    const path = location.pathname
+    if (path.includes('/sessions')) return 'sessions'
+    if (path.includes('/wiki')) return 'wiki'
+    if (path === '/settings' || path.includes('/settings')) return 'settings'
+    return null
+  })()
 
   const panelRoutes: Record<ActivityPanel, string> = {
     coordinates: `/projects/${effectiveProjectId}/coordinates`,
@@ -68,11 +86,33 @@ export default function WorkbenchLayout() {
       navigate('/settings')
       return
     }
-    setActivePanel(panel)
     if (effectiveProjectId) {
       navigate(panelRoutes[panel])
     }
   }
+
+  const isCachedPanel = effectiveProjectId && (activePanel === 'wiki' || activePanel === 'sessions')
+
+  const unbindContext = useContextStore(s => s.unbind)
+  const removeFromStore = useShellStore(s => s.removeProject)
+
+  const handleRemoveProject = useCallback(async (projectId: string) => {
+    const isCurrentProject = projectId === effectiveProjectId
+    if (isCurrentProject) {
+      unbindContext()
+      setCurrentProjectId(null)
+    }
+    await projectApi.deleteProject(projectId)
+    removeFromStore(projectId)
+    if (isCurrentProject) {
+      const remaining = useShellStore.getState().projects
+      if (remaining.length > 0) {
+        navigate(`/projects/${remaining[0].id}/wiki`, { replace: true })
+      } else {
+        navigate('/', { replace: true })
+      }
+    }
+  }, [effectiveProjectId, unbindContext, setCurrentProjectId, removeFromStore, navigate])
 
   return (
     <div className="workbench-shell">
@@ -84,16 +124,36 @@ export default function WorkbenchLayout() {
       )}
       <div className="workbench-island">
         <div className="island-body">
-          <Outlet context={{ onCreateProject: () => setCreateDialogOpen(true) }} />
+          {/* Cached project pages — always mounted once project exists */}
+          {effectiveProjectId && (
+            <>
+              <div className={`flex-1 min-h-0 flex flex-col ${activePanel !== 'wiki' ? 'hidden' : ''}`}>
+                <WikiPage projectId={effectiveProjectId} />
+              </div>
+              <div className={`flex-1 min-h-0 flex flex-col ${activePanel !== 'sessions' ? 'hidden' : ''}`}>
+                <SessionsPage />
+              </div>
+            </>
+          )}
+          {/* Outlet for non-cached routes (welcome, settings) */}
+          <div className={isCachedPanel ? 'hidden' : 'flex-1 min-h-0 flex flex-col'}>
+            <Outlet context={{ onCreateProject: () => setCreateDialogOpen(true) }} />
+          </div>
         </div>
         <WorkbenchHeader
           activePanel={activePanel}
           onPanelToggle={handlePanelToggle}
-          onHome={() => navigate('/')}
           hasProject={!!effectiveProjectId}
+          projectName={projectName}
+          currentProjectId={effectiveProjectId}
+          projects={projects}
+          onProjectSwitch={(id) => navigate(`/projects/${id}/wiki`)}
+          onCreateProject={() => setCreateDialogOpen(true)}
+          onRemoveProject={handleRemoveProject}
         />
       </div>
       <ProjectCreateDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} />
+      <ToastContainer />
     </div>
   )
 }
