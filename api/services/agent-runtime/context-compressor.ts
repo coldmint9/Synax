@@ -106,7 +106,7 @@ export async function compactMessages(
 
   const summaryMessage: ModelMessage = {
     role: 'user',
-    content: `<context-summary>\n[Previous conversation summary - compressed to save context]\n${summaryText}\n</context-summary>`,
+    content: `<context-summary>\n[Previous conversation summary - compressed to save context]\n${summaryText}\n</context-summary>\n\n<system-note>Context was compressed. Before continuing, briefly confirm: (1) what you have accomplished so far, (2) what remains to be done. Then proceed with the next action.</system-note>`,
   };
 
   const compactedMessages: ModelMessage[] = [summaryMessage, ...preserved];

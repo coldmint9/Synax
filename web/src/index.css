@@ -493,6 +493,21 @@
   }
 
 
+  .wh-project-trigger {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: none;
+    background: transparent;
+    color: hsl(var(--foreground));
+    cursor: pointer;
+    transition: background 120ms;
+    height: 28px;
+  }
+  .wh-project-trigger:hover { background: hsl(var(--secondary)); }
+
   .wh-btn {
     width: 28px;
     height: 28px;
@@ -533,9 +548,29 @@
     display: flex;
     align-items: center;
   }
-  .wh-tabs .tabs__tab[aria-selected="true"] { color: hsl(var(--foreground)) !important; }
-  .wh-tabs .tabs__indicator { border-radius: 999px !important; }
+  .wh-tabs .tabs__tab[aria-selected="true"] { color: hsl(var(--primary)) !important; }
+  .wh-tabs .tabs__indicator { border-radius: 999px !important; background: hsl(var(--primary) / 0.1) !important; }
   .wh-tabs .tabs__separator { display: none !important; }
+
+  /* ── Wiki view mode tabs (文档/规划) ── */
+  .wiki-view-tabs { display: flex; align-items: center; }
+  .wiki-view-tabs .tabs__list-container { background: transparent !important; border: none !important; padding: 0 !important; }
+  .wiki-view-tabs .tabs__list { background: hsl(var(--muted) / 0.4) !important; border: none !important; gap: 0 !important; padding: 2px !important; border-radius: 999px !important; }
+  .wiki-view-tabs .tabs__tab {
+    font-size: 11px !important;
+    height: 24px !important;
+    padding: 0 12px !important;
+    gap: 4px !important;
+    border-radius: 999px !important;
+    color: hsl(var(--muted-foreground) / 0.6) !important;
+    display: flex;
+    align-items: center;
+    font-weight: 500 !important;
+    transition: color 0.15s !important;
+  }
+  .wiki-view-tabs .tabs__tab[aria-selected="true"] { color: hsl(var(--primary)) !important; }
+  .wiki-view-tabs .tabs__indicator { border-radius: 999px !important; background: hsl(var(--background)) !important; box-shadow: 0 1px 3px hsl(0 0% 0% / 0.08) !important; }
+  .wiki-view-tabs .tabs__separator { display: none !important; }
 
   /* ── Wiki Workspace panels ── */
   .wiki-panel {

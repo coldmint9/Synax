@@ -1,5 +1,5 @@
 import { AlertTriangle, FileText, Lock, Loader2, Maximize2, Pencil, X, MessageCircle } from 'lucide-react'
-import { useState, useEffect, useRef, useMemo, memo } from 'react'
+import { useState, useEffect, useMemo, memo } from 'react'
 import { Card, Typography } from '@heroui/react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -7,7 +7,7 @@ import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import type { WikiBlock, WikiDocument, WikiSourceBinding } from '../../../lib/contracts/wiki'
 import './wiki-prose.css'
-import IssuePopover from './WikiIssuePopover'
+import WikiBlockIssueInline from './WikiBlockIssueInline'
 
 // ── Stale badge ──────────────────────────────────────────────────────────────
 
@@ -467,8 +467,6 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
   const selectBlock = useWikiStore(s => s.selectBlock)
   const hasBindings = block.sourceBindingIds.length > 0
     || Object.values(bindingsById).some(b => b.wikiBlockId === block.id)
-  const [issueOpen, setIssueOpen] = useState(false)
-  const issueBtnRef = useRef<HTMLButtonElement>(null)
 
   return (
     <div
@@ -480,32 +478,12 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
       id={`wiki-block-${block.id}`}
       onClick={() => selectBlock(block.id)}
     >
-      {/* Issue trigger */}
-      <button
-        ref={issueBtnRef}
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setIssueOpen(v => !v) }}
-        className={`absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-full px-1.5 py-1 text-muted-foreground/40 transition-all ${
-          issueCount > 0 || issueOpen
-            ? 'opacity-100'
-            : 'opacity-0 group-hover:opacity-100'
-        } hover:bg-secondary/80 hover:text-foreground`}
-        title="Issues"
-      >
-        <MessageCircle size={12} />
-        {issueCount > 0 && (
+      {/* Issue indicator */}
+      {issueCount > 0 && !isSelected && (
+        <span className="absolute right-3 top-3 flex items-center gap-0.5 text-muted-foreground/50">
+          <MessageCircle size={11} />
           <span className="text-[9px] font-bold text-amber-400">{issueCount}</span>
-        )}
-      </button>
-
-      {/* Issue popover (portal) */}
-      {issueOpen && (
-        <IssuePopover
-          blockId={block.id}
-          projectId={projectId}
-          anchorRef={issueBtnRef}
-          onClose={() => setIssueOpen(false)}
-        />
+        </span>
       )}
 
       {/* Selected indicator bar */}
@@ -527,6 +505,11 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
       {/* Inline source file links */}
       {hasBindings && (
         <InlineSourceLinks block={block} />
+      )}
+
+      {/* Inline issue section */}
+      {isSelected && (
+        <WikiBlockIssueInline blockId={block.id} projectId={projectId} />
       )}
     </div>
   )
@@ -554,9 +537,48 @@ function PageTitle({ block }: { block: WikiBlock }) {
 export default function WikiBlockRenderer({ document, issuesByBlockId, projectId }: { document: WikiDocument; issuesByBlockId?: Map<string, number>; projectId: string }) {
   const blocksById = useWikiStore(s => s.blocksById)
   const snapshot = useWikiStore(s => s.snapshot)
+  const selectedBlockId = useWikiStore(s => s.selectedBlockId)
+  const selectBlock = useWikiStore(s => s.selectBlock)
   const blocks = document.blockIds
     .map(id => blocksById[id])
     .filter((b): b is WikiBlock => Boolean(b))
+
+  const contentBlocks = useMemo(() => {
+    const firstBlock = blocks[0]
+    const isFirstHeading = firstBlock?.blockType === 'heading'
+    return isFirstHeading ? blocks.slice(1) : blocks
+  }, [blocks])
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'Enter') return
+      e.preventDefault()
+
+      if (e.key === 'Enter' && selectedBlockId) {
+        const blockEl = window.document.getElementById(`wiki-block-${selectedBlockId}`)
+        const textarea = blockEl?.querySelector('textarea')
+        textarea?.focus()
+        return
+      }
+
+      const currentIdx = contentBlocks.findIndex(b => b.id === selectedBlockId)
+      let nextIdx: number
+      if (e.key === 'ArrowDown') {
+        nextIdx = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, contentBlocks.length - 1)
+      } else {
+        nextIdx = currentIdx <= 0 ? 0 : currentIdx - 1
+      }
+      const nextBlock = contentBlocks[nextIdx]
+      if (nextBlock) {
+        selectBlock(nextBlock.id)
+        const el = window.document.getElementById(`wiki-block-${nextBlock.id}`)
+        el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [contentBlocks, selectedBlockId, selectBlock])
 
   if (blocks.length === 0) {
     const isGenerating = snapshot?.status === 'outline_ready' || snapshot?.status === 'writing'
@@ -578,8 +600,7 @@ export default function WikiBlockRenderer({ document, issuesByBlockId, projectId
   }
 
   const firstBlock = blocks[0]
-  const isFirstHeading = firstBlock.blockType === 'heading'
-  const contentBlocks = isFirstHeading ? blocks.slice(1) : blocks
+  const isFirstHeading = firstBlock?.blockType === 'heading'
 
   return (
     <div className="space-y-3">

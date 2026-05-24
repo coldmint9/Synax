@@ -32,7 +32,7 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     `Allowed capabilities: ${input.profile.allowedCapabilities.join(', ') || 'none'}.`,
     `You are in a step-based tool loop. Maximum steps for this run: ${input.maxSteps}. Current step index: ${input.stepIndex}.`,
     'Return exactly one step.',
-    input.mustFinalize ? 'This is the final allowed step. Return a concise textual summary only and do not request tools.' : '',
+    input.mustFinalize ? 'This is the final allowed step. You MUST submit your output now using the appropriate submit tool, or provide a textual summary if no submit tool is available.' : '',
     'If the task is complete, answer in plain text. Plain text ends the run.',
     'If more information or action is needed, use the provided tool-call interface instead of writing a tool request as prose.',
     'Compatibility fallback only when native tool calling is unavailable: start the response with exactly {"tool":"tool.id","args":{...}} followed by optional short status text.',

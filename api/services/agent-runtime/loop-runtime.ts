@@ -42,7 +42,7 @@ import {
 } from "./tool-disclosure.js";
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
 import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
-import { buildTodoDriftReminder } from "./tools/todo-manage.js";
+import { buildTaskDriftReminder } from "./tools/task-tools.js";
 import { sessionHooks } from "./session-hooks.js";
 import { sessionLiveBus } from "./session-live-bus.js";
 import { logger } from "../../lib/logger.js";
@@ -263,7 +263,7 @@ export class AgentLoopRuntime {
     }
 
     try {
-      const maxSteps = input.maxSteps ?? profile.maxSteps;
+      const maxSteps = Infinity;
       const context = session.contextSnapshotId
         ? this.tryGetContext(session.contextSnapshotId)
         : null;
@@ -625,7 +625,7 @@ export class AgentLoopRuntime {
             modelResult.step.usage,
           );
         }
-        for (const call of withIds(modelResult.step.toolCalls)) {
+        for (const call of withIds(modelResult.step.toolCalls.slice(0, 50))) {
           const toolExecution = await this.tools.execute(
             sessionId,
             call.toolId,
@@ -1209,7 +1209,7 @@ export class AgentLoopRuntime {
         lastUserMessage.content.trim() === input.prompt.trim()
       );
 
-    const todoDriftReminder = input.stepIndex > 1 ? buildTodoDriftReminder(input.sessionId) : null;
+    const todoDriftReminder = input.stepIndex > 1 ? buildTaskDriftReminder(input.sessionId) : null;
 
     const request = {
       projectId: this.store.getSession(input.sessionId).projectId,

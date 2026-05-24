@@ -12,12 +12,12 @@ export function buildPlanPrompt(ctx: PlanPromptContext): string {
   const issueList = ctx.issues.map((issue, i) => {
     const block = ctx.blocks[issue.blockId]
     const blockTitle = block ? extractBlockTitle(block) : issue.blockId.slice(0, 8)
-    return `  ${i + 1}. [${issue.id}] "${issue.content}" (Block: ${blockTitle})`
+    return `  ${i + 1}. [${issue.id}] "${issue.content}" (Block: ${blockTitle}, blockId: ${issue.blockId})`
   }).join('\n')
 
   const blockContents = Object.values(ctx.blocks)
     .filter(b => ctx.issues.some(e => e.blockId === b.id))
-    .map(b => `### Block ${b.id.slice(0, 8)} (${b.blockType})\n${extractContent(b)}`)
+    .map(b => `### Block ${b.id} (${b.blockType})\n${extractContent(b)}`)
     .join('\n\n')
 
   const sourceSnippets = ctx.bindings.slice(0, 10).map(b => {
@@ -55,7 +55,7 @@ ${sourceSnippets || '  (无直接绑定的源码)'}
 
 function extractBlockTitle(block: WikiBlock): string {
   try {
-    const content = typeof block.contentJson === 'string' ? JSON.parse(block.contentJson) : block.contentJson
+    const content = typeof block.content === 'string' ? JSON.parse(block.content) : block.content
     if (content?.title) return content.title
     if (content?.text) return content.text.slice(0, 40)
     if (typeof content === 'string') return content.slice(0, 40)
@@ -65,7 +65,7 @@ function extractBlockTitle(block: WikiBlock): string {
 
 function extractContent(block: WikiBlock): string {
   try {
-    const content = typeof block.contentJson === 'string' ? JSON.parse(block.contentJson) : block.contentJson
+    const content = typeof block.content === 'string' ? JSON.parse(block.content) : block.content
     if (typeof content === 'string') return content.slice(0, 500)
     if (content?.text) return content.text.slice(0, 500)
     return JSON.stringify(content).slice(0, 500)

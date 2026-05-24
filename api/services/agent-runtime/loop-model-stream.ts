@@ -14,12 +14,18 @@ export interface GenerateLoopModelStepInput {
 }
 
 export async function generateLoopModelStep(input: GenerateLoopModelStepInput): Promise<LoopStepModelResult> {
-  const hasTools = !input.mustFinalize && input.tools.activeTools.length > 0;
+  const finalizeSubmitTools = input.mustFinalize
+    ? input.tools.activeTools.filter(t => t.includes('submit'))
+    : null;
+  const hasTools = finalizeSubmitTools
+    ? finalizeSubmitTools.length > 0
+    : input.tools.activeTools.length > 0;
+  const activeTools = finalizeSubmitTools ?? input.tools.activeTools;
   const result = await createGatewayStream(
     {
       ...input.request,
       tools: hasTools ? input.tools.tools : undefined,
-      activeTools: hasTools ? input.tools.activeTools : undefined,
+      activeTools: hasTools ? activeTools : undefined,
       toolChoice: hasTools ? 'auto' : 'none',
       repairToolCall: hasTools ? input.tools.repairToolCall : undefined,
       maxRetries: 2,
@@ -98,12 +104,18 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
 export async function* streamLoopModelStep(
   input: GenerateLoopModelStepInput,
 ): AsyncGenerator<LoopModelStreamEvent> {
-  const hasTools = !input.mustFinalize && input.tools.activeTools.length > 0;
+  const finalizeSubmitTools = input.mustFinalize
+    ? input.tools.activeTools.filter(t => t.includes('submit'))
+    : null;
+  const hasTools = finalizeSubmitTools
+    ? finalizeSubmitTools.length > 0
+    : input.tools.activeTools.length > 0;
+  const activeTools = finalizeSubmitTools ?? input.tools.activeTools;
   const result = await createGatewayStream(
     {
       ...input.request,
       tools: hasTools ? input.tools.tools : undefined,
-      activeTools: hasTools ? input.tools.activeTools : undefined,
+      activeTools: hasTools ? activeTools : undefined,
       toolChoice: hasTools ? 'auto' : 'none',
       repairToolCall: hasTools ? input.tools.repairToolCall : undefined,
       maxRetries: 2,

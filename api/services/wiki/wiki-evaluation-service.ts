@@ -1,7 +1,7 @@
-import { eq, and, desc } from 'drizzle-orm'
+import { eq, and, desc, inArray } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { getDb } from '../../db/index.js'
-import { wikiEvaluations, wikiPlans, wikiPlanNodes } from '../../db/schema.js'
+import { wikiEvaluations, wikiPlans, wikiPlanNodes, wikiPlanNodeArtifacts } from '../../db/schema.js'
 
 export type WikiEvaluation = {
   id: string
@@ -20,7 +20,7 @@ export type WikiPlan = {
   projectId: string
   snapshotId: string
   evaluationIds: string[]
-  status: 'draft' | 'confirmed' | 'in_progress' | 'completed'
+  status: 'draft' | 'confirmed' | 'executing' | 'reviewing' | 'committing' | 'completed'
   createdAt: string
   updatedAt: string
   confirmedAt: string | null
@@ -35,12 +35,33 @@ export type WikiPlanNode = {
   evaluationIds: string[]
   dependsOn: string[]
   expectedFiles: string[]
-  status: 'pending' | 'in_progress' | 'completed' | 'incomplete'
+  status: 'pending' | 'executing' | 'review' | 'accepted' | 'committed'
   sortOrder: number
   reviewResult: string | null
   createdAt: string
   updatedAt: string
   completedAt: string | null
+}
+
+export type PlanNodeArtifactPatch = {
+  filePath: string
+  diff: string
+  action: 'create' | 'modify' | 'delete'
+}
+
+export type WikiPlanNodeArtifact = {
+  id: string
+  nodeId: string
+  planId: string
+  sessionId: string | null
+  patches: PlanNodeArtifactPatch[]
+  executionLog: string | null
+  commitMessage: string | null
+  status: 'pending' | 'generated' | 'accepted' | 'committed' | 'discarded'
+  redoCount: number
+  redoFeedback: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 const now = () => new Date().toISOString()
@@ -110,10 +131,10 @@ export async function getPlan(id: string): Promise<WikiPlan | null> {
 export async function getActivePlan(projectId: string): Promise<WikiPlan | null> {
   const db = getDb()
   const rows = await db.select().from(wikiPlans)
-    .where(and(eq(wikiPlans.projectId, projectId), eq(wikiPlans.status, 'draft')))
+    .where(eq(wikiPlans.projectId, projectId))
     .orderBy(desc(wikiPlans.createdAt))
-    .limit(1)
-  return rows.length ? rowToPlan(rows[0]) : null
+  const active = rows.map(rowToPlan).find(p => p.status !== 'completed')
+  return active ?? null
 }
 
 export async function confirmPlan(id: string): Promise<void> {
@@ -160,8 +181,124 @@ export async function listPlanNodes(planId: string): Promise<WikiPlanNode[]> {
 export async function updatePlanNodeStatus(id: string, status: WikiPlanNode['status']): Promise<void> {
   const db = getDb()
   const updates: Record<string, unknown> = { status, updatedAt: now() }
-  if (status === 'completed') updates.completedAt = now()
+  if (status === 'committed') updates.completedAt = now()
   await db.update(wikiPlanNodes).set(updates).where(eq(wikiPlanNodes.id, id))
+}
+
+// ── Plan status transitions ────────────────────────────────────────────────
+
+export async function updatePlanStatus(id: string, status: WikiPlan['status']): Promise<void> {
+  const db = getDb()
+  await db.update(wikiPlans).set({ status, updatedAt: now() }).where(eq(wikiPlans.id, id))
+}
+
+export async function listPlans(projectId: string): Promise<WikiPlan[]> {
+  const db = getDb()
+  const rows = await db.select().from(wikiPlans)
+    .where(eq(wikiPlans.projectId, projectId))
+    .orderBy(desc(wikiPlans.createdAt))
+  return rows.map(rowToPlan)
+}
+
+export async function getNextPendingNode(planId: string): Promise<WikiPlanNode | null> {
+  const db = getDb()
+  const rows = await db.select().from(wikiPlanNodes)
+    .where(and(eq(wikiPlanNodes.planId, planId), eq(wikiPlanNodes.status, 'pending')))
+    .orderBy(wikiPlanNodes.sortOrder)
+    .limit(1)
+  return rows.length ? rowToPlanNode(rows[0]) : null
+}
+
+// ── Plan Node CRUD (draft editing) ────────────────────────────────────────
+
+export async function updatePlanNode(id: string, updates: {
+  title?: string; description?: string; evaluationIds?: string[];
+  dependsOn?: string[]; expectedFiles?: string[];
+}): Promise<void> {
+  const db = getDb()
+  const set: Record<string, unknown> = { updatedAt: now() }
+  if (updates.title !== undefined) set.title = updates.title
+  if (updates.description !== undefined) set.description = updates.description
+  if (updates.evaluationIds !== undefined) set.evaluationIdsJson = JSON.stringify(updates.evaluationIds)
+  if (updates.dependsOn !== undefined) set.dependsOnJson = JSON.stringify(updates.dependsOn)
+  if (updates.expectedFiles !== undefined) set.expectedFilesJson = JSON.stringify(updates.expectedFiles)
+  await db.update(wikiPlanNodes).set(set).where(eq(wikiPlanNodes.id, id))
+}
+
+export async function deletePlanNode(id: string): Promise<void> {
+  const db = getDb()
+  await db.delete(wikiPlanNodes).where(eq(wikiPlanNodes.id, id))
+}
+
+export async function reorderPlanNodes(planId: string, nodeIds: string[]): Promise<void> {
+  const db = getDb()
+  for (let i = 0; i < nodeIds.length; i++) {
+    await db.update(wikiPlanNodes)
+      .set({ sortOrder: i, updatedAt: now() })
+      .where(and(eq(wikiPlanNodes.id, nodeIds[i]), eq(wikiPlanNodes.planId, planId)))
+  }
+}
+
+// ── Artifacts CRUD ─────────────────────────────────────────────────────────
+
+export async function createArtifact(input: {
+  nodeId: string; planId: string; sessionId?: string;
+}): Promise<WikiPlanNodeArtifact> {
+  const db = getDb()
+  const id = nanoid()
+  const ts = now()
+  await db.insert(wikiPlanNodeArtifacts).values({
+    id, nodeId: input.nodeId, planId: input.planId,
+    sessionId: input.sessionId ?? null,
+    status: 'pending', createdAt: ts, updatedAt: ts,
+  })
+  return {
+    id, nodeId: input.nodeId, planId: input.planId,
+    sessionId: input.sessionId ?? null, patches: [],
+    executionLog: null, commitMessage: null,
+    status: 'pending', redoCount: 0, redoFeedback: null,
+    createdAt: ts, updatedAt: ts,
+  }
+}
+
+export async function getArtifact(nodeId: string): Promise<WikiPlanNodeArtifact | null> {
+  const db = getDb()
+  const rows = await db.select().from(wikiPlanNodeArtifacts)
+    .where(eq(wikiPlanNodeArtifacts.nodeId, nodeId))
+    .orderBy(desc(wikiPlanNodeArtifacts.createdAt))
+    .limit(1)
+  return rows.length ? rowToArtifact(rows[0]) : null
+}
+
+export async function listArtifacts(planId: string): Promise<WikiPlanNodeArtifact[]> {
+  const db = getDb()
+  const rows = await db.select().from(wikiPlanNodeArtifacts)
+    .where(eq(wikiPlanNodeArtifacts.planId, planId))
+  return rows.map(rowToArtifact)
+}
+
+export async function updateArtifact(id: string, updates: {
+  patches?: PlanNodeArtifactPatch[]; executionLog?: string;
+  commitMessage?: string; status?: WikiPlanNodeArtifact['status'];
+  sessionId?: string; redoFeedback?: string; redoCount?: number;
+}): Promise<void> {
+  const db = getDb()
+  const set: Record<string, unknown> = { updatedAt: now() }
+  if (updates.patches !== undefined) set.patchesJson = JSON.stringify(updates.patches)
+  if (updates.executionLog !== undefined) set.executionLog = updates.executionLog
+  if (updates.commitMessage !== undefined) set.commitMessage = updates.commitMessage
+  if (updates.status !== undefined) set.status = updates.status
+  if (updates.sessionId !== undefined) set.sessionId = updates.sessionId
+  if (updates.redoFeedback !== undefined) set.redoFeedback = updates.redoFeedback
+  if (updates.redoCount !== undefined) set.redoCount = updates.redoCount
+  await db.update(wikiPlanNodeArtifacts).set(set).where(eq(wikiPlanNodeArtifacts.id, id))
+}
+
+export async function discardArtifact(id: string): Promise<void> {
+  const db = getDb()
+  await db.update(wikiPlanNodeArtifacts)
+    .set({ status: 'discarded', updatedAt: now() })
+    .where(eq(wikiPlanNodeArtifacts.id, id))
 }
 
 // ── Row mappers ─────────────────────────────────────────────────────────────
@@ -194,6 +331,19 @@ function rowToPlanNode(r: typeof wikiPlanNodes.$inferSelect): WikiPlanNode {
     status: r.status as WikiPlanNode['status'],
     sortOrder: r.sortOrder, reviewResult: r.reviewResult ?? null,
     createdAt: r.createdAt, updatedAt: r.updatedAt, completedAt: r.completedAt ?? null,
+  }
+}
+
+function rowToArtifact(r: typeof wikiPlanNodeArtifacts.$inferSelect): WikiPlanNodeArtifact {
+  return {
+    id: r.id, nodeId: r.nodeId, planId: r.planId,
+    sessionId: r.sessionId ?? null,
+    patches: JSON.parse(r.patchesJson),
+    executionLog: r.executionLog ?? null,
+    commitMessage: r.commitMessage ?? null,
+    status: r.status as WikiPlanNodeArtifact['status'],
+    redoCount: r.redoCount, redoFeedback: r.redoFeedback ?? null,
+    createdAt: r.createdAt, updatedAt: r.updatedAt,
   }
 }
 

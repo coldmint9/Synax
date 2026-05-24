@@ -1,19 +1,25 @@
-import { Tabs } from '@heroui/react'
-import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Home, Zap } from 'lucide-react'
-import { useShellStore } from '../state/shellStore'
+import { useState, useCallback } from 'react'
+import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
+import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
+import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
 import type { ActivityPanel } from './ActivityBar'
 
 interface WorkbenchHeaderProps {
   activePanel: ActivityPanel | null
   onPanelToggle: (panel: ActivityPanel) => void
-  onHome: () => void
   hasProject: boolean
+  projectName: string
+  currentProjectId: string
+  projects: ProjectSummary[]
+  onProjectSwitch: (projectId: string) => void
+  onCreateProject: () => void
+  onRemoveProject: (projectId: string) => Promise<void>
 }
 
-const navTabs: { id: ActivityPanel; icon: typeof BookOpen; label: string; requiresProject: boolean }[] = [
-  { id: 'wiki', icon: BookOpen, label: 'Wiki', requiresProject: true },
-  { id: 'sessions', icon: Monitor, label: 'Sessions', requiresProject: true },
+const navTabs: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
+  { id: 'wiki', icon: BookOpen, label: 'Wiki' },
+  { id: 'sessions', icon: Monitor, label: 'Sessions' },
 ]
 
 function WikiToolbar() {
@@ -21,28 +27,34 @@ function WikiToolbar() {
   const setViewMode = useWikiStore(s => s.setViewMode)
   const patchesPending = useWikiStore(s => s.patchesSummary.pending)
   const togglePatchPanel = useWikiStore(s => s.togglePatchPanel)
-
-  const items: { id: WikiViewMode; label: string }[] = [
-    { id: 'document', label: '文档' },
-    { id: 'plan', label: '规划' },
-  ]
+  const planGenStatus = useWikiStore(s => s.planGeneration.status)
 
   return (
     <div className="flex items-center gap-0.5">
-      {items.map(item => (
-        <button
-          key={item.id}
-          type="button"
-          onClick={() => setViewMode(item.id)}
-          className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
-            viewMode === item.id
-              ? 'text-primary'
-              : 'text-muted-foreground/50 hover:text-muted-foreground'
-          }`}
-        >
-          {item.label}
-        </button>
-      ))}
+      <Tabs
+        selectedKey={viewMode}
+        onSelectionChange={(key) => setViewMode(key as WikiViewMode)}
+        className="wiki-view-tabs"
+      >
+        <Tabs.ListContainer>
+          <Tabs.List aria-label="Wiki 视图" className="wiki-view-tabs-list">
+            <Tabs.Tab id="document" className="wiki-view-tab">
+              <span>文档</span>
+              <Tabs.Indicator />
+            </Tabs.Tab>
+            <Tabs.Tab id="plan" className="wiki-view-tab">
+              <span>规划</span>
+              {planGenStatus === 'generating' && (
+                <span className="relative flex h-2 w-2 ml-0.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                </span>
+              )}
+              <Tabs.Indicator />
+            </Tabs.Tab>
+          </Tabs.List>
+        </Tabs.ListContainer>
+      </Tabs>
       <div className="wh-divider" />
       <button type="button" className="wh-btn relative" title="Patches" onClick={togglePatchPanel}>
         <Zap size={13} />
@@ -59,16 +71,85 @@ function WikiToolbar() {
   )
 }
 
-export function WorkbenchHeader({ activePanel, onPanelToggle, onHome, hasProject }: WorkbenchHeaderProps) {
+export function WorkbenchHeader({
+  activePanel,
+  onPanelToggle,
+  hasProject,
+  projectName,
+  currentProjectId,
+  projects,
+  onProjectSwitch,
+  onCreateProject,
+  onRemoveProject,
+}: WorkbenchHeaderProps) {
   const theme = useShellStore(s => s.preferences.theme)
   const setTheme = useShellStore(s => s.setTheme)
+
+  const confirmState = useOverlayState()
+  const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const handleRemoveClick = useCallback((e: React.MouseEvent, project: ProjectSummary) => {
+    e.stopPropagation()
+    setDeleteTarget(project)
+    confirmState.open()
+  }, [confirmState])
+
+  const handleConfirmRemove = useCallback(async () => {
+    if (!deleteTarget || deleting) return
+    setDeleting(true)
+    try {
+      await onRemoveProject(deleteTarget.id)
+      confirmState.close()
+      setDeleteTarget(null)
+    } finally {
+      setDeleting(false)
+    }
+  }, [deleteTarget, deleting, onRemoveProject, confirmState])
 
   return (
     <div className="workbench-header">
       <div className="wh-pill">
-        <button type="button" className="wh-btn" title="首页" onClick={onHome}>
-          <Home size={15} />
-        </button>
+        <Dropdown>
+          <Dropdown.Trigger>
+            <button type="button" className="wh-project-trigger">
+              <span className="truncate max-w-[120px] text-xs font-medium">
+                {hasProject ? projectName : 'Synapse'}
+              </span>
+              <ChevronsUpDown size={12} className="text-muted-foreground shrink-0" />
+            </button>
+          </Dropdown.Trigger>
+          <Dropdown.Popover placement="top start">
+            <Dropdown.Menu
+              aria-label="切换项目"
+              onAction={(key) => {
+                if (key === '__create__') onCreateProject()
+                else onProjectSwitch(key as string)
+              }}
+            >
+              {projects.map(p => (
+                <Dropdown.Item key={p.id} id={p.id} textValue={p.name}>
+                  <div className="flex items-center justify-between w-full gap-2">
+                    <span className="text-xs truncate">{p.name}</span>
+                    <button
+                      type="button"
+                      className="shrink-0 p-0.5 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition"
+                      onClick={(e) => handleRemoveClick(e, p)}
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                </Dropdown.Item>
+              ))}
+              <Dropdown.Item key="__create__" id="__create__" textValue="导入项目">
+                <span className="flex items-center gap-1.5 text-xs text-primary">
+                  <Plus size={12} />
+                  导入项目
+                </span>
+              </Dropdown.Item>
+            </Dropdown.Menu>
+          </Dropdown.Popover>
+        </Dropdown>
 
         <div className="wh-divider" />
 
@@ -81,12 +162,11 @@ export function WorkbenchHeader({ activePanel, onPanelToggle, onHome, hasProject
             <Tabs.List aria-label="主导航" className="wh-tabs-list">
               {navTabs.map((tab, i) => {
                 const Icon = tab.icon
-                const disabled = tab.requiresProject && !hasProject
                 return (
                   <Tabs.Tab
                     key={tab.id}
                     id={tab.id}
-                    isDisabled={disabled}
+                    isDisabled={!hasProject}
                     className="wh-tab"
                   >
                     {i > 0 && <Tabs.Separator />}
@@ -103,12 +183,7 @@ export function WorkbenchHeader({ activePanel, onPanelToggle, onHome, hasProject
         <div className="wh-divider" />
 
         <div className="wh-actions">
-          <button
-            type="button"
-            className="wh-btn"
-            title="设置"
-            onClick={() => onPanelToggle('settings')}
-          >
+          <button type="button" className="wh-btn" title="设置" onClick={() => onPanelToggle('settings')}>
             <Settings2 size={15} />
           </button>
           <button
@@ -127,6 +202,50 @@ export function WorkbenchHeader({ activePanel, onPanelToggle, onHome, hasProject
           <WikiToolbar />
         </div>
       )}
+
+      {/* Remove project confirmation modal */}
+      <Modal state={confirmState}>
+        <Modal.Backdrop>
+          <Modal.Container size="sm">
+            <Modal.Dialog>
+              <Modal.Header>
+                <Modal.Icon className="bg-destructive/10 text-destructive">
+                  <Trash2 size={18} />
+                </Modal.Icon>
+                <Modal.Heading>移除项目</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                <p className="text-sm text-muted-foreground">
+                  确定要移除「{deleteTarget?.name}」吗？项目配置和元数据将被永久删除，此操作不可撤销。
+                </p>
+                {deleteTarget?.id === currentProjectId && (
+                  <p className="mt-2 text-xs text-warning">
+                    该项目正在运行中，移除前将自动关闭并中断所有连接。
+                  </p>
+                )}
+              </Modal.Body>
+              <Modal.Footer>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  isDisabled={deleting}
+                  onPress={() => { confirmState.close(); setDeleteTarget(null) }}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  isDisabled={deleting}
+                  onPress={() => void handleConfirmRemove()}
+                >
+                  {deleting ? '移除中…' : '确认移除'}
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
     </div>
   )
 }
