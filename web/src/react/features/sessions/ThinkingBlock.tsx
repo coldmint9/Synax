@@ -1,36 +1,40 @@
-import { useState } from 'react'
-import { Brain, ChevronDown, ChevronRight } from 'lucide-react'
+import { Accordion, Chip } from '@heroui/react'
+import { Brain } from 'lucide-react'
 
 interface Props {
   content: string
+  isStreaming?: boolean
 }
 
-export function ThinkingBlock({ content }: Props) {
-  const [expanded, setExpanded] = useState(false)
-  const preview = content.length > 120 ? content.slice(0, 120) + '...' : content
-
+export function ThinkingBlock({ content, isStreaming }: Props) {
   return (
-    <div className="rounded-md border border-border/30 bg-muted/20 px-3 py-2">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-1.5 text-left"
+    <Accordion className="px-0 gap-0">
+      <Accordion.Item
+        id="thinking"
+        aria-label="Agent thinking"
+        className="border-border/30 bg-muted/20 rounded-md"
       >
-        <Brain size={12} className="shrink-0 text-muted-foreground/60" />
-        <span className="text-[11px] font-medium text-muted-foreground/70">Thinking</span>
-        {expanded
-          ? <ChevronDown size={11} className="ml-auto text-muted-foreground/50" />
-          : <ChevronRight size={11} className="ml-auto text-muted-foreground/50" />}
-      </button>
-      {expanded ? (
-        <div className="mt-1.5 text-[12px] italic leading-relaxed text-muted-foreground/70 whitespace-pre-wrap">
-          {content}
-        </div>
-      ) : (
-        <div className="mt-1 text-[11px] italic text-muted-foreground/50 truncate">
-          {preview}
-        </div>
-      )}
-    </div>
+        <Accordion.Trigger className="flex items-center gap-2 px-3 py-2 text-left w-full">
+          <Brain size={12} className="shrink-0 text-muted-foreground/60" />
+          <span className="text-[11px] font-medium text-muted-foreground/70">Thinking</span>
+          {isStreaming && (
+            <Chip size="sm" color="primary" variant="dot" className="h-4 text-[9px]">
+              live
+            </Chip>
+          )}
+          <Accordion.Indicator className="ml-auto text-muted-foreground/50 [&>svg]:size-3" />
+        </Accordion.Trigger>
+        <Accordion.Panel>
+          <Accordion.Body className="px-3 pb-2 pt-0">
+            <div className="text-[12px] italic leading-relaxed text-muted-foreground/70 whitespace-pre-wrap">
+              {content}
+              {isStreaming && (
+                <span className="inline-block w-0.5 h-[1em] bg-foreground/60 animate-pulse ml-0.5 align-text-bottom" />
+              )}
+            </div>
+          </Accordion.Body>
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
   )
 }
