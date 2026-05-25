@@ -200,6 +200,39 @@ export async function listPlans(projectId: string): Promise<WikiPlan[]> {
   return rows.map(rowToPlan)
 }
 
+export type PlanNodeSummary = { total: number; completed: number; titles: string[] }
+export type WikiPlanWithSummary = WikiPlan & { nodeSummary: PlanNodeSummary }
+
+export async function listPlansWithSummary(projectId: string): Promise<WikiPlanWithSummary[]> {
+  const plans = await listPlans(projectId)
+  if (plans.length === 0) return []
+
+  const db = getDb()
+  const planIds = plans.map(p => p.id)
+  const allNodes = await db.select({
+    planId: wikiPlanNodes.planId,
+    title: wikiPlanNodes.title,
+    status: wikiPlanNodes.status,
+    sortOrder: wikiPlanNodes.sortOrder,
+  }).from(wikiPlanNodes)
+    .where(inArray(wikiPlanNodes.planId, planIds))
+    .orderBy(wikiPlanNodes.sortOrder)
+
+  const nodesByPlan = new Map<string, typeof allNodes>()
+  for (const n of allNodes) {
+    const arr = nodesByPlan.get(n.planId) ?? []
+    arr.push(n)
+    nodesByPlan.set(n.planId, arr)
+  }
+
+  return plans.map(plan => {
+    const nodes = nodesByPlan.get(plan.id) ?? []
+    const completed = nodes.filter(n => n.status === 'accepted' || n.status === 'committed').length
+    const titles = nodes.slice(0, 3).map(n => n.title)
+    return { ...plan, nodeSummary: { total: nodes.length, completed, titles } }
+  })
+}
+
 export async function getNextPendingNode(planId: string): Promise<WikiPlanNode | null> {
   const db = getDb()
   const rows = await db.select().from(wikiPlanNodes)

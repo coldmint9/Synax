@@ -492,6 +492,69 @@
     box-shadow: 0 2px 16px hsl(0 0% 0% / 0.28), 0 1px 0 hsl(0 0% 100% / 0.06) inset;
   }
 
+  /* Wiki toolbar cell-division animation — grid slot for layout-space animation */
+  .wh-pill-slot {
+    display: grid;
+    grid-template-columns: 0fr;
+    transition: grid-template-columns 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .wh-pill-slot.open {
+    grid-template-columns: 1fr;
+  }
+  .wh-pill-slot.closing {
+    grid-template-columns: 0fr;
+    transition: grid-template-columns 0.35s cubic-bezier(0.55, 0, 0.75, 0.2);
+  }
+  .wh-pill-slot > .wh-pill {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  /* Visual enter animation on the pill content */
+  .wh-pill-enter {
+    animation: pill-fade-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+  .wh-pill-enter > .flex > * {
+    animation: pill-child-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .wh-pill-enter > .flex > *:nth-child(1) { animation-delay: 0.08s; }
+  .wh-pill-enter > .flex > *:nth-child(2) { animation-delay: 0.14s; }
+  .wh-pill-enter > .flex > *:nth-child(3) { animation-delay: 0.20s; }
+  .wh-pill-enter > .flex > *:nth-child(4) { animation-delay: 0.26s; }
+
+  /* Visual exit animation */
+  .wh-pill-exit {
+    animation: pill-fade-out 0.28s cubic-bezier(0.55, 0, 0.75, 0.2) forwards;
+  }
+  .wh-pill-exit > .flex > * {
+    animation: pill-child-out 0.2s cubic-bezier(0.55, 0, 0.75, 0.2) both;
+  }
+  .wh-pill-exit > .flex > *:nth-child(4) { animation-delay: 0s; }
+  .wh-pill-exit > .flex > *:nth-child(3) { animation-delay: 0.04s; }
+  .wh-pill-exit > .flex > *:nth-child(2) { animation-delay: 0.08s; }
+  .wh-pill-exit > .flex > *:nth-child(1) { animation-delay: 0.12s; }
+
+  @keyframes pill-fade-in {
+    0% { opacity: 0; filter: blur(4px); }
+    60% { opacity: 1; filter: blur(0px); }
+    100% { opacity: 1; filter: blur(0px); }
+  }
+
+  @keyframes pill-fade-out {
+    0% { opacity: 1; filter: blur(0px); }
+    100% { opacity: 0; filter: blur(4px); }
+  }
+
+  @keyframes pill-child-in {
+    0% { opacity: 0; transform: scale(0.5) translateX(-8px); }
+    100% { opacity: 1; transform: scale(1) translateX(0); }
+  }
+
+  @keyframes pill-child-out {
+    0% { opacity: 1; transform: scale(1) translateX(0); }
+    100% { opacity: 0; transform: scale(0.5) translateX(-8px); }
+  }
+
 
   .wh-project-trigger {
     display: flex;

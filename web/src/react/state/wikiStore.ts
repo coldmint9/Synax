@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import { wikiApi } from '../../lib/api/wiki';
-import { evaluationApi, type WikiEvaluation, type WikiPlan, type WikiPlanNode, type PlanNodeDraft, type PlanStreamEvent } from '../../lib/api/evaluation';
+import { evaluationApi, type WikiEvaluation, type WikiPlan, type WikiPlanNode, type WikiPlanWithSummary, type PlanNodeDraft, type PlanStreamEvent } from '../../lib/api/evaluation';
 import { useToastStore } from './toastStore';
 import type {
   WikiSnapshot,
@@ -33,7 +33,7 @@ export interface WikiState {
   error: string | null;
 
   // Plan state
-  plans: WikiPlan[];
+  plans: WikiPlanWithSummary[];
   activePlan: WikiPlan | null;
   activePlanNodes: WikiPlanNode[];
   planNav: PlanNavView;
@@ -88,7 +88,7 @@ const initialState = {
   patchPanelOpen: false,
   loading: { snapshot: false, patches: false, plans: false },
   error: null,
-  plans: [] as WikiPlan[],
+  plans: [] as WikiPlanWithSummary[],
   activePlan: null as WikiPlan | null,
   activePlanNodes: [] as WikiPlanNode[],
   planNav: 'detail' as PlanNavView,
@@ -220,8 +220,13 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     set(s => ({ ...s, loading: { ...s.loading, plans: true } }));
     try {
       const plans = await evaluationApi.listPlans(projectId)
-      const active = plans.find(p => p.status !== 'completed') ?? null
-      set(s => ({ ...s, plans, activePlan: active, loading: { ...s.loading, plans: false } }))
+      const { selectedPlanId } = get()
+      if (selectedPlanId) {
+        set(s => ({ ...s, plans, loading: { ...s.loading, plans: false } }))
+      } else {
+        const active = plans.find(p => p.status !== 'completed') ?? null
+        set(s => ({ ...s, plans, activePlan: active, loading: { ...s.loading, plans: false } }))
+      }
     } catch {
       set(s => ({ ...s, loading: { ...s.loading, plans: false } }))
     }
@@ -230,7 +235,10 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   loadActivePlan: async (projectId: string) => {
     try {
       const { plan, nodes } = await evaluationApi.getActivePlan(projectId)
-      set({ activePlan: plan, activePlanNodes: nodes })
+      const { selectedPlanId } = get()
+      if (!selectedPlanId) {
+        set({ activePlan: plan, activePlanNodes: nodes })
+      }
     } catch { /* ignore */ }
   },
 
@@ -244,7 +252,18 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   setPlanNav: (nav: PlanNavView) => set({ planNav: nav }),
 
   selectPlan: (planId: string | null) => {
-    set({ selectedPlanId: planId, planNav: planId ? 'detail' : 'list' })
+    if (!planId) {
+      set({ selectedPlanId: null, activePlan: null, activePlanNodes: [], planNav: 'list' })
+      return
+    }
+    const { plans } = get()
+    const plan = plans.find(p => p.id === planId) ?? null
+    set({ selectedPlanId: planId, activePlan: plan, activePlanNodes: [], planNav: 'detail' })
+    evaluationApi.getPlanNodes(planId).then(nodes => {
+      if (get().selectedPlanId === planId) {
+        set({ activePlanNodes: nodes })
+      }
+    }).catch(() => {})
   },
 
   confirmPlan: async (projectId: string, planId: string) => {

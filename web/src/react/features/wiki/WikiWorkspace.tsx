@@ -1,4 +1,4 @@
-import { AlertCircle, BookOpen, Download, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
+import { AlertCircle, BookOpen, Download, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Drawer, Skeleton, Spinner } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
@@ -9,6 +9,7 @@ import WikiBlockRenderer from './WikiBlockRenderer'
 import WikiPatchQueue from './WikiPatchQueue'
 import WikiEvaluationSidebar from './WikiEvaluationSidebar'
 import PlanView from './PlanView'
+import PlanListView from './PlanListView'
 import { wikiApi } from '../../../lib/api/wiki'
 import { apiFetch } from '../../../lib/api/origin'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
@@ -425,32 +426,46 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden">
-      {/* ── Left: Document tree (resizable) ── */}
+      {/* ── Left: Document tree / Plan list (resizable) ── */}
       <aside style={{ width: sidebarWidth }} className="flex shrink-0 flex-col wiki-panel">
-        <div className="wiki-panel-header shrink-0 justify-between">
-          <span className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider">
-            文档
-          </span>
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={handleRefresh}
-              disabled={refreshing || reinitializing}
-              className="wh-btn !w-6 !h-6 disabled:opacity-40"
-              title="更新 Wiki（检测代码变更）"
-            >
-              <RefreshCw size={11} className={refreshing ? 'animate-spin' : ''} />
-            </button>
-            <button
-              type="button"
-              onClick={handleExport}
-              className="wh-btn !w-6 !h-6"
-              title="导出 Markdown"
-            >
-              <Download size={11} />
-            </button>
-          </div>
-        </div>
+        {viewMode === 'plan' ? (
+          <>
+            <div className="wiki-panel-header shrink-0 justify-between">
+              <span className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider flex items-center gap-1.5">
+                <ListChecks size={11} className="text-primary" />
+                规划
+              </span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <PlanListView projectId={projectId} />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="wiki-panel-header shrink-0 justify-between">
+              <span className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider">
+                文档
+              </span>
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  disabled={refreshing || reinitializing}
+                  className="wh-btn !w-6 !h-6 disabled:opacity-40"
+                  title="更新 Wiki（检测代码变更）"
+                >
+                  <RefreshCw size={11} className={refreshing ? 'animate-spin' : ''} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  className="wh-btn !w-6 !h-6"
+                  title="导出 Markdown"
+                >
+                  <Download size={11} />
+                </button>
+              </div>
+            </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {snapshot?.status === 'failed' && documents.length > 0 && (
             <div className="flex flex-col gap-2 px-3 py-2 bg-destructive/5 border-b border-destructive/20">
@@ -520,6 +535,8 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             {reinitializing ? '重新生成中…' : '重新生成'}
           </Button>
         </div>
+          </>
+        )}
       </aside>
 
       {/* ── Resize handle ── */}
