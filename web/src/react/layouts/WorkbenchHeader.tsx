@@ -112,12 +112,12 @@ export function WorkbenchHeader({
       <div className="wh-pill">
         <Dropdown>
           <Dropdown.Trigger>
-            <button type="button" className="wh-project-trigger">
+            <div role="button" tabIndex={0} className="wh-project-trigger">
               <span className="truncate max-w-[120px] text-xs font-medium">
                 {hasProject ? projectName : 'Synapse'}
               </span>
               <ChevronsUpDown size={12} className="text-muted-foreground shrink-0" />
-            </button>
+            </div>
           </Dropdown.Trigger>
           <Dropdown.Popover placement="top start">
             <Dropdown.Menu
@@ -131,13 +131,14 @@ export function WorkbenchHeader({
                 <Dropdown.Item key={p.id} id={p.id} textValue={p.name}>
                   <div className="flex items-center justify-between w-full gap-2">
                     <span className="text-xs truncate">{p.name}</span>
-                    <button
-                      type="button"
-                      className="shrink-0 p-0.5 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition"
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      className="shrink-0 p-0.5 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition cursor-pointer"
                       onClick={(e) => handleRemoveClick(e, p)}
                     >
                       <Trash2 size={11} />
-                    </button>
+                    </span>
                   </div>
                 </Dropdown.Item>
               ))}

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import type { ToolCallRecord } from './contracts.js';
 
 export type SessionLiveEvent =
-  | { type: 'step_started'; stepId: string; stepIndex: number }
+  | { type: 'step_started'; stepId: string; stepIndex: number; modelCapabilities?: { reasoning: boolean } }
   | { type: 'message_delta'; stepId: string; delta: string }
   | { type: 'thought_delta'; stepId: string; delta: string }
   | { type: 'tool_call'; stepId: string; toolCall: ToolCallRecord }

@@ -42,6 +42,12 @@ function ToastItem({ toast }: { toast: Toast }) {
   const ref = useRef<HTMLDivElement>(null)
   const Icon = ICONS[toast.type]
 
+  const VARIANT_STYLES: Record<string, string> = {
+    default: 'text-primary hover:text-primary/80',
+    primary: 'text-emerald-600 hover:text-emerald-500',
+    danger: 'text-destructive hover:text-destructive/80',
+  }
+
   return (
     <div
       ref={ref}
@@ -50,7 +56,21 @@ function ToastItem({ toast }: { toast: Toast }) {
       <Icon size={15} className={`shrink-0 mt-0.5 ${ICON_STYLES[toast.type]}`} />
       <div className="flex-1 min-w-0">
         <p className="text-[12px] text-foreground/85 leading-relaxed">{toast.message}</p>
-        {toast.action && (
+        {toast.actions && toast.actions.length > 0 && (
+          <div className="mt-1.5 flex items-center gap-3">
+            {toast.actions.map((a, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => { a.onClick(); dismiss(toast.id) }}
+                className={`text-[11px] font-medium transition-colors ${VARIANT_STYLES[a.variant ?? 'default']}`}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {!toast.actions && toast.action && (
           <button
             type="button"
             onClick={() => { toast.action!.onClick(); dismiss(toast.id) }}

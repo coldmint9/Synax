@@ -45,6 +45,7 @@ import { shouldCompact, compactMessages, getCompactionConfig } from "./context-c
 import { buildTaskDriftReminder } from "./tools/task-tools.js";
 import { sessionHooks } from "./session-hooks.js";
 import { sessionLiveBus } from "./session-live-bus.js";
+import { resolveGatewaySelection } from "../llm-runtime/stream.js";
 import { logger } from "../../lib/logger.js";
 
 const LOG_TEXT_LIMIT = 2000;
@@ -268,6 +269,17 @@ export class AgentLoopRuntime {
         ? this.tryGetContext(session.contextSnapshotId)
         : null;
 
+      // Resolve model capabilities once for the run
+      let modelCapabilities: { reasoning: boolean } | undefined
+      try {
+        const selection = await resolveGatewaySelection({
+          projectId: session.projectId,
+          purpose: input.purpose ?? profile.kind,
+          model: input.model ?? undefined,
+        })
+        modelCapabilities = { reasoning: selection.modelDef.reasoning ?? false }
+      } catch { /* non-critical, proceed without capabilities */ }
+
       let currentPrompt = prompt;
       if (pendingResume?.permission.userReply) {
         this.appendSystemNotePart({
@@ -362,7 +374,7 @@ export class AgentLoopRuntime {
           "[agent-runtime] step started",
         );
         yield { type: "step_started", step, event: stepStarted };
-        sessionLiveBus.emit(sessionId, { type: 'step_started', stepId: step.id, stepIndex: step.index });
+        sessionLiveBus.emit(sessionId, { type: 'step_started', stepId: step.id, stepIndex: step.index, modelCapabilities });
 
         const history = this.store
           .listMessages(sessionId)

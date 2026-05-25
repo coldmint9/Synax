@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import { ScrollShadow } from '@heroui/react'
 
 interface Props {
@@ -8,14 +7,6 @@ interface Props {
 }
 
 export function StreamingTextBlock({ text, isStreaming, maxHeight = '400px' }: Props) {
-  const endRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (isStreaming && endRef.current) {
-      endRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
-    }
-  }, [text, isStreaming])
-
   if (!text && !isStreaming) return null
 
   return (
@@ -25,7 +16,6 @@ export function StreamingTextBlock({ text, isStreaming, maxHeight = '400px' }: P
         {isStreaming && (
           <span className="inline-block w-0.5 h-[1em] bg-foreground/60 animate-pulse ml-0.5 align-text-bottom" />
         )}
-        <div ref={endRef} />
       </div>
     </ScrollShadow>
   )

@@ -4,6 +4,9 @@ import { projectApi } from '../../lib/api/project'
 import { addProject, useShellStore } from '../state/shellStore'
 import { useContextStore } from '../state/contextStore'
 import { useContextStream } from '../../hooks/useContextStream'
+import { useAgentPermissionNotifier } from '../../hooks/useAgentPermissionNotifier'
+import { useRuntimeSSE } from '../features/debug-console/useRuntimeSSE'
+import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
 import type { ActivityPanel } from './ActivityBar'
 import { WorkbenchHeader } from './WorkbenchHeader'
 import { TitleBar } from './TitleBar'
@@ -47,6 +50,23 @@ export default function WorkbenchLayout() {
   }, [effectiveProjectId, boundProjectId, bindContext])
   useContextStream()
 
+  // 单例 SSE 订阅 + 绑定 projectId 到 debugConsoleStore
+  const setDebugProjectId = useDebugConsole(s => s.setProjectId)
+  useEffect(() => {
+    setDebugProjectId(effectiveProjectId || null)
+  }, [effectiveProjectId, setDebugProjectId])
+  useRuntimeSSE()
+
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  const navigateToSession = useCallback((sessionId: string) => {
+    if (effectiveProjectId) {
+      navigate(`/projects/${effectiveProjectId}/sessions`)
+    }
+  }, [effectiveProjectId, navigate])
+  useAgentPermissionNotifier(effectiveProjectId || null, navigateToSession)
+
   useEffect(() => {
     if (!effectiveProjectId) return
     const inStore = useShellStore.getState().projects.some(p => p.id === effectiveProjectId)
@@ -60,8 +80,6 @@ export default function WorkbenchLayout() {
   }, [effectiveProjectId])
 
   const projectName = project?.name ?? (effectiveProjectId || 'Synapse')
-  const navigate = useNavigate()
-  const location = useLocation()
 
   // Derive activePanel from current route
   const activePanel: ActivityPanel | null = (() => {
@@ -127,10 +145,16 @@ export default function WorkbenchLayout() {
           {/* Cached project pages — always mounted once project exists */}
           {effectiveProjectId && (
             <>
-              <div className={`flex-1 min-h-0 flex flex-col ${activePanel !== 'wiki' ? 'hidden' : ''}`}>
+              <div
+                className="absolute inset-0 flex flex-col"
+                style={{ visibility: activePanel === 'wiki' ? 'visible' : 'hidden', zIndex: activePanel === 'wiki' ? 1 : 0 }}
+              >
                 <WikiPage projectId={effectiveProjectId} />
               </div>
-              <div className={`flex-1 min-h-0 flex flex-col ${activePanel !== 'sessions' ? 'hidden' : ''}`}>
+              <div
+                className="absolute inset-0 flex flex-col"
+                style={{ visibility: activePanel === 'sessions' ? 'visible' : 'hidden', zIndex: activePanel === 'sessions' ? 1 : 0 }}
+              >
                 <SessionsPage />
               </div>
             </>

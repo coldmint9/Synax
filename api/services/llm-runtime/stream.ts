@@ -1,12 +1,16 @@
-import { generateText, Output, streamText } from 'ai'
+import { extractReasoningMiddleware, generateText, Output, streamText, wrapLanguageModel } from 'ai'
 import type { ZodType } from 'zod'
 import type { GenerateTextResult } from 'ai'
 import type { ModelMessage } from '@ai-sdk/provider-utils'
 import { getGlobalConfigForRuntime, getProjectConfigForRuntime } from '../../lib/config/config-store.js'
+import { logger } from '../../lib/logger.js'
 import { instantiateProvider, selectLanguageModel } from './registry.js'
 import { getRuntimeCatalog } from './catalog.js'
 import { resolveLlmSelection, resolveProviderModelRef, resolveRuntimeProvider } from './resolver.js'
 import type { LlmGatewayRequest, ResolvedModelSelection, ValidateLlmRequest } from './types.js'
+
+const RATE_LIMIT_MAX_RETRIES = 3
+const RATE_LIMIT_BASE_DELAY_MS = 1000
 
 export interface GatewayObjectResult<T> {
   object: T
@@ -34,12 +38,41 @@ export async function createGatewayStream(
   request: LlmGatewayRequest,
   abortSignal?: AbortSignal,
 ): Promise<any> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < RATE_LIMIT_MAX_RETRIES; attempt++) {
+    try {
+      return await createGatewayStreamOnce(request, abortSignal)
+    } catch (err) {
+      lastError = err
+      if (attempt < RATE_LIMIT_MAX_RETRIES - 1 && isRateLimitError(err)) {
+        const delay = RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 500
+        logger.warn({ attempt, delay }, '[llm-runtime] rate limited, retrying')
+        await new Promise((r) => setTimeout(r, delay))
+        continue
+      }
+      throw err
+    }
+  }
+  throw lastError
+}
+
+async function createGatewayStreamOnce(
+  request: LlmGatewayRequest,
+  abortSignal?: AbortSignal,
+): Promise<any> {
   const selection = await resolveGatewaySelection(request)
   if (!hasConfiguredApiKey(selection.config, selection.provider.env)) {
     throw new Error(missingApiKeyMessage(selection.providerId, selection.provider.env))
   }
   const client = await instantiateProvider(selection.provider, selection.config)
-  const model = selectLanguageModel(client, selection.modelId)
+  let model = selectLanguageModel(client, selection.modelId)
+
+  if (needsThinkTagExtraction(selection)) {
+    model = wrapLanguageModel({
+      model: model as any,
+      middleware: extractReasoningMiddleware({ tagName: 'think', startWithReasoning: true }),
+    })
+  }
 
   const { system, messages } = toModelPrompt(request.messages)
 
@@ -269,4 +302,30 @@ function resolveValidationTarget(input: ValidateLlmRequest): { providerId: strin
     throw new Error('Validation requires either providerId + model, or model in provider/model format')
   }
   return parsed
+}
+
+function isRateLimitError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const msg = err.message.toLowerCase()
+  return msg.includes('rate limit') ||
+    msg.includes('rate_limit') ||
+    msg.includes('too many requests') ||
+    msg.includes('concurrency limit') ||
+    msg.includes('429')
+}
+
+const PROVIDERS_WITH_NATIVE_REASONING = new Set([
+  '@ai-sdk/anthropic',
+  '@ai-sdk/openai',
+  '@ai-sdk/deepseek',
+  '@ai-sdk/google',
+  '@ai-sdk/openai-compatible',
+  '@ai-sdk/xai',
+  '@ai-sdk/groq',
+])
+
+function needsThinkTagExtraction(selection: ResolvedModelSelection): boolean {
+  if (!selection.modelDef.reasoning) return false
+  if (PROVIDERS_WITH_NATIVE_REASONING.has(selection.provider.npm ?? '')) return false
+  return true
 }

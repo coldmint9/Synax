@@ -41,7 +41,7 @@ export function EnhancedToolCallCard({ call }: Props) {
 
   return (
     <Card
-      className={`shadow-none transition-colors ${
+      className={`shadow-none transition-colors animate-[fade-up_0.3s_ease-out] ${
         expanded ? 'border-accent/20 bg-accent/5' : 'border-border/60 bg-background/40'
       }`}
     >

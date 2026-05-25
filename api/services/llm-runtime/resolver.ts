@@ -252,6 +252,19 @@ function createConfiguredRuntimeProvider(provider: ProviderDef, connection?: Pro
   }
 }
 
+const KNOWN_PROVIDER_ADAPTERS: Record<string, Pick<RuntimeProvider, 'npm' | 'api' | 'env'>> = {
+  deepseek: { npm: '@ai-sdk/deepseek', api: 'https://api.deepseek.com', env: ['DEEPSEEK_API_KEY'] },
+  groq: { npm: '@ai-sdk/groq', api: 'https://api.groq.com/openai/v1', env: ['GROQ_API_KEY'] },
+  mistral: { npm: '@ai-sdk/mistral', api: 'https://api.mistral.ai/v1', env: ['MISTRAL_API_KEY'] },
+  xai: { npm: '@ai-sdk/xai', api: 'https://api.x.ai/v1', env: ['XAI_API_KEY'] },
+  perplexity: { npm: '@ai-sdk/perplexity', api: 'https://api.perplexity.ai', env: ['PERPLEXITY_API_KEY'] },
+  google: { npm: '@ai-sdk/google', env: ['GOOGLE_GENERATIVE_AI_API_KEY', 'GEMINI_API_KEY'] },
+  cohere: { npm: '@ai-sdk/cohere', env: ['COHERE_API_KEY'] },
+  togetherai: { npm: '@ai-sdk/togetherai', env: ['TOGETHER_AI_API_KEY'] },
+  cerebras: { npm: '@ai-sdk/cerebras', env: ['CEREBRAS_API_KEY'] },
+  deepinfra: { npm: '@ai-sdk/deepinfra', env: ['DEEPINFRA_API_KEY'] },
+}
+
 function resolveConfiguredProviderAdapter(
   providerId: string,
   connection?: ProviderConnection,
@@ -278,6 +291,16 @@ function resolveConfiguredProviderAdapter(
       npm: '@ai-sdk/anthropic',
       api: connection?.baseUrl,
       env: [],
+    }
+  }
+
+  // Use dedicated provider when available and no custom baseUrl override
+  const known = KNOWN_PROVIDER_ADAPTERS[providerId]
+  if (known && (!connection?.baseUrl || connection.baseUrl === known.api)) {
+    return {
+      npm: known.npm,
+      api: connection?.baseUrl ?? known.api,
+      env: known.env,
     }
   }
 

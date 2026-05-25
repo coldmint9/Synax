@@ -460,7 +460,7 @@
   }
 
   .island-header-meta { margin-left: auto; font-size: 11px; color: hsl(var(--muted-foreground)); }
-  .island-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .island-body { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 
   /* ── Workbench Header ── */
   .workbench-header {

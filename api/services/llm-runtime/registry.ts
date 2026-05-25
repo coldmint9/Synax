@@ -8,6 +8,7 @@ const REGISTRY: Record<string, () => Promise<ProviderFactory>> = {
   '@ai-sdk/cerebras': async () => (await import('@ai-sdk/cerebras')).createCerebras,
   '@ai-sdk/cohere': async () => (await import('@ai-sdk/cohere')).createCohere,
   '@ai-sdk/deepinfra': async () => (await import('@ai-sdk/deepinfra')).createDeepInfra,
+  '@ai-sdk/deepseek': async () => (await import('@ai-sdk/deepseek')).createDeepSeek,
   '@ai-sdk/google': async () => (await import('@ai-sdk/google')).createGoogleGenerativeAI,
   '@ai-sdk/groq': async () => (await import('@ai-sdk/groq')).createGroq,
   '@ai-sdk/mistral': async () => (await import('@ai-sdk/mistral')).createMistral,
@@ -110,89 +111,128 @@ function patchToolCallIdStream(body: ReadableStream<Uint8Array>): ReadableStream
   const encoder = new TextEncoder()
 
   return new ReadableStream({
+    async pull(controller) {
+      // Handled in start
+    },
     async start(controller) {
       const reader = body.getReader()
-      const lines: string[] = []
       let buffer = ''
+      // Per-index state: track whether we've seen id/name
+      const indexState = new Map<number, { id?: string; name?: string; pending: string[] }>()
+      const MAX_PENDING = 5
+
+      function flushIndex(index: number) {
+        const state = indexState.get(index)
+        if (!state || state.pending.length === 0) return
+        const id = state.id ?? `call_${index}_${Math.random().toString(36).slice(2, 10)}`
+        for (let i = 0; i < state.pending.length; i++) {
+          const line = state.pending[i]
+          if (i === 0) {
+            // Patch the first chunk with id and name
+            try {
+              const trimmed = line.trimEnd()
+              const suffix = line.slice(trimmed.length)
+              const payload = trimmed.slice(6)
+              const data = JSON.parse(payload)
+              for (const choice of data?.choices ?? []) {
+                for (const tc of choice?.delta?.tool_calls ?? []) {
+                  if (tc.index === index) {
+                    if (!tc.id) tc.id = id
+                    if (!tc.function) tc.function = {}
+                    if (!tc.function.name && state.name) tc.function.name = state.name
+                  }
+                }
+              }
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}${suffix}`))
+            } catch { controller.enqueue(encoder.encode(line)) }
+          } else {
+            controller.enqueue(encoder.encode(line))
+          }
+        }
+        state.pending = []
+      }
+
+      function processLine(line: string) {
+        const trimmed = line.trimEnd()
+        if (!trimmed.startsWith('data: ')) {
+          controller.enqueue(encoder.encode(line))
+          return
+        }
+        const payload = trimmed.slice(6)
+        if (payload === '[DONE]') {
+          // Flush all pending before DONE
+          for (const [idx] of indexState) flushIndex(idx)
+          controller.enqueue(encoder.encode(line))
+          return
+        }
+
+        let hasToolCalls = false
+        let needsBuffering = false
+        try {
+          const data = JSON.parse(payload)
+          for (const choice of data?.choices ?? []) {
+            for (const tc of choice?.delta?.tool_calls ?? []) {
+              const idx = tc.index
+              if (typeof idx !== 'number') continue
+              hasToolCalls = true
+
+              if (!indexState.has(idx)) {
+                indexState.set(idx, { pending: [] })
+              }
+              const state = indexState.get(idx)!
+
+              if (typeof tc.id === 'string' && tc.id) state.id = tc.id
+              if (typeof tc.function?.name === 'string' && tc.function.name) state.name = tc.function.name
+
+              if (!state.id) {
+                needsBuffering = true
+              }
+            }
+          }
+        } catch {
+          controller.enqueue(encoder.encode(line))
+          return
+        }
+
+        if (!hasToolCalls) {
+          controller.enqueue(encoder.encode(line))
+          return
+        }
+
+        if (needsBuffering) {
+          // Buffer this line for indices missing id
+          for (const [idx, state] of indexState) {
+            if (!state.id) {
+              state.pending.push(line)
+              if (state.pending.length >= MAX_PENDING) flushIndex(idx)
+              break
+            }
+          }
+        } else {
+          // All indices have id — flush any pending and pass through
+          for (const [idx, state] of indexState) {
+            if (state.pending.length > 0) flushIndex(idx)
+          }
+          controller.enqueue(encoder.encode(line))
+        }
+      }
 
       try {
         while (true) {
           const { done, value } = await reader.read()
           if (done) {
-            if (buffer) lines.push(buffer)
+            if (buffer) processLine(buffer)
+            for (const [idx] of indexState) flushIndex(idx)
             break
           }
           buffer += decoder.decode(value, { stream: true })
           const parts = buffer.split('\n')
           buffer = parts.pop() ?? ''
-          for (const part of parts) lines.push(part + '\n')
+          for (const part of parts) processLine(part + '\n')
         }
       } catch (err) {
         controller.error(err)
         return
-      }
-
-      // First pass: collect tool call names and ids per index
-      const toolCallNames = new Map<number, string>()
-      const toolCallIds = new Map<number, string>()
-      const allIndices = new Set<number>()
-      for (const line of lines) {
-        const trimmed = line.trimEnd()
-        if (!trimmed.startsWith('data: ')) continue
-        const payload = trimmed.slice(6)
-        if (payload === '[DONE]') continue
-        try {
-          const data = JSON.parse(payload)
-          for (const choice of data?.choices ?? []) {
-            for (const tc of choice?.delta?.tool_calls ?? []) {
-              const { index } = tc
-              if (typeof index !== 'number') continue
-              allIndices.add(index)
-              if (typeof tc.id === 'string' && tc.id && !toolCallIds.has(index)) toolCallIds.set(index, tc.id)
-              if (typeof tc.function?.name === 'string' && tc.function.name && !toolCallNames.has(index)) toolCallNames.set(index, tc.function.name)
-            }
-          }
-        } catch {}
-      }
-      // Some providers omit function.name for parallel tool call indices — fill in from any known name
-      if (toolCallNames.size > 0) {
-        const fallbackName = toolCallNames.values().next().value as string
-        for (const idx of allIndices) {
-          if (!toolCallNames.has(idx)) toolCallNames.set(idx, fallbackName)
-        }
-      }
-
-      // Second pass: emit with injected id/name for first chunk of each index
-      const seenIndices = new Set<number>()
-      for (const line of lines) {
-        const trimmed = line.trimEnd()
-        const suffix = line.slice(trimmed.length)
-        if (!trimmed.startsWith('data: ')) { controller.enqueue(encoder.encode(line)); continue }
-        const payload = trimmed.slice(6)
-        if (payload === '[DONE]') { controller.enqueue(encoder.encode(line)); continue }
-        try {
-          const data = JSON.parse(payload)
-          let patched = false
-          for (const choice of data?.choices ?? []) {
-            for (const tc of choice?.delta?.tool_calls ?? []) {
-              const { index } = tc
-              if (typeof index !== 'number') continue
-              if (!seenIndices.has(index)) {
-                seenIndices.add(index)
-                if (!tc.id) {
-                  tc.id = toolCallIds.get(index) ?? `call_${index}_${Math.random().toString(36).slice(2, 10)}`
-                  patched = true
-                }
-                if (!tc.function) tc.function = {}
-                if (!tc.function.name) {
-                  const name = toolCallNames.get(index)
-                  if (name) { tc.function.name = name; patched = true }
-                }
-              }
-            }
-          }
-          controller.enqueue(encoder.encode(patched ? `data: ${JSON.stringify(data)}${suffix}` : line))
-        } catch { controller.enqueue(encoder.encode(line)) }
       }
 
       controller.close()
