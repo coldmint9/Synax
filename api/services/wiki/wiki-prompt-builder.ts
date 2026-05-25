@@ -17,6 +17,7 @@ export interface WikiPromptInput {
   locale: 'zh' | 'en';
   outline?: WikiOutlineEntry[];
   continuation?: { completedTitles: string[]; remainingCount: number };
+  preloadedContext?: string;
 }
 
 // ── Extract project metadata from scan ───────────────────────────────────────
@@ -210,6 +211,15 @@ ${completed}
 请只为未完成的文档生成内容。`;
 }
 
+function buildPreloadedContextSegment(context: string): string {
+  return `## 预加载探索结果（来自 Planner 阶段）
+
+以下是 Planner 阶段已探索的代码库信息，你可以直接使用这些数据，无需重复调用相同的工具：
+
+${context}`;
+}
+
+
 function buildOutlineSegment(outline: WikiOutlineEntry[]): string {
   return `## 文档目录树\n\n${JSON.stringify(outline, null, 2)}`;
 }
@@ -232,6 +242,10 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
 
   const localeSegment = buildLocaleSegment(input.locale);
   if (localeSegment) segments.push(localeSegment);
+
+  if (input.preloadedContext) {
+    segments.push(buildPreloadedContextSegment(input.preloadedContext));
+  }
 
   if (input.continuation) {
     segments.push(buildContinuationSegment(input.continuation));

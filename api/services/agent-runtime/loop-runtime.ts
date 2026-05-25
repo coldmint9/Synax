@@ -1139,6 +1139,7 @@ export class AgentLoopRuntime {
             mustFinalize: true,
             model: compactionConfig.summaryModel ?? input.input.model ?? null,
             abortSignal: input.abortSignal,
+            hookContext: { sessionId: input.sessionId, purpose: 'context-compaction' },
           });
           return summaryResult.step.message ?? '';
         },
@@ -1179,6 +1180,7 @@ export class AgentLoopRuntime {
       projectId: this.store.getSession(input.sessionId).projectId,
       purpose: input.input.purpose ?? input.profile.kind,
       model: input.input.model,
+      cacheControl: true,
       messages: [
         {
           role: "system" as const,
@@ -1211,6 +1213,7 @@ export class AgentLoopRuntime {
       mustFinalize: input.mustFinalize,
       model: input.input.model ?? null,
       abortSignal: input.abortSignal,
+      hookContext: { sessionId: input.sessionId, purpose: input.input.purpose ?? undefined },
     });
   }
 

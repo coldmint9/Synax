@@ -1,6 +1,7 @@
 import type { ModelMessage } from '@ai-sdk/provider-utils'
 import type { ToolCallRepairFunction, ToolChoice, ToolSet } from 'ai'
 import type { GlobalConfig, ProjectConfig } from '../../lib/config/config-types.js'
+import type { LlmHookContext } from './llm-hooks.js'
 
 export type LlmPurpose =
   | 'analyze'
@@ -79,6 +80,8 @@ export interface LlmGatewayRequest {
   activeTools?: string[]
   maxRetries?: number
   repairToolCall?: ToolCallRepairFunction<ToolSet>
+  cacheControl?: boolean
+  hookContext?: LlmHookContext
 }
 
 export interface LlmGatewayConfig {

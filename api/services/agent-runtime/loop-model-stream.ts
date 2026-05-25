@@ -1,5 +1,6 @@
 import { createGatewayStream } from '../llm-runtime/stream.js';
 import type { LlmGatewayRequest } from '../llm-runtime/types.js';
+import type { LlmHookContext } from '../llm-runtime/llm-hooks.js';
 import type { LoopModelStreamEvent, LoopStepModelResult, StructuredToolCall } from './contracts.js';
 import type { LoopToolSet } from './loop-ai-tools.js';
 import { isRecord, parseLoopModelStepText } from './loop-model-output.js';
@@ -11,6 +12,7 @@ export interface GenerateLoopModelStepInput {
   mustFinalize: boolean;
   model: string | null;
   abortSignal?: AbortSignal;
+  hookContext?: LlmHookContext;
 }
 
 export async function generateLoopModelStep(input: GenerateLoopModelStepInput): Promise<LoopStepModelResult> {
@@ -29,6 +31,7 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
       toolChoice: hasTools ? 'auto' : 'none',
       repairToolCall: hasTools ? input.tools.repairToolCall : undefined,
       maxRetries: 2,
+      hookContext: input.hookContext,
     },
     input.abortSignal,
   );
@@ -119,6 +122,7 @@ export async function* streamLoopModelStep(
       toolChoice: hasTools ? 'auto' : 'none',
       repairToolCall: hasTools ? input.tools.repairToolCall : undefined,
       maxRetries: 2,
+      hookContext: input.hookContext,
     },
     input.abortSignal,
   );

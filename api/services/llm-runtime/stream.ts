@@ -1,16 +1,27 @@
 import { extractReasoningMiddleware, generateText, Output, streamText, wrapLanguageModel } from 'ai'
 import type { ZodType } from 'zod'
 import type { GenerateTextResult } from 'ai'
-import type { ModelMessage } from '@ai-sdk/provider-utils'
+import type { ModelMessage, SystemModelMessage } from '@ai-sdk/provider-utils'
 import { getGlobalConfigForRuntime, getProjectConfigForRuntime } from '../../lib/config/config-store.js'
 import { logger } from '../../lib/logger.js'
 import { instantiateProvider, selectLanguageModel } from './registry.js'
 import { getRuntimeCatalog } from './catalog.js'
 import { resolveLlmSelection, resolveProviderModelRef, resolveRuntimeProvider } from './resolver.js'
 import type { LlmGatewayRequest, ResolvedModelSelection, ValidateLlmRequest } from './types.js'
+import { llmHooks, type LlmHookContext } from './llm-hooks.js'
 
 const RATE_LIMIT_MAX_RETRIES = 3
 const RATE_LIMIT_BASE_DELAY_MS = 1000
+
+function normalizeUsage(usage: unknown): { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined {
+  if (!usage || typeof usage !== 'object') return undefined
+  const u = usage as Record<string, unknown>
+  return {
+    promptTokens: typeof u.promptTokens === 'number' ? u.promptTokens : undefined,
+    completionTokens: typeof u.completionTokens === 'number' ? u.completionTokens : undefined,
+    totalTokens: typeof u.totalTokens === 'number' ? u.totalTokens : undefined,
+  }
+}
 
 export interface GatewayObjectResult<T> {
   object: T
@@ -74,7 +85,11 @@ async function createGatewayStreamOnce(
     })
   }
 
-  const { system, messages } = toModelPrompt(request.messages)
+  const isAnthropicProvider = selection.provider.npm === '@ai-sdk/anthropic'
+  const enableCache = request.cacheControl && isAnthropicProvider
+  const { system, messages } = toModelPrompt(request.messages, enableCache)
+  const ctx = request.hookContext
+  const genStart = Date.now()
 
   return streamText({
     model: model as any,
@@ -89,6 +104,24 @@ async function createGatewayStreamOnce(
     stopSequences: request.stop,
     maxRetries: request.maxRetries,
     abortSignal,
+    experimental_onStart: (event) => {
+      llmHooks.emit({ type: 'generation:start', modelId: event.model.modelId, provider: event.model.provider, purpose: request.purpose, context: ctx })
+    },
+    experimental_onStepStart: (event) => {
+      llmHooks.emit({ type: 'step:start', stepNumber: event.stepNumber, modelId: event.model.modelId, provider: event.model.provider, purpose: request.purpose, context: ctx })
+    },
+    experimental_onToolCallStart: (event) => {
+      llmHooks.emit({ type: 'tool_call:start', toolName: event.toolCall.toolName, toolCallId: event.toolCall.toolCallId, stepNumber: event.stepNumber ?? undefined, context: ctx })
+    },
+    experimental_onToolCallFinish: (event) => {
+      llmHooks.emit({ type: 'tool_call:end', toolName: event.toolCall.toolName, toolCallId: event.toolCall.toolCallId, durationMs: event.durationMs, success: event.success, error: !event.success ? String(event.error) : undefined, context: ctx })
+    },
+    onStepFinish: (event) => {
+      llmHooks.emit({ type: 'step:finish', stepNumber: event.stepNumber, finishReason: event.finishReason ?? 'unknown', usage: normalizeUsage(event.usage), modelId: event.model.modelId, provider: event.model.provider, context: ctx })
+    },
+    onFinish: (event) => {
+      llmHooks.emit({ type: 'generation:finish', totalSteps: event.steps?.length ?? 1, totalUsage: normalizeUsage(event.totalUsage), durationMs: Date.now() - genStart, context: ctx })
+    },
   })
 }
 
@@ -103,7 +136,11 @@ export async function generateGatewayTextResult(
   const client = await instantiateProvider(selection.provider, selection.config)
   const model = selectLanguageModel(client, selection.modelId)
 
-  const { system, messages } = toModelPrompt(request.messages)
+  const isAnthropicProvider = selection.provider.npm === '@ai-sdk/anthropic'
+  const enableCache = request.cacheControl && isAnthropicProvider
+  const { system, messages } = toModelPrompt(request.messages, enableCache)
+  const ctx = request.hookContext
+  const genStart = Date.now()
 
   return generateText({
     model: model as any,
@@ -113,6 +150,24 @@ export async function generateGatewayTextResult(
     maxOutputTokens: request.maxTokens,
     stopSequences: request.stop,
     abortSignal,
+    experimental_onStart: (event) => {
+      llmHooks.emit({ type: 'generation:start', modelId: event.model.modelId, provider: event.model.provider, purpose: request.purpose, context: ctx })
+    },
+    experimental_onStepStart: (event) => {
+      llmHooks.emit({ type: 'step:start', stepNumber: event.stepNumber, modelId: event.model.modelId, provider: event.model.provider, purpose: request.purpose, context: ctx })
+    },
+    experimental_onToolCallStart: (event) => {
+      llmHooks.emit({ type: 'tool_call:start', toolName: event.toolCall.toolName, toolCallId: event.toolCall.toolCallId, stepNumber: event.stepNumber ?? undefined, context: ctx })
+    },
+    experimental_onToolCallFinish: (event) => {
+      llmHooks.emit({ type: 'tool_call:end', toolName: event.toolCall.toolName, toolCallId: event.toolCall.toolCallId, durationMs: event.durationMs, success: event.success, error: !event.success ? String(event.error) : undefined, context: ctx })
+    },
+    onStepFinish: (event) => {
+      llmHooks.emit({ type: 'step:finish', stepNumber: event.stepNumber, finishReason: event.finishReason ?? 'unknown', usage: normalizeUsage(event.usage), modelId: event.model.modelId, provider: event.model.provider, context: ctx })
+    },
+    onFinish: (event) => {
+      llmHooks.emit({ type: 'generation:finish', totalSteps: event.steps?.length ?? 1, totalUsage: normalizeUsage(event.totalUsage), durationMs: Date.now() - genStart, context: ctx })
+    },
   })
 }
 
@@ -181,13 +236,27 @@ function missingApiKeyMessage(providerId: string, envNames: string[]): string {
   return `Missing API key for provider '${providerId}'. Configure one in Synapse settings${envHint}.`
 }
 
-function toModelPrompt(messages: LlmGatewayRequest['messages']): { system?: string; messages: ModelMessage[] } {
+function toModelPrompt(messages: LlmGatewayRequest['messages'], cacheControl?: boolean): { system?: string | SystemModelMessage[]; messages: ModelMessage[] } {
   const systemMessages = messages
     .filter((message) => message.role === 'system')
     .map((message) => message.content.trim())
     .filter(Boolean)
+
+  const systemContent = systemMessages.length > 0 ? systemMessages.join('\n\n') : undefined
+
+  let system: string | SystemModelMessage[] | undefined
+  if (systemContent && cacheControl) {
+    system = [{
+      role: 'system',
+      content: systemContent,
+      providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    }]
+  } else {
+    system = systemContent
+  }
+
   return {
-    ...(systemMessages.length > 0 ? { system: systemMessages.join('\n\n') } : {}),
+    ...(system ? { system } : {}),
     messages: toModelMessages(messages.filter(isConversationMessage)),
   }
 }

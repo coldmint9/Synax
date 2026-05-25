@@ -11,6 +11,7 @@ import {
   resolveWorkspaceRoot,
   setSessionWorkspaceRoot,
 } from '../agent-runtime/tools/workspace.js';
+import type { ToolCallRecord } from '../agent-runtime/contracts.js';
 import { logger } from '../../lib/logger.js';
 import { wikiStore } from './wiki-store.js';
 import { wikiCoordinateService } from './wiki-coordinate-service.js';
@@ -48,6 +49,46 @@ function readGitState(workDir: string): WikiGitState {
     .digest('hex')
     .slice(0, 16);
   return { branch, headCommitSha, workingTreeHash, dirty };
+}
+
+const EXPLORATION_TOOL_IDS = new Set([
+  'wiki.read_code_index',
+  'wiki.read_modules',
+  'wiki.read_graph',
+  'wiki.read_tree',
+]);
+const MAX_CONTEXT_LENGTH = 8000;
+
+function extractPlannerExplorationContext(sessionId: string): string {
+  const runs = agentRuntimeStore.listRuns(sessionId);
+  if (runs.length === 0) return '';
+
+  const toolCalls: ToolCallRecord[] = [];
+  for (const run of runs) {
+    toolCalls.push(...agentRuntimeStore.listRunToolCalls(run.id));
+  }
+
+  const sections: string[] = [];
+  let totalLength = 0;
+
+  for (const tc of toolCalls) {
+    if (tc.status !== 'completed') continue;
+    if (!EXPLORATION_TOOL_IDS.has(tc.toolId)) continue;
+
+    const output = tc.outputRef != null
+      ? (typeof tc.outputRef === 'string' ? tc.outputRef : JSON.stringify(tc.outputRef))
+      : tc.outputSummary ?? '';
+    if (!output) continue;
+
+    const truncated = output.length > 2000 ? output.slice(0, 2000) + '…' : output;
+    const section = `### ${tc.toolId}(${tc.inputSummary})\n${truncated}`;
+
+    if (totalLength + section.length > MAX_CONTEXT_LENGTH) break;
+    sections.push(section);
+    totalLength += section.length;
+  }
+
+  return sections.join('\n\n');
 }
 
 export const wikiLoopService = {
@@ -181,7 +222,7 @@ export const wikiLoopService = {
         },
       });
 
-      const writerPrompt = buildWikiPrompt({ role: 'writer', projectMeta, locale, outline });
+      const writerPrompt = buildWikiPrompt({ role: 'writer', projectMeta, locale, outline, preloadedContext: extractPlannerExplorationContext(plannerSession.id) });
       const writerSession = agentSessionRuntime.create({
         projectId,
         profileId: 'wiki-writer',
