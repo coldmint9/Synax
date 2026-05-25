@@ -1,4 +1,4 @@
-import { apiFetch } from './origin'
+import { apiFetch, apiRequest } from './origin'
 
 const BASE = '/api/agent-runtime'
 
@@ -229,23 +229,7 @@ export interface StreamTurnRequest {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await apiFetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!resp.ok) {
-    const text = await resp.text()
-    let message = text
-    try {
-      const parsed = JSON.parse(text) as { error?: string; code?: string }
-      if (parsed.code) message = `[${parsed.code}] ${parsed.error ?? text}`
-      else if (parsed.error) message = parsed.error
-    } catch {
-      /* keep raw body */
-    }
-    throw new Error(message || `Agent runtime API error ${resp.status}`)
-  }
-  return resp.json() as Promise<T>
+  return apiRequest<T>(`${BASE}${path}`, init)
 }
 
 export const agentRuntimeApi = {
