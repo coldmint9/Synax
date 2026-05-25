@@ -281,6 +281,10 @@ export const agentRuntimeApi = {
     request<{ items: AgentRunStep[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/steps`,
     ),
+  listSessionSteps: (sessionId: string) =>
+    request<{ items: AgentRunStep[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/steps`,
+    ),
   listEvents: (sessionId: string, after?: string) =>
     request<{ items: RuntimeEvent[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/events${after ? `?after=${encodeURIComponent(after)}` : ''}`,

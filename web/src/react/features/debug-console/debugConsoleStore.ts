@@ -5,14 +5,67 @@ import {
   type AgentRunStep,
   type AgentRuntimeMessage,
   type AgentSession,
+  type PermissionDecision,
   type RuntimeEvent,
   type SessionStats,
   type TodoItem,
   type ToolCallRecord,
 } from '../../../lib/api/agentRuntime'
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
+import { useToastStore } from '../../state/toastStore'
+
+// --- Delta backpressure: drain buffered text at a controlled rate per frame ---
+let _textBuffer = ''
+let _thinkingBuffer = ''
+let _rafId: number | null = null
+
+const CHARS_PER_FRAME_BASE = 12
+const CHARS_PER_FRAME_MAX = 200
+const BACKPRESSURE_THRESHOLD = 300
+
+function _drainLoop() {
+  _rafId = null
+  const textLen = _textBuffer.length
+  const thinkLen = _thinkingBuffer.length
+  if (textLen === 0 && thinkLen === 0) return
+
+  const pressure = textLen + thinkLen
+  const chunkSize = pressure > BACKPRESSURE_THRESHOLD
+    ? Math.min(CHARS_PER_FRAME_MAX, Math.ceil(pressure / 5))
+    : CHARS_PER_FRAME_BASE
+
+  let t = ''
+  let th = ''
+  if (textLen > 0) {
+    const take = Math.min(textLen, chunkSize)
+    t = _textBuffer.slice(0, take)
+    _textBuffer = _textBuffer.slice(take)
+  }
+  if (thinkLen > 0) {
+    const take = Math.min(thinkLen, chunkSize)
+    th = _thinkingBuffer.slice(0, take)
+    _thinkingBuffer = _thinkingBuffer.slice(take)
+  }
+
+  if (t || th) {
+    useDebugConsole.setState(s => ({
+      ...(t ? { streamingText: s.streamingText + t } : {}),
+      ...(th ? { streamingThinking: s.streamingThinking + th } : {}),
+    }))
+  }
+
+  if (_textBuffer.length > 0 || _thinkingBuffer.length > 0) {
+    _rafId = requestAnimationFrame(_drainLoop)
+  }
+}
+
+function _scheduleFlush() {
+  if (_rafId !== null) return
+  _rafId = requestAnimationFrame(_drainLoop)
+}
 
 export interface DebugConsoleState {
+  projectId: string | null
   sessions: AgentSession[]
   selectedSessionId: string | null
   panelOpen: boolean
@@ -22,6 +75,7 @@ export interface DebugConsoleState {
   messages: AgentRuntimeMessage[]
   toolCalls: ToolCallRecord[]
   childSessions: Record<string, AgentSession[]>
+  permissions: PermissionDecision[]
   sessionStats: SessionStats | null
   sessionTodos: TodoItem[]
 
@@ -30,7 +84,15 @@ export interface DebugConsoleState {
   streamingText: string
   streamingThinking: string
   streamingToolCalls: ToolCallRecord[]
+  streamingCompletedSteps: Array<{
+    stepId: string
+    stepIndex: number
+    text: string
+    thinking: string
+    toolCalls: ToolCallRecord[]
+  }>
 
+  setProjectId: (projectId: string | null) => void
   refreshSessions: () => Promise<void>
   deleteSession: (sessionId: string) => Promise<string[]>
   openPanel: (sessionId: string) => void
@@ -41,10 +103,12 @@ export interface DebugConsoleState {
   resumeSession: (sessionId: string, message?: string) => Promise<void>
   fetchSessionStats: () => Promise<void>
   fetchSessionTodos: () => Promise<void>
+  replyPermission: (permissionId: string, reply: 'once' | 'always' | 'reject') => Promise<void>
   applyLiveEvent: (event: SessionLiveEvent) => void
 }
 
 export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
+  projectId: null,
   sessions: [],
   selectedSessionId: null,
   panelOpen: false,
@@ -54,16 +118,26 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   messages: [],
   toolCalls: [],
   childSessions: {},
+  permissions: [],
   sessionStats: null,
   sessionTodos: [],
   streamingStepId: null,
   streamingText: '',
   streamingThinking: '',
   streamingToolCalls: [],
+  streamingCompletedSteps: [],
+
+  setProjectId: (projectId) => {
+    if (projectId === get().projectId) return
+    set({ projectId, sessions: [] })
+    void get().refreshSessions()
+  },
 
   refreshSessions: async () => {
+    const { projectId } = get()
     try {
-      const { items } = await agentRuntimeApi.listSessions()
+      const query = projectId ? { projectId } : {}
+      const { items } = await agentRuntimeApi.listSessions(query)
       set({ sessions: items })
     } catch { /* API not available */ }
   },
@@ -86,7 +160,22 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   },
 
   openPanel: (sessionId) => {
-    set({ panelOpen: true, selectedSessionId: sessionId, runs: [], steps: [], events: [], messages: [], toolCalls: [] })
+    const prev = get().selectedSessionId
+    set({
+      panelOpen: true,
+      selectedSessionId: sessionId,
+      streamingStepId: null,
+      streamingText: '',
+      streamingThinking: '',
+      streamingToolCalls: [],
+      streamingCompletedSteps: [],
+    })
+    // Only clear persisted data if switching to a different session
+    // refreshDetail will atomically replace with new data
+    if (prev !== sessionId) {
+      _textBuffer = ''
+      _thinkingBuffer = ''
+    }
     void get().refreshDetail()
   },
 
@@ -95,28 +184,33 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   refreshDetail: async () => {
     const { selectedSessionId } = get()
     if (!selectedSessionId) return
+    const targetSessionId = selectedSessionId
     try {
-      const [runsRes, eventsRes, messagesRes, toolCallsRes] = await Promise.all([
-        agentRuntimeApi.listRuns(selectedSessionId),
-        agentRuntimeApi.listEvents(selectedSessionId),
-        agentRuntimeApi.listMessages(selectedSessionId),
-        agentRuntimeApi.listToolCalls(selectedSessionId),
+      const [runsRes, eventsRes, messagesRes, toolCallsRes, permissionsRes] = await Promise.all([
+        agentRuntimeApi.listRuns(targetSessionId),
+        agentRuntimeApi.listEvents(targetSessionId),
+        agentRuntimeApi.listMessages(targetSessionId),
+        agentRuntimeApi.listToolCalls(targetSessionId),
+        agentRuntimeApi.listPermissions(targetSessionId),
       ])
+      // Guard: if session changed during fetch, discard stale results
+      if (get().selectedSessionId !== targetSessionId) return
       set({
         runs: runsRes.items,
         events: eventsRes.items,
         messages: messagesRes.items,
         toolCalls: toolCallsRes.items,
+        permissions: permissionsRes.items,
         streamingStepId: null,
         streamingText: '',
         streamingThinking: '',
         streamingToolCalls: [],
+        streamingCompletedSteps: [],
       })
-      const activeRun = runsRes.items.find(r => r.status === 'running') ?? runsRes.items[runsRes.items.length - 1]
-      if (activeRun) {
-        const stepsRes = await agentRuntimeApi.listRunSteps(selectedSessionId, activeRun.id)
-        set({ steps: stepsRes.items })
-      }
+      // Load all steps for this session in a single request
+      const stepsRes = await agentRuntimeApi.listSessionSteps(targetSessionId)
+      if (get().selectedSessionId !== targetSessionId) return
+      set({ steps: stepsRes.items })
       // Fetch child sessions if any
       const session = get().sessions.find(s => s.id === selectedSessionId)
       if (session && session.childSessionIds.length > 0) {
@@ -185,16 +279,53 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
     } catch { /* silent */ }
   },
 
+  replyPermission: async (permissionId, reply) => {
+    const { selectedSessionId } = get()
+    if (!selectedSessionId) return
+    try {
+      const updated = await agentRuntimeApi.replyPermission(selectedSessionId, permissionId, reply)
+      set(s => ({
+        permissions: s.permissions.map(p => p.id === permissionId ? updated : p),
+      }))
+      useToastStore.getState().dismiss(`perm-${permissionId}`)
+      if (reply !== 'reject') {
+        void get().refreshDetail()
+      }
+    } catch { /* silent */ }
+  },
+
   applyLiveEvent: (event) => {
     switch (event.type) {
-      case 'step_started':
-        set({ streamingStepId: event.stepId, streamingText: '', streamingThinking: '', streamingToolCalls: [] })
+      case 'step_started': {
+        const s = get()
+        const hasContent = s.streamingStepId && (s.streamingText || s.streamingThinking || s.streamingToolCalls.length > 0)
+        const completedSteps = hasContent
+          ? [...s.streamingCompletedSteps, {
+              stepId: s.streamingStepId!,
+              stepIndex: s.streamingCompletedSteps.length + 1,
+              text: s.streamingText,
+              thinking: s.streamingThinking,
+              toolCalls: s.streamingToolCalls,
+            }]
+          : s.streamingCompletedSteps
+        _textBuffer = ''
+        _thinkingBuffer = ''
+        set({
+          streamingStepId: event.stepId,
+          streamingText: '',
+          streamingThinking: '',
+          streamingToolCalls: [],
+          streamingCompletedSteps: completedSteps,
+        })
         break
+      }
       case 'message_delta':
-        set(s => ({ streamingText: s.streamingText + event.delta }))
+        _textBuffer += event.delta
+        _scheduleFlush()
         break
       case 'thought_delta':
-        set(s => ({ streamingThinking: s.streamingThinking + event.delta }))
+        _thinkingBuffer += event.delta
+        _scheduleFlush()
         break
       case 'tool_call':
         set(s => ({ streamingToolCalls: [...s.streamingToolCalls, event.toolCall] }))

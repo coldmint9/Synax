@@ -4,7 +4,7 @@
 // Sub-agents are nested under their parent session with indentation.
 // ---------------------------------------------------------------------------
 
-import { Activity, AlertTriangle, Clock, MessageSquare, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Activity, AlertTriangle, Clock, MessageSquare, Plus, RefreshCw, Trash2, Bot } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useContextStore } from '../../../state/contextStore'
@@ -237,6 +237,15 @@ export default function SessionList() {
             disabled={loading}
           >
             <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/agent-loop-test')}
+            className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+            aria-label="Agent Loop"
+            title="Agent Loop Test"
+          >
+            <Bot size={12} />
           </button>
           <button
             type="button"

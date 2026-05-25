@@ -15,6 +15,7 @@ export type TurnContentBlock =
   | { type: 'text'; content: string }
   | { type: 'thinking'; content: string }
   | { type: 'tool_call'; call: ToolCallView }
+  | { type: 'tool_call_group'; calls: ToolCallView[] }
   | { type: 'sub_session'; session: AgentSession }
 
 export interface InterleavedTurn {
@@ -36,6 +37,32 @@ function computeToolDuration(startedAt: string, endedAt: string): string {
   const ms = new Date(endedAt).getTime() - new Date(startedAt).getTime()
   if (ms < 1000) return `${ms}ms`
   return `${(ms / 1000).toFixed(1)}s`
+}
+
+function groupParallelToolCalls(blocks: TurnContentBlock[]): TurnContentBlock[] {
+  const result: TurnContentBlock[] = []
+  let i = 0
+  while (i < blocks.length) {
+    const block = blocks[i]
+    if (block.type === 'tool_call') {
+      const group: ToolCallView[] = [block.call]
+      let j = i + 1
+      while (j < blocks.length && blocks[j].type === 'tool_call') {
+        group.push((blocks[j] as { type: 'tool_call'; call: ToolCallView }).call)
+        j++
+      }
+      if (group.length > 1) {
+        result.push({ type: 'tool_call_group', calls: group })
+      } else {
+        result.push(block)
+      }
+      i = j
+    } else {
+      result.push(block)
+      i++
+    }
+  }
+  return result
 }
 
 function mergeConsecutiveBlocks(blocks: TurnContentBlock[]): TurnContentBlock[] {
@@ -111,7 +138,8 @@ export function buildInterleavedTurns(
     }
 
     items.sort((a, b) => a.timestamp - b.timestamp)
-    const blocks = mergeConsecutiveBlocks(items.map(i => i.block))
+    const merged = mergeConsecutiveBlocks(items.map(i => i.block))
+    const blocks = groupParallelToolCalls(merged)
 
     return {
       stepId: step.id,

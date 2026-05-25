@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useWikiStore } from '../state/wikiStore'
 import WikiWorkspace from '../features/wiki/WikiWorkspace'
 
-export default function WikiPage({ projectId: propId }: { projectId?: string }) {
+export default memo(function WikiPage({ projectId: propId }: { projectId?: string }) {
   const { projectId: routeId = '' } = useParams()
   const projectId = propId || routeId
   const loadLatest = useWikiStore(s => s.loadLatest)
@@ -24,4 +24,4 @@ export default function WikiPage({ projectId: propId }: { projectId?: string }) 
       </div>
     </div>
   )
-}
+})

@@ -714,6 +714,13 @@ export class AgentRuntimeStore {
     return rows.map(mapRunStep);
   }
 
+  listSessionSteps(sessionId: string): AgentRunStep[] {
+    const rows = getRawSqlite()
+      .prepare('SELECT * FROM agent_runtime_run_steps WHERE session_id = ? ORDER BY rowid')
+      .all(sessionId) as RunStepRow[];
+    return rows.map(mapRunStep);
+  }
+
   appendRunPart(part: AgentRunPart): AgentRunPart {
     getRawSqlite()
       .prepare(
@@ -1012,8 +1019,8 @@ export class AgentRuntimeStore {
       try {
         const meta = JSON.parse(row.metadata_json || '{}');
         const u = meta.usage ?? {};
-        input += (u.promptTokens ?? u.input_tokens ?? 0);
-        output += (u.completionTokens ?? u.output_tokens ?? 0);
+        input += (u.inputTokens ?? u.promptTokens ?? u.input_tokens ?? 0);
+        output += (u.outputTokens ?? u.completionTokens ?? u.output_tokens ?? 0);
       } catch { /* skip */ }
     }
     const total = input + output;

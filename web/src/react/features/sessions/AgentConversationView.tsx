@@ -1,9 +1,10 @@
 import { useMemo, useRef, useEffect } from 'react'
-import { Chip, Progress, ScrollShadow, Skeleton, Card } from '@heroui/react'
+import { Chip, ProgressBar, ScrollShadow, Skeleton, Card } from '@heroui/react'
 import { Bot, Pause, Play, XCircle } from 'lucide-react'
 import type { AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import { buildInterleavedTurns } from './buildInterleavedTurns'
 import { EnhancedToolCallCard } from './EnhancedToolCallCard'
+import { ParallelToolCallGroup } from './ParallelToolCallGroup'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { SubSessionCard } from './SubSessionCard'
@@ -23,6 +24,13 @@ interface Props {
   streamingText?: string
   streamingThinking?: string
   streamingToolCalls?: ToolCallRecord[]
+  streamingCompletedSteps?: Array<{
+    stepId: string
+    stepIndex: number
+    text: string
+    thinking: string
+    toolCalls: ToolCallRecord[]
+  }>
 }
 
 const STATUS_MAP: Record<string, { text: string; color: 'primary' | 'success' | 'danger' | 'warning' | 'default' }> = {
@@ -40,8 +48,10 @@ export function AgentConversationView({
   session, steps, toolCalls, messages, childSessions,
   onPause, onResume, onCancel, onExpandChild,
   streamingStepId, streamingText, streamingThinking, streamingToolCalls,
+  streamingCompletedSteps,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const isNearBottom = useRef(true)
 
   const turns = useMemo(
     () => buildInterleavedTurns(steps, toolCalls, messages, childSessions),
@@ -53,11 +63,17 @@ export function AgentConversationView({
   const cat = session ? getSessionCategory(session.profileId) : null
   const statusInfo = session ? STATUS_MAP[session.status] : null
 
+  const handleScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    isNearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+
   useEffect(() => {
-    if (isRunning && scrollRef.current) {
+    if (isNearBottom.current && scrollRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
     }
-  }, [streamingText, streamingThinking, streamingToolCalls, isRunning])
+  }, [streamingText, streamingThinking, streamingToolCalls])
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -109,7 +125,7 @@ export function AgentConversationView({
       </div>
 
       {/* Progress bar when running */}
-      {isRunning && <Progress isIndeterminate size="sm" color="primary" className="w-full" />}
+      {isRunning && <ProgressBar isIndeterminate size="sm" color="primary" className="w-full" />}
 
       {/* Prompt */}
       {session?.prompt && (
@@ -121,7 +137,7 @@ export function AgentConversationView({
       )}
 
       {/* Turns */}
-      <ScrollShadow ref={scrollRef} className="flex-1 min-h-0">
+      <ScrollShadow ref={scrollRef} className="flex-1 min-h-0" onScroll={handleScroll}>
         {turns.length === 0 && !streamingStepId ? (
           <div className="flex flex-col items-center justify-center py-8 gap-3">
             {isRunning ? (
@@ -154,6 +170,9 @@ export function AgentConversationView({
                     if (block.type === 'tool_call') {
                       return <EnhancedToolCallCard key={i} call={block.call} />
                     }
+                    if (block.type === 'tool_call_group') {
+                      return <ParallelToolCallGroup key={i} calls={block.calls} />
+                    }
                     if (block.type === 'sub_session') {
                       return <SubSessionCard key={i} session={block.session} onExpand={onExpandChild} />
                     }
@@ -164,6 +183,51 @@ export function AgentConversationView({
                       {turn.duration}
                     </div>
                   )}
+                </div>
+              </div>
+            ))}
+
+            {/* Completed streaming steps (buffered before refreshDetail syncs) */}
+            {(streamingCompletedSteps ?? []).map(cs => (
+              <div key={cs.stepId} className="flex gap-3 animate-[fade-up_0.3s_ease-out]">
+                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
+                  <Bot size={14} className="text-[var(--color-agent)]" />
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col gap-2">
+                  {cs.thinking && <ThinkingBlock content={cs.thinking} />}
+                  {cs.text && <StreamingTextBlock text={cs.text} isStreaming={false} />}
+                  {cs.toolCalls.length > 1 ? (
+                    <ParallelToolCallGroup
+                      calls={cs.toolCalls.map(tc => ({
+                        id: tc.id,
+                        toolId: tc.toolId,
+                        inputSummary: tc.inputSummary ?? '',
+                        outputSummary: tc.outputSummary ?? '',
+                        status: tc.status,
+                        category: tc.category,
+                        duration: tc.endedAt
+                          ? `${((new Date(tc.endedAt).getTime() - new Date(tc.startedAt).getTime()) / 1000).toFixed(1)}s`
+                          : null,
+                        mutability: tc.mutability,
+                      }))}
+                    />
+                  ) : cs.toolCalls.map(tc => (
+                    <EnhancedToolCallCard
+                      key={tc.id}
+                      call={{
+                        id: tc.id,
+                        toolId: tc.toolId,
+                        inputSummary: tc.inputSummary ?? '',
+                        outputSummary: tc.outputSummary ?? '',
+                        status: tc.status,
+                        category: tc.category,
+                        duration: tc.endedAt
+                          ? `${((new Date(tc.endedAt).getTime() - new Date(tc.startedAt).getTime()) / 1000).toFixed(1)}s`
+                          : null,
+                        mutability: tc.mutability,
+                      }}
+                    />
+                  ))}
                 </div>
               </div>
             ))}
@@ -179,7 +243,22 @@ export function AgentConversationView({
                   {streamingText && (
                     <StreamingTextBlock text={streamingText} isStreaming />
                   )}
-                  {(streamingToolCalls ?? []).map(tc => (
+                  {(streamingToolCalls ?? []).length > 1 ? (
+                    <ParallelToolCallGroup
+                      calls={(streamingToolCalls ?? []).map(tc => ({
+                        id: tc.id,
+                        toolId: tc.toolId,
+                        inputSummary: tc.inputSummary ?? '',
+                        outputSummary: tc.outputSummary ?? '',
+                        status: tc.status,
+                        category: tc.category,
+                        duration: tc.endedAt
+                          ? `${((new Date(tc.endedAt).getTime() - new Date(tc.startedAt).getTime()) / 1000).toFixed(1)}s`
+                          : null,
+                        mutability: tc.mutability,
+                      }))}
+                    />
+                  ) : (streamingToolCalls ?? []).map(tc => (
                     <EnhancedToolCallCard
                       key={tc.id}
                       call={{

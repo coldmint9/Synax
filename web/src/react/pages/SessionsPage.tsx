@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { useContextStore } from '../state/contextStore'
 import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
 import { useDebugPolling } from '../features/debug-console/useDebugPolling'
@@ -6,7 +7,7 @@ import { SessionTranscript } from '../features/sessions/SessionTranscript'
 import { SessionWorkspace, useHasWorkspaceContent } from '../features/sessions/SessionWorkspace'
 import SessionList from '../features/coordinates/context/SessionList'
 
-export default function SessionsPage() {
+export default memo(function SessionsPage() {
   useDebugPolling()
   const currentSessionId = useContextStore(s => s.currentSessionId)
   const agentSessionId = useDebugConsole(s => s.selectedSessionId)
@@ -47,5 +48,5 @@ export default function SessionsPage() {
       )}
     </div>
   )
-}
+})
 

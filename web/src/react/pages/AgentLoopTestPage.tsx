@@ -48,10 +48,11 @@ export default function AgentLoopTestPage() {
   // Wire up debugConsoleStore for rich rendering
   const debugStore = useDebugConsole()
   const { steps, toolCalls, messages: storeMessages, childSessions,
-    streamingStepId, streamingText, streamingThinking, streamingToolCalls } = debugStore
+    streamingStepId, streamingText, streamingThinking, streamingToolCalls,
+    streamingCompletedSteps } = debugStore
 
   // Subscribe to SSE live events when session is active
-  useSessionLiveStream(sessionIdRef.current)
+  useSessionLiveStream(session?.id ?? null)
 
   const pendingPermissions = permissions.filter(
     (p) => p.action === 'ask' && !p.resolvedAt,
@@ -183,6 +184,7 @@ export default function AgentLoopTestPage() {
                   streamingText={streamingText}
                   streamingThinking={streamingThinking}
                   streamingToolCalls={streamingToolCalls}
+                  streamingCompletedSteps={streamingCompletedSteps}
                 />
               </div>
 

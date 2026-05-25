@@ -173,6 +173,14 @@ agentRuntimeRoutes.get('/sessions/:sessionId/runs/:runId/steps', (c) => {
   }
 });
 
+agentRuntimeRoutes.get('/sessions/:sessionId/steps', (c) => {
+  try {
+    return c.json({ items: agentRuntimeStore.listSessionSteps(c.req.param('sessionId')) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 agentRuntimeRoutes.post('/sessions/:sessionId/turns/stream', async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
