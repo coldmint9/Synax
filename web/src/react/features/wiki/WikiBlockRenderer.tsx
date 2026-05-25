@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, memo } from 'react'
 import { Card, Typography } from '@heroui/react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { renderDiagram } from '../../../lib/mermaid-renderer'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import type { WikiBlock, WikiDocument, WikiSourceBinding } from '../../../lib/contracts/wiki'
@@ -236,7 +237,7 @@ const ShikiCodeBlock = memo(function ShikiCodeBlock({ code, language }: { code: 
   )
 })
 
-const MermaidCodeBlock = memo(function MermaidCodeBlock({ code }: { code: string }) {
+const MermaidFallback = memo(function MermaidFallback({ code }: { code: string }) {
   const [svgHtml, setSvgHtml] = useState<string>('')
   const [error, setError] = useState(false)
 
@@ -259,6 +260,18 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({ code }: { code: string
   if (error) return <pre className="wiki-code-fallback"><code>{code}</code></pre>
   if (!svgHtml) return <div className="flex h-24 items-center justify-center text-[12px] text-muted-foreground/50">加载图表...</div>
   return <div className="w-full overflow-x-auto" dangerouslySetInnerHTML={{ __html: svgHtml }} />
+})
+
+const MermaidCodeBlock = memo(function MermaidCodeBlock({ code }: { code: string }) {
+  const result = useMemo(() => renderDiagram(code), [code])
+
+  if (result && 'svg' in result) {
+    return <div className="w-full overflow-x-auto" dangerouslySetInnerHTML={{ __html: result.svg }} />
+  }
+  if (result && 'error' in result) {
+    return <pre className="wiki-code-fallback"><code>{code}</code></pre>
+  }
+  return <MermaidFallback code={code} />
 })
 
 const mdComponents = {
@@ -295,25 +308,34 @@ function DiagramBlock({ content }: { content: unknown }) {
   const heading = headingMatch?.[2]
   const fenceMatch = raw.match(/```mermaid\n([\s\S]*?)```/)
   const code = fenceMatch ? fenceMatch[1].trim() : raw.replace(/^#{1,3}\s+.+\n+/, '').trim()
-  const [svgHtml, setSvgHtml] = useState<string>('')
-  const [error, setError] = useState<string>('')
   const [fullscreen, setFullscreen] = useState(false)
 
+  const result = useMemo(() => renderDiagram(code), [code])
+  const syncSvg = result && 'svg' in result ? result.svg : null
+  const syncError = result && 'error' in result ? result.error : null
+
+  const [fallbackSvg, setFallbackSvg] = useState<string>('')
+  const [fallbackError, setFallbackError] = useState<string>('')
+  const needsFallback = result === null
+
   useEffect(() => {
-    if (!code) return
+    if (!needsFallback || !code) return
     let cancelled = false
     const id = `mmd-${Math.random().toString(36).slice(2, 9)}`
     import('mermaid').then(async ({ default: mermaid }) => {
       mermaid.initialize({ startOnLoad: false, theme: 'dark' })
       try {
         const { svg } = await mermaid.render(id, code)
-        if (!cancelled) setSvgHtml(svg)
+        if (!cancelled) setFallbackSvg(svg)
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || String(e))
+        if (!cancelled) setFallbackError(e?.message || String(e))
       }
     })
     return () => { cancelled = true }
-  }, [code])
+  }, [code, needsFallback])
+
+  const svgHtml = syncSvg || fallbackSvg
+  const error = syncError || fallbackError
 
   if (error) {
     return (
