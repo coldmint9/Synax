@@ -1,5 +1,6 @@
 import { Bot, ChevronDown, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
+import { useLocale } from '../../../hooks/useLocale'
 import type { AgentSession } from '../../../lib/api/agentRuntime'
 import { getSessionCategory } from './sessionGrouping'
 
@@ -21,6 +22,7 @@ const STATUS_DOT: Record<string, string> = {
 }
 
 export function SubSessionCard({ session, onExpand }: Props) {
+  const { t } = useLocale()
   const [expanded, setExpanded] = useState(false)
   const cat = getSessionCategory(session.profileId)
 
@@ -46,7 +48,7 @@ export function SubSessionCard({ session, onExpand }: Props) {
               onClick={(e) => { e.stopPropagation(); onExpand(session.id) }}
               className="text-[10px] text-primary/70 hover:text-primary"
             >
-              详情
+              {t('subSessionDetails')}
             </button>
           )}
           {expanded
@@ -59,9 +61,9 @@ export function SubSessionCard({ session, onExpand }: Props) {
           {session.resultSummary ? (
             <p className="whitespace-pre-wrap leading-relaxed">{session.resultSummary}</p>
           ) : session.status === 'running' ? (
-            <p className="italic">执行中...</p>
+            <p className="italic">{t('subSessionRunning')}</p>
           ) : (
-            <p className="italic">暂无结果</p>
+            <p className="italic">{t('subSessionNoResult')}</p>
           )}
         </div>
       )}

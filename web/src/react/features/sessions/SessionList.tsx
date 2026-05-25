@@ -7,6 +7,7 @@
 import { Activity, AlertTriangle, Clock, MessageSquare, Plus, RefreshCw, Trash2, Bot } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useLocale } from '../../../hooks/useLocale'
 import { useContextStore } from '../../state/contextStore'
 import { useDebugConsole } from '../debug-console/debugConsoleStore'
 import { useDebugPolling } from '../debug-console/useDebugPolling'
@@ -112,6 +113,7 @@ function flattenNodes(nodes: UnifiedSession[]): UnifiedSession[] {
 export default function SessionList() {
   useDebugPolling()
 
+  const { t } = useLocale()
   const projectId = useContextStore((s) => s.projectId) ?? ''
   const navigate = useNavigate()
 
@@ -180,8 +182,8 @@ export default function SessionList() {
     e.preventDefault()
     e.stopPropagation()
     const confirmMessage = s.kind === 'agent'
-      ? `删除 agent 会话「${s.label}」？这会中断当前运行，并删除其事件、消息、步骤和子会话。`
-      : `删除会话「${s.label}」？此操作不可撤销。`
+      ? t('sessionDeleteAgentConfirm', { label: s.label })
+      : t('sessionDeleteConfirm', { label: s.label })
     if (typeof window !== 'undefined') {
       const confirmed = window.confirm(confirmMessage)
       if (!confirmed) return
@@ -195,7 +197,7 @@ export default function SessionList() {
       }
     } catch (err) {
       if (typeof window !== 'undefined') {
-        const message = err instanceof Error ? err.message : '删除会话失败'
+        const message = err instanceof Error ? err.message : t('sessionDeleteFailed')
         window.alert(message)
       }
     } finally {
@@ -263,7 +265,7 @@ export default function SessionList() {
       <div className="flex-1 overflow-y-auto">
         {unified.length === 0 ? (
           <div className="px-3 py-6 text-center text-[11px] text-muted-foreground">
-            无活跃会话
+            {t('sessionNoActive')}
           </div>
         ) : (
           <ul className="divide-y divide-border/30">
@@ -307,7 +309,7 @@ export default function SessionList() {
                           deletingIds.has(s.id) ? 'opacity-50' : 'opacity-70 group-hover:opacity-100 focus:opacity-100'
                         }`}
                         aria-label="Delete session"
-                        title={s.kind === 'agent' ? '删除 agent 会话' : '删除'}
+                        title={s.kind === 'agent' ? t('sessionDeleteAgent') : t('sessionDelete')}
                         disabled={deletingIds.has(s.id)}
                       >
                         <Trash2 size={10} />

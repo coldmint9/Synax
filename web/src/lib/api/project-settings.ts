@@ -1,128 +1,55 @@
+import { apiRequest } from './origin'
 import type {
-  ArchiveProjectRequest,
-  DeleteProjectRequest,
-  GetProjectSettingsResponse,
-  HighRiskAuditListResponse,
-  RestoreProjectRequest,
   ProjectSettings,
-  TransferProjectRequest,
   UpdateProjectSettingsRequest,
+  HighRiskAuthEnvelope,
 } from '../contracts/project-settings'
 
-const settingsByProject = new Map<string, ProjectSettings>()
-const auditsByProject = new Map<string, HighRiskAuditListResponse['entries']>()
-
-function defaultSettings(projectId: string): ProjectSettings {
-  return {
-    projectId,
-    lifecycleState: 'active',
-    basics: {
-      projectName: projectId,
-      projectCode: projectId.toUpperCase().slice(0, 6),
-      environment: 'development',
-      description: '',
-      visibility: 'private',
-      timezone: 'UTC',
-      tags: [],
-      ownerMemberId: 'u-alice',
-    },
-    collaboration: {
-      agentsAllowDirectCommit: false,
-      reviewPolicy: {
-        minApprovals: 1,
-        requireQaApproval: false,
-        requireOwnerApproval: false,
-        blockOnFailedCi: true,
-      },
-    },
-    notifications: {
-      channel: 'none',
-      minSeverity: 'critical',
-      webhookUrl: '',
-      recipients: [],
-      quietHours: '',
-    },
-    compliance: {
-      retentionDays: 90,
-      auditLogEnabled: true,
-      dataExportAllowed: false,
-      piiMasking: true,
-    },
-    updatedAt: 'just now',
-    updatedBy: 'Alice Chen',
-  }
+export interface ProjectSettingsResponse {
+  settings: ProjectSettings
 }
 
 export const projectSettingsApi = {
-  async get(projectId: string): Promise<GetProjectSettingsResponse> {
-    if (!settingsByProject.has(projectId)) {
-      settingsByProject.set(projectId, defaultSettings(projectId))
-    }
-    return { settings: { ...settingsByProject.get(projectId)!, basics: { ...settingsByProject.get(projectId)!.basics } } }
+  async get(projectId: string): Promise<ProjectSettingsResponse> {
+    return apiRequest<ProjectSettingsResponse>(`/api/projects/${encodeURIComponent(projectId)}/settings`)
   },
 
-  async update(projectId: string, payload: UpdateProjectSettingsRequest, operator: string): Promise<GetProjectSettingsResponse> {
-    const prev = settingsByProject.get(projectId) ?? defaultSettings(projectId)
-    const next: ProjectSettings = {
-      ...prev,
-      basics: { ...payload.basics },
-      collaboration: { ...payload.collaboration, reviewPolicy: { ...payload.collaboration.reviewPolicy } },
-      notifications: { ...payload.notifications, recipients: [...payload.notifications.recipients] },
-      compliance: { ...payload.compliance },
-      updatedAt: 'just now',
-      updatedBy: operator,
-    }
-    settingsByProject.set(projectId, next)
-    return { settings: { ...next, basics: { ...next.basics } } }
+  async update(projectId: string, payload: UpdateProjectSettingsRequest): Promise<ProjectSettingsResponse> {
+    return apiRequest<ProjectSettingsResponse>(`/api/projects/${encodeURIComponent(projectId)}/settings`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
   },
 
-  async archive(
-    projectId: string,
-    _payload: ArchiveProjectRequest,
-    _operatorId: string,
-    operatorName: string,
-  ): Promise<GetProjectSettingsResponse> {
-    const s = settingsByProject.get(projectId) ?? defaultSettings(projectId)
-    s.lifecycleState = 'archived'
-    s.updatedAt = 'just now'
-    s.updatedBy = operatorName
-    settingsByProject.set(projectId, s)
-    return { settings: { ...s, basics: { ...s.basics } } }
+  async patchSection(projectId: string, section: string, data: unknown): Promise<ProjectSettingsResponse> {
+    return apiRequest<ProjectSettingsResponse>(`/api/projects/${encodeURIComponent(projectId)}/settings/${section}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
   },
 
-  async restore(
-    projectId: string,
-    _payload: RestoreProjectRequest,
-    _operatorId: string,
-    operatorName: string,
-  ): Promise<GetProjectSettingsResponse> {
-    const s = settingsByProject.get(projectId) ?? defaultSettings(projectId)
-    s.lifecycleState = 'active'
-    s.updatedAt = 'just now'
-    s.updatedBy = operatorName
-    settingsByProject.set(projectId, s)
-    return { settings: { ...s, basics: { ...s.basics } } }
+  async reset(projectId: string): Promise<void> {
+    await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/settings`, { method: 'DELETE' })
   },
 
-  async transfer(
-    projectId: string,
-    payload: TransferProjectRequest,
-    _operatorId: string,
-    operatorName: string,
-  ): Promise<GetProjectSettingsResponse> {
-    const s = settingsByProject.get(projectId) ?? defaultSettings(projectId)
-    s.basics.ownerMemberId = payload.newOwnerMemberId
-    s.updatedAt = 'just now'
-    s.updatedBy = operatorName
-    settingsByProject.set(projectId, s)
-    return { settings: { ...s, basics: { ...s.basics } } }
+  async archive(projectId: string, auth: HighRiskAuthEnvelope): Promise<ProjectSettingsResponse> {
+    return apiRequest<ProjectSettingsResponse>(`/api/projects/${encodeURIComponent(projectId)}/settings/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ auth }),
+    })
   },
 
-  async delete(projectId: string, _payload: DeleteProjectRequest, _operatorId: string, _operatorName: string) {
-    settingsByProject.delete(projectId)
+  async restore(projectId: string, auth: HighRiskAuthEnvelope): Promise<ProjectSettingsResponse> {
+    return apiRequest<ProjectSettingsResponse>(`/api/projects/${encodeURIComponent(projectId)}/settings/restore`, {
+      method: 'POST',
+      body: JSON.stringify({ auth }),
+    })
   },
 
-  async listHighRiskAudits(projectId: string): Promise<HighRiskAuditListResponse> {
-    return { entries: auditsByProject.get(projectId) ?? [] }
+  async transfer(projectId: string, newOwnerMemberId: string, auth: HighRiskAuthEnvelope): Promise<ProjectSettingsResponse> {
+    return apiRequest<ProjectSettingsResponse>(`/api/projects/${encodeURIComponent(projectId)}/settings/transfer`, {
+      method: 'POST',
+      body: JSON.stringify({ newOwnerMemberId, auth }),
+    })
   },
 }

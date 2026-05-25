@@ -115,6 +115,7 @@ export function normalizeModelList(models: string[], model: string): string[] {
 export function resolveFormat(providerId: string, connection?: ProviderConnection): ApiFormat {
   const raw = connection?.extra?.apiFormat
   if (raw === 'anthropic') return 'anthropic'
+  if (raw === 'openai-responses') return 'openai-responses'
   if (raw === 'openai') return 'openai'
   return PRESET_BY_PROVIDER_ID.get(providerId)?.format ?? (providerId === 'anthropic' ? 'anthropic' : 'openai')
 }
@@ -212,7 +213,7 @@ export function createCustomDraft(existing: ApiProviderDraft[]): ApiProviderDraf
     label: `Custom API ${count}`,
     description: '',
     format: 'openai',
-    baseUrl: defaultBaseUrl('openai'),
+    baseUrl: '',
     apiKey: '',
     apiKeyMasked: '',
     model: defaultModel('openai'),

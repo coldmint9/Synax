@@ -3,6 +3,7 @@ import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
 import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
+import { useLocale } from '../../hooks/useLocale'
 import type { ActivityPanel } from './ActivityBar'
 
 interface WorkbenchHeaderProps {
@@ -23,6 +24,7 @@ const navTabs: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
 ]
 
 function WikiToolbar() {
+  const { t } = useLocale()
   const viewMode = useWikiStore(s => s.viewMode)
   const setViewMode = useWikiStore(s => s.setViewMode)
   const patchesPending = useWikiStore(s => s.patchesSummary.pending)
@@ -37,13 +39,13 @@ function WikiToolbar() {
         className="wiki-view-tabs"
       >
         <Tabs.ListContainer>
-          <Tabs.List aria-label="Wiki 视图" className="wiki-view-tabs-list">
+          <Tabs.List aria-label="Wiki" className="wiki-view-tabs-list">
             <Tabs.Tab id="document" className="wiki-view-tab">
-              <span>文档</span>
+              <span>{t('wikiDocument')}</span>
               <Tabs.Indicator />
             </Tabs.Tab>
             <Tabs.Tab id="plan" className="wiki-view-tab">
-              <span>规划</span>
+              <span>{t('wikiPlan')}</span>
               {planGenStatus === 'generating' && (
                 <span className="relative flex h-2 w-2 ml-0.5">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
@@ -64,7 +66,7 @@ function WikiToolbar() {
           </span>
         )}
       </button>
-      <button type="button" className="wh-btn" title="搜索">
+      <button type="button" className="wh-btn" title={t('appSearch')}>
         <Search size={13} />
       </button>
     </div>
@@ -117,6 +119,7 @@ export function WorkbenchHeader({
   onCreateProject,
   onRemoveProject,
 }: WorkbenchHeaderProps) {
+  const { t } = useLocale()
   const theme = useShellStore(s => s.preferences.theme)
   const setTheme = useShellStore(s => s.setTheme)
 
@@ -156,7 +159,7 @@ export function WorkbenchHeader({
           </Dropdown.Trigger>
           <Dropdown.Popover placement="top start">
             <Dropdown.Menu
-              aria-label="切换项目"
+              aria-label={t('appSwitchProject')}
               onAction={(key) => {
                 if (key === '__create__') onCreateProject()
                 else onProjectSwitch(key as string)
@@ -177,10 +180,10 @@ export function WorkbenchHeader({
                   </div>
                 </Dropdown.Item>
               ))}
-              <Dropdown.Item key="__create__" id="__create__" textValue="导入项目">
+              <Dropdown.Item key="__create__" id="__create__" textValue={t('appImportProject')}>
                 <span className="flex items-center gap-1.5 text-xs text-primary">
                   <Plus size={12} />
-                  导入项目
+                  {t('appImportProject')}
                 </span>
               </Dropdown.Item>
             </Dropdown.Menu>
@@ -219,13 +222,13 @@ export function WorkbenchHeader({
         <div className="wh-divider" />
 
         <div className="wh-actions">
-          <button type="button" className="wh-btn" title="设置" onClick={() => onPanelToggle('settings')}>
+          <button type="button" className="wh-btn" title={t('appSettings')} onClick={() => onPanelToggle('settings')}>
             <Settings2 size={15} />
           </button>
           <button
             type="button"
             className="wh-btn"
-            title={theme === 'dark' ? '浅色模式' : '深色模式'}
+            title={theme === 'dark' ? t('appLightMode') : t('appDarkMode')}
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           >
             {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
@@ -244,15 +247,15 @@ export function WorkbenchHeader({
                 <Modal.Icon className="bg-destructive/10 text-destructive">
                   <Trash2 size={18} />
                 </Modal.Icon>
-                <Modal.Heading>移除项目</Modal.Heading>
+                <Modal.Heading>{t('appRemoveProject')}</Modal.Heading>
               </Modal.Header>
               <Modal.Body>
                 <p className="text-sm text-muted-foreground">
-                  确定要移除「{deleteTarget?.name}」吗？项目配置和元数据将被永久删除，此操作不可撤销。
+                  {t('appRemoveProjectConfirm', { name: deleteTarget?.name ?? '' })}
                 </p>
                 {deleteTarget?.id === currentProjectId && (
                   <p className="mt-2 text-xs text-warning">
-                    该项目正在运行中，移除前将自动关闭并中断所有连接。
+                    {t('appRemoveProjectRunning')}
                   </p>
                 )}
               </Modal.Body>
@@ -263,7 +266,7 @@ export function WorkbenchHeader({
                   isDisabled={deleting}
                   onPress={() => { confirmState.close(); setDeleteTarget(null) }}
                 >
-                  取消
+                  {t('appCancel')}
                 </Button>
                 <Button
                   variant="danger"
@@ -271,7 +274,7 @@ export function WorkbenchHeader({
                   isDisabled={deleting}
                   onPress={() => void handleConfirmRemove()}
                 >
-                  {deleting ? '移除中…' : '确认移除'}
+                  {deleting ? t('appRemoving') : t('appConfirmRemove')}
                 </Button>
               </Modal.Footer>
             </Modal.Dialog>

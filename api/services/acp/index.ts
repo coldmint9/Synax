@@ -88,7 +88,8 @@ export async function createAcpClient(): Promise<AcpClient> {
  *
  * Resolution order:
  *   1. ProjectConfig.providerId  →  explicit project override
- *   2. GlobalConfig.defaultProviderId  →  system default
+ *   2. GlobalConfig.enabledAcpProviderIds[0]  →  first enabled ACP provider
+ *   3. GlobalConfig.defaultProviderId  →  legacy fallback
  *
  * This is the preferred path for all callers that have a project context.
  * Callers without a project context (e.g. health checks) should use

@@ -13,7 +13,6 @@
     "@heroui/react": "^3.0.5",
     "@heroui/styles": "^3.0.5",
     "@tailwindcss/postcss": "^4.3.0",
-    "@xyflow/react": "^12.10.2",
     "clsx": "^2.1.1",
     "lucide-react": "^1.9.0",
     "mermaid": "^11.15.0",

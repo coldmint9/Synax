@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Loader2, ListChecks } from 'lucide-react'
+import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import PlanDraftView from './PlanDraftView'
 import PlanGeneratingView from './PlanGeneratingView'
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function PlanView({ projectId }: Props) {
+  const { t } = useLocale()
   const activePlan = useWikiStore(s => s.activePlan)
   const plans = useWikiStore(s => s.plans)
   const loadPlans = useWikiStore(s => s.loadPlans)
@@ -39,7 +41,7 @@ export default function PlanView({ projectId }: Props) {
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
           <ListChecks size={28} className="mx-auto mb-2 text-muted-foreground/20" />
-          <p className="text-[12px] text-muted-foreground/50">从左侧选择一个规划查看详情</p>
+          <p className="text-[12px] text-muted-foreground/50">{t('planSelectHint')}</p>
         </div>
       </div>
     )
@@ -75,6 +77,7 @@ function PlanDetailRouter({ projectId }: Props) {
 }
 
 function PlanExecutingView({ projectId, nodes }: { projectId: string; nodes: WikiPlanNode[] }) {
+  const { t } = useLocale()
   const acceptedCount = nodes.filter(n => n.status === 'accepted' || n.status === 'committed').length
 
   return (
@@ -82,8 +85,8 @@ function PlanExecutingView({ projectId, nodes }: { projectId: string; nodes: Wik
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/15 px-5">
         <div className="flex items-center gap-2.5">
           <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-          <span className="text-[13px] font-semibold text-foreground/80">执行中</span>
-          <span className="text-[11px] text-muted-foreground/50">{acceptedCount}/{nodes.length} 完成</span>
+          <span className="text-[13px] font-semibold text-foreground/80">{t('planExecutingTitle')}</span>
+          <span className="text-[11px] text-muted-foreground/50">{t('planDoneCount', { done: acceptedCount, total: nodes.length })}</span>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -98,12 +101,13 @@ function PlanExecutingView({ projectId, nodes }: { projectId: string; nodes: Wik
 }
 
 function PlanCompletedView({ projectId, nodes }: { projectId: string; nodes: WikiPlanNode[] }) {
+  const { t } = useLocale()
   return (
     <div className="flex h-full flex-col overflow-hidden flex-1">
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/15 px-5">
         <div className="flex items-center gap-2.5">
-          <span className="text-[13px] font-semibold text-foreground/80">规划完成</span>
-          <span className="text-[11px] text-muted-foreground/50">{nodes.length} 个节点</span>
+          <span className="text-[13px] font-semibold text-foreground/80">{t('planCompletedTitle')}</span>
+          <span className="text-[11px] text-muted-foreground/50">{t('planNodeCount', { count: nodes.length })}</span>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">

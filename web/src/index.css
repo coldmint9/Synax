@@ -3,19 +3,19 @@
 @variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --color-border: hsl(var(--border));
+  --color-border: var(--border);
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
   --color-primary: hsl(var(--primary));
   --color-primary-foreground: hsl(var(--primary-foreground));
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-muted: hsl(var(--muted));
+  --color-muted: var(--muted);
   --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-accent: hsl(var(--accent-hsl));
+  --color-accent-foreground: hsl(var(--accent-foreground-hsl));
   --color-card: hsl(var(--card));
   --color-card-foreground: hsl(var(--card-foreground));
   --color-destructive: hsl(var(--destructive));
@@ -24,10 +24,10 @@
   --color-agent-foreground: hsl(var(--agent-foreground));
   --color-human: hsl(var(--human));
   --color-human-foreground: hsl(var(--human-foreground));
-  --color-success: hsl(var(--success));
-  --color-success-foreground: hsl(var(--success-foreground));
-  --color-warning: hsl(var(--warning));
-  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-reality: hsl(var(--reality));
   --color-reality-foreground: hsl(var(--reality-foreground));
   --color-run: hsl(var(--run));
@@ -104,8 +104,49 @@
 
 /* ── CSS Variables ── */
 :root {
-  --background: 44 30% 97%;
-  --foreground: 160 12% 14%;
+  /* Raw HSL aliases (for opacity patterns: hsl(var(--x-hsl) / alpha)) */
+  --background-hsl: 44 30% 97%;
+  --foreground-hsl: 160 12% 14%;
+  --border-hsl: 36 18% 84%;
+  --accent-hsl: 30 44% 88%;
+  --accent-foreground-hsl: 160 12% 14%;
+  --success-hsl: 146 52% 38%;
+  --warning-hsl: 38 88% 52%;
+  --muted-hsl: 38 20% 90%;
+
+  /* Full colors (HeroUI components use var(--x) directly) */
+  --background: hsl(44 30% 97%);
+  --foreground: hsl(160 12% 14%);
+  --border: hsl(36 18% 84%);
+  --accent: hsl(158 44% 32%);
+  --accent-foreground: hsl(0 0% 100%);
+  --muted: hsl(28 10% 38%);
+  --success: hsl(146 52% 38%);
+  --success-foreground: hsl(0 0% 100%);
+  --warning: hsl(38 88% 52%);
+  --warning-foreground: hsl(0 0% 0%);
+
+  /* HeroUI-specific tokens */
+  --surface: hsl(42 28% 98%);
+  --surface-foreground: hsl(160 12% 14%);
+  --surface-secondary: hsl(40 26% 92%);
+  --overlay: hsl(42 28% 98%);
+  --overlay-foreground: hsl(160 12% 14%);
+  --default: hsl(40 26% 92%);
+  --default-foreground: hsl(160 12% 14%);
+  --danger: hsl(0 84% 60%);
+  --danger-foreground: hsl(0 0% 100%);
+  --focus: hsl(158 44% 32%);
+  --field-background: hsl(44 30% 97%);
+  --field-foreground: hsl(160 12% 14%);
+  --field-placeholder: hsl(28 10% 38%);
+  --field-border: hsl(36 18% 84%);
+  --separator: hsl(36 18% 84%);
+  --segment: hsl(42 28% 98%);
+  --segment-foreground: hsl(160 12% 14%);
+  --scrollbar: hsl(36 18% 84%);
+
+  /* Project tokens (not used by HeroUI directly) */
   --card: 42 28% 98%;
   --card-foreground: 160 12% 14%;
   --popover: 42 28% 98%;
@@ -114,13 +155,9 @@
   --primary-foreground: 0 0% 100%;
   --secondary: 40 26% 92%;
   --secondary-foreground: 160 12% 14%;
-  --muted: 38 20% 90%;
   --muted-foreground: 28 10% 38%;
-  --accent: 30 44% 88%;
-  --accent-foreground: 160 12% 14%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
-  --border: 36 18% 84%;
   --input: 36 18% 84%;
   --ring: 158 44% 32%;
   --radius: 0.5rem;
@@ -128,10 +165,6 @@
   --agent-foreground: 0 0% 100%;
   --human: 24 86% 52%;
   --human-foreground: 0 0% 0%;
-  --success: 146 52% 38%;
-  --success-foreground: 0 0% 100%;
-  --warning: 38 88% 52%;
-  --warning-foreground: 0 0% 0%;
   --wiki: 24 68% 48%;
   --wiki-foreground: 0 0% 100%;
   --arch: 14 42% 40%;
@@ -178,8 +211,49 @@
 }
 
 .dark {
-  --background: 30 12% 8%;
-  --foreground: 44 22% 92%;
+  /* Raw HSL aliases */
+  --background-hsl: 30 12% 8%;
+  --foreground-hsl: 44 22% 92%;
+  --border-hsl: 30 8% 24%;
+  --accent-hsl: 26 14% 21%;
+  --accent-foreground-hsl: 44 22% 92%;
+  --success-hsl: 146 52% 46%;
+  --warning-hsl: 38 88% 56%;
+  --muted-hsl: 30 8% 18%;
+
+  /* Full colors */
+  --background: hsl(30 12% 8%);
+  --foreground: hsl(44 22% 92%);
+  --border: hsl(30 8% 24%);
+  --accent: hsl(158 46% 54%);
+  --accent-foreground: hsl(0 0% 100%);
+  --muted: hsl(34 12% 62%);
+  --success: hsl(146 52% 46%);
+  --success-foreground: hsl(0 0% 100%);
+  --warning: hsl(38 88% 56%);
+  --warning-foreground: hsl(0 0% 0%);
+
+  /* HeroUI-specific tokens */
+  --surface: hsl(30 10% 11%);
+  --surface-foreground: hsl(44 22% 92%);
+  --surface-secondary: hsl(30 8% 18%);
+  --overlay: hsl(30 10% 11%);
+  --overlay-foreground: hsl(44 22% 92%);
+  --default: hsl(30 8% 18%);
+  --default-foreground: hsl(44 22% 92%);
+  --danger: hsl(0 70% 42%);
+  --danger-foreground: hsl(0 0% 98%);
+  --focus: hsl(158 46% 54%);
+  --field-background: hsl(30 10% 11%);
+  --field-foreground: hsl(44 22% 92%);
+  --field-placeholder: hsl(34 12% 62%);
+  --field-border: hsl(30 8% 24%);
+  --separator: hsl(30 8% 20%);
+  --segment: hsl(30 8% 18%);
+  --segment-foreground: hsl(44 22% 92%);
+  --scrollbar: hsl(30 8% 24%);
+
+  /* Project tokens */
   --card: 30 10% 11%;
   --card-foreground: 44 22% 92%;
   --popover: 30 10% 11%;
@@ -188,19 +262,13 @@
   --primary-foreground: 0 0% 100%;
   --secondary: 30 8% 18%;
   --secondary-foreground: 44 22% 92%;
-  --muted: 30 8% 18%;
   --muted-foreground: 34 12% 62%;
-  --accent: 26 14% 21%;
-  --accent-foreground: 44 22% 92%;
   --destructive: 0 70% 42%;
   --destructive-foreground: 0 0% 98%;
-  --border: 30 8% 24%;
   --input: 30 8% 24%;
   --ring: 158 46% 54%;
   --agent: 162 64% 44%;
   --human: 24 82% 56%;
-  --success: 146 52% 46%;
-  --warning: 38 88% 56%;
   --wiki: 24 72% 58%;
   --arch: 14 52% 54%;
   --req: 42 88% 54%;
@@ -245,27 +313,27 @@
   .font-mono { font-family: 'JetBrains Mono', 'SF Mono', monospace; }
 
   .canvas-dot-bg {
-    background-color: hsl(var(--background));
-    background-image: radial-gradient(circle, hsl(var(--border) / 0.15) 1px, transparent 1px);
+    background-color: var(--background);
+    background-image: radial-gradient(circle, hsl(var(--border-hsl) / 0.15) 1px, transparent 1px);
     background-size: 24px 24px;
   }
 
-  .node-card-shadow { box-shadow: 0 1px 3px hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(var(--border) / 0.5); }
-  .node-card-shadow-selected { box-shadow: 0 1px 3px hsl(0 0% 0% / 0.3), 0 0 0 1px hsl(var(--border) / 0.8); }
+  .node-card-shadow { box-shadow: 0 1px 3px hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(var(--border-hsl) / 0.5); }
+  .node-card-shadow-selected { box-shadow: 0 1px 3px hsl(0 0% 0% / 0.3), 0 0 0 1px hsl(var(--border-hsl) / 0.8); }
 
   .canvas-grid-light {
-    background-color: hsl(var(--background));
+    background-color: var(--background);
     background-image:
-      linear-gradient(hsl(var(--border) / 0.35) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--border) / 0.35) 1px, transparent 1px);
+      linear-gradient(hsl(var(--border-hsl) / 0.35) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border-hsl) / 0.35) 1px, transparent 1px);
     background-size: 24px 24px;
     background-position: 0 0;
   }
 
   .dark .canvas-grid-light {
     background-image:
-      linear-gradient(hsl(var(--border) / 0.45) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--border) / 0.45) 1px, transparent 1px);
+      linear-gradient(hsl(var(--border-hsl) / 0.45) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border-hsl) / 0.45) 1px, transparent 1px);
   }
 
   .liquid-glass {
@@ -308,7 +376,7 @@
     align-items: center;
     padding: 0 16px;
     -webkit-app-region: drag;
-    background: hsl(var(--background) / 0.85);
+    background: hsl(var(--background-hsl) / 0.85);
     backdrop-filter: blur(12px) saturate(1.2);
     -webkit-backdrop-filter: blur(12px) saturate(1.2);
   }
@@ -320,12 +388,12 @@
     margin-left: 64px;
     font-size: 12px;
     font-weight: 500;
-    color: hsl(var(--foreground));
+    color: var(--foreground);
     pointer-events: none;
   }
 
   .titlebar-project { font-weight: 600; }
-  .titlebar-dot { width: 4px; height: 4px; border-radius: 50%; background: hsl(var(--border)); }
+  .titlebar-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--border); }
 
   .titlebar-branch {
     display: inline-flex;
@@ -366,7 +434,7 @@
 
   .titlebar-action-btn:hover {
     background: hsl(var(--secondary));
-    color: hsl(var(--foreground));
+    color: var(--foreground);
   }
 
   .activity-bar {
@@ -385,7 +453,7 @@
     background: hsl(var(--card) / 0.88);
     backdrop-filter: blur(16px) saturate(1.4);
     -webkit-backdrop-filter: blur(16px) saturate(1.4);
-    border: 1px solid hsl(var(--border) / 0.6);
+    border: 1px solid hsl(var(--border-hsl) / 0.6);
     border-radius: 999px;
     box-shadow: 0 2px 12px hsl(0 0% 0% / 0.08), 0 4px 24px hsl(0 0% 0% / 0.06);
   }
@@ -410,7 +478,7 @@
 
   .ab-item:hover {
     background: hsl(var(--secondary));
-    color: hsl(var(--foreground));
+    color: var(--foreground);
   }
 
   .ab-item-active {
@@ -427,7 +495,7 @@
 
   .workbench-island {
     flex: 1;
-    background: hsl(var(--background));
+    background: var(--background);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -436,7 +504,7 @@
 
   .island-header {
     padding: 10px 18px;
-    border-bottom: 1px solid hsl(var(--border) / 0.5);
+    border-bottom: 1px solid hsl(var(--border-hsl) / 0.5);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -445,7 +513,7 @@
   }
 
   .island-header-name { font-weight: 600; }
-  .island-header-dot { width: 4px; height: 4px; border-radius: 50%; background: hsl(var(--border)); }
+  .island-header-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--border); }
 
   .island-header-branch {
     display: inline-flex;
@@ -481,15 +549,28 @@
     gap: 4px;
     padding: 4px 8px;
     border-radius: 999px;
-    border: 1px solid hsl(var(--border) / 0.5);
-    background: hsl(var(--card) / 0.78);
-    backdrop-filter: blur(20px) saturate(1.5);
-    -webkit-backdrop-filter: blur(20px) saturate(1.5);
-    box-shadow: 0 2px 16px hsl(0 0% 0% / 0.08), 0 1px 0 hsl(0 0% 100% / 0.22) inset;
+    -webkit-backdrop-filter: blur(28px) saturate(1.8) brightness(1.06);
+    border: 1px solid hsl(0deg 0% 100% / 10%);
+    background: hsl(0deg 0% 100% / 5%);
+    backdrop-filter: blur(28px) saturate(2) brightness(1);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.7) inset,
+      0 -1px 0 hsl(0 0% 0% / 0.06) inset,
+      0 4px 24px hsl(0 0% 0% / 0.10),
+      0 1px 4px hsl(0 0% 0% / 0.06),
+      0 0 0 0.5px hsl(0 0% 0% / 0.06);
   }
   .dark .wh-pill {
-    background: hsl(var(--card) / 0.72);
-    box-shadow: 0 2px 16px hsl(0 0% 0% / 0.28), 0 1px 0 hsl(0 0% 100% / 0.06) inset;
+    border-color: hsl(0 0% 100% / 0.12);
+    background: hsl(var(--card) / 0.52);
+    backdrop-filter: blur(28px) saturate(1.6) brightness(1.02);
+    -webkit-backdrop-filter: blur(28px) saturate(1.6) brightness(1.02);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.10) inset,
+      0 -1px 0 hsl(0 0% 0% / 0.25) inset,
+      0 4px 32px hsl(0 0% 0% / 0.40),
+      0 1px 6px hsl(0 0% 0% / 0.20),
+      0 0 0 0.5px hsl(0 0% 0% / 0.30);
   }
 
   /* Wiki toolbar cell-division animation — grid slot for layout-space animation */
@@ -564,7 +645,7 @@
     border-radius: 999px;
     border: none;
     background: transparent;
-    color: hsl(var(--foreground));
+    color: var(--foreground);
     cursor: pointer;
     transition: background 120ms;
     height: 28px;
@@ -585,12 +666,12 @@
     transition: background 120ms, color 120ms;
     flex-shrink: 0;
   }
-  .wh-btn:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+  .wh-btn:hover { background: hsl(var(--secondary)); color: var(--foreground); }
 
   .wh-divider {
     width: 1px;
     height: 16px;
-    background: hsl(var(--border) / 0.6);
+    background: hsl(var(--border-hsl) / 0.6);
     flex-shrink: 0;
     margin: 0 2px;
   }
@@ -618,21 +699,19 @@
   /* ── Wiki view mode tabs (文档/规划) ── */
   .wiki-view-tabs { display: flex; align-items: center; }
   .wiki-view-tabs .tabs__list-container { background: transparent !important; border: none !important; padding: 0 !important; }
-  .wiki-view-tabs .tabs__list { background: hsl(var(--muted) / 0.4) !important; border: none !important; gap: 0 !important; padding: 2px !important; border-radius: 999px !important; }
+  .wiki-view-tabs .tabs__list { background: transparent !important; border: none !important; gap: 0 !important; padding: 0 !important; }
   .wiki-view-tabs .tabs__tab {
-    font-size: 11px !important;
-    height: 24px !important;
-    padding: 0 12px !important;
-    gap: 4px !important;
+    font-size: 12px !important;
+    height: 28px !important;
+    padding: 0 10px !important;
+    gap: 5px !important;
     border-radius: 999px !important;
-    color: hsl(var(--muted-foreground) / 0.6) !important;
+    color: hsl(var(--muted-foreground)) !important;
     display: flex;
     align-items: center;
-    font-weight: 500 !important;
-    transition: color 0.15s !important;
   }
   .wiki-view-tabs .tabs__tab[aria-selected="true"] { color: hsl(var(--primary)) !important; }
-  .wiki-view-tabs .tabs__indicator { border-radius: 999px !important; background: hsl(var(--background)) !important; box-shadow: 0 1px 3px hsl(0 0% 0% / 0.08) !important; }
+  .wiki-view-tabs .tabs__indicator { border-radius: 999px !important; background: hsl(var(--primary) / 0.1) !important; }
   .wiki-view-tabs .tabs__separator { display: none !important; }
 
   /* ── Wiki Workspace panels ── */
@@ -655,7 +734,7 @@
 
   .wiki-separator {
     width: 1px;
-    background: hsl(var(--border) / 0.4);
+    background: hsl(var(--border-hsl) / 0.4);
     align-self: stretch;
     margin: 8px 0;
   }
@@ -676,7 +755,7 @@
     flex: 1;
     transition: color 120ms;
   }
-  .wiki-tabs .tabs__tab[aria-selected="true"] { color: hsl(var(--foreground)) !important; }
+  .wiki-tabs .tabs__tab[aria-selected="true"] { color: var(--foreground) !important; }
   .wiki-tabs .tabs__indicator { border-radius: 999px !important; background: hsl(var(--secondary)) !important; }
   .wiki-tabs .tabs__separator { display: none !important; }
 
@@ -688,7 +767,7 @@
     background: hsl(var(--card) / 0.82);
     backdrop-filter: blur(20px) saturate(1.5);
     -webkit-backdrop-filter: blur(20px) saturate(1.5);
-    border: 1px solid hsl(var(--border) / 0.3);
+    border: 1px solid hsl(var(--border-hsl) / 0.3);
     box-shadow:
       0 8px 32px hsl(0 0% 0% / 0.15),
       inset 0 1px 0 hsl(0 0% 100% / 0.1);
@@ -712,14 +791,14 @@
   }
 
   .wiki-page-bg {
-    background: radial-gradient(circle at top left, hsl(var(--wiki-warm) / 0.55), transparent 34%), radial-gradient(circle at top right, hsl(var(--wiki-accent) / 0.52), transparent 28%), linear-gradient(180deg, hsl(var(--wiki-surface)) 0%, hsl(var(--background)) 45%, hsl(var(--background)) 100%);
+    background: radial-gradient(circle at top left, hsl(var(--wiki-warm) / 0.55), transparent 34%), radial-gradient(circle at top right, hsl(var(--wiki-accent) / 0.52), transparent 28%), linear-gradient(180deg, hsl(var(--wiki-surface)) 0%, var(--background) 45%, var(--background) 100%);
   }
   .dark .wiki-page-bg {
-    background: radial-gradient(circle at top left, hsl(var(--wiki-warm) / 0.34), transparent 34%), radial-gradient(circle at top right, hsl(var(--wiki-accent) / 0.42), transparent 28%), linear-gradient(180deg, hsl(var(--wiki-surface)) 0%, hsl(var(--background)) 42%, hsl(var(--background)) 100%);
+    background: radial-gradient(circle at top left, hsl(var(--wiki-warm) / 0.34), transparent 34%), radial-gradient(circle at top right, hsl(var(--wiki-accent) / 0.42), transparent 28%), linear-gradient(180deg, hsl(var(--wiki-surface)) 0%, var(--background) 42%, var(--background) 100%);
   }
 
   .wiki-workbench-card {
-    border: 1px solid hsl(var(--border) / 0.72);
+    border: 1px solid hsl(var(--border-hsl) / 0.72);
     background: linear-gradient(180deg, hsl(var(--wiki-panel) / 0.94) 0%, hsl(var(--card) / 0.86) 100%);
     box-shadow: 0 18px 42px hsl(var(--wiki-shadow) / 0.08), 0 1px 0 hsl(0 0% 100% / 0.22) inset;
     backdrop-filter: blur(14px);
@@ -731,18 +810,18 @@
   }
 
   .wiki-reading-surface {
-    border: 1px solid hsl(var(--border) / 0.72);
-    background: linear-gradient(180deg, hsl(var(--wiki-panel) / 0.98) 0%, hsl(var(--background) / 0.96) 100%);
+    border: 1px solid hsl(var(--border-hsl) / 0.72);
+    background: linear-gradient(180deg, hsl(var(--wiki-panel) / 0.98) 0%, hsl(var(--background-hsl) / 0.96) 100%);
     box-shadow: 0 24px 60px hsl(var(--wiki-shadow) / 0.08), 0 1px 0 hsl(0 0% 100% / 0.22) inset;
   }
   .dark .wiki-reading-surface {
-    background: linear-gradient(180deg, hsl(var(--wiki-panel) / 0.98) 0%, hsl(var(--background) / 0.94) 100%);
+    background: linear-gradient(180deg, hsl(var(--wiki-panel) / 0.98) 0%, hsl(var(--background-hsl) / 0.94) 100%);
     box-shadow: 0 24px 60px hsl(0 0% 0% / 0.34), 0 1px 0 hsl(0 0% 100% / 0.04) inset;
   }
 
   .wiki-reading-copy { font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif; }
   .wiki-kicker { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
-  .wiki-soft-rule { border-color: hsl(var(--border) / 0.55); }
+  .wiki-soft-rule { border-color: hsl(var(--border-hsl) / 0.55); }
   .wiki-fade-in { animation: float-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
   .toolbar-block { @apply rounded-xl border border-transparent bg-transparent p-0; }
@@ -755,27 +834,27 @@
     @apply border border-border/60 bg-card/80 shadow;
     backdrop-filter: blur(6px);
     background: hsl(var(--card) / 0.82) !important;
-    border-color: hsl(var(--border) / 0.6) !important;
-    color: hsl(var(--foreground)) !important;
+    border-color: hsl(var(--border-hsl) / 0.6) !important;
+    color: var(--foreground) !important;
   }
   .react-flow__controls-button {
     @apply border-border/50 bg-card text-foreground hover:bg-secondary;
     background: transparent !important;
-    border-color: hsl(var(--border) / 0.5) !important;
-    color: hsl(var(--foreground)) !important;
+    border-color: hsl(var(--border-hsl) / 0.5) !important;
+    color: var(--foreground) !important;
   }
   .react-flow__controls-button:hover { background: hsl(var(--secondary) / 0.9) !important; }
   .react-flow__controls-button:active { background: hsl(var(--secondary)) !important; }
-  .react-flow__controls-button svg { stroke: currentColor !important; color: hsl(var(--foreground)) !important; }
+  .react-flow__controls-button svg { stroke: currentColor !important; color: var(--foreground) !important; }
   .react-flow__controls-button svg * { stroke: currentColor !important; }
   .react-flow__controls-button path { stroke: currentColor !important; fill: none !important; }
   .react-flow.light .react-flow__controls,
   .react-flow.dark .react-flow__controls,
   .react-flow.light .react-flow__controls-button,
-  .react-flow.dark .react-flow__controls-button { color: hsl(var(--foreground)) !important; }
+  .react-flow.dark .react-flow__controls-button { color: var(--foreground) !important; }
   .react-flow__minimap {
     background: hsl(var(--card) / 0.82) !important;
-    border-color: hsl(var(--border) / 0.6) !important;
+    border-color: hsl(var(--border-hsl) / 0.6) !important;
     @apply border border-border/60 bg-card/70 shadow;
   }
   .react-flow__edge-path { transition: stroke 120ms ease, stroke-width 120ms ease, opacity 120ms ease; }
@@ -793,7 +872,7 @@
     gap: 0.25rem;
     padding: 1.25rem;
     border-radius: 0.75rem;
-    border: 1px solid hsl(var(--border));
+    border: 1px solid var(--border);
     background: hsl(var(--card));
     cursor: pointer;
     transition: all 0.24s cubic-bezier(0.4, 0, 0.2, 1);
@@ -830,7 +909,7 @@
     gap: 0.75rem;
     min-height: 100px;
     border-radius: 0.75rem;
-    border: 1.5px dashed hsl(var(--border));
+    border: 1.5px dashed var(--border);
     background: transparent;
     color: hsl(var(--muted-foreground));
     cursor: pointer;
@@ -861,17 +940,17 @@
 
   .import-step-line { width: 2px; flex: 1; min-height: 1.5rem; transition: background 0.3s ease; }
   .import-step-line[data-state="done"] { background: hsl(var(--import-step-done)); }
-  .import-step-line[data-state="pending"] { background: hsl(var(--border)); }
+  .import-step-line[data-state="pending"] { background: var(--border); }
 
   .import-input {
     height: 2.5rem;
     width: 100%;
     border-radius: 0.5rem;
-    border: 1px solid hsl(var(--border));
-    background: hsl(var(--background));
+    border: 1px solid var(--border);
+    background: var(--background);
     padding: 0 0.75rem;
     font-size: 0.875rem;
-    color: hsl(var(--foreground));
+    color: var(--foreground);
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
   }
   .import-input:focus { outline: none; border-color: hsl(var(--primary) / 0.5); box-shadow: 0 0 0 2px hsl(var(--primary) / 0.12); }
@@ -881,11 +960,11 @@
     height: 2.5rem;
     width: 100%;
     border-radius: 0.5rem;
-    border: 1px solid hsl(var(--border));
-    background: hsl(var(--background));
+    border: 1px solid var(--border);
+    background: var(--background);
     padding: 0 0.75rem;
     font-size: 0.875rem;
-    color: hsl(var(--foreground));
+    color: var(--foreground);
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
     appearance: none;
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3e%3cpath d='m6 9 6 6 6-6'/%3e%3c/svg%3e");
@@ -902,7 +981,7 @@
     gap: 0.5rem;
     padding: 1.25rem;
     border-radius: 0.75rem;
-    border: 1px solid hsl(var(--border) / 0.6);
+    border: 1px solid hsl(var(--border-hsl) / 0.6);
     background: hsl(var(--card));
     cursor: pointer;
     transition: all 0.24s cubic-bezier(0.4, 0, 0.2, 1);
@@ -915,14 +994,14 @@
   }
 
   .project-status-dot { position: relative; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .project-status-dot[data-status="healthy"] { background: hsl(var(--success)); box-shadow: 0 0 6px hsl(var(--success) / 0.4); }
-  .project-status-dot[data-status="at_risk"] { background: hsl(var(--warning)); box-shadow: 0 0 6px hsl(var(--warning) / 0.4); animation: status-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; }
+  .project-status-dot[data-status="healthy"] { background: var(--success); box-shadow: 0 0 6px hsl(var(--success-hsl) / 0.4); }
+  .project-status-dot[data-status="at_risk"] { background: var(--warning); box-shadow: 0 0 6px hsl(var(--warning-hsl) / 0.4); animation: status-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; }
   .project-status-dot[data-status="blocked"] { background: hsl(var(--destructive)); box-shadow: 0 0 6px hsl(var(--destructive) / 0.4); }
 
   .health-bar { height: 3px; border-radius: 999px; background: hsl(var(--secondary)); overflow: hidden; }
   .health-bar-fill { height: 100%; border-radius: 999px; transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
-  .health-bar-fill[data-level="high"] { background: hsl(var(--success)); }
-  .health-bar-fill[data-level="medium"] { background: hsl(var(--warning)); }
+  .health-bar-fill[data-level="high"] { background: var(--success); }
+  .health-bar-fill[data-level="medium"] { background: var(--warning); }
   .health-bar-fill[data-level="low"] { background: hsl(var(--destructive)); }
 
   .env-badge {
@@ -949,10 +1028,10 @@
     font-weight: 500;
     line-height: 1.4;
   }
-  .import-state-badge[data-state="syncing"] { background: hsl(var(--warning) / 0.12); color: hsl(var(--warning)); border: 1px solid hsl(var(--warning) / 0.3); }
-  .import-state-badge[data-state="ready"] { background: hsl(var(--success) / 0.12); color: hsl(var(--success)); border: 1px solid hsl(var(--success) / 0.3); }
+  .import-state-badge[data-state="syncing"] { background: hsl(var(--warning-hsl) / 0.12); color: var(--warning); border: 1px solid hsl(var(--warning-hsl) / 0.3); }
+  .import-state-badge[data-state="ready"] { background: hsl(var(--success-hsl) / 0.12); color: var(--success); border: 1px solid hsl(var(--success-hsl) / 0.3); }
   .import-state-badge[data-state="failed"] { background: hsl(var(--destructive) / 0.12); color: hsl(var(--destructive)); border: 1px solid hsl(var(--destructive) / 0.3); }
-  .import-state-badge[data-state="idle"] { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); border: 1px solid hsl(var(--border)); }
+  .import-state-badge[data-state="idle"] { background: hsl(var(--muted-hsl)); color: hsl(var(--muted-foreground)); border: 1px solid var(--border); }
 
   .search-input-wrapper { position: relative; display: flex; align-items: center; }
   .search-input {
@@ -960,11 +1039,11 @@
     width: 100%;
     max-width: 18rem;
     border-radius: 0.625rem;
-    border: 1px solid hsl(var(--border) / 0.7);
+    border: 1px solid hsl(var(--border-hsl) / 0.7);
     background: hsl(var(--card));
     padding: 0 0.75rem 0 2.25rem;
     font-size: 0.8125rem;
-    color: hsl(var(--foreground));
+    color: var(--foreground);
     transition: border-color 0.2s ease, box-shadow 0.2s ease, width 0.2s ease;
   }
   .search-input:focus { outline: none; border-color: hsl(var(--primary) / 0.5); box-shadow: 0 0 0 2px hsl(var(--primary) / 0.1); max-width: 22rem; }
@@ -976,7 +1055,7 @@
     gap: 0.375rem;
     height: 2rem;
     border-radius: 0.5rem;
-    border: 1px solid hsl(var(--border) / 0.6);
+    border: 1px solid hsl(var(--border-hsl) / 0.6);
     background: hsl(var(--card));
     padding: 0 0.625rem;
     font-size: 0.75rem;
@@ -985,18 +1064,18 @@
     transition: all 0.2s ease;
     white-space: nowrap;
   }
-  .filter-chip:hover { border-color: hsl(var(--primary) / 0.3); color: hsl(var(--foreground)); background: hsl(var(--accent) / 0.5); }
+  .filter-chip:hover { border-color: hsl(var(--primary) / 0.3); color: var(--foreground); background: hsl(var(--accent-hsl) / 0.5); }
   .filter-chip[data-active="true"] { border-color: hsl(var(--primary) / 0.5); background: hsl(var(--primary) / 0.1); color: hsl(var(--primary)); }
   .filter-chip[data-active="true"]:hover { background: hsl(var(--primary) / 0.15); }
 
   .sort-select {
     height: 2rem;
     border-radius: 0.5rem;
-    border: 1px solid hsl(var(--border) / 0.6);
+    border: 1px solid hsl(var(--border-hsl) / 0.6);
     background: hsl(var(--card));
     padding: 0 1.75rem 0 0.625rem;
     font-size: 0.75rem;
-    color: hsl(var(--foreground));
+    color: var(--foreground);
     cursor: pointer;
     appearance: none;
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3e%3cpath d='m6 9 6 6 6-6'/%3e%3c/svg%3e");
@@ -1025,13 +1104,13 @@
     max-width: 26rem;
     margin: 1rem;
     border-radius: 1rem;
-    border: 1px solid hsl(var(--border) / 0.6);
+    border: 1px solid hsl(var(--border-hsl) / 0.6);
     background: hsl(var(--card));
     padding: 1.5rem;
-    box-shadow: 0 20px 60px hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(var(--border) / 0.3);
+    box-shadow: 0 20px 60px hsl(0 0% 0% / 0.2), 0 0 0 1px hsl(var(--border-hsl) / 0.3);
     animation: float-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
-  .dialog-content h3 { font-size: 1rem; font-weight: 600; color: hsl(var(--foreground)); margin-bottom: 0.5rem; }
+  .dialog-content h3 { font-size: 1rem; font-weight: 600; color: var(--foreground); margin-bottom: 0.5rem; }
   .dialog-content p { font-size: 0.8125rem; color: hsl(var(--muted-foreground)); line-height: 1.5; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem; }
 
@@ -1048,15 +1127,15 @@
     gap: 0.75rem;
     padding: 0.875rem 1rem;
     border-radius: 0.75rem;
-    border: 1px solid hsl(var(--border) / 0.6);
+    border: 1px solid hsl(var(--border-hsl) / 0.6);
     background: hsl(var(--card));
     box-shadow: 0 12px 40px hsl(0 0% 0% / 0.15);
     animation: float-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     max-width: 24rem;
   }
-  .toast[data-type="success"] { border-color: hsl(var(--success) / 0.3); background: hsl(var(--success) / 0.08); }
+  .toast[data-type="success"] { border-color: hsl(var(--success-hsl) / 0.3); background: hsl(var(--success-hsl) / 0.08); }
   .toast[data-type="error"] { border-color: hsl(var(--destructive) / 0.3); background: hsl(var(--destructive) / 0.08); }
-  .toast[data-type="warning"] { border-color: hsl(var(--warning) / 0.3); background: hsl(var(--warning) / 0.08); }
+  .toast[data-type="warning"] { border-color: hsl(var(--warning-hsl) / 0.3); background: hsl(var(--warning-hsl) / 0.08); }
 
   .provider-card {
     display: flex;
@@ -1064,7 +1143,7 @@
     gap: 0.75rem;
     padding: 1rem;
     border-radius: 0.75rem;
-    border: 1px solid hsl(var(--border) / 0.6);
+    border: 1px solid hsl(var(--border-hsl) / 0.6);
     background: hsl(var(--card));
     cursor: pointer;
     transition: all 0.2s ease;
@@ -1078,19 +1157,19 @@
     gap: 0.75rem;
     padding: 0.875rem 1rem;
     border-radius: 0.75rem;
-    background: hsl(var(--warning) / 0.08);
-    border: 1px solid hsl(var(--warning) / 0.25);
+    background: hsl(var(--warning-hsl) / 0.08);
+    border: 1px solid hsl(var(--warning-hsl) / 0.25);
   }
   .duplicate-warning-icon {
     flex-shrink: 0;
     width: 2rem;
     height: 2rem;
     border-radius: 0.5rem;
-    background: hsl(var(--warning) / 0.15);
+    background: hsl(var(--warning-hsl) / 0.15);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: hsl(var(--warning));
+    color: var(--warning);
   }
 
   .import-progress-bar { height: 4px; border-radius: 999px; background: hsl(var(--secondary)); overflow: hidden; }
@@ -1099,8 +1178,8 @@
 /* END_UTILITIES */
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: hsl(var(--background)); }
-::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+::-webkit-scrollbar-track { background: var(--background); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
 
 [contenteditable]:focus { outline: none; }
@@ -1149,7 +1228,7 @@
   gap: 0.5rem;
   height: 36px;
   padding: 0 0.75rem;
-  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  border-bottom: 1px solid hsl(var(--border-hsl) / 0.6);
   background: hsl(var(--card) / 0.85);
   backdrop-filter: blur(12px) saturate(1.2);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
@@ -1157,7 +1236,7 @@
   flex-shrink: 0;
 }
 
-.debug-panel { border-bottom: 1px solid hsl(var(--border) / 0.5); z-index: 29; flex-shrink: 0; }
+.debug-panel { border-bottom: 1px solid hsl(var(--border-hsl) / 0.5); z-index: 29; flex-shrink: 0; }
 
 .debug-pill {
   display: inline-flex;
@@ -1166,7 +1245,7 @@
   max-width: 12rem;
   padding: 0.2rem 0.5rem;
   border-radius: 9999px;
-  border: 1px solid hsl(var(--border) / 0.5);
+  border: 1px solid hsl(var(--border-hsl) / 0.5);
   background: hsl(var(--card) / 0.6);
   font-size: 10px;
   color: hsl(var(--muted-foreground));
@@ -1174,58 +1253,15 @@
   transition: background 120ms ease, border-color 120ms ease;
   white-space: nowrap;
 }
-.debug-pill:hover { background: hsl(var(--secondary) / 0.7); border-color: hsl(var(--border)); }
-.debug-pill-active { background: hsl(var(--primary) / 0.1); border-color: hsl(var(--primary) / 0.4); color: hsl(var(--foreground)); }
+.debug-pill:hover { background: hsl(var(--secondary) / 0.7); border-color: var(--border); }
+.debug-pill-active { background: hsl(var(--primary) / 0.1); border-color: hsl(var(--primary) / 0.4); color: var(--foreground); }
 
-.debug-step-border { border-left: 2px solid hsl(var(--border) / 0.5); padding-left: 0.75rem; margin-left: 0.25rem; }
+.debug-step-border { border-left: 2px solid hsl(var(--border-hsl) / 0.5); padding-left: 0.75rem; margin-left: 0.25rem; }
 .debug-step-border[data-status="running"] { border-color: hsl(var(--run)); }
-.debug-step-border[data-status="completed"] { border-color: hsl(var(--success)); }
+.debug-step-border[data-status="completed"] { border-color: var(--success); }
 .debug-step-border[data-status="failed"] { border-color: hsl(var(--destructive)); }
-.debug-step-border[data-status="waiting_permission"] { border-color: hsl(var(--warning)); }
-.debug-step-border[data-status="blocked"] { border-color: hsl(var(--warning)); }
+.debug-step-border[data-status="waiting_permission"] { border-color: var(--warning); }
+.debug-step-border[data-status="blocked"] { border-color: var(--warning); }
 
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
-
-.settings-input {
-  width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  border-radius: 6px;
-  border: 1px solid hsl(var(--border) / 0.6);
-  background: hsl(var(--background));
-  font-size: 12px;
-  color: hsl(var(--foreground));
-  transition: border-color 0.15s;
-}
-.settings-input:focus { outline: none; border-color: hsl(var(--primary)); }
-.settings-input.border-destructive { border-color: hsl(var(--destructive)); }
-
-.settings-select {
-  height: 30px;
-  padding: 0 24px 0 8px;
-  border-radius: 6px;
-  border: 1px solid hsl(var(--border) / 0.6);
-  background: hsl(var(--background));
-  font-size: 12px;
-  color: hsl(var(--foreground));
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 6px center;
-}
-.settings-select:focus { outline: none; border-color: hsl(var(--primary)); }
-
-.settings-number {
-  width: 80px;
-  height: 30px;
-  padding: 0 8px;
-  border-radius: 6px;
-  border: 1px solid hsl(var(--border) / 0.6);
-  background: hsl(var(--background));
-  font-size: 12px;
-  color: hsl(var(--foreground));
-  text-align: right;
-}
-.settings-number:focus { outline: none; border-color: hsl(var(--primary)); }
-.settings-number.border-destructive { border-color: hsl(var(--destructive)); }

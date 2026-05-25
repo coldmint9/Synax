@@ -76,6 +76,7 @@ function createGlobalConfig(overrides?: Partial<GlobalConfig>): GlobalConfig {
     ],
     defaultProviderId: 'opencode-acp',
     defaultApiProviderId: 'openai',
+    enabledAcpProviderIds: ['opencode-acp'],
     providerConnections: {
       openai: {
         providerId: 'openai',
@@ -107,12 +108,10 @@ function createGlobalConfig(overrides?: Partial<GlobalConfig>): GlobalConfig {
     },
     limits: {
       maxAgentsPerProject: 10,
-      maxSessionsPerUser: 5,
       agentTimeoutMs: 300_000,
     },
     features: {
       allowProjectConnectionOverride: true,
-      allowMultiProvider: false,
     },
     updatedAt: '2026-05-13T00:00:00.000Z',
     updatedBy: 'tester',

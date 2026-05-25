@@ -63,11 +63,11 @@ const globalConfigPatchSchema = z
     providers: z.array(providerDefSchema).optional(),
     defaultProviderId: z.enum(ACP_PROVIDER_IDS).optional(),
     defaultApiProviderId: z.string().min(1).optional(),
+    enabledAcpProviderIds: z.array(z.string().min(1)).optional(),
     providerConnections: z.record(z.string(), providerConnectionSchema).optional(),
     limits: z
       .object({
         maxAgentsPerProject: z.number().int().positive(),
-        maxSessionsPerUser: z.number().int().positive(),
         agentTimeoutMs: z.number().int().positive(),
       })
       .partial()
@@ -75,7 +75,6 @@ const globalConfigPatchSchema = z
     features: z
       .object({
         allowProjectConnectionOverride: z.boolean(),
-        allowMultiProvider: z.boolean(),
       })
       .partial()
       .optional(),
@@ -84,7 +83,7 @@ const globalConfigPatchSchema = z
 
 const aiApiValidateSchema = z.object({
   providerId: z.string().min(1).optional(),
-  format: z.enum(['openai', 'anthropic']),
+  format: z.enum(['openai', 'openai-responses', 'anthropic']),
   baseUrl: z.string().url(),
   apiKey: z.string().min(1).optional(),
   model: z.string().min(1),
@@ -92,7 +91,7 @@ const aiApiValidateSchema = z.object({
 
 const aiApiModelsDiscoverSchema = z.object({
   providerId: z.string().min(1).optional(),
-  format: z.enum(['openai', 'anthropic']),
+  format: z.enum(['openai', 'openai-responses', 'anthropic']),
   baseUrl: z.string().url(),
   apiKey: z.string().min(1).optional(),
 })
@@ -153,6 +152,7 @@ configRoutes.get('/acp/discovery', async (c) => {
   const items = await discoverAcpProviders(providers, global.defaultProviderId)
   return c.json({
     selectedProviderId: global.defaultProviderId,
+    enabledIds: global.enabledAcpProviderIds ?? [global.defaultProviderId],
     supported: items,
   })
 })
@@ -422,8 +422,8 @@ function validateProviderConnection(
   if (providerId === 'anthropic' && format && format !== 'anthropic') {
     throw new Error('anthropic provider 的 API 格式必须是 anthropic')
   }
-  if (isCustomApiProviderId(providerId) && format !== 'openai' && format !== 'anthropic') {
-    throw new Error(`${providerId} 的 API 格式必须是 openai 或 anthropic`)
+  if (isCustomApiProviderId(providerId) && format !== 'openai' && format !== 'openai-responses' && format !== 'anthropic') {
+    throw new Error(`${providerId} 的 API 格式必须是 openai、openai-responses 或 anthropic`)
   }
 
   if (!connection.baseUrl) {
@@ -477,47 +477,65 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-async function validateAiApi(input: z.infer<typeof aiApiValidateSchema>): Promise<{ ok: boolean; message?: string; error?: string }> {
+async function tryValidateOnce(
+  baseUrl: string,
+  format: ApiFormat,
+  apiKey: string,
+  model: string,
+  signal: AbortSignal,
+): Promise<{ ok: boolean; status: number; message?: string; error?: string }> {
+  if (format === 'anthropic') {
+    const resp = await fetch(`${baseUrl}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+      signal,
+    })
+    if (resp.ok) return { ok: true, status: resp.status, message: 'Anthropic-compatible API 验证成功' }
+    return { ok: false, status: resp.status, error: await validationError(resp) }
+  }
+
+  if (format === 'openai-responses') {
+    const resp = await fetch(`${baseUrl}/responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, input: 'ping', max_output_tokens: 1 }),
+      signal,
+    })
+    if (resp.ok) return { ok: true, status: resp.status, message: 'OpenAI Responses API 验证成功' }
+    return { ok: false, status: resp.status, error: await validationError(resp) }
+  }
+
+  const resp = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1, stream: false }),
+    signal,
+  })
+  if (resp.ok) return { ok: true, status: resp.status, message: 'OpenAI Chat Completions API 验证成功' }
+  return { ok: false, status: resp.status, error: await validationError(resp) }
+}
+
+async function validateAiApi(input: z.infer<typeof aiApiValidateSchema>): Promise<{ ok: boolean; message?: string; error?: string; resolvedBaseUrl?: string }> {
   const baseUrl = input.baseUrl.replace(/\/+$/, '')
   const apiKey = resolveAiApiKey(input.providerId, input.apiKey)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 15_000)
   try {
-    if (input.format === 'anthropic') {
-      const resp = await fetch(`${baseUrl}/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: input.model,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'ping' }],
-        }),
-        signal: controller.signal,
-      })
-      if (resp.ok) return { ok: true, message: 'Anthropic-compatible API 验证成功' }
-      return { ok: false, error: await validationError(resp) }
+    const result = await tryValidateOnce(baseUrl, input.format, apiKey, input.model, controller.signal)
+    if (result.ok) return { ok: true, message: result.message }
+
+    if (result.status === 404 && !baseUrl.endsWith('/v1')) {
+      const altUrl = `${baseUrl}/v1`
+      const retry = await tryValidateOnce(altUrl, input.format, apiKey, input.model, controller.signal)
+      if (retry.ok) return { ok: true, message: retry.message, resolvedBaseUrl: altUrl }
     }
 
-    const resp = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: input.model,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
-        stream: false,
-      }),
-      signal: controller.signal,
-    })
-    if (resp.ok) return { ok: true, message: 'OpenAI-compatible API 验证成功' }
-    return { ok: false, error: await validationError(resp) }
+    return { ok: false, error: result.error }
   } finally {
     clearTimeout(timeout)
   }
@@ -539,30 +557,16 @@ async function discoverAiApiModels(input: z.infer<typeof aiApiModelsDiscoverSche
   const timeout = setTimeout(() => controller.abort(), 15_000)
 
   try {
-    const resp = await fetch(`${baseUrl}/models`, {
-      method: 'GET',
-      headers: buildModelDiscoveryHeaders(input.format, apiKey),
-      signal: controller.signal,
-    })
+    const result = await tryDiscoverModels(baseUrl, input.format, apiKey, controller.signal)
+    if (result.ok) return { ...result, source: modelDiscoverySource(input.format) }
 
-    if (!resp.ok) {
-      return {
-        ok: false,
-        models: [],
-        source: modelDiscoverySource(input.format),
-        error: await validationError(resp),
-      }
+    if (result.status === 404 && !baseUrl.endsWith('/v1')) {
+      const altUrl = `${baseUrl}/v1`
+      const retry = await tryDiscoverModels(altUrl, input.format, apiKey, controller.signal)
+      if (retry.ok) return { ...retry, source: modelDiscoverySource(input.format), resolvedBaseUrl: altUrl }
     }
 
-    const payload = await resp.json().catch(() => ({}))
-    const models = extractModelIds(payload)
-
-    return {
-      ok: true,
-      models,
-      source: modelDiscoverySource(input.format),
-      ...(models.length === 0 ? { error: '模型接口未返回可识别的模型 ID' } : {}),
-    }
+    return { ...result, source: modelDiscoverySource(input.format) }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     return {
@@ -588,6 +592,30 @@ function buildModelDiscoveryHeaders(format: ApiFormat, apiKey: string): Record<s
   return {
     Accept: 'application/json',
     Authorization: `Bearer ${apiKey}`,
+  }
+}
+
+async function tryDiscoverModels(
+  baseUrl: string,
+  format: ApiFormat,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<{ ok: boolean; status: number; models: string[]; error?: string; resolvedBaseUrl?: string }> {
+  const resp = await fetch(`${baseUrl}/models`, {
+    method: 'GET',
+    headers: buildModelDiscoveryHeaders(format, apiKey),
+    signal,
+  })
+  if (!resp.ok) {
+    return { ok: false, status: resp.status, models: [], error: await validationError(resp) }
+  }
+  const payload = await resp.json().catch(() => ({}))
+  const models = extractModelIds(payload)
+  return {
+    ok: true,
+    status: resp.status,
+    models,
+    ...(models.length === 0 ? { error: '模型接口未返回可识别的模型 ID' } : {}),
   }
 }
 
@@ -638,7 +666,7 @@ function extractModelIds(payload: unknown): string[] {
 async function validationError(resp: Response): Promise<string> {
   const text = await resp.text().catch(() => '')
   if (resp.status === 401 || resp.status === 403) return `认证失败 (${resp.status})`
-  if (resp.status === 404) return `接口路径不存在 (${resp.status})，请检查 base URL 是否包含 /v1`
+  if (resp.status === 404) return `接口路径不存在 (${resp.status})`
   if (resp.status === 400) return `请求被拒绝 (${resp.status}): ${text.slice(0, 240)}`
   return `请求失败 (${resp.status}): ${text.slice(0, 240) || resp.statusText}`
 }

@@ -1,4 +1,5 @@
 import { ArrowLeftRight, X } from 'lucide-react'
+import { useLocale } from '../../hooks/useLocale'
 import type { ActivityPanel } from './ActivityBar'
 
 interface SidePanelProps {
@@ -10,15 +11,17 @@ interface SidePanelProps {
   children?: React.ReactNode
 }
 
-const panelTitles: Record<ActivityPanel, string> = {
-  wiki: 'Wiki',
-  sessions: 'Sessions',
-  search: '搜索',
-  settings: '设置',
-  projects: '项目',
-}
-
 export function SidePanel({ activePanel, open, position, onClose, onFlipPosition, children }: SidePanelProps) {
+  const { t } = useLocale()
+
+  const panelTitles: Record<ActivityPanel, string> = {
+    wiki: 'Wiki',
+    sessions: 'Sessions',
+    search: t('panelSearch'),
+    settings: t('panelSettings'),
+    projects: t('panelProjects'),
+  }
+
   return (
     <div
       className={`side-panel${open ? ' side-panel-open' : ''}${position === 'right' ? ' side-panel-right' : ''}`}
@@ -29,7 +32,7 @@ export function SidePanel({ activePanel, open, position, onClose, onFlipPosition
           <button
             type="button"
             className="sp-btn"
-            title="切换面板位置 (左/右)"
+            title={t('commonFlipPanel')}
             onClick={onFlipPosition}
           >
             <ArrowLeftRight size={13} />
@@ -37,7 +40,7 @@ export function SidePanel({ activePanel, open, position, onClose, onFlipPosition
           <button
             type="button"
             className="sp-btn"
-            title="关闭面板"
+            title={t('commonClose')}
             onClick={onClose}
           >
             <X size={14} />

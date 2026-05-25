@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, Circle, Clock, Cpu, FileEdit, FilePlus, FileX, File, Loader2, Users } from 'lucide-react'
+import { useLocale } from '../../../hooks/useLocale'
 import { useDebugConsole } from '../debug-console/debugConsoleStore'
 import type { SessionStats, TodoItem } from '../../../lib/api/agentRuntime'
 
@@ -83,11 +84,12 @@ function SessionStatusCard({ stats }: { stats: SessionStats }) {
 }
 
 function TodoCard({ items }: { items: TodoItem[] }) {
+  const { t } = useLocale()
   if (items.length === 0) {
     return (
       <div className="border-b border-border/40 px-2 py-2">
         <div className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">TODO</div>
-        <div className="mt-1 text-[10px] text-muted-foreground/50">暂无规划</div>
+        <div className="mt-1 text-[10px] text-muted-foreground/50">{t('sessionNoPlans')}</div>
       </div>
     )
   }
@@ -143,6 +145,7 @@ export function useHasWorkspaceContent(_mode: 'context' | 'agent'): boolean {
 }
 
 export function SessionWorkspace({ mode }: { mode: 'context' | 'agent' }) {
+  const { t } = useLocale()
   const events = useDebugConsole(s => s.events)
   const sessionStats = useDebugConsole(s => s.sessionStats)
   const sessionTodos = useDebugConsole(s => s.sessionTodos)
@@ -163,7 +166,7 @@ export function SessionWorkspace({ mode }: { mode: 'context' | 'agent' }) {
   if (mode !== 'agent') {
     return (
       <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground/50">
-        暂无工作产出
+        {t('sessionNoOutput')}
       </div>
     )
   }

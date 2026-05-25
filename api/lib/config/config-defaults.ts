@@ -49,6 +49,7 @@ export function createDefaultGlobalConfig(updatedBy = 'system'): GlobalConfig {
     providers: BUILTIN_PROVIDERS,
     defaultProviderId: 'opencode-acp',
     defaultApiProviderId: 'openai',
+    enabledAcpProviderIds: ['opencode-acp'],
     providerConnections: {
       'opencode-acp': {
         providerId: 'opencode-acp',
@@ -87,12 +88,10 @@ export function createDefaultGlobalConfig(updatedBy = 'system'): GlobalConfig {
     },
     limits: {
       maxAgentsPerProject: 10,
-      maxSessionsPerUser: 5,
       agentTimeoutMs: 300_000,
     },
     features: {
       allowProjectConnectionOverride: true,
-      allowMultiProvider: false,
     },
     updatedAt: now,
     updatedBy,
@@ -106,15 +105,14 @@ export function createDefaultUserGlobalConfig(updatedBy = 'system'): GlobalConfi
     providers: [],
     defaultProviderId: 'opencode-acp',
     defaultApiProviderId: 'openai',
+    enabledAcpProviderIds: ['opencode-acp'],
     providerConnections: {},
     limits: {
       maxAgentsPerProject: 10,
-      maxSessionsPerUser: 5,
       agentTimeoutMs: 300_000,
     },
     features: {
       allowProjectConnectionOverride: true,
-      allowMultiProvider: false,
     },
     updatedAt: now,
     updatedBy,

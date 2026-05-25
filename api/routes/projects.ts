@@ -509,3 +509,27 @@ projectRoutes.delete('/:id', async (c) => {
     backupFile: existsSync(backupFile) ? backupFile : undefined,
   });
 });
+
+// ---------------------------------------------------------------------------
+// Exported helper: sync basics from project-settings into ProjectRecord
+// ---------------------------------------------------------------------------
+
+export function syncProjectBasics(projectId: string, basics: { name?: string; environment?: 'production' | 'staging' | 'development' }): boolean {
+  const project = projects.get(projectId);
+  if (!project) return false;
+  let changed = false;
+  if (basics.name !== undefined && basics.name !== project.name) {
+    project.name = basics.name;
+    changed = true;
+  }
+  if (basics.environment !== undefined && basics.environment !== project.environment) {
+    project.environment = basics.environment;
+    changed = true;
+  }
+  if (changed) {
+    project.updatedAt = new Date().toISOString();
+    projects.set(projectId, project);
+    saveProjectsToDisk();
+  }
+  return changed;
+}

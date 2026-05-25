@@ -1,6 +1,7 @@
 import { useMemo, useRef, useEffect } from 'react'
 import { Chip, ProgressBar, ScrollShadow, Skeleton, Card } from '@heroui/react'
 import { Bot, Pause, Play, XCircle } from 'lucide-react'
+import { useLocale } from '../../../hooks/useLocale'
 import type { AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import { buildInterleavedTurns } from './buildInterleavedTurns'
 import { EnhancedToolCallCard } from './EnhancedToolCallCard'
@@ -50,6 +51,7 @@ export function AgentConversationView({
   streamingStepId, streamingText, streamingThinking, streamingToolCalls,
   streamingCompletedSteps,
 }: Props) {
+  const { t } = useLocale()
   const scrollRef = useRef<HTMLDivElement>(null)
   const isNearBottom = useRef(true)
 
@@ -84,7 +86,7 @@ export function AgentConversationView({
         </Chip>
         {cat?.isBuiltin && (
           <Chip size="sm" variant="bordered" color="primary" className="text-[10px]">
-            内建
+            {t('sessionBuiltin')}
           </Chip>
         )}
         {statusInfo && (
@@ -100,7 +102,7 @@ export function AgentConversationView({
               onClick={() => onPause(session.id)}
               className="flex items-center gap-1 rounded-md border border-border/50 px-2 py-1 text-[10px] text-muted-foreground hover:bg-secondary/50"
             >
-              <Pause size={10} /> 暂停
+              <Pause size={10} /> {t('sessionPause')}
             </button>
           )}
           {isResumable && onResume && session && (
@@ -109,7 +111,7 @@ export function AgentConversationView({
               onClick={() => onResume(session.id)}
               className="flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] text-primary hover:bg-primary/10"
             >
-              <Play size={10} /> 恢复
+              <Play size={10} /> {t('sessionResume')}
             </button>
           )}
           {isRunning && onCancel && session && (
@@ -118,7 +120,7 @@ export function AgentConversationView({
               onClick={() => onCancel(session.id)}
               className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-[10px] text-destructive/70 hover:bg-destructive/5"
             >
-              <XCircle size={10} /> 取消
+              <XCircle size={10} /> {t('sessionCancel')}
             </button>
           )}
         </div>
@@ -147,7 +149,7 @@ export function AgentConversationView({
                 <Skeleton className="h-4 w-2/3 rounded-lg" />
               </>
             ) : (
-              <span className="text-sm text-muted-foreground/50">暂无执行记录</span>
+              <span className="text-sm text-muted-foreground/50">{t('sessionNoRecords')}</span>
             )}
           </div>
         ) : (
@@ -318,7 +320,7 @@ export function AgentConversationView({
               {session?.status === 'paused' ? 'Paused' : 'Interrupted'}
             </Chip>
             <div className="text-[13px] leading-relaxed text-muted-foreground">
-              {session?.blockedReason ?? '会话已暂停，可随时恢复执行'}
+              {session?.blockedReason ?? t('sessionPausedHint')}
             </div>
           </div>
         </Card>

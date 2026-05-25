@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Button, Dropdown, Label } from '@heroui/react'
 import { KeyRound, Plus } from 'lucide-react'
-import { SettingsSection } from './SettingsSection'
+import { SettingsCard } from './SettingsCard'
 import { SaveIndicator } from './SaveIndicator'
 import { LlmProviderCard } from './LlmProviderCard'
+import { useLocale } from '../../../../hooks/useLocale'
 import {
   type ApiProviderDraft,
   API_PROVIDER_PRESETS,
@@ -102,10 +104,17 @@ function buildApiProviderPatch(
 }
 
 export function LlmProviderSection({ config, providers, onUpdate, onReload }: LlmProviderSectionProps) {
+  const { t } = useLocale()
   const [drafts, setDrafts] = useState(() => buildApiDrafts(config, providers))
   const [defaultId, setDefaultId] = useState(config.defaultApiProviderId)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [showAddMenu, setShowAddMenu] = useState(false)
+  const [expandedId, _setExpandedId] = useState<string | null>(
+    () => sessionStorage.getItem('llm-provider-expanded') || null,
+  )
+  const setExpandedId = useCallback((id: string | null) => {
+    _setExpandedId(id)
+    if (id) sessionStorage.setItem('llm-provider-expanded', id)
+    else sessionStorage.removeItem('llm-provider-expanded')
+  }, [])
   const [savingId, setSavingId] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -153,7 +162,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       setDefaultId(draft.id)
       markSaved()
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : '保存失败')
+      setSaveError(err instanceof Error ? err.message : t('llmProviderSaveFailed'))
     } finally {
       setSavingId(null)
     }
@@ -191,22 +200,24 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
         setDrafts(prev => prev.map(d => d.id === draft.id ? {
           ...d,
           validating: false,
-          validationMessage: result.error || '连接失败，未保存',
+          validationMessage: result.error || t('llmProviderConnectFailed'),
         } : d))
         return
       }
 
-      const next = drafts.map(d => d.id === draft.id ? draft : d)
+      const resolvedDraft = result.resolvedBaseUrl ? { ...draft, baseUrl: result.resolvedBaseUrl } : draft
+      const next = drafts.map(d => d.id === draft.id ? resolvedDraft : d)
       const providerIdsToPersist = storedApiProviderIds(config)
       providerIdsToPersist.add(draft.id)
       await saveProviderPatch({ drafts: next, defaultId, providerIdsToPersist })
       setDrafts(prev => prev.map(d => d.id === draft.id ? {
         ...d,
+        ...(result.resolvedBaseUrl ? { baseUrl: result.resolvedBaseUrl } : {}),
         validating: false,
-        validationMessage: '✓ 连接成功，已保存',
+        validationMessage: t('llmProviderSaveSuccess'),
       } : d))
     } catch (err) {
-      const message = err instanceof Error ? err.message : '保存失败'
+      const message = err instanceof Error ? err.message : t('llmProviderSaveFailed')
       setSaveError(message)
       setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: false, validationMessage: message } : d))
     } finally {
@@ -259,7 +270,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       })
       setDefaultId(nextDefaultId)
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : '保存失败')
+      setSaveError(err instanceof Error ? err.message : t('llmProviderSaveFailed'))
     } finally {
       setSavingId(null)
     }
@@ -275,9 +286,14 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
         apiKey: draft.apiKey || undefined,
         model: draft.model,
       })
-      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: false, validationMessage: result.ok ? '✓ 连接成功' : result.error || '连接失败' } : d))
+      setDrafts(prev => prev.map(d => d.id === draft.id ? {
+        ...d,
+        ...(result.resolvedBaseUrl ? { baseUrl: result.resolvedBaseUrl } : {}),
+        validating: false,
+        validationMessage: result.ok ? t('llmProviderSaveSuccess') : result.error || t('llmProviderConnectFailed'),
+      } : d))
     } catch {
-      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: false, validationMessage: '验证请求失败' } : d))
+      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: false, validationMessage: t('llmProviderRequestFailed') } : d))
     }
   }
 
@@ -293,10 +309,16 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       setDrafts(prev => prev.map(d => {
         if (d.id !== draft.id) return d
         const models = result.ok && result.models.length > 0 ? result.models : d.models
-        return { ...d, discoveringModels: false, models, modelMessage: result.ok ? `发现 ${result.models.length} 个模型` : (result.error || '发现失败') }
+        return {
+          ...d,
+          ...(result.resolvedBaseUrl ? { baseUrl: result.resolvedBaseUrl } : {}),
+          discoveringModels: false,
+          models,
+          modelMessage: result.ok ? t('llmProviderDiscoverCount', { count: result.models.length }) : (result.error || t('llmProviderDiscoverFailed')),
+        }
       }))
     } catch {
-      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, discoveringModels: false, modelMessage: '请求失败' } : d))
+      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, discoveringModels: false, modelMessage: t('llmProviderRequestFailed') } : d))
     }
   }
 
@@ -304,68 +326,62 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
     const existing = drafts.find(d => d.id === preset.providerId)
     if (existing) {
       setExpandedId(existing.id)
-      setShowAddMenu(false)
       return
     }
 
     const newDraft = createDraftFromPreset(preset)
     setDrafts(prev => upsertDraft(prev, newDraft))
     setExpandedId(newDraft.id)
-    setShowAddMenu(false)
   }
 
   const handleAddCustom = () => {
     const newDraft = createCustomDraft(drafts)
     setDrafts(prev => [...prev, newDraft])
     setExpandedId(newDraft.id)
-    setShowAddMenu(false)
   }
 
   return (
-    <SettingsSection
+    <SettingsCard
       title="LLM Provider"
       icon={KeyRound}
       trailing={
         <div className="flex items-center gap-2">
           <SaveIndicator saving={Boolean(savingId)} saved={saved} error={saveError} />
-          <div className="relative">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] hover:bg-muted"
-              onClick={() => setShowAddMenu(!showAddMenu)}
-            >
-              <Plus size={12} />
-              添加
-            </button>
-            {showAddMenu && (
-              <div className="absolute right-0 top-full mt-1 z-10 w-48 rounded-lg border border-border bg-card p-1 shadow-lg">
-                {API_PROVIDER_PRESETS.map(preset => (
-                  <button
-                    key={preset.providerId}
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs hover:bg-muted"
-                    onClick={() => handleAddPreset(preset)}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-                <div className="my-1 border-t border-border/50" />
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs hover:bg-muted"
-                  onClick={handleAddCustom}
-                >
-                  自定义
-                </button>
-              </div>
-            )}
-          </div>
+          <Dropdown>
+            <Button size="sm" variant="bordered" startContent={<Plus size={12} />}>
+              {t('llmProviderAdd')}
+            </Button>
+            <Dropdown.Popover>
+              <Dropdown.Menu
+                aria-label="Add provider"
+                onAction={(key) => {
+                  if (key === '__custom__') {
+                    handleAddCustom()
+                  } else {
+                    const preset = API_PROVIDER_PRESETS.find(p => p.providerId === key)
+                    if (preset) handleAddPreset(preset)
+                  }
+                }}
+              >
+                {[
+                  ...API_PROVIDER_PRESETS.map(preset => (
+                    <Dropdown.Item key={preset.providerId} id={preset.providerId} textValue={preset.label}>
+                      <Label>{preset.label}</Label>
+                    </Dropdown.Item>
+                  )),
+                  <Dropdown.Item key="__custom__" id="__custom__" textValue="Custom">
+                    <Label>{t('llmProviderCustom')}</Label>
+                  </Dropdown.Item>,
+                ]}
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
         </div>
       }
     >
       <div className="space-y-2">
         {configuredDrafts.length === 0 && !expandedId && (
-          <p className="text-xs text-muted-foreground py-2">暂无已配置的 Provider，点击添加开始配置。</p>
+          <p className="text-xs text-muted-foreground py-2">{t('llmProviderEmpty')}</p>
         )}
         {drafts.filter(d => isConfiguredProvider(d) || d.id === expandedId).map(draft => (
           <LlmProviderCard
@@ -385,6 +401,6 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
           />
         ))}
       </div>
-    </SettingsSection>
+    </SettingsCard>
   )
 }

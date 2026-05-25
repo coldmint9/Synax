@@ -1,11 +1,13 @@
 import { useCallback } from 'react'
-import { Wrench, FileCode } from 'lucide-react'
-import { SettingsSection } from './SettingsSection'
+import { Button, Switch } from '@heroui/react'
+import { Wrench, FileCode, Plug } from 'lucide-react'
+import { SettingsCard } from './SettingsCard'
+import { FormRow } from './FormRow'
 import { SaveIndicator } from './SaveIndicator'
-import { CapsuleSwitch } from './CapsuleSwitch'
 import { useAutoSave } from '../useAutoSave'
 import { apiFetch } from '../../../../lib/api/origin'
 import type { GlobalConfig } from '../../../../lib/contracts/config'
+import { useLocale } from '../../../../hooks/useLocale'
 
 interface AdvancedSectionProps {
   config: GlobalConfig
@@ -13,6 +15,7 @@ interface AdvancedSectionProps {
 }
 
 export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
+  const { t } = useLocale()
   const saveFn = useCallback(async (features: GlobalConfig['features']) => {
     await onUpdate({ features })
   }, [onUpdate])
@@ -32,44 +35,43 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
   }
 
   return (
-    <SettingsSection title="高级" icon={Wrench} trailing={<SaveIndicator saving={saving} saved={saved} error={error} />}>
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-xs font-medium text-foreground">允许项目覆盖连接参数</div>
-            <div className="text-[11px] text-muted-foreground">项目可自定义 ACP 连接配置</div>
-          </div>
-          <CapsuleSwitch
-            checked={config.features.allowProjectConnectionOverride}
-            onChange={v => handleToggle('allowProjectConnectionOverride', v)}
-          />
-        </div>
+    <div className="space-y-3">
+      <SettingsCard title={t('settingsAdvancedTitle')} icon={Wrench} trailing={<SaveIndicator saving={saving} saved={saved} error={error} />}>
+        <div className="space-y-3">
+          <FormRow label={t('settingsAllowProjectOverride')} description={t('settingsAllowProjectOverrideDesc')}>
+            <Switch
+              size="sm"
+              isSelected={config.features.allowProjectConnectionOverride}
+              onChange={(v) => handleToggle('allowProjectConnectionOverride', v)}
+              aria-label={t('settingsAllowProjectOverride')}
+            >
+              <Switch.Control><Switch.Thumb /></Switch.Control>
+            </Switch>
+          </FormRow>
 
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-xs font-medium text-foreground">多 Provider 模式</div>
-            <div className="text-[11px] text-muted-foreground">允许同时使用多个 LLM Provider</div>
+          <div className="border-t border-border/30 pt-3">
+            <Button
+              size="sm"
+              variant="bordered"
+              onPress={openConfigFile}
+              startContent={<FileCode size={13} />}
+            >
+              {t('settingsOpenConfigFile')}
+            </Button>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              {t('settingsOpenConfigFileDesc')}
+            </p>
           </div>
-          <CapsuleSwitch
-            checked={config.features.allowMultiProvider}
-            onChange={v => handleToggle('allowMultiProvider', v)}
-          />
         </div>
+      </SettingsCard>
 
-        <div className="border-t border-border/30 pt-3">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-foreground transition hover:bg-secondary"
-            onClick={openConfigFile}
-          >
-            <FileCode size={13} />
-            打开配置文件
-          </button>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">
-            在系统编辑器中打开 JSON 配置文件，保存后自动同步
-          </p>
-        </div>
-      </div>
-    </SettingsSection>
+      <SettingsCard
+        title={t('settingsMcpTitle')}
+        icon={Plug}
+        badge={<span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{t('settingsMcpComingSoon')}</span>}
+      >
+        <p className="text-xs text-muted-foreground">{t('settingsMcpDesc')}</p>
+      </SettingsCard>
+    </div>
   )
 }
