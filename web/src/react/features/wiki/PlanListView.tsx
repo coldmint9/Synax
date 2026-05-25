@@ -1,15 +1,13 @@
-import { useEffect } from 'react'
-import { ListChecks, Plus, CheckCircle2, Loader2, Clock } from 'lucide-react'
-import { Button, Card } from '@heroui/react'
+import { ListChecks, CheckCircle2, Loader2, Clock } from 'lucide-react'
 import { useWikiStore } from '../../state/wikiStore'
-import { type WikiPlan } from '../../../lib/api/evaluation'
+import { type WikiPlanWithSummary } from '../../../lib/api/evaluation'
 import { relativeTime } from './PlanNodeCard'
 
 interface Props {
   projectId: string
 }
 
-function PlanStatusBadge({ status }: { status: WikiPlan['status'] }) {
+function PlanStatusBadge({ status }: { status: WikiPlanWithSummary['status'] }) {
   const map: Record<string, { label: string; icon: typeof CheckCircle2; cls: string }> = {
     draft: { label: '草案', icon: Clock, cls: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
     confirmed: { label: '已确认', icon: CheckCircle2, cls: 'bg-primary/10 text-primary border-primary/20' },
@@ -30,12 +28,10 @@ function PlanStatusBadge({ status }: { status: WikiPlan['status'] }) {
 export default function PlanListView({ projectId }: Props) {
   const plans = useWikiStore(s => s.plans)
   const loading = useWikiStore(s => s.loading.plans)
-  const loadPlans = useWikiStore(s => s.loadPlans)
   const selectPlan = useWikiStore(s => s.selectPlan)
+  const selectedPlanId = useWikiStore(s => s.selectedPlanId)
 
-  useEffect(() => { loadPlans(projectId) }, [projectId, loadPlans])
-
-  if (loading) {
+  if (loading && plans.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 size={18} className="animate-spin text-muted-foreground/40" />
@@ -51,45 +47,60 @@ export default function PlanListView({ projectId }: Props) {
   const completedPlans = plans.filter(p => p.status === 'completed')
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/15 px-5">
-        <div className="flex items-center gap-2">
-          <ListChecks size={14} className="text-primary" />
-          <span className="text-[13px] font-semibold text-foreground/80">规划历史</span>
-          <span className="text-[11px] text-muted-foreground/50">({plans.length})</span>
-        </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 space-y-2">
-        {activePlan && (
-          <PlanRow plan={activePlan} index={plans.indexOf(activePlan)} total={plans.length} onSelect={selectPlan} active />
-        )}
-        {completedPlans.map(plan => (
-          <PlanRow key={plan.id} plan={plan} index={plans.indexOf(plan)} total={plans.length} onSelect={selectPlan} />
-        ))}
-      </div>
+    <div className="px-3 py-3 space-y-2">
+      {activePlan && (
+        <PlanRow plan={activePlan} index={plans.indexOf(activePlan)} total={plans.length} onSelect={selectPlan} selected={selectedPlanId === activePlan.id} active />
+      )}
+      {completedPlans.map(plan => (
+        <PlanRow key={plan.id} plan={plan} index={plans.indexOf(plan)} total={plans.length} onSelect={selectPlan} selected={selectedPlanId === plan.id} />
+      ))}
     </div>
   )
 }
 
-function PlanRow({ plan, index, total, onSelect, active }: { plan: WikiPlan; index: number; total: number; onSelect: (id: string) => void; active?: boolean }) {
+function PlanRow({ plan, index, total, onSelect, selected, active }: { plan: WikiPlanWithSummary; index: number; total: number; onSelect: (id: string) => void; selected?: boolean; active?: boolean }) {
   const num = total - index
+  const nodeSummary = plan.nodeSummary ?? { total: 0, completed: 0, titles: [] }
+  const showProgress = plan.status !== 'draft' && nodeSummary.total > 0
+
   return (
-    <Card
-      isPressable
-      onPress={() => onSelect(plan.id)}
-      className={`w-full text-left p-4 transition-all ${
-        active ? 'border-primary/20 bg-primary/[0.03]' : 'border-border/20 bg-card/40'
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(plan.id)}
+      onKeyDown={(e) => { if (e.key === 'Enter') onSelect(plan.id) }}
+      className={`w-full text-left p-3 rounded-lg border cursor-pointer transition-all ${
+        selected
+          ? 'border-primary bg-primary/10 ring-1 ring-primary/30'
+          : active
+            ? 'border-primary/20 bg-primary/[0.03]'
+            : 'border-border/20 bg-card/40 hover:bg-card/60'
       }`}
     >
       <div className="flex items-center justify-between">
-        <span className="text-[13px] font-semibold text-foreground/85">#{num}</span>
+        <span className="text-[12px] font-semibold text-foreground/85">#{num}</span>
         <PlanStatusBadge status={plan.status} />
       </div>
-      <div className="mt-1.5 flex items-center gap-3 text-[10px] text-muted-foreground/50">
-        <span>{plan.evaluationIds.length} 个 Issue</span>
+      {nodeSummary.titles.length > 0 && (
+        <div className="mt-1.5 space-y-0.5">
+          {nodeSummary.titles.map((title, i) => (
+            <div key={i} className="text-[11px] text-foreground/60 truncate">
+              • {title}
+            </div>
+          ))}
+          {nodeSummary.total > nodeSummary.titles.length && (
+            <div className="text-[10px] text-muted-foreground/40">
+              +{nodeSummary.total - nodeSummary.titles.length} 更多
+            </div>
+          )}
+        </div>
+      )}
+      <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground/50">
+        <span>{plan.evaluationIds.length} Issue</span>
+        {showProgress && <span>{nodeSummary.completed}/{nodeSummary.total} 完成</span>}
         <span>{relativeTime(plan.createdAt)}</span>
       </div>
-    </Card>
+    </div>
   )
 }
 

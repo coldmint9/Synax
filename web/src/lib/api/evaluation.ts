@@ -42,6 +42,9 @@ export type WikiPlan = {
   confirmedAt: string | null
 }
 
+export type PlanNodeSummary = { total: number; completed: number; titles: string[] }
+export type WikiPlanWithSummary = WikiPlan & { nodeSummary: PlanNodeSummary }
+
 export type WikiPlanStatus = WikiPlan['status']
 export type WikiPlanNodeStatus = WikiPlanNode['status']
 
@@ -127,10 +130,10 @@ export const evaluationApi = {
     return res.json() as Promise<{ plan: WikiPlan; nodes: WikiPlanNode[] }>
   },
 
-  async listPlans(projectId: string): Promise<WikiPlan[]> {
+  async listPlans(projectId: string): Promise<WikiPlanWithSummary[]> {
     const res = await apiFetch(`${BASE}/projects/${projectId}/plans`)
     if (!res.ok) throw new Error(`plans/list failed: ${res.status}`)
-    const data = await res.json() as { plans: WikiPlan[] }
+    const data = await res.json() as { plans: WikiPlanWithSummary[] }
     return data.plans
   },
 

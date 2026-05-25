@@ -503,7 +503,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
 // ── GET /api/wiki/projects/:projectId/plans ──────────────────────────────────
 wikiRoutes.get('/projects/:projectId/plans', async (c) => {
   const { projectId } = c.req.param();
-  const plans = await evalService.listPlans(projectId);
+  const plans = await evalService.listPlansWithSummary(projectId);
   return c.json({ plans });
 });
 

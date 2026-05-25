@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
 import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
@@ -67,6 +67,41 @@ function WikiToolbar() {
       <button type="button" className="wh-btn" title="搜索">
         <Search size={13} />
       </button>
+    </div>
+  )
+}
+
+function WikiToolbarPill({ visible }: { visible: boolean }) {
+  const [mounted, setMounted] = useState(false)
+  const [phase, setPhase] = useState<'enter' | 'exit' | ''>('')
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true)
+      requestAnimationFrame(() => setPhase('enter'))
+    } else if (mounted) {
+      setPhase('exit')
+      const el = ref.current
+      const onEnd = () => { setMounted(false); setPhase('') }
+      if (el) {
+        el.addEventListener('transitionend', onEnd, { once: true })
+        return () => el.removeEventListener('transitionend', onEnd)
+      }
+      setTimeout(onEnd, 400)
+    }
+  }, [visible])
+
+  if (!mounted) return null
+
+  const slotClass = `wh-pill-slot ${phase === 'enter' ? 'open' : phase === 'exit' ? 'closing' : ''}`
+  const pillClass = `wh-pill ${phase === 'enter' ? 'wh-pill-enter' : phase === 'exit' ? 'wh-pill-exit' : ''}`
+
+  return (
+    <div ref={ref} className={slotClass}>
+      <div className={pillClass}>
+        <WikiToolbar />
+      </div>
     </div>
   )
 }
@@ -198,11 +233,7 @@ export function WorkbenchHeader({
         </div>
       </div>
 
-      {activePanel === 'wiki' && (
-        <div className="wh-pill">
-          <WikiToolbar />
-        </div>
-      )}
+      <WikiToolbarPill visible={activePanel === 'wiki'} />
 
       {/* Remove project confirmation modal */}
       <Modal state={confirmState}>
