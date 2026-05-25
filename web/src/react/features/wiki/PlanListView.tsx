@@ -1,4 +1,5 @@
-import { ListChecks, CheckCircle2, Loader2, Clock } from 'lucide-react'
+import { ListChecks, CheckCircle2, Loader2, Clock, XCircle } from 'lucide-react'
+import { Card } from '@heroui/react'
 import { useWikiStore } from '../../state/wikiStore'
 import { type WikiPlanWithSummary } from '../../../lib/api/evaluation'
 import { relativeTime } from './PlanNodeCard'
@@ -15,6 +16,7 @@ function PlanStatusBadge({ status }: { status: WikiPlanWithSummary['status'] }) 
     reviewing: { label: '审查中', icon: Clock, cls: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
     committing: { label: '提交中', icon: Loader2, cls: 'bg-purple-500/10 text-purple-500 border-purple-500/20' },
     completed: { label: '已完成', icon: CheckCircle2, cls: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
+    discarded: { label: '已废弃', icon: XCircle, cls: 'bg-muted/10 text-muted-foreground/60 border-muted/20' },
   }
   const { label, icon: Icon, cls } = map[status] ?? map.draft
   return (
@@ -43,64 +45,68 @@ export default function PlanListView({ projectId }: Props) {
     return <EmptyState />
   }
 
-  const activePlan = plans.find(p => p.status !== 'completed')
-  const completedPlans = plans.filter(p => p.status === 'completed')
+  const activePlans = plans.filter(p => p.status !== 'completed' && p.status !== 'discarded')
+  const finishedPlans = plans.filter(p => p.status === 'completed' || p.status === 'discarded')
 
   return (
     <div className="px-3 py-3 space-y-2">
-      {activePlan && (
-        <PlanRow plan={activePlan} index={plans.indexOf(activePlan)} total={plans.length} onSelect={selectPlan} selected={selectedPlanId === activePlan.id} active />
-      )}
-      {completedPlans.map(plan => (
+      {activePlans.map(plan => (
+        <PlanRow key={plan.id} plan={plan} index={plans.indexOf(plan)} total={plans.length} onSelect={selectPlan} selected={selectedPlanId === plan.id} />
+      ))}
+      {finishedPlans.map(plan => (
         <PlanRow key={plan.id} plan={plan} index={plans.indexOf(plan)} total={plans.length} onSelect={selectPlan} selected={selectedPlanId === plan.id} />
       ))}
     </div>
   )
 }
 
-function PlanRow({ plan, index, total, onSelect, selected, active }: { plan: WikiPlanWithSummary; index: number; total: number; onSelect: (id: string) => void; selected?: boolean; active?: boolean }) {
+function PlanRow({ plan, index, total, onSelect, selected }: { plan: WikiPlanWithSummary; index: number; total: number; onSelect: (id: string) => void; selected?: boolean }) {
   const num = total - index
   const nodeSummary = plan.nodeSummary ?? { total: 0, completed: 0, titles: [] }
-  const showProgress = plan.status !== 'draft' && nodeSummary.total > 0
+  const showProgress = plan.status !== 'draft' && plan.status !== 'discarded' && nodeSummary.total > 0
+  const isDiscarded = plan.status === 'discarded'
 
   return (
-    <div
+    <Card
+      variant="transparent"
+      className={`cursor-pointer transition-all p-3 shadow-sm hover:shadow-md ${
+        selected
+          ? 'border-primary bg-primary/10 ring-1 ring-primary/30 shadow-primary/10'
+          : isDiscarded
+            ? 'opacity-50 border-border/10 shadow-none hover:opacity-70'
+            : 'border-border/20 hover:bg-card/60'
+      }`}
+      onClick={() => onSelect(plan.id)}
       role="button"
       tabIndex={0}
-      onClick={() => onSelect(plan.id)}
-      onKeyDown={(e) => { if (e.key === 'Enter') onSelect(plan.id) }}
-      className={`w-full text-left p-3 rounded-lg border cursor-pointer transition-all ${
-        selected
-          ? 'border-primary bg-primary/10 ring-1 ring-primary/30'
-          : active
-            ? 'border-primary/20 bg-primary/[0.03]'
-            : 'border-border/20 bg-card/40 hover:bg-card/60'
-      }`}
+      onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') onSelect(plan.id) }}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-[12px] font-semibold text-foreground/85">#{num}</span>
-        <PlanStatusBadge status={plan.status} />
-      </div>
-      {nodeSummary.titles.length > 0 && (
-        <div className="mt-1.5 space-y-0.5">
-          {nodeSummary.titles.map((title, i) => (
-            <div key={i} className="text-[11px] text-foreground/60 truncate">
-              • {title}
-            </div>
-          ))}
-          {nodeSummary.total > nodeSummary.titles.length && (
-            <div className="text-[10px] text-muted-foreground/40">
-              +{nodeSummary.total - nodeSummary.titles.length} 更多
-            </div>
-          )}
+      <Card.Header className="p-0 gap-0">
+        <div className="flex items-center justify-between w-full">
+          <Card.Title className="text-[12px] font-semibold text-foreground/85">#{num}</Card.Title>
+          <PlanStatusBadge status={plan.status} />
         </div>
+      </Card.Header>
+      {nodeSummary.titles.length > 0 && (
+        <Card.Content className="p-0 mt-1.5">
+          <div className="space-y-0.5">
+            {nodeSummary.titles.map((title, i) => (
+              <div key={i} className="text-[11px] text-foreground/60 truncate">• {title}</div>
+            ))}
+            {nodeSummary.total > nodeSummary.titles.length && (
+              <div className="text-[10px] text-muted-foreground/40">+{nodeSummary.total - nodeSummary.titles.length} 更多</div>
+            )}
+          </div>
+        </Card.Content>
       )}
-      <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground/50">
-        <span>{plan.evaluationIds.length} Issue</span>
-        {showProgress && <span>{nodeSummary.completed}/{nodeSummary.total} 完成</span>}
-        <span>{relativeTime(plan.createdAt)}</span>
-      </div>
-    </div>
+      <Card.Footer className="p-0 mt-1.5">
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground/50">
+          <span>{plan.evaluationIds.length} Issue</span>
+          {showProgress && <span>{nodeSummary.completed}/{nodeSummary.total} 完成</span>}
+          <span>{relativeTime(plan.createdAt)}</span>
+        </div>
+      </Card.Footer>
+    </Card>
   )
 }
 
