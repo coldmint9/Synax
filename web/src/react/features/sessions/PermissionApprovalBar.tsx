@@ -1,18 +1,12 @@
 import { Button, Tooltip } from '@heroui/react'
 import { ShieldAlert, ShieldCheck, FileEdit, Zap, AlertTriangle } from 'lucide-react'
+import { useLocale } from '../../../hooks/useLocale'
 import type { PermissionDecision } from '../../../lib/api/agentRuntime'
 
 interface PermissionApprovalBarProps {
   permissions: PermissionDecision[]
   onReply: (permissionId: string, reply: 'once' | 'always' | 'reject') => void
   isLoading?: boolean
-}
-
-const CATEGORY_CONFIG: Record<string, { label: string; color: string; icon: typeof ShieldAlert }> = {
-  read: { label: '读取', color: 'bg-emerald-500/15 text-emerald-600', icon: ShieldCheck },
-  write: { label: '写入', color: 'bg-amber-500/15 text-amber-600', icon: FileEdit },
-  external_execution: { label: '外部执行', color: 'bg-orange-500/15 text-orange-600', icon: Zap },
-  high_risk: { label: '高风险', color: 'bg-destructive/15 text-destructive', icon: AlertTriangle },
 }
 
 export function PermissionApprovalBar({ permissions, onReply, isLoading }: PermissionApprovalBarProps) {
@@ -37,6 +31,13 @@ function PermissionItem({
   onReply: (id: string, reply: 'once' | 'always' | 'reject') => void
   isLoading?: boolean
 }) {
+  const { t } = useLocale()
+  const CATEGORY_CONFIG: Record<string, { labelKey: 'permRead' | 'permWrite' | 'permExternalExecution' | 'permHighRisk'; color: string; icon: typeof ShieldAlert }> = {
+    read: { labelKey: 'permRead', color: 'bg-emerald-500/15 text-emerald-600', icon: ShieldCheck },
+    write: { labelKey: 'permWrite', color: 'bg-amber-500/15 text-amber-600', icon: FileEdit },
+    external_execution: { labelKey: 'permExternalExecution', color: 'bg-orange-500/15 text-orange-600', icon: Zap },
+    high_risk: { labelKey: 'permHighRisk', color: 'bg-destructive/15 text-destructive', icon: AlertTriangle },
+  }
   const config = CATEGORY_CONFIG[permission.coarseCategory] ?? CATEGORY_CONFIG.high_risk
   const Icon = config.icon
 
@@ -45,7 +46,7 @@ function PermissionItem({
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${config.color}`}>
           <Icon size={11} />
-          {config.label}
+          {t(config.labelKey)}
         </span>
         <span className="text-xs text-foreground truncate font-medium">
           {permission.patterns[0] ?? ''}
@@ -62,16 +63,16 @@ function PermissionItem({
           isDisabled={isLoading}
           onPress={() => onReply(permission.id, 'once')}
         >
-          允许一次
+          {t('permAllowOnce')}
         </Button>
-        <Tooltip content="后续相同操作将自动通过">
+        <Tooltip content={t('permAlwaysAllowHint')}>
           <Button
             size="sm"
             variant="ghost"
             isDisabled={isLoading}
             onPress={() => onReply(permission.id, 'always')}
           >
-            始终允许
+            {t('permAlwaysAllow')}
           </Button>
         </Tooltip>
         <Button
@@ -81,7 +82,7 @@ function PermissionItem({
           isDisabled={isLoading}
           onPress={() => onReply(permission.id, 'reject')}
         >
-          拒绝
+          {t('permReject')}
         </Button>
       </div>
     </div>

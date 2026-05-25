@@ -1,4 +1,4 @@
-import type { ProviderConnection, ProviderDef } from '../../lib/config/config-types.js'
+import type { ApiFormat, ProviderConnection, ProviderDef } from '../../lib/config/config-types.js'
 import { isProviderSupported } from './registry.js'
 import type {
   ModelOverrideConfig,
@@ -359,9 +359,12 @@ function mergeConnectionMetadata(
   }
 }
 
-function resolveApiFormat(connection?: ProviderConnection): 'openai' | 'anthropic' {
+function resolveApiFormat(connection?: ProviderConnection): ApiFormat {
   const extra = toRecord(connection?.extra)
-  return extra?.apiFormat === 'anthropic' ? 'anthropic' : 'openai'
+  const format = extra?.apiFormat
+  if (format === 'anthropic') return 'anthropic'
+  if (format === 'openai-responses') return 'openai-responses'
+  return 'openai'
 }
 
 function resolveModelIdFromConnection(connection?: ProviderConnection | null): string | undefined {

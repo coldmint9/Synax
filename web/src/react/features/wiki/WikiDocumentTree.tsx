@@ -1,5 +1,6 @@
 import { BookOpen, ChevronDown, ChevronRight, FileText } from 'lucide-react'
 import { useState } from 'react'
+import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import type { WikiDocument } from '../../../lib/contracts/wiki'
 
@@ -121,6 +122,7 @@ function DocTree({
 }
 
 export default function WikiDocumentTree() {
+  const { t } = useLocale()
   const documents = useWikiStore(s => s.documents)
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
   const selectDocument = useWikiStore(s => s.selectDocument)
@@ -187,7 +189,7 @@ export default function WikiDocumentTree() {
       {documents.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
           <BookOpen size={20} className="text-muted-foreground/30" />
-          <p className="text-[11px] text-muted-foreground/50">暂无文档</p>
+          <p className="text-[11px] text-muted-foreground/50">{t('wikiNoDocuments')}</p>
         </div>
       )}
     </div>

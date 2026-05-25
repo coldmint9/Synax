@@ -11,17 +11,9 @@ import {
 } from 'lucide-react'
 import { formatProjectPath } from '../../lib/formatProjectPath'
 import { Link } from 'react-router-dom'
+import { useLocale } from '../../hooks/useLocale'
 import type { ProjectSummary } from '../state/shellStore'
 import type { ProjectStats } from '../../lib/api/project'
-
-function relativeTime(iso: string | null): string {
-  if (!iso) return '—'
-  const diff = Date.now() - new Date(iso).getTime()
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}小时前`
-  return `${Math.floor(diff / 86_400_000)}天前`
-}
 
 export function ProjectCard({
   project,
@@ -36,6 +28,17 @@ export function ProjectCard({
   showDelete?: boolean
   className?: string
 }) {
+  const { t } = useLocale()
+
+  function relativeTime(iso: string | null): string {
+    if (!iso) return '—'
+    const diff = Date.now() - new Date(iso).getTime()
+    if (diff < 60_000) return t('cardJustNow')
+    if (diff < 3_600_000) return t('cardMinutesAgo', { count: Math.floor(diff / 60_000) })
+    if (diff < 86_400_000) return t('cardHoursAgo', { count: Math.floor(diff / 3_600_000) })
+    return t('cardDaysAgo', { count: Math.floor(diff / 86_400_000) })
+  }
+
   const SourceIcon =
     project.source?.kind === 'github' || project.source?.kind === 'gitlab'
       ? GitBranch
@@ -58,7 +61,7 @@ export function ProjectCard({
         <div className="flex shrink-0 items-center gap-1">
           {project.importState && project.importState !== 'ready' && (
             <span className="import-state-badge" data-state={project.importState}>
-              {project.importState === 'syncing' ? '同步中' : project.importState === 'failed' ? '失败' : '空闲'}
+              {project.importState === 'syncing' ? t('cardSyncing') : project.importState === 'failed' ? t('cardFailed') : t('cardIdle')}
             </span>
           )}
           {showDelete && onDelete && (
@@ -66,7 +69,7 @@ export function ProjectCard({
               type="button"
               className="rounded-md p-1 text-muted-foreground/40 opacity-0 transition-all hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
               onClick={e => { e.preventDefault(); e.stopPropagation(); onDelete() }}
-              title="删除项目"
+              title={t('cardDeleteTitle')}
             >
               <Trash2 size={13} />
             </button>
@@ -87,16 +90,16 @@ export function ProjectCard({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1">
             <Network size={11} />
-            {stats.nodeCount} 节点
+            {t('cardNodes', { count: stats.nodeCount })}
           </span>
           <span className="flex items-center gap-1">
             <MessageSquare size={11} />
-            {stats.sessionCount} 会话
+            {t('cardSessions', { count: stats.sessionCount })}
           </span>
           {stats.recentRunCount > 0 && (
             <span className="flex items-center gap-1">
               <Bot size={11} />
-              {stats.recentRunCount} 运行
+              {t('cardRuns', { count: stats.recentRunCount })}
             </span>
           )}
         </div>
@@ -111,7 +114,7 @@ export function ProjectCard({
           to={`/projects/${project.id}/wiki`}
           className="inline-flex shrink-0 items-center text-[10px] text-muted-foreground/40 transition hover:text-primary"
         >
-          进入
+          {t('cardEnter')}
           <ChevronRight size={10} />
         </Link>
       </div>

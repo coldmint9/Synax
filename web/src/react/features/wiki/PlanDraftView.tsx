@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Zap, X, Loader2 } from 'lucide-react'
 import { Button, Modal } from '@heroui/react'
+import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { type WikiPlanNode } from '../../../lib/api/evaluation'
 import PlanNodeCard from './PlanNodeCard'
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export default function PlanDraftView({ projectId }: Props) {
+  const { t } = useLocale()
   const activePlan = useWikiStore(s => s.activePlan)
   const nodes = useWikiStore(s => s.activePlanNodes)
   const confirmPlan = useWikiStore(s => s.confirmPlan)
@@ -56,7 +58,7 @@ export default function PlanDraftView({ projectId }: Props) {
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/15 px-5">
         <div className="flex items-center gap-2.5">
           <Zap size={14} className="text-amber-500" />
-          <span className="text-[13px] font-semibold text-foreground/80">规划草案</span>
+          <span className="text-[13px] font-semibold text-foreground/80">{t('planDraftTitle')}</span>
           <span className="text-[11px] text-muted-foreground/50">
             基于 {activePlan.evaluationIds.length} 个 Issue · {nodes.length} 个节点
           </span>
@@ -64,11 +66,11 @@ export default function PlanDraftView({ projectId }: Props) {
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onPress={handleDiscard}>
             <X size={12} />
-            放弃
+            {t('planDraftDiscard')}
           </Button>
           <Button color="primary" size="sm" onPress={handleConfirm} isDisabled={confirming || nodes.length === 0}>
             {confirming ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
-            确认执行
+            {t('planDraftConfirm')}
           </Button>
         </div>
       </div>
@@ -111,6 +113,7 @@ function NodeEditModal({ node, projectId, onClose, onSave }: {
   onClose: () => void
   onSave: (updates: Partial<Pick<WikiPlanNode, 'title' | 'description' | 'expectedFiles'>>) => Promise<void>
 }) {
+  const { t } = useLocale()
   const [title, setTitle] = useState(node.title)
   const [description, setDescription] = useState(node.description)
   const [files, setFiles] = useState(node.expectedFiles.join(', '))
@@ -132,11 +135,11 @@ function NodeEditModal({ node, projectId, onClose, onSave }: {
   return (
     <Modal isOpen onOpenChange={(open) => { if (!open) onClose() }}>
       <Modal.Content>
-        <Modal.Header>编辑节点</Modal.Header>
+        <Modal.Header>{t('planEditNodeTitle')}</Modal.Header>
         <Modal.Body>
           <div className="space-y-3">
             <div>
-              <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">标题</label>
+              <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditTitle')}</label>
               <input
                 value={title}
                 onChange={e => setTitle(e.target.value)}
@@ -144,7 +147,7 @@ function NodeEditModal({ node, projectId, onClose, onSave }: {
               />
             </div>
             <div>
-              <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">描述</label>
+              <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditDescription')}</label>
               <textarea
                 value={description}
                 onChange={e => setDescription(e.target.value)}
@@ -153,7 +156,7 @@ function NodeEditModal({ node, projectId, onClose, onSave }: {
               />
             </div>
             <div>
-              <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">预期文件（逗号分隔）</label>
+              <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditExpectedFiles')}</label>
               <input
                 value={files}
                 onChange={e => setFiles(e.target.value)}
@@ -163,10 +166,10 @@ function NodeEditModal({ node, projectId, onClose, onSave }: {
           </div>
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="ghost" size="sm" onPress={onClose}>取消</Button>
+          <Button variant="ghost" size="sm" onPress={onClose}>{t('commonCancel')}</Button>
           <Button color="primary" size="sm" onPress={handleSave} isDisabled={saving || !title.trim()}>
             {saving ? <Loader2 size={12} className="animate-spin" /> : null}
-            保存
+            {t('commonSave')}
           </Button>
         </Modal.Footer>
       </Modal.Content>

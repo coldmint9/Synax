@@ -41,6 +41,7 @@ describe('config-store migration and overrides', () => {
       providers: [],
       defaultProviderId: 'opencode-acp',
       defaultApiProviderId: 'anthropic',
+      enabledAcpProviderIds: ['opencode-acp'],
       providerConnections: {
         anthropic: {
           providerId: 'anthropic',
@@ -53,12 +54,10 @@ describe('config-store migration and overrides', () => {
       },
       limits: {
         maxAgentsPerProject: 10,
-        maxSessionsPerUser: 5,
         agentTimeoutMs: 300000,
       },
       features: {
         allowProjectConnectionOverride: true,
-        allowMultiProvider: false,
       },
       updatedAt: '2026-05-13T00:00:00.000Z',
       updatedBy: 'legacy',

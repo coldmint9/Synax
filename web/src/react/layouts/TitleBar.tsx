@@ -1,4 +1,5 @@
 import { Search, Monitor, Bell } from 'lucide-react'
+import { useLocale } from '../../hooks/useLocale'
 import type { ActivityPanel } from './ActivityBar'
 
 interface TitleBarProps {
@@ -7,6 +8,7 @@ interface TitleBarProps {
 }
 
 export function TitleBar({ projectName, onPanelToggle }: TitleBarProps) {
+  const { t } = useLocale()
   return (
     <div className="titlebar">
       <div className="titlebar-info">
@@ -21,7 +23,7 @@ export function TitleBar({ projectName, onPanelToggle }: TitleBarProps) {
       <div className="titlebar-actions">
         <button
           type="button"
-          title="搜索"
+          title={t('commonSearch')}
           className="titlebar-action-btn"
           onClick={() => onPanelToggle('search')}
         >
@@ -29,7 +31,7 @@ export function TitleBar({ projectName, onPanelToggle }: TitleBarProps) {
         </button>
         <button
           type="button"
-          title="会话"
+          title={t('titlebarSessions')}
           className="titlebar-action-btn"
           onClick={() => onPanelToggle('sessions')}
         >
@@ -37,7 +39,7 @@ export function TitleBar({ projectName, onPanelToggle }: TitleBarProps) {
         </button>
         <button
           type="button"
-          title="通知"
+          title={t('titlebarNotifications')}
           className="titlebar-action-btn"
         >
           <Bell size={14} />

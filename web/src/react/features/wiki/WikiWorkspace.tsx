@@ -2,6 +2,7 @@ import { AlertCircle, BookOpen, Download, ListChecks, Loader2, RefreshCw, Rotate
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Drawer, Skeleton, Spinner } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
+import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
@@ -15,6 +16,7 @@ import { apiFetch } from '../../../lib/api/origin'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
 function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated: () => void }) {
+  const { t } = useLocale()
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [phase, setPhase] = useState<string | null>(null)
@@ -24,17 +26,17 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
     const project = projects.find(p => p.id === projectId)
     const workDir = project?.source?.localPath
     if (!workDir) {
-      setError('项目未配置本地路径（source.localPath），无法生成 Wiki。')
+      setError(t('wikiNoLocalPath'))
       return
     }
 
     setGenerating(true)
     setError(null)
-    setPhase('正在启动生成任务…')
+    setPhase(t('wikiPhaseStarting'))
 
     try {
       await wikiApi.generate(projectId, { workDir, locale: 'zh' })
-      setPhase('正在分析代码库，请稍候…')
+      setPhase(t('wikiPhaseAnalyzing'))
 
       // Poll /latest until snapshot is ready or failed (max 3 min)
       const deadline = Date.now() + 180_000
@@ -47,7 +49,7 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
             return
           }
           if (tree.snapshot?.status === 'failed') {
-            setError('Wiki 生成失败，请检查项目配置后重试。')
+            setError(t('wikiGenerationFailed'))
             setGenerating(false)
             setPhase(null)
             return
@@ -57,18 +59,18 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
               onGenerated()
               return
             }
-            setPhase('目录结构已生成，正在填充内容…')
+            setPhase(t('wikiPhaseOutlineReady'))
           }
           if (tree.snapshot?.status === 'refreshing') {
-            setPhase('Agent 正在分析代码库…')
+            setPhase(t('wikiPhaseAgentAnalyzing'))
           }
         } catch {
           // transient fetch error — keep polling
         }
       }
-      setError('生成超时，请稍后刷新页面查看结果。')
+      setError(t('wikiGenerationTimeout'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成失败，请重试。')
+      setError(err instanceof Error ? err.message : t('wikiGenerationError'))
     } finally {
       setGenerating(false)
       setPhase(null)
@@ -79,11 +81,11 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
     <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
       <div className="rounded-2xl border border-border/40 bg-card/60 p-8 max-w-sm w-full">
         <BookOpen size={32} className="mx-auto mb-3 text-muted-foreground/30" />
-        <h2 className="text-sm font-semibold text-foreground/80">暂无 Wiki</h2>
+        <h2 className="text-sm font-semibold text-foreground/80">{t('wikiEmpty')}</h2>
         <p className="mt-1 text-[12px] text-muted-foreground/60">
-          该项目还没有生成 Codebase Design Wiki。
+          {t('wikiEmptyDesc')}
           <br />
-          点击下方按钮，AI 将分析代码库并生成结构化设计文档。
+          {t('wikiEmptyDescLine2')}
         </p>
 
         {error && (
@@ -114,7 +116,7 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
           {generating
             ? <Spinner size="sm" />
             : <Sparkles size={14} />}
-          {generating ? '生成中…' : '生成 Wiki'}
+          {generating ? t('wikiGenerating') : t('wikiGenerate')}
         </Button>
       </div>
     </div>
@@ -122,6 +124,7 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
 }
 
 function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () => void }) {
+  const { t } = useLocale()
   const [retrying, setRetrying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [phase, setPhase] = useState<string | null>(null)
@@ -131,17 +134,17 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
     const project = projects.find(p => p.id === projectId)
     const workDir = project?.source?.localPath
     if (!workDir) {
-      setError('项目未配置本地路径（source.localPath），无法重新生成。')
+      setError(t('wikiNoLocalPathRetry'))
       return
     }
 
     setRetrying(true)
     setError(null)
-    setPhase('重新启动生成任务…')
+    setPhase(t('wikiPhaseRestarting'))
 
     try {
       await wikiApi.generate(projectId, { workDir, locale: 'zh' })
-      setPhase('正在分析代码库…')
+      setPhase(t('wikiPhaseAnalyzing'))
 
       const deadline = Date.now() + 180_000
       while (Date.now() < deadline) {
@@ -153,7 +156,7 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
             return
           }
           if (tree.snapshot?.status === 'failed') {
-            setError('Wiki 生成再次失败，请检查日志。')
+            setError(t('wikiGenerationFailedAgain'))
             setRetrying(false)
             setPhase(null)
             return
@@ -168,9 +171,9 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
           }
         } catch { /* keep polling */ }
       }
-      setError('生成超时，请稍后刷新页面。')
+      setError(t('wikiGenerationTimeoutShort'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : '重试失败。')
+      setError(err instanceof Error ? err.message : t('wikiRetryError'))
     } finally {
       setRetrying(false)
       setPhase(null)
@@ -181,9 +184,9 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
     <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
       <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-8 max-w-sm w-full">
         <AlertCircle size={32} className="mx-auto mb-3 text-destructive/50" />
-        <h2 className="text-sm font-semibold text-foreground/80">Wiki 生成失败</h2>
+        <h2 className="text-sm font-semibold text-foreground/80">{t('wikiFailedTitle')}</h2>
         <p className="mt-1 text-[12px] text-muted-foreground/60">
-          上次生成任务未能完成，可能是代码分析或 LLM 调用出错。
+          {t('wikiFailedDesc')}
         </p>
 
         {error && (
@@ -212,7 +215,7 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
           isDisabled={retrying}
         >
           {retrying ? <Spinner size="sm" /> : <RefreshCw size={14} />}
-          {retrying ? '重新生成中…' : '重新生成'}
+          {retrying ? t('wikiRetrying') : t('wikiRetry')}
         </Button>
       </div>
     </div>
@@ -220,6 +223,7 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
 }
 
 export default function WikiWorkspace({ projectId }: { projectId: string }) {
+  const { t } = useLocale()
   const snapshot = useWikiStore(s => s.snapshot)
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
   const selectedBlockId = useWikiStore(s => s.selectedBlockId)
@@ -321,7 +325,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     const project = projects.find(p => p.id === projectId)
     const workDir = project?.source?.localPath
     if (!workDir) {
-      alert('项目未配置 localPath，无法 refresh')
+      alert(t('wikiNoLocalPath'))
       return
     }
     setRefreshing(true)
@@ -354,7 +358,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     const project = projects.find(p => p.id === projectId)
     const workDir = project?.source?.localPath
     if (!workDir) {
-      alert('项目未配置 localPath，无法重新初始化')
+      alert(t('wikiNoLocalPath'))
       return
     }
     setShowReinitConfirm(false)
@@ -373,7 +377,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     const project = projects.find(p => p.id === projectId)
     const workDir = project?.source?.localPath
     if (!workDir) {
-      alert('项目未配置 localPath，无法继续生成')
+      alert(t('wikiNoLocalPath'))
       return
     }
     setContinuing(true)
@@ -433,7 +437,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             <div className="wiki-panel-header shrink-0 justify-between">
               <span className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider flex items-center gap-1.5">
                 <ListChecks size={11} className="text-primary" />
-                规划
+                {t('wikiPlans')}
               </span>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -444,7 +448,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           <>
             <div className="wiki-panel-header shrink-0 justify-between">
               <span className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider">
-                文档
+                {t('wikiDocuments')}
               </span>
               <div className="flex items-center gap-0.5">
                 <button
@@ -472,7 +476,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               <div className="flex items-center gap-1.5">
                 <AlertCircle size={11} className="shrink-0 text-destructive" />
                 <span className="text-[11px] text-destructive">
-                  生成未完成 ({documents.filter(d => d.blockIds.length > 0).length}/{documents.length} 篇已完成)
+                  {t('wikiGenerationIncomplete', { done: documents.filter(d => d.blockIds.length > 0).length, total: documents.length })}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
@@ -483,7 +487,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                   className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
                   {continuing ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
-                  继续生成
+                  {t('wikiContinueGenerate')}
                 </button>
                 <button
                   type="button"
@@ -492,7 +496,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                   className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-[10px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
                 >
                   {reinitializing ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
-                  重新生成
+                  {t('wikiRegenerate')}
                 </button>
               </div>
             </div>
@@ -501,7 +505,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
               <Loader2 size={11} className="animate-spin text-primary" />
               <span className="text-[11px] text-primary">
-                正在分析代码库…
+                {t('wikiAnalyzing')}
               </span>
             </div>
           )}
@@ -509,7 +513,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/5 border-b border-amber-500/10">
               <Loader2 size={11} className="animate-spin text-amber-600" />
               <span className="text-[11px] text-amber-600">
-                目录结构已就绪，正在准备生成内容…
+                {t('wikiOutlineReady')}
               </span>
             </div>
           )}
@@ -517,7 +521,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
               <Loader2 size={11} className="animate-spin text-primary" />
               <span className="text-[11px] text-primary">
-                文档内容生成中… ({documents.filter(d => d.blockIds.length > 0).length}/{documents.length} 篇已完成)
+                {t('wikiWriting', { done: documents.filter(d => d.blockIds.length > 0).length, total: documents.length })}
               </span>
             </div>
           )}
@@ -532,7 +536,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             isDisabled={refreshing || reinitializing || continuing}
           >
             {reinitializing ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
-            {reinitializing ? '重新生成中…' : '重新生成'}
+            {reinitializing ? t('wikiRegenerating') : t('wikiRegenerate')}
           </Button>
         </div>
           </>
@@ -546,20 +550,27 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       />
 
       {/* ── Center: Block content or Plan view ── */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden pt-14">
-        <div className={`min-h-0 flex-1 flex flex-col overflow-hidden ${viewMode !== 'plan' ? 'hidden' : ''}`}>
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className={`min-h-0 flex-1 flex flex-col overflow-hidden pt-14 ${viewMode !== 'plan' ? 'hidden' : ''}`}>
           <PlanView projectId={projectId} />
         </div>
         <div className={`min-h-0 flex-1 flex flex-col overflow-hidden ${viewMode !== 'document' ? 'hidden' : ''}`}>
           {selectedDoc ? (
-            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
+            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-14">
               <WikiBlockRenderer document={selectedDoc} issuesByBlockId={issuesByBlockId} projectId={projectId} />
             </div>
           ) : (
-            <div className="flex h-full items-center justify-center">
-              <p className="text-[12px] text-muted-foreground/40">从左侧选择文档</p>
+            <div className="flex h-full items-center justify-center pt-14">
+              <p className="text-[12px] text-muted-foreground/40">{t('wikiSelectDocument')}</p>
             </div>
           )}
+        </div>
+        {/* Progressive blur fade at top — rendered last so backdrop-filter sees the content */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-14" aria-hidden="true">
+          <div className="absolute inset-0 backdrop-blur-[10px]" style={{ maskImage: 'linear-gradient(to bottom, black 0%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 0%, transparent 100%)' }} />
+          <div className="absolute inset-0 backdrop-blur-[6px]" style={{ maskImage: 'linear-gradient(to bottom, black 25%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 25%, transparent 100%)' }} />
+          <div className="absolute inset-0 backdrop-blur-[3px]" style={{ maskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)' }} />
+          <div className="absolute inset-0 backdrop-blur-[1px]" style={{ maskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)' }} />
         </div>
       </main>
 
@@ -586,9 +597,9 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       {showReinitConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-background/60 p-4">
           <div className="w-full max-w-sm rounded-2xl border border-border/40 bg-card p-6 shadow-xl">
-            <h3 className="text-sm font-semibold text-foreground/90">确认重新初始化</h3>
+            <h3 className="text-sm font-semibold text-foreground/90">{t('wikiReinitConfirmTitle')}</h3>
             <p className="mt-2 text-[12px] text-muted-foreground leading-relaxed">
-              此操作将删除当前项目的所有 Wiki 数据（文档、块、补丁、历史记录等），并重新从代码库生成。此操作不可撤销。
+              {t('wikiReinitConfirmDesc')}
             </p>
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
@@ -596,14 +607,14 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                 onClick={() => setShowReinitConfirm(false)}
                 className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:bg-secondary transition-colors"
               >
-                取消
+                {t('commonCancel')}
               </button>
               <button
                 type="button"
                 onClick={handleReinitialize}
                 className="rounded-lg bg-destructive px-3 py-1.5 text-[12px] font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
               >
-                确认重新初始化
+                {t('wikiReinitConfirm')}
               </button>
             </div>
           </div>

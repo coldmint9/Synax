@@ -355,6 +355,7 @@ function splitMergedGlobalConfig(config: GlobalConfig): ConfigLayers {
       providerConnections: normalizeConnections(userConnections, true),
       defaultProviderId: normalizeAcpProviderId(config.defaultProviderId),
       defaultApiProviderId: config.defaultApiProviderId || globalBase.defaultApiProviderId,
+      enabledAcpProviderIds: config.enabledAcpProviderIds ?? globalBase.enabledAcpProviderIds,
       limits: config.limits,
       features: config.features,
       updatedAt: config.updatedAt,
@@ -381,6 +382,7 @@ function normalizeTemplateConfig(config: GlobalConfig, includeSecrets: boolean):
     providerConnections,
     defaultProviderId: normalizeAcpProviderId(config.defaultProviderId),
     defaultApiProviderId: normalizeApiProviderId(config.defaultApiProviderId, providers),
+    enabledAcpProviderIds: config.enabledAcpProviderIds ?? defaults.enabledAcpProviderIds,
   }
 }
 
@@ -397,6 +399,7 @@ function normalizeUserGlobalConfig(config: GlobalConfig, includeSecrets: boolean
     providerConnections,
     defaultProviderId: normalizeAcpProviderId(config.defaultProviderId),
     defaultApiProviderId: config.defaultApiProviderId || defaults.defaultApiProviderId,
+    enabledAcpProviderIds: config.enabledAcpProviderIds ?? defaults.enabledAcpProviderIds,
   }
 }
 
@@ -409,6 +412,7 @@ function mergeGlobalConfigLayers(template: GlobalConfig, global: GlobalConfig, i
     providers,
     defaultProviderId: normalizeAcpProviderId(global.defaultProviderId ?? template.defaultProviderId),
     defaultApiProviderId: normalizeApiProviderId(global.defaultApiProviderId ?? template.defaultApiProviderId, providers),
+    enabledAcpProviderIds: global.enabledAcpProviderIds ?? template.enabledAcpProviderIds,
     providerConnections,
     limits: global.limits ?? template.limits,
     features: global.features ?? template.features,
@@ -449,6 +453,7 @@ function applyGlobalConfigPatch(
   const globalTouched =
     Boolean(patch.defaultProviderId) ||
     Boolean(patch.defaultApiProviderId) ||
+    Boolean(patch.enabledAcpProviderIds) ||
     Boolean(patch.limits) ||
     Boolean(patch.features) ||
     Boolean(userPatchProviders?.length) ||
@@ -470,6 +475,7 @@ function applyGlobalConfigPatch(
     providerConnections: nextGlobalConnections,
     defaultProviderId: normalizeAcpProviderId(patch.defaultProviderId ?? current.defaultProviderId),
     defaultApiProviderId: patch.defaultApiProviderId ?? current.defaultApiProviderId,
+    enabledAcpProviderIds: patch.enabledAcpProviderIds ?? current.enabledAcpProviderIds,
     limits: patch.limits ? { ...current.limits, ...patch.limits } : current.limits,
     features: patch.features ? { ...current.features, ...patch.features } : current.features,
     updatedAt: globalTouched ? updatedAt : layers.global.updatedAt,

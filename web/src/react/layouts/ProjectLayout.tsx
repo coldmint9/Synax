@@ -4,9 +4,11 @@ import { Link, NavLink, Outlet, useParams } from 'react-router-dom'
 import { formatProjectPath } from '../../lib/formatProjectPath'
 import { projectApi } from '../../lib/api/project'
 import { addProject, useShellStore } from '../state/shellStore'
+import { useLocale } from '../../hooks/useLocale'
 
 export default function ProjectLayout() {
   const { projectId = '' } = useParams()
+  const { t } = useLocale()
   const project = useShellStore(s => s.projects.find(p => p.id === projectId) ?? null)
   const [notFoundForId, setNotFoundForId] = useState<string | null>(null)
 
@@ -36,7 +38,7 @@ export default function ProjectLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const navItems = [
     { to: `/projects/${projectId}/wiki`, label: 'Wiki', icon: BookOpen },
-    { to: `/projects/${projectId}/settings`, label: '项目配置', icon: Settings2 },
+    { to: `/projects/${projectId}/settings`, label: t('projectNavConfig'), icon: Settings2 },
   ]
 
   return (
@@ -83,16 +85,16 @@ export default function ProjectLayout() {
               </>
             ) : sidebarProjectLoading ? (
               <>
-                <div className="truncate text-sm font-semibold text-muted-foreground">加载项目…</div>
-                <p className="mt-1 text-xs text-muted-foreground">正在从服务器获取项目信息</p>
+                <div className="truncate text-sm font-semibold text-muted-foreground">{t('projectLoadingTitle')}</div>
+                <p className="mt-1 text-xs text-muted-foreground">{t('projectLoadingDesc')}</p>
               </>
             ) : (
               <>
-                <div className="truncate text-sm font-semibold text-foreground">{projectId || '未知项目'}</div>
+                <div className="truncate text-sm font-semibold text-foreground">{projectId || t('projectUnknown')}</div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {notFoundForId === projectId
-                    ? '未找到该项目，可能已被删除或 ID 不正确。'
-                    : '列表中暂无该项目，请返回首页同步。'}
+                    ? t('projectNotFound')
+                    : t('projectNotInList')}
                 </p>
               </>
             )}
@@ -123,7 +125,7 @@ export default function ProjectLayout() {
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         >
           {theme === 'dark' ? <Sun size={13} /> : <Moon size={13} />}
-          {`Theme: ${theme}`}
+          {theme === 'dark' ? t('appLightMode') : t('appDarkMode')}
         </button>
         <Link
           to="/"
@@ -131,7 +133,7 @@ export default function ProjectLayout() {
           onClick={() => setDrawerOpen(false)}
         >
           <Home size={13} />
-          Back to Projects
+          {t('appReturnHome')}
         </Link>
       </aside>
 

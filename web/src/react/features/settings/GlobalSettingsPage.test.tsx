@@ -1,27 +1,111 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GlobalConfig, ProviderDef } from '../../../lib/contracts/config'
+import { useState, type ReactNode } from 'react'
 
-vi.mock('./components/CapsuleSwitch', () => ({
-  CapsuleSwitch: ({ checked, onChange, disabled, label }: any) => (
-    <label>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e: any) => onChange?.(e.target.checked)}
-        disabled={disabled}
-        aria-label={label}
-      />
-      {label && <span>{label}</span>}
-    </label>
-  ),
-}))
-
-vi.mock('@heroui/react', () => ({
-  Spinner: ({ size }: any) => <span data-testid="spinner" data-size={size} />,
-}))
+vi.mock('@heroui/react', () => {
+  const Passthrough = ({ children, className }: any) => <div className={className}>{children}</div>
+  const TabsComp = ({ children }: any) => <div>{children}</div>
+  TabsComp.ListContainer = Passthrough
+  TabsComp.List = ({ children }: any) => <div role="tablist">{children}</div>
+  TabsComp.Tab = ({ children, id }: any) => <button role="tab" data-id={id}>{children}</button>
+  TabsComp.Indicator = () => null
+  TabsComp.Panel = ({ children }: any) => <div role="tabpanel">{children}</div>
+  const CardComp = ({ children, className }: any) => <div className={className}>{children}</div>
+  CardComp.Header = Passthrough
+  CardComp.Content = Passthrough
+  CardComp.Footer = Passthrough
+  CardComp.Title = Passthrough
+  CardComp.Description = Passthrough
+  const { useState: useStateHook } = require('react')
+  const DropdownComp = ({ children }: any) => {
+    const [open, setOpen] = useStateHook(false)
+    const childArray = Array.isArray(children) ? children : [children]
+    const trigger = childArray[0]
+    const popover = childArray[1]
+    return <div>
+      <div onClick={() => setOpen(!open)}>{trigger}</div>
+      {open && popover}
+    </div>
+  }
+  DropdownComp.Popover = ({ children }: any) => <div>{children}</div>
+  DropdownComp.Menu = ({ children, onAction, 'aria-label': ariaLabel }: any) => {
+    return <div aria-label={ariaLabel} onClick={(e: any) => {
+      const key = (e.target as HTMLElement).closest('[data-key]')?.getAttribute('data-key')
+      if (key && onAction) onAction(key)
+    }}>{children}</div>
+  }
+  DropdownComp.Item = ({ children, id, textValue }: any) => {
+    const label = typeof children === 'string' ? children : textValue
+    return <button data-key={id}>{label}</button>
+  }
+  const SelectComp = ({ children, 'aria-label': ariaLabel }: any) => <div aria-label={ariaLabel}>{children}</div>
+  SelectComp.Trigger = Passthrough
+  SelectComp.Value = () => null
+  SelectComp.Indicator = () => null
+  SelectComp.Popover = Passthrough
+  const ListBoxComp = ({ children }: any) => <div role="listbox">{children}</div>
+  ListBoxComp.Item = ({ children, id, textValue }: any) => <div role="option" aria-label={textValue}>{children}</div>
+  return {
+    Button: ({ children, onPress, startContent, isLoading, isDisabled, isIconOnly, ...props }: any) => (
+      <button onClick={onPress} disabled={isDisabled || isLoading} {...props}>{startContent}{children}</button>
+    ),
+    Card: CardComp,
+    Chip: ({ children }: any) => <span>{children}</span>,
+    Checkbox: Object.assign(
+      ({ children, isSelected, onChange, isDisabled }: any) => (
+        <label><input type="checkbox" checked={isSelected} onChange={(e: any) => onChange?.(e.target.checked)} disabled={isDisabled} />{children}</label>
+      ),
+      {
+        Control: Passthrough,
+        Indicator: () => null,
+        Content: Passthrough,
+      },
+    ),
+    Dropdown: DropdownComp,
+    Input: ({ value, onValueChange, placeholder, label, endContent, type, isDisabled, description, ...props }: any) => (
+      <div>
+        {label && <label>{label}</label>}
+        <input value={value ?? ''} onChange={(e: any) => onValueChange?.(e.target.value)} placeholder={placeholder} type={type} disabled={isDisabled} />
+        {endContent}
+        {description && <span>{description}</span>}
+      </div>
+    ),
+    Label: ({ children }: any) => <span>{children}</span>,
+    ListBox: ListBoxComp,
+    NumberField: Object.assign(
+      ({ children, value, onChange, label }: any) => (
+        <div>{label && <label>{label}</label>}{children}<input value={value ?? ''} onChange={(e: any) => onChange?.(Number(e.target.value) || 0)} /></div>
+      ),
+      {
+        Group: Passthrough,
+        Input: () => <span />,
+      },
+    ),
+    ScrollShadow: Passthrough,
+    Select: SelectComp,
+    Spinner: ({ size }: any) => <span data-testid="spinner" data-size={size} />,
+    Surface: Passthrough,
+    Switch: Object.assign(
+      ({ isSelected, onChange, children }: any) => (
+        <label><input type="checkbox" checked={isSelected} onChange={(e: any) => onChange?.(e.target.checked)} />{children}</label>
+      ),
+      {
+        Control: Passthrough,
+        Thumb: () => null,
+        Content: Passthrough,
+        Icon: () => null,
+      },
+    ),
+    Tabs: TabsComp,
+    TextArea: ({ value, onChange, label }: any) => (
+      <div>{label && <label>{label}</label>}<textarea value={value} onChange={onChange} /></div>
+    ),
+    Typography: ({ children }: any) => <span>{children}</span>,
+  }
+})
 
 const mocks = vi.hoisted(() => ({
   discoverAcp: vi.fn(),
@@ -83,6 +167,7 @@ function createGlobalConfig(extra?: Partial<GlobalConfig>): GlobalConfig {
     providers,
     defaultProviderId: 'opencode-acp',
     defaultApiProviderId: 'openai',
+    enabledAcpProviderIds: ['opencode-acp'],
     providerConnections: {
       'opencode-acp': { providerId: 'opencode-acp', baseUrl: 'http://127.0.0.1:3210', extra: { kind: 'acp' } },
       'cursor-acp': { providerId: 'cursor-acp', baseUrl: 'http://127.0.0.1:3210', extra: { kind: 'acp' } },
@@ -99,8 +184,8 @@ function createGlobalConfig(extra?: Partial<GlobalConfig>): GlobalConfig {
       },
       ...(extra?.providerConnections ?? {}),
     },
-    limits: { maxAgentsPerProject: 10, maxSessionsPerUser: 5, agentTimeoutMs: 300000 },
-    features: { allowProjectConnectionOverride: true, allowMultiProvider: false },
+    limits: { maxAgentsPerProject: 10, agentTimeoutMs: 300000 },
+    features: { allowProjectConnectionOverride: true },
     updatedAt: '2026-05-13T00:00:00.000Z',
     updatedBy: 'test',
   }
@@ -273,7 +358,10 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     await renderPage()
 
     expect(screen.getByText('DeepSeek')).toBeInTheDocument()
-    await user.click(screen.getByText('DeepSeek'))
+    fireEvent.click(screen.getByText('DeepSeek').closest('button')!)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /删除/ })).toBeInTheDocument()
+    })
     await user.click(screen.getByRole('button', { name: /删除/ }))
 
     expect(mocks.updateGlobalConfig).toHaveBeenCalledWith(
@@ -310,7 +398,10 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     mocks.state.providers = mocks.state.globalConfig.providers
     await renderPage()
 
-    await user.click(screen.getByText('DeepSeek'))
+    fireEvent.click(screen.getByText('DeepSeek').closest('button')!)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /设为默认/ })).toBeInTheDocument()
+    })
     await user.click(screen.getByRole('button', { name: /设为默认/ }))
 
     expect(mocks.updateGlobalConfig).toHaveBeenCalledWith({

@@ -1,5 +1,6 @@
 import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Home } from 'lucide-react'
 import { useShellStore } from '../state/shellStore'
+import { useLocale } from '../../hooks/useLocale'
 
 export type ActivityPanel = 'wiki' | 'sessions' | 'search' | 'settings' | 'projects'
 
@@ -10,19 +11,20 @@ interface ActivityBarProps {
   hasProject: boolean
 }
 
-const topItems: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
-  { id: 'wiki', icon: BookOpen, label: 'Wiki' },
-  { id: 'sessions', icon: Monitor, label: 'Sessions' },
-  { id: 'search', icon: Search, label: '搜索' },
-]
-
-const bottomItems: { id: ActivityPanel; icon: typeof Settings2; label: string }[] = [
-  { id: 'settings', icon: Settings2, label: '设置' },
-]
-
 export function ActivityBar({ activePanel, onPanelToggle, onHome, hasProject }: ActivityBarProps) {
+  const { t } = useLocale()
   const theme = useShellStore(s => s.preferences.theme)
   const setTheme = useShellStore(s => s.setTheme)
+
+  const topItems: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
+    { id: 'wiki', icon: BookOpen, label: 'Wiki' },
+    { id: 'sessions', icon: Monitor, label: 'Sessions' },
+    { id: 'search', icon: Search, label: t('appSearch') },
+  ]
+
+  const bottomItems: { id: ActivityPanel; icon: typeof Settings2; label: string }[] = [
+    { id: 'settings', icon: Settings2, label: t('appSettings') },
+  ]
 
   const projectPanels: Set<ActivityPanel> = new Set(['wiki', 'sessions'])
 
@@ -37,7 +39,7 @@ export function ActivityBar({ activePanel, onPanelToggle, onHome, hasProject }: 
             <button
               key={item.id}
               type="button"
-              title={disabled ? `${item.label}（需先选择项目）` : item.label}
+              title={disabled ? `${item.label}（${t('appNeedProject')}）` : item.label}
               className={`ab-item${isActive ? ' ab-item-active' : ''}${disabled ? ' ab-item-disabled' : ''}`}
               onClick={() => !disabled && onPanelToggle(item.id)}
               disabled={disabled}
@@ -65,7 +67,7 @@ export function ActivityBar({ activePanel, onPanelToggle, onHome, hasProject }: 
         })}
         <button
           type="button"
-          title="首页"
+          title={t('appHome')}
           className="ab-item"
           onClick={onHome}
         >
@@ -73,7 +75,7 @@ export function ActivityBar({ activePanel, onPanelToggle, onHome, hasProject }: 
         </button>
         <button
           type="button"
-          title={theme === 'dark' ? '浅色模式' : '深色模式'}
+          title={theme === 'dark' ? t('appLightMode') : t('appDarkMode')}
           className="ab-item"
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         >

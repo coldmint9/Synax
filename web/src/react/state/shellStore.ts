@@ -156,14 +156,15 @@ export function hydrateShellPreferences() {
   if (!raw) return
   try {
     const parsed = JSON.parse(raw) as Partial<ShellPreferences>
-    if (parsed.theme === 'light' || parsed.theme === 'dark') {
+    const patch: Partial<ShellPreferences> = {}
+    if (parsed.theme === 'light' || parsed.theme === 'dark') patch.theme = parsed.theme
+    if (parsed.locale === 'zh' || parsed.locale === 'en') patch.locale = parsed.locale
+    if (parsed.defaultHome === 'global-home' || parsed.defaultHome === 'last-project') patch.defaultHome = parsed.defaultHome
+    if (typeof parsed.notifications === 'boolean') patch.notifications = parsed.notifications
+    if (parsed.editor && ['system', 'vscode', 'cursor', 'windsurf', 'webstorm'].includes(parsed.editor)) patch.editor = parsed.editor
+    if (Object.keys(patch).length > 0) {
       useShellStore.setState((state) => ({
-        preferences: { ...state.preferences, theme: parsed.theme! },
-      }))
-    }
-    if (parsed.locale === 'zh' || parsed.locale === 'en') {
-      useShellStore.setState((state) => ({
-        preferences: { ...state.preferences, locale: parsed.locale! },
+        preferences: { ...state.preferences, ...patch },
       }))
     }
   } catch {

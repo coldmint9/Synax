@@ -1,3 +1,5 @@
+import type { ProviderConnection } from './config-types.js'
+
 export type ProjectVisibility = 'private' | 'internal' | 'public'
 export type ProjectLifecycleState = 'active' | 'archived'
 export type NotificationChannel = 'email' | 'im' | 'webhook' | 'none'
@@ -22,7 +24,7 @@ export interface ProjectBasics {
 export interface ProjectProviderOverride {
   providerId?: string | null
   modelId?: string | null
-  providerConnection?: import('./config').ProviderConnection | null
+  providerConnection?: ProviderConnection | null
   limits?: {
     maxAgentsPerProject?: number
     agentTimeoutMs?: number
@@ -70,8 +72,52 @@ export interface UpdateProjectSettingsRequest {
   compliance?: Partial<ComplianceSettings>
 }
 
+export type ProjectSettingsSection = 'basics' | 'provider' | 'collaboration' | 'notifications' | 'compliance'
+
 export interface HighRiskAuthEnvelope {
   confirmPhrase: string
   securityCode: string
   justification: string
+}
+
+export function createDefaultProjectSettings(projectId: string, updatedBy = 'system'): ProjectSettings {
+  const now = new Date().toISOString()
+  return {
+    projectId,
+    version: 1,
+    basics: {
+      name: projectId,
+      description: '',
+      environment: 'development',
+      visibility: 'private',
+      tags: [],
+      ownerMemberId: '',
+    },
+    provider: {},
+    collaboration: {
+      agentsAllowDirectCommit: false,
+      reviewPolicy: {
+        minApprovals: 1,
+        requireQaApproval: false,
+        requireOwnerApproval: false,
+        blockOnFailedCi: true,
+      },
+    },
+    notifications: {
+      channel: 'none',
+      minSeverity: 'critical',
+      webhookUrl: '',
+      recipients: [],
+      quietHours: '',
+    },
+    compliance: {
+      retentionDays: 90,
+      auditLogEnabled: true,
+      dataExportAllowed: false,
+      piiMasking: true,
+    },
+    lifecycleState: 'active',
+    updatedAt: now,
+    updatedBy,
+  }
 }

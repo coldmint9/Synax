@@ -5,6 +5,7 @@ import { addProject, useShellStore } from '../state/shellStore'
 import { useContextStore } from '../state/contextStore'
 import { useContextStream } from '../../hooks/useContextStream'
 import { useAgentPermissionNotifier } from '../../hooks/useAgentPermissionNotifier'
+import { useDesktopNotification } from '../../hooks/useDesktopNotification'
 import { useRuntimeSSE } from '../features/debug-console/useRuntimeSSE'
 import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
 import type { ActivityPanel } from './ActivityBar'
@@ -66,6 +67,7 @@ export default function WorkbenchLayout() {
     }
   }, [effectiveProjectId, navigate])
   useAgentPermissionNotifier(effectiveProjectId || null, navigateToSession)
+  useDesktopNotification(effectiveProjectId || null)
 
   useEffect(() => {
     if (!effectiveProjectId) return

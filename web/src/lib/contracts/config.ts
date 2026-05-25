@@ -1,6 +1,6 @@
 export type ProviderStatus = 'live' | 'experimental' | 'inactive'
 export type ProviderKind = 'acp' | 'api'
-export type ApiFormat = 'openai' | 'anthropic'
+export type ApiFormat = 'openai' | 'openai-responses' | 'anthropic'
 
 export interface ProviderCaps {
   canFollowUp: boolean
@@ -37,15 +37,14 @@ export interface GlobalConfig {
   providers: ProviderDef[]
   defaultProviderId: string
   defaultApiProviderId: string
+  enabledAcpProviderIds: string[]
   providerConnections: Record<string, ProviderConnection>
   limits: {
     maxAgentsPerProject: number
-    maxSessionsPerUser: number
     agentTimeoutMs: number
   }
   features: {
     allowProjectConnectionOverride: boolean
-    allowMultiProvider: boolean
   }
   updatedAt: string
   updatedBy: string
@@ -79,6 +78,7 @@ export interface UpdateGlobalConfigRequest {
   providers?: ProviderDef[]
   defaultProviderId?: string
   defaultApiProviderId?: string
+  enabledAcpProviderIds?: string[]
   providerConnections?: Record<string, ProviderConnection>
   limits?: GlobalConfig['limits']
   features?: GlobalConfig['features']
@@ -123,6 +123,7 @@ export interface AcpDiscoveryItem {
 
 export interface AcpDiscoveryResponse {
   selectedProviderId: string
+  enabledIds: string[]
   supported: AcpDiscoveryItem[]
 }
 
@@ -138,6 +139,7 @@ export interface AiApiValidateResponse {
   ok: boolean
   message?: string
   error?: string
+  resolvedBaseUrl?: string
 }
 
 export interface AiApiModelsDiscoverRequest {
@@ -152,4 +154,5 @@ export interface AiApiModelsDiscoverResponse {
   models: string[]
   source: string
   error?: string
+  resolvedBaseUrl?: string
 }
