@@ -224,7 +224,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       if (selectedPlanId) {
         set(s => ({ ...s, plans, loading: { ...s.loading, plans: false } }))
       } else {
-        const active = plans.find(p => p.status !== 'completed') ?? null
+        const active = plans.find(p => p.status !== 'completed' && p.status !== 'discarded') ?? null
         set(s => ({ ...s, plans, activePlan: active, loading: { ...s.loading, plans: false } }))
       }
     } catch {
@@ -275,7 +275,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
   discardPlan: async (planId: string) => {
     await evaluationApi.discardPlan(planId)
-    set({ activePlan: null, activePlanNodes: [], planNav: 'list' })
+    set({ activePlan: null, activePlanNodes: [], selectedPlanId: null, planNav: 'list' })
   },
 
   updatePlanNode: async (nodeId: string, updates) => {

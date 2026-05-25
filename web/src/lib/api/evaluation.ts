@@ -36,7 +36,7 @@ export type WikiPlan = {
   projectId: string
   snapshotId: string
   evaluationIds: string[]
-  status: 'draft' | 'confirmed' | 'executing' | 'reviewing' | 'committing' | 'completed'
+  status: 'draft' | 'confirmed' | 'executing' | 'reviewing' | 'committing' | 'completed' | 'discarded'
   createdAt: string
   updatedAt: string
   confirmedAt: string | null
