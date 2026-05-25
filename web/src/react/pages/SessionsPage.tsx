@@ -5,7 +5,7 @@ import { useDebugPolling } from '../features/debug-console/useDebugPolling'
 import { useSessionLiveStream } from '../features/debug-console/useSessionLiveStream'
 import { SessionTranscript } from '../features/sessions/SessionTranscript'
 import { SessionWorkspace, useHasWorkspaceContent } from '../features/sessions/SessionWorkspace'
-import SessionList from '../features/coordinates/context/SessionList'
+import SessionList from '../features/sessions/SessionList'
 
 export default memo(function SessionsPage() {
   useDebugPolling()

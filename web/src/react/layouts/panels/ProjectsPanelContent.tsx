@@ -143,7 +143,7 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
             key={project.id}
             type="button"
             className="sp-list-item group"
-            onClick={() => navigate(`/projects/${project.id}/coordinates`)}
+            onClick={() => navigate(`/projects/${project.id}/wiki`)}
           >
             <Circle
               size={6}

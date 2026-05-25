@@ -11,7 +11,6 @@ interface SidePanelProps {
 }
 
 const panelTitles: Record<ActivityPanel, string> = {
-  coordinates: 'Coordinates',
   wiki: 'Wiki',
   sessions: 'Sessions',
   search: '搜索',

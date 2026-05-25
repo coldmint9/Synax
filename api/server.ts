@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { API_SESSION_LOG_FILE, logger as pinoLogger } from "./lib/logger.js";
 import { PORT } from "./lib/env.js";
-import { coordinatesRoutes } from "./routes/coordinates.js";
+import { acpRoutes } from "./routes/acp.js";
 import { healthRoutes } from "./routes/health.js";
 import { projectRoutes } from "./routes/projects.js";
 import { contextRoutes } from "./routes/context.js";
@@ -35,7 +35,7 @@ app.use("*", async (c, next) => {
 
 // --- 路由 ---
 app.route("/api/projects", projectRoutes);
-app.route("/api/coordinates", coordinatesRoutes);
+app.route("/api/acp", acpRoutes);
 app.route("/api/context", contextRoutes);
 app.route("/api/config", configRoutes);
 app.route("/api/llm", llmRoutes);

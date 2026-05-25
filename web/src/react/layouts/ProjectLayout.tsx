@@ -1,16 +1,13 @@
-import { BrainCircuit, BookOpen, FolderCode, GitBranch, Home, Moon, Settings2, Sun } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { BookOpen, FolderCode, GitBranch, Home, Moon, Settings2, Sun } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useParams } from 'react-router-dom'
 import { formatProjectPath } from '../../lib/formatProjectPath'
-import { headerGitBranchLabel } from '../../lib/projectGitBranch'
 import { projectApi } from '../../lib/api/project'
-import { useCoordinatesState } from '../state/coordinatesStore'
 import { addProject, useShellStore } from '../state/shellStore'
 
 export default function ProjectLayout() {
   const { projectId = '' } = useParams()
   const project = useShellStore(s => s.projects.find(p => p.id === projectId) ?? null)
-  /** When GET /projects/:id returns 404, record which id so we do not treat the next route as failed. */
   const [notFoundForId, setNotFoundForId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -34,44 +31,27 @@ export default function ProjectLayout() {
   const sidebarProjectLoading = sidebarMissingProject && notFoundForId !== projectId
 
   const projectName = project?.name ?? (projectId || '—')
-  const forestSource = useCoordinatesState(projectId, projectName, s => s.forest.source)
-  const headerBranch = useMemo(
-    () => headerGitBranchLabel(project, forestSource),
-    [project, forestSource],
-  )
-  const nodeCount = useCoordinatesState(projectId, projectName, s => Object.keys(s.forest.nodes).length)
   const theme = useShellStore(s => s.preferences.theme)
   const setTheme = useShellStore(s => s.setTheme)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const navItems = [
-    { to: `/projects/${projectId}/coordinates`, label: 'Coordinates', icon: BrainCircuit },
     { to: `/projects/${projectId}/wiki`, label: 'Wiki', icon: BookOpen },
     { to: `/projects/${projectId}/settings`, label: '项目配置', icon: Settings2 },
   ]
 
   return (
     <div className="relative flex h-full min-h-0">
-      {/* ── Pull handle (always visible when drawer closed) ── */}
       {!drawerOpen && (
         <button
           type="button"
           aria-label="Open sidebar"
-          className={`sidebar-handle z-20 flex items-center gap-1${headerBranch ? ' sidebar-handle-expanded' : ''}`}
+          className="sidebar-handle z-20 flex items-center gap-1"
           onClick={() => setDrawerOpen(true)}
         >
-          <BrainCircuit size={14} className="shrink-0" />
-          {headerBranch ? (
-            <span
-              className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/75"
-              title={`Git 分支：${headerBranch}`}
-            >
-              {headerBranch}
-            </span>
-          ) : null}
+          <BookOpen size={14} className="shrink-0" />
         </button>
       )}
 
-      {/* ── Drawer overlay ── */}
       {drawerOpen && (
         <div
           className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[2px]"
@@ -79,7 +59,6 @@ export default function ProjectLayout() {
         />
       )}
 
-      {/* ── Sliding sidebar drawer ── */}
       <aside
         className={`sidebar-drawer ${drawerOpen ? 'sidebar-drawer-open' : 'sidebar-drawer-closed'}`}
         onClick={e => e.stopPropagation()}
@@ -88,20 +67,8 @@ export default function ProjectLayout() {
           <div className="min-w-0 flex-1 rounded-xl border border-border/50 bg-background/55 p-3">
             {project ? (
               <>
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <div className="truncate text-sm font-semibold text-foreground">{project.name}</div>
-                  {headerBranch ? (
-                    <span
-                      className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground/75"
-                      title={`Git 分支：${headerBranch}`}
-                    >
-                      <GitBranch size={11} className="text-muted-foreground/55" />
-                      <span className="max-w-[7rem] truncate font-mono">{headerBranch}</span>
-                    </span>
-                  ) : null}
-                </div>
+                <div className="truncate text-sm font-semibold text-foreground">{project.name}</div>
                 <div className="mt-2">
-                
                   <div className="mt-1 flex items-start gap-1.5 text-[11px] text-muted-foreground/85">
                     {project.source?.kind === 'github' || project.source?.kind === 'gitlab' ? (
                       <GitBranch size={12} className="mt-0.5 shrink-0 text-muted-foreground/50" />
@@ -113,17 +80,11 @@ export default function ProjectLayout() {
                     </span>
                   </div>
                 </div>
-                <div className="mt-2 text-xs tabular-nums text-muted-foreground">
-                  节点 <span className="font-medium text-foreground">{nodeCount}</span>
-                </div>
               </>
             ) : sidebarProjectLoading ? (
               <>
                 <div className="truncate text-sm font-semibold text-muted-foreground">加载项目…</div>
                 <p className="mt-1 text-xs text-muted-foreground">正在从服务器获取项目信息</p>
-                <div className="mt-2 text-xs tabular-nums text-muted-foreground">
-                  节点 <span className="font-medium text-foreground">{nodeCount}</span>
-                </div>
               </>
             ) : (
               <>
@@ -133,13 +94,9 @@ export default function ProjectLayout() {
                     ? '未找到该项目，可能已被删除或 ID 不正确。'
                     : '列表中暂无该项目，请返回首页同步。'}
                 </p>
-                <div className="mt-2 text-xs tabular-nums text-muted-foreground">
-                  节点 <span className="font-medium text-foreground">{nodeCount}</span>
-                </div>
               </>
             )}
           </div>
-         
         </div>
         <nav className="mt-3 space-y-1">
           {navItems.map(item => {
@@ -178,7 +135,6 @@ export default function ProjectLayout() {
         </Link>
       </aside>
 
-      {/* ── Main content fills entire viewport ── */}
       <main className="min-w-0 flex-1">
         <Outlet />
       </main>

@@ -21,9 +21,6 @@ export function useElectronMenu() {
       const projectId = projectMatch?.[1];
 
       switch (action) {
-        case 'view:coordinates':
-          if (projectId) navigate(`/projects/${projectId}/coordinates`);
-          break;
         case 'view:wiki':
           if (projectId) navigate(`/projects/${projectId}/wiki`);
           break;

@@ -197,19 +197,9 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
           : { kind: 'scratch' },
         importState: form.sourceKind === 'scratch' ? 'ready' : 'syncing',
       })
-      const searchParams = new URLSearchParams()
-      if (form.sourceKind !== 'scratch') {
-        searchParams.set('autoAnalyze', '1')
-        if (form.sourceKind === 'localPath') searchParams.set('localPath', form.localPath.trim())
-        else if (form.sourceKind === 'git') {
-          searchParams.set('repoUrl', form.repoUrl.trim())
-          searchParams.set('branch', form.branch.trim() || 'main')
-        }
-      }
-      const qs = searchParams.toString()
       reset()
       onClose()
-      navigate(`/projects/${project.id}/coordinates${qs ? `?${qs}` : ''}`)
+      navigate(`/projects/${project.id}/wiki`)
     } catch (err) {
       setError((err as Error).message || String(err))
     } finally {

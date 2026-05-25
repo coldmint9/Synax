@@ -7,10 +7,10 @@
 import { Activity, AlertTriangle, Clock, MessageSquare, Plus, RefreshCw, Trash2, Bot } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useContextStore } from '../../../state/contextStore'
-import { useDebugConsole } from '../../debug-console/debugConsoleStore'
-import { useDebugPolling } from '../../debug-console/useDebugPolling'
-import type { AgentSession, AgentSessionStatus } from '../../../../lib/api/agentRuntime'
+import { useContextStore } from '../../state/contextStore'
+import { useDebugConsole } from '../debug-console/debugConsoleStore'
+import { useDebugPolling } from '../debug-console/useDebugPolling'
+import type { AgentSession, AgentSessionStatus } from '../../../lib/api/agentRuntime'
 
 const AGENT_STATUS_DOT: Record<AgentSessionStatus, string> = {
   running: 'bg-[var(--color-run)] animate-pulse',

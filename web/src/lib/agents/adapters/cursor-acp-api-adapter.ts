@@ -58,7 +58,7 @@ export class CursorAcpApiAdapter implements CursorAgentAdapter {
   }
 
   async dispatchIntent(input: DispatchIntentInput): Promise<DispatchIntentResult> {
-    const response = await apiFetch('/api/coordinates/dispatch/stream', {
+    const response = await apiFetch('/api/acp/dispatch/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),

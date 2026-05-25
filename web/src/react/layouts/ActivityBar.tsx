@@ -1,7 +1,7 @@
 import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Home } from 'lucide-react'
 import { useShellStore } from '../state/shellStore'
 
-export type ActivityPanel = 'coordinates' | 'wiki' | 'sessions' | 'search' | 'settings' | 'projects'
+export type ActivityPanel = 'wiki' | 'sessions' | 'search' | 'settings' | 'projects'
 
 interface ActivityBarProps {
   activePanel: ActivityPanel | null
