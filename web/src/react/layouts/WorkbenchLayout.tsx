@@ -91,7 +91,6 @@ export default function WorkbenchLayout() {
   })()
 
   const panelRoutes: Record<ActivityPanel, string> = {
-    coordinates: `/projects/${effectiveProjectId}/coordinates`,
     wiki: `/projects/${effectiveProjectId}/wiki`,
     sessions: `/projects/${effectiveProjectId}/sessions`,
     search: `/projects/${effectiveProjectId}/wiki`,

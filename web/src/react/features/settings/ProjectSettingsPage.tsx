@@ -139,7 +139,7 @@ export default function ProjectSettingsPage() {
     <div className="h-full overflow-auto bg-background">
       <div className="mx-auto max-w-5xl px-6 py-10">
         <Link
-          to={'/projects/' + projectId + '/coordinates'}
+          to={'/projects/' + projectId + '/wiki'}
           className="mb-6 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition hover:text-foreground"
         >
           <ArrowLeft size={14} />
