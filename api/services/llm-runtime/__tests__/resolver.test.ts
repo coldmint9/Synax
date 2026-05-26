@@ -200,15 +200,12 @@ describe('resolveLlmSelection', () => {
     expect(result.model).toBe('openai/gpt-4o-mini')
   })
 
-  it('falls back to the first enabled supported API provider when preferred one is unsupported', () => {
-    const result = resolveLlmSelection({
+  it('throws when no candidate resolves instead of falling back', () => {
+    expect(() => resolveLlmSelection({
       catalog,
       globalConfig: createGlobalConfig({ defaultApiProviderId: 'unsupported' }),
       purpose: 'wiki',
-    })
-
-    expect(result.providerId).toBe('openai')
-    expect(result.modelId).toBe('gpt-4o-mini')
+    })).toThrow('No LLM provider configured. Please configure one in Settings.')
   })
 
   it('rejects models blocked by whitelist and falls back to a valid default model', () => {

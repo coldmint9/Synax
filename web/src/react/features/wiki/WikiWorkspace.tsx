@@ -12,7 +12,8 @@ import WikiEvaluationSidebar from './WikiEvaluationSidebar'
 import PlanView from './PlanView'
 import PlanListView from './PlanListView'
 import { wikiApi } from '../../../lib/api/wiki'
-import { apiFetch } from '../../../lib/api/origin'
+import { apiFetch, apiRequest } from '../../../lib/api/origin'
+import { handleError, createAppError, AppError } from '../../../lib/errors'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
 function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated: () => void }) {
@@ -335,19 +336,32 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workDir }),
       })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string; code?: string; message?: string }
+        const msg = body.error ?? body.message ?? `请求失败 (${res.status})`
+        throw createAppError(msg, res.status, body.code)
+      }
       const { task } = await res.json() as { task: { id: string } }
 
-      // Poll refresh task until completed/failed (max 60s)
       const deadline = Date.now() + 60_000
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 1500))
         const taskRes = await apiFetch(`/api/wiki/refresh-tasks/${task.id}`)
-        const taskData = await taskRes.json() as { status: string }
-        if (taskData.status === 'completed' || taskData.status === 'failed') break
+        if (!taskRes.ok) break
+        const taskData = await taskRes.json() as { status: string; errorMessage?: string | null }
+        if (taskData.status === 'failed') {
+          const msg = taskData.errorMessage ?? t('wikiRefreshFailed')
+          const code = msg.includes('LLM_PROVIDER_NOT_CONFIGURED') || msg.includes('未配置')
+            ? 'LLM_PROVIDER_NOT_CONFIGURED' : undefined
+          throw new AppError(msg, { level: 'business', code })
+        }
+        if (taskData.status === 'completed') break
       }
 
       await loadLatest(projectId)
       await loadPatches(projectId, 'pending')
+    } catch (err) {
+      handleError(err)
     } finally {
       setRefreshing(false)
     }
