@@ -57,18 +57,18 @@ export function useConfig(projectId?: string | null) {
   const updateProjectConfig = useCallback(
     async (patch: Parameters<typeof configApi.updateProject>[1]) => {
       if (!projectId) return
-      await configApi.updateProject(projectId, patch)
-      await load()
+      const res = await configApi.updateProject(projectId, patch)
+      setProjectConfig(res.config)
     },
-    [projectId, load],
+    [projectId],
   )
 
   const updateGlobalConfig = useCallback(
     async (patch: Parameters<typeof configApi.updateGlobal>[0]) => {
-      await configApi.updateGlobal(patch)
-      await load()
+      const res = await configApi.updateGlobal(patch)
+      setGlobalConfig(res.config)
     },
-    [load],
+    [],
   )
 
   const resetProjectConfig = useCallback(async () => {

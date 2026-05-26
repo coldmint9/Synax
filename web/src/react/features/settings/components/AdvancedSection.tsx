@@ -52,10 +52,10 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
           <div className="border-t border-border/30 pt-3">
             <Button
               size="sm"
-              variant="bordered"
+              variant="secondary"
               onPress={openConfigFile}
-              startContent={<FileCode size={13} />}
             >
+              <FileCode size={13} />
               {t('settingsOpenConfigFile')}
             </Button>
             <p className="mt-1.5 text-[11px] text-muted-foreground">
@@ -68,7 +68,7 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
       <SettingsCard
         title={t('settingsMcpTitle')}
         icon={Plug}
-        badge={<span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{t('settingsMcpComingSoon')}</span>}
+        badge={<span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] text-foreground/60">{t('settingsMcpComingSoon')}</span>}
       >
         <p className="text-xs text-muted-foreground">{t('settingsMcpDesc')}</p>
       </SettingsCard>

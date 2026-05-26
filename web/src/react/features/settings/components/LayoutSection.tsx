@@ -24,10 +24,9 @@ export function LayoutSection() {
           <SettingsSelect
             className="w-36"
             fullWidth={false}
-            selectedKeys={[locale]}
-            onSelectionChange={(keys) => {
-              const val = [...keys][0] as string
-              if (val) setLocale(val as 'zh' | 'en')
+            selectedKey={locale}
+            onSelectionChange={(key) => {
+              if (key) setLocale(key as 'zh' | 'en')
             }}
             disallowEmptySelection
             aria-label={t('settingsLanguage')}
@@ -42,10 +41,9 @@ export function LayoutSection() {
           <SettingsSelect
             className="w-36"
             fullWidth={false}
-            selectedKeys={[defaultHome]}
-            onSelectionChange={(keys) => {
-              const val = [...keys][0] as string
-              if (val) setDefaultHome(val as 'global-home' | 'last-project')
+            selectedKey={defaultHome}
+            onSelectionChange={(key) => {
+              if (key) setDefaultHome(key as 'global-home' | 'last-project')
             }}
             disallowEmptySelection
             aria-label={t('settingsDefaultHome')}
@@ -66,10 +64,9 @@ export function LayoutSection() {
           <SettingsSelect
             className="w-36"
             fullWidth={false}
-            selectedKeys={[editor]}
-            onSelectionChange={(keys) => {
-              const val = [...keys][0] as string
-              if (val) setEditor(val as typeof editor)
+            selectedKey={editor}
+            onSelectionChange={(key) => {
+              if (key) setEditor(key as typeof editor)
             }}
             disallowEmptySelection
             aria-label={t('settingsEditor')}

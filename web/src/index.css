@@ -105,60 +105,60 @@
 /* ── CSS Variables ── */
 :root {
   /* Raw HSL aliases (for opacity patterns: hsl(var(--x-hsl) / alpha)) */
-  --background-hsl: 44 30% 97%;
-  --foreground-hsl: 160 12% 14%;
-  --border-hsl: 36 18% 84%;
-  --accent-hsl: 30 44% 88%;
-  --accent-foreground-hsl: 160 12% 14%;
+  --background-hsl: 40 28% 97%;
+  --foreground-hsl: 160 14% 12%;
+  --border-hsl: 38 16% 88%;
+  --accent-hsl: 38 20% 92%;
+  --accent-foreground-hsl: 160 14% 12%;
   --success-hsl: 146 52% 38%;
   --warning-hsl: 38 88% 52%;
-  --muted-hsl: 38 20% 90%;
+  --muted-hsl: 38 14% 90%;
 
   /* Full colors (HeroUI components use var(--x) directly) */
-  --background: hsl(44 30% 97%);
-  --foreground: hsl(160 12% 14%);
-  --border: hsl(36 18% 84%);
+  --background: hsl(40 28% 97%);
+  --foreground: hsl(160 14% 12%);
+  --border: hsl(38 16% 88%);
   --accent: hsl(158 44% 32%);
   --accent-foreground: hsl(0 0% 100%);
-  --muted: hsl(28 10% 38%);
+  --muted: hsl(38 8% 42%);
   --success: hsl(146 52% 38%);
   --success-foreground: hsl(0 0% 100%);
   --warning: hsl(38 88% 52%);
   --warning-foreground: hsl(0 0% 0%);
 
   /* HeroUI-specific tokens */
-  --surface: hsl(42 28% 98%);
-  --surface-foreground: hsl(160 12% 14%);
-  --surface-secondary: hsl(40 26% 92%);
-  --overlay: hsl(42 28% 98%);
-  --overlay-foreground: hsl(160 12% 14%);
-  --default: hsl(40 26% 92%);
-  --default-foreground: hsl(160 12% 14%);
+  --surface: hsl(42 32% 99%);
+  --surface-foreground: hsl(160 14% 12%);
+  --surface-secondary: hsl(40 20% 94%);
+  --overlay: hsl(42 32% 99%);
+  --overlay-foreground: hsl(160 14% 12%);
+  --default: hsl(40 20% 94%);
+  --default-foreground: hsl(160 14% 12%);
   --danger: hsl(0 84% 60%);
   --danger-foreground: hsl(0 0% 100%);
   --focus: hsl(158 44% 32%);
-  --field-background: hsl(44 30% 97%);
-  --field-foreground: hsl(160 12% 14%);
-  --field-placeholder: hsl(28 10% 38%);
-  --field-border: hsl(36 18% 84%);
-  --separator: hsl(36 18% 84%);
-  --segment: hsl(42 28% 98%);
-  --segment-foreground: hsl(160 12% 14%);
-  --scrollbar: hsl(36 18% 84%);
+  --field-background: hsl(42 32% 99%);
+  --field-foreground: hsl(160 14% 12%);
+  --field-placeholder: hsl(38 8% 52%);
+  --field-border: hsl(38 16% 88%);
+  --separator: hsl(38 16% 88%);
+  --segment: hsl(42 32% 99%);
+  --segment-foreground: hsl(160 14% 12%);
+  --scrollbar: hsl(38 16% 88%);
 
   /* Project tokens (not used by HeroUI directly) */
-  --card: 42 28% 98%;
-  --card-foreground: 160 12% 14%;
-  --popover: 42 28% 98%;
-  --popover-foreground: 160 12% 14%;
+  --card: 42 32% 99%;
+  --card-foreground: 160 14% 12%;
+  --popover: 42 32% 99%;
+  --popover-foreground: 160 14% 12%;
   --primary: 158 44% 32%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 40 26% 92%;
-  --secondary-foreground: 160 12% 14%;
-  --muted-foreground: 28 10% 38%;
+  --secondary: 40 20% 94%;
+  --secondary-foreground: 160 14% 12%;
+  --muted-foreground: 38 8% 44%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
-  --input: 36 18% 84%;
+  --input: 38 16% 88%;
   --ring: 158 44% 32%;
   --radius: 0.5rem;
   --agent: 162 68% 35%;
@@ -189,15 +189,15 @@
   --import-step-done: 158 44% 32%;
   --import-step-active: 158 44% 32%;
   --import-step-pending: 0 0% 60%;
-  --wiki-surface: 44 34% 96%;
-  --wiki-surface-strong: 42 32% 93%;
-  --wiki-panel: 40 30% 98%;
-  --wiki-panel-foreground: 160 12% 14%;
-  --wiki-panel-muted: 40 22% 91%;
+  --wiki-surface: 40 26% 96%;
+  --wiki-surface-strong: 38 22% 93%;
+  --wiki-panel: 42 30% 98%;
+  --wiki-panel-foreground: 160 14% 12%;
+  --wiki-panel-muted: 38 18% 91%;
   --wiki-accent: 158 34% 89%;
   --wiki-accent-foreground: 160 18% 18%;
-  --wiki-warm: 28 58% 90%;
-  --wiki-shadow: 28 30% 28%;
+  --wiki-warm: 36 50% 90%;
+  --wiki-shadow: 36 24% 26%;
   --verdict-bug: 0 70% 52%;
   --verdict-risk: 38 80% 52%;
   --verdict-new-req: 258 70% 58%;
@@ -212,60 +212,60 @@
 
 .dark {
   /* Raw HSL aliases */
-  --background-hsl: 30 12% 8%;
-  --foreground-hsl: 44 22% 92%;
-  --border-hsl: 30 8% 24%;
-  --accent-hsl: 26 14% 21%;
-  --accent-foreground-hsl: 44 22% 92%;
+  --background-hsl: 160 14% 8%;
+  --foreground-hsl: 150 16% 92%;
+  --border-hsl: 155 10% 22%;
+  --accent-hsl: 155 12% 20%;
+  --accent-foreground-hsl: 150 16% 92%;
   --success-hsl: 146 52% 46%;
   --warning-hsl: 38 88% 56%;
-  --muted-hsl: 30 8% 18%;
+  --muted-hsl: 155 8% 18%;
 
   /* Full colors */
-  --background: hsl(30 12% 8%);
-  --foreground: hsl(44 22% 92%);
-  --border: hsl(30 8% 24%);
+  --background: hsl(160 14% 8%);
+  --foreground: hsl(150 16% 92%);
+  --border: hsl(155 10% 22%);
   --accent: hsl(158 46% 54%);
   --accent-foreground: hsl(0 0% 100%);
-  --muted: hsl(34 12% 62%);
+  --muted: hsl(155 8% 58%);
   --success: hsl(146 52% 46%);
   --success-foreground: hsl(0 0% 100%);
   --warning: hsl(38 88% 56%);
   --warning-foreground: hsl(0 0% 0%);
 
   /* HeroUI-specific tokens */
-  --surface: hsl(30 10% 11%);
-  --surface-foreground: hsl(44 22% 92%);
-  --surface-secondary: hsl(30 8% 18%);
-  --overlay: hsl(30 10% 11%);
-  --overlay-foreground: hsl(44 22% 92%);
-  --default: hsl(30 8% 18%);
-  --default-foreground: hsl(44 22% 92%);
+  --surface: hsl(160 12% 11%);
+  --surface-foreground: hsl(150 16% 92%);
+  --surface-secondary: hsl(158 10% 17%);
+  --overlay: hsl(160 12% 11%);
+  --overlay-foreground: hsl(150 16% 92%);
+  --default: hsl(158 10% 17%);
+  --default-foreground: hsl(150 16% 92%);
   --danger: hsl(0 70% 42%);
   --danger-foreground: hsl(0 0% 98%);
   --focus: hsl(158 46% 54%);
-  --field-background: hsl(30 10% 11%);
-  --field-foreground: hsl(44 22% 92%);
-  --field-placeholder: hsl(34 12% 62%);
-  --field-border: hsl(30 8% 24%);
-  --separator: hsl(30 8% 20%);
-  --segment: hsl(30 8% 18%);
-  --segment-foreground: hsl(44 22% 92%);
-  --scrollbar: hsl(30 8% 24%);
+  --field-background: hsl(160 12% 11%);
+  --field-foreground: hsl(150 16% 92%);
+  --field-placeholder: hsl(155 8% 58%);
+  --field-border: hsl(155 10% 22%);
+  --separator: hsl(155 10% 19%);
+  --segment: hsl(158 10% 17%);
+  --segment-foreground: hsl(150 16% 92%);
+  --scrollbar: hsl(155 10% 22%);
 
   /* Project tokens */
-  --card: 30 10% 11%;
-  --card-foreground: 44 22% 92%;
-  --popover: 30 10% 11%;
-  --popover-foreground: 44 22% 92%;
+  --card: 160 12% 11%;
+  --card-foreground: 150 16% 92%;
+  --popover: 160 12% 11%;
+  --popover-foreground: 150 16% 92%;
   --primary: 158 46% 54%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 30 8% 18%;
-  --secondary-foreground: 44 22% 92%;
-  --muted-foreground: 34 12% 62%;
+  --secondary: 158 10% 17%;
+  --secondary-foreground: 150 16% 92%;
+  --muted-foreground: 155 8% 58%;
   --destructive: 0 70% 42%;
   --destructive-foreground: 0 0% 98%;
-  --input: 30 8% 24%;
+  --input: 155 10% 22%;
   --ring: 158 46% 54%;
   --agent: 162 64% 44%;
   --human: 24 82% 56%;
@@ -288,14 +288,14 @@
   --import-step-done: 158 46% 54%;
   --import-step-active: 158 46% 54%;
   --import-step-pending: 0 0% 48%;
-  --wiki-surface: 28 12% 10%;
-  --wiki-surface-strong: 28 11% 13%;
-  --wiki-panel: 28 10% 12%;
-  --wiki-panel-foreground: 44 22% 92%;
-  --wiki-panel-muted: 30 8% 18%;
+  --wiki-surface: 158 14% 10%;
+  --wiki-surface-strong: 158 12% 13%;
+  --wiki-panel: 158 12% 12%;
+  --wiki-panel-foreground: 150 16% 92%;
+  --wiki-panel-muted: 155 10% 18%;
   --wiki-accent: 156 24% 22%;
-  --wiki-accent-foreground: 44 22% 92%;
-  --wiki-warm: 28 22% 18%;
+  --wiki-accent-foreground: 150 16% 92%;
+  --wiki-warm: 155 14% 18%;
   --wiki-shadow: 0 0% 0%;
 }
 

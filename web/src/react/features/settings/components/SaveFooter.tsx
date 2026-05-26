@@ -1,4 +1,4 @@
-import { Button } from '@heroui/react'
+import { Button, Spinner } from '@heroui/react'
 import { Check, Save } from 'lucide-react'
 import { useLocale } from '../../../../hooks/useLocale'
 
@@ -14,10 +14,13 @@ export function SaveFooter({ saving, saved, error, onSave, saveLabel }: SaveFoot
   const { t } = useLocale()
   return (
     <div className="flex items-center gap-3 pt-4 border-t border-border/30">
-      <Button size="sm" color="primary" isLoading={saving} onPress={onSave}
-        startContent={!saving ? <Save size={13} /> : undefined}
-      >
-        {saveLabel ?? t('commonSave')}
+      <Button size="sm" isPending={saving} onPress={onSave}>
+        {({ isPending }) => (
+          <>
+            {isPending ? <Spinner color="current" size="sm" /> : <Save size={13} />}
+            {saveLabel ?? t('commonSave')}
+          </>
+        )}
       </Button>
       {saved && (
         <span className="inline-flex items-center gap-1 text-xs text-success animate-fade-up">

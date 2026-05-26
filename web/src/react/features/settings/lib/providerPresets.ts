@@ -40,7 +40,7 @@ export const API_PROVIDER_PRESETS: ProviderPreset[] = [
     format: 'openai',
     defaultBaseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o-mini',
-    allowBaseUrlEdit: false,
+    allowBaseUrlEdit: true,
   },
   {
     providerId: 'anthropic',
@@ -49,7 +49,7 @@ export const API_PROVIDER_PRESETS: ProviderPreset[] = [
     format: 'anthropic',
     defaultBaseUrl: 'https://api.anthropic.com/v1',
     defaultModel: 'claude-3-5-sonnet-latest',
-    allowBaseUrlEdit: false,
+    allowBaseUrlEdit: true,
   },
   {
     providerId: 'custom-api:deepseek',
@@ -58,7 +58,7 @@ export const API_PROVIDER_PRESETS: ProviderPreset[] = [
     format: 'openai',
     defaultBaseUrl: 'https://api.deepseek.com',
     defaultModel: 'deepseek-chat',
-    allowBaseUrlEdit: false,
+    allowBaseUrlEdit: true,
   },
   {
     providerId: 'custom-api:openrouter',
@@ -67,7 +67,7 @@ export const API_PROVIDER_PRESETS: ProviderPreset[] = [
     format: 'openai',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'openai/gpt-4o-mini',
-    allowBaseUrlEdit: false,
+    allowBaseUrlEdit: true,
   },
   {
     providerId: 'custom-api:xai',
@@ -76,7 +76,7 @@ export const API_PROVIDER_PRESETS: ProviderPreset[] = [
     format: 'openai',
     defaultBaseUrl: 'https://api.x.ai/v1',
     defaultModel: 'grok-2-latest',
-    allowBaseUrlEdit: false,
+    allowBaseUrlEdit: true,
   },
 ]
 
