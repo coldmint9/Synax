@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { wikiApi } from '../../lib/api/wiki';
 import { evaluationApi, type WikiEvaluation, type WikiPlan, type WikiPlanNode, type WikiPlanWithSummary, type PlanNodeDraft, type PlanStreamEvent } from '../../lib/api/evaluation';
-import { useToastStore } from './toastStore';
+import { useNotificationStore } from './notificationStore';
 import type {
   WikiSnapshot,
   WikiDocument,
@@ -297,7 +297,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   },
 
   startPlanGeneration: (projectId: string, snapshotId: string, workDir: string) => {
-    const toast = useToastStore.getState()
+    const toast = useNotificationStore.getState()
     set({
       viewMode: 'plan',
       planGeneration: {

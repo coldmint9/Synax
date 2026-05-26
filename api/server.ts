@@ -12,6 +12,7 @@ import { llmRoutes } from "./routes/llm.js";
 import { agentRuntimeRoutes } from "./routes/agent-runtime.js";
 import { wikiRoutes } from "./routes/wiki.js";
 import { logRoutes } from "./routes/logs.js";
+import { notificationRoutes } from "./routes/notifications.js";
 import { projectSettingsRoutes } from "./routes/project-settings.js";
 import { getDb } from "./db/index.js";
 import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
@@ -43,6 +44,7 @@ app.route("/api/config", configRoutes);
 app.route("/api/llm", llmRoutes);
 app.route("/api/agent-runtime", agentRuntimeRoutes);
 app.route("/api/wiki", wikiRoutes);
+app.route("/api/notifications", notificationRoutes);
 app.route("/api/logs", logRoutes);
 app.route("/api/health", healthRoutes);
 

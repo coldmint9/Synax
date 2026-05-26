@@ -1,4 +1,4 @@
-import { useToastStore, type ToastType } from '../react/state/toastStore'
+import { useNotificationStore } from '../react/state/notificationStore'
 
 export type ErrorLevel = 'system' | 'business'
 
@@ -98,10 +98,16 @@ const LLM_CONFIG_ERROR_CODES = new Set(['LLM_PROVIDER_NOT_CONFIGURED', 'API_KEY_
 function routeError(err: AppError): void {
   if (err.level === 'system') {
     console.error('[system]', err.message, err.code ?? '', err.statusCode ?? '')
+    useNotificationStore.getState().push({
+      id: `sys-${Date.now().toString(36)}`,
+      type: 'warning',
+      message: err.message,
+      duration: 3000,
+    })
     return
   }
   console.warn('[business]', err.message, err.code ?? '', err.statusCode ?? '')
-  useToastStore.getState().push({
+  useNotificationStore.getState().push({
     id: `err-${Date.now().toString(36)}`,
     type: toastTypeForError(err),
     message: userMessage(err),

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useShellStore } from '../react/state/shellStore'
-import { useToastStore } from '../react/state/toastStore'
+import { useNotificationStore } from '../react/state/notificationStore'
 import { subscribe } from '../lib/api/runtimeEventBus'
 
 export function sendDesktopNotification(title: string, body: string) {
@@ -25,7 +25,7 @@ export function useDesktopNotification(projectId: string | null) {
       }
       if (Notification.permission === 'denied') {
         useShellStore.getState().setNotifications(false)
-        useToastStore.getState().push({
+        useNotificationStore.getState().push({
           type: 'warning',
           message: 'Browser notifications are blocked. Please enable them in browser settings.',
           duration: 5000,

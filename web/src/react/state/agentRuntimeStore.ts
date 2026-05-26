@@ -11,7 +11,7 @@ import {
   type StreamTurnRequest,
   type ToolCallRecord,
 } from '../../lib/api/agentRuntime'
-import { useToastStore } from '../../react/state/toastStore'
+import { useNotificationStore } from '../../react/state/notificationStore'
 
 const CATEGORY_LABEL: Record<string, string> = {
   read: '读取',
@@ -75,7 +75,7 @@ function handleStreamChunk(
     set((s) => ({ permissions: [...s.permissions, perm] }))
     const label = CATEGORY_LABEL[perm.coarseCategory] ?? perm.coarseCategory
     const replyFn = get().replyPermission
-    useToastStore.getState().push({
+    useNotificationStore.getState().push({
       id: `perm-${perm.id}`,
       type: 'warning',
       message: `Agent 请求${label}: ${perm.patterns[0] ?? ''}`,
@@ -186,7 +186,7 @@ function createAgentRuntimeStore(projectId: string): StoreApi<AgentRuntimeState>
         set((s) => ({
           permissions: s.permissions.map(p => p.id === permissionId ? updated : p),
         }))
-        useToastStore.getState().dismiss(`perm-${permissionId}`)
+        useNotificationStore.getState().dismiss(`perm-${permissionId}`)
         if (reply !== 'reject') {
           void get().resumeAfterPermission()
         }

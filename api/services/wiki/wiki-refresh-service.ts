@@ -16,6 +16,7 @@ import { runCodeMapScan } from '../analyzer/scan.js';
 import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { generateGatewayObject } from '../llm-runtime/stream.js';
 import { logger } from '../../lib/logger.js';
+import { notify } from '../notifications/notify.js';
 import type { WikiRefreshTask, WikiBlock } from './contracts.js';
 import * as z from 'zod/v4';
 
@@ -102,6 +103,16 @@ export const wikiRefreshService = {
     snapshotId: string,
     workDir: string,
   ): Promise<void> {
+    notify({
+      type: 'task_started',
+      taskKind: 'wiki_refresh',
+      projectId,
+      taskId,
+      title: 'Wiki 刷新',
+      message: '文档刷新检查已启动',
+      severity: 'info',
+    });
+
     try {
       // Phase 1: indexing
       await updateTask(taskId, { status: 'indexing' });
@@ -162,12 +173,32 @@ export const wikiRefreshService = {
         completedAt: new Date().toISOString(),
       });
 
+      notify({
+        type: 'task_completed',
+        taskKind: 'wiki_refresh',
+        projectId,
+        taskId,
+        title: 'Wiki 刷新完成',
+        message: `发现 ${affectedBlockIds.length} 个变更块，生成 ${patchIds.length} 个补丁`,
+        severity: patchIds.length > 0 ? 'warning' : 'success',
+        meta: { affectedBlocks: affectedBlockIds.length, patches: patchIds.length },
+      });
+
       logger.info(
         { taskId, affectedBlocks: affectedBlockIds.length, patches: patchIds.length },
         'wiki refresh: complete',
       );
     } catch (err) {
       logger.error({ err, taskId }, 'wiki refresh: failed');
+      notify({
+        type: 'task_failed',
+        taskKind: 'wiki_refresh',
+        projectId,
+        taskId,
+        title: 'Wiki 刷新失败',
+        message: err instanceof Error ? err.message : String(err),
+        severity: 'error',
+      });
       await updateTask(taskId, {
         status: 'failed',
         errorMessage: err instanceof Error ? err.message : String(err),

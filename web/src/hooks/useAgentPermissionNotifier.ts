@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useToastStore } from '../react/state/toastStore'
+import { useNotificationStore } from '../react/state/notificationStore'
 import { subscribe } from '../lib/api/runtimeEventBus'
 
 export function useAgentPermissionNotifier(
@@ -23,7 +23,7 @@ export function useAgentPermissionNotifier(
               const toastId = `perm-global-${data.sessionId}`
               if (notifiedRef.current.has(toastId)) return
               notifiedRef.current.add(toastId)
-              useToastStore.getState().push({
+              useNotificationStore.getState().push({
                 id: toastId,
                 type: 'warning',
                 message: `会话等待审批: ${data.patch.blockedReason ?? '权限请求'}`,
@@ -43,7 +43,7 @@ export function useAgentPermissionNotifier(
             if (data.patch?.status && data.patch.status !== 'waiting_permission') {
               const toastId = `perm-global-${data.sessionId}`
               notifiedRef.current.delete(toastId)
-              useToastStore.getState().dismiss(toastId)
+              useNotificationStore.getState().dismiss(toastId)
             }
           } catch { /* ignore parse errors */ }
         },
