@@ -21,12 +21,12 @@ const COMMANDS: Record<string, { commandName: string; windowsName: string; compa
   'opencode-acp': {
     commandName: 'opencode',
     windowsName: 'opencode.cmd',
-    compatibility: '推荐默认项。通过 `opencode acp` 启动本地 ACP stdio agent，适合画布 action run。',
+    compatibility: '',
   },
   'cursor-acp': {
     commandName: 'cursor-agent',
     windowsName: 'cursor-agent.cmd',
-    compatibility: '兼容 Cursor Agent Client Protocol。需要本机已安装 cursor-agent CLI。',
+    compatibility: '',
   },
 }
 

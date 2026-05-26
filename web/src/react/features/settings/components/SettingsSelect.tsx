@@ -12,8 +12,8 @@ interface SettingsSelectProps {
   variant?: 'flat' | 'bordered' | 'faded' | 'underlined'
   className?: string
   fullWidth?: boolean
-  selectedKeys: string[]
-  onSelectionChange: (keys: Set<string>) => void
+  selectedKey: string | null
+  onSelectionChange: (key: string | null) => void
   disallowEmptySelection?: boolean
   'aria-label'?: string
   options: SelectOption[]
@@ -25,39 +25,43 @@ export function SettingsSelect({
   variant = 'bordered',
   className,
   fullWidth,
-  selectedKeys,
+  selectedKey,
   onSelectionChange,
   disallowEmptySelection,
   'aria-label': ariaLabel,
   options,
 }: SettingsSelectProps) {
-  const currentKey = selectedKeys[0] ?? null
   return (
-    <Select
-      size={size}
-      variant={variant}
-      className={className}
-      fullWidth={fullWidth}
-      selectedKey={currentKey}
-      onSelectionChange={(key: Key | null) => {
-        if (key != null) onSelectionChange(new Set([String(key)]))
-      }}
-      disallowEmptySelection={disallowEmptySelection}
-      aria-label={ariaLabel ?? label}
-    >
-      <Select.Trigger>
-        <Select.Value />
-        <Select.Indicator />
-      </Select.Trigger>
-      <Select.Popover>
-        <ListBox>
-          {options.map(opt => (
-            <ListBox.Item key={opt.key} id={opt.key} textValue={typeof opt.label === 'string' ? opt.label : opt.key}>
-              {opt.label}
-            </ListBox.Item>
-          ))}
-        </ListBox>
-      </Select.Popover>
-    </Select>
+    <div className={className}>
+      {label && (
+        <span className="block text-xs text-foreground pb-1.5">{label}</span>
+      )}
+      <Select
+        size={size}
+        variant={variant}
+        fullWidth={fullWidth}
+        value={selectedKey}
+        onChange={(value: Key | null) => {
+          onSelectionChange(value ? String(value) : null)
+        }}
+        disallowEmptySelection={disallowEmptySelection}
+        aria-label={ariaLabel ?? label}
+      >
+        <Select.Trigger>
+          <Select.Value />
+          <Select.Indicator />
+        </Select.Trigger>
+        <Select.Popover>
+          <ListBox aria-label={ariaLabel ?? label ?? 'Options'}>
+            {options.map(opt => (
+              <ListBox.Item key={opt.key} id={opt.key} textValue={typeof opt.label === 'string' ? opt.label : opt.key}>
+                {opt.label}
+                <ListBox.ItemIndicator />
+              </ListBox.Item>
+            ))}
+          </ListBox>
+        </Select.Popover>
+      </Select>
+    </div>
   )
 }

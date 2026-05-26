@@ -85,8 +85,7 @@ async function createGatewayStreamOnce(
     })
   }
 
-  const isAnthropicProvider = selection.provider.npm === '@ai-sdk/anthropic'
-  const enableCache = request.cacheControl && isAnthropicProvider
+  const enableCache = request.cacheControl && isNativeAnthropicEndpoint(selection)
   const { system, messages } = toModelPrompt(request.messages, enableCache)
   const ctx = request.hookContext
   const genStart = Date.now()
@@ -136,8 +135,7 @@ export async function generateGatewayTextResult(
   const client = await instantiateProvider(selection.provider, selection.config)
   const model = selectLanguageModel(client, selection.modelId)
 
-  const isAnthropicProvider = selection.provider.npm === '@ai-sdk/anthropic'
-  const enableCache = request.cacheControl && isAnthropicProvider
+  const enableCache = request.cacheControl && isNativeAnthropicEndpoint(selection)
   const { system, messages } = toModelPrompt(request.messages, enableCache)
   const ctx = request.hookContext
   const genStart = Date.now()
@@ -397,4 +395,11 @@ function needsThinkTagExtraction(selection: ResolvedModelSelection): boolean {
   if (!selection.modelDef.reasoning) return false
   if (PROVIDERS_WITH_NATIVE_REASONING.has(selection.provider.npm ?? '')) return false
   return true
+}
+
+function isNativeAnthropicEndpoint(selection: ResolvedModelSelection): boolean {
+  if (selection.provider.npm !== '@ai-sdk/anthropic') return false
+  if (selection.providerId === 'anthropic') return true
+  const baseUrl = selection.config.baseUrl ?? selection.provider.api ?? ''
+  return baseUrl.includes('anthropic.com')
 }

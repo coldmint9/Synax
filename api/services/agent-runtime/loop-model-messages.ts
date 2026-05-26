@@ -55,6 +55,7 @@ function buildRunMessages(
   for (const step of steps) {
     const stepParts = store.listRunParts(step.id);
     const assistantContent: NonNullable<Extract<ModelMessage, { role: 'assistant' }>['content']> = [];
+    const emittedToolCallIds = new Set<string>();
 
     for (const part of stepParts) {
       if (part.kind === 'thought' && part.content.trim()) {
@@ -66,9 +67,11 @@ function buildRunMessages(
       if (part.kind === 'tool_call' && part.toolCallId) {
         const record = toolCallsById.get(part.toolCallId);
         if (!record) continue;
+        const toolCallId = normalizeToolCallId(record.modelToolCallId ?? record.id);
+        emittedToolCallIds.add(toolCallId);
         assistantContent.push({
           type: 'tool-call',
-          toolCallId: normalizeToolCallId(record.modelToolCallId ?? record.id),
+          toolCallId,
           toolName: toolSet.resolveModelToolName(record.toolId) ?? sanitizeToolName(record.toolId),
           input: record.inputRef ?? {},
         });
@@ -82,14 +85,19 @@ function buildRunMessages(
       });
     }
 
-    const toolResults = orderedStepToolCalls(stepParts, toolCallsById).map((record) => {
-      return {
-        type: 'tool-result' as const,
-        toolCallId: normalizeToolCallId(record.modelToolCallId ?? record.id),
-        toolName: toolSet.resolveModelToolName(record.toolId) ?? sanitizeToolName(record.toolId),
-        output: toToolResultOutput(record),
-      };
-    });
+    const toolResults = orderedStepToolCalls(stepParts, toolCallsById)
+      .filter((record) => {
+        const id = normalizeToolCallId(record.modelToolCallId ?? record.id);
+        return emittedToolCallIds.has(id);
+      })
+      .map((record) => {
+        return {
+          type: 'tool-result' as const,
+          toolCallId: normalizeToolCallId(record.modelToolCallId ?? record.id),
+          toolName: toolSet.resolveModelToolName(record.toolId) ?? sanitizeToolName(record.toolId),
+          output: toToolResultOutput(record),
+        };
+      });
 
     if (toolResults.length > 0) {
       messages.push({

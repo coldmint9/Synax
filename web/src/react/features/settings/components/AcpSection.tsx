@@ -14,10 +14,10 @@ interface AcpSectionProps {
   onReload: () => Promise<void>
 }
 
-const statusColor = (s: AcpDiscoveryItem['status']): 'success' | 'primary' | 'default' | 'danger' => {
+const statusColor = (s: AcpDiscoveryItem['status']): 'success' | 'accent' | 'default' | 'danger' => {
   switch (s) {
     case 'available': return 'success'
-    case 'installed': return 'primary'
+    case 'installed': return 'accent'
     case 'missing': return 'default'
     case 'failed': return 'danger'
   }
@@ -82,12 +82,16 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
           <SaveIndicator saving={saving} saved={saved} error={error} />
           <Button
             size="sm"
-            variant="bordered"
-            isLoading={discovering}
+            variant="secondary"
+            isPending={discovering}
             onPress={loadDiscovery}
-            startContent={!discovering ? <RefreshCw size={12} /> : undefined}
           >
-            {t('settingsAcpRefresh')}
+            {({ isPending }) => (
+              <>
+                {isPending ? null : <RefreshCw size={12} />}
+                {t('settingsAcpRefresh')}
+              </>
+            )}
           </Button>
         </div>
       }
@@ -119,8 +123,8 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-foreground">{item.label}</span>
-                  <Chip size="sm" color={statusColor(item.status)} variant="flat" className="h-4 text-[9px]">
-                    {statusLabel(item.status)}
+                  <Chip size="sm" color={statusColor(item.status)} variant="soft" className="h-4 text-[9px]">
+                    <Chip.Label>{statusLabel(item.status)}</Chip.Label>
                   </Chip>
                 </div>
                 <div className="mt-0.5 text-[11px] text-muted-foreground">{item.command} · {item.compatibility}</div>

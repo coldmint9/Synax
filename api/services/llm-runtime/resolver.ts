@@ -23,7 +23,12 @@ export function resolveLlmSelection(input: ResolveLlmSelectionInput): ResolvedMo
     throw new Error('No enabled API providers are available')
   }
 
-  const modelDef = fallback.models.find((model) => model.isDefault) ?? fallback.models[0]
+  const fallbackConnection = input.globalConfig.providerConnections[fallback.id]
+  const configuredFallbackModelId = resolveModelIdFromConnection(fallbackConnection)
+  const modelDef = configuredFallbackModelId
+    ? (fallback.models.find((model) => model.id === configuredFallbackModelId)
+      ?? { id: configuredFallbackModelId, label: configuredFallbackModelId })
+    : (fallback.models.find((model) => model.isDefault) ?? fallback.models[0])
   if (!modelDef) {
     throw new Error(`Provider '${fallback.id}' has no models`)
   }
@@ -224,9 +229,22 @@ function enabledApiProviderIds(input: ResolveLlmSelectionInput): string[] {
 
 export function resolveRuntimeProvider(providerId: string, input: ResolveLlmSelectionInput): RuntimeProvider | null {
   const fromCatalog = input.catalog.providers.find((provider) => provider.id === providerId)
-  if (fromCatalog) return fromCatalog
-
   const providerDef = input.globalConfig.providers.find((provider) => provider.id === providerId)
+
+  if (fromCatalog) {
+    if (providerDef && providerDef.models.length > 0) {
+      const connection = mergeConnectionMetadata(
+        input.globalConfig.providerConnections[providerId],
+        projectConnectionForProvider(input, providerId),
+      )
+      return {
+        ...fromCatalog,
+        models: toRuntimeModels(providerDef, connection),
+      }
+    }
+    return fromCatalog
+  }
+
   if (!providerDef || providerDef.kind !== 'api') return null
 
   return createConfiguredRuntimeProvider(

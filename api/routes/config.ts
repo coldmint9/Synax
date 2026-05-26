@@ -376,10 +376,7 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
     defaultApiProviderId,
     mergedConnections[defaultApiProviderId],
     current.providerConnections[defaultApiProviderId],
-    Boolean(
-      patch.defaultApiProviderId ||
-      patch.providerConnections?.[defaultApiProviderId],
-    ),
+    false,
   )
 
   return patch as UpdateGlobalConfigRequest

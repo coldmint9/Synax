@@ -88,6 +88,7 @@ export default function WikiBlockIssueInline({ blockId, projectId, autoFocus }: 
           size="sm"
           color="primary"
           isIconOnly
+          aria-label="提交"
           isDisabled={!content.trim() || submitting}
           onPress={() => void handleSubmit()}
           className="shrink-0"

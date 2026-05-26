@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Dropdown, Label } from '@heroui/react'
+import { AlertDialog, Button, Dropdown, Label } from '@heroui/react'
 import { KeyRound, Plus } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { SaveIndicator } from './SaveIndicator'
 import { LlmProviderCard } from './LlmProviderCard'
+import { LlmProviderModal } from './LlmProviderModal'
 import { useLocale } from '../../../../hooks/useLocale'
 import {
   type ApiProviderDraft,
@@ -82,18 +83,11 @@ function buildApiProviderPatch(
     if (!draft && !current) continue
     providerConnections[providerId] = draft
       ? draftToConnection({ ...draft, apiKey: '', apiKeyMasked: '' })
-      : {
-          providerId,
-          baseUrl: current?.baseUrl,
-          extra: current?.extra,
-        }
+      : { providerId, baseUrl: current?.baseUrl, extra: current?.extra }
   }
 
   const providers = Array.from(providerMap.values())
-  const patch: Record<string, unknown> = {
-    providers,
-    providerConnections,
-  }
+  const patch: Record<string, unknown> = { providers, providerConnections }
 
   const defaultExists = providers.some(provider => provider.kind === 'api' && provider.id === nextDefaultId)
   if (nextDefaultId && nextDefaultId !== config.defaultApiProviderId && defaultExists) {
@@ -107,14 +101,16 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
   const { t } = useLocale()
   const [drafts, setDrafts] = useState(() => buildApiDrafts(config, providers))
   const [defaultId, setDefaultId] = useState(config.defaultApiProviderId)
-  const [expandedId, _setExpandedId] = useState<string | null>(
+  const [detailId, _setDetailId] = useState<string | null>(
     () => sessionStorage.getItem('llm-provider-expanded') || null,
   )
-  const setExpandedId = useCallback((id: string | null) => {
-    _setExpandedId(id)
+  const setDetailId = useCallback((id: string | null) => {
+    _setDetailId(id)
     if (id) sessionStorage.setItem('llm-provider-expanded', id)
     else sessionStorage.removeItem('llm-provider-expanded')
   }, [])
+  const [editingDraft, setEditingDraft] = useState<ApiProviderDraft | null>(null)
+  const [pendingRemoveDraft, setPendingRemoveDraft] = useState<ApiProviderDraft | null>(null)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -137,21 +133,12 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
 
   const saveProviderPatch = useCallback(async (next: LlmProviderSaveState) => {
     await onUpdate(buildApiProviderPatch(
-      config,
-      next.drafts,
-      next.defaultId,
-      next.clearedProviderIds,
-      next.providerIdsToPersist,
+      config, next.drafts, next.defaultId, next.clearedProviderIds, next.providerIdsToPersist,
     ))
     markSaved()
   }, [config, markSaved, onUpdate])
 
   const configuredDrafts = drafts.filter(isConfiguredProvider)
-
-  const handleDraftChange = (updated: ApiProviderDraft) => {
-    const next = drafts.map(d => d.id === updated.id ? updated : d)
-    setDrafts(next)
-  }
 
   const handleSetDefault = async (draft: ApiProviderDraft) => {
     if (!hasStoredApiKey(config, draft.id)) return
@@ -168,85 +155,14 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
     }
   }
 
-  const discardDraft = (draft: ApiProviderDraft) => {
-    if (isBuiltinApiProviderId(draft.id)) {
-      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, apiKey: '', apiKeyMasked: '' } : d))
-    } else {
-      setDrafts(prev => prev.filter(d => d.id !== draft.id))
-    }
-    setExpandedId(null)
-  }
-
-  const handleSave = async (draft: ApiProviderDraft) => {
-    const errors = validateProviderDraft(draft)
-    if (errors.length > 0) {
-      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validationMessage: errors[0].message } : d))
-      return
-    }
-
-    setSavingId(draft.id)
-    setSaveError(null)
-    setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: true, validationMessage: null } : d))
-    try {
-      const result = await configApi.validateAiApi({
-        providerId: draft.apiKey.trim() ? undefined : draft.id,
-        format: draft.format,
-        baseUrl: draft.baseUrl,
-        apiKey: draft.apiKey || undefined,
-        model: draft.model,
-      })
-
-      if (!result.ok) {
-        setDrafts(prev => prev.map(d => d.id === draft.id ? {
-          ...d,
-          validating: false,
-          validationMessage: result.error || t('llmProviderConnectFailed'),
-        } : d))
-        return
-      }
-
-      const resolvedDraft = result.resolvedBaseUrl ? { ...draft, baseUrl: result.resolvedBaseUrl } : draft
-      const next = drafts.map(d => d.id === draft.id ? resolvedDraft : d)
-      const providerIdsToPersist = storedApiProviderIds(config)
-      providerIdsToPersist.add(draft.id)
-      await saveProviderPatch({ drafts: next, defaultId, providerIdsToPersist })
-      setDrafts(prev => prev.map(d => d.id === draft.id ? {
-        ...d,
-        ...(result.resolvedBaseUrl ? { baseUrl: result.resolvedBaseUrl } : {}),
-        validating: false,
-        validationMessage: t('llmProviderSaveSuccess'),
-      } : d))
-    } catch (err) {
-      const message = err instanceof Error ? err.message : t('llmProviderSaveFailed')
-      setSaveError(message)
-      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: false, validationMessage: message } : d))
-    } finally {
-      setSavingId(null)
-    }
-  }
-
-  const handleToggleDraft = (draft: ApiProviderDraft) => {
-    if (expandedId !== draft.id) {
-      setExpandedId(draft.id)
-      return
-    }
-
-    if (!hasStoredApiKey(config, draft.id)) {
-      discardDraft(draft)
-      return
-    }
-
-    setExpandedId(null)
-  }
-
   const handleRemove = async (draft: ApiProviderDraft) => {
     if (!hasStoredApiKey(config, draft.id)) {
-      discardDraft(draft)
+      setDrafts(prev => prev.filter(d => d.id !== draft.id))
+      setDetailId(null)
       return
     }
-
-    const clearsBuiltinConnection = isBuiltinApiProviderId(draft.id)
-    const next = clearsBuiltinConnection
+    const clearsBuiltin = isBuiltinApiProviderId(draft.id)
+    const next = clearsBuiltin
       ? drafts.map(d => d.id === draft.id ? { ...d, apiKey: '', apiKeyMasked: '' } : d)
       : drafts.filter(d => d.id !== draft.id)
     const nextConfigured = next.filter(isConfiguredProvider)
@@ -260,15 +176,15 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
     setSaveError(null)
     setDrafts(next)
     setDefaultId(nextDefaultId)
-    setExpandedId(expandedId === draft.id ? null : expandedId)
+    setDetailId(detailId === draft.id ? null : detailId)
     try {
       await saveProviderPatch({
         drafts: next,
         defaultId: nextDefaultId,
-        clearedProviderIds: clearsBuiltinConnection ? [draft.id] : undefined,
+        clearedProviderIds: clearsBuiltin ? [draft.id] : undefined,
         providerIdsToPersist,
       })
-      setDefaultId(nextDefaultId)
+      await onReload()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : t('llmProviderSaveFailed'))
     } finally {
@@ -276,68 +192,60 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
     }
   }
 
-  const handleValidate = async (draft: ApiProviderDraft) => {
-    setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: true, validationMessage: null } : d))
+  const handleModalSave = async (draft: ApiProviderDraft) => {
+    const errors = validateProviderDraft(draft)
+    if (errors.length > 0) return
+    setSavingId(draft.id)
+    setSaveError(null)
     try {
       const result = await configApi.validateAiApi({
         providerId: draft.apiKey.trim() ? undefined : draft.id,
-        format: draft.format,
-        baseUrl: draft.baseUrl,
-        apiKey: draft.apiKey || undefined,
-        model: draft.model,
+        format: draft.format, baseUrl: draft.baseUrl,
+        apiKey: draft.apiKey || undefined, model: draft.model,
       })
-      setDrafts(prev => prev.map(d => d.id === draft.id ? {
-        ...d,
-        ...(result.resolvedBaseUrl ? { baseUrl: result.resolvedBaseUrl } : {}),
-        validating: false,
-        validationMessage: result.ok ? t('llmProviderSaveSuccess') : result.error || t('llmProviderConnectFailed'),
-      } : d))
-    } catch {
-      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, validating: false, validationMessage: t('llmProviderRequestFailed') } : d))
+      if (!result.ok) throw new Error(result.error || t('llmProviderConnectFailed'))
+      const resolvedDraft = result.resolvedBaseUrl ? { ...draft, baseUrl: result.resolvedBaseUrl } : draft
+      const next = upsertDraft(drafts, resolvedDraft)
+      const providerIdsToPersist = storedApiProviderIds(config)
+      providerIdsToPersist.add(draft.id)
+      await saveProviderPatch({ drafts: next, defaultId, providerIdsToPersist })
+      setDrafts(next)
+      setEditingDraft(null)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : t('llmProviderSaveFailed'))
+      throw err
+    } finally {
+      setSavingId(null)
     }
   }
 
-  const handleDiscoverModels = async (draft: ApiProviderDraft) => {
-    setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, discoveringModels: true, modelMessage: null } : d))
-    try {
-      const result = await configApi.discoverAiModels({
-        providerId: draft.apiKey.trim() ? undefined : draft.id,
-        format: draft.format,
-        baseUrl: draft.baseUrl,
-        apiKey: draft.apiKey || undefined,
-      })
-      setDrafts(prev => prev.map(d => {
-        if (d.id !== draft.id) return d
-        const models = result.ok && result.models.length > 0 ? result.models : d.models
-        return {
-          ...d,
-          ...(result.resolvedBaseUrl ? { baseUrl: result.resolvedBaseUrl } : {}),
-          discoveringModels: false,
-          models,
-          modelMessage: result.ok ? t('llmProviderDiscoverCount', { count: result.models.length }) : (result.error || t('llmProviderDiscoverFailed')),
-        }
-      }))
-    } catch {
-      setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, discoveringModels: false, modelMessage: t('llmProviderRequestFailed') } : d))
-    }
+  const handleModalValidate = async (draft: ApiProviderDraft) => {
+    const result = await configApi.validateAiApi({
+      providerId: draft.apiKey.trim() ? undefined : draft.id,
+      format: draft.format, baseUrl: draft.baseUrl,
+      apiKey: draft.apiKey || undefined, model: draft.model,
+    })
+    if (!result.ok) throw new Error(result.error || t('llmProviderConnectFailed'))
+  }
+
+  const handleModalDiscover = async (draft: ApiProviderDraft): Promise<string[]> => {
+    const result = await configApi.discoverAiModels({
+      providerId: draft.apiKey.trim() ? undefined : draft.id,
+      format: draft.format, baseUrl: draft.baseUrl,
+      apiKey: draft.apiKey || undefined,
+    })
+    if (!result.ok) throw new Error(result.error || t('llmProviderDiscoverFailed'))
+    return result.models
   }
 
   const handleAddPreset = (preset: typeof API_PROVIDER_PRESETS[number]) => {
     const existing = drafts.find(d => d.id === preset.providerId)
-    if (existing) {
-      setExpandedId(existing.id)
-      return
-    }
-
-    const newDraft = createDraftFromPreset(preset)
-    setDrafts(prev => upsertDraft(prev, newDraft))
-    setExpandedId(newDraft.id)
+    if (existing) { setEditingDraft(existing); return }
+    setEditingDraft(createDraftFromPreset(preset))
   }
 
   const handleAddCustom = () => {
-    const newDraft = createCustomDraft(drafts)
-    setDrafts(prev => [...prev, newDraft])
-    setExpandedId(newDraft.id)
+    setEditingDraft(createCustomDraft(drafts))
   }
 
   return (
@@ -348,31 +256,29 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
         <div className="flex items-center gap-2">
           <SaveIndicator saving={Boolean(savingId)} saved={saved} error={saveError} />
           <Dropdown>
-            <Button size="sm" variant="bordered" startContent={<Plus size={12} />}>
+            <Button size="sm" variant="secondary">
+              <Plus size={12} />
               {t('llmProviderAdd')}
             </Button>
             <Dropdown.Popover>
               <Dropdown.Menu
                 aria-label="Add provider"
                 onAction={(key) => {
-                  if (key === '__custom__') {
-                    handleAddCustom()
-                  } else {
+                  if (key === '__custom__') handleAddCustom()
+                  else {
                     const preset = API_PROVIDER_PRESETS.find(p => p.providerId === key)
                     if (preset) handleAddPreset(preset)
                   }
                 }}
               >
-                {[
-                  ...API_PROVIDER_PRESETS.map(preset => (
-                    <Dropdown.Item key={preset.providerId} id={preset.providerId} textValue={preset.label}>
-                      <Label>{preset.label}</Label>
-                    </Dropdown.Item>
-                  )),
-                  <Dropdown.Item key="__custom__" id="__custom__" textValue="Custom">
-                    <Label>{t('llmProviderCustom')}</Label>
-                  </Dropdown.Item>,
-                ]}
+                {API_PROVIDER_PRESETS.map(preset => (
+                  <Dropdown.Item key={preset.providerId} id={preset.providerId} textValue={preset.label}>
+                    {preset.label}
+                  </Dropdown.Item>
+                ))}
+                <Dropdown.Item key="__custom__" id="__custom__" textValue={t('llmProviderCustom')}>
+                  {t('llmProviderCustom')}
+                </Dropdown.Item>
               </Dropdown.Menu>
             </Dropdown.Popover>
           </Dropdown>
@@ -380,27 +286,66 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       }
     >
       <div className="space-y-2">
-        {configuredDrafts.length === 0 && !expandedId && (
+        {configuredDrafts.length === 0 && !editingDraft && (
           <p className="text-xs text-muted-foreground py-2">{t('llmProviderEmpty')}</p>
         )}
-        {drafts.filter(d => isConfiguredProvider(d) || d.id === expandedId).map(draft => (
+        {configuredDrafts.map(draft => (
           <LlmProviderCard
             key={draft.id}
             draft={draft}
             isDefault={draft.id === defaultId}
             isSaved={hasStoredApiKey(config, draft.id)}
             saving={savingId === draft.id}
-            expanded={expandedId === draft.id}
-            onToggleExpand={() => handleToggleDraft(draft)}
-            onChange={handleDraftChange}
-            onSave={() => void handleSave(draft)}
+            expanded={detailId === draft.id}
+            onToggleExpand={() => setDetailId(detailId === draft.id ? null : draft.id)}
+            onEdit={() => setEditingDraft(draft)}
             onSetDefault={() => void handleSetDefault(draft)}
-            onRemove={() => void handleRemove(draft)}
-            onValidate={() => void handleValidate(draft)}
-            onDiscoverModels={() => void handleDiscoverModels(draft)}
+            onRemove={() => setPendingRemoveDraft(draft)}
           />
         ))}
       </div>
+
+      {editingDraft && (
+        <LlmProviderModal
+          draft={editingDraft}
+          onClose={() => setEditingDraft(null)}
+          onSave={handleModalSave}
+          onValidate={handleModalValidate}
+          onDiscoverModels={handleModalDiscover}
+        />
+      )}
+
+      <AlertDialog.Backdrop
+        isOpen={!!pendingRemoveDraft}
+        onOpenChange={(open) => { if (!open) setPendingRemoveDraft(null) }}
+      >
+        <AlertDialog.Container>
+          <AlertDialog.Dialog className="sm:max-w-[400px]">
+            <AlertDialog.CloseTrigger />
+            <AlertDialog.Header>
+              <AlertDialog.Icon status="danger" />
+              <AlertDialog.Heading>删除 {pendingRemoveDraft?.label}？</AlertDialog.Heading>
+            </AlertDialog.Header>
+            <AlertDialog.Body>
+              <p>删除后该供应商的 API Key 和配置将被移除，此操作不可撤销。</p>
+            </AlertDialog.Body>
+            <AlertDialog.Footer>
+              <Button slot="close" variant="tertiary">取消</Button>
+              <Button
+                variant="danger"
+                onPress={() => {
+                  if (pendingRemoveDraft) {
+                    void handleRemove(pendingRemoveDraft)
+                    setPendingRemoveDraft(null)
+                  }
+                }}
+              >
+                删除
+              </Button>
+            </AlertDialog.Footer>
+          </AlertDialog.Dialog>
+        </AlertDialog.Container>
+      </AlertDialog.Backdrop>
     </SettingsCard>
   )
 }

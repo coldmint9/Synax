@@ -892,12 +892,16 @@ export class AgentLoopRuntime {
             : error instanceof Error
               ? error.message
               : String(error);
+      const responseBody = (error as any)?.responseBody ?? (error as any)?.data ?? undefined;
+      const statusCode = (error as any)?.statusCode ?? (error as any)?.status ?? undefined;
       logger.error(
         {
           sessionId,
           runId: run.id,
           aborted: Boolean(runAbortSignal.aborted),
           err: error,
+          statusCode,
+          responseBody: typeof responseBody === 'string' ? responseBody.slice(0, 1000) : responseBody,
         },
         "[agent-runtime] run failed",
       );

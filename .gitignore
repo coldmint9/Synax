@@ -84,3 +84,5 @@ out/
 .sidecar-staging/
 CLAUDE.md
 skills-lock.json
+# heroui-agents-md
+.heroui-docs/
