@@ -1,4 +1,5 @@
 import { apiFetch } from './origin'
+import { createAppError, handleError } from '../errors'
 
 const BASE = '/api/wiki'
 
@@ -191,8 +192,11 @@ export const evaluationApi = {
           signal: controller.signal,
         })
         if (!resp.ok || !resp.body) {
-          const body = await resp.json().catch(() => ({})) as { error?: string }
-          throw new Error(body.error || `generate/stream failed: ${resp.status}`)
+          const body = await resp.json().catch(() => ({})) as { error?: string; code?: string }
+          const msg = body.error || `generate/stream failed: ${resp.status}`
+          const appErr = createAppError(msg, resp.status, body.code)
+          handleError(appErr)
+          throw appErr
         }
         const reader = resp.body.getReader()
         const decoder = new TextDecoder()

@@ -1,4 +1,5 @@
 import { apiFetch, apiRequest } from './origin'
+import { createAppError, handleError } from '../errors'
 
 const BASE = '/api/agent-runtime'
 
@@ -305,12 +306,16 @@ export const agentRuntimeApi = {
     })
     if (!response.ok || !response.body) {
       let message = `Agent runtime resume stream error ${response.status}`
+      let code: string | undefined
       try {
         const b = await response.json() as { error?: string; code?: string }
-        if (b.code) message = `[${b.code}] ${b.error ?? message}`
+        code = b.code
+        if (b.code) message = b.error ?? message
         else if (b.error) message = b.error
       } catch { /* keep default message */ }
-      throw new Error(message)
+      const appErr = createAppError(message, response.status, code)
+      handleError(appErr)
+      throw appErr
     }
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -345,12 +350,16 @@ export const agentRuntimeApi = {
     })
     if (!response.ok || !response.body) {
       let message = `Agent runtime turn stream error ${response.status}`
+      let code: string | undefined
       try {
         const body = await response.json() as { error?: string; code?: string }
-        if (body.code) message = `[${body.code}] ${body.error ?? message}`
+        code = body.code
+        if (body.code) message = body.error ?? message
         else if (body.error) message = body.error
       } catch { /* keep default message */ }
-      throw new Error(message)
+      const appErr = createAppError(message, response.status, code)
+      handleError(appErr)
+      throw appErr
     }
 
     const reader = response.body.getReader()

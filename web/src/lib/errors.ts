@@ -11,6 +11,7 @@ export type BusinessErrorCode =
   | 'PERMISSION_DENIED'
   | 'CONTEXT_LIMIT'
   | 'PROVIDER_ERROR'
+  | 'LLM_PROVIDER_NOT_CONFIGURED'
 
 const ERROR_MESSAGES: Record<string, string> = {
   RATE_LIMITED: '请求过于频繁，请稍后再试',
@@ -21,6 +22,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   PERMISSION_DENIED: '操作被拒绝',
   CONTEXT_LIMIT: '上下文已超出模型限制',
   PROVIDER_ERROR: 'LLM 服务调用失败，请检查 API Key 或网络',
+  LLM_PROVIDER_NOT_CONFIGURED: '未配置可用的 LLM Provider，请在设置中配置。',
 }
 
 const STATUS_TOAST_TYPE: Record<number, ToastType> = {
@@ -91,6 +93,8 @@ export function handleError(err: unknown): AppError {
   return appErr
 }
 
+const LLM_CONFIG_ERROR_CODES = new Set(['LLM_PROVIDER_NOT_CONFIGURED', 'API_KEY_MISSING'])
+
 function routeError(err: AppError): void {
   if (err.level === 'system') {
     console.error('[system]', err.message, err.code ?? '', err.statusCode ?? '')
@@ -101,6 +105,10 @@ function routeError(err: AppError): void {
     id: `err-${Date.now().toString(36)}`,
     type: toastTypeForError(err),
     message: userMessage(err),
+    ...(err.code && LLM_CONFIG_ERROR_CODES.has(err.code) && {
+      action: { label: '前往配置', onClick: () => { window.location.href = '/settings' } },
+      duration: 8000,
+    }),
   })
 }
 

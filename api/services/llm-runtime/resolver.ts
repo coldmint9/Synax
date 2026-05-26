@@ -18,33 +18,7 @@ export function resolveLlmSelection(input: ResolveLlmSelectionInput): ResolvedMo
     if (resolved) return resolved
   }
 
-  const fallback = firstAllowedProvider(input.catalog, input)
-  if (!fallback) {
-    throw new Error('No enabled API providers are available')
-  }
-
-  const fallbackConnection = input.globalConfig.providerConnections[fallback.id]
-  const configuredFallbackModelId = resolveModelIdFromConnection(fallbackConnection)
-  const modelDef = configuredFallbackModelId
-    ? (fallback.models.find((model) => model.id === configuredFallbackModelId)
-      ?? { id: configuredFallbackModelId, label: configuredFallbackModelId })
-    : (fallback.models.find((model) => model.isDefault) ?? fallback.models[0])
-  if (!modelDef) {
-    throw new Error(`Provider '${fallback.id}' has no models`)
-  }
-
-  return {
-    model: `${fallback.id}/${modelDef.id}`,
-    providerId: fallback.id,
-    modelId: modelDef.id,
-    provider: fallback,
-    modelDef,
-    config: mergeProviderConfig(
-      fallback.id,
-      input.globalConfig.providerConnections[fallback.id],
-      projectConnectionForProvider(input, fallback.id),
-    ),
-  }
+  throw new Error('No LLM provider configured. Please configure one in Settings.')
 }
 
 export function resolveProviderModelRef(value: string | undefined | null): { providerId: string; modelId: string } | null {
