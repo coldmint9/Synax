@@ -12,7 +12,7 @@ import {
   type ToolCallRecord,
 } from '../../../lib/api/agentRuntime'
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
-import { useToastStore } from '../../state/toastStore'
+import { useNotificationStore } from '../../state/notificationStore'
 
 // --- Delta backpressure: drain buffered text at a controlled rate per frame ---
 let _textBuffer = ''
@@ -287,7 +287,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
       set(s => ({
         permissions: s.permissions.map(p => p.id === permissionId ? updated : p),
       }))
-      useToastStore.getState().dismiss(`perm-${permissionId}`)
+      useNotificationStore.getState().dismiss(`perm-${permissionId}`)
       if (reply !== 'reject') {
         void get().refreshDetail()
       }

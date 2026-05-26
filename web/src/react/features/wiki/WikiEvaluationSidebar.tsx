@@ -1,7 +1,7 @@
 import { Loader2, ListChecks, MessageCircle } from 'lucide-react'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
-import { useToastStore } from '../../state/toastStore'
+import { useNotificationStore } from '../../state/notificationStore'
 
 interface Props {
   projectId: string
@@ -86,11 +86,11 @@ function GeneratePlanButton({ projectId }: { projectId: string }) {
 
   function handleGenerate() {
     if (!snapshot) {
-      useToastStore.getState().push({ type: 'warning', message: 'Wiki 快照未就绪，无法生成规划。' })
+      useNotificationStore.getState().push({ type: 'warning', message: 'Wiki 快照未就绪，无法生成规划。' })
       return
     }
     if (!project?.source?.localPath) {
-      useToastStore.getState().push({ type: 'warning', message: '项目未配置本地路径，无法生成规划。' })
+      useNotificationStore.getState().push({ type: 'warning', message: '项目未配置本地路径，无法生成规划。' })
       return
     }
     startPlanGeneration(projectId, snapshot.id, project.source.localPath)

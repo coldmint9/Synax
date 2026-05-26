@@ -13,6 +13,7 @@ import {
 } from '../agent-runtime/tools/workspace.js';
 import type { ToolCallRecord } from '../agent-runtime/contracts.js';
 import { logger } from '../../lib/logger.js';
+import { notify } from '../notifications/notify.js';
 import { wikiStore } from './wiki-store.js';
 import { wikiCoordinateService } from './wiki-coordinate-service.js';
 import { ensureWikiProfileRegistered } from './wiki-loop-profile.js';
@@ -111,6 +112,17 @@ export const wikiLoopService = {
       createdBy: 'agent',
     });
     await wikiStore.updateSnapshotStatus(snapshot.id, 'refreshing');
+
+    notify({
+      type: 'task_started',
+      taskKind: 'wiki_generate',
+      projectId,
+      taskId: snapshot.id,
+      title: 'Wiki 生成',
+      message: '文档生成任务已启动',
+      severity: 'info',
+      meta: { snapshotId: snapshot.id },
+    });
 
     const sessionIds: string[] = [];
     const registeredToolIds: string[] = [];
@@ -251,9 +263,29 @@ export const wikiLoopService = {
 
       await wikiStore.updateSnapshotStatus(snapshot.id, 'ready', persistedDocIds);
       logger.info({ projectId, snapshotId: snapshot.id, docCount: persistedDocIds.length }, 'wiki-loop: generation complete');
+      notify({
+        type: 'task_completed',
+        taskKind: 'wiki_generate',
+        projectId,
+        taskId: snapshot.id,
+        title: 'Wiki 生成完成',
+        message: `成功生成 ${persistedDocIds.length} 篇文档`,
+        severity: 'success',
+        meta: { snapshotId: snapshot.id, docCount: persistedDocIds.length },
+      });
       return { snapshotId: snapshot.id, status: 'completed' };
     } catch (err) {
       logger.error({ err, projectId, snapshotId: snapshot.id }, 'wiki-loop: generation failed');
+      notify({
+        type: 'task_failed',
+        taskKind: 'wiki_generate',
+        projectId,
+        taskId: snapshot.id,
+        title: 'Wiki 生成失败',
+        message: err instanceof Error ? err.message : String(err),
+        severity: 'error',
+        meta: { snapshotId: snapshot.id },
+      });
       await failSession(sessionIds[sessionIds.length - 1], err);
       await wikiStore.updateSnapshotStatus(snapshot.id, 'failed');
       return { snapshotId: snapshot.id, status: 'failed', error: err instanceof Error ? err.message : String(err) };
@@ -358,9 +390,29 @@ export const wikiLoopService = {
 
       await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
       logger.info({ snapshotId, unfilledCount: unfilled.length }, 'wiki-loop: continue generation complete');
+      notify({
+        type: 'task_completed',
+        taskKind: 'wiki_generate',
+        projectId: snapshot.projectId,
+        taskId: snapshotId,
+        title: 'Wiki 继续生成完成',
+        message: `成功补全 ${unfilled.length} 篇文档`,
+        severity: 'success',
+        meta: { snapshotId, docCount: unfilled.length },
+      });
       return { snapshotId, status: 'completed' };
     } catch (err) {
       logger.error({ err, snapshotId }, 'wiki-loop: continue generation failed');
+      notify({
+        type: 'task_failed',
+        taskKind: 'wiki_generate',
+        projectId: snapshot.projectId,
+        taskId: snapshotId,
+        title: 'Wiki 继续生成失败',
+        message: err instanceof Error ? err.message : String(err),
+        severity: 'error',
+        meta: { snapshotId },
+      });
       await failSession(sessionIds[sessionIds.length - 1], err);
       await wikiStore.updateSnapshotStatus(snapshotId, 'failed');
       return { snapshotId, status: 'failed', error: err instanceof Error ? err.message : String(err) };
