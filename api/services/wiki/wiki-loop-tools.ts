@@ -60,7 +60,7 @@ export interface WikiWriterHandle {
   getCommittedDocuments(): WikiDocumentDraft[];
 }
 
-const PAGE_SIZE = 40;
+const PAGE_SIZE = 80;
 
 function buildTreeString(files: string[], root: string, maxDepth: number): string {
   const tree: Record<string, { files: string[]; dirs: Set<string> }> = {};

@@ -17,7 +17,7 @@ import { detectDoomLoop, shouldForceFinalSummary } from "./loop-guards.js";
 import { buildLoopToolSet } from "./loop-ai-tools.js";
 import { buildLoopModelMessages } from "./loop-model-messages.js";
 import { generateLoopModelStep, streamLoopModelStep } from "./loop-model-stream.js";
-import { buildLoopSystemPrompt } from "./loop-prompt.js";
+import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
 import { loopResumeService, type LoopResumeService } from "./loop-resume.js";
 import {
   permissionPolicy,
@@ -51,7 +51,7 @@ import { logger } from "../../lib/logger.js";
 const LOG_TEXT_LIMIT = 2000;
 const ACTIVE_SESSION_WAIT_MS = 25;
 const ACTIVE_SESSION_TIMEOUT_MS = 5_000;
-const DEFAULT_CONTEXT_LIMIT = 128_000;
+const DEFAULT_CONTEXT_LIMIT = 200_000;
 
 export class AgentLoopRuntime {
   private readonly activeSessionControllers = new Map<string, Set<AbortController>>();
@@ -448,6 +448,24 @@ export class AgentLoopRuntime {
           if (event.type === "step_complete") {
             modelResult = { model: event.model, step: event.step };
           }
+          if (event.type === "context_compacted") {
+            const compactEvt = this.events.append({
+              sessionId,
+              type: "progress_updated",
+              summary: `Context compacted: ${event.originalTokens} → ${event.compressedTokens} tokens`,
+              payload: { kind: 'compaction', originalTokens: event.originalTokens, compressedTokens: event.compressedTokens, messageCount: event.messageCount },
+            });
+            yield {
+              type: "context_compacted",
+              runId: run.id,
+              stepId: step.id,
+              originalTokens: event.originalTokens,
+              compressedTokens: event.compressedTokens,
+              messageCount: event.messageCount,
+              event: compactEvt,
+            };
+            sessionLiveBus.emit(sessionId, { type: 'context_compacted', stepId: step.id, originalTokens: event.originalTokens, compressedTokens: event.compressedTokens, messageCount: event.messageCount });
+          }
         }
 
         if (!modelResult) {
@@ -773,7 +791,7 @@ export class AgentLoopRuntime {
           return;
         }
 
-        const doomLoop = detectDoomLoop(this.store.listRunToolCalls(run.id));
+        const doomLoop = detectDoomLoop(this.store.listRunToolCalls(run.id), profile?.doomLoopThreshold);
         if (doomLoop) {
           const note = `Repeated tool call detected for ${doomLoop.toolId}.`;
           logger.warn(
@@ -1152,17 +1170,12 @@ export class AgentLoopRuntime {
       if (compactionResult.didCompact && compactionResult.record) {
         conversationMessages = compactionResult.messages;
         this.store.saveCompactionRecord(compactionResult.record);
-        this.events.append({
-          sessionId: input.sessionId,
-          type: 'progress_updated',
-          summary: `Context compacted: ${compactionResult.record.originalTokenCount} → ${compactionResult.record.compressedTokenCount} tokens`,
-          payload: {
-            kind: 'compaction',
-            originalTokens: compactionResult.record.originalTokenCount,
-            compressedTokens: compactionResult.record.compressedTokenCount,
-            messageCount: compactionResult.record.compressedMessageCount,
-          },
-        });
+        yield {
+          type: 'context_compacted' as const,
+          originalTokens: compactionResult.record.originalTokenCount,
+          compressedTokens: compactionResult.record.compressedTokenCount,
+          messageCount: compactionResult.record.compressedMessageCount,
+        };
       }
     }
 
@@ -1180,6 +1193,13 @@ export class AgentLoopRuntime {
 
     const todoDriftReminder = input.stepIndex > 1 ? buildTaskDriftReminder(input.sessionId) : null;
 
+    const stepNote = buildLoopStepNote(input);
+    const tailReminders = [
+      stepNote,
+      todoDriftReminder ?? '',
+      needsInstructionOverride ? input.prompt.trim() : '',
+    ].filter(Boolean);
+
     const request = {
       projectId: this.store.getSession(input.sessionId).projectId,
       purpose: input.input.purpose ?? input.profile.kind,
@@ -1191,19 +1211,11 @@ export class AgentLoopRuntime {
           content: systemPromptContent,
         },
         ...conversationMessages,
-        ...(todoDriftReminder
+        ...(tailReminders.length > 0
           ? [
               {
                 role: "user" as const,
-                content: `<system-reminder>\n${todoDriftReminder}\n</system-reminder>`,
-              },
-            ]
-          : []),
-        ...(needsInstructionOverride
-          ? [
-              {
-                role: "user" as const,
-                content: `<system-reminder>\n${input.prompt.trim()}\n</system-reminder>`,
+                content: `<system-reminder>\n${tailReminders.join('\n')}\n</system-reminder>`,
               },
             ]
           : []),

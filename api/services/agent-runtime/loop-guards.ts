@@ -10,8 +10,7 @@ function stepSignature(calls: ToolCallRecord[]): string {
   return calls.map(normalizeToolArgsHash).sort().join('|');
 }
 
-export function detectDoomLoop(toolCalls: ToolCallRecord[]): ToolCallRecord | null {
-  // Group tool calls by stepId so parallel calls within one step count as one unit.
+export function detectDoomLoop(toolCalls: ToolCallRecord[], threshold = DOOM_LOOP_THRESHOLD): ToolCallRecord | null {
   const stepMap = new Map<string, ToolCallRecord[]>();
   for (const tc of toolCalls) {
     const key = tc.stepId ?? tc.id;
@@ -20,8 +19,8 @@ export function detectDoomLoop(toolCalls: ToolCallRecord[]): ToolCallRecord | nu
     else stepMap.set(key, [tc]);
   }
   const steps = [...stepMap.values()];
-  if (steps.length < DOOM_LOOP_THRESHOLD) return null;
-  const recent = steps.slice(-DOOM_LOOP_THRESHOLD);
+  if (steps.length < threshold) return null;
+  const recent = steps.slice(-threshold);
   const sigs = recent.map(stepSignature);
   const first = sigs[0];
   if (sigs.every((s) => s === first)) {

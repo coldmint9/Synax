@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -84,7 +85,7 @@ const SOURCE_LANGUAGE_BY_EXTENSION: Record<string, { language: string; parserLan
   '.sh': { language: 'shell' },
 }
 
-const IGNORED_DIR_NAMES = new Set([
+export const IGNORED_DIR_NAMES = new Set([
   '.git',
   '.hg',
   '.svn',
@@ -258,7 +259,30 @@ export function readTextFile(absPath: string): string | null {
   }
 }
 
-export function walkRepositoryFiles(rootPath: string, limit = MAX_SCAN_FILES): string[] {
+function walkRepositoryFilesGit(rootPath: string, limit: number): string[] | null {
+  try {
+    const result = execSync('git ls-files --cached --others --exclude-standard', {
+      cwd: rootPath,
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const files: string[] = []
+    for (const line of result.split('\n')) {
+      if (!line) continue
+      const absPath = path.resolve(rootPath, line)
+      if (shouldScanFile(absPath)) {
+        files.push(absPath)
+        if (files.length >= limit) break
+      }
+    }
+    return files
+  } catch {
+    return null
+  }
+}
+
+function walkRepositoryFilesFallback(rootPath: string, limit: number): string[] {
   const out: string[] = []
   const visit = (current: string) => {
     if (out.length >= limit) return
@@ -285,6 +309,10 @@ export function walkRepositoryFiles(rootPath: string, limit = MAX_SCAN_FILES): s
   }
   visit(rootPath)
   return out
+}
+
+export function walkRepositoryFiles(rootPath: string, limit = MAX_SCAN_FILES): string[] {
+  return walkRepositoryFilesGit(rootPath, limit) ?? walkRepositoryFilesFallback(rootPath, limit)
 }
 
 export function chunkForSymbol(fileId: string, symbol: SymbolEntry): ChunkEntry {

@@ -6,7 +6,8 @@ export type SessionLiveEvent =
   | { type: 'message_delta'; stepId: string; delta: string }
   | { type: 'thought_delta'; stepId: string; delta: string }
   | { type: 'tool_call'; stepId: string; toolCall: ToolCallRecord }
-  | { type: 'tool_result'; stepId: string; toolCall: ToolCallRecord };
+  | { type: 'tool_result'; stepId: string; toolCall: ToolCallRecord }
+  | { type: 'context_compacted'; stepId: string; originalTokens: number; compressedTokens: number; messageCount: number };
 
 class SessionLiveBus {
   private readonly emitters = new Map<string, EventEmitter>();

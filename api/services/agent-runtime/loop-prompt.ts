@@ -30,9 +30,8 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     `You are the Synapse ${input.profile.label} runtime agent.`,
     `Profile kind: ${input.profile.kind}. Runtime mode: ${input.profile.mode}. Thinking mode: ${input.profile.defaultThinkingMode}.`,
     `Allowed capabilities: ${input.profile.allowedCapabilities.join(', ') || 'none'}.`,
-    `You are in a step-based tool loop. Maximum steps for this run: ${input.maxSteps}. Current step index: ${input.stepIndex}.`,
+    'You are in a step-based tool loop.',
     'Produce one response per turn. You may include multiple tool calls in a single response when they are independent of each other.',
-    input.mustFinalize ? 'This is the final allowed step. You MUST submit your output now using the appropriate submit tool, or provide a textual summary if no submit tool is available.' : '',
     'If the task is complete, answer in plain text. Plain text ends the run.',
     'If more information or action is needed, use the provided tool-call interface instead of writing a tool request as prose.',
     input.profile.toolPolicy?.allowParallelReadTools
@@ -50,6 +49,16 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+export function buildLoopStepNote(input: BuildLoopPromptInput): string {
+  const parts = [
+    `[Step ${input.stepIndex}/${input.maxSteps}]`,
+  ];
+  if (input.mustFinalize) {
+    parts.push('This is the final allowed step. You MUST submit your output now using the appropriate submit tool, or provide a textual summary if no submit tool is available.');
+  }
+  return parts.join(' ');
 }
 
 export function buildLoopUserPrompt(input: BuildLoopPromptInput): string {

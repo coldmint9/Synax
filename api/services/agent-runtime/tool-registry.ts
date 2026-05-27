@@ -12,12 +12,11 @@ import { sessionHooks } from './session-hooks.js';
 import { logger } from '../../lib/logger.js';
 import { skillRegistry } from './skill-registry.js';
 import { ESCALATION_TOOL } from './tool-disclosure.js';
-import { INVALID_TOOL } from './tool-invalid.js';
+import { INVALID_TOOL, INVALID_TOOL_ID } from './tool-invalid.js';
 import { diffReadTool } from './tools/diff-read.js';
 import { fileGlobTool } from './tools/file-glob.js';
 import { fileListTool } from './tools/file-list.js';
 import { filePatchTool } from './tools/file-patch.js';
-import { fileReadTool } from './tools/file-read.js';
 import { fileWriteTool } from './tools/file-write.js';
 import { grepSearchTool } from './tools/grep-search.js';
 import { taskCreateTool, taskUpdateTool, taskGetTool, taskListTool } from './tools/task-tools.js';
@@ -57,7 +56,7 @@ export class ToolRegistry {
     private readonly evidence: EvidenceService = evidenceService,
     private readonly profiles: ProfileService = profileService,
   ) {
-    [fileListTool, fileReadTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, filePatchTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, ESCALATION_TOOL, INVALID_TOOL].forEach((tool) =>
+    [fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, filePatchTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, ESCALATION_TOOL, INVALID_TOOL].forEach((tool) =>
       this.register(tool),
     );
     this.register({
@@ -220,8 +219,31 @@ export class ToolRegistry {
     const session = this.store.getSession(sessionId);
     const profile = this.profiles.get(session.profileId);
     const tool = this.get(toolId);
-    if (!profile.allowedCapabilities.includes(tool.id) && tool.category !== 'skill') {
-      throw new AgentValidationError(`Tool ${tool.id} is not available to profile ${profile.id}.`);
+
+    if (!profile.allowedCapabilities.includes(tool.id) && tool.category !== 'skill' && tool.id !== INVALID_TOOL_ID) {
+      const errorMsg = `Tool ${tool.id} is not available to profile ${profile.id}. Use only the tools listed in your capabilities.`;
+      const now = nowIso();
+      const record = this.store.appendToolCall({
+        id: makeRuntimeId('tc'),
+        sessionId,
+        runId: options.runId ?? null,
+        stepId: options.stepId ?? null,
+        modelToolCallId: options.modelToolCallId ?? null,
+        toolId,
+        category: tool.category,
+        mutability: tool.mutability,
+        argsHash: this.store.hashArgs(args),
+        inputSummary: summarize(args),
+        inputRef: args ?? null,
+        outputSummary: errorMsg,
+        outputRef: { error: true, message: errorMsg },
+        status: 'failed',
+        permissionDecisionId: null,
+        startedAt: now,
+        endedAt: now,
+        error: errorMsg,
+      });
+      return { record, toolResult: { result: { error: true, message: errorMsg }, displaySummary: errorMsg, artifacts: [] } };
     }
 
     const now = nowIso();

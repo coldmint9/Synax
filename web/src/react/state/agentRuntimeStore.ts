@@ -20,6 +20,13 @@ const CATEGORY_LABEL: Record<string, string> = {
   high_risk: '高风险操作',
 }
 
+export interface CompactionEvent {
+  stepId: string
+  originalTokens: number
+  compressedTokens: number
+  messageCount: number
+}
+
 export interface AgentRuntimeState {
   projectId: string
   sessions: AgentSession[]
@@ -28,6 +35,7 @@ export interface AgentRuntimeState {
   events: RuntimeEvent[]
   artifacts: EvidenceArtifact[]
   permissions: PermissionDecision[]
+  compactions: CompactionEvent[]
   isStreaming: boolean
   error: string | null
 
@@ -86,6 +94,19 @@ function handleStreamChunk(
       ],
     })
   }
+  if (typed.type === 'context_compacted') {
+    const c = chunk as { stepId?: string; originalTokens?: number; compressedTokens?: number; messageCount?: number }
+    if (c.originalTokens != null && c.compressedTokens != null) {
+      set((s) => ({
+        compactions: [...s.compactions, {
+          stepId: c.stepId ?? '',
+          originalTokens: c.originalTokens!,
+          compressedTokens: c.compressedTokens!,
+          messageCount: c.messageCount ?? 0,
+        }],
+      }))
+    }
+  }
 }
 
 function createAgentRuntimeStore(projectId: string): StoreApi<AgentRuntimeState> {
@@ -97,6 +118,7 @@ function createAgentRuntimeStore(projectId: string): StoreApi<AgentRuntimeState>
     events: [],
     artifacts: [],
     permissions: [],
+    compactions: [],
     isStreaming: false,
     error: null,
     runs: [],

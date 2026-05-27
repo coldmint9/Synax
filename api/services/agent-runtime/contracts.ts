@@ -162,6 +162,7 @@ export interface AgentProfile {
   toolPolicy?: ToolPolicy;
   loopHints?: string[];
   allowsSubsessions?: boolean;
+  doomLoopThreshold?: number;
 }
 
 export interface AgentSession {
@@ -497,6 +498,7 @@ export interface LoopStepModelResult {
 export type LoopModelStreamEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'thought_delta'; delta: string }
+  | { type: 'context_compacted'; originalTokens: number; compressedTokens: number; messageCount: number }
   | { type: 'step_complete'; step: LoopModelStep; model: string | null };
 
 export interface CompactionConfig {
@@ -530,5 +532,6 @@ export type AgentRunStreamChunk =
   | { type: 'message'; message: AgentRuntimeMessage }
   | { type: 'event'; event: RuntimeEvent }
   | { type: 'run_completed'; run: AgentRun; message?: AgentRuntimeMessage; event?: RuntimeEvent }
+  | { type: 'context_compacted'; runId: string; stepId: string; originalTokens: number; compressedTokens: number; messageCount: number; event?: RuntimeEvent }
   | { type: 'run_failed'; run: AgentRun; error: string; event?: RuntimeEvent }
   | { type: 'done'; sessionId: string; runId: string };

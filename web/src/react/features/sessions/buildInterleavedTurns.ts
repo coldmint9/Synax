@@ -17,6 +17,7 @@ export type TurnContentBlock =
   | { type: 'tool_call'; call: ToolCallView }
   | { type: 'tool_call_group'; calls: ToolCallView[] }
   | { type: 'sub_session'; session: AgentSession }
+  | { type: 'context_compacted'; originalTokens: number; compressedTokens: number; messageCount: number }
 
 export interface InterleavedTurn {
   stepId: string

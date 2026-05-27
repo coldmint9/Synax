@@ -58,7 +58,7 @@ const EXPLORATION_TOOL_IDS = new Set([
   'wiki.read_graph',
   'wiki.read_tree',
 ]);
-const MAX_CONTEXT_LENGTH = 8000;
+const MAX_CONTEXT_LENGTH = 16000;
 
 function extractPlannerExplorationContext(sessionId: string): string {
   const runs = agentRuntimeStore.listRuns(sessionId);
@@ -81,7 +81,7 @@ function extractPlannerExplorationContext(sessionId: string): string {
       : tc.outputSummary ?? '';
     if (!output) continue;
 
-    const truncated = output.length > 2000 ? output.slice(0, 2000) + '…' : output;
+    const truncated = output.length > 3000 ? output.slice(0, 3000) + '…' : output;
     const section = `### ${tc.toolId}(${tc.inputSummary})\n${truncated}`;
 
     if (totalLength + section.length > MAX_CONTEXT_LENGTH) break;
@@ -273,6 +273,10 @@ export const wikiLoopService = {
         severity: 'success',
         meta: { snapshotId: snapshot.id, docCount: persistedDocIds.length },
       });
+
+      for (const hid of hookIds) toolRegistry.unregisterHook(hid);
+      for (const tid of registeredToolIds) toolRegistry.unregister(tid);
+
       return { snapshotId: snapshot.id, status: 'completed' };
     } catch (err) {
       logger.error({ err, projectId, snapshotId: snapshot.id }, 'wiki-loop: generation failed');
@@ -291,8 +295,6 @@ export const wikiLoopService = {
       return { snapshotId: snapshot.id, status: 'failed', error: err instanceof Error ? err.message : String(err) };
     } finally {
       for (const sid of sessionIds) clearSessionWorkspaceRoot(sid);
-      for (const hid of hookIds) toolRegistry.unregisterHook(hid);
-      for (const tid of registeredToolIds) toolRegistry.unregister(tid);
     }
   },
 
