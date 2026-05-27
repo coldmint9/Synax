@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { sandboxPolicy } from '../sandbox/index.js';
 
 const SECRET_SEGMENTS = new Set(['.env', '.ssh', '.git', 'node_modules', 'dist', 'build']);
 const sessionWorkspaceRoots = new Map<string, string>();
@@ -35,19 +36,13 @@ function workspaceRootForSession(sessionId?: string): string {
 
 export function resolveWorkspacePath(inputPath = '.', sessionId?: string): string {
   const root = workspaceRootForSession(sessionId);
-  const resolved = path.isAbsolute(inputPath) ? path.resolve(inputPath) : path.resolve(root, inputPath);
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
-    throw new Error('Path is outside the Synapse workspace.');
-  }
-  const parts = path.relative(root, resolved).split(path.sep).filter(Boolean);
-  if (hasBlockedSegment(parts)) {
-    throw new Error('Path is blocked by the read guard.');
-  }
-  return resolved;
+  return sandboxPolicy.resolve(inputPath, root, sessionId ?? '__default__', 'workspace');
 }
 
 export function toWorkspaceRelative(absPath: string, sessionId?: string): string {
-  return path.relative(workspaceRootForSession(sessionId), absPath).replace(/\\/g, '/') || '.';
+  let root = workspaceRootForSession(sessionId);
+  try { root = fs.realpathSync(root); } catch { /* keep as-is */ }
+  return path.relative(root, absPath).replace(/\\/g, '/') || '.';
 }
 
 export function isWorkspaceRelativePathBlocked(relativePath: string): boolean {

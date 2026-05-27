@@ -24,37 +24,7 @@ import { notify } from '../notifications/notify.js';
 import type { WikiRefreshTask, WikiBlock, DraftBlockChange } from './contracts.js';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
 
-// ── Document draft output schema ─────────────────────────────────────────────
-
-const DocumentDraftOutputSchema = z.object({
-  summary: z.string(),
-  changes: z.array(z.object({
-    blockId: z.string(),
-    action: z.enum(['update', 'delete', 'insert_after']),
-    newContent: z.unknown().optional(),
-    reasoning: z.string(),
-  }).passthrough()),
-}).passthrough();
-
-type DocumentDraftOutput = z.infer<typeof DocumentDraftOutputSchema>;
-
-function extractJson(text: string): Record<string, unknown> | null {
-  const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-  const raw = fenced ? fenced[1].trim() : text.trim();
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') return parsed;
-  } catch { /* not valid JSON */ }
-  const braceStart = text.indexOf('{');
-  const braceEnd = text.lastIndexOf('}');
-  if (braceStart >= 0 && braceEnd > braceStart) {
-    try {
-      const parsed = JSON.parse(text.slice(braceStart, braceEnd + 1));
-      if (parsed && typeof parsed === 'object') return parsed;
-    } catch { /* fallback failed */ }
-  }
-  return null;
-}
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function rowToTask(r: typeof wikiRefreshTasks.$inferSelect): WikiRefreshTask {
   return {
@@ -344,9 +314,7 @@ export const wikiRefreshService = {
     const symbolsList = [...allSymbols].slice(0, 20);
     const diffContext = buildDiffContext(scanDiff, sourceFilesList);
 
-// PLACEHOLDER_LLM_CALL
-
-    // Build document content representation for LLM
+    // Build document content representation for agent prompt
     const blocksContext = allBlocks.map(b => ({
       id: b.id,
       type: b.blockType,
@@ -355,89 +323,85 @@ export const wikiRefreshService = {
       isAffected: affectedBlockIds.includes(b.id),
     }));
 
-    let draftOutput: DocumentDraftOutput | null = null;
-    try {
-      const result = await generateGatewayTextResult({
-        purpose: 'wiki',
-        projectId,
-        messages: [
-          {
-            role: 'system',
-            content: `You are a senior software architect. Given a design document and code changes, determine which blocks need updating.
-Output ONLY a JSON object (no markdown fences, no explanation) with this structure:
-{"summary":"<one-line summary of changes>","changes":[{"blockId":"<id>","action":"update"|"delete"|"insert_after","newContent":<content as JSON value matching the block's original format>,"reasoning":"<why>"}]}
-Rules:
-- Only include blocks that actually need modification due to the code changes.
-- newContent must match the block's original content structure (object, not string).
-- If no blocks need updating, return {"summary":"","changes":[]}.`,
-          },
-          {
-            role: 'user',
-            content: `Document: "${docTitle}" (type: ${docType})
+    // Run refresh agent
+    ensureRefreshProfileRegistered();
+    const handle = createRefreshTools({ allBlocks, affectedBlockIds, documentTitle: docTitle });
+    const registeredToolIds: string[] = [];
+    for (const tool of handle.tools) {
+      toolRegistry.register(tool);
+      registeredToolIds.push(tool.id);
+    }
 
-Blocks:
+    try {
+      const prompt = `Analyze document "${docTitle}" (type: ${docType}) for needed updates based on code changes.
+
+Affected blocks (marked with affected=true):
 ${blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.content}`).join('\n\n')}
 
 Changed source files: ${sourceFilesList.join(', ') || 'unknown'}
 Related symbols: ${symbolsList.join(', ') || 'none'}
 ${diffContext}
-Output the JSON for blocks that need updating.`,
-          },
-        ],
+
+Use refresh.read_block to inspect any block's full content if needed.
+Then call refresh.submit_changes with the blocks that need updating.`;
+
+      const session = agentSessionRuntime.create({
+        projectId,
+        profileId: 'wiki-refresh',
+        prompt,
       });
 
-      const text = (result as { text?: string }).text ?? '';
-      const json = extractJson(text);
-      if (json) {
-        const validated = DocumentDraftOutputSchema.safeParse(json);
-        if (validated.success) {
-          draftOutput = validated.data;
-        } else {
-          logger.warn({ documentId, issues: validated.error.issues.length }, 'wiki refresh: draft output validation failed, using raw');
-          if (json.summary !== undefined && Array.isArray(json.changes)) {
-            draftOutput = json as DocumentDraftOutput;
-          }
+      const stream = agentLoopRuntime.streamRun(session.id, {});
+      for await (const chunk of stream) {
+        if (chunk.type === 'run_failed') {
+          logger.warn({ documentId, error: chunk.error }, 'wiki refresh: agent run failed');
+          break;
         }
+        if (chunk.type === 'done') break;
       }
+
+      const result = handle.getResult();
+      if (!result || result.changes.length === 0) return null;
+
+      const changes: DraftBlockChange[] = result.changes.map(c => {
+        const block = allBlocks.find(b => b.id === c.blockId);
+        return {
+          blockId: c.blockId,
+          action: c.action,
+          oldContent: block?.content ?? null,
+          newContent: c.newContent ?? null,
+          reasoning: c.reasoning,
+        };
+      });
+
+      let sourceCommitSha: string | null = null;
+      try {
+        const snap = await wikiStore.getSnapshot(snapshotId);
+        sourceCommitSha = snap?.headCommitSha ?? null;
+      } catch { /* ignore */ }
+
+      await db.insert(wikiRefreshDrafts).values({
+        id: draftId,
+        projectId,
+        snapshotId,
+        refreshTaskId: taskId,
+        documentId,
+        status: 'ready',
+        changesJson: JSON.stringify(changes),
+        summary: result.summary,
+        sourceCommitSha,
+        createdAt: now,
+      });
+
+      return draftId;
     } catch (err) {
-      logger.warn({ err, documentId }, 'wiki refresh: document draft LLM failed');
+      logger.warn({ err, documentId }, 'wiki refresh: document draft agent failed');
+      return null;
+    } finally {
+      for (const id of registeredToolIds) {
+        toolRegistry.unregister(id);
+      }
     }
-
-    if (!draftOutput || draftOutput.changes.length === 0) return null;
-
-    // Build changes with oldContent
-    const changes: DraftBlockChange[] = draftOutput.changes.map(c => {
-      const block = allBlocks.find(b => b.id === c.blockId);
-      return {
-        blockId: c.blockId,
-        action: c.action,
-        oldContent: block?.content ?? null,
-        newContent: c.newContent ?? null,
-        reasoning: c.reasoning,
-      };
-    });
-
-    // Get current commit SHA for freshness tracking
-    let sourceCommitSha: string | null = null;
-    try {
-      const snapshot = await wikiStore.getSnapshot(snapshotId);
-      sourceCommitSha = snapshot?.headCommitSha ?? null;
-    } catch { /* ignore */ }
-
-    await db.insert(wikiRefreshDrafts).values({
-      id: draftId,
-      projectId,
-      snapshotId,
-      refreshTaskId: taskId,
-      documentId,
-      status: 'ready',
-      changesJson: JSON.stringify(changes),
-      summary: draftOutput.summary,
-      sourceCommitSha,
-      createdAt: now,
-    });
-
-    return draftId;
   },
 };
 
