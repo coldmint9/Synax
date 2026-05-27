@@ -27,10 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_refresh_drafts_task
   ON wiki_refresh_drafts(refresh_task_id);
 
 -- Extend wiki_refresh_tasks with draft tracking columns
-ALTER TABLE wiki_refresh_tasks ADD COLUMN draft_ids_json TEXT NOT NULL DEFAULT '[]';
-ALTER TABLE wiki_refresh_tasks ADD COLUMN affected_document_ids_json TEXT NOT NULL DEFAULT '[]';
+-- (handled by ensureColumn in db/index.ts for idempotency)
 
 -- Extend wiki_block_revisions to support draft source
--- (SQLite doesn't have enum constraints, so 'draft' is just a new value for source column)
--- Add draft_id column for linking revisions to drafts
-ALTER TABLE wiki_block_revisions ADD COLUMN draft_id TEXT;
+-- (handled by ensureColumn in db/index.ts for idempotency)

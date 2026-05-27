@@ -590,6 +590,9 @@
     min-width: 0;
     overflow: hidden;
   }
+  .wh-pill:has([data-searching]) {
+    overflow: visible !important;
+  }
 
   /* Visual enter animation on the pill content */
   .wh-pill-enter {

@@ -226,6 +226,9 @@ function ensureRuntimeSchema(sqlite: DatabaseSync): void {
   ensureColumn(sqlite, 'wiki_source_bindings', 'start_line', 'start_line INTEGER');
   ensureColumn(sqlite, 'wiki_source_bindings', 'end_line', 'end_line INTEGER');
   ensureColumn(sqlite, 'wiki_source_bindings', 'qualified_name', 'qualified_name TEXT');
+  ensureColumn(sqlite, 'wiki_refresh_tasks', 'draft_ids_json', "draft_ids_json TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(sqlite, 'wiki_refresh_tasks', 'affected_document_ids_json', "affected_document_ids_json TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(sqlite, 'wiki_block_revisions', 'draft_id', 'draft_id TEXT');
 }
 
 export function getDb(): ContextDb {
