@@ -109,6 +109,35 @@ export const wikiExplorerProfile: AgentProfile = {
   ],
 };
 
+export const wikiDocumentWriterProfile: AgentProfile = {
+  id: 'wiki-document-writer',
+  label: 'Wiki Document Writer',
+  kind: 'executor',
+  mode: 'primary',
+  description: 'Generate content for a single wiki document using pre-built code context.',
+  defaultThinkingMode: 'standard',
+  allowedCapabilities: [
+    'wiki.commit_document',
+    'wiki.check_mermaid',
+    'tools.escalate',
+  ],
+  permissionDefaults: [
+    { gate: 'read', pattern: '*', action: 'allow', reason: 'Document writer reads context.' },
+    { gate: 'write', pattern: '*', action: 'allow', reason: 'Document writer commits without approval.' },
+    { gate: 'task', pattern: '*', action: 'deny', reason: 'Document writer does not delegate.' },
+    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Document writer does not need shell.' },
+  ],
+  defaultSkills: [],
+  maxSteps: 8,
+  status: 'active',
+  toolPolicy: { allowParallelReadTools: false, allowSubtasks: false, maxParallelReadTools: 1 },
+  loopHints: [
+    'All code context is pre-built in the prompt. Generate blocks directly.',
+    'Use wiki.check_mermaid before committing any diagram block.',
+    'Call wiki.commit_document once all blocks are ready.',
+  ],
+};
+
 export const wikiGeneratorProfile: AgentProfile = {
   id: 'wiki-generator',
   label: 'Wiki Generator (Legacy)',
@@ -147,6 +176,7 @@ let registered = false;
 const WIKI_PROFILE_TITLE: Record<string, string> = {
   'wiki-planner': 'Wiki 初始化',
   'wiki-writer': 'Wiki 生成',
+  'wiki-document-writer': 'Wiki 文档生成',
   'wiki-explorer': 'Wiki 探索',
   'wiki-generator': 'Wiki 初始化',
 };
@@ -161,6 +191,7 @@ export function ensureWikiProfileRegistered(): void {
   if (registered) return;
   profileService.register(wikiPlannerProfile);
   profileService.register(wikiWriterProfile);
+  profileService.register(wikiDocumentWriterProfile);
   profileService.register(wikiExplorerProfile);
   profileService.register(wikiGeneratorProfile);
   for (const tool of createWikiExplorerTools()) {
@@ -168,6 +199,7 @@ export function ensureWikiProfileRegistered(): void {
   }
   registerTitleGenerator('wiki-planner', wikiTitleGenerator);
   registerTitleGenerator('wiki-writer', wikiTitleGenerator);
+  registerTitleGenerator('wiki-document-writer', wikiTitleGenerator);
   registerTitleGenerator('wiki-explorer', wikiTitleGenerator);
   registerTitleGenerator('wiki-generator', wikiTitleGenerator);
   registered = true;

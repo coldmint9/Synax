@@ -12,12 +12,14 @@ export interface ProjectMeta {
 }
 
 export interface WikiPromptInput {
-  role: 'planner' | 'writer';
+  role: 'planner' | 'writer' | 'document-writer';
   projectMeta: ProjectMeta;
   locale: 'zh' | 'en';
   outline?: WikiOutlineEntry[];
   continuation?: { completedTitles: string[]; remainingCount: number };
   preloadedContext?: string;
+  documentContext?: string;
+  documentEntry?: WikiOutlineEntry;
 }
 
 // ── Extract project metadata from scan ───────────────────────────────────────
@@ -45,14 +47,17 @@ export function extractProjectMeta(scan: CodeMapScanResult): ProjectMeta {
 
 // ── Segment builders ─────────────────────────────────────────────────────────
 
-function buildIdentitySegment(role: 'planner' | 'writer'): string {
+function buildIdentitySegment(role: 'planner' | 'writer' | 'document-writer'): string {
   if (role === 'planner') {
     return '你是一位资深软件架构师。你的唯一任务是：分析代码库结构，输出一份层级化的文档目录树（outline）。\n\n你不需要写任何文档内容，只需要规划文档结构。';
+  }
+  if (role === 'document-writer') {
+    return '你是一位资深技术文档工程师。你的任务是根据提供的代码上下文，为指定文档生成详细的技术规格内容。所有需要的代码信息已预先提供，直接基于上下文撰写即可。';
   }
   return '你是一位资深技术文档工程师。你已经收到一份文档目录树（outline），你的任务是为每个文档生成详细的技术规格内容。';
 }
 
-function buildWorkflowSegment(role: 'planner' | 'writer'): string {
+function buildWorkflowSegment(role: 'planner' | 'writer' | 'document-writer'): string {
   if (role === 'planner') {
     return `## 工作流程
 
@@ -76,16 +81,28 @@ function buildWorkflowSegment(role: 'planner' | 'writer'): string {
 调用 wiki.submit_outline，提交层级化文档计划。`;
   }
 
+  if (role === 'document-writer') {
+    return `## 工作流程
+
+1. 阅读下方提供的代码上下文（文件、符号、依赖关系）
+2. 根据 keyQuestions 组织内容结构
+3. 生成所有 blocks（至少 6 个 block）
+4. 调用 wiki.commit_document 提交文档
+
+无需调用代码探索工具，所有必要信息已在上下文中提供。`;
+  }
+
   return `## 工作策略
 
+逐个生成文档，每次聚焦一个 document 的所有 blocks。
+
 1. **根级文档**（directory_tree、overview、architecture）— 自己直接生成，需要全局视角
-2. **模块级文档**（module_spec 等）— 使用 subagent.delegate 委派子 agent 探索后，自己格式化并提交
+2. **模块级文档**（module_spec 等）— 委派通用 explorer 子代理探索代码，收到摘要后格式化并提交
 
 subagent.delegate 行为：
-- 子 agent 完成前，你会阻塞等待，不会继续下一步
-- 子 agent 可以递归调用 subagent.delegate 探索更深层子模块（最大深度 3 层）
+- 使用 profileId: "explorer"（通用代码探索）
+- 子 agent 完成前，你会阻塞等待
 - 最多同时运行 5 个子任务
-- 使用 profileId: "wiki-explorer" 来委派探索任务
 
 ### 使用 subagent.delegate 委派探索：
 \`\`\`
@@ -98,10 +115,10 @@ subagent.delegate({
 收到子 agent 返回的摘要后，格式化为 blocks 并调用 wiki.commit_document。
 
 ## 执行顺序（拓扑序）
-必须按父 → 子的顺序提交。parentPlanId 指向 outline 中的 id。`;
+必须按父 → 子的顺序逐个提交。parentPlanId 指向 outline 中的 id。`;
 }
 
-function buildConstraintsSegment(role: 'planner' | 'writer', meta: ProjectMeta): string {
+function buildConstraintsSegment(role: 'planner' | 'writer' | 'document-writer', meta: ProjectMeta): string {
   if (role === 'planner') {
     const { estimatedComplexity, hasMonorepo, moduleCount } = meta;
     const docRange = estimatedComplexity === 'small'
@@ -164,13 +181,21 @@ Level 2（子模块/流程级 — 深入细节）：
 每个非 heading block 必须有 sourceHints，优先使用 qualifiedName（如 ClassName.methodName），其次文件路径。`;
 }
 
-function buildToolsGuideSegment(role: 'planner' | 'writer'): string {
+function buildToolsGuideSegment(role: 'planner' | 'writer' | 'document-writer'): string {
   if (role === 'planner') {
     return `## 规则
 1. 每一步都必须包含至少一个工具调用
 2. targetFiles 必须是你在 wiki.read_code_index 中看到的真实文件路径
 3. keyQuestions 必须具体（如"AgentLoopRuntime.streamRun 的状态机有哪些转换？"），不要泛泛而谈
 4. 目录树应覆盖项目所有核心模块，不要遗漏重要子系统`;
+  }
+
+  if (role === 'document-writer') {
+    return `## 规则
+1. 直接基于提供的代码上下文撰写，不要编造不存在的 API 或类型
+2. diagram block 提交前必须用 wiki.check_mermaid 验证
+3. mermaid 节点标签中不要使用裸括号 ()，用引号包裹
+4. 每个非 heading block 必须有 sourceHints`;
   }
 
   return `## 规则
@@ -244,12 +269,20 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
     segments.push(buildOutlineSegment(input.outline));
   }
 
+  if (input.role === 'document-writer' && input.documentEntry) {
+    segments.push(`## 当前文档\n\n- 标题: ${input.documentEntry.title}\n- 类型: ${input.documentEntry.docType}\n- ID: ${input.documentEntry.id}`);
+  }
+
   segments.push(buildConstraintsSegment(input.role, input.projectMeta));
   segments.push(buildToolsGuideSegment(input.role));
   segments.push(buildContextSegment(input.projectMeta));
 
   const localeSegment = buildLocaleSegment(input.locale);
   if (localeSegment) segments.push(localeSegment);
+
+  if (input.documentContext) {
+    segments.push(`## 代码上下文\n\n${input.documentContext}`);
+  }
 
   if (input.preloadedContext) {
     segments.push(buildPreloadedContextSegment(input.preloadedContext));
