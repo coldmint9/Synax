@@ -11,6 +11,7 @@ function DocItem({
   depth,
   isEmpty,
   issueCount,
+  draftInfo,
   children,
 }: {
   doc: WikiDocument
@@ -19,6 +20,7 @@ function DocItem({
   depth: number
   isEmpty?: boolean
   issueCount?: number
+  draftInfo?: { count: number; status: 'ready' | 'generating' | 'partially_applied' }
   children?: React.ReactNode
 }) {
   const [expanded, setExpanded] = useState(true)
@@ -51,6 +53,15 @@ function DocItem({
           <FileText size={11} className="shrink-0 opacity-60" />
         )}
         <span className="min-w-0 flex-1 leading-snug break-words">{doc.title}</span>
+        {draftInfo && draftInfo.count > 0 && (
+          <span className={`shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white ${
+            draftInfo.status === 'generating' ? 'bg-primary animate-pulse' :
+            draftInfo.status === 'partially_applied' ? 'bg-amber-400' :
+            'bg-primary'
+          }`}>
+            {draftInfo.status === 'generating' ? '·' : draftInfo.count}
+          </span>
+        )}
         {(issueCount ?? 0) > 0 && (
           <span className="shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400/80 px-1 text-[9px] font-bold text-white">
             {issueCount}
@@ -71,6 +82,7 @@ function DocTree({
   onSelect,
   depth,
   issuesByDocId,
+  draftsByDocId,
 }: {
   docs: WikiDocument[]
   allDocs: WikiDocument[]
@@ -78,6 +90,7 @@ function DocTree({
   onSelect: (id: string) => void
   depth: number
   issuesByDocId?: Map<string, number>
+  draftsByDocId?: Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>
 }) {
   return (
     <>
@@ -103,6 +116,7 @@ function DocTree({
             depth={depth}
             isEmpty={isCategoryShell && !sameNameChild}
             issueCount={issuesByDocId?.get(effectiveDocId) ?? 0}
+            draftInfo={draftsByDocId?.get(effectiveDocId)}
           >
             {visibleChildren.length > 0 ? (
               <DocTree
@@ -112,6 +126,7 @@ function DocTree({
                 onSelect={onSelect}
                 depth={depth + 1}
                 issuesByDocId={issuesByDocId}
+                draftsByDocId={draftsByDocId}
               />
             ) : undefined}
           </DocItem>
@@ -127,7 +142,8 @@ export default function WikiDocumentTree() {
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
   const selectDocument = useWikiStore(s => s.selectDocument)
   const snapshot = useWikiStore(s => s.snapshot)
-  const patchesSummary = useWikiStore(s => s.patchesSummary)
+  const draftsSummary = useWikiStore(s => s.draftsSummary)
+  const draftsById = useWikiStore(s => s.draftsById)
   const evaluations = useWikiStore(s => s.evaluations)
 
   const roots = documents.filter(d => !d.parentId).sort((a, b) => a.sortOrder - b.sortOrder)
@@ -147,6 +163,20 @@ export default function WikiDocumentTree() {
     }
   }
 
+  // Compute draft info per document
+  const draftsByDocId = new Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>()
+  for (const draft of Object.values(draftsById)) {
+    if (draft.status === 'applied' || draft.status === 'discarded' || draft.status === 'expired') continue
+    const existing = draftsByDocId.get(draft.documentId)
+    const count = draft.changes.length
+    if (!existing) {
+      draftsByDocId.set(draft.documentId, { count, status: draft.status as 'ready' | 'generating' | 'partially_applied' })
+    } else {
+      existing.count += count
+      if (draft.status === 'generating') existing.status = 'generating'
+    }
+  }
+
   return (
     <div className="flex h-full flex-col gap-1 px-2 py-3">
       {/* Snapshot meta */}
@@ -160,14 +190,14 @@ export default function WikiDocumentTree() {
           </div>
           <div className="mt-1 flex items-center gap-2 text-[10px]">
             <span className="text-muted-foreground">rev {snapshot.revision}</span>
-            {patchesSummary.pending > 0 && (
-              <span className="rounded bg-warning/15 px-1.5 py-0.5 text-warning">
-                {patchesSummary.pending} pending
+            {draftsSummary.ready > 0 && (
+              <span className="rounded bg-primary/15 px-1.5 py-0.5 text-primary">
+                {draftsSummary.ready} ready
               </span>
             )}
-            {patchesSummary.conflict > 0 && (
-              <span className="rounded bg-destructive/15 px-1.5 py-0.5 text-destructive">
-                {patchesSummary.conflict} conflict
+            {draftsSummary.generating > 0 && (
+              <span className="animate-pulse rounded bg-primary/15 px-1.5 py-0.5 text-primary">
+                {draftsSummary.generating} generating
               </span>
             )}
           </div>
@@ -183,6 +213,7 @@ export default function WikiDocumentTree() {
           onSelect={id => selectDocument(id)}
           depth={0}
           issuesByDocId={issuesByDocId}
+          draftsByDocId={draftsByDocId}
         />
       </div>
 

@@ -93,7 +93,7 @@ function GeneratePlanButton({ projectId }: { projectId: string }) {
       useNotificationStore.getState().push({ type: 'warning', message: '项目未配置本地路径，无法生成规划。' })
       return
     }
-    startPlanGeneration(projectId, snapshot.id, project.source.localPath)
+    startPlanGeneration(projectId, snapshot.id)
   }
 
   const generating = planGenStatus === 'generating'

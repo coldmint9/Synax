@@ -14,28 +14,47 @@ import { runCodeMapScan, compareScans, type ScanDiff } from '../analyzer/scan.js
 import { buildAnalyzerGraph } from '../analyzer/graph.js';
 import { computeBlastRadius } from '../analyzer/graph.js';
 import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
-import { generateGatewayObject } from '../llm-runtime/gateway.js';
+import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
+import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
+import { toolRegistry } from '../agent-runtime/tool-registry.js';
+import { createRefreshTools } from './wiki-refresh-tools.js';
+import { ensureRefreshProfileRegistered } from './wiki-refresh-profile.js';
 import { logger } from '../../lib/logger.js';
 import { notify } from '../notifications/notify.js';
 import type { WikiRefreshTask, WikiBlock, DraftBlockChange } from './contracts.js';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
-import * as z from 'zod/v4';
 
 // ── Document draft output schema ─────────────────────────────────────────────
 
 const DocumentDraftOutputSchema = z.object({
-  summary: z.string().max(200),
+  summary: z.string(),
   changes: z.array(z.object({
     blockId: z.string(),
     action: z.enum(['update', 'delete', 'insert_after']),
-    newContent: z.unknown().nullable(),
+    newContent: z.unknown().optional(),
     reasoning: z.string(),
-    confidence: z.number().min(0).max(1),
-    risk: z.enum(['low', 'medium', 'high']),
-  })),
-});
+  }).passthrough()),
+}).passthrough();
 
 type DocumentDraftOutput = z.infer<typeof DocumentDraftOutputSchema>;
+
+function extractJson(text: string): Record<string, unknown> | null {
+  const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  const raw = fenced ? fenced[1].trim() : text.trim();
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch { /* not valid JSON */ }
+  const braceStart = text.indexOf('{');
+  const braceEnd = text.lastIndexOf('}');
+  if (braceStart >= 0 && braceEnd > braceStart) {
+    try {
+      const parsed = JSON.parse(text.slice(braceStart, braceEnd + 1));
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch { /* fallback failed */ }
+  }
+  return null;
+}
 
 function rowToTask(r: typeof wikiRefreshTasks.$inferSelect): WikiRefreshTask {
   return {
@@ -129,6 +148,16 @@ export const wikiRefreshService = {
     try {
       // Phase 1: scanning
       await updateTask(taskId, { status: 'scanning' });
+      notify({
+        type: 'task_progress',
+        taskKind: 'wiki_refresh',
+        projectId,
+        taskId,
+        title: 'Wiki 刷新',
+        message: '正在扫描代码索引…',
+        severity: 'info',
+        meta: { phase: 'scanning' },
+      });
       const previousScan = await loadCachedScan(projectId);
       const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
       const nextRepoIndexId = scan.scanId;
@@ -144,6 +173,16 @@ export const wikiRefreshService = {
 
       // Phase 2: stale detection
       await updateTask(taskId, { status: 'stale_checking' });
+      notify({
+        type: 'task_progress',
+        taskKind: 'wiki_refresh',
+        projectId,
+        taskId,
+        title: 'Wiki 刷新',
+        message: '正在检测过期文档…',
+        severity: 'info',
+        meta: { phase: 'stale_checking' },
+      });
       const snapshot = await wikiStore.getSnapshot(snapshotId);
       if (!snapshot) throw new Error(`Snapshot not found: ${snapshotId}`);
 
@@ -192,6 +231,17 @@ export const wikiRefreshService = {
       const documentBlockMap = await this._groupBlocksByDocument(affectedBlockIds);
       const affectedDocumentIds = [...documentBlockMap.keys()];
       await updateTask(taskId, { affectedDocumentIdsJson: JSON.stringify(affectedDocumentIds) });
+
+      notify({
+        type: 'task_progress',
+        taskKind: 'wiki_refresh',
+        projectId,
+        taskId,
+        title: 'Wiki 刷新',
+        message: `正在为 ${affectedDocumentIds.length} 个文档生成草稿…`,
+        severity: 'info',
+        meta: { phase: 'drafting', affectedDocuments: affectedDocumentIds.length },
+      });
 
       const draftIds: string[] = [];
       for (const [documentId, blockIds] of documentBlockMap) {
@@ -307,24 +357,23 @@ export const wikiRefreshService = {
 
     let draftOutput: DocumentDraftOutput | null = null;
     try {
-      draftOutput = await generateGatewayObject(
-        {
-          purpose: 'wiki',
-          projectId,
-          messages: [
-            {
-              role: 'system',
-              content: `You are a senior software architect. Given a design document and code changes, output which blocks need updating.
+      const result = await generateGatewayTextResult({
+        purpose: 'wiki',
+        projectId,
+        messages: [
+          {
+            role: 'system',
+            content: `You are a senior software architect. Given a design document and code changes, determine which blocks need updating.
+Output ONLY a JSON object (no markdown fences, no explanation) with this structure:
+{"summary":"<one-line summary of changes>","changes":[{"blockId":"<id>","action":"update"|"delete"|"insert_after","newContent":<content as JSON value matching the block's original format>,"reasoning":"<why>"}]}
 Rules:
-- Only output blocks that actually need modification due to the code changes.
-- Keep each block's original blockType and contentFormat.
-- Provide a one-sentence reasoning per block explaining what changed.
-- If no blocks need updating, return an empty changes array.
-- Output valid JSON matching the schema exactly.`,
-            },
-            {
-              role: 'user',
-              content: `Document: "${docTitle}" (type: ${docType})
+- Only include blocks that actually need modification due to the code changes.
+- newContent must match the block's original content structure (object, not string).
+- If no blocks need updating, return {"summary":"","changes":[]}.`,
+          },
+          {
+            role: 'user',
+            content: `Document: "${docTitle}" (type: ${docType})
 
 Blocks:
 ${blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.content}`).join('\n\n')}
@@ -332,12 +381,24 @@ ${blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.c
 Changed source files: ${sourceFilesList.join(', ') || 'unknown'}
 Related symbols: ${symbolsList.join(', ') || 'none'}
 ${diffContext}
-Output the blocks that need updating to reflect these code changes.`,
-            },
-          ],
-        },
-        DocumentDraftOutputSchema,
-      );
+Output the JSON for blocks that need updating.`,
+          },
+        ],
+      });
+
+      const text = (result as { text?: string }).text ?? '';
+      const json = extractJson(text);
+      if (json) {
+        const validated = DocumentDraftOutputSchema.safeParse(json);
+        if (validated.success) {
+          draftOutput = validated.data;
+        } else {
+          logger.warn({ documentId, issues: validated.error.issues.length }, 'wiki refresh: draft output validation failed, using raw');
+          if (json.summary !== undefined && Array.isArray(json.changes)) {
+            draftOutput = json as DocumentDraftOutput;
+          }
+        }
+      }
     } catch (err) {
       logger.warn({ err, documentId }, 'wiki refresh: document draft LLM failed');
     }
@@ -351,16 +412,10 @@ Output the blocks that need updating to reflect these code changes.`,
         blockId: c.blockId,
         action: c.action,
         oldContent: block?.content ?? null,
-        newContent: c.newContent,
+        newContent: c.newContent ?? null,
         reasoning: c.reasoning,
-        confidence: c.confidence,
-        risk: c.risk,
       };
     });
-
-    const risks = changes.map(c => c.risk);
-    const aggregateRisk = risks.includes('high') ? 'high' : risks.includes('medium') ? 'medium' : 'low';
-    const aggregateConfidence = changes.reduce((sum, c) => sum + c.confidence, 0) / changes.length;
 
     // Get current commit SHA for freshness tracking
     let sourceCommitSha: string | null = null;
@@ -378,8 +433,6 @@ Output the blocks that need updating to reflect these code changes.`,
       status: 'ready',
       changesJson: JSON.stringify(changes),
       summary: draftOutput.summary,
-      aggregateRisk,
-      aggregateConfidence,
       sourceCommitSha,
       createdAt: now,
     });

@@ -30,8 +30,9 @@ function WikiToolbar() {
   const { t } = useLocale()
   const viewMode = useWikiStore(s => s.viewMode)
   const setViewMode = useWikiStore(s => s.setViewMode)
-  const patchesPending = useWikiStore(s => s.patchesSummary.pending)
-  const togglePatchPanel = useWikiStore(s => s.togglePatchPanel)
+  const draftsReady = useWikiStore(s => s.draftsSummary.ready)
+  const draftsGenerating = useWikiStore(s => s.draftsSummary.generating)
+  const toggleDraftPanel = useWikiStore(s => s.toggleDraftPanel)
   const planGenStatus = useWikiStore(s => s.planGeneration.status)
   const selectDocument = useWikiStore(s => s.selectDocument)
   const selectBlock = useWikiStore(s => s.selectBlock)
@@ -157,12 +158,15 @@ function WikiToolbar() {
         </Tabs.ListContainer>
       </Tabs>
       <div className="wh-divider" />
-      <button type="button" className="wh-btn relative" title="Patches" onClick={togglePatchPanel}>
+      <button type="button" className="wh-btn relative" title="Drafts" onClick={toggleDraftPanel}>
         <BookDashed size={13} />
-        {patchesPending > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-warning px-0.5 text-[8px] font-bold text-warning-foreground">
-            {patchesPending}
+        {draftsReady > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[8px] font-bold text-white">
+            {draftsReady}
           </span>
+        )}
+        {draftsGenerating > 0 && draftsReady === 0 && (
+          <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 animate-pulse rounded-full bg-primary" />
         )}
       </button>
       <button type="button" className="wh-btn" title={t('appSearch')} onClick={() => setSearching(true)}>
@@ -221,6 +225,9 @@ export function WorkbenchHeader({
   const { t } = useLocale()
   const theme = useShellStore(s => s.preferences.theme)
   const setTheme = useShellStore(s => s.setTheme)
+  const showSessionsTab = useShellStore(s => s.preferences.showSessionsTab)
+
+  const visibleTabs = showSessionsTab ? navTabs : navTabs.filter(t => t.id !== 'sessions')
 
   const confirmState = useOverlayState()
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null)
@@ -298,7 +305,7 @@ export function WorkbenchHeader({
         >
           <Tabs.ListContainer>
             <Tabs.List aria-label="主导航" className="wh-tabs-list">
-              {navTabs.map((tab, i) => {
+              {visibleTabs.map((tab, i) => {
                 const Icon = tab.icon
                 return (
                   <Tabs.Tab

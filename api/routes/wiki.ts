@@ -529,7 +529,6 @@ wikiRoutes.post('/projects/:projectId/plans/generate', async (c) => {
   const { projectId } = c.req.param();
   const parsed = await parseBody(c, z.object({
     snapshotId: z.string().min(1).max(128),
-    workDir: z.string().min(1).max(4096),
   }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
@@ -541,7 +540,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate', async (c) => {
 
   try {
     assertLlmProviderConfigured(projectId);
-    const result = await generatePlan(projectId, parsed.data.snapshotId, parsed.data.workDir);
+    const result = await generatePlan(projectId, parsed.data.snapshotId);
     const plan = await evalService.getPlan(result.planId);
     const nodes = await evalService.listPlanNodes(result.planId);
     return c.json({ plan, nodes });
@@ -559,7 +558,6 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
   const { projectId } = c.req.param();
   const parsed = await parseBody(c, z.object({
     snapshotId: z.string().min(1).max(128),
-    workDir: z.string().min(1).max(4096),
   }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
@@ -577,7 +575,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
     throw err;
   }
 
-  const { snapshotId, workDir } = parsed.data;
+  const { snapshotId } = parsed.data;
 
   return streamSSE(c, async (stream) => {
     const heartbeat = setInterval(() => {
@@ -585,7 +583,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
     }, 10_000);
 
     try {
-      for await (const event of generatePlanStream(projectId, snapshotId, workDir)) {
+      for await (const event of generatePlanStream(projectId, snapshotId)) {
         await stream.writeSSE({ data: JSON.stringify(event) });
       }
     } catch (err) {

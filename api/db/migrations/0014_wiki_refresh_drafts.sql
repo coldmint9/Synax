@@ -10,8 +10,6 @@ CREATE TABLE IF NOT EXISTS wiki_refresh_drafts (
   status                TEXT NOT NULL DEFAULT 'generating',
   changes_json          TEXT NOT NULL DEFAULT '[]',
   summary               TEXT,
-  aggregate_risk        TEXT NOT NULL DEFAULT 'low',
-  aggregate_confidence  REAL NOT NULL DEFAULT 0.5,
   source_commit_sha     TEXT,
   created_at            TEXT NOT NULL,
   expires_at            TEXT,

@@ -1,14 +1,15 @@
 import { AlertCircle, BookOpen, Download, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Drawer, Skeleton, Spinner } from '@heroui/react'
+import { Button, Skeleton, Spinner } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiGenerationEvents } from '../../../hooks/useWikiGenerationEvents'
+import { useWikiRefreshListener } from '../../../hooks/useWikiRefreshListener'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
 import WikiBlockRenderer from './WikiBlockRenderer'
-import WikiPatchQueue from './WikiPatchQueue'
+import WikiDraftPanel from './WikiDraftPanel'
 import WikiEvaluationSidebar from './WikiEvaluationSidebar'
 import PlanView from './PlanView'
 import PlanListView from './PlanListView'
@@ -191,12 +192,18 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const loading = useWikiStore(s => s.loading)
   const loadLatest = useWikiStore(s => s.loadLatest)
   const loadEvaluations = useWikiStore(s => s.loadEvaluations)
-  const patchPanelOpen = useWikiStore(s => s.patchPanelOpen)
-  const togglePatchPanel = useWikiStore(s => s.togglePatchPanel)
-  const loadPatches = useWikiStore(s => s.loadPatches)
+  const draftPanelOpen = useWikiStore(s => s.draftPanelOpen)
+  const toggleDraftPanel = useWikiStore(s => s.toggleDraftPanel)
+  const loadDrafts = useWikiStore(s => s.loadDrafts)
+  const draftsSummary = useWikiStore(s => s.draftsSummary)
   const viewMode = useWikiStore(s => s.viewMode)
+  const refreshTask = useWikiStore(s => s.refreshTask)
+  const setRefreshStarted = useWikiStore(s => s.setRefreshStarted)
 
-  const [refreshing, setRefreshing] = useState(false)
+  useWikiRefreshListener(projectId)
+
+  const refreshing = refreshTask.phase !== 'idle' && refreshTask.phase !== 'completed' && refreshTask.phase !== 'failed'
+
   const [showReinitConfirm, setShowReinitConfirm] = useState(false)
   const [reinitializing, setReinitializing] = useState(false)
   const [continuing, setContinuing] = useState(false)
@@ -210,10 +217,24 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     if (projectId) void loadEvaluations(projectId)
   }, [projectId, loadEvaluations])
 
-  // Load patches when panel opens
+  // Load drafts when panel opens
   useEffect(() => {
-    if (patchPanelOpen && projectId) void loadPatches(projectId, 'pending')
-  }, [patchPanelOpen, projectId, loadPatches])
+    if (draftPanelOpen && projectId) void loadDrafts(projectId)
+  }, [draftPanelOpen, projectId, loadDrafts])
+
+  // React to refresh task completion via SSE
+  useEffect(() => {
+    if (refreshTask.phase === 'completed') {
+      void loadLatest(projectId)
+      void loadDrafts(projectId).then(() => {
+        const { draftsSummary: summary, draftPanelOpen: alreadyOpen } = useWikiStore.getState()
+        if (summary.ready > 0 && !alreadyOpen) toggleDraftPanel()
+      })
+    }
+    if (refreshTask.phase === 'failed' && refreshTask.message) {
+      handleError(new Error(refreshTask.message))
+    }
+  }, [refreshTask.phase])
 
   // Compute issuesByBlockId
   const issuesByBlockId = useMemo(() => {
@@ -279,7 +300,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   async function handleRefresh() {
     if (!snapshot) return
-    // Get workDir from project record (source.localPath)
     const projects = useShellStore.getState().projects
     const project = projects.find(p => p.id === projectId)
     const workDir = project?.source?.localPath
@@ -287,7 +307,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       alert(t('wikiNoLocalPath'))
       return
     }
-    setRefreshing(true)
     try {
       const res = await apiFetch(`/api/wiki/snapshots/${snapshot.id}/refresh`, {
         method: 'POST',
@@ -300,28 +319,9 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
         throw createAppError(msg, res.status, body.code)
       }
       const { task } = await res.json() as { task: { id: string } }
-
-      const deadline = Date.now() + 60_000
-      while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, 1500))
-        const taskRes = await apiFetch(`/api/wiki/refresh-tasks/${task.id}`)
-        if (!taskRes.ok) break
-        const taskData = await taskRes.json() as { status: string; errorMessage?: string | null }
-        if (taskData.status === 'failed') {
-          const msg = taskData.errorMessage ?? t('wikiRefreshFailed')
-          const code = msg.includes('LLM_PROVIDER_NOT_CONFIGURED') || msg.includes('未配置')
-            ? 'LLM_PROVIDER_NOT_CONFIGURED' : undefined
-          throw new AppError(msg, { level: 'business', code })
-        }
-        if (taskData.status === 'completed') break
-      }
-
-      await loadLatest(projectId)
-      await loadPatches(projectId, 'pending')
+      setRefreshStarted(task.id)
     } catch (err) {
       handleError(err)
-    } finally {
-      setRefreshing(false)
     }
   }
 
@@ -432,6 +432,11 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                 >
                   <RefreshCw size={11} className={refreshing ? 'animate-spin' : ''} />
                 </button>
+                {refreshing && refreshTask.message && (
+                  <span className="text-[10px] text-foreground-500 truncate max-w-[140px]">
+                    {refreshTask.message}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={handleExport}
@@ -551,20 +556,12 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
         <WikiEvaluationSidebar projectId={projectId} selectedBlockId={selectedBlockId} />
       </aside>
 
-      {/* ── Patches Drawer (HeroUI) ── */}
-      <Drawer.Backdrop isOpen={patchPanelOpen} onOpenChange={(open) => { if (!open) togglePatchPanel() }} variant="transparent">
-        <Drawer.Content placement="right">
-          <Drawer.Dialog className="max-w-[320px]">
-            <Drawer.CloseTrigger />
-            <Drawer.Header>
-              <Drawer.Heading>Patches</Drawer.Heading>
-            </Drawer.Header>
-            <Drawer.Body>
-              <WikiPatchQueue projectId={projectId} />
-            </Drawer.Body>
-          </Drawer.Dialog>
-        </Drawer.Content>
-      </Drawer.Backdrop>
+      {/* ── Right: Draft Panel (replaces old Patches Drawer) ── */}
+      {draftPanelOpen && viewMode === 'document' && (
+        <aside className="flex w-[400px] shrink-0 flex-col">
+          <WikiDraftPanel />
+        </aside>
+      )}
 
       {showReinitConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-background/60 p-4">
