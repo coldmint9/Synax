@@ -258,6 +258,13 @@ export async function updatePlanNode(id: string, updates: {
   await db.update(wikiPlanNodes).set(set).where(eq(wikiPlanNodes.id, id))
 }
 
+export async function deletePlan(id: string): Promise<void> {
+  const db = getDb()
+  await db.delete(wikiPlanNodeArtifacts).where(eq(wikiPlanNodeArtifacts.planId, id))
+  await db.delete(wikiPlanNodes).where(eq(wikiPlanNodes.planId, id))
+  await db.delete(wikiPlans).where(eq(wikiPlans.id, id))
+}
+
 export async function deletePlanNode(id: string): Promise<void> {
   const db = getDb()
   await db.delete(wikiPlanNodes).where(eq(wikiPlanNodes.id, id))

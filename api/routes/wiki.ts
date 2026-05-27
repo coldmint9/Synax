@@ -619,8 +619,13 @@ wikiRoutes.delete('/plans/:planId', async (c) => {
   const { planId } = c.req.param();
   const plan = await evalService.getPlan(planId);
   if (!plan) return c.json({ error: 'Plan not found' }, 404);
-  if (plan.status === 'completed' || plan.status === 'discarded') return c.json({ error: 'Plan already finalized' }, 409);
-  await evalService.updatePlanStatus(planId, 'discarded');
+  const permanent = c.req.query('permanent') === 'true';
+  if (permanent) {
+    await evalService.deletePlan(planId);
+  } else {
+    if (plan.status === 'completed' || plan.status === 'discarded') return c.json({ error: 'Plan already finalized' }, 409);
+    await evalService.updatePlanStatus(planId, 'discarded');
+  }
   return c.json({ ok: true });
 });
 

@@ -6,6 +6,7 @@ import AgentLoopTestPage from './pages/AgentLoopTestPage'
 import GlobalSettingsPage from './features/settings/GlobalSettingsPage'
 import ProjectSettingsPage from './features/settings/ProjectSettingsPage'
 import { useElectronMenu } from '../lib/electron-menu'
+import { useWikiStore } from './state/wikiStore'
 
 export default function App() {
   useEffect(() => {
@@ -15,6 +16,8 @@ export default function App() {
   }, [])
 
   useElectronMenu()
+
+  const draftPreviewActive = useWikiStore(s => s.draftPreviewActive)
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
@@ -33,6 +36,14 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
+      {/* Draft preview mode glow overlay */}
+      <div
+        className={`pointer-events-none fixed inset-0 z-[9999] will-change-[opacity] transition-opacity duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${
+          draftPreviewActive ? 'opacity-100' : 'opacity-0'
+        }`}
+        style={{ boxShadow: 'inset 0 0 40px 8px rgba(251,191,36,0.25), inset 0 0 12px 2px rgba(251,191,36,0.4)' }}
+        aria-hidden="true"
+      />
     </div>
   )
 }

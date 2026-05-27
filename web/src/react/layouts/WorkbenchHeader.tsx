@@ -1,9 +1,10 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
-import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2, BookDashed } from 'lucide-react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { Tabs, Dropdown, Modal, Button, Popover, Checkbox, useOverlayState } from '@heroui/react'
+import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw, AlertCircle, ListChecks } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
 import { useLocale } from '../../hooks/useLocale'
+import { wikiApi } from '../../lib/api/wiki'
 import { NotificationBell } from '../components/notifications/NotificationBell'
 import WikiSearchPanel from '../features/wiki/WikiSearchPanel'
 import { useWikiSearch, type SearchResult } from '../features/wiki/WikiSearchPanel'
@@ -35,6 +36,7 @@ function WikiToolbar() {
   const toggleDraftPanel = useWikiStore(s => s.toggleDraftPanel)
   const draftPanelOpen = useWikiStore(s => s.draftPanelOpen)
   const planGenStatus = useWikiStore(s => s.planGeneration.status)
+  const snapshot = useWikiStore(s => s.snapshot)
   const selectDocument = useWikiStore(s => s.selectDocument)
   const selectBlock = useWikiStore(s => s.selectBlock)
 
@@ -170,9 +172,202 @@ function WikiToolbar() {
           <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 animate-pulse rounded-full bg-primary" />
         )}
       </button>
+      <WikiIssueButton />
       <button type="button" className="wh-btn" title={t('appSearch')} onClick={() => setSearching(true)}>
         <Search size={13} />
       </button>
+      <Dropdown>
+        <Dropdown.Trigger>
+          <div role="button" tabIndex={0} className="wh-btn" title="Tools">
+            <Ellipsis size={13} />
+          </div>
+        </Dropdown.Trigger>
+        <Dropdown.Popover placement="bottom end">
+          <Dropdown.Menu
+            aria-label="Document tools"
+            onAction={(key) => {
+              if (key === 'export' && snapshot) {
+                window.open(wikiApi.exportSnapshotUrl(snapshot.id), '_blank')
+              } else if (key === 'reinit') {
+                useWikiStore.getState().setShowReinitConfirm(true)
+              }
+            }}
+          >
+            <Dropdown.Item key="export" id="export" textValue="Export all">
+              <span className="flex items-center gap-2 text-xs">
+                <Download size={12} />
+                导出全部
+              </span>
+            </Dropdown.Item>
+            <Dropdown.Item key="reinit" id="reinit" textValue="Reinitialize">
+              <span className="flex items-center gap-2 text-xs text-destructive">
+                <RotateCcw size={12} />
+                重新初始化
+              </span>
+            </Dropdown.Item>
+          </Dropdown.Menu>
+        </Dropdown.Popover>
+      </Dropdown>
+    </div>
+  )
+}
+
+function WikiIssueButton() {
+  const evaluations = useWikiStore(s => s.evaluations)
+  const documents = useWikiStore(s => s.documents)
+  const snapshot = useWikiStore(s => s.snapshot)
+  const setViewMode = useWikiStore(s => s.setViewMode)
+  const selectBlock = useWikiStore(s => s.selectBlock)
+  const selectDocument = useWikiStore(s => s.selectDocument)
+  const planGenStatus = useWikiStore(s => s.planGeneration.status)
+  const startPlanGeneration = useWikiStore(s => s.startPlanGeneration)
+  const deleteEvaluations = useWikiStore(s => s.deleteEvaluations)
+  const projectId = useShellStore(s => s.currentProjectId)
+
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [bounce, setBounce] = useState(false)
+  const prevCount = useRef(evaluations.length)
+
+  const count = evaluations.length
+  const visible = count > 0
+
+  useEffect(() => {
+    if (count > prevCount.current) {
+      setBounce(true)
+      const t = setTimeout(() => setBounce(false), 400)
+      prevCount.current = count
+      return () => clearTimeout(t)
+    }
+    prevCount.current = count
+  }, [count])
+
+  const grouped = useMemo(() => {
+    const groups: Record<string, { docTitle: string; items: typeof evaluations }> = {}
+    for (const ev of evaluations) {
+      const doc = documents.find(d => d.blockIds.includes(ev.blockId))
+      const docId = doc?.id ?? 'unknown'
+      if (!groups[docId]) groups[docId] = { docTitle: doc?.title ?? 'Unknown', items: [] }
+      groups[docId].items.push(ev)
+    }
+    return Object.entries(groups)
+  }, [evaluations, documents])
+
+  function toggleCheck(id: string) {
+    setChecked(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  function handleLocate(ev: { blockId: string }) {
+    const doc = documents.find(d => d.blockIds.includes(ev.blockId))
+    if (doc) {
+      setViewMode('document')
+      selectDocument(doc.id)
+      setTimeout(() => {
+        selectBlock(ev.blockId)
+        const el = document.getElementById(`wiki-block-${ev.blockId}`)
+        el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }, 50)
+    }
+  }
+
+  function handleGenerate() {
+    if (!snapshot || !projectId) return
+    startPlanGeneration(projectId, snapshot.id)
+  }
+
+  async function handleDelete() {
+    if (checked.size === 0) return
+    await deleteEvaluations([...checked])
+    setChecked(new Set())
+  }
+
+  if (!visible) return null
+
+  return (
+    <div className="wh-issue-btn-wrapper enter">
+      <Popover>
+        <Button
+          isIconOnly
+          variant="tertiary"
+          size="sm"
+          aria-label="Issues"
+          className={`wh-btn relative ${bounce ? 'wh-bounce' : ''}`}
+        >
+          <AlertCircle size={13} />
+          <span className={`absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-bold text-white ${bounce ? 'wh-badge-pop' : ''}`}>
+            {count}
+          </span>
+        </Button>
+        <Popover.Content placement="bottom" offset={8}>
+          <Popover.Dialog>
+            <Popover.Arrow />
+            <div className="w-80 max-h-[420px] flex flex-col">
+              <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border/30">
+                <span className="text-xs font-medium text-foreground/80">Issues ({count})</span>
+                {checked.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    className="flex items-center gap-1 text-[10px] text-destructive hover:text-destructive/80 transition-colors"
+                  >
+                    <Trash2 size={10} />
+                    删除 ({checked.size})
+                  </button>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-2 py-2">
+                {grouped.map(([docId, { docTitle, items }]) => (
+                  <div key={docId} className="mb-3 last:mb-0">
+                    <p className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider px-1.5 mb-1">{docTitle}</p>
+                    <div className="flex flex-col gap-0.5">
+                      {items.map(ev => (
+                        <div
+                          key={ev.id}
+                          className="flex items-start gap-2 rounded-lg px-1.5 py-1.5 hover:bg-secondary/50"
+                        >
+                          <Checkbox
+                            isSelected={checked.has(ev.id)}
+                            onChange={() => toggleCheck(ev.id)}
+                            aria-label={ev.content}
+                            className="mt-0.5 [&_[data-slot=control]]:h-3.5 [&_[data-slot=control]]:w-3.5"
+                          >
+                            <Checkbox.Control>
+                              <Checkbox.Indicator />
+                            </Checkbox.Control>
+                          </Checkbox>
+                          <button
+                            type="button"
+                            onClick={() => handleLocate(ev)}
+                            className="flex-1 text-left text-[11px] text-foreground/80 line-clamp-2 leading-tight hover:text-primary transition-colors"
+                          >
+                            {ev.content}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="shrink-0 border-t border-border/20 p-2">
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  disabled={planGenStatus === 'generating'}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2 py-1.5 text-[11px] font-medium text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
+                >
+                  <ListChecks size={10} />
+                  {planGenStatus === 'generating' ? '生成中…' : '生成规划'}
+                </button>
+              </div>
+            </div>
+          </Popover.Dialog>
+        </Popover.Content>
+      </Popover>
     </div>
   )
 }

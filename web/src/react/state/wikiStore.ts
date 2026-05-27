@@ -52,6 +52,12 @@ export interface WikiState {
   draftPanelLayer: 'list' | 'detail';
   draftSelectedBlockIds: Record<string, string[]>;
   draftEditedContent: Record<string, Record<string, unknown>>;
+  draftPreviewActive: boolean;
+  draftPreviewId: string | null;
+
+  // UI state
+  showReinitConfirm: boolean;
+  setShowReinitConfirm: (show: boolean) => void;
 
   // Plan state
   plans: WikiPlanWithSummary[];
@@ -76,6 +82,7 @@ export interface WikiState {
   selectDocument: (documentId: string | null) => void;
   selectBlock: (blockId: string | null) => void;
   loadEvaluations: (projectId: string) => Promise<void>;
+  deleteEvaluations: (evalIds: string[]) => Promise<void>;
   updateBlockLocally: (block: WikiBlock) => void;
   loadPatches: (projectId: string, status?: string) => Promise<void>;
   togglePatchPanel: () => void;
@@ -92,6 +99,8 @@ export interface WikiState {
   editDraftBlock: (draftId: string, blockId: string, newContent: unknown) => void;
   applyDraft: (draftId: string, blockIds?: string[]) => Promise<void>;
   discardDraft: (draftId: string) => Promise<void>;
+  enterDraftPreview: (draftId: string) => void;
+  exitDraftPreview: () => void;
 
   // Refresh task actions
   setRefreshStarted: (taskId: string) => void;
@@ -105,6 +114,7 @@ export interface WikiState {
   selectPlan: (planId: string | null) => void;
   confirmPlan: (projectId: string, planId: string) => Promise<void>;
   discardPlan: (planId: string) => Promise<void>;
+  deletePlan: (planId: string) => Promise<void>;
   updatePlanNode: (nodeId: string, updates: Partial<Pick<WikiPlanNode, 'title' | 'description' | 'expectedFiles'>>) => Promise<void>;
   deletePlanNode: (nodeId: string) => Promise<void>;
   startPlanGeneration: (projectId: string, snapshotId: string) => void;
@@ -135,6 +145,9 @@ const initialState = {
   draftPanelLayer: 'list' as 'list' | 'detail',
   draftSelectedBlockIds: {} as Record<string, string[]>,
   draftEditedContent: {} as Record<string, Record<string, unknown>>,
+  draftPreviewActive: false,
+  draftPreviewId: null as string | null,
+  showReinitConfirm: false,
   plans: [] as WikiPlanWithSummary[],
   activePlan: null as WikiPlan | null,
   activePlanNodes: [] as WikiPlanNode[],
@@ -248,6 +261,11 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     } catch { /* ignore */ }
   },
 
+  deleteEvaluations: async (evalIds: string[]) => {
+    await Promise.all(evalIds.map(id => evaluationApi.delete(id)))
+    set(s => ({ evaluations: s.evaluations.filter(e => !evalIds.includes(e.id)) }))
+  },
+
   updateBlockLocally: (block) =>
     set(s => ({ blocksById: { ...s.blocksById, [block.id]: block } })),
 
@@ -293,12 +311,16 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       selectedDraftId: draftId,
       draftPanelLayer: 'detail',
       draftSelectedBlockIds: { ...s.draftSelectedBlockIds, [draftId]: blockIds },
+      selectedDocumentId: draft.documentId,
+      selectedBlockId: null,
     }));
+    try { localStorage.setItem('wiki-selected-doc', draft.documentId); } catch {}
   },
 
   backToDraftList: () => set({ selectedDraftId: null, draftPanelLayer: 'list' }),
 
   toggleDraftPanel: () => set(s => ({ draftPanelOpen: !s.draftPanelOpen })),
+  setShowReinitConfirm: (show: boolean) => set({ showReinitConfirm: show }),
 
   toggleDraftBlock: (draftId, blockId) => {
     set(s => {
@@ -376,6 +398,17 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         };
       });
     } catch { /* handled by caller */ }
+  },
+
+  enterDraftPreview: (draftId) => {
+    const draft = get().draftsById[draftId];
+    if (!draft) return;
+    set({ draftPreviewActive: true, draftPreviewId: draftId, selectedDocumentId: draft.documentId, selectedBlockId: null });
+    try { localStorage.setItem('wiki-selected-doc', draft.documentId); } catch {}
+  },
+
+  exitDraftPreview: () => {
+    set({ draftPreviewActive: false, draftPreviewId: null });
   },
 
   // Refresh task actions
@@ -458,6 +491,17 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   discardPlan: async (planId: string) => {
     await evaluationApi.discardPlan(planId)
     set({ activePlan: null, activePlanNodes: [], selectedPlanId: null, planNav: 'list' })
+  },
+
+  deletePlan: async (planId: string) => {
+    await evaluationApi.deletePlan(planId)
+    set(s => ({
+      plans: s.plans.filter(p => p.id !== planId),
+      activePlan: s.activePlan?.id === planId ? null : s.activePlan,
+      activePlanNodes: s.activePlan?.id === planId ? [] : s.activePlanNodes,
+      selectedPlanId: s.selectedPlanId === planId ? null : s.selectedPlanId,
+      planNav: s.selectedPlanId === planId ? 'list' as const : s.planNav,
+    }))
   },
 
   updatePlanNode: async (nodeId: string, updates) => {
