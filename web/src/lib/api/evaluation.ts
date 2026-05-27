@@ -63,7 +63,7 @@ export type PlanStreamEvent =
   | { type: 'tool_call'; tool: string; summary: string }
   | { type: 'thought_delta'; delta: string }
   | { type: 'message_delta'; delta: string }
-  | { type: 'plan_submitted'; nodes: PlanNodeDraft[] }
+  | { type: 'node_submitted'; node: PlanNodeDraft; index: number }
   | { type: 'completed'; planId: string; nodeCount: number }
   | { type: 'failed'; error: string }
 

@@ -3,7 +3,8 @@ import { Loader2, FileCode, AlertCircle, RotateCcw, Search, Brain, Send, CheckCi
 import { Button } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
-import type { PlanNodeDraft, WikiEvaluation } from '../../../lib/api/evaluation'
+import type { WikiEvaluation } from '../../../lib/api/evaluation'
+import PlanDAGView from './PlanDAGView'
 
 const PHASES = [
   { key: 'analyzing', labelKey: 'planPhaseAnalyzing' as const, icon: Search },
@@ -40,12 +41,27 @@ export default function PlanGeneratingView({ projectId }: Props) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PhaseSteps current={gen.phase} elapsed={elapsed} />
-      <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-        <div className="max-w-2xl mx-auto space-y-4">
-          <IssueContext issues={evaluations} />
-          <ActivityFeed toolCalls={gen.toolCalls} text={gen.streamingText} />
-          {gen.previewNodes.length > 0 && <NodesPreview nodes={gen.previewNodes} />}
-        </div>
+      <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
+        {gen.previewNodes.length > 0 ? (
+          <>
+            <div ref={logRef} className="shrink-0 max-h-[180px] overflow-y-auto px-5 py-3 border-b border-border/10">
+              <div className="max-w-2xl mx-auto space-y-3">
+                <IssueContext issues={evaluations} />
+                <ActivityFeed toolCalls={gen.toolCalls} text={gen.streamingText} />
+              </div>
+            </div>
+            <div className="flex-1 min-h-0">
+              <PlanDAGView nodes={gen.previewNodes} isGenerating />
+            </div>
+          </>
+        ) : (
+          <div ref={logRef} className="flex-1 overflow-y-auto px-5 py-5">
+            <div className="max-w-2xl mx-auto space-y-4">
+              <IssueContext issues={evaluations} />
+              <ActivityFeed toolCalls={gen.toolCalls} text={gen.streamingText} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -148,28 +164,6 @@ function ActivityFeed({ toolCalls, text }: { toolCalls: { tool: string; summary:
           </pre>
         </div>
       )}
-    </div>
-  )
-}
-
-function NodesPreview({ nodes }: { nodes: PlanNodeDraft[] }) {
-  const { t } = useLocale()
-  return (
-    <div className="space-y-2">
-      <span className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider">{t('planNodesPreview')}</span>
-      {nodes.map((node, i) => (
-        <div key={i} className="rounded-xl border border-primary/20 bg-primary/[0.03] p-3">
-          <h4 className="text-[12px] font-semibold text-foreground/85">{i + 1}. {node.title}</h4>
-          {node.description && <p className="mt-1 text-[11px] text-muted-foreground/60 line-clamp-2">{node.description}</p>}
-          {node.expectedFiles.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {node.expectedFiles.map(f => (
-                <span key={f} className="rounded-md bg-foreground/[0.04] border border-border/10 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground/60">{f}</span>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
     </div>
   )
 }

@@ -26,7 +26,7 @@ export type PlanStreamEvent =
   | { type: 'tool_call'; tool: string; summary: string }
   | { type: 'thought_delta'; delta: string }
   | { type: 'message_delta'; delta: string }
-  | { type: 'plan_submitted'; nodes: PlanNodeDraft[] }
+  | { type: 'node_submitted'; node: PlanNodeDraft; index: number }
   | { type: 'completed'; planId: string; nodeCount: number }
   | { type: 'failed'; error: string }
 
@@ -149,7 +149,13 @@ export async function* generatePlanStream(
 
   const prompt = buildPlanPrompt({ issues, blocks: blocksById, bindings: relevantBindings, wikiOverview })
 
-  const handle = createPlanTools({ projectId, blocksById, bindingsById })
+  const pendingNodeEvents: PlanStreamEvent[] = []
+  const handle = createPlanTools({
+    projectId, blocksById, bindingsById,
+    onNodeSubmitted: (node, index) => {
+      pendingNodeEvents.push({ type: 'node_submitted', node, index })
+    },
+  })
   const registeredToolIds: string[] = []
   for (const tool of handle.tools) {
     toolRegistry.register(tool)
@@ -174,7 +180,7 @@ export async function* generatePlanStream(
           } else if (toolId === 'file.read') {
             yield { type: 'phase', phase: 'reading_source' }
             yield { type: 'tool_call', tool: 'file_read', summary: chunk.toolCall?.inputSummary ?? '' }
-          } else if (toolId === 'plan.submit_plan') {
+          } else if (toolId === 'plan.submit_node') {
             yield { type: 'phase', phase: 'submitting' }
           }
           break
@@ -186,18 +192,15 @@ export async function* generatePlanStream(
         case 'message_delta':
           yield { type: 'message_delta', delta: chunk.delta }
           break
-        case 'tool_result': {
-          if (chunk.toolCall?.toolId === 'plan.submit_plan') {
-            const nodes = handle.getPlan()
-            if (nodes) yield { type: 'plan_submitted', nodes }
-          }
-          break
-        }
         case 'run_failed':
           yield { type: 'failed', error: chunk.error ?? 'Unknown error' }
           return
         case 'done':
           break
+      }
+      // Drain pending node events after each chunk
+      while (pendingNodeEvents.length > 0) {
+        yield pendingNodeEvents.shift()!
       }
       if (chunk.type === 'done') break
     }

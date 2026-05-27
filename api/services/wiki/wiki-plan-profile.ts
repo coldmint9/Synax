@@ -14,7 +14,7 @@ export const planGeneratorProfile: AgentProfile = {
     'file.read',
     'grep.search',
     'plan.read_wiki_block',
-    'plan.submit_plan',
+    'plan.submit_node',
     'tools.escalate',
   ],
   permissionDefaults: [
@@ -31,7 +31,7 @@ export const planGeneratorProfile: AgentProfile = {
     'IMPORTANT: First analyze and clarify each issue before searching code. Understand what each issue asks, identify ambiguities, and note dependencies between issues.',
     'Use grep.search to find relevant symbols and patterns based on the source bindings provided in the prompt. Batch multiple searches in one step.',
     'Use file.read only for targeted code snippets — never read entire files.',
-    'Call plan.submit_plan as soon as your plan is ready. Do not over-search.',
+    'Submit each plan node individually using plan.submit_node as soon as you design it. Submit in dependency order — nodes with no dependencies first.',
   ],
 }
 
