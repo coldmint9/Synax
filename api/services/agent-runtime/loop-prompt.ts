@@ -51,7 +51,7 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     .join('\n');
 }
 
-export function buildLoopStepNote(input: BuildLoopPromptInput): string {
+export function buildLoopStepNote(input: Pick<BuildLoopPromptInput, 'stepIndex' | 'maxSteps' | 'mustFinalize'>): string {
   const parts = [
     `[Step ${input.stepIndex}/${input.maxSteps}]`,
   ];

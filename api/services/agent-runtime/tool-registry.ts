@@ -77,10 +77,14 @@ export class ToolRegistry {
         thinkingMode: z.enum(['fast', 'standard', 'deep']).optional().describe('Child session thinking mode.'),
       }),
       execute: (input) => {
-        const MAX_RECURSION_DEPTH = 3;
         const MAX_CONCURRENT_SUBTASKS = 5;
 
         const parent = this.store.getSession(input.sessionId);
+
+        if (parent.parentSessionId) {
+          throw new AgentValidationError('Sub-agents cannot delegate further sub-agents.');
+        }
+
         const args = input.args as { profileId?: string; prompt?: string; nodeId?: string | null; thinkingMode?: 'fast' | 'standard' | 'deep' };
         const profileId = args.profileId ?? 'explorer';
 
@@ -89,17 +93,6 @@ export class ToolRegistry {
           throw new AgentValidationError(`Subtask profile must be one of: ${ALLOWED_SUBTASK_PROFILES.join(', ')}. Got "${profileId}".`);
         }
         if (!args.prompt?.trim()) throw new AgentValidationError('prompt is required for subagent.delegate.');
-
-        // Depth check: walk parent chain
-        let depth = 0;
-        let current = parent;
-        while (current.parentSessionId) {
-          depth++;
-          try { current = this.store.getSession(current.parentSessionId); } catch { break; }
-        }
-        if (depth >= MAX_RECURSION_DEPTH) {
-          throw new AgentValidationError(`Maximum recursion depth (${MAX_RECURSION_DEPTH}) reached. Cannot create deeper sub-agents.`);
-        }
 
         // Concurrency check: count active children of the immediate parent
         const siblings = (parent.childSessionIds ?? [])
@@ -121,14 +114,14 @@ export class ToolRegistry {
           result: {
             taskId: child.id,
             session: child,
-            summary: `Child session ${child.id} (${profileId}) created at depth ${depth + 1}.`,
+            summary: `Child session ${child.id} (${profileId}) created.`,
           },
-          displaySummary: `Started ${profileId} subtask ${child.id} (depth ${depth + 1}/${MAX_RECURSION_DEPTH}).`,
+          displaySummary: `Started ${profileId} subtask ${child.id}.`,
           artifacts: [
             {
               kind: 'decision',
               title: 'Subtask created',
-              summary: `Started ${profileId} child session ${child.id} at depth ${depth + 1}.`,
+              summary: `Started ${profileId} child session ${child.id}.`,
               risk: 'low',
             },
           ],
