@@ -552,9 +552,11 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       </main>
 
       {/* ── Right: Evaluation sidebar (issues + generate plan) ── */}
-      <aside className={`flex w-[220px] shrink-0 flex-col border-l border-border/15 ${viewMode !== 'document' ? 'hidden' : ''}`}>
-        <WikiEvaluationSidebar projectId={projectId} selectedBlockId={selectedBlockId} />
-      </aside>
+      {!draftPanelOpen && viewMode === 'document' && (
+        <aside className="flex w-[220px] shrink-0 flex-col border-l border-border/15">
+          <WikiEvaluationSidebar projectId={projectId} selectedBlockId={selectedBlockId} />
+        </aside>
+      )}
 
       {/* ── Right: Draft Panel (replaces old Patches Drawer) ── */}
       {draftPanelOpen && viewMode === 'document' && (

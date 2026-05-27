@@ -354,6 +354,8 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           draftsSummary: { ...s.draftsSummary, ready: Math.max(0, s.draftsSummary.ready - 1) },
         };
       });
+      const projectId = get().snapshot?.projectId;
+      if (projectId) get().loadLatest(projectId);
     } catch { /* handled by caller */ }
   },
 

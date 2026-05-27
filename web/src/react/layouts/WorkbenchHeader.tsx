@@ -33,6 +33,7 @@ function WikiToolbar() {
   const draftsReady = useWikiStore(s => s.draftsSummary.ready)
   const draftsGenerating = useWikiStore(s => s.draftsSummary.generating)
   const toggleDraftPanel = useWikiStore(s => s.toggleDraftPanel)
+  const draftPanelOpen = useWikiStore(s => s.draftPanelOpen)
   const planGenStatus = useWikiStore(s => s.planGeneration.status)
   const selectDocument = useWikiStore(s => s.selectDocument)
   const selectBlock = useWikiStore(s => s.selectBlock)
@@ -158,7 +159,7 @@ function WikiToolbar() {
         </Tabs.ListContainer>
       </Tabs>
       <div className="wh-divider" />
-      <button type="button" className="wh-btn relative" title="Drafts" onClick={toggleDraftPanel}>
+      <button type="button" className={`wh-btn relative ${draftPanelOpen ? 'active' : ''}`} title="Drafts" onClick={toggleDraftPanel}>
         <BookDashed size={13} />
         {draftsReady > 0 && (
           <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[8px] font-bold text-white">

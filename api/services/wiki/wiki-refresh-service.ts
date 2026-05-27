@@ -333,17 +333,24 @@ export const wikiRefreshService = {
     }
 
     try {
-      const prompt = `Analyze document "${docTitle}" (type: ${docType}) for needed updates based on code changes.
+      const prompt = `You are updating document "${docTitle}" (type: ${docType}).
 
-Affected blocks (marked with affected=true):
+TASK: Based on the code changes below, determine which blocks need updating and call refresh.submit_changes IMMEDIATELY.
+
+## Document Blocks
 ${blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.content}`).join('\n\n')}
 
-Changed source files: ${sourceFilesList.join(', ') || 'unknown'}
-Related symbols: ${symbolsList.join(', ') || 'none'}
+## Code Changes
+Files: ${sourceFilesList.join(', ') || 'unknown'}
+Symbols: ${symbolsList.join(', ') || 'none'}
 ${diffContext}
 
-Use refresh.read_block to inspect any block's full content if needed.
-Then call refresh.submit_changes with the blocks that need updating.`;
+## Instructions
+1. For each affected block, decide: does the code change require updating this block's content?
+2. Call refresh.submit_changes with your changes array. Each change needs: blockId, action (update/delete/insert_after), newContent, and reasoning.
+3. If no updates are needed, call refresh.submit_changes with summary="No updates needed" and an empty changes array.
+
+Do NOT explore the codebase. All context you need is above.`;
 
       const session = agentSessionRuntime.create({
         projectId,

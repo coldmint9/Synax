@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useState, useRef } from 'react'
 import { X, CheckCircle2, AlertCircle, Info, AlertTriangle } from 'lucide-react'
 import { useNotificationStore, type Notification, type NotificationType } from '../state/notificationStore'
 
@@ -23,22 +23,42 @@ const ICON_STYLES: Record<NotificationType, string> = {
   warning: 'text-amber-500',
 }
 
+const MAX_VISIBLE_STACK = 3
+
 export function ToastContainer() {
   const notifications = useNotificationStore(s => s.notifications)
   const visibleToasts = notifications.filter(n => n.visible)
+  const [expanded, setExpanded] = useState(false)
 
   if (visibleToasts.length === 0) return null
 
   return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col-reverse gap-2 max-w-sm">
-      {visibleToasts.map(n => (
-        <ToastItem key={n.id} notification={n} />
-      ))}
+    <div
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[100] w-[340px]"
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
+    >
+      <div className="relative">
+        {visibleToasts.map((n, i) => (
+          <ToastItem
+            key={n.id}
+            notification={n}
+            index={i}
+            total={visibleToasts.length}
+            expanded={expanded}
+          />
+        ))}
+      </div>
     </div>
   )
 }
 
-function ToastItem({ notification }: { notification: Notification }) {
+function ToastItem({ notification, index, total, expanded }: {
+  notification: Notification
+  index: number
+  total: number
+  expanded: boolean
+}) {
   const dismiss = useNotificationStore(s => s.dismiss)
   const ref = useRef<HTMLDivElement>(null)
   const Icon = ICONS[notification.type]
@@ -49,14 +69,32 @@ function ToastItem({ notification }: { notification: Notification }) {
     danger: 'text-destructive hover:text-destructive/80',
   }
 
+  const hidden = !expanded && index >= MAX_VISIBLE_STACK
+  const scale = expanded ? 1 : 1 - index * 0.05
+  const translateY = expanded ? -(index * 52) : -(index * 8)
+  const opacity = hidden ? 0 : 1
+
   return (
     <div
       ref={ref}
-      className={`flex items-start gap-2.5 rounded-xl border px-3.5 py-3 shadow-lg backdrop-blur-sm animate-in slide-in-from-right-5 fade-in duration-300 ${TYPE_STYLES[notification.type]}`}
+      style={{
+        transform: `scale(${scale}) translateY(${translateY}px)`,
+        opacity,
+        zIndex: total - index,
+        position: index === 0 ? 'relative' : 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        pointerEvents: hidden ? 'none' : 'auto',
+        transition: 'transform 0.3s ease, opacity 0.3s ease',
+      }}
+      className={`flex items-start gap-2.5 rounded-xl border px-3.5 py-3 shadow-lg backdrop-blur-sm ${index === 0 ? 'animate-in slide-in-from-bottom-5 fade-in duration-300' : ''} ${TYPE_STYLES[notification.type]}`}
     >
       <Icon size={15} className={`shrink-0 mt-0.5 ${ICON_STYLES[notification.type]}`} />
       <div className="flex-1 min-w-0">
-        <p className="text-[12px] text-foreground/85 leading-relaxed">{notification.message}</p>
+        <p className="text-[12px] text-foreground/85 leading-relaxed">
+          {notification.message}
+        </p>
         {notification.actions && notification.actions.length > 0 && (
           <div className="mt-1.5 flex items-center gap-3">
             {notification.actions.map((a, i) => (

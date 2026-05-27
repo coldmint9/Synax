@@ -9,8 +9,6 @@ export const refreshAgentProfile: AgentProfile = {
   description: '分析代码变更对文档的影响，生成文档更新草稿。',
   defaultThinkingMode: 'deep',
   allowedCapabilities: [
-    'file.read',
-    'grep.search',
     'refresh.read_block',
     'refresh.submit_changes',
   ],
@@ -21,13 +19,13 @@ export const refreshAgentProfile: AgentProfile = {
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Refresh agent does not need shell.' },
   ],
   defaultSkills: [],
-  maxSteps: 30,
+  maxSteps: 15,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'Read affected blocks first to understand current content and format.',
-    'Use grep.search or file.read to check actual source code changes when needed.',
-    'Call refresh.submit_changes once with ALL changes. Do not call it multiple times.',
+    'All context you need is in the prompt. Do NOT try to explore the codebase.',
+    'Use refresh.read_block ONLY if a block content is truncated and you need the full text.',
+    'Call refresh.submit_changes IMMEDIATELY after analyzing the provided context.',
     'If no blocks need updating, call refresh.submit_changes with an empty changes array.',
   ],
 }
