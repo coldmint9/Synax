@@ -654,8 +654,6 @@ export const wikiRefreshDrafts = sqliteTable('wiki_refresh_drafts', {
   status: text('status').notNull().default('generating'),
   changesJson: text('changes_json').notNull().default('[]'),
   summary: text('summary'),
-  aggregateRisk: text('aggregate_risk').notNull().default('low'),
-  aggregateConfidence: real('aggregate_confidence').notNull().default(0.5),
   sourceCommitSha: text('source_commit_sha'),
   createdAt: text('created_at').notNull(),
   expiresAt: text('expires_at'),

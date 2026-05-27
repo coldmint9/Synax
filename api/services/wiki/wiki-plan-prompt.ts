@@ -9,48 +9,69 @@ export interface PlanPromptContext {
 }
 
 export function buildPlanPrompt(ctx: PlanPromptContext): string {
-  const issueList = ctx.issues.map((issue, i) => {
+  const issueDetails = ctx.issues.map((issue, i) => {
     const block = ctx.blocks[issue.blockId]
     const blockTitle = block ? extractBlockTitle(block) : issue.blockId.slice(0, 8)
-    return `  ${i + 1}. [${issue.id}] "${issue.content}" (Block: ${blockTitle}, blockId: ${issue.blockId})`
-  }).join('\n')
+    const blockType = block?.blockType ?? 'unknown'
+    const blockContent = block ? extractContent(block) : '(unavailable)'
 
-  const blockContents = Object.values(ctx.blocks)
-    .filter(b => ctx.issues.some(e => e.blockId === b.id))
-    .map(b => `### Block ${b.id} (${b.blockType})\n${extractContent(b)}`)
-    .join('\n\n')
+    const relatedBindings = ctx.bindings
+      .filter(b => b.wikiBlockId === issue.blockId)
+      .map(b => {
+        const loc = b.filePath
+          ? `${b.filePath}${b.startLine ? `:${b.startLine}-${b.endLine}` : ''}`
+          : b.sourceId
+        return `    - ${loc} (${b.sourceType}, confidence: ${b.confidence})`
+      })
+      .join('\n')
 
-  const sourceSnippets = ctx.bindings.slice(0, 10).map(b => {
-    const loc = b.filePath ? `${b.filePath}${b.startLine ? `:${b.startLine}-${b.endLine}` : ''}` : b.sourceId
-    return `  - ${loc}`
-  }).join('\n')
+    return `### Issue ${i + 1}: [${issue.id}]
+- **内容**: ${issue.content}
+- **关联 Block**: "${blockTitle}" (${blockType})
+- **Block 摘要**: ${blockContent}
+- **源码绑定**:
+${relatedBindings || '    (无直接绑定)'}`
+  }).join('\n\n')
 
-  return `你是一个软件架构规划师。基于用户对代码库设计文档提出的 Issues，生成一个可执行的行动规划。
+  return `你是一个软件架构规划师。你的任务是基于用户提出的 Issues 生成可执行的行动规划。
+
+## Issues（一等公民）
+
+以下每个 Issue 都需要你深入理解和澄清，不要跳过任何一个。
+
+${issueDetails}
 
 ## 全局架构概览
 ${ctx.wikiOverview}
 
-## Issues 列表
-${issueList}
+## 工作流程（严格按序执行）
 
-## 关联 Block 内容
-${blockContents}
+### Phase 1 — 澄清 Issues（必须先完成）
+逐个分析每个 Issue：
+1. 这个 issue 具体要求什么？有没有隐含的需求？
+2. 涉及哪些模块/组件？影响范围多大？
+3. 与其他 issues 有没有依赖或冲突关系？
+4. 如果 block 内容不够清晰，用 plan.read_wiki_block 补充理解
 
-## 相关源码文件
-${sourceSnippets || '  (无直接绑定的源码)'}
+在你的思考中，先输出每个 issue 的澄清分析，再进入下一步。
 
-## 指令
-1. 分析所有 Issues，理解它们之间的关联和优先级
-2. 如果需要更多源码上下文，使用 plan.read_source 工具读取相关文件
-3. 将 Issues 分解为可执行的规划节点，每个节点是一个独立的、可验证的任务
-4. 每个节点应包含：
-   - title: 简短的行动标题
-   - description: 具体需要做什么、为什么
-   - evaluationIds: 关联的 Issue ID 列表
-   - dependsOn: 依赖的其他节点标题列表（确保拓扑排序正确）
-   - expectedFiles: 预期需要修改的文件路径列表
-5. 节点粒度：一个节点 = 一个可独立完成和验证的代码变更
-6. 最终使用 plan.submit_plan 工具提交规划`
+### Phase 2 — 搜索验证
+基于 Phase 1 的理解和上面列出的源码绑定线索：
+1. 用 grep.search 搜索关键符号、类型、函数名来理解代码结构
+2. 必要时用 file.read 精读关键代码片段（不要整文件读取）
+3. 验证 issue 描述的问题在代码中确实存在
+4. 识别需要修改的文件和依赖关系
+
+### Phase 3 — 规划提交
+将 issues 分解为可执行的规划节点：
+- title: 简短的行动标题
+- description: 具体需要做什么、为什么、怎么验证
+- evaluationIds: 关联的 Issue ID 列表
+- dependsOn: 依赖的其他节点标题列表（确保拓扑正确）
+- expectedFiles: 预期需要修改的文件路径列表
+
+节点粒度：一个节点 = 一个可独立完成和验证的代码变更。
+最终使用 plan.submit_plan 工具提交规划。`
 }
 
 function extractBlockTitle(block: WikiBlock): string {
@@ -66,9 +87,9 @@ function extractBlockTitle(block: WikiBlock): string {
 function extractContent(block: WikiBlock): string {
   try {
     const content = typeof block.content === 'string' ? JSON.parse(block.content) : block.content
-    if (typeof content === 'string') return content.slice(0, 500)
-    if (content?.text) return content.text.slice(0, 500)
-    return JSON.stringify(content).slice(0, 500)
+    if (typeof content === 'string') return content.slice(0, 800)
+    if (content?.text) return content.text.slice(0, 800)
+    return JSON.stringify(content).slice(0, 800)
   } catch { /* ignore */ }
   return '(content unavailable)'
 }

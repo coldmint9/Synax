@@ -33,7 +33,6 @@ export type PlanStreamEvent =
 export async function generatePlan(
   projectId: string,
   snapshotId: string,
-  workDir: string,
 ): Promise<GeneratePlanResult> {
   ensurePlanProfileRegistered()
 
@@ -68,7 +67,7 @@ export async function generatePlan(
   })
 
   // 3. Register tools
-  const handle = createPlanTools({ projectId, workDir, blocksById, bindingsById })
+  const handle = createPlanTools({ projectId, blocksById, bindingsById })
   const registeredToolIds: string[] = []
   for (const tool of handle.tools) {
     toolRegistry.register(tool)
@@ -129,7 +128,6 @@ export async function generatePlan(
 export async function* generatePlanStream(
   projectId: string,
   snapshotId: string,
-  workDir: string,
 ): AsyncGenerator<PlanStreamEvent> {
   ensurePlanProfileRegistered()
 
@@ -151,7 +149,7 @@ export async function* generatePlanStream(
 
   const prompt = buildPlanPrompt({ issues, blocks: blocksById, bindings: relevantBindings, wikiOverview })
 
-  const handle = createPlanTools({ projectId, workDir, blocksById, bindingsById })
+  const handle = createPlanTools({ projectId, blocksById, bindingsById })
   const registeredToolIds: string[] = []
   for (const tool of handle.tools) {
     toolRegistry.register(tool)
@@ -168,11 +166,14 @@ export async function* generatePlanStream(
       switch (chunk.type) {
         case 'tool_call': {
           const toolId = chunk.toolCall?.toolId ?? ''
-          if (toolId === 'plan.read_source') {
-            yield { type: 'phase', phase: 'reading_source' }
-            yield { type: 'tool_call', tool: 'read_source', summary: chunk.toolCall?.inputSummary ?? '' }
-          } else if (toolId === 'plan.read_wiki_block') {
+          if (toolId === 'plan.read_wiki_block') {
             yield { type: 'tool_call', tool: 'read_wiki_block', summary: chunk.toolCall?.inputSummary ?? '' }
+          } else if (toolId === 'grep.search') {
+            yield { type: 'phase', phase: 'reading_source' }
+            yield { type: 'tool_call', tool: 'grep_search', summary: chunk.toolCall?.inputSummary ?? '' }
+          } else if (toolId === 'file.read') {
+            yield { type: 'phase', phase: 'reading_source' }
+            yield { type: 'tool_call', tool: 'file_read', summary: chunk.toolCall?.inputSummary ?? '' }
           } else if (toolId === 'plan.submit_plan') {
             yield { type: 'phase', phase: 'submitting' }
           }

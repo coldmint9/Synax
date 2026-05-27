@@ -22,8 +22,6 @@ function rowToDraft(r: typeof wikiRefreshDrafts.$inferSelect): WikiRefreshDraft 
     status: r.status as WikiRefreshDraft['status'],
     changes: JSON.parse(r.changesJson) as DraftBlockChange[],
     summary: r.summary ?? null,
-    aggregateRisk: r.aggregateRisk as WikiRefreshDraft['aggregateRisk'],
-    aggregateConfidence: r.aggregateConfidence,
     sourceCommitSha: r.sourceCommitSha ?? null,
     createdAt: r.createdAt,
     expiresAt: r.expiresAt ?? null,

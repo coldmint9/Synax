@@ -114,6 +114,8 @@ export default function WorkbenchLayout() {
 
   const isCachedPanel = effectiveProjectId && (activePanel === 'wiki' || activePanel === 'sessions')
 
+  const showSessionsTab = useShellStore(s => s.preferences.showSessionsTab)
+
   const unbindContext = useContextStore(s => s.unbind)
   const removeFromStore = useShellStore(s => s.removeProject)
 
@@ -154,12 +156,14 @@ export default function WorkbenchLayout() {
               >
                 <WikiPage projectId={effectiveProjectId} />
               </div>
-              <div
-                className="absolute inset-0 flex flex-col"
-                style={{ visibility: activePanel === 'sessions' ? 'visible' : 'hidden', zIndex: activePanel === 'sessions' ? 1 : 0 }}
-              >
-                <SessionsPage />
-              </div>
+              {showSessionsTab && (
+                <div
+                  className="absolute inset-0 flex flex-col"
+                  style={{ visibility: activePanel === 'sessions' ? 'visible' : 'hidden', zIndex: activePanel === 'sessions' ? 1 : 0 }}
+                >
+                  <SessionsPage />
+                </div>
+              )}
             </>
           )}
           {/* Outlet for non-cached routes (welcome, settings) */}

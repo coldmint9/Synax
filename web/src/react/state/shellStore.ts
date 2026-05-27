@@ -29,6 +29,7 @@ export interface ShellPreferences {
   notifications: boolean
   locale: 'zh' | 'en'
   editor: 'system' | 'vscode' | 'cursor' | 'windsurf' | 'webstorm'
+  showSessionsTab: boolean
 }
 
 export interface ProjectSearchFilter {
@@ -56,6 +57,7 @@ interface ShellState {
   setDefaultHome: (defaultHome: ShellPreferences['defaultHome']) => void
   setNotifications: (notifications: boolean) => void
   setEditor: (editor: ShellPreferences['editor']) => void
+  setShowSessionsTab: (show: boolean) => void
   addProject: (project: ProjectSummary) => void
   setProjects: (projects: ProjectSummary[]) => void
   removeProject: (projectId: string) => void
@@ -76,6 +78,7 @@ export const useShellStore = create<ShellState>((set) => ({
     notifications: true,
     locale: 'zh',
     editor: 'system',
+    showSessionsTab: false,
   },
   currentProjectId: null,
   currentUser: {
@@ -110,6 +113,10 @@ export const useShellStore = create<ShellState>((set) => ({
   },
   setEditor: (editor) => {
     set((state) => ({ preferences: { ...state.preferences, editor } }))
+    localStorage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences))
+  },
+  setShowSessionsTab: (showSessionsTab) => {
+    set((state) => ({ preferences: { ...state.preferences, showSessionsTab } }))
     localStorage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences))
   },
   addProject: (project) => {
@@ -162,6 +169,7 @@ export function hydrateShellPreferences() {
     if (parsed.defaultHome === 'global-home' || parsed.defaultHome === 'last-project') patch.defaultHome = parsed.defaultHome
     if (typeof parsed.notifications === 'boolean') patch.notifications = parsed.notifications
     if (parsed.editor && ['system', 'vscode', 'cursor', 'windsurf', 'webstorm'].includes(parsed.editor)) patch.editor = parsed.editor
+    if (typeof parsed.showSessionsTab === 'boolean') patch.showSessionsTab = parsed.showSessionsTab
     if (Object.keys(patch).length > 0) {
       useShellStore.setState((state) => ({
         preferences: { ...state.preferences, ...patch },

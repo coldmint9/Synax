@@ -12,10 +12,19 @@ import type {
   WikiBlock,
   WikiSourceBinding,
   WikiPatch,
+  WikiRefreshDraft,
 } from '../../lib/contracts/wiki';
 
 export type WikiViewMode = 'document' | 'plan';
 export type PlanNavView = 'list' | 'detail';
+export type RefreshPhase = 'idle' | 'scanning' | 'stale_checking' | 'drafting' | 'completed' | 'failed';
+
+export interface RefreshTaskState {
+  taskId: string | null;
+  phase: RefreshPhase;
+  message: string | null;
+  meta: Record<string, unknown> | null;
+}
 
 export interface WikiState {
   viewMode: WikiViewMode;
@@ -29,8 +38,20 @@ export interface WikiState {
   evaluations: WikiEvaluation[];
   patchesSummary: { pending: number; conflict: number };
   patchPanelOpen: boolean;
-  loading: { snapshot: boolean; patches: boolean; plans: boolean };
+  loading: { snapshot: boolean; patches: boolean; plans: boolean; drafts: boolean };
   error: string | null;
+
+  // Refresh task real-time state
+  refreshTask: RefreshTaskState;
+
+  // Draft state
+  draftsById: Record<string, WikiRefreshDraft>;
+  draftsSummary: { ready: number; generating: number };
+  selectedDraftId: string | null;
+  draftPanelOpen: boolean;
+  draftPanelLayer: 'list' | 'detail';
+  draftSelectedBlockIds: Record<string, string[]>;
+  draftEditedContent: Record<string, Record<string, unknown>>;
 
   // Plan state
   plans: WikiPlanWithSummary[];
@@ -60,6 +81,22 @@ export interface WikiState {
   togglePatchPanel: () => void;
   reset: () => void;
 
+  // Draft actions
+  loadDrafts: (projectId: string, status?: string) => Promise<void>;
+  selectDraft: (draftId: string) => void;
+  backToDraftList: () => void;
+  toggleDraftPanel: () => void;
+  toggleDraftBlock: (draftId: string, blockId: string) => void;
+  selectAllDraftBlocks: (draftId: string) => void;
+  deselectAllDraftBlocks: (draftId: string) => void;
+  editDraftBlock: (draftId: string, blockId: string, newContent: unknown) => void;
+  applyDraft: (draftId: string, blockIds?: string[]) => Promise<void>;
+  discardDraft: (draftId: string) => Promise<void>;
+
+  // Refresh task actions
+  setRefreshStarted: (taskId: string) => void;
+  handleRefreshEvent: (type: string, data: { taskId: string; message: string; meta?: Record<string, unknown> }) => void;
+
   // Plan actions
   loadPlans: (projectId: string) => Promise<void>;
   loadActivePlan: (projectId: string) => Promise<void>;
@@ -70,7 +107,7 @@ export interface WikiState {
   discardPlan: (planId: string) => Promise<void>;
   updatePlanNode: (nodeId: string, updates: Partial<Pick<WikiPlanNode, 'title' | 'description' | 'expectedFiles'>>) => Promise<void>;
   deletePlanNode: (nodeId: string) => Promise<void>;
-  startPlanGeneration: (projectId: string, snapshotId: string, workDir: string) => void;
+  startPlanGeneration: (projectId: string, snapshotId: string) => void;
   resetPlanGeneration: () => void;
 }
 
@@ -86,8 +123,18 @@ const initialState = {
   evaluations: [] as WikiEvaluation[],
   patchesSummary: { pending: 0, conflict: 0 },
   patchPanelOpen: false,
-  loading: { snapshot: false, patches: false, plans: false },
+  loading: { snapshot: false, patches: false, plans: false, drafts: false },
   error: null,
+  // Refresh task state
+  refreshTask: { taskId: null, phase: 'idle', message: null, meta: null } as RefreshTaskState,
+  // Draft state
+  draftsById: {} as Record<string, WikiRefreshDraft>,
+  draftsSummary: { ready: 0, generating: 0 },
+  selectedDraftId: null as string | null,
+  draftPanelOpen: false,
+  draftPanelLayer: 'list' as 'list' | 'detail',
+  draftSelectedBlockIds: {} as Record<string, string[]>,
+  draftEditedContent: {} as Record<string, Record<string, unknown>>,
   plans: [] as WikiPlanWithSummary[],
   activePlan: null as WikiPlan | null,
   activePlanNodes: [] as WikiPlanNode[],
@@ -151,6 +198,9 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       const patchesChanged = prev.patchesSummary.pending !== tree.patchesSummary.pending
         || prev.patchesSummary.conflict !== tree.patchesSummary.conflict;
 
+      const draftsChanged = prev.draftsSummary.ready !== (tree.draftsSummary?.ready ?? 0)
+        || prev.draftsSummary.generating !== (tree.draftsSummary?.generating ?? 0);
+
       const firstDocId = tree.documents[0]?.id ?? null;
       const currentSelected = prev.selectedDocumentId;
       const savedDocId = !currentSelected ? (localStorage.getItem('wiki-selected-doc') ?? null) : null;
@@ -161,7 +211,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           : (restoredId ?? firstDocId);
 
       const patch: Partial<WikiState> = {
-        loading: { snapshot: false, patches: prev.loading.patches },
+        loading: { snapshot: false, patches: prev.loading.patches, plans: prev.loading.plans, drafts: prev.loading.drafts },
         error: null,
       };
       if (snapshotChanged) patch.snapshot = tree.snapshot;
@@ -169,6 +219,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       if (blocksChanged) patch.blocksById = nextBlocksById;
       if (bindingsChanged) patch.bindingsById = nextBindingsById;
       if (patchesChanged) patch.patchesSummary = tree.patchesSummary;
+      if (draftsChanged) patch.draftsSummary = tree.draftsSummary ?? { ready: 0, generating: 0 };
       if (selectedDocumentId !== prev.selectedDocumentId) patch.selectedDocumentId = selectedDocumentId;
 
       set(patch as WikiState);
@@ -214,6 +265,135 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
   reset: () => set(initialState),
   togglePatchPanel: () => set(s => ({ patchPanelOpen: !s.patchPanelOpen })),
+
+  // Draft actions
+  loadDrafts: async (projectId, status) => {
+    set(s => ({ ...s, loading: { ...s.loading, drafts: true } }));
+    try {
+      const drafts = await wikiApi.getDrafts(projectId, status);
+      const draftsById: Record<string, WikiRefreshDraft> = {};
+      let ready = 0, generating = 0;
+      for (const d of drafts) {
+        draftsById[d.id] = d;
+        if (d.status === 'ready' || d.status === 'partially_applied') ready++;
+        else if (d.status === 'generating') generating++;
+      }
+      set(s => ({ ...s, draftsById, draftsSummary: { ready, generating }, loading: { ...s.loading, drafts: false } }));
+    } catch {
+      set(s => ({ ...s, loading: { ...s.loading, drafts: false } }));
+    }
+  },
+
+  selectDraft: (draftId) => {
+    const draft = get().draftsById[draftId];
+    if (!draft) return;
+    const blockIds = draft.changes.map(c => c.blockId);
+    set(s => ({
+      ...s,
+      selectedDraftId: draftId,
+      draftPanelLayer: 'detail',
+      draftSelectedBlockIds: { ...s.draftSelectedBlockIds, [draftId]: blockIds },
+    }));
+  },
+
+  backToDraftList: () => set({ selectedDraftId: null, draftPanelLayer: 'list' }),
+
+  toggleDraftPanel: () => set(s => ({ draftPanelOpen: !s.draftPanelOpen })),
+
+  toggleDraftBlock: (draftId, blockId) => {
+    set(s => {
+      const current = s.draftSelectedBlockIds[draftId] ?? [];
+      const next = current.includes(blockId)
+        ? current.filter(id => id !== blockId)
+        : [...current, blockId];
+      return { draftSelectedBlockIds: { ...s.draftSelectedBlockIds, [draftId]: next } };
+    });
+  },
+
+  selectAllDraftBlocks: (draftId) => {
+    const draft = get().draftsById[draftId];
+    if (!draft) return;
+    const blockIds = draft.changes.map(c => c.blockId);
+    set(s => ({ draftSelectedBlockIds: { ...s.draftSelectedBlockIds, [draftId]: blockIds } }));
+  },
+
+  deselectAllDraftBlocks: (draftId) => {
+    set(s => ({ draftSelectedBlockIds: { ...s.draftSelectedBlockIds, [draftId]: [] } }));
+  },
+
+  editDraftBlock: (draftId, blockId, newContent) => {
+    set(s => ({
+      draftEditedContent: {
+        ...s.draftEditedContent,
+        [draftId]: { ...(s.draftEditedContent[draftId] ?? {}), [blockId]: newContent },
+      },
+    }));
+  },
+
+  applyDraft: async (draftId, blockIds) => {
+    const edits = get().draftEditedContent[draftId];
+    try {
+      if (edits && Object.keys(edits).length > 0) {
+        const changes = Object.entries(edits).map(([blockId, newContent]) => ({ blockId, newContent }));
+        await wikiApi.editDraft(draftId, changes);
+      } else if (blockIds) {
+        await wikiApi.applyPartialDraft(draftId, blockIds);
+      } else {
+        await wikiApi.applyDraft(draftId);
+      }
+      set(s => {
+        const { [draftId]: _, ...rest } = s.draftsById;
+        const { [draftId]: __, ...restEdits } = s.draftEditedContent;
+        const { [draftId]: ___, ...restSelected } = s.draftSelectedBlockIds;
+        return {
+          draftsById: rest,
+          draftEditedContent: restEdits,
+          draftSelectedBlockIds: restSelected,
+          selectedDraftId: null,
+          draftPanelLayer: 'list',
+          draftsSummary: { ...s.draftsSummary, ready: Math.max(0, s.draftsSummary.ready - 1) },
+        };
+      });
+    } catch { /* handled by caller */ }
+  },
+
+  discardDraft: async (draftId) => {
+    try {
+      await wikiApi.discardDraft(draftId);
+      set(s => {
+        const { [draftId]: _, ...rest } = s.draftsById;
+        const { [draftId]: __, ...restEdits } = s.draftEditedContent;
+        const { [draftId]: ___, ...restSelected } = s.draftSelectedBlockIds;
+        return {
+          draftsById: rest,
+          draftEditedContent: restEdits,
+          draftSelectedBlockIds: restSelected,
+          selectedDraftId: s.selectedDraftId === draftId ? null : s.selectedDraftId,
+          draftPanelLayer: s.selectedDraftId === draftId ? 'list' : s.draftPanelLayer,
+          draftsSummary: { ...s.draftsSummary, ready: Math.max(0, s.draftsSummary.ready - 1) },
+        };
+      });
+    } catch { /* handled by caller */ }
+  },
+
+  // Refresh task actions
+  setRefreshStarted: (taskId) => {
+    set({ refreshTask: { taskId, phase: 'scanning', message: '正在扫描代码索引…', meta: null } });
+  },
+
+  handleRefreshEvent: (type, data) => {
+    const current = get().refreshTask;
+    if (current.taskId && current.taskId !== data.taskId) return;
+
+    if (type === 'task_progress') {
+      const phase = (data.meta?.phase as RefreshPhase) ?? current.phase;
+      set({ refreshTask: { taskId: data.taskId, phase, message: data.message, meta: data.meta ?? null } });
+    } else if (type === 'task_completed') {
+      set({ refreshTask: { taskId: data.taskId, phase: 'completed', message: data.message, meta: data.meta ?? null } });
+    } else if (type === 'task_failed') {
+      set({ refreshTask: { taskId: data.taskId, phase: 'failed', message: data.message, meta: data.meta ?? null } });
+    }
+  },
 
   // Plan actions
   loadPlans: async (projectId: string) => {
@@ -296,7 +476,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     }))
   },
 
-  startPlanGeneration: (projectId: string, snapshotId: string, workDir: string) => {
+  startPlanGeneration: (projectId: string, snapshotId: string) => {
     const toast = useNotificationStore.getState()
     set({
       viewMode: 'plan',
@@ -318,7 +498,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       duration: 4000,
     })
 
-    evaluationApi.streamGeneratePlan(projectId, snapshotId, workDir, (event) => {
+    evaluationApi.streamGeneratePlan(projectId, snapshotId, (event) => {
       const s = get()
       switch (event.type) {
         case 'started':

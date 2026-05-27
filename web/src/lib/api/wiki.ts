@@ -6,6 +6,7 @@ import type {
   WikiSnapshotTree,
   WikiBlock,
   WikiPatch,
+  WikiRefreshDraft,
 } from '../contracts/wiki';
 import { apiRequest } from './origin';
 
@@ -87,5 +88,41 @@ export const wikiApi = {
     fallbackSearchQuery?: string;
   }> {
     return apiRequest(`${BASE}/source-bindings/${bindingId}/resolve`);
+  },
+
+  // ── Draft API ───────────────────────────────────────────────────────────────
+
+  async getDrafts(projectId: string, status?: string): Promise<WikiRefreshDraft[]> {
+    const url = status
+      ? `${BASE}/projects/${projectId}/drafts?status=${status}`
+      : `${BASE}/projects/${projectId}/drafts`;
+    const data = await apiRequest<{ drafts: WikiRefreshDraft[] }>(url);
+    return data.drafts;
+  },
+
+  getDraft(draftId: string): Promise<WikiRefreshDraft> {
+    return apiRequest<WikiRefreshDraft>(`${BASE}/drafts/${draftId}`);
+  },
+
+  applyDraft(draftId: string): Promise<{ applied: string[]; conflicts: Array<{ blockId: string; manualState: string }> }> {
+    return apiRequest(`${BASE}/drafts/${draftId}/apply`, { method: 'POST' });
+  },
+
+  applyPartialDraft(draftId: string, blockIds: string[]): Promise<{ applied: string[]; conflicts: Array<{ blockId: string; manualState: string }> }> {
+    return apiRequest(`${BASE}/drafts/${draftId}/apply-partial`, {
+      method: 'POST',
+      body: JSON.stringify({ blockIds }),
+    });
+  },
+
+  editDraft(draftId: string, changes: Array<{ blockId: string; newContent: unknown }>): Promise<{ applied: string[]; conflicts: Array<{ blockId: string; manualState: string }> }> {
+    return apiRequest(`${BASE}/drafts/${draftId}/edit`, {
+      method: 'POST',
+      body: JSON.stringify({ changes }),
+    });
+  },
+
+  discardDraft(draftId: string): Promise<{ ok: true }> {
+    return apiRequest(`${BASE}/drafts/${draftId}/discard`, { method: 'POST' });
   },
 };

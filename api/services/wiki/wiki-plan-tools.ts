@@ -1,6 +1,4 @@
 import * as z from 'zod/v4'
-import fs from 'node:fs'
-import path from 'node:path'
 import type { RegisteredTool } from '../agent-runtime/contracts.js'
 import type { WikiBlock, WikiSourceBinding } from './contracts.js'
 
@@ -14,45 +12,12 @@ export interface PlanNodeDraft {
 
 export interface PlanContext {
   projectId: string
-  workDir: string
   blocksById: Record<string, WikiBlock>
   bindingsById: Record<string, WikiSourceBinding>
 }
 
 export function createPlanTools(context: PlanContext) {
   let submittedPlan: PlanNodeDraft[] | null = null
-
-  const readSourceTool: RegisteredTool = {
-    id: 'plan.read_source',
-    label: 'Read Source File',
-    description: 'Read a source file from the project to understand implementation details.',
-    category: 'read',
-    mutability: 'read',
-    resumeBehavior: 'auto',
-    internalGate: 'none',
-    inputSchema: z.object({
-      filePath: z.string().describe('Relative file path from project root'),
-      startLine: z.number().optional().describe('Start line (1-based)'),
-      endLine: z.number().optional().describe('End line (1-based)'),
-    }),
-    async execute(input) {
-      const args = input.args as { filePath: string; startLine?: number; endLine?: number }
-      const fullPath = path.resolve(context.workDir, args.filePath)
-      if (!fullPath.startsWith(context.workDir)) {
-        return { result: { error: 'Path outside project' }, displaySummary: 'Rejected: path outside project', artifacts: [] }
-      }
-      try {
-        const content = fs.readFileSync(fullPath, 'utf-8')
-        const lines = content.split('\n')
-        const start = (args.startLine ?? 1) - 1
-        const end = args.endLine ?? lines.length
-        const slice = lines.slice(start, end).join('\n')
-        return { result: { content: slice, totalLines: lines.length }, displaySummary: `Read ${args.filePath} (${end - start} lines)`, artifacts: [] }
-      } catch {
-        return { result: { error: 'File not found' }, displaySummary: `File not found: ${args.filePath}`, artifacts: [] }
-      }
-    },
-  }
 
   const readWikiBlockTool: RegisteredTool = {
     id: 'plan.read_wiki_block',
@@ -104,7 +69,7 @@ export function createPlanTools(context: PlanContext) {
   }
 
   return {
-    tools: [readSourceTool, readWikiBlockTool, submitPlanTool],
+    tools: [readWikiBlockTool, submitPlanTool],
     getPlan: () => submittedPlan,
   }
 }

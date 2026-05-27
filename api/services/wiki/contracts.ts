@@ -250,8 +250,6 @@ export interface DraftBlockChange {
   oldContent: unknown | null;
   newContent: unknown | null;
   reasoning: string;
-  confidence: number;
-  risk: 'low' | 'medium' | 'high';
 }
 
 export interface WikiRefreshDraft {
@@ -263,8 +261,6 @@ export interface WikiRefreshDraft {
   status: WikiRefreshDraftStatus;
   changes: DraftBlockChange[];
   summary: string | null;
-  aggregateRisk: 'low' | 'medium' | 'high';
-  aggregateConfidence: number;
   sourceCommitSha: string | null;
   createdAt: string;
   expiresAt: string | null;

@@ -131,4 +131,39 @@ export interface WikiSnapshotTree {
   blocks: WikiBlock[];
   sourceBindings: WikiSourceBinding[];
   patchesSummary: { pending: number; conflict: number };
+  draftsSummary: { ready: number; generating: number };
+}
+
+// ── Refresh Draft types ─────────────────────────────────────────────────────
+
+export type WikiRefreshDraftStatus =
+  | 'generating'
+  | 'ready'
+  | 'partially_applied'
+  | 'applied'
+  | 'discarded'
+  | 'expired';
+
+export interface DraftBlockChange {
+  blockId: string;
+  action: 'update' | 'delete' | 'insert_after';
+  oldContent: unknown | null;
+  newContent: unknown | null;
+  reasoning: string;
+}
+
+export interface WikiRefreshDraft {
+  id: string;
+  projectId: string;
+  snapshotId: string;
+  refreshTaskId: string | null;
+  documentId: string;
+  status: WikiRefreshDraftStatus;
+  changes: DraftBlockChange[];
+  summary: string | null;
+  sourceCommitSha: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  decidedAt: string | null;
+  decidedBy: string | null;
 }

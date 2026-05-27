@@ -13,7 +13,6 @@ export const planGeneratorProfile: AgentProfile = {
     'file.list',
     'file.read',
     'grep.search',
-    'plan.read_source',
     'plan.read_wiki_block',
     'plan.submit_plan',
     'tools.escalate',
@@ -25,14 +24,14 @@ export const planGeneratorProfile: AgentProfile = {
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Planner does not need shell.' },
   ],
   defaultSkills: [],
-  maxSteps: 200,
+  maxSteps: 60,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'Read source files to understand the codebase relevant to the issues.',
-    'IMPORTANT: Batch multiple file reads in a single step. Call plan.read_source multiple times in one response to read several files at once instead of one file per step.',
-    'Design plan nodes with clear dependencies and expected file changes.',
-    'Call plan.submit_plan as soon as your plan is ready. Do not over-read.',
+    'IMPORTANT: First analyze and clarify each issue before searching code. Understand what each issue asks, identify ambiguities, and note dependencies between issues.',
+    'Use grep.search to find relevant symbols and patterns based on the source bindings provided in the prompt. Batch multiple searches in one step.',
+    'Use file.read only for targeted code snippets — never read entire files.',
+    'Call plan.submit_plan as soon as your plan is ready. Do not over-search.',
   ],
 }
 

@@ -118,11 +118,11 @@ export const evaluationApi = {
     if (!res.ok) throw new Error(`plans/confirm failed: ${res.status}`)
   },
 
-  async generatePlan(projectId: string, snapshotId: string, workDir: string): Promise<{ plan: WikiPlan; nodes: WikiPlanNode[] }> {
+  async generatePlan(projectId: string, snapshotId: string): Promise<{ plan: WikiPlan; nodes: WikiPlanNode[] }> {
     const res = await apiFetch(`${BASE}/projects/${projectId}/plans/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ snapshotId, workDir }),
+      body: JSON.stringify({ snapshotId }),
     })
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string }
@@ -176,7 +176,6 @@ export const evaluationApi = {
   streamGeneratePlan(
     projectId: string,
     snapshotId: string,
-    workDir: string,
     onEvent: (event: PlanStreamEvent) => void,
     onError?: (err: unknown) => void,
   ): () => void {
@@ -188,7 +187,7 @@ export const evaluationApi = {
         const resp = await apiFetch(`${BASE}/projects/${projectId}/plans/generate/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-          body: JSON.stringify({ snapshotId, workDir }),
+          body: JSON.stringify({ snapshotId }),
           signal: controller.signal,
         })
         if (!resp.ok || !resp.body) {
