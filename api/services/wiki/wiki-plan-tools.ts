@@ -14,10 +14,11 @@ export interface PlanContext {
   projectId: string
   blocksById: Record<string, WikiBlock>
   bindingsById: Record<string, WikiSourceBinding>
+  onNodeSubmitted?: (node: PlanNodeDraft, index: number) => void
 }
 
 export function createPlanTools(context: PlanContext) {
-  let submittedPlan: PlanNodeDraft[] | null = null
+  const submittedNodes: PlanNodeDraft[] = []
 
   const readWikiBlockTool: RegisteredTool = {
     id: 'plan.read_wiki_block',
@@ -40,36 +41,40 @@ export function createPlanTools(context: PlanContext) {
     },
   }
 
-  const submitPlanTool: RegisteredTool = {
-    id: 'plan.submit_plan',
-    label: 'Submit Plan',
-    description: 'Submit the final execution plan with ordered nodes.',
+  const submitNodeTool: RegisteredTool = {
+    id: 'plan.submit_node',
+    label: 'Submit Plan Node',
+    description: 'Submit a single plan node. Call once per node, in dependency order.',
     category: 'write',
     mutability: 'write',
     resumeBehavior: 'auto',
     internalGate: 'none',
     inputSchema: z.object({
-      nodes: z.array(z.object({
-        title: z.string().describe('Short action title'),
-        description: z.string().describe('What needs to be done and why'),
-        evaluationIds: z.array(z.string()).describe('Related issue IDs'),
-        dependsOn: z.array(z.string()).describe('Titles of nodes this depends on'),
-        expectedFiles: z.array(z.string()).describe('Files expected to be modified'),
-      })).min(1),
+      title: z.string().describe('Short action title'),
+      description: z.string().describe('What needs to be done and why'),
+      evaluationIds: z.array(z.string()).describe('Related issue IDs'),
+      dependsOn: z.array(z.string()).describe('Titles of previously submitted nodes this depends on'),
+      expectedFiles: z.array(z.string()).describe('Files expected to be modified'),
     }),
     async execute(input) {
-      const args = input.args as { nodes: PlanNodeDraft[] }
-      submittedPlan = args.nodes
+      const args = input.args as PlanNodeDraft
+      const duplicate = submittedNodes.find(n => n.title === args.title)
+      if (duplicate) {
+        return { result: { error: `Node with title "${args.title}" already exists` }, displaySummary: `Duplicate: ${args.title}`, artifacts: [] }
+      }
+      submittedNodes.push(args)
+      const index = submittedNodes.length - 1
+      context.onNodeSubmitted?.(args, index)
       return {
-        result: { ok: true, count: args.nodes.length },
-        displaySummary: `Plan submitted: ${args.nodes.length} nodes`,
-        artifacts: [{ kind: 'decision', title: 'Plan Generated', summary: `${args.nodes.length} action nodes`, risk: 'low' }],
+        result: { ok: true, nodeIndex: index, title: args.title },
+        displaySummary: `Node #${index + 1}: ${args.title}`,
+        artifacts: [],
       }
     },
   }
 
   return {
-    tools: [readWikiBlockTool, submitPlanTool],
-    getPlan: () => submittedPlan,
+    tools: [readWikiBlockTool, submitNodeTool],
+    getPlan: () => (submittedNodes.length > 0 ? submittedNodes : null),
   }
 }

@@ -4,7 +4,7 @@ import { Button, Modal } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { type WikiPlanNode } from '../../../lib/api/evaluation'
-import PlanNodeCard from './PlanNodeCard'
+import PlanDAGView from './PlanDAGView'
 
 interface Props {
   projectId: string
@@ -17,7 +17,6 @@ export default function PlanDraftView({ projectId }: Props) {
   const confirmPlan = useWikiStore(s => s.confirmPlan)
   const discardPlan = useWikiStore(s => s.discardPlan)
   const updatePlanNode = useWikiStore(s => s.updatePlanNode)
-  const deletePlanNode = useWikiStore(s => s.deletePlanNode)
   const setViewMode = useWikiStore(s => s.setViewMode)
 
   const [confirming, setConfirming] = useState(false)
@@ -41,18 +40,6 @@ export default function PlanDraftView({ projectId }: Props) {
     setViewMode('document')
   }
 
-  async function handleDeleteNode(nodeId: string) {
-    await deletePlanNode(nodeId)
-  }
-
-  function handleMoveUp(nodeId: string) {
-    // TODO: reorder via API
-  }
-
-  function handleMoveDown(nodeId: string) {
-    // TODO: reorder via API
-  }
-
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/15 px-5">
@@ -74,22 +61,11 @@ export default function PlanDraftView({ projectId }: Props) {
           </Button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-        <div className="max-w-2xl mx-auto space-y-3">
-          {nodes.map((node, i) => (
-            <PlanNodeCard
-              key={node.id}
-              node={node}
-              index={i}
-              isLast={i === nodes.length - 1}
-              editable
-              onEdit={setEditingNode}
-              onDelete={handleDeleteNode}
-              onMoveUp={handleMoveUp}
-              onMoveDown={handleMoveDown}
-            />
-          ))}
-        </div>
+      <div className="min-h-0 flex-1">
+        <PlanDAGView
+          nodes={nodes}
+          onNodeClick={(node) => { if ('id' in node) setEditingNode(node as WikiPlanNode) }}
+        />
       </div>
 
       {editingNode && (
@@ -133,46 +109,50 @@ function NodeEditModal({ node, projectId, onClose, onSave }: {
   }
 
   return (
-    <Modal isOpen onOpenChange={(open) => { if (!open) onClose() }}>
-      <Modal.Content>
-        <Modal.Header>{t('planEditNodeTitle')}</Modal.Header>
-        <Modal.Body>
-          <div className="space-y-3">
-            <div>
-              <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditTitle')}</label>
-              <input
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                className="w-full rounded-lg border border-border/30 bg-background/60 px-3 py-2 text-[12px] focus:border-primary/40 focus:outline-none"
-              />
+    <Modal.Backdrop isOpen onOpenChange={(open) => { if (!open) onClose() }}>
+      <Modal.Container size="md">
+        <Modal.Dialog>
+          <Modal.Header>
+            <Modal.Heading>{t('planEditNodeTitle')}</Modal.Heading>
+          </Modal.Header>
+          <Modal.Body>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditTitle')}</label>
+                <input
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  className="w-full rounded-lg border border-border/30 bg-background/60 px-3 py-2 text-[12px] focus:border-primary/40 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditDescription')}</label>
+                <textarea
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  rows={4}
+                  className="w-full resize-none rounded-lg border border-border/30 bg-background/60 px-3 py-2 text-[12px] focus:border-primary/40 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditExpectedFiles')}</label>
+                <input
+                  value={files}
+                  onChange={e => setFiles(e.target.value)}
+                  className="w-full rounded-lg border border-border/30 bg-background/60 px-3 py-2 text-[11px] font-mono focus:border-primary/40 focus:outline-none"
+                />
+              </div>
             </div>
-            <div>
-              <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditDescription')}</label>
-              <textarea
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                rows={4}
-                className="w-full resize-none rounded-lg border border-border/30 bg-background/60 px-3 py-2 text-[12px] focus:border-primary/40 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditExpectedFiles')}</label>
-              <input
-                value={files}
-                onChange={e => setFiles(e.target.value)}
-                className="w-full rounded-lg border border-border/30 bg-background/60 px-3 py-2 text-[11px] font-mono focus:border-primary/40 focus:outline-none"
-              />
-            </div>
-          </div>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="ghost" size="sm" onPress={onClose}>{t('commonCancel')}</Button>
-          <Button color="primary" size="sm" onPress={handleSave} isDisabled={saving || !title.trim()}>
-            {saving ? <Loader2 size={12} className="animate-spin" /> : null}
-            {t('commonSave')}
-          </Button>
-        </Modal.Footer>
-      </Modal.Content>
-    </Modal>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="ghost" size="sm" onPress={onClose}>{t('commonCancel')}</Button>
+            <Button color="primary" size="sm" onPress={handleSave} isDisabled={saving || !title.trim()}>
+              {saving ? <Loader2 size={12} className="animate-spin" /> : null}
+              {t('commonSave')}
+            </Button>
+          </Modal.Footer>
+        </Modal.Dialog>
+      </Modal.Container>
+    </Modal.Backdrop>
   )
 }

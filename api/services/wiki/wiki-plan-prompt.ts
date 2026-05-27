@@ -62,16 +62,20 @@ ${ctx.wikiOverview}
 3. 验证 issue 描述的问题在代码中确实存在
 4. 识别需要修改的文件和依赖关系
 
-### Phase 3 — 规划提交
-将 issues 分解为可执行的规划节点：
-- title: 简短的行动标题
+### Phase 3 — 逐步提交规划节点
+将 issues 分解为可执行的规划节点，**逐个提交**：
+- 每完成一个节点的设计，立即使用 plan.submit_node 工具提交
+- 按依赖顺序提交：被依赖的节点先提交，依赖其他节点的后提交
+- 不要等所有节点设计完再一起提交
+
+每个节点包含：
+- title: 简短的行动标题（全局唯一，后续节点通过此标题引用依赖）
 - description: 具体需要做什么、为什么、怎么验证
 - evaluationIds: 关联的 Issue ID 列表
-- dependsOn: 依赖的其他节点标题列表（确保拓扑正确）
+- dependsOn: 依赖的其他节点标题列表（必须是已提交节点的标题）
 - expectedFiles: 预期需要修改的文件路径列表
 
-节点粒度：一个节点 = 一个可独立完成和验证的代码变更。
-最终使用 plan.submit_plan 工具提交规划。`
+节点粒度：一个节点 = 一个可独立完成和验证的代码变更。`
 }
 
 function extractBlockTitle(block: WikiBlock): string {

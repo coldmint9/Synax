@@ -560,8 +560,8 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         case 'message_delta':
           set({ planGeneration: { ...s.planGeneration, streamingText: s.planGeneration.streamingText + event.delta } })
           break
-        case 'plan_submitted':
-          set({ planGeneration: { ...s.planGeneration, previewNodes: event.nodes } })
+        case 'node_submitted':
+          set({ planGeneration: { ...s.planGeneration, previewNodes: [...s.planGeneration.previewNodes, event.node] } })
           break
         case 'completed':
           get().loadActivePlan(projectId).then(() => {
