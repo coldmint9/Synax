@@ -5,6 +5,8 @@ import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
 import { useLocale } from '../../hooks/useLocale'
 import { NotificationBell } from '../components/notifications/NotificationBell'
+import WikiSearchPanel from '../features/wiki/WikiSearchPanel'
+import { useWikiSearch, type SearchResult } from '../features/wiki/WikiSearchPanel'
 import type { ActivityPanel } from './ActivityBar'
 
 interface WorkbenchHeaderProps {
@@ -31,6 +33,102 @@ function WikiToolbar() {
   const patchesPending = useWikiStore(s => s.patchesSummary.pending)
   const togglePatchPanel = useWikiStore(s => s.togglePatchPanel)
   const planGenStatus = useWikiStore(s => s.planGeneration.status)
+  const selectDocument = useWikiStore(s => s.selectDocument)
+  const selectBlock = useWikiStore(s => s.selectBlock)
+
+  const [searching, setSearching] = useState(false)
+  const [query, setQuery] = useState('')
+  const [activeIndex, setActiveIndex] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const { results } = useWikiSearch(query)
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setSearching(true)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  useEffect(() => {
+    if (searching) inputRef.current?.focus()
+  }, [searching])
+
+  useEffect(() => { setActiveIndex(0) }, [results])
+
+  function handleSelect(result: SearchResult) {
+    setViewMode('document')
+    selectDocument(result.documentId)
+    setTimeout(() => {
+      selectBlock(result.blockId)
+      const el = document.getElementById(`wiki-block-${result.blockId}`)
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 50)
+    closeSearch()
+  }
+
+  function closeSearch() {
+    setSearching(false)
+    setQuery('')
+    setActiveIndex(0)
+  }
+
+  function handleSearchKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeSearch()
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex(i => Math.min(i + 1, results.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex(i => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter' && results[activeIndex]) {
+      e.preventDefault()
+      handleSelect(results[activeIndex])
+    }
+  }
+
+  if (searching) {
+    return (
+      <div data-searching className="relative">
+        <div className="flex items-center gap-0.5">
+          <div className="wh-btn !w-auto !px-2 gap-1.5 !cursor-text" onClick={() => inputRef.current?.focus()}>
+            <Search size={13} className="text-muted-foreground shrink-0" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder={t('wikiSearchPlaceholder')}
+              className="w-[140px] bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+          <button type="button" className="wh-btn" title="Close" onMouseDown={e => { e.preventDefault(); closeSearch() }}>
+            <kbd className="text-[9px] text-muted-foreground">ESC</kbd>
+          </button>
+        </div>
+        {query.trim() && (
+          <>
+            <div className="fixed inset-0 z-[9998]" onClick={closeSearch} />
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-[9999] w-[360px] rounded-xl border border-border/40 bg-card shadow-2xl overflow-hidden">
+              <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rotate-45 border-l border-t border-border/40 bg-card" />
+              <WikiSearchPanel
+                query={query}
+                activeIndex={activeIndex}
+                onActiveIndexChange={setActiveIndex}
+                onSelect={handleSelect}
+              />
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="flex items-center gap-0.5">
@@ -67,7 +165,7 @@ function WikiToolbar() {
           </span>
         )}
       </button>
-      <button type="button" className="wh-btn" title={t('appSearch')}>
+      <button type="button" className="wh-btn" title={t('appSearch')} onClick={() => setSearching(true)}>
         <Search size={13} />
       </button>
     </div>
