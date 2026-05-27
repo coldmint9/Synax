@@ -11,7 +11,6 @@ import {
   resolveWorkspaceRoot,
   setSessionWorkspaceRoot,
 } from '../agent-runtime/tools/workspace.js';
-import type { ToolCallRecord } from '../agent-runtime/contracts.js';
 import { logger } from '../../lib/logger.js';
 import { notify } from '../notifications/notify.js';
 import { wikiStore } from './wiki-store.js';
@@ -20,18 +19,14 @@ import { ensureWikiProfileRegistered } from './wiki-loop-profile.js';
 import {
   createPlannerTools,
   createWriterTools,
-  createWikiTools,
   type WikiDocumentDraft,
   type WikiOutlineEntry,
-  type WikiPlannerHandle,
-  type WikiWriterHandle,
-  type WikiToolsHandle,
 } from './wiki-loop-tools.js';
 import type { GenerateWikiInput, GenerateWikiResult, WikiGitState } from './wiki-snapshot-service.js';
-import type { RegisteredTool } from '../agent-runtime/contracts.js';
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { buildWikiPrompt, extractProjectMeta } from './wiki-prompt-builder.js';
+import { buildDocumentContext } from './wiki-document-context.js';
 
 function readGitState(workDir: string): WikiGitState {
   const run = (cmd: string) => {
@@ -50,46 +45,6 @@ function readGitState(workDir: string): WikiGitState {
     .digest('hex')
     .slice(0, 16);
   return { branch, headCommitSha, workingTreeHash, dirty };
-}
-
-const EXPLORATION_TOOL_IDS = new Set([
-  'wiki.read_code_index',
-  'wiki.read_modules',
-  'wiki.read_graph',
-  'wiki.read_tree',
-]);
-const MAX_CONTEXT_LENGTH = 16000;
-
-function extractPlannerExplorationContext(sessionId: string): string {
-  const runs = agentRuntimeStore.listRuns(sessionId);
-  if (runs.length === 0) return '';
-
-  const toolCalls: ToolCallRecord[] = [];
-  for (const run of runs) {
-    toolCalls.push(...agentRuntimeStore.listRunToolCalls(run.id));
-  }
-
-  const sections: string[] = [];
-  let totalLength = 0;
-
-  for (const tc of toolCalls) {
-    if (tc.status !== 'completed') continue;
-    if (!EXPLORATION_TOOL_IDS.has(tc.toolId)) continue;
-
-    const output = tc.outputRef != null
-      ? (typeof tc.outputRef === 'string' ? tc.outputRef : JSON.stringify(tc.outputRef))
-      : tc.outputSummary ?? '';
-    if (!output) continue;
-
-    const truncated = output.length > 3000 ? output.slice(0, 3000) + '…' : output;
-    const section = `### ${tc.toolId}(${tc.inputSummary})\n${truncated}`;
-
-    if (totalLength + section.length > MAX_CONTEXT_LENGTH) break;
-    sections.push(section);
-    totalLength += section.length;
-  }
-
-  return sections.join('\n\n');
 }
 
 export const wikiLoopService = {
@@ -178,7 +133,7 @@ export const wikiLoopService = {
       const { docIds, planIdToDocId } = await persistOutlineAsEmptyDocs(outline, snapshot.id, projectId);
       await wikiStore.updateSnapshotStatus(snapshot.id, 'outline_ready', docIds);
 
-      // ═══ Phase 2: Content Generation ═══
+      // ═══ Phase 2: Content Generation (per-document) ═══
       await wikiStore.updateSnapshotStatus(snapshot.id, 'writing', docIds);
 
       const writerHandle = createWriterTools(scan, outline);
@@ -219,45 +174,48 @@ export const wikiLoopService = {
         },
       });
 
-      const taskRunHookId = `wiki-workspace-${snapshot.id}`;
-      hookIds.push(taskRunHookId);
-      toolRegistry.registerHook({
-        id: taskRunHookId,
-        toolId: 'subagent.delegate',
-        async afterExecute(ctx) {
-          const result = ctx.result.result as { taskId?: string; session?: { id?: string } };
-          const childId = result?.taskId ?? result?.session?.id;
-          if (childId) {
-            setSessionWorkspaceRoot(childId, workDir);
-            sessionIds.push(childId);
+      const sortedOutline = topologicalSort(outline);
+      const totalDocs = sortedOutline.length;
+
+      for (let i = 0; i < totalDocs; i++) {
+        const entry = sortedOutline[i];
+        const documentContext = buildDocumentContext(scan, entry);
+
+        const docPrompt = buildWikiPrompt({
+          role: 'document-writer',
+          projectMeta,
+          locale,
+          documentEntry: entry,
+          documentContext,
+        });
+
+        const docSession = agentSessionRuntime.create({
+          projectId,
+          profileId: 'wiki-document-writer',
+          prompt: docPrompt,
+        });
+        agentRuntimeStore.updateSession(docSession.id, {
+          title: `Wiki: ${entry.title}`,
+          updatedAt: nowIso(),
+        });
+        sessionIds.push(docSession.id);
+        setSessionWorkspaceRoot(docSession.id, workDir);
+
+        agentEventService.append({
+          sessionId: docSession.id,
+          type: 'progress_updated',
+          summary: `Phase 2: Generating document ${i + 1}/${totalDocs}: ${entry.title}`,
+          payload: { snapshotId: snapshot.id, phase: 2, docIndex: i, docTitle: entry.title },
+        });
+
+        logger.info({ projectId, docTitle: entry.title, index: i, total: totalDocs }, 'wiki-loop: generating document');
+        const stream = agentLoopRuntime.streamRun(docSession.id, {});
+        for await (const chunk of stream) {
+          if (chunk.type === 'run_failed') throw new Error(chunk.error ?? `Document writer failed for: ${entry.title}`);
+          if (chunk.type === 'done') {
+            const s = agentRuntimeStore.tryGetSession(docSession.id);
+            if (s && s.status === 'interrupted') throw new Error(`Document writer interrupted for: ${entry.title}`);
           }
-        },
-      });
-
-      const writerPrompt = buildWikiPrompt({ role: 'writer', projectMeta, locale, outline, preloadedContext: extractPlannerExplorationContext(plannerSession.id) });
-      const writerSession = agentSessionRuntime.create({
-        projectId,
-        profileId: 'wiki-writer',
-        prompt: writerPrompt,
-      });
-      agentRuntimeStore.updateSession(writerSession.id, { title: 'Wiki 生成', updatedAt: nowIso() });
-      sessionIds.push(writerSession.id);
-      setSessionWorkspaceRoot(writerSession.id, workDir);
-
-      agentEventService.append({
-        sessionId: writerSession.id,
-        type: 'progress_updated',
-        summary: 'Phase 2: Generating document content.',
-        payload: { snapshotId: snapshot.id, phase: 2 },
-      });
-
-      logger.info({ projectId, sessionId: writerSession.id }, 'wiki-loop: Phase 2 starting writer agent');
-      const stream2 = agentLoopRuntime.streamRun(writerSession.id, {});
-      for await (const chunk of stream2) {
-        if (chunk.type === 'run_failed') throw new Error(chunk.error ?? 'Writer agent failed');
-        if (chunk.type === 'done') {
-          const s = agentRuntimeStore.tryGetSession(writerSession.id);
-          if (s && s.status === 'interrupted') throw new Error('Writer agent was interrupted');
         }
       }
 
