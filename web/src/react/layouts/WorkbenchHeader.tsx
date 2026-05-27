@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
-import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2 } from 'lucide-react'
+import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2, BookDashed } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
 import { useLocale } from '../../hooks/useLocale'
@@ -158,7 +158,7 @@ function WikiToolbar() {
       </Tabs>
       <div className="wh-divider" />
       <button type="button" className="wh-btn relative" title="Patches" onClick={togglePatchPanel}>
-        <Zap size={13} />
+        <BookDashed size={13} />
         {patchesPending > 0 && (
           <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-warning px-0.5 text-[8px] font-bold text-warning-foreground">
             {patchesPending}
