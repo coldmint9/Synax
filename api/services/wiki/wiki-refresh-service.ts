@@ -348,7 +348,8 @@ ${diffContext}
 ## Instructions
 1. For each affected block, decide: does the code change require updating this block's content?
 2. Call refresh.submit_changes with your changes array. Each change needs: blockId, action (update/delete/insert_after), newContent, and reasoning.
-3. If no updates are needed, call refresh.submit_changes with summary="No updates needed" and an empty changes array.
+3. For newContent: if the block's contentFormat is "markdown_fragment", provide a plain markdown STRING. For structured blocks (heading, list, table), provide a JSON object matching the original structure.
+4. If no updates are needed, call refresh.submit_changes with summary="No updates needed" and an empty changes array.
 
 Do NOT explore the codebase. All context you need is above.`;
 

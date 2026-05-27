@@ -57,7 +57,7 @@ export function createRefreshTools(context: RefreshToolContext) {
       changes: z.array(z.object({
         blockId: z.string().describe('ID of the block to modify'),
         action: z.enum(['update', 'delete', 'insert_after']).describe('Type of change'),
-        newContent: z.record(z.string(), z.unknown()).optional().describe('New block content object matching original format'),
+        newContent: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('New block content — use a plain markdown string for markdown_fragment blocks, or a JSON object for structured blocks (heading, list, etc.)'),
         reasoning: z.string().describe('One sentence explaining why this block needs updating'),
       })),
     }),

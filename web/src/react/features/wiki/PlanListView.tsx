@@ -1,4 +1,4 @@
-import { ListChecks, CheckCircle2, Loader2, Clock, XCircle } from 'lucide-react'
+import { ListChecks, CheckCircle2, Loader2, Clock, XCircle, Trash2 } from 'lucide-react'
 import { Card } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
@@ -35,6 +35,7 @@ export default function PlanListView({ projectId }: Props) {
   const loading = useWikiStore(s => s.loading.plans)
   const selectPlan = useWikiStore(s => s.selectPlan)
   const selectedPlanId = useWikiStore(s => s.selectedPlanId)
+  const deletePlan = useWikiStore(s => s.deletePlan)
 
   if (loading && plans.length === 0) {
     return (
@@ -54,16 +55,16 @@ export default function PlanListView({ projectId }: Props) {
   return (
     <div className="px-3 py-3 space-y-2">
       {activePlans.map(plan => (
-        <PlanRow key={plan.id} plan={plan} index={plans.indexOf(plan)} total={plans.length} onSelect={selectPlan} selected={selectedPlanId === plan.id} />
+        <PlanRow key={plan.id} plan={plan} index={plans.indexOf(plan)} total={plans.length} onSelect={selectPlan} onDelete={deletePlan} selected={selectedPlanId === plan.id} />
       ))}
       {finishedPlans.map(plan => (
-        <PlanRow key={plan.id} plan={plan} index={plans.indexOf(plan)} total={plans.length} onSelect={selectPlan} selected={selectedPlanId === plan.id} />
+        <PlanRow key={plan.id} plan={plan} index={plans.indexOf(plan)} total={plans.length} onSelect={selectPlan} onDelete={deletePlan} selected={selectedPlanId === plan.id} />
       ))}
     </div>
   )
 }
 
-function PlanRow({ plan, index, total, onSelect, selected }: { plan: WikiPlanWithSummary; index: number; total: number; onSelect: (id: string) => void; selected?: boolean }) {
+function PlanRow({ plan, index, total, onSelect, onDelete, selected }: { plan: WikiPlanWithSummary; index: number; total: number; onSelect: (id: string) => void; onDelete: (id: string) => Promise<void>; selected?: boolean }) {
   const { t } = useLocale()
   const num = total - index
   const nodeSummary = plan.nodeSummary ?? { total: 0, completed: 0, titles: [] }
@@ -73,7 +74,7 @@ function PlanRow({ plan, index, total, onSelect, selected }: { plan: WikiPlanWit
   return (
     <Card
       variant="transparent"
-      className={`cursor-pointer transition-all p-3 shadow-sm hover:shadow-md ${
+      className={`cursor-pointer transition-all p-3 shadow-sm hover:shadow-md group ${
         selected
           ? 'border-primary bg-primary/10 ring-1 ring-primary/30 shadow-primary/10'
           : isDiscarded
@@ -88,7 +89,16 @@ function PlanRow({ plan, index, total, onSelect, selected }: { plan: WikiPlanWit
       <Card.Header className="p-0 gap-0">
         <div className="flex items-center justify-between w-full">
           <Card.Title className="text-[12px] font-semibold text-foreground/85">#{num}</Card.Title>
-          <PlanStatusBadge status={plan.status} />
+          <div className="flex items-center gap-1">
+            <button
+              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-danger/10 text-muted-foreground/40 hover:text-danger"
+              onClick={(e) => { e.stopPropagation(); onDelete(plan.id) }}
+              aria-label="Delete plan"
+            >
+              <Trash2 size={12} />
+            </button>
+            <PlanStatusBadge status={plan.status} />
+          </div>
         </div>
       </Card.Header>
       {nodeSummary.titles.length > 0 && (

@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm'
 import { renderDiagram } from '../../../lib/mermaid-renderer'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
-import type { WikiBlock, WikiDocument, WikiSourceBinding } from '../../../lib/contracts/wiki'
+import type { WikiBlock, WikiDocument, WikiSourceBinding, DraftBlockChange } from '../../../lib/contracts/wiki'
 import './wiki-prose.css'
 import WikiBlockIssueInline from './WikiBlockIssueInline'
 
@@ -483,12 +483,15 @@ function InlineSourceLinks({ block }: { block: WikiBlock }) {
 
 // ── Block wrapper ────────────────────────────────────────────────────────────
 
-const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId }: { block: WikiBlock; issueCount: number; projectId: string }) {
+const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId, draftChange }: { block: WikiBlock; issueCount: number; projectId: string; draftChange?: DraftBlockChange | null }) {
   const bindingsById = useWikiStore(s => s.bindingsById)
   const isSelected = useWikiStore(s => s.selectedBlockId === block.id)
   const selectBlock = useWikiStore(s => s.selectBlock)
   const hasBindings = block.sourceBindingIds.length > 0
     || Object.values(bindingsById).some(b => b.wikiBlockId === block.id)
+
+  const isDelete = draftChange?.action === 'delete'
+  const isUpdate = draftChange?.action === 'update'
 
   return (
     <div
@@ -509,7 +512,7 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
       )}
 
       {/* Selected indicator bar */}
-      {isSelected && (
+      {isSelected && !draftChange && (
         <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-primary" />
       )}
 
@@ -521,21 +524,48 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
         </div>
       )}
 
-      {/* Content */}
-      <BlockContent block={block} />
+      {/* Content — with inline diff in preview mode */}
+      {isUpdate ? (
+        <div className="space-y-2">
+          <div className="line-through opacity-40 text-muted-foreground">
+            <BlockContent block={block} />
+          </div>
+          {draftChange.newContent && (
+            <div className="border-l-2 border-emerald-500 pl-3 bg-emerald-500/5 rounded-r-md py-1">
+              <MarkdownFragmentBlock content={draftChange.newContent} />
+            </div>
+          )}
+        </div>
+      ) : isDelete ? (
+        <div className="line-through opacity-40 text-muted-foreground">
+          <BlockContent block={block} />
+        </div>
+      ) : (
+        <BlockContent block={block} />
+      )}
 
       {/* Inline source file links */}
-      {hasBindings && (
+      {hasBindings && !draftChange && (
         <InlineSourceLinks block={block} />
       )}
 
       {/* Inline issue section */}
-      {isSelected && (
+      {isSelected && !draftChange && (
         <WikiBlockIssueInline blockId={block.id} projectId={projectId} />
       )}
     </div>
   )
 })
+
+// ── Draft preview: inserted block ───────────────────────────────────────────
+
+function DraftInsertedBlock({ content }: { content: unknown }) {
+  return (
+    <div className="mt-2 rounded-lg border-l-2 border-emerald-500 bg-emerald-500/5 p-4">
+      <MarkdownFragmentBlock content={content} />
+    </div>
+  )
+}
 
 // ── Page title (first heading block) ────────────────────────────────────────
 
@@ -561,9 +591,21 @@ export default function WikiBlockRenderer({ document, issuesByBlockId, projectId
   const snapshot = useWikiStore(s => s.snapshot)
   const selectedBlockId = useWikiStore(s => s.selectedBlockId)
   const selectBlock = useWikiStore(s => s.selectBlock)
+  const draftPreviewActive = useWikiStore(s => s.draftPreviewActive)
+  const draftPreviewId = useWikiStore(s => s.draftPreviewId)
+  const draftsById = useWikiStore(s => s.draftsById)
+
   const blocks = document.blockIds
     .map(id => blocksById[id])
     .filter((b): b is WikiBlock => Boolean(b))
+
+  const previewDraft = draftPreviewActive && draftPreviewId ? draftsById[draftPreviewId] : null
+  const changesMap = useMemo(() => {
+    if (!previewDraft || previewDraft.documentId !== document.id) return null
+    const map = new Map<string, DraftBlockChange>()
+    for (const c of previewDraft.changes) map.set(c.blockId, c)
+    return map
+  }, [previewDraft, document.id])
 
   const contentBlocks = useMemo(() => {
     const firstBlock = blocks[0]
@@ -627,9 +669,17 @@ export default function WikiBlockRenderer({ document, issuesByBlockId, projectId
   return (
     <div className="space-y-3">
       {isFirstHeading && <PageTitle block={firstBlock} />}
-      {contentBlocks.map(block => (
-        <WikiBlockItem key={block.id} block={block} issueCount={issuesByBlockId?.get(block.id) ?? 0} projectId={projectId} />
-      ))}
+      {contentBlocks.map(block => {
+        const change = changesMap?.get(block.id) ?? null
+        return (
+          <div key={block.id}>
+            <WikiBlockItem block={block} issueCount={issuesByBlockId?.get(block.id) ?? 0} projectId={projectId} draftChange={change} />
+            {change?.action === 'insert_after' && change.newContent && (
+              <DraftInsertedBlock content={change.newContent} />
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

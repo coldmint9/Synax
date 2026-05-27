@@ -1,4 +1,4 @@
-import { AlertCircle, BookOpen, Download, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
+import { AlertCircle, BookOpen, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Skeleton, Spinner } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
@@ -10,7 +10,6 @@ import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
 import WikiBlockRenderer from './WikiBlockRenderer'
 import WikiDraftPanel from './WikiDraftPanel'
-import WikiEvaluationSidebar from './WikiEvaluationSidebar'
 import PlanView from './PlanView'
 import PlanListView from './PlanListView'
 import { wikiApi } from '../../../lib/api/wiki'
@@ -186,7 +185,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const { t } = useLocale()
   const snapshot = useWikiStore(s => s.snapshot)
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
-  const selectedBlockId = useWikiStore(s => s.selectedBlockId)
   const documents = useWikiStore(s => s.documents)
   const evaluations = useWikiStore(s => s.evaluations)
   const loading = useWikiStore(s => s.loading)
@@ -199,12 +197,13 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const viewMode = useWikiStore(s => s.viewMode)
   const refreshTask = useWikiStore(s => s.refreshTask)
   const setRefreshStarted = useWikiStore(s => s.setRefreshStarted)
+  const showReinitConfirm = useWikiStore(s => s.showReinitConfirm)
+  const setShowReinitConfirm = useWikiStore(s => s.setShowReinitConfirm)
 
   useWikiRefreshListener(projectId)
 
   const refreshing = refreshTask.phase !== 'idle' && refreshTask.phase !== 'completed' && refreshTask.phase !== 'failed'
 
-  const [showReinitConfirm, setShowReinitConfirm] = useState(false)
   const [reinitializing, setReinitializing] = useState(false)
   const [continuing, setContinuing] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(260)
@@ -291,12 +290,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [snapshot?.status, projectId, loadLatest])
-
-  function handleExport() {
-    if (!snapshot) return
-    const url = wikiApi.exportSnapshotUrl(snapshot.id)
-    window.open(url, '_blank')
-  }
 
   async function handleRefresh() {
     if (!snapshot) return
@@ -437,14 +430,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                     {refreshTask.message}
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={handleExport}
-                  className="wh-btn !w-6 !h-6"
-                  title="导出 Markdown"
-                >
-                  <Download size={11} />
-                </button>
               </div>
             </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -504,18 +489,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           )}
           <WikiDocumentTree />
         </div>
-        <div className="shrink-0 px-3 py-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full text-[11px] text-destructive/70 hover:text-destructive"
-            onPress={() => setShowReinitConfirm(true)}
-            isDisabled={refreshing || reinitializing || continuing}
-          >
-            {reinitializing ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
-            {reinitializing ? t('wikiRegenerating') : t('wikiRegenerate')}
-          </Button>
-        </div>
           </>
         )}
       </aside>
@@ -550,13 +523,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           <div className="absolute inset-0 backdrop-blur-[1px]" style={{ maskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)' }} />
         </div>
       </main>
-
-      {/* ── Right: Evaluation sidebar (issues + generate plan) ── */}
-      {!draftPanelOpen && viewMode === 'document' && (
-        <aside className="flex w-[220px] shrink-0 flex-col border-l border-border/15">
-          <WikiEvaluationSidebar projectId={projectId} selectedBlockId={selectedBlockId} />
-        </aside>
-      )}
 
       {/* ── Right: Draft Panel (replaces old Patches Drawer) ── */}
       {draftPanelOpen && viewMode === 'document' && (

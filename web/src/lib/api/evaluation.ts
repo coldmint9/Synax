@@ -150,6 +150,11 @@ export const evaluationApi = {
     if (!res.ok) throw new Error(`plans/discard failed: ${res.status}`)
   },
 
+  async deletePlan(planId: string): Promise<void> {
+    const res = await apiFetch(`${BASE}/plans/${planId}?permanent=true`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`plans/delete failed: ${res.status}`)
+  },
+
   async updateNode(planId: string, nodeId: string, updates: Partial<Pick<WikiPlanNode, 'title' | 'description' | 'expectedFiles'>>): Promise<void> {
     const res = await apiFetch(`${BASE}/plans/${planId}/nodes/${nodeId}`, {
       method: 'PATCH',
