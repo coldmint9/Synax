@@ -7,7 +7,7 @@
 import { NoObjectGeneratedError } from 'ai';
 import { nanoid } from 'nanoid';
 import * as z from 'zod/v4';
-import { generateGatewayObject } from '../llm-runtime/stream.js';
+import { generateGatewayObject } from '../llm-runtime/gateway.js';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
 import { logger } from '../../lib/logger.js';
 import type { WikiBlockContentFormat, WikiDocType, WikiBlockType } from './contracts.js';

@@ -1,6 +1,4 @@
-import { generateText } from 'ai'
-import { resolveGatewaySelection } from '../llm-runtime/stream.js'
-import { instantiateProvider, selectLanguageModel } from '../llm-runtime/registry.js'
+import { generateGatewayTextResult } from '../llm-runtime/gateway.js'
 
 export async function maybeGenerateStructuredText(
   purpose: 'context-signal' | 'wiki',
@@ -10,18 +8,18 @@ export async function maybeGenerateStructuredText(
   model?: string,
 ): Promise<string | null> {
   try {
-    const selection = await resolveGatewaySelection({ projectId, purpose, model })
-    if (!selection) return null
-    const client = await instantiateProvider(selection.provider, selection.config)
-    const languageModel = selectLanguageModel(client, selection.modelId)
-    const response = await generateText({
-      model: languageModel as never,
-      system,
-      messages: [{ role: 'user', content: user }],
+    const result = await generateGatewayTextResult({
+      projectId,
+      purpose,
+      model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
       temperature: 0.2,
-      maxOutputTokens: 4096,
+      maxTokens: 4096,
     })
-    return response.text || null
+    return result.text || null
   } catch {
     return null
   }

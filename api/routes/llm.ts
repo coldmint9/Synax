@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import * as z from 'zod/v4'
 import { logger } from '../lib/logger.js'
-import { createGatewayStream, validateGatewayModel } from '../services/llm-runtime/stream.js'
+import { createGatewayStream, validateGatewayModel } from '../services/llm-runtime/gateway.js'
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js'
 import { AgentProviderNotConfiguredError } from '../services/agent-runtime/runtime-errors.js'
 

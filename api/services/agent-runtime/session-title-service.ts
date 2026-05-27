@@ -1,5 +1,5 @@
 import { logger } from '../../lib/logger.js';
-import { generateGatewayTextResult } from '../llm-runtime/stream.js';
+import { generateGatewayTextResult } from '../llm-runtime/gateway.js';
 import { agentRuntimeStore } from './session-store.js';
 import { nowIso } from './runtime-ids.js';
 

@@ -1,4 +1,4 @@
-import { createGatewayStream } from '../llm-runtime/stream.js';
+import { createGatewayStream } from '../llm-runtime/gateway.js';
 import type { LlmGatewayRequest } from '../llm-runtime/types.js';
 import type { LlmHookContext } from '../llm-runtime/llm-hooks.js';
 import type { LoopModelStreamEvent, LoopStepModelResult, StructuredToolCall } from './contracts.js';

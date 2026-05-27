@@ -11,7 +11,7 @@ import { getDb } from '../../db/index.js';
 import { wikiDesignMappingTasks, wikiActionContextBundles } from '../../db/schema.js';
 import { wikiStore } from './wiki-store.js';
 import { wikiRefreshService } from './wiki-refresh-service.js';
-import { generateGatewayObject } from '../llm-runtime/stream.js';
+import { generateGatewayObject } from '../llm-runtime/gateway.js';
 import { createAcpClientFor, type ProviderId, type CoordinatesRunEvent } from '../acp/index.js';
 import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { logger } from '../../lib/logger.js';
