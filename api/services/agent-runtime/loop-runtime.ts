@@ -652,8 +652,41 @@ export class AgentLoopRuntime {
               return t.mutability === 'read' && c.toolId !== 'subagent.delegate';
             } catch { return false; }
           });
+        const canParallelSubagent = allCalls.length > 1 &&
+          allCalls.every((c) => c.toolId === 'subagent.delegate');
 
-        if (canParallelRead) {
+        if (canParallelSubagent) {
+          const executions = await Promise.all(
+            allCalls.map((call) =>
+              this.tools.execute(sessionId, call.toolId, call.args, {
+                runId: run.id, stepId: step.id,
+                modelToolCallId: call.id,
+                resumeToken: optionsResumeToken(run.id, step.id, call.id),
+              }).then((exec) => ({ call, exec })),
+            ),
+          );
+          const pendingTasks: Array<{ call: typeof allCalls[0]; exec: typeof executions[0]['exec']; promise: Promise<ToolCallRecord> }> = [];
+          for (const { call, exec } of executions) {
+            this.appendToolCallPart({ runId: run.id, stepId: step.id, sessionId, record: exec.record, reason: call.reason });
+            yield {
+              type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record,
+              event: this.events.append({ sessionId, type: "tool_call", summary: `${call.toolId} requested`, payload: { runId: run.id, stepId: step.id, toolCallId: exec.record.id, modelToolCallId: call.id } }),
+            };
+            sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: exec.record });
+            if (exec.toolResult?.result) {
+              pendingTasks.push({ call, exec, promise: this.awaitTaskResult(exec.record, exec.toolResult.result, runAbortSignal) });
+            } else {
+              pendingTasks.push({ call, exec, promise: Promise.resolve(exec.record) });
+            }
+          }
+          const results = await Promise.all(pendingTasks.map((t) => t.promise));
+          for (let i = 0; i < results.length; i++) {
+            const completedRecord = results[i];
+            this.appendToolResultPart({ runId: run.id, stepId: step.id, sessionId, record: completedRecord });
+            yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
+            sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
+          }
+        } else if (canParallelRead) {
           const maxParallel = profile.toolPolicy!.maxParallelReadTools ?? 4;
           const batch = allCalls.slice(0, maxParallel);
           const executions = await Promise.all(
