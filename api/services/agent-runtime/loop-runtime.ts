@@ -45,7 +45,7 @@ import { shouldCompact, compactMessages, getCompactionConfig } from "./context-c
 import { buildTaskDriftReminder } from "./tools/task-tools.js";
 import { sessionHooks } from "./session-hooks.js";
 import { sessionLiveBus } from "./session-live-bus.js";
-import { resolveGatewaySelection } from "../llm-runtime/stream.js";
+import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
 import { logger } from "../../lib/logger.js";
 
 const LOG_TEXT_LIMIT = 2000;

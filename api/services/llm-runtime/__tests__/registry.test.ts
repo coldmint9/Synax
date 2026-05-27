@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isProviderSupported } from '../registry.js'
+import { isProviderSupported } from '../providers/provider-registry.js'
 
 describe('llm provider registry', () => {
   it('accepts allowlisted AI SDK providers', () => {

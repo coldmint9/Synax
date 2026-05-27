@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ensureJsonObjectResponseFormatInstruction } from '../stream.js'
+import { ensureJsonObjectResponseFormatInstruction } from '../prompt.js'
 import type { LlmGatewayRequest } from '../types.js'
 
 describe('ensureJsonObjectResponseFormatInstruction', () => {

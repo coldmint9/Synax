@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DATA_ROOT } from '../../lib/env.js'
 import { logger } from '../../lib/logger.js'
-import { isProviderSupported } from './registry.js'
+import { isProviderSupported } from './providers/provider-registry.js'
 import { LLM_CATALOG_SNAPSHOT } from './snapshot.js'
 import type { ModelsDevProvider, RuntimeCatalog, RuntimeModel, RuntimeProvider } from './types.js'
 
@@ -10,17 +10,36 @@ const MODELS_DEV_URL = 'https://models.dev/api.json'
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000
 
 let memoryCache: { ts: number; catalog: RuntimeCatalog } | null = null
+let refreshPromise: Promise<void> | null = null
+
+function triggerBackgroundRefresh(): void {
+  if (refreshPromise) return
+  refreshPromise = fetchRemoteCatalog()
+    .then((catalog) => {
+      const now = Date.now()
+      memoryCache = { ts: now, catalog }
+      writeCacheFile(catalog, now)
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err)
+      logger.warn({ err: message }, '[llm-runtime] background catalog refresh failed')
+    })
+    .finally(() => { refreshPromise = null })
+}
 
 export async function getRuntimeCatalog(forceRefresh = false): Promise<RuntimeCatalog> {
   const now = Date.now()
-  if (!forceRefresh && memoryCache && now - memoryCache.ts < CACHE_TTL_MS) {
+
+  if (!forceRefresh && memoryCache) {
+    if (now - memoryCache.ts >= CACHE_TTL_MS) triggerBackgroundRefresh()
     return memoryCache.catalog
   }
 
   if (!forceRefresh) {
     const disk = readCacheFile()
-    if (disk && now - disk.ts < CACHE_TTL_MS) {
+    if (disk) {
       memoryCache = { ts: disk.ts, catalog: disk.catalog }
+      if (now - disk.ts >= CACHE_TTL_MS) triggerBackgroundRefresh()
       return disk.catalog
     }
   }

@@ -1,5 +1,5 @@
 import type { ApiFormat, ProviderConnection, ProviderDef } from '../../lib/config/config-types.js'
-import { isProviderSupported } from './registry.js'
+import { isProviderSupported } from './providers/provider-registry.js'
 import type {
   ModelOverrideConfig,
   ResolveLlmSelectionInput,

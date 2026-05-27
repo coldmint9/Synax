@@ -14,7 +14,7 @@ import { wikiStore } from './wiki-store.js';
 import { wikiCoordinateService } from './wiki-coordinate-service.js';
 import { runCodeMapScan } from '../analyzer/scan.js';
 import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
-import { generateGatewayObject } from '../llm-runtime/stream.js';
+import { generateGatewayObject } from '../llm-runtime/gateway.js';
 import { logger } from '../../lib/logger.js';
 import { notify } from '../notifications/notify.js';
 import type { WikiRefreshTask, WikiBlock } from './contracts.js';
