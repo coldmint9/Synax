@@ -264,7 +264,7 @@ export class AgentLoopRuntime {
     }
 
     try {
-      const maxSteps = Infinity;
+      const maxSteps = profile.maxSteps;
       const context = session.contextSnapshotId
         ? this.tryGetContext(session.contextSnapshotId)
         : null;
