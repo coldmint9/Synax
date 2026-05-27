@@ -496,23 +496,22 @@ export function createWikiExplorerTools(): RegisteredTool[] {
   const listDocumentsTool: RegisteredTool = {
     id: 'wiki.list_documents',
     label: 'List Wiki Documents',
-    description: 'List all documents in the latest wiki snapshot for a project. Returns document titles, types, and hierarchy.',
+    description: 'List all document metadata under a given wiki snapshot. Returns id, title, docType, parentId, blockIds, sortOrder, and timestamps.',
     category: 'read',
     mutability: 'read',
     resumeBehavior: 'auto',
     internalGate: 'none',
     inputSchema: z.object({
-      projectId: z.string().min(1).describe('The project ID to list wiki documents for.'),
+      snapshotId: z.string().min(1).describe('The snapshot ID to list documents for.'),
     }),
     async execute(input) {
-      const args = input.args as { projectId: string };
-      const snapshot = await wikiStore.getLatestSnapshot(args.projectId);
-      if (!snapshot) {
-        return { result: { documents: [], message: 'No wiki snapshot found for this project.' }, displaySummary: 'No wiki found', artifacts: [] };
+      const args = input.args as { snapshotId: string };
+      const docs = await wikiStore.getDocumentsBySnapshot(args.snapshotId);
+      if (docs.length === 0) {
+        return { result: { documents: [], message: 'No documents found in this snapshot.' }, displaySummary: 'No documents', artifacts: [] };
       }
-      const docs = await wikiStore.getDocumentsBySnapshot(snapshot.id);
-      const items = docs.map(d => ({ id: d.id, title: d.title, docType: d.docType, parentId: d.parentId, sortOrder: d.sortOrder }));
-      return { result: { snapshotId: snapshot.id, documents: items }, displaySummary: `Listed ${items.length} wiki documents`, artifacts: [] };
+      const items = docs.map(d => ({ id: d.id, title: d.title, docType: d.docType, parentId: d.parentId, blockIds: d.blockIds, sortOrder: d.sortOrder, createdAt: d.createdAt, updatedAt: d.updatedAt }));
+      return { result: { snapshotId: args.snapshotId, documents: items }, displaySummary: `Listed ${items.length} wiki documents`, artifacts: [] };
     },
   };
 
