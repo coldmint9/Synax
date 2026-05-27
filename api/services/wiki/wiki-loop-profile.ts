@@ -28,7 +28,7 @@ export const wikiPlannerProfile: AgentProfile = {
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Planner does not need shell.' },
   ],
   defaultSkills: [],
-  maxSteps: 20,
+  maxSteps: 30,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
@@ -68,6 +68,7 @@ export const wikiWriterProfile: AgentProfile = {
   maxSteps: 60,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
+  doomLoopThreshold: 6,
   loopHints: [
     'Generate root-level documents (directory_tree, overview, architecture) yourself — they need global context.',
     'For module_spec documents, use subagent.delegate(profileId: "wiki-explorer") to spawn sub-agents for exploration, then format and commit.',

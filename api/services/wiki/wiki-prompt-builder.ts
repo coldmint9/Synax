@@ -56,15 +56,23 @@ function buildWorkflowSegment(role: 'planner' | 'writer'): string {
   if (role === 'planner') {
     return `## 工作流程
 
-### Step 1：探索（3-6 步）
-1. wiki.read_tree — 项目目录结构
-2. wiki.read_modules — 顶层模块、语言、核心符号
+### Step 1：全局概览（2-3 步）
+1. wiki.read_modules — 顶层模块、语言、核心符号
+2. wiki.read_tree — 项目目录结构
 3. wiki.read_code_index(kind: 'files') — 文件列表，关注 symbolCount 和 importCount 高的文件
-4. wiki.read_code_index(kind: 'symbols') — 核心符号，关注 degree 高的
-5. wiki.read_graph(section: 'communities') — 功能聚类
-6. file.read 读取 2-3 个核心入口文件（如 index.ts、main.ts、app.ts）
 
-### Step 2：提交目录树（1 步）
+### Step 2：按需深入探索
+根据项目复杂度自行决定探索深度和步数：
+- file.list(path) — 对感兴趣的子目录做更深层的文件发现
+- file.glob(pattern) — 按模式匹配查找特定类型的文件
+- grep.search(query, path) — 搜索关键概念、接口、核心类名
+- file.read — 读取核心入口文件和发现的关键文件
+- wiki.read_code_index(kind: 'symbols') — 核心符号，关注 degree 高的
+- wiki.read_graph(section: 'communities') — 功能聚类（可选）
+
+大型项目应探索更多模块，小型项目可以快速完成。
+
+### Step 3：提交目录树
 调用 wiki.submit_outline，提交层级化文档计划。`;
   }
 

@@ -173,7 +173,7 @@ export function buildModuleMap(codeIndex: CodeMapCodeIndex, graph: AnalyzerGraph
       score: bucket.fileIds.length * 2 + bucket.symbolCount + bucket.importsIn * 0.5 + bucket.importsOut * 0.5,
     }))
     .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
-    .slice(0, 16)
+    .slice(0, 32)
 
   const languages = Object.entries(
     codeIndex.files.reduce<Record<string, { fileCount: number; symbolCount: number; bytes: number }>>((acc, file) => {
@@ -201,7 +201,7 @@ export function buildModuleMap(codeIndex: CodeMapCodeIndex, graph: AnalyzerGraph
       score: scoreEntryFile(file, importsBySource.get(file.id) ?? 0, graph.symbolIdsByFile.get(file.id)?.length ?? 0),
     }))
     .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
-    .slice(0, 24)
+    .slice(0, 48)
 
   const coreSymbols: CodeMapSymbolSummary[] = codeIndex.symbols
     .map((symbol) => ({
@@ -215,14 +215,14 @@ export function buildModuleMap(codeIndex: CodeMapCodeIndex, graph: AnalyzerGraph
       centrality: Math.min(1, (degreeBySymbol.get(symbol.id) ?? 0) / 6),
     }))
     .sort((left, right) => right.degree - left.degree || left.path.localeCompare(right.path) || left.name.localeCompare(right.name))
-    .slice(0, 32)
+    .slice(0, 64)
 
   return {
     topDirs,
     languages,
     entryFiles,
     coreSymbols,
-    dependencies: [...dependenciesByKey.values()].sort((left, right) => right.weight - left.weight || left.source.localeCompare(right.source)).slice(0, 80),
+    dependencies: [...dependenciesByKey.values()].sort((left, right) => right.weight - left.weight || left.source.localeCompare(right.source)).slice(0, 120),
   }
 }
 

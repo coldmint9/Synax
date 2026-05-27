@@ -45,7 +45,6 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     allowedCapabilities: [
       'file.glob',
       'file.list',
-      'file.read',
       'grep.search',
       'diff.read',
       'file.write',
@@ -77,7 +76,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     mode: 'subagent',
     description: 'Review completed action evidence against a goal.',
     defaultThinkingMode: 'deep',
-    allowedCapabilities: ['file.read', 'grep.search', 'diff.read', 'skill.load'],
+    allowedCapabilities: ['grep.search', 'diff.read', 'skill.load'],
     permissionDefaults: [allowRead(), denyWrite('Reviewer is read-only in v1.')],
     defaultSkills: ['goal-reviewer'],
     maxSteps: 14,
@@ -93,7 +92,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     mode: 'subagent',
     description: 'Fast bounded codebase investigation for another agent or user.',
     defaultThinkingMode: 'fast',
-    allowedCapabilities: ['file.glob', 'file.list', 'file.read', 'grep.search', 'diff.read', 'skill.load'],
+    allowedCapabilities: ['file.glob', 'file.list', 'grep.search', 'diff.read', 'skill.load'],
     permissionDefaults: [
       allowRead(),
       denyWrite('Explorer is read-only in v1.'),

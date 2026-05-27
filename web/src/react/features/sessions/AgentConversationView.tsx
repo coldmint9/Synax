@@ -1,8 +1,9 @@
 import { useMemo, useRef, useEffect } from 'react'
 import { Chip, ProgressBar, ScrollShadow, Skeleton, Card } from '@heroui/react'
-import { Bot, Pause, Play, XCircle } from 'lucide-react'
+import { Bot, Pause, Play, XCircle, Zap } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
+import type { CompactionEvent } from '../../state/agentRuntimeStore'
 import { buildInterleavedTurns } from './buildInterleavedTurns'
 import { EnhancedToolCallCard } from './EnhancedToolCallCard'
 import { ParallelToolCallGroup } from './ParallelToolCallGroup'
@@ -17,6 +18,7 @@ interface Props {
   toolCalls: ToolCallRecord[]
   messages: AgentRuntimeMessage[]
   childSessions?: AgentSession[]
+  compactions?: CompactionEvent[]
   onPause?: (sessionId: string) => void
   onResume?: (sessionId: string) => void
   onCancel?: (sessionId: string) => void
@@ -46,7 +48,7 @@ const STATUS_MAP: Record<string, { text: string; color: 'primary' | 'success' | 
 }
 
 export function AgentConversationView({
-  session, steps, toolCalls, messages, childSessions,
+  session, steps, toolCalls, messages, childSessions, compactions,
   onPause, onResume, onCancel, onExpandChild,
   streamingStepId, streamingText, streamingThinking, streamingToolCalls,
   streamingCompletedSteps,
@@ -129,6 +131,14 @@ export function AgentConversationView({
       {/* Progress bar when running */}
       {isRunning && <ProgressBar isIndeterminate size="sm" color="primary" className="w-full" />}
 
+      {/* Compaction indicators */}
+      {compactions && compactions.length > 0 && compactions.map((c, i) => (
+        <div key={`compaction-${i}`} className="flex items-center gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-1.5 text-[11px] text-warning">
+          <Zap size={12} />
+          <span>上下文压缩: {c.originalTokens.toLocaleString()} → {c.compressedTokens.toLocaleString()} tokens ({c.messageCount} 条消息被摘要)</span>
+        </div>
+      ))}
+
       {/* Prompt */}
       {session?.prompt && (
         <Card className="shadow-none border-border/50 bg-secondary/30">
@@ -177,6 +187,14 @@ export function AgentConversationView({
                     }
                     if (block.type === 'sub_session') {
                       return <SubSessionCard key={i} session={block.session} onExpand={onExpandChild} />
+                    }
+                    if (block.type === 'context_compacted') {
+                      return (
+                        <div key={i} className="flex items-center gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-1.5 text-[11px] text-warning">
+                          <Zap size={12} />
+                          <span>上下文压缩: {block.originalTokens.toLocaleString()} → {block.compressedTokens.toLocaleString()} tokens ({block.messageCount} 条消息被摘要)</span>
+                        </div>
+                      )
                     }
                     return null
                   })}
