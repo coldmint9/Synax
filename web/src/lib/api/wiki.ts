@@ -105,7 +105,7 @@ export const wikiApi = {
   },
 
   applyDraft(draftId: string): Promise<{ applied: string[]; conflicts: Array<{ blockId: string; manualState: string }> }> {
-    return apiRequest(`${BASE}/drafts/${draftId}/apply`, { method: 'POST' });
+    return apiRequest(`${BASE}/drafts/${draftId}/apply`, { method: 'POST', body: JSON.stringify({}) });
   },
 
   applyPartialDraft(draftId: string, blockIds: string[]): Promise<{ applied: string[]; conflicts: Array<{ blockId: string; manualState: string }> }> {
@@ -123,6 +123,6 @@ export const wikiApi = {
   },
 
   discardDraft(draftId: string): Promise<{ ok: true }> {
-    return apiRequest(`${BASE}/drafts/${draftId}/discard`, { method: 'POST' });
+    return apiRequest(`${BASE}/drafts/${draftId}/discard`, { method: 'POST', body: JSON.stringify({}) });
   },
 };

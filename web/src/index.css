@@ -670,6 +670,7 @@
     flex-shrink: 0;
   }
   .wh-btn:hover { background: hsl(var(--secondary)); color: var(--foreground); }
+  .wh-btn.active { background: hsl(var(--primary) / 0.12); color: hsl(var(--primary)); }
 
   .wh-divider {
     width: 1px;

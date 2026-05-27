@@ -75,7 +75,7 @@ export default function WikiBlockIssueInline({ blockId, projectId, autoFocus }: 
           aria-label="Issue 描述"
           value={content}
           onChange={e => setContent(e.target.value)}
-          placeholder="描述问题或建议..."
+          placeholder="Add new issue ~"
           rows={1}
           className="flex-1 text-[12px]"
           onKeyDown={e => {
