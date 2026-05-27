@@ -409,6 +409,7 @@ export class AgentLoopRuntime {
           blockedByPermission: pendingPermission?.userReply === "reject",
           disclosureState: disclosureState,
           disclosureStrategy: disclosureStrategy,
+          previousStepUsage: previousStep?.metadata?.usage as Record<string, unknown> | undefined,
           abortSignal: runAbortSignal,
         })) {
           if (event.type === "thought_delta") {
@@ -1076,6 +1077,7 @@ export class AgentLoopRuntime {
     blockedByPermission: boolean;
     disclosureState: DisclosureState | null;
     disclosureStrategy: DisclosureStrategy | null;
+    previousStepUsage?: Record<string, unknown> | null;
     abortSignal?: AbortSignal;
   }): AsyncGenerator<LoopModelStreamEvent> {
     if (input.blockedByPermission) {
@@ -1152,13 +1154,18 @@ export class AgentLoopRuntime {
 
     const contextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
     const compactionConfig = getCompactionConfig();
-    const systemTokens = countTokens(systemPromptContent, input.input.model ?? undefined);
-    const conversationTokens = countMessagesTokens(
-      conversationMessages as unknown as import('../llm-runtime/types.js').LlmGatewayMessage[],
-      input.input.model ?? undefined,
+
+    const prevInputTokens = typeof input.previousStepUsage?.inputTokens === 'number'
+      ? input.previousStepUsage.inputTokens as number
+      : null;
+    const totalTokens = prevInputTokens ?? (
+      countTokens(systemPromptContent, input.input.model ?? undefined) +
+      countMessagesTokens(
+        conversationMessages as unknown as import('../llm-runtime/types.js').LlmGatewayMessage[],
+        input.input.model ?? undefined,
+      ) +
+      estimateToolDefinitionsTokens(visibleTools.length, input.input.model ?? undefined)
     );
-    const toolTokens = estimateToolDefinitionsTokens(visibleTools.length, input.input.model ?? undefined);
-    const totalTokens = systemTokens + conversationTokens + toolTokens;
 
     if (shouldCompact(totalTokens, contextLimit, compactionConfig)) {
       logger.info(
@@ -1168,6 +1175,7 @@ export class AgentLoopRuntime {
           totalTokens,
           contextLimit,
           threshold: compactionConfig.threshold,
+          source: prevInputTokens != null ? 'provider_usage' : 'tiktoken_estimate',
         },
         "[agent-runtime] context approaching limit, triggering compaction",
       );
@@ -1201,7 +1209,7 @@ export class AgentLoopRuntime {
       });
 
       if (compactionResult.didCompact && compactionResult.record) {
-        conversationMessages = compactionResult.messages;
+        conversationMessages = compactionResult.messages as typeof conversationMessages;
         this.store.saveCompactionRecord(compactionResult.record);
         yield {
           type: 'context_compacted' as const,
