@@ -5,6 +5,8 @@ import { agentEventService, type AgentEventService } from './event-service.js';
 import { permissionPolicy, type PermissionPolicy } from './permission-policy.js';
 import { profileService, type ProfileService } from './profile-service.js';
 import { AgentNotFoundError, AgentPermissionError, AgentValidationError } from './runtime-errors.js';
+import { sandboxPolicy } from './sandbox/index.js';
+import { workspaceRoot } from './tools/workspace.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { agentSessionRuntime } from './session-runtime.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
@@ -367,6 +369,7 @@ export class ToolRegistry {
       };
       const hookCtx: ToolHookContext = { sessionId, runId: running.runId, stepId: running.stepId, toolCallId: running.id, toolId: running.toolId, args, result: null! };
       void sessionHooks.emit({ type: 'tool:before', ctx: hookCtx });
+      sandboxPolicy.validateToolArgs(running.toolId, args, workspaceRoot(sessionId), sessionId);
       const result = await tool.execute(input);
       const outputSummary = result.displaySummary.slice(0, SUMMARY_LIMIT);
       const status = result.displaySummary.length > SUMMARY_LIMIT ? 'compacted' : 'completed';
