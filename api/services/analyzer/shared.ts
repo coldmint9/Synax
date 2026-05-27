@@ -347,7 +347,8 @@ export function createEmptyCodeIndex(): CodeMapCodeIndex {
     symbols: [],
     chunks: [],
     imports: [],
-    stats: { fileCount: 0, symbolCount: 0, chunkCount: 0, importCount: 0 },
+    callEdges: [],
+    stats: { fileCount: 0, symbolCount: 0, chunkCount: 0, importCount: 0, callEdgeCount: 0 },
     updatedAt: 0,
   }
 }

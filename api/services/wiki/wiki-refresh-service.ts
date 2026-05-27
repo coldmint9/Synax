@@ -1,35 +1,41 @@
 // ---------------------------------------------------------------------------
 // api/services/wiki/wiki-refresh-service.ts
 //
-// 手动触发 Wiki refresh：增量索引 → hash-diff stale 检测 → Agent 语义复核 → pending patches
+// Wiki refresh：增量索引 → hash-diff stale 检测 → 按文档分组 → LLM 生成 document drafts
 // ---------------------------------------------------------------------------
 
-import { execSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../../db/index.js';
-import { wikiRefreshTasks, wikiPatches } from '../../db/schema.js';
+import { wikiRefreshTasks, wikiRefreshDrafts, wikiScanCache } from '../../db/schema.js';
 import { wikiStore } from './wiki-store.js';
 import { wikiCoordinateService } from './wiki-coordinate-service.js';
-import { runCodeMapScan } from '../analyzer/scan.js';
+import { runCodeMapScan, compareScans, type ScanDiff } from '../analyzer/scan.js';
+import { buildAnalyzerGraph } from '../analyzer/graph.js';
+import { computeBlastRadius } from '../analyzer/graph.js';
 import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { generateGatewayObject } from '../llm-runtime/gateway.js';
 import { logger } from '../../lib/logger.js';
 import { notify } from '../notifications/notify.js';
-import type { WikiRefreshTask, WikiBlock } from './contracts.js';
+import type { WikiRefreshTask, WikiBlock, DraftBlockChange } from './contracts.js';
+import type { CodeMapScanResult } from '../contracts/code-map.js';
 import * as z from 'zod/v4';
 
-// ── Semantic review schema ────────────────────────────────────────────────────
+// ── Document draft output schema ─────────────────────────────────────────────
 
-const SemanticReviewOutputSchema = z.object({
-  newContent: z.unknown(),
-  reasoning: z.array(z.string()).min(1).max(5),
-  confidence: z.number().min(0).max(1),
-  risk: z.enum(['low', 'medium', 'high']),
+const DocumentDraftOutputSchema = z.object({
+  summary: z.string().max(200),
+  changes: z.array(z.object({
+    blockId: z.string(),
+    action: z.enum(['update', 'delete', 'insert_after']),
+    newContent: z.unknown().nullable(),
+    reasoning: z.string(),
+    confidence: z.number().min(0).max(1),
+    risk: z.enum(['low', 'medium', 'high']),
+  })),
 });
 
-type SemanticReviewOutput = z.infer<typeof SemanticReviewOutputSchema>;
+type DocumentDraftOutput = z.infer<typeof DocumentDraftOutputSchema>;
 
 function rowToTask(r: typeof wikiRefreshTasks.$inferSelect): WikiRefreshTask {
   return {
@@ -42,12 +48,16 @@ function rowToTask(r: typeof wikiRefreshTasks.$inferSelect): WikiRefreshTask {
     priority: r.priority as WikiRefreshTask['priority'],
     affectedBlockIds: JSON.parse(r.affectedBlockIdsJson) as string[],
     patchIds: JSON.parse(r.patchIdsJson) as string[],
+    draftIds: JSON.parse(r.draftIdsJson) as string[],
+    affectedDocumentIds: JSON.parse(r.affectedDocumentIdsJson) as string[],
     errorMessage: r.errorMessage ?? null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
     completedAt: r.completedAt ?? null,
   };
 }
+
+// PLACEHOLDER_REST
 
 async function updateTask(
   taskId: string,
@@ -75,7 +85,6 @@ export const wikiRefreshService = {
     const db = getDb();
     const now = new Date().toISOString();
     const taskId = nanoid();
-
     const workDirAbs = resolveWorkspaceRoot(workDir);
 
     await db.insert(wikiRefreshTasks).values({
@@ -86,6 +95,8 @@ export const wikiRefreshService = {
       priority: 'p1',
       affectedBlockIdsJson: '[]',
       patchIdsJson: '[]',
+      draftIdsJson: '[]',
+      affectedDocumentIdsJson: '[]',
       createdAt: now,
       updatedAt: now,
     });
@@ -96,6 +107,8 @@ export const wikiRefreshService = {
 
     return (await this.getTask(taskId))!;
   },
+
+// PLACEHOLDER_RUN_REFRESH
 
   async _runRefresh(
     taskId: string,
@@ -114,13 +127,22 @@ export const wikiRefreshService = {
     });
 
     try {
-      // Phase 1: indexing
-      await updateTask(taskId, { status: 'indexing' });
+      // Phase 1: scanning
+      await updateTask(taskId, { status: 'scanning' });
+      const previousScan = await loadCachedScan(projectId);
       const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
       const nextRepoIndexId = scan.scanId;
       await updateTask(taskId, { nextRepoIndexId });
 
-      // Phase 2: hash-diff stale check
+      const graph = buildAnalyzerGraph(scan.codeIndex);
+      let scanDiff: ScanDiff | null = null;
+      if (previousScan) {
+        scanDiff = compareScans(previousScan, scan);
+        logger.info({ taskId, diffEntries: scanDiff.entries.length }, 'wiki refresh: scan diff computed');
+      }
+      await persistScanCache(projectId, scan);
+
+      // Phase 2: stale detection
       await updateTask(taskId, { status: 'stale_checking' });
       const snapshot = await wikiStore.getSnapshot(snapshotId);
       if (!snapshot) throw new Error(`Snapshot not found: ${snapshotId}`);
@@ -128,48 +150,60 @@ export const wikiRefreshService = {
       const baseRepoIndexId = snapshot.repoIndexId ?? nextRepoIndexId;
       await updateTask(taskId, { baseRepoIndexId });
 
-      // Real diff: only bindings whose source hash actually changed (or was removed)
       const { changedBindingIds, changedSourceIds } = await wikiCoordinateService.detectChangedBindings(
-        projectId,
-        scan.codeIndex,
+        projectId, scan.codeIndex,
       );
 
-      // Find affected blocks via reverse index OR direct binding lookup
+      // Blast radius via call graph
+      let blastRadiusSourceIds: string[] = [];
+      if (scanDiff && scanDiff.entries.length > 0) {
+        const changedSymbolIds = scanDiff.entries
+          .filter(e => e.kind === 'symbol_added' || e.kind === 'symbol_removed' || e.kind === 'symbol_modified')
+          .map(e => e.entityId);
+        if (changedSymbolIds.length > 0) {
+          const blastRadius = computeBlastRadius(changedSymbolIds, graph.reverseCallGraph);
+          blastRadiusSourceIds = [...blastRadius]
+            .map(symId => scan.codeIndex.symbols.find(s => s.id === symId)?.fileId)
+            .filter((id): id is string => Boolean(id));
+        }
+      }
+
+// PLACEHOLDER_RUN_REFRESH_2
+
+      // Find affected blocks
+      const allChangedSourceIds = [...new Set([...changedSourceIds, ...blastRadiusSourceIds])];
       const indexLookup = await wikiCoordinateService.getBlockIdsBySourceIds(
-        projectId,
-        baseRepoIndexId,
-        changedSourceIds,
+        projectId, baseRepoIndexId, allChangedSourceIds,
       );
       const fromIndex = [...indexLookup.values()].flat();
       const fromBindings = await wikiCoordinateService.getBlockIdsByBindingIds(changedBindingIds);
       const affectedBlockIds = [...new Set([...fromIndex, ...fromBindings])];
 
-      await updateTask(taskId, {
-        affectedBlockIdsJson: JSON.stringify(affectedBlockIds),
-      });
+      await updateTask(taskId, { affectedBlockIdsJson: JSON.stringify(affectedBlockIds) });
 
       if (affectedBlockIds.length > 0) {
-        await wikiStore.markBlocksStale(affectedBlockIds, 'possibly_stale');
+        await wikiStore.markBlocksStale(affectedBlockIds, 'stale');
       }
 
-      // Refresh verified hashes for unchanged sources
       await wikiCoordinateService.refreshVerifiedHashes(projectId, nextRepoIndexId, scan.codeIndex);
 
-      // Phase 3: semantic review (P0/P1/P2 only — top 20)
-      await updateTask(taskId, { status: 'semantic_reviewing' });
-      const priorityBlocks = await this._getPriorityBlocks(affectedBlockIds, 20);
+      // Phase 3: group by document and generate drafts
+      await updateTask(taskId, { status: 'drafting' });
+      const documentBlockMap = await this._groupBlocksByDocument(affectedBlockIds);
+      const affectedDocumentIds = [...documentBlockMap.keys()];
+      await updateTask(taskId, { affectedDocumentIdsJson: JSON.stringify(affectedDocumentIds) });
 
-      // Phase 4: generate pending patches
-      await updateTask(taskId, { status: 'patching' });
-      const patchIds: string[] = [];
-      for (const block of priorityBlocks) {
-        const patchId = await this._createSemanticPatch(projectId, snapshotId, taskId, block, scan);
-        if (patchId) patchIds.push(patchId);
+      const draftIds: string[] = [];
+      for (const [documentId, blockIds] of documentBlockMap) {
+        const draftId = await this._createDocumentDraft(
+          projectId, snapshotId, taskId, documentId, blockIds, scan, scanDiff,
+        );
+        if (draftId) draftIds.push(draftId);
       }
 
       await updateTask(taskId, {
         status: 'completed',
-        patchIdsJson: JSON.stringify(patchIds),
+        draftIdsJson: JSON.stringify(draftIds),
         completedAt: new Date().toISOString(),
       });
 
@@ -179,13 +213,13 @@ export const wikiRefreshService = {
         projectId,
         taskId,
         title: 'Wiki 刷新完成',
-        message: `发现 ${affectedBlockIds.length} 个变更块，生成 ${patchIds.length} 个补丁`,
-        severity: patchIds.length > 0 ? 'warning' : 'success',
-        meta: { affectedBlocks: affectedBlockIds.length, patches: patchIds.length },
+        message: `${affectedDocumentIds.length} 个文档受影响，生成 ${draftIds.length} 个草稿`,
+        severity: draftIds.length > 0 ? 'warning' : 'success',
+        meta: { affectedDocuments: affectedDocumentIds.length, drafts: draftIds.length },
       });
 
       logger.info(
-        { taskId, affectedBlocks: affectedBlockIds.length, patches: patchIds.length },
+        { taskId, affectedDocuments: affectedDocumentIds.length, drafts: draftIds.length },
         'wiki refresh: complete',
       );
     } catch (err) {
@@ -206,116 +240,212 @@ export const wikiRefreshService = {
     }
   },
 
-  async _getPriorityBlocks(blockIds: string[], limit: number): Promise<WikiBlock[]> {
-    const blocks: WikiBlock[] = [];
-    for (const id of blockIds.slice(0, limit)) {
-      const block = await wikiStore.getBlock(id);
-      if (block) blocks.push(block);
+// PLACEHOLDER_HELPERS
+
+  async _groupBlocksByDocument(blockIds: string[]): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    for (const blockId of blockIds) {
+      const block = await wikiStore.getBlock(blockId);
+      if (!block) continue;
+      const existing = map.get(block.documentId) ?? [];
+      existing.push(blockId);
+      map.set(block.documentId, existing);
     }
-    return blocks;
+    return map;
   },
 
-  async _createSemanticPatch(
+  async _createDocumentDraft(
     projectId: string,
     snapshotId: string,
     taskId: string,
-    block: WikiBlock,
+    documentId: string,
+    affectedBlockIds: string[],
     scan: Awaited<ReturnType<typeof runCodeMapScan>>,
+    scanDiff: ScanDiff | null,
   ): Promise<string | null> {
     const db = getDb();
     const now = new Date().toISOString();
-    const patchId = nanoid();
+    const draftId = nanoid();
 
-    // Get current bindings for context
-    const bindings = await wikiStore.getBindingsByBlock(block.id);
-    const sourceFiles = bindings
-      .map(b => scan.codeIndex.files.find(f => f.id === b.sourceId)?.path)
-      .filter((p): p is string => Boolean(p))
-      .slice(0, 5);
+    const allBlocks = await wikiStore.getBlocksByDocument(documentId);
+    if (allBlocks.length === 0) return null;
 
-    // Build compact code context for the affected sources
-    const sourceSymbols = bindings
-      .flatMap(b => {
+    const doc = await wikiStore.getDocument(documentId);
+    const docTitle = doc?.title ?? 'Unknown';
+    const docType = doc?.docType ?? 'module_design';
+
+    // Gather source context from all affected blocks' bindings
+    const allSourceFiles = new Set<string>();
+    const allSymbols = new Set<string>();
+    for (const blockId of affectedBlockIds) {
+      const bindings = await wikiStore.getBindingsByBlock(blockId);
+      for (const b of bindings) {
         if (b.sourceType === 'symbol') {
           const sym = scan.codeIndex.symbols.find(s => s.id === b.sourceId);
-          return sym ? [`${sym.qualifiedName} [${sym.kind}]`] : [];
+          if (sym) allSymbols.add(`${sym.qualifiedName} [${sym.kind}]`);
         }
-        if (b.sourceType === 'file') {
-          const file = scan.codeIndex.files.find(f => f.id === b.sourceId);
-          return file ? [file.path] : [];
-        }
-        return [];
-      })
-      .slice(0, 10);
+        const file = scan.codeIndex.files.find(f => f.id === b.sourceId);
+        if (file) allSourceFiles.add(file.path);
+        if (b.filePath) allSourceFiles.add(b.filePath);
+      }
+    }
 
-    // Call LLM to generate updated block content
-    let reviewResult: SemanticReviewOutput | null = null;
+    const sourceFilesList = [...allSourceFiles].slice(0, 15);
+    const symbolsList = [...allSymbols].slice(0, 20);
+    const diffContext = buildDiffContext(scanDiff, sourceFilesList);
+
+// PLACEHOLDER_LLM_CALL
+
+    // Build document content representation for LLM
+    const blocksContext = allBlocks.map(b => ({
+      id: b.id,
+      type: b.blockType,
+      format: b.contentFormat,
+      content: JSON.stringify(b.content).slice(0, 600),
+      isAffected: affectedBlockIds.includes(b.id),
+    }));
+
+    let draftOutput: DocumentDraftOutput | null = null;
     try {
-      reviewResult = await generateGatewayObject(
+      draftOutput = await generateGatewayObject(
         {
           purpose: 'wiki',
           projectId,
           messages: [
             {
               role: 'system',
-              content: `You are a senior software architect reviewing a wiki block for accuracy after source code changes.
-Given the current block content and the changed source code context, generate an updated version of the block.
+              content: `You are a senior software architect. Given a design document and code changes, output which blocks need updating.
 Rules:
-- Keep the same blockType and contentFormat as the original.
-- Only update content that is factually affected by the code changes.
-- If the block is still accurate, return the original content unchanged with confidence > 0.8.
-- Provide 1-3 reasoning sentences explaining what changed and why.
-- Output only valid json matching the schema exactly.`,
+- Only output blocks that actually need modification due to the code changes.
+- Keep each block's original blockType and contentFormat.
+- Provide a one-sentence reasoning per block explaining what changed.
+- If no blocks need updating, return an empty changes array.
+- Output valid JSON matching the schema exactly.`,
             },
             {
               role: 'user',
-              content: `Block type: ${block.blockType}
-Content format: ${block.contentFormat}
-Current content: ${JSON.stringify(block.content).slice(0, 800)}
+              content: `Document: "${docTitle}" (type: ${docType})
 
-Changed source files: ${sourceFiles.join(', ') || 'unknown'}
-Related symbols: ${sourceSymbols.join(', ') || 'none'}
+Blocks:
+${blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.content}`).join('\n\n')}
 
-Generate an updated version of this block reflecting the code changes.`,
+Changed source files: ${sourceFilesList.join(', ') || 'unknown'}
+Related symbols: ${symbolsList.join(', ') || 'none'}
+${diffContext}
+Output the blocks that need updating to reflect these code changes.`,
             },
           ],
         },
-        SemanticReviewOutputSchema,
+        DocumentDraftOutputSchema,
       );
     } catch (err) {
-      logger.warn({ err, blockId: block.id }, 'wiki refresh: semantic review LLM failed, using placeholder patch');
+      logger.warn({ err, documentId }, 'wiki refresh: document draft LLM failed');
     }
 
-    const newContent = reviewResult?.newContent ?? block.content;
-    const confidence = reviewResult?.confidence ?? 0.5;
-    const risk = reviewResult?.risk ?? (block.manualState === 'none' ? 'low' : 'high');
-    const reasoning = reviewResult?.reasoning ?? [
-      `Source code changed in ${sourceFiles.length > 0 ? sourceFiles.join(', ') : 'related files'}.`,
-      `Block has ${bindings.length} source binding(s) verified at older revision.`,
-      block.manualState !== 'none'
-        ? `Block has manualState=${block.manualState} — accept will require explicit override.`
-        : 'Block can be updated automatically once accepted.',
-    ];
+    if (!draftOutput || draftOutput.changes.length === 0) return null;
 
-    await db.insert(wikiPatches).values({
-      id: patchId,
+    // Build changes with oldContent
+    const changes: DraftBlockChange[] = draftOutput.changes.map(c => {
+      const block = allBlocks.find(b => b.id === c.blockId);
+      return {
+        blockId: c.blockId,
+        action: c.action,
+        oldContent: block?.content ?? null,
+        newContent: c.newContent,
+        reasoning: c.reasoning,
+        confidence: c.confidence,
+        risk: c.risk,
+      };
+    });
+
+    const risks = changes.map(c => c.risk);
+    const aggregateRisk = risks.includes('high') ? 'high' : risks.includes('medium') ? 'medium' : 'low';
+    const aggregateConfidence = changes.reduce((sum, c) => sum + c.confidence, 0) / changes.length;
+
+    // Get current commit SHA for freshness tracking
+    let sourceCommitSha: string | null = null;
+    try {
+      const snapshot = await wikiStore.getSnapshot(snapshotId);
+      sourceCommitSha = snapshot?.headCommitSha ?? null;
+    } catch { /* ignore */ }
+
+    await db.insert(wikiRefreshDrafts).values({
+      id: draftId,
       projectId,
       snapshotId,
       refreshTaskId: taskId,
-      targetDocumentId: block.documentId,
-      targetBlockIdsJson: JSON.stringify([block.id]),
-      kind: 'update',
-      status: 'pending',
-      risk,
-      confidence,
-      oldContentJson: JSON.stringify(block.content),
-      newContentJson: JSON.stringify(newContent),
-      sourceDiffIdsJson: '[]',
-      reasoningJson: JSON.stringify(reasoning),
+      documentId,
+      status: 'ready',
+      changesJson: JSON.stringify(changes),
+      summary: draftOutput.summary,
+      aggregateRisk,
+      aggregateConfidence,
+      sourceCommitSha,
       createdAt: now,
-      updatedAt: now,
     });
 
-    return patchId;
+    return draftId;
   },
 };
+
+// ── Scan Cache Helpers ────────────────────────────────────────────────────────
+
+async function loadCachedScan(projectId: string): Promise<CodeMapScanResult | null> {
+  try {
+    const db = getDb();
+    const rows = await db.select().from(wikiScanCache).where(eq(wikiScanCache.projectId, projectId)).limit(1);
+    if (!rows[0]) return null;
+    const row = rows[0];
+    const codeIndex = JSON.parse(row.codeIndexJson);
+    const communities = row.communitiesJson ? JSON.parse(row.communitiesJson) : null;
+    return {
+      projectId,
+      scanId: row.scanId,
+      generatedAt: 0,
+      durationMs: 0,
+      workDir: '',
+      source: null,
+      codeIndex,
+      semanticGraph: { nodes: [], edges: [] },
+      communities,
+      warnings: [],
+    };
+  } catch (err) {
+    logger.warn({ err, projectId }, 'wiki refresh: failed to load cached scan');
+    return null;
+  }
+}
+
+async function persistScanCache(projectId: string, scan: CodeMapScanResult): Promise<void> {
+  try {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const codeIndexJson = JSON.stringify(scan.codeIndex);
+    const communitiesJson = scan.communities ? JSON.stringify(scan.communities) : null;
+    await db.insert(wikiScanCache).values({
+      projectId,
+      scanId: scan.scanId,
+      codeIndexJson,
+      communitiesJson,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: wikiScanCache.projectId,
+      set: { scanId: scan.scanId, codeIndexJson, communitiesJson, updatedAt: now },
+    });
+  } catch (err) {
+    logger.warn({ err, projectId }, 'wiki refresh: failed to persist scan cache');
+  }
+}
+
+function buildDiffContext(scanDiff: ScanDiff | null, sourceFiles: string[]): string {
+  if (!scanDiff || scanDiff.entries.length === 0) return '';
+  const relevant = scanDiff.entries
+    .filter(e => !e.path || sourceFiles.some(f => e.path?.includes(f) || f.includes(e.path!)))
+    .slice(0, 10);
+  if (relevant.length === 0) return `\nChange summary: ${scanDiff.summary}\n`;
+  const lines = relevant.map(e => {
+    const path = e.path ? ` (${e.path})` : '';
+    return `- ${e.kind}${path}`;
+  });
+  return `\nChange summary: ${scanDiff.summary}\nDetailed changes:\n${lines.join('\n')}\n`;
+}

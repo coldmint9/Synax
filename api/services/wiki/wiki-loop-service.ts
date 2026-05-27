@@ -133,8 +133,30 @@ export const wikiLoopService = {
       const { docIds, planIdToDocId } = await persistOutlineAsEmptyDocs(outline, snapshot.id, projectId);
       await wikiStore.updateSnapshotStatus(snapshot.id, 'outline_ready', docIds);
 
+      notify({
+        type: 'task_progress',
+        taskKind: 'wiki_generate',
+        projectId,
+        taskId: snapshot.id,
+        title: 'Wiki 生成',
+        message: '文档大纲已就绪，准备生成内容',
+        severity: 'info',
+        meta: { snapshotId: snapshot.id, snapshotStatus: 'outline_ready', phase: 1, docCount: docIds.length },
+      });
+
       // ═══ Phase 2: Content Generation (per-document) ═══
       await wikiStore.updateSnapshotStatus(snapshot.id, 'writing', docIds);
+
+      notify({
+        type: 'task_progress',
+        taskKind: 'wiki_generate',
+        projectId,
+        taskId: snapshot.id,
+        title: 'Wiki 生成',
+        message: '正在撰写文档内容',
+        severity: 'info',
+        meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, totalDocs: docIds.length },
+      });
 
       const writerHandle = createWriterTools(scan, outline);
       for (const tool of writerHandle.tools) {
@@ -206,6 +228,17 @@ export const wikiLoopService = {
           type: 'progress_updated',
           summary: `Phase 2: Generating document ${i + 1}/${totalDocs}: ${entry.title}`,
           payload: { snapshotId: snapshot.id, phase: 2, docIndex: i, docTitle: entry.title },
+        });
+
+        notify({
+          type: 'task_progress',
+          taskKind: 'wiki_generate',
+          projectId,
+          taskId: snapshot.id,
+          title: 'Wiki 生成',
+          message: `正在生成: ${entry.title} (${i + 1}/${totalDocs})`,
+          severity: 'info',
+          meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, docIndex: i, totalDocs, docTitle: entry.title },
         });
 
         logger.info({ projectId, docTitle: entry.title, index: i, total: totalDocs }, 'wiki-loop: generating document');

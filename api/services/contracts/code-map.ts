@@ -17,17 +17,27 @@ export interface CodeMapImport {
   isExternal: boolean;
 }
 
+export interface CodeMapCallEdge {
+  sourceSymbolId: string;
+  targetName: string;
+  targetSymbolId?: string;
+  line: number;
+  fileId: string;
+}
+
 export interface CodeMapCodeIndex {
   indexId: string;
   files: FileEntry[];
   symbols: SymbolEntry[];
   chunks: ChunkEntry[];
   imports: CodeMapImport[];
+  callEdges: CodeMapCallEdge[];
   stats: {
     fileCount: number;
     symbolCount: number;
     chunkCount: number;
     importCount: number;
+    callEdgeCount: number;
   };
   updatedAt: number;
 }

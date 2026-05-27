@@ -1,5 +1,5 @@
 import path from 'node:path'
-import type { CodeMapCodeIndex, CodeMapImport } from '../contracts/code-map.js'
+import type { CodeMapCallEdge, CodeMapCodeIndex, CodeMapImport } from '../contracts/code-map.js'
 import { topDirFromPath } from './shared.js'
 
 export interface ResolvedImportEdge {
@@ -18,6 +18,8 @@ export interface AnalyzerGraph {
   symbolIdsByFile: Map<string, string[]>
   fileToPath: Map<string, string>
   fileToDir: Map<string, string>
+  callGraph: Map<string, Set<string>>
+  reverseCallGraph: Map<string, Set<string>>
 }
 
 const TS_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
@@ -81,6 +83,18 @@ export function buildAnalyzerGraph(codeIndex: CodeMapCodeIndex): AnalyzerGraph {
     fileDegree.set(file.id, degree)
   }
 
+  const { callGraph, reverseCallGraph } = resolveCallEdges(codeIndex, symbolIdsByFile, resolvedImports)
+
+  // Strengthen file neighbors with cross-file call edges
+  for (const edge of codeIndex.callEdges) {
+    if (!edge.targetSymbolId) continue
+    const sourceFileId = edge.fileId
+    const targetSym = codeIndex.symbols.find((s) => s.id === edge.targetSymbolId)
+    if (!targetSym || targetSym.fileId === sourceFileId) continue
+    incrementWeight(fileNeighbors, sourceFileId, targetSym.fileId, 0.5)
+    incrementWeight(fileNeighbors, targetSym.fileId, sourceFileId, 0.5)
+  }
+
   return {
     resolvedImports,
     fileNeighbors,
@@ -88,6 +102,8 @@ export function buildAnalyzerGraph(codeIndex: CodeMapCodeIndex): AnalyzerGraph {
     symbolIdsByFile,
     fileToPath: new Map(codeIndex.files.map((file) => [file.id, file.path] as const)),
     fileToDir: new Map(codeIndex.files.map((file) => [file.id, topDirFromPath(file.path)] as const)),
+    callGraph,
+    reverseCallGraph,
   }
 }
 
@@ -196,4 +212,111 @@ function incrementWeight(map: Map<string, Map<string, number>>, source: string, 
   const bucket = map.get(source) ?? new Map<string, number>()
   bucket.set(target, (bucket.get(target) ?? 0) + weight)
   map.set(source, bucket)
+}
+
+// ── Call Graph Resolution ─────────────────────────────────────────────────────
+
+function resolveCallEdges(
+  codeIndex: CodeMapCodeIndex,
+  symbolIdsByFile: Map<string, string[]>,
+  resolvedImports: ResolvedImportEdge[],
+): { callGraph: Map<string, Set<string>>; reverseCallGraph: Map<string, Set<string>> } {
+  const callGraph = new Map<string, Set<string>>()
+  const reverseCallGraph = new Map<string, Set<string>>()
+
+  const symbolById = new Map(codeIndex.symbols.map((s) => [s.id, s] as const))
+  const nameToSymbols = new Map<string, string[]>()
+  for (const sym of codeIndex.symbols) {
+    const bucket = nameToSymbols.get(sym.name) ?? []
+    bucket.push(sym.id)
+    nameToSymbols.set(sym.name, bucket)
+  }
+
+  const importedFilesByFile = new Map<string, Set<string>>()
+  for (const edge of resolvedImports) {
+    const set = importedFilesByFile.get(edge.sourceFileId) ?? new Set()
+    set.add(edge.targetFileId)
+    importedFilesByFile.set(edge.sourceFileId, set)
+  }
+
+  for (const edge of codeIndex.callEdges) {
+    const candidates = nameToSymbols.get(edge.targetName)
+    if (!candidates || candidates.length === 0) continue
+
+    const resolved = resolveCallTarget(
+      edge, candidates, symbolById, symbolIdsByFile, importedFilesByFile,
+    )
+    if (!resolved) continue
+
+    edge.targetSymbolId = resolved
+
+    const fwd = callGraph.get(edge.sourceSymbolId) ?? new Set()
+    fwd.add(resolved)
+    callGraph.set(edge.sourceSymbolId, fwd)
+
+    const rev = reverseCallGraph.get(resolved) ?? new Set()
+    rev.add(edge.sourceSymbolId)
+    reverseCallGraph.set(resolved, rev)
+  }
+
+  return { callGraph, reverseCallGraph }
+}
+
+function resolveCallTarget(
+  edge: CodeMapCallEdge,
+  candidates: string[],
+  symbolById: Map<string, { id: string; fileId: string; kind: string; name: string }>,
+  symbolIdsByFile: Map<string, string[]>,
+  importedFilesByFile: Map<string, Set<string>>,
+): string | null {
+  if (candidates.length === 1) {
+    const sym = symbolById.get(candidates[0])
+    if (sym && sym.id !== edge.sourceSymbolId) return sym.id
+    return null
+  }
+
+  // Prefer same-file match
+  const sameFile = candidates.filter((id) => {
+    const sym = symbolById.get(id)
+    return sym && sym.fileId === edge.fileId && sym.id !== edge.sourceSymbolId
+  })
+  if (sameFile.length === 1) return sameFile[0]
+
+  // Prefer imported-file match
+  const importedFiles = importedFilesByFile.get(edge.fileId)
+  if (importedFiles) {
+    const imported = candidates.filter((id) => {
+      const sym = symbolById.get(id)
+      return sym && importedFiles.has(sym.fileId) && sym.id !== edge.sourceSymbolId
+    })
+    if (imported.length === 1) return imported[0]
+  }
+
+  // Ambiguous — drop
+  return null
+}
+
+export function computeBlastRadius(
+  changedSymbolIds: string[],
+  reverseCallGraph: Map<string, Set<string>>,
+  maxDepth = 2,
+): Set<string> {
+  const result = new Set<string>()
+  const queue: Array<{ id: string; depth: number }> = changedSymbolIds.map((id) => ({ id, depth: 0 }))
+  const visited = new Set<string>(changedSymbolIds)
+
+  while (queue.length > 0 && result.size < 50) {
+    const { id, depth } = queue.shift()!
+    const callers = reverseCallGraph.get(id)
+    if (!callers || depth >= maxDepth) continue
+    for (const caller of callers) {
+      if (visited.has(caller)) continue
+      visited.add(caller)
+      result.add(caller)
+      if (result.size >= 50) break
+      queue.push({ id: caller, depth: depth + 1 })
+    }
+  }
+
+  return result
 }

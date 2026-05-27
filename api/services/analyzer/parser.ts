@@ -1,5 +1,5 @@
 import type { ChunkEntry, FileEntry, SymbolEntry } from '../contracts/forest.js'
-import type { CodeMapCodeIndex, CodeMapImport } from '../contracts/code-map.js'
+import type { CodeMapCallEdge, CodeMapCodeIndex, CodeMapImport } from '../contracts/code-map.js'
 import {
   chunkForFile,
   chunkForSymbol,
@@ -111,6 +111,7 @@ export async function parseRepository(workDirAbs: string): Promise<AnalyzerParse
   const symbols: SymbolEntry[] = []
   const chunks: ChunkEntry[] = []
   const imports: CodeMapImport[] = []
+  const callEdges: CodeMapCallEdge[] = []
   const warnings: string[] = []
 
   for (const absPath of walkRepositoryFiles(workDirAbs)) {
@@ -143,11 +144,15 @@ export async function parseRepository(workDirAbs: string): Promise<AnalyzerParse
     const fallbackSymbols = treeSymbols.length > 0 ? [] : parseSymbolsFallback(language, fileId, relPath, text)
     const fileSymbols = dedupeSymbols(treeSymbols.length > 0 ? treeSymbols : fallbackSymbols)
     const fileImports = parseImports(language, fileId, text)
+    const fileCalls = parserLanguage
+      ? await parseTreeSitterCalls(parserLanguage, fileId, text, fileSymbols, parseWarnings)
+      : parseCallsFallback(language, fileId, text, fileSymbols)
 
     files.push(entry)
     entries.push(fileRecord)
     symbols.push(...fileSymbols)
     imports.push(...fileImports)
+    callEdges.push(...fileCalls)
     warnings.push(...parseWarnings.map((warning) => `${relPath}: ${warning}`))
     if (fileSymbols.length > 0) {
       for (const symbol of fileSymbols.slice(0, 48)) {
@@ -164,11 +169,13 @@ export async function parseRepository(workDirAbs: string): Promise<AnalyzerParse
     symbols,
     chunks,
     imports,
+    callEdges,
     stats: {
       fileCount: files.length,
       symbolCount: symbols.length,
       chunkCount: chunks.length,
       importCount: imports.length,
+      callEdgeCount: callEdges.length,
     },
     updatedAt: now(),
   }
@@ -544,3 +551,147 @@ function parseSymbolsFallback(language: string, fileId: string, relPath: string,
   }
   return ordered.map(({ line: _line, ...symbol }) => symbol)
 }
+
+// ── Call Expression Extraction ───────────────────────────────────────────────
+
+const CALL_NODE_TYPES = new Set([
+  'call_expression',
+  'method_invocation',
+  'function_call',
+  'call',
+  'invocation_expression',
+])
+
+async function parseTreeSitterCalls(
+  language: ParserLanguageKey,
+  fileId: string,
+  text: string,
+  fileSymbols: SymbolEntry[],
+  warnings: string[],
+): Promise<CodeMapCallEdge[]> {
+  const ParserCtor = await parserCtorPromise
+  if (ParserCtor == null) return parseCallsFallback('', fileId, text, fileSymbols)
+  const languageDef = await loadLanguage(language)
+  if (!languageDef) return parseCallsFallback('', fileId, text, fileSymbols)
+
+  try {
+    const parser = new ParserCtor()
+    parser.setLanguage(languageDef)
+    const tree = parser.parse(text)
+    return extractCallsFromTree(tree.rootNode, fileId, text, fileSymbols)
+  } catch {
+    return parseCallsFallback('', fileId, text, fileSymbols)
+  }
+}
+
+function extractCallsFromTree(
+  rootNode: TreeSitterNode,
+  fileId: string,
+  text: string,
+  fileSymbols: SymbolEntry[],
+): CodeMapCallEdge[] {
+  const edges: CodeMapCallEdge[] = []
+  const seen = new Set<string>()
+
+  walkNamed(rootNode, (node) => {
+    if (!CALL_NODE_TYPES.has(node.type)) return
+    const calleeName = extractCalleeName(node, text)
+    if (!calleeName) return
+    const line = node.startPosition.row + 1
+    const enclosing = findEnclosingSymbol(fileSymbols, line)
+    if (!enclosing) return
+    const key = `${enclosing.id}:${calleeName}:${line}`
+    if (seen.has(key)) return
+    seen.add(key)
+    edges.push({
+      sourceSymbolId: enclosing.id,
+      targetName: calleeName,
+      line,
+      fileId,
+    })
+  })
+
+  return edges.slice(0, 500)
+}
+
+function extractCalleeName(node: TreeSitterNode, text: string): string | null {
+  const funcChild = safeFieldChild(node, 'function')
+    ?? safeFieldChild(node, 'method')
+    ?? safeFieldChild(node, 'name')
+  if (funcChild) {
+    if (IDENTIFIER_TYPES.has(funcChild.type)) {
+      return text.slice(funcChild.startIndex, funcChild.endIndex).trim()
+    }
+    const prop = safeFieldChild(funcChild, 'property')
+      ?? safeFieldChild(funcChild, 'field')
+      ?? safeFieldChild(funcChild, 'name')
+    if (prop && IDENTIFIER_TYPES.has(prop.type)) {
+      return text.slice(prop.startIndex, prop.endIndex).trim()
+    }
+    const lastIdent = findLastIdentifier(funcChild)
+    if (lastIdent) return text.slice(lastIdent.startIndex, lastIdent.endIndex).trim()
+  }
+  const firstChild = getNamedChildren(node)[0]
+  if (firstChild) {
+    if (IDENTIFIER_TYPES.has(firstChild.type)) {
+      return text.slice(firstChild.startIndex, firstChild.endIndex).trim()
+    }
+    const lastIdent = findLastIdentifier(firstChild)
+    if (lastIdent) return text.slice(lastIdent.startIndex, lastIdent.endIndex).trim()
+  }
+  return null
+}
+
+function findLastIdentifier(node: TreeSitterNode): TreeSitterNode | null {
+  const children = getNamedChildren(node)
+  for (let i = children.length - 1; i >= 0; i--) {
+    if (IDENTIFIER_TYPES.has(children[i].type)) return children[i]
+  }
+  return null
+}
+
+function findEnclosingSymbol(symbols: SymbolEntry[], line: number): SymbolEntry | null {
+  for (let i = symbols.length - 1; i >= 0; i--) {
+    const s = symbols[i]
+    if (line >= s.range.startLine && line <= s.range.endLine) return s
+  }
+  return null
+}
+
+function parseCallsFallback(
+  _language: string,
+  fileId: string,
+  text: string,
+  fileSymbols: SymbolEntry[],
+): CodeMapCallEdge[] {
+  const edges: CodeMapCallEdge[] = []
+  const seen = new Set<string>()
+  const lines = text.split(/\r?\n/)
+  const callPattern = /\b([A-Za-z_$][\w$]*)\s*\(/g
+
+  for (const [index, line] of lines.entries()) {
+    const lineNo = index + 1
+    const enclosing = findEnclosingSymbol(fileSymbols, lineNo)
+    if (!enclosing) continue
+    let match: RegExpExecArray | null
+    callPattern.lastIndex = 0
+    while ((match = callPattern.exec(line)) !== null) {
+      const name = match[1]
+      if (IGNORED_CALL_NAMES.has(name)) continue
+      const key = `${enclosing.id}:${name}:${lineNo}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      edges.push({ sourceSymbolId: enclosing.id, targetName: name, line: lineNo, fileId })
+    }
+  }
+
+  return edges.slice(0, 500)
+}
+
+const IGNORED_CALL_NAMES = new Set([
+  'if', 'for', 'while', 'switch', 'catch', 'return', 'throw',
+  'new', 'typeof', 'instanceof', 'delete', 'void', 'await',
+  'require', 'import', 'export', 'console', 'log', 'warn', 'error',
+  'parseInt', 'parseFloat', 'String', 'Number', 'Boolean', 'Array', 'Object',
+  'print', 'println', 'printf', 'sprintf', 'fmt',
+])
