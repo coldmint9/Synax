@@ -1,6 +1,8 @@
 import type { AgentProfile } from '../agent-runtime/contracts.js';
 import { profileService } from '../agent-runtime/profile-service.js';
+import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import { registerTitleGenerator } from '../agent-runtime/session-title-service.js';
+import { createWikiExplorerTools } from './wiki-loop-tools.js';
 
 export const wikiPlannerProfile: AgentProfile = {
   id: 'wiki-planner',
@@ -71,9 +73,7 @@ export const wikiWriterProfile: AgentProfile = {
   doomLoopThreshold: 6,
   loopHints: [
     'Generate root-level documents (directory_tree, overview, architecture) yourself — they need global context.',
-    'For module_spec documents, use subagent.delegate(profileId: "wiki-explorer") to spawn sub-agents for exploration, then format and commit.',
-    'subagent.delegate is recursive: sub-agents can further delegate via subagent.delegate to explore sub-modules (max depth 3).',
-    'Parent blocks until all sub-agents complete. Max 5 concurrent sub-agents.',
+    'For module_spec documents, use subagent.delegate(profileId: "wiki-explorer") to gather existing wiki context when needed.',
     'Always commit documents in topological order: parents before children.',
     'sourceHints should use qualifiedName (e.g. ClassName.methodName) for precise symbol-level tracing.',
   ],
@@ -84,34 +84,28 @@ export const wikiExplorerProfile: AgentProfile = {
   label: 'Wiki Explorer',
   kind: 'explorer',
   mode: 'subagent',
-  description: 'Recursively explore code for wiki document generation. Can delegate deeper exploration to sub-agents.',
-  defaultThinkingMode: 'standard',
+  description: 'Search and read generated wiki documents to provide design context.',
+  defaultThinkingMode: 'fast',
   allowedCapabilities: [
-    'file.glob',
-    'file.list',
-    'file.read',
+    'wiki.list_documents',
+    'wiki.read_document',
+    'wiki.search_content',
     'grep.search',
-    'wiki.read_code_index',
-    'wiki.read_graph',
-    'wiki.read_modules',
-    'wiki.read_tree',
-    'subagent.delegate',
-    'tools.escalate',
   ],
   permissionDefaults: [
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki explorer reads freely.' },
     { gate: 'write', pattern: '*', action: 'deny', reason: 'Wiki explorer is read-only.' },
-    { gate: 'task', pattern: '*', action: 'allow', reason: 'Wiki explorer can delegate deeper exploration.' },
+    { gate: 'task', pattern: '*', action: 'deny', reason: 'Wiki explorer cannot delegate.' },
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Wiki explorer does not need shell.' },
   ],
   defaultSkills: [],
-  maxSteps: 15,
+  maxSteps: 6,
   status: 'active',
-  toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
+  toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'Read the specified files and answer the key questions with concrete technical details.',
-    'If a module is too large, use wiki.delegate to explore sub-modules recursively.',
-    'Return a structured summary with: interfaces, data models, flows, dependencies, and qualifiedName list.',
+    'List documents first to understand available wiki content.',
+    'Read specific documents relevant to the query.',
+    'Return a focused summary answering the parent agent\'s question.',
   ],
 };
 
@@ -169,6 +163,9 @@ export function ensureWikiProfileRegistered(): void {
   profileService.register(wikiWriterProfile);
   profileService.register(wikiExplorerProfile);
   profileService.register(wikiGeneratorProfile);
+  for (const tool of createWikiExplorerTools()) {
+    toolRegistry.register(tool);
+  }
   registerTitleGenerator('wiki-planner', wikiTitleGenerator);
   registerTitleGenerator('wiki-writer', wikiTitleGenerator);
   registerTitleGenerator('wiki-explorer', wikiTitleGenerator);
