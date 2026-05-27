@@ -9,6 +9,7 @@ import { wikiLoopService } from '../services/wiki/wiki-loop-service.js';
 import { wikiCoordinateService } from '../services/wiki/wiki-coordinate-service.js';
 import { wikiRefreshService } from '../services/wiki/wiki-refresh-service.js';
 import { wikiPatchService, WikiPatchConflictError } from '../services/wiki/wiki-patch-service.js';
+import { wikiDraftService } from '../services/wiki/wiki-draft-service.js';
 import { wikiDesignMappingService } from '../services/wiki/wiki-design-mapping-service.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 import { AgentProviderNotConfiguredError } from '../services/agent-runtime/runtime-errors.js';
@@ -29,6 +30,26 @@ const refreshBodySchema = z.object({
 });
 
 const patchActionBodySchema = z.object({
+  actorId: z.string().max(128).optional(),
+  confirmManualOverride: z.boolean().optional(),
+});
+
+const draftApplyBodySchema = z.object({
+  actorId: z.string().max(128).optional(),
+  confirmManualOverride: z.boolean().optional(),
+});
+
+const draftApplyPartialBodySchema = z.object({
+  blockIds: z.array(z.string().min(1).max(128)).min(1),
+  actorId: z.string().max(128).optional(),
+  confirmManualOverride: z.boolean().optional(),
+});
+
+const draftEditBodySchema = z.object({
+  changes: z.array(z.object({
+    blockId: z.string().min(1).max(128),
+    newContent: z.unknown(),
+  })).min(1),
   actorId: z.string().max(128).optional(),
   confirmManualOverride: z.boolean().optional(),
 });
@@ -78,7 +99,7 @@ wikiRoutes.get('/projects/:projectId/latest', async (c) => {
   const { projectId } = c.req.param();
   const snapshot = await wikiStore.getLatestSnapshot(projectId);
   if (!snapshot) {
-    return c.json({ snapshot: null, documents: [], blocks: [], sourceBindings: [], patchesSummary: { pending: 0, conflict: 0 } });
+    return c.json({ snapshot: null, documents: [], blocks: [], sourceBindings: [], patchesSummary: { pending: 0, conflict: 0 }, draftsSummary: { ready: 0, generating: 0 } });
   }
   const tree = await wikiStore.getSnapshotTree(snapshot.id);
   return c.json(tree);
@@ -355,6 +376,84 @@ wikiRoutes.get('/projects/:projectId/patches', async (c) => {
   const status = c.req.query('status') as 'pending' | 'accepted' | 'dismissed' | undefined;
   const patches = await wikiStore.getPatchesByProject(projectId, status);
   return c.json({ patches });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Refresh Drafts
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/wiki/projects/:projectId/drafts ─────────────────────────────────
+wikiRoutes.get('/projects/:projectId/drafts', async (c) => {
+  const { projectId } = c.req.param();
+  const status = c.req.query('status') || undefined;
+  const drafts = await wikiDraftService.getDraftsByProject(projectId, status);
+  return c.json({ drafts });
+});
+
+// ── GET /api/wiki/drafts/:draftId ────────────────────────────────────────────
+wikiRoutes.get('/drafts/:draftId', async (c) => {
+  const { draftId } = c.req.param();
+  const draft = await wikiDraftService.getDraft(draftId);
+  if (!draft) return c.json({ error: 'Draft not found' }, 404);
+  return c.json(draft);
+});
+
+// ── POST /api/wiki/drafts/:draftId/apply ─────────────────────────────────────
+wikiRoutes.post('/drafts/:draftId/apply', async (c) => {
+  const { draftId } = c.req.param();
+  const parsed = await parseBody(c, draftApplyBodySchema);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  try {
+    const result = await wikiDraftService.applyDraft(draftId, parsed.data);
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'apply failed' }, 400);
+  }
+});
+
+// ── POST /api/wiki/drafts/:draftId/apply-partial ─────────────────────────────
+wikiRoutes.post('/drafts/:draftId/apply-partial', async (c) => {
+  const { draftId } = c.req.param();
+  const parsed = await parseBody(c, draftApplyPartialBodySchema);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  try {
+    const result = await wikiDraftService.applyPartial(draftId, parsed.data.blockIds, {
+      actorId: parsed.data.actorId,
+      confirmManualOverride: parsed.data.confirmManualOverride,
+    });
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'apply-partial failed' }, 400);
+  }
+});
+
+// ── POST /api/wiki/drafts/:draftId/edit ──────────────────────────────────────
+wikiRoutes.post('/drafts/:draftId/edit', async (c) => {
+  const { draftId } = c.req.param();
+  const parsed = await parseBody(c, draftEditBodySchema);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  try {
+    const result = await wikiDraftService.editAndApply(draftId, parsed.data.changes, {
+      actorId: parsed.data.actorId,
+      confirmManualOverride: parsed.data.confirmManualOverride,
+    });
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'edit failed' }, 400);
+  }
+});
+
+// ── POST /api/wiki/drafts/:draftId/discard ───────────────────────────────────
+wikiRoutes.post('/drafts/:draftId/discard', async (c) => {
+  const { draftId } = c.req.param();
+  const parsed = await parseBody(c, draftApplyBodySchema);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  try {
+    const draft = await wikiDraftService.discardDraft(draftId, { actorId: parsed.data.actorId });
+    return c.json(draft);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'discard failed' }, 400);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

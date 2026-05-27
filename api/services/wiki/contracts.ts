@@ -37,6 +37,8 @@ export type WikiRefreshTaskStatus =
   | 'stale_checking'
   | 'semantic_reviewing'
   | 'patching'
+  | 'scanning'
+  | 'drafting'
   | 'completed'
   | 'failed';
 export type WikiSourcePrecision = 'ast' | 'symbol' | 'chunk' | 'file';
@@ -164,6 +166,8 @@ export interface WikiRefreshTask {
   priority: 'p0' | 'p1' | 'p2' | 'p3';
   affectedBlockIds: string[];
   patchIds: string[];
+  draftIds: string[];
+  affectedDocumentIds: string[];
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
@@ -176,6 +180,7 @@ export interface WikiSnapshotTree {
   blocks: WikiBlock[];
   sourceBindings: WikiSourceBinding[];
   patchesSummary: { pending: number; conflict: number };
+  draftsSummary: { ready: number; generating: number };
 }
 
 // ── Input types ──────────────────────────────────────────────────────────────
@@ -227,4 +232,42 @@ export interface MarkdownExportResult {
   content: string;
   snapshotId: string;
   revision: number;
+}
+
+// ── Refresh Draft types ─────────────────────────────────────────────────────
+
+export type WikiRefreshDraftStatus =
+  | 'generating'
+  | 'ready'
+  | 'partially_applied'
+  | 'applied'
+  | 'discarded'
+  | 'expired';
+
+export interface DraftBlockChange {
+  blockId: string;
+  action: 'update' | 'delete' | 'insert_after';
+  oldContent: unknown | null;
+  newContent: unknown | null;
+  reasoning: string;
+  confidence: number;
+  risk: 'low' | 'medium' | 'high';
+}
+
+export interface WikiRefreshDraft {
+  id: string;
+  projectId: string;
+  snapshotId: string;
+  refreshTaskId: string | null;
+  documentId: string;
+  status: WikiRefreshDraftStatus;
+  changes: DraftBlockChange[];
+  summary: string | null;
+  aggregateRisk: 'low' | 'medium' | 'high';
+  aggregateConfidence: number;
+  sourceCommitSha: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  decidedAt: string | null;
+  decidedBy: string | null;
 }

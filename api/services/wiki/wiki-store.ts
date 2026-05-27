@@ -14,6 +14,7 @@ import {
   wikiSourceBindings,
   wikiPatches,
   wikiRefreshTasks,
+  wikiRefreshDrafts,
   wikiDesignMappingTasks,
 } from '../../db/schema.js';
 import type {
@@ -214,6 +215,16 @@ export const wikiStore = {
       .where(eq(wikiDocuments.snapshotId, snapshotId))
       .orderBy(wikiDocuments.sortOrder);
     return rows.map(rowToDocument);
+  },
+
+  async getDocument(documentId: string): Promise<WikiDocument | null> {
+    const db = getDb();
+    const rows = await db
+      .select()
+      .from(wikiDocuments)
+      .where(eq(wikiDocuments.id, documentId))
+      .limit(1);
+    return rows[0] ? rowToDocument(rows[0]) : null;
   },
 
   async upsertDocument(input: UpsertWikiDocumentInput): Promise<WikiDocument> {
@@ -457,7 +468,15 @@ export const wikiStore = {
       conflict: patches.filter(p => p.status === 'conflict').length,
     };
 
-    return { snapshot, documents, blocks, sourceBindings, patchesSummary };
+    const db2 = getDb();
+    const draftRows = await db2.select().from(wikiRefreshDrafts)
+      .where(eq(wikiRefreshDrafts.projectId, snapshot.projectId));
+    const draftsSummary = {
+      ready: draftRows.filter(r => r.status === 'ready').length,
+      generating: draftRows.filter(r => r.status === 'generating').length,
+    };
+
+    return { snapshot, documents, blocks, sourceBindings, patchesSummary, draftsSummary };
   },
 
   async purgeProject(projectId: string): Promise<void> {

@@ -72,8 +72,10 @@ function buildWorkflowSegment(role: 'planner' | 'writer' | 'document-writer'): s
 - file.glob(pattern) — 按模式匹配查找特定类型的文件
 - grep.search(query, path) — 搜索关键概念、接口、核心类名
 - file.read — 读取核心入口文件和发现的关键文件
-- wiki.read_code_index(kind: 'symbols') — 核心符号，关注 degree 高的
+- wiki.read_code_index(kind: 'symbols') — 核心符号，关注 degree、callCount、callerCount 高的
 - wiki.read_graph(section: 'communities') — 功能聚类（可选）
+- wiki.read_call_graph(symbolName, direction) — 查询核心 symbol 的调用关系，理解模块间耦合
+- wiki.impact_analysis(target, targetType) — 分析关键模块的影响范围，辅助文档边界划分
 
 大型项目应探索更多模块，小型项目可以快速完成。
 

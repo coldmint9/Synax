@@ -586,6 +586,7 @@ export const wikiBlockRevisions = sqliteTable('wiki_block_revisions', {
   contentHash: text('content_hash').notNull().default(''),
   source: text('source').notNull().default('agent'),
   patchId: text('patch_id'),
+  draftId: text('draft_id'),
   createdAt: text('created_at').notNull(),
   createdBy: text('created_by'),
 });
@@ -644,6 +645,24 @@ export const wikiPatches = sqliteTable('wiki_patches', {
   decidedAt: text('decided_at'),
 });
 
+export const wikiRefreshDrafts = sqliteTable('wiki_refresh_drafts', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  snapshotId: text('snapshot_id').notNull(),
+  refreshTaskId: text('refresh_task_id'),
+  documentId: text('document_id').notNull(),
+  status: text('status').notNull().default('generating'),
+  changesJson: text('changes_json').notNull().default('[]'),
+  summary: text('summary'),
+  aggregateRisk: text('aggregate_risk').notNull().default('low'),
+  aggregateConfidence: real('aggregate_confidence').notNull().default(0.5),
+  sourceCommitSha: text('source_commit_sha'),
+  createdAt: text('created_at').notNull(),
+  expiresAt: text('expires_at'),
+  decidedAt: text('decided_at'),
+  decidedBy: text('decided_by'),
+});
+
 export const wikiRefreshTasks = sqliteTable('wiki_refresh_tasks', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
@@ -654,6 +673,8 @@ export const wikiRefreshTasks = sqliteTable('wiki_refresh_tasks', {
   priority: text('priority').notNull().default('p1'),
   affectedBlockIdsJson: text('affected_block_ids_json').notNull().default('[]'),
   patchIdsJson: text('patch_ids_json').notNull().default('[]'),
+  draftIdsJson: text('draft_ids_json').notNull().default('[]'),
+  affectedDocumentIdsJson: text('affected_document_ids_json').notNull().default('[]'),
   errorMessage: text('error_message'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -705,6 +726,14 @@ export type WikiPatchRow = typeof wikiPatches.$inferSelect;
 export type NewWikiPatchRow = typeof wikiPatches.$inferInsert;
 export type WikiRefreshTaskRow = typeof wikiRefreshTasks.$inferSelect;
 export type NewWikiRefreshTaskRow = typeof wikiRefreshTasks.$inferInsert;
+
+export const wikiScanCache = sqliteTable('wiki_scan_cache', {
+  projectId: text('project_id').primaryKey(),
+  scanId: text('scan_id').notNull(),
+  codeIndexJson: text('code_index_json').notNull(),
+  communitiesJson: text('communities_json'),
+  updatedAt: text('updated_at').notNull(),
+});
 
 // ── Wiki Evaluations & Plans ────────────────────────────────────────────────
 

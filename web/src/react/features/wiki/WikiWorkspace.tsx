@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Drawer, Skeleton, Spinner } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
 import { useLocale } from '../../../hooks/useLocale'
+import { useWikiGenerationEvents } from '../../../hooks/useWikiGenerationEvents'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
@@ -18,9 +19,21 @@ import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../c
 
 function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated: () => void }) {
   const { t } = useLocale()
-  const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [phase, setPhase] = useState<string | null>(null)
+
+  const gen = useWikiGenerationEvents({
+    projectId,
+    onCompleted: () => onGenerated(),
+    onFailed: (msg) => setError(msg),
+  })
+
+  const phase = gen.phase === 'starting' ? t('wikiPhaseStarting')
+    : gen.phase === 'refreshing' ? t('wikiPhaseAgentAnalyzing')
+    : gen.phase === 'outline_ready' ? t('wikiPhaseOutlineReady')
+    : gen.phase === 'writing' && gen.progress
+      ? `${t('wikiPhaseWriting')} (${(gen.progress.docIndex ?? 0) + 1}/${gen.progress.totalDocs})`
+    : gen.phase === 'writing' ? t('wikiPhaseWriting')
+    : null
 
   async function handleGenerate() {
     const projects = useShellStore.getState().projects
@@ -31,50 +44,14 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
       return
     }
 
-    setGenerating(true)
     setError(null)
-    setPhase(t('wikiPhaseStarting'))
+    gen.start()
 
     try {
       await wikiApi.generate(projectId, { workDir, locale: 'zh' })
-      setPhase(t('wikiPhaseAnalyzing'))
-
-      // Poll /latest until snapshot is ready or failed (max 3 min)
-      const deadline = Date.now() + 180_000
-      while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, 3000))
-        try {
-          const tree = await wikiApi.getLatest(projectId)
-          if (tree.snapshot?.status === 'ready') {
-            onGenerated()
-            return
-          }
-          if (tree.snapshot?.status === 'failed') {
-            setError(t('wikiGenerationFailed'))
-            setGenerating(false)
-            setPhase(null)
-            return
-          }
-          if (tree.snapshot?.status === 'outline_ready' || tree.snapshot?.status === 'writing') {
-            if (tree.documents.length > 0) {
-              onGenerated()
-              return
-            }
-            setPhase(t('wikiPhaseOutlineReady'))
-          }
-          if (tree.snapshot?.status === 'refreshing') {
-            setPhase(t('wikiPhaseAgentAnalyzing'))
-          }
-        } catch {
-          // transient fetch error — keep polling
-        }
-      }
-      setError(t('wikiGenerationTimeout'))
     } catch (err) {
+      gen.reset()
       setError(err instanceof Error ? err.message : t('wikiGenerationError'))
-    } finally {
-      setGenerating(false)
-      setPhase(null)
     }
   }
 
@@ -102,7 +79,7 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
           )
         )}
 
-        {generating && phase && (
+        {gen.active && phase && (
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
             <Spinner size="sm" className="text-primary" />
             <p className="text-[11px] text-primary">{phase}</p>
@@ -112,12 +89,12 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
         <Button
           className="mt-4 w-full"
           onPress={handleGenerate}
-          isDisabled={generating}
+          isDisabled={gen.active}
         >
-          {generating
+          {gen.active
             ? <Spinner size="sm" />
             : <Sparkles size={14} />}
-          {generating ? t('wikiGenerating') : t('wikiGenerate')}
+          {gen.active ? t('wikiGenerating') : t('wikiGenerate')}
         </Button>
       </div>
     </div>
@@ -126,9 +103,21 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
 
 function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () => void }) {
   const { t } = useLocale()
-  const [retrying, setRetrying] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [phase, setPhase] = useState<string | null>(null)
+
+  const gen = useWikiGenerationEvents({
+    projectId,
+    onCompleted: () => onRetry(),
+    onFailed: (msg) => setError(msg),
+  })
+
+  const phase = gen.phase === 'starting' ? t('wikiPhaseRestarting')
+    : gen.phase === 'refreshing' ? t('wikiPhaseAgentAnalyzing')
+    : gen.phase === 'outline_ready' ? t('wikiPhaseOutlineReady')
+    : gen.phase === 'writing' && gen.progress
+      ? `${t('wikiPhaseWriting')} (${(gen.progress.docIndex ?? 0) + 1}/${gen.progress.totalDocs})`
+    : gen.phase === 'writing' ? t('wikiPhaseWriting')
+    : null
 
   async function handleRetry() {
     const projects = useShellStore.getState().projects
@@ -139,45 +128,14 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
       return
     }
 
-    setRetrying(true)
     setError(null)
-    setPhase(t('wikiPhaseRestarting'))
+    gen.start()
 
     try {
       await wikiApi.generate(projectId, { workDir, locale: 'zh' })
-      setPhase(t('wikiPhaseAnalyzing'))
-
-      const deadline = Date.now() + 180_000
-      while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, 3000))
-        try {
-          const tree = await wikiApi.getLatest(projectId)
-          if (tree.snapshot?.status === 'ready') {
-            onRetry()
-            return
-          }
-          if (tree.snapshot?.status === 'failed') {
-            setError(t('wikiGenerationFailedAgain'))
-            setRetrying(false)
-            setPhase(null)
-            return
-          }
-          if (tree.snapshot?.status === 'refreshing' && tree.documents.length > 0) {
-            onRetry()
-            return
-          }
-          if ((tree.snapshot?.status === 'outline_ready' || tree.snapshot?.status === 'writing') && tree.documents.length > 0) {
-            onRetry()
-            return
-          }
-        } catch { /* keep polling */ }
-      }
-      setError(t('wikiGenerationTimeoutShort'))
     } catch (err) {
+      gen.reset()
       setError(err instanceof Error ? err.message : t('wikiRetryError'))
-    } finally {
-      setRetrying(false)
-      setPhase(null)
     }
   }
 
@@ -203,7 +161,7 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
           )
         )}
 
-        {retrying && phase && (
+        {gen.active && phase && (
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
             <Spinner size="sm" className="text-primary" />
             <p className="text-[11px] text-primary">{phase}</p>
@@ -213,10 +171,10 @@ function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () =>
         <Button
           className="mt-4 w-full"
           onPress={handleRetry}
-          isDisabled={retrying}
+          isDisabled={gen.active}
         >
-          {retrying ? <Spinner size="sm" /> : <RefreshCw size={14} />}
-          {retrying ? t('wikiRetrying') : t('wikiRetry')}
+          {gen.active ? <Spinner size="sm" /> : <RefreshCw size={14} />}
+          {gen.active ? t('wikiRetrying') : t('wikiRetry')}
         </Button>
       </div>
     </div>

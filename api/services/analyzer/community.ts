@@ -164,7 +164,7 @@ function buildSemanticGraph(
     const sourceCommunity = communityByFileId.get(edge.sourceFileId)
     const targetCommunity = communityByFileId.get(edge.targetFileId)
     if (!sourceCommunity || !targetCommunity || sourceCommunity === targetCommunity) continue
-    const key = `${sourceCommunity}->${targetCommunity}`
+    const key = `imports:${sourceCommunity}->${targetCommunity}`
     const current = edgesByKey.get(key)
     if (current) {
       current.weight += edge.weight
@@ -179,5 +179,37 @@ function buildSemanticGraph(
     })
   }
 
+  // Aggregate cross-community call edges
+  for (const [callerId, callees] of graph.callGraph) {
+    for (const calleeId of callees) {
+      const callerFile = findFileForSymbol(callerId, graph)
+      const calleeFile = findFileForSymbol(calleeId, graph)
+      if (!callerFile || !calleeFile) continue
+      const sourceCommunity = communityByFileId.get(callerFile)
+      const targetCommunity = communityByFileId.get(calleeFile)
+      if (!sourceCommunity || !targetCommunity || sourceCommunity === targetCommunity) continue
+      const key = `calls:${sourceCommunity}->${targetCommunity}`
+      const current = edgesByKey.get(key)
+      if (current) {
+        current.weight += 1
+        continue
+      }
+      edgesByKey.set(key, {
+        id: `semantic_call_${hashParts(sourceCommunity, targetCommunity)}`,
+        source: sourceCommunity,
+        target: targetCommunity,
+        kind: 'calls',
+        weight: 1,
+      })
+    }
+  }
+
   return { nodes, edges: [...edgesByKey.values()] }
+}
+
+function findFileForSymbol(symbolId: string, graph: AnalyzerGraph): string | null {
+  for (const [fileId, symbolIds] of graph.symbolIdsByFile) {
+    if (symbolIds.includes(symbolId)) return fileId
+  }
+  return null
 }
