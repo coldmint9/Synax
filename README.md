@@ -112,7 +112,7 @@ This diagram is the lobby map, not the full tour. For the real architecture walk
 ### Install
 
 ```bash
-git clone https://github.com/weiweizwc98/Synax.git
+git clone https://github.com/coldmint9/Synax.git
 cd Synax
 npm install
 ```
