@@ -216,9 +216,67 @@ npm run make:desktop
 
 打包产物会把 `server-dist`、`web/dist` 和数据库迁移文件作为 Electron resources 一起带上。
 
-## 贡献
+## 参与贡献
 
-贡献内容应包含清晰的问题描述、聚焦的实现以及验证说明。对于较大的改动，建议先提交 issue 或设计讨论，提前确认 Runtime、持久化和 UI 影响。
+贡献内容应包含清晰的问题描述、聚焦的实现以及验证说明。对于较大的改动，建议先提交 Issue 或 Discussion 讨论设计方案，提前确认 Runtime、持久化和 UI 影响。
+
+### 分支与提交
+
+- 从 `main` 创建功能分支，命名格式：`feat/xxx`、`fix/xxx`、`refactor/xxx`
+- 使用 [Conventional Commits](https://www.conventionalcommits.org/) 风格：
+
+  ```
+  feat(wiki): add document export to PDF
+  fix(agent-runtime): prevent duplicate tool calls in streaming
+  refactor(api): simplify provider resolution logic
+  ```
+
+- 保持提交粒度小且聚焦，一个 PR 解决一个问题。
+
+### Pull Request 规范
+
+1. 标题简洁，不超过 70 个字符。
+2. 描述中包含：
+   - 变更摘要（做了什么、为什么做）。
+   - 验证方式（测试命令或手动步骤）。
+   - 如果涉及 UI 变更，附上截图。
+3. 提交前确保以下检查通过：
+
+   ```bash
+   npm run typecheck
+   npm run test
+   npm run lint
+   ```
+
+### 代码风格
+
+- TypeScript strict mode，不使用 `any`（除非有充分理由）。
+- 后端路由放在 `api/routes/`，业务逻辑放在 `api/services/`。
+- 前端组件优先使用 [HeroUI](https://heroui.com) v3 组件库。
+- 状态管理使用 Zustand，store 放在 `web/src/react/state/`。
+- 文件命名：组件用 PascalCase，工具函数用 camelCase。
+- 不写多余注释，代码自解释；只在 "为什么" 不明显时加注释。
+
+### 测试
+
+- 修改运行时行为、持久化逻辑、路由契约或 Wiki 生成时，需要添加或更新测试。
+- API 测试：Vitest，放在 `__tests__/` 目录或 `.test.ts` 后缀文件中。
+- Web 测试：Vitest + React Testing Library（`web/vitest.config.ts`）。
+
+### 数据库变更
+
+- 迁移文件放在 `api/db/migrations/`，使用原始 SQL。
+- 迁移必须是幂等的（使用 `CREATE TABLE IF NOT EXISTS` 等）。
+- 启动时按顺序执行，无需手动运行迁移命令。
+
+### 报告问题
+
+开 Issue 时请包含：
+
+- 问题描述和复现步骤。
+- 期望行为 vs 实际行为。
+- 环境信息（OS、Node 版本、浏览器）。
+- 相关日志或截图。
 
 ## 许可
 
