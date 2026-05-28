@@ -49,7 +49,7 @@ import type {
   ProjectMemory,
   SessionFilter,
   SnapshotOpts,
-  SynapseNodeContext,
+  SynaxNodeContext,
   SyncEvent,
 } from '../contracts/context.js';
 import type { CoordForest } from '../contracts/forest.js';
@@ -2015,7 +2015,7 @@ export class ContextService {
                 ? 'uses'
                 : 'references',
           confidence: Math.max(0.65, signal.confidence),
-          reason: 'Shared manually from Synapse Context.',
+          reason: 'Shared manually from Synax Context.',
           createdBy: input.actorId ?? 'web',
         }),
       ];
@@ -2023,7 +2023,7 @@ export class ContextService {
     return [];
   }
 
-  getSynapseContextForNode(projectId: string, nodeId: string): SynapseNodeContext {
+  getSynaxContextForNode(projectId: string, nodeId: string): SynaxNodeContext {
     const blocksById = new Map(this.listContextBlocks(projectId, 500).map((block) => [block.id, block]));
     const signals = this.listContextSignals(projectId, 500).filter((signal) => this.isDisplayableSignal(signal));
     const signalById = new Map(signals.map((signal) => [signal.id, signal]));
@@ -2037,8 +2037,8 @@ export class ContextService {
         if (!signal) return null;
         return { suggestion, signal, block: blocksById.get(signal.blockId) ?? null };
       })
-      .filter((item): item is SynapseNodeContext['incoming'][number] => Boolean(item));
-    const inputs: SynapseNodeContext['inputs'] = [];
+      .filter((item): item is SynaxNodeContext['incoming'][number] => Boolean(item));
+    const inputs: SynaxNodeContext['inputs'] = [];
     for (const binding of this.getContextBindingsForTarget(projectId, 'node', nodeId).filter(
       (candidate) => candidate.relation !== 'produces',
     )) {
@@ -2050,7 +2050,7 @@ export class ContextService {
       .filter((signal) => signal.sourceNodeId === nodeId)
       .map((signal) => ({ signal, block: blocksById.get(signal.blockId) ?? null }))
       .slice(0, 20);
-    const handoffs: SynapseNodeContext['handoffs'] = [];
+    const handoffs: SynaxNodeContext['handoffs'] = [];
     for (const suggestion of suggestions.filter(
       (candidate) => candidate.sourceNodeId === nodeId && candidate.targetNodeId !== nodeId && candidate.status === 'pending',
     )) {

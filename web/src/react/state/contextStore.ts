@@ -26,7 +26,7 @@ import {
   type Suggestion,
 } from '../../lib/api/context'
 
-const PREF_KEY = 'synapse.context.preferences'
+const PREF_KEY = 'Synax.context.preferences'
 
 interface StoredPrefs {
   selectedSessionByProject: Record<string, string | null>

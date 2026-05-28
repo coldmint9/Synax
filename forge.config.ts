@@ -6,8 +6,8 @@ const config: ForgeConfig = {
     onlyModules: [],
   },
   packagerConfig: {
-    name: 'Synapse',
-    appBundleId: 'com.synapse.desktop',
+    name: 'Synax',
+    appBundleId: 'com.Synax.desktop',
     icon: path.resolve(__dirname, 'electron/resources/icon'),
     asar: true,
     extraResource: [

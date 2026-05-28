@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- 0000_init_context.sql — Synapse 内置上下文管理系统初始 DDL
+-- 0000_init_context.sql — Synax 内置上下文管理系统初始 DDL
 -- 参考 .qoder/specs/context-management-system.md §3.3
 --
 -- 包含：

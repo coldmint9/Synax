@@ -358,7 +358,7 @@ export interface ContextDisclosureSuggestion {
   decidedAt: string | null;
 }
 
-export interface SynapseNodeContext {
+export interface SynaxNodeContext {
   nodeId: string;
   incoming: Array<{
     suggestion: ContextDisclosureSuggestion;

@@ -10,7 +10,7 @@ async function main() {
   const planner = agentSessionRuntime.create({
     projectId: 'agent-runtime-smoke',
     profileId: 'planner',
-    prompt: 'Plan a small Synapse workflow.',
+    prompt: 'Plan a small Synax workflow.',
   });
 
   const explorer = agentSessionRuntime.create({

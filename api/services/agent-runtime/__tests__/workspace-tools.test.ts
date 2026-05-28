@@ -23,7 +23,7 @@ afterEach(() => {
 
 describe('session workspace roots', () => {
   it('allows tools to operate relative to a project directory outside process.cwd()', () => {
-    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-project-root-'));
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Synax-project-root-'));
     tempDirs.push(projectDir);
     fs.writeFileSync(path.join(projectDir, 'entry.ts'), 'export const value = 42;\n', 'utf8');
 

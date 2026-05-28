@@ -4,7 +4,7 @@
  */
 import { wikiLoopService } from '../api/services/wiki/wiki-loop-service.js';
 
-const PROJECT_ID = 'test-synapse';
+const PROJECT_ID = 'test-Synax';
 const WORK_DIR = '.';
 
 async function main() {

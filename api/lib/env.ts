@@ -18,7 +18,7 @@ export const LOG_LEVEL = env('LOG_LEVEL', 'info');
 
 function defaultDataRoot(): string {
   if (NODE_ENV === 'test' || process.env.VITEST_WORKER_ID || process.env.VITEST) {
-    return path.join(os.tmpdir(), `synapse-vitest-${process.env.VITEST_WORKER_ID ?? 'worker'}-${process.pid}`);
+    return path.join(os.tmpdir(), `Synax-vitest-${process.env.VITEST_WORKER_ID ?? 'worker'}-${process.pid}`);
   }
   return '.data';
 }

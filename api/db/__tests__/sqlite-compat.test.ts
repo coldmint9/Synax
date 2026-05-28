@@ -11,7 +11,7 @@ const originalEnv = {
 let tempDir = '';
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-sqlite-compat-'));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Synax-sqlite-compat-'));
   process.env.DATA_ROOT = tempDir;
   process.env.LOG_LEVEL = 'warn';
   vi.resetModules();

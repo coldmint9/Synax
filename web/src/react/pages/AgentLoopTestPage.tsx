@@ -145,7 +145,7 @@ export default function AgentLoopTestPage() {
         {/* Left sidebar */}
         <aside className="hidden w-72 shrink-0 border-r border-border bg-card/60 p-5 lg:block">
           <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Synapse Runtime</p>
+            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Synax Runtime</p>
             <h1 className="mt-2 text-xl font-semibold">Agent Loop Test</h1>
           </div>
 

@@ -81,7 +81,7 @@ function buildContextSignalPrompt(req: ExtractContextSignalsRequest): { system: 
   }))
   const loop = req.loopRecord
   return {
-    system: 'You are a Synapse context-signal extractor. Return strict JSON matching {signals:[...], handoffs:[...], warnings:[...]} and nothing else.',
+    system: 'You are a Synax context-signal extractor. Return strict JSON matching {signals:[...], handoffs:[...], warnings:[...]} and nothing else.',
     user: JSON.stringify({
       projectId: req.projectId,
       sourceNodeId: loop.nodeId,

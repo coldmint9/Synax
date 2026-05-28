@@ -4,7 +4,7 @@ const ENCRYPTED_PREFIX = 'enc:v1:'
 const MASKED_SECRET = '****'
 
 function encryptionKey(): Buffer {
-  const raw = process.env.CONFIG_ENCRYPTION_KEY || process.env.SYNAPSE_CONFIG_SECRET || 'synapse-local-config-secret'
+  const raw = process.env.CONFIG_ENCRYPTION_KEY || process.env.Synax_CONFIG_SECRET || 'Synax-local-config-secret'
   return createHash('sha256').update(raw).digest()
 }
 

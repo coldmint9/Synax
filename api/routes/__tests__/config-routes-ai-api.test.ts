@@ -11,7 +11,7 @@ const originalEnv = {
 let tempDir = ''
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-config-routes-'))
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Synax-config-routes-'))
   process.env.DATA_ROOT = tempDir
   process.env.CONFIG_ENCRYPTION_KEY = 'route-test-secret'
   vi.restoreAllMocks()
