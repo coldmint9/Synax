@@ -87,19 +87,7 @@ Synax 基于几个很朴素的判断：
 
 ## 架构
 
-```mermaid
-flowchart LR
-  Repo[本地代码库] --> Analyzer[tree-sitter 分析器]
-  Analyzer --> API[Hono API]
-  API --> DB[(SQLite + JSON 配置)]
-  API --> Runtime[Agent Runtime]
-  Runtime --> Providers[LLM Provider / ACP]
-  Web[React Web App] --> API
-  Desktop[Electron Shell] --> Web
-  Desktop --> API
-```
-
-这张图只是大厅导览，不是完整参观路线。想看真正细的架构说明，可以安装 Synax 后把这个仓库导进去，然后生成 Wiki 自己看。本项目本来就是干这个的，让它讲自己，多少有点自觉。
+想看真正细的架构说明，可以安装 Synax 后把这个仓库导进去，然后生成 Wiki 自己看。本项目本来就是干这个的，让它讲自己，多少有点自觉。😄
 
 ## 快速开始
 
