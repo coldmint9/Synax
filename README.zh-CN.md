@@ -7,6 +7,7 @@
 [English](./README.md) | 简体中文
 
 ![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.1.0--snapshot-64748b?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black)
 ![Electron](https://img.shields.io/badge/Electron-42-47848f?style=flat-square&logo=electron&logoColor=white)
@@ -14,11 +15,64 @@
 
 </div>
 
+## 支持的 LLM 供应商
+
+先说大家最关心的模型。Synax 目前在产品配置里支持 OpenAI 和 Anthropic，并通过自定义 API 连接预置了 DeepSeek、OpenRouter 和 xAI。
+
+同时支持接入符合以下协议格式的自定义端点：
+
+- OpenAI Chat Completions compatible
+- OpenAI Responses compatible
+- Anthropic Messages compatible
+
+作者目前主要用 DeepSeek V4 开发和自测 Synax。如果某些路径看起来对 DeepSeek 用户特别顺手，这不是错觉。
+
+由于当前仍是 `0.1.0-snapshot`，Provider 细节还在演进中。代码里有一些更底层的 runtime adapter，但在完成配置、校验和 UI 串联之前，不应把它们视为已经产品化支持的 Provider。
+
 ## 项目概览
 
 Synax 让 AI 辅助研发始终贴近真实代码库。你可以导入本地仓库，生成可追溯到源码的设计 Wiki，运行有权限边界的 Agent 会话，并把项目记忆、决策、运行证据和实现上下文持续沉淀下来。
 
 项目采用 TypeScript monorepo 架构，包含 Hono API、React Web 客户端、SQLite 本地持久化、基于 tree-sitter 的代码分析、Profile 驱动的 Agent Runtime，以及 Electron 桌面壳。
+
+## 产品目标
+
+Synax 的目标是成为一个本地优先的 AI 研发工作台，把代码库转化为可长期复用的上下文：可追溯到源码的设计文档、可执行计划、Agent 运行历史、实现证据和项目记忆。
+
+长期目标是让人负责定义意图和边界，让 Agent 在明确权限约束下执行有限任务，并在产品演进过程中持续对齐计划、文档和真实代码。
+
+## 项目理念
+
+Synax 基于几个很朴素的判断：
+
+- 代码库是真相源。文档、计划和 Agent 记忆必须能追溯到真实文件、符号和变更，而不是飘在代码上方自说自话。
+- 人负责意图。AI 可以探索、总结、起草和执行，但产品方向、取舍和风险接受必须是清晰的人类决策。
+- Agent 应该是有边界的协作者，而不是神秘的后台魔法。一次有价值的 Agent 运行需要上下文、权限、证据和可恢复的历史记录。
+- 文档应该是活的。不能感知代码漂移的 Wiki 很快会变成另一份过期资产；Synax 把文档视为需要刷新、打补丁、review 和追溯的对象。
+- 本地优先是一种信任设计。源码、凭据、运行状态和项目记忆默认应该由用户自己控制。
+- 上下文会复利。每一次运行、决策和纠正，都应该让下一次运行更便宜、更安全、更不迷路。
+
+## 版本说明
+
+当前版本：`0.1.0-snapshot`。
+
+这只是一个早期开发快照，不是稳定发布版本。很多产品细节、交互流程、运行边界和工程稳定性工作都还没有完善。
+
+当前已经具备或正在完善的能力：
+
+- 本地项目导入和项目元数据管理。
+- 代码库扫描、源码索引，以及 Wiki 生成和刷新基础能力。
+- LLM Provider 配置和本地运行时设置。
+- Agent Session Runtime 基础能力，包括流式事件、会话状态和权限记录。
+- Electron 桌面端打包基础能力。
+
+当前尚未完成或仍不稳定的部分：
+
+- Plan 相关工作流仍处于实验阶段，尚未完成。
+- ACP 相关的发现、连接、执行和端到端工作流尚未完成。
+- 权限审批体验、错误处理、恢复流程和安全边界仍需要继续打磨。
+- 稳定版本发布前，API 契约、数据结构、Prompt 和 UI 细节都可能继续变化，不保证兼容。
+- 测试、打包、文档和生产可用性还需要进一步加强。
 
 ## 核心能力
 
@@ -26,7 +80,7 @@ Synax 让 AI 辅助研发始终贴近真实代码库。你可以导入本地仓�
 - Agent Runtime：内置 planner、executor、reviewer、explorer 和 Wiki 专用 Profile，支持流式事件、权限闸门、暂停、恢复、取消和会话历史。
 - Context Memory：把项目上下文、对话、运行证据、token 预警、压缩状态和可搜索记忆保存在本地 SQLite。
 - Code Intelligence：索引 TypeScript、TSX、JavaScript、JSX、Python、Java、C、C++、C#、Go、Rust、PHP、Ruby、Kotlin、Swift、SQL 和 shell 文件。
-- Provider Flexibility：支持配置 OpenAI、Anthropic、DeepSeek、OpenRouter、xAI、自定义 OpenAI-compatible API、OpenCode 和 Cursor 等 ACP Provider，以及基于 AI SDK 的模型运行时。
+- Provider Flexibility：支持配置 OpenAI、Anthropic、DeepSeek、OpenRouter、xAI，以及自定义兼容 API 端点。
 - Web 与桌面端：既可以作为 Vite Web 应用独立运行，也可以打包为带 API sidecar 的 Electron 桌面应用。
 
 ## 架构
@@ -42,6 +96,8 @@ flowchart LR
   Desktop[Electron Shell] --> Web
   Desktop --> API
 ```
+
+这张图只是大厅导览，不是完整参观路线。想看真正细的架构说明，可以安装 Synax 后把这个仓库导进去，然后生成 Wiki 自己看。本项目本来就是干这个的，让它讲自己，多少有点自觉。
 
 ## 快速开始
 
@@ -176,4 +232,4 @@ npm run make:desktop
 
 ## 许可
 
-当前仓库尚未包含 license 文件。在作为开源项目发布或分发前，请先补充明确的开源许可证。
+Synax 基于 [MIT License](./LICENSE) 开源。

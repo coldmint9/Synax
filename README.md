@@ -7,6 +7,7 @@ Local-first AI code intelligence workbench for codebase wikis, agent sessions, a
 English | [Simplified Chinese](./README.zh-CN.md)
 
 ![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.1.0--snapshot-64748b?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black)
 ![Electron](https://img.shields.io/badge/Electron-42-47848f?style=flat-square&logo=electron&logoColor=white)
@@ -14,11 +15,64 @@ English | [Simplified Chinese](./README.zh-CN.md)
 
 </div>
 
+## Supported LLM Providers
+
+First things first: models. Synax currently exposes provider setup for OpenAI and Anthropic, plus presets for DeepSeek, OpenRouter, and xAI through custom API connections.
+
+It also supports custom endpoints that speak one of these API formats:
+
+- OpenAI Chat Completions compatible
+- OpenAI Responses compatible
+- Anthropic Messages compatible
+
+Author note: Synax is currently developed and dogfooded mostly with DeepSeek V4. If a few paths feel especially friendly to DeepSeek users, that is not a coincidence.
+
+Because this is `0.1.0-snapshot`, provider details are still evolving. Some lower-level runtime adapters exist in code, but they should not be treated as product-ready provider support until they are wired into configuration, validation, and the UI.
+
 ## Overview
 
 Synax helps engineering teams keep AI-assisted development grounded in the real codebase. Import a local repository, generate a source-linked design wiki, run scoped agent sessions, and keep project memory, decisions, and implementation context searchable over time.
 
 The project is built as a TypeScript monorepo with a Hono API, React web client, SQLite persistence, tree-sitter based code analysis, a profile-driven agent runtime, and an Electron desktop shell.
+
+## Product Goal
+
+Synax aims to become a local-first AI engineering workspace that turns a codebase into durable, reusable context: source-linked design documents, executable plans, agent run history, implementation evidence, and project memory.
+
+The long-term goal is to let humans define intent and boundaries, let agents execute bounded work with clear permissions, and continuously reconcile plans, documentation, and code reality as the product evolves.
+
+## Philosophy
+
+Synax is built around a few practical beliefs:
+
+- The codebase is the source of truth. Documents, plans, and agent memory must point back to real files, symbols, and changes instead of floating above the work.
+- Humans own intent. AI can explore, summarize, draft, and execute, but product direction, tradeoffs, and risk acceptance should remain explicit human decisions.
+- Agents should be bounded collaborators, not mysterious background magic. Every useful agent run needs context, permissions, evidence, and a recoverable history.
+- Documentation should stay alive. A wiki that cannot notice code drift becomes another stale artifact; Synax treats docs as something to refresh, patch, review, and trace.
+- Local-first is a trust feature. Source code, credentials, runtime state, and project memory should stay under the user's control by default.
+- Context is compound interest. Every run, decision, and correction should make the next run cheaper, safer, and less confused.
+
+## Version Status
+
+Current version: `0.1.0-snapshot`.
+
+This is an early development snapshot, not a stable release. Many product details, interaction flows, runtime boundaries, and engineering hardening work are still incomplete.
+
+Currently available or actively evolving:
+
+- Local project import and project metadata management.
+- Codebase scanning, source indexing, and Wiki generation/refresh foundations.
+- LLM provider configuration and local runtime settings.
+- Agent session runtime foundations, including streamed events, session state, and permission records.
+- Electron desktop packaging foundations.
+
+Known incomplete or unstable areas:
+
+- Plan-related workflows are still experimental and not complete.
+- ACP-related discovery, connection, execution, and end-to-end workflows are not complete.
+- Permission approval UX, error handling, recovery flows, and safety boundaries still need refinement.
+- API contracts, data schemas, prompts, and UI details may change without compatibility guarantees before a stable release.
+- Tests, packaging, documentation, and production readiness still need more hardening.
 
 ## Highlights
 
@@ -26,7 +80,7 @@ The project is built as a TypeScript monorepo with a Hono API, React web client,
 - Agent Runtime: run planner, executor, reviewer, explorer, and wiki-specific profiles with streaming events, permission gates, pause, resume, cancel, and session history.
 - Context Memory: persist project context, conversations, run evidence, token warnings, compression state, and searchable memory in local SQLite.
 - Code Intelligence: index TypeScript, TSX, JavaScript, JSX, Python, Java, C, C++, C#, Go, Rust, PHP, Ruby, Kotlin, Swift, SQL, and shell files.
-- Provider Flexibility: configure OpenAI, Anthropic, DeepSeek, OpenRouter, xAI, custom OpenAI-compatible APIs, ACP providers such as OpenCode and Cursor, and AI SDK backed model runtimes.
+- Provider Flexibility: configure OpenAI, Anthropic, DeepSeek, OpenRouter, xAI, and custom compatible API endpoints.
 - Web and Desktop: use Synax as a standalone Vite web app or package it as an Electron desktop app with a bundled API sidecar.
 
 ## Architecture
@@ -42,6 +96,8 @@ flowchart LR
   Desktop[Electron shell] --> Web
   Desktop --> API
 ```
+
+This diagram is the lobby map, not the full tour. For the real architecture walkthrough, install Synax, import this repository, and generate the Wiki. The project is built to explain codebases, so yes, it can explain itself. Very polite of it.
 
 ## Quick Start
 
@@ -176,4 +232,4 @@ Contributions should include a clear problem statement, a focused implementation
 
 ## License
 
-This repository does not currently include a license file. Add a license before publishing or distributing it as an open-source project.
+Synax is released under the [MIT License](./LICENSE).
