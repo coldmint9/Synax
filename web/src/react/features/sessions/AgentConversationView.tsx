@@ -308,18 +308,6 @@ export function AgentConversationView({
         )}
       </ScrollShadow>
 
-      {/* Result */}
-      {session?.status === 'completed' && session.resultSummary && (
-        <Card className="shadow-none border-success/15 bg-success/[0.03]">
-          <div className="px-3.5 py-2.5">
-            <Chip size="sm" color="success" variant="flat" className="mb-1 text-[10px]">Completed</Chip>
-            <div className="text-[13px] leading-relaxed text-muted-foreground">
-              {session.resultSummary}
-            </div>
-          </div>
-        </Card>
-      )}
-
       {session?.status === 'failed' && (
         <Card className="shadow-none border-destructive/15 bg-destructive/[0.03]">
           <div className="px-3.5 py-2.5">
