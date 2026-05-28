@@ -1,19 +1,3 @@
-// ---------------------------------------------------------------------------
-// context-smoke.ts — 上下文管理系统端到端 smoke 测试（不经过 HTTP）
-//
-// 覆盖：
-//   Phase1  DB 初始化 / schema / FTS5 触发器
-//   Phase1  Session / Entry / Snapshot / Memory / Link CRUD
-//   Phase2  SessionManager resume / SearchService 全文 + suggest
-//   Phase3  MemoryManager extract / CompressionService / 相关记忆查询
-//   Phase5  ExportProject / ImportProject(merge & replace)
-//           SyncBus 事件发射
-//           projectId 跨项目隔离
-//
-// 运行：bun api/__smoke__/context-smoke.ts
-// 会在独立 DATA_ROOT(=.data/_smoke) 下创建 context.db，结束后打印汇总。
-// ---------------------------------------------------------------------------
-
 import fs from 'node:fs';
 import path from 'node:path';
 
