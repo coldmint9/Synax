@@ -1,7 +1,4 @@
-/**
- * End-to-end test script for wikiLoopService.generate()
- * Run with: bun run scripts/test-wiki-loop.ts
- */
+
 import { wikiLoopService } from '../api/services/wiki/wiki-loop-service.js';
 
 const PROJECT_ID = 'test-Synax';

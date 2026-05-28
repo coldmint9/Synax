@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Search contract mirror for the built-in Bun analyzer
+// Search contract mirror for the built-in analyzer
 // ---------------------------------------------------------------------------
 
 export type SearchMode = 'keyword' | 'hybrid';

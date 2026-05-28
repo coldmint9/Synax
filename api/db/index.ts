@@ -1,17 +1,3 @@
-// ---------------------------------------------------------------------------
-// api/db/index.ts — SQLite 连接单例 + WAL 模式 + 迁移执行
-//
-// 职责：
-//   1. 创建/打开 context.db（位于 DATA_ROOT/context.db）
-//   2. 启用 WAL、foreign_keys、synchronous=NORMAL
-//   3. 首次启动执行 migrations/*.sql
-//   4. 暴露 drizzle 实例 + 原生 Bun SQLite 实例
-//
-// 设计要点：
-//   - 单文件、单连接：Bun SQLite 是同步 API，一个进程一个连接足矣。
-//   - 迁移采用幂等 DDL（CREATE TABLE IF NOT EXISTS），允许多次重复执行。
-//   - _meta.schema_version 用于未来结构演进时选择对应迁移链路。
-// ---------------------------------------------------------------------------
 
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';

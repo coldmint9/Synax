@@ -1,17 +1,3 @@
-// ---------------------------------------------------------------------------
-// context-http-smoke.ts — 通过 Hono app.request 做完整 HTTP + SSE 验证
-//
-// 覆盖：
-//   - 路由层 Zod 校验（缺 projectId、非法 role、超长 content 等）
-//   - Session / Entry / Snapshot / Memory / Link REST
-//   - /sync SSE 事件实时推送（session_created / entry_created）
-//   - /search 全文检索
-//   - /export & /import (merge & replace)
-//   - NodeDetailPanel 需要的 linksByNode 与 getEntry
-//
-// 运行：bun api/__smoke__/context-http-smoke.ts
-// ---------------------------------------------------------------------------
-
 import fs from 'node:fs';
 import path from 'node:path';
 

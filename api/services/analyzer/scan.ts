@@ -379,7 +379,7 @@ export function buildForestFromScan(scan: CodeMapScanResult): CoordForest {
     goalsCreated: [...nodeMap.values()].filter((node) => node.type === 'goal').length,
     actionsCreated: [...nodeMap.values()].filter((node) => node.type === 'action').length,
     linksCreated: links.length,
-    message: `Local Bun analyzer scanned ${scan.codeIndex.files.length} files.`,
+    message: `Local analyzer scanned ${scan.codeIndex.files.length} files.`,
     warnings: scan.warnings,
   }
 
@@ -397,7 +397,7 @@ export function buildForestFromScan(scan: CodeMapScanResult): CoordForest {
   }
   forest.lifecycle = { initState: 'ready', autoSync: false }
   forest.meta.updatedAt = now()
-  forest.meta.tokens.analyzerToken = 'local-bun'
+  forest.meta.tokens.analyzerToken = 'local'
   return forest
 }
 
