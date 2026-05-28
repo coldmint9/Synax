@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import WorkbenchLayout from './layouts/WorkbenchLayout'
 import { WelcomeView } from './layouts/WelcomeView'
 import AgentLoopTestPage from './pages/AgentLoopTestPage'
+import AboutPage from './pages/AboutPage'
 import GlobalSettingsPage from './features/settings/GlobalSettingsPage'
 import ProjectSettingsPage from './features/settings/ProjectSettingsPage'
 import { useElectronMenu } from '../lib/electron-menu'
@@ -26,6 +27,7 @@ export default function App() {
           <Route element={<WorkbenchLayout />}>
             <Route path="/" element={<WelcomeView />} />
             <Route path="/settings" element={<GlobalSettingsPage />} />
+            <Route path="/about" element={<AboutPage />} />
             <Route path="/projects/:projectId" element={<Navigate to="wiki" replace />} />
             {/* wiki/sessions 由 WorkbenchLayout keep-alive 块渲染，路由仅用于 URL 匹配 */}
             <Route path="/projects/:projectId/wiki" element={null} />
