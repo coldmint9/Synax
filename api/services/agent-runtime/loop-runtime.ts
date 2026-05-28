@@ -1306,6 +1306,16 @@ export class AgentLoopRuntime {
           createdAt: nowIso(),
         }),
       );
+      this.store.appendMessage({
+        id: makeRuntimeId("msg"),
+        sessionId,
+        runId,
+        stepId,
+        role: "assistant",
+        content: step.thought.trim(),
+        metadata: { type: "thinking" },
+        createdAt: nowIso(),
+      });
     }
     if (step.message?.trim()) {
       logger.info(

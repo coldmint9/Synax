@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { createHash } from 'node:crypto';
-import { eq, desc, and, inArray } from 'drizzle-orm';
+import { eq, desc, and, inArray, notInArray } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { getDb } from '../../db/index.js';
 import {
@@ -16,6 +16,10 @@ import {
   wikiRefreshTasks,
   wikiRefreshDrafts,
   wikiDesignMappingTasks,
+  wikiPlans,
+  wikiPlanNodes,
+  wikiPlanNodeArtifacts,
+  wikiEvaluations,
 } from '../../db/schema.js';
 import type {
   WikiSnapshot,
@@ -489,6 +493,21 @@ export const wikiStore = {
     await db.delete(wikiRefreshTasks).where(eq(wikiRefreshTasks.projectId, projectId));
     await db.delete(wikiDesignMappingTasks).where(eq(wikiDesignMappingTasks.projectId, projectId));
     await db.delete(wikiSnapshots).where(eq(wikiSnapshots.projectId, projectId));
+
+    // 清空所有 drafts
+    await db.delete(wikiRefreshDrafts).where(eq(wikiRefreshDrafts.projectId, projectId));
+
+    // 归档未完结的 plans（设为 discarded）
+    const terminalStatuses = ['completed', 'discarded'];
+    await db.update(wikiPlans)
+      .set({ status: 'discarded', updatedAt: new Date().toISOString() })
+      .where(and(
+        eq(wikiPlans.projectId, projectId),
+        notInArray(wikiPlans.status, terminalStatuses),
+      ));
+
+    // 清理关联的 evaluations（引用的 block 已被删除）
+    await db.delete(wikiEvaluations).where(eq(wikiEvaluations.projectId, projectId));
   },
 
   async deleteDocumentsBySnapshot(snapshotId: string): Promise<void> {

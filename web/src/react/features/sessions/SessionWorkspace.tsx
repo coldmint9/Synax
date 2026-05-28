@@ -61,7 +61,7 @@ function SessionStatusCard({ stats }: { stats: SessionStats }) {
       </div>
       <div className="space-y-0.5">
         <div className="flex items-center justify-between text-[9px] text-muted-foreground">
-          <span>Context</span><span>{stats.contextUsedPercent}%</span>
+          <span>Usage</span><span>{stats.contextUsedPercent}%</span>
         </div>
         <div className="h-1.5 w-full rounded-full bg-secondary/60">
           <div

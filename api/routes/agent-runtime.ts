@@ -401,10 +401,17 @@ agentRuntimeRoutes.get('/sessions/:sessionId/todos', (c) => {
     const sessionId = c.req.param('sessionId');
     agentSessionRuntime.get(sessionId);
     const events = agentRuntimeStore.listEvents(sessionId);
-    let items: unknown[] = [];
+    let items: Array<{ id: string; label: string; status: string }> = [];
     for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].type === 'todo_updated') {
-        items = (events[i].payload.items as unknown[]) ?? [];
+      if (events[i].type === 'task_state_updated') {
+        const tasks = (events[i].payload.tasks as Array<{ id: string; subject: string; status: string }>) ?? [];
+        items = tasks
+          .filter(t => t.status !== 'deleted')
+          .map(t => ({
+            id: t.id,
+            label: t.subject,
+            status: t.status === 'completed' ? 'done' : t.status,
+          }));
         break;
       }
     }

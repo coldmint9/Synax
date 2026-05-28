@@ -1010,24 +1010,27 @@ export class AgentRuntimeStore {
     const db = getRawSqlite();
 
     const stepRows = db
-      .prepare("SELECT metadata_json FROM agent_runtime_run_steps WHERE session_id = ?")
+      .prepare("SELECT metadata_json FROM agent_runtime_run_steps WHERE session_id = ? ORDER BY step_index ASC")
       .all(sessionId) as Array<{ metadata_json: string }>;
 
     let input = 0;
     let output = 0;
+    let latestInputTokens = 0;
     for (const row of stepRows) {
       try {
         const meta = JSON.parse(row.metadata_json || '{}');
         const u = meta.usage ?? {};
-        input += (u.inputTokens ?? u.promptTokens ?? u.input_tokens ?? 0);
-        output += (u.outputTokens ?? u.completionTokens ?? u.output_tokens ?? 0);
+        const stepInput = u.inputTokens ?? u.promptTokens ?? u.input_tokens ?? 0;
+        const stepOutput = u.outputTokens ?? u.completionTokens ?? u.output_tokens ?? 0;
+        input += stepInput;
+        output += stepOutput;
+        if (stepInput > 0) latestInputTokens = stepInput;
       } catch { /* skip */ }
     }
     const total = input + output;
 
-    const contextLimit = 128_000;
-    const compaction = this.getLatestCompactionRecord(sessionId);
-    const contextUsed = compaction ? compaction.originalTokenCount : total;
+    const contextLimit = 200_000;
+    const contextUsed = latestInputTokens > 0 ? latestInputTokens : total;
     const contextUsedPercent = Math.min(Math.round((contextUsed / contextLimit) * 100), 100);
 
     const toolCountRow = db
