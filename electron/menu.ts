@@ -32,7 +32,7 @@ export function buildAppMenu(projects?: Project[]): void {
     {
       label: app.name,
       submenu: [
-        { role: 'about', label: '关于 Synapse' },
+        { role: 'about', label: '关于 Synax' },
         { type: 'separator' },
         {
           label: '偏好设置...',
@@ -42,11 +42,11 @@ export function buildAppMenu(projects?: Project[]): void {
         { type: 'separator' },
         { role: 'services', label: '服务' },
         { type: 'separator' },
-        { role: 'hide', label: '隐藏 Synapse' },
+        { role: 'hide', label: '隐藏 Synax' },
         { role: 'hideOthers', label: '隐藏其他' },
         { role: 'unhide', label: '显示全部' },
         { type: 'separator' },
-        { role: 'quit', label: '退出 Synapse' },
+        { role: 'quit', label: '退出 Synax' },
       ],
     },
     {

@@ -93,7 +93,7 @@ export async function validateGatewayModel(input: ValidateLlmRequest): Promise<{
     return { ok: false, error: `Unknown provider: ${parsed.providerId}` }
   }
   if (!provider.supported) {
-    return { ok: false, error: `Provider '${parsed.providerId}' is unsupported in Synapse runtime` }
+    return { ok: false, error: `Provider '${parsed.providerId}' is unsupported in Synax runtime` }
   }
 
   try {

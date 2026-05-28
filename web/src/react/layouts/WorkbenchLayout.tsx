@@ -83,7 +83,7 @@ export default function WorkbenchLayout() {
     return () => { cancelled = true }
   }, [effectiveProjectId])
 
-  const projectName = project?.name ?? (effectiveProjectId || 'Synapse')
+  const projectName = project?.name ?? (effectiveProjectId || 'Synax')
 
   // Derive activePanel from current route
   const activePanel: ActivityPanel | null = (() => {

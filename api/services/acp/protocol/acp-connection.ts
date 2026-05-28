@@ -138,9 +138,9 @@ export function spawnAcpConnection(
  * IMPORTANT: ``cwd`` is the working directory the remote ACP agent will
  * anchor its filesystem view to. Callers MUST pass the *target project's*
  * path (e.g. ``source.localPath`` for the repo being analyzed) — falling
- * back to ``process.cwd()`` makes the agent treat the Synapse repo itself
+ * back to ``process.cwd()`` makes the agent treat the Synax repo itself
  * as the target, which silently poisons seed-extraction output with
- * Synapse's own feature tree. When no explicit cwd is available we still
+ * Synax's own feature tree. When no explicit cwd is available we still
  * fall back, but log a warning so the caller gets nudged to fix it.
  */
 export async function initializeSession(

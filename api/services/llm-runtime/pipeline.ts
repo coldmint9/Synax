@@ -43,7 +43,7 @@ export function hasConfiguredApiKey(
 
 export function missingApiKeyMessage(providerId: string, envNames: string[]): string {
   const envHint = envNames.length > 0 ? ` or set ${envNames.join(' or ')}` : ''
-  return `Missing API key for provider '${providerId}'. Configure one in Synapse settings${envHint}.`
+  return `Missing API key for provider '${providerId}'. Configure one in Synax settings${envHint}.`
 }
 
 function assertApiKey(selection: ResolvedModelSelection): void {

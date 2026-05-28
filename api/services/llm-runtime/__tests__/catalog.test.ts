@@ -10,7 +10,7 @@ const originalEnv = {
 let tempDir = ''
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-llm-catalog-'))
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Synax-llm-catalog-'))
   process.env.DATA_ROOT = tempDir
   vi.restoreAllMocks()
   vi.resetModules()

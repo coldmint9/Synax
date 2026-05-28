@@ -21,7 +21,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     label: 'Planner',
     kind: 'planner',
     mode: 'primary',
-    description: 'Turn project intent into Synapse goals and actions.',
+    description: 'Turn project intent into Synax goals and actions.',
     defaultThinkingMode: 'standard',
     allowedCapabilities: ['subagent.delegate', 'task.create', 'task.update', 'task.get', 'task.list', 'skill.load'],
     permissionDefaults: [
@@ -40,7 +40,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     label: 'Executor',
     kind: 'executor',
     mode: 'primary',
-    description: 'Read, edit, and coordinate bounded implementation work inside Synapse.',
+    description: 'Read, edit, and coordinate bounded implementation work inside Synax.',
     defaultThinkingMode: 'standard',
     allowedCapabilities: [
       'file.glob',

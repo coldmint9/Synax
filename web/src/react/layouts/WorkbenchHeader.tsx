@@ -454,7 +454,7 @@ export function WorkbenchHeader({
           <Dropdown.Trigger>
             <div role="button" tabIndex={0} className="wh-project-trigger">
               <span className="truncate max-w-[120px] text-xs font-medium">
-                {hasProject ? projectName : 'Synapse'}
+                {hasProject ? projectName : 'Synax'}
               </span>
               <ChevronsUpDown size={12} className="text-muted-foreground shrink-0" />
             </div>

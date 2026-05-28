@@ -32,7 +32,7 @@ export async function instantiateProvider(
   config: ResolvedProviderConfig,
 ): Promise<unknown> {
   if (!provider.npm || !REGISTRY[provider.npm]) {
-    throw new Error(`Provider '${provider.id}' is unsupported in Synapse runtime`)
+    throw new Error(`Provider '${provider.id}' is unsupported in Synax runtime`)
   }
 
   const create = await getFactory(provider.npm)

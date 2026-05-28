@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { profileService } from '../profile-service.js';
 
 describe('profileService', () => {
-  it('lists the Synapse business agent profiles', () => {
+  it('lists the Synax business agent profiles', () => {
     const ids = profileService.list().map((profile) => profile.id);
     expect(ids).toEqual(expect.arrayContaining(['planner', 'executor', 'reviewer', 'explorer']));
     expect(ids).not.toContain('wiki');

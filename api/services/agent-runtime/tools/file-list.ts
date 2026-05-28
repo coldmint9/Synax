@@ -8,7 +8,7 @@ export const fileListTool: RegisteredTool = {
   id: 'file.list',
   label: 'List Files',
   description:
-    'List files and folders inside the Synapse workspace. Use this before reading when you need to inspect a directory.',
+    'List files and folders inside the Synax workspace. Use this before reading when you need to inspect a directory.',
   category: 'read',
   mutability: 'read',
   resumeBehavior: 'auto',

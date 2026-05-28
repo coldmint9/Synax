@@ -27,7 +27,7 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
   const warnings = input.context?.warnings.length ? `\n\nContext warnings:\n${input.context.warnings.join('\n')}` : '';
   const loopHints = input.profile.loopHints?.length ? `\nLoop hints:\n${input.profile.loopHints.join('\n')}` : '';
   return [
-    `You are the Synapse ${input.profile.label} runtime agent.`,
+    `You are the Synax ${input.profile.label} runtime agent.`,
     `Profile kind: ${input.profile.kind}. Runtime mode: ${input.profile.mode}. Thinking mode: ${input.profile.defaultThinkingMode}.`,
     `Allowed capabilities: ${input.profile.allowedCapabilities.join(', ') || 'none'}.`,
     'You are in a step-based tool loop.',
@@ -43,7 +43,7 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     loopHints,
     input.disclosureHint ?? '',
     '',
-    '[Synapse Context]',
+    '[Synax Context]',
     blocks,
     warnings,
   ]

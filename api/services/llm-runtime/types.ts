@@ -85,7 +85,7 @@ export interface LlmGatewayRequest {
 }
 
 export interface LlmGatewayConfig {
-  backend?: 'synapse-gateway' | 'mock'
+  backend?: 'Synax-gateway' | 'mock'
   purpose: LlmPurpose | string
   projectId?: string
   model?: string

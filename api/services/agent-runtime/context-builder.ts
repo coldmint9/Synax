@@ -39,9 +39,9 @@ export class AgentContextBuilder {
           sourceId: block.id,
         });
       }
-      if (suggestions.length === 0) warnings.push('No stored Synapse context suggestions matched this request.');
+      if (suggestions.length === 0) warnings.push('No stored Synax context suggestions matched this request.');
     } catch (error) {
-      warnings.push(`Synapse context adapter unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      warnings.push(`Synax context adapter unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
     const bundle: AgentContextBundle = {
       id: makeRuntimeId('acb'),

@@ -60,7 +60,7 @@ function createTransaction(sqlite: DatabaseSync): SqliteTransaction {
       const useSavepoint = state.depth > 0 || sqliteIsInTransaction(sqlite);
 
       if (useSavepoint) {
-        const savepoint = `synapse_tx_${state.nextSavepointId++}`;
+        const savepoint = `Synax_tx_${state.nextSavepointId++}`;
         sqlite.exec(`SAVEPOINT ${savepoint}`);
         state.depth++;
         try {

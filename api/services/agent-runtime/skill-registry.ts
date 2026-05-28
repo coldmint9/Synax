@@ -9,7 +9,7 @@ const BUILTIN_SKILLS: AgentSkill[] = [
   {
     id: 'coord-planner',
     label: 'Coord Planner',
-    description: 'Break product intent into Synapse goals, actions, and review criteria.',
+    description: 'Break product intent into Synax goals, actions, and review criteria.',
     source: 'system',
     version: '1.0.0',
   appliesTo: ['planner'],
@@ -29,7 +29,7 @@ const BUILTIN_SKILLS: AgentSkill[] = [
     requiredCapabilities: ['grep.search', 'diff.read', 'file.write', 'file.patch', 'subagent.delegate'],
     permissionHints: ['task', 'write'],
     contentRef: 'system://skills/action-executor',
-    content: 'Read first, then perform bounded file changes through Synapse tools. Preserve session evidence.',
+    content: 'Read first, then perform bounded file changes through Synax tools. Preserve session evidence.',
     status: 'available',
   },
   {

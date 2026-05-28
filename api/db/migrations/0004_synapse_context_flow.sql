@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- 0004_synapse_context_flow.sql — Synapse Context Flow
+-- 0004_Synax_context_flow.sql — Synax Context Flow
 --
 -- Adds high-value context signals extracted from complete agent loop records
 -- and disclosure suggestions that let users approve cross-node handoffs.

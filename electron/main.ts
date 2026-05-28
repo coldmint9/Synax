@@ -111,7 +111,7 @@ async function bootstrap(): Promise<void> {
 
 app.whenReady().then(bootstrap).catch((err) => {
   console.error('[electron] failed to bootstrap', err);
-  dialog.showErrorBox('Synapse failed to start', err instanceof Error ? err.stack ?? err.message : String(err));
+  dialog.showErrorBox('Synax failed to start', err instanceof Error ? err.stack ?? err.message : String(err));
 });
 
 app.on('window-all-closed', () => {

@@ -3,7 +3,7 @@ import * as z from 'zod/v4';
 import { buildLoopToolSet } from '../loop-ai-tools.js';
 
 describe('loop AI tool adapter', () => {
-  it('maps Synapse dotted tool ids to provider-safe tool names', () => {
+  it('maps Synax dotted tool ids to provider-safe tool names', () => {
     const toolSet = buildLoopToolSet([
       {
         id: 'file.read',
