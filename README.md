@@ -2,7 +2,7 @@
 
 # Synax
 
-Local-first AI code intelligence workbench for codebase wikis, agent sessions, and implementation context.
+Turn a local codebase into a source-linked, refreshable design wiki that becomes the context layer for agent-assisted development.
 
 English | [Simplified Chinese](./README.zh-CN.md)
 
@@ -31,7 +31,9 @@ Because this is `0.1.0-snapshot`, provider details are still evolving. Some lowe
 
 ## Overview
 
-Synax helps engineering teams keep AI-assisted development grounded in the real codebase. Import a local repository, generate a source-linked design wiki, run scoped agent sessions, and keep project memory, decisions, and implementation context searchable over time.
+Synax is built around one core loop: import a local codebase, analyze its files and symbols, generate a Codebase Design Wiki with source bindings, then keep that wiki refreshed as the code changes.
+
+The Wiki is not meant to be decorative documentation. It is the project's structured context layer: a place where architecture, modules, APIs, flows, risks, decisions, source references, refresh drafts, and future agent work can meet without drifting away from the actual code.
 
 The project is built as a TypeScript monorepo with a Hono API, React web client, SQLite persistence, tree-sitter based code analysis, a profile-driven agent runtime, and an Electron desktop shell.
 
