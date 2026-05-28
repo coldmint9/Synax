@@ -2,7 +2,7 @@
 
 # Synax
 
-本地优先的 AI 代码智能工作台，用于生成代码库 Wiki、运行 Agent 会话，并沉淀实现上下文。
+把本地代码库生成可追溯、可刷新的设计 Wiki，并让它成为 Agent 理解项目和协作开发的上下文底座。
 
 [English](./README.md) | 简体中文
 
@@ -31,7 +31,9 @@
 
 ## 项目概览
 
-Synax 让 AI 辅助研发始终贴近真实代码库。你可以导入本地仓库，生成可追溯到源码的设计 Wiki，运行有权限边界的 Agent 会话，并把项目记忆、决策、运行证据和实现上下文持续沉淀下来。
+Synax 围绕一个核心闭环构建：导入本地代码库，分析文件与符号，生成带源码绑定的 Codebase Design Wiki，并在代码变化后持续刷新这份 Wiki。
+
+这份 Wiki 不是摆着好看的文档。它是项目的结构化上下文层：架构、模块、API、流程、风险、决策、源码引用、刷新草稿和未来 Agent 工作，都应该在这里汇合，并且始终贴着真实代码走。
 
 项目采用 TypeScript monorepo 架构，包含 Hono API、React Web 客户端、SQLite 本地持久化、基于 tree-sitter 的代码分析、Profile 驱动的 Agent Runtime，以及 Electron 桌面壳。
 
