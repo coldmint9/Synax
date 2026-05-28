@@ -153,7 +153,7 @@ describe('resolveLlmSelection', () => {
           ...current.providerConnections,
           [providerId]: {
             providerId,
-            baseUrl: 'https://www.right.codes/codex/v1',
+            baseUrl: 'https://api.example.com/v1',
             extra: {
               kind: 'api',
               apiFormat: 'openai',
