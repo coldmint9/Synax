@@ -221,6 +221,64 @@ Packaged builds include `server-dist`, `web/dist`, and database migrations as El
 
 Contributions should include a clear problem statement, a focused implementation, and verification notes. For larger changes, open an issue or design discussion first so the runtime, persistence, and UI impact can be reviewed before code lands.
 
+### Branch and Commit
+
+- Branch from `main` with a descriptive name: `feat/xxx`, `fix/xxx`, `refactor/xxx`
+- Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+  ```
+  feat(wiki): add document export to PDF
+  fix(agent-runtime): prevent duplicate tool calls in streaming
+  refactor(api): simplify provider resolution logic
+  ```
+
+- Keep commits small and focused — one PR solves one problem.
+
+### Pull Request Checklist
+
+1. Title under 70 characters.
+2. Description includes:
+   - Summary of what changed and why.
+   - How to verify (test commands or manual steps).
+   - Screenshots if UI changed.
+3. All checks pass:
+
+   ```bash
+   npm run typecheck
+   npm run test
+   npm run lint
+   ```
+
+### Code Style
+
+- TypeScript strict mode; avoid `any` without justification.
+- Backend routes in `api/routes/`, business logic in `api/services/`.
+- Frontend components use [HeroUI](https://heroui.com) v3.
+- State management with Zustand in `web/src/react/state/`.
+- File naming: PascalCase for components, camelCase for utilities.
+- No unnecessary comments — only explain the "why" when non-obvious.
+
+### Testing
+
+- Add or update tests when touching runtime behavior, persistence, route contracts, or wiki generation.
+- API tests: Vitest, `__tests__/` directories or `.test.ts` suffix.
+- Web tests: Vitest + React Testing Library (`web/vitest.config.ts`).
+
+### Database Changes
+
+- Migration files go in `api/db/migrations/` as raw SQL.
+- Must be idempotent (`CREATE TABLE IF NOT EXISTS`, etc.).
+- Executed sequentially on startup — no manual migration step needed.
+
+### Reporting Issues
+
+Please include:
+
+- Description and reproduction steps.
+- Expected vs actual behavior.
+- Environment info (OS, Node version, browser).
+- Relevant logs or screenshots.
+
 ## License
 
 Synax is released under the [MIT License](./LICENSE).

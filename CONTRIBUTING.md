@@ -1,15 +1,17 @@
-# 参与贡献
+# Contributing
 
-感谢你对 Synax 的关注。本文档说明如何参与项目开发。
+English | [简体中文](./CONTRIBUTING.zh-CN.md)
 
-## 前置要求
+Thank you for your interest in Synax. This document explains how to participate in development.
+
+## Prerequisites
 
 - Node.js 24+
 - npm 10+
 - Git
-- 原生编译工具链（macOS 需要 Xcode Command Line Tools，用于 tree-sitter）
+- Native build toolchain (macOS requires Xcode Command Line Tools for tree-sitter)
 
-## 本地开发
+## Local Development
 
 ```bash
 git clone https://github.com/coldmint9/Synax.git
@@ -18,32 +20,32 @@ npm install
 npm run dev
 ```
 
-API 启动在 `http://localhost:3210`，Web 启动在 `http://localhost:5173`。
+API starts at `http://localhost:3210`, web app at `http://localhost:5173`.
 
-## 项目结构
+## Project Structure
 
 ```
-api/        后端：Hono 路由、SQLite、Drizzle ORM、Agent Runtime、Wiki 服务
-web/        前端：React 19、Vite、HeroUI、Zustand
-electron/   桌面端：Electron 壳、IPC、API sidecar
-scripts/    开发脚本
-docs/       设计文档
+api/        Backend: Hono routes, SQLite, Drizzle ORM, Agent Runtime, Wiki services
+web/        Frontend: React 19, Vite, HeroUI, Zustand
+electron/   Desktop: Electron shell, IPC, API sidecar
+scripts/    Development scripts
+docs/       Design documents
 ```
 
-## 提交前检查
+## Pre-submit Checks
 
-提交 PR 前请确保以下命令通过：
+Run these before opening a PR:
 
 ```bash
-npm run typecheck   # TypeScript 类型检查
-npm run test        # 运行测试
-npm run lint        # ESLint 检查
+npm run typecheck   # TypeScript type checking
+npm run test        # Run tests
+npm run lint        # ESLint
 ```
 
-## 分支与提交
+## Branch and Commit
 
-- 从 `main` 创建功能分支，命名格式：`feat/xxx`、`fix/xxx`、`refactor/xxx`
-- Commit message 使用 [Conventional Commits](https://www.conventionalcommits.org/) 风格：
+- Branch from `main` with a descriptive name: `feat/xxx`, `fix/xxx`, `refactor/xxx`
+- Use [Conventional Commits](https://www.conventionalcommits.org/):
 
   ```
   feat(wiki): add document export to PDF
@@ -52,47 +54,47 @@ npm run lint        # ESLint 检查
   docs(readme): update quick start section
   ```
 
-- 保持提交粒度小且聚焦，一个 PR 解决一个问题
+- Keep commits small and focused — one PR solves one problem.
 
-## Pull Request 规范
+## Pull Request Guidelines
 
-1. PR 标题简洁，不超过 70 个字符
-2. 描述中包含：
-   - 变更摘要（做了什么、为什么做）
-   - 测试说明（如何验证）
-   - 如果涉及 UI 变更，附上截图
-3. 较大的改动请先开 Issue 或 Discussion 讨论设计方案
+1. PR title under 70 characters.
+2. Description includes:
+   - Summary of what changed and why.
+   - How to verify (test commands or manual steps).
+   - Screenshots if UI changed.
+3. For larger changes, open an Issue or Discussion first.
 
-## 代码风格
+## Code Style
 
-- TypeScript strict mode，不使用 `any`（除非有充分理由）
-- 后端路由放在 `api/routes/`，业务逻辑放在 `api/services/`
-- 前端组件优先使用 [HeroUI](https://heroui.com) v3 组件库
-- 状态管理使用 Zustand，store 放在 `web/src/react/state/`
-- 文件命名：组件用 PascalCase，工具函数用 camelCase
-- 不写多余注释，代码自解释；只在 "为什么" 不明显时加注释
+- TypeScript strict mode; avoid `any` without justification.
+- Backend routes in `api/routes/`, business logic in `api/services/`.
+- Frontend components use [HeroUI](https://heroui.com) v3.
+- State management with Zustand in `web/src/react/state/`.
+- File naming: PascalCase for components, camelCase for utilities.
+- No unnecessary comments — only explain the "why" when non-obvious.
 
-## 测试
+## Testing
 
-- 修改运行时行为、持久化逻辑、路由契约或 Wiki 生成时，需要添加或更新测试
-- API 测试使用 Vitest，放在 `__tests__/` 目录或 `.test.ts` 后缀文件中
-- Web 测试使用 Vitest + React Testing Library（`web/vitest.config.ts`）
+- Add or update tests when touching runtime behavior, persistence, route contracts, or wiki generation.
+- API tests: Vitest, `__tests__/` directories or `.test.ts` suffix.
+- Web tests: Vitest + React Testing Library (`web/vitest.config.ts`).
 
-## 数据库变更
+## Database Changes
 
-- 迁移文件放在 `api/db/migrations/`，使用原始 SQL
-- 迁移必须是幂等的（使用 `CREATE TABLE IF NOT EXISTS` 等）
-- 启动时按顺序执行，无需手动运行迁移命令
+- Migration files go in `api/db/migrations/` as raw SQL.
+- Must be idempotent (`CREATE TABLE IF NOT EXISTS`, etc.).
+- Executed sequentially on startup — no manual migration step needed.
 
-## 报告问题
+## Reporting Issues
 
-开 Issue 时请包含：
+Please include:
 
-- 问题描述和复现步骤
-- 期望行为 vs 实际行为
-- 环境信息（OS、Node 版本、浏览器）
-- 相关日志或截图
+- Description and reproduction steps.
+- Expected vs actual behavior.
+- Environment info (OS, Node version, browser).
+- Relevant logs or screenshots.
 
 ## License
 
-贡献的代码将以 [MIT License](./LICENSE) 发布。
+Contributions are released under the [MIT License](./LICENSE).
