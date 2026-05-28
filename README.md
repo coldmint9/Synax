@@ -1,6 +1,10 @@
 <div align="center">
 
 # Synax
+<img width="898" height="80" alt="image" src="https://github.com/user-attachments/assets/ba60d60b-ee63-4409-b158-33754f4efe80" />
+
+
+
 
 Turn a local codebase into a source-linked, refreshable design wiki that becomes the context layer for agent-assisted development.
 
