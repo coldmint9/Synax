@@ -87,19 +87,8 @@ Known incomplete or unstable areas:
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  Repo[Local codebase] --> Analyzer[tree-sitter analyzer]
-  Analyzer --> API[Hono API]
-  API --> DB[(SQLite + JSON config)]
-  API --> Runtime[Agent runtime]
-  Runtime --> Providers[LLM providers / ACP]
-  Web[React web app] --> API
-  Desktop[Electron shell] --> Web
-  Desktop --> API
-```
 
-This diagram is the lobby map, not the full tour. For the real architecture walkthrough, install Synax, import this repository, and generate the Wiki. The project is built to explain codebases, so yes, it can explain itself. Very polite of it.
+This diagram is the lobby map, not the full tour. For the real architecture walkthrough, install Synax, import this repository, and generate the Wiki. The project is built to explain codebases, so yes, it can explain itself. Very polite of it.😄
 
 ## Quick Start
 
