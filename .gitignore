@@ -59,7 +59,6 @@ venv/
 .ruff_cache/
 
 # analyzer runtime data (per-project whoosh / meta / graph / cloned repos)
-/.data/
 /analyzer/.data/
 /analyzer/.env
 

@@ -20,10 +20,10 @@ function defaultDataRoot(): string {
   if (NODE_ENV === 'test' || process.env.VITEST_WORKER_ID || process.env.VITEST) {
     return path.join(os.tmpdir(), `Synax-vitest-${process.env.VITEST_WORKER_ID ?? 'worker'}-${process.pid}`);
   }
-  return '.data';
+  return path.join(os.homedir(), '.synax');
 }
 
-/** 数据根目录（与 analyzer .data 共用）用于项目元数据等持久化 */
+/** 数据根目录，统一存放于 ~/.synax */
 export const DATA_ROOT = env('DATA_ROOT', defaultDataRoot());
 
 /** 是否为开发环境 */
