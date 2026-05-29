@@ -3,7 +3,8 @@
   "private": true,
   "version": "0.1.0-snapshot",
   "license": "MIT",
-  "description": "",
+  "author": "Synax",
+  "description": "AI-powered code analysis platform",
   "type": "module",
   "main": "dist-electron/main.js",
   "engines": {
