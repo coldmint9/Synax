@@ -29,6 +29,47 @@
 
 由于当前仍是 `0.1.0-snapshot`，Provider 细节还在演进中。代码里有一些更底层的 runtime adapter，但在完成配置、校验和 UI 串联之前，不应把它们视为已经产品化支持的 Provider。
 
+## 快速开始
+
+### 环境要求
+
+- Node.js 24 或更高版本。
+- npm 10 或更高版本。
+- Git。
+- tree-sitter 依赖需要原生构建工具。macOS 请安装 Xcode Command Line Tools；Windows 请安装 Visual Studio Build Tools（C++ 工作负载）；Linux 请安装 `build-essential`（Debian/Ubuntu）或等效包（`gcc`、`g++`、`make`）。
+- 如需生成 Wiki 或运行 Agent，需要至少配置一个 LLM Provider key。
+
+### 安装
+
+```bash
+git clone https://github.com/coldmint9/Synax.git
+cd Synax
+npm install
+```
+
+### 启动 Web 应用
+
+```bash
+npm run dev
+```
+
+API 默认启动在 `http://localhost:3210`，Web 应用默认启动在 `http://localhost:5173`。
+
+首次使用建议流程：
+
+1. 打开 `http://localhost:5173`。
+2. 进入 Settings，配置 LLM Provider。
+3. 导入一个本地项目目录。
+4. 打开 Wiki 页面，生成第一份 Codebase Design Wiki。
+
+### 启动桌面应用
+
+```bash
+npm run dev:desktop
+```
+
+开发模式下，Electron 会连接本地 Web 和 API 服务。打包后，Electron 会启动内置的 API sidecar。
+
 ## 项目概览
 
 Synax 围绕一个核心闭环构建：导入本地代码库，分析文件与符号，生成带源码绑定的 Codebase Design Wiki，并在代码变化后持续刷新这份 Wiki。
@@ -88,47 +129,6 @@ Synax 基于几个很朴素的判断：
 ## 架构
 
 想看真正细的架构说明，可以安装 Synax 后把这个仓库导进去，然后生成 Wiki 自己看。本项目本来就是干这个的，让它讲自己，多少有点自觉。😄
-
-## 快速开始
-
-### 环境要求
-
-- Node.js 24 或更高版本。
-- npm 10 或更高版本。
-- Git。
-- tree-sitter 依赖需要原生构建工具。macOS 请安装 Xcode Command Line Tools。
-- 如需生成 Wiki 或运行 Agent，需要至少配置一个 LLM Provider key，或准备一个可用的 ACP Runtime。
-
-### 安装
-
-```bash
-git clone https://github.com/coldmint9/Synax.git
-cd Synax
-npm install
-```
-
-### 启动 Web 应用
-
-```bash
-npm run dev
-```
-
-API 默认启动在 `http://localhost:3210`，Web 应用默认启动在 `http://localhost:5173`。
-
-首次使用建议流程：
-
-1. 打开 `http://localhost:5173`。
-2. 进入 Settings，配置 LLM 或 ACP Provider。
-3. 导入一个本地项目目录。
-4. 打开 Wiki 页面，生成第一份 Codebase Design Wiki。
-
-### 启动桌面应用
-
-```bash
-npm run dev:desktop
-```
-
-开发模式下，Electron 会连接本地 Web 和 API 服务。打包后，Electron 会启动内置的 API sidecar。
 
 ## 配置
 

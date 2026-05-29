@@ -33,6 +33,47 @@ Author note: Synax is currently developed and dogfooded mostly with DeepSeek V4.
 
 Because this is `0.1.0-snapshot`, provider details are still evolving. Some lower-level runtime adapters exist in code, but they should not be treated as product-ready provider support until they are wired into configuration, validation, and the UI.
 
+## Quick Start
+
+### Prerequisites
+
+- Node.js 24 or newer.
+- npm 10 or newer.
+- Git.
+- A native build toolchain for tree-sitter packages. On macOS, install Xcode Command Line Tools; on Windows, install Visual Studio Build Tools (C++ workload); on Linux, install `build-essential` (Debian/Ubuntu) or equivalent (`gcc`, `g++`, `make`).
+- At least one LLM provider key if you want to generate wiki content or run agents.
+
+### Install
+
+```bash
+git clone https://github.com/coldmint9/Synax.git
+cd Synax
+npm install
+```
+
+### Run the Web App
+
+```bash
+npm run dev
+```
+
+The API starts at `http://localhost:3210` and the web app starts at `http://localhost:5173`.
+
+Recommended first run:
+
+1. Open `http://localhost:5173`.
+2. Go to Settings and configure an LLM provider.
+3. Import a local project directory.
+4. Open the Wiki tab and generate the first Codebase Design Wiki.
+
+### Run the Desktop App
+
+```bash
+npm run dev:desktop
+```
+
+In development, Electron uses the local web and API servers. In packaged builds, Electron starts the bundled API sidecar.
+
 ## Overview
 
 Synax is built around one core loop: import a local codebase, analyze its files and symbols, generate a Codebase Design Wiki with source bindings, then keep that wiki refreshed as the code changes.
@@ -93,47 +134,6 @@ Known incomplete or unstable areas:
 
 
 This diagram is the lobby map, not the full tour. For the real architecture walkthrough, install Synax, import this repository, and generate the Wiki. The project is built to explain codebases, so yes, it can explain itself. Very polite of it.😄
-
-## Quick Start
-
-### Prerequisites
-
-- Node.js 24 or newer.
-- npm 10 or newer.
-- Git.
-- A native build toolchain for tree-sitter packages. On macOS, install Xcode Command Line Tools.
-- At least one LLM provider key or an available ACP runtime if you want to generate wiki content or run agents.
-
-### Install
-
-```bash
-git clone https://github.com/coldmint9/Synax.git
-cd Synax
-npm install
-```
-
-### Run the Web App
-
-```bash
-npm run dev
-```
-
-The API starts at `http://localhost:3210` and the web app starts at `http://localhost:5173`.
-
-Recommended first run:
-
-1. Open `http://localhost:5173`.
-2. Go to Settings and configure an LLM or ACP provider.
-3. Import a local project directory.
-4. Open the Wiki tab and generate the first Codebase Design Wiki.
-
-### Run the Desktop App
-
-```bash
-npm run dev:desktop
-```
-
-In development, Electron uses the local web and API servers. In packaged builds, Electron starts the bundled API sidecar.
 
 ## Configuration
 
