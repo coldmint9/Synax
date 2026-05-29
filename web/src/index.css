@@ -364,81 +364,70 @@
 
   .workbench-shell {
     display: flex;
+    flex-direction: column;
     height: 100%;
+    position: relative;
   }
 
-  .electron .workbench-shell { padding-top: 40px; }
+  .electron .workbench-shell {
+    padding-top: 52px;
+    background: var(--background);
+  }
 
-  .titlebar {
+  .electron .workbench-shell::before {
+    content: '';
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    height: 40px;
-    z-index: 9999;
-    display: flex;
-    align-items: center;
-    padding: 0 16px;
+    height: 52px;
+    z-index: 9990;
     -webkit-app-region: drag;
-    background: hsl(var(--background-hsl) / 0.85);
-    backdrop-filter: blur(12px) saturate(1.2);
-    -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  }
-
-  .titlebar-info {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-left: 64px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--foreground);
     pointer-events: none;
   }
 
-  .titlebar-project { font-weight: 600; }
-  .titlebar-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--border); }
-
-  .titlebar-branch {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-family: 'JetBrains Mono', 'SF Mono', monospace;
-    font-size: 10px;
-    color: hsl(var(--muted-foreground));
-    background: hsl(var(--secondary));
-    padding: 2px 7px;
-    border-radius: 6px;
-  }
-
-  .titlebar-meta { font-size: 11px; color: hsl(var(--muted-foreground)); }
-
-  .titlebar-actions {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 4px;
+  .electron .traffic-light-pill {
+    position: fixed;
+    top: 10px;
+    left: 6px;
+    width: 68px;
+    height: 36px;
+    border-radius: 999px;
+    z-index: 9998;
     -webkit-app-region: no-drag;
-    pointer-events: auto;
+    pointer-events: none;
+    border: 1px solid hsl(0deg 0% 100% / 10%);
+    background: hsl(0deg 0% 100% / 5%);
+    -webkit-backdrop-filter: blur(28px) saturate(1.8) brightness(1.06);
+    backdrop-filter: blur(28px) saturate(2) brightness(1);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.7) inset,
+      0 -1px 0 hsl(0 0% 0% / 0.06) inset,
+      0 4px 24px hsl(0 0% 0% / 0.10),
+      0 1px 4px hsl(0 0% 0% / 0.06),
+      0 0 0 0.5px hsl(0 0% 0% / 0.06);
   }
 
-  .titlebar-action-btn {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    border: none;
-    background: transparent;
-    color: hsl(var(--muted-foreground));
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 120ms, color 120ms;
+  .dark .traffic-light-pill {
+    border-color: hsl(0 0% 100% / 0.12);
+    background: hsl(var(--card) / 0.52);
+    backdrop-filter: blur(28px) saturate(1.6) brightness(1.02);
+    -webkit-backdrop-filter: blur(28px) saturate(1.6) brightness(1.02);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.10) inset,
+      0 -1px 0 hsl(0 0% 0% / 0.25) inset,
+      0 4px 32px hsl(0 0% 0% / 0.40),
+      0 1px 6px hsl(0 0% 0% / 0.20),
+      0 0 0 0.5px hsl(0 0% 0% / 0.30);
   }
 
-  .titlebar-action-btn:hover {
-    background: hsl(var(--secondary));
-    color: var(--foreground);
+  .electron .workbench-header {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9998;
+    -webkit-app-region: no-drag;
   }
 
   .activity-bar {
@@ -550,8 +539,9 @@
   .wh-pill {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
+    gap: 6px;
+    padding: 0 10px;
+    height: 36px;
     border-radius: 999px;
     -webkit-backdrop-filter: blur(28px) saturate(1.8) brightness(1.06);
     border: 1px solid hsl(0deg 0% 100% / 10%);
@@ -647,21 +637,22 @@
   .wh-project-trigger {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
+    gap: 5px;
+    padding: 0 10px;
     border-radius: 999px;
     border: none;
     background: transparent;
     color: var(--foreground);
     cursor: pointer;
     transition: background 120ms;
-    height: 28px;
+    height: 26px;
+    font-size: 12px;
   }
   .wh-project-trigger:hover { background: hsl(var(--secondary)); }
 
   .wh-btn {
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     border-radius: 999px;
     border: none;
     background: transparent;
@@ -695,10 +686,10 @@
 
   .wh-divider {
     width: 1px;
-    height: 16px;
+    height: 14px;
     background: hsl(var(--border-hsl) / 0.6);
     flex-shrink: 0;
-    margin: 0 2px;
+    margin: 0 4px;
   }
 
   .wh-actions { display: flex; align-items: center; gap: 2px; }
@@ -709,7 +700,7 @@
   .wh-tabs .tabs__list { background: transparent !important; border: none !important; gap: 0 !important; padding: 0 !important; }
   .wh-tabs .tabs__tab {
     font-size: 12px !important;
-    height: 28px !important;
+    height: 26px !important;
     padding: 0 10px !important;
     gap: 5px !important;
     border-radius: 999px !important;
@@ -727,7 +718,7 @@
   .wiki-view-tabs .tabs__list { background: transparent !important; border: none !important; gap: 0 !important; padding: 0 !important; }
   .wiki-view-tabs .tabs__tab {
     font-size: 12px !important;
-    height: 28px !important;
+    height: 26px !important;
     padding: 0 10px !important;
     gap: 5px !important;
     border-radius: 999px !important;

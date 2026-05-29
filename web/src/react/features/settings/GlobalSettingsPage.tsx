@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { ScrollShadow, Spinner, Surface, Typography } from '@heroui/react'
+import { ScrollShadow, Spinner, Typography } from '@heroui/react'
 import { useConfig } from './useConfig'
 import { useLocale } from '../../../hooks/useLocale'
 import { LayoutSection } from './components/LayoutSection'
@@ -30,7 +30,7 @@ export default function GlobalSettingsPage() {
 
   return (
     <ScrollShadow className="h-full overflow-y-auto">
-      <Surface variant="default" className="min-h-full">
+      <div className="min-h-full bg-background">
         <div className="mx-auto max-w-2xl px-6 pt-20 pb-12">
           <div className="mb-8">
             <Typography type="h5">{t('settingsSystemConfig')}</Typography>
@@ -52,7 +52,7 @@ export default function GlobalSettingsPage() {
             <AdvancedSection config={globalConfig} onUpdate={updateGlobalConfig} />
           </div>
         </div>
-      </Surface>
+      </div>
     </ScrollShadow>
   )
 }

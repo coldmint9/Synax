@@ -1,4 +1,4 @@
-import { Button, ScrollShadow, Spinner, Surface, Typography } from '@heroui/react'
+import { Button, ScrollShadow, Spinner, Typography } from '@heroui/react'
 import { useParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import { useProjectSettings } from './useProjectSettings'
@@ -43,7 +43,7 @@ export default function ProjectSettingsPage() {
 
   return (
     <ScrollShadow className="h-full overflow-y-auto">
-      <Surface variant="default" className="min-h-full">
+      <div className="min-h-full bg-background">
         <div className="mx-auto max-w-2xl px-6 pt-20 pb-12">
           <div className="flex items-start justify-between gap-3 mb-8">
             <div>
@@ -65,7 +65,7 @@ export default function ProjectSettingsPage() {
             <ComplianceTab settings={settings} onSave={(data) => patchSection('compliance', data)} />
           </div>
         </div>
-      </Surface>
+      </div>
     </ScrollShadow>
   )
 }
