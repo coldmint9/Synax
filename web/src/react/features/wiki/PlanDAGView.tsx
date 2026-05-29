@@ -87,8 +87,8 @@ function getNodeId(node: PlanNodeDraft | WikiPlanNode, index: number): string {
 }
 
 function PlanDAGViewInner({ nodes: planNodes, isGenerating, onNodeClick }: PlanDAGViewProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState([])
+  const [nodes, setNodes, onNodesChange] = useNodesState([] as Node<PlanDAGNodeData>[])
+  const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[])
   const { fitView } = useReactFlow()
   const prevLenRef = useRef(0)
 

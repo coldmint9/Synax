@@ -104,16 +104,16 @@ function NodeActions({ index, isLast, node, onMoveUp, onMoveDown, onEdit, onDele
   return (
     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
       {onMoveUp && index > 0 && (
-        <Button variant="light" size="sm" isIconOnly aria-label="上移" onPress={() => onMoveUp(node.id)} className="min-w-6 h-6"><ChevronUp size={12} /></Button>
+        <Button variant="ghost" size="sm" isIconOnly aria-label="上移" onPress={() => onMoveUp(node.id)} className="min-w-6 h-6"><ChevronUp size={12} /></Button>
       )}
       {onMoveDown && !isLast && (
-        <Button variant="light" size="sm" isIconOnly aria-label="下移" onPress={() => onMoveDown(node.id)} className="min-w-6 h-6"><ChevronDown size={12} /></Button>
+        <Button variant="ghost" size="sm" isIconOnly aria-label="下移" onPress={() => onMoveDown(node.id)} className="min-w-6 h-6"><ChevronDown size={12} /></Button>
       )}
       {onEdit && (
-        <Button variant="light" size="sm" isIconOnly aria-label="编辑" onPress={() => onEdit(node)} className="min-w-6 h-6"><Pencil size={12} /></Button>
+        <Button variant="ghost" size="sm" isIconOnly aria-label="编辑" onPress={() => onEdit(node)} className="min-w-6 h-6"><Pencil size={12} /></Button>
       )}
       {onDelete && (
-        <Button variant="light" size="sm" isIconOnly aria-label="删除" onPress={() => onDelete(node.id)} className="min-w-6 h-6 text-destructive/70"><Trash2 size={12} /></Button>
+        <Button variant="ghost" size="sm" isIconOnly aria-label="删除" onPress={() => onDelete(node.id)} className="min-w-6 h-6 text-destructive/70"><Trash2 size={12} /></Button>
       )}
     </div>
   )

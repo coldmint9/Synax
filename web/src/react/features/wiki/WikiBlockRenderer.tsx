@@ -530,11 +530,11 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
           <div className="line-through opacity-40 text-muted-foreground">
             <BlockContent block={block} />
           </div>
-          {draftChange.newContent && (
+          {draftChange.newContent ? (
             <div className="border-l-2 border-emerald-500 pl-3 bg-emerald-500/5 rounded-r-md py-1">
               <MarkdownFragmentBlock content={draftChange.newContent} />
             </div>
-          )}
+          ) : null}
         </div>
       ) : isDelete ? (
         <div className="line-through opacity-40 text-muted-foreground">
@@ -674,9 +674,9 @@ export default function WikiBlockRenderer({ document, issuesByBlockId, projectId
         return (
           <div key={block.id}>
             <WikiBlockItem block={block} issueCount={issuesByBlockId?.get(block.id) ?? 0} projectId={projectId} draftChange={change} />
-            {change?.action === 'insert_after' && change.newContent && (
+            {change?.action === 'insert_after' && change.newContent ? (
               <DraftInsertedBlock content={change.newContent} />
-            )}
+            ) : null}
           </div>
         )
       })}

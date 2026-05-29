@@ -1,4 +1,6 @@
-import { useNotificationStore } from '../react/state/notificationStore'
+import { useNotificationStore, type NotificationType } from '../react/state/notificationStore'
+
+type ToastType = NotificationType
 
 export type ErrorLevel = 'system' | 'business'
 

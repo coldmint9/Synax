@@ -74,13 +74,13 @@ export default function WikiDraftBlockChange({
           {/* Diff display */}
           {!editing && change.action !== 'delete' && (
             <div className="mt-1.5 rounded bg-secondary/30 p-2 text-[10px] font-mono leading-relaxed">
-              {change.oldContent && (
+              {change.oldContent ? (
                 <div className="text-destructive/70 line-through">
                   {typeof change.oldContent === 'string'
                     ? change.oldContent.slice(0, 200)
                     : JSON.stringify(change.oldContent).slice(0, 200)}
                 </div>
-              )}
+              ) : null}
               <div className="text-emerald-600">
                 {typeof change.newContent === 'string'
                   ? change.newContent.slice(0, 200)

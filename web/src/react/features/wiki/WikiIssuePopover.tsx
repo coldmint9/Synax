@@ -150,7 +150,7 @@ export default function IssuePopover({ blockId, projectId, anchorRef, onClose }:
     if (!snapshot || !project?.source?.localPath) return
     setGenerating(true)
     try {
-      await evaluationApi.generatePlan(projectId, snapshot.id, project.source.localPath)
+      await evaluationApi.generatePlan(projectId, snapshot.id)
     } finally {
       setGenerating(false)
     }

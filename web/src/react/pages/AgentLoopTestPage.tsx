@@ -157,7 +157,7 @@ export default function AgentLoopTestPage() {
           </div>
 
           <Button
-            variant="bordered"
+            variant="outline"
             size="sm"
             className="mt-6 w-full"
             onPress={() => { void refreshSessionData(); void debugStore.refreshDetail() }}
@@ -215,7 +215,7 @@ export default function AgentLoopTestPage() {
                           <Button size="sm" onPress={() => void replyPermission(permission.id, 'once')} isDisabled={approvingId === permission.id}>
                             <Check size={13} /> Allow
                           </Button>
-                          <Button size="sm" variant="bordered" onPress={() => void replyPermission(permission.id, 'reject')} isDisabled={approvingId === permission.id}>
+                          <Button size="sm" variant="outline" onPress={() => void replyPermission(permission.id, 'reject')} isDisabled={approvingId === permission.id}>
                             <X size={13} /> Reject
                           </Button>
                         </div>
@@ -267,7 +267,7 @@ export default function AgentLoopTestPage() {
                       <Card key={event.id} className="shadow-none border-border/60 bg-background/60">
                         <div className="px-3 py-2">
                           <div className="flex items-center justify-between gap-2">
-                            <Chip size="sm" variant="flat" className="text-[9px] h-4">
+                            <Chip size="sm" variant="soft" className="text-[9px] h-4">
                               {event.type}
                             </Chip>
                             <span className="shrink-0 text-[10px] text-muted-foreground">{formatTime(event.timestamp)}</span>

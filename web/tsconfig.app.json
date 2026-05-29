@@ -19,5 +19,6 @@
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src/main.tsx", "src/react/**/*.ts", "src/react/**/*.tsx"]
+  "include": ["src/main.tsx", "src/react/**/*.ts", "src/react/**/*.tsx"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/__tests__/**"]
 }

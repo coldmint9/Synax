@@ -5,6 +5,22 @@ import { useProjectSettings } from './useProjectSettings'
 import { useConfig } from './useConfig'
 import { useLocale } from '../../../hooks/useLocale'
 
+function ProviderTab(_props: { settings: any; globalConfig: any; providers: any; onSave: (data: any) => void }) {
+  return <div className="text-sm text-muted-foreground">Provider settings (coming soon)</div>
+}
+function BasicsTab(_props: { settings: any; onSave: (data: any) => void }) {
+  return <div className="text-sm text-muted-foreground">Basic settings (coming soon)</div>
+}
+function CollaborationTab(_props: { settings: any; onSave: (data: any) => void }) {
+  return <div className="text-sm text-muted-foreground">Collaboration settings (coming soon)</div>
+}
+function NotificationsTab(_props: { settings: any; onSave: (data: any) => void }) {
+  return <div className="text-sm text-muted-foreground">Notification settings (coming soon)</div>
+}
+function ComplianceTab(_props: { settings: any; onSave: (data: any) => void }) {
+  return <div className="text-sm text-muted-foreground">Compliance settings (coming soon)</div>
+}
+
 export default function ProjectSettingsPage() {
   const { projectId = '' } = useParams()
   const { settings, loading, error, reload, patchSection } = useProjectSettings(projectId)
@@ -36,7 +52,7 @@ export default function ProjectSettingsPage() {
                 {projectId}
               </Typography>
             </div>
-            <Button size="sm" variant="bordered" isIconOnly onPress={reload} aria-label="Refresh">
+            <Button size="sm" variant="outline" isIconOnly onPress={reload} aria-label="Refresh">
               <RefreshCw size={12} />
             </Button>
           </div>

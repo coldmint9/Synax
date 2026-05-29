@@ -112,7 +112,6 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
               className={`flex items-start gap-3 rounded-lg border p-3 transition ${disabled ? 'opacity-50' : ''} ${checked && !disabled ? 'border-primary bg-primary/5' : 'border-border/50 hover:bg-secondary/30'}`}
             >
               <Checkbox
-                size="sm"
                 isSelected={checked}
                 isDisabled={disabled}
                 onChange={(isChecked) => handleToggle(item.id, isChecked)}

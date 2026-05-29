@@ -55,7 +55,7 @@ export default function PlanDraftView({ projectId }: Props) {
             <X size={12} />
             {t('planDraftDiscard')}
           </Button>
-          <Button color="primary" size="sm" onPress={handleConfirm} isDisabled={confirming || nodes.length === 0}>
+          <Button variant="primary" size="sm" onPress={handleConfirm} isDisabled={confirming || nodes.length === 0}>
             {confirming ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
             {t('planDraftConfirm')}
           </Button>
@@ -146,7 +146,7 @@ function NodeEditModal({ node, projectId, onClose, onSave }: {
           </Modal.Body>
           <Modal.Footer>
             <Button variant="ghost" size="sm" onPress={onClose}>{t('commonCancel')}</Button>
-            <Button color="primary" size="sm" onPress={handleSave} isDisabled={saving || !title.trim()}>
+            <Button variant="primary" size="sm" onPress={handleSave} isDisabled={saving || !title.trim()}>
               {saving ? <Loader2 size={12} className="animate-spin" /> : null}
               {t('commonSave')}
             </Button>
