@@ -5,7 +5,7 @@ export function getDataRoot(): string {
   if (app.isPackaged) {
     return path.join(app.getPath('userData'), 'data');
   }
-  return path.resolve(app.getAppPath(), '.data');
+  return path.join(app.getPath('home'), '.synax');
 }
 
 export function getResourcePath(...segments: string[]): string {
