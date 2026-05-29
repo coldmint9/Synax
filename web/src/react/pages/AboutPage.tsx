@@ -5,14 +5,14 @@ const VERSION = '0.1.0-snapshot'
 const REPO_URL = 'https://github.com/coldmint9/Synax'
 
 const techStack = [
-  { label: 'TypeScript 5.7', color: 'primary' as const },
-  { label: 'React 19', color: 'secondary' as const },
+  { label: 'TypeScript 5.7', color: 'accent' as const },
+  { label: 'React 19', color: 'default' as const },
   { label: 'Hono', color: 'success' as const },
   { label: 'SQLite + Drizzle', color: 'warning' as const },
   { label: 'Electron 42', color: 'default' as const },
-  { label: 'Vite', color: 'secondary' as const },
+  { label: 'Vite', color: 'default' as const },
   { label: 'Tree-sitter', color: 'success' as const },
-  { label: 'Vercel AI SDK', color: 'primary' as const },
+  { label: 'Vercel AI SDK', color: 'accent' as const },
 ]
 
 export default function AboutPage() {
@@ -46,7 +46,7 @@ export default function AboutPage() {
             <section>
               <Typography type="h6" className="mb-3">Version</Typography>
               <div className="flex items-center gap-2">
-                <Chip size="sm" variant="flat" color="warning">{VERSION}</Chip>
+                <Chip size="sm" variant="soft" color="warning">{VERSION}</Chip>
                 <Typography type="body-xs" color="muted">Alpha</Typography>
               </div>
             </section>
@@ -57,7 +57,7 @@ export default function AboutPage() {
               <Typography type="h6" className="mb-3">Tech Stack</Typography>
               <div className="flex flex-wrap gap-2">
                 {techStack.map(t => (
-                  <Chip key={t.label} size="sm" variant="flat" color={t.color}>
+                  <Chip key={t.label} size="sm" variant="soft" color={t.color}>
                     {t.label}
                   </Chip>
                 ))}

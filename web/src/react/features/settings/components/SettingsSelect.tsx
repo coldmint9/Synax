@@ -9,7 +9,7 @@ export interface SelectOption {
 interface SettingsSelectProps {
   label?: string
   size?: 'sm' | 'md' | 'lg'
-  variant?: 'flat' | 'bordered' | 'faded' | 'underlined'
+  variant?: 'primary' | 'secondary'
   className?: string
   fullWidth?: boolean
   selectedKey: string | null
@@ -22,7 +22,7 @@ interface SettingsSelectProps {
 export function SettingsSelect({
   label,
   size = 'sm',
-  variant = 'bordered',
+  variant = 'secondary',
   className,
   fullWidth,
   selectedKey,
@@ -37,14 +37,12 @@ export function SettingsSelect({
         <span className="block text-xs text-foreground pb-1.5">{label}</span>
       )}
       <Select
-        size={size}
         variant={variant}
         fullWidth={fullWidth}
         value={selectedKey}
         onChange={(value: Key | null) => {
           onSelectionChange(value ? String(value) : null)
         }}
-        disallowEmptySelection={disallowEmptySelection}
         aria-label={ariaLabel ?? label}
       >
         <Select.Trigger>

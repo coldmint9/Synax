@@ -86,7 +86,7 @@ export default function WikiBlockIssueInline({ blockId, projectId, autoFocus }: 
         />
         <Button
           size="sm"
-          color="primary"
+          variant="primary"
           isIconOnly
           aria-label="提交"
           isDisabled={!content.trim() || submitting}

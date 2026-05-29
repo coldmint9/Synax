@@ -4,6 +4,7 @@ import { FileCode } from 'lucide-react'
 import type { PlanNodeDraft } from '../../../lib/api/evaluation'
 
 export interface PlanDAGNodeData {
+  [key: string]: unknown
   node: PlanNodeDraft
   index: number
   status?: 'pending' | 'executing' | 'review' | 'accepted' | 'committed'

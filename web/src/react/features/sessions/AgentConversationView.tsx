@@ -36,8 +36,8 @@ interface Props {
   }>
 }
 
-const STATUS_MAP: Record<string, { text: string; color: 'primary' | 'success' | 'danger' | 'warning' | 'default' }> = {
-  running: { text: 'running', color: 'primary' },
+const STATUS_MAP: Record<string, { text: string; color: 'accent' | 'success' | 'danger' | 'warning' | 'default' }> = {
+  running: { text: 'running', color: 'accent' },
   completed: { text: 'completed', color: 'success' },
   failed: { text: 'failed', color: 'danger' },
   interrupted: { text: 'warning', color: 'warning' },
@@ -83,16 +83,16 @@ export function AgentConversationView({
     <div className="flex flex-col gap-4 p-4">
       {/* Session header */}
       <div className="flex items-center gap-2 border-b border-border/40 pb-3">
-        <Chip size="sm" variant="flat" color="secondary" className="text-[11px]">
+        <Chip size="sm" variant="soft" color="default" className="text-[11px]">
           {session?.profileId ?? 'agent'}
         </Chip>
         {cat?.isBuiltin && (
-          <Chip size="sm" variant="bordered" color="primary" className="text-[10px]">
+          <Chip size="sm" variant="secondary" color="accent" className="text-[10px]">
             {t('sessionBuiltin')}
           </Chip>
         )}
         {statusInfo && (
-          <Chip size="sm" variant="dot" color={statusInfo.color} className="text-[11px]">
+          <Chip size="sm" variant="soft" color={statusInfo.color} className="text-[11px]">
             {statusInfo.text}
           </Chip>
         )}
@@ -129,7 +129,7 @@ export function AgentConversationView({
       </div>
 
       {/* Progress bar when running */}
-      {isRunning && <ProgressBar isIndeterminate size="sm" color="primary" className="w-full" />}
+      {isRunning && <ProgressBar isIndeterminate size="sm" color="accent" className="w-full" />}
 
       {/* Compaction indicators */}
       {compactions && compactions.length > 0 && compactions.map((c, i) => (
@@ -311,7 +311,7 @@ export function AgentConversationView({
       {session?.status === 'failed' && (
         <Card className="shadow-none border-destructive/15 bg-destructive/[0.03]">
           <div className="px-3.5 py-2.5">
-            <Chip size="sm" color="danger" variant="flat" className="mb-1 text-[10px]">Failed</Chip>
+            <Chip size="sm" color="danger" variant="soft" className="mb-1 text-[10px]">Failed</Chip>
             <div className="text-[13px] leading-relaxed text-muted-foreground">
               {session.blockedReason ?? 'Agent execution failed'}
             </div>
@@ -322,7 +322,7 @@ export function AgentConversationView({
       {isResumable && (
         <Card className="shadow-none border-sky-500/15 bg-sky-500/[0.03]">
           <div className="px-3.5 py-2.5">
-            <Chip size="sm" color="default" variant="flat" className="mb-1 text-[10px]">
+            <Chip size="sm" color="default" variant="soft" className="mb-1 text-[10px]">
               {session?.status === 'paused' ? 'Paused' : 'Interrupted'}
             </Chip>
             <div className="text-[13px] leading-relaxed text-muted-foreground">

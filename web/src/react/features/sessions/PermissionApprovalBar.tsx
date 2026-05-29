@@ -58,14 +58,13 @@ function PermissionItem({
       <div className="flex items-center gap-1.5 shrink-0">
         <Button
           size="sm"
-          variant="solid"
-          color="primary"
+          variant="primary"
           isDisabled={isLoading}
           onPress={() => onReply(permission.id, 'once')}
         >
           {t('permAllowOnce')}
         </Button>
-        <Tooltip content={t('permAlwaysAllowHint')}>
+        <Tooltip delay={0}>
           <Button
             size="sm"
             variant="ghost"
@@ -74,11 +73,11 @@ function PermissionItem({
           >
             {t('permAlwaysAllow')}
           </Button>
+          <Tooltip.Content>{t('permAlwaysAllowHint')}</Tooltip.Content>
         </Tooltip>
         <Button
           size="sm"
-          variant="ghost"
-          color="danger"
+          variant="danger-soft"
           isDisabled={isLoading}
           onPress={() => onReply(permission.id, 'reject')}
         >

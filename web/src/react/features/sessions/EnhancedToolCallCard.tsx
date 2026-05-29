@@ -21,8 +21,8 @@ function getToolIcon(category: string) {
   return TOOL_ICONS[category] ?? Wrench
 }
 
-const STATUS_COLOR: Record<string, 'primary' | 'success' | 'danger' | 'warning' | 'default'> = {
-  running: 'primary',
+const STATUS_COLOR: Record<string, 'accent' | 'success' | 'danger' | 'warning' | 'default'> = {
+  running: 'accent',
   completed: 'success',
   failed: 'danger',
   denied: 'warning',
@@ -66,7 +66,7 @@ export function EnhancedToolCallCard({ call }: Props) {
               {call.duration}
             </span>
           )}
-          <Chip size="sm" color={chipColor} variant="flat" className="h-4 text-[9px]">
+          <Chip size="sm" color={chipColor} variant="soft" className="h-4 text-[9px]">
             {call.status}
           </Chip>
           {hasOutput && (

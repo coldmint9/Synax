@@ -20,8 +20,8 @@ export function ParallelToolCallGroup({ calls }: Props) {
         </span>
         <Chip
           size="sm"
-          variant="dot"
-          color={allCompleted ? 'success' : anyRunning ? 'primary' : 'default'}
+          variant="soft"
+          color={allCompleted ? 'success' : anyRunning ? 'accent' : 'default'}
           className="h-4 text-[9px]"
         >
           {allCompleted ? 'done' : anyRunning ? 'running' : 'pending'}

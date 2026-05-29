@@ -17,7 +17,7 @@ export function useWikiSearch(query: string, debounceMs = 150) {
   const blocksById = useWikiStore(s => s.blocksById);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const docMap = useMemo(() => {
     const map = new Map<string, string>();
