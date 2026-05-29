@@ -37,6 +37,8 @@ const config: ForgeConfig = {
       name: '@electron-forge/maker-squirrel',
       config: {
         name: 'Synax',
+        authors: 'Synax',
+        description: 'AI-powered code analysis platform',
       },
     },
   ],
