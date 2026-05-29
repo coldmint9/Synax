@@ -1,11 +1,14 @@
 {
   "name": "synax",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.0-snapshot",
   "license": "MIT",
   "description": "",
   "type": "module",
   "main": "dist-electron/main.js",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "workspaces": [
     "web"
   ],
