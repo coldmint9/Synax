@@ -11,7 +11,6 @@ import { useRuntimeSSE } from '../features/debug-console/useRuntimeSSE'
 import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
 import type { ActivityPanel } from './ActivityBar'
 import { WorkbenchHeader } from './WorkbenchHeader'
-import { TitleBar } from './TitleBar'
 import { ProjectCreateDialog } from '../features/project-create/ProjectCreateDialog'
 import { ToastContainer } from '../components/ToastContainer'
 import WikiPage from '../pages/WikiPage'
@@ -139,12 +138,18 @@ export default function WorkbenchLayout() {
 
   return (
     <div className="workbench-shell">
-      {isElectron && (
-        <TitleBar
-          projectName={projectName}
-          onPanelToggle={handlePanelToggle}
-        />
-      )}
+      {isElectron && <div className="traffic-light-pill" />}
+      <WorkbenchHeader
+        activePanel={activePanel}
+        onPanelToggle={handlePanelToggle}
+        hasProject={!!effectiveProjectId}
+        projectName={projectName}
+        currentProjectId={effectiveProjectId}
+        projects={projects}
+        onProjectSwitch={(id) => navigate(`/projects/${id}/wiki`)}
+        onCreateProject={() => setCreateDialogOpen(true)}
+        onRemoveProject={handleRemoveProject}
+      />
       <div className="workbench-island">
         <div className="island-body">
           {/* Cached project pages — always mounted once project exists */}
@@ -171,17 +176,6 @@ export default function WorkbenchLayout() {
             <Outlet context={{ onCreateProject: () => setCreateDialogOpen(true) }} />
           </div>
         </div>
-        <WorkbenchHeader
-          activePanel={activePanel}
-          onPanelToggle={handlePanelToggle}
-          hasProject={!!effectiveProjectId}
-          projectName={projectName}
-          currentProjectId={effectiveProjectId}
-          projects={projects}
-          onProjectSwitch={(id) => navigate(`/projects/${id}/wiki`)}
-          onCreateProject={() => setCreateDialogOpen(true)}
-          onRemoveProject={handleRemoveProject}
-        />
       </div>
       <ProjectCreateDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} />
       <ToastContainer />
