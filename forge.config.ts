@@ -17,7 +17,6 @@ const config: ForgeConfig = {
     ],
     ignore: (file: string) => {
       if (!file) return false;
-      // Only include dist-electron/ and package.json in the asar
       if (file === '/package.json') return false;
       if (file.startsWith('/dist-electron')) return false;
       return true;
@@ -32,7 +31,13 @@ const config: ForgeConfig = {
     },
     {
       name: '@electron-forge/maker-zip',
-      platforms: ['darwin', 'linux'],
+      platforms: ['darwin', 'linux', 'win32'],
+    },
+    {
+      name: '@electron-forge/maker-squirrel',
+      config: {
+        name: 'Synax',
+      },
     },
   ],
 };

@@ -1,0 +1,58 @@
+name: Build Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin
+            arch: x64
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+          - os: windows-latest
+            platform: win32
+            arch: x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build
+
+      - name: Build Web
+        run: npm run web:build
+
+      - name: Build Electron
+        run: npm run build:electron
+
+      - name: Package desktop app
+        run: npx electron-forge make --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+        env:
+          ELECTRON_SKIP_REBUILD: '1'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: synax-${{ matrix.platform }}-${{ matrix.arch }}
+          path: out/make/**/*
