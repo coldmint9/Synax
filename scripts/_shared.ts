@@ -37,11 +37,12 @@ export async function ensureWorkspaceInstall() {
   }
 }
 
-export function spawnProcess(cmd: string[], cwd = ROOT_DIR): ChildProcess {
+export function spawnProcess(cmd: string[], cwd = ROOT_DIR, extraEnv: NodeJS.ProcessEnv = {}): ChildProcess {
   return spawn(cmd[0], cmd.slice(1), {
     cwd,
-    env: withLocalNoProxy(process.env),
+    env: { ...withLocalNoProxy(process.env), ...extraEnv },
     stdio: 'inherit',
+    shell: process.platform === 'win32',
   })
 }
 

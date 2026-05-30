@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startSidecar, stopSidecar, getSidecarPort } from './lib/node-sidecar.js';
 import { getResourcePath } from './lib/data-paths.js';
 import { loadWindowState, saveWindowState } from './lib/window-state.js';
@@ -11,6 +11,19 @@ const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
+
+// Register custom protocol scheme before app is ready
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'app',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -31,8 +44,8 @@ function createWindow(): BrowserWindow {
     ...state,
     minWidth: 800,
     minHeight: 600,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 18 },
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 14, y: 18 } } : {}),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -87,6 +100,14 @@ async function bootstrap(): Promise<void> {
   registerIPC();
   buildAppMenu();
 
+  // Register custom protocol to serve frontend assets over app:// scheme.
+  // This is required because <script type="module"> does not work with file:// protocol.
+  protocol.handle('app', (request) => {
+    const url = new URL(request.url);
+    const filePath = path.join(getResourcePath('dist'), url.pathname);
+    return net.fetch(pathToFileURL(filePath).href);
+  });
+
   const externalApi = process.env.ELECTRON_SKIP_SIDECAR === '1';
 
   if (!externalApi) {
@@ -104,8 +125,7 @@ async function bootstrap(): Promise<void> {
     mainWindow.loadURL(`http://localhost:${webPort}`);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    const indexPath = getResourcePath('dist', 'index.html');
-    await mainWindow.loadFile(indexPath);
+    await mainWindow.loadURL('app://./index.html');
   }
 }
 

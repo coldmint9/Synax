@@ -48,8 +48,6 @@ jobs:
 
       - name: Package desktop app
         run: npx electron-forge make --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
-        env:
-          ELECTRON_SKIP_REBUILD: '1'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

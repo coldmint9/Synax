@@ -86,3 +86,6 @@ CLAUDE.md
 skills-lock.json
 # heroui-agents-md
 .heroui-docs/
+dist-app/
+.synax-test2/
+.synax-test3/

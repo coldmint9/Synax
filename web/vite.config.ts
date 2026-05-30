@@ -1,6 +1,16 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+
+function removeCrossOrigin(): Plugin {
+  return {
+    name: 'remove-crossorigin',
+    enforce: 'post',
+    transformIndexHtml(html) {
+      return html.replace(/ crossorigin/g, '')
+    },
+  }
+}
 
 const localNoProxyHosts = ['localhost', '127.0.0.1', '::1']
 const noProxy = `${process.env.NO_PROXY ?? ''},${process.env.no_proxy ?? ''}`
@@ -13,7 +23,11 @@ process.env.no_proxy = process.env.NO_PROXY
 
 export default defineConfig({
   base: './',
-  plugins: [react()],
+  plugins: [react(), removeCrossOrigin()],
+  build: {
+    chunkSizeWarningLimit: 1000,
+    modulePreload: { polyfill: false },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

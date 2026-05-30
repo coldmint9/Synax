@@ -1,28 +1,28 @@
 
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'libsql';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { drizzle, type NodeSQLiteDatabase } from 'drizzle-orm/node-sqlite/driver';
+import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { DATA_ROOT } from '../lib/env.js';
 import { logger as pinoLogger } from '../lib/logger.js';
 import * as schema from './schema.js';
 
-export type ContextDb = NodeSQLiteDatabase<typeof schema>;
+export type ContextDb = BetterSQLite3Database<typeof schema>;
 export type SqliteTransaction = <Args extends unknown[], Result>(
   fn: (...args: Args) => Result,
 ) => (...args: Args) => Result;
-export type RawSqlite = DatabaseSync & {
+export type RawSqlite = Database.Database & {
   transaction: SqliteTransaction;
-  query: DatabaseSync['prepare'];
+  query: Database.Database['prepare'];
 };
 
 let _sqlite: RawSqlite | null = null;
 let _db: ContextDb | null = null;
 
-const transactionStates = new WeakMap<DatabaseSync, { depth: number; nextSavepointId: number }>();
+const transactionStates = new WeakMap<Database.Database, { depth: number; nextSavepointId: number }>();
 
-function getTransactionState(sqlite: DatabaseSync): { depth: number; nextSavepointId: number } {
+function getTransactionState(sqlite: Database.Database): { depth: number; nextSavepointId: number } {
   let state = transactionStates.get(sqlite);
   if (!state) {
     state = { depth: 0, nextSavepointId: 0 };
@@ -31,15 +31,15 @@ function getTransactionState(sqlite: DatabaseSync): { depth: number; nextSavepoi
   return state;
 }
 
-function sqliteIsInTransaction(sqlite: DatabaseSync): boolean {
+function sqliteIsInTransaction(sqlite: Database.Database): boolean {
   try {
-    return Boolean((sqlite as DatabaseSync & { isTransaction?: boolean }).isTransaction);
+    return sqlite.inTransaction;
   } catch {
     return false;
   }
 }
 
-function createTransaction(sqlite: DatabaseSync): SqliteTransaction {
+function createTransaction(sqlite: Database.Database): SqliteTransaction {
   return function transaction<Args extends unknown[], Result>(fn: (...args: Args) => Result) {
     return (...args: Args): Result => {
       const state = getTransactionState(sqlite);
@@ -81,7 +81,7 @@ function createTransaction(sqlite: DatabaseSync): SqliteTransaction {
   };
 }
 
-function installSqliteCompat(sqlite: DatabaseSync): RawSqlite {
+function installSqliteCompat(sqlite: Database.Database): RawSqlite {
   const compat = sqlite as RawSqlite;
   if (typeof compat.transaction !== 'function') {
     Object.defineProperty(compat, 'transaction', {
@@ -131,7 +131,7 @@ function hasExecutableSql(sql: string): boolean {
     .length > 0;
 }
 
-function configureSqlite(sqlite: DatabaseSync): void {
+function configureSqlite(sqlite: Database.Database): void {
   sqlite.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
@@ -140,7 +140,7 @@ function configureSqlite(sqlite: DatabaseSync): void {
   `);
 }
 
-function runMigrations(sqlite: DatabaseSync): void {
+function runMigrations(sqlite: Database.Database): void {
   const dir = resolveMigrationsDir();
   if (!fs.existsSync(dir)) {
     pinoLogger.warn({ dir }, 'context db: migrations directory missing');
@@ -166,7 +166,7 @@ function runMigrations(sqlite: DatabaseSync): void {
   }
 }
 
-function ensureColumn(sqlite: DatabaseSync, table: string, column: string, ddl: string): void {
+function ensureColumn(sqlite: Database.Database, table: string, column: string, ddl: string): void {
   const tableExists = sqlite
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(table) as { name: string } | undefined;
@@ -177,7 +177,7 @@ function ensureColumn(sqlite: DatabaseSync, table: string, column: string, ddl: 
   pinoLogger.info({ table, column }, 'context db: column added');
 }
 
-function ensureRuntimeSchema(sqlite: DatabaseSync): void {
+function ensureRuntimeSchema(sqlite: Database.Database): void {
   ensureColumn(sqlite, 'agent_runtime_sessions', 'active_run_id', 'active_run_id TEXT');
   ensureColumn(sqlite, 'agent_runtime_sessions', 'pending_resume_token', 'pending_resume_token TEXT');
   ensureColumn(sqlite, 'agent_runtime_sessions', 'title', 'title TEXT');
@@ -221,7 +221,7 @@ export function getDb(): ContextDb {
   if (_db && _sqlite) return _db;
 
   const dbPath = resolveDbPath();
-  const sqlite = installSqliteCompat(new DatabaseSync(dbPath));
+  const sqlite = installSqliteCompat(new Database(dbPath));
   configureSqlite(sqlite);
 
   runMigrations(sqlite);

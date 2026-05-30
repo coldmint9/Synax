@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'libsql';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_ROOT } from './env.js';
@@ -59,9 +59,9 @@ interface PersistedLogRow {
   errorRequestCount: number;
 }
 
-let sqlite: DatabaseSync | null = null;
-let insertLogStmt: ReturnType<DatabaseSync['prepare']> | null = null;
-let upsertDailyStatsStmt: ReturnType<DatabaseSync['prepare']> | null = null;
+let sqlite: Database.Database | null = null;
+let insertLogStmt: ReturnType<Database.Database['prepare']> | null = null;
+let upsertDailyStatsStmt: ReturnType<Database.Database['prepare']> | null = null;
 
 function resolveDataRootDir(): string {
   const dir = path.isAbsolute(DATA_ROOT)
@@ -77,7 +77,7 @@ function resolveLogDbPath(): string {
   return path.join(resolveDataRootDir(), 'api-logs.db');
 }
 
-function ensureSchema(db: DatabaseSync): void {
+function ensureSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,10 +112,10 @@ function ensureSchema(db: DatabaseSync): void {
   `);
 }
 
-function getLogDb(): DatabaseSync {
+function getLogDb(): Database.Database {
   if (sqlite) return sqlite;
 
-  const db = new DatabaseSync(resolveLogDbPath());
+  const db = new Database(resolveLogDbPath());
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
@@ -238,7 +238,7 @@ export function persistApiLog(input: PersistApiLogInput): void {
     const row = toPersistedRow(input);
     db.exec('BEGIN');
     try {
-      insertLogStmt!.run(
+      insertLogStmt!.run([
         row.day,
         row.loggedAt,
         row.level,
@@ -248,8 +248,8 @@ export function persistApiLog(input: PersistApiLogInput): void {
         row.path,
         row.status,
         row.durationMs,
-      );
-      upsertDailyStatsStmt!.run(
+      ]);
+      upsertDailyStatsStmt!.run([
         row.day,
         row.traceCount,
         row.debugCount,
@@ -260,7 +260,7 @@ export function persistApiLog(input: PersistApiLogInput): void {
         row.requestCount,
         row.errorRequestCount,
         row.loggedAt,
-      );
+      ]);
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
