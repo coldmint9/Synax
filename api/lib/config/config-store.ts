@@ -469,12 +469,18 @@ function applyGlobalConfigPatch(
     version: templateTouched ? layers.template.version + 1 : layers.template.version,
   }
 
+  const allProviders = mergeProviderDefs(nextTemplateProviders, nextGlobalProviders)
+  const allConnections = { ...nextTemplateConnections, ...nextGlobalConnections }
+  const resolvedDefaultApiProviderId = patch.defaultApiProviderId
+    ?? autoSelectDefaultApiProvider(allProviders, allConnections)
+    ?? current.defaultApiProviderId
+
   const nextGlobal: GlobalConfig = {
     ...layers.global,
     providers: nextGlobalProviders,
     providerConnections: nextGlobalConnections,
     defaultProviderId: normalizeAcpProviderId(patch.defaultProviderId ?? current.defaultProviderId),
-    defaultApiProviderId: patch.defaultApiProviderId ?? current.defaultApiProviderId,
+    defaultApiProviderId: resolvedDefaultApiProviderId,
     enabledAcpProviderIds: patch.enabledAcpProviderIds ?? current.enabledAcpProviderIds,
     limits: patch.limits ? { ...current.limits, ...patch.limits } : current.limits,
     features: patch.features ? { ...current.features, ...patch.features } : current.features,
@@ -655,6 +661,16 @@ function prepareProviderConnectionForStorage(
 
 function normalizeAcpProviderId(providerId?: string | null): string {
   return providerId === 'cursor-acp' || providerId === 'opencode-acp' ? providerId : 'opencode-acp'
+}
+
+function autoSelectDefaultApiProvider(
+  providers: ProviderDef[],
+  connections: Record<string, ProviderConnection>,
+): string | null {
+  const configured = providers.filter(
+    (p) => p.kind === 'api' && p.status !== 'inactive' && connections[p.id]?.apiKey,
+  )
+  return configured.length === 1 ? configured[0].id : null
 }
 
 function normalizeApiProviderId(providerId?: string | null, providers: ProviderDef[] = BUILTIN_PROVIDERS): string {
