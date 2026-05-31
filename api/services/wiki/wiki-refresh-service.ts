@@ -4,6 +4,28 @@
 // Wiki refresh：增量索引 → hash-diff stale 检测 → 按文档分组 → LLM 生成 document drafts
 // ---------------------------------------------------------------------------
 
+function refreshMsg(locale: 'zh' | 'en') {
+  return locale === 'en' ? {
+    title: 'Wiki Refresh',
+    started: 'Document refresh check started',
+    scanning: 'Scanning code index…',
+    detecting: 'Detecting stale documents…',
+    drafting: (count: number) => `Generating drafts for ${count} documents…`,
+    complete: (docs: number, drafts: number) => `${docs} documents affected, ${drafts} drafts generated`,
+    completeTitle: 'Wiki Refresh Complete',
+    failed: 'Wiki Refresh Failed',
+  } : {
+    title: 'Wiki 刷新',
+    started: '文档刷新检查已启动',
+    scanning: '正在扫描代码索引…',
+    detecting: '正在检测过期文档…',
+    drafting: (count: number) => `正在为 ${count} 个文档生成草稿…`,
+    complete: (docs: number, drafts: number) => `${docs} 个文档受影响，生成 ${drafts} 个草稿`,
+    completeTitle: 'Wiki 刷新完成',
+    failed: 'Wiki 刷新失败',
+  };
+}
+
 import { nanoid } from 'nanoid';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../../db/index.js';
@@ -70,6 +92,7 @@ export const wikiRefreshService = {
     projectId: string,
     snapshotId: string,
     workDir: string,
+    locale: 'zh' | 'en' = 'zh',
   ): Promise<WikiRefreshTask> {
     const db = getDb();
     const now = new Date().toISOString();
@@ -90,7 +113,7 @@ export const wikiRefreshService = {
       updatedAt: now,
     });
 
-    this._runRefresh(taskId, projectId, snapshotId, workDirAbs).catch(err => {
+    this._runRefresh(taskId, projectId, snapshotId, workDirAbs, locale).catch(err => {
       logger.error({ err, taskId }, 'wiki refresh: unhandled error');
     });
 
@@ -104,14 +127,15 @@ export const wikiRefreshService = {
     projectId: string,
     snapshotId: string,
     workDir: string,
+    locale: 'zh' | 'en' = 'zh',
   ): Promise<void> {
     notify({
       type: 'task_started',
       taskKind: 'wiki_refresh',
       projectId,
       taskId,
-      title: 'Wiki 刷新',
-      message: '文档刷新检查已启动',
+      title: refreshMsg(locale).title,
+      message: refreshMsg(locale).started,
       severity: 'info',
     });
 
@@ -123,8 +147,8 @@ export const wikiRefreshService = {
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
-        title: 'Wiki 刷新',
-        message: '正在扫描代码索引…',
+        title: refreshMsg(locale).title,
+        message: refreshMsg(locale).scanning,
         severity: 'info',
         meta: { phase: 'scanning' },
       });
@@ -148,8 +172,8 @@ export const wikiRefreshService = {
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
-        title: 'Wiki 刷新',
-        message: '正在检测过期文档…',
+        title: refreshMsg(locale).title,
+        message: refreshMsg(locale).detecting,
         severity: 'info',
         meta: { phase: 'stale_checking' },
       });
@@ -207,8 +231,8 @@ export const wikiRefreshService = {
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
-        title: 'Wiki 刷新',
-        message: `正在为 ${affectedDocumentIds.length} 个文档生成草稿…`,
+        title: refreshMsg(locale).title,
+        message: refreshMsg(locale).drafting(affectedDocumentIds.length),
         severity: 'info',
         meta: { phase: 'drafting', affectedDocuments: affectedDocumentIds.length },
       });
@@ -216,7 +240,7 @@ export const wikiRefreshService = {
       const draftIds: string[] = [];
       for (const [documentId, blockIds] of documentBlockMap) {
         const draftId = await this._createDocumentDraft(
-          projectId, snapshotId, taskId, documentId, blockIds, scan, scanDiff,
+          projectId, snapshotId, taskId, documentId, blockIds, scan, scanDiff, locale,
         );
         if (draftId) draftIds.push(draftId);
       }
@@ -232,8 +256,8 @@ export const wikiRefreshService = {
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
-        title: 'Wiki 刷新完成',
-        message: `${affectedDocumentIds.length} 个文档受影响，生成 ${draftIds.length} 个草稿`,
+        title: refreshMsg(locale).completeTitle,
+        message: refreshMsg(locale).complete(affectedDocumentIds.length, draftIds.length),
         severity: draftIds.length > 0 ? 'warning' : 'success',
         meta: { affectedDocuments: affectedDocumentIds.length, drafts: draftIds.length },
       });
@@ -249,7 +273,7 @@ export const wikiRefreshService = {
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
-        title: 'Wiki 刷新失败',
+        title: refreshMsg(locale).failed,
         message: err instanceof Error ? err.message : String(err),
         severity: 'error',
       });
@@ -282,6 +306,7 @@ export const wikiRefreshService = {
     affectedBlockIds: string[],
     scan: Awaited<ReturnType<typeof runCodeMapScan>>,
     scanDiff: ScanDiff | null,
+    locale: 'zh' | 'en' = 'zh',
   ): Promise<string | null> {
     const db = getDb();
     const now = new Date().toISOString();
@@ -333,7 +358,8 @@ export const wikiRefreshService = {
     }
 
     try {
-      const prompt = `You are updating document "${docTitle}" (type: ${docType}).
+      const prompt = locale === 'en'
+        ? `You are updating document "${docTitle}" (type: ${docType}).
 
 TASK: Based on the code changes below, determine which blocks need updating and call refresh.submit_changes IMMEDIATELY.
 
@@ -351,7 +377,26 @@ ${diffContext}
 3. For newContent: if the block's contentFormat is "markdown_fragment", provide a plain markdown STRING. For structured blocks (heading, list, table), provide a JSON object matching the original structure.
 4. If no updates are needed, call refresh.submit_changes with summary="No updates needed" and an empty changes array.
 
-Do NOT explore the codebase. All context you need is above.`;
+Do NOT explore the codebase. All context you need is above.`
+        : `你正在更新文档 "${docTitle}"（类型: ${docType}）。
+
+任务：根据下方的代码变更，判断哪些 block 需要更新，并立即调用 refresh.submit_changes。
+
+## 文档 Blocks
+${blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.content}`).join('\n\n')}
+
+## 代码变更
+文件: ${sourceFilesList.join(', ') || '未知'}
+符号: ${symbolsList.join(', ') || '无'}
+${diffContext}
+
+## 指令
+1. 对每个受影响的 block，判断：代码变更是否需要更新该 block 的内容？
+2. 调用 refresh.submit_changes 提交变更数组。每个变更需要：blockId、action（update/delete/insert_after）、newContent 和 reasoning。
+3. 对于 newContent：如果 block 的 contentFormat 是 "markdown_fragment"，提供纯 markdown 字符串。对于结构化 block（heading、list、table），提供匹配原始结构的 JSON 对象。
+4. 如果不需要更新，调用 refresh.submit_changes 并设置 summary="无需更新"，changes 为空数组。
+
+不要探索代码库。所有需要的上下文已在上方提供。`;
 
       const session = agentSessionRuntime.create({
         projectId,

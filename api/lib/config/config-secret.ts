@@ -31,26 +31,24 @@ export function decryptSecret(value: string | undefined | null): string | undefi
   const [ivB64, tagB64, ciphertextB64] = payload.split(':')
   if (!ivB64 || !tagB64 || !ciphertextB64) return undefined
 
-  const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(ivB64, 'base64'))
-  decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
-  const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(ciphertextB64, 'base64')),
-    decipher.final(),
-  ])
-  return plaintext.toString('utf8')
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(ivB64, 'base64'))
+    decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(ciphertextB64, 'base64')),
+      decipher.final(),
+    ])
+    return plaintext.toString('utf8')
+  } catch {
+    return undefined
+  }
 }
 
 export function maskSecret(value: string | undefined | null): string | undefined {
   if (!value) return undefined
 
-  let plain: string | undefined
-  try {
-    plain = isEncryptedSecret(value) ? decryptSecret(value) : value
-  } catch {
-    return MASKED_SECRET
-  }
-
-  if (!plain) return undefined
+  const plain = isEncryptedSecret(value) ? decryptSecret(value) : value
+  if (!plain) return MASKED_SECRET
   if (plain.length <= 8) return MASKED_SECRET
   return `${plain.slice(0, 4)}${MASKED_SECRET}${plain.slice(-4)}`
 }

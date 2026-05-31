@@ -28,6 +28,36 @@ import { createHash } from 'node:crypto';
 import { buildWikiPrompt, extractProjectMeta } from './wiki-prompt-builder.js';
 import { buildDocumentContext } from './wiki-document-context.js';
 
+function wikiMsg(locale: 'zh' | 'en') {
+  return locale === 'en' ? {
+    genTitle: 'Wiki Generation',
+    genStarted: 'Document generation task started',
+    outlineReady: 'Document outline ready, preparing to generate content',
+    writingContent: 'Writing document content',
+    generating: (title: string, i: number, total: number) => `Generating: ${title} (${i}/${total})`,
+    genComplete: (count: number) => `Successfully generated ${count} documents`,
+    genFailed: 'Wiki Generation Failed',
+    continueTitle: 'Wiki Continue Generation',
+    continueComplete: (count: number) => `Successfully completed ${count} documents`,
+    continueFailed: 'Wiki Continue Generation Failed',
+    sessionInit: 'Wiki Initialization',
+    sessionContinue: 'Wiki Continue Generation',
+  } : {
+    genTitle: 'Wiki 生成',
+    genStarted: '文档生成任务已启动',
+    outlineReady: '文档大纲已就绪，准备生成内容',
+    writingContent: '正在撰写文档内容',
+    generating: (title: string, i: number, total: number) => `正在生成: ${title} (${i}/${total})`,
+    genComplete: (count: number) => `成功生成 ${count} 篇文档`,
+    genFailed: 'Wiki 生成失败',
+    continueTitle: 'Wiki 继续生成',
+    continueComplete: (count: number) => `成功补全 ${count} 篇文档`,
+    continueFailed: 'Wiki 继续生成失败',
+    sessionInit: 'Wiki 初始化',
+    sessionContinue: 'Wiki 继续生成',
+  };
+}
+
 function readGitState(workDir: string): WikiGitState {
   const run = (cmd: string) => {
     try {
@@ -73,8 +103,8 @@ export const wikiLoopService = {
       taskKind: 'wiki_generate',
       projectId,
       taskId: snapshot.id,
-      title: 'Wiki 生成',
-      message: '文档生成任务已启动',
+      title: wikiMsg(locale).genTitle,
+      message: wikiMsg(locale).genStarted,
       severity: 'info',
       meta: { snapshotId: snapshot.id },
     });
@@ -103,7 +133,7 @@ export const wikiLoopService = {
         profileId: 'wiki-planner',
         prompt: plannerPrompt,
       });
-      agentRuntimeStore.updateSession(plannerSession.id, { title: 'Wiki 初始化', updatedAt: nowIso() });
+      agentRuntimeStore.updateSession(plannerSession.id, { title: wikiMsg(locale).sessionInit, updatedAt: nowIso() });
       sessionIds.push(plannerSession.id);
       setSessionWorkspaceRoot(plannerSession.id, workDir);
 
@@ -138,8 +168,8 @@ export const wikiLoopService = {
         taskKind: 'wiki_generate',
         projectId,
         taskId: snapshot.id,
-        title: 'Wiki 生成',
-        message: '文档大纲已就绪，准备生成内容',
+        title: wikiMsg(locale).genTitle,
+        message: wikiMsg(locale).outlineReady,
         severity: 'info',
         meta: { snapshotId: snapshot.id, snapshotStatus: 'outline_ready', phase: 1, docCount: docIds.length },
       });
@@ -152,8 +182,8 @@ export const wikiLoopService = {
         taskKind: 'wiki_generate',
         projectId,
         taskId: snapshot.id,
-        title: 'Wiki 生成',
-        message: '正在撰写文档内容',
+        title: wikiMsg(locale).genTitle,
+        message: wikiMsg(locale).writingContent,
         severity: 'info',
         meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, totalDocs: docIds.length },
       });
@@ -235,8 +265,8 @@ export const wikiLoopService = {
           taskKind: 'wiki_generate',
           projectId,
           taskId: snapshot.id,
-          title: 'Wiki 生成',
-          message: `正在生成: ${entry.title} (${i + 1}/${totalDocs})`,
+          title: wikiMsg(locale).genTitle,
+          message: wikiMsg(locale).generating(entry.title, i + 1, totalDocs),
           severity: 'info',
           meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, docIndex: i, totalDocs, docTitle: entry.title },
         });
@@ -259,8 +289,8 @@ export const wikiLoopService = {
         taskKind: 'wiki_generate',
         projectId,
         taskId: snapshot.id,
-        title: 'Wiki 生成完成',
-        message: `成功生成 ${persistedDocIds.length} 篇文档`,
+        title: wikiMsg(locale).genTitle,
+        message: wikiMsg(locale).genComplete(persistedDocIds.length),
         severity: 'success',
         meta: { snapshotId: snapshot.id, docCount: persistedDocIds.length },
       });
@@ -276,7 +306,7 @@ export const wikiLoopService = {
         taskKind: 'wiki_generate',
         projectId,
         taskId: snapshot.id,
-        title: 'Wiki 生成失败',
+        title: wikiMsg(locale).genFailed,
         message: err instanceof Error ? err.message : String(err),
         severity: 'error',
         meta: { snapshotId: snapshot.id },
@@ -368,7 +398,7 @@ export const wikiLoopService = {
         profileId: 'wiki-writer',
         prompt: writerPrompt,
       });
-      agentRuntimeStore.updateSession(writerSession.id, { title: 'Wiki 继续生成', updatedAt: nowIso() });
+      agentRuntimeStore.updateSession(writerSession.id, { title: wikiMsg(locale).sessionContinue, updatedAt: nowIso() });
       sessionIds.push(writerSession.id);
       setSessionWorkspaceRoot(writerSession.id, workDir);
 
@@ -388,8 +418,8 @@ export const wikiLoopService = {
         taskKind: 'wiki_generate',
         projectId: snapshot.projectId,
         taskId: snapshotId,
-        title: 'Wiki 继续生成完成',
-        message: `成功补全 ${unfilled.length} 篇文档`,
+        title: wikiMsg(locale).continueTitle,
+        message: wikiMsg(locale).continueComplete(unfilled.length),
         severity: 'success',
         meta: { snapshotId, docCount: unfilled.length },
       });
@@ -401,7 +431,7 @@ export const wikiLoopService = {
         taskKind: 'wiki_generate',
         projectId: snapshot.projectId,
         taskId: snapshotId,
-        title: 'Wiki 继续生成失败',
+        title: wikiMsg(locale).continueFailed,
         message: err instanceof Error ? err.message : String(err),
         severity: 'error',
         meta: { snapshotId },
