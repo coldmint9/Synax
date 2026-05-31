@@ -1013,8 +1013,7 @@ export class AgentRuntimeStore {
       .prepare("SELECT metadata_json FROM agent_runtime_run_steps WHERE session_id = ? ORDER BY step_index ASC")
       .all(sessionId) as Array<{ metadata_json: string }>;
 
-    let input = 0;
-    let output = 0;
+    let cumulativeOutput = 0;
     let latestInputTokens = 0;
     for (const row of stepRows) {
       try {
@@ -1022,16 +1021,16 @@ export class AgentRuntimeStore {
         const u = meta.usage ?? {};
         const stepInput = u.inputTokens ?? u.promptTokens ?? u.input_tokens ?? 0;
         const stepOutput = u.outputTokens ?? u.completionTokens ?? u.output_tokens ?? 0;
-        input += stepInput;
-        output += stepOutput;
+        cumulativeOutput += stepOutput;
         if (stepInput > 0) latestInputTokens = stepInput;
       } catch { /* skip */ }
     }
+    const input = latestInputTokens;
+    const output = cumulativeOutput;
     const total = input + output;
 
     const contextLimit = 200_000;
-    const contextUsed = latestInputTokens > 0 ? latestInputTokens : total;
-    const contextUsedPercent = Math.min(Math.round((contextUsed / contextLimit) * 100), 100);
+    const contextUsedPercent = Math.min(Math.round((input / contextLimit) * 100), 100);
 
     const toolCountRow = db
       .prepare('SELECT COUNT(*) as cnt FROM agent_runtime_tool_calls WHERE session_id = ?')

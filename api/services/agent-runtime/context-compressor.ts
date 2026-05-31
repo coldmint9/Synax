@@ -8,7 +8,7 @@ type ModelMessage = { role: string; content: unknown };
 
 const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   enabled: true,
-  threshold: 0.75,
+  threshold: 0.92,
   preserveRecentMessages: 4,
   maxSummaryTokens: 2000,
 };

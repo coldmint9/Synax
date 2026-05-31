@@ -47,6 +47,7 @@ import { sessionHooks } from "./session-hooks.js";
 import { sessionLiveBus } from "./session-live-bus.js";
 import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
 import { logger } from "../../lib/logger.js";
+import { CONTEXT_TOOL_CLEAR_THRESHOLD, CONTEXT_TOOL_CLEAR_KEEP_RECENT, CONTEXT_TOOL_CLEAR_EXCLUDE } from "../../lib/env.js";
 
 const LOG_TEXT_LIMIT = 2000;
 const ACTIVE_SESSION_WAIT_MS = 25;
@@ -1130,10 +1131,22 @@ export class AgentLoopRuntime {
         ? filterByDisclosure(availableTools, input.disclosureState, input.disclosureStrategy)
         : availableTools;
     const toolSet = buildLoopToolSet(availableTools, visibleTools);
+    const contextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
     let conversationMessages = buildLoopModelMessages(
       this.store,
       input.sessionId,
       toolSet,
+      {
+        clearing: {
+          priorInputTokens: typeof input.previousStepUsage?.inputTokens === 'number'
+            ? input.previousStepUsage.inputTokens as number
+            : null,
+          contextLimit,
+          threshold: CONTEXT_TOOL_CLEAR_THRESHOLD,
+          keepRecent: CONTEXT_TOOL_CLEAR_KEEP_RECENT,
+          excludeTools: CONTEXT_TOOL_CLEAR_EXCLUDE,
+        },
+      },
     );
 
     const systemPromptContent = buildLoopSystemPrompt({
@@ -1152,7 +1165,6 @@ export class AgentLoopRuntime {
           : undefined,
     });
 
-    const contextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
     const compactionConfig = getCompactionConfig();
 
     const prevInputTokens = typeof input.previousStepUsage?.inputTokens === 'number'

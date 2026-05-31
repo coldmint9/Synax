@@ -41,3 +41,12 @@ export const CONTEXT_TOKEN_WARNING_THRESHOLD = Number(
 export const CONTEXT_MEMORY_MAX_PER_PROJECT = Number(
   env('CONTEXT_MEMORY_MAX_PER_PROJECT', '500'),
 );
+
+/** 确定性工具结果清除：触发阈值（占 contextLimit 的比例） */
+export const CONTEXT_TOOL_CLEAR_THRESHOLD = Number(env('CONTEXT_TOOL_CLEAR_THRESHOLD', '0.5'));
+
+/** 确定性工具结果清除：保留最近 N 个完整结果 */
+export const CONTEXT_TOOL_CLEAR_KEEP_RECENT = Number(env('CONTEXT_TOOL_CLEAR_KEEP_RECENT', '3'));
+
+/** 确定性工具结果清除：排除的工具 ID（逗号分隔） */
+export const CONTEXT_TOOL_CLEAR_EXCLUDE = env('CONTEXT_TOOL_CLEAR_EXCLUDE', 'task.create,task.update,task.get,task.list').split(',');
