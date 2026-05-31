@@ -10,8 +10,8 @@
 ![Version](https://img.shields.io/badge/version-0.1.0--snapshot-64748b?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black)
-![Electron](https://img.shields.io/badge/Electron-42-47848f?style=flat-square&logo=electron&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white)
+![Electron](https://img.shields.io/badge/Electron-39-47848f?style=flat-square&logo=electron&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?style=flat-square&logo=node.js&logoColor=white)
 
 </div>
 
@@ -33,7 +33,7 @@
 
 ### 环境要求
 
-- Node.js 24 或更高版本。
+- Node.js 22 或更高版本。
 - npm 10 或更高版本。
 - Git。
 - tree-sitter 依赖需要原生构建工具。macOS 请安装 Xcode Command Line Tools；Windows 请安装 Visual Studio Build Tools（C++ 工作负载）；Linux 请安装 `build-essential`（Debian/Ubuntu）或等效包（`gcc`、`g++`、`make`）。
