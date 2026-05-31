@@ -173,17 +173,21 @@ export const wikiGeneratorProfile: AgentProfile = {
 
 let registered = false;
 
-const WIKI_PROFILE_TITLE: Record<string, string> = {
-  'wiki-planner': 'Wiki 初始化',
-  'wiki-writer': 'Wiki 生成',
-  'wiki-document-writer': 'Wiki 文档生成',
-  'wiki-explorer': 'Wiki 探索',
-  'wiki-generator': 'Wiki 初始化',
+const WIKI_PROFILE_TITLE: Record<string, Record<'zh' | 'en', string>> = {
+  'wiki-planner': { zh: 'Wiki 初始化', en: 'Wiki Initialization' },
+  'wiki-writer': { zh: 'Wiki 生成', en: 'Wiki Generation' },
+  'wiki-document-writer': { zh: 'Wiki 文档生成', en: 'Wiki Document Generation' },
+  'wiki-explorer': { zh: 'Wiki 探索', en: 'Wiki Exploration' },
+  'wiki-generator': { zh: 'Wiki 初始化', en: 'Wiki Initialization' },
 };
+
+export function getWikiProfileTitle(profileId: string, locale: 'zh' | 'en' = 'zh'): string {
+  return WIKI_PROFILE_TITLE[profileId]?.[locale] ?? 'Wiki';
+}
 
 const wikiTitleGenerator = {
   generate(ctx: { profileId: string }) {
-    return WIKI_PROFILE_TITLE[ctx.profileId] ?? 'Wiki';
+    return WIKI_PROFILE_TITLE[ctx.profileId]?.zh ?? 'Wiki';
   },
 };
 
