@@ -10,14 +10,16 @@
 ![Version](https://img.shields.io/badge/version-0.1.0--snapshot-64748b?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-8-646cff?style=flat-square&logo=vite&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06b6d4?style=flat-square&logo=tailwindcss&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-39-47848f?style=flat-square&logo=electron&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?style=flat-square&logo=node.js&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-22-339933?style=flat-square&logo=node.js&logoColor=white)
 
 </div>
 
 ## 支持的 LLM 供应商
 
-先说大家最关心的模型。Synax 目前在产品配置里支持 OpenAI 和 Anthropic，并通过自定义 API 连接预置了 DeepSeek、OpenRouter 和 xAI。
+先说大家最关心的模型。Synax 目前在产品配置里支持 OpenAI、Anthropic、DeepSeek、Google、Groq、Mistral、xAI、Perplexity、Cerebras、Cohere、DeepInfra、TogetherAI 和 OpenRouter。
 
 同时支持接入符合以下协议格式的自定义端点：
 
@@ -33,7 +35,7 @@
 
 ### 环境要求
 
-- Node.js 22 或更高版本。
+- Node.js 22（>=22, <23）。
 - npm 10 或更高版本。
 - Git。
 - tree-sitter 依赖需要原生构建工具。macOS 请安装 Xcode Command Line Tools；Windows 请安装 Visual Studio Build Tools（C++ 工作负载）；Linux 请安装 `build-essential`（Debian/Ubuntu）或等效包（`gcc`、`g++`、`make`）。
@@ -76,7 +78,7 @@ Synax 围绕一个核心闭环构建：导入本地代码库，分析文件与�
 
 这份 Wiki 不是摆着好看的文档。它是项目的结构化上下文层：架构、模块、API、流程、风险、决策、源码引用、刷新草稿和未来 Agent 工作，都应该在这里汇合，并且始终贴着真实代码走。
 
-项目采用 TypeScript monorepo 架构，包含 Hono API、React Web 客户端、SQLite 本地持久化、基于 tree-sitter 的代码分析、Profile 驱动的 Agent Runtime，以及 Electron 桌面壳。
+项目采用 TypeScript monorepo 架构，包含 Hono API、React Web 客户端、libSQL/Drizzle 本地持久化、基于 tree-sitter 的代码分析、Profile 驱动的 Agent Runtime，以及 Electron 桌面壳。
 
 ## 产品目标
 
@@ -121,9 +123,9 @@ Synax 基于几个很朴素的判断：
 
 - Codebase Design Wiki：从源码生成分层文档，把 Wiki 内容绑定到文件和符号，支持 Markdown 导出，并在代码变化后进行增量刷新。
 - Agent Runtime：内置 planner、executor、reviewer、explorer 和 Wiki 专用 Profile，支持流式事件、权限闸门、暂停、恢复、取消和会话历史。
-- Context Memory：把项目上下文、对话、运行证据、token 预警、压缩状态和可搜索记忆保存在本地 SQLite。
+- Context Memory：把项目上下文、对话、运行证据、token 预警、压缩状态和可搜索记忆保存在本地 libSQL。
 - Code Intelligence：索引 TypeScript、TSX、JavaScript、JSX、Python、Java、C、C++、C#、Go、Rust、PHP、Ruby、Kotlin、Swift、SQL 和 shell 文件。
-- Provider Flexibility：支持配置 OpenAI、Anthropic、DeepSeek、OpenRouter、xAI，以及自定义兼容 API 端点。
+- Provider Flexibility：支持配置 OpenAI、Anthropic、DeepSeek、Google、Groq、Mistral、xAI、Perplexity、Cerebras、Cohere、DeepInfra、TogetherAI、OpenRouter，以及自定义兼容 API 端点。
 - Web 与桌面端：既可以作为 Vite Web 应用独立运行，也可以打包为带 API sidecar 的 Electron 桌面应用。
 
 ## 架构
@@ -139,7 +141,7 @@ Synax 会通过 `dotenv/config` 自动读取 `.env`，但项目不要求必须�
 | `PORT` | `3210` | API 服务端口。 |
 | `WEB_PORT` | `5173` | Vite 开发服务端口。 |
 | `WEB_HOST` | `0.0.0.0` | 开发脚本使用的 Vite host。 |
-| `DATA_ROOT` | `.data` | 本地数据目录，用于 SQLite、项目元数据、配置、日志和模型目录缓存。 |
+| `DATA_ROOT` | `.data` | 本地数据目录，用于 libSQL、项目元数据、配置、日志和模型目录缓存。 |
 | `LOG_LEVEL` | `info` | API 日志级别。 |
 | `CONFIG_ENCRYPTION_KEY` | 未设置 | 用于加密本地保存的 Provider key。 |
 | `Synax_CONFIG_SECRET` | 未设置 | 配置加密的备用密钥。 |
@@ -169,7 +171,7 @@ Synax 会通过 `dotenv/config` 自动读取 `.env`，但项目不要求必须�
 ## 项目结构
 
 ```text
-api/        Hono 路由、SQLite schema、迁移、分析器、Wiki、Context 和 Agent Runtime
+api/        Hono 路由、libSQL/Drizzle schema、迁移、分析器、Wiki、Context 和 Agent Runtime
 web/        React 19、Vite、HeroUI、Zustand、Wiki UI、Sessions UI、设置和 API Client
 electron/   桌面壳、preload bridge、菜单集成、窗口状态和 API sidecar 启动器
 scripts/    API、Web、桌面端和组合开发流程的启动脚本
