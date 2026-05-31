@@ -14,14 +14,16 @@ English | [Simplified Chinese](./README.zh-CN.md)
 ![Version](https://img.shields.io/badge/version-0.1.0--snapshot-64748b?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-8-646cff?style=flat-square&logo=vite&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06b6d4?style=flat-square&logo=tailwindcss&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-39-47848f?style=flat-square&logo=electron&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?style=flat-square&logo=node.js&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-22-339933?style=flat-square&logo=node.js&logoColor=white)
 
 </div>
 
 ## Supported LLM Providers
 
-First things first: models. Synax currently exposes provider setup for OpenAI and Anthropic, plus presets for DeepSeek, OpenRouter, and xAI through custom API connections.
+First things first: models. Synax currently exposes provider setup for OpenAI, Anthropic, DeepSeek, Google, Groq, Mistral, xAI, Perplexity, Cerebras, Cohere, DeepInfra, TogetherAI, and OpenRouter.
 
 It also supports custom endpoints that speak one of these API formats:
 
@@ -37,7 +39,7 @@ Because this is `0.1.0-snapshot`, provider details are still evolving. Some lowe
 
 ### Prerequisites
 
-- Node.js 24 or newer.
+- Node.js 22 (>=22, <23).
 - npm 10 or newer.
 - Git.
 - A native build toolchain for tree-sitter packages. On macOS, install Xcode Command Line Tools; on Windows, install Visual Studio Build Tools (C++ workload); on Linux, install `build-essential` (Debian/Ubuntu) or equivalent (`gcc`, `g++`, `make`).
@@ -80,7 +82,7 @@ Synax is built around one core loop: import a local codebase, analyze its files 
 
 The Wiki is not meant to be decorative documentation. It is the project's structured context layer: a place where architecture, modules, APIs, flows, risks, decisions, source references, refresh drafts, and future agent work can meet without drifting away from the actual code.
 
-The project is built as a TypeScript monorepo with a Hono API, React web client, SQLite persistence, tree-sitter based code analysis, a profile-driven agent runtime, and an Electron desktop shell.
+The project is built as a TypeScript monorepo with a Hono API, React web client, libSQL/Drizzle persistence, tree-sitter based code analysis, a profile-driven agent runtime, and an Electron desktop shell.
 
 ## Product Goal
 
@@ -125,9 +127,9 @@ Known incomplete or unstable areas:
 
 - Codebase Design Wiki: generate hierarchical documentation from source, bind wiki blocks back to files and symbols, export Markdown, and refresh docs when code changes.
 - Agent Runtime: run planner, executor, reviewer, explorer, and wiki-specific profiles with streaming events, permission gates, pause, resume, cancel, and session history.
-- Context Memory: persist project context, conversations, run evidence, token warnings, compression state, and searchable memory in local SQLite.
+- Context Memory: persist project context, conversations, run evidence, token warnings, compression state, and searchable memory in local libSQL.
 - Code Intelligence: index TypeScript, TSX, JavaScript, JSX, Python, Java, C, C++, C#, Go, Rust, PHP, Ruby, Kotlin, Swift, SQL, and shell files.
-- Provider Flexibility: configure OpenAI, Anthropic, DeepSeek, OpenRouter, xAI, and custom compatible API endpoints.
+- Provider Flexibility: configure OpenAI, Anthropic, DeepSeek, Google, Groq, Mistral, xAI, Perplexity, Cerebras, Cohere, DeepInfra, TogetherAI, OpenRouter, and custom compatible API endpoints.
 - Web and Desktop: use Synax as a standalone Vite web app or package it as an Electron desktop app with a bundled API sidecar.
 
 ## Architecture
@@ -144,7 +146,7 @@ Synax reads `.env` automatically through `dotenv/config`, but no template file i
 | `PORT` | `3210` | API server port. |
 | `WEB_PORT` | `5173` | Vite development server port. |
 | `WEB_HOST` | `0.0.0.0` | Vite development server host used by dev scripts. |
-| `DATA_ROOT` | `.data` | Local data directory for SQLite, project metadata, config, logs, and model catalog cache. |
+| `DATA_ROOT` | `.data` | Local data directory for libSQL, project metadata, config, logs, and model catalog cache. |
 | `LOG_LEVEL` | `info` | API log level. |
 | `CONFIG_ENCRYPTION_KEY` | unset | Secret used to encrypt stored provider keys. |
 | `Synax_CONFIG_SECRET` | unset | Alternative secret used for config encryption. |
@@ -174,7 +176,7 @@ Runtime data is local by default and is ignored by Git. Use a stable `CONFIG_ENC
 ## Project Layout
 
 ```text
-api/        Hono routes, SQLite schema, migrations, analyzer, wiki, context, and agent runtime
+api/        Hono routes, libSQL/Drizzle schema, migrations, analyzer, wiki, context, and agent runtime
 web/        React 19, Vite, HeroUI, Zustand, wiki UI, sessions UI, settings, and API clients
 electron/   Desktop shell, preload bridge, menu integration, window state, and API sidecar launcher
 scripts/    Development bootstrap scripts for API, web, desktop, and combined workflows
