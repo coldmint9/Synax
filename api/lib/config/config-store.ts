@@ -536,6 +536,15 @@ function mergeProviderDefs(existing: ProviderDef[], incoming: ProviderDef[]): Pr
   return Array.from(map.values())
 }
 
+function preserveApiKey(connection: ProviderConnection, existing?: ProviderConnection): ProviderConnection {
+  if (connection.apiKey) return connection
+  if (!existing?.apiKey) return connection
+  if (connection.apiKeyMasked || !('apiKey' in connection)) {
+    return { ...connection, apiKey: existing.apiKey, apiKeyMasked: existing.apiKeyMasked }
+  }
+  return connection
+}
+
 function mergeProviderConnections(
   existing: Record<string, ProviderConnection>,
   incoming: Record<string, ProviderConnection>,
@@ -547,9 +556,12 @@ function mergeProviderConnections(
     : new Set<string>([...Object.keys(existing), ...Object.keys(incoming)])
   const result: Record<string, ProviderConnection> = {}
 
-  for (const [providerId, connection] of Object.entries({ ...existing, ...incoming })) {
+  const merged = { ...existing, ...incoming }
+  for (const [providerId, connection] of Object.entries(merged)) {
     if (!allowedIds.has(providerId)) continue
-    result[providerId] = normalizeProviderConnection(connection, includeSecrets)
+    const prev = existing[providerId]
+    const preserved = preserveApiKey(connection, prev)
+    result[providerId] = normalizeProviderConnection(preserved, includeSecrets)
   }
 
   return result

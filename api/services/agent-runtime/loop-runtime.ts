@@ -334,6 +334,8 @@ export class AgentLoopRuntime {
           )
         : null;
 
+      let clearingActivated = false;
+
       while (run.currentStep < maxSteps) {
         if (runAbortSignal.aborted) {
           throw new AgentRuntimeError(
@@ -412,6 +414,7 @@ export class AgentLoopRuntime {
           disclosureStrategy: disclosureStrategy,
           previousStepUsage: previousStep?.metadata?.usage as Record<string, unknown> | undefined,
           abortSignal: runAbortSignal,
+          clearingActivated,
         })) {
           if (event.type === "thought_delta") {
             const evt = this.events.append({
@@ -472,6 +475,14 @@ export class AgentLoopRuntime {
 
         if (!modelResult) {
           throw new AgentRuntimeError("Model step produced no result.", "INTERNAL", 500);
+        }
+
+        const stepUsage = modelResult.step.usage as Record<string, unknown> | undefined;
+        if (!clearingActivated && typeof stepUsage?.inputTokens === 'number') {
+          const stepContextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
+          if ((stepUsage.inputTokens as number) > stepContextLimit * CONTEXT_TOOL_CLEAR_THRESHOLD) {
+            clearingActivated = true;
+          }
         }
 
         await this.persistStepOutput(
@@ -1080,6 +1091,7 @@ export class AgentLoopRuntime {
     disclosureStrategy: DisclosureStrategy | null;
     previousStepUsage?: Record<string, unknown> | null;
     abortSignal?: AbortSignal;
+    clearingActivated?: boolean;
   }): AsyncGenerator<LoopModelStreamEvent> {
     if (input.blockedByPermission) {
       logger.info(
@@ -1132,19 +1144,23 @@ export class AgentLoopRuntime {
         : availableTools;
     const toolSet = buildLoopToolSet(availableTools, visibleTools);
     const contextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
+
+    const prevInputTokens = typeof input.previousStepUsage?.inputTokens === 'number'
+      ? input.previousStepUsage.inputTokens as number
+      : null;
+
     let conversationMessages = buildLoopModelMessages(
       this.store,
       input.sessionId,
       toolSet,
       {
         clearing: {
-          priorInputTokens: typeof input.previousStepUsage?.inputTokens === 'number'
-            ? input.previousStepUsage.inputTokens as number
-            : null,
+          priorInputTokens: prevInputTokens,
           contextLimit,
           threshold: CONTEXT_TOOL_CLEAR_THRESHOLD,
           keepRecent: CONTEXT_TOOL_CLEAR_KEEP_RECENT,
           excludeTools: CONTEXT_TOOL_CLEAR_EXCLUDE,
+          forceActivated: input.clearingActivated ?? false,
         },
       },
     );
@@ -1167,9 +1183,6 @@ export class AgentLoopRuntime {
 
     const compactionConfig = getCompactionConfig();
 
-    const prevInputTokens = typeof input.previousStepUsage?.inputTokens === 'number'
-      ? input.previousStepUsage.inputTokens as number
-      : null;
     const totalTokens = prevInputTokens ?? (
       countTokens(systemPromptContent, input.input.model ?? undefined) +
       countMessagesTokens(

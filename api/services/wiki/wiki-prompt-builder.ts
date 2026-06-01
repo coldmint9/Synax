@@ -3,17 +3,9 @@ import type { WikiOutlineEntry } from './wiki-loop-tools.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface ProjectMeta {
-  fileCount: number;
-  languageDistribution: Record<string, number>;
-  moduleCount: number;
-  hasMonorepo: boolean;
-  estimatedComplexity: 'small' | 'medium' | 'large';
-}
-
 export interface WikiPromptInput {
   role: 'planner' | 'writer' | 'document-writer';
-  projectMeta: ProjectMeta;
+  languages: string;
   locale: 'zh' | 'en';
   outline?: WikiOutlineEntry[];
   continuation?: { completedTitles: string[]; remainingCount: number };
@@ -22,27 +14,16 @@ export interface WikiPromptInput {
   documentEntry?: WikiOutlineEntry;
 }
 
-// ── Extract project metadata from scan ───────────────────────────────────────
+// ── Format language composition from scan ────────────────────────────────────
 
-export function extractProjectMeta(scan: CodeMapScanResult): ProjectMeta {
-  const fileCount = scan.codeIndex.stats.fileCount;
-  const langDist: Record<string, number> = {};
-  if (scan.moduleMap?.languages) {
-    for (const lang of scan.moduleMap.languages) {
-      langDist[lang.language] = lang.fileCount;
-    }
-  }
-  const moduleCount = scan.moduleMap?.topDirs.length ?? 0;
-  const hasMonorepo = scan.moduleMap?.topDirs.some(
-    d => d.path.includes('packages/') || d.path.includes('apps/')
-  ) ?? false;
-
-  let estimatedComplexity: ProjectMeta['estimatedComplexity'];
-  if (fileCount < 50 || moduleCount < 5) estimatedComplexity = 'small';
-  else if (fileCount > 300 || moduleCount > 15) estimatedComplexity = 'large';
-  else estimatedComplexity = 'medium';
-
-  return { fileCount, languageDistribution: langDist, moduleCount, hasMonorepo, estimatedComplexity };
+export function formatLanguages(scan: CodeMapScanResult): string {
+  const langs = scan.moduleMap?.languages ?? [];
+  if (langs.length === 0) return 'unknown';
+  return langs
+    .sort((a, b) => b.fileCount - a.fileCount)
+    .slice(0, 5)
+    .map(l => `${l.language}(${l.fileCount})`)
+    .join(', ');
 }
 
 // ── Segment builders ─────────────────────────────────────────────────────────
@@ -76,28 +57,22 @@ function buildWorkflowSegment(role: Role, locale: Locale): string {
 
 function buildWorkflowSegmentEn(role: Role): string {
   if (role === 'planner') {
-    return `## Workflow
+    return `## Task
 
-### Step 1: Global Overview (2-3 steps)
-1. wiki.read_modules — top-level modules, languages, core symbols
-2. wiki.read_tree — project directory structure
-3. wiki.read_code_index(kind: 'files') — file list, focus on files with high symbolCount and importCount
+Analyze the codebase and submit a hierarchical document outline.
 
-### Step 2: Deep Exploration as Needed
-Decide exploration depth and steps based on project complexity:
-- file.list(path) — deeper file discovery for interesting subdirectories
-- file.glob(pattern) — pattern-match specific file types
-- grep.search(query, path) — search for key concepts, interfaces, core class names
-- file.read — read core entry files and discovered key files
-- wiki.read_code_index(kind: 'symbols') — core symbols, focus on high degree, callCount, callerCount
-- wiki.read_graph(section: 'communities') — functional clusters (optional)
-- wiki.read_call_graph(symbolName, direction) — query call relationships of core symbols
-- wiki.impact_analysis(target, targetType) — analyze impact scope of key modules
+Available tools:
+- wiki.read_modules — module structure, language breakdown, core symbols
+- wiki.read_tree — directory tree
+- wiki.read_code_index — file list, symbol index (paginated)
+- wiki.read_graph — semantic clusters
+- wiki.read_call_graph — call relationships
+- wiki.impact_analysis — impact scope analysis
+- file.read — read any file
+- file.list / file.glob — file discovery
+- grep.search — search code
 
-Large projects should explore more modules; small projects can finish quickly.
-
-### Step 3: Submit Outline
-Call wiki.submit_outline to submit the hierarchical document plan.`;
+Based on the project's language ecosystem, autonomously decide your exploration strategy. Read configuration files, entry points, and core modules as you see fit. When ready, call wiki.submit_outline.`;
   }
 
   if (role === 'document-writer') {
@@ -123,14 +98,6 @@ subagent.delegate behavior:
 - You will block until the sub-agent completes
 - Maximum 5 concurrent subtasks
 
-### Using subagent.delegate for exploration:
-\`\`\`
-subagent.delegate({
-  prompt: "Analyze the following files and provide a structured technical summary:\\nFiles: {targetFiles}\\nQuestions: {keyQuestions}\\n\\nUse file.read to read each file and extract: 1. Module overview 2. Public interface signatures 3. Core data models 4. Business flows 5. Dependencies 6. All referenced qualifiedName list",
-  profileId: "explorer"
-})
-\`\`\`
-
 After receiving the sub-agent's summary, format into blocks and call wiki.commit_document.
 
 ## Execution Order (topological)
@@ -139,28 +106,22 @@ Must submit in parent → child order. parentPlanId points to the id in the outl
 
 function buildWorkflowSegmentZh(role: Role): string {
   if (role === 'planner') {
-    return `## 工作流程
+    return `## 任务
 
-### Step 1：全局概览（2-3 步）
-1. wiki.read_modules — 顶层模块、语言、核心符号
-2. wiki.read_tree — 项目目录结构
-3. wiki.read_code_index(kind: 'files') — 文件列表，关注 symbolCount 和 importCount 高的文件
+分析代码库，规划文档结构，提交 outline。
 
-### Step 2：按需深入探索
-根据项目复杂度自行决定探索深度和步数：
-- file.list(path) — 对感兴趣的子目录做更深层的文件发现
-- file.glob(pattern) — 按模式匹配查找特定类型的文件
-- grep.search(query, path) — 搜索关键概念、接口、核心类名
-- file.read — 读取核心入口文件和发现的关键文件
-- wiki.read_code_index(kind: 'symbols') — 核心符号，关注 degree、callCount、callerCount 高的
-- wiki.read_graph(section: 'communities') — 功能聚类（可选）
-- wiki.read_call_graph(symbolName, direction) — 查询核心 symbol 的调用关系，理解模块间耦合
-- wiki.impact_analysis(target, targetType) — 分析关键模块的影响范围，辅助文档边界划分
+可用工具：
+- wiki.read_modules — 模块结构、语言分布、核心符号
+- wiki.read_tree — 目录树
+- wiki.read_code_index — 文件列表、符号索引（分页）
+- wiki.read_graph — 语义聚类
+- wiki.read_call_graph — 调用关系
+- wiki.impact_analysis — 影响范围分析
+- file.read — 读取任意文件
+- file.list / file.glob — 文件发现
+- grep.search — 搜索代码
 
-大型项目应探索更多模块，小型项目可以快速完成。
-
-### Step 3：提交目录树
-调用 wiki.submit_outline，提交层级化文档计划。`;
+根据项目的语言体系，自主决定探索策略。阅读配置文件、入口文件和核心模块。探索完毕后调用 wiki.submit_outline 提交文档计划。`;
   }
 
   if (role === 'document-writer') {
@@ -186,32 +147,15 @@ subagent.delegate 行为：
 - 子 agent 完成前，你会阻塞等待
 - 最多同时运行 5 个子任务
 
-### 使用 subagent.delegate 委派探索：
-\`\`\`
-subagent.delegate({
-  prompt: "分析以下文件并提供结构化技术摘要：\\n文件：{targetFiles}\\n问题：{keyQuestions}\\n\\n请用 file.read 读取每个文件，提取：1.模块概述 2.公开接口签名 3.核心数据模型 4.业务流程 5.依赖关系 6.所有引用的qualifiedName列表",
-  profileId: "explorer"
-})
-\`\`\`
-
 收到子 agent 返回的摘要后，格式化为 blocks 并调用 wiki.commit_document。
 
 ## 执行顺序（拓扑序）
 必须按父 → 子的顺序逐个提交。parentPlanId 指向 outline 中的 id。`;
 }
 
-function buildConstraintsSegment(role: Role, meta: ProjectMeta, locale: Locale): string {
+function buildConstraintsSegment(role: Role, locale: Locale): string {
   if (role === 'planner') {
-    const { estimatedComplexity, hasMonorepo, moduleCount } = meta;
-    const maxDepth = moduleCount > 15 ? 4 : 3;
-
     if (locale === 'en') {
-      const docRange = estimatedComplexity === 'small'
-        ? 'Total documents >= 6 (target 8-12)'
-        : estimatedComplexity === 'large'
-          ? 'Total documents >= 12 (target 20-30)'
-          : 'Total documents >= 8 (target 12-20)';
-      const monorepoRule = hasMonorepo ? '\n- At least one module_spec per package/app' : '';
       return `## Outline Structure Requirements
 
 Follow the standard software design document format (high-level → detailed design):
@@ -232,20 +176,12 @@ Level 2 (Sub-module/flow — deep details):
 - decision: Important architectural decision records
 
 Constraints:
-- ${docRange}
-- Maximum nesting depth: ${maxDepth} levels
-- Must include: 1+ directory_tree, 1+ overview, 1+ architecture, 3+ module_spec${monorepoRule}
+- Must include: 1+ directory_tree, 1+ overview, 1+ architecture
+- Decide document count and nesting depth based on your understanding of the project
 - Each entry must specify targetFiles (real file paths) and keyQuestions (specific, answerable questions)
 - sortOrder determines display order among siblings
 - title must be concise — no parenthetical elaborations`;
     }
-
-    const docRange = estimatedComplexity === 'small'
-      ? '总文档数 >= 6（目标 8-12）'
-      : estimatedComplexity === 'large'
-        ? '总文档数 >= 12（目标 20-30）'
-        : '总文档数 >= 8（目标 12-20）';
-    const monorepoRule = hasMonorepo ? '\n- 每个 package/app 至少一个 module_spec' : '';
 
     return `## 目录树结构要求
 
@@ -267,12 +203,11 @@ Level 2（子模块/流程级 — 深入细节）：
 - decision: 重要架构决策记录
 
 约束：
-- ${docRange}
-- 最大嵌套深度 ${maxDepth} 层
-- 必须包含：1+ directory_tree、1+ overview、1+ architecture、3+ module_spec${monorepoRule}
+- 必须包含：1+ directory_tree、1+ overview、1+ architecture
+- 根据你对项目的理解，自行决定文档数量和层级深度
 - 每个条目必须指定 targetFiles（真实存在的文件路径）和 keyQuestions（具体、可回答的问题）
 - sortOrder 决定同级文档的显示顺序
-- title 必须简洁，禁止使用括号补充说明（错误示例："系统架构（分层、模块关系、数据流）"，正确示例："系统架构"）`;
+- title 必须简洁，禁止使用括号补充说明`;
   }
 
   if (locale === 'en') {
@@ -368,38 +303,12 @@ function buildToolsGuideSegment(role: Role, locale: Locale): string {
 5. mermaid 节点标签中不要使用裸括号 ()，用引号包裹`;
 }
 
-function buildContextSegment(meta: ProjectMeta, locale: Locale): string {
-  const langs = Object.entries(meta.languageDistribution)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([lang, count]) => `${lang}(${count})`)
-    .join(', ');
-
+function buildContextSegment(languages: string, role: Role, locale: Locale): string {
+  if (role !== 'planner') return '';
   if (locale === 'en') {
-    const lines = [
-      `## Project Overview`,
-      `- Total files: ${meta.fileCount}`,
-      `- Primary languages: ${langs || 'unknown'}`,
-      `- Top-level modules: ${meta.moduleCount}`,
-      `- Estimated complexity: ${meta.estimatedComplexity}`,
-    ];
-    if (meta.hasMonorepo) {
-      lines.push('- Structure: monorepo (multi-package)');
-    }
-    return lines.join('\n');
+    return `## Language Composition\n${languages}`;
   }
-
-  const lines = [
-    `## 项目概况`,
-    `- 文件总数: ${meta.fileCount}`,
-    `- 主要语言: ${langs || '未知'}`,
-    `- 顶层模块数: ${meta.moduleCount}`,
-    `- 复杂度评估: ${meta.estimatedComplexity}`,
-  ];
-  if (meta.hasMonorepo) {
-    lines.push('- 结构: monorepo（多包）');
-  }
-  return lines.join('\n');
+  return `## 语言组成\n${languages}`;
 }
 
 function buildContinuationSegment(ctx: { completedTitles: string[]; remainingCount: number }, locale: Locale): string {
@@ -448,17 +357,17 @@ function buildOutlineSegment(outline: WikiOutlineEntry[], locale: Locale): strin
 // ── Main builder ─────────────────────────────────────────────────────────────
 
 export function buildWikiPrompt(input: WikiPromptInput): string {
-  const { locale } = input;
+  const { locale, role } = input;
   const segments: string[] = [];
 
-  segments.push(buildIdentitySegment(input.role, locale));
-  segments.push(buildWorkflowSegment(input.role, locale));
+  segments.push(buildIdentitySegment(role, locale));
+  segments.push(buildWorkflowSegment(role, locale));
 
-  if (input.role === 'writer' && input.outline) {
+  if (role === 'writer' && input.outline) {
     segments.push(buildOutlineSegment(input.outline, locale));
   }
 
-  if (input.role === 'document-writer' && input.documentEntry) {
+  if (role === 'document-writer' && input.documentEntry) {
     if (locale === 'en') {
       segments.push(`## Current Document\n\n- Title: ${input.documentEntry.title}\n- Type: ${input.documentEntry.docType}\n- ID: ${input.documentEntry.id}`);
     } else {
@@ -466,9 +375,11 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
     }
   }
 
-  segments.push(buildConstraintsSegment(input.role, input.projectMeta, locale));
-  segments.push(buildToolsGuideSegment(input.role, locale));
-  segments.push(buildContextSegment(input.projectMeta, locale));
+  segments.push(buildConstraintsSegment(role, locale));
+  segments.push(buildToolsGuideSegment(role, locale));
+
+  const ctx = buildContextSegment(input.languages, role, locale);
+  if (ctx) segments.push(ctx);
 
   if (input.documentContext) {
     const header = locale === 'en' ? '## Code Context' : '## 代码上下文';
