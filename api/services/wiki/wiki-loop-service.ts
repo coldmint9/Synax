@@ -25,7 +25,7 @@ import {
 import type { GenerateWikiInput, GenerateWikiResult, WikiGitState } from './wiki-snapshot-service.js';
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { buildWikiPrompt, extractProjectMeta } from './wiki-prompt-builder.js';
+import { buildWikiPrompt, formatLanguages } from './wiki-prompt-builder.js';
 import { buildDocumentContext } from './wiki-document-context.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
@@ -118,7 +118,7 @@ export const wikiLoopService = {
 
       logger.info({ projectId, workDir }, 'wiki-loop: running code map scan');
       const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
-      const projectMeta = extractProjectMeta(scan);
+      const languages = formatLanguages(scan);
 
       // ═══ Phase 1: Outline Generation ═══
       const plannerHandle = createPlannerTools(scan);
@@ -127,7 +127,7 @@ export const wikiLoopService = {
         registeredToolIds.push(tool.id);
       }
 
-      const plannerPrompt = buildWikiPrompt({ role: 'planner', projectMeta, locale });
+      const plannerPrompt = buildWikiPrompt({ role: 'planner', languages, locale });
       const plannerSession = agentSessionRuntime.create({
         projectId,
         profileId: 'wiki-planner',
@@ -235,7 +235,7 @@ export const wikiLoopService = {
 
         const docPrompt = buildWikiPrompt({
           role: 'document-writer',
-          projectMeta,
+          languages,
           locale,
           documentEntry: entry,
           documentContext,
@@ -385,7 +385,7 @@ export const wikiLoopService = {
 
       const writerPrompt = buildWikiPrompt({
         role: 'writer',
-        projectMeta: extractProjectMeta(scan),
+        languages: formatLanguages(scan),
         locale,
         outline,
         continuation: {

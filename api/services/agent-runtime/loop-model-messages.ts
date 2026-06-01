@@ -13,6 +13,7 @@ export interface ClearingOptions {
   threshold: number;
   keepRecent: number;
   excludeTools: string[];
+  forceActivated?: boolean;
 }
 
 export interface BuildMessagesOptions {
@@ -204,9 +205,9 @@ function buildClearSet(
   clearing?: ClearingOptions,
 ): Set<string> | null {
   if (!clearing) return null;
-  if (!clearing.priorInputTokens || clearing.priorInputTokens <= clearing.contextLimit * clearing.threshold) {
-    return null;
-  }
+  const activated = clearing.forceActivated ||
+    (!!clearing.priorInputTokens && clearing.priorInputTokens > clearing.contextLimit * clearing.threshold);
+  if (!activated) return null;
 
   const excludeSet = new Set(clearing.excludeTools);
   const allToolCalls: ToolCallRecord[] = [];

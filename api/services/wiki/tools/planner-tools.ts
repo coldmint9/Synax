@@ -55,14 +55,12 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
       for (const doc of args.documents) {
         const depth = depthOf(doc.id);
         if (depth === Infinity) errors.push(`Circular reference involving "${doc.title}".`);
-        else if (depth > 3) errors.push(`"${doc.title}" exceeds max depth 3.`);
+        else if (depth > 4) errors.push(`"${doc.title}" exceeds max depth 4.`);
       }
 
       const typeCount = (t: string) => args.documents.filter(d => d.docType === t).length;
       if (typeCount('directory_tree') < 1) errors.push('Need at least 1 directory_tree.');
       if (typeCount('overview') < 1) errors.push('Need at least 1 overview.');
-      if (typeCount('module_spec') < 3) errors.push(`Need at least 3 module_spec (found ${typeCount('module_spec')}).`);
-      if (args.documents.length < 8) errors.push(`Need at least 8 documents (found ${args.documents.length}).`);
 
       if (errors.length > 0) {
         return { result: { ok: false, error: errors.join(' ') }, displaySummary: `Outline rejected:\n${errors.map(e => '  - ' + e).join('\n')}`, artifacts: [] };
