@@ -207,7 +207,7 @@ export const wikiStore = {
       .update(wikiSnapshots)
       .set({ status: 'failed' })
       .where(inArray(wikiSnapshots.status, ['refreshing', 'outline_ready', 'writing']));
-    return Number(result.changes ?? 0);
+    return Number(result.rowsAffected ?? 0);
   },
 
   // ── Documents ─────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = join(import.meta.dirname, '..');
@@ -12,26 +12,11 @@ writeFileSync(
 );
 console.log('  wrote server-dist/package.json');
 
-// Create a better-sqlite3 shim that re-exports libsql.
-// drizzle-orm/better-sqlite3 driver imports 'better-sqlite3' at runtime,
-// but libsql provides an API-compatible replacement.
 const dest = join(serverDist, 'node_modules');
 mkdirSync(dest, { recursive: true });
 
-const shimDir = join(dest, 'better-sqlite3');
-mkdirSync(shimDir, { recursive: true });
-writeFileSync(
-  join(shimDir, 'package.json'),
-  JSON.stringify({ name: 'better-sqlite3', version: '0.0.0', main: 'index.js' })
-);
-writeFileSync(
-  join(shimDir, 'index.js'),
-  'module.exports = require("libsql");\n'
-);
-console.log('  created better-sqlite3 shim -> libsql');
-
-// Copy libsql and its dependencies
-const libsqlPackages = ['libsql', '@neon-rs/load', 'detect-libc'];
+// Copy libsql, @libsql/client, and their runtime dependencies.
+const libsqlPackages = ['libsql', '@neon-rs/load', 'detect-libc', 'js-base64', 'promise-limit', 'ws'];
 const libsqlPlatforms = readdirSync(src).filter(
   (d) => d.startsWith('@libsql')
 );
