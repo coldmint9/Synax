@@ -554,6 +554,7 @@ export const wikiDocuments = sqliteTable('wiki_documents', {
   docType: text('doc_type').notNull(),
   parentId: text('parent_id'),
   blockIdsJson: text('block_ids_json').notNull().default('[]'),
+  pipelineStage: text('pipeline_stage').notNull().default('pending'),
   sortOrder: integer('sort_order').notNull().default(0),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -800,3 +801,20 @@ export const wikiPlanNodeArtifacts = sqliteTable('wiki_plan_node_artifacts', {
 
 export type WikiPlanNodeArtifactRow = typeof wikiPlanNodeArtifacts.$inferSelect;
 export type NewWikiPlanNodeArtifactRow = typeof wikiPlanNodeArtifacts.$inferInsert;
+
+export const wikiJobs = sqliteTable('wiki_jobs', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  snapshotId: text('snapshot_id'),
+  status: text('status').notNull().default('queued'),
+  priority: integer('priority').notNull().default(0),
+  workDir: text('work_dir').notNull(),
+  locale: text('locale').notNull().default('zh'),
+  createdAt: text('created_at').notNull(),
+  startedAt: text('started_at'),
+  completedAt: text('completed_at'),
+  error: text('error'),
+});
+
+export type WikiJobRow = typeof wikiJobs.$inferSelect;
+export type NewWikiJobRow = typeof wikiJobs.$inferInsert;

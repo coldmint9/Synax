@@ -1,0 +1,2 @@
+-- Add pipeline_stage column to wiki_documents for resume granularity
+-- Column is added idempotently via ensureColumn() in db/index.ts instead

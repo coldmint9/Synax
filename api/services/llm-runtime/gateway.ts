@@ -9,6 +9,7 @@ import type { LlmGatewayRequest, ResolvedModelSelection, ValidateLlmRequest } fr
 import { executePipeline, hasConfiguredApiKey, missingApiKeyMessage } from './pipeline.js'
 import type { ExecutionMode } from './pipeline.js'
 import { withRetry } from './middleware/retry.js'
+import { withRateLimit, withStreamRateLimit } from './middleware/rate-limiter.js'
 import { instantiateProvider, selectLanguageModel } from './providers/provider-registry.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,14 +40,14 @@ export async function createGatewayStream(
   abortSignal?: AbortSignal,
 ): Promise<unknown> {
   const selection = await resolveGatewaySelection(request)
-  return withRetry(() => executePipeline(request, selection, {
+  return withRetry(() => withStreamRateLimit(selection.providerId, selection.modelId, request.maxTokens ?? 4096, () => executePipeline(request, selection, {
     kind: 'stream',
     tools: request.tools,
     toolChoice: request.toolChoice,
     activeTools: request.activeTools,
     repairToolCall: request.repairToolCall,
     maxRetries: request.maxRetries,
-  }, abortSignal))
+  }, abortSignal)))
 }
 
 export async function generateGatewayTextResult(
@@ -54,7 +55,7 @@ export async function generateGatewayTextResult(
   abortSignal?: AbortSignal,
 ): Promise<AnyGenerateTextResult> {
   const selection = await resolveGatewaySelection(request)
-  return withRetry(() => executePipeline(request, selection, { kind: 'text' }, abortSignal)) as Promise<AnyGenerateTextResult>
+  return withRetry(() => withRateLimit(selection.providerId, selection.modelId, request.maxTokens ?? 4096, () => executePipeline(request, selection, { kind: 'text' }, abortSignal))) as Promise<AnyGenerateTextResult>
 }
 
 export async function generateGatewayObjectResult<T>(
@@ -63,7 +64,7 @@ export async function generateGatewayObjectResult<T>(
   abortSignal?: AbortSignal,
 ): Promise<GatewayObjectResult<T>> {
   const selection = await resolveGatewaySelection(request)
-  const result = await withRetry(() => executePipeline(request, selection, { kind: 'object', schema }, abortSignal)) as AnyGenerateTextResult
+  const result = await withRetry(() => withRateLimit(selection.providerId, selection.modelId, request.maxTokens ?? 4096, () => executePipeline(request, selection, { kind: 'object', schema }, abortSignal))) as AnyGenerateTextResult
   return {
     object: (result as unknown as { output: T }).output,
     result,

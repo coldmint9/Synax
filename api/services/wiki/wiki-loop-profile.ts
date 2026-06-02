@@ -117,6 +117,10 @@ export const wikiDocumentWriterProfile: AgentProfile = {
   description: 'Generate content for a single wiki document using pre-built code context.',
   defaultThinkingMode: 'standard',
   allowedCapabilities: [
+    'file.read',
+    'file.list',
+    'file.glob',
+    'grep.search',
     'wiki.commit_document',
     'wiki.check_mermaid',
     'tools.escalate',
@@ -128,13 +132,13 @@ export const wikiDocumentWriterProfile: AgentProfile = {
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Document writer does not need shell.' },
   ],
   defaultSkills: [],
-  maxSteps: 8,
+  maxSteps: 12,
   status: 'active',
-  toolPolicy: { allowParallelReadTools: false, allowSubtasks: false, maxParallelReadTools: 1 },
+  toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'All code context is pre-built in the prompt. Generate blocks directly.',
+    'Read source files referenced in targetFiles to verify facts before writing.',
     'Use wiki.check_mermaid before committing any diagram block.',
-    'Call wiki.commit_document once all blocks are ready.',
+    'Call wiki.commit_document once all blocks are ready. Include claims for every factual assertion.',
   ],
 };
 
@@ -171,6 +175,39 @@ export const wikiGeneratorProfile: AgentProfile = {
   loopHints: [],
 };
 
+export const wikiVerifierProfile: AgentProfile = {
+  id: 'wiki-verifier',
+  label: 'Wiki Verifier',
+  kind: 'reviewer',
+  mode: 'subagent',
+  description: 'Adversarially verify claims made by wiki writers by reading source code.',
+  defaultThinkingMode: 'standard',
+  allowedCapabilities: [
+    'file.read',
+    'file.list',
+    'file.glob',
+    'grep.search',
+    'diff.read',
+    'wiki.submit_verdict',
+    'tools.escalate',
+  ],
+  permissionDefaults: [
+    { gate: 'read', pattern: '*', action: 'allow', reason: 'Verifier reads source freely.' },
+    { gate: 'write', pattern: '*', action: 'allow', reason: 'Verifier submits verdict.' },
+    { gate: 'task', pattern: '*', action: 'deny', reason: 'Verifier does not delegate.' },
+    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Verifier does not need shell.' },
+  ],
+  defaultSkills: [],
+  maxSteps: 10,
+  status: 'active',
+  toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
+  loopHints: [
+    'Your task is to REFUTE the given claim. Search for evidence that contradicts it.',
+    'If you cannot find supporting evidence, the claim is refuted by default.',
+    'Return your verdict via wiki.submit_verdict with evidence from actual source files.',
+  ],
+};
+
 let registered = false;
 
 const WIKI_PROFILE_TITLE: Record<string, Record<'zh' | 'en', string>> = {
@@ -178,6 +215,7 @@ const WIKI_PROFILE_TITLE: Record<string, Record<'zh' | 'en', string>> = {
   'wiki-writer': { zh: 'Wiki 生成', en: 'Wiki Generation' },
   'wiki-document-writer': { zh: 'Wiki 文档生成', en: 'Wiki Document Generation' },
   'wiki-explorer': { zh: 'Wiki 探索', en: 'Wiki Exploration' },
+  'wiki-verifier': { zh: 'Wiki 验证', en: 'Wiki Verification' },
   'wiki-generator': { zh: 'Wiki 初始化', en: 'Wiki Initialization' },
 };
 
@@ -197,6 +235,7 @@ export function ensureWikiProfileRegistered(): void {
   profileService.register(wikiWriterProfile);
   profileService.register(wikiDocumentWriterProfile);
   profileService.register(wikiExplorerProfile);
+  profileService.register(wikiVerifierProfile);
   profileService.register(wikiGeneratorProfile);
   for (const tool of createWikiExplorerTools()) {
     toolRegistry.register(tool);
@@ -205,6 +244,7 @@ export function ensureWikiProfileRegistered(): void {
   registerTitleGenerator('wiki-writer', wikiTitleGenerator);
   registerTitleGenerator('wiki-document-writer', wikiTitleGenerator);
   registerTitleGenerator('wiki-explorer', wikiTitleGenerator);
+  registerTitleGenerator('wiki-verifier', wikiTitleGenerator);
   registerTitleGenerator('wiki-generator', wikiTitleGenerator);
   registered = true;
 }

@@ -62,6 +62,13 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
         sourceHints: z.array(z.string()).optional(),
         confidence: z.number().min(0).max(1).optional(),
       })).min(1).describe('Document blocks.'),
+      claims: z.array(z.object({
+        id: z.string().min(1).describe('Unique claim ID (e.g. "claim-runtime-node").'),
+        subject: z.string().min(1).describe('What the claim is about (e.g. "runtime environment").'),
+        assertion: z.string().min(1).describe('The factual assertion being made.'),
+        evidenceHint: z.string().min(1).describe('Where to look to verify (file path or symbol).'),
+        centrality: z.enum(['load-bearing', 'incidental']).describe('How critical this claim is.'),
+      })).min(1).describe('Discrete verifiable claims made in this document.'),
     }),
     execute(input) {
       const args = input.args as WikiDocumentDraft & { parentPlanId?: string; blocks: Array<{ blockType: WikiBlockType; content: string; contentFormat?: WikiBlockContentFormat; sourceHints?: string[]; confidence?: number }> };

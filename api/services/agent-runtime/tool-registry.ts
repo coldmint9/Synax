@@ -91,7 +91,7 @@ export class ToolRegistry {
         const args = input.args as { profileId?: string; prompt?: string; nodeId?: string | null; thinkingMode?: 'fast' | 'standard' | 'deep' };
         const profileId = args.profileId ?? 'explorer';
 
-        const ALLOWED_SUBTASK_PROFILES = ['explorer', 'reviewer', 'wiki-explorer'];
+        const ALLOWED_SUBTASK_PROFILES = ['explorer', 'reviewer', 'wiki-explorer', 'wiki-verifier'];
         if (!ALLOWED_SUBTASK_PROFILES.includes(profileId)) {
           throw new AgentValidationError(`Subtask profile must be one of: ${ALLOWED_SUBTASK_PROFILES.join(', ')}. Got "${profileId}".`);
         }
