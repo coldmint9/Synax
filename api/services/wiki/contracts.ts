@@ -75,6 +75,7 @@ export interface WikiDocument {
   docType: WikiDocType;
   parentId: string | null;
   blockIds: string[];
+  pipelineStage: 'pending' | 'drafted' | 'verified' | 'corrected' | 'done';
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -202,6 +203,7 @@ export interface UpsertWikiDocumentInput {
   docType: WikiDocType;
   parentId?: string | null;
   blockIds?: string[];
+  pipelineStage?: 'pending' | 'drafted' | 'verified' | 'corrected' | 'done';
   sortOrder?: number;
 }
 

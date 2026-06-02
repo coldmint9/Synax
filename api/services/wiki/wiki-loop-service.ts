@@ -27,6 +27,8 @@ import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { buildWikiPrompt, formatLanguages } from './wiki-prompt-builder.js';
 import { buildDocumentContext } from './wiki-document-context.js';
+import { createVerifierTools, type WikiVerdict } from './tools/verifier-tools.js';
+import type { WikiClaim } from './tools/contracts.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
   return locale === 'en' ? {
@@ -205,7 +207,8 @@ export const wikiLoopService = {
           const commitResult = ctx.result.result as { ok: boolean; index?: number };
           if (!commitResult?.ok) return;
           const docs = writerHandle.getCommittedDocuments();
-          const latestDoc = docs[docs.length - 1];
+          const idx = commitResult.index ?? docs.length - 1;
+          const latestDoc = docs[idx];
           if (!latestDoc) return;
 
           const resolvedParentId = latestDoc.parentPlanId
@@ -215,11 +218,13 @@ export const wikiLoopService = {
           const existingDocId = findExistingDocId(latestDoc, outline, planIdToDocId);
           if (existingDocId) {
             await fillDocumentContent(existingDocId, latestDoc, projectId, scan);
+            await wikiStore.updateDocumentPipelineStage(existingDocId, 'drafted');
           } else {
             const newId = await persistSingleDocument(latestDoc, snapshot.id, projectId, scan, resolvedParentId);
             persistedDocIds.push(newId);
             const planEntry = outline.find(p => p.title === latestDoc.title && p.docType === latestDoc.docType);
             if (planEntry) planIdToDocId.set(planEntry.id, newId);
+            await wikiStore.updateDocumentPipelineStage(newId, 'drafted');
           }
 
           logger.info({ projectId, title: latestDoc.title }, 'wiki-loop: document content committed');
@@ -228,9 +233,10 @@ export const wikiLoopService = {
 
       const sortedOutline = topologicalSort(outline);
       const totalDocs = sortedOutline.length;
+      const MAX_CONCURRENT_DOCS = 3;
 
-      for (let i = 0; i < totalDocs; i++) {
-        const entry = sortedOutline[i];
+      // ═══ Phase 2: Writer → Skeptic → Corrector Pipeline ═══
+      const processDocument = async (entry: WikiOutlineEntry, i: number) => {
         const documentContext = buildDocumentContext(scan, entry);
 
         const docPrompt = buildWikiPrompt({
@@ -241,6 +247,7 @@ export const wikiLoopService = {
           documentContext,
         });
 
+        // Stage 1: Writer
         const docSession = agentSessionRuntime.create({
           projectId,
           profileId: 'wiki-document-writer',
@@ -279,6 +286,134 @@ export const wikiLoopService = {
             const s = agentRuntimeStore.tryGetSession(docSession.id);
             if (s && s.status === 'interrupted') throw new Error(`Document writer interrupted for: ${entry.title}`);
           }
+        }
+
+        // Stage 2: Skeptic verification (only load-bearing claims)
+        const committedDocs = writerHandle.getCommittedDocuments();
+        const targetDoc = committedDocs.find(d => d.title === entry.title && d.docType === entry.docType)
+          ?? committedDocs[committedDocs.length - 1];
+        const claims: WikiClaim[] = (targetDoc as unknown as { claims?: WikiClaim[] })?.claims ?? [];
+        const loadBearing = claims.filter(c => c.centrality === 'load-bearing');
+
+        const docId = planIdToDocId.get(entry.id);
+
+        if (loadBearing.length > 0) {
+          logger.info({ projectId, docTitle: entry.title, claimCount: loadBearing.length }, 'wiki-loop: verifying claims');
+
+          const verdicts: WikiVerdict[] = [];
+          for (const claim of loadBearing) {
+            const verifierHandle = createVerifierTools(scan);
+            for (const t of verifierHandle.tools) {
+              toolRegistry.register(t);
+              registeredToolIds.push(t.id);
+            }
+
+            const verifierPrompt = [
+              `Verify this claim by reading the actual source code.`,
+              ``,
+              `Claim ID: ${claim.id}`,
+              `Subject: ${claim.subject}`,
+              `Assertion: "${claim.assertion}"`,
+              `Evidence hint: ${claim.evidenceHint}`,
+              ``,
+              `Language composition: ${languages}`,
+              ``,
+              `Your task: find evidence that SUPPORTS or REFUTES this claim.`,
+              `If you cannot find supporting evidence, default to refuted=true.`,
+              `Call wiki.submit_verdict with your findings.`,
+            ].join('\n');
+
+            const verifierSession = agentSessionRuntime.create({
+              projectId,
+              profileId: 'wiki-verifier',
+              prompt: verifierPrompt,
+            });
+            sessionIds.push(verifierSession.id);
+            setSessionWorkspaceRoot(verifierSession.id, workDir);
+
+            const vStream = agentLoopRuntime.streamRun(verifierSession.id, {});
+            for await (const chunk of vStream) {
+              if (chunk.type === 'run_failed') {
+                logger.warn({ projectId, claimId: claim.id }, 'wiki-loop: verifier failed, skipping claim');
+                break;
+              }
+              if (chunk.type === 'done') break;
+            }
+
+            const verdict = verifierHandle.getVerdict();
+            if (verdict) verdicts.push(verdict);
+
+            for (const t of verifierHandle.tools) {
+              toolRegistry.unregister(t.id);
+              registeredToolIds.splice(registeredToolIds.indexOf(t.id), 1);
+            }
+          }
+
+          // Stage 3: Corrector (if any claims were refuted)
+          const refuted = verdicts.filter(v => v.refuted);
+
+          if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'verified');
+
+          if (refuted.length > 0) {
+            logger.info({ projectId, docTitle: entry.title, refutedCount: refuted.length }, 'wiki-loop: correcting refuted claims');
+
+            const corrections = refuted.map(v =>
+              `- Claim "${v.claimId}": REFUTED. Evidence: ${v.evidence}. Correction: ${v.correction ?? 'remove assertion'}`
+            ).join('\n');
+
+            const correctorPrompt = [
+              `You are rewriting a wiki document to fix factual errors found by verification.`,
+              ``,
+              `Document: "${entry.title}" (${entry.docType})`,
+              ``,
+              `The following claims were refuted with evidence:`,
+              corrections,
+              ``,
+              `Rewrite the document incorporating the corrections. Keep all other content intact.`,
+              `Call wiki.commit_document when done. Include updated claims.`,
+            ].join('\n');
+
+            const correctorSession = agentSessionRuntime.create({
+              projectId,
+              profileId: 'wiki-document-writer',
+              prompt: correctorPrompt,
+            });
+            sessionIds.push(correctorSession.id);
+            setSessionWorkspaceRoot(correctorSession.id, workDir);
+
+            const cStream = agentLoopRuntime.streamRun(correctorSession.id, {});
+            for await (const chunk of cStream) {
+              if (chunk.type === 'run_failed') {
+                logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: corrector failed');
+                break;
+              }
+              if (chunk.type === 'done') break;
+            }
+
+            if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
+          } else {
+            if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
+          }
+        } else {
+          logger.debug({ projectId, docTitle: entry.title }, 'wiki-loop: no load-bearing claims, skipping verification');
+          if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
+        }
+      };
+
+      // Run documents with concurrency limit (topological order respected via queue)
+      const queue = [...sortedOutline.entries()];
+      const running: Promise<void>[] = [];
+
+      while (queue.length > 0 || running.length > 0) {
+        while (running.length < MAX_CONCURRENT_DOCS && queue.length > 0) {
+          const [i, entry] = queue.shift()!;
+          const task = processDocument(entry, i).then(() => {
+            running.splice(running.indexOf(task), 1);
+          });
+          running.push(task);
+        }
+        if (running.length > 0) {
+          await Promise.race(running);
         }
       }
 
@@ -328,7 +463,7 @@ export const wikiLoopService = {
     if (snapshot.status !== 'failed') throw new Error(`Snapshot status must be "failed" to continue, got "${snapshot.status}"`);
 
     const documents = await wikiStore.getDocumentsBySnapshot(snapshotId);
-    const unfilled = documents.filter(d => d.blockIds.length === 0);
+    const unfilled = documents.filter(d => d.pipelineStage !== 'done');
 
     if (unfilled.length === 0) {
       await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));

@@ -215,6 +215,7 @@ function ensureRuntimeSchema(sqlite: Database.Database): void {
   ensureColumn(sqlite, 'wiki_refresh_tasks', 'draft_ids_json', "draft_ids_json TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(sqlite, 'wiki_refresh_tasks', 'affected_document_ids_json', "affected_document_ids_json TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(sqlite, 'wiki_block_revisions', 'draft_id', 'draft_id TEXT');
+  ensureColumn(sqlite, 'wiki_documents', 'pipeline_stage', "pipeline_stage TEXT NOT NULL DEFAULT 'pending'");
 }
 
 export function getDb(): ContextDb {

@@ -70,6 +70,7 @@ function rowToDocument(r: typeof wikiDocuments.$inferSelect): WikiDocument {
     docType: r.docType as WikiDocument['docType'],
     parentId: r.parentId ?? null,
     blockIds: JSON.parse(r.blockIdsJson) as string[],
+    pipelineStage: (r.pipelineStage ?? 'pending') as WikiDocument['pipelineStage'],
     sortOrder: r.sortOrder,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
@@ -245,6 +246,7 @@ export const wikiStore = {
         docType: input.docType,
         parentId: input.parentId ?? null,
         blockIdsJson: JSON.stringify(input.blockIds ?? []),
+        pipelineStage: input.pipelineStage ?? 'pending',
         sortOrder: input.sortOrder ?? 0,
         createdAt: now,
         updatedAt: now,
@@ -256,6 +258,7 @@ export const wikiStore = {
           docType: input.docType,
           parentId: input.parentId ?? null,
           blockIdsJson: JSON.stringify(input.blockIds ?? []),
+          pipelineStage: input.pipelineStage ?? undefined,
           sortOrder: input.sortOrder ?? 0,
           updatedAt: now,
         },
@@ -269,6 +272,14 @@ export const wikiStore = {
     await db
       .update(wikiDocuments)
       .set({ blockIdsJson: JSON.stringify(blockIds), updatedAt: new Date().toISOString() })
+      .where(eq(wikiDocuments.id, documentId));
+  },
+
+  async updateDocumentPipelineStage(documentId: string, stage: 'pending' | 'drafted' | 'verified' | 'corrected' | 'done'): Promise<void> {
+    const db = getDb();
+    await db
+      .update(wikiDocuments)
+      .set({ pipelineStage: stage, updatedAt: new Date().toISOString() })
       .where(eq(wikiDocuments.id, documentId));
   },
 

@@ -49,6 +49,14 @@ export interface WikiPlanEntry {
   keyQuestions: string[];
 }
 
+export interface WikiClaim {
+  id: string;
+  subject: string;
+  assertion: string;
+  evidenceHint: string;
+  centrality: 'load-bearing' | 'incidental';
+}
+
 export interface WikiPlannerHandle {
   tools: RegisteredTool[];
   getOutline(): WikiOutlineEntry[] | null;
