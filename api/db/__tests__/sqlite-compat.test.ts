@@ -28,8 +28,8 @@ afterEach(async () => {
   process.env.LOG_LEVEL = originalEnv.LOG_LEVEL;
 });
 
-describe('SQLite compatibility helpers', () => {
-  it('provides better-sqlite3-style transactions for node:sqlite', async () => {
+describe('libsql raw helpers', () => {
+  it('provides libsql raw transaction helpers', async () => {
     const { getRawSqlite } = await import('../index.js');
     const db = getRawSqlite();
 

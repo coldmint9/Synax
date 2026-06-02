@@ -78,7 +78,7 @@ class WikiJobQueue {
       .update(wikiJobs)
       .set({ status: 'failed', error: 'Orphaned: server restarted', completedAt: new Date().toISOString() })
       .where(eq(wikiJobs.status, 'running'));
-    return Number(result.changes ?? 0);
+    return Number(result.rowsAffected ?? 0);
   }
 
   start(): void {

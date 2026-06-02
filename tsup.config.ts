@@ -10,6 +10,6 @@ export default defineConfig({
   target: 'node22',
   splitting: false,
   noExternal: [/.*/],
-  external: ['libsql', 'better-sqlite3', '@libsql/*'],
+  external: ['libsql', '@libsql/*'],
   removeNodeProtocol: false,
 });

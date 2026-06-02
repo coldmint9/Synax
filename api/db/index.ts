@@ -1,28 +1,30 @@
 
-import Database from 'libsql';
+import { createClient, type Client } from '@libsql/client';
+import NativeDatabase from 'libsql';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
 import { DATA_ROOT } from '../lib/env.js';
 import { logger as pinoLogger } from '../lib/logger.js';
 import * as schema from './schema.js';
 
-export type ContextDb = BetterSQLite3Database<typeof schema>;
+export type ContextDb = LibSQLDatabase<typeof schema>;
 export type SqliteTransaction = <Args extends unknown[], Result>(
   fn: (...args: Args) => Result,
 ) => (...args: Args) => Result;
-export type RawSqlite = Database.Database & {
+export type RawSqlite = NativeDatabase.Database & {
   transaction: SqliteTransaction;
-  query: Database.Database['prepare'];
+  query: NativeDatabase.Database['prepare'];
 };
 
 let _sqlite: RawSqlite | null = null;
+let _client: Client | null = null;
 let _db: ContextDb | null = null;
 
-const transactionStates = new WeakMap<Database.Database, { depth: number; nextSavepointId: number }>();
+const transactionStates = new WeakMap<NativeDatabase.Database, { depth: number; nextSavepointId: number }>();
 
-function getTransactionState(sqlite: Database.Database): { depth: number; nextSavepointId: number } {
+function getTransactionState(sqlite: NativeDatabase.Database): { depth: number; nextSavepointId: number } {
   let state = transactionStates.get(sqlite);
   if (!state) {
     state = { depth: 0, nextSavepointId: 0 };
@@ -31,7 +33,7 @@ function getTransactionState(sqlite: Database.Database): { depth: number; nextSa
   return state;
 }
 
-function sqliteIsInTransaction(sqlite: Database.Database): boolean {
+function sqliteIsInTransaction(sqlite: NativeDatabase.Database): boolean {
   try {
     return sqlite.inTransaction;
   } catch {
@@ -39,7 +41,7 @@ function sqliteIsInTransaction(sqlite: Database.Database): boolean {
   }
 }
 
-function createTransaction(sqlite: Database.Database): SqliteTransaction {
+function createTransaction(sqlite: NativeDatabase.Database): SqliteTransaction {
   return function transaction<Args extends unknown[], Result>(fn: (...args: Args) => Result) {
     return (...args: Args): Result => {
       const state = getTransactionState(sqlite);
@@ -81,14 +83,12 @@ function createTransaction(sqlite: Database.Database): SqliteTransaction {
   };
 }
 
-function installSqliteCompat(sqlite: Database.Database): RawSqlite {
+function installSqliteCompat(sqlite: NativeDatabase.Database): RawSqlite {
   const compat = sqlite as RawSqlite;
-  if (typeof compat.transaction !== 'function') {
-    Object.defineProperty(compat, 'transaction', {
-      configurable: true,
-      value: createTransaction(sqlite),
-    });
-  }
+  Object.defineProperty(compat, 'transaction', {
+    configurable: true,
+    value: createTransaction(sqlite),
+  });
   if (typeof compat.query !== 'function') {
     Object.defineProperty(compat, 'query', {
       configurable: true,
@@ -131,7 +131,7 @@ function hasExecutableSql(sql: string): boolean {
     .length > 0;
 }
 
-function configureSqlite(sqlite: Database.Database): void {
+function configureSqlite(sqlite: NativeDatabase.Database): void {
   sqlite.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
@@ -140,7 +140,7 @@ function configureSqlite(sqlite: Database.Database): void {
   `);
 }
 
-function runMigrations(sqlite: Database.Database): void {
+function runMigrations(sqlite: NativeDatabase.Database): void {
   const dir = resolveMigrationsDir();
   if (!fs.existsSync(dir)) {
     pinoLogger.warn({ dir }, 'context db: migrations directory missing');
@@ -166,7 +166,7 @@ function runMigrations(sqlite: Database.Database): void {
   }
 }
 
-function ensureColumn(sqlite: Database.Database, table: string, column: string, ddl: string): void {
+function ensureColumn(sqlite: NativeDatabase.Database, table: string, column: string, ddl: string): void {
   const tableExists = sqlite
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(table) as { name: string } | undefined;
@@ -177,7 +177,7 @@ function ensureColumn(sqlite: Database.Database, table: string, column: string, 
   pinoLogger.info({ table, column }, 'context db: column added');
 }
 
-function ensureRuntimeSchema(sqlite: Database.Database): void {
+function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
   ensureColumn(sqlite, 'agent_runtime_sessions', 'active_run_id', 'active_run_id TEXT');
   ensureColumn(sqlite, 'agent_runtime_sessions', 'pending_resume_token', 'pending_resume_token TEXT');
   ensureColumn(sqlite, 'agent_runtime_sessions', 'title', 'title TEXT');
@@ -218,37 +218,53 @@ function ensureRuntimeSchema(sqlite: Database.Database): void {
   ensureColumn(sqlite, 'wiki_documents', 'pipeline_stage', "pipeline_stage TEXT NOT NULL DEFAULT 'pending'");
 }
 
-export function getDb(): ContextDb {
-  if (_db && _sqlite) return _db;
-
-  const dbPath = resolveDbPath();
-  const sqlite = installSqliteCompat(new Database(dbPath));
+function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
+  if (_sqlite) return _sqlite;
+  const sqlite = installSqliteCompat(new NativeDatabase(dbPath));
   configureSqlite(sqlite);
 
   runMigrations(sqlite);
   ensureRuntimeSchema(sqlite);
 
   _sqlite = sqlite;
-  _db = drizzle({ client: sqlite, schema });
   pinoLogger.info({ dbPath }, 'context db: ready');
+  return _sqlite;
+}
+
+function getOrCreateClient(dbPath = resolveDbPath()): Client {
+  if (_client) return _client;
+  _client = createClient({ url: pathToFileURL(dbPath).href });
+  return _client;
+}
+
+export function getDb(): ContextDb {
+  if (_db) return _db;
+
+  const dbPath = resolveDbPath();
+  getOrCreateRawSqlite(dbPath);
+  const client = getOrCreateClient(dbPath);
+  _db = drizzle({ client, schema });
   return _db;
 }
 
 export function getRawSqlite(): RawSqlite {
-  if (!_sqlite) getDb();
-  return _sqlite!;
+  return getOrCreateRawSqlite();
 }
 
 export function closeDb(): void {
+  if (_client) {
+    _client.close();
+  }
   if (_sqlite) {
     try {
       _sqlite.close();
     } catch {
       /* noop */
     }
-    _sqlite = null;
-    _db = null;
   }
+  _client = null;
+  _sqlite = null;
+  _db = null;
 }
 
 export { schema };
