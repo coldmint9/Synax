@@ -12,11 +12,11 @@ export interface WikiVerdict {
 
 export interface WikiVerifierHandle {
   tools: RegisteredTool[];
-  getVerdict(): WikiVerdict | null;
+  getVerdicts(): WikiVerdict[];
 }
 
 export function createVerifierTools(scan: CodeMapScanResult): WikiVerifierHandle {
-  let submittedVerdict: WikiVerdict | null = null;
+  const verdicts: WikiVerdict[] = [];
 
   const readTools = buildReadTools(scan);
 
@@ -58,17 +58,21 @@ export function createVerifierTools(scan: CodeMapScanResult): WikiVerifierHandle
         };
       }
 
-      submittedVerdict = {
+      const verdict: WikiVerdict = {
         claimId: args.claimId,
         refuted: args.refuted,
         evidence: args.evidence,
         correction: args.correction,
       };
+      // Deduplicate: replace existing verdict for same claim
+      const idx = verdicts.findIndex(v => v.claimId === verdict.claimId);
+      if (idx >= 0) verdicts[idx] = verdict;
+      else verdicts.push(verdict);
 
       const status = args.refuted ? 'REFUTED' : 'CONFIRMED';
       return {
-        result: { ok: true, claimId: args.claimId, status },
-        displaySummary: `Verdict: claim "${args.claimId}" ${status}.`,
+        result: { ok: true, claimId: args.claimId, status, totalVerdicts: verdicts.length },
+        displaySummary: `Verdict: claim "${args.claimId}" ${status} (${verdicts.length} total).`,
         artifacts: [
           {
             kind: 'evidence',
@@ -83,6 +87,6 @@ export function createVerifierTools(scan: CodeMapScanResult): WikiVerifierHandle
 
   return {
     tools: [...readTools, submitVerdictTool],
-    getVerdict: () => submittedVerdict,
+    getVerdicts: () => verdicts,
   };
 }

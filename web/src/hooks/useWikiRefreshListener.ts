@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { subscribe } from '../lib/api/taskNotificationBus'
+import { TaskNotificationEventType } from '../lib/api/eventTypes'
 import { useWikiStore } from '../react/state/wikiStore'
 
 interface RefreshEventPayload {
@@ -23,10 +24,10 @@ export function useWikiRefreshListener(projectId: string | null) {
 
     return subscribe(projectId, {
       events: {
-        task_started: handleEvent('task_started'),
-        task_progress: handleEvent('task_progress'),
-        task_completed: handleEvent('task_completed'),
-        task_failed: handleEvent('task_failed'),
+        [TaskNotificationEventType.TaskStarted]: handleEvent(TaskNotificationEventType.TaskStarted),
+        [TaskNotificationEventType.TaskProgress]: handleEvent(TaskNotificationEventType.TaskProgress),
+        [TaskNotificationEventType.TaskCompleted]: handleEvent(TaskNotificationEventType.TaskCompleted),
+        [TaskNotificationEventType.TaskFailed]: handleEvent(TaskNotificationEventType.TaskFailed),
       },
     })
   }, [projectId])

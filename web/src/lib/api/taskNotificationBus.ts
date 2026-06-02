@@ -1,3 +1,5 @@
+import { SseEventType, TaskNotificationEventType } from './eventTypes'
+
 type EventHandler = (e: MessageEvent) => void
 type ConnectHandler = () => void
 
@@ -20,12 +22,18 @@ function connect(projectId: string) {
   currentProjectId = projectId
   es = new EventSource(`/api/notifications/stream?projectId=${encodeURIComponent(projectId)}`)
 
-  es.addEventListener('connected', () => {
+  es.addEventListener(SseEventType.Connected, () => {
     retries = 0
     for (const sub of subscribers) sub.onConnect?.()
   })
 
-  const eventTypes = ['task_started', 'task_progress', 'task_completed', 'task_failed']
+  const eventTypes = [
+    TaskNotificationEventType.TaskStarted,
+    TaskNotificationEventType.TaskProgress,
+    TaskNotificationEventType.TaskCompleted,
+    TaskNotificationEventType.TaskFailed,
+    TaskNotificationEventType.WikiSnapshot,
+  ]
   for (const type of eventTypes) {
     es.addEventListener(type, (e: MessageEvent) => {
       for (const sub of subscribers) sub.events?.[type]?.(e)

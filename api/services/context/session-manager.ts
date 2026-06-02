@@ -16,6 +16,7 @@ import {
 import { logger } from '../../lib/logger.js';
 import { contextService } from './context-service.js';
 import { syncBus } from './sync-bus.js';
+import { SyncEventType } from '../contracts/context.js';
 import type { ContextSession } from '../contracts/context.js';
 
 export class SessionManager {
@@ -82,7 +83,7 @@ export class SessionManager {
     if (!s) return;
     if (s.tokenCount >= CONTEXT_TOKEN_WARNING_THRESHOLD) {
       syncBus.emit({
-        type: 'session_token_warning',
+        type: SyncEventType.SessionTokenWarning,
         projectId: s.projectId,
         sessionId: s.id,
         payload: {

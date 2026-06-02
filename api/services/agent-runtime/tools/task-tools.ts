@@ -3,6 +3,10 @@ import type { RegisteredTool } from '../contracts.js';
 import { agentEventService } from '../event-service.js';
 import { agentRuntimeStore } from '../session-store.js';
 
+const TaskToolEventType = {
+  TaskStateUpdated: 'task_state_updated',
+} as const;
+
 // ── Data Model ──────────────────────────────────────────────────────────────
 
 export interface Task {
@@ -30,7 +34,7 @@ export class TaskStore {
     const events = agentRuntimeStore.listEvents(sessionId)
     for (let i = events.length - 1; i >= 0; i--) {
       const ev = events[i]
-      if (ev.type === 'task_state_updated') {
+      if (ev.type === TaskToolEventType.TaskStateUpdated) {
         const items = ev.payload.tasks as Task[]
         for (const t of items) store.tasks.set(t.id, t)
         store.nextId = (ev.payload.nextId as number) ?? items.length + 1
@@ -43,7 +47,7 @@ export class TaskStore {
   persist(sessionId: string): void {
     agentEventService.append({
       sessionId,
-      type: 'task_state_updated',
+      type: TaskToolEventType.TaskStateUpdated,
       summary: `Tasks: ${this.summary()}`,
       payload: { tasks: [...this.tasks.values()], nextId: this.nextId },
     })

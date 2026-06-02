@@ -1,14 +1,39 @@
 import { EventEmitter } from "node:events";
+import { SseEventType } from "../../lib/sse-events.js";
+import type {
+  WikiBlock,
+  WikiDocument,
+  WikiSnapshot,
+  WikiSourceBinding,
+} from "../wiki/contracts.js";
+import type { WikiSnapshotEventReason } from "../wiki/wiki-snapshot-events.js";
+
+export const TaskNotificationEventType = {
+  TaskStarted: "task_started",
+  TaskProgress: "task_progress",
+  TaskCompleted: "task_completed",
+  TaskFailed: "task_failed",
+  WikiSnapshot: "wiki_snapshot",
+} as const;
+
+export const NotificationStreamEventType = {
+  Connected: SseEventType.Connected,
+  Ping: SseEventType.Ping,
+} as const;
+
+export type TaskLifecycleNotificationType =
+  | typeof TaskNotificationEventType.TaskStarted
+  | typeof TaskNotificationEventType.TaskProgress
+  | typeof TaskNotificationEventType.TaskCompleted
+  | typeof TaskNotificationEventType.TaskFailed;
 
 export type TaskNotificationType =
-  | "task_started"
-  | "task_progress"
-  | "task_completed"
-  | "task_failed";
+  | TaskLifecycleNotificationType
+  | typeof TaskNotificationEventType.WikiSnapshot;
 
-export interface TaskNotificationEvent {
+export interface TaskLifecycleNotificationEvent {
   id: string;
-  type: TaskNotificationType;
+  type: TaskLifecycleNotificationType;
   taskKind: string;
   projectId: string;
   taskId: string;
@@ -18,6 +43,26 @@ export interface TaskNotificationEvent {
   timestamp: number;
   meta?: Record<string, unknown>;
 }
+
+export interface WikiSnapshotEventTree {
+  snapshot: WikiSnapshot | null;
+  documents: WikiDocument[];
+  blocks: WikiBlock[];
+  sourceBindings: WikiSourceBinding[];
+  patchesSummary: { pending: number; conflict: number };
+  draftsSummary: { ready: number; generating: number };
+}
+
+export interface WikiSnapshotNotificationEvent {
+  id: string;
+  type: typeof TaskNotificationEventType.WikiSnapshot;
+  projectId: string;
+  timestamp: number;
+  reason?: WikiSnapshotEventReason;
+  tree: WikiSnapshotEventTree;
+}
+
+export type TaskNotificationEvent = TaskLifecycleNotificationEvent | WikiSnapshotNotificationEvent;
 
 class TaskNotificationBus {
   private emitter = new EventEmitter();

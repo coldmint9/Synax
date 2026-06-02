@@ -198,13 +198,13 @@ export const wikiVerifierProfile: AgentProfile = {
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Verifier does not need shell.' },
   ],
   defaultSkills: [],
-  maxSteps: 10,
+  maxSteps: 6,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'Your task is to REFUTE the given claim. Search for evidence that contradicts it.',
-    'If you cannot find supporting evidence, the claim is refuted by default.',
-    'Return your verdict via wiki.submit_verdict with evidence from actual source files.',
+    'Verify each claim by reading actual source files. Call wiki.submit_verdict once per claim.',
+    'If you cannot find supporting evidence for a claim, default to refuted=true.',
+    'Be efficient: read only the files relevant to the claims, then submit all verdicts.',
   ],
 };
 

@@ -20,6 +20,7 @@ import { memoryManager } from '../services/context/memory-manager.js';
 import { searchService } from '../services/context/search-service.js';
 import { sessionManager } from '../services/context/session-manager.js';
 import { syncBus } from '../services/context/sync-bus.js';
+import { SseEventType } from '../lib/sse-events.js';
 import type { SyncEvent } from '../services/contracts/context.js';
 
 export const contextRoutes = new Hono();
@@ -582,12 +583,12 @@ contextRoutes.get('/sync', (c) => {
     const unsubscribe = syncBus.subscribe(projectId, onEvent);
 
     // 初次握手
-    await stream.writeSSE({ event: 'ready', data: JSON.stringify({ projectId }) });
+    await stream.writeSSE({ event: SseEventType.Ready, data: JSON.stringify({ projectId }) });
 
     // 心跳（每 25s）防止代理断连
     const heartbeat = setInterval(() => {
       if (closed) return;
-      stream.writeSSE({ event: 'ping', data: String(Date.now()) }).catch(() => {
+      stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) }).catch(() => {
         closed = true;
       });
     }, 25_000);
