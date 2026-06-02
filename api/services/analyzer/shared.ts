@@ -96,6 +96,7 @@ export const IGNORED_DIR_NAMES = new Set([
   '.metadata',
   '.history',
   'dist',
+  'dist-electron',
   'build',
   'out',
   'bin',

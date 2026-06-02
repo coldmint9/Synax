@@ -13,10 +13,6 @@ import { apiRequest } from './origin';
 const BASE = '/api/wiki';
 
 export const wikiApi = {
-  getLatest(projectId: string): Promise<WikiSnapshotTree> {
-    return apiRequest<WikiSnapshotTree>(`${BASE}/projects/${projectId}/latest`);
-  },
-
   getSnapshot(snapshotId: string): Promise<WikiSnapshotTree> {
     return apiRequest<WikiSnapshotTree>(`${BASE}/snapshots/${snapshotId}`);
   },

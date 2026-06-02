@@ -650,32 +650,40 @@ export interface ImportResult {
 
 // ============================== 同步事件 ==============================
 
-export type SyncEventType =
-  | 'session_created'
-  | 'session_updated'
-  | 'session_archived'
-  | 'session_deleted'
-  | 'entry_created'
-  | 'entry_updated'
-  | 'entry_deleted'
-  | 'snapshot_created'
-  | 'memory_created'
-  | 'memory_updated'
-  | 'memory_deleted'
-  | 'link_created'
-  | 'link_deleted'
-  | 'session_token_warning'
-  | 'context_block_created'
-  | 'context_block_updated'
-  | 'context_binding_created'
-  | 'context_binding_deleted'
-  | 'context_snapshot_created'
-  | 'context_bundle_created'
-  | 'context_signal_created'
-  | 'context_disclosure_suggested'
-  | 'context_disclosure_updated'
-  | 'coord_event_created'
-  | 'coordinates_state_saved';
+export const SyncEventType = {
+  SessionCreated: 'session_created',
+  SessionUpdated: 'session_updated',
+  SessionArchived: 'session_archived',
+  SessionDeleted: 'session_deleted',
+  EntryCreated: 'entry_created',
+  EntryUpdated: 'entry_updated',
+  EntryDeleted: 'entry_deleted',
+  SnapshotCreated: 'snapshot_created',
+  MemoryCreated: 'memory_created',
+  MemoryUpdated: 'memory_updated',
+  MemoryDeleted: 'memory_deleted',
+  LinkCreated: 'link_created',
+  LinkDeleted: 'link_deleted',
+  SessionTokenWarning: 'session_token_warning',
+  ContextBlockCreated: 'context_block_created',
+  ContextBlockUpdated: 'context_block_updated',
+  ContextBindingCreated: 'context_binding_created',
+  ContextBindingDeleted: 'context_binding_deleted',
+  ContextSnapshotCreated: 'context_snapshot_created',
+  ContextBundleCreated: 'context_bundle_created',
+  ContextSignalCreated: 'context_signal_created',
+  ContextDisclosureSuggested: 'context_disclosure_suggested',
+  ContextDisclosureUpdated: 'context_disclosure_updated',
+  ContextDisclosureAccepted: 'context_disclosure_accepted',
+  ContextDisclosureDismissed: 'context_disclosure_dismissed',
+  CoordEventCreated: 'coord_event_created',
+  CoordinatesStateSaved: 'coordinates_state_saved',
+  AgentLoopRecorded: 'agent_loop_recorded',
+  RunEventRecorded: 'run_event_recorded',
+  RunVerdictRecorded: 'run_verdict_recorded',
+} as const;
+
+export type SyncEventType = (typeof SyncEventType)[keyof typeof SyncEventType];
 
 export interface SyncEvent<T = unknown> {
   type: SyncEventType;

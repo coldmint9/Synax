@@ -1,19 +1,19 @@
 import { nanoid } from "nanoid";
 import {
   taskNotificationBus,
-  type TaskNotificationType,
-  type TaskNotificationEvent,
+  type TaskLifecycleNotificationType,
+  type TaskLifecycleNotificationEvent,
 } from "./task-notification-bus.js";
 import { logger } from "../../lib/logger.js";
 
 interface NotifyOptions {
-  type: TaskNotificationType;
+  type: TaskLifecycleNotificationType;
   taskKind: string;
   projectId: string;
   taskId: string;
   title: string;
   message: string;
-  severity: TaskNotificationEvent["severity"];
+  severity: TaskLifecycleNotificationEvent["severity"];
   meta?: Record<string, unknown>;
 }
 

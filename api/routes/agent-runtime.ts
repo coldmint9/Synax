@@ -23,6 +23,7 @@ import {
 import { runtimeBus } from '../services/agent-runtime/runtime-bus.js';
 import { sessionLiveBus } from '../services/agent-runtime/session-live-bus.js';
 import { logger } from '../lib/logger.js';
+import { SseEventType } from '../lib/sse-events.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 
 export const agentRuntimeRoutes = new Hono();
@@ -252,9 +253,9 @@ agentRuntimeRoutes.post('/sessions/:sessionId/turns/stream', async (c) => {
 
       void stream
         .writeSSE({
-          event: 'ping',
+          event: SseEventType.Ping,
           data: JSON.stringify({
-            type: 'ping',
+            type: SseEventType.Ping,
             sessionId,
             timestamp: Date.now(),
           }),
@@ -505,11 +506,11 @@ agentRuntimeRoutes.get('/events/stream', (c) => {
 
     const unsubscribe = runtimeBus.subscribe(onEvent);
 
-    await stream.writeSSE({ event: 'connected', data: '{}' });
+    await stream.writeSSE({ event: SseEventType.Connected, data: '{}' });
 
     const heartbeat = setInterval(() => {
       if (closed) return;
-      stream.writeSSE({ event: 'ping', data: String(Date.now()) })
+      stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) })
         .catch(() => { closed = true; });
     }, 25_000);
 
@@ -546,11 +547,11 @@ agentRuntimeRoutes.get('/sessions/:sessionId/live', (c) => {
 
     const unsubscribe = sessionLiveBus.subscribe(sessionId, onEvent);
 
-    await stream.writeSSE({ event: 'connected', data: '{}' });
+    await stream.writeSSE({ event: SseEventType.Connected, data: '{}' });
 
     const heartbeat = setInterval(() => {
       if (closed) return;
-      stream.writeSSE({ event: 'ping', data: String(Date.now()) })
+      stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) })
         .catch(() => { closed = true; });
     }, 25_000);
 

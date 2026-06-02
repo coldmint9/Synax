@@ -4,16 +4,17 @@ import { streamSSE } from 'hono/streaming';
 import * as z from 'zod/v4';
 import { wikiStore } from '../services/wiki/wiki-store.js';
 import { wikiExportService } from '../services/wiki/wiki-export-service.js';
-import { wikiSnapshotService } from '../services/wiki/wiki-snapshot-service.js';
 import { wikiLoopService } from '../services/wiki/wiki-loop-service.js';
 import { wikiCoordinateService } from '../services/wiki/wiki-coordinate-service.js';
 import { wikiRefreshService } from '../services/wiki/wiki-refresh-service.js';
 import { wikiPatchService, WikiPatchConflictError } from '../services/wiki/wiki-patch-service.js';
 import { wikiDraftService } from '../services/wiki/wiki-draft-service.js';
 import { wikiDesignMappingService } from '../services/wiki/wiki-design-mapping-service.js';
+import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from '../services/wiki/wiki-snapshot-events.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 import { AgentProviderNotConfiguredError } from '../services/agent-runtime/runtime-errors.js';
 import { logger } from '../lib/logger.js';
+import { SseEventType } from '../lib/sse-events.js';
 
 export const wikiRoutes = new Hono();
 
@@ -94,17 +95,6 @@ async function parseBody<T>(
   return { ok: true, data: parsed.data };
 }
 
-// ── GET /api/wiki/projects/:projectId/latest ─────────────────────────────────
-wikiRoutes.get('/projects/:projectId/latest', async (c) => {
-  const { projectId } = c.req.param();
-  const snapshot = await wikiStore.getLatestSnapshot(projectId);
-  if (!snapshot) {
-    return c.json({ snapshot: null, documents: [], blocks: [], sourceBindings: [], patchesSummary: { pending: 0, conflict: 0 }, draftsSummary: { ready: 0, generating: 0 } });
-  }
-  const tree = await wikiStore.getSnapshotTree(snapshot.id);
-  return c.json(tree);
-});
-
 // ── GET /api/wiki/snapshots/:snapshotId ──────────────────────────────────────
 wikiRoutes.get('/snapshots/:snapshotId', async (c) => {
   const { snapshotId } = c.req.param();
@@ -126,6 +116,7 @@ wikiRoutes.patch('/blocks/:blockId', async (c) => {
     manualState: parsed.data.manualState,
     actorId: parsed.data.actorId,
   });
+  await publishLatestWikiSnapshot(updated.projectId, WikiSnapshotEventReason.BlockUpdated);
   return c.json(updated);
 });
 
@@ -173,7 +164,6 @@ wikiRoutes.post('/projects/:projectId/generate', async (c) => {
     return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
   }
 
-  // Fire-and-forget: client polls /latest for completion
   void wikiLoopService.generate({
     projectId,
     workDir: parsed.data.workDir,
@@ -182,7 +172,7 @@ wikiRoutes.post('/projects/:projectId/generate', async (c) => {
     logger.error({ err, projectId }, '[wiki] generate task failed before service handler completed');
   });
 
-  return c.json({ status: 'queued', message: 'Wiki generation started. Poll /latest for status.' });
+  return c.json({ status: 'queued', message: 'Wiki generation started.' });
 });
 
 // ── POST /api/wiki/projects/:projectId/reinitialize ─────────────────────────
@@ -202,6 +192,7 @@ wikiRoutes.post('/projects/:projectId/reinitialize', async (c) => {
   }
 
   await wikiStore.purgeProject(projectId);
+  await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.ProjectPurged);
 
   void wikiLoopService.generate({
     projectId,
@@ -211,7 +202,7 @@ wikiRoutes.post('/projects/:projectId/reinitialize', async (c) => {
     logger.error({ err, projectId }, '[wiki] reinitialize task failed before service handler completed');
   });
 
-  return c.json({ status: 'queued', message: 'Wiki purged and regeneration started. Poll /latest for status.' });
+  return c.json({ status: 'queued', message: 'Wiki purged and regeneration started.' });
 });
 
 // ── POST /api/wiki/snapshots/:snapshotId/continue ───────────────────────────
@@ -240,7 +231,7 @@ wikiRoutes.post('/snapshots/:snapshotId/continue', async (c) => {
     logger.error({ err, snapshotId }, '[wiki] continue generation failed');
   });
 
-  return c.json({ status: 'queued', message: 'Wiki continue generation started. Poll /latest for status.' });
+  return c.json({ status: 'queued', message: 'Wiki continue generation started.' });
 });
 
 // ── GET /api/wiki/source-bindings/:bindingId/resolve ─────────────────────────
@@ -294,9 +285,12 @@ wikiRoutes.post('/patches/:patchId/accept', async (c) => {
 
   try {
     const patch = await wikiPatchService.accept(patchId, parsed.data);
+    await publishLatestWikiSnapshot(patch.projectId, WikiSnapshotEventReason.PatchAccepted);
     return c.json(patch);
   } catch (err) {
     if (err instanceof WikiPatchConflictError) {
+      const patch = await wikiPatchService.getPatch(patchId);
+      if (patch) await publishLatestWikiSnapshot(patch.projectId, WikiSnapshotEventReason.PatchConflict);
       return c.json({ error: err.message, code: 'manual_override_required', blockId: err.blockId, manualState: err.manualState }, 409);
     }
     throw err;
@@ -310,6 +304,7 @@ wikiRoutes.post('/patches/:patchId/dismiss', async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
   const patch = await wikiPatchService.dismiss(patchId, { actorId: parsed.data.actorId });
+  await publishLatestWikiSnapshot(patch.projectId, WikiSnapshotEventReason.PatchDismissed);
   return c.json(patch);
 });
 
@@ -405,6 +400,8 @@ wikiRoutes.post('/drafts/:draftId/apply', async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   try {
     const result = await wikiDraftService.applyDraft(draftId, parsed.data);
+    const draft = await wikiDraftService.getDraft(draftId);
+    if (draft) await publishLatestWikiSnapshot(draft.projectId, WikiSnapshotEventReason.DraftApplied);
     return c.json(result);
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'apply failed' }, 400);
@@ -421,6 +418,8 @@ wikiRoutes.post('/drafts/:draftId/apply-partial', async (c) => {
       actorId: parsed.data.actorId,
       confirmManualOverride: parsed.data.confirmManualOverride,
     });
+    const draft = await wikiDraftService.getDraft(draftId);
+    if (draft) await publishLatestWikiSnapshot(draft.projectId, WikiSnapshotEventReason.DraftApplied);
     return c.json(result);
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'apply-partial failed' }, 400);
@@ -437,6 +436,8 @@ wikiRoutes.post('/drafts/:draftId/edit', async (c) => {
       actorId: parsed.data.actorId,
       confirmManualOverride: parsed.data.confirmManualOverride,
     });
+    const draft = await wikiDraftService.getDraft(draftId);
+    if (draft) await publishLatestWikiSnapshot(draft.projectId, WikiSnapshotEventReason.DraftApplied);
     return c.json(result);
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'edit failed' }, 400);
@@ -450,6 +451,7 @@ wikiRoutes.post('/drafts/:draftId/discard', async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   try {
     const draft = await wikiDraftService.discardDraft(draftId, { actorId: parsed.data.actorId });
+    await publishLatestWikiSnapshot(draft.projectId, WikiSnapshotEventReason.DraftDiscarded);
     return c.json(draft);
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'discard failed' }, 400);
@@ -579,7 +581,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
 
   return streamSSE(c, async (stream) => {
     const heartbeat = setInterval(() => {
-      stream.writeSSE({ event: 'ping', data: String(Date.now()) }).catch(() => {});
+      stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) }).catch(() => {});
     }, 10_000);
 
     try {

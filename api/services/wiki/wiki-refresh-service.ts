@@ -43,6 +43,8 @@ import { createRefreshTools } from './wiki-refresh-tools.js';
 import { ensureRefreshProfileRegistered } from './wiki-refresh-profile.js';
 import { logger } from '../../lib/logger.js';
 import { notify } from '../notifications/notify.js';
+import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
+import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
 import type { WikiRefreshTask, WikiBlock, DraftBlockChange } from './contracts.js';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
 
@@ -130,7 +132,7 @@ export const wikiRefreshService = {
     locale: 'zh' | 'en' = 'zh',
   ): Promise<void> {
     notify({
-      type: 'task_started',
+      type: TaskNotificationEventType.TaskStarted,
       taskKind: 'wiki_refresh',
       projectId,
       taskId,
@@ -143,7 +145,7 @@ export const wikiRefreshService = {
       // Phase 1: scanning
       await updateTask(taskId, { status: 'scanning' });
       notify({
-        type: 'task_progress',
+        type: TaskNotificationEventType.TaskProgress,
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
@@ -168,7 +170,7 @@ export const wikiRefreshService = {
       // Phase 2: stale detection
       await updateTask(taskId, { status: 'stale_checking' });
       notify({
-        type: 'task_progress',
+        type: TaskNotificationEventType.TaskProgress,
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
@@ -216,6 +218,7 @@ export const wikiRefreshService = {
 
       if (affectedBlockIds.length > 0) {
         await wikiStore.markBlocksStale(affectedBlockIds, 'stale');
+        await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.BlocksMarkedStale);
       }
 
       await wikiCoordinateService.refreshVerifiedHashes(projectId, nextRepoIndexId, scan.codeIndex);
@@ -227,7 +230,7 @@ export const wikiRefreshService = {
       await updateTask(taskId, { affectedDocumentIdsJson: JSON.stringify(affectedDocumentIds) });
 
       notify({
-        type: 'task_progress',
+        type: TaskNotificationEventType.TaskProgress,
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
@@ -252,7 +255,7 @@ export const wikiRefreshService = {
       });
 
       notify({
-        type: 'task_completed',
+        type: TaskNotificationEventType.TaskCompleted,
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
@@ -261,6 +264,7 @@ export const wikiRefreshService = {
         severity: draftIds.length > 0 ? 'warning' : 'success',
         meta: { affectedDocuments: affectedDocumentIds.length, drafts: draftIds.length },
       });
+      await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.RefreshCompleted);
 
       logger.info(
         { taskId, affectedDocuments: affectedDocumentIds.length, drafts: draftIds.length },
@@ -269,7 +273,7 @@ export const wikiRefreshService = {
     } catch (err) {
       logger.error({ err, taskId }, 'wiki refresh: failed');
       notify({
-        type: 'task_failed',
+        type: TaskNotificationEventType.TaskFailed,
         taskKind: 'wiki_refresh',
         projectId,
         taskId,
@@ -281,6 +285,7 @@ export const wikiRefreshService = {
         status: 'failed',
         errorMessage: err instanceof Error ? err.message : String(err),
       });
+      await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.RefreshFailed);
     }
   },
 

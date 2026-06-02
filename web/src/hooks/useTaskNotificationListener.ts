@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNotificationStore, type NotificationType } from '../react/state/notificationStore'
 import { subscribe } from '../lib/api/taskNotificationBus'
+import { TaskNotificationEventType } from '../lib/api/eventTypes'
 
 interface TaskNotificationPayload {
   id: string
@@ -39,8 +40,8 @@ export function useTaskNotificationListener(projectId: string | null) {
 
     return subscribe(projectId, {
       events: {
-        task_completed: handleEvent,
-        task_failed: handleEvent,
+        [TaskNotificationEventType.TaskCompleted]: handleEvent,
+        [TaskNotificationEventType.TaskFailed]: handleEvent,
       },
     })
   }, [projectId])

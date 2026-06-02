@@ -6,6 +6,7 @@
 import { nanoid } from 'nanoid';
 import { getRawSqlite } from '../../db/index.js';
 import { syncBus } from './sync-bus.js';
+import { SyncEventType } from '../contracts/context.js';
 import type {
   ContextBinding,
   ContextBlock,
@@ -632,7 +633,7 @@ export class ContextService {
       .run(row);
     const session = mapSession(row);
     publish({
-      type: 'session_created',
+      type: SyncEventType.SessionCreated,
       projectId,
       sessionId: session.id,
       payload: session,
@@ -712,7 +713,7 @@ export class ContextService {
       .run(...params);
     const updated = this.getSession(sessionId)!;
     publish({
-      type: 'session_updated',
+      type: SyncEventType.SessionUpdated,
       projectId: updated.projectId,
       sessionId: updated.id,
       payload: updated,
@@ -731,7 +732,7 @@ export class ContextService {
     const updated = this.getSession(sessionId);
     if (!updated) throw new Error(`Session ${sessionId} not found`);
     publish({
-      type: 'session_archived',
+      type: SyncEventType.SessionArchived,
       projectId: updated.projectId,
       sessionId,
       payload: updated,
@@ -745,7 +746,7 @@ export class ContextService {
     if (!existing) return;
     this.db.prepare(`DELETE FROM context_sessions WHERE id = ?`).run(sessionId);
     publish({
-      type: 'session_deleted',
+      type: SyncEventType.SessionDeleted,
       projectId: existing.projectId,
       sessionId,
       payload: { id: sessionId },
@@ -803,7 +804,7 @@ export class ContextService {
 
     const entryDomain = tx(entry);
     publish({
-      type: 'entry_created',
+      type: SyncEventType.EntryCreated,
       projectId: entryDomain.projectId,
       sessionId,
       payload: entryDomain,
@@ -869,7 +870,7 @@ export class ContextService {
     const updated = this.getEntry(entryId);
     if (!updated) throw new Error(`Entry ${entryId} not found`);
     publish({
-      type: 'entry_updated',
+      type: SyncEventType.EntryUpdated,
       projectId: updated.projectId,
       sessionId: updated.sessionId,
       payload: updated,
@@ -892,7 +893,7 @@ export class ContextService {
       )
       .run(existing.tokenEstimate, now(), existing.sessionId);
     publish({
-      type: 'entry_deleted',
+      type: SyncEventType.EntryDeleted,
       projectId: existing.projectId,
       sessionId: existing.sessionId,
       payload: { id: entryId },
@@ -938,7 +939,7 @@ export class ContextService {
       .run(row);
     const snap = mapSnapshot(row);
     publish({
-      type: 'snapshot_created',
+      type: SyncEventType.SnapshotCreated,
       projectId: snap.projectId,
       sessionId,
       payload: snap,
@@ -995,7 +996,7 @@ export class ContextService {
       .run(row);
     const mem = mapMemory(row);
     publish({
-      type: 'memory_created',
+      type: SyncEventType.MemoryCreated,
       projectId,
       payload: mem,
       timestamp: Date.now(),
@@ -1089,7 +1090,7 @@ export class ContextService {
     const updated = this.getMemory(memoryId);
     if (!updated) throw new Error(`Memory ${memoryId} not found`);
     publish({
-      type: 'memory_updated',
+      type: SyncEventType.MemoryUpdated,
       projectId: updated.projectId,
       payload: updated,
       timestamp: Date.now(),
@@ -1102,7 +1103,7 @@ export class ContextService {
     if (!existing) return;
     this.db.prepare(`DELETE FROM project_memories WHERE id = ?`).run(memoryId);
     publish({
-      type: 'memory_deleted',
+      type: SyncEventType.MemoryDeleted,
       projectId: existing.projectId,
       payload: { id: memoryId },
       timestamp: Date.now(),
@@ -1145,7 +1146,7 @@ export class ContextService {
   ): { forest: CoordForest; revision: number; updatedAt: string; event: CoordEventLogEntry } {
     const event = this.appendCoordEvent({
       projectId,
-      type: 'coordinates_state_saved',
+      type: SyncEventType.CoordinatesStateSaved,
       payload: {
         nodeCount: Object.keys(forest.nodes ?? {}).length,
         edgeCount: forest.edges?.length ?? 0,
@@ -1176,7 +1177,7 @@ export class ContextService {
       )
       .run(projectId, JSON.stringify(nextForest), event.revision, ts, actorId);
     publish({
-      type: 'coordinates_state_saved',
+      type: SyncEventType.CoordinatesStateSaved,
       projectId,
       payload: { forest: nextForest, revision: event.revision, updatedAt: ts },
       timestamp: Date.now(),
@@ -1245,7 +1246,7 @@ export class ContextService {
     };
     const event = mapCoordEvent(row);
     publish({
-      type: 'coord_event_created',
+      type: SyncEventType.CoordEventCreated,
       projectId,
       payload: event,
       timestamp: Date.now(),
@@ -1292,14 +1293,14 @@ export class ContextService {
         : this.getContextBlock(row.id);
     const domain = block ?? mapContextBlock(row);
     publish({
-      type: 'context_block_created',
+      type: SyncEventType.ContextBlockCreated,
       projectId: input.projectId,
       payload: domain,
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId: input.projectId,
-      type: 'context_block_created',
+      type: SyncEventType.ContextBlockCreated,
       contextBlockIds: [domain.id],
       payload: { kind: domain.kind, sourceType: domain.sourceType, sourceId: domain.sourceId },
       actorId: input.createdBy ?? null,
@@ -1367,14 +1368,14 @@ export class ContextService {
       .run(row);
     const binding = this.findContextBinding(input) ?? mapContextBinding(row);
     publish({
-      type: 'context_binding_created',
+      type: SyncEventType.ContextBindingCreated,
       projectId: input.projectId,
       payload: binding,
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId: input.projectId,
-      type: 'context_binding_created',
+      type: SyncEventType.ContextBindingCreated,
       nodeId: input.targetKind === 'node' ? input.targetId : null,
       runId: input.targetKind === 'run' ? input.targetId : null,
       contextBlockIds: [input.blockId],
@@ -1409,14 +1410,14 @@ export class ContextService {
     if (!row) return;
     this.db.prepare(`DELETE FROM context_bindings WHERE id = ?`).run(bindingId);
     publish({
-      type: 'context_binding_deleted',
+      type: SyncEventType.ContextBindingDeleted,
       projectId: row.project_id,
       payload: { id: bindingId },
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId: row.project_id,
-      type: 'context_binding_deleted',
+      type: SyncEventType.ContextBindingDeleted,
       nodeId: row.target_kind === 'node' ? row.target_id : null,
       runId: row.target_kind === 'run' ? row.target_id : null,
       contextBlockIds: [row.block_id],
@@ -1525,14 +1526,14 @@ export class ContextService {
       this.findContextSignalBySource(input.projectId, input.sourceType, input.sourceId, input.kind, input.title) ??
       mapContextSignal(row);
     publish({
-      type: 'context_signal_created',
+      type: SyncEventType.ContextSignalCreated,
       projectId: input.projectId,
       payload: signal,
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId: input.projectId,
-      type: 'context_signal_created',
+      type: SyncEventType.ContextSignalCreated,
       nodeId: signal.sourceNodeId,
       runId: signal.sourceRunId,
       contextBlockIds: [signal.blockId],
@@ -1582,14 +1583,14 @@ export class ContextService {
       .run(row);
     const suggestion = mapDisclosureSuggestion(row);
     publish({
-      type: 'context_disclosure_suggested',
+      type: SyncEventType.ContextDisclosureSuggested,
       projectId: input.projectId,
       payload: suggestion,
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId: input.projectId,
-      type: 'context_disclosure_suggested',
+      type: SyncEventType.ContextDisclosureSuggested,
       nodeId: input.targetNodeId,
       payload: {
         suggestionId: suggestion.id,
@@ -1633,14 +1634,14 @@ export class ContextService {
       .run(row);
     const bundle = mapContextBundle(row);
     publish({
-      type: 'context_bundle_created',
+      type: SyncEventType.ContextBundleCreated,
       projectId,
       payload: bundle,
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId,
-      type: 'context_bundle_created',
+      type: SyncEventType.ContextBundleCreated,
       contextBlockIds: uniqueBlockIds,
       payload: { bundleId: bundle.id, title: bundle.title },
       actorId: createdBy,
@@ -1709,14 +1710,14 @@ export class ContextService {
       .run(row);
     const snapshot = mapContextRunSnapshot(row);
     publish({
-      type: 'context_snapshot_created',
+      type: SyncEventType.ContextSnapshotCreated,
       projectId: input.projectId,
       payload: snapshot,
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId: input.projectId,
-      type: 'context_snapshot_created',
+      type: SyncEventType.ContextSnapshotCreated,
       nodeId: input.nodeId,
       runId: input.runId,
       contextBlockIds: inputBlockIds,
@@ -1842,14 +1843,14 @@ export class ContextService {
 
     const record = tx();
     publish({
-      type: 'coord_event_created',
+      type: SyncEventType.CoordEventCreated,
       projectId: input.projectId,
       payload: { runId: input.runId, loopRecordId: record.id },
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId: input.projectId,
-      type: 'agent_loop_recorded',
+      type: SyncEventType.AgentLoopRecorded,
       nodeId: input.nodeId ?? null,
       runId: input.runId,
       payload: {
@@ -1940,14 +1941,14 @@ export class ContextService {
       .get(suggestionId) as ContextDisclosureSuggestionRowLike;
     const suggestion = mapDisclosureSuggestion(updated);
     publish({
-      type: 'context_disclosure_updated',
+      type: SyncEventType.ContextDisclosureUpdated,
       projectId: row.project_id,
       payload: suggestion,
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId: row.project_id,
-      type: 'context_disclosure_accepted',
+      type: SyncEventType.ContextDisclosureAccepted,
       nodeId: row.target_node_id,
       contextBlockIds: [signal.blockId],
       payload: { suggestionId, signalId: signal.id, sourceNodeId: row.source_node_id },
@@ -1974,14 +1975,14 @@ export class ContextService {
       .get(suggestionId) as ContextDisclosureSuggestionRowLike;
     const suggestion = mapDisclosureSuggestion(updated);
     publish({
-      type: 'context_disclosure_updated',
+      type: SyncEventType.ContextDisclosureUpdated,
       projectId: row.project_id,
       payload: suggestion,
       timestamp: Date.now(),
     });
     this.appendCoordEvent({
       projectId: row.project_id,
-      type: 'context_disclosure_dismissed',
+      type: SyncEventType.ContextDisclosureDismissed,
       nodeId: row.target_node_id,
       payload: { suggestionId, signalId: row.signal_id, sourceNodeId: row.source_node_id },
       actorId,
@@ -2133,7 +2134,7 @@ export class ContextService {
     }
     const event = this.appendCoordEvent({
       projectId: input.projectId,
-      type: 'run_event_recorded',
+      type: SyncEventType.RunEventRecorded,
       nodeId: input.nodeId,
       runId: input.runId,
       contextBlockIds: blocks.map((b) => b.id),
@@ -2184,7 +2185,7 @@ export class ContextService {
     });
     this.appendCoordEvent({
       projectId: input.projectId,
-      type: 'run_verdict_recorded',
+      type: SyncEventType.RunVerdictRecorded,
       nodeId: input.nodeId,
       runId: input.runId,
       contextBlockIds: [block.id],
@@ -2417,7 +2418,7 @@ export class ContextService {
       .run(row);
     const domain = mapLink(row);
     publish({
-      type: 'link_created',
+      type: SyncEventType.LinkCreated,
       projectId: link.projectId,
       payload: domain,
       timestamp: Date.now(),
@@ -2432,7 +2433,7 @@ export class ContextService {
     if (!row) return;
     this.db.prepare(`DELETE FROM context_links WHERE id = ?`).run(linkId);
     publish({
-      type: 'link_deleted',
+      type: SyncEventType.LinkDeleted,
       projectId: row.project_id,
       payload: { id: linkId },
       timestamp: Date.now(),
@@ -2694,7 +2695,7 @@ export class ContextService {
     const result = tx();
     // 导入后广播一个汇总事件，前端可进行 refreshAll
     publish({
-      type: 'session_updated' as const,
+      type: SyncEventType.SessionUpdated,
       projectId,
       payload: { imported: result } as unknown,
       timestamp: Date.now(),

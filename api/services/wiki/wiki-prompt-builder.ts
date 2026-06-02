@@ -1,5 +1,7 @@
 import type { CodeMapScanResult } from '../contracts/code-map.js';
 import type { WikiOutlineEntry } from './wiki-loop-tools.js';
+import { derivePackages } from './tools/package-baseline.js';
+import { FILE_SPLIT, SYM_SPLIT } from './tools/contracts.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -7,6 +9,7 @@ export interface WikiPromptInput {
   role: 'planner' | 'writer' | 'document-writer';
   languages: string;
   locale: 'zh' | 'en';
+  scan?: CodeMapScanResult;
   outline?: WikiOutlineEntry[];
   continuation?: { completedTitles: string[]; remainingCount: number };
   preloadedContext?: string;
@@ -354,6 +357,48 @@ function buildOutlineSegment(outline: WikiOutlineEntry[], locale: Locale): strin
   return `${title}\n\n${JSON.stringify(outline, null, 2)}`;
 }
 
+function buildPackageBaselineSegment(scan: CodeMapScanResult, locale: Locale): string {
+  const baseline = derivePackages(scan);
+  const en = locale === 'en';
+
+  const lines: string[] = [];
+  if (en) {
+    lines.push('## Package Baseline');
+    lines.push('Every package below must be covered by at least one document.');
+    lines.push('');
+  } else {
+    lines.push('## 代码库包结构');
+    lines.push('以下每个包都必须被至少一篇文档覆盖。');
+    lines.push('');
+  }
+
+  for (const pkg of baseline) {
+    const needsSplit = pkg.fileCount >= FILE_SPLIT || pkg.symbolCount >= SYM_SPLIT;
+    const hubs = pkg.hubSymbols.slice(0, 3).map(h => h.name).join(', ');
+    if (en) {
+      const splitHint = needsSplit ? ` → [NEEDS SPLIT] parent + 3-4 child docs (hubs: ${hubs})` : ` → 1 module_spec`;
+      lines.push(`- ${pkg.label}  ${pkg.fileCount} files/${pkg.symbolCount} syms${splitHint}`);
+    } else {
+      const splitHint = needsSplit ? ` → [需拆分] 父文档 + 按 hub 拆 3-4 子文档 (hub: ${hubs})` : ` → 1 篇 module_spec`;
+      lines.push(`- ${pkg.label}  ${pkg.fileCount} files/${pkg.symbolCount} syms${splitHint}`);
+    }
+  }
+
+  if (en) {
+    lines.push('');
+    lines.push('## Directory Tree Baseline');
+    const topDirs = scan.moduleMap?.topDirs ?? [];
+    lines.push(topDirs.map(d => (d as { path?: string; dir?: string }).path ?? (d as { path?: string; dir?: string }).dir ?? '').filter(Boolean).join(', '));
+  } else {
+    lines.push('');
+    lines.push('## 目录树基线（directory_tree 文档用）');
+    const topDirs = scan.moduleMap?.topDirs ?? [];
+    lines.push(topDirs.map(d => (d as { path?: string; dir?: string }).path ?? (d as { path?: string; dir?: string }).dir ?? '').filter(Boolean).join(', '));
+  }
+
+  return lines.join('\n');
+}
+
 // ── Main builder ─────────────────────────────────────────────────────────────
 
 export function buildWikiPrompt(input: WikiPromptInput): string {
@@ -380,6 +425,10 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
 
   const ctx = buildContextSegment(input.languages, role, locale);
   if (ctx) segments.push(ctx);
+
+  if (role === 'planner' && input.scan) {
+    segments.push(buildPackageBaselineSegment(input.scan, locale));
+  }
 
   if (input.documentContext) {
     const header = locale === 'en' ? '## Code Context' : '## 代码上下文';

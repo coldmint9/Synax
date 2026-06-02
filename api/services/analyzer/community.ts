@@ -94,7 +94,7 @@ function compareCommunityPath(left: string[], right: string[], fileById: Map<str
   return leftPath.localeCompare(rightPath)
 }
 
-function buildHubSymbols(codeIndex: CodeMapCodeIndex, graph: AnalyzerGraph, fileIds: string[]): CodeMapSymbolSummary[] {
+export function buildHubSymbols(codeIndex: CodeMapCodeIndex, graph: AnalyzerGraph, fileIds: string[]): CodeMapSymbolSummary[] {
   const fileById = new Map(codeIndex.files.map((file) => [file.id, file] as const))
   const fileSet = new Set(fileIds)
   return codeIndex.symbols

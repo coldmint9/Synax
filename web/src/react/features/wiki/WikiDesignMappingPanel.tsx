@@ -77,7 +77,6 @@ export default function WikiDesignMappingPanel({ projectId }: { projectId: strin
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
   const blocksById = useWikiStore(s => s.blocksById)
   const documents = useWikiStore(s => s.documents)
-  const loadLatest = useWikiStore(s => s.loadLatest)
   const loadPatches = useWikiStore(s => s.loadPatches)
 
   const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([])
@@ -149,9 +148,7 @@ export default function WikiDesignMappingPanel({ projectId }: { projectId: strin
       })
       if (!res.ok) throw new Error(`Confirm failed: ${res.status}`)
       setStatus('done')
-      // Reload wiki state after ACP execution
       await new Promise(r => setTimeout(r, 1500))
-      await loadLatest(projectId)
       await loadPatches(projectId, 'pending')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Confirm failed')

@@ -13,8 +13,10 @@ import {
 } from '../agent-runtime/tools/workspace.js';
 import { logger } from '../../lib/logger.js';
 import { notify } from '../notifications/notify.js';
+import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { wikiStore } from './wiki-store.js';
 import { wikiCoordinateService } from './wiki-coordinate-service.js';
+import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
 import { ensureWikiProfileRegistered } from './wiki-loop-profile.js';
 import {
   createPlannerTools,
@@ -99,9 +101,10 @@ export const wikiLoopService = {
       createdBy: 'agent',
     });
     await wikiStore.updateSnapshotStatus(snapshot.id, 'refreshing');
+    await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.GenerationStarted);
 
     notify({
-      type: 'task_started',
+      type: TaskNotificationEventType.TaskStarted,
       taskKind: 'wiki_generate',
       projectId,
       taskId: snapshot.id,
@@ -129,7 +132,7 @@ export const wikiLoopService = {
         registeredToolIds.push(tool.id);
       }
 
-      const plannerPrompt = buildWikiPrompt({ role: 'planner', languages, locale });
+      const plannerPrompt = buildWikiPrompt({ role: 'planner', languages, locale, scan });
       const plannerSession = agentSessionRuntime.create({
         projectId,
         profileId: 'wiki-planner',
@@ -164,9 +167,10 @@ export const wikiLoopService = {
       logger.info({ projectId, outlineCount: outline.length }, 'wiki-loop: Phase 1 outline received, persisting empty documents');
       const { docIds, planIdToDocId } = await persistOutlineAsEmptyDocs(outline, snapshot.id, projectId);
       await wikiStore.updateSnapshotStatus(snapshot.id, 'outline_ready', docIds);
+      await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.OutlineReady);
 
       notify({
-        type: 'task_progress',
+        type: TaskNotificationEventType.TaskProgress,
         taskKind: 'wiki_generate',
         projectId,
         taskId: snapshot.id,
@@ -178,9 +182,10 @@ export const wikiLoopService = {
 
       // ═══ Phase 2: Content Generation (per-document) ═══
       await wikiStore.updateSnapshotStatus(snapshot.id, 'writing', docIds);
+      await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.WritingStarted);
 
       notify({
-        type: 'task_progress',
+        type: TaskNotificationEventType.TaskProgress,
         taskKind: 'wiki_generate',
         projectId,
         taskId: snapshot.id,
@@ -228,6 +233,7 @@ export const wikiLoopService = {
           }
 
           logger.info({ projectId, title: latestDoc.title }, 'wiki-loop: document content committed');
+          await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.DocumentCommitted);
         },
       });
 
@@ -268,7 +274,7 @@ export const wikiLoopService = {
         });
 
         notify({
-          type: 'task_progress',
+          type: TaskNotificationEventType.TaskProgress,
           taskKind: 'wiki_generate',
           projectId,
           taskId: snapshot.id,
@@ -300,53 +306,51 @@ export const wikiLoopService = {
         if (loadBearing.length > 0) {
           logger.info({ projectId, docTitle: entry.title, claimCount: loadBearing.length }, 'wiki-loop: verifying claims');
 
-          const verdicts: WikiVerdict[] = [];
-          for (const claim of loadBearing) {
-            const verifierHandle = createVerifierTools(scan);
-            for (const t of verifierHandle.tools) {
-              toolRegistry.register(t);
-              registeredToolIds.push(t.id);
+          // Batch all load-bearing claims into ONE verifier session
+          const verifierHandle = createVerifierTools(scan);
+          for (const t of verifierHandle.tools) {
+            toolRegistry.register(t);
+            registeredToolIds.push(t.id);
+          }
+
+          const claimsList = loadBearing.map(c =>
+            `- ID: ${c.id} | Subject: ${c.subject} | Assertion: "${c.assertion}" | Evidence hint: ${c.evidenceHint}`
+          ).join('\n');
+
+          const verifierPrompt = [
+            `Verify the following claims by reading the actual source code.`,
+            `For each claim, call wiki.submit_verdict with your findings.`,
+            `If you cannot find supporting evidence for a claim, default to refuted=true.`,
+            ``,
+            `## Claims to verify`,
+            claimsList,
+            ``,
+            `Language composition: ${languages}`,
+          ].join('\n');
+
+          const verifierSession = agentSessionRuntime.create({
+            projectId,
+            profileId: 'wiki-verifier',
+            prompt: verifierPrompt,
+          });
+          sessionIds.push(verifierSession.id);
+          setSessionWorkspaceRoot(verifierSession.id, workDir);
+
+          const vStream = agentLoopRuntime.streamRun(verifierSession.id, {});
+          for await (const chunk of vStream) {
+            if (chunk.type === 'run_failed') {
+              logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: verifier failed');
+              break;
             }
+            if (chunk.type === 'done') break;
+          }
 
-            const verifierPrompt = [
-              `Verify this claim by reading the actual source code.`,
-              ``,
-              `Claim ID: ${claim.id}`,
-              `Subject: ${claim.subject}`,
-              `Assertion: "${claim.assertion}"`,
-              `Evidence hint: ${claim.evidenceHint}`,
-              ``,
-              `Language composition: ${languages}`,
-              ``,
-              `Your task: find evidence that SUPPORTS or REFUTES this claim.`,
-              `If you cannot find supporting evidence, default to refuted=true.`,
-              `Call wiki.submit_verdict with your findings.`,
-            ].join('\n');
+          const verdicts = verifierHandle.getVerdicts();
+          logger.info({ projectId, docTitle: entry.title, verdictCount: verdicts.length }, 'wiki-loop: verification complete');
 
-            const verifierSession = agentSessionRuntime.create({
-              projectId,
-              profileId: 'wiki-verifier',
-              prompt: verifierPrompt,
-            });
-            sessionIds.push(verifierSession.id);
-            setSessionWorkspaceRoot(verifierSession.id, workDir);
-
-            const vStream = agentLoopRuntime.streamRun(verifierSession.id, {});
-            for await (const chunk of vStream) {
-              if (chunk.type === 'run_failed') {
-                logger.warn({ projectId, claimId: claim.id }, 'wiki-loop: verifier failed, skipping claim');
-                break;
-              }
-              if (chunk.type === 'done') break;
-            }
-
-            const verdict = verifierHandle.getVerdict();
-            if (verdict) verdicts.push(verdict);
-
-            for (const t of verifierHandle.tools) {
-              toolRegistry.unregister(t.id);
-              registeredToolIds.splice(registeredToolIds.indexOf(t.id), 1);
-            }
+          for (const t of verifierHandle.tools) {
+            toolRegistry.unregister(t.id);
+            registeredToolIds.splice(registeredToolIds.indexOf(t.id), 1);
           }
 
           // Stage 3: Corrector (if any claims were refuted)
@@ -418,9 +422,10 @@ export const wikiLoopService = {
       }
 
       await wikiStore.updateSnapshotStatus(snapshot.id, 'ready', persistedDocIds);
+      await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.GenerationCompleted);
       logger.info({ projectId, snapshotId: snapshot.id, docCount: persistedDocIds.length }, 'wiki-loop: generation complete');
       notify({
-        type: 'task_completed',
+        type: TaskNotificationEventType.TaskCompleted,
         taskKind: 'wiki_generate',
         projectId,
         taskId: snapshot.id,
@@ -437,7 +442,7 @@ export const wikiLoopService = {
     } catch (err) {
       logger.error({ err, projectId, snapshotId: snapshot.id }, 'wiki-loop: generation failed');
       notify({
-        type: 'task_failed',
+        type: TaskNotificationEventType.TaskFailed,
         taskKind: 'wiki_generate',
         projectId,
         taskId: snapshot.id,
@@ -448,6 +453,7 @@ export const wikiLoopService = {
       });
       await failSession(sessionIds[sessionIds.length - 1], err);
       await wikiStore.updateSnapshotStatus(snapshot.id, 'failed');
+      await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.GenerationFailed);
       return { snapshotId: snapshot.id, status: 'failed', error: err instanceof Error ? err.message : String(err) };
     } finally {
       for (const sid of sessionIds) clearSessionWorkspaceRoot(sid);
@@ -467,10 +473,12 @@ export const wikiLoopService = {
 
     if (unfilled.length === 0) {
       await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
+      await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueCompleted);
       return { snapshotId, status: 'completed' };
     }
 
     await wikiStore.updateSnapshotStatus(snapshotId, 'writing', documents.map(d => d.id));
+    await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueStarted);
 
     const sessionIds: string[] = [];
     const registeredToolIds: string[] = [];
@@ -515,6 +523,7 @@ export const wikiLoopService = {
             await fillDocumentContent(existingDoc.id, latestDoc, snapshot.projectId, scan);
           }
           logger.info({ projectId: snapshot.projectId, title: latestDoc.title }, 'wiki-loop: continue - document content committed');
+          await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.DocumentCommitted);
         },
       });
 
@@ -547,9 +556,10 @@ export const wikiLoopService = {
       }
 
       await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
+      await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueCompleted);
       logger.info({ snapshotId, unfilledCount: unfilled.length }, 'wiki-loop: continue generation complete');
       notify({
-        type: 'task_completed',
+        type: TaskNotificationEventType.TaskCompleted,
         taskKind: 'wiki_generate',
         projectId: snapshot.projectId,
         taskId: snapshotId,
@@ -562,7 +572,7 @@ export const wikiLoopService = {
     } catch (err) {
       logger.error({ err, snapshotId }, 'wiki-loop: continue generation failed');
       notify({
-        type: 'task_failed',
+        type: TaskNotificationEventType.TaskFailed,
         taskKind: 'wiki_generate',
         projectId: snapshot.projectId,
         taskId: snapshotId,
@@ -573,6 +583,7 @@ export const wikiLoopService = {
       });
       await failSession(sessionIds[sessionIds.length - 1], err);
       await wikiStore.updateSnapshotStatus(snapshotId, 'failed');
+      await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueFailed);
       return { snapshotId, status: 'failed', error: err instanceof Error ? err.message : String(err) };
     } finally {
       for (const sid of sessionIds) clearSessionWorkspaceRoot(sid);

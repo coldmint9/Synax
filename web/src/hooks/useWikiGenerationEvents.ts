@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { subscribe } from '../lib/api/taskNotificationBus'
-import { wikiApi } from '../lib/api/wiki'
+import { TaskNotificationEventType } from '../lib/api/eventTypes'
+import type { WikiSnapshotTree } from '../lib/contracts/wiki'
 
 export type WikiGenPhase = 'starting' | 'refreshing' | 'outline_ready' | 'writing' | 'ready' | 'failed'
 
@@ -31,6 +32,7 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
     active: false, phase: null, progress: null, error: null, snapshotId: null,
   })
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const snapshotIdRef = useRef<string | null>(null)
   const callbacksRef = useRef({ onCompleted, onFailed })
   callbacksRef.current = { onCompleted, onFailed }
 
@@ -42,31 +44,18 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
   }, [])
 
   const start = useCallback((snapshotId?: string) => {
+    snapshotIdRef.current = snapshotId ?? null
     setState({ active: true, phase: 'starting', progress: null, error: null, snapshotId: snapshotId ?? null })
     clearTimer()
-    timeoutRef.current = setTimeout(async () => {
-      if (!projectId) return
-      try {
-        const tree = await wikiApi.getLatest(projectId)
-        if (tree.snapshot?.status === 'ready') {
-          setState(s => ({ ...s, active: false, phase: 'ready' }))
-          callbacksRef.current.onCompleted?.(tree.snapshot.id)
-        } else if (tree.snapshot?.status === 'failed') {
-          setState(s => ({ ...s, active: false, phase: 'failed', error: 'Generation timeout' }))
-          callbacksRef.current.onFailed?.('Generation timeout')
-        } else {
-          setState(s => ({ ...s, active: false, phase: 'failed', error: 'Generation timeout' }))
-          callbacksRef.current.onFailed?.('Generation timeout')
-        }
-      } catch {
-        setState(s => ({ ...s, active: false, phase: 'failed', error: 'Generation timeout' }))
-        callbacksRef.current.onFailed?.('Generation timeout')
-      }
+    timeoutRef.current = setTimeout(() => {
+      setState(s => ({ ...s, active: false, phase: 'failed', error: 'Generation timeout' }))
+      callbacksRef.current.onFailed?.('Generation timeout')
     }, timeoutMs)
-  }, [projectId, timeoutMs, clearTimer])
+  }, [timeoutMs, clearTimer])
 
   const reset = useCallback(() => {
     clearTimer()
+    snapshotIdRef.current = null
     setState({ active: false, phase: null, progress: null, error: null, snapshotId: null })
   }, [clearTimer])
 
@@ -75,12 +64,24 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
 
     return subscribe(projectId, {
       events: {
-        task_progress: (e: MessageEvent) => {
+        [TaskNotificationEventType.TaskStarted]: (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data)
+            if (data.taskKind !== 'wiki_generate') return
+            const sid = data.meta?.snapshotId as string | undefined
+            if (sid) {
+              snapshotIdRef.current = sid
+              setState(s => ({ ...s, snapshotId: sid, phase: 'refreshing' }))
+            }
+          } catch { /* ignore */ }
+        },
+        [TaskNotificationEventType.TaskProgress]: (e: MessageEvent) => {
           try {
             const data = JSON.parse(e.data)
             if (data.taskKind !== 'wiki_generate') return
             const meta = data.meta as Record<string, unknown> | undefined
             const status = meta?.snapshotStatus as WikiGenPhase | undefined
+            if (meta?.snapshotId) snapshotIdRef.current = meta.snapshotId as string
             if (status) setState(s => ({ ...s, phase: status, snapshotId: (meta?.snapshotId as string) ?? s.snapshotId }))
             if (meta?.docIndex != null) {
               setState(s => ({ ...s, progress: {
@@ -91,17 +92,18 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
             }
           } catch { /* ignore */ }
         },
-        task_completed: (e: MessageEvent) => {
+        [TaskNotificationEventType.TaskCompleted]: (e: MessageEvent) => {
           try {
             const data = JSON.parse(e.data)
             if (data.taskKind !== 'wiki_generate') return
             clearTimer()
             const sid = (data.meta?.snapshotId as string) ?? state.snapshotId ?? ''
+            snapshotIdRef.current = sid || snapshotIdRef.current
             setState(s => ({ ...s, active: false, phase: 'ready', snapshotId: sid }))
             callbacksRef.current.onCompleted?.(sid)
           } catch { /* ignore */ }
         },
-        task_failed: (e: MessageEvent) => {
+        [TaskNotificationEventType.TaskFailed]: (e: MessageEvent) => {
           try {
             const data = JSON.parse(e.data)
             if (data.taskKind !== 'wiki_generate') return
@@ -109,6 +111,24 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
             const msg = data.message ?? 'Generation failed'
             setState(s => ({ ...s, active: false, phase: 'failed', error: msg }))
             callbacksRef.current.onFailed?.(msg)
+          } catch { /* ignore */ }
+        },
+        [TaskNotificationEventType.WikiSnapshot]: (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data) as { projectId: string; tree: WikiSnapshotTree }
+            if (data.projectId !== projectId) return
+            if (!data.tree.snapshot) return
+            const expectedSnapshotId = snapshotIdRef.current
+            if (!expectedSnapshotId || data.tree.snapshot.id !== expectedSnapshotId) return
+            if (data.tree.snapshot.status === 'ready') {
+              clearTimer()
+              setState(s => ({ ...s, active: false, phase: 'ready', snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))
+              callbacksRef.current.onCompleted?.(data.tree.snapshot.id)
+            } else if (data.tree.snapshot.status === 'failed') {
+              clearTimer()
+              setState(s => ({ ...s, active: false, phase: 'failed', error: 'Generation failed', snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))
+              callbacksRef.current.onFailed?.('Generation failed')
+            }
           } catch { /* ignore */ }
         },
       },

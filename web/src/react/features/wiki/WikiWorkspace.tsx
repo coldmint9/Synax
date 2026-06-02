@@ -17,13 +17,12 @@ import { apiFetch, apiRequest } from '../../../lib/api/origin'
 import { handleError, createAppError, AppError } from '../../../lib/errors'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
-function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated: () => void }) {
+function EmptyState({ projectId }: { projectId: string }) {
   const { t } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
   const gen = useWikiGenerationEvents({
     projectId,
-    onCompleted: () => onGenerated(),
     onFailed: (msg) => setError(msg),
   })
 
@@ -101,13 +100,12 @@ function EmptyState({ projectId, onGenerated }: { projectId: string; onGenerated
   )
 }
 
-function FailedState({ projectId, onRetry }: { projectId: string; onRetry: () => void }) {
+function FailedState({ projectId }: { projectId: string }) {
   const { t } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
   const gen = useWikiGenerationEvents({
     projectId,
-    onCompleted: () => onRetry(),
     onFailed: (msg) => setError(msg),
   })
 
@@ -188,7 +186,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const documents = useWikiStore(s => s.documents)
   const evaluations = useWikiStore(s => s.evaluations)
   const loading = useWikiStore(s => s.loading)
-  const loadLatest = useWikiStore(s => s.loadLatest)
   const loadEvaluations = useWikiStore(s => s.loadEvaluations)
   const draftPanelOpen = useWikiStore(s => s.draftPanelOpen)
   const toggleDraftPanel = useWikiStore(s => s.toggleDraftPanel)
@@ -224,7 +221,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   // React to refresh task completion via SSE
   useEffect(() => {
     if (refreshTask.phase === 'completed') {
-      void loadLatest(projectId)
       void loadDrafts(projectId).then(() => {
         const { draftsSummary: summary, draftPanelOpen: alreadyOpen } = useWikiStore.getState()
         if (summary.ready > 0 && !alreadyOpen) toggleDraftPanel()
@@ -233,7 +229,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     if (refreshTask.phase === 'failed' && refreshTask.message) {
       handleError(new Error(refreshTask.message))
     }
-  }, [refreshTask.phase])
+  }, [refreshTask.phase, refreshTask.message, projectId, loadDrafts, toggleDraftPanel])
 
   // Compute issuesByBlockId
   const issuesByBlockId = useMemo(() => {
@@ -265,31 +261,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
   }, [sidebarWidth])
-
-  useEffect(() => {
-    const shouldPoll = snapshot?.status === 'refreshing'
-      || snapshot?.status === 'outline_ready'
-      || snapshot?.status === 'writing'
-    if (!shouldPoll) return
-    let interval: ReturnType<typeof setInterval> | null = null
-
-    const start = () => {
-      if (interval) return
-      interval = setInterval(() => { loadLatest(projectId) }, 3000)
-    }
-    const stop = () => {
-      if (interval) { clearInterval(interval); interval = null }
-    }
-
-    const onVisibility = () => { document.hidden ? stop() : start() }
-    document.addEventListener('visibilitychange', onVisibility)
-    if (!document.hidden) start()
-
-    return () => {
-      stop()
-      document.removeEventListener('visibilitychange', onVisibility)
-    }
-  }, [snapshot?.status, projectId, loadLatest])
 
   async function handleRefresh() {
     if (!snapshot) return
@@ -330,7 +301,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     setReinitializing(true)
     try {
       await wikiApi.reinitialize(projectId, { workDir, locale: 'zh' })
-      await loadLatest(projectId)
     } finally {
       setReinitializing(false)
     }
@@ -348,7 +318,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     setContinuing(true)
     try {
       await wikiApi.continueGeneration(snapshot.id, { workDir, locale: 'zh' })
-      await loadLatest(projectId)
     } finally {
       setContinuing(false)
     }
@@ -386,11 +355,11 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   }
 
   if (!snapshot) {
-    return <EmptyState projectId={projectId} onGenerated={() => void loadLatest(projectId)} />
+    return <EmptyState projectId={projectId} />
   }
 
   if (snapshot.status === 'failed' && documents.length === 0) {
-    return <FailedState projectId={projectId} onRetry={() => void loadLatest(projectId)} />
+    return <FailedState projectId={projectId} />
   }
 
   return (

@@ -1,9 +1,11 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import {
+  NotificationStreamEventType,
   taskNotificationBus,
   type TaskNotificationEvent,
 } from "../services/notifications/task-notification-bus.js";
+import { buildWikiSnapshotEvent, WikiSnapshotEventReason } from "../services/wiki/wiki-snapshot-events.js";
 
 export const notificationRoutes = new Hono();
 
@@ -25,12 +27,22 @@ notificationRoutes.get("/stream", (c) => {
 
     const unsubscribe = taskNotificationBus.subscribe(projectId, onEvent);
 
-    await stream.writeSSE({ event: "connected", data: JSON.stringify({ projectId }) });
+    await stream.writeSSE({ event: NotificationStreamEventType.Connected, data: JSON.stringify({ projectId }) });
+    try {
+      const snapshotEvent = await buildWikiSnapshotEvent(projectId, WikiSnapshotEventReason.Connected);
+      await stream.writeSSE({
+        event: snapshotEvent.type,
+        data: JSON.stringify(snapshotEvent),
+        id: snapshotEvent.id,
+      });
+    } catch {
+      // Keep the notification stream alive even if the snapshot read fails.
+    }
 
     const heartbeat = setInterval(() => {
       if (closed) return;
       stream
-        .writeSSE({ event: "ping", data: String(Date.now()) })
+        .writeSSE({ event: NotificationStreamEventType.Ping, data: String(Date.now()) })
         .catch(() => { closed = true; });
     }, 25_000);
 
