@@ -153,6 +153,7 @@ export const wikiExportService = {
       title: docRows[0].title,
       docType: docRows[0].docType as WikiDocument['docType'],
       parentId: docRows[0].parentId ?? null,
+      pipelineStage: docRows[0].pipelineStage as WikiDocument['pipelineStage'],
       blockIds: JSON.parse(docRows[0].blockIdsJson) as string[],
       sortOrder: docRows[0].sortOrder,
       createdAt: docRows[0].createdAt,

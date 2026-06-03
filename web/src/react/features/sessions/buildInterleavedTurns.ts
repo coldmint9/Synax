@@ -142,12 +142,24 @@ export function buildInterleavedTurns(
     const merged = mergeConsecutiveBlocks(items.map(i => i.block))
     const blocks = groupParallelToolCalls(merged)
 
+    // Move thought blocks after tool calls so they appear below tool results
+    const reordered: TurnContentBlock[] = []
+    const thinkers: TurnContentBlock[] = []
+    for (const b of blocks) {
+      if (b.type === 'thinking') {
+        thinkers.push(b)
+      } else {
+        reordered.push(b)
+      }
+    }
+    reordered.push(...thinkers)
+
     return {
       stepId: step.id,
       index: step.index,
       status: step.status,
       duration: computeDuration(step),
-      blocks,
+      blocks: reordered,
     }
   })
 }

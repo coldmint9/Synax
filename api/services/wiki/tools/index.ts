@@ -67,7 +67,7 @@ export function createWikiTools(scan: CodeMapScanResult): WikiToolsHandle {
       }
       submittedPlan = args.documents;
       return {
-        result: { ok: true, message: `Plan accepted: ${args.documents.length} documents.`, documents: args.documents },
+        result: { ok: true, count: args.documents.length, message: `Plan accepted: ${args.documents.length} documents.` },
         displaySummary: `Plan accepted: ${args.documents.length} documents.`,
         artifacts: [],
       };

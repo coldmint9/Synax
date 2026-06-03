@@ -72,6 +72,8 @@
   --animate-ripple-pulse: ripple-pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
   --animate-origin-breathe: origin-breathe 3s ease-in-out infinite;
   --animate-wave-ripple: wave-ripple 1.5s cubic-bezier(0, 0.2, 0.8, 1) forwards;
+  --animate-thinking-bounce: thinking-bounce 0.9s ease-in-out infinite;
+  --animate-bot-glow: bot-glow 2s ease-in-out infinite;
 }
 
 /* ── Keyframes ── */
@@ -105,6 +107,8 @@
 @keyframes origin-breathe { 0%, 100% { transform: scale(1); box-shadow: 0 0 20px hsl(var(--primary) / 0.2); } 50% { transform: scale(1.04); box-shadow: 0 0 40px hsl(var(--primary) / 0.35), 0 0 80px hsl(var(--arch) / 0.14); } }
 @keyframes wave-ripple { 0% { transform: scale(0.8); opacity: 0.6; border-width: 2px; } 100% { transform: scale(2.5); opacity: 0; border-width: 0.5px; } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes thinking-bounce { 0%, 40% { transform: translateY(0); opacity: 0.3; } 20% { transform: translateY(-6px); opacity: 1; } }
+@keyframes bot-glow { 0%, 100% { box-shadow: 0 0 0 0 hsl(var(--agent) / 0.08); border-color: hsl(var(--agent) / 0.15); } 50% { box-shadow: 0 0 6px 2px hsl(var(--agent) / 0.12); border-color: hsl(var(--agent) / 0.35); } }
 
 /* ── CSS Variables ── */
 :root {

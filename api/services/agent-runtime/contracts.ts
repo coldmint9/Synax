@@ -142,8 +142,10 @@ export interface PermissionRule {
 }
 
 export interface ToolPolicy {
+  /** @deprecated All tools now execute in parallel within a step. Kept for backward compatibility. */
   allowParallelReadTools?: boolean;
   allowSubtasks?: boolean;
+  /** @deprecated No longer capped. All tool calls in a step execute concurrently. Kept for backward compatibility. */
   maxParallelReadTools?: number;
 }
 

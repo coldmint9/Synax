@@ -18,10 +18,21 @@ import { useNotificationStore } from '../../state/notificationStore'
 let _textBuffer = ''
 let _thinkingBuffer = ''
 let _rafId: number | null = null
+let _intervalId: ReturnType<typeof setInterval> | null = null
 
-const CHARS_PER_FRAME_BASE = 12
-const CHARS_PER_FRAME_MAX = 200
-const BACKPRESSURE_THRESHOLD = 300
+const CHARS_PER_FRAME_BASE = 80
+const CHARS_PER_FRAME_MAX = 600
+const BACKPRESSURE_THRESHOLD = 150
+
+function _computeChunkSize(bufferLen: number): number {
+  if (bufferLen > BACKPRESSURE_THRESHOLD) {
+    return Math.min(CHARS_PER_FRAME_MAX, Math.ceil(bufferLen / 3))
+  }
+  if (bufferLen > 60) {
+    return Math.min(CHARS_PER_FRAME_MAX, Math.ceil(bufferLen / 2))
+  }
+  return CHARS_PER_FRAME_BASE
+}
 
 function _drainLoop() {
   _rafId = null
@@ -29,22 +40,19 @@ function _drainLoop() {
   const thinkLen = _thinkingBuffer.length
   if (textLen === 0 && thinkLen === 0) return
 
-  const pressure = textLen + thinkLen
-  const chunkSize = pressure > BACKPRESSURE_THRESHOLD
-    ? Math.min(CHARS_PER_FRAME_MAX, Math.ceil(pressure / 5))
-    : CHARS_PER_FRAME_BASE
+  // Text and thinking each get their own independent quota per frame
+  const textChunk = _computeChunkSize(textLen)
+  const thinkChunk = _computeChunkSize(thinkLen)
 
   let t = ''
   let th = ''
   if (textLen > 0) {
-    const take = Math.min(textLen, chunkSize)
-    t = _textBuffer.slice(0, take)
-    _textBuffer = _textBuffer.slice(take)
+    t = _textBuffer.slice(0, Math.min(textLen, textChunk))
+    _textBuffer = _textBuffer.slice(t.length)
   }
   if (thinkLen > 0) {
-    const take = Math.min(thinkLen, chunkSize)
-    th = _thinkingBuffer.slice(0, take)
-    _thinkingBuffer = _thinkingBuffer.slice(take)
+    th = _thinkingBuffer.slice(0, Math.min(thinkLen, thinkChunk))
+    _thinkingBuffer = _thinkingBuffer.slice(th.length)
   }
 
   if (t || th) {
@@ -56,12 +64,36 @@ function _drainLoop() {
 
   if (_textBuffer.length > 0 || _thinkingBuffer.length > 0) {
     _rafId = requestAnimationFrame(_drainLoop)
+  } else if (_intervalId !== null) {
+    clearInterval(_intervalId)
+    _intervalId = null
   }
 }
 
 function _scheduleFlush() {
   if (_rafId !== null) return
   _rafId = requestAnimationFrame(_drainLoop)
+}
+
+// Keep draining even when tab is hidden (rAF pauses in background)
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      // Switch to setInterval when tab is hidden
+      if (_intervalId === null && (_textBuffer.length > 0 || _thinkingBuffer.length > 0)) {
+        _intervalId = setInterval(_drainLoop, 32)
+      }
+    } else {
+      // Switch back to rAF when tab is visible
+      if (_intervalId !== null) {
+        clearInterval(_intervalId)
+        _intervalId = null
+      }
+      if (_rafId === null && (_textBuffer.length > 0 || _thinkingBuffer.length > 0)) {
+        _rafId = requestAnimationFrame(_drainLoop)
+      }
+    }
+  })
 }
 
 export interface DebugConsoleState {

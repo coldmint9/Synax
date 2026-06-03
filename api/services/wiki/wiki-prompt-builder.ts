@@ -1,6 +1,6 @@
 import type { CodeMapScanResult } from '../contracts/code-map.js';
 import type { WikiOutlineEntry } from './wiki-loop-tools.js';
-import { derivePackages } from './tools/package-baseline.js';
+import { derivePackages, filterBaselineForPrompt } from './tools/package-baseline.js';
 import { FILE_SPLIT, SYM_SPLIT } from './tools/contracts.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -358,29 +358,31 @@ function buildOutlineSegment(outline: WikiOutlineEntry[], locale: Locale): strin
 }
 
 function buildPackageBaselineSegment(scan: CodeMapScanResult, locale: Locale): string {
-  const baseline = derivePackages(scan);
+  const baseline = filterBaselineForPrompt(derivePackages(scan));
   const en = locale === 'en';
+
+  if (baseline.length === 0) return '';
 
   const lines: string[] = [];
   if (en) {
     lines.push('## Package Baseline');
-    lines.push('Every package below must be covered by at least one document.');
+    lines.push('Core modules below. Each needs at least one document; packages marked [SPLIT] have enough surface area to warrant sub-documents keyed to their hub symbols.');
     lines.push('');
   } else {
     lines.push('## 代码库包结构');
-    lines.push('以下每个包都必须被至少一篇文档覆盖。');
+    lines.push('以下核心模块各需至少一篇文档。[需拆分] 标记表示该包规模较大，应沿 hub 符号拆分子文档。');
     lines.push('');
   }
 
   for (const pkg of baseline) {
-    const needsSplit = pkg.fileCount >= FILE_SPLIT || pkg.symbolCount >= SYM_SPLIT;
+    const needsSplit = pkg.fileCount >= FILE_SPLIT && pkg.symbolCount >= SYM_SPLIT;
     const hubs = pkg.hubSymbols.slice(0, 3).map(h => h.name).join(', ');
     if (en) {
-      const splitHint = needsSplit ? ` → [NEEDS SPLIT] parent + 3-4 child docs (hubs: ${hubs})` : ` → 1 module_spec`;
-      lines.push(`- ${pkg.label}  ${pkg.fileCount} files/${pkg.symbolCount} syms${splitHint}`);
+      const splitHint = needsSplit ? ` → [SPLIT] parent + sub-docs (hubs: ${hubs})` : '';
+      lines.push(`- ${pkg.label}  ${pkg.fileCount}f / ${pkg.symbolCount}s${splitHint}`);
     } else {
-      const splitHint = needsSplit ? ` → [需拆分] 父文档 + 按 hub 拆 3-4 子文档 (hub: ${hubs})` : ` → 1 篇 module_spec`;
-      lines.push(`- ${pkg.label}  ${pkg.fileCount} files/${pkg.symbolCount} syms${splitHint}`);
+      const splitHint = needsSplit ? ` → [需拆分] 父文档 + 子文档 (hub: ${hubs})` : '';
+      lines.push(`- ${pkg.label}  ${pkg.fileCount}f / ${pkg.symbolCount}s${splitHint}`);
     }
   }
 

@@ -6,6 +6,7 @@ import { makeRuntimeId } from './runtime-ids.js';
 
 const MAX_TOOL_OUTPUT_TEXT = 12_000;
 const MAX_TOOL_OUTPUT_JSON = 12_000;
+const MAX_TOOL_INPUT_JSON = 4_000;
 
 export interface ClearingOptions {
   priorInputTokens: number | null;
@@ -96,7 +97,7 @@ function buildRunMessages(
           type: 'tool-call',
           toolCallId,
           toolName: toolSet.resolveModelToolName(record.toolId) ?? sanitizeToolName(record.toolId),
-          input: record.inputRef ?? {},
+          input: toToolCallInput(record, clearSet),
         });
       }
     }
@@ -187,6 +188,44 @@ function toToolResultOutput(record: ToolCallRecord): ToolResultOutput {
 
 function trimToolText(value: string): string {
   return value.length > MAX_TOOL_OUTPUT_TEXT ? `${value.slice(0, MAX_TOOL_OUTPUT_TEXT)}…` : value;
+}
+
+function toToolCallInput(
+  record: ToolCallRecord,
+  clearSet: Set<string> | null,
+): Record<string, unknown> {
+  const input = record.inputRef;
+  if (input === null || input === undefined) return {};
+
+  const asObject = input as Record<string, unknown>;
+  const serialized = JSON.stringify(input);
+  const inClearSet = clearSet !== null && clearSet.has(record.id);
+
+  if (!inClearSet && serialized.length <= MAX_TOOL_INPUT_JSON) return asObject;
+
+  return summarizeToolInput(asObject, record);
+}
+
+function summarizeToolInput(
+  input: Record<string, unknown>,
+  record: ToolCallRecord,
+): Record<string, unknown> {
+  const summary: Record<string, unknown> = { _truncated: true };
+  if (record.inputSummary) summary.summary = record.inputSummary;
+
+  for (const [key, value] of Object.entries(input)) {
+    if (Array.isArray(value)) {
+      summary[key] = `[${value.length} items]`;
+    } else if (typeof value === 'string' && value.length <= 100) {
+      summary[key] = value;
+    } else if (typeof value === 'string') {
+      summary[key] = value.slice(0, 100) + '…';
+    } else if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+      summary[key] = value;
+    }
+  }
+
+  return summary;
 }
 
 function sanitizeToolName(toolId: string): string {

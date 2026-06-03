@@ -99,6 +99,7 @@ export function buildHubSymbols(codeIndex: CodeMapCodeIndex, graph: AnalyzerGrap
   const fileSet = new Set(fileIds)
   return codeIndex.symbols
     .filter((symbol) => fileSet.has(symbol.fileId))
+    .filter((symbol) => isQualityHubName(symbol.name))
     .map((symbol) => ({
       id: symbol.id,
       fileId: symbol.fileId,
@@ -111,6 +112,12 @@ export function buildHubSymbols(codeIndex: CodeMapCodeIndex, graph: AnalyzerGrap
     }))
     .sort((left, right) => right.degree - left.degree || left.path.localeCompare(right.path) || left.name.localeCompare(right.name))
     .slice(0, 5)
+}
+
+function isQualityHubName(name: string): boolean {
+  if (name.length <= 1) return false
+  if (/^_?[a-z]\d*$/.test(name)) return false
+  return true
 }
 
 function buildCommunityLabel(
