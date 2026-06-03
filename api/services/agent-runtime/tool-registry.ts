@@ -426,13 +426,16 @@ export class ToolRegistry {
         error: message,
       });
       const recentFailures = this.store
-        .listToolCalls(sessionId)
+        .listRunToolCalls(record.runId)
         .filter((call) => call.status === 'failed' && call.toolId === tool.id).length;
       if (recentFailures >= 3) {
         this.store.updateSession(sessionId, {
           status: 'blocked',
           blockedReason: `Repeated ${tool.id} failures.`,
           updatedAt: nowIso(),
+          completedAt: nowIso(),
+          activeRunId: null,
+          pendingResumeToken: null,
         });
       }
       this.events.append({
