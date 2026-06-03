@@ -226,6 +226,14 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   const gen = useWikiGenerationEvents({ projectId })
 
+  // Auto-activate generation tracking when a refreshing snapshot is detected
+  // (handles page refresh during generation or loading an in-progress snapshot)
+  useEffect(() => {
+    if (snapshot?.status === 'refreshing' && !gen.active) {
+      gen.start(snapshot.id)
+    }
+  }, [snapshot?.status, snapshot?.id, gen.active, gen.start])
+
   const refreshing = refreshTask.phase !== 'idle' && refreshTask.phase !== 'completed' && refreshTask.phase !== 'failed'
 
   const [reinitializing, setReinitializing] = useState(false)
@@ -459,20 +467,12 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               </div>
             </div>
           )}
-          {snapshot?.status === 'refreshing' && gen.active && (
+          {snapshot?.status === 'refreshing' && (
             <WikiOutlineProgress
               activities={gen.outlineActivities}
               currentActivity={gen.currentActivity}
               phase={gen.phase}
             />
-          )}
-          {snapshot?.status === 'refreshing' && !gen.active && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
-              <Loader2 size={11} className="animate-spin text-primary" />
-              <span className="text-[11px] text-primary">
-                {t('wikiAnalyzing')}
-              </span>
-            </div>
           )}
           {snapshot?.status === 'outline_ready' && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/5 border-b border-amber-500/10">
