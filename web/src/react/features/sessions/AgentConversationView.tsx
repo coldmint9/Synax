@@ -64,6 +64,18 @@ export function AgentConversationView({
     [steps, toolCalls, messages, childSessions],
   )
 
+  // The live streaming step is persisted as `running` from the moment it starts,
+  // so it gets pulled into `steps` by refreshDetail. We must render it from the
+  // live streaming state (streamingText/Thinking/ToolCalls) — NOT from its empty
+  // DB turn — until it settles. Once completed, the DB turn carries full content
+  // and the live block is retired.
+  const streamingStep = streamingStepId ? steps.find(s => s.id === streamingStepId) : undefined
+  const showLiveBlock = !!streamingStepId && (!streamingStep || streamingStep.status === 'running')
+  const visibleTurns = useMemo(
+    () => (showLiveBlock ? turns.filter(turn => turn.stepId !== streamingStepId) : turns),
+    [turns, showLiveBlock, streamingStepId],
+  )
+
   const isRunning = session?.status === 'running'
   const isResumable = session?.status === 'interrupted' || session?.status === 'paused' || session?.status === 'failed'
   const cat = session ? getSessionCategory(session.profileId) : null
@@ -163,7 +175,7 @@ export function AgentConversationView({
 
       {/* Turns */}
       <ScrollShadow ref={scrollRef} className="flex-1 min-h-0" onScroll={handleScroll}>
-        {turns.length === 0 && !streamingStepId ? (
+        {visibleTurns.length === 0 && !showLiveBlock ? (
           <div className="flex flex-col items-center justify-center py-8 gap-3">
             {isRunning ? (
               <>
@@ -177,7 +189,7 @@ export function AgentConversationView({
           </div>
         ) : (
           <div className="flex flex-col gap-5">
-            {turns.map(turn => (
+            {visibleTurns.map(turn => (
               <div key={turn.stepId} className="flex gap-3">
                 <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
                   <Bot size={14} className="text-[var(--color-agent)]" />
@@ -266,7 +278,7 @@ export function AgentConversationView({
             ))}
 
             {/* Streaming turn */}
-            {streamingStepId && !steps.find(s => s.id === streamingStepId) && (
+            {showLiveBlock && (
               <div className="flex gap-3">
                 <div className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04] ${isRunning ? 'animate-bot-glow' : ''}`}>
                   <Bot size={14} className="text-[var(--color-agent)]" />

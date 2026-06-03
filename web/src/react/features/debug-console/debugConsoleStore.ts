@@ -227,17 +227,26 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
       ])
       // Guard: if session changed during fetch, discard stale results
       if (get().selectedSessionId !== targetSessionId) return
+      // While the session is still running, deltas are actively accumulating in
+      // streamingText/Thinking/ToolCalls (fed by the live EventSource). A bulk
+      // refresh must NOT wipe that in-flight state, or the live block resets to
+      // empty on every step-completion poll and the stream looks frozen until the
+      // whole step lands in the DB. Only clear streaming state once settled.
+      const sessionStillRunning =
+        get().sessions.find(s => s.id === targetSessionId)?.status === 'running'
       set({
         runs: runsRes.items,
         events: eventsRes.items,
         messages: messagesRes.items,
         toolCalls: toolCallsRes.items,
         permissions: permissionsRes.items,
-        streamingStepId: null,
-        streamingText: '',
-        streamingThinking: '',
-        streamingToolCalls: [],
-        streamingCompletedSteps: [],
+        ...(sessionStillRunning ? {} : {
+          streamingStepId: null,
+          streamingText: '',
+          streamingThinking: '',
+          streamingToolCalls: [],
+          streamingCompletedSteps: [],
+        }),
       })
       // Load all steps for this session in a single request
       const stepsRes = await agentRuntimeApi.listSessionSteps(targetSessionId)
