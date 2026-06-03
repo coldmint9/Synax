@@ -64,18 +64,26 @@ function buildWorkflowSegmentEn(role: Role): string {
 
 Analyze the codebase and submit a hierarchical document outline.
 
-Available tools:
-- wiki.read_modules — module structure, language breakdown, core symbols
-- wiki.read_tree — directory tree
-- wiki.read_code_index — file list, symbol index (paginated)
-- wiki.read_graph — semantic clusters
-- wiki.read_call_graph — call relationships
-- wiki.impact_analysis — impact scope analysis
-- file.read — read any file
-- file.list / file.glob — file discovery
-- grep.search — search code
+### Exploration Strategy (3-phase)
 
-Based on the project's language ecosystem, autonomously decide your exploration strategy. Read configuration files, entry points, and core modules as you see fit. When ready, call wiki.submit_outline.`;
+**Phase 1 — High-level scan (1-2 steps)**
+Use wiki.read_modules, wiki.read_tree, wiki.read_code_index, and wiki.read_graph to understand the overall project structure. Identify which packages from the Package Baseline need deep exploration.
+
+**Phase 2 — Concurrent deep exploration (1-2 steps)**
+For each package that needs deep exploration (especially those marked [SPLIT]), delegate to an explorer subagent:
+- Call subagent.delegate(profileId: "explorer", prompt: "Explore <dir>. Read key source files. Answer: <specific questions>")
+- Give each subagent a SPECIFIC prompt: which directory to explore, which questions to answer, what to look for
+- Launch up to 5 subagents concurrently in a single step — they run in parallel
+- Each subagent returns a summary; you block until all complete
+
+**Phase 3 — Synthesize & submit (1-2 steps)**
+Review all subagent summaries. Read any remaining files yourself if gaps exist. Call wiki.submit_outline with a complete hierarchical outline.
+
+Available tools:
+- wiki.read_modules / wiki.read_tree / wiki.read_code_index / wiki.read_graph — codebase structure
+- wiki.read_call_graph / wiki.impact_analysis — dependency analysis
+- file.read / file.list / file.glob / grep.search — direct file access
+- **subagent.delegate(profileId: "explorer")** — delegate package exploration (max 5 concurrent)`;
   }
 
   if (role === 'document-writer') {
@@ -113,18 +121,26 @@ function buildWorkflowSegmentZh(role: Role): string {
 
 分析代码库，规划文档结构，提交 outline。
 
-可用工具：
-- wiki.read_modules — 模块结构、语言分布、核心符号
-- wiki.read_tree — 目录树
-- wiki.read_code_index — 文件列表、符号索引（分页）
-- wiki.read_graph — 语义聚类
-- wiki.read_call_graph — 调用关系
-- wiki.impact_analysis — 影响范围分析
-- file.read — 读取任意文件
-- file.list / file.glob — 文件发现
-- grep.search — 搜索代码
+### 探索策略（3 阶段）
 
-根据项目的语言体系，自主决定探索策略。阅读配置文件、入口文件和核心模块。探索完毕后调用 wiki.submit_outline 提交文档计划。`;
+**阶段 1 — 高层扫描（1-2 步）**
+使用 wiki.read_modules、wiki.read_tree、wiki.read_code_index、wiki.read_graph 了解项目整体结构。根据 Package Baseline 确定哪些包需要深入探索。
+
+**阶段 2 — 并发深度探索（1-2 步）**
+对每个需要深入探索的包（尤其是标记 [需拆分] 的），委派 explorer 子 agent：
+- 调用 subagent.delegate(profileId: "explorer", prompt: "探索 <目录>。读取关键源文件。回答：<具体问题>")
+- 给每个子 agent 明确的 prompt：要探索的目录、要回答的问题、要关注的重点
+- 单步内最多同时启动 5 个子 agent，它们并发执行
+- 每个子 agent 返回摘要；你会阻塞等待全部完成
+
+**阶段 3 — 综合 & 提交（1-2 步）**
+审查所有子 agent 摘要。如有遗漏，自己补充阅读。调用 wiki.submit_outline 提交完整的分层 outline。
+
+可用工具：
+- wiki.read_modules / wiki.read_tree / wiki.read_code_index / wiki.read_graph — 代码库结构
+- wiki.read_call_graph / wiki.impact_analysis — 依赖分析
+- file.read / file.list / file.glob / grep.search — 直接文件访问
+- **subagent.delegate(profileId: "explorer")** — 委派包探索给子 agent（最多 5 并发）`;
   }
 
   if (role === 'document-writer') {
