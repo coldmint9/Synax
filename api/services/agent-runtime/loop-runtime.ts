@@ -1198,6 +1198,7 @@ export class AgentLoopRuntime {
       maxSteps: input.maxSteps,
       stepIndex: input.stepIndex,
       mustFinalize: input.mustFinalize,
+      locale: input.input.locale,
       disclosureHint:
         input.disclosureState && input.disclosureStrategy && !isTerminalTier(input.disclosureState, input.disclosureStrategy)
           ? 'Currently in exploration mode. Call tools_escalate when ready to write files.'

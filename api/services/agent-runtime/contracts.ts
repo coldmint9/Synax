@@ -412,6 +412,7 @@ export const streamTurnRequestSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   maxTokens: z.number().int().positive().max(200_000).optional(),
   maxSteps: z.number().int().positive().max(500).optional(),
+  locale: z.enum(['zh', 'en']).optional(),
 });
 export type StreamTurnRequest = z.infer<typeof streamTurnRequestSchema>;
 

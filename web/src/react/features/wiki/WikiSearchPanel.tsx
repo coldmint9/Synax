@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { Hash, AlignLeft, List, Table2, Code, GitBranch, AlertTriangle, Share2, CheckSquare } from 'lucide-react'
+import { Hash, AlignLeft, List, Table2, Code, Share2, CheckSquare } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { useWikiSearch, type SearchResult } from './hooks/useWikiSearch'
@@ -11,8 +11,6 @@ const blockTypeIcons: Record<WikiBlockType, typeof Hash> = {
   list: List,
   table: Table2,
   code_ref: Code,
-  decision: GitBranch,
-  risk: AlertTriangle,
   diagram: Share2,
   task: CheckSquare,
 }

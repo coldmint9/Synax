@@ -50,26 +50,6 @@ function blockToMarkdown(block: WikiBlock): string {
     return `\`\`\`${lang}\n${c.code ?? ''}\n\`\`\`${ref}\n`;
   }
 
-  if (block.blockType === 'decision') {
-    const c = content as { title?: string; decision?: string; rationale?: string; alternatives?: string[] };
-    const lines = [`**Decision: ${c.title ?? ''}**`, '', c.decision ?? ''];
-    if (c.rationale) lines.push('', `*Rationale:* ${c.rationale}`);
-    if (c.alternatives?.length) {
-      lines.push('', '*Alternatives considered:*');
-      c.alternatives.forEach(a => lines.push(`- ${a}`));
-    }
-    return lines.join('\n') + '\n';
-  }
-
-  if (block.blockType === 'risk') {
-    const c = content as { title?: string; description?: string; severity?: string; mitigation?: string };
-    const lines = [`**Risk: ${c.title ?? ''}**`];
-    if (c.severity) lines.push(`Severity: ${c.severity}`);
-    if (c.description) lines.push('', c.description);
-    if (c.mitigation) lines.push('', `*Mitigation:* ${c.mitigation}`);
-    return lines.join('\n') + '\n';
-  }
-
   // diagram / task / fallback — render as markdown fragment if string
   if (block.contentFormat === 'markdown_fragment' && typeof content === 'string') {
     return content + '\n';

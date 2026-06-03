@@ -11,8 +11,6 @@ export type WikiDocType =
   | 'data_model'
   | 'api'
   | 'flow'
-  | 'risk'
-  | 'decision'
   | 'directory_tree'
   | 'module_spec';
 export type WikiBlockType =
@@ -22,8 +20,6 @@ export type WikiBlockType =
   | 'table'
   | 'diagram'
   | 'code_ref'
-  | 'decision'
-  | 'risk'
   | 'task';
 export type WikiBlockContentFormat = 'rich_text_json' | 'markdown_fragment' | 'diagram_json';
 export type WikiStaleState = 'fresh' | 'possibly_stale' | 'stale' | 'semantic_review_needed' | 'conflict';

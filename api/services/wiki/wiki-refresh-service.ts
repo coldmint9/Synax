@@ -41,6 +41,7 @@ import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
 import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import { createRefreshTools } from './wiki-refresh-tools.js';
 import { ensureRefreshProfileRegistered } from './wiki-refresh-profile.js';
+import { buildLanguageDirective } from '../prompts/language-directive.js';
 import { logger } from '../../lib/logger.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
@@ -363,45 +364,27 @@ export const wikiRefreshService = {
     }
 
     try {
-      const prompt = locale === 'en'
-        ? `You are updating document "${docTitle}" (type: ${docType}).
-
-TASK: Based on the code changes below, determine which blocks need updating and call refresh.submit_changes IMMEDIATELY.
-
-## Document Blocks
-${blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.content}`).join('\n\n')}
-
-## Code Changes
-Files: ${sourceFilesList.join(', ') || 'unknown'}
-Symbols: ${symbolsList.join(', ') || 'none'}
-${diffContext}
-
-## Instructions
-1. For each affected block, decide: does the code change require updating this block's content?
-2. Call refresh.submit_changes with your changes array. Each change needs: blockId, action (update/delete/insert_after), newContent, and reasoning.
-3. For newContent: if the block's contentFormat is "markdown_fragment", provide a plain markdown STRING. For structured blocks (heading, list, table), provide a JSON object matching the original structure.
-4. If no updates are needed, call refresh.submit_changes with summary="No updates needed" and an empty changes array.
-
-Do NOT explore the codebase. All context you need is above.`
-        : `你正在更新文档 "${docTitle}"（类型: ${docType}）。
-
-任务：根据下方的代码变更，判断哪些 block 需要更新，并立即调用 refresh.submit_changes。
-
-## 文档 Blocks
-${blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.content}`).join('\n\n')}
-
-## 代码变更
-文件: ${sourceFilesList.join(', ') || '未知'}
-符号: ${symbolsList.join(', ') || '无'}
-${diffContext}
-
-## 指令
-1. 对每个受影响的 block，判断：代码变更是否需要更新该 block 的内容？
-2. 调用 refresh.submit_changes 提交变更数组。每个变更需要：blockId、action（update/delete/insert_after）、newContent 和 reasoning。
-3. 对于 newContent：如果 block 的 contentFormat 是 "markdown_fragment"，提供纯 markdown 字符串。对于结构化 block（heading、list、table），提供匹配原始结构的 JSON 对象。
-4. 如果不需要更新，调用 refresh.submit_changes 并设置 summary="无需更新"，changes 为空数组。
-
-不要探索代码库。所有需要的上下文已在上方提供。`;
+      const prompt = buildLanguageDirective(locale) + [
+        `You are updating document "${docTitle}" (type: ${docType}).`,
+        '',
+        'TASK: Based on the code changes below, determine which blocks need updating and call refresh.submit_changes IMMEDIATELY.',
+        '',
+        '## Document Blocks',
+        blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.content}`).join('\n\n'),
+        '',
+        '## Code Changes',
+        `Files: ${sourceFilesList.join(', ') || 'unknown'}`,
+        `Symbols: ${symbolsList.join(', ') || 'none'}`,
+        diffContext,
+        '',
+        '## Instructions',
+        '1. For each affected block, decide: does the code change require updating this block\'s content?',
+        '2. Call refresh.submit_changes with your changes array. Each change needs: blockId, action (update/delete/insert_after), newContent, and reasoning.',
+        '3. For newContent: if the block\'s contentFormat is "markdown_fragment", provide a plain markdown STRING. For structured blocks (heading, list, table), provide a JSON object matching the original structure.',
+        '4. If no updates are needed, call refresh.submit_changes with summary="No updates needed" and an empty changes array.',
+        '',
+        'Do NOT explore the codebase. All context you need is above.',
+      ].join('\n');
 
       const session = agentSessionRuntime.create({
         projectId,
@@ -409,7 +392,7 @@ ${diffContext}
         prompt,
       });
 
-      const stream = agentLoopRuntime.streamRun(session.id, {});
+      const stream = agentLoopRuntime.streamRun(session.id, { locale });
       for await (const chunk of stream) {
         if (chunk.type === 'run_failed') {
           logger.warn({ documentId, error: chunk.error }, 'wiki refresh: agent run failed');

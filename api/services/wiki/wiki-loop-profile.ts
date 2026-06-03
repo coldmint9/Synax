@@ -36,9 +36,9 @@ export const wikiPlannerProfile: AgentProfile = {
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   loopHints: [
     'Step 1: High-level scan — read tree, modules, code index, and graph to understand overall structure.',
-    'Step 2: For each [需拆分] package in the baseline, delegate exploration to a subagent via subagent.delegate(profileId: "explorer"). Give each subagent a specific prompt: which directory to explore, what questions to answer. Launch up to 5 concurrently.',
+    'Step 2: For each [SPLIT] package in the baseline, delegate exploration to a subagent via subagent.delegate(profileId: "explorer"). Give each subagent a specific prompt: which directory to explore, what questions to answer. Launch up to 5 concurrently.',
     'Step 3: After all subagents return, synthesize their summaries. Read any remaining files yourself if gaps remain.',
-    'Final step: Submit outline via wiki.submit_outline. Ensure every [需拆分] package has >= 2 covering docs with children.',
+    'Final step: Submit outline via wiki.submit_outline. Ensure every [SPLIT] package has >= 2 covering docs with children.',
   ],
 };
 

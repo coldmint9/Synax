@@ -10,13 +10,14 @@ import * as z from 'zod/v4';
 import { generateGatewayObject } from '../llm-runtime/gateway.js';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
 import { logger } from '../../lib/logger.js';
+import { buildLanguageDirective } from '../prompts/language-directive.js';
 import type { WikiBlockContentFormat, WikiDocType, WikiBlockType } from './contracts.js';
 
 // ── Output schema ────────────────────────────────────────────────────────────
 
 const WikiBlockDraftSchema = z.object({
   id: z.string(),
-  blockType: z.enum(['heading', 'paragraph', 'list', 'table', 'diagram', 'code_ref', 'decision', 'risk', 'task']),
+  blockType: z.enum(['heading', 'paragraph', 'list', 'table', 'diagram', 'code_ref', 'task']),
   content: z.unknown(),
   contentFormat: z.enum(['rich_text_json', 'markdown_fragment', 'diagram_json']).optional(),
   sourceHints: z.array(z.string()).optional(),
@@ -26,7 +27,7 @@ const WikiBlockDraftSchema = z.object({
 const WikiDocumentDraftSchema = z.object({
   id: z.string(),
   title: z.string(),
-  docType: z.enum(['overview', 'architecture', 'tech_stack', 'module_design', 'data_model', 'api', 'flow', 'risk', 'decision', 'directory_tree', 'module_spec']),
+  docType: z.enum(['overview', 'architecture', 'tech_stack', 'module_design', 'data_model', 'api', 'flow', 'directory_tree', 'module_spec']),
   sortOrder: z.number().optional(),
   blocks: z.array(WikiBlockDraftSchema),
 });
@@ -73,13 +74,11 @@ type RawWikiGeneratorOutput = z.infer<typeof RawWikiGeneratorOutputSchema>;
 
 // ── Prompt builder ───────────────────────────────────────────────────────────
 
-function buildSystemPrompt(locale: 'zh' | 'en'): string {
-  const lang = locale === 'zh' ? '中文' : 'English';
+function buildSystemPrompt(): string {
   return `You are a senior software architect generating a structured Codebase Design Wiki.
-Output language: ${lang}.
 Rules:
-- Allowed docType values: overview, architecture, tech_stack, module_design, data_model, api, flow, risk, decision, directory_tree, module_spec.
-- Allowed blockType values: heading, paragraph, list, table, diagram, code_ref, decision, risk, task.
+- Allowed docType values: overview, architecture, tech_stack, module_design, data_model, api, flow, directory_tree, module_spec.
+- Allowed blockType values: heading, paragraph, list, table, diagram, code_ref, task.
 - Do not generate document ids or block ids. The system will assign them.
 - Every non-heading block must have at least one sourceHint (file path, symbol name, or module name from the code index).
 - Blocks without evidence must have confidence < 0.5.
@@ -88,7 +87,7 @@ Rules:
 - Output only valid json matching the schema exactly.`;
 }
 
-function buildUserPrompt(scan: CodeMapScanResult, locale: 'zh' | 'en'): string {
+function buildUserPrompt(scan: CodeMapScanResult): string {
   const { codeIndex, semanticGraph, moduleMap, communities } = scan;
 
   const fileSummary = codeIndex.files
@@ -135,8 +134,7 @@ ${semanticNodes}
 
 Generate documents covering: overview, architecture, tech_stack, and the most important module_design sections.
 Each document should have 3-8 blocks. Use sourceHints to reference actual file paths and symbol names from above.
-Return only valid json. Do not include markdown fences or explanatory prose.
-Output locale: ${locale === 'zh' ? 'Chinese' : 'English'}.`;
+Return only valid json. Do not include markdown fences or explanatory prose.`;
 }
 
 // ── Normalization ────────────────────────────────────────────────────────────
@@ -149,8 +147,6 @@ const DOC_TYPE_VALUES = new Set<WikiDocType>([
   'data_model',
   'api',
   'flow',
-  'risk',
-  'decision',
 ]);
 
 const BLOCK_TYPE_VALUES = new Set<WikiBlockType>([
@@ -160,8 +156,6 @@ const BLOCK_TYPE_VALUES = new Set<WikiBlockType>([
   'table',
   'diagram',
   'code_ref',
-  'decision',
-  'risk',
   'task',
 ]);
 
@@ -272,8 +266,6 @@ function normalizeDocType(value: unknown, title: string | undefined): WikiDocTyp
     if (normalized.includes('data') && normalized.includes('model')) return 'data_model';
     if (normalized === 'api' || normalized.includes('interface') || normalized.includes('endpoint')) return 'api';
     if (normalized.includes('flow') || normalized.includes('workflow')) return 'flow';
-    if (normalized.includes('risk')) return 'risk';
-    if (normalized.includes('decision')) return 'decision';
     if (normalized.includes('arch')) return 'architecture';
     if (normalized.includes('overview') || normalized.includes('summary')) return 'overview';
   }
@@ -284,8 +276,6 @@ function normalizeDocType(value: unknown, title: string | undefined): WikiDocTyp
   if (titleKey.includes('data') && titleKey.includes('model')) return 'data_model';
   if (titleKey === 'api' || titleKey.includes('endpoint')) return 'api';
   if (titleKey.includes('flow')) return 'flow';
-  if (titleKey.includes('risk')) return 'risk';
-  if (titleKey.includes('decision')) return 'decision';
   if (titleKey.includes('arch')) return 'architecture';
   return 'overview';
 }
@@ -302,8 +292,6 @@ function normalizeBlockType(raw: RawWikiBlockDraft): WikiBlockType {
     if (normalized.includes('table') || normalized === 'matrix') return 'table';
     if (normalized.includes('diagram') || normalized === 'mermaid' || normalized === 'graph') return 'diagram';
     if (normalized.includes('code')) return 'code_ref';
-    if (normalized.includes('decision')) return 'decision';
-    if (normalized.includes('risk')) return 'risk';
     if (normalized.includes('task') || normalized.includes('todo')) return 'task';
   }
 
@@ -311,8 +299,6 @@ function normalizeBlockType(raw: RawWikiBlockDraft): WikiBlockType {
   if (Array.isArray(raw.items) || Array.isArray(content?.items)) return 'list';
   if (Array.isArray(content?.headers) || Array.isArray(content?.rows)) return 'table';
   if (firstString(content?.code, content?.filePath, content?.qualifiedName)) return 'code_ref';
-  if (firstString(content?.decision, content?.rationale)) return 'decision';
-  if (firstString(content?.severity, content?.mitigation)) return 'risk';
   if (firstString(raw.title) && coerceNumber(content?.level ?? asRecord(raw)?.level) != null) return 'heading';
   return 'paragraph';
 }
@@ -385,32 +371,6 @@ function normalizeCodeRefContent(raw: RawWikiBlockDraft): Record<string, unknown
   return normalized;
 }
 
-function normalizeDecisionContent(raw: RawWikiBlockDraft): Record<string, unknown> {
-  const content = asRecord(raw.content);
-  return {
-    title: firstString(raw.title, content?.title) ?? 'Decision',
-    decision: firstString(content?.decision, content?.text, raw.text, raw.content) ?? '',
-    ...(firstString(content?.rationale, content?.summary, content?.description) ? {
-      rationale: firstString(content?.rationale, content?.summary, content?.description),
-    } : {}),
-    ...(Array.isArray(content?.alternatives) ? {
-      alternatives: content.alternatives.map(item => stringifyUnknown(item)).filter(Boolean),
-    } : {}),
-  };
-}
-
-function normalizeRiskContent(raw: RawWikiBlockDraft): Record<string, unknown> {
-  const content = asRecord(raw.content);
-  return {
-    title: firstString(raw.title, content?.title) ?? 'Risk',
-    description: firstString(content?.description, content?.text, raw.text, raw.content) ?? '',
-    ...(firstString(content?.severity) ? { severity: firstString(content?.severity) } : {}),
-    ...(firstString(content?.mitigation, content?.rationale) ? {
-      mitigation: firstString(content?.mitigation, content?.rationale),
-    } : {}),
-  };
-}
-
 function normalizeBlock(raw: RawWikiBlockDraft): WikiBlockDraft {
   const blockType = normalizeBlockType(raw);
   const sourceHints = normalizeSourceHints(raw.sourceHints, raw.content);
@@ -460,28 +420,6 @@ function normalizeBlock(raw: RawWikiBlockDraft): WikiBlockDraft {
       id: nanoid(),
       blockType,
       content: normalizeCodeRefContent(raw),
-      contentFormat: 'rich_text_json',
-      ...(sourceHints ? { sourceHints } : {}),
-      ...(confidence != null ? { confidence } : {}),
-    };
-  }
-
-  if (blockType === 'decision') {
-    return {
-      id: nanoid(),
-      blockType,
-      content: normalizeDecisionContent(raw),
-      contentFormat: 'rich_text_json',
-      ...(sourceHints ? { sourceHints } : {}),
-      ...(confidence != null ? { confidence } : {}),
-    };
-  }
-
-  if (blockType === 'risk') {
-    return {
-      id: nanoid(),
-      blockType,
-      content: normalizeRiskContent(raw),
       contentFormat: 'rich_text_json',
       ...(sourceHints ? { sourceHints } : {}),
       ...(confidence != null ? { confidence } : {}),
@@ -550,8 +488,6 @@ function normalizeDocumentTitle(raw: RawWikiDocumentDraft, docType: WikiDocType,
     data_model: { zh: '数据模型', en: 'Data Model' },
     api: { zh: 'API 设计', en: 'API Design' },
     flow: { zh: '流程设计', en: 'Flow' },
-    risk: { zh: '风险', en: 'Risks' },
-    decision: { zh: '设计决策', en: 'Decisions' },
     directory_tree: { zh: '目录结构', en: 'Directory Tree' },
     module_spec: { zh: '模块规格', en: 'Module Spec' },
   };
@@ -750,8 +686,8 @@ export const wikiAgentService = {
           projectId: opts.projectId,
           model: opts.model,
           messages: [
-            { role: 'system', content: buildSystemPrompt(locale) },
-            { role: 'user', content: buildUserPrompt(scan, locale) },
+            { role: 'system', content: buildLanguageDirective(locale) + buildSystemPrompt() },
+            { role: 'user', content: buildUserPrompt(scan) },
           ],
         },
         RawWikiGeneratorOutputSchema,

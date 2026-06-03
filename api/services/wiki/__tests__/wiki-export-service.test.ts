@@ -144,23 +144,6 @@ describe('wikiExportService.exportSnapshot', () => {
     expect(result.content).toContain('| foo | string |');
   });
 
-  it('renders decision block with title and rationale', async () => {
-    mockGetSnapshotTree.mockResolvedValueOnce({
-      snapshot: makeSnapshot(),
-      documents: [makeDoc({ blockIds: ['block-1'] })],
-      blocks: [makeBlock('block-1', 'decision', {
-        title: 'Use SQLite', decision: 'We chose SQLite.', rationale: 'Simple and embedded.',
-      })],
-      sourceBindings: [],
-      patchesSummary: { pending: 0, conflict: 0 },
-    });
-
-    const result = await wikiExportService.exportSnapshot('snap-1');
-    expect(result.content).toContain('**Decision: Use SQLite**');
-    expect(result.content).toContain('We chose SQLite.');
-    expect(result.content).toContain('Simple and embedded.');
-  });
-
   it('includes source binding comments when includeSourceRefs=true', async () => {
     mockGetSnapshotTree.mockResolvedValueOnce({
       snapshot: makeSnapshot(),

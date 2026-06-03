@@ -3,13 +3,13 @@ import type { WikiDocType, WikiBlockType, WikiBlockContentFormat } from '../cont
 
 export const WIKI_DOC_TYPES: WikiDocType[] = [
   'overview', 'architecture', 'tech_stack', 'module_design',
-  'data_model', 'api', 'flow', 'risk', 'decision',
+  'data_model', 'api', 'flow',
   'directory_tree', 'module_spec',
 ];
 
 export const WIKI_BLOCK_TYPES: WikiBlockType[] = [
   'heading', 'paragraph', 'list', 'table',
-  'diagram', 'code_ref', 'decision', 'risk', 'task',
+  'diagram', 'code_ref', 'task',
 ];
 
 export const MIN_CONTENT_LENGTH = 100;

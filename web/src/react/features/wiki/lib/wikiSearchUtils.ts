@@ -39,10 +39,6 @@ export function extractBlockText(block: WikiBlock): string {
       }
       case 'code_ref':
         return [c.filePath, c.symbol, c.code].filter(Boolean).join(' ');
-      case 'decision':
-        return [c.title, c.decision, c.rationale].filter(Boolean).join(' ');
-      case 'risk':
-        return [c.title, c.description, c.mitigation].filter(Boolean).join(' ');
       case 'task':
         return [c.title, c.description].filter(Boolean).join(' ');
       case 'diagram':

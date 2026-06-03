@@ -28,6 +28,7 @@ const generateBodySchema = z.object({
 const refreshBodySchema = z.object({
   workDir: z.string().min(1).max(4096),
   actorId: z.string().max(128).optional(),
+  locale: z.enum(['zh', 'en']).optional(),
 });
 
 const patchActionBodySchema = z.object({
@@ -262,7 +263,7 @@ wikiRoutes.post('/snapshots/:snapshotId/refresh', async (c) => {
   }
 
   try {
-    const task = await wikiRefreshService.triggerRefresh(snapshot.projectId, snapshotId, parsed.data.workDir);
+    const task = await wikiRefreshService.triggerRefresh(snapshot.projectId, snapshotId, parsed.data.workDir, parsed.data.locale);
     return c.json({ task });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'refresh failed' }, 400);
@@ -531,6 +532,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate', async (c) => {
   const { projectId } = c.req.param();
   const parsed = await parseBody(c, z.object({
     snapshotId: z.string().min(1).max(128),
+    locale: z.enum(['zh', 'en']).optional(),
   }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
@@ -542,7 +544,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate', async (c) => {
 
   try {
     assertLlmProviderConfigured(projectId);
-    const result = await generatePlan(projectId, parsed.data.snapshotId);
+    const result = await generatePlan(projectId, parsed.data.snapshotId, parsed.data.locale);
     const plan = await evalService.getPlan(result.planId);
     const nodes = await evalService.listPlanNodes(result.planId);
     return c.json({ plan, nodes });
@@ -560,6 +562,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
   const { projectId } = c.req.param();
   const parsed = await parseBody(c, z.object({
     snapshotId: z.string().min(1).max(128),
+    locale: z.enum(['zh', 'en']).optional(),
   }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
@@ -577,7 +580,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
     throw err;
   }
 
-  const { snapshotId } = parsed.data;
+  const { snapshotId, locale } = parsed.data;
 
   return streamSSE(c, async (stream) => {
     const heartbeat = setInterval(() => {
@@ -585,7 +588,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
     }, 10_000);
 
     try {
-      for await (const event of generatePlanStream(projectId, snapshotId)) {
+      for await (const event of generatePlanStream(projectId, snapshotId, locale)) {
         await stream.writeSSE({ data: JSON.stringify(event) });
       }
     } catch (err) {
