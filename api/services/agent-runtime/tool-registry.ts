@@ -19,6 +19,7 @@ import { diffReadTool } from './tools/diff-read.js';
 import { fileGlobTool } from './tools/file-glob.js';
 import { fileListTool } from './tools/file-list.js';
 import { filePatchTool } from './tools/file-patch.js';
+import { bashTool } from './tools/bash.js';
 import { fileReadTool } from './tools/file-read.js';
 import { fileWriteTool } from './tools/file-write.js';
 import { grepSearchTool } from './tools/grep-search.js';
@@ -59,7 +60,7 @@ export class ToolRegistry {
     private readonly evidence: EvidenceService = evidenceService,
     private readonly profiles: ProfileService = profileService,
   ) {
-    [fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, filePatchTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, ESCALATION_TOOL, INVALID_TOOL].forEach((tool) =>
+    [bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, filePatchTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, ESCALATION_TOOL, INVALID_TOOL].forEach((tool) =>
       this.register(tool),
     );
     this.register({
@@ -425,9 +426,10 @@ export class ToolRegistry {
         endedAt: nowIso(),
         error: message,
       });
-      const recentFailures = this.store
-        .listRunToolCalls(record.runId)
-        .filter((call) => call.status === 'failed' && call.toolId === tool.id).length;
+      const recentFailures = record.runId
+        ? this.store.listRunToolCalls(record.runId)
+            .filter((call) => call.status === 'failed' && call.toolId === tool.id).length
+        : 0;
       if (recentFailures >= 3) {
         this.store.updateSession(sessionId, {
           status: 'blocked',

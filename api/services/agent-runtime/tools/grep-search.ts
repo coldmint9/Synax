@@ -14,6 +14,8 @@ export const grepSearchTool: RegisteredTool = {
   mutability: 'read',
   resumeBehavior: 'auto',
   internalGate: 'none',
+  progressiveDetails:
+    'Accepts { query: string, path?: string, limit?: number, caseSensitive?: boolean, regex?: boolean, filePattern?: string, excludePattern?: string, contextLines?: number, wordBoundary?: boolean, multiline?: boolean }. Returns matching lines with file path, line number, preview text, and optional context lines.',
   inputSchema: z.object({
     query: z.string().min(1).describe('Text or regex pattern to search for.'),
     path: z.string().min(1).optional().describe('Workspace-relative path to search under.'),
@@ -32,7 +34,11 @@ export const grepSearchTool: RegisteredTool = {
       regex?: boolean; filePattern?: string; excludePattern?: string;
       contextLines?: number; wordBoundary?: boolean; multiline?: boolean;
     };
-    if (!args?.query) throw new Error('query is required.');
+    if (!args?.query)
+      throw new Error(
+        'query is required. Provide a text or regex pattern to search for. ' +
+          'Available options: query (required), path, limit, caseSensitive, regex, filePattern, excludePattern, contextLines, wordBoundary, multiline.',
+      );
     const requested = resolveWorkspacePath(args.path ?? '.', input.sessionId);
     const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
     const contextLines = Math.min(Math.max(args.contextLines ?? 0, 0), 5);
@@ -58,7 +64,11 @@ export const grepSearchTool: RegisteredTool = {
     });
     if (result.error) throw result.error;
     if (result.status !== 0 && result.status !== 1) {
-      throw new Error(result.stderr.trim() || `rg failed with exit code ${result.status ?? 'unknown'}.`);
+      const stderrInfo = result.stderr?.trim() ? ` stderr: ${result.stderr.trim()}` : '';
+      throw new Error(
+        `rg failed with exit code ${result.status ?? 'unknown'}.${stderrInfo} ` +
+          'Verify that ripgrep (rg) is installed and accessible in the PATH.',
+      );
     }
 
     const hits: Array<{ path: string; line: number; preview: string; contextBefore?: string[]; contextAfter?: string[] }> = [];

@@ -43,7 +43,7 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     'Batch independent reads, writes, and searches together to minimize round trips. ' +
     'If a write depends on a read result, call the read tool first, receive the result, then call the write tool in the next step.',
     'Compatibility fallback only when native tool calling is unavailable: start the response with exactly {"tool":"tool.id","args":{...}} followed by optional short status text.',
-    'Never request shell or external execution. Use only the provided tools.',
+    'Prefer the bash tool for file search, listing, and text inspection. It accepts read-only Unix commands (rg, grep, find, ls, cat, head, tail, wc, sort, uniq, sed, awk, git diff/log/show, etc.) and supports pipes and command chaining. Combine multiple operations into a single bash call to reduce round trips. If a command is unavailable, fall back to file.glob, file.list, grep.search, and file.read tools.',
     'When proposing file changes, prefer specific file paths and bounded edits.',
     loopHints,
     input.disclosureHint ?? '',

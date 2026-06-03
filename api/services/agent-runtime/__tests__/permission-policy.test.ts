@@ -5,12 +5,12 @@ import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 describe('permissionPolicy', () => {
   beforeEach(resetAgentRuntimeFixtures);
 
-  it('allows project-contained reads and denies shell by default', () => {
+  it('allows project-contained reads and shell by default (whitelist-restricted)', () => {
     const read = permissionPolicy.evaluate({ sessionId: 's1', category: 'read' });
     const shell = permissionPolicy.evaluate({ sessionId: 's1', category: 'shell', internalGate: 'shell' });
 
     expect(read.action).toBe('allow');
-    expect(shell.action).toBe('deny');
+    expect(shell.action).toBe('allow');
   });
 
   it('asks for writes and denies external execution', () => {
