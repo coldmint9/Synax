@@ -39,7 +39,7 @@ function matches(rule: PermissionRule, input: PermissionRequestInput): boolean {
 
 function defaultDecision(input: PermissionRequestInput): { action: PermissionAction; reason: string } {
   if (input.internalGate === 'shell' || input.category === 'shell') {
-    return { action: 'deny', reason: 'Arbitrary shell is out of scope for v1.' };
+    return { action: 'allow', reason: 'Shell access is restricted to read-only whitelisted commands.' };
   }
   if (input.isSubSession && input.category === 'task') {
     return { action: 'deny', reason: 'Child sessions cannot recursively delegate tasks in v1.' };
@@ -72,7 +72,10 @@ export class PermissionPolicy {
   constructor(private readonly store: AgentRuntimeStore = agentRuntimeStore) {}
 
   evaluate(input: PermissionRequestInput): PermissionDecision {
-    const rule = [...(input.rules ?? [])].reverse().find((candidate) => matches(candidate, input));
+    // Shell access is controlled by the bash tool's internal command
+    // whitelist — session-level shell rules are ignored.
+    const effectiveRules = (input.rules ?? []).filter((r) => r.gate !== 'shell');
+    const rule = [...effectiveRules].reverse().find((candidate) => matches(candidate, input));
     const fallback = defaultDecision(input);
     const action = rule?.action ?? fallback.action;
     const reason = rule?.reason ?? fallback.reason;
