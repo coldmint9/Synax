@@ -1,5 +1,6 @@
 import type { WikiEvaluation } from './wiki-evaluation-service.js'
 import type { WikiBlock, WikiSourceBinding } from './contracts.js'
+import { buildLanguageDirective } from '../prompts/language-directive.js'
 
 export interface PlanPromptContext {
   issues: WikiEvaluation[]
@@ -13,17 +14,18 @@ export function buildPlanPrompt(ctx: PlanPromptContext): string {
   const locale = ctx.locale ?? 'zh';
   const issueDetails = buildIssueDetails(ctx);
 
-  if (locale === 'en') return buildPlanPromptEn(issueDetails, ctx.wikiOverview);
-  return buildPlanPromptZh(issueDetails, ctx.wikiOverview);
+  return [
+    buildLanguageDirective(locale),
+    buildPlanPromptCore(issueDetails, ctx.wikiOverview),
+  ].join('\n');
 }
 
 function buildIssueDetails(ctx: PlanPromptContext): string {
-  const locale = ctx.locale ?? 'zh';
   return ctx.issues.map((issue, i) => {
     const block = ctx.blocks[issue.blockId]
     const blockTitle = block ? extractBlockTitle(block) : issue.blockId.slice(0, 8)
     const blockType = block?.blockType ?? 'unknown'
-    const blockContent = block ? extractContent(block) : locale === 'en' ? '(unavailable)' : '(unavailable)'
+    const blockContent = block ? extractContent(block) : '(unavailable)'
 
     const relatedBindings = ctx.bindings
       .filter(b => b.wikiBlockId === issue.blockId)
@@ -35,25 +37,16 @@ function buildIssueDetails(ctx: PlanPromptContext): string {
       })
       .join('\n')
 
-    if (locale === 'en') {
-      return `### Issue ${i + 1}: [${issue.id}]
+    return `### Issue ${i + 1}: [${issue.id}]
 - **Content**: ${issue.content}
 - **Related Block**: "${blockTitle}" (${blockType})
 - **Block Summary**: ${blockContent}
 - **Source Bindings**:
 ${relatedBindings || '    (no direct bindings)'}`;
-    }
-
-    return `### Issue ${i + 1}: [${issue.id}]
-- **内容**: ${issue.content}
-- **关联 Block**: "${blockTitle}" (${blockType})
-- **Block 摘要**: ${blockContent}
-- **源码绑定**:
-${relatedBindings || '    (无直接绑定)'}`;
   }).join('\n\n');
 }
 
-function buildPlanPromptEn(issueDetails: string, wikiOverview: string): string {
+function buildPlanPromptCore(issueDetails: string, wikiOverview: string): string {
   return `You are a software architecture planner. Your task is to generate an executable action plan based on the Issues raised by the user.
 
 ## Issues (first-class citizens)
@@ -97,52 +90,6 @@ Each node contains:
 - expectedFiles: List of file paths expected to be modified
 
 Node granularity: one node = one independently completable and verifiable code change.`;
-}
-
-function buildPlanPromptZh(issueDetails: string, wikiOverview: string): string {
-  return `你是一个软件架构规划师。你的任务是基于用户提出的 Issues 生成可执行的行动规划。
-
-## Issues（一等公民）
-
-以下每个 Issue 都需要你深入理解和澄清，不要跳过任何一个。
-
-${issueDetails}
-
-## 全局架构概览
-${wikiOverview}
-
-## 工作流程（严格按序执行）
-
-### Phase 1 — 澄清 Issues（必须先完成）
-逐个分析每个 Issue：
-1. 这个 issue 具体要求什么？有没有隐含的需求？
-2. 涉及哪些模块/组件？影响范围多大？
-3. 与其他 issues 有没有依赖或冲突关系？
-4. 如果 block 内容不够清晰，用 plan.read_wiki_block 补充理解
-
-在你的思考中，先输出每个 issue 的澄清分析，再进入下一步。
-
-### Phase 2 — 搜索验证
-基于 Phase 1 的理解和上面列出的源码绑定线索：
-1. 用 grep.search 搜索关键符号、类型、函数名来理解代码结构
-2. 必要时用 file.read 精读关键代码片段（不要整文件读取）
-3. 验证 issue 描述的问题在代码中确实存在
-4. 识别需要修改的文件和依赖关系
-
-### Phase 3 — 逐步提交规划节点
-将 issues 分解为可执行的规划节点，**逐个提交**：
-- 每完成一个节点的设计，立即使用 plan.submit_node 工具提交
-- 按依赖顺序提交：被依赖的节点先提交，依赖其他节点的后提交
-- 不要等所有节点设计完再一起提交
-
-每个节点包含：
-- title: 简短的行动标题（全局唯一，后续节点通过此标题引用依赖）
-- description: 具体需要做什么、为什么、怎么验证
-- evaluationIds: 关联的 Issue ID 列表
-- dependsOn: 依赖的其他节点标题列表（必须是已提交节点的标题）
-- expectedFiles: 预期需要修改的文件路径列表
-
-节点粒度：一个节点 = 一个可独立完成和验证的代码变更。`;
 }
 
 function extractBlockTitle(block: WikiBlock): string {

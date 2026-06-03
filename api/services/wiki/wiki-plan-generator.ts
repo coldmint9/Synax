@@ -33,6 +33,7 @@ export type PlanStreamEvent =
 export async function generatePlan(
   projectId: string,
   snapshotId: string,
+  locale: 'zh' | 'en' = 'zh',
 ): Promise<GeneratePlanResult> {
   ensurePlanProfileRegistered()
 
@@ -64,6 +65,7 @@ export async function generatePlan(
     blocks: blocksById,
     bindings: relevantBindings,
     wikiOverview,
+    locale,
   })
 
   // 3. Register tools
@@ -82,7 +84,7 @@ export async function generatePlan(
       prompt,
     })
 
-    const stream = agentLoopRuntime.streamRun(session.id, {})
+    const stream = agentLoopRuntime.streamRun(session.id, { locale })
     for await (const chunk of stream) {
       if (chunk.type === 'run_failed') {
         throw new Error(`Plan generation failed: ${chunk.error}`)
@@ -128,6 +130,7 @@ export async function generatePlan(
 export async function* generatePlanStream(
   projectId: string,
   snapshotId: string,
+  locale: 'zh' | 'en' = 'zh',
 ): AsyncGenerator<PlanStreamEvent> {
   ensurePlanProfileRegistered()
 
@@ -147,7 +150,7 @@ export async function* generatePlanStream(
   const relevantBindings = tree.sourceBindings.filter(b => issueBlockIds.has(b.wikiBlockId))
   const wikiOverview = tree.documents.map(d => `- ${d.title} (${d.docType})`).join('\n')
 
-  const prompt = buildPlanPrompt({ issues, blocks: blocksById, bindings: relevantBindings, wikiOverview })
+  const prompt = buildPlanPrompt({ issues, blocks: blocksById, bindings: relevantBindings, wikiOverview, locale })
 
   const pendingNodeEvents: PlanStreamEvent[] = []
   const handle = createPlanTools({
@@ -167,7 +170,7 @@ export async function* generatePlanStream(
     yield { type: 'started', sessionId: session.id }
     yield { type: 'phase', phase: 'analyzing' }
 
-    const stream = agentLoopRuntime.streamRun(session.id, {})
+    const stream = agentLoopRuntime.streamRun(session.id, { locale })
     for await (const chunk of stream) {
       switch (chunk.type) {
         case 'tool_call': {

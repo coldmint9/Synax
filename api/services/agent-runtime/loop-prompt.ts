@@ -6,6 +6,7 @@ import type {
   LoopModelStep,
   ToolCallRecord,
 } from './contracts.js';
+import { buildLanguageDirective } from '../prompts/language-directive.js';
 
 interface BuildLoopPromptInput {
   profile: AgentProfile;
@@ -18,15 +19,19 @@ interface BuildLoopPromptInput {
   stepIndex: number;
   mustFinalize?: boolean;
   disclosureHint?: string;
+  /** If set, a language output directive is prepended to the system prompt. */
+  locale?: 'zh' | 'en';
 }
 
 export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
+  const directive = input.locale ? buildLanguageDirective(input.locale) : '';
   const blocks = input.context?.blocks
     .map((block) => `## ${block.title}\n${block.content}`)
     .join('\n\n') ?? 'No context bundle is attached.';
   const warnings = input.context?.warnings.length ? `\n\nContext warnings:\n${input.context.warnings.join('\n')}` : '';
   const loopHints = input.profile.loopHints?.length ? `\nLoop hints:\n${input.profile.loopHints.join('\n')}` : '';
   return [
+    directive,
     `You are the Synax ${input.profile.label} runtime agent.`,
     `Profile kind: ${input.profile.kind}. Runtime mode: ${input.profile.mode}. Thinking mode: ${input.profile.defaultThinkingMode}.`,
     `Allowed capabilities: ${input.profile.allowedCapabilities.join(', ') || 'none'}.`,

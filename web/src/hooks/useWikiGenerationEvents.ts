@@ -5,6 +5,14 @@ import type { WikiSnapshotTree } from '../lib/contracts/wiki'
 
 export type WikiGenPhase = 'starting' | 'refreshing' | 'outline_ready' | 'writing' | 'ready' | 'failed'
 
+export type OutlineActivityPhase = 'scan' | 'explore' | 'delegate' | 'synthesize' | 'submit'
+
+export interface OutlineActivity {
+  activity: string
+  detail?: string
+  phase: OutlineActivityPhase
+}
+
 interface WikiGenProgress {
   docIndex?: number
   totalDocs?: number
@@ -17,6 +25,8 @@ interface WikiGenerationState {
   progress: WikiGenProgress | null
   error: string | null
   snapshotId: string | null
+  outlineActivities: OutlineActivity[]
+  currentActivity: string | null
 }
 
 interface UseWikiGenerationEventsOptions {
@@ -30,6 +40,7 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
   const { projectId, onCompleted, onFailed, timeoutMs = 180_000 } = opts
   const [state, setState] = useState<WikiGenerationState>({
     active: false, phase: null, progress: null, error: null, snapshotId: null,
+    outlineActivities: [], currentActivity: null,
   })
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const snapshotIdRef = useRef<string | null>(null)
@@ -45,7 +56,7 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
 
   const start = useCallback((snapshotId?: string) => {
     snapshotIdRef.current = snapshotId ?? null
-    setState({ active: true, phase: 'starting', progress: null, error: null, snapshotId: snapshotId ?? null })
+    setState({ active: true, phase: 'starting', progress: null, error: null, snapshotId: snapshotId ?? null, outlineActivities: [], currentActivity: null })
     clearTimer()
     timeoutRef.current = setTimeout(() => {
       setState(s => ({ ...s, active: false, phase: 'failed', error: 'Generation timeout' }))
@@ -56,7 +67,7 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
   const reset = useCallback(() => {
     clearTimer()
     snapshotIdRef.current = null
-    setState({ active: false, phase: null, progress: null, error: null, snapshotId: null })
+    setState({ active: false, phase: null, progress: null, error: null, snapshotId: null, outlineActivities: [], currentActivity: null })
   }, [clearTimer])
 
   useEffect(() => {
@@ -71,7 +82,7 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
             const sid = data.meta?.snapshotId as string | undefined
             if (sid) {
               snapshotIdRef.current = sid
-              setState(s => ({ ...s, snapshotId: sid, phase: 'refreshing' }))
+              setState(s => ({ ...s, snapshotId: sid, phase: 'refreshing', outlineActivities: [], currentActivity: null }))
             }
           } catch { /* ignore */ }
         },
@@ -89,6 +100,19 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
                 totalDocs: meta.totalDocs as number,
                 docTitle: meta.docTitle as string,
               }}))
+            }
+            // Phase 1 outline activity tracking
+            if (meta?.activity && meta?.activityPhase) {
+              const entry: OutlineActivity = {
+                activity: meta.activity as string,
+                detail: meta.detail as string | undefined,
+                phase: meta.activityPhase as OutlineActivityPhase,
+              }
+              setState(s => ({
+                ...s,
+                currentActivity: entry.activity,
+                outlineActivities: [...s.outlineActivities, entry].slice(-50),
+              }))
             }
           } catch { /* ignore */ }
         },

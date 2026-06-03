@@ -10,6 +10,7 @@ import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
 import WikiBlockRenderer from './WikiBlockRenderer'
 import WikiDraftPanel from './WikiDraftPanel'
+import WikiOutlineProgress from './WikiOutlineProgress'
 import PlanView from './PlanView'
 import PlanListView from './PlanListView'
 import { wikiApi } from '../../../lib/api/wiki'
@@ -17,14 +18,11 @@ import { apiFetch, apiRequest } from '../../../lib/api/origin'
 import { handleError, createAppError, AppError } from '../../../lib/errors'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
-function EmptyState({ projectId }: { projectId: string }) {
+function EmptyState({ projectId, gen }: { projectId: string; gen: ReturnType<typeof useWikiGenerationEvents> }) {
   const { t } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
-  const gen = useWikiGenerationEvents({
-    projectId,
-    onFailed: (msg) => setError(msg),
-  })
+  // gen is now passed from parent WikiWorkspace
 
   const phase = gen.phase === 'starting' ? t('wikiPhaseStarting')
     : gen.phase === 'refreshing' ? t('wikiPhaseAgentAnalyzing')
@@ -78,10 +76,25 @@ function EmptyState({ projectId }: { projectId: string }) {
           )
         )}
 
-        {gen.active && phase && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
-            <Spinner size="sm" className="text-primary" />
-            <p className="text-[11px] text-primary">{phase}</p>
+        {gen.active && (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
+              <Spinner size="sm" className="text-primary" />
+              <p className="text-[11px] text-primary">
+                {gen.currentActivity ?? phase ?? t('wikiPhaseAgentAnalyzing')}
+              </p>
+            </div>
+            {gen.outlineActivities.length > 0 && (
+              <div className="rounded-lg bg-card/40 border border-border/20 px-3 py-1.5 max-h-[80px] overflow-y-auto text-left">
+                <div className="space-y-0.5">
+                  {gen.outlineActivities.slice(-5).map((a, i) => (
+                    <div key={i} className="text-[10px] text-muted-foreground/50 truncate">
+                      {a.activity}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -100,14 +113,11 @@ function EmptyState({ projectId }: { projectId: string }) {
   )
 }
 
-function FailedState({ projectId }: { projectId: string }) {
+function FailedState({ projectId, gen }: { projectId: string; gen: ReturnType<typeof useWikiGenerationEvents> }) {
   const { t } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
-  const gen = useWikiGenerationEvents({
-    projectId,
-    onFailed: (msg) => setError(msg),
-  })
+  // gen is now passed from parent WikiWorkspace
 
   const phase = gen.phase === 'starting' ? t('wikiPhaseRestarting')
     : gen.phase === 'refreshing' ? t('wikiPhaseAgentAnalyzing')
@@ -159,10 +169,25 @@ function FailedState({ projectId }: { projectId: string }) {
           )
         )}
 
-        {gen.active && phase && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
-            <Spinner size="sm" className="text-primary" />
-            <p className="text-[11px] text-primary">{phase}</p>
+        {gen.active && (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
+              <Spinner size="sm" className="text-primary" />
+              <p className="text-[11px] text-primary">
+                {gen.currentActivity ?? phase ?? t('wikiPhaseAgentAnalyzing')}
+              </p>
+            </div>
+            {gen.outlineActivities.length > 0 && (
+              <div className="rounded-lg bg-card/40 border border-border/20 px-3 py-1.5 max-h-[80px] overflow-y-auto text-left">
+                <div className="space-y-0.5">
+                  {gen.outlineActivities.slice(-5).map((a, i) => (
+                    <div key={i} className="text-[10px] text-muted-foreground/50 truncate">
+                      {a.activity}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -198,6 +223,8 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const setShowReinitConfirm = useWikiStore(s => s.setShowReinitConfirm)
 
   useWikiRefreshListener(projectId)
+
+  const gen = useWikiGenerationEvents({ projectId })
 
   const refreshing = refreshTask.phase !== 'idle' && refreshTask.phase !== 'completed' && refreshTask.phase !== 'failed'
 
@@ -355,11 +382,11 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   }
 
   if (!snapshot) {
-    return <EmptyState projectId={projectId} />
+    return <EmptyState projectId={projectId} gen={gen} />
   }
 
   if (snapshot.status === 'failed' && documents.length === 0) {
-    return <FailedState projectId={projectId} />
+    return <FailedState projectId={projectId} gen={gen} />
   }
 
   return (
@@ -432,7 +459,14 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               </div>
             </div>
           )}
-          {snapshot?.status === 'refreshing' && (
+          {snapshot?.status === 'refreshing' && gen.active && (
+            <WikiOutlineProgress
+              activities={gen.outlineActivities}
+              currentActivity={gen.currentActivity}
+              phase={gen.phase}
+            />
+          )}
+          {snapshot?.status === 'refreshing' && !gen.active && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
               <Loader2 size={11} className="animate-spin text-primary" />
               <span className="text-[11px] text-primary">

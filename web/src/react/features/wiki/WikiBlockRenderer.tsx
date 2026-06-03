@@ -152,53 +152,6 @@ function CodeRefBlock({ content }: { content: unknown }) {
   )
 }
 
-function DecisionBlock({ content }: { content: unknown }) {
-  const c = content as { title?: string; decision?: string; rationale?: string; alternatives?: string[] }
-  return (
-    <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
-      <div className="text-[12px] font-semibold text-primary">{c.title ?? 'Decision'}</div>
-      {c.decision && <p className="text-[13px] text-foreground/85">{c.decision}</p>}
-      {c.rationale && (
-        <p className="text-[12px] text-muted-foreground italic">{c.rationale}</p>
-      )}
-      {c.alternatives && c.alternatives.length > 0 && (
-        <div>
-          <div className="text-[11px] font-medium text-muted-foreground mb-1">Alternatives</div>
-          <ul className="list-disc pl-4 space-y-0.5">
-            {c.alternatives.map((a, i) => (
-              <li key={i} className="text-[12px] text-foreground/70">{a}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function RiskBlock({ content }: { content: unknown }) {
-  const c = content as { title?: string; description?: string; severity?: string; mitigation?: string }
-  const severityColor = c.severity === 'high'
-    ? 'border-destructive/30 bg-destructive/5'
-    : c.severity === 'medium'
-    ? 'border-warning/30 bg-warning/5'
-    : 'border-border/40 bg-card/60'
-  return (
-    <div className={`rounded-lg border p-3 space-y-1.5 ${severityColor}`}>
-      <div className="flex items-center gap-2">
-        <AlertTriangle size={12} className="text-warning shrink-0" />
-        <span className="text-[12px] font-semibold text-foreground/90">{c.title ?? 'Risk'}</span>
-        {c.severity && (
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{c.severity}</span>
-        )}
-      </div>
-      {c.description && <p className="text-[13px] text-foreground/80">{c.description}</p>}
-      {c.mitigation && (
-        <p className="text-[12px] text-muted-foreground">Mitigation: {c.mitigation}</p>
-      )}
-    </div>
-  )
-}
-
 // Module-level singleton — shared across all ShikiCodeBlock instances
 let _highlighterPromise: Promise<any> | null = null
 function getHighlighter() {
@@ -396,8 +349,6 @@ function BlockContent({ block }: { block: WikiBlock }) {
     case 'list': return <ListBlock content={block.content} />
     case 'table': return <TableBlock content={block.content} />
     case 'code_ref': return <CodeRefBlock content={block.content} />
-    case 'decision': return <DecisionBlock content={block.content} />
-    case 'risk': return <RiskBlock content={block.content} />
     default: return <MarkdownFragmentBlock content={block.content} />
   }
 }

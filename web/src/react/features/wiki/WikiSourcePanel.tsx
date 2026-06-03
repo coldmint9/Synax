@@ -1,4 +1,4 @@
-import { FileText, Hash, Heading, List, Table, Code2, AlertTriangle, Lightbulb, Layers } from 'lucide-react'
+import { FileText, Hash, Heading, List, Table, Code2, Layers } from 'lucide-react'
 import { useWikiStore } from '../../state/wikiStore'
 import type { WikiBlock } from '../../../lib/contracts/wiki'
 
@@ -9,8 +9,6 @@ const BLOCK_TYPE_META: Record<string, { icon: typeof FileText; label: string }> 
   table: { icon: Table, label: 'Table' },
   diagram: { icon: Hash, label: 'Diagram' },
   code_ref: { icon: Code2, label: 'Code' },
-  decision: { icon: Lightbulb, label: 'Decision' },
-  risk: { icon: AlertTriangle, label: 'Risk' },
 }
 
 function blockPreview(block: WikiBlock): string {
@@ -18,7 +16,6 @@ function blockPreview(block: WikiBlock): string {
   if (typeof c === 'string') return c.slice(0, 60)
   if (c?.text && typeof c.text === 'string') return c.text.slice(0, 60)
   if (c?.title && typeof c.title === 'string') return c.title.slice(0, 60)
-  if (c?.decision && typeof c.decision === 'string') return c.decision.slice(0, 60)
   if (c?.description && typeof c.description === 'string') return c.description.slice(0, 60)
   if (Array.isArray(c?.items)) return (c.items as string[])[0]?.slice(0, 60) ?? ''
   return block.blockType

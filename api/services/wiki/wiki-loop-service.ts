@@ -31,6 +31,8 @@ import { buildWikiPrompt, formatLanguages } from './wiki-prompt-builder.js';
 import { buildDocumentContext } from './wiki-document-context.js';
 import { createVerifierTools, type WikiVerdict } from './tools/verifier-tools.js';
 import type { WikiClaim } from './tools/contracts.js';
+import { buildLanguageDirective } from '../prompts/language-directive.js';
+import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
   return locale === 'en' ? {
@@ -125,6 +127,18 @@ export const wikiLoopService = {
       const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
       const languages = formatLanguages(scan);
 
+      const scanActivity = scanCompleteActivity(scan.codeIndex.files.length, languages, locale);
+      notify({
+        type: TaskNotificationEventType.TaskProgress,
+        taskKind: 'wiki_generate',
+        projectId,
+        taskId: snapshot.id,
+        title: wikiMsg(locale).genTitle,
+        message: scanActivity.activity,
+        severity: 'info',
+        meta: { snapshotId: snapshot.id, snapshotStatus: 'refreshing', phase: 1, activity: scanActivity.activity, activityPhase: scanActivity.phase },
+      });
+
       // ═══ Phase 1: Outline Generation ═══
       const plannerHandle = createPlannerTools(scan);
       for (const tool of plannerHandle.tools) {
@@ -150,9 +164,60 @@ export const wikiLoopService = {
       });
 
       logger.info({ projectId, sessionId: plannerSession.id }, 'wiki-loop: Phase 1 starting planner agent');
-      const stream1 = agentLoopRuntime.streamRun(plannerSession.id, {});
+      const stream1 = agentLoopRuntime.streamRun(plannerSession.id, { locale });
+      let lastActivityTs = 0;
+      const ACTIVITY_THROTTLE_MS = 800;
+      const SYNTHESIZE_THROTTLE_MS = 2000;
       for await (const chunk of stream1) {
         if (chunk.type === 'run_failed') throw new Error(chunk.error ?? 'Planner agent failed');
+
+        if (chunk.type === 'tool_call') {
+          const toolId = chunk.toolCall?.toolId ?? '';
+          const args = chunk.toolCall?.inputRef;
+          const activity = mapToolCallToActivity(toolId, args);
+          if (activity && (Date.now() - lastActivityTs > ACTIVITY_THROTTLE_MS || activity.phase === 'submit')) {
+            lastActivityTs = Date.now();
+            notify({
+              type: TaskNotificationEventType.TaskProgress,
+              taskKind: 'wiki_generate',
+              projectId,
+              taskId: snapshot.id,
+              title: wikiMsg(locale).genTitle,
+              message: activity.activity,
+              severity: 'info',
+              meta: {
+                snapshotId: snapshot.id,
+                snapshotStatus: 'refreshing',
+                phase: 1,
+                activity: activity.activity,
+                detail: activity.detail,
+                activityPhase: activity.phase,
+              },
+            });
+          }
+        }
+
+        if (chunk.type === 'thought_delta' && Date.now() - lastActivityTs > SYNTHESIZE_THROTTLE_MS) {
+          lastActivityTs = Date.now();
+          const synth = synthesizeActivity(locale);
+          notify({
+            type: TaskNotificationEventType.TaskProgress,
+            taskKind: 'wiki_generate',
+            projectId,
+            taskId: snapshot.id,
+            title: wikiMsg(locale).genTitle,
+            message: synth.activity,
+            severity: 'info',
+            meta: {
+              snapshotId: snapshot.id,
+              snapshotStatus: 'refreshing',
+              phase: 1,
+              activity: synth.activity,
+              activityPhase: synth.phase,
+            },
+          });
+        }
+
         if (chunk.type === 'done') {
           const s = agentRuntimeStore.tryGetSession(plannerSession.id);
           if (s && s.status === 'interrupted') throw new Error('Planner agent was interrupted');
@@ -169,15 +234,16 @@ export const wikiLoopService = {
       await wikiStore.updateSnapshotStatus(snapshot.id, 'outline_ready', docIds);
       await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.OutlineReady);
 
+      const outlineActivity = outlineCompleteActivity(outline.length, locale);
       notify({
         type: TaskNotificationEventType.TaskProgress,
         taskKind: 'wiki_generate',
         projectId,
         taskId: snapshot.id,
         title: wikiMsg(locale).genTitle,
-        message: wikiMsg(locale).outlineReady,
+        message: outlineActivity.activity,
         severity: 'info',
-        meta: { snapshotId: snapshot.id, snapshotStatus: 'outline_ready', phase: 1, docCount: docIds.length },
+        meta: { snapshotId: snapshot.id, snapshotStatus: 'outline_ready', phase: 1, docCount: docIds.length, activity: outlineActivity.activity, activityPhase: outlineActivity.phase },
       });
 
       // ═══ Phase 2: Content Generation (per-document) ═══
@@ -285,7 +351,7 @@ export const wikiLoopService = {
         });
 
         logger.info({ projectId, docTitle: entry.title, index: i, total: totalDocs }, 'wiki-loop: generating document');
-        const stream = agentLoopRuntime.streamRun(docSession.id, {});
+        const stream = agentLoopRuntime.streamRun(docSession.id, { locale });
         for await (const chunk of stream) {
           if (chunk.type === 'run_failed') throw new Error(chunk.error ?? `Document writer failed for: ${entry.title}`);
           if (chunk.type === 'done') {
@@ -317,7 +383,7 @@ export const wikiLoopService = {
             `- ID: ${c.id} | Subject: ${c.subject} | Assertion: "${c.assertion}" | Evidence hint: ${c.evidenceHint}`
           ).join('\n');
 
-          const verifierPrompt = [
+          const verifierPrompt = buildLanguageDirective(locale) + [
             `Verify the following claims by reading the actual source code.`,
             `For each claim, call wiki.submit_verdict with your findings.`,
             `If you cannot find supporting evidence for a claim, default to refuted=true.`,
@@ -336,7 +402,7 @@ export const wikiLoopService = {
           sessionIds.push(verifierSession.id);
           setSessionWorkspaceRoot(verifierSession.id, workDir);
 
-          const vStream = agentLoopRuntime.streamRun(verifierSession.id, {});
+          const vStream = agentLoopRuntime.streamRun(verifierSession.id, { locale });
           for await (const chunk of vStream) {
             if (chunk.type === 'run_failed') {
               logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: verifier failed');
@@ -365,7 +431,7 @@ export const wikiLoopService = {
               `- Claim "${v.claimId}": REFUTED. Evidence: ${v.evidence}. Correction: ${v.correction ?? 'remove assertion'}`
             ).join('\n');
 
-            const correctorPrompt = [
+            const correctorPrompt = buildLanguageDirective(locale) + [
               `You are rewriting a wiki document to fix factual errors found by verification.`,
               ``,
               `Document: "${entry.title}" (${entry.docType})`,
@@ -385,7 +451,7 @@ export const wikiLoopService = {
             sessionIds.push(correctorSession.id);
             setSessionWorkspaceRoot(correctorSession.id, workDir);
 
-            const cStream = agentLoopRuntime.streamRun(correctorSession.id, {});
+            const cStream = agentLoopRuntime.streamRun(correctorSession.id, { locale });
             for await (const chunk of cStream) {
               if (chunk.type === 'run_failed') {
                 logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: corrector failed');
@@ -546,7 +612,7 @@ export const wikiLoopService = {
       sessionIds.push(writerSession.id);
       setSessionWorkspaceRoot(writerSession.id, workDir);
 
-      const stream = agentLoopRuntime.streamRun(writerSession.id, {});
+      const stream = agentLoopRuntime.streamRun(writerSession.id, { locale });
       for await (const chunk of stream) {
         if (chunk.type === 'run_failed') throw new Error(chunk.error ?? 'Writer agent failed');
         if (chunk.type === 'done') {
