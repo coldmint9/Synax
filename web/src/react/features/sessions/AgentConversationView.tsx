@@ -1,6 +1,6 @@
-import { useMemo, useRef, useEffect } from 'react'
+import { useMemo, useRef, useEffect, useState } from 'react'
 import { Chip, ProgressBar, ScrollShadow, Skeleton, Card } from '@heroui/react'
-import { Bot, Pause, Play, XCircle, Zap } from 'lucide-react'
+import { Bot, ChevronDown, ChevronUp, Pause, Play, XCircle, Zap } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import type { CompactionEvent } from '../../state/agentRuntimeStore'
@@ -10,6 +10,7 @@ import { ParallelToolCallGroup } from './ParallelToolCallGroup'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { SubSessionCard } from './SubSessionCard'
+import { ThinkingIndicator } from './ThinkingIndicator'
 import { getSessionCategory } from './sessionGrouping'
 
 interface Props {
@@ -56,6 +57,7 @@ export function AgentConversationView({
   const { t } = useLocale()
   const scrollRef = useRef<HTMLDivElement>(null)
   const isNearBottom = useRef(true)
+  const [promptExpanded, setPromptExpanded] = useState(false)
 
   const turns = useMemo(
     () => buildInterleavedTurns(steps, toolCalls, messages, childSessions),
@@ -142,7 +144,18 @@ export function AgentConversationView({
       {/* Prompt */}
       {session?.prompt && (
         <Card className="shadow-none border-border/50 bg-secondary/30">
-          <div className="px-3.5 py-2.5 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap line-clamp-3">
+          <button
+            type="button"
+            onClick={() => setPromptExpanded(v => !v)}
+            className="flex items-center gap-1.5 px-3.5 py-2 w-full text-left hover:bg-secondary/20 transition-colors"
+          >
+            <span className="text-[11px] font-medium text-muted-foreground/60 uppercase tracking-wider">
+              System Prompt
+            </span>
+            <span className="flex-1" />
+            {promptExpanded ? <ChevronUp size={12} className="text-muted-foreground/50" /> : <ChevronDown size={12} className="text-muted-foreground/50" />}
+          </button>
+          <div className={`px-3.5 pb-2.5 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap ${promptExpanded ? '' : 'line-clamp-3'}`}>
             {session.prompt}
           </div>
         </Card>
@@ -210,11 +223,10 @@ export function AgentConversationView({
             {/* Completed streaming steps (buffered before refreshDetail syncs) */}
             {(streamingCompletedSteps ?? []).map(cs => (
               <div key={cs.stepId} className="flex gap-3 animate-[fade-up_0.3s_ease-out]">
-                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
+                <div className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04] ${isRunning ? 'animate-bot-glow' : ''}`}>
                   <Bot size={14} className="text-[var(--color-agent)]" />
                 </div>
                 <div className="flex-1 min-w-0 flex flex-col gap-2">
-                  {cs.thinking && <ThinkingBlock content={cs.thinking} />}
                   {cs.text && <StreamingTextBlock text={cs.text} isStreaming={false} />}
                   {cs.toolCalls.length > 1 ? (
                     <ParallelToolCallGroup
@@ -248,6 +260,7 @@ export function AgentConversationView({
                       }}
                     />
                   ))}
+                  {cs.thinking && <ThinkingBlock content={cs.thinking} />}
                 </div>
               </div>
             ))}
@@ -255,11 +268,10 @@ export function AgentConversationView({
             {/* Streaming turn */}
             {streamingStepId && !steps.find(s => s.id === streamingStepId) && (
               <div className="flex gap-3">
-                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
+                <div className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04] ${isRunning ? 'animate-bot-glow' : ''}`}>
                   <Bot size={14} className="text-[var(--color-agent)]" />
                 </div>
                 <div className="flex-1 min-w-0 flex flex-col gap-2">
-                  {streamingThinking && <ThinkingBlock content={streamingThinking} isStreaming />}
                   {streamingText && (
                     <StreamingTextBlock text={streamingText} isStreaming />
                   )}
@@ -295,11 +307,9 @@ export function AgentConversationView({
                       }}
                     />
                   ))}
+                  {streamingThinking && <ThinkingBlock content={streamingThinking} isStreaming />}
                   {!streamingText && !streamingThinking && (streamingToolCalls ?? []).length === 0 && (
-                    <div className="flex items-center gap-2">
-                      <Skeleton className="h-3 w-24 rounded-md" />
-                      <Skeleton className="h-3 w-16 rounded-md" />
-                    </div>
+                    <ThinkingIndicator />
                   )}
                 </div>
               </div>

@@ -43,6 +43,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     description: 'Read, edit, and coordinate bounded implementation work inside Synax.',
     defaultThinkingMode: 'standard',
     allowedCapabilities: [
+      'file.read',
       'file.glob',
       'file.list',
       'grep.search',

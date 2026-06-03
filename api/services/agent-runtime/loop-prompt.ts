@@ -34,9 +34,9 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     'Produce one response per turn. You may include multiple tool calls in a single response when they are independent of each other.',
     'If the task is complete, answer in plain text. Plain text ends the run.',
     'If more information or action is needed, use the provided tool-call interface instead of writing a tool request as prose.',
-    input.profile.toolPolicy?.allowParallelReadTools
-      ? `You may call multiple read-only tools in a single step (up to ${input.profile.toolPolicy.maxParallelReadTools ?? 4} parallel reads). Batch file reads together to minimize round trips.`
-      : '',
+    'You may call multiple tools in a single step. All tool calls within a step execute in parallel. ' +
+    'Batch independent reads, writes, and searches together to minimize round trips. ' +
+    'If a write depends on a read result, call the read tool first, receive the result, then call the write tool in the next step.',
     'Compatibility fallback only when native tool calling is unavailable: start the response with exactly {"tool":"tool.id","args":{...}} followed by optional short status text.',
     'Never request shell or external execution. Use only the provided tools.',
     'When proposing file changes, prefer specific file paths and bounded edits.',

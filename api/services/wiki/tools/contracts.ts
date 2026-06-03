@@ -19,8 +19,8 @@ export const PAGE_SIZE = 80;
 // Package baseline thresholds for outline quality gates
 export const MIN_PACKAGE_FILES = 3;
 export const COVERAGE_MIN = 0.85;
-export const FILE_SPLIT = 10;
-export const SYM_SPLIT = 50;
+export const FILE_SPLIT = 20;
+export const SYM_SPLIT = 80;
 
 export interface WikiDocumentDraft {
   title: string;

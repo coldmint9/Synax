@@ -4,7 +4,7 @@ import type { CodeMapScanResult } from '../../contracts/code-map.js';
 import { WIKI_DOC_TYPES, MIN_PACKAGE_FILES, COVERAGE_MIN, FILE_SPLIT, SYM_SPLIT } from './contracts.js';
 import type { WikiOutlineEntry, WikiPlannerHandle } from './contracts.js';
 import { buildReadTools } from './read-tools.js';
-import { derivePackages } from './package-baseline.js';
+import { derivePackages, filterBaselineForPrompt } from './package-baseline.js';
 
 export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
   let submittedOutline: WikiOutlineEntry[] | null = null;
@@ -74,8 +74,9 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
         }
       }
 
-      // ── Gate 2: package coverage ──
-      const coverable = baseline.filter(p => p.fileCount >= MIN_PACKAGE_FILES);
+      // ── Gate 2: package coverage (against prompt-facing baseline) ──
+      const promptBaseline = filterBaselineForPrompt(baseline);
+      const coverable = promptBaseline.filter(p => p.fileCount >= MIN_PACKAGE_FILES);
       const covered = new Map<string, string>();
       for (const doc of args.documents) {
         for (const p of doc.targetFiles) {
@@ -99,8 +100,12 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
       }
 
       // ── Gate 3: size-driven split ──
-      for (const p of baseline) {
-        if (p.fileCount < FILE_SPLIT && p.symbolCount < SYM_SPLIT) continue;
+      // Grade only the packages the model was actually shown (promptBaseline), and use the
+      // exact same [SPLIT] criterion the prompt displays (AND, not OR). Otherwise the model
+      // gets rejected on ancestor containers (e.g. web/src) that filterBaselineForPrompt pruned,
+      // or on packages the prompt never marked as needing a split — an unsatisfiable contract.
+      for (const p of promptBaseline) {
+        if (!(p.fileCount >= FILE_SPLIT && p.symbolCount >= SYM_SPLIT)) continue;
         const coveringDocs = args.documents.filter(d =>
           d.targetFiles.some(tf => {
             const pkg = pathToPkg.get(tf);
@@ -124,7 +129,7 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
         return `${indent}- ${d.docType}: "${d.title}" [${d.id}]${d.parentId ? ` (child of ${d.parentId})` : ''}`;
       }).join('\n');
       return {
-        result: { ok: true, count: args.documents.length, documents: args.documents },
+        result: { ok: true, count: args.documents.length },
         displaySummary: `Outline accepted: ${args.documents.length} documents.\n${summary}`,
         artifacts: [{ kind: 'decision', title: 'Wiki outline submitted', summary: `${args.documents.length} documents planned.`, risk: 'low' }],
       };

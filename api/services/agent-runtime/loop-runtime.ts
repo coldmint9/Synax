@@ -657,111 +657,134 @@ export class AgentLoopRuntime {
           record: ToolCallRecord;
         };
         const allCalls = withIds(modelResult.step.toolCalls.slice(0, 50));
-        const canParallelRead = profile.toolPolicy?.allowParallelReadTools &&
-          allCalls.length > 1 &&
-          allCalls.every((c) => {
-            try {
-              const t = this.tools.get(c.toolId);
-              return t.mutability === 'read' && c.toolId !== 'subagent.delegate';
-            } catch { return false; }
-          });
-        const canParallelSubagent = allCalls.length > 1 &&
-          allCalls.every((c) => c.toolId === 'subagent.delegate');
 
-        if (canParallelSubagent) {
-          const executions = await Promise.all(
-            allCalls.map((call) =>
-              this.tools.execute(sessionId, call.toolId, call.args, {
-                runId: run.id, stepId: step.id,
-                modelToolCallId: call.id,
-                resumeToken: optionsResumeToken(run.id, step.id, call.id),
-              }).then((exec) => ({ call, exec })),
-            ),
+        // Build dedup index from previous steps — same tool + same args on a
+        // read-only tool is needless re-execution that burns context.  Fold it.
+        const dedupIndex = new Map<string, ToolCallRecord>();
+        for (const prev of this.store.listRunToolCalls(run.id)) {
+          if (prev.status === 'completed' || prev.status === 'compacted') {
+            dedupIndex.set(`${prev.toolId}:${prev.argsHash}`, prev);
+          }
+        }
+
+        // Unified parallel: launch all tool calls concurrently, no arbitrary cap.
+        // The LLM already determined these calls are independent when it emitted
+        // them together. If a write depends on a read, the LLM should call the
+        // read in step N and the write in step N+1.
+        const executions = await Promise.all(
+          allCalls.map(async (call) => {
+            const tool = this.tools.list().find(t => t.id === call.toolId);
+            if (tool?.mutability === 'read') {
+              const argsHash = this.store.hashArgs(call.args);
+              const prev = dedupIndex.get(`${call.toolId}:${argsHash}`);
+              if (prev) {
+                logger.info(
+                  { sessionId, runId: run.id, stepId: step.id, toolId: call.toolId, argsHash, originalCallId: prev.id },
+                  '[agent-runtime] tool call deduplicated',
+                );
+                const dedupRecord = this.store.appendToolCall({
+                  id: makeRuntimeId('tc'),
+                  sessionId,
+                  runId: run.id,
+                  stepId: step.id,
+                  modelToolCallId: call.id,
+                  toolId: call.toolId,
+                  category: tool.category,
+                  mutability: tool.mutability,
+                  argsHash,
+                  inputSummary: prev.inputSummary,
+                  inputRef: null,
+                  outputSummary: `[Duplicate of earlier ${call.toolId} call — skipped]`,
+                  outputRef: null,
+                  status: 'compacted',
+                  permissionDecisionId: null,
+                  startedAt: nowIso(),
+                  endedAt: nowIso(),
+                  error: null,
+                });
+                return { call, exec: { record: dedupRecord } };
+              }
+            }
+
+            return this.tools.execute(sessionId, call.toolId, call.args, {
+              runId: run.id, stepId: step.id,
+              modelToolCallId: call.id,
+              resumeToken: optionsResumeToken(run.id, step.id, call.id),
+            }).then((exec) => ({ call, exec }));
+          }),
+        );
+
+        // Emit tool_call events in model-dictated order (allCalls order)
+        for (const { call, exec } of executions) {
+          this.appendToolCallPart({ runId: run.id, stepId: step.id, sessionId, record: exec.record, reason: call.reason });
+          yield {
+            type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record,
+            event: this.events.append({ sessionId, type: "tool_call", summary: `${call.toolId} requested`, payload: { runId: run.id, stepId: step.id, toolCallId: exec.record.id, modelToolCallId: call.id } }),
+          };
+          sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: exec.record });
+          logger.info(
+            { sessionId, runId: run.id, stepId: step.id, toolCallId: exec.record.id, toolId: call.toolId, status: exec.record.status, permissionAction: exec.permission?.action ?? null },
+            "[agent-runtime] tool call executed",
           );
-          const pendingTasks: Array<{ call: typeof allCalls[0]; exec: typeof executions[0]['exec']; promise: Promise<ToolCallRecord> }> = [];
-          for (const { call, exec } of executions) {
-            this.appendToolCallPart({ runId: run.id, stepId: step.id, sessionId, record: exec.record, reason: call.reason });
-            yield {
-              type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record,
-              event: this.events.append({ sessionId, type: "tool_call", summary: `${call.toolId} requested`, payload: { runId: run.id, stepId: step.id, toolCallId: exec.record.id, modelToolCallId: call.id } }),
-            };
-            sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: exec.record });
-            if (exec.toolResult?.result) {
-              pendingTasks.push({ call, exec, promise: this.awaitTaskResult(exec.record, exec.toolResult.result, runAbortSignal) });
-            } else {
-              pendingTasks.push({ call, exec, promise: Promise.resolve(exec.record) });
-            }
-          }
-          const results = await Promise.all(pendingTasks.map((t) => t.promise));
-          for (let i = 0; i < results.length; i++) {
-            const completedRecord = results[i];
-            this.appendToolResultPart({ runId: run.id, stepId: step.id, sessionId, record: completedRecord });
-            yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
-            sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
-          }
-        } else if (canParallelRead) {
-          const maxParallel = profile.toolPolicy!.maxParallelReadTools ?? 4;
-          const batch = allCalls.slice(0, maxParallel);
-          const executions = await Promise.all(
-            batch.map((call) =>
-              this.tools.execute(sessionId, call.toolId, call.args, {
-                runId: run.id, stepId: step.id,
-                modelToolCallId: call.id,
-                resumeToken: optionsResumeToken(run.id, step.id, call.id),
-              }).then((exec) => ({ call, exec })),
-            ),
+        }
+
+        // Check for permission "ask" — pause at the first one in model order.
+        // If any tool needs user approval, we persist results for tools that
+        // completed BEFORE it and yield a permission_requested event.
+        const askIndex = executions.findIndex(({ exec }) => exec.permission?.action === "ask");
+
+        if (askIndex >= 0) {
+          const askExec = executions[askIndex];
+          waitingPermission = { permission: askExec.exec.permission!, record: askExec.exec.record };
+          logger.info(
+            { sessionId, runId: run.id, stepId: step.id, permissionId: askExec.exec.permission!.id, toolCallId: askExec.exec.record.id, reason: truncateLogText(askExec.exec.permission!.reason) },
+            "[agent-runtime] permission requested",
           );
-          for (const { call, exec } of executions) {
-            this.appendToolCallPart({ runId: run.id, stepId: step.id, sessionId, record: exec.record, reason: call.reason });
-            yield {
-              type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record,
-              event: this.events.append({ sessionId, type: "tool_call", summary: `${call.toolId} requested`, payload: { runId: run.id, stepId: step.id, toolCallId: exec.record.id, modelToolCallId: call.id } }),
-            };
-            sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: exec.record });
-            this.appendToolResultPart({ runId: run.id, stepId: step.id, sessionId, record: exec.record });
-            yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: exec.record };
-            sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: exec.record });
-            if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
-              disclosureState = promoteDisclosure(disclosureState);
-            }
-          }
-        } else {
-          for (const call of allCalls) {
-            const toolExecution = await this.tools.execute(
-              sessionId, call.toolId, call.args,
-              { runId: run.id, stepId: step.id, modelToolCallId: call.id, resumeToken: optionsResumeToken(run.id, step.id, call.id) },
-            );
-            this.appendToolCallPart({ runId: run.id, stepId: step.id, sessionId, record: toolExecution.record, reason: call.reason });
-            yield {
-              type: "tool_call", runId: run.id, stepId: step.id, toolCall: toolExecution.record,
-              event: this.events.append({ sessionId, type: "tool_call", summary: `${call.toolId} requested`, payload: { runId: run.id, stepId: step.id, toolCallId: toolExecution.record.id, modelToolCallId: call.id } }),
-            };
-            sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: toolExecution.record });
-            logger.info(
-              { sessionId, runId: run.id, stepId: step.id, toolCallId: toolExecution.record.id, toolId: call.toolId, status: toolExecution.record.status, permissionAction: toolExecution.permission?.action ?? null },
-              "[agent-runtime] tool call executed",
-            );
-            if (toolExecution.permission?.action === "ask") {
-              waitingPermission = { permission: toolExecution.permission, record: toolExecution.record };
-              logger.info(
-                { sessionId, runId: run.id, stepId: step.id, permissionId: toolExecution.permission.id, toolCallId: toolExecution.record.id, reason: truncateLogText(toolExecution.permission.reason) },
-                "[agent-runtime] permission requested",
-              );
-              break;
-            }
+
+          // Emit tool_result for tools that completed BEFORE the ask-point (model order)
+          for (let i = 0; i < askIndex; i++) {
+            const { call, exec } = executions[i];
             const completedRecord =
-              call.toolId === "subagent.delegate" && toolExecution.toolResult?.result
-                ? await this.awaitTaskResult(toolExecution.record, toolExecution.toolResult.result, runAbortSignal)
-                : toolExecution.record;
+              call.toolId === "subagent.delegate" && exec.toolResult?.result
+                ? await this.awaitTaskResult(exec.record, exec.toolResult.result, runAbortSignal)
+                : exec.record;
             this.appendToolResultPart({ runId: run.id, stepId: step.id, sessionId, record: completedRecord });
             if (completedRecord.status === "denied") {
               logger.warn(
                 { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId },
                 "[agent-runtime] tool call denied",
               );
-              currentPrompt = `The attempted tool call ${call.toolId} was denied. Explain the blocker and finish without further writes.`;
-              pendingPermission = toolExecution.permission ?? null;
-              continue;
+            }
+            logger.info(
+              { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId, status: completedRecord.status, outputSummary: truncateLogText(completedRecord.outputSummary ?? completedRecord.error ?? "") },
+              "[agent-runtime] tool result recorded",
+            );
+            yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
+            sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
+            if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
+              disclosureState = promoteDisclosure(disclosureState);
+            }
+          }
+        } else {
+          // No permission issues — resolve subagent delegation results in parallel,
+          // then emit tool_result events in model-dictated order.
+          const resolved = await Promise.all(
+            executions.map(({ call, exec }) =>
+              call.toolId === "subagent.delegate" && exec.toolResult?.result
+                ? this.awaitTaskResult(exec.record, exec.toolResult.result, runAbortSignal)
+                : Promise.resolve(exec.record),
+            ),
+          );
+
+          for (let i = 0; i < resolved.length; i++) {
+            const completedRecord = resolved[i];
+            const { call } = executions[i];
+            this.appendToolResultPart({ runId: run.id, stepId: step.id, sessionId, record: completedRecord });
+            if (completedRecord.status === "denied") {
+              logger.warn(
+                { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId },
+                "[agent-runtime] tool call denied",
+              );
             }
             logger.info(
               { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId, status: completedRecord.status, outputSummary: truncateLogText(completedRecord.outputSummary ?? completedRecord.error ?? "") },

@@ -128,3 +128,42 @@ function dirToLabel(dirPath: string): string {
   // Return the last 2 segments if deep enough, else the last
   return parts.length >= 2 ? parts.slice(-2).join('/') : parts[parts.length - 1];
 }
+
+// ── Prompt-facing filter ──────────────────────────────────────────────────────
+
+const MIN_OWN_FILES = 3;
+const MIN_OWN_RATIO = 0.25;
+const MAX_PROMPT_PACKAGES = 25;
+
+/**
+ * Prune the flat package list for the planner prompt:
+ *  - Remove ancestor packages whose files are mostly covered by descendants.
+ *  - Cap at a reasonable size so the prompt doesn't overwhelm the model.
+ */
+export function filterBaselineForPrompt(baseline: PackageBaseline[]): PackageBaseline[] {
+  // Build a quick index: for each package, collect all descendant file IDs
+  const descendantFiles = new Map<string, Set<string>>();
+  for (const pkg of baseline) {
+    const prefix = pkg.dirPath + '/';
+    const all = new Set<string>();
+    for (const other of baseline) {
+      if (other.dirPath.startsWith(prefix) && other.dirPath !== pkg.dirPath) {
+        for (const fid of other.fileIds) all.add(fid);
+      }
+    }
+    descendantFiles.set(pkg.dirPath, all);
+  }
+
+  const kept = baseline.filter(pkg => {
+    const prefix = pkg.dirPath + '/';
+    const hasChildren = baseline.some(o => o.dirPath !== pkg.dirPath && o.dirPath.startsWith(prefix));
+    if (!hasChildren) return true; // leaf — always keep
+
+    const desc = descendantFiles.get(pkg.dirPath) ?? new Set();
+    const ownCount = pkg.fileIds.filter(fid => !desc.has(fid)).length;
+    const ownRatio = ownCount / Math.max(pkg.fileIds.length, 1);
+    return ownCount >= MIN_OWN_FILES && ownRatio >= MIN_OWN_RATIO;
+  });
+
+  return kept.slice(0, MAX_PROMPT_PACKAGES);
+}

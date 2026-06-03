@@ -19,13 +19,13 @@ export function ThinkingBlock({ content, isStreaming }: Props) {
       <Accordion.Item
         id="thinking"
         aria-label="Agent thinking"
-        className="border-border/30 bg-muted/20 rounded-md animate-[fade-up_0.3s_ease-out]"
+        className={`border-border/30 bg-muted/20 rounded-md animate-[fade-up_0.3s_ease-out] ${isStreaming ? 'ring-1 ring-accent/20' : ''}`}
       >
         <Accordion.Trigger className="flex items-center gap-2 px-3 py-2 text-left w-full">
           <Brain size={12} className="shrink-0 text-muted-foreground/60" />
-          <span className="text-[11px] font-medium text-muted-foreground/70">Thinking</span>
+          <span className="text-[11px] font-medium text-muted-foreground/70">Thought</span>
           {isStreaming && (
-            <Chip size="sm" color="accent" variant="soft" className="h-4 text-[9px]">
+            <Chip size="sm" color="accent" variant="solid" className="h-4 text-[9px]">
               live
             </Chip>
           )}
