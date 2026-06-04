@@ -1,4 +1,5 @@
 import os from 'node:os';
+import fs from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -8,6 +9,14 @@ import type { AnalyzerSourceFile } from './shared.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Resolve the worker script path. In dev (tsx), the .ts source exists and
+// tsx can execute it directly. In production builds, only the .js output exists.
+const IS_DEV = fs.existsSync(path.join(__dirname, 'analyzer-worker.ts'));
+const WORKER_SCRIPT = IS_DEV
+	? path.join(__dirname, 'worker-bootstrap.ts')
+	: path.join(__dirname, 'analyzer-worker.js');
+const ACTUAL_WORKER = path.join(__dirname, 'analyzer-worker.ts');
 
 export interface FileParseResult {
 	fileEntry: FileEntry;
@@ -42,8 +51,11 @@ export class AnalyzerWorkerPool {
 
 	constructor(size = DEFAULT_POOL_SIZE) {
 		this.workers = [];
+		const workerOptions: import('node:worker_threads').WorkerOptions = IS_DEV
+			? { execArgv: ['--import', 'tsx/esm'], workerData: { __workerPath: ACTUAL_WORKER } }
+			: {};
 		for (let i = 0; i < size; i++) {
-			const worker = new Worker(path.join(__dirname, 'analyzer-worker.js'));
+			const worker = new Worker(WORKER_SCRIPT, workerOptions);
 			worker.on('message', (msg: WorkerMessage) => this.handleMessage(worker, msg));
 			worker.on('error', (err) => this.handleWorkerError(worker, err));
 			this.workers.push(worker);

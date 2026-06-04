@@ -1,20 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react'
-import { useContextStore } from '../../state/contextStore'
+import { useEffect, useRef } from 'react'
 import { useDebugConsole } from '../debug-console/debugConsoleStore'
-import { TranscriptEntry } from './TranscriptEntry'
 import { AgentConversationView } from './AgentConversationView'
 import { PermissionApprovalBar } from './PermissionApprovalBar'
 
-interface Props {
-  mode: 'context' | 'agent'
-}
-
-export function SessionTranscript({ mode }: Props) {
+export function SessionTranscript() {
   const scrollRef = useRef<HTMLDivElement>(null)
-
-  // Context session data
-  const entries = useContextStore((s) => s.entries)
-  const loadingEntries = useContextStore((s) => s.loading.entries)
 
   // Agent session data
   const session = useDebugConsole((s) => {
@@ -38,62 +28,34 @@ export function SessionTranscript({ mode }: Props) {
   const streamingToolCalls = useDebugConsole((s) => s.streamingToolCalls)
   const streamingCompletedSteps = useDebugConsole((s) => s.streamingCompletedSteps)
 
-  const orderedEntries = useMemo(
-    () => [...entries].sort((a, b) => a.sequence - b.sequence),
-    [entries],
-  )
-
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [orderedEntries.length, steps.length, streamingText, streamingToolCalls.length])
+  }, [steps.length, streamingText, streamingToolCalls.length])
 
-  if (mode === 'agent') {
-    return (
-      <div className="flex flex-col flex-1 min-h-0">
-        <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          <AgentConversationView
-            session={session}
-            steps={steps}
-            toolCalls={toolCalls}
-            messages={messages}
-            childSessions={childSessions}
-            onPause={pauseSession}
-            onResume={(id) => resumeSession(id)}
-            streamingStepId={streamingStepId}
-            streamingText={streamingText}
-            streamingThinking={streamingThinking}
-            streamingToolCalls={streamingToolCalls}
-            streamingCompletedSteps={streamingCompletedSteps}
-          />
-        </div>
-        <PermissionApprovalBar
-          permissions={permissions}
-          onReply={replyPermission}
+  return (
+    <div className="flex flex-col flex-1 min-h-0">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <AgentConversationView
+          session={session}
+          steps={steps}
+          toolCalls={toolCalls}
+          messages={messages}
+          childSessions={childSessions}
+          onPause={pauseSession}
+          onResume={(id) => resumeSession(id)}
+          streamingStepId={streamingStepId}
+          streamingText={streamingText}
+          streamingThinking={streamingThinking}
+          streamingToolCalls={streamingToolCalls}
+          streamingCompletedSteps={streamingCompletedSteps}
         />
       </div>
-    )
-  }
-
-  // Context mode
-  return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed">
-      {loadingEntries && orderedEntries.length === 0 ? (
-        <div className="py-8 text-center text-muted-foreground/60">
-          加载中…
-        </div>
-      ) : orderedEntries.length === 0 ? (
-        <div className="py-8 text-center text-muted-foreground/60">
-          尚无条目
-        </div>
-      ) : (
-        <div className="divide-y divide-border/20 py-1">
-          {orderedEntries.map((entry) => (
-            <TranscriptEntry key={entry.id} entry={entry} />
-          ))}
-        </div>
-      )}
+      <PermissionApprovalBar
+        permissions={permissions}
+        onReply={replyPermission}
+      />
     </div>
   )
 }

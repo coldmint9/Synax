@@ -372,6 +372,7 @@ export const listSessionsQuerySchema = z.object({
   nodeId: z.string().min(1).max(256).optional(),
   status: sessionStatusSchema.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
 
@@ -404,6 +405,11 @@ export const executeToolRequestSchema = z.object({
   args: z.unknown().optional(),
 });
 export type ExecuteToolRequest = z.infer<typeof executeToolRequestSchema>;
+
+export const clearInactiveSessionsBodySchema = z.object({
+  projectId: z.string().min(1).max(128),
+});
+export type ClearInactiveSessionsBody = z.infer<typeof clearInactiveSessionsBodySchema>;
 
 export const streamTurnRequestSchema = z.object({
   message: z.string().min(1).max(100_000).optional(),

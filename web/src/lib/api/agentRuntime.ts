@@ -199,6 +199,12 @@ export interface SessionPayload {
   candidateSkills: AgentSkillSummary[]
 }
 
+export interface SessionListResponse {
+  items: AgentSession[]
+  totalCount: number
+  countByStatus: Record<string, number>
+}
+
 export interface DeleteSessionResult {
   ok: true
   deletedSessionIds: string[]
@@ -244,18 +250,29 @@ export const agentRuntimeApi = {
     }),
   createSession: (body: CreateSessionRequest) =>
     request<SessionPayload>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
-  listSessions: (query: { projectId?: string; nodeId?: string; status?: AgentSessionStatus } = {}) => {
+  listSessions: (query: {
+    projectId?: string
+    nodeId?: string
+    status?: AgentSessionStatus
+    limit?: number
+    offset?: number
+  } = {}) => {
     const qs = new URLSearchParams()
     Object.entries(query).forEach(([key, value]) => {
-      if (value) qs.set(key, value)
+      if (value !== undefined && value !== null) qs.set(key, String(value))
     })
-    return request<{ items: AgentSession[] }>(`/sessions${qs.size ? `?${qs.toString()}` : ''}`)
+    return request<SessionListResponse>(`/sessions${qs.size ? `?${qs.toString()}` : ''}`)
   },
   getSession: (sessionId: string) => request<SessionPayload>(`/sessions/${encodeURIComponent(sessionId)}`),
   cancelSession: (sessionId: string) =>
     request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: 'POST' }),
   deleteSession: (sessionId: string) =>
     request<DeleteSessionResult>(`/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
+  clearInactiveSessions: (projectId: string) =>
+    request<{ ok: true; deletedCount: number; deletedSessionIds: string[] }>(
+      `/sessions/clear-inactive`,
+      { method: 'POST', body: JSON.stringify({ projectId }) },
+    ),
   listMessages: (sessionId: string) =>
     request<{ items: AgentRuntimeMessage[] }>(`/sessions/${encodeURIComponent(sessionId)}/messages`),
   listRuns: (sessionId: string) =>
