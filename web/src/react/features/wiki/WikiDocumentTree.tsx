@@ -1,138 +1,61 @@
-import { BookOpen, ChevronDown, ChevronRight, FileText } from 'lucide-react'
-import { useState } from 'react'
+import { BookOpen, FileText, Globe, Network, Box, Workflow, Database } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
-import type { WikiDocument } from '../../../lib/contracts/wiki'
+import type { WikiDocument, WikiDocType } from '../../../lib/contracts/wiki'
+
+const DOC_TYPE_CONFIG: Record<WikiDocType, { icon: typeof Globe; label: string; color: string }> = {
+  landscape: { icon: Globe, label: 'Landscape', color: 'text-emerald-400' },
+  topology: { icon: Network, label: 'Topology', color: 'text-sky-400' },
+  module: { icon: Box, label: 'Modules', color: 'text-violet-400' },
+  flow: { icon: Workflow, label: 'Flows', color: 'text-amber-400' },
+  data: { icon: Database, label: 'Data', color: 'text-rose-400' },
+}
+
+const DOC_TYPE_ORDER: WikiDocType[] = ['landscape', 'topology', 'module', 'flow', 'data']
 
 function DocItem({
   doc,
   isSelected,
   onSelect,
-  depth,
-  isEmpty,
   issueCount,
   draftInfo,
-  children,
 }: {
   doc: WikiDocument
   isSelected: boolean
   onSelect: () => void
-  depth: number
-  isEmpty?: boolean
   issueCount?: number
   draftInfo?: { count: number; status: 'ready' | 'generating' | 'partially_applied' }
-  children?: React.ReactNode
 }) {
-  const [expanded, setExpanded] = useState(true)
-  const hasChildren = Boolean(children)
-
+  const isEmpty = doc.blockIds.length === 0
   return (
-    <div>
-      <button
-        type="button"
-        onClick={onSelect}
-        style={{ paddingLeft: `${8 + depth * 14}px` }}
-        className={`group flex w-full items-center gap-1.5 rounded-md pr-2.5 py-1.5 text-left text-[12px] transition-colors ${
-          isSelected
-            ? 'bg-primary/15 text-primary'
-            : isEmpty
-              ? 'text-muted-foreground/50 hover:bg-secondary/30 hover:text-muted-foreground'
-              : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
-        }`}
-      >
-        {hasChildren ? (
-          <span
-            role="button"
-            tabIndex={-1}
-            onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
-            className="shrink-0 opacity-60"
-          >
-            {expanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-          </span>
-        ) : (
-          <FileText size={11} className="shrink-0 opacity-60" />
-        )}
-        <span className="min-w-0 flex-1 leading-snug break-words">{doc.title}</span>
-        {draftInfo && draftInfo.count > 0 && (
-          <span className={`shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white ${
-            draftInfo.status === 'generating' ? 'bg-primary animate-pulse' :
-            draftInfo.status === 'partially_applied' ? 'bg-amber-400' :
-            'bg-primary'
-          }`}>
-            {draftInfo.status === 'generating' ? '·' : draftInfo.count}
-          </span>
-        )}
-        {(issueCount ?? 0) > 0 && (
-          <span className="shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400/80 px-1 text-[9px] font-bold text-white">
-            {issueCount}
-          </span>
-        )}
-      </button>
-      {hasChildren && expanded && (
-        <div>{children}</div>
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`group flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors ${
+        isSelected
+          ? 'bg-primary/15 text-primary'
+          : isEmpty
+            ? 'text-muted-foreground/50 hover:bg-secondary/30 hover:text-muted-foreground'
+            : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
+      }`}
+    >
+      <FileText size={11} className="shrink-0 opacity-60" />
+      <span className="min-w-0 flex-1 leading-snug break-words">{doc.title}</span>
+      {draftInfo && draftInfo.count > 0 && (
+        <span className={`shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white ${
+          draftInfo.status === 'generating' ? 'bg-primary animate-pulse' :
+          draftInfo.status === 'partially_applied' ? 'bg-amber-400' :
+          'bg-primary'
+        }`}>
+          {draftInfo.status === 'generating' ? '·' : draftInfo.count}
+        </span>
       )}
-    </div>
-  )
-}
-
-function DocTree({
-  docs,
-  allDocs,
-  selectedDocumentId,
-  onSelect,
-  depth,
-  issuesByDocId,
-  draftsByDocId,
-}: {
-  docs: WikiDocument[]
-  allDocs: WikiDocument[]
-  selectedDocumentId: string | null
-  onSelect: (id: string) => void
-  depth: number
-  issuesByDocId?: Map<string, number>
-  draftsByDocId?: Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>
-}) {
-  return (
-    <>
-      {docs.map(doc => {
-        const children = allDocs.filter(d => d.parentId === doc.id).sort((a, b) => a.sortOrder - b.sortOrder)
-
-        const isCategoryShell = doc.blockIds.length === 0
-        const sameNameChild = isCategoryShell
-          ? children.find(c => c.title === doc.title)
-          : null
-
-        const effectiveDocId = sameNameChild ? sameNameChild.id : doc.id
-        const visibleChildren = sameNameChild
-          ? children.filter(c => c.id !== sameNameChild.id)
-          : children
-
-        return (
-          <DocItem
-            key={doc.id}
-            doc={doc}
-            isSelected={selectedDocumentId === effectiveDocId}
-            onSelect={() => onSelect(effectiveDocId)}
-            depth={depth}
-            isEmpty={isCategoryShell && !sameNameChild}
-            issueCount={issuesByDocId?.get(effectiveDocId) ?? 0}
-            draftInfo={draftsByDocId?.get(effectiveDocId)}
-          >
-            {visibleChildren.length > 0 ? (
-              <DocTree
-                docs={visibleChildren}
-                allDocs={allDocs}
-                selectedDocumentId={selectedDocumentId}
-                onSelect={onSelect}
-                depth={depth + 1}
-                issuesByDocId={issuesByDocId}
-                draftsByDocId={draftsByDocId}
-              />
-            ) : undefined}
-          </DocItem>
-        )
-      })}
-    </>
+      {(issueCount ?? 0) > 0 && (
+        <span className="shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400/80 px-1 text-[9px] font-bold text-white">
+          {issueCount}
+        </span>
+      )}
+    </button>
   )
 }
 
@@ -145,8 +68,6 @@ export default function WikiDocumentTree() {
   const draftsSummary = useWikiStore(s => s.draftsSummary)
   const draftsById = useWikiStore(s => s.draftsById)
   const evaluations = useWikiStore(s => s.evaluations)
-
-  const roots = documents.filter(d => !d.parentId).sort((a, b) => a.sortOrder - b.sortOrder)
 
   // Compute issue counts per document
   const issuesByDocId = new Map<string, number>()
@@ -177,6 +98,17 @@ export default function WikiDocumentTree() {
     }
   }
 
+  // Group documents by docType
+  const grouped = new Map<WikiDocType, WikiDocument[]>()
+  for (const docType of DOC_TYPE_ORDER) {
+    grouped.set(docType, [])
+  }
+  for (const doc of documents) {
+    const group = grouped.get(doc.docType as WikiDocType)
+    if (group) group.push(doc)
+    else grouped.get('module')!.push(doc) // fallback unknown types to module
+  }
+
   return (
     <div className="flex h-full flex-col gap-1 px-2 py-3">
       {/* Snapshot meta */}
@@ -204,17 +136,35 @@ export default function WikiDocumentTree() {
         </div>
       )}
 
-      {/* Document tree */}
-      <div className="space-y-0.5">
-        <DocTree
-          docs={roots}
-          allDocs={documents}
-          selectedDocumentId={selectedDocumentId}
-          onSelect={id => selectDocument(id)}
-          depth={0}
-          issuesByDocId={issuesByDocId}
-          draftsByDocId={draftsByDocId}
-        />
+      {/* Document groups by docType */}
+      <div className="space-y-3">
+        {DOC_TYPE_ORDER.map(docType => {
+          const docs = grouped.get(docType) ?? []
+          if (docs.length === 0) return null
+          const config = DOC_TYPE_CONFIG[docType]
+          const Icon = config.icon
+          return (
+            <div key={docType}>
+              <div className={`flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${config.color}`}>
+                <Icon size={11} />
+                <span>{config.label}</span>
+                <span className="text-muted-foreground/40 font-normal normal-case">({docs.length})</span>
+              </div>
+              <div className="mt-0.5 space-y-0.5">
+                {docs.sort((a, b) => a.sortOrder - b.sortOrder).map(doc => (
+                  <DocItem
+                    key={doc.id}
+                    doc={doc}
+                    isSelected={selectedDocumentId === doc.id}
+                    onSelect={() => selectDocument(doc.id)}
+                    issueCount={issuesByDocId.get(doc.id)}
+                    draftInfo={draftsByDocId.get(doc.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       {documents.length === 0 && (
