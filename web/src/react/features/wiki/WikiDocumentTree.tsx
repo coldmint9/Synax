@@ -4,11 +4,11 @@ import { useWikiStore } from '../../state/wikiStore'
 import type { WikiDocument, WikiDocType } from '../../../lib/contracts/wiki'
 
 const DOC_TYPE_CONFIG: Record<WikiDocType, { icon: typeof Globe; label: string; color: string }> = {
-  landscape: { icon: Globe, label: 'Landscape', color: 'text-emerald-400' },
-  topology: { icon: Network, label: 'Topology', color: 'text-sky-400' },
-  module: { icon: Box, label: 'Modules', color: 'text-violet-400' },
-  flow: { icon: Workflow, label: 'Flows', color: 'text-amber-400' },
-  data: { icon: Database, label: 'Data', color: 'text-rose-400' },
+  landscape: { icon: Globe, label: 'Landscape', color: 'text-emerald-600 dark:text-emerald-400' },
+  topology: { icon: Network, label: 'Topology', color: 'text-sky-600 dark:text-sky-400' },
+  module: { icon: Box, label: 'Modules', color: 'text-violet-600 dark:text-violet-400' },
+  flow: { icon: Workflow, label: 'Flows', color: 'text-amber-600 dark:text-amber-400' },
+  data: { icon: Database, label: 'Data', color: 'text-rose-600 dark:text-rose-400' },
 }
 
 const DOC_TYPE_ORDER: WikiDocType[] = ['landscape', 'topology', 'module', 'flow', 'data']

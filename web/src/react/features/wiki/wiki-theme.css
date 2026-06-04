@@ -25,7 +25,7 @@
   --wiki-radius: 6px;
 }
 
-.wiki-doc.light {
+:root:not(.dark) .wiki-doc {
   --wiki-bg: #ffffff;
   --wiki-surface: #f8f9fa;
   --wiki-raised: #f1f3f5;

@@ -1,7 +1,8 @@
 import { memo, useState, useEffect } from 'react'
 import type { DiagramContent } from '../../../../lib/contracts/wiki'
+import { useShellStore } from '../../../state/shellStore'
 
-const DiagramRenderer = memo(function DiagramRenderer({ code }: { code: string }) {
+const DiagramRenderer = memo(function DiagramRenderer({ code, theme }: { code: string; theme: 'light' | 'dark' }) {
   const [svgHtml, setSvgHtml] = useState<string>('')
   const [error, setError] = useState(false)
 
@@ -10,7 +11,7 @@ const DiagramRenderer = memo(function DiagramRenderer({ code }: { code: string }
     let cancelled = false
     const id = `mmd-${Math.random().toString(36).slice(2, 9)}`
     import('mermaid').then(async ({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, theme: 'dark' })
+      mermaid.initialize({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default' })
       try {
         const { svg } = await mermaid.render(id, code)
         if (!cancelled) setSvgHtml(svg)
@@ -19,7 +20,7 @@ const DiagramRenderer = memo(function DiagramRenderer({ code }: { code: string }
       }
     })
     return () => { cancelled = true }
-  }, [code])
+  }, [code, theme])
 
   if (error) {
     return (
@@ -35,10 +36,11 @@ const DiagramRenderer = memo(function DiagramRenderer({ code }: { code: string }
 })
 
 export default function DiagramBlock({ content }: { content: DiagramContent }) {
+  const theme = useShellStore(s => s.preferences.theme)
   return (
     <div className="my-4 border border-[var(--wiki-border)] rounded-[var(--wiki-radius)] overflow-hidden bg-[var(--wiki-surface)]">
       <div className="p-4">
-        <DiagramRenderer code={content.code} />
+        <DiagramRenderer code={content.code} theme={theme} />
       </div>
       {content.caption && (
         <div className="px-4 pb-3 text-[11px] text-[var(--wiki-text-muted)] text-center">

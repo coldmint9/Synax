@@ -27,7 +27,7 @@ export default function TableBlock({ content }: { content: TableContent }) {
         </thead>
         <tbody>
           {content.rows.map((row, ri) => (
-            <tr key={ri} className="last:[&>td]:border-b-0 hover:bg-[rgba(255,255,255,0.015)]">
+            <tr key={ri} className="last:[&>td]:border-b-0 hover:bg-[var(--wiki-accent-bg)]">
               {content.headers.map(h => (
                 <td
                   key={h.key}
