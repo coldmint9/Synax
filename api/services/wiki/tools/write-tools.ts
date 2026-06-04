@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { RegisteredTool } from '../../agent-runtime/contracts.js';
-import type { WikiBlockType, WikiBlockContentFormat } from '../contracts.js';
-import { WIKI_DOC_TYPES, WIKI_BLOCK_TYPES, MIN_CONTENT_LENGTH, MIN_BLOCKS } from './contracts.js';
+import { validateBlockContent, type WikiBlockType, type WikiDocType } from '../contracts.js';
+import { WIKI_DOC_TYPES, WIKI_BLOCK_TYPES, MIN_BLOCKS_BY_DOC_TYPE, MIN_BLOCKS } from './contracts.js';
 import type { WikiDocumentDraft, WikiOutlineEntry } from './contracts.js';
 
 export function buildCheckMermaidTool(): RegisteredTool {
@@ -45,7 +45,7 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
   return {
     id: 'wiki.commit_document',
     label: 'Commit Wiki Document',
-    description: 'Submit a completed wiki document. Pass parentPlanId to nest under a parent. Quality gates: min 3 blocks, paragraph/list/table content >= 100 chars, non-heading blocks must have sourceHints.',
+    description: 'Submit a completed wiki document. Quality gates: minimum blocks per doc type, structured block content validation, non-heading blocks must have sourceHints.',
     category: 'write',
     mutability: 'write',
     resumeBehavior: 'auto',
@@ -57,8 +57,7 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
       sortOrder: z.number().int().optional().describe('Display order among siblings.'),
       blocks: z.array(z.object({
         blockType: z.enum(WIKI_BLOCK_TYPES as [string, ...string[]]),
-        content: z.string().describe('Block content as a markdown string.'),
-        contentFormat: z.enum(['rich_text_json', 'markdown_fragment', 'diagram_json']).optional(),
+        content: z.record(z.string(), z.unknown()).describe('Block content as JSON matching the block type schema.'),
         sourceHints: z.array(z.string()).optional(),
         confidence: z.number().min(0).max(1).optional(),
       })).min(1).describe('Document blocks.'),
@@ -71,7 +70,7 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
       })).min(1).describe('Discrete verifiable claims made in this document.'),
     }),
     execute(input) {
-      const args = input.args as WikiDocumentDraft & { parentPlanId?: string; blocks: Array<{ blockType: WikiBlockType; content: string; contentFormat?: WikiBlockContentFormat; sourceHints?: string[]; confidence?: number }> };
+      const args = input.args as WikiDocumentDraft & { parentPlanId?: string; blocks: Array<{ blockType: WikiBlockType; content: Record<string, unknown>; sourceHints?: string[]; confidence?: number }> };
       if (!args?.blocks || !Array.isArray(args.blocks)) {
         return { result: { ok: false, errors: ['blocks array is required.'], message: 'Document rejected.' }, displaySummary: 'Document rejected.', artifacts: [] };
       }
@@ -80,23 +79,18 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
       }
 
       const errors: string[] = [];
-      if (args.parentPlanId && outline) {
-        if (!outline.find(p => p.id === args.parentPlanId)) {
-          errors.push(`parentPlanId "${args.parentPlanId}" not found in outline.`);
-        }
-      }
-      if (args.blocks.length < MIN_BLOCKS) {
-        errors.push(`Too few blocks: ${args.blocks.length} (minimum ${MIN_BLOCKS}).`);
+      const minBlocks = MIN_BLOCKS_BY_DOC_TYPE[args.docType as WikiDocType] ?? MIN_BLOCKS;
+      if (args.blocks.length < minBlocks) {
+        errors.push(`Too few blocks: ${args.blocks.length} (minimum ${minBlocks} for ${args.docType}).`);
       }
       for (let i = 0; i < args.blocks.length; i++) {
         const block = args.blocks[i];
-        const needsContent = ['paragraph', 'list', 'table', 'code_ref'].includes(block.blockType);
-        const content = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
-        if (needsContent && content.length < MIN_CONTENT_LENGTH) {
-          errors.push(`Block ${i + 1} (${block.blockType}) too short: ${content.length} chars (min ${MIN_CONTENT_LENGTH}).`);
+        const validation = validateBlockContent(block.blockType as WikiBlockType, block.content);
+        if (!validation.ok) {
+          errors.push(`Block ${i + 1} (${block.blockType}): ${validation.errors?.join('; ')}`);
         }
-        const needsHints = block.blockType !== 'heading' && block.blockType !== 'task';
-        if (needsHints && (!block.sourceHints || block.sourceHints.length === 0)) {
+        // sourceHints still required for non-heading blocks
+        if (block.blockType !== 'heading' && (!block.sourceHints || block.sourceHints.length === 0)) {
           errors.push(`Block ${i + 1} (${block.blockType}) missing sourceHints.`);
         }
       }
