@@ -49,7 +49,7 @@ function makeSnapshotRow(overrides: Record<string, unknown> = {}) {
 function makeBlockRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'block-1', projectId: 'proj-1', documentId: 'doc-1',
-    blockType: 'paragraph', contentJson: '{"text":"hello"}',
+    blockType: 'prose', contentJson: '{"text":"hello"}',
     contentFormat: 'rich_text_json', sourceBindingIdsJson: '[]',
     contentHash: 'abc', generatedFromHash: null,
     staleState: 'fresh', manualState: 'none', confidence: 0.8,
@@ -94,7 +94,7 @@ describe('wikiStore.getBlock', () => {
     const result = await wikiStore.getBlock('block-1');
     expect(result).not.toBeNull();
     expect(result!.content).toEqual({ text: 'hello' });
-    expect(result!.blockType).toBe('paragraph');
+    expect(result!.blockType).toBe('prose');
   });
 });
 
@@ -166,7 +166,7 @@ describe('wikiStore.upsertBlock — manual protection', () => {
         id: 'block-1',
         projectId: 'proj-1',
         documentId: 'doc-1',
-        blockType: 'paragraph',
+        blockType: 'prose',
         content: { text: 'overwrite' },
       }),
     ).rejects.toThrow(WikiManualProtectionError);
@@ -181,7 +181,7 @@ describe('wikiStore.upsertBlock — manual protection', () => {
     const result = await wikiStore.upsertBlock({
       projectId: 'proj-1',
       documentId: 'doc-1',
-      blockType: 'paragraph',
+      blockType: 'prose',
       content: { text: 'ok' },
     });
     expect(result.id).toBe('block-1');

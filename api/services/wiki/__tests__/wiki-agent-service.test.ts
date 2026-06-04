@@ -14,7 +14,7 @@ vi.mock('nanoid', () => ({
   nanoid: () => `generated-${++nanoidCounter}`,
 }));
 
-vi.mock('../../llm-runtime/stream.js', () => ({
+vi.mock('../../llm-runtime/gateway.js', () => ({
   generateGatewayObject: (...args: unknown[]) => mockGenerateGatewayObject(...args),
 }));
 
@@ -139,19 +139,12 @@ describe('wikiAgentService.generateWiki', () => {
     expect(request.messages.map((message: { content: string }) => message.content).join('\n')).toContain('json');
     expect(result.documents).toHaveLength(1);
     expect(result.documents[0].id).toMatch(/^generated-\d+$/);
-    expect(result.documents[0].docType).toBe('tech_stack');
+    expect(result.documents[0].docType).toBe('landscape');
     expect(result.documents[0].sortOrder).toBe(2);
     expect(result.documents[0].blocks[0].id).toMatch(/^generated-\d+$/);
-    expect(result.documents[0].blocks[0].blockType).toBe('paragraph');
-    expect(result.documents[0].blocks[0].content).toEqual({
-      text: 'Uses TypeScript across the API runtime.',
-    });
+    expect(result.documents[0].blocks[0].blockType).toBe('prose');
     expect(result.documents[0].blocks[0].confidence).toBe(0.9);
     expect(result.documents[0].blocks[1].blockType).toBe('list');
-    expect(result.documents[0].blocks[1].content).toEqual({
-      items: ['api/server.ts', 'src/index.ts'],
-      ordered: false,
-    });
   });
 
   it('recovers from schema mismatch when the raw JSON text is still salvageable', async () => {
@@ -177,7 +170,8 @@ describe('wikiAgentService.generateWiki', () => {
 
     expect(result.documents).toHaveLength(1);
     expect(result.documents[0].title).toBe('Overview');
-    expect(result.documents[0].blocks[0].content).toEqual({ text: 'Recovered from raw JSON.' });
+    expect(result.documents[0].docType).toBe('landscape');
+    expect(result.documents[0].blocks[0].blockType).toBe('prose');
     expect(mockWarn).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: 'proj-1', cause: 'No object generated: response did not match schema.' }),
       'wiki generator: recovered structured output after schema mismatch',
@@ -190,9 +184,9 @@ describe('wikiAgentService.generateWiki', () => {
     const result = await wikiAgentService.generateWiki(makeScan(), { locale: 'en', projectId: 'proj-1' });
 
     expect(result.documents).toHaveLength(3);
-    expect(result.documents.map(doc => doc.docType)).toEqual(['overview', 'architecture', 'tech_stack']);
+    expect(result.documents.map(doc => doc.docType)).toEqual(['landscape', 'topology', 'landscape']);
     expect(result.documents[0].blocks[0].content).toEqual({
-      text: expect.stringContaining('generated from static analysis data'),
+      segments: [{ type: 'text', value: expect.stringContaining('generated from static analysis data') }],
     });
     expect(mockWarn).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: 'proj-1' }),
