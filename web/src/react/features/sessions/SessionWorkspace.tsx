@@ -70,7 +70,7 @@ function SessionStatusCard({ stats }: { stats: SessionStats }) {
           />
         </div>
         <div className="text-[8px] text-muted-foreground/60">
-          {(stats.tokenUsage.total / 1000).toFixed(1)}K / {(stats.contextLimit / 1000).toFixed(0)}K tokens
+          {(stats.tokenUsage.total / 1000).toFixed(1)}K / {(stats.contextLimit / 1000).toFixed(0)}K context
         </div>
       </div>
       <div className="flex items-center gap-3 text-[9px] text-muted-foreground">

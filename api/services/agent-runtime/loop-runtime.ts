@@ -32,13 +32,18 @@ import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
 import {
   type DisclosureState,
   type DisclosureStrategy,
+  type FallbackDisclosureState,
   advance as advanceDisclosure,
   createState as createDisclosureState,
   filterByDisclosure,
+  filterFallbackTools,
   getStrategyForProfile,
   isTerminalTier,
   promote as promoteDisclosure,
   rebuildState as rebuildDisclosureState,
+  rebuildFallbackState,
+  advanceFallbackState,
+  createFallbackState,
 } from "./tool-disclosure.js";
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
 import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
@@ -334,6 +339,13 @@ export class AgentLoopRuntime {
           )
         : null;
 
+      let fallbackState: FallbackDisclosureState | null = profile.fallbackDisclosure
+        ? rebuildFallbackState(
+            this.store.listRunToolCalls(run.id),
+            profile.fallbackDisclosure,
+          )
+        : null;
+
       let clearingActivated = false;
 
       while (run.currentStep < maxSteps) {
@@ -412,6 +424,7 @@ export class AgentLoopRuntime {
           blockedByPermission: pendingPermission?.userReply === "reject",
           disclosureState: disclosureState,
           disclosureStrategy: disclosureStrategy,
+          fallbackState: fallbackState,
           previousStepUsage: previousStep?.metadata?.usage as Record<string, unknown> | undefined,
           abortSignal: runAbortSignal,
           clearingActivated,
@@ -802,6 +815,31 @@ export class AgentLoopRuntime {
           disclosureState = advanceDisclosure(disclosureState);
         }
 
+        // Advance fallback disclosure based on bash results in this step.
+        if (fallbackState && profile.fallbackDisclosure) {
+          for (const { exec } of executions) {
+            if (exec.record.toolId === profile.fallbackDisclosure.trackedToolId) {
+              const { state: nextState, justDisclosed } = advanceFallbackState(
+                fallbackState, exec.record, profile.fallbackDisclosure,
+              );
+              fallbackState = nextState;
+              if (justDisclosed) {
+                logger.info(
+                  { sessionId, runId: run.id, stepId: step.id, fallbackTools: profile.fallbackDisclosure.fallbackToolIds },
+                  "[agent-runtime] fallback tools disclosed after consecutive bash errors",
+                );
+                this.events.append({
+                  sessionId,
+                  type: 'progress_updated',
+                  summary: `Fallback tools unlocked: ${profile.fallbackDisclosure.fallbackToolIds.join(', ')}`,
+                  payload: { kind: 'fallback_disclosure', tools: profile.fallbackDisclosure.fallbackToolIds },
+                });
+                sessionLiveBus.emit(sessionId, { type: 'fallback_disclosed', tools: profile.fallbackDisclosure.fallbackToolIds } as any);
+              }
+            }
+          }
+        }
+
         const completedStep = this.store.updateRunStep(step.id, {
           status: waitingPermission ? "waiting_permission" : "completed",
           completedAt: nowIso(),
@@ -1112,6 +1150,7 @@ export class AgentLoopRuntime {
     blockedByPermission: boolean;
     disclosureState: DisclosureState | null;
     disclosureStrategy: DisclosureStrategy | null;
+    fallbackState: FallbackDisclosureState | null;
     previousStepUsage?: Record<string, unknown> | null;
     abortSignal?: AbortSignal;
     clearingActivated?: boolean;
@@ -1161,10 +1200,14 @@ export class AgentLoopRuntime {
           tool.category === "skill" ||
           tool.id === "tools.invalid",
       );
-    const visibleTools =
+    let visibleTools =
       input.disclosureState && input.disclosureStrategy
         ? filterByDisclosure(availableTools, input.disclosureState, input.disclosureStrategy)
         : availableTools;
+    // Apply fallback disclosure — hide tools that bash can cover until bash fails repeatedly.
+    if (input.fallbackState && input.profile.fallbackDisclosure) {
+      visibleTools = filterFallbackTools(visibleTools, input.fallbackState, input.profile.fallbackDisclosure);
+    }
     const toolSet = buildLoopToolSet(availableTools, visibleTools);
     const contextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
 
@@ -1202,6 +1245,10 @@ export class AgentLoopRuntime {
       disclosureHint:
         input.disclosureState && input.disclosureStrategy && !isTerminalTier(input.disclosureState, input.disclosureStrategy)
           ? 'Currently in exploration mode. Call tools_escalate when ready to write files.'
+          : undefined,
+      fallbackHint:
+        input.fallbackState?.disclosed
+          ? 'Fallback tools (file.read, file.glob, file.list, grep.search, diff.read) are now available after repeated bash failures. Use them if bash is not working for this task.'
           : undefined,
     });
 
