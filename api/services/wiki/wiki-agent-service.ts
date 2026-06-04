@@ -17,9 +17,9 @@ import type { WikiBlockContentFormat, WikiDocType, WikiBlockType } from './contr
 
 const WikiBlockDraftSchema = z.object({
   id: z.string(),
-  blockType: z.enum(['heading', 'paragraph', 'list', 'table', 'diagram', 'code_ref', 'task']),
+  blockType: z.enum(['heading', 'prose', 'signature', 'callout', 'table', 'diagram', 'list']),
   content: z.unknown(),
-  contentFormat: z.enum(['rich_text_json', 'markdown_fragment', 'diagram_json']).optional(),
+  contentFormat: z.enum(['structured_json', 'markdown_fragment']).optional(),
   sourceHints: z.array(z.string()).optional(),
   confidence: z.number().min(0).max(1).optional(),
 });
@@ -27,7 +27,7 @@ const WikiBlockDraftSchema = z.object({
 const WikiDocumentDraftSchema = z.object({
   id: z.string(),
   title: z.string(),
-  docType: z.enum(['overview', 'architecture', 'tech_stack', 'module_design', 'data_model', 'api', 'flow', 'directory_tree', 'module_spec']),
+  docType: z.enum(['landscape', 'topology', 'module', 'flow', 'data']),
   sortOrder: z.number().optional(),
   blocks: z.array(WikiBlockDraftSchema),
 });
@@ -77,8 +77,8 @@ type RawWikiGeneratorOutput = z.infer<typeof RawWikiGeneratorOutputSchema>;
 function buildSystemPrompt(): string {
   return `You are a senior software architect generating a structured Codebase Design Wiki.
 Rules:
-- Allowed docType values: overview, architecture, tech_stack, module_design, data_model, api, flow, directory_tree, module_spec.
-- Allowed blockType values: heading, paragraph, list, table, diagram, code_ref, task.
+- Allowed docType values: landscape, topology, module, flow, data.
+- Allowed blockType values: heading, prose, signature, callout, table, diagram, list.
 - Do not generate document ids or block ids. The system will assign them.
 - Every non-heading block must have at least one sourceHint (file path, symbol name, or module name from the code index).
 - Blocks without evidence must have confidence < 0.5.
@@ -132,37 +132,34 @@ ${communitySummary}
 ## Semantic Graph Nodes
 ${semanticNodes}
 
-Generate documents covering: overview, architecture, tech_stack, and the most important module_design sections.
-Each document should have 3-8 blocks. Use sourceHints to reference actual file paths and symbol names from above.
+Generate documents covering: landscape, topology, and the most important module sections.
+Each document should have 5-8 blocks. Use sourceHints to reference actual file paths and symbol names from above.
 Return only valid json. Do not include markdown fences or explanatory prose.`;
 }
 
 // ── Normalization ────────────────────────────────────────────────────────────
 
 const DOC_TYPE_VALUES = new Set<WikiDocType>([
-  'overview',
-  'architecture',
-  'tech_stack',
-  'module_design',
-  'data_model',
-  'api',
+  'landscape',
+  'topology',
+  'module',
   'flow',
+  'data',
 ]);
 
 const BLOCK_TYPE_VALUES = new Set<WikiBlockType>([
   'heading',
-  'paragraph',
-  'list',
+  'prose',
+  'signature',
+  'callout',
   'table',
   'diagram',
-  'code_ref',
-  'task',
+  'list',
 ]);
 
 const CONTENT_FORMAT_VALUES = new Set<WikiBlockContentFormat>([
-  'rich_text_json',
+  'structured_json',
   'markdown_fragment',
-  'diagram_json',
 ]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -261,23 +258,23 @@ function normalizeDocType(value: unknown, title: string | undefined): WikiDocTyp
     if (DOC_TYPE_VALUES.has(normalized as WikiDocType)) {
       return normalized as WikiDocType;
     }
-    if (normalized.includes('tech') && normalized.includes('stack')) return 'tech_stack';
-    if (normalized.includes('module')) return 'module_design';
-    if (normalized.includes('data') && normalized.includes('model')) return 'data_model';
-    if (normalized === 'api' || normalized.includes('interface') || normalized.includes('endpoint')) return 'api';
+    if (normalized.includes('tech') && normalized.includes('stack')) return 'landscape';
+    if (normalized.includes('module')) return 'module';
+    if (normalized.includes('data') && normalized.includes('model')) return 'data';
+    if (normalized === 'api' || normalized.includes('interface') || normalized.includes('endpoint')) return 'module';
     if (normalized.includes('flow') || normalized.includes('workflow')) return 'flow';
-    if (normalized.includes('arch')) return 'architecture';
-    if (normalized.includes('overview') || normalized.includes('summary')) return 'overview';
+    if (normalized.includes('arch') || normalized.includes('topology')) return 'topology';
+    if (normalized.includes('overview') || normalized.includes('summary') || normalized.includes('landscape')) return 'landscape';
   }
 
   const titleKey = normalizeKey(title ?? '');
-  if (titleKey.includes('tech') && titleKey.includes('stack')) return 'tech_stack';
-  if (titleKey.includes('module')) return 'module_design';
-  if (titleKey.includes('data') && titleKey.includes('model')) return 'data_model';
-  if (titleKey === 'api' || titleKey.includes('endpoint')) return 'api';
+  if (titleKey.includes('tech') && titleKey.includes('stack')) return 'landscape';
+  if (titleKey.includes('module')) return 'module';
+  if (titleKey.includes('data') && titleKey.includes('model')) return 'data';
+  if (titleKey === 'api' || titleKey.includes('endpoint')) return 'module';
   if (titleKey.includes('flow')) return 'flow';
-  if (titleKey.includes('arch')) return 'architecture';
-  return 'overview';
+  if (titleKey.includes('arch') || titleKey.includes('topology')) return 'topology';
+  return 'landscape';
 }
 
 function normalizeBlockType(raw: RawWikiBlockDraft): WikiBlockType {
@@ -287,20 +284,23 @@ function normalizeBlockType(raw: RawWikiBlockDraft): WikiBlockType {
       return normalized as WikiBlockType;
     }
     if (normalized.includes('heading') || normalized === 'title') return 'heading';
-    if (normalized === 'text' || normalized === 'summary' || normalized === 'note') return 'paragraph';
+    if (normalized === 'text' || normalized === 'summary' || normalized === 'note' || normalized === 'paragraph') return 'prose';
     if (normalized.includes('list') || normalized === 'bullets' || normalized === 'checklist') return 'list';
     if (normalized.includes('table') || normalized === 'matrix') return 'table';
     if (normalized.includes('diagram') || normalized === 'mermaid' || normalized === 'graph') return 'diagram';
-    if (normalized.includes('code')) return 'code_ref';
-    if (normalized.includes('task') || normalized.includes('todo')) return 'task';
+    if (normalized.includes('code') || normalized.includes('signature')) return 'signature';
+    if (normalized.includes('callout') || normalized.includes('warn') || normalized.includes('important')) return 'callout';
+    if (normalized.includes('task') || normalized.includes('todo')) return 'prose';
   }
 
   const content = asRecord(raw.content);
+  if (Array.isArray(content?.segments)) return 'prose';
+  if (Array.isArray(content?.tokens)) return 'signature';
   if (Array.isArray(raw.items) || Array.isArray(content?.items)) return 'list';
   if (Array.isArray(content?.headers) || Array.isArray(content?.rows)) return 'table';
-  if (firstString(content?.code, content?.filePath, content?.qualifiedName)) return 'code_ref';
+  if (firstString(content?.code, content?.filePath, content?.qualifiedName)) return 'signature';
   if (firstString(raw.title) && coerceNumber(content?.level ?? asRecord(raw)?.level) != null) return 'heading';
-  return 'paragraph';
+  return 'prose';
 }
 
 function normalizeHeadingContent(raw: RawWikiBlockDraft): { level: number; text: string } {
@@ -381,7 +381,7 @@ function normalizeBlock(raw: RawWikiBlockDraft): WikiBlockDraft {
       id: nanoid(),
       blockType,
       content: normalizeHeadingContent(raw),
-      contentFormat: 'rich_text_json',
+      contentFormat: 'structured_json',
       ...(sourceHints ? { sourceHints } : {}),
       ...(confidence != null ? { confidence } : {}),
     };
@@ -394,7 +394,7 @@ function normalizeBlock(raw: RawWikiBlockDraft): WikiBlockDraft {
         id: nanoid(),
         blockType,
         content,
-        contentFormat: 'rich_text_json',
+        contentFormat: 'structured_json',
         ...(sourceHints ? { sourceHints } : {}),
         ...(confidence != null ? { confidence } : {}),
       };
@@ -408,47 +408,32 @@ function normalizeBlock(raw: RawWikiBlockDraft): WikiBlockDraft {
         id: nanoid(),
         blockType,
         content,
-        contentFormat: 'rich_text_json',
+        contentFormat: 'structured_json',
         ...(sourceHints ? { sourceHints } : {}),
         ...(confidence != null ? { confidence } : {}),
       };
     }
   }
 
-  if (blockType === 'code_ref') {
+  if (blockType === 'signature') {
     return {
       id: nanoid(),
       blockType,
       content: normalizeCodeRefContent(raw),
-      contentFormat: 'rich_text_json',
+      contentFormat: 'structured_json',
       ...(sourceHints ? { sourceHints } : {}),
       ...(confidence != null ? { confidence } : {}),
     };
   }
 
   if (blockType === 'diagram') {
-    const preferredFormat = typeof raw.contentFormat === 'string' && CONTENT_FORMAT_VALUES.has(raw.contentFormat as WikiBlockContentFormat)
-      ? raw.contentFormat as WikiBlockContentFormat
-      : undefined;
     const stringContent = stringifyUnknown(raw.content);
-    const contentFormat = preferredFormat ?? (typeof raw.content === 'string' ? 'markdown_fragment' : 'diagram_json');
+    const content = typeof raw.content === 'object' && raw.content ? raw.content : { diagramType: 'flowchart', code: stringContent };
     return {
       id: nanoid(),
       blockType,
-      content: contentFormat === 'diagram_json' ? (raw.content ?? {}) : stringContent,
-      contentFormat,
-      ...(sourceHints ? { sourceHints } : {}),
-      ...(confidence != null ? { confidence } : {}),
-    };
-  }
-
-  if (blockType === 'task') {
-    const text = firstString(raw.text, raw.title, raw.content) ?? stringifyUnknown(raw.content);
-    return {
-      id: nanoid(),
-      blockType,
-      content: text,
-      contentFormat: 'markdown_fragment',
+      content,
+      contentFormat: 'structured_json',
       ...(sourceHints ? { sourceHints } : {}),
       ...(confidence != null ? { confidence } : {}),
     };
@@ -456,11 +441,11 @@ function normalizeBlock(raw: RawWikiBlockDraft): WikiBlockDraft {
 
   return {
     id: nanoid(),
-    blockType: 'paragraph',
+    blockType: 'prose',
     content: {
-      text: firstString(raw.text, raw.title, raw.content) ?? stringifyUnknown(raw.content),
+      segments: [{ type: 'text', value: firstString(raw.text, raw.title, raw.content) ?? stringifyUnknown(raw.content) }],
     },
-    contentFormat: 'rich_text_json',
+    contentFormat: 'structured_json',
     ...(sourceHints ? { sourceHints } : {}),
     ...(confidence != null ? { confidence } : {}),
   };
@@ -481,15 +466,11 @@ function normalizeDocumentTitle(raw: RawWikiDocumentDraft, docType: WikiDocType,
   if (explicitTitle) return explicitTitle;
 
   const fallbackTitles: Record<WikiDocType, { zh: string; en: string }> = {
-    overview: { zh: '项目概览', en: 'Overview' },
-    architecture: { zh: '架构设计', en: 'Architecture' },
-    tech_stack: { zh: '技术栈', en: 'Tech Stack' },
-    module_design: { zh: '模块设计', en: 'Module Design' },
-    data_model: { zh: '数据模型', en: 'Data Model' },
-    api: { zh: 'API 设计', en: 'API Design' },
+    landscape: { zh: '项目全景', en: 'Landscape' },
+    topology: { zh: '架构拓扑', en: 'Topology' },
+    module: { zh: '模块设计', en: 'Module' },
     flow: { zh: '流程设计', en: 'Flow' },
-    directory_tree: { zh: '目录结构', en: 'Directory Tree' },
-    module_spec: { zh: '模块规格', en: 'Module Spec' },
+    data: { zh: '数据模型', en: 'Data' },
   };
 
   return fallbackTitles[docType][locale];
@@ -507,7 +488,7 @@ function normalizeDocument(raw: RawWikiDocumentDraft, index: number, locale: 'zh
   if (blocks.length === 0) {
     const fallbackText = firstString(raw.summary, raw.content);
     if (fallbackText) {
-      blocks.push(normalizeBlock({ blockType: 'paragraph', content: fallbackText }));
+      blocks.push(normalizeBlock({ blockType: 'prose', content: fallbackText }));
     }
   }
 
@@ -599,23 +580,23 @@ function buildFallbackWiki(scan: CodeMapScanResult, locale: 'zh' | 'en'): WikiGe
     documents: [
       {
         id: nanoid(),
-        title: locale === 'zh' ? '项目概览' : 'Overview',
-        docType: 'overview',
+        title: locale === 'zh' ? '项目全景' : 'Landscape',
+        docType: 'landscape',
         sortOrder: 0,
         blocks: [
           {
             id: nanoid(),
-            blockType: 'paragraph',
-            content: { text: overviewText },
-            contentFormat: 'rich_text_json',
+            blockType: 'prose',
+            content: { segments: [{ type: 'text', value: overviewText }] },
+            contentFormat: 'structured_json',
             sourceHints: topSourceHints,
             confidence: 0.6,
           },
           {
             id: nanoid(),
             blockType: 'list',
-            content: { items: topFiles, ordered: false },
-            contentFormat: 'rich_text_json',
+            content: { items: topFiles.map(f => ({ segments: [{ type: 'text', value: f }] })), ordered: false },
+            contentFormat: 'structured_json',
             sourceHints: topSourceHints,
             confidence: 0.6,
           },
@@ -623,23 +604,23 @@ function buildFallbackWiki(scan: CodeMapScanResult, locale: 'zh' | 'en'): WikiGe
       },
       {
         id: nanoid(),
-        title: locale === 'zh' ? '架构设计' : 'Architecture',
-        docType: 'architecture',
+        title: locale === 'zh' ? '架构拓扑' : 'Topology',
+        docType: 'topology',
         sortOrder: 1,
         blocks: [
           {
             id: nanoid(),
-            blockType: 'paragraph',
-            content: { text: architectureText },
-            contentFormat: 'rich_text_json',
+            blockType: 'prose',
+            content: { segments: [{ type: 'text', value: architectureText }] },
+            contentFormat: 'structured_json',
             sourceHints: topSourceHints,
             confidence: 0.55,
           },
           {
             id: nanoid(),
             blockType: 'list',
-            content: { items: moduleItems.length > 0 ? moduleItems : communityItems, ordered: false },
-            contentFormat: 'rich_text_json',
+            content: { items: (moduleItems.length > 0 ? moduleItems : communityItems).map(item => ({ segments: [{ type: 'text', value: item }] })), ordered: false },
+            contentFormat: 'structured_json',
             sourceHints: topSourceHints,
             confidence: 0.55,
           },
@@ -648,19 +629,20 @@ function buildFallbackWiki(scan: CodeMapScanResult, locale: 'zh' | 'en'): WikiGe
       {
         id: nanoid(),
         title: locale === 'zh' ? '技术栈' : 'Tech Stack',
-        docType: 'tech_stack',
+        docType: 'landscape',
         sortOrder: 2,
         blocks: [
           {
             id: nanoid(),
             blockType: 'list',
             content: {
-              items: languageItems.length > 0
+              items: (languageItems.length > 0
                 ? languageItems
-                : [locale === 'zh' ? '未能从索引中识别语言分布' : 'No language distribution available from the index'],
+                : [locale === 'zh' ? '未能从索引中识别语言分布' : 'No language distribution available from the index']
+              ).map(item => ({ segments: [{ type: 'text', value: item }] })),
               ordered: false,
             },
-            contentFormat: 'rich_text_json',
+            contentFormat: 'structured_json',
             sourceHints: topSourceHints,
             confidence: 0.6,
           },

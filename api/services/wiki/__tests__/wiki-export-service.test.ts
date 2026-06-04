@@ -75,7 +75,7 @@ describe('wikiExportService.exportSnapshot', () => {
       documents: [makeDoc()],
       blocks: [
         makeBlock('block-1', 'heading', { level: 2, text: 'Architecture' }),
-        makeBlock('block-2', 'paragraph', { text: 'This is the overview.' }),
+        makeBlock('block-2', 'prose', { segments: [{ type: 'text', value: 'This is the overview.' }] }),
       ],
       sourceBindings: [],
       patchesSummary: { pending: 0, conflict: 0 },
@@ -100,11 +100,11 @@ describe('wikiExportService.exportSnapshot', () => {
     expect(result.content).toContain('## My Section');
   });
 
-  it('renders paragraph block as plain text', async () => {
+  it('renders prose block as plain text', async () => {
     mockGetSnapshotTree.mockResolvedValueOnce({
       snapshot: makeSnapshot(),
       documents: [makeDoc({ blockIds: ['block-1'] })],
-      blocks: [makeBlock('block-1', 'paragraph', { text: 'Hello world.' })],
+      blocks: [makeBlock('block-1', 'prose', { segments: [{ type: 'text', value: 'Hello world.' }] })],
       sourceBindings: [],
       patchesSummary: { pending: 0, conflict: 0 },
     });
@@ -117,7 +117,7 @@ describe('wikiExportService.exportSnapshot', () => {
     mockGetSnapshotTree.mockResolvedValueOnce({
       snapshot: makeSnapshot(),
       documents: [makeDoc({ blockIds: ['block-1'] })],
-      blocks: [makeBlock('block-1', 'list', { items: ['Item A', 'Item B'], ordered: false })],
+      blocks: [makeBlock('block-1', 'list', { items: [{ segments: [{ type: 'text', value: 'Item A' }] }, { segments: [{ type: 'text', value: 'Item B' }] }], ordered: false })],
       sourceBindings: [],
       patchesSummary: { pending: 0, conflict: 0 },
     });
@@ -132,8 +132,8 @@ describe('wikiExportService.exportSnapshot', () => {
       snapshot: makeSnapshot(),
       documents: [makeDoc({ blockIds: ['block-1'] })],
       blocks: [makeBlock('block-1', 'table', {
-        headers: ['Name', 'Type'],
-        rows: [['foo', 'string'], ['bar', 'number']],
+        headers: [{ key: 'name', label: 'Name' }, { key: 'type', label: 'Type' }],
+        rows: [{ name: 'foo', type: 'string' }, { name: 'bar', type: 'number' }],
       })],
       sourceBindings: [],
       patchesSummary: { pending: 0, conflict: 0 },
@@ -148,7 +148,7 @@ describe('wikiExportService.exportSnapshot', () => {
     mockGetSnapshotTree.mockResolvedValueOnce({
       snapshot: makeSnapshot(),
       documents: [makeDoc({ blockIds: ['block-1'] })],
-      blocks: [makeBlock('block-1', 'paragraph', { text: 'Text.' }, { sourceBindingIds: ['bind-1'] })],
+      blocks: [makeBlock('block-1', 'prose', { segments: [{ type: 'text', value: 'Text.' }] }, { sourceBindingIds: ['bind-1'] })],
       sourceBindings: [],
       patchesSummary: { pending: 0, conflict: 0 },
     });
@@ -161,7 +161,7 @@ describe('wikiExportService.exportSnapshot', () => {
     mockGetSnapshotTree.mockResolvedValueOnce({
       snapshot: makeSnapshot(),
       documents: [makeDoc({ blockIds: ['block-1'] })],
-      blocks: [makeBlock('block-1', 'paragraph', { text: 'Text.' }, { sourceBindingIds: ['bind-1'] })],
+      blocks: [makeBlock('block-1', 'prose', { segments: [{ type: 'text', value: 'Text.' }] }, { sourceBindingIds: ['bind-1'] })],
       sourceBindings: [],
       patchesSummary: { pending: 0, conflict: 0 },
     });
