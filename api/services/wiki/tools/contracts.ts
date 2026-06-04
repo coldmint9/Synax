@@ -2,18 +2,22 @@ import type { RegisteredTool } from '../../agent-runtime/contracts.js';
 import type { WikiDocType, WikiBlockType, WikiBlockContentFormat } from '../contracts.js';
 
 export const WIKI_DOC_TYPES: WikiDocType[] = [
-  'overview', 'architecture', 'tech_stack', 'module_design',
-  'data_model', 'api', 'flow',
-  'directory_tree', 'module_spec',
+  'landscape', 'topology', 'module', 'flow', 'data',
 ];
 
 export const WIKI_BLOCK_TYPES: WikiBlockType[] = [
-  'heading', 'paragraph', 'list', 'table',
-  'diagram', 'code_ref', 'task',
+  'heading', 'prose', 'signature', 'callout', 'table', 'diagram', 'list',
 ];
 
-export const MIN_CONTENT_LENGTH = 100;
-export const MIN_BLOCKS = 3;
+export const MIN_CONTENT_LENGTH = 200;
+export const MIN_BLOCKS_BY_DOC_TYPE: Record<WikiDocType, number> = {
+  landscape: 6,
+  topology: 5,
+  module: 8,
+  flow: 6,
+  data: 5,
+};
+export const MIN_BLOCKS = 5;
 export const PAGE_SIZE = 80;
 
 // Package baseline thresholds for outline quality gates

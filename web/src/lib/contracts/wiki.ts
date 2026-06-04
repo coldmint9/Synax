@@ -3,25 +3,9 @@
 // ---------------------------------------------------------------------------
 
 export type WikiSnapshotStatus = 'ready' | 'refreshing' | 'outline_ready' | 'writing' | 'partial' | 'failed';
-export type WikiDocType =
-  | 'overview'
-  | 'architecture'
-  | 'tech_stack'
-  | 'module_design'
-  | 'data_model'
-  | 'api'
-  | 'flow'
-  | 'directory_tree'
-  | 'module_spec';
-export type WikiBlockType =
-  | 'heading'
-  | 'paragraph'
-  | 'list'
-  | 'table'
-  | 'diagram'
-  | 'code_ref'
-  | 'task';
-export type WikiBlockContentFormat = 'rich_text_json' | 'markdown_fragment' | 'diagram_json';
+export type WikiDocType = 'landscape' | 'topology' | 'module' | 'flow' | 'data';
+export type WikiBlockType = 'heading' | 'prose' | 'signature' | 'callout' | 'table' | 'diagram' | 'list';
+export type WikiBlockContentFormat = 'structured_json' | 'markdown_fragment';
 export type WikiStaleState = 'fresh' | 'possibly_stale' | 'stale' | 'semantic_review_needed' | 'conflict';
 export type WikiManualState = 'none' | 'edited' | 'locked';
 export type WikiPatchKind = 'insert' | 'update' | 'delete' | 'move' | 'split' | 'merge';
@@ -36,6 +20,71 @@ export type WikiSourceType =
   | 'file'
   | 'semantic_node'
   | 'dependency_edge';
+
+// ── Block Content Schemas ───────────────────────────────────────────────────
+
+export type Segment =
+  | { type: 'text'; value: string }
+  | { type: 'bold'; value: string }
+  | { type: 'code'; value: string }
+  | { type: 'xref'; target: string; label: string };
+
+export interface HeadingContent {
+  level: 1 | 2 | 3;
+  text: string;
+  anchor?: string;
+}
+
+export interface ProseContent {
+  segments: Segment[];
+}
+
+export interface SignatureToken {
+  type: 'keyword' | 'type' | 'name' | 'param' | 'punctuation' | 'comment';
+  value: string;
+}
+
+export interface SignatureContent {
+  language: string;
+  tokens: SignatureToken[];
+  source: { file: string; line?: number };
+}
+
+export interface CalloutContent {
+  level: 'info' | 'warn' | 'important';
+  title?: string;
+  body: Segment[];
+}
+
+export interface TableContent {
+  headers: Array<{ key: string; label: string }>;
+  rows: Array<Record<string, string | { type: 'code'; value: string }>>;
+}
+
+export interface DiagramContent {
+  diagramType: 'flowchart' | 'sequence' | 'er' | 'state';
+  code: string;
+  caption?: string;
+}
+
+export interface ListItem {
+  segments: Segment[];
+  children?: ListItem[];
+}
+
+export interface ListContent {
+  ordered: boolean;
+  items: ListItem[];
+}
+
+export type WikiBlockContent =
+  | HeadingContent
+  | ProseContent
+  | SignatureContent
+  | CalloutContent
+  | TableContent
+  | DiagramContent
+  | ListContent;
 
 export interface WikiSnapshot {
   id: string;
