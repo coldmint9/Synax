@@ -1,13 +1,12 @@
 import { AlertTriangle, FileText, Lock, Loader2, Maximize2, Pencil, X, MessageCircle } from 'lucide-react'
 import { useState, useEffect, useMemo, memo } from 'react'
 import { Card, Typography } from '@heroui/react'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { renderDiagram } from '../../../lib/mermaid-renderer'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import type { WikiBlock, WikiDocument, WikiSourceBinding, DraftBlockChange } from '../../../lib/contracts/wiki'
-import './wiki-prose.css'
+import type { HeadingContent, ProseContent, SignatureContent, CalloutContent, TableContent, DiagramContent, ListContent } from '../../../lib/contracts/wiki'
+import { HeadingBlock as HeadingBlockV2, ProseBlock, SignatureBlock, CalloutBlock, TableBlock as TableBlockV2, DiagramBlock as DiagramBlockV2, ListBlock as ListBlockV2 } from './blocks'
+import './wiki-theme.css'
 import WikiBlockIssueInline from './WikiBlockIssueInline'
 
 // ── Stale badge ──────────────────────────────────────────────────────────────
@@ -43,314 +42,61 @@ function ManualBadge({ state }: { state: WikiBlock['manualState'] }) {
   )
 }
 
-// ── Block content renderers ──────────────────────────────────────────────────
+// ── Block content dispatch ───────────────────────────────────────────────────
 
-function HeadingBlock({ content }: { content: unknown }) {
-  const c = content as { level?: number; text?: string }
-  const level = c.level ?? 2
-  const text = c.text ?? ''
-  if (level === 1) return <h1 className="text-xl font-bold text-foreground">{text}</h1>
-  if (level === 2) return <h2 className="text-base font-semibold text-foreground">{text}</h2>
-  return <h3 className="text-sm font-semibold text-foreground/90">{text}</h3>
-}
-
-function ParagraphBlock({ content }: { content: unknown }) {
-  const c = content as { text?: string }
-  return <p className="text-[13px] leading-relaxed text-foreground/85">{c.text ?? ''}</p>
-}
-
-function ListBlock({ content }: { content: unknown }) {
-  const c = content as { items?: string[]; ordered?: boolean }
-  const items = c.items ?? []
-  if (c.ordered) {
-    return (
-      <ol className="list-decimal space-y-1 pl-5 text-[13px] text-foreground/85">
-        {items.map((item, i) => <li key={i}>{item}</li>)}
-      </ol>
-    )
-  }
-  return (
-    <ul className="list-disc space-y-1 pl-5 text-[13px] text-foreground/85">
-      {items.map((item, i) => <li key={i}>{item}</li>)}
-    </ul>
-  )
-}
-
-function TableBlock({ content }: { content: unknown }) {
-  const c = content as { headers?: string[]; rows?: string[][] }
-  const headers = c.headers ?? []
-  const rows = c.rows ?? []
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[12px]">
-        <thead>
-          <tr className="border-b border-border/40">
-            {headers.map((h, i) => (
-              <th key={i} className="px-3 py-2 text-left font-medium text-foreground/80">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri} className="border-b border-border/20 last:border-0 hover:bg-secondary/20">
-              {row.map((cell, ci) => (
-                <td key={ci} className="px-3 py-2 text-foreground/75">{cell}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function CodeRefBlock({ content }: { content: unknown }) {
-  const c = content as { language?: string; code?: string; filePath?: string }
-  const [html, setHtml] = useState('')
-  const code = c.code ?? ''
-  const lang = c.language ?? 'text'
-
-  useEffect(() => {
-    if (!code) return
-    let cancelled = false
-    import('shiki').then(({ createHighlighter }) =>
-      createHighlighter({ themes: ['github-dark'], langs: [] })
-    ).then(async (highlighter) => {
-      try { await highlighter.loadLanguage(lang as any) } catch { /* fallback */ }
-      const result = highlighter.codeToHtml(code, {
-        lang: highlighter.getLoadedLanguages().includes(lang) ? lang : 'text',
-        theme: 'github-dark',
-      })
-      if (!cancelled) setHtml(result)
-    })
-    return () => { cancelled = true }
-  }, [code, lang])
-
-  return (
-    <div className="rounded-lg overflow-hidden bg-[#0d1117]">
-      <div className="flex items-center h-8 px-3 bg-[#161b22]">
-        <div className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
-          <span className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
-          <span className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-        </div>
-        {c.filePath && (
-          <span className="ml-3 font-mono text-[11px] text-[#8b949e]">{c.filePath}</span>
-        )}
-      </div>
-      {html ? (
-        <div
-          className="overflow-x-auto p-3 text-[12px] leading-relaxed [&_pre]:!bg-transparent [&_pre]:!m-0 [&_pre]:!p-0 [&_code]:!bg-transparent"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
-      ) : (
-        <pre className="overflow-x-auto p-3 text-[12px] leading-relaxed text-[#c9d1d9]">
-          <code>{code}</code>
-        </pre>
-      )}
-    </div>
-  )
-}
-
-// Module-level singleton — shared across all ShikiCodeBlock instances
-let _highlighterPromise: Promise<any> | null = null
-function getHighlighter() {
-  if (!_highlighterPromise) {
-    _highlighterPromise = import('shiki').then(({ createHighlighter }) =>
-      createHighlighter({ themes: ['github-dark'], langs: [] })
-    )
-  }
-  return _highlighterPromise
-}
-
-const ShikiCodeBlock = memo(function ShikiCodeBlock({ code, language }: { code: string; language: string }) {
-  const [html, setHtml] = useState('')
-
-  useEffect(() => {
-    let cancelled = false
-    getHighlighter().then(async (highlighter) => {
-      try { await highlighter.loadLanguage(language as any) } catch { /* fallback to text */ }
-      const result = highlighter.codeToHtml(code, {
-        lang: highlighter.getLoadedLanguages().includes(language) ? language : 'text',
-        theme: 'github-dark',
-      })
-      if (!cancelled) setHtml(result)
-    })
-    return () => { cancelled = true }
-  }, [code, language])
-
-  if (!html) {
-    return <pre className="wiki-code-fallback"><code>{code}</code></pre>
-  }
-  return (
-    <div
-      className="wiki-code-highlighted"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  )
-})
-
-const MermaidFallback = memo(function MermaidFallback({ code }: { code: string }) {
-  const [svgHtml, setSvgHtml] = useState<string>('')
-  const [error, setError] = useState(false)
-
-  useEffect(() => {
-    if (!code) return
-    let cancelled = false
-    const id = `mmd-${Math.random().toString(36).slice(2, 9)}`
-    import('mermaid').then(async ({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, theme: 'dark' })
-      try {
-        const { svg } = await mermaid.render(id, code)
-        if (!cancelled) setSvgHtml(svg)
-      } catch {
-        if (!cancelled) setError(true)
-      }
-    })
-    return () => { cancelled = true }
-  }, [code])
-
-  if (error) return <pre className="wiki-code-fallback"><code>{code}</code></pre>
-  if (!svgHtml) return <div className="flex h-24 items-center justify-center text-[12px] text-muted-foreground/50">加载图表...</div>
-  return <div className="w-full overflow-x-auto" dangerouslySetInnerHTML={{ __html: svgHtml }} />
-})
-
-const MermaidCodeBlock = memo(function MermaidCodeBlock({ code }: { code: string }) {
-  const result = useMemo(() => renderDiagram(code), [code])
-
-  if (result && 'svg' in result) {
-    return <div className="w-full overflow-x-auto" dangerouslySetInnerHTML={{ __html: result.svg }} />
-  }
-  if (result && 'error' in result) {
-    return <pre className="wiki-code-fallback"><code>{code}</code></pre>
-  }
-  return <MermaidFallback code={code} />
-})
-
-const mdComponents = {
-  pre({ children }: any) { return <>{children}</> },
-  code({ className, children }: any) {
-    const match = /language-(\w+)/.exec(className || '')
-    const codeStr = String(children).replace(/\n$/, '')
-    if (match) {
-      if (match[1] === 'mermaid') {
-        return <MermaidCodeBlock code={codeStr} />
-      }
-      return (
-        <figure className="wiki-code-figure">
-          <ShikiCodeBlock code={codeStr} language={match[1]} />
-        </figure>
-      )
-    }
-    return <code className={className}>{children}</code>
-  },
-}
-
-const MarkdownFragmentBlock = memo(function MarkdownFragmentBlock({ content }: { content: unknown }) {
-  const text = typeof content === 'string' ? content : JSON.stringify(content)
-  return (
-    <div className="wiki-prose">
-      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{text}</Markdown>
-    </div>
-  )
-})
-
-function DiagramBlock({ content }: { content: unknown }) {
-  const raw = typeof content === 'string' ? content : JSON.stringify(content)
-  const headingMatch = raw.match(/^(#{1,3})\s+(.+)\n/)
-  const heading = headingMatch?.[2]
-  const fenceMatch = raw.match(/```mermaid\n([\s\S]*?)```/)
-  const code = fenceMatch ? fenceMatch[1].trim() : raw.replace(/^#{1,3}\s+.+\n+/, '').trim()
-  const [fullscreen, setFullscreen] = useState(false)
-
-  const result = useMemo(() => renderDiagram(code), [code])
-  const syncSvg = result && 'svg' in result ? result.svg : null
-  const syncError = result && 'error' in result ? result.error : null
-
-  const [fallbackSvg, setFallbackSvg] = useState<string>('')
-  const [fallbackError, setFallbackError] = useState<string>('')
-  const needsFallback = result === null
-
-  useEffect(() => {
-    if (!needsFallback || !code) return
-    let cancelled = false
-    const id = `mmd-${Math.random().toString(36).slice(2, 9)}`
-    import('mermaid').then(async ({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, theme: 'dark' })
-      try {
-        const { svg } = await mermaid.render(id, code)
-        if (!cancelled) setFallbackSvg(svg)
-      } catch (e: any) {
-        if (!cancelled) setFallbackError(e?.message || String(e))
-      }
-    })
-    return () => { cancelled = true }
-  }, [code, needsFallback])
-
-  const svgHtml = syncSvg || fallbackSvg
-  const error = syncError || fallbackError
-
-  if (error) {
-    return (
-      <div className="space-y-2">
-        {heading && <h3 className="text-sm font-semibold text-foreground/90">{heading}</h3>}
-        <pre className="overflow-x-auto rounded-md bg-black/30 p-3 text-[11px] leading-relaxed text-foreground/60 whitespace-pre-wrap">{code}</pre>
-      </div>
-    )
-  }
-
-  if (!svgHtml) {
-    return (
-      <div className="space-y-2">
-        {heading && <h3 className="text-sm font-semibold text-foreground/90">{heading}</h3>}
-        <div className="flex h-24 items-center justify-center text-[12px] text-muted-foreground/50">加载图表...</div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-2">
-      {heading && <h3 className="text-sm font-semibold text-foreground/90">{heading}</h3>}
-      <div className="relative group/diagram">
-        <div
-          className="w-full overflow-x-auto"
-          dangerouslySetInnerHTML={{ __html: svgHtml }}
-        />
-        <button
-          type="button"
-          onClick={() => setFullscreen(true)}
-          className="absolute top-1 right-1 rounded p-1 text-muted-foreground/40 opacity-0 transition-opacity group-hover/diagram:opacity-100 hover:bg-secondary/80 hover:text-foreground"
-        >
-          <Maximize2 size={12} />
-        </button>
-      </div>
-      {fullscreen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-sm" onClick={() => setFullscreen(false)}>
-          <button type="button" onClick={() => setFullscreen(false)} className="absolute top-4 right-4 z-10 rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground">
-            <X size={20} />
-          </button>
-          <div className="h-[90vh] w-[90vw] overflow-auto p-6" dangerouslySetInnerHTML={{ __html: svgHtml }} onClick={e => e.stopPropagation()} />
-        </div>
-      )}
-    </div>
-  )
+function isV2Content(block: WikiBlock): boolean {
+  const c = block.content as Record<string, unknown>
+  if (block.blockType === 'prose' && Array.isArray(c?.segments)) return true
+  if (block.blockType === 'signature' && Array.isArray(c?.tokens)) return true
+  if (block.blockType === 'callout' && c?.level && Array.isArray(c?.body)) return true
+  if (block.blockType === 'table' && Array.isArray(c?.headers) && Array.isArray(c?.rows)) return true
+  if (block.blockType === 'diagram' && c?.diagramType && c?.code) return true
+  if (block.blockType === 'list' && Array.isArray(c?.items)) return true
+  return false
 }
 
 function BlockContent({ block }: { block: WikiBlock }) {
-  if (block.blockType === 'diagram') {
-    return <DiagramBlock content={block.content} />
+  const content = block.content as Record<string, unknown>
+
+  // v2 structured JSON blocks
+  if (block.contentFormat === 'structured_json' || isV2Content(block)) {
+    switch (block.blockType) {
+      case 'heading':
+        return <HeadingBlockV2 content={content as unknown as HeadingContent} />
+      case 'prose':
+        return <ProseBlock content={content as unknown as ProseContent} />
+      case 'signature':
+        return <SignatureBlock content={content as unknown as SignatureContent} />
+      case 'callout':
+        return <CalloutBlock content={content as unknown as CalloutContent} />
+      case 'table':
+        return <TableBlockV2 content={content as unknown as TableContent} />
+      case 'diagram':
+        return <DiagramBlockV2 content={content as unknown as DiagramContent} />
+      case 'list':
+        return <ListBlockV2 content={content as unknown as ListContent} />
+    }
   }
-  if (block.contentFormat === 'markdown_fragment' && typeof block.content === 'string') {
-    return <MarkdownFragmentBlock content={block.content} />
+
+  // Legacy fallback: wrap old content formats gracefully
+  if (block.blockType === 'heading') {
+    const c = content as { level?: number; text?: string }
+    return <HeadingBlockV2 content={{ level: (c.level ?? 2) as 1 | 2 | 3, text: c.text ?? '' }} />
   }
-  switch (block.blockType) {
-    case 'heading': return <HeadingBlock content={block.content} />
-    case 'paragraph': return <ParagraphBlock content={block.content} />
-    case 'list': return <ListBlock content={block.content} />
-    case 'table': return <TableBlock content={block.content} />
-    case 'code_ref': return <CodeRefBlock content={block.content} />
-    default: return <MarkdownFragmentBlock content={block.content} />
+  if (block.blockType === 'prose') {
+    const c = content as { text?: string }
+    return <ProseBlock content={{ segments: [{ type: 'text', value: c.text ?? '' }] }} />
   }
+  if (typeof block.content === 'string') {
+    return <ProseBlock content={{ segments: [{ type: 'text', value: block.content }] }} />
+  }
+
+  // Unknown block type fallback
+  return (
+    <p className="text-[13px] text-[var(--wiki-text-muted)] italic">
+      [Unknown block type: {block.blockType}]
+    </p>
+  )
 }
 
 // ── Inline source file links ────────────────────────────────────────────────
@@ -397,34 +143,35 @@ function InlineSourceLinks({ block }: { block: WikiBlock }) {
   }
 
   return (
-    <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-      <FileText size={10} className="text-muted-foreground/50 shrink-0" />
+    <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/10 pt-2">
       {uniqueBindings.map(b => {
-        const displayName = b.filePath!.split('/').slice(-2).join('/')
         const uri = buildUri(b.filePath!, b.startLine)
-
+        const label = b.startLine ? `${b.filePath}:${b.startLine}` : b.filePath!
+        const short = label.split('/').slice(-2).join('/')
         if (uri) {
           return (
             <a
               key={b.id}
               href={uri}
-              className="font-mono text-[11px] text-primary/70 hover:text-primary hover:underline"
-              title={b.filePath!}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground/60 hover:bg-secondary hover:text-foreground transition-colors"
+              title={label}
+              onClick={e => e.stopPropagation()}
             >
-              {displayName}
+              <FileText size={9} />
+              {short}
             </a>
           )
         }
-
         return (
           <button
             key={b.id}
             type="button"
-            onClick={() => handleSystemOpen(b.filePath!, b.startLine)}
-            className="font-mono text-[11px] text-primary/70 hover:text-primary hover:underline"
-            title={b.filePath!}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground/60 hover:bg-secondary hover:text-foreground transition-colors"
+            title={label}
+            onClick={e => { e.stopPropagation(); handleSystemOpen(b.filePath!, b.startLine) }}
           >
-            {displayName}
+            <FileText size={9} />
+            {short}
           </button>
         )
       })}
@@ -432,7 +179,7 @@ function InlineSourceLinks({ block }: { block: WikiBlock }) {
   )
 }
 
-// ── Block wrapper ────────────────────────────────────────────────────────────
+// ── Block item wrapper ────────────────────────────────────────────────────────
 
 const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId, draftChange }: { block: WikiBlock; issueCount: number; projectId: string; draftChange?: DraftBlockChange | null }) {
   const bindingsById = useWikiStore(s => s.bindingsById)
@@ -483,7 +230,7 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
           </div>
           {draftChange.newContent ? (
             <div className="border-l-2 border-emerald-500 pl-3 bg-emerald-500/5 rounded-r-md py-1">
-              <MarkdownFragmentBlock content={draftChange.newContent} />
+              <BlockContent block={{ ...block, content: draftChange.newContent }} />
             </div>
           ) : null}
         </div>
@@ -511,9 +258,19 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
 // ── Draft preview: inserted block ───────────────────────────────────────────
 
 function DraftInsertedBlock({ content }: { content: unknown }) {
+  const c = content as Record<string, unknown>
+  if (Array.isArray(c?.segments)) {
+    return (
+      <div className="mt-2 rounded-lg border-l-2 border-emerald-500 bg-emerald-500/5 p-4">
+        <ProseBlock content={c as unknown as ProseContent} />
+      </div>
+    )
+  }
+  // Legacy fallback
+  const text = typeof content === 'string' ? content : JSON.stringify(content)
   return (
     <div className="mt-2 rounded-lg border-l-2 border-emerald-500 bg-emerald-500/5 p-4">
-      <MarkdownFragmentBlock content={content} />
+      <ProseBlock content={{ segments: [{ type: 'text', value: text }] }} />
     </div>
   )
 }
@@ -618,7 +375,7 @@ export default function WikiBlockRenderer({ document, issuesByBlockId, projectId
   const isFirstHeading = firstBlock?.blockType === 'heading'
 
   return (
-    <div className="space-y-3">
+    <div className="wiki-doc space-y-3">
       {isFirstHeading && <PageTitle block={firstBlock} />}
       {contentBlocks.map(block => {
         const change = changesMap?.get(block.id) ?? null
