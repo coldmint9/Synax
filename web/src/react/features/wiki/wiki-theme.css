@@ -1,0 +1,55 @@
+/* web/src/react/features/wiki/wiki-theme.css */
+
+.wiki-doc {
+  /* ── Dark theme (default) ── */
+  --wiki-bg: #0f1115;
+  --wiki-surface: #161920;
+  --wiki-raised: #1c2028;
+  --wiki-border: #2a2f3a;
+  --wiki-border-subtle: #222730;
+  --wiki-text: #e2e4e8;
+  --wiki-text-secondary: #9ba1ad;
+  --wiki-text-muted: #6b7280;
+  --wiki-accent: #7c9aff;
+  --wiki-accent-dim: #5b7bd4;
+  --wiki-accent-bg: rgba(124, 154, 255, 0.08);
+  --wiki-green: #4ade80;
+  --wiki-green-bg: rgba(74, 222, 128, 0.08);
+  --wiki-orange: #fb923c;
+  --wiki-orange-bg: rgba(251, 146, 60, 0.08);
+  --wiki-red: #f87171;
+  --wiki-purple: #a78bfa;
+  --wiki-purple-bg: rgba(167, 139, 250, 0.06);
+  --wiki-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  --wiki-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  --wiki-radius: 6px;
+}
+
+.wiki-doc.light {
+  --wiki-bg: #ffffff;
+  --wiki-surface: #f8f9fa;
+  --wiki-raised: #f1f3f5;
+  --wiki-border: #e1e4e8;
+  --wiki-border-subtle: #eaecef;
+  --wiki-text: #1f2328;
+  --wiki-text-secondary: #505862;
+  --wiki-text-muted: #8b929a;
+  --wiki-accent: #4969e1;
+  --wiki-accent-dim: #3b5bca;
+  --wiki-accent-bg: rgba(73, 105, 225, 0.06);
+  --wiki-green: #1a8d48;
+  --wiki-green-bg: rgba(26, 141, 72, 0.06);
+  --wiki-orange: #d97706;
+  --wiki-orange-bg: rgba(217, 119, 6, 0.06);
+  --wiki-red: #dc2626;
+  --wiki-purple: #7c3aed;
+  --wiki-purple-bg: rgba(124, 58, 237, 0.05);
+}
+
+/* ── Base typography ── */
+.wiki-doc {
+  font-family: var(--wiki-sans);
+  color: var(--wiki-text);
+  font-size: 14px;
+  line-height: 1.7;
+}
