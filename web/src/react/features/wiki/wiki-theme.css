@@ -53,3 +53,13 @@
   font-size: 14px;
   line-height: 1.7;
 }
+
+/* ── rehype-pretty-code dual-theme toggling ── */
+.wiki-code-block[data-theme="dark"] code > [data-theme="light"],
+.wiki-code-block[data-theme="light"] code > [data-theme="dark"] {
+  display: none;
+}
+.wiki-code-block[data-theme="dark"] code > [data-theme="dark"],
+.wiki-code-block[data-theme="light"] code > [data-theme="light"] {
+  display: inline;
+}
