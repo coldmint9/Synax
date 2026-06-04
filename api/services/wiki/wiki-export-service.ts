@@ -7,55 +7,93 @@ import { getDb } from '../../db/index.js';
 import { wikiDocuments, wikiBlocks } from '../../db/schema.js';
 import { wikiStore } from './wiki-store.js';
 import type { WikiDocument, WikiBlock, MarkdownExportResult } from './contracts.js';
+import type { HeadingContent, ProseContent, SignatureContent, CalloutContent, TableContent, DiagramContent, ListContent, ListItem, Segment } from './contracts.js';
+
+function segmentsToMarkdown(segments: Segment[]): string {
+  return segments.map(s => {
+    if (s.type === 'code') return `\`${s.value}\``;
+    if (s.type === 'bold') return `**${s.value}**`;
+    if (s.type === 'xref') return `[${s.label}]`;
+    return s.value;
+  }).join('');
+}
+
+function listItemsToMarkdown(items: ListItem[], ordered: boolean, indent = 0): string {
+  return items.map((item, i) => {
+    const prefix = ordered ? `${'  '.repeat(indent)}${i + 1}. ` : `${'  '.repeat(indent)}- `;
+    const text = segmentsToMarkdown(item.segments);
+    const children = item.children ? '\n' + listItemsToMarkdown(item.children, ordered, indent + 1) : '';
+    return `${prefix}${text}${children}`;
+  }).join('\n');
+}
 
 function blockToMarkdown(block: WikiBlock): string {
-  const content = block.content;
+  const content = block.content as Record<string, unknown>;
 
-  if (block.blockType === 'heading') {
-    const c = content as { level?: number; text?: string };
-    const level = c.level ?? 2;
-    return `${'#'.repeat(level)} ${c.text ?? ''}\n`;
+  switch (block.blockType) {
+    case 'heading': {
+      const c = content as unknown as HeadingContent;
+      return `${'#'.repeat(c.level ?? 2)} ${c.text ?? ''}\n`;
+    }
+    case 'prose': {
+      const c = content as unknown as ProseContent;
+      if (c.segments) return `${segmentsToMarkdown(c.segments)}\n`;
+      // Legacy fallback
+      const text = (content as any).text;
+      if (typeof text === 'string') return `${text}\n`;
+      return '';
+    }
+    case 'signature': {
+      const c = content as unknown as SignatureContent;
+      const code = c.tokens ? c.tokens.map(t => t.value).join('') : '';
+      const source = c.source ? `\n<!-- source: ${c.source.file}${c.source.line ? `:${c.source.line}` : ''} -->` : '';
+      return `\`\`\`${c.language ?? ''}\n${code}\n\`\`\`${source}\n`;
+    }
+    case 'callout': {
+      const c = content as unknown as CalloutContent;
+      const prefix = c.level === 'warn' ? '⚠️' : c.level === 'important' ? '✦' : 'ℹ️';
+      const title = c.title ? `**${c.title}** ` : '';
+      const body = c.body ? segmentsToMarkdown(c.body) : '';
+      return `> ${prefix} ${title}${body}\n`;
+    }
+    case 'table': {
+      const c = content as unknown as TableContent;
+      if (!c.headers || c.headers.length === 0) return '';
+      const header = `| ${c.headers.map(h => h.label).join(' | ')} |`;
+      const sep = `| ${c.headers.map(() => '---').join(' | ')} |`;
+      const rows = (c.rows ?? []).map(row =>
+        `| ${c.headers.map(h => {
+          const val = row[h.key];
+          if (!val) return '';
+          if (typeof val === 'string') return val;
+          return `\`${val.value}\``;
+        }).join(' | ')} |`
+      ).join('\n');
+      return [header, sep, rows].filter(Boolean).join('\n') + '\n';
+    }
+    case 'diagram': {
+      const c = content as unknown as DiagramContent;
+      const caption = c.caption ? `\n*${c.caption}*` : '';
+      // Also handle legacy markdown_fragment diagrams
+      const code = c.code ?? (typeof block.content === 'string' ? block.content : '');
+      return `\`\`\`mermaid\n${code}\n\`\`\`${caption}\n`;
+    }
+    case 'list': {
+      const c = content as unknown as ListContent;
+      if (c.items) return listItemsToMarkdown(c.items, c.ordered ?? false) + '\n';
+      // Legacy fallback
+      const items = (content as any).items as string[] | undefined;
+      if (Array.isArray(items)) return items.map(item => `- ${item}`).join('\n') + '\n';
+      return '';
+    }
+    default: {
+      // Legacy markdown_fragment fallback
+      if (block.contentFormat === 'markdown_fragment' && typeof block.content === 'string') {
+        return block.content + '\n';
+      }
+      return '';
+    }
   }
-
-  if (block.blockType === 'paragraph') {
-    const c = content as { text?: string };
-    return `${c.text ?? ''}\n`;
-  }
-
-  if (block.blockType === 'list') {
-    const c = content as { items?: string[]; ordered?: boolean };
-    const items = c.items ?? [];
-    return items
-      .map((item, i) => (c.ordered ? `${i + 1}. ${item}` : `- ${item}`))
-      .join('\n') + '\n';
-  }
-
-  if (block.blockType === 'table') {
-    const c = content as { headers?: string[]; rows?: string[][] };
-    const headers = c.headers ?? [];
-    const rows = c.rows ?? [];
-    if (headers.length === 0) return '';
-    const header = `| ${headers.join(' | ')} |`;
-    const sep = `| ${headers.map(() => '---').join(' | ')} |`;
-    const body = rows.map(row => `| ${row.join(' | ')} |`).join('\n');
-    return [header, sep, body].filter(Boolean).join('\n') + '\n';
-  }
-
-  if (block.blockType === 'code_ref') {
-    const c = content as { language?: string; code?: string; filePath?: string; range?: { startLine: number; endLine: number } };
-    const lang = c.language ?? '';
-    const ref = c.filePath
-      ? `\n<!-- source: ${c.filePath}${c.range ? `:${c.range.startLine}-${c.range.endLine}` : ''} -->`
-      : '';
-    return `\`\`\`${lang}\n${c.code ?? ''}\n\`\`\`${ref}\n`;
-  }
-
-  // diagram / task / fallback — render as markdown fragment if string
-  if (block.contentFormat === 'markdown_fragment' && typeof content === 'string') {
-    return content + '\n';
-  }
-
-  return '';
 }
 
 function documentToMarkdown(doc: WikiDocument, blocks: WikiBlock[], includeSourceRefs: boolean): string {

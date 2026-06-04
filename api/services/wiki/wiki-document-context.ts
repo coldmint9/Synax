@@ -5,7 +5,7 @@ import { topDirFromPath } from '../analyzer/shared.js';
 
 const MAX_SYMBOLS_PER_FILE = 20;
 const MAX_IMPORTS_PER_FILE = 15;
-const MAX_CONTEXT_CHARS = 12000;
+const MAX_CONTEXT_CHARS = 24000;
 
 export function buildDocumentContext(scan: CodeMapScanResult, entry: WikiOutlineEntry): string {
   const { codeIndex, moduleMap } = scan;
