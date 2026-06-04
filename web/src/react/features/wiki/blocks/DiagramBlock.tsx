@@ -1,46 +1,30 @@
-import { memo, useState, useEffect } from 'react'
+import { useMemo } from 'react'
+import { renderMermaidSVG, THEMES } from 'beautiful-mermaid'
 import type { DiagramContent } from '../../../../lib/contracts/wiki'
 import { useShellStore } from '../../../state/shellStore'
 
-const DiagramRenderer = memo(function DiagramRenderer({ code, theme }: { code: string; theme: 'light' | 'dark' }) {
-  const [svgHtml, setSvgHtml] = useState<string>('')
-  const [error, setError] = useState(false)
-
-  useEffect(() => {
-    if (!code) return
-    let cancelled = false
-    const id = `mmd-${Math.random().toString(36).slice(2, 9)}`
-    import('mermaid').then(async ({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default' })
-      try {
-        const { svg } = await mermaid.render(id, code)
-        if (!cancelled) setSvgHtml(svg)
-      } catch {
-        if (!cancelled) setError(true)
-      }
-    })
-    return () => { cancelled = true }
-  }, [code, theme])
-
-  if (error) {
-    return (
-      <pre className="overflow-x-auto p-3 text-[12px] leading-relaxed text-[var(--wiki-text-muted)] font-[family-name:var(--wiki-mono)]">
-        <code>{code}</code>
-      </pre>
-    )
-  }
-  if (!svgHtml) {
-    return <div className="flex h-24 items-center justify-center text-[12px] text-[var(--wiki-text-muted)]">Loading diagram...</div>
-  }
-  return <div className="w-full overflow-x-auto" dangerouslySetInnerHTML={{ __html: svgHtml }} />
-})
-
 export default function DiagramBlock({ content }: { content: DiagramContent }) {
   const theme = useShellStore(s => s.preferences.theme)
+
+  const { svg, error } = useMemo(() => {
+    const colors = theme === 'dark' ? THEMES['github-dark'] : THEMES['github-light']
+    try {
+      return { svg: renderMermaidSVG(content.code, { ...colors, font: 'var(--wiki-mono, Inter)' }), error: null }
+    } catch (e) {
+      return { svg: null, error: e instanceof Error ? e.message : 'Parse error' }
+    }
+  }, [content.code, theme])
+
   return (
     <div className="my-4 border border-[var(--wiki-border)] rounded-[var(--wiki-radius)] overflow-hidden bg-[var(--wiki-surface)]">
-      <div className="p-4">
-        <DiagramRenderer code={content.code} theme={theme} />
+      <div className="p-4 overflow-x-auto">
+        {svg ? (
+          <div className="w-full" dangerouslySetInnerHTML={{ __html: svg }} />
+        ) : (
+          <pre className="overflow-x-auto p-3 text-[12px] leading-relaxed text-[var(--wiki-text-muted)] font-[family-name:var(--wiki-mono)]">
+            <code>{content.code}</code>
+          </pre>
+        )}
       </div>
       {content.caption && (
         <div className="px-4 pb-3 text-[11px] text-[var(--wiki-text-muted)] text-center">
