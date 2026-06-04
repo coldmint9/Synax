@@ -9,6 +9,7 @@ import {
   agentRuntimeStore,
   agentSessionRuntime,
   buildContextRequestSchema,
+  clearInactiveSessionsBodySchema,
   createSessionRequestSchema,
   listEventsQuerySchema,
   listSessionsQuerySchema,
@@ -102,7 +103,15 @@ agentRuntimeRoutes.post('/sessions', async (c) => {
 agentRuntimeRoutes.get('/sessions', (c) => {
   const parsed = listSessionsQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
   if (!parsed.success) return validationError(c, parsed.error);
-  return c.json({ items: agentSessionRuntime.list(parsed.data) });
+  const { limit, offset, ...filter } = parsed.data;
+  const allFiltered = agentSessionRuntime.list({ ...filter, limit: Number.MAX_SAFE_INTEGER });
+  const countByStatus: Record<string, number> = {};
+  for (const s of allFiltered) {
+    countByStatus[s.status] = (countByStatus[s.status] || 0) + 1;
+  }
+  const totalCount = allFiltered.length;
+  const items = allFiltered.slice(offset, offset + limit);
+  return c.json({ items, totalCount, countByStatus });
 });
 
 agentRuntimeRoutes.get('/sessions/:sessionId', (c) => {
@@ -137,6 +146,39 @@ agentRuntimeRoutes.delete('/sessions/:sessionId', async (c) => {
       ok: true,
       deletedSessionIds: agentSessionRuntime.delete(c.req.param('sessionId')),
     });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post('/sessions/clear-inactive', async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = clearInactiveSessionsBodySchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const { projectId } = parsed.data;
+    const keep = new Set(['running', 'waiting_permission', 'paused', 'queued']);
+
+    const allSessions = agentSessionRuntime.list({ projectId, limit: Number.MAX_SAFE_INTEGER });
+    const toDelete = allSessions.filter(
+      (s) => !keep.has(s.status),
+    );
+
+    const toDeleteIds = new Set(toDelete.map((s) => s.id));
+    // Only delete roots (sessions whose parent is not also being deleted)
+    const roots = toDelete.filter(
+      (s) => !s.parentSessionId || !toDeleteIds.has(s.parentSessionId),
+    );
+
+    const deletedIds: string[] = [];
+    for (const root of roots) {
+      const treeIds = agentSessionRuntime.listSessionTree(root.id).map((s) => s.id);
+      await agentLoopRuntime.interruptAndWaitForSessions(treeIds);
+      deletedIds.push(...agentSessionRuntime.delete(root.id));
+    }
+
+    return c.json({ ok: true, deletedCount: toDelete.length, deletedSessionIds: deletedIds });
   } catch (error) {
     return runtimeError(c, error);
   }

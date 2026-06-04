@@ -140,18 +140,12 @@ function FilesCard({ files }: { files: FileChange[] }) {
   )
 }
 
-export function useHasWorkspaceContent(_mode: 'context' | 'agent'): boolean {
-  return true
-}
-
-export function SessionWorkspace({ mode }: { mode: 'context' | 'agent' }) {
-  const { t } = useLocale()
+export function SessionWorkspace() {
   const events = useDebugConsole(s => s.events)
   const sessionStats = useDebugConsole(s => s.sessionStats)
   const sessionTodos = useDebugConsole(s => s.sessionTodos)
 
   const fileChanges = useMemo<FileChange[]>(() => {
-    if (mode !== 'agent') return []
     const paths = new Map<string, FileChange>()
     for (const item of events) {
       const p = (item as { payload: Record<string, unknown> }).payload
@@ -161,15 +155,7 @@ export function SessionWorkspace({ mode }: { mode: 'context' | 'agent' }) {
       if (match) paths.set(match[1], { path: match[1], changeType: 'modified' })
     }
     return [...paths.values()]
-  }, [mode, events])
-
-  if (mode !== 'agent') {
-    return (
-      <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground/50">
-        {t('sessionNoOutput')}
-      </div>
-    )
-  }
+  }, [events])
 
   return (
     <div className="flex h-full flex-col overflow-y-auto text-[10px]">
