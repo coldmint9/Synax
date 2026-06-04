@@ -1,8 +1,15 @@
-import type { AgentProfile } from '../agent-runtime/contracts.js';
+import type { AgentProfile, FallbackDisclosureConfig } from '../agent-runtime/contracts.js';
 import { profileService } from '../agent-runtime/profile-service.js';
 import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import { registerTitleGenerator } from '../agent-runtime/session-title-service.js';
 import { createWikiExplorerTools } from './wiki-loop-tools.js';
+
+/** Shared fallback config: file/grep tools hidden until bash errors 4 times in a row. */
+const WIKI_FALLBACK_DISCLOSURE: FallbackDisclosureConfig = {
+  fallbackToolIds: ['file.read', 'file.list', 'file.glob', 'grep.search', 'diff.read'],
+  trackedToolId: 'bash',
+  consecutiveErrorThreshold: 4,
+};
 
 export const wikiPlannerProfile: AgentProfile = {
   id: 'wiki-planner',
@@ -12,6 +19,7 @@ export const wikiPlannerProfile: AgentProfile = {
   description: 'Explore a codebase and generate a hierarchical document outline for wiki generation.',
   defaultThinkingMode: 'deep',
   allowedCapabilities: [
+    'bash',
     'file.glob',
     'file.list',
     'file.read',
@@ -28,12 +36,13 @@ export const wikiPlannerProfile: AgentProfile = {
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki planner reads freely.' },
     { gate: 'write', pattern: '*', action: 'allow', reason: 'Wiki planner submits outline without approval.' },
     { gate: 'task', pattern: '*', action: 'allow', reason: 'Planner delegates exploration to sub-agents.' },
-    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Planner does not need shell.' },
+    { gate: 'shell', pattern: '*', action: 'allow', reason: 'Planner uses bash for file exploration.' },
   ],
   defaultSkills: [],
   maxSteps: 40,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
+  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   loopHints: [
     'Step 1: High-level scan — read tree, modules, code index, and graph to understand overall structure.',
     'Step 2: For each [SPLIT] package in the baseline, delegate exploration to a subagent via subagent.delegate(profileId: "explorer"). Give each subagent a specific prompt: which directory to explore, what questions to answer. Launch up to 5 concurrently.',
@@ -50,6 +59,7 @@ export const wikiWriterProfile: AgentProfile = {
   description: 'Generate wiki document content by delegating to sub-agents based on a pre-built outline.',
   defaultThinkingMode: 'standard',
   allowedCapabilities: [
+    'bash',
     'file.glob',
     'file.list',
     'file.read',
@@ -67,13 +77,14 @@ export const wikiWriterProfile: AgentProfile = {
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki writer reads freely.' },
     { gate: 'write', pattern: '*', action: 'allow', reason: 'Wiki writer commits documents without approval.' },
     { gate: 'task', pattern: '*', action: 'allow', reason: 'Wiki writer delegates to sub-agents.' },
-    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Wiki writer does not need shell.' },
+    { gate: 'shell', pattern: '*', action: 'allow', reason: 'Wiki writer uses bash for file exploration.' },
   ],
   defaultSkills: [],
   maxSteps: 60,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   doomLoopThreshold: 6,
+  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   loopHints: [
     'Generate root-level documents (directory_tree, overview, architecture) yourself — they need global context.',
     'For module_spec documents, use subagent.delegate(profileId: "wiki-explorer") to gather existing wiki context when needed.',
@@ -120,6 +131,7 @@ export const wikiDocumentWriterProfile: AgentProfile = {
   description: 'Generate content for a single wiki document using pre-built code context.',
   defaultThinkingMode: 'standard',
   allowedCapabilities: [
+    'bash',
     'file.read',
     'file.list',
     'file.glob',
@@ -132,12 +144,13 @@ export const wikiDocumentWriterProfile: AgentProfile = {
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Document writer reads context.' },
     { gate: 'write', pattern: '*', action: 'allow', reason: 'Document writer commits without approval.' },
     { gate: 'task', pattern: '*', action: 'deny', reason: 'Document writer does not delegate.' },
-    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Document writer does not need shell.' },
+    { gate: 'shell', pattern: '*', action: 'allow', reason: 'Document writer uses bash for file reading.' },
   ],
   defaultSkills: [],
   maxSteps: 12,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
+  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   loopHints: [
     'Read source files referenced in targetFiles to verify facts before writing.',
     'Use wiki.check_mermaid before committing any diagram block.',
@@ -153,6 +166,7 @@ export const wikiGeneratorProfile: AgentProfile = {
   description: 'Legacy single-phase wiki generator. Use wiki-planner + wiki-writer instead.',
   defaultThinkingMode: 'deep',
   allowedCapabilities: [
+    'bash',
     'file.glob',
     'file.list',
     'file.read',
@@ -169,12 +183,13 @@ export const wikiGeneratorProfile: AgentProfile = {
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki generation reads freely.' },
     { gate: 'write', pattern: '*', action: 'allow', reason: 'Wiki generation commits documents without approval.' },
     { gate: 'task', pattern: '*', action: 'deny', reason: 'Wiki generator does not delegate subtasks.' },
-    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Wiki generator does not need shell access.' },
+    { gate: 'shell', pattern: '*', action: 'allow', reason: 'Wiki generator uses bash for file exploration.' },
   ],
   defaultSkills: [],
   maxSteps: 50,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
+  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   loopHints: [],
 };
 
@@ -186,6 +201,7 @@ export const wikiVerifierProfile: AgentProfile = {
   description: 'Adversarially verify claims made by wiki writers by reading source code.',
   defaultThinkingMode: 'standard',
   allowedCapabilities: [
+    'bash',
     'file.read',
     'file.list',
     'file.glob',
@@ -198,12 +214,13 @@ export const wikiVerifierProfile: AgentProfile = {
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Verifier reads source freely.' },
     { gate: 'write', pattern: '*', action: 'allow', reason: 'Verifier submits verdict.' },
     { gate: 'task', pattern: '*', action: 'deny', reason: 'Verifier does not delegate.' },
-    { gate: 'shell', pattern: '*', action: 'deny', reason: 'Verifier does not need shell.' },
+    { gate: 'shell', pattern: '*', action: 'allow', reason: 'Verifier uses bash for source verification.' },
   ],
   defaultSkills: [],
   maxSteps: 6,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
+  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   loopHints: [
     'Verify each claim by reading actual source files. Call wiki.submit_verdict once per claim.',
     'If you cannot find supporting evidence for a claim, default to refuted=true.',

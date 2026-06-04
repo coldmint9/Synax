@@ -149,6 +149,15 @@ export interface ToolPolicy {
   maxParallelReadTools?: number;
 }
 
+export interface FallbackDisclosureConfig {
+  /** Tool IDs that are hidden initially and only disclosed on repeated failures. */
+  fallbackToolIds: string[];
+  /** The tool whose errors are tracked (typically 'bash'). */
+  trackedToolId: string;
+  /** How many consecutive tracked-tool errors trigger disclosure. */
+  consecutiveErrorThreshold: number;
+}
+
 export interface AgentProfile {
   id: string;
   label: string;
@@ -165,6 +174,7 @@ export interface AgentProfile {
   loopHints?: string[];
   allowsSubsessions?: boolean;
   doomLoopThreshold?: number;
+  fallbackDisclosure?: FallbackDisclosureConfig;
 }
 
 export interface AgentSession {

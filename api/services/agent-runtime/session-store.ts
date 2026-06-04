@@ -1027,7 +1027,7 @@ export class AgentRuntimeStore {
     }
     const input = latestInputTokens;
     const output = cumulativeOutput;
-    const total = input + output;
+    const total = input; // current context window size (excludes historical output)
 
     const contextLimit = 200_000;
     const contextUsedPercent = Math.min(Math.round((input / contextLimit) * 100), 100);

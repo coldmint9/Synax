@@ -1,5 +1,5 @@
 import * as z from 'zod/v4';
-import type { CapabilityCategory, RegisteredTool, ToolMutability } from './contracts.js';
+import type { CapabilityCategory, FallbackDisclosureConfig, RegisteredTool, ToolCallRecord, ToolMutability } from './contracts.js';
 
 type LoopToolDef = { id: string; mutability: ToolMutability; category: CapabilityCategory };
 
@@ -89,4 +89,90 @@ export function rebuildState(
 export function getStrategyForProfile(profileKind: string): DisclosureStrategy | null {
   if (profileKind === 'executor') return EXECUTOR_STRATEGY;
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Fallback disclosure — progressive tool reveal on repeated bash failures
+// ---------------------------------------------------------------------------
+
+export interface FallbackDisclosureState {
+  consecutiveErrors: number;
+  disclosed: boolean;
+}
+
+export function createFallbackState(): FallbackDisclosureState {
+  return { consecutiveErrors: 0, disclosed: false };
+}
+
+/**
+ * Determine if a bash tool call was an error based on its record.
+ * Bash never throws — it always returns a completed result. We check:
+ *   1. exitCode !== 0 (command ran but failed)
+ *   2. exitCode === null (validation blocked execution — whitelist, redirect, etc.)
+ */
+export function isBashError(call: ToolCallRecord): boolean {
+  const ref = call.outputRef as { exitCode?: number | null } | null;
+  if (ref == null) return call.error != null;
+  return ref.exitCode !== 0;
+}
+
+/**
+ * Rebuild fallback state from historical tool calls (for resume).
+ */
+export function rebuildFallbackState(
+  toolCalls: ToolCallRecord[],
+  config: FallbackDisclosureConfig,
+): FallbackDisclosureState {
+  let consecutiveErrors = 0;
+  let disclosed = false;
+  for (const call of toolCalls) {
+    if (call.toolId !== config.trackedToolId) continue;
+    if (isBashError(call)) {
+      consecutiveErrors++;
+      if (consecutiveErrors >= config.consecutiveErrorThreshold) {
+        disclosed = true;
+      }
+    } else {
+      consecutiveErrors = 0;
+    }
+  }
+  return { consecutiveErrors, disclosed };
+}
+
+/**
+ * Update fallback state after a single tool call completes.
+ * Returns { state, justDisclosed } — justDisclosed is true on the transition edge.
+ */
+export function advanceFallbackState(
+  state: FallbackDisclosureState,
+  call: ToolCallRecord,
+  config: FallbackDisclosureConfig,
+): { state: FallbackDisclosureState; justDisclosed: boolean } {
+  if (state.disclosed) return { state, justDisclosed: false };
+  if (call.toolId !== config.trackedToolId) return { state, justDisclosed: false };
+
+  if (isBashError(call)) {
+    const next = state.consecutiveErrors + 1;
+    const nowDisclosed = next >= config.consecutiveErrorThreshold;
+    return {
+      state: { consecutiveErrors: next, disclosed: nowDisclosed },
+      justDisclosed: nowDisclosed,
+    };
+  }
+
+  // Success resets the counter.
+  return { state: { consecutiveErrors: 0, disclosed: false }, justDisclosed: false };
+}
+
+/**
+ * Filter out fallback tools that haven't been disclosed yet.
+ */
+export function filterFallbackTools<T extends { id: string }>(
+  tools: T[],
+  state: FallbackDisclosureState,
+  config: FallbackDisclosureConfig,
+): T[] {
+  if (state.disclosed) return tools;
+  const hidden = new Set(config.fallbackToolIds);
+  return tools.filter(t => !hidden.has(t.id));
 }
