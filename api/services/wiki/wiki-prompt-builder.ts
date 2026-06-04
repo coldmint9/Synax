@@ -36,12 +36,76 @@ type Role = 'planner' | 'writer' | 'document-writer';
 
 function buildIdentitySegment(role: Role): string {
   if (role === 'planner') {
-    return 'You are a senior software architect. Your sole task is: analyze the codebase structure and output a hierarchical document outline.\n\nYou do not need to write any document content — only plan the document structure.';
+    return 'You are a senior software architect. Your sole task is: analyze the codebase structure and output a flat document outline grouped by type (landscape, topology, module, flow, data).\n\nYou do not write document content — only plan the document structure.';
   }
   if (role === 'document-writer') {
-    return 'You are a senior technical documentation engineer. Your task is to generate detailed technical specification content for the specified document based on the provided code context. All necessary code information has been pre-loaded — write directly based on the context.';
+    return `You are a technical documentation engineer writing for developers who need to understand software design without reading source code.
+
+Writing style:
+- Be precise and dense. Every sentence must convey concrete technical information.
+- Lead with the conclusion, then explain the mechanism.
+- Use inline code references freely for types, functions, and values.
+- Never use filler phrases: "It is worth noting", "This module is responsible for", "As mentioned above", "In order to", "It should be noted that".
+- Never repeat the title in the first paragraph.
+- Never describe what's obvious from names alone — explain WHY and HOW, not WHAT.
+- Prefer showing type signatures over describing them in prose.
+- Design decisions go in callout blocks, not buried in paragraphs.
+
+Output format: structured JSON blocks (not markdown). Each block has a blockType and a content object matching the schema below.`;
   }
-  return 'You are a senior technical documentation engineer. You have received a document outline, and your task is to generate detailed technical specification content for each document.';
+  return `You are a technical documentation engineer. Generate document content as structured JSON blocks for the specified documents in the outline.
+
+Writing constraints: be precise, no filler, no AI-speak, no repeating titles. Lead with conclusions. Design decisions go in callout blocks.`;
+}
+
+function buildJsonSchemaGuide(role: Role): string {
+  if (role === 'planner') return '';
+  return `## Block Content JSON Schema
+
+Each block submitted to wiki.commit_document must have blockType + content (JSON object). Reference:
+
+### heading
+{ "level": 1|2|3, "text": "Section title", "anchor": "optional-slug" }
+
+### prose
+{ "segments": [
+  { "type": "text", "value": "plain text" },
+  { "type": "bold", "value": "emphasized text" },
+  { "type": "code", "value": "functionName()" },
+  { "type": "xref", "target": "document-id", "label": "display text" }
+] }
+
+### signature
+{ "language": "typescript",
+  "tokens": [
+    { "type": "keyword"|"type"|"name"|"param"|"punctuation"|"comment", "value": "..." }
+  ],
+  "source": { "file": "path/to/file.ts", "line": 42 }
+}
+Token types: keyword (async, export, function, class, interface, type, const, let, return, extends, implements), type (type names, interfaces, generics), name (function/method/variable names), param (parameter names), punctuation (braces, parens, colons, arrows, commas), comment (inline notes).
+
+### callout
+{ "level": "info"|"warn"|"important",
+  "title": "Optional heading",
+  "body": [/* Segment[] — same as prose.segments */]
+}
+Use for: design decisions, constraints, non-obvious behavior, caveats.
+
+### table
+{ "headers": [{ "key": "field", "label": "Field" }, { "key": "type", "label": "Type" }],
+  "rows": [{ "field": "id", "type": { "type": "code", "value": "string" } }]
+}
+Cell values: plain string OR { "type": "code", "value": "..." } for mono rendering.
+
+### diagram
+{ "diagramType": "flowchart"|"sequence"|"er"|"state",
+  "code": "graph TD\\n  A --> B",
+  "caption": "Optional description"
+}
+Must validate with wiki.check_mermaid before submitting.
+
+### list
+{ "ordered": boolean, "items": [{ "segments": [/* Segment[] */], "children": [/* recursive */] }] }`;
 }
 
 function buildWorkflowSegment(role: Role): string {
@@ -77,7 +141,7 @@ Available tools:
 
 1. Read the code context provided below (files, symbols, dependencies)
 2. Organize content structure based on keyQuestions
-3. Generate all blocks (at least 6 blocks)
+3. Generate all blocks as structured JSON (minimum count depends on docType — see Quality Requirements)
 4. Call wiki.commit_document to submit the document
 
 No need to call code exploration tools — all necessary information is provided in the context.`;
@@ -105,49 +169,82 @@ function buildConstraintsSegment(role: Role): string {
   if (role === 'planner') {
     return `## Outline Structure Requirements
 
-Follow the standard software design document format (high-level → detailed design):
+Follow the 5-type flat document hierarchy:
 
-Level 0 (Root — global perspective):
-- directory_tree: Project directory structure and module responsibilities
-- overview: Project overview
-- architecture: System architecture
-
-Level 1 (Module — each core subsystem):
-- module_spec: Detailed specification for each core module
-- data_model: Core data models (optional, data-intensive modules)
-- api: API endpoint specifications (optional, modules with external interfaces)
-
-Level 2 (Sub-module/flow — deep details):
-- module_spec: Sub-module specifications
-- flow: Key business flows
+- landscape: 1 per project (global entry point — tech stack, directory, concepts)
+- topology: architecture connections and communication patterns
+- module: one per core subsystem (minimum 8 blocks when written)
+- flow: key end-to-end operations (minimum 6 blocks when written)
+- data: storage layer, schemas, lifecycle (minimum 5 blocks when written)
 
 Constraints:
-- Must include: 1+ directory_tree, 1+ overview, 1+ architecture
-- Decide document count and nesting depth based on your understanding of the project
-- Each entry must specify targetFiles (real file paths) and keyQuestions (specific, answerable questions)
-- sortOrder determines display order among siblings
+- Must include: 1 landscape, 1 topology, modules for all core packages
+- Documents are FLAT — no parentId nesting. Use xref cross-references instead.
+- Each entry must specify targetFiles (real file paths) and keyQuestions
 - title must be concise — no parenthetical elaborations`;
   }
 
-  return `## Block Type Specifications
-- heading: "# Title" format
-- paragraph: At least 200 words, include specific technical details
-- list: Each item with explanation
-- table: Markdown table (Field|Type|Description|Constraints)
-- code_ref: Key function signatures or code snippets
-- diagram: Mermaid diagrams (must validate with wiki.check_mermaid before submitting)
-- task: Task/checklist items
+  return `## Quality Requirements
 
-## module_spec documents must include (at least 6 blocks):
-1. heading: "# {ModuleName} — {one-line responsibility}"
-2. paragraph: Overview (200+ words, responsibility boundaries, design goals)
-3. code_ref: Public interface signatures
-4. table: Data model field table
-5. diagram: Business flow diagram (mermaid flowchart)
-6. list: Dependencies
+- All block content must be valid JSON matching the schema for its blockType
+- prose segments total character count >= 200 per block
+- signature blocks must include source file reference with real file path
+- callout blocks are for design decisions and constraints, not generic notes
+- table blocks: headers and row keys must be consistent across all rows
+- diagram blocks: mermaid code must pass wiki.check_mermaid validation
+- Minimum blocks by docType: landscape=6, topology=5, module=8, flow=6, data=5
+
+## Document Skeleton by Type
+
+### module document structure:
+1. heading (level 1): module name + one-phrase role
+2. prose: design intent — why this module exists, what problem it solves
+3. prose: core concepts — key abstractions/terms (3-5)
+4. signature: primary interface or entry point
+5. prose or diagram: state/lifecycle (if stateful)
+6. table or signature: core API surface
+7. prose: data flow — inputs, outputs, transformations
+8. callout: key design decisions
+9. list: dependencies (who depends on this, what it depends on)
+
+### landscape document structure:
+1. heading: project name + positioning
+2. table: tech stack (language, framework, key deps)
+3. list: directory structure with per-directory roles
+4. prose: how to run (dev/build/test)
+5. table: domain vocabulary
+
+### topology document structure:
+1. heading: system name
+2. diagram (flowchart): full system diagram
+3. prose: layer descriptions
+4. table: communication patterns between layers
+5. callout: key constraints (perf/security/deploy boundaries)
+
+### flow document structure:
+1. heading: flow name + trigger
+2. diagram (sequence): end-to-end sequence diagram
+3. prose/list: step breakdown
+4. callout: error/branch paths
+5. list: involved modules (with xref)
+
+### data document structure:
+1. heading: storage overview
+2. diagram (er): entity relationships
+3. table: core schema (fields, types, constraints)
+4. prose: data lifecycle
+5. prose or table: query patterns and indexes
+
+## Anti-Patterns (NEVER do these)
+- "This module is responsible for..." — state the responsibility directly
+- "It is worth noting that..." — just state the fact
+- Repeating the document title in the first prose block
+- Describing what is obvious from type/function names (explain WHY, not WHAT)
+- Writing a list that just restates file names without explaining purpose
+- Using headings for content that should be a single callout
 
 ## sourceHints Traceability (critical)
-Every non-heading block must have sourceHints. Prefer qualifiedName (e.g. ClassName.methodName), then file paths.`;
+Every non-heading block MUST have sourceHints. Use qualified names (e.g. ClassName.methodName) or file paths.`;
 }
 
 function buildToolsGuideSegment(role: Role): string {
@@ -248,6 +345,7 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
   }
 
   segments.push(buildConstraintsSegment(role));
+  segments.push(buildJsonSchemaGuide(role));
   segments.push(buildToolsGuideSegment(role));
 
   const ctx = buildContextSegment(input.languages, role);
