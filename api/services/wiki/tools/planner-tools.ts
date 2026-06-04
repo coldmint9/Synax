@@ -17,7 +17,7 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
   const submitOutlineTool: RegisteredTool = {
     id: 'wiki.submit_outline',
     label: 'Submit Wiki Outline',
-    description: 'Submit a hierarchical document outline. Each entry has a unique id and optional parentId for nesting. Must include: 1+ directory_tree, 1+ overview, 3+ module_spec. Total >= 8. Max depth 3. targetFiles must be real file paths from the code index.',
+    description: 'Submit a flat document outline grouped by type (landscape, topology, module, flow, data). Must include: 1+ landscape, 1+ topology, modules for all core packages. Total >= 5. targetFiles must be real file paths from the code index.',
     category: 'write',
     mutability: 'write',
     resumeBehavior: 'auto',
@@ -63,8 +63,8 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
       }
 
       const typeCount = (t: string) => args.documents.filter(d => d.docType === t).length;
-      if (typeCount('directory_tree') < 1) errors.push('Need at least 1 directory_tree.');
-      if (typeCount('overview') < 1) errors.push('Need at least 1 overview.');
+      if (typeCount('landscape') < 1) errors.push('Need at least 1 landscape document.');
+      if (typeCount('topology') < 1) errors.push('Need at least 1 topology document.');
 
       // ── Gate 1: targetFiles must be real paths ──
       for (const doc of args.documents) {

@@ -323,7 +323,7 @@ export const wikiRefreshService = {
 
     const doc = await wikiStore.getDocument(documentId);
     const docTitle = doc?.title ?? 'Unknown';
-    const docType = doc?.docType ?? 'module_design';
+    const docType = doc?.docType ?? 'module';
 
     // Gather source context from all affected blocks' bindings
     const allSourceFiles = new Set<string>();
