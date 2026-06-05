@@ -175,6 +175,10 @@ export interface AgentProfile {
   allowsSubsessions?: boolean;
   doomLoopThreshold?: number;
   fallbackDisclosure?: FallbackDisclosureConfig;
+  /** ID of a SessionToolProvider that supplies tools/hooks for this profile's sessions.
+   *  The provider is consulted on every tool listing and execution so that
+   *  paused/interrupted sessions recover their tool set on resume. */
+  toolProviderId?: string;
 }
 
 export interface AgentSession {
@@ -198,6 +202,9 @@ export interface AgentSession {
   skillIds: string[];
   activeRunId: string | null;
   pendingResumeToken: string | null;
+  /** Arbitrary JSON payload for session-specific orchestrator state (wiki snapshot, pipeline phase, etc.).
+   *  Persisted to DB so state survives pause/interrupt and server restart. */
+  sessionMetadata: Record<string, unknown> | null;
 }
 
 export interface AgentRun {
@@ -374,6 +381,7 @@ export const createSessionRequestSchema = z.object({
   prompt: z.string().min(1).max(100_000),
   thinkingMode: thinkingModeSchema.optional(),
   skillIds: z.array(z.string().min(1).max(128)).max(20).optional(),
+  sessionMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
@@ -489,6 +497,20 @@ export interface ToolHook {
   id: string;
   toolId: string | '*';
   afterExecute: (ctx: ToolHookContext) => Promise<void> | void;
+}
+
+/**
+ * A provider that supplies session-scoped tools and hooks.
+ * Implementations reconstruct tools/hooks from persisted state (e.g., wiki DB)
+ * so that paused/interrupted sessions can resume without losing access to
+ * their profile-specific tools.
+ */
+export interface SessionToolProvider {
+  id: string;
+  /** Return tools valid for this session. Called during tool listing for every step. */
+  getTools(sessionId: string): RegisteredTool[];
+  /** Return hooks valid for this session. Called during tool execution. */
+  getHooks(sessionId: string): ToolHook[];
 }
 
 export interface StructuredToolCall {

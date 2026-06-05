@@ -36,7 +36,7 @@ export function SessionListPanel() {
         onSearchChange={list.setSearchQuery}
         onRefresh={() => { void list.refresh() }}
         onClearInactive={() => setShowClear(true)}
-        isRefreshing={false}
+        isRefreshing={list.isRefreshing}
       />
       <SessionFilterChips
         value={list.statusFilter}

@@ -131,6 +131,9 @@ export class AgentLoopRuntime {
       );
     }
 
+    // Recover any incomplete subagent.delegate calls before continuing
+    await this.recoverIncompleteSubtasks(sessionId, abortSignal);
+
     if (hasNewMessage) {
       yield* this.streamRun(sessionId, input, abortSignal, false);
     } else {
@@ -1115,7 +1118,19 @@ export class AgentLoopRuntime {
     sessionIds: Iterable<string>,
     reason = "Agent runtime session deleted by user.",
   ): void {
-    for (const sessionId of sessionIds) {
+    const ids = new Set(sessionIds);
+    // Cascade to child sessions so sub-agents are interrupted alongside their parent
+    for (const id of [...ids]) {
+      try {
+        const session = this.store.getSession(id);
+        for (const childId of session.childSessionIds) {
+          ids.add(childId);
+        }
+      } catch {
+        // session may not exist (already deleted)
+      }
+    }
+    for (const sessionId of ids) {
       for (const controller of this.activeSessionControllers.get(sessionId) ?? []) {
         if (!controller.signal.aborted) {
           controller.abort(new Error(reason));
@@ -1228,7 +1243,7 @@ export class AgentLoopRuntime {
       "[agent-runtime] generating step",
     );
     const availableTools = this.tools
-      .list()
+      .listForSession(input.sessionId)
       .filter(
         (tool) =>
           input.profile.allowedCapabilities.includes(tool.id) ||
@@ -1628,6 +1643,105 @@ export class AgentLoopRuntime {
       },
     });
     return updated;
+  }
+
+  /**
+   * On session resume, scan for incomplete subagent.delegate tool calls
+   * and attempt to recover child sessions. Child sessions that are
+   * interrupted/paused are resumed to completion; unrecoverable children
+   * are marked as failed so the model can re-delegate if needed.
+   */
+  private async recoverIncompleteSubtasks(sessionId: string, abortSignal?: AbortSignal): Promise<void> {
+    const runs = this.store.listRuns(sessionId);
+    for (const run of runs) {
+      const calls = this.store.listRunToolCalls(run.id);
+      for (const call of calls) {
+        if (call.toolId !== 'subagent.delegate') continue;
+        if (call.status === 'completed' || call.status === 'failed') continue;
+
+        const inputRef = call.inputRef as { taskId?: unknown; session?: { id?: unknown } } | null;
+        const childId =
+          typeof inputRef?.taskId === 'string'
+            ? inputRef.taskId
+            : typeof inputRef?.session?.id === 'string'
+              ? inputRef.session.id
+              : null;
+
+        if (!childId) {
+          this.store.updateToolCall(sessionId, call.id, {
+            status: 'failed',
+            outputSummary: 'Subtask reference lost — child session ID not found.',
+            endedAt: nowIso(),
+            error: 'Child session ID missing from tool call inputRef.',
+          });
+          continue;
+        }
+
+        try {
+          const child = this.store.getSession(childId);
+          if (child.status === 'interrupted' || child.status === 'paused') {
+            logger.info({ sessionId, childSessionId: childId, childStatus: child.status },
+              '[agent-runtime] recovering interrupted child session');
+            // Resume the child to completion
+            for await (const _chunk of this.streamRun(childId, {}, abortSignal)) {
+              // consume stream; child persists its own state
+            }
+            const updated = this.store.getSession(childId);
+            const summary = updated.resultSummary ?? `Child session finished with status ${updated.status}.`;
+            this.store.updateToolCall(sessionId, call.id, {
+              status: updated.status === 'completed' ? 'completed' : 'failed',
+              outputSummary: `Subtask ${childId} ${updated.status}: ${summary}`,
+              outputRef: {
+                ...(call.inputRef as Record<string, unknown> ?? {}),
+                childSessionId: childId,
+                childStatus: updated.status,
+                childSummary: summary,
+              },
+              endedAt: nowIso(),
+              error: updated.status === 'failed' ? summary : null,
+            } as Partial<ToolCallRecord>);
+            logger.info({ sessionId, childSessionId: childId, childStatus: updated.status },
+              '[agent-runtime] child session recovered');
+          } else if (child.status === 'running') {
+            // Zombie child: mark as interrupted so it doesn't block future delegates
+            this.store.updateSession(childId, {
+              status: 'interrupted',
+              updatedAt: nowIso(),
+              blockedReason: 'Parent session resumed; child marked as interrupted.',
+            });
+            this.store.updateToolCall(sessionId, call.id, {
+              status: 'failed',
+              outputSummary: 'Subtask was interrupted and could not be recovered. Re-delegate if needed.',
+              endedAt: nowIso(),
+              error: 'interrupted',
+            });
+          } else if (child.status === 'completed' || child.status === 'failed') {
+            // Child finished independently — update parent record
+            const summary = child.resultSummary ?? `Child session finished with status ${child.status}.`;
+            this.store.updateToolCall(sessionId, call.id, {
+              status: child.status === 'completed' ? 'completed' : 'failed',
+              outputSummary: `Subtask ${childId} ${child.status}: ${summary}`,
+              outputRef: {
+                ...(call.inputRef as Record<string, unknown> ?? {}),
+                childSessionId: childId,
+                childStatus: child.status,
+                childSummary: summary,
+              },
+              endedAt: nowIso(),
+              error: child.status === 'failed' ? summary : null,
+            } as Partial<ToolCallRecord>);
+          }
+        } catch {
+          // Child session deleted or lost
+          this.store.updateToolCall(sessionId, call.id, {
+            status: 'failed',
+            outputSummary: 'Child session lost — re-delegate if needed.',
+            endedAt: nowIso(),
+            error: 'Child session not found.',
+          });
+        }
+      }
+    }
   }
 
   private tryGetContext(contextSnapshotId: string): AgentContextBundle | null {

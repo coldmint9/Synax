@@ -1,4 +1,4 @@
-import type { PermissionDecision, RegisteredTool, ToolCallRecord, ToolExecutionInput, ToolExecutionResult, ToolHook, ToolHookContext } from './contracts.js';
+import type { PermissionDecision, RegisteredTool, SessionToolProvider, ToolCallRecord, ToolExecutionInput, ToolExecutionResult, ToolHook, ToolHookContext } from './contracts.js';
 import * as z from 'zod/v4';
 import { evidenceService, type EvidenceService } from './evidence-service.js';
 import { agentEventService, type AgentEventService } from './event-service.js';
@@ -52,6 +52,7 @@ export interface ExecuteToolResult {
 export class ToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
   private readonly hooks = new Map<string, ToolHook>();
+  private readonly providers = new Map<string, SessionToolProvider>();
 
   constructor(
     private readonly store: AgentRuntimeStore = agentRuntimeStore,
@@ -187,14 +188,49 @@ export class ToolRegistry {
     this.hooks.delete(hookId);
   }
 
+  registerProvider(provider: SessionToolProvider): void {
+    this.providers.set(provider.id, provider);
+  }
+
+  unregisterProvider(providerId: string): void {
+    this.providers.delete(providerId);
+  }
+
   list(): Array<Omit<RegisteredTool, 'execute'>> {
     return [...this.tools.values()].map(({ execute: _execute, ...summary }) => summary);
+  }
+
+  /** List all tools available for a specific session, merging global tools
+   *  with session-provider tools. Provider tools shadow global tools with the same ID. */
+  listForSession(sessionId: string): Array<Omit<RegisteredTool, 'execute'>> {
+    const sessionTools: Array<Omit<RegisteredTool, 'execute'>> = [];
+    for (const provider of this.providers.values()) {
+      for (const tool of provider.getTools(sessionId)) {
+        const { execute: _execute, ...summary } = tool;
+        sessionTools.push(summary);
+      }
+    }
+    const seen = new Set(sessionTools.map((t) => t.id));
+    const globalTools = [...this.tools.values()]
+      .map(({ execute: _execute, ...summary }) => summary)
+      .filter((t) => !seen.has(t.id));
+    return [...sessionTools, ...globalTools];
   }
 
   get(toolId: string): RegisteredTool {
     const tool = this.tools.get(toolId);
     if (!tool) throw new AgentNotFoundError(toolId);
     return tool;
+  }
+
+  /** Look up a tool by ID, checking session providers first, then global registry. */
+  getForSession(sessionId: string, toolId: string): RegisteredTool {
+    for (const provider of this.providers.values()) {
+      const tools = provider.getTools(sessionId);
+      const found = tools.find((t) => t.id === toolId);
+      if (found) return found;
+    }
+    return this.get(toolId);
   }
 
   async resumePending(sessionId: string, permission: PermissionDecision): Promise<ExecuteToolResult> {
@@ -205,7 +241,7 @@ export class ToolRegistry {
       throw new AgentValidationError('Permission resume requires a persisted tool call.');
     }
     const record = this.store.getToolCall(sessionId, permission.toolCallId);
-    const tool = this.get(record.toolId);
+    const tool = this.getForSession(sessionId, record.toolId);
     if (record.status !== 'pending') {
       return { record, permission };
     }
@@ -215,7 +251,7 @@ export class ToolRegistry {
   async execute(sessionId: string, toolId: string, args: unknown, options: ExecuteToolOptions = {}): Promise<ExecuteToolResult> {
     const session = this.store.getSession(sessionId);
     const profile = this.profiles.get(session.profileId);
-    const tool = this.get(toolId);
+    const tool = this.getForSession(sessionId, toolId);
 
     if (!profile.allowedCapabilities.includes(tool.id) && tool.category !== 'skill' && tool.id !== INVALID_TOOL_ID) {
       const errorMsg = `Tool ${tool.id} is not available to profile ${profile.id}. Use only the tools listed in your capabilities.`;
@@ -457,7 +493,12 @@ export class ToolRegistry {
   }
 
   private async fireHooks(ctx: ToolHookContext): Promise<void> {
-    for (const hook of this.hooks.values()) {
+    // Collect hooks from both session providers and global registry
+    const allHooks: ToolHook[] = [...this.hooks.values()];
+    for (const provider of this.providers.values()) {
+      allHooks.push(...provider.getHooks(ctx.sessionId));
+    }
+    for (const hook of allHooks) {
       if (hook.toolId !== '*' && hook.toolId !== ctx.toolId) continue;
       try {
         await hook.afterExecute(ctx);

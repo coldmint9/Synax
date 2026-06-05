@@ -3,6 +3,7 @@ import { profileService } from '../agent-runtime/profile-service.js';
 import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import { registerTitleGenerator } from '../agent-runtime/session-title-service.js';
 import { createWikiExplorerTools } from './wiki-loop-tools.js';
+import { wikiSessionToolProvider } from './wiki-session-tool-provider.js';
 
 /** Shared fallback config: file/grep tools hidden until bash errors 4 times in a row. */
 const WIKI_FALLBACK_DISCLOSURE: FallbackDisclosureConfig = {
@@ -43,6 +44,7 @@ export const wikiPlannerProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
+  toolProviderId: 'wiki-session-tools',
   loopHints: [
     'Step 1: High-level scan — read tree, modules, code index, and graph to understand overall structure.',
     'Step 2: For each [SPLIT] package in the baseline, delegate exploration to a subagent via subagent.delegate(profileId: "explorer"). Give each subagent a specific prompt: which directory to explore, what questions to answer. Launch up to 5 concurrently.',
@@ -85,6 +87,7 @@ export const wikiWriterProfile: AgentProfile = {
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   doomLoopThreshold: 6,
   fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
+  toolProviderId: 'wiki-session-tools',
   loopHints: [
     'Generate root-level documents (directory_tree, overview, architecture) yourself — they need global context.',
     'For module_spec documents, use subagent.delegate(profileId: "wiki-explorer") to gather existing wiki context when needed.',
@@ -151,6 +154,7 @@ export const wikiDocumentWriterProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
+  toolProviderId: 'wiki-session-tools',
   loopHints: [
     'Read source files referenced in targetFiles to verify facts before writing.',
     'Use wiki.check_mermaid before committing any diagram block.',
@@ -190,6 +194,7 @@ export const wikiGeneratorProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
+  toolProviderId: 'wiki-session-tools',
   loopHints: [],
 };
 
@@ -221,6 +226,7 @@ export const wikiVerifierProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
+  toolProviderId: 'wiki-session-tools',
   loopHints: [
     'Verify each claim by reading actual source files. Call wiki.submit_verdict once per claim.',
     'If you cannot find supporting evidence for a claim, default to refuted=true.',
@@ -260,6 +266,7 @@ export function ensureWikiProfileRegistered(): void {
   for (const tool of createWikiExplorerTools()) {
     toolRegistry.register(tool);
   }
+  toolRegistry.registerProvider(wikiSessionToolProvider);
   registerTitleGenerator('wiki-planner', wikiTitleGenerator);
   registerTitleGenerator('wiki-writer', wikiTitleGenerator);
   registerTitleGenerator('wiki-document-writer', wikiTitleGenerator);
