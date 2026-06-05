@@ -44,6 +44,7 @@ export class AgentSessionRuntime {
       skillIds: input.skillIds ?? profile.defaultSkills,
       activeRunId: null,
       pendingResumeToken: null,
+      sessionMetadata: input.sessionMetadata ?? null,
     };
     const saved = this.store.createSession(session);
     const bundle = agentContextBuilder.build(input.projectId, {

@@ -42,6 +42,7 @@ interface SessionRow {
   skill_ids_json: string;
   active_run_id: string | null;
   pending_resume_token: string | null;
+  session_metadata_json: string | null;
 }
 
 interface MessageRow {
@@ -246,6 +247,7 @@ function mapSession(row: SessionRow): AgentSession {
     skillIds: parseArray<string>(row.skill_ids_json),
     activeRunId: row.active_run_id,
     pendingResumeToken: row.pending_resume_token,
+    sessionMetadata: parseObject(row.session_metadata_json),
   };
 }
 
@@ -443,6 +445,12 @@ export class AgentRuntimeStore {
       void sessionHooks.emit({ type: 'session:status_changed', sessionId: id, from: current.status, to: patch.status, patch: patch as Record<string, unknown> });
     }
     return next;
+  }
+
+  updateSessionMetadata(sessionId: string, patch: Record<string, unknown>): AgentSession {
+    const current = this.getSession(sessionId);
+    const next = { ...(current.sessionMetadata ?? {}), ...patch };
+    return this.updateSession(sessionId, { sessionMetadata: next });
   }
 
   listSessions(filter: { projectId?: string; nodeId?: string; status?: string; limit?: number } = {}): AgentSession[] {
@@ -1092,8 +1100,8 @@ export class AgentRuntimeStore {
         `INSERT OR REPLACE INTO agent_runtime_sessions
          (id, project_id, parent_session_id, child_session_ids_json, node_id, profile_id, status,
           title, prompt, context_snapshot_id, thinking_mode, permission_rules_json, created_at, updated_at,
-          completed_at, result_summary, blocked_reason, skill_ids_json, active_run_id, pending_resume_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          completed_at, result_summary, blocked_reason, skill_ids_json, active_run_id, pending_resume_token, session_metadata_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         session.id,
@@ -1116,6 +1124,7 @@ export class AgentRuntimeStore {
         stringify(session.skillIds),
         session.activeRunId,
         session.pendingResumeToken,
+        stringify(session.sessionMetadata),
       );
   }
 

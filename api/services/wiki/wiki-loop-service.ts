@@ -151,6 +151,7 @@ export const wikiLoopService = {
         projectId,
         profileId: 'wiki-planner',
         prompt: plannerPrompt,
+        sessionMetadata: { snapshotId: snapshot.id, phase: 'planner' },
       });
       agentRuntimeStore.updateSession(plannerSession.id, { title: wikiMsg(locale).sessionInit, updatedAt: nowIso() });
       sessionIds.push(plannerSession.id);
@@ -324,6 +325,7 @@ export const wikiLoopService = {
           projectId,
           profileId: 'wiki-document-writer',
           prompt: docPrompt,
+          sessionMetadata: { snapshotId: snapshot.id, phase: 'document-writer', docTitle: entry.title },
         });
         agentRuntimeStore.updateSession(docSession.id, {
           title: `Wiki: ${entry.title}`,
@@ -398,6 +400,7 @@ export const wikiLoopService = {
             projectId,
             profileId: 'wiki-verifier',
             prompt: verifierPrompt,
+            sessionMetadata: { snapshotId: snapshot.id, phase: 'verifier', docTitle: entry.title },
           });
           sessionIds.push(verifierSession.id);
           setSessionWorkspaceRoot(verifierSession.id, workDir);
@@ -447,6 +450,7 @@ export const wikiLoopService = {
               projectId,
               profileId: 'wiki-document-writer',
               prompt: correctorPrompt,
+              sessionMetadata: { snapshotId: snapshot.id, phase: 'corrector', docTitle: entry.title },
             });
             sessionIds.push(correctorSession.id);
             setSessionWorkspaceRoot(correctorSession.id, workDir);
@@ -607,6 +611,7 @@ export const wikiLoopService = {
         projectId: snapshot.projectId,
         profileId: 'wiki-writer',
         prompt: writerPrompt,
+        sessionMetadata: { snapshotId: snapshot.id, phase: 'writer' },
       });
       agentRuntimeStore.updateSession(writerSession.id, { title: wikiMsg(locale).sessionContinue, updatedAt: nowIso() });
       sessionIds.push(writerSession.id);

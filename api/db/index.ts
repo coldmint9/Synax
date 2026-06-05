@@ -181,6 +181,7 @@ function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
   ensureColumn(sqlite, 'agent_runtime_sessions', 'active_run_id', 'active_run_id TEXT');
   ensureColumn(sqlite, 'agent_runtime_sessions', 'pending_resume_token', 'pending_resume_token TEXT');
   ensureColumn(sqlite, 'agent_runtime_sessions', 'title', 'title TEXT');
+  ensureColumn(sqlite, 'agent_runtime_sessions', 'session_metadata_json', 'session_metadata_json TEXT');
   ensureColumn(sqlite, 'agent_runtime_messages', 'project_id', "project_id TEXT NOT NULL DEFAULT ''");
   ensureColumn(sqlite, 'agent_runtime_messages', 'sequence', 'sequence INTEGER NOT NULL DEFAULT 0');
   ensureColumn(sqlite, 'agent_runtime_messages', 'turn_id', 'turn_id TEXT');

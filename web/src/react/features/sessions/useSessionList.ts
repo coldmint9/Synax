@@ -198,5 +198,6 @@ export function useSessionList() {
     toggleGroup,
     toggleExpand,
     deleteSession,
+    isRefreshing,
   }
 }
