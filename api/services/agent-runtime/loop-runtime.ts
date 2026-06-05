@@ -15,7 +15,7 @@ import type {
 import { agentEventService, type AgentEventService } from "./event-service.js";
 import { detectDoomLoop, shouldForceFinalSummary } from "./loop-guards.js";
 import { buildLoopToolSet } from "./loop-ai-tools.js";
-import { buildLoopModelMessages } from "./loop-model-messages.js";
+import { buildLoopModelMessages, computeClearedToolCallIds } from "./loop-model-messages.js";
 import { generateLoopModelStep, streamLoopModelStep } from "./loop-model-stream.js";
 import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
 import { loopResumeService, type LoopResumeService } from "./loop-resume.js";
@@ -673,9 +673,26 @@ export class AgentLoopRuntime {
 
         // Build dedup index from previous steps — same tool + same args on a
         // read-only tool is needless re-execution that burns context.  Fold it.
+        // However, if the original output has been cleared from context, the LLM
+        // legitimately needs the data again — skip those from the dedup index.
+        const clearedIds = clearingActivated
+          ? computeClearedToolCallIds(this.store, sessionId, {
+              priorInputTokens: typeof (modelResult.step.usage as Record<string, unknown>)?.inputTokens === 'number'
+                ? (modelResult.step.usage as Record<string, unknown>).inputTokens as number
+                : null,
+              contextLimit: DEFAULT_CONTEXT_LIMIT,
+              threshold: CONTEXT_TOOL_CLEAR_THRESHOLD,
+              keepRecent: CONTEXT_TOOL_CLEAR_KEEP_RECENT,
+              excludeTools: CONTEXT_TOOL_CLEAR_EXCLUDE,
+              forceActivated: clearingActivated,
+            })
+          : null;
+
         const dedupIndex = new Map<string, ToolCallRecord>();
         for (const prev of this.store.listRunToolCalls(run.id)) {
           if (prev.status === 'completed' || prev.status === 'compacted') {
+            // Don't dedup against calls whose output was cleared from context
+            if (clearedIds?.has(prev.id)) continue;
             dedupIndex.set(`${prev.toolId}:${prev.argsHash}`, prev);
           }
         }
@@ -691,6 +708,24 @@ export class AgentLoopRuntime {
               const argsHash = this.store.hashArgs(call.args);
               const prev = dedupIndex.get(`${call.toolId}:${argsHash}`);
               if (prev) {
+                // Safety valve: if the same call has already been deduped 2+ times
+                // in this run, the LLM clearly can't see the original result (likely
+                // cleared or compacted away). Re-execute instead of deduping again.
+                const priorDedups = this.store.listRunToolCalls(run.id).filter(
+                  tc => tc.toolId === call.toolId && tc.argsHash === argsHash && tc.status === 'compacted' && tc.outputRef === null,
+                ).length;
+                if (priorDedups >= 2) {
+                  logger.info(
+                    { sessionId, runId: run.id, stepId: step.id, toolId: call.toolId, argsHash, priorDedups },
+                    '[agent-runtime] dedup safety valve — re-executing after repeated dedup misses',
+                  );
+                  return this.tools.execute(sessionId, call.toolId, call.args, {
+                    runId: run.id, stepId: step.id,
+                    modelToolCallId: call.id,
+                    resumeToken: optionsResumeToken(run.id, step.id, call.id),
+                  }).then((exec) => ({ call, exec }));
+                }
+
                 logger.info(
                   { sessionId, runId: run.id, stepId: step.id, toolId: call.toolId, argsHash, originalCallId: prev.id },
                   '[agent-runtime] tool call deduplicated',
@@ -707,7 +742,7 @@ export class AgentLoopRuntime {
                   argsHash,
                   inputSummary: prev.inputSummary,
                   inputRef: null,
-                  outputSummary: `[Duplicate of earlier ${call.toolId} call — skipped]`,
+                  outputSummary: `[Duplicate of earlier ${call.toolId} call — the result is already in your context above. Re-read what you received earlier instead of calling again.]`,
                   outputRef: null,
                   status: 'compacted',
                   permissionDecisionId: null,

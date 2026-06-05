@@ -121,4 +121,25 @@ export const wikiApi = {
   discardDraft(draftId: string): Promise<{ ok: true }> {
     return apiRequest(`${BASE}/drafts/${draftId}/discard`, { method: 'POST', body: JSON.stringify({}) });
   },
+
+  // ── Search API ──────────────────────────────────────────────────────────────
+
+  async search(projectId: string, query: string, opts?: { limit?: number; documentId?: string }): Promise<WikiSearchApiResult> {
+    const params = new URLSearchParams({ q: query });
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.documentId) params.set('documentId', opts.documentId);
+    return apiRequest<WikiSearchApiResult>(`${BASE}/projects/${projectId}/search?${params}`);
+  },
 };
+
+export interface WikiSearchApiResult {
+  results: Array<{
+    blockId: string;
+    documentId: string;
+    documentTitle: string;
+    blockType: string;
+    snippet: string;
+    rank: number;
+  }>;
+  total: number;
+}

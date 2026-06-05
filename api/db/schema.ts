@@ -574,6 +574,7 @@ export const wikiBlocks = sqliteTable('wiki_blocks', {
   manualState: text('manual_state').notNull().default('none'),
   confidence: real('confidence').notNull().default(0.5),
   generatedByJson: text('generated_by_json').notNull().default('{}'),
+  searchText: text('search_text').notNull().default(''),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

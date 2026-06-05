@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { Hash, AlignLeft, List, Table2, Code, Share2, CheckSquare } from 'lucide-react'
+import { Hash, AlignLeft, List, Table2, Code, Share2, AlertTriangle } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { useWikiSearch, type SearchResult } from './hooks/useWikiSearch'
@@ -7,12 +7,12 @@ import type { WikiBlockType } from '../../../lib/contracts/wiki'
 
 const blockTypeIcons: Record<WikiBlockType, typeof Hash> = {
   heading: Hash,
-  paragraph: AlignLeft,
+  prose: AlignLeft,
+  signature: Code,
+  callout: AlertTriangle,
   list: List,
   table: Table2,
-  code_ref: Code,
   diagram: Share2,
-  task: CheckSquare,
 }
 
 interface Props {
@@ -24,7 +24,7 @@ interface Props {
 
 export default function WikiSearchPanel({ query, activeIndex, onActiveIndexChange, onSelect }: Props) {
   const { t } = useLocale()
-  const { results } = useWikiSearch(query)
+  const { results, loading } = useWikiSearch(query)
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -62,6 +62,14 @@ export default function WikiSearchPanel({ query, activeIndex, onActiveIndexChang
     return (
       <div ref={listRef} className="p-3">
         <p className="text-center text-xs text-muted-foreground py-4">{t('wikiSearchHint')}</p>
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div ref={listRef} className="p-3">
+        <p className="text-center text-xs text-muted-foreground py-4 animate-pulse">{t('wikiSearchLoading') ?? 'Searching…'}</p>
       </div>
     )
   }

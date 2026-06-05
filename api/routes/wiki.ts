@@ -11,6 +11,7 @@ import { wikiPatchService, WikiPatchConflictError } from '../services/wiki/wiki-
 import { wikiDraftService } from '../services/wiki/wiki-draft-service.js';
 import { wikiDesignMappingService } from '../services/wiki/wiki-design-mapping-service.js';
 import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from '../services/wiki/wiki-snapshot-events.js';
+import { searchWikiBlocks } from '../services/wiki/wiki-fts.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 import { AgentProviderNotConfiguredError } from '../services/agent-runtime/runtime-errors.js';
 import { logger } from '../lib/logger.js';
@@ -102,6 +103,40 @@ wikiRoutes.get('/snapshots/:snapshotId', async (c) => {
   const tree = await wikiStore.getSnapshotTree(snapshotId);
   if (!tree) return c.json({ error: 'not found' }, 404);
   return c.json(tree);
+});
+
+// ── GET /api/wiki/projects/:projectId/search?q=&limit=&documentId= ─────────
+wikiRoutes.get('/projects/:projectId/search', async (c) => {
+  const { projectId } = c.req.param();
+  const q = c.req.query('q') ?? '';
+  const limit = Math.min(Math.max(parseInt(c.req.query('limit') ?? '50', 10) || 50, 1), 200);
+  const documentId = c.req.query('documentId') || undefined;
+
+  if (!q.trim()) {
+    return c.json({ results: [], total: 0 });
+  }
+
+  const results = searchWikiBlocks({ projectId, query: q, limit, documentId });
+
+  // Enrich with document titles
+  const docIds = [...new Set(results.map(r => r.documentId))];
+  const docTitleMap = new Map<string, string>();
+  if (docIds.length > 0) {
+    const snapshot = await wikiStore.getLatestSnapshot(projectId);
+    if (snapshot) {
+      const docs = await wikiStore.getDocumentsBySnapshot(snapshot.id);
+      for (const d of docs) {
+        docTitleMap.set(d.id, d.title);
+      }
+    }
+  }
+
+  const enriched = results.map(r => ({
+    ...r,
+    documentTitle: docTitleMap.get(r.documentId) ?? '',
+  }));
+
+  return c.json({ results: enriched, total: enriched.length });
 });
 
 // ── PATCH /api/wiki/blocks/:blockId ──────────────────────────────────────────

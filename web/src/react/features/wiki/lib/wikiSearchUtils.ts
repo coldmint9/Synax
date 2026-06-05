@@ -1,4 +1,4 @@
-import type { WikiBlock } from '../../../../lib/contracts/wiki';
+import type { WikiBlock, Segment, ListItem } from '../../../../lib/contracts/wiki';
 
 function stripMarkdown(text: string): string {
   return text
@@ -14,6 +14,18 @@ function stripMarkdown(text: string): string {
     .replace(/^>\s+/gm, '');
 }
 
+function segmentsToText(segments: Segment[]): string {
+  return segments.map(s => 'value' in s ? s.value : s.label).join('');
+}
+
+function listItemsToText(items: ListItem[]): string {
+  return items.map(item => {
+    const text = segmentsToText(item.segments);
+    const childText = item.children ? listItemsToText(item.children) : '';
+    return childText ? `${text} ${childText}` : text;
+  }).join(' ');
+}
+
 export function extractBlockText(block: WikiBlock): string {
   const { content, contentFormat, blockType } = block;
   if (!content) return '';
@@ -22,27 +34,40 @@ export function extractBlockText(block: WikiBlock): string {
     return typeof content === 'string' ? stripMarkdown(content) : '';
   }
 
-  if (contentFormat === 'rich_text_json') {
+  if (contentFormat === 'structured_json') {
     const c = content as Record<string, unknown>;
     switch (blockType) {
       case 'heading':
-      case 'paragraph':
         return typeof c.text === 'string' ? c.text : '';
+      case 'prose':
+        return Array.isArray(c.segments) ? segmentsToText(c.segments as Segment[]) : '';
+      case 'signature': {
+        const tokens = Array.isArray(c.tokens) ? c.tokens as Array<{ value: string }> : [];
+        return tokens.map(t => t.value).join('');
+      }
+      case 'callout': {
+        const title = typeof c.title === 'string' ? c.title : '';
+        const body = Array.isArray(c.body) ? segmentsToText(c.body as Segment[]) : '';
+        return `${title} ${body}`.trim();
+      }
       case 'list':
-        return Array.isArray(c.items) ? c.items.join(' ') : '';
+        return Array.isArray(c.items) ? listItemsToText(c.items as ListItem[]) : '';
       case 'table': {
-        const headers = Array.isArray(c.headers) ? c.headers.join(' ') : '';
+        const headers = Array.isArray(c.headers)
+          ? (c.headers as Array<{ label: string }>).map(h => h.label).join(' ')
+          : '';
         const rows = Array.isArray(c.rows)
-          ? (c.rows as string[][]).flat().join(' ')
+          ? (c.rows as Array<Record<string, string | { type: string; value: string }>>)
+              .flatMap(row => Object.values(row).map(v => typeof v === 'string' ? v : v.value))
+              .join(' ')
           : '';
         return `${headers} ${rows}`.trim();
       }
-      case 'code_ref':
-        return [c.filePath, c.symbol, c.code].filter(Boolean).join(' ');
-      case 'task':
-        return [c.title, c.description].filter(Boolean).join(' ');
-      case 'diagram':
-        return typeof c.title === 'string' ? c.title : '';
+      case 'diagram': {
+        const caption = typeof c.caption === 'string' ? c.caption : '';
+        const code = typeof c.code === 'string' ? c.code : '';
+        return caption || code;
+      }
       default:
         return typeof c.text === 'string' ? c.text : '';
     }
