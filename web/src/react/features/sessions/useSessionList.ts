@@ -92,6 +92,9 @@ export function useSessionList() {
   const [hasMore, setHasMore] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
 
+  // Refresh state
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
   // Filter & search state
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -141,15 +144,20 @@ export function useSessionList() {
   // ---- Actions ----
 
   const refresh = useCallback(async () => {
+    setIsRefreshing(true)
     setPage(0)
     setHasMore(true)
     // Populate store sessions — needed for grouping to render
     await storeRefresh()
-    // Fetch paginated counts for display
-    const r = await agentRuntimeApi.listSessions({ projectId: projectId ?? undefined, limit: PAGE_SIZE, offset: 0 })
-    setTotalCount(r.totalCount)
-    setCountByStatus(r.countByStatus)
-    setHasMore(r.items.length >= PAGE_SIZE)
+    try {
+      // Fetch paginated counts for display
+      const r = await agentRuntimeApi.listSessions({ projectId: projectId ?? undefined, limit: PAGE_SIZE, offset: 0 })
+      setTotalCount(r.totalCount)
+      setCountByStatus(r.countByStatus)
+      setHasMore(r.items.length >= PAGE_SIZE)
+    } finally {
+      setIsRefreshing(false)
+    }
   }, [projectId, storeRefresh])
 
   const loadMore = useCallback(async () => {

@@ -7,7 +7,12 @@ export function normalizeToolArgsHash(toolCall: Pick<ToolCallRecord, 'toolId' | 
 }
 
 function stepSignature(calls: ToolCallRecord[]): string {
-  return calls.map(normalizeToolArgsHash).sort().join('|');
+  // Exclude deduped (compacted with null outputRef) calls — they don't represent
+  // real work and would falsely trigger doom loop detection when the LLM
+  // legitimately needs to re-read cleared data.
+  const real = calls.filter(c => !(c.status === 'compacted' && c.outputRef === null));
+  if (real.length === 0) return `__dedup_only_${calls.length}__${Math.random()}`;
+  return real.map(normalizeToolArgsHash).sort().join('|');
 }
 
 export function detectDoomLoop(toolCalls: ToolCallRecord[], threshold = DOOM_LOOP_THRESHOLD): ToolCallRecord | null {

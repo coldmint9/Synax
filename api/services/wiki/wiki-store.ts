@@ -34,7 +34,9 @@ import type {
   UpsertWikiBlockInput,
   UpdateBlockContentInput,
   WikiStaleState,
+  WikiBlockType,
 } from './contracts.js';
+import { extractSearchText } from './wiki-fts.js';
 
 export class WikiManualProtectionError extends Error {
   constructor(public readonly blockId: string, public readonly manualState: string) {
@@ -305,6 +307,11 @@ export const wikiStore = {
     const now = new Date().toISOString();
     const id = input.id ?? nanoid();
     const contentJson = JSON.stringify(input.content);
+    const searchText = extractSearchText(
+      input.blockType as WikiBlockType,
+      input.contentFormat ?? 'markdown_fragment',
+      input.content,
+    );
 
     // Manual protection: if updating an existing block with manualState != 'none',
     // refuse to overwrite. Callers must route the change through the patch flow.
@@ -331,6 +338,7 @@ export const wikiStore = {
         manualState: input.manualState ?? 'none',
         confidence: input.confidence ?? 0.5,
         generatedByJson: JSON.stringify(input.generatedBy ?? {}),
+        searchText,
         createdAt: now,
         updatedAt: now,
       })
@@ -345,6 +353,7 @@ export const wikiStore = {
           staleState: input.staleState ?? 'fresh',
           confidence: input.confidence ?? 0.5,
           generatedByJson: JSON.stringify(input.generatedBy ?? {}),
+          searchText,
           updatedAt: now,
         },
       });
@@ -362,10 +371,16 @@ export const wikiStore = {
       .update(contentJson)
       .digest('hex')
       .slice(0, 32);
+    const searchText = extractSearchText(
+      block.blockType as WikiBlockType,
+      block.contentFormat,
+      input.content,
+    );
 
     await db.update(wikiBlocks).set({
       contentJson,
       contentHash,
+      searchText,
       manualState: input.manualState ?? 'edited',
       updatedAt: now,
     }).where(eq(wikiBlocks.id, blockId));

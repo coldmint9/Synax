@@ -18,6 +18,7 @@ import { getDb } from "./db/index.js";
 import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
 import { wikiStore } from "./services/wiki/wiki-store.js";
 import { ensureWikiProfileRegistered } from "./services/wiki/wiki-loop-profile.js";
+import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
 
 export const app = new Hono();
 
@@ -75,6 +76,11 @@ wikiStore.recoverOrphanedSnapshots().then((count) => {
   }
 }).catch((err) => {
   pinoLogger.error({ err }, "failed to recover orphaned wiki snapshots");
+});
+
+// --- 启动时 backfill FTS 索引（对已有 block 建立搜索文本）---
+rebuildWikiFtsIndex().catch((err) => {
+  pinoLogger.error({ err }, "failed to rebuild wiki FTS index on startup");
 });
 
 function startServer(): void {
