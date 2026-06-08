@@ -126,7 +126,7 @@ export const wikiSnapshotService = {
             documentId: doc.id,
             blockType: blockDraft.blockType,
             content: blockDraft.content,
-            contentFormat: blockDraft.contentFormat ?? 'markdown_fragment',
+            contentFormat: blockDraft.contentFormat ?? (typeof blockDraft.content === 'object' && blockDraft.content !== null ? 'structured_json' : 'markdown_fragment'),
             confidence: blockDraft.confidence ?? 0.5,
             generatedBy: { agentRunId: snapshot.id, model: 'wiki-generator' },
           });

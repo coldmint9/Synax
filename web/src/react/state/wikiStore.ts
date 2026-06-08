@@ -37,6 +37,7 @@ export interface WikiState {
   patchesById: Record<string, WikiPatch>;
   selectedDocumentId: string | null;
   selectedBlockId: string | null;
+  searchHighlightQuery: string | null;
   evaluations: WikiEvaluation[];
   patchesSummary: { pending: number; conflict: number };
   patchPanelOpen: boolean;
@@ -84,6 +85,7 @@ export interface WikiState {
   applySnapshotTree: (tree: WikiSnapshotTree) => void;
   selectDocument: (documentId: string | null) => void;
   selectBlock: (blockId: string | null) => void;
+  setSearchHighlightQuery: (query: string | null) => void;
   loadEvaluations: (projectId: string) => Promise<void>;
   deleteEvaluations: (evalIds: string[]) => Promise<void>;
   updateBlockLocally: (block: WikiBlock) => void;
@@ -133,6 +135,7 @@ const initialState = {
   patchesById: {},
   selectedDocumentId: null,
   selectedBlockId: null,
+  searchHighlightQuery: null,
   evaluations: [] as WikiEvaluation[],
   patchesSummary: { pending: 0, conflict: 0 },
   patchPanelOpen: false,
@@ -246,6 +249,8 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   },
 
   selectBlock: (blockId) => set({ selectedBlockId: blockId }),
+
+  setSearchHighlightQuery: (query) => set({ searchHighlightQuery: query }),
 
   loadEvaluations: async (projectId: string) => {
     try {

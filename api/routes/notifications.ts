@@ -6,6 +6,7 @@ import {
   type TaskNotificationEvent,
 } from "../services/notifications/task-notification-bus.js";
 import { buildWikiSnapshotEvent, WikiSnapshotEventReason } from "../services/wiki/wiki-snapshot-events.js";
+import { logger } from "../lib/logger.js";
 
 export const notificationRoutes = new Hono();
 
@@ -35,7 +36,8 @@ notificationRoutes.get("/stream", (c) => {
         data: JSON.stringify(snapshotEvent),
         id: snapshotEvent.id,
       });
-    } catch {
+    } catch (err) {
+      logger.warn({ err, projectId }, 'notification stream: failed to build initial wiki snapshot event');
       // Keep the notification stream alive even if the snapshot read fails.
     }
 

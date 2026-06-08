@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, memo } from 'react'
 import { Card, Typography } from '@heroui/react'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
+import { useSearchHighlight } from './useSearchHighlight'
 import type { WikiBlock, WikiDocument, WikiSourceBinding, DraftBlockChange } from '../../../lib/contracts/wiki'
 import type { HeadingContent, ProseContent, SignatureContent, CalloutContent, TableContent, DiagramContent, ListContent } from '../../../lib/contracts/wiki'
 import { HeadingBlock as HeadingBlockV2, ProseBlock, SignatureBlock, CalloutBlock, TableBlock as TableBlockV2, DiagramBlock as DiagramBlockV2, ListBlock as ListBlockV2 } from './blocks'
@@ -185,8 +186,14 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
   const bindingsById = useWikiStore(s => s.bindingsById)
   const isSelected = useWikiStore(s => s.selectedBlockId === block.id)
   const selectBlock = useWikiStore(s => s.selectBlock)
+  const setSearchHighlightQuery = useWikiStore(s => s.setSearchHighlightQuery)
+  const searchHighlightQuery = useWikiStore(s => s.searchHighlightQuery)
   const hasBindings = block.sourceBindingIds.length > 0
     || Object.values(bindingsById).some(b => b.wikiBlockId === block.id)
+
+  // Highlight search matches inside this block's DOM when it's the
+  // selected block and a search query is active.
+  useSearchHighlight(block.id, searchHighlightQuery, isSelected)
 
   const isDelete = draftChange?.action === 'delete'
   const isUpdate = draftChange?.action === 'update'
@@ -199,7 +206,7 @@ const WikiBlockItem = memo(function WikiBlockItem({ block, issueCount, projectId
           : 'hover:bg-card/60'
       }`}
       id={`wiki-block-${block.id}`}
-      onClick={() => selectBlock(block.id)}
+      onClick={() => { selectBlock(block.id); setSearchHighlightQuery(null) }}
     >
       {/* Issue indicator */}
       {issueCount > 0 && !isSelected && (

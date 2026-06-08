@@ -366,10 +366,20 @@ export const wikiLoopService = {
         const committedDocs = writerHandle.getCommittedDocuments();
         const targetDoc = committedDocs.find(d => d.title === entry.title && d.docType === entry.docType)
           ?? committedDocs[committedDocs.length - 1];
-        const claims: WikiClaim[] = (targetDoc as unknown as { claims?: WikiClaim[] })?.claims ?? [];
-        const loadBearing = claims.filter(c => c.centrality === 'load-bearing');
 
         const docId = planIdToDocId.get(entry.id);
+
+        // Verify the document was actually committed by checking if it now has blocks
+        const docAfterWriter = docId ? await wikiStore.getDocument(docId) : null;
+        const wasCommitted = targetDoc != null && docAfterWriter != null && docAfterWriter.blockIds.length > 0;
+        if (!wasCommitted) {
+          logger.warn({ projectId, docTitle: entry.title, docId }, 'wiki-loop: writer completed but document was not committed — skipping verification');
+          // Leave as 'drafted' or 'pending' so it can be retried via continueGeneration
+          return;
+        }
+
+        const claims: WikiClaim[] = (targetDoc as unknown as { claims?: WikiClaim[] })?.claims ?? [];
+        const loadBearing = claims.filter(c => c.centrality === 'load-bearing');
 
         if (loadBearing.length > 0) {
           logger.info({ projectId, docTitle: entry.title, claimCount: loadBearing.length }, 'wiki-loop: verifying claims');
@@ -591,6 +601,7 @@ export const wikiLoopService = {
           const existingDoc = unfilled.find(d => d.title === latestDoc.title);
           if (existingDoc) {
             await fillDocumentContent(existingDoc.id, latestDoc, snapshot.projectId, scan);
+            await wikiStore.updateDocumentPipelineStage(existingDoc.id, 'drafted');
           }
           logger.info({ projectId: snapshot.projectId, title: latestDoc.title }, 'wiki-loop: continue - document content committed');
           await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.DocumentCommitted);
@@ -626,19 +637,41 @@ export const wikiLoopService = {
         }
       }
 
-      await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
-      await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueCompleted);
-      logger.info({ snapshotId, unfilledCount: unfilled.length }, 'wiki-loop: continue generation complete');
-      notify({
-        type: TaskNotificationEventType.TaskCompleted,
-        taskKind: 'wiki_generate',
-        projectId: snapshot.projectId,
-        taskId: snapshotId,
-        title: wikiMsg(locale).continueTitle,
-        message: wikiMsg(locale).continueComplete(unfilled.length),
-        severity: 'success',
-        meta: { snapshotId, docCount: unfilled.length },
-      });
+      // Re-check unfilled count after the writer finishes
+      const updatedDocs = await wikiStore.getDocumentsBySnapshot(snapshotId);
+      const stillUnfilled = updatedDocs.filter(d => d.pipelineStage !== 'done' && d.blockIds.length === 0);
+      const filledCount = unfilled.length - stillUnfilled.length;
+
+      if (stillUnfilled.length > 0) {
+        // Writer didn't finish all documents — mark as failed so user can continue again
+        logger.warn({ snapshotId, stillUnfilled: stillUnfilled.length, filledCount }, 'wiki-loop: continue generation incomplete');
+        await wikiStore.updateSnapshotStatus(snapshotId, 'failed', documents.map(d => d.id));
+        await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueFailed);
+        notify({
+          type: TaskNotificationEventType.TaskFailed,
+          taskKind: 'wiki_generate',
+          projectId: snapshot.projectId,
+          taskId: snapshotId,
+          title: wikiMsg(locale).continueTitle,
+          message: `Writer stopped after filling ${filledCount} of ${unfilled.length} documents. ${stillUnfilled.length} remain. You can continue again.`,
+          severity: 'warning',
+          meta: { snapshotId, docCount: filledCount, remainingCount: stillUnfilled.length },
+        });
+      } else {
+        await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
+        await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueCompleted);
+        logger.info({ snapshotId, unfilledCount: unfilled.length }, 'wiki-loop: continue generation complete');
+        notify({
+          type: TaskNotificationEventType.TaskCompleted,
+          taskKind: 'wiki_generate',
+          projectId: snapshot.projectId,
+          taskId: snapshotId,
+          title: wikiMsg(locale).continueTitle,
+          message: wikiMsg(locale).continueComplete(filledCount),
+          severity: 'success',
+          meta: { snapshotId, docCount: filledCount },
+        });
+      }
       return { snapshotId, status: 'completed' };
     } catch (err) {
       logger.error({ err, snapshotId }, 'wiki-loop: continue generation failed');
@@ -724,6 +757,25 @@ function findExistingDocId(
   return null;
 }
 
+/**
+ * Infer the correct contentFormat from the block draft.
+ * When contentFormat is explicitly set, use it; otherwise infer from content type.
+ * This prevents structured JSON objects from being mislabeled as 'markdown_fragment',
+ * which would cause empty search_text and broken FTS indexing.
+ */
+function inferContentFormat(
+  explicit: string | undefined,
+  content: unknown,
+): 'structured_json' | 'markdown_fragment' {
+  if (explicit === 'structured_json' || explicit === 'markdown_fragment') {
+    return explicit;
+  }
+  // Infer: structured objects → structured_json, strings → markdown_fragment
+  return typeof content === 'object' && content !== null
+    ? 'structured_json'
+    : 'markdown_fragment';
+}
+
 async function fillDocumentContent(
   docId: string,
   draft: WikiDocumentDraft,
@@ -740,7 +792,7 @@ async function fillDocumentContent(
       documentId: docId,
       blockType: blockDraft.blockType,
       content: blockDraft.content,
-      contentFormat: blockDraft.contentFormat ?? 'markdown_fragment',
+      contentFormat: inferContentFormat(blockDraft.contentFormat, blockDraft.content),
       confidence: blockDraft.confidence ?? 0.5,
       generatedBy: { agentRunId: docId, model: 'wiki-writer' },
     });
@@ -786,7 +838,7 @@ async function persistSingleDocument(
       documentId: doc.id,
       blockType: blockDraft.blockType,
       content: blockDraft.content,
-      contentFormat: blockDraft.contentFormat ?? 'markdown_fragment',
+      contentFormat: inferContentFormat(blockDraft.contentFormat, blockDraft.content),
       confidence: blockDraft.confidence ?? 0.5,
       generatedBy: { agentRunId: snapshotId, model: 'wiki-writer' },
     });
