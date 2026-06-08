@@ -39,6 +39,7 @@ function WikiToolbar() {
   const snapshot = useWikiStore(s => s.snapshot)
   const selectDocument = useWikiStore(s => s.selectDocument)
   const selectBlock = useWikiStore(s => s.selectBlock)
+  const setSearchHighlightQuery = useWikiStore(s => s.setSearchHighlightQuery)
 
   const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState('')
@@ -66,8 +67,12 @@ function WikiToolbar() {
   function handleSelect(result: SearchResult) {
     setViewMode('document')
     selectDocument(result.documentId)
+    // Persist the search query so the block renderer can highlight matches
+    setSearchHighlightQuery(query.trim())
     setTimeout(() => {
       selectBlock(result.blockId)
+      // Scroll to the block first; useSearchHighlight will then
+      // fine-scroll to the first <mark> inside the block after highlighting.
       const el = document.getElementById(`wiki-block-${result.blockId}`)
       el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
     }, 50)

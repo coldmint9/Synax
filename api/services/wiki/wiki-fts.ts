@@ -47,7 +47,10 @@ function segmentsToText(segments: unknown): string {
 
 function listItemsToText(items: unknown): string {
   if (!Array.isArray(items)) return '';
-  return (items as ListItem[]).map(item => {
+  return (items as (ListItem | string)[]).map(item => {
+    // Handle string items (simplified list format: ["item1", "item2"])
+    if (typeof item === 'string') return item;
+    // Handle object items with segments and optional children
     const text = segmentsToText(item.segments);
     const childText = item.children ? listItemsToText(item.children) : '';
     return childText ? `${text} ${childText}` : text;
@@ -72,6 +75,14 @@ function stripMarkdown(text: string): string {
  * Extract plaintext from a wiki block's structured content, with CJK characters
  * space-separated so the unicode61 FTS tokenizer treats each as an independent
  * token (every CJK character is individually searchable).
+ *
+ * Handles multiple content shapes robustly:
+ * - markdown_fragment with string content (standard)
+ * - markdown_fragment with object content (legacy mislabel — fall through to structured extraction)
+ * - structured_json with all expected block type shapes
+ * - Simplified prose ({ text: "..." } vs { segments: [...] })
+ * - Simplified list ({ items: ["str1", "str2"] } vs { items: [{ segments: [...] }] })
+ * - diagram_json with caption or bare diagram code
  */
 export function extractSearchText(
   blockType: WikiBlockType,
@@ -81,17 +92,34 @@ export function extractSearchText(
   if (!content) return '';
 
   let raw: string;
-  if (contentFormat === 'markdown_fragment') {
+
+  // Determine the effective format — some blocks are labeled 'markdown_fragment'
+  // but actually contain a structured JSON object (legacy generator output).
+  const isStructuredObject = typeof content === 'object' && content !== null;
+  const effectiveFormat = contentFormat === 'markdown_fragment' && isStructuredObject
+    ? 'structured_json'
+    : contentFormat;
+
+  if (effectiveFormat === 'markdown_fragment') {
     raw = typeof content === 'string' ? stripMarkdown(content) : '';
-  } else if (contentFormat === 'structured_json') {
+  } else if (effectiveFormat === 'structured_json' || effectiveFormat === 'diagram_json') {
     const c = content as Record<string, unknown>;
     switch (blockType) {
       case 'heading':
         raw = typeof c.text === 'string' ? c.text : '';
         break;
-      case 'prose':
-        raw = segmentsToText(c.segments);
+      case 'prose': {
+        // Handle both { segments: [...] } and { text: "..." } shapes
+        const proseSegments = segmentsToText(c.segments);
+        if (proseSegments) {
+          raw = proseSegments;
+        } else if (typeof c.text === 'string') {
+          raw = c.text;
+        } else {
+          raw = '';
+        }
         break;
+      }
       case 'signature': {
         const tokens = Array.isArray(c.tokens) ? (c.tokens as Array<{ value: string }>) : [];
         raw = tokens.map(t => t.value).join('');
@@ -109,7 +137,9 @@ export function extractSearchText(
       case 'table': {
         const headers = Array.isArray(c.headers)
           ? (c.headers as Array<{ label: string }>).map(h => h.label).join(' ')
-          : '';
+          : Array.isArray(c.headers)
+            ? (c.headers as string[]).join(' ')
+            : '';
         const rows = Array.isArray(c.rows)
           ? (c.rows as Array<Record<string, string | { type: string; value: string }>>)
               .flatMap(row => Object.values(row).map(v => typeof v === 'string' ? v : v.value))
@@ -119,7 +149,29 @@ export function extractSearchText(
         break;
       }
       case 'diagram': {
-        raw = typeof c.caption === 'string' ? c.caption : '';
+        // Prefer caption, fall back to diagramType + code description
+        if (typeof c.caption === 'string' && c.caption.trim()) {
+          raw = c.caption;
+        } else if (typeof c.code === 'string') {
+          // Extract any readable text from diagram code (e.g. node labels in mermaid)
+          // Extract readable text from diagram code: keep node labels inside brackets
+          // but strip the mermaid keywords, arrows, and other syntax characters.
+          const codeText = c.code
+            .replace(/\b(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|mindmap|timeline)\b/gi, ' ')
+            .replace(/\b(TD|LR|RL|BT|TB)\b/gi, ' ')
+            .replace(/[-=]{2,}>?/g, ' ')   // arrows: --> ----> ==> etc.
+            .replace(/==?/g, ' ')           // thick arrows
+            .replace(/-\.-?x?/g, ' ')       // dotted arrows
+            .replace(/[\[\]{}()|;,@:<>]+/g, ' ')  // syntax delimiters
+            .replace(/\|/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          raw = codeText || '';
+        } else if (typeof c.diagramType === 'string') {
+          raw = c.diagramType;
+        } else {
+          raw = '';
+        }
         break;
       }
       default:
@@ -165,6 +217,23 @@ export function searchWikiBlocks(opts: WikiSearchOptions): WikiSearchResult[] {
   // becomes "认 证" (AND of two CJK character tokens).
   const ftsQuery = cjkSeparate(trimmed);
 
+  // Verify FTS table is available before attempting MATCH
+  const ftsExists = sqlite
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wiki_blocks_fts'")
+    .get() as { name: string } | undefined;
+
+  if (!ftsExists) {
+    logger.warn({ projectId, query: trimmed }, '[wiki-fts] FTS table missing — index may not have been built yet');
+    return [];
+  }
+
+  // Check if FTS table has any content at all
+  const ftsCount = (sqlite.prepare('SELECT COUNT(*) AS n FROM wiki_blocks_fts').get() as { n: number }).n;
+  if (ftsCount === 0) {
+    logger.warn({ projectId, query: trimmed }, '[wiki-fts] FTS table exists but is empty — rebuild may have failed');
+    return [];
+  }
+
   let sql: string;
   let params: unknown[];
 
@@ -207,9 +276,12 @@ export function searchWikiBlocks(opts: WikiSearchOptions): WikiSearchResult[] {
   try {
     rows = sqlite.prepare(sql).all(...params) as typeof rows;
   } catch (err) {
-    // FTS table might not exist yet (first run before rebuild)
-    logger.warn({ err, projectId, query: trimmed }, '[wiki-fts] search query failed');
+    logger.warn({ err, projectId, query: trimmed, ftsQuery }, '[wiki-fts] search MATCH query failed');
     return [];
+  }
+
+  if (rows.length === 0) {
+    logger.warn({ projectId, query: trimmed, ftsQuery, ftsCount }, '[wiki-fts] MATCH returned no results');
   }
 
   return rows.map(r => ({
@@ -221,15 +293,29 @@ export function searchWikiBlocks(opts: WikiSearchOptions): WikiSearchResult[] {
   }));
 }
 
+/**
+ * Generate a snippet around the first match of query in text.
+ * Handles CJK-separated text by searching for both the original query
+ * and the CJK-separated version.
+ */
 function generateSnippet(text: string, query: string, contextChars = 80): string {
   if (!text) return '';
   const lower = text.toLowerCase();
   const queryLower = query.toLowerCase();
-  const idx = lower.indexOf(queryLower);
+  const ftsQueryLower = cjkSeparate(query).toLowerCase();
+
+  // Try the CJK-separated query first (to match CJK queries against
+  // CJK-separated search_text), then fall back to the raw query.
+  let idx = lower.indexOf(ftsQueryLower);
+  let matchLen = ftsQueryLower.length;
+  if (idx === -1) {
+    idx = lower.indexOf(queryLower);
+    matchLen = queryLower.length;
+  }
   if (idx === -1) return text.slice(0, contextChars * 2);
 
   const start = Math.max(0, idx - contextChars);
-  const end = Math.min(text.length, idx + query.length + contextChars);
+  const end = Math.min(text.length, idx + matchLen + contextChars);
   const prefix = start > 0 ? '…' : '';
   const suffix = end < text.length ? '…' : '';
   return `${prefix}${text.slice(start, end)}${suffix}`;
@@ -237,10 +323,6 @@ function generateSnippet(text: string, query: string, contextChars = 80): string
 
 // ── Index Rebuild ───────────────────────────────────────────────────────────
 
-/**
- * Rebuild the FTS index for all wiki blocks.
- * Called on first startup after migration, or manually to reindex.
- */
 /**
  * Rebuild the FTS index for all wiki blocks.
  * Called on startup — backfills search_text, recreates FTS table if tokenizer
@@ -298,36 +380,71 @@ export async function rebuildWikiFtsIndex(): Promise<{ indexed: number }> {
   if (emptyRows.length > 0) {
     logger.info({ count: emptyRows.length }, '[wiki-fts] backfilling search_text for blocks');
 
-    const updateStmt = sqlite.prepare('UPDATE wiki_blocks SET search_text = ? WHERE id = ?');
+    // Drop triggers temporarily so the backfill doesn't fire per-row FTS sync
+    // (the full rebuild happens right after). This also sidesteps a libsql
+    // compatibility issue where FTS5 trigger operations inside
+    // exec('BEGIN')/exec('COMMIT') transactions throw "SQL logic error".
+    sqlite.exec('DROP TRIGGER IF EXISTS trg_wiki_blocks_fts_au');
+    sqlite.exec('DROP TRIGGER IF EXISTS trg_wiki_blocks_fts_ai');
 
-    const txn = sqlite.transaction(() => {
+    try {
+      const updateStmt = sqlite.prepare('UPDATE wiki_blocks SET search_text = ? WHERE id = ?');
       for (const row of emptyRows) {
-        const content = JSON.parse(row.contentJson);
-        const text = extractSearchText(
-          row.blockType as WikiBlockType,
-          row.contentFormat,
-          content,
-        );
-        if (text) {
-          updateStmt.run(text, row.id);
+        try {
+          const content = JSON.parse(row.contentJson);
+          const text = extractSearchText(
+            row.blockType as WikiBlockType,
+            row.contentFormat,
+            content,
+          );
+          if (text) {
+            updateStmt.run(text, row.id);
+          }
+        } catch (err) {
+          logger.warn({ err, blockId: row.id }, '[wiki-fts] failed to backfill block, skipping');
         }
       }
-    });
-    txn();
+    } finally {
+      // Recreate the triggers so incremental FTS sync works after rebuild
+      sqlite.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_wiki_blocks_fts_ai AFTER INSERT ON wiki_blocks
+        WHEN new.search_text != '' BEGIN
+          INSERT INTO wiki_blocks_fts (search_text, block_id, document_id, project_id)
+          VALUES (new.search_text, new.id, new.document_id, new.project_id);
+        END;
+      `);
+      sqlite.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_wiki_blocks_fts_au AFTER UPDATE OF search_text ON wiki_blocks
+        WHEN new.search_text != old.search_text BEGIN
+          DELETE FROM wiki_blocks_fts WHERE block_id = old.id;
+          INSERT INTO wiki_blocks_fts (search_text, block_id, document_id, project_id)
+          VALUES (new.search_text, new.id, new.document_id, new.project_id);
+        END;
+      `);
+    }
   }
 
-  // Rebuild FTS from all blocks that have search_text
-  sqlite.exec('DELETE FROM wiki_blocks_fts');
-  sqlite.exec(`
-    INSERT INTO wiki_blocks_fts (search_text, block_id, document_id, project_id)
-    SELECT search_text, id, document_id, project_id
-    FROM wiki_blocks
-    WHERE search_text != ''
-  `);
+  // Rebuild FTS from all blocks that have search_text.
+  // Only clear the FTS table if there are blocks to reindex — otherwise
+  // preserve whatever data already exists in the FTS table.
+  const searchPopulated = (sqlite.prepare(
+    "SELECT COUNT(*) AS n FROM wiki_blocks WHERE search_text != ''"
+  ).get() as { n: number }).n;
 
-  const indexed = (sqlite.prepare("SELECT COUNT(*) AS n FROM wiki_blocks WHERE search_text != ''").get() as { n: number }).n;
-  logger.info({ indexed }, '[wiki-fts] FTS rebuild complete');
-  return { indexed };
+  if (searchPopulated > 0) {
+    sqlite.exec('DELETE FROM wiki_blocks_fts');
+    sqlite.exec(`
+      INSERT INTO wiki_blocks_fts (search_text, block_id, document_id, project_id)
+      SELECT search_text, id, document_id, project_id
+      FROM wiki_blocks
+      WHERE search_text != ''
+    `);
+    logger.info({ indexed: searchPopulated }, '[wiki-fts] FTS rebuild complete');
+  } else {
+    logger.warn('[wiki-fts] no blocks have search_text — FTS table not rebuilt, preserving existing data');
+  }
+
+  return { indexed: searchPopulated };
 }
 
 /**

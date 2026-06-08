@@ -847,6 +847,20 @@
   .wiki-soft-rule { border-color: hsl(var(--border-hsl) / 0.55); }
   .wiki-fade-in { animation: float-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
+  /* ── Search keyword highlight inside wiki blocks ──────────────────────── */
+  mark.wiki-search-highlight {
+    @apply bg-warning/40 text-foreground rounded-sm px-0.5;
+    animation: wiki-highlight-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes wiki-highlight-pop {
+    0% { background-color: hsl(var(--warning) / 0.7); transform: scale(1.05); }
+    100% { background-color: hsl(var(--warning) / 0.4); transform: scale(1); }
+  }
+  @keyframes float-in {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
   .toolbar-block { @apply rounded-xl border border-transparent bg-transparent p-0; }
   .toolbar-quick-btn { @apply inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-background/60 px-2.5 py-1 text-xs text-foreground transition hover:bg-background/90 disabled:opacity-50; }
   .toolbar-check-chip { @apply inline-flex h-8 items-center gap-2 rounded-lg border border-border/50 bg-background/60 px-2.5 text-xs text-foreground transition hover:bg-background/90; }

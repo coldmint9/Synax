@@ -20,7 +20,9 @@ export function useWikiSnapshotListener(projectId: string | null) {
         if (data.type !== TaskNotificationEventType.WikiSnapshot) return
         if (data.projectId !== projectId) return
         useWikiStore.getState().applySnapshotTree(data.tree)
-      } catch { /* ignore parse errors */ }
+      } catch (err) {
+        console.warn('[useWikiSnapshotListener] Failed to process wiki_snapshot event:', err)
+      }
     }
 
     return subscribe(projectId, {

@@ -147,4 +147,73 @@ describe('extractSearchText', () => {
     const result = extractSearchText('prose', 'structured_json', content);
     expect(result).toBe('参 见 认 证 模 块');
   });
+
+  it('handles prose with text field (simplified schema)', () => {
+    const content = { text: '这是一个简化版本的 prose 内容。' };
+    const result = extractSearchText('prose', 'structured_json', content);
+    expect(result).toBe('这 是 一 个 简 化 版 本 的 prose 内 容 。');
+  });
+
+  it('handles list with string items (simplified schema)', () => {
+    const content = { items: ['第一项', '第二项', '第三项'], ordered: false };
+    const result = extractSearchText('list', 'structured_json', content);
+    expect(result).toContain('第 一 项');
+    expect(result).toContain('第 二 项');
+    expect(result).toContain('第 三 项');
+  });
+
+  it('handles markdown_fragment with object content (legacy mislabel)', () => {
+    // Some blocks are labeled markdown_fragment but actually contain structured JSON objects
+    const content = { level: 2, text: '分层架构' };
+    const result = extractSearchText('heading', 'markdown_fragment', content);
+    expect(result).toBe('分 层 架 构');
+  });
+
+  it('handles markdown_fragment with prose segments object', () => {
+    const content = {
+      segments: [
+        { type: 'text', value: '这是一段' },
+        { type: 'bold', value: '重要' },
+        { type: 'text', value: '内容。' },
+      ],
+    };
+    const result = extractSearchText('prose', 'markdown_fragment', content);
+    expect(result).toBe('这 是 一 段 重 要 内 容 。');
+  });
+
+  it('handles empty diagram_json gracefully', () => {
+    const result = extractSearchText('diagram', 'diagram_json', {});
+    expect(result).toBe('');
+  });
+
+  it('handles diagram with code but no caption', () => {
+    const content = { diagramType: 'flowchart', code: 'graph TD; A[开始] --> B[结束];' };
+    const result = extractSearchText('diagram', 'structured_json', content);
+    // Should extract text from diagram code (labels, etc.)
+    expect(result).toBeTruthy();
+    expect(result).toContain('开 始');
+    expect(result).toContain('结 束');
+  });
+
+  it('handles prose with only text field (no segments)', () => {
+    const content = { text: '纯文本 prose 内容' };
+    const result = extractSearchText('prose', 'structured_json', content);
+    expect(result).toBe('纯 文 本 prose 内 容');
+  });
+
+  it('handles heading via markdown_fragment mislabel', () => {
+    const content = { level: 1, text: '项目定位', anchor: 'project-positioning' };
+    const result = extractSearchText('heading', 'markdown_fragment', content);
+    expect(result).toBe('项 目 定 位');
+  });
+
+  it('handles table via markdown_fragment mislabel', () => {
+    const content = {
+      headers: [{ key: 'layer', label: '层次' }],
+      rows: [{ layer: '运行时' }],
+    };
+    const result = extractSearchText('table', 'markdown_fragment', content);
+    expect(result).toContain('层 次');
+    expect(result).toContain('运 行 时');
+  });
 });
