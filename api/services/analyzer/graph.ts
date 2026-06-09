@@ -86,10 +86,11 @@ export function buildAnalyzerGraph(codeIndex: CodeMapCodeIndex): AnalyzerGraph {
   const { callGraph, reverseCallGraph } = resolveCallEdges(codeIndex, symbolIdsByFile, resolvedImports)
 
   // Strengthen file neighbors with cross-file call edges
+  const symbolById = new Map(codeIndex.symbols.map((s) => [s.id, s] as const))
   for (const edge of codeIndex.callEdges) {
     if (!edge.targetSymbolId) continue
     const sourceFileId = edge.fileId
-    const targetSym = codeIndex.symbols.find((s) => s.id === edge.targetSymbolId)
+    const targetSym = symbolById.get(edge.targetSymbolId)
     if (!targetSym || targetSym.fileId === sourceFileId) continue
     incrementWeight(fileNeighbors, sourceFileId, targetSym.fileId, 0.5)
     incrementWeight(fileNeighbors, targetSym.fileId, sourceFileId, 0.5)

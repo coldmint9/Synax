@@ -148,7 +148,8 @@ function buildCommunitySummary(
   fileById: Map<string, { path: string }>,
 ): string {
   const dirPreview = [...new Set(fileIds.map((fileId) => topDirFromPath(fileById.get(fileId)?.path ?? '.')))].slice(0, 3).join(', ')
-  const crossImports = graph.resolvedImports.filter((edge) => fileIds.includes(edge.sourceFileId) && !fileIds.includes(edge.targetFileId)).length
+  const fileSet = new Set(fileIds)
+  const crossImports = graph.resolvedImports.filter((edge) => fileSet.has(edge.sourceFileId) && !fileSet.has(edge.targetFileId)).length
   return `${fileIds.length} files, ${symbolIds.length} symbols, ${crossImports} cross-community imports${dirPreview ? ` across ${dirPreview}` : ''}.`
 }
 
@@ -165,6 +166,13 @@ function buildSemanticGraph(
     evidence: { fileIds: community.fileIds, symbolIds: community.symbolIds },
     score: community.score,
   }))
+
+  const symbolToFile = new Map<string, string>()
+  for (const [fileId, symbolIds] of graph.symbolIdsByFile) {
+    for (const symbolId of symbolIds) {
+      symbolToFile.set(symbolId, fileId)
+    }
+  }
 
   const edgesByKey = new Map<string, SemanticEdge>()
   for (const edge of graph.resolvedImports) {
@@ -189,8 +197,8 @@ function buildSemanticGraph(
   // Aggregate cross-community call edges
   for (const [callerId, callees] of graph.callGraph) {
     for (const calleeId of callees) {
-      const callerFile = findFileForSymbol(callerId, graph)
-      const calleeFile = findFileForSymbol(calleeId, graph)
+      const callerFile = symbolToFile.get(callerId) ?? null
+      const calleeFile = symbolToFile.get(calleeId) ?? null
       if (!callerFile || !calleeFile) continue
       const sourceCommunity = communityByFileId.get(callerFile)
       const targetCommunity = communityByFileId.get(calleeFile)
@@ -212,11 +220,4 @@ function buildSemanticGraph(
   }
 
   return { nodes, edges: [...edgesByKey.values()] }
-}
-
-function findFileForSymbol(symbolId: string, graph: AnalyzerGraph): string | null {
-  for (const [fileId, symbolIds] of graph.symbolIdsByFile) {
-    if (symbolIds.includes(symbolId)) return fileId
-  }
-  return null
 }
