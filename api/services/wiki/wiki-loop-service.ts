@@ -33,6 +33,8 @@ import { createVerifierTools, type WikiVerdict } from './tools/verifier-tools.js
 import type { WikiClaim } from './tools/contracts.js';
 import { buildLanguageDirective } from '../prompts/language-directive.js';
 import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
+import { runBatch } from '../agent-runtime/subagent-orchestrator.js';
+import { deriveExplorerSpecs, formatExplorerContext } from './wiki-explorer-specs.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
   return locale === 'en' ? {
@@ -146,11 +148,10 @@ export const wikiLoopService = {
         registeredToolIds.push(tool.id);
       }
 
-      const plannerPrompt = buildWikiPrompt({ role: 'planner', languages, locale, scan });
       const plannerSession = agentSessionRuntime.create({
         projectId,
         profileId: 'wiki-planner',
-        prompt: plannerPrompt,
+        prompt: buildWikiPrompt({ role: 'planner', languages, locale, scan }),
         sessionMetadata: { snapshotId: snapshot.id, phase: 'planner' },
       });
       agentRuntimeStore.updateSession(plannerSession.id, { title: wikiMsg(locale).sessionInit, updatedAt: nowIso() });
@@ -164,8 +165,45 @@ export const wikiLoopService = {
         payload: { snapshotId: snapshot.id, phase: 1 },
       });
 
+      // Phase 1a: deterministic fan-out. Code (not the planner LLM) decides which
+      // packages to explore; each explorer runs with a per-child timeout and full
+      // failure isolation, so a hung/blocked explorer cannot freeze the session.
+      const explorerSpecs = deriveExplorerSpecs(scan);
+      let preloadedContext = '';
+      if (explorerSpecs.length > 0) {
+        logger.info({ projectId, sessionId: plannerSession.id, explorerCount: explorerSpecs.length },
+          'wiki-loop: Phase 1a fanning out explorers');
+        notify({
+          type: TaskNotificationEventType.TaskProgress,
+          taskKind: 'wiki_generate',
+          projectId,
+          taskId: snapshot.id,
+          title: wikiMsg(locale).genTitle,
+          message: locale === 'en'
+            ? `Exploring ${explorerSpecs.length} core packages in parallel`
+            : `正在并行探索 ${explorerSpecs.length} 个核心包`,
+          severity: 'info',
+          meta: { snapshotId: snapshot.id, snapshotStatus: 'refreshing', phase: 1, activityPhase: 'explore' },
+        });
+
+        const explorerResults = await runBatch(plannerSession.id, explorerSpecs, {
+          maxConcurrency: 5,
+          onChildCreated: (childId) => {
+            setSessionWorkspaceRoot(childId, workDir);
+            sessionIds.push(childId);
+          },
+        });
+        preloadedContext = formatExplorerContext(
+          explorerResults.map((r) => ({ label: r.spec.label, status: r.status, summary: r.summary })),
+        );
+        logger.info({ projectId, sessionId: plannerSession.id, byStatus: explorerResults.reduce((acc, r) => { acc[r.status] = (acc[r.status] ?? 0) + 1; return acc; }, {} as Record<string, number>) },
+          'wiki-loop: Phase 1a explorers complete');
+      }
+
+      // Phase 1b: planner synthesizes the explorer evidence into an outline.
+      const plannerPrompt = buildWikiPrompt({ role: 'planner', languages, locale, scan, preloadedContext: preloadedContext || undefined });
       logger.info({ projectId, sessionId: plannerSession.id }, 'wiki-loop: Phase 1 starting planner agent');
-      const stream1 = agentLoopRuntime.streamRun(plannerSession.id, { locale });
+      const stream1 = agentLoopRuntime.streamRun(plannerSession.id, { locale, message: plannerPrompt });
       let lastActivityTs = 0;
       const ACTIVITY_THROTTLE_MS = 800;
       const SYNTHESIZE_THROTTLE_MS = 2000;

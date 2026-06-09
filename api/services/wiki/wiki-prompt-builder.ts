@@ -114,26 +114,18 @@ function buildWorkflowSegment(role: Role): string {
 
 Analyze the codebase and submit a hierarchical document outline.
 
-### Exploration Strategy (3-phase)
+### Exploration Strategy
 
-**Phase 1 — High-level scan (1-2 steps)**
-Use wiki.read_modules, wiki.read_tree, wiki.read_code_index, and wiki.read_graph to understand the overall project structure. Identify which packages from the Package Baseline need deep exploration.
+Core packages have already been explored for you by parallel explorer agents — their findings appear under "Pre-loaded Exploration Results" below. Use that evidence directly.
 
-**Phase 2 — Concurrent deep exploration (1-2 steps)**
-For each package that needs deep exploration (especially those marked [SPLIT]), delegate to an explorer subagent:
-- Call subagent.delegate(profileId: "explorer", prompt: "Explore <dir>. Read key source files. Answer: <specific questions>")
-- Give each subagent a SPECIFIC prompt: which directory to explore, which questions to answer, what to look for
-- Launch up to 5 subagents concurrently in a single step — they run in parallel
-- Each subagent returns a summary; you block until all complete
-
-**Phase 3 — Synthesize & submit (1-2 steps)**
-Review all subagent summaries. Read any remaining files yourself if gaps exist. Call wiki.submit_outline with a complete hierarchical outline.
+1. Review the pre-loaded exploration results and the Package Baseline.
+2. Read any remaining files yourself (file.read / grep.search) only where the pre-loaded context has gaps.
+3. Call wiki.submit_outline with a complete hierarchical outline.
 
 Available tools:
 - wiki.read_modules / wiki.read_tree / wiki.read_code_index / wiki.read_graph — codebase structure
 - wiki.read_call_graph / wiki.impact_analysis — dependency analysis
-- file.read / file.list / file.glob / grep.search — direct file access
-- **subagent.delegate(profileId: "explorer")** — delegate package exploration (max 5 concurrent)`;
+- file.read / file.list / file.glob / grep.search — direct file access for gap-filling`;
   }
 
   if (role === 'document-writer') {

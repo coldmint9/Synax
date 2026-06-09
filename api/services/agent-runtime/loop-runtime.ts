@@ -13,7 +13,7 @@ import type {
   ToolCallRecord,
 } from "./contracts.js";
 import { agentEventService, type AgentEventService } from "./event-service.js";
-import { detectDoomLoop, shouldForceFinalSummary } from "./loop-guards.js";
+import { detectDoomLoop, shouldForceFinalSummary, buildConsecutiveFailureReminder } from "./loop-guards.js";
 import { buildLoopToolSet } from "./loop-ai-tools.js";
 import { buildLoopModelMessages, computeClearedToolCallIds } from "./loop-model-messages.js";
 import { generateLoopModelStep, streamLoopModelStep } from "./loop-model-stream.js";
@@ -48,6 +48,7 @@ import {
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
 import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
 import { buildTaskDriftReminder } from "./tools/task-tools.js";
+import { runChildToCompletion, DEFAULT_PER_CHILD_TIMEOUT_MS } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
 import { sessionLiveBus } from "./session-live-bus.js";
 import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
@@ -1379,11 +1380,16 @@ export class AgentLoopRuntime {
       );
 
     const todoDriftReminder = input.stepIndex > 1 ? buildTaskDriftReminder(input.sessionId) : null;
+    const failureReminder = buildConsecutiveFailureReminder(
+      input.previousToolCalls,
+      input.profile.consecutiveFailureReminderThreshold,
+    );
 
     const stepNote = buildLoopStepNote(input);
     const tailReminders = [
       stepNote,
       todoDriftReminder ?? '',
+      failureReminder ?? '',
       needsInstructionOverride ? input.prompt.trim() : '',
     ].filter(Boolean);
 
@@ -1601,22 +1607,22 @@ export class AgentLoopRuntime {
           : null;
     if (!childSessionId) return record;
 
-    for await (const _chunk of this.streamRun(
+    // Run the child with a wall-clock timeout so a hung sub-agent (e.g. a stalled
+    // LLM call) aborts itself instead of blocking the parent's Promise.all forever.
+    const childResult = await runChildToCompletion(
       childSessionId,
-      {},
-      abortSignal,
-    )) {
-      // The child run persists its own messages/events; the parent only needs the final summary.
-    }
+      { profileId: 'subagent', prompt: '' },
+      { timeoutMs: DEFAULT_PER_CHILD_TIMEOUT_MS, abortSignal },
+    );
 
     const childSession = this.store.getSession(childSessionId);
     const childSummary =
       childSession.resultSummary ??
       `Child session ${childSessionId} finished with status ${childSession.status}.`;
     const status =
-      childSession.status === "completed" ? record.status : "failed";
+      childResult.status === "completed" ? record.status : "failed";
     const outputSummary = truncateSummary(
-      `Subtask ${childSessionId} ${childSession.status}: ${childSummary}`,
+      `Subtask ${childSessionId} ${childResult.status}: ${childSummary}`,
     );
     const updated = this.store.updateToolCall(record.sessionId, record.id, {
       status,

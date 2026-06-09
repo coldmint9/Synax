@@ -462,20 +462,12 @@ export class ToolRegistry {
         endedAt: nowIso(),
         error: message,
       });
-      const recentFailures = record.runId
-        ? this.store.listRunToolCalls(record.runId)
-            .filter((call) => call.status === 'failed' && call.toolId === tool.id).length
-        : 0;
-      if (recentFailures >= 3) {
-        this.store.updateSession(sessionId, {
-          status: 'blocked',
-          blockedReason: `Repeated ${tool.id} failures.`,
-          updatedAt: nowIso(),
-          completedAt: nowIso(),
-          activeRunId: null,
-          pendingResumeToken: null,
-        });
-      }
+      // A failed tool call is a SIGNAL, not a session death sentence. The failure
+      // is surfaced to the model as a tool_result so it can self-correct (change
+      // approach, fix args, switch tools). Consecutive same-tool failures trigger
+      // a corrective system-reminder (see buildConsecutiveFailureReminder), and
+      // genuine no-progress loops are caught by detectDoomLoop. We deliberately do
+      // NOT block the session on a failure count.
       this.events.append({
         sessionId,
         type: 'tool_result',

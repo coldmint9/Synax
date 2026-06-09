@@ -30,7 +30,6 @@ export const wikiPlannerProfile: AgentProfile = {
     'wiki.read_modules',
     'wiki.read_tree',
     'wiki.submit_outline',
-    'subagent.delegate',
     'tools.escalate',
   ],
   permissionDefaults: [
