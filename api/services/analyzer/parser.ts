@@ -11,6 +11,7 @@ import {
 } from './shared.js'
 import { parseOneFile } from './parse-lib.js'
 import { AnalyzerWorkerPool, type FileParseResult } from './worker-pool.js'
+import { logger } from '../../lib/logger.js'
 
 // Re-export for backward compatibility — parseOneFile is also available
 // for direct (non-worker) use in tests and fallback paths.
@@ -32,21 +33,36 @@ export async function parseRepository(workDirAbs: string): Promise<AnalyzerParse
 	const callEdges: CodeMapCallEdge[] = []
 	const allWarnings: string[] = []
 
-	// File discovery (main thread — one-shot, ~2-5s)
+	logger.info('[analyzer] ░░░░░░░░░░ 0% — discovering files...')
 	const filePaths = walkRepositoryFiles(workDirAbs)
 
 	if (filePaths.length === 0) {
+		logger.info('[analyzer] ██████████ 100% — no files found, skipping')
 		return emptyParseResult(workDirAbs, files, symbols, chunks, imports, callEdges, allWarnings)
 	}
 
-	// Offload per-file parsing to a worker pool.
-	// Pool size defaults to os.cpus().length - 1, configurable via env.
+	logger.info(`[analyzer] ██░░░░░░░░ 10% — found ${filePaths.length} files, parsing...`)
+
 	const poolSize = parsePoolSize()
 	const pool = new AnalyzerWorkerPool(poolSize)
 
+	let completed = 0
+	const total = filePaths.length
+	let lastLoggedPct = 10
+
 	const results = await Promise.all(
 		filePaths.map((absPath) =>
-			pool.parseFile(absPath, workDirAbs).catch((_err): FileParseResult | null => null),
+			pool.parseFile(absPath, workDirAbs).then((r) => {
+				completed++
+				const pct = Math.round(10 + (completed / total) * 60)
+				if (pct >= lastLoggedPct + 20) {
+					const filled = Math.round(pct / 10)
+					const bar = '█'.repeat(filled) + '░'.repeat(10 - filled)
+					logger.info(`[analyzer] ${bar} ${pct}% — parsed ${completed}/${total} files`)
+					lastLoggedPct = pct
+				}
+				return r
+			}).catch((_err): FileParseResult | null => null),
 		),
 	)
 

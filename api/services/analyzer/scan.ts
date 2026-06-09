@@ -42,6 +42,7 @@ import { parseRepository } from './parser.js'
 import { contextService } from '../context/context-service.js'
 import { searchService } from '../context/search-service.js'
 import { resolveWorkspacePath, workspaceRoot } from '../agent-runtime/tools/workspace.js'
+import { logger } from '../../lib/logger.js'
 
 export interface ScanDiffEntry {
   kind:
@@ -98,11 +99,22 @@ export async function normalizeScanRequest(req: CodeMapScanRequest): Promise<Nor
 export async function runCodeMapScan(req: CodeMapScanRequest): Promise<CodeMapScanResult> {
   const normalized = await normalizeScanRequest(req)
   const started = now()
+
+  logger.info('[analyzer] ▶ scan started', { workDir: normalized.workDirAbs })
   const parsed = await parseRepository(normalized.workDirAbs)
+
+  logger.info(`[analyzer] ███████░░░ 70% — building dependency graph...`)
   const graph = buildAnalyzerGraph(parsed.codeIndex)
+
+  logger.info(`[analyzer] ████████░░ 80% — detecting communities...`)
   const communityResult = detectCommunities(parsed.codeIndex, graph)
+
+  logger.info(`[analyzer] █████████░ 90% — building module map...`)
   const moduleMap = buildModuleMap(parsed.codeIndex, graph)
+
+  logger.info(`[analyzer] █████████▓ 95% — generating coordinate seed...`)
   const coordSeed = buildCoordSeed(req.projectId, parsed.codeIndex, moduleMap, communityResult.communities, graph)
+
   const result: CodeMapScanResult = {
     projectId: req.projectId,
     scanId: `scan_${hashParts(req.projectId, String(started), String(parsed.codeIndex.files.length), String(parsed.codeIndex.symbols.length))}`,
@@ -117,6 +129,13 @@ export async function runCodeMapScan(req: CodeMapScanRequest): Promise<CodeMapSc
     coordSeed,
     warnings: [...normalized.warnings, ...parsed.warnings],
   }
+
+  logger.info(`[analyzer] ██████████ 100% — scan complete`, {
+    files: parsed.codeIndex.files.length,
+    symbols: parsed.codeIndex.symbols.length,
+    communities: communityResult.communities.length,
+    durationMs: result.durationMs,
+  })
 
   return result
 }
