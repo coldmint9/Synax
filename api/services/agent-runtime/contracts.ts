@@ -174,6 +174,11 @@ export interface AgentProfile {
   loopHints?: string[];
   allowsSubsessions?: boolean;
   doomLoopThreshold?: number;
+  /** After this many consecutive failures of the SAME tool, inject a corrective
+   *  system-reminder to the model (instead of terminating the session). Defaults
+   *  to 3 when unset. Read-only exploration profiles (explorer/verifier) may set
+   *  a higher value since their bash probing fails more freely while self-healing. */
+  consecutiveFailureReminderThreshold?: number;
   fallbackDisclosure?: FallbackDisclosureConfig;
   /** ID of a SessionToolProvider that supplies tools/hooks for this profile's sessions.
    *  The provider is consulted on every tool listing and execution so that
