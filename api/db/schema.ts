@@ -735,6 +735,21 @@ export const wikiScanCache = sqliteTable('wiki_scan_cache', {
   updatedAt: text('updated_at').notNull(),
 });
 
+export const wikiScanGitCache = sqliteTable('wiki_scan_git_cache', {
+  projectId: text('project_id').notNull(),
+  branch: text('branch').notNull(),
+  headCommitSha: text('head_commit_sha').notNull(),
+  workingTreeHash: text('working_tree_hash').notNull(),
+  scanId: text('scan_id').notNull(),
+  resultJson: text('result_json').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.projectId, table.branch, table.headCommitSha, table.workingTreeHash] }),
+}));
+
+export type WikiScanGitCacheRow = typeof wikiScanGitCache.$inferSelect;
+export type NewWikiScanGitCacheRow = typeof wikiScanGitCache.$inferInsert;
+
 // ── Wiki Evaluations & Plans ────────────────────────────────────────────────
 
 export const wikiEvaluations = sqliteTable('wiki_evaluations', {

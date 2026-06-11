@@ -120,7 +120,9 @@ Core packages have already been explored for you by parallel explorer agents —
 
 1. Review the pre-loaded exploration results and the Package Baseline.
 2. Read any remaining files yourself (file.read / grep.search) only where the pre-loaded context has gaps.
-3. Call wiki.submit_outline with a complete hierarchical outline.
+3. Call wiki.create_outline_draft with your best-guess outline. It saves the draft and returns any structural issues as validationErrors.
+4. Call wiki.edit_outline_draft to fix remaining issues (add missing docs, fix targetFiles, update keyQuestions). Each edit runs full validation and returns updated validationErrors. Iterate until the list is empty.
+5. Call wiki.submit_outline (no arguments) to lock the outline. If it returns errors, go back to step 4.
 
 Available tools:
 - wiki.read_modules / wiki.read_tree / wiki.read_code_index / wiki.read_graph — codebase structure
@@ -243,9 +245,10 @@ function buildToolsGuideSegment(role: Role): string {
   if (role === 'planner') {
     return `## Rules
 1. Every step must include at least one tool call
-2. targetFiles must be real file paths seen in wiki.read_code_index
-3. keyQuestions must be specific (e.g. "What state transitions does AgentLoopRuntime.streamRun have?"), not vague
-4. The outline should cover all core modules — do not omit important subsystems`;
+2. Use the 3-step flow: wiki.create_outline_draft -> wiki.edit_outline_draft -> wiki.submit_outline
+3. targetFiles must be real file paths from wiki.read_code_index(kind: "files") - check for exact paths
+4. keyQuestions must be specific (e.g. "What state transitions does AgentLoopRuntime.streamRun have?"), not vague
+5. The outline should cover all core modules — do not omit important subsystems`;
   }
   if (role === 'document-writer') {
     return `## Rules

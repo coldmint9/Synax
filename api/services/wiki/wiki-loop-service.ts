@@ -25,8 +25,7 @@ import {
   type WikiOutlineEntry,
 } from './wiki-loop-tools.js';
 import type { GenerateWikiInput, GenerateWikiResult, WikiGitState } from './wiki-snapshot-service.js';
-import { execSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { readGitState } from './wiki-snapshot-service.js';
 import { buildWikiPrompt, formatLanguages } from './wiki-prompt-builder.js';
 import { buildDocumentContext } from './wiki-document-context.js';
 import { createVerifierTools, type WikiVerdict } from './tools/verifier-tools.js';
@@ -35,6 +34,7 @@ import { buildLanguageDirective } from '../prompts/language-directive.js';
 import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
 import { runBatch } from '../agent-runtime/subagent-orchestrator.js';
 import { deriveExplorerSpecs, formatExplorerContext } from './wiki-explorer-specs.js';
+import { loadCachedScanByGitState, persistScanCacheByGitState } from './wiki-scan-cache.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
   return locale === 'en' ? {
@@ -64,25 +64,6 @@ function wikiMsg(locale: 'zh' | 'en') {
     sessionInit: 'Wiki 初始化',
     sessionContinue: 'Wiki 继续生成',
   };
-}
-
-function readGitState(workDir: string): WikiGitState {
-  const run = (cmd: string) => {
-    try {
-      return execSync(cmd, { cwd: workDir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-    } catch {
-      return '';
-    }
-  };
-  const branch = run('git rev-parse --abbrev-ref HEAD') || 'unknown';
-  const headCommitSha = run('git rev-parse HEAD') || '0'.repeat(40);
-  const statusOutput = run('git status --porcelain');
-  const dirty = statusOutput.length > 0;
-  const workingTreeHash = createHash('sha256')
-    .update(statusOutput + run('git diff --binary') + run('git diff --cached --binary'))
-    .digest('hex')
-    .slice(0, 16);
-  return { branch, headCommitSha, workingTreeHash, dirty };
 }
 
 export const wikiLoopService = {
@@ -126,7 +107,11 @@ export const wikiLoopService = {
       ensureWikiProfileRegistered();
 
       logger.info({ projectId, workDir }, 'wiki-loop: running code map scan');
-      const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
+      const cachedScan = await loadCachedScanByGitState(projectId, gitState);
+      const scan = cachedScan ?? await runCodeMapScan({ projectId, workDir, include: ['all'] });
+      if (!cachedScan) {
+        await persistScanCacheByGitState(projectId, scan, gitState);
+      }
       const languages = formatLanguages(scan);
 
       const scanActivity = scanCompleteActivity(scan.codeIndex.files.length, languages, locale);
@@ -265,6 +250,11 @@ export const wikiLoopService = {
 
       const outline = plannerHandle.getOutline();
       if (!outline || outline.length === 0) {
+        const draft = plannerHandle.getDraft();
+        if (draft && draft.documents.length > 0 && !draft.locked) {
+          throw new Error('Planner agent created an outline draft but did not call wiki.submit_outline to lock it. ' +
+            `Draft has ${draft.documents.length} documents with ${draft.validationErrors.length} unresolved issues.`);
+        }
         throw new Error('Planner agent did not produce an outline');
       }
 
@@ -605,7 +595,19 @@ export const wikiLoopService = {
     try {
       ensureWikiProfileRegistered();
 
-      const scan = await runCodeMapScan({ projectId: snapshot.projectId, workDir, include: ['all'] });
+      // 捕获当前 git state 用于 git 缓存检查
+      let gitState: WikiGitState;
+      try {
+        gitState = readGitState(workDir);
+      } catch {
+        gitState = { branch: 'unknown', headCommitSha: '0'.repeat(40), workingTreeHash: nanoid(16), dirty: false };
+      }
+
+      const cachedScan = await loadCachedScanByGitState(snapshot.projectId, gitState);
+      const scan = cachedScan ?? await runCodeMapScan({ projectId: snapshot.projectId, workDir, include: ['all'] });
+      if (!cachedScan) {
+        await persistScanCacheByGitState(snapshot.projectId, scan, gitState);
+      }
 
       const outline: WikiOutlineEntry[] = unfilled.map(doc => ({
         id: doc.id,

@@ -270,6 +270,38 @@ wikiRoutes.post('/snapshots/:snapshotId/continue', async (c) => {
   return c.json({ status: 'queued', message: 'Wiki continue generation started.' });
 });
 
+// ── POST /api/wiki/snapshots/:snapshotId/approve ────────────────────────────
+wikiRoutes.post('/snapshots/:snapshotId/approve', async (c) => {
+  const { snapshotId } = c.req.param();
+  const parsed = await parseBody(c, generateBodySchema);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  const snapshot = await wikiStore.getSnapshot(snapshotId);
+  if (!snapshot) return c.json({ error: 'Snapshot not found' }, 404);
+  if (snapshot.status !== 'outline_ready') {
+    return c.json({ error: `Snapshot must be outline_ready to approve, got "${snapshot.status}"` }, 409);
+  }
+
+  try {
+    assertLlmProviderConfigured(snapshot.projectId);
+  } catch (err) {
+    if (err instanceof AgentProviderNotConfiguredError) {
+      return c.json({ error: err.message, code: err.code }, 422);
+    }
+    return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
+  }
+
+  void wikiLoopService.approveOutline({
+    snapshotId,
+    workDir: parsed.data.workDir,
+    locale: parsed.data.locale ?? 'zh',
+  }).catch((err) => {
+    logger.error({ err, snapshotId }, '[wiki] approve outline failed');
+  });
+
+  return c.json({ status: 'queued', message: 'Wiki content generation started.' });
+});
+
 // ── GET /api/wiki/source-bindings/:bindingId/resolve ─────────────────────────
 wikiRoutes.get('/source-bindings/:bindingId/resolve', async (c) => {
   const { bindingId } = c.req.param();

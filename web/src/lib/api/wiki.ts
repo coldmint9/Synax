@@ -63,6 +63,16 @@ export const wikiApi = {
     });
   },
 
+  approveSnapshot(
+    snapshotId: string,
+    body: { workDir: string; locale?: 'zh' | 'en' },
+  ): Promise<{ status: string; message: string }> {
+    return apiRequest<{ status: string; message: string }>(`${BASE}/snapshots/${snapshotId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
   continueGeneration(
     snapshotId: string,
     body: { workDir: string; locale?: 'zh' | 'en' },

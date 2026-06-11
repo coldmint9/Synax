@@ -336,16 +336,20 @@ export class AgentLoopRuntime {
       }
 
       const disclosureStrategy = getStrategyForProfile(profile.kind);
+      // Rebuild disclosure state from ALL session tool calls — not just the
+      // current run. When a session is interrupted and resumed, a new run is
+      // created (resume=false), and run-level tool calls would be empty,
+      // causing disclosure state (and therefore tool permissions) to reset.
       let disclosureState: DisclosureState | null = disclosureStrategy
         ? rebuildDisclosureState(
-            this.store.listRunToolCalls(run.id),
+            this.store.listToolCalls(sessionId),
             disclosureStrategy.escalationToolId,
           )
         : null;
 
       let fallbackState: FallbackDisclosureState | null = profile.fallbackDisclosure
         ? rebuildFallbackState(
-            this.store.listRunToolCalls(run.id),
+            this.store.listToolCalls(sessionId),
             profile.fallbackDisclosure,
           )
         : null;

@@ -51,7 +51,38 @@ export interface AnalyzerParseResult {
 }
 
 export const FILE_READ_LIMIT = 512 * 1024
-export const MAX_SCAN_FILES = 1000
+export const MAX_SCAN_FILES = 10000
+
+// Binary file extensions that should never be scanned, even if they somehow
+// end up in the file walk.  This list covers common binary formats: images,
+// audio, video, archives, compiled code, documents, and fonts.
+const BINARY_EXTENSIONS = new Set([
+  // Images
+  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.svgz', '.webp', '.tiff', '.tif',
+  '.heic', '.heif', '.avif', '.jxl', '.psd', '.ai', '.eps', '.raw', '.cr2', '.nef',
+  // Audio
+  '.mp3', '.wav', '.ogg', '.oga', '.flac', '.aac', '.m4a', '.wma', '.opus', '.mid',
+  '.midi',
+  // Video
+  '.mp4', '.mov', '.avi', '.mkv', '.webm', '.wmv', '.flv', '.m4v', '.mpeg', '.mpg',
+  // Archives
+  '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar', '.zst', '.lz4', '.lzma', '.jar',
+  '.war', '.ear', '.aar', '.apk', '.ipa', '.dmg', '.pkg', '.deb', '.rpm', '.snap',
+  // Compiled / binary executables
+  '.exe', '.dll', '.so', '.dylib', '.o', '.obj', '.a', '.lib', '.wasm', '.bin',
+  '.elf', '.out', '.class', '.pyc', '.pyo', '.pyd', '.node',
+  // Documents
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pages', '.numbers',
+  '.key', '.odt', '.ods', '.odp',
+  // Fonts
+  '.ttf', '.otf', '.woff', '.woff2', '.eot',
+  // Database / data
+  '.db', '.sqlite', '.sqlite3', '.mdb', '.accdb', '.frm', '.ibd', '.dat', '.idx',
+  '.pack', '.bak',
+  // Other binary
+  '.DS_Store', '.lock',
+])
+
 export const MAX_PREVIEW = 220
 export const COMMUNITY_EDGE_WEIGHT = 1
 
@@ -243,17 +274,46 @@ export function detectParserLanguage(absPath: string): ParserLanguageKey | null 
   return SOURCE_LANGUAGE_BY_EXTENSION[path.extname(absPath).toLowerCase()]?.parserLanguage ?? null
 }
 
+/**
+ * Detect whether a file is binary by reading its first 4 KB and looking for
+ * null bytes — the most reliable cross-platform signal of binary content.
+ * Also checks against a known set of binary extensions for early rejection.
+ */
+export function isBinaryFile(absPath: string): boolean {
+  const ext = path.extname(absPath).toLowerCase()
+  if (BINARY_EXTENSIONS.has(ext)) return true
+  try {
+    const fd = fs.openSync(absPath, 'r')
+    const buf = Buffer.alloc(4096)
+    const bytesRead = fs.readSync(fd, buf, 0, 4096, 0)
+    fs.closeSync(fd)
+    // A null byte anywhere in the first chunk is a strong binary indicator.
+    for (let i = 0; i < bytesRead; i++) {
+      if (buf[i] === 0) return true
+    }
+    return false
+  } catch {
+    // If we can't read the file, treat it as non-scanable.
+    return true
+  }
+}
+
 export function shouldScanFile(absPath: string): boolean {
   const ext = path.extname(absPath).toLowerCase()
   if (!SOURCE_LANGUAGE_BY_EXTENSION[ext]) return false
   const base = path.basename(absPath)
-  return !IGNORED_FILE_PATTERNS.some((pattern) => pattern.test(base))
+  if (IGNORED_FILE_PATTERNS.some((pattern) => pattern.test(base))) return false
+  // Also reject known binary extensions even if they somehow passed the
+  // source-language check (e.g. someone renamed a binary).
+  if (BINARY_EXTENSIONS.has(ext)) return false
+  return true
 }
 
 export function readTextFile(absPath: string): string | null {
   try {
     const stat = fs.statSync(absPath)
     if (!stat.isFile() || stat.size > FILE_READ_LIMIT) return null
+    if (isBinaryFile(absPath)) return null
     return fs.readFileSync(absPath, 'utf8')
   } catch {
     return null

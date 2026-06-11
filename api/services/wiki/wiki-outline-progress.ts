@@ -132,8 +132,16 @@ const TOOL_MESSAGES: Record<string, (args: LooseArgs) => { activity: string; pha
   },
 
   // ── wiki submit: submit phase ──
+  'wiki.create_outline_draft': () => ({
+    activity: '正在创建大纲草稿…',
+    phase: 'submit',
+  }),
+  'wiki.edit_outline_draft': () => ({
+    activity: '正在根据校验反馈修改大纲…',
+    phase: 'submit',
+  }),
   'wiki.submit_outline': () => ({
-    activity: '正在提交文档大纲…',
+    activity: '正在提交并锁定大纲…',
     phase: 'submit',
   }),
 }

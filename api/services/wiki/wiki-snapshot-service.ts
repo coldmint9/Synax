@@ -30,11 +30,12 @@ export interface GenerateWikiInput {
 
 export interface GenerateWikiResult {
   snapshotId: string;
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'outline_ready';
   error?: string;
+  docCount?: number;
 }
 
-function readGitState(workDir: string): WikiGitState {
+export function readGitState(workDir: string): WikiGitState {
   const run = (cmd: string) => {
     try {
       return execSync(cmd, { cwd: workDir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
