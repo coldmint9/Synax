@@ -67,9 +67,28 @@ export interface WikiClaim {
   centrality: 'load-bearing' | 'incidental';
 }
 
+export interface ValidationError {
+  severity: 'error' | 'warning';
+  field: string;
+  message: string;
+}
+
+export interface OutlineDraft {
+  documents: WikiOutlineEntry[];
+  locked: boolean;
+  validationErrors: ValidationError[];
+}
+
+export type OutlineEditOp =
+  | { type: 'add'; document: WikiOutlineEntry }
+  | { type: 'remove'; docId: string }
+  | { type: 'update'; docId: string; changes: Partial<Pick<WikiOutlineEntry, 'targetFiles' | 'keyQuestions' | 'title' | 'parentId' | 'sortOrder'>> }
+  | { type: 'replace'; docId: string; document: WikiOutlineEntry };
+
 export interface WikiPlannerHandle {
   tools: RegisteredTool[];
   getOutline(): WikiOutlineEntry[] | null;
+  getDraft(): OutlineDraft | null;
 }
 
 export interface WikiWriterHandle {

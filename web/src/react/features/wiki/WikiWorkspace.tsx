@@ -1,4 +1,4 @@
-import { AlertCircle, BookOpen, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
+import { AlertCircle, BookOpen, CheckCircle2, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Skeleton, Spinner } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
@@ -238,6 +238,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   const [reinitializing, setReinitializing] = useState(false)
   const [continuing, setContinuing] = useState(false)
+  const [approvingOutline, setApprovingOutline] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(260)
 
   const selectedDoc = documents.find(d => d.id === selectedDocumentId)
@@ -358,6 +359,25 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
   }
 
+  async function handleApproveOutline() {
+    if (!snapshot) return
+    const projects = useShellStore.getState().projects
+    const project = projects.find(p => p.id === projectId)
+    const workDir = project?.source?.localPath
+    if (!workDir) {
+      alert(t('wikiNoLocalPath'))
+      return
+    }
+    setApprovingOutline(true)
+    try {
+      await wikiApi.approveSnapshot(snapshot.id, { workDir, locale: 'zh' })
+    } catch (err) {
+      handleError(err)
+    } finally {
+      setApprovingOutline(false)
+    }
+  }
+
   if (loading.snapshot) {
     return (
       <div className="flex h-full min-h-0 overflow-hidden">
@@ -475,11 +495,26 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             />
           )}
           {snapshot?.status === 'outline_ready' && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/5 border-b border-amber-500/10">
-              <Loader2 size={11} className="animate-spin text-amber-600" />
-              <span className="text-[11px] text-amber-600">
-                {t('wikiOutlineReady')}
-              </span>
+            <div className="flex flex-col gap-2 px-3 py-2 bg-amber-500/5 border-b border-amber-500/10">
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 size={11} className="text-amber-600" />
+                <span className="text-[11px] text-amber-600 font-medium">
+                  {t('wikiOutlineReady')}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleApproveOutline}
+                disabled={approvingOutline || reinitializing}
+                className="flex items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              >
+                {approvingOutline ? (
+                  <Loader2 size={11} className="animate-spin" />
+                ) : (
+                  <Sparkles size={11} />
+                )}
+                {approvingOutline ? t('wikiApprovingOutline') : t('wikiApproveOutline')}
+              </button>
             </div>
           )}
           {snapshot?.status === 'writing' && (

@@ -46,6 +46,9 @@ import { logger } from '../../lib/logger.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
+import { readGitState } from './wiki-snapshot-service.js';
+import type { WikiGitState } from './wiki-snapshot-service.js';
+import { loadCachedScanByGitState, persistScanCacheByGitState } from './wiki-scan-cache.js';
 import type { WikiRefreshTask, WikiBlock, DraftBlockChange } from './contracts.js';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
 
@@ -156,7 +159,18 @@ export const wikiRefreshService = {
         meta: { phase: 'scanning' },
       });
       const previousScan = await loadCachedScan(projectId);
-      const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
+      // 捕获当前 git state 并检查缓存，同一分支版本跳过重复扫描
+      let gitState: WikiGitState;
+      try {
+        gitState = readGitState(workDir);
+      } catch {
+        gitState = { branch: 'unknown', headCommitSha: '0'.repeat(40), workingTreeHash: nanoid(16), dirty: false };
+      }
+      const cachedScan = await loadCachedScanByGitState(projectId, gitState);
+      const scan = cachedScan ?? await runCodeMapScan({ projectId, workDir, include: ['all'] });
+      if (!cachedScan) {
+        await persistScanCacheByGitState(projectId, scan, gitState);
+      }
       const nextRepoIndexId = scan.scanId;
       await updateTask(taskId, { nextRepoIndexId });
 
