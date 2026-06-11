@@ -21,15 +21,11 @@ export const wikiPlannerProfile: AgentProfile = {
   defaultThinkingMode: 'deep',
   allowedCapabilities: [
     'bash',
-    'file.glob',
-    'file.list',
-    'file.read',
-    'grep.search',
-    'wiki.read_code_index',
-    'wiki.read_graph',
-    'wiki.read_modules',
     'wiki.read_tree',
     'wiki.submit_outline',
+    'wiki.create_outline_draft',
+    'wiki.edit_outline_draft',
+    'subagent.delegate',
     'tools.escalate',
   ],
   permissionDefaults: [
@@ -45,10 +41,10 @@ export const wikiPlannerProfile: AgentProfile = {
   fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   toolProviderId: 'wiki-session-tools',
   loopHints: [
-    'Step 1: High-level scan — read tree, modules, code index, and graph to understand overall structure.',
-    'Step 2: For each [SPLIT] package in the baseline, delegate exploration to a subagent via subagent.delegate(profileId: "explorer"). Give each subagent a specific prompt: which directory to explore, what questions to answer. Launch up to 5 concurrently.',
-    'Step 3: After all subagents return, synthesize their summaries. Read any remaining files yourself if gaps remain.',
-    'Final step: Submit outline via wiki.submit_outline. Ensure every [SPLIT] package has >= 2 covering docs with children.',
+    'Step 1: Review the directory tree and package baseline in the system prompt.',
+    'Step 2: For packages you need to understand deeper, use wiki.read_tree(path, depth) to explore subdirectories.',
+    'Step 3: For core packages that need detailed analysis, delegate to subagent.delegate(profileId: "wiki-package-explorer"). Max 3 concurrent sub-agents.',
+    'Step 4: Synthesize all findings and use the 3-step outline flow: create_outline_draft -> edit_outline_draft -> submit_outline.',
   ],
 };
 
@@ -122,6 +118,34 @@ export const wikiExplorerProfile: AgentProfile = {
     'List documents first to understand available wiki content.',
     'Read specific documents relevant to the query.',
     'Return a focused summary answering the parent agent\'s question.',
+  ],
+};
+
+export const wikiPackageExplorerProfile: AgentProfile = {
+  id: 'wiki-package-explorer',
+  label: 'Wiki Package Explorer',
+  kind: 'explorer',
+  mode: 'subagent',
+  description: '深入探索一个代码包，用 read_tree 查看目录结构，用 bash 读取文件内容。',
+  defaultThinkingMode: 'fast',
+  allowedCapabilities: [
+    'bash',
+    'wiki.read_tree',
+  ],
+  permissionDefaults: [
+    { gate: 'read', pattern: '*', action: 'allow', reason: 'Read-only explorer.' },
+    { gate: 'write', pattern: '*', action: 'deny', reason: 'Explorer is read-only.' },
+    { gate: 'task', pattern: '*', action: 'deny', reason: 'Explorer does not delegate.' },
+    { gate: 'shell', pattern: '*', action: 'allow', reason: 'Explorer uses bash for file reading.' },
+  ],
+  defaultSkills: [],
+  maxSteps: 10,
+  status: 'active',
+  toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 3 },
+  loopHints: [
+    'Use wiki.read_tree to explore the package directory structure.',
+    'Use bash (cat/head) to read key source files.',
+    'Return a focused summary: responsibility, main types, dependencies, data flows.',
   ],
 };
 
@@ -261,6 +285,7 @@ export function ensureWikiProfileRegistered(): void {
   profileService.register(wikiDocumentWriterProfile);
   profileService.register(wikiExplorerProfile);
   profileService.register(wikiVerifierProfile);
+  profileService.register(wikiPackageExplorerProfile);
   profileService.register(wikiGeneratorProfile);
   for (const tool of createWikiExplorerTools()) {
     toolRegistry.register(tool);
