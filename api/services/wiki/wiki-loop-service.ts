@@ -148,7 +148,7 @@ export const wikiLoopService = {
         payload: { snapshotId: snapshot.id, phase: 1 },
       });
 
-      // Phase 1b: planner synthesizes the explorer evidence into an outline.
+      // Phase 1b: planner agent explores, delegates to sub-agents, and produces outline
       const plannerPrompt = buildWikiPrompt({ role: 'planner', languages, locale, scan });
       logger.info({ projectId, sessionId: plannerSession.id }, 'wiki-loop: Phase 1 starting planner agent');
       const stream1 = agentLoopRuntime.streamRun(plannerSession.id, { locale, message: plannerPrompt });
