@@ -94,7 +94,8 @@ function formatErrors(errors: ValidationError[]): string {
 export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
   let draft: OutlineDraft | null = null;
 
-  const readTools = buildReadTools(scan);
+  const allReadTools = buildReadTools(scan);
+  const readTreeTool = allReadTools.find(t => t.id === 'wiki.read_tree')!;
   const baseline = derivePackages(scan);
   const validPaths = new Set(scan.codeIndex.files.map(f => f.path));
   const pathToPkg = buildPathToPackage(baseline, scan.codeIndex.files);
@@ -283,7 +284,7 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
   };
 
   return {
-    tools: [...readTools, createDraftTool, editDraftTool, submitOutlineTool],
+    tools: [readTreeTool, createDraftTool, editDraftTool, submitOutlineTool],
     getOutline: () => (draft?.locked ? draft.documents : null),
     getDraft: () => draft,
   };
