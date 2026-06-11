@@ -126,7 +126,7 @@ export const wikiPackageExplorerProfile: AgentProfile = {
   label: 'Wiki Package Explorer',
   kind: 'explorer',
   mode: 'subagent',
-  description: '深入探索一个代码包，用 read_tree 查看目录结构，用 bash 读取文件内容。',
+  description: 'Explore a code package using read_tree for directory structure and bash for file content.',
   defaultThinkingMode: 'fast',
   allowedCapabilities: [
     'bash',
@@ -265,6 +265,7 @@ const WIKI_PROFILE_TITLE: Record<string, Record<'zh' | 'en', string>> = {
   'wiki-document-writer': { zh: 'Wiki 文档生成', en: 'Wiki Document Generation' },
   'wiki-explorer': { zh: 'Wiki 探索', en: 'Wiki Exploration' },
   'wiki-verifier': { zh: 'Wiki 验证', en: 'Wiki Verification' },
+  'wiki-package-explorer': { zh: 'Wiki 包探索', en: 'Wiki Package Exploration' },
   'wiki-generator': { zh: 'Wiki 初始化', en: 'Wiki Initialization' },
 };
 
@@ -296,6 +297,7 @@ export function ensureWikiProfileRegistered(): void {
   registerTitleGenerator('wiki-document-writer', wikiTitleGenerator);
   registerTitleGenerator('wiki-explorer', wikiTitleGenerator);
   registerTitleGenerator('wiki-verifier', wikiTitleGenerator);
+  registerTitleGenerator('wiki-package-explorer', wikiTitleGenerator);
   registerTitleGenerator('wiki-generator', wikiTitleGenerator);
   registered = true;
 }
