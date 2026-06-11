@@ -74,7 +74,7 @@ export class ToolRegistry {
       mutability: 'task',
       resumeBehavior: 'wait_permission',
       progressiveDetails:
-        'Accepts { profileId?: string, prompt: string, nodeId?: string | null, thinkingMode?: "fast" | "standard" | "deep" }. Max depth: 3, max concurrent: 5.',
+        'Accepts { profileId?: string, prompt: string, nodeId?: string | null, thinkingMode?: "fast" | "standard" | "deep" }. Max depth: 3, max concurrent: 3.',
       inputSchema: z.object({
         profileId: z.string().optional().describe('Child agent profile. Defaults to explorer. Must be a subagent-capable profile.'),
         prompt: z.string().min(1).describe('Bounded prompt for the child agent session.'),
