@@ -2,6 +2,7 @@ import type { CodeMapScanResult } from '../contracts/code-map.js';
 import type { WikiOutlineEntry } from './wiki-loop-tools.js';
 import { derivePackages, filterBaselineForPrompt } from './tools/package-baseline.js';
 import { FILE_SPLIT, SYM_SPLIT } from './tools/contracts.js';
+import { buildTreeString } from './tools/helpers.js';
 import { buildLanguageDirective, type Locale } from '../prompts/language-directive.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -116,18 +117,19 @@ Analyze the codebase and submit a hierarchical document outline.
 
 ### Exploration Strategy
 
-Core packages have already been explored for you by parallel explorer agents — their findings appear under "Pre-loaded Exploration Results" below. Use that evidence directly.
+The project directory tree and package baseline are provided in the system prompt. Use them directly.
 
-1. Review the pre-loaded exploration results and the Package Baseline.
-2. Read any remaining files yourself (file.read / grep.search) only where the pre-loaded context has gaps.
-3. Call wiki.create_outline_draft with your best-guess outline. It saves the draft and returns any structural issues as validationErrors.
-4. Call wiki.edit_outline_draft to fix remaining issues (add missing docs, fix targetFiles, update keyQuestions). Each edit runs full validation and returns updated validationErrors. Iterate until the list is empty.
-5. Call wiki.submit_outline (no arguments) to lock the outline. If it returns errors, go back to step 4.
+1. Review the directory tree and package baseline above.
+2. For packages you need to understand deeper, use wiki.read_tree(path, depth) to explore subdirectories.
+3. For core packages that need detailed analysis, delegate to subagent.delegate(profileId: "wiki-package-explorer").
+   - Max 3 concurrent sub-agents.
+   - Give each sub-agent clear questions: responsibility, main types, dependencies, data flows.
+4. Synthesize all findings and use the 3-step outline flow:
+   wiki.create_outline_draft -> wiki.edit_outline_draft -> wiki.submit_outline
 
 Available tools:
-- wiki.read_modules / wiki.read_tree / wiki.read_code_index / wiki.read_graph — codebase structure
-- wiki.read_call_graph / wiki.impact_analysis — dependency analysis
-- file.read / file.list / file.glob / grep.search — direct file access for gap-filling`;
+- wiki.read_tree — browse directory structure at any depth
+- subagent.delegate — delegate deep exploration to sub-agents`;
   }
 
   if (role === 'document-writer') {
@@ -246,7 +248,7 @@ function buildToolsGuideSegment(role: Role): string {
     return `## Rules
 1. Every step must include at least one tool call
 2. Use the 3-step flow: wiki.create_outline_draft -> wiki.edit_outline_draft -> wiki.submit_outline
-3. targetFiles must be real file paths from wiki.read_code_index(kind: "files") - check for exact paths
+3. targetFiles must be real file paths — check wiki.read_tree to see which files exist
 4. keyQuestions must be specific (e.g. "What state transitions does AgentLoopRuntime.streamRun have?"), not vague
 5. The outline should cover all core modules — do not omit important subsystems`;
   }
@@ -292,6 +294,12 @@ ${context}`;
 
 function buildOutlineSegment(outline: WikiOutlineEntry[]): string {
   return `## Document Outline\n\n${JSON.stringify(outline, null, 2)}`;
+}
+
+function buildRootTreeSegment(scan: CodeMapScanResult): string {
+  const files = scan.codeIndex.files.map(f => f.path);
+  const tree = buildTreeString(files, '', 2);
+  return `## 项目目录结构\n\n\`\`\`\n${tree}\n\`\`\``;
 }
 
 function buildPackageBaselineSegment(scan: CodeMapScanResult): string {
@@ -347,6 +355,7 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
   if (ctx) segments.push(ctx);
 
   if (role === 'planner' && input.scan) {
+    segments.push(buildRootTreeSegment(input.scan));
     segments.push(buildPackageBaselineSegment(input.scan));
   }
 
