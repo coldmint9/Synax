@@ -1,49 +1,42 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import pino from 'pino';
-import { DATA_ROOT, LOG_LEVEL, isDev } from './env.js';
+import { LOG_LEVEL } from './env.js';
+import {
+  API_SESSION_LOG_FILE,
+  getApiLogFilePath,
+  initDailyLogFiles,
+  writeDailyLogLine,
+} from './log-file-store.js';
 import { persistApiLog, type ApiLogLevel } from './log-store.js';
+import {
+  buildPinoPrettyOptions,
+  createColorizedLogStream,
+  hasPinoPretty,
+  shouldColorizeLogs,
+} from './log-pretty.js';
 
-/** 检查 pino-pretty 是否可用 */
-function hasPinoPretty(): boolean {
-  try {
-    import.meta.resolve('pino-pretty');
-    return true;
-  } catch {
-    return false;
+function createRawLogger(): pino.Logger {
+  const baseOptions = { level: LOG_LEVEL };
+
+  if (shouldColorizeLogs() && hasPinoPretty()) {
+    return pino({
+      ...baseOptions,
+      transport: {
+        target: 'pino-pretty',
+        options: buildPinoPrettyOptions(),
+      },
+    });
   }
-}
 
-const rawLogger = pino({
-  level: LOG_LEVEL,
-  ...(isDev && hasPinoPretty() && {
-    transport: {
-      target: 'pino-pretty',
-      options: { colorize: true },
-    },
-  }),
-});
-
-function resolveSessionLogFilePath(): string {
-  const dataRoot = path.isAbsolute(DATA_ROOT)
-    ? DATA_ROOT
-    : path.resolve(process.cwd(), DATA_ROOT);
-  const logDir = path.join(dataRoot, 'logs');
-  if (!fs.existsSync(logDir)) {
-    fs.mkdirSync(logDir, { recursive: true });
+  if (shouldColorizeLogs()) {
+    return pino(baseOptions, createColorizedLogStream());
   }
-  return path.join(logDir, 'api-current.log');
+
+  return pino(baseOptions);
 }
 
-export const API_SESSION_LOG_FILE = resolveSessionLogFilePath();
+const rawLogger = createRawLogger();
 
-function initSessionLogFile(): void {
-  fs.writeFileSync(API_SESSION_LOG_FILE, '', 'utf8');
-}
-
-function writeSessionLogLine(line: string): void {
-  fs.appendFileSync(API_SESSION_LOG_FILE, `${line}\n`, 'utf8');
-}
+export { API_SESSION_LOG_FILE, getApiLogFilePath };
 
 export interface AppLogger {
   trace: (...args: unknown[]) => void;
@@ -144,20 +137,20 @@ function fallbackWrite(message: string): void {
 }
 
 try {
-  initSessionLogFile();
+  initDailyLogFiles();
 } catch (err) {
   const message = err instanceof Error ? err.stack ?? err.message : String(err);
-  fallbackWrite(`[api-logger] failed to initialize session log file: ${message}`);
+  fallbackWrite(`[api-logger] failed to initialize daily log files: ${message}`);
 }
 
 function emit(level: ApiLogLevel, args: unknown[]): void {
   if (!rawLogger.isLevelEnabled(level)) return;
   const entry = normalizeLogCall(args);
   try {
-    writeSessionLogLine(formatSessionLogLine(level, entry.message, entry.context));
+    writeDailyLogLine(formatSessionLogLine(level, entry.message, entry.context));
   } catch (err) {
     const message = err instanceof Error ? err.stack ?? err.message : String(err);
-    fallbackWrite(`[api-logger] failed to write session log file: ${message}`);
+    fallbackWrite(`[api-logger] failed to write daily log file: ${message}`);
   }
   persistApiLog({
     level,

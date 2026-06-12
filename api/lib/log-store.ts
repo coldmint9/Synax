@@ -2,6 +2,7 @@ import Database from 'libsql';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_ROOT } from './env.js';
+import { formatLocalDay, LOG_RETENTION_DAYS, retentionCutoffDay } from './log-retention.js';
 
 export type ApiLogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
@@ -62,6 +63,7 @@ interface PersistedLogRow {
 let sqlite: Database.Database | null = null;
 let insertLogStmt: ReturnType<Database.Database['prepare']> | null = null;
 let upsertDailyStatsStmt: ReturnType<Database.Database['prepare']> | null = null;
+let lastPruneDay: string | null = null;
 
 function resolveDataRootDir(): string {
   const dir = path.isAbsolute(DATA_ROOT)
@@ -171,14 +173,26 @@ function getLogDb(): Database.Database {
   `);
 
   sqlite = db;
+  pruneOldApiLogsOnDb(db);
   return db;
 }
 
-function formatLocalDay(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+function pruneOldApiLogsOnDb(db: Database.Database, retentionDays = LOG_RETENTION_DAYS): void {
+  const cutoff = retentionCutoffDay(retentionDays);
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM api_logs WHERE day < ?').run([cutoff]);
+    db.prepare('DELETE FROM api_log_daily_stats WHERE day < ?').run([cutoff]);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export function pruneOldApiLogs(retentionDays = LOG_RETENTION_DAYS): void {
+  if (!sqlite) return;
+  pruneOldApiLogsOnDb(sqlite, retentionDays);
 }
 
 function coerceInt(value: unknown): number | null {
@@ -235,6 +249,11 @@ function fallbackWrite(message: string): void {
 export function persistApiLog(input: PersistApiLogInput): void {
   try {
     const db = getLogDb();
+    const today = formatLocalDay(new Date());
+    if (lastPruneDay !== today) {
+      lastPruneDay = today;
+      pruneOldApiLogs();
+    }
     const row = toPersistedRow(input);
     db.exec('BEGIN');
     try {
@@ -368,6 +387,7 @@ export function clearApiLogStoreForTests(): void {
     DELETE FROM api_logs;
     DELETE FROM api_log_daily_stats;
   `);
+  lastPruneDay = null;
 }
 
 export function closeApiLogStore(): void {
