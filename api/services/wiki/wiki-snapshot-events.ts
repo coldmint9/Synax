@@ -11,11 +11,8 @@ import { wikiStore } from "./wiki-store.js";
 
 export const WikiSnapshotEventReason = {
   Connected: "connected",
-  BlockUpdated: "block_updated",
+  DocumentUpdated: "document_updated",
   ProjectPurged: "project_purged",
-  PatchAccepted: "patch_accepted",
-  PatchConflict: "patch_conflict",
-  PatchDismissed: "patch_dismissed",
   DraftApplied: "draft_applied",
   DraftDiscarded: "draft_discarded",
   GenerationStarted: "generation_started",
@@ -27,7 +24,7 @@ export const WikiSnapshotEventReason = {
   ContinueStarted: "continue_started",
   ContinueCompleted: "continue_completed",
   ContinueFailed: "continue_failed",
-  BlocksMarkedStale: "blocks_marked_stale",
+  DocumentsMarkedStale: "documents_marked_stale",
   RefreshCompleted: "refresh_completed",
   RefreshFailed: "refresh_failed",
 } as const;
@@ -41,9 +38,6 @@ export async function getLatestWikiSnapshotTree(projectId: string): Promise<Wiki
     return {
       snapshot: null,
       documents: [],
-      blocks: [],
-      sourceBindings: [],
-      patchesSummary: { pending: 0, conflict: 0 },
       draftsSummary: { ready: 0, generating: 0 },
     };
   }
@@ -52,9 +46,6 @@ export async function getLatestWikiSnapshotTree(projectId: string): Promise<Wiki
   return tree ?? {
     snapshot: null,
     documents: [],
-    blocks: [],
-    sourceBindings: [],
-    patchesSummary: { pending: 0, conflict: 0 },
     draftsSummary: { ready: 0, generating: 0 },
   };
 }
@@ -85,7 +76,6 @@ export async function publishDocumentCommittedEvent(projectId: string, documentI
   try {
     const doc = await wikiStore.getDocument(documentId);
     if (!doc) return;
-    const blocks = await wikiStore.getBlocksByDocument(documentId);
     const event: WikiDocumentCommittedNotificationEvent = {
       id: nanoid(12),
       type: TaskNotificationEventType.DocumentCommitted,
@@ -93,10 +83,9 @@ export async function publishDocumentCommittedEvent(projectId: string, documentI
       timestamp: Date.now(),
       documentId,
       document: doc,
-      blocks,
     };
     taskNotificationBus.emit(event);
-    logger.debug({ projectId, documentId, blockCount: blocks.length }, 'wiki-snapshot-events: document committed event published');
+    logger.debug({ projectId, documentId }, 'wiki-snapshot-events: document committed event published');
   } catch (err) {
     logger.warn({ err, projectId, documentId }, "wiki-snapshot-events: document committed event failed");
   }

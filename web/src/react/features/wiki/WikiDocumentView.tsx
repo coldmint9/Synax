@@ -1,0 +1,242 @@
+import { AlertTriangle, FileText, Loader2, Lock, MessageCircle, Pencil, X } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { Streamdown } from 'streamdown'
+import { Button, TextArea } from '@heroui/react'
+import { streamdownPlugins } from '../../../lib/streamdown-plugins'
+import { evaluationApi, type WikiEvaluation } from '../../../lib/api/evaluation'
+import type { WikiDocument, WikiManualState, WikiStaleState } from '../../../lib/contracts/wiki'
+import { useWikiStore } from '../../state/wikiStore'
+import { useSearchHighlight } from './useSearchHighlight'
+import './wiki-theme.css'
+
+function StaleBadge({ state }: { state: WikiStaleState }) {
+  if (state === 'fresh') return null
+  const map = {
+    possibly_stale: { label: 'possibly stale', cls: 'bg-warning/15 text-warning' },
+    stale: { label: 'stale', cls: 'bg-destructive/15 text-destructive' },
+    semantic_review_needed: { label: 'review needed', cls: 'bg-orange-500/15 text-orange-400' },
+    conflict: { label: 'conflict', cls: 'bg-destructive/20 text-destructive' },
+  } as const
+  const { label, cls } = map[state] ?? { label: state, cls: 'bg-secondary text-muted-foreground' }
+  return (
+    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide ${cls}`}>
+      <AlertTriangle size={8} />
+      {label}
+    </span>
+  )
+}
+
+function ManualBadge({ state }: { state: WikiManualState }) {
+  if (state === 'none') return null
+  return (
+    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide ${
+      state === 'locked' ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'
+    }`}>
+      {state === 'locked' ? <Lock size={8} /> : <Pencil size={8} />}
+      {state}
+    </span>
+  )
+}
+
+const statusDot: Record<WikiEvaluation['status'], string> = {
+  active: 'bg-amber-400',
+  planned: 'bg-blue-400',
+  resolved: 'bg-emerald-400',
+}
+
+function DocumentIssues({ documentId, projectId }: { documentId: string; projectId: string }) {
+  const evaluations = useWikiStore(s => s.evaluations)
+  const loadEvaluations = useWikiStore(s => s.loadEvaluations)
+  const [content, setContent] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const docIssues = evaluations.filter(e => e.documentId === documentId)
+
+  async function handleSubmit() {
+    if (!content.trim()) return
+    setSubmitting(true)
+    try {
+      await evaluationApi.create(projectId, documentId, content.trim())
+      setContent('')
+      await loadEvaluations(projectId)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleDelete(id: string) {
+    await evaluationApi.delete(id)
+    await loadEvaluations(projectId)
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-border/30 bg-card/30">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        <MessageCircle size={12} />
+        <span>Issues ({docIssues.length})</span>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-border/20">
+          {docIssues.length > 0 && (
+            <div className="max-h-[160px] overflow-y-auto border-b border-border/10">
+              {docIssues.map(ev => (
+                <div key={ev.id} className="group/item flex items-start gap-2 px-3 py-2 border-b border-border/5 last:border-0">
+                  <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${statusDot[ev.status]}`} />
+                  <p className="flex-1 min-w-0 text-[11px] text-foreground/80 leading-relaxed">{ev.content}</p>
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(ev.id)}
+                    className="shrink-0 rounded p-0.5 text-muted-foreground/30 opacity-0 group-hover/item:opacity-100 hover:text-destructive transition-all"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-end gap-2 p-2.5">
+            <TextArea
+              ref={textareaRef}
+              aria-label="Issue description"
+              value={content}
+              onChange={e => setContent(e.target.value)}
+              placeholder="Add issue for this document…"
+              rows={1}
+              className="flex-1 text-[12px]"
+              onKeyDown={e => {
+                if (e.key === 'Enter' && e.metaKey) { e.preventDefault(); void handleSubmit() }
+              }}
+            />
+            <Button
+              size="sm"
+              variant="primary"
+              isDisabled={!content.trim() || submitting}
+              onPress={() => void handleSubmit()}
+            >
+              Add
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ReferencesSection({ references }: { references: WikiDocument['references'] }) {
+  if (references.length === 0) return null
+
+  const uniquePaths = [...new Map(references.map(r => [r.filePath, r])).values()]
+
+  return (
+    <section className="mt-8 border-t border-border/30 pt-5">
+      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+        References
+      </h3>
+      <ul className="space-y-1.5">
+        {uniquePaths.map(ref => {
+          const lineSuffix = ref.startLine
+            ? ref.endLine && ref.endLine !== ref.startLine
+              ? `:${ref.startLine}-${ref.endLine}`
+              : `:${ref.startLine}`
+            : ''
+          return (
+            <li key={ref.filePath}>
+              <code className="rounded bg-secondary/50 px-1.5 py-0.5 text-[11px] font-mono text-foreground/80">
+                {ref.filePath}{lineSuffix}
+              </code>
+              {ref.symbol && (
+                <span className="ml-2 text-[10px] text-muted-foreground/60">{ref.symbol}</span>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
+export default function WikiDocumentView({
+  document,
+  projectId,
+}: {
+  document: WikiDocument
+  projectId: string
+}) {
+  const snapshot = useWikiStore(s => s.snapshot)
+  const searchHighlightQuery = useWikiStore(s => s.searchHighlightQuery)
+  const draftPreviewActive = useWikiStore(s => s.draftPreviewActive)
+  const draftPreviewId = useWikiStore(s => s.draftPreviewId)
+  const draftsById = useWikiStore(s => s.draftsById)
+  const evaluations = useWikiStore(s => s.evaluations)
+
+  const previewDraft = draftPreviewActive && draftPreviewId ? draftsById[draftPreviewId] : null
+  const previewChange = useMemo(() => {
+    if (!previewDraft || previewDraft.documentId !== document.id) return null
+    return previewDraft.changes.find(c => c.documentId === document.id) ?? null
+  }, [previewDraft, document.id])
+
+  const contentMd = previewChange?.newContentMd ?? document.contentMd
+  const issueCount = evaluations.filter(e => e.documentId === document.id).length
+
+  useSearchHighlight(document.id, searchHighlightQuery, Boolean(contentMd))
+
+  if (!contentMd) {
+    const isGenerating = (snapshot?.status === 'outline_ready' || snapshot?.status === 'writing')
+      && document.pipelineStage === 'pending'
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+        {isGenerating ? (
+          <>
+            <Loader2 size={20} className="animate-spin text-muted-foreground/30" />
+            <p className="text-[12px] text-muted-foreground/50">内容生成中，请稍候…</p>
+          </>
+        ) : (
+          <>
+            <FileText size={24} className="text-muted-foreground/20" />
+            <p className="text-[12px] text-muted-foreground/40">此文档暂无内容</p>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <article
+      id={`wiki-document-${document.id}`}
+      className="wiki-doc max-w-3xl"
+    >
+      <header className="mb-5 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-semibold text-[var(--wiki-text)]">{document.title}</h1>
+          <StaleBadge state={document.staleState} />
+          <ManualBadge state={document.manualState} />
+          {issueCount > 0 && (
+            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400/80 px-1 text-[9px] font-bold text-white">
+              {issueCount}
+            </span>
+          )}
+        </div>
+        {previewChange && (
+          <p className="text-[11px] text-amber-600">Draft preview — showing proposed changes</p>
+        )}
+      </header>
+
+      <div className="wiki-markdown">
+        <Streamdown mode="static" plugins={streamdownPlugins}>
+          {contentMd}
+        </Streamdown>
+      </div>
+
+      <ReferencesSection references={document.references} />
+      <DocumentIssues documentId={document.id} projectId={projectId} />
+    </article>
+  )
+}

@@ -10,9 +10,6 @@ import { useNotificationStore } from './notificationStore';
 import type {
   WikiSnapshot,
   WikiDocument,
-  WikiBlock,
-  WikiSourceBinding,
-  WikiPatch,
   WikiRefreshDraft,
   WikiSnapshotTree,
 } from '../../lib/contracts/wiki';
@@ -32,44 +29,33 @@ export interface WikiState {
   viewMode: WikiViewMode;
   snapshot: WikiSnapshot | null;
   documents: WikiDocument[];
-  blocksById: Record<string, WikiBlock>;
-  bindingsById: Record<string, WikiSourceBinding>;
-  patchesById: Record<string, WikiPatch>;
   selectedDocumentId: string | null;
-  selectedBlockId: string | null;
   searchHighlightQuery: string | null;
   evaluations: WikiEvaluation[];
-  patchesSummary: { pending: number; conflict: number };
-  patchPanelOpen: boolean;
-  loading: { snapshot: boolean; patches: boolean; plans: boolean; drafts: boolean };
+  draftsSummary: { ready: number; generating: number };
+  loading: { snapshot: boolean; plans: boolean; drafts: boolean };
   error: string | null;
 
-  // Refresh task real-time state
   refreshTask: RefreshTaskState;
 
-  // Draft state
   draftsById: Record<string, WikiRefreshDraft>;
-  draftsSummary: { ready: number; generating: number };
   selectedDraftId: string | null;
   draftPanelOpen: boolean;
   draftPanelLayer: 'list' | 'detail';
-  draftSelectedBlockIds: Record<string, string[]>;
-  draftEditedContent: Record<string, Record<string, unknown>>;
+  draftSelectedDocumentIds: Record<string, string[]>;
+  draftEditedContentMd: Record<string, Record<string, string>>;
   draftPreviewActive: boolean;
   draftPreviewId: string | null;
 
-  // UI state
   showReinitConfirm: boolean;
   setShowReinitConfirm: (show: boolean) => void;
 
-  // Plan state
   plans: WikiPlanWithSummary[];
   activePlan: WikiPlan | null;
   activePlanNodes: WikiPlanNode[];
   planNav: PlanNavView;
   selectedPlanId: string | null;
 
-  // Plan generation streaming state
   planGeneration: {
     status: 'idle' | 'generating' | 'completed' | 'failed'
     phase: string | null
@@ -83,36 +69,29 @@ export interface WikiState {
   setViewMode: (mode: WikiViewMode) => void;
   setSnapshotLoading: () => void;
   applySnapshotTree: (tree: WikiSnapshotTree) => void;
-  applyDocumentUpdate: (documentId: string, update: { blockIds: string[]; pipelineStage: string }, blocks: WikiBlock[]) => void;
+  applyDocumentUpdate: (document: WikiDocument) => void;
   selectDocument: (documentId: string | null) => void;
-  selectBlock: (blockId: string | null) => void;
   setSearchHighlightQuery: (query: string | null) => void;
   loadEvaluations: (projectId: string) => Promise<void>;
   deleteEvaluations: (evalIds: string[]) => Promise<void>;
-  updateBlockLocally: (block: WikiBlock) => void;
-  loadPatches: (projectId: string, status?: string) => Promise<void>;
-  togglePatchPanel: () => void;
   reset: () => void;
 
-  // Draft actions
   loadDrafts: (projectId: string, status?: string) => Promise<void>;
   selectDraft: (draftId: string) => void;
   backToDraftList: () => void;
   toggleDraftPanel: () => void;
-  toggleDraftBlock: (draftId: string, blockId: string) => void;
-  selectAllDraftBlocks: (draftId: string) => void;
-  deselectAllDraftBlocks: (draftId: string) => void;
-  editDraftBlock: (draftId: string, blockId: string, newContent: unknown) => void;
-  applyDraft: (draftId: string, blockIds?: string[]) => Promise<void>;
+  toggleDraftChange: (draftId: string, documentId: string) => void;
+  selectAllDraftChanges: (draftId: string) => void;
+  deselectAllDraftChanges: (draftId: string) => void;
+  editDraftChange: (draftId: string, documentId: string, newContentMd: string) => void;
+  applyDraft: (draftId: string, documentIds?: string[]) => Promise<void>;
   discardDraft: (draftId: string) => Promise<void>;
   enterDraftPreview: (draftId: string) => void;
   exitDraftPreview: () => void;
 
-  // Refresh task actions
   setRefreshStarted: (taskId: string) => void;
   handleRefreshEvent: (type: string, data: { taskId: string; message: string; meta?: Record<string, unknown> }) => void;
 
-  // Plan actions
   loadPlans: (projectId: string) => Promise<void>;
   loadActivePlan: (projectId: string) => Promise<void>;
   loadPlanNodes: (planId: string) => Promise<void>;
@@ -131,27 +110,19 @@ const initialState = {
   viewMode: 'document' as WikiViewMode,
   snapshot: null,
   documents: [],
-  blocksById: {},
-  bindingsById: {},
-  patchesById: {},
   selectedDocumentId: null,
-  selectedBlockId: null,
   searchHighlightQuery: null,
   evaluations: [] as WikiEvaluation[],
-  patchesSummary: { pending: 0, conflict: 0 },
-  patchPanelOpen: false,
-  loading: { snapshot: false, patches: false, plans: false, drafts: false },
-  error: null,
-  // Refresh task state
-  refreshTask: { taskId: null, phase: 'idle', message: null, meta: null } as RefreshTaskState,
-  // Draft state
-  draftsById: {} as Record<string, WikiRefreshDraft>,
   draftsSummary: { ready: 0, generating: 0 },
+  loading: { snapshot: false, plans: false, drafts: false },
+  error: null,
+  refreshTask: { taskId: null, phase: 'idle', message: null, meta: null } as RefreshTaskState,
+  draftsById: {} as Record<string, WikiRefreshDraft>,
   selectedDraftId: null as string | null,
   draftPanelOpen: false,
   draftPanelLayer: 'list' as 'list' | 'detail',
-  draftSelectedBlockIds: {} as Record<string, string[]>,
-  draftEditedContent: {} as Record<string, Record<string, unknown>>,
+  draftSelectedDocumentIds: {} as Record<string, string[]>,
+  draftEditedContentMd: {} as Record<string, Record<string, string>>,
   draftPreviewActive: false,
   draftPreviewId: null as string | null,
   showReinitConfirm: false,
@@ -171,6 +142,15 @@ const initialState = {
   },
 };
 
+function documentChanged(prev: WikiDocument | undefined, next: WikiDocument): boolean {
+  if (!prev) return true;
+  return prev.updatedAt !== next.updatedAt
+    || prev.contentMd !== next.contentMd
+    || prev.pipelineStage !== next.pipelineStage
+    || prev.references.length !== next.references.length
+    || JSON.stringify(prev.references) !== JSON.stringify(next.references);
+}
+
 export const useWikiStore = create<WikiState>((set, get) => ({
   ...initialState,
 
@@ -183,37 +163,13 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   applySnapshotTree: (tree: WikiSnapshotTree) => {
     const prev = get();
 
-    const nextBlocksById: Record<string, WikiBlock> = {};
-    let blocksChanged = false;
-    for (const b of tree.blocks) {
-      nextBlocksById[b.id] = b;
-      if (!prev.blocksById[b.id] || prev.blocksById[b.id].updatedAt !== b.updatedAt) {
-        blocksChanged = true;
-      }
-    }
-    if (Object.keys(prev.blocksById).length !== tree.blocks.length) blocksChanged = true;
-
-    const nextBindingsById: Record<string, WikiSourceBinding> = {};
-    let bindingsChanged = false;
-    for (const b of tree.sourceBindings) {
-      nextBindingsById[b.id] = b;
-      if (!prev.bindingsById[b.id]) bindingsChanged = true;
-    }
-    if (Object.keys(prev.bindingsById).length !== tree.sourceBindings.length) bindingsChanged = true;
-
     const docsChanged = prev.documents.length !== tree.documents.length
-      || tree.documents.some((d, i) => {
-        const p = prev.documents[i];
-        return !p || p.id !== d.id || p.updatedAt !== d.updatedAt || p.blockIds.length !== d.blockIds.length;
-      });
+      || tree.documents.some((d, i) => documentChanged(prev.documents[i], d));
 
     const snapshotChanged = !prev.snapshot
       || prev.snapshot.status !== tree.snapshot?.status
       || prev.snapshot.revision !== tree.snapshot?.revision
       || prev.snapshot.documentIds.length !== (tree.snapshot?.documentIds.length ?? 0);
-
-    const patchesChanged = prev.patchesSummary.pending !== tree.patchesSummary.pending
-      || prev.patchesSummary.conflict !== tree.patchesSummary.conflict;
 
     const draftsChanged = prev.draftsSummary.ready !== (tree.draftsSummary?.ready ?? 0)
       || prev.draftsSummary.generating !== (tree.draftsSummary?.generating ?? 0);
@@ -228,47 +184,33 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         : (restoredId ?? firstDocId);
 
     const patch: Partial<WikiState> = {
-      loading: { snapshot: false, patches: prev.loading.patches, plans: prev.loading.plans, drafts: prev.loading.drafts },
+      loading: { snapshot: false, plans: prev.loading.plans, drafts: prev.loading.drafts },
       error: null,
     };
     if (snapshotChanged) patch.snapshot = tree.snapshot;
     if (docsChanged) patch.documents = tree.documents;
-    if (blocksChanged) patch.blocksById = nextBlocksById;
-    if (bindingsChanged) patch.bindingsById = nextBindingsById;
-    if (patchesChanged) patch.patchesSummary = tree.patchesSummary;
     if (draftsChanged) patch.draftsSummary = tree.draftsSummary ?? { ready: 0, generating: 0 };
     if (selectedDocumentId !== prev.selectedDocumentId) patch.selectedDocumentId = selectedDocumentId;
 
     set(patch);
   },
 
-  applyDocumentUpdate: (documentId, update, blocks) => {
+  applyDocumentUpdate: (document) => {
     const prev = get();
-    const docIndex = prev.documents.findIndex(d => d.id === documentId);
+    const docIndex = prev.documents.findIndex(d => d.id === document.id);
     if (docIndex < 0) return;
 
     const updatedDocs = [...prev.documents];
-    updatedDocs[docIndex] = { ...updatedDocs[docIndex], blockIds: update.blockIds, pipelineStage: update.pipelineStage };
-
-    const nextBlocksById = { ...prev.blocksById };
-    for (const block of blocks) {
-      nextBlocksById[block.id] = block;
-    }
-
-    set({
-      documents: updatedDocs,
-      blocksById: nextBlocksById,
-    });
+    updatedDocs[docIndex] = document;
+    set({ documents: updatedDocs });
   },
 
   selectDocument: (documentId) => {
-    set({ selectedDocumentId: documentId, selectedBlockId: null })
+    set({ selectedDocumentId: documentId })
     if (documentId) {
       try { localStorage.setItem('wiki-selected-doc', documentId) } catch {}
     }
   },
-
-  selectBlock: (blockId) => set({ selectedBlockId: blockId }),
 
   setSearchHighlightQuery: (query) => set({ searchHighlightQuery: query }),
 
@@ -284,25 +226,9 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     set(s => ({ evaluations: s.evaluations.filter(e => !evalIds.includes(e.id)) }))
   },
 
-  updateBlockLocally: (block) =>
-    set(s => ({ blocksById: { ...s.blocksById, [block.id]: block } })),
-
-  loadPatches: async (projectId, status) => {
-    set(s => ({ ...s, loading: { ...s.loading, patches: true } }));
-    try {
-      const patches = await wikiApi.getPatches(projectId, status);
-      const patchesById: Record<string, WikiPatch> = {};
-      for (const p of patches) patchesById[p.id] = p;
-      set(s => ({ ...s, patchesById, loading: { ...s.loading, patches: false } }));
-    } catch {
-      set(s => ({ ...s, loading: { ...s.loading, patches: false } }));
-    }
-  },
-
   reset: () => set(initialState),
-  togglePatchPanel: () => set(s => ({ patchPanelOpen: !s.patchPanelOpen })),
+  setShowReinitConfirm: (show: boolean) => set({ showReinitConfirm: show }),
 
-  // Draft actions
   loadDrafts: async (projectId, status) => {
     set(s => ({ ...s, loading: { ...s.loading, drafts: true } }));
     try {
@@ -323,14 +249,13 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   selectDraft: (draftId) => {
     const draft = get().draftsById[draftId];
     if (!draft) return;
-    const blockIds = draft.changes.map(c => c.blockId);
+    const documentIds = draft.changes.map(c => c.documentId);
     set(s => ({
       ...s,
       selectedDraftId: draftId,
       draftPanelLayer: 'detail',
-      draftSelectedBlockIds: { ...s.draftSelectedBlockIds, [draftId]: blockIds },
+      draftSelectedDocumentIds: { ...s.draftSelectedDocumentIds, [draftId]: documentIds },
       selectedDocumentId: draft.documentId,
-      selectedBlockId: null,
     }));
     try { localStorage.setItem('wiki-selected-doc', draft.documentId); } catch {}
   },
@@ -338,57 +263,56 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   backToDraftList: () => set({ selectedDraftId: null, draftPanelLayer: 'list' }),
 
   toggleDraftPanel: () => set(s => ({ draftPanelOpen: !s.draftPanelOpen })),
-  setShowReinitConfirm: (show: boolean) => set({ showReinitConfirm: show }),
 
-  toggleDraftBlock: (draftId, blockId) => {
+  toggleDraftChange: (draftId, documentId) => {
     set(s => {
-      const current = s.draftSelectedBlockIds[draftId] ?? [];
-      const next = current.includes(blockId)
-        ? current.filter(id => id !== blockId)
-        : [...current, blockId];
-      return { draftSelectedBlockIds: { ...s.draftSelectedBlockIds, [draftId]: next } };
+      const current = s.draftSelectedDocumentIds[draftId] ?? [];
+      const next = current.includes(documentId)
+        ? current.filter(id => id !== documentId)
+        : [...current, documentId];
+      return { draftSelectedDocumentIds: { ...s.draftSelectedDocumentIds, [draftId]: next } };
     });
   },
 
-  selectAllDraftBlocks: (draftId) => {
+  selectAllDraftChanges: (draftId) => {
     const draft = get().draftsById[draftId];
     if (!draft) return;
-    const blockIds = draft.changes.map(c => c.blockId);
-    set(s => ({ draftSelectedBlockIds: { ...s.draftSelectedBlockIds, [draftId]: blockIds } }));
+    const documentIds = draft.changes.map(c => c.documentId);
+    set(s => ({ draftSelectedDocumentIds: { ...s.draftSelectedDocumentIds, [draftId]: documentIds } }));
   },
 
-  deselectAllDraftBlocks: (draftId) => {
-    set(s => ({ draftSelectedBlockIds: { ...s.draftSelectedBlockIds, [draftId]: [] } }));
+  deselectAllDraftChanges: (draftId) => {
+    set(s => ({ draftSelectedDocumentIds: { ...s.draftSelectedDocumentIds, [draftId]: [] } }));
   },
 
-  editDraftBlock: (draftId, blockId, newContent) => {
+  editDraftChange: (draftId, documentId, newContentMd) => {
     set(s => ({
-      draftEditedContent: {
-        ...s.draftEditedContent,
-        [draftId]: { ...(s.draftEditedContent[draftId] ?? {}), [blockId]: newContent },
+      draftEditedContentMd: {
+        ...s.draftEditedContentMd,
+        [draftId]: { ...(s.draftEditedContentMd[draftId] ?? {}), [documentId]: newContentMd },
       },
     }));
   },
 
-  applyDraft: async (draftId, blockIds) => {
-    const edits = get().draftEditedContent[draftId];
+  applyDraft: async (draftId, documentIds) => {
+    const edits = get().draftEditedContentMd[draftId];
     try {
       if (edits && Object.keys(edits).length > 0) {
-        const changes = Object.entries(edits).map(([blockId, newContent]) => ({ blockId, newContent }));
+        const changes = Object.entries(edits).map(([documentId, newContentMd]) => ({ documentId, newContentMd }));
         await wikiApi.editDraft(draftId, changes);
-      } else if (blockIds) {
-        await wikiApi.applyPartialDraft(draftId, blockIds);
+      } else if (documentIds) {
+        await wikiApi.applyPartialDraft(draftId, documentIds);
       } else {
         await wikiApi.applyDraft(draftId);
       }
       set(s => {
         const { [draftId]: _, ...rest } = s.draftsById;
-        const { [draftId]: __, ...restEdits } = s.draftEditedContent;
-        const { [draftId]: ___, ...restSelected } = s.draftSelectedBlockIds;
+        const { [draftId]: __, ...restEdits } = s.draftEditedContentMd;
+        const { [draftId]: ___, ...restSelected } = s.draftSelectedDocumentIds;
         return {
           draftsById: rest,
-          draftEditedContent: restEdits,
-          draftSelectedBlockIds: restSelected,
+          draftEditedContentMd: restEdits,
+          draftSelectedDocumentIds: restSelected,
           selectedDraftId: null,
           draftPanelLayer: 'list',
           draftsSummary: { ...s.draftsSummary, ready: Math.max(0, s.draftsSummary.ready - 1) },
@@ -402,12 +326,12 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       await wikiApi.discardDraft(draftId);
       set(s => {
         const { [draftId]: _, ...rest } = s.draftsById;
-        const { [draftId]: __, ...restEdits } = s.draftEditedContent;
-        const { [draftId]: ___, ...restSelected } = s.draftSelectedBlockIds;
+        const { [draftId]: __, ...restEdits } = s.draftEditedContentMd;
+        const { [draftId]: ___, ...restSelected } = s.draftSelectedDocumentIds;
         return {
           draftsById: rest,
-          draftEditedContent: restEdits,
-          draftSelectedBlockIds: restSelected,
+          draftEditedContentMd: restEdits,
+          draftSelectedDocumentIds: restSelected,
           selectedDraftId: s.selectedDraftId === draftId ? null : s.selectedDraftId,
           draftPanelLayer: s.selectedDraftId === draftId ? 'list' : s.draftPanelLayer,
           draftsSummary: { ...s.draftsSummary, ready: Math.max(0, s.draftsSummary.ready - 1) },
@@ -419,7 +343,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   enterDraftPreview: (draftId) => {
     const draft = get().draftsById[draftId];
     if (!draft) return;
-    set({ draftPreviewActive: true, draftPreviewId: draftId, selectedDocumentId: draft.documentId, selectedBlockId: null });
+    set({ draftPreviewActive: true, draftPreviewId: draftId, selectedDocumentId: draft.documentId });
     try { localStorage.setItem('wiki-selected-doc', draft.documentId); } catch {}
   },
 
@@ -427,7 +351,6 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     set({ draftPreviewActive: false, draftPreviewId: null });
   },
 
-  // Refresh task actions
   setRefreshStarted: (taskId) => {
     set({ refreshTask: { taskId, phase: 'scanning', message: '正在扫描代码索引…', meta: null } });
   },
@@ -446,7 +369,6 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     }
   },
 
-  // Plan actions
   loadPlans: async (projectId: string) => {
     set(s => ({ ...s, loading: { ...s.loading, plans: true } }));
     try {

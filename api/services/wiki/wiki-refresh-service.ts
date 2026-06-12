@@ -31,10 +31,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '../../db/index.js';
 import { wikiRefreshTasks, wikiRefreshDrafts, wikiScanCache } from '../../db/schema.js';
 import { wikiStore } from './wiki-store.js';
-import { wikiCoordinateService } from './wiki-coordinate-service.js';
 import { runCodeMapScan, compareScans, type ScanDiff } from '../analyzer/scan.js';
-import { buildAnalyzerGraph } from '../analyzer/graph.js';
-import { computeBlastRadius } from '../analyzer/graph.js';
 import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
 import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
@@ -49,7 +46,7 @@ import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from './wiki-snaps
 import { readGitState } from './wiki-snapshot-service.js';
 import type { WikiGitState } from './wiki-snapshot-service.js';
 import { loadCachedScanByGitState, persistScanCacheByGitState } from './wiki-scan-cache.js';
-import type { WikiRefreshTask, WikiBlock, DraftBlockChange } from './contracts.js';
+import type { WikiRefreshTask, DraftDocumentChange } from './contracts.js';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -63,10 +60,8 @@ function rowToTask(r: typeof wikiRefreshTasks.$inferSelect): WikiRefreshTask {
     nextRepoIndexId: r.nextRepoIndexId ?? null,
     status: r.status as WikiRefreshTask['status'],
     priority: r.priority as WikiRefreshTask['priority'],
-    affectedBlockIds: JSON.parse(r.affectedBlockIdsJson) as string[],
-    patchIds: JSON.parse(r.patchIdsJson) as string[],
-    draftIds: JSON.parse(r.draftIdsJson) as string[],
     affectedDocumentIds: JSON.parse(r.affectedDocumentIdsJson) as string[],
+    draftIds: JSON.parse(r.draftIdsJson) as string[],
     errorMessage: r.errorMessage ?? null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
@@ -111,10 +106,8 @@ export const wikiRefreshService = {
       snapshotId,
       status: 'queued',
       priority: 'p1',
-      affectedBlockIdsJson: '[]',
-      patchIdsJson: '[]',
-      draftIdsJson: '[]',
       affectedDocumentIdsJson: '[]',
+      draftIdsJson: '[]',
       createdAt: now,
       updatedAt: now,
     });
@@ -174,7 +167,6 @@ export const wikiRefreshService = {
       const nextRepoIndexId = scan.scanId;
       await updateTask(taskId, { nextRepoIndexId });
 
-      const graph = buildAnalyzerGraph(scan.codeIndex);
       let scanDiff: ScanDiff | null = null;
       if (previousScan) {
         scanDiff = compareScans(previousScan, scan);
@@ -200,49 +192,28 @@ export const wikiRefreshService = {
       const baseRepoIndexId = snapshot.repoIndexId ?? nextRepoIndexId;
       await updateTask(taskId, { baseRepoIndexId });
 
-      const { changedBindingIds, changedSourceIds } = await wikiCoordinateService.detectChangedBindings(
-        projectId, scan.codeIndex,
-      );
-
-      // Blast radius via call graph
-      let blastRadiusSourceIds: string[] = [];
-      if (scanDiff && scanDiff.entries.length > 0) {
-        const changedSymbolIds = scanDiff.entries
-          .filter(e => e.kind === 'symbol_added' || e.kind === 'symbol_removed' || e.kind === 'symbol_modified')
-          .map(e => e.entityId);
-        if (changedSymbolIds.length > 0) {
-          const blastRadius = computeBlastRadius(changedSymbolIds, graph.reverseCallGraph);
-          blastRadiusSourceIds = [...blastRadius]
-            .map(symId => scan.codeIndex.symbols.find(s => s.id === symId)?.fileId)
-            .filter((id): id is string => Boolean(id));
+      const changedFilePaths = new Set<string>();
+      if (scanDiff) {
+        for (const entry of scanDiff.entries) {
+          const file = scan.codeIndex.files.find(f => f.id === entry.entityId);
+          if (file) changedFilePaths.add(file.path);
         }
       }
 
-// PLACEHOLDER_RUN_REFRESH_2
+      const documents = await wikiStore.getDocumentsBySnapshot(snapshotId);
+      const affectedDocumentIds = documents
+        .filter(doc => doc.references.some(ref => changedFilePaths.has(ref.filePath)))
+        .map(doc => doc.id);
 
-      // Find affected blocks
-      const allChangedSourceIds = [...new Set([...changedSourceIds, ...blastRadiusSourceIds])];
-      const indexLookup = await wikiCoordinateService.getBlockIdsBySourceIds(
-        projectId, baseRepoIndexId, allChangedSourceIds,
-      );
-      const fromIndex = [...indexLookup.values()].flat();
-      const fromBindings = await wikiCoordinateService.getBlockIdsByBindingIds(changedBindingIds);
-      const affectedBlockIds = [...new Set([...fromIndex, ...fromBindings])];
+      await updateTask(taskId, { affectedDocumentIdsJson: JSON.stringify(affectedDocumentIds) });
 
-      await updateTask(taskId, { affectedBlockIdsJson: JSON.stringify(affectedBlockIds) });
-
-      if (affectedBlockIds.length > 0) {
-        await wikiStore.markBlocksStale(affectedBlockIds, 'stale');
-        await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.BlocksMarkedStale);
+      if (affectedDocumentIds.length > 0) {
+        await wikiStore.markDocumentsStale(affectedDocumentIds, 'stale');
+        await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.DocumentsMarkedStale);
       }
 
-      await wikiCoordinateService.refreshVerifiedHashes(projectId, nextRepoIndexId, scan.codeIndex);
-
-      // Phase 3: group by document and generate drafts
+      // Phase 3: generate document drafts
       await updateTask(taskId, { status: 'drafting' });
-      const documentBlockMap = await this._groupBlocksByDocument(affectedBlockIds);
-      const affectedDocumentIds = [...documentBlockMap.keys()];
-      await updateTask(taskId, { affectedDocumentIdsJson: JSON.stringify(affectedDocumentIds) });
 
       notify({
         type: TaskNotificationEventType.TaskProgress,
@@ -256,9 +227,9 @@ export const wikiRefreshService = {
       });
 
       const draftIds: string[] = [];
-      for (const [documentId, blockIds] of documentBlockMap) {
+      for (const documentId of affectedDocumentIds) {
         const draftId = await this._createDocumentDraft(
-          projectId, snapshotId, taskId, documentId, blockIds, scan, scanDiff, locale,
+          projectId, snapshotId, taskId, documentId, scan, scanDiff, locale,
         );
         if (draftId) draftIds.push(draftId);
       }
@@ -306,24 +277,11 @@ export const wikiRefreshService = {
 
 // PLACEHOLDER_HELPERS
 
-  async _groupBlocksByDocument(blockIds: string[]): Promise<Map<string, string[]>> {
-    const map = new Map<string, string[]>();
-    for (const blockId of blockIds) {
-      const block = await wikiStore.getBlock(blockId);
-      if (!block) continue;
-      const existing = map.get(block.documentId) ?? [];
-      existing.push(blockId);
-      map.set(block.documentId, existing);
-    }
-    return map;
-  },
-
   async _createDocumentDraft(
     projectId: string,
     snapshotId: string,
     taskId: string,
     documentId: string,
-    affectedBlockIds: string[],
     scan: Awaited<ReturnType<typeof runCodeMapScan>>,
     scanDiff: ScanDiff | null,
     locale: 'zh' | 'en' = 'zh',
@@ -332,45 +290,16 @@ export const wikiRefreshService = {
     const now = new Date().toISOString();
     const draftId = nanoid();
 
-    const allBlocks = await wikiStore.getBlocksByDocument(documentId);
-    if (allBlocks.length === 0) return null;
-
     const doc = await wikiStore.getDocument(documentId);
-    const docTitle = doc?.title ?? 'Unknown';
-    const docType = doc?.docType ?? 'module';
+    if (!doc || !doc.contentMd.trim()) return null;
 
-    // Gather source context from all affected blocks' bindings
-    const allSourceFiles = new Set<string>();
-    const allSymbols = new Set<string>();
-    for (const blockId of affectedBlockIds) {
-      const bindings = await wikiStore.getBindingsByBlock(blockId);
-      for (const b of bindings) {
-        if (b.sourceType === 'symbol') {
-          const sym = scan.codeIndex.symbols.find(s => s.id === b.sourceId);
-          if (sym) allSymbols.add(`${sym.qualifiedName} [${sym.kind}]`);
-        }
-        const file = scan.codeIndex.files.find(f => f.id === b.sourceId);
-        if (file) allSourceFiles.add(file.path);
-        if (b.filePath) allSourceFiles.add(b.filePath);
-      }
-    }
-
-    const sourceFilesList = [...allSourceFiles].slice(0, 15);
-    const symbolsList = [...allSymbols].slice(0, 20);
+    const docTitle = doc.title;
+    const docType = doc.docType;
+    const sourceFilesList = doc.references.map(r => r.filePath).slice(0, 15);
     const diffContext = buildDiffContext(scanDiff, sourceFilesList);
 
-    // Build document content representation for agent prompt
-    const blocksContext = allBlocks.map(b => ({
-      id: b.id,
-      type: b.blockType,
-      format: b.contentFormat,
-      content: JSON.stringify(b.content).slice(0, 600),
-      isAffected: affectedBlockIds.includes(b.id),
-    }));
-
-    // Run refresh agent
     ensureRefreshProfileRegistered();
-    const handle = createRefreshTools({ allBlocks, affectedBlockIds, documentTitle: docTitle });
+    const handle = createRefreshTools({ document: doc, documentTitle: docTitle });
     const registeredToolIds: string[] = [];
     for (const tool of handle.tools) {
       toolRegistry.register(tool);
@@ -381,21 +310,19 @@ export const wikiRefreshService = {
       const prompt = buildLanguageDirective(locale) + [
         `You are updating document "${docTitle}" (type: ${docType}).`,
         '',
-        'TASK: Based on the code changes below, determine which blocks need updating and call refresh.submit_changes IMMEDIATELY.',
+        'TASK: Based on the code changes below, revise the document markdown and call refresh.submit_changes IMMEDIATELY.',
         '',
-        '## Document Blocks',
-        blocksContext.map(b => `[${b.id}] (${b.type}, affected=${b.isAffected}): ${b.content}`).join('\n\n'),
+        '## Current Document',
+        doc.contentMd.slice(0, 4000),
         '',
         '## Code Changes',
-        `Files: ${sourceFilesList.join(', ') || 'unknown'}`,
-        `Symbols: ${symbolsList.join(', ') || 'none'}`,
+        `Referenced files: ${sourceFilesList.join(', ') || 'unknown'}`,
         diffContext,
         '',
         '## Instructions',
-        '1. For each affected block, decide: does the code change require updating this block\'s content?',
-        '2. Call refresh.submit_changes with your changes array. Each change needs: blockId, action (update/delete/insert_after), newContent, and reasoning.',
-        '3. For newContent: if the block\'s contentFormat is "markdown_fragment", provide a plain markdown STRING. For structured blocks (heading, list, table), provide a JSON object matching the original structure.',
-        '4. If no updates are needed, call refresh.submit_changes with summary="No updates needed" and an empty changes array.',
+        '1. Decide whether the code changes require updating this document.',
+        '2. Call refresh.submit_changes with summary, newContentMd (full revised markdown), and reasoning.',
+        '3. If no updates are needed, call refresh.submit_changes with summary="No updates needed" and newContentMd equal to the current content.',
         '',
         'Do NOT explore the codebase. All context you need is above.',
       ].join('\n');
@@ -416,18 +343,15 @@ export const wikiRefreshService = {
       }
 
       const result = handle.getResult();
-      if (!result || result.changes.length === 0) return null;
+      if (!result || !result.change) return null;
+      if (result.change.newContentMd.trim() === doc.contentMd.trim()) return null;
 
-      const changes: DraftBlockChange[] = result.changes.map(c => {
-        const block = allBlocks.find(b => b.id === c.blockId);
-        return {
-          blockId: c.blockId,
-          action: c.action,
-          oldContent: block?.content ?? null,
-          newContent: c.newContent ?? null,
-          reasoning: c.reasoning,
-        };
-      });
+      const changes: DraftDocumentChange[] = [{
+        documentId,
+        oldContentMd: doc.contentMd,
+        newContentMd: result.change.newContentMd,
+        reasoning: result.change.reasoning,
+      }];
 
       let sourceCommitSha: string | null = null;
       try {

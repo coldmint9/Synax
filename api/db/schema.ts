@@ -553,98 +553,15 @@ export const wikiDocuments = sqliteTable('wiki_documents', {
   title: text('title').notNull(),
   docType: text('doc_type').notNull(),
   parentId: text('parent_id'),
-  blockIdsJson: text('block_ids_json').notNull().default('[]'),
+  contentMd: text('content_md').notNull().default(''),
+  referencesJson: text('references_json').notNull().default('[]'),
+  searchText: text('search_text').notNull().default(''),
   pipelineStage: text('pipeline_stage').notNull().default('pending'),
   sortOrder: integer('sort_order').notNull().default(0),
-  createdAt: text('created_at').notNull(),
-  updatedAt: text('updated_at').notNull(),
-});
-
-export const wikiBlocks = sqliteTable('wiki_blocks', {
-  id: text('id').primaryKey(),
-  projectId: text('project_id').notNull(),
-  documentId: text('document_id').notNull(),
-  blockType: text('block_type').notNull(),
-  contentJson: text('content_json').notNull().default('{}'),
-  contentFormat: text('content_format').notNull().default('markdown_fragment'),
-  sourceBindingIdsJson: text('source_binding_ids_json').notNull().default('[]'),
-  contentHash: text('content_hash').notNull().default(''),
-  generatedFromHash: text('generated_from_hash'),
-  staleState: text('stale_state').notNull().default('fresh'),
   manualState: text('manual_state').notNull().default('none'),
-  confidence: real('confidence').notNull().default(0.5),
-  generatedByJson: text('generated_by_json').notNull().default('{}'),
-  searchText: text('search_text').notNull().default(''),
+  staleState: text('stale_state').notNull().default('fresh'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
-});
-
-export const wikiBlockRevisions = sqliteTable('wiki_block_revisions', {
-  id: text('id').primaryKey(),
-  projectId: text('project_id').notNull(),
-  blockId: text('block_id').notNull(),
-  revision: integer('revision').notNull(),
-  contentJson: text('content_json').notNull().default('{}'),
-  contentHash: text('content_hash').notNull().default(''),
-  source: text('source').notNull().default('agent'),
-  patchId: text('patch_id'),
-  draftId: text('draft_id'),
-  createdAt: text('created_at').notNull(),
-  createdBy: text('created_by'),
-});
-
-export const wikiSourceBindings = sqliteTable('wiki_source_bindings', {
-  id: text('id').primaryKey(),
-  projectId: text('project_id').notNull(),
-  wikiBlockId: text('wiki_block_id').notNull(),
-  sourceType: text('source_type').notNull(),
-  sourceId: text('source_id').notNull(),
-  lastVerifiedRepoIndexId: text('last_verified_repo_index_id'),
-  lastVerifiedHash: text('last_verified_hash'),
-  precision: text('precision').notNull().default('file'),
-  confidence: real('confidence').notNull().default(0.5),
-  createdBy: text('created_by').notNull().default('agent'),
-  createdAt: text('created_at').notNull(),
-  filePath: text('file_path'),
-  startLine: integer('start_line'),
-  endLine: integer('end_line'),
-  qualifiedName: text('qualified_name'),
-});
-
-export const wikiSourceBlockIndex = sqliteTable(
-  'wiki_source_block_index',
-  {
-    projectId: text('project_id').notNull(),
-    repoIndexId: text('repo_index_id').notNull(),
-    sourceId: text('source_id').notNull(),
-    wikiBlockIdsJson: text('wiki_block_ids_json').notNull().default('[]'),
-    updatedAt: text('updated_at').notNull(),
-  },
-  (t) => ({
-    pk: primaryKey({ columns: [t.projectId, t.repoIndexId, t.sourceId] }),
-  }),
-);
-
-export const wikiPatches = sqliteTable('wiki_patches', {
-  id: text('id').primaryKey(),
-  projectId: text('project_id').notNull(),
-  snapshotId: text('snapshot_id').notNull(),
-  refreshTaskId: text('refresh_task_id'),
-  agentSessionId: text('agent_session_id'),
-  targetDocumentId: text('target_document_id').notNull(),
-  targetBlockIdsJson: text('target_block_ids_json').notNull().default('[]'),
-  kind: text('kind').notNull().default('update'),
-  status: text('status').notNull().default('pending'),
-  risk: text('risk').notNull().default('medium'),
-  confidence: real('confidence').notNull().default(0.5),
-  oldContentJson: text('old_content_json'),
-  newContentJson: text('new_content_json').notNull().default('{}'),
-  sourceDiffIdsJson: text('source_diff_ids_json').notNull().default('[]'),
-  reasoningJson: text('reasoning_json').notNull().default('[]'),
-  createdAt: text('created_at').notNull(),
-  updatedAt: text('updated_at').notNull(),
-  decidedBy: text('decided_by'),
-  decidedAt: text('decided_at'),
 });
 
 export const wikiRefreshDrafts = sqliteTable('wiki_refresh_drafts', {
@@ -671,8 +588,6 @@ export const wikiRefreshTasks = sqliteTable('wiki_refresh_tasks', {
   nextRepoIndexId: text('next_repo_index_id'),
   status: text('status').notNull().default('queued'),
   priority: text('priority').notNull().default('p1'),
-  affectedBlockIdsJson: text('affected_block_ids_json').notNull().default('[]'),
-  patchIdsJson: text('patch_ids_json').notNull().default('[]'),
   draftIdsJson: text('draft_ids_json').notNull().default('[]'),
   affectedDocumentIdsJson: text('affected_document_ids_json').notNull().default('[]'),
   errorMessage: text('error_message'),
@@ -681,49 +596,10 @@ export const wikiRefreshTasks = sqliteTable('wiki_refresh_tasks', {
   completedAt: text('completed_at'),
 });
 
-export const wikiDesignMappingTasks = sqliteTable('wiki_design_mapping_tasks', {
-  id: text('id').primaryKey(),
-  projectId: text('project_id').notNull(),
-  sourceSnapshotId: text('source_snapshot_id').notNull(),
-  selectedBlockIdsJson: text('selected_block_ids_json').notNull().default('[]'),
-  selectedText: text('selected_text').notNull().default(''),
-  userInstruction: text('user_instruction').notNull().default(''),
-  relatedCoordinateIdsJson: text('related_coordinate_ids_json').notNull().default('[]'),
-  generatedGoalId: text('generated_goal_id'),
-  generatedActionIdsJson: text('generated_action_ids_json').notNull().default('[]'),
-  actionContextBundleId: text('action_context_bundle_id').notNull(),
-  acpSessionId: text('acp_session_id'),
-  status: text('status').notNull().default('draft'),
-  createdAt: text('created_at').notNull(),
-  updatedAt: text('updated_at').notNull(),
-});
-
-export const wikiActionContextBundles = sqliteTable('wiki_action_context_bundles', {
-  id: text('id').primaryKey(),
-  projectId: text('project_id').notNull(),
-  selectedText: text('selected_text').notNull().default(''),
-  userInstruction: text('user_instruction').notNull().default(''),
-  wikiBlockIdsJson: text('wiki_block_ids_json').notNull().default('[]'),
-  coordinateIdsJson: text('coordinate_ids_json').notNull().default('[]'),
-  fileIdsJson: text('file_ids_json').notNull().default('[]'),
-  symbolIdsJson: text('symbol_ids_json').notNull().default('[]'),
-  constraintsJson: text('constraints_json').notNull().default('[]'),
-  relatedTestFilesJson: text('related_test_files_json').notNull().default('[]'),
-  createdAt: text('created_at').notNull(),
-});
-
 export type WikiSnapshotRow = typeof wikiSnapshots.$inferSelect;
 export type NewWikiSnapshotRow = typeof wikiSnapshots.$inferInsert;
 export type WikiDocumentRow = typeof wikiDocuments.$inferSelect;
 export type NewWikiDocumentRow = typeof wikiDocuments.$inferInsert;
-export type WikiBlockRow = typeof wikiBlocks.$inferSelect;
-export type NewWikiBlockRow = typeof wikiBlocks.$inferInsert;
-export type WikiBlockRevisionRow = typeof wikiBlockRevisions.$inferSelect;
-export type NewWikiBlockRevisionRow = typeof wikiBlockRevisions.$inferInsert;
-export type WikiSourceBindingRow = typeof wikiSourceBindings.$inferSelect;
-export type NewWikiSourceBindingRow = typeof wikiSourceBindings.$inferInsert;
-export type WikiPatchRow = typeof wikiPatches.$inferSelect;
-export type NewWikiPatchRow = typeof wikiPatches.$inferInsert;
 export type WikiRefreshTaskRow = typeof wikiRefreshTasks.$inferSelect;
 export type NewWikiRefreshTaskRow = typeof wikiRefreshTasks.$inferInsert;
 
@@ -755,7 +631,7 @@ export type NewWikiScanGitCacheRow = typeof wikiScanGitCache.$inferInsert;
 export const wikiEvaluations = sqliteTable('wiki_evaluations', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
-  blockId: text('block_id').notNull(),
+  documentId: text('document_id').notNull(),
   content: text('content').notNull(),
   status: text('status').notNull().default('active'),
   planNodeId: text('plan_node_id'),

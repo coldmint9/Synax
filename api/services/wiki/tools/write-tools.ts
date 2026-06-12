@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import type { RegisteredTool } from '../../agent-runtime/contracts.js';
-import { validateBlockContent, type WikiBlockType, type WikiDocType } from '../contracts.js';
+import type { WikiDocType, WikiReference } from '../contracts.js';
 import { validateDocumentQuality } from '../document-quality-gates.js';
-import { WIKI_DOC_TYPES, WIKI_BLOCK_TYPES, MIN_BLOCKS_BY_DOC_TYPE, MIN_BLOCKS } from './contracts.js';
-import type { WikiDocumentDraft, WikiOutlineEntry } from './contracts.js';
+import { WIKI_DOC_TYPES, MIN_MARKDOWN_LENGTH } from './contracts.js';
+import type { WikiDocumentDraft, WikiOutlineEntry, WikiClaim } from './contracts.js';
 
 export function buildCheckMermaidTool(): RegisteredTool {
   return {
@@ -42,11 +42,19 @@ export function buildCheckMermaidTool(): RegisteredTool {
   };
 }
 
+const referenceSchema = z.object({
+  filePath: z.string().min(1),
+  startLine: z.number().int().optional(),
+  endLine: z.number().int().optional(),
+  symbol: z.string().optional(),
+  confidence: z.number().min(0).max(1).optional(),
+});
+
 export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[], outline: WikiOutlineEntry[] | null): RegisteredTool {
   return {
     id: 'wiki.commit_document',
     label: 'Commit Wiki Document',
-    description: 'Submit a completed wiki document. Quality gates: minimum blocks per docType, required block mix (diagrams/callouts/tables), prose depth, structured block validation, non-heading blocks must have sourceHints.',
+    description: 'Submit a completed wiki document as markdown with references and verifiable claims.',
     category: 'write',
     mutability: 'write',
     resumeBehavior: 'auto',
@@ -56,45 +64,40 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
       docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]).describe('Document type.'),
       parentPlanId: z.string().optional().describe('Plan ID of the parent document from the outline. Omit for root-level.'),
       sortOrder: z.number().int().optional().describe('Display order among siblings.'),
-      blocks: z.array(z.object({
-        blockType: z.enum(WIKI_BLOCK_TYPES as [string, ...string[]]),
-        content: z.record(z.string(), z.unknown()).describe('Block content as JSON matching the block type schema.'),
-        sourceHints: z.array(z.string()).optional(),
-        confidence: z.number().min(0).max(1).optional(),
-      })).min(1).describe('Document blocks.'),
+      markdown: z.string().min(1).describe('Full document body in markdown (headings, prose, tables, mermaid fences, code blocks).'),
+      references: z.array(referenceSchema).min(1).describe('Source file/symbol references cited in the document.'),
       claims: z.array(z.object({
-        id: z.string().min(1).describe('Unique claim ID (e.g. "claim-runtime-node").'),
-        subject: z.string().min(1).describe('What the claim is about (e.g. "runtime environment").'),
-        assertion: z.string().min(1).describe('The factual assertion being made.'),
-        evidenceHint: z.string().min(1).describe('Where to look to verify (file path or symbol).'),
-        centrality: z.enum(['load-bearing', 'incidental']).describe('How critical this claim is.'),
+        id: z.string().min(1),
+        subject: z.string().min(1),
+        assertion: z.string().min(1),
+        evidenceHint: z.string().min(1),
+        centrality: z.enum(['load-bearing', 'incidental']),
       })).min(1).describe('Discrete verifiable claims made in this document.'),
     }),
     execute(input) {
-      const args = input.args as WikiDocumentDraft & { parentPlanId?: string; blocks: Array<{ blockType: WikiBlockType; content: Record<string, unknown>; sourceHints?: string[]; confidence?: number }> };
-      if (!args?.blocks || !Array.isArray(args.blocks)) {
-        return { result: { ok: false, errors: ['blocks array is required.'], message: 'Document rejected.' }, displaySummary: 'Document rejected.', artifacts: [] };
-      }
-      if (!args?.title || !args?.docType) {
-        return { result: { ok: false, errors: ['title and docType are required.'], message: 'Document rejected.' }, displaySummary: 'Document rejected.', artifacts: [] };
+      const args = input.args as {
+        title: string;
+        docType: WikiDocType;
+        parentPlanId?: string;
+        sortOrder?: number;
+        markdown: string;
+        references: WikiReference[];
+        claims: WikiClaim[];
+      };
+
+      if (!args?.markdown || !args?.title || !args?.docType) {
+        return { result: { ok: false, errors: ['title, docType, and markdown are required.'], message: 'Document rejected.' }, displaySummary: 'Document rejected.', artifacts: [] };
       }
 
       const errors: string[] = [];
-      const minBlocks = MIN_BLOCKS_BY_DOC_TYPE[args.docType as WikiDocType] ?? MIN_BLOCKS;
-      if (args.blocks.length < minBlocks) {
-        errors.push(`Too few blocks: ${args.blocks.length} (minimum ${minBlocks} for ${args.docType}).`);
+      const minLen = MIN_MARKDOWN_LENGTH[args.docType] ?? 350;
+      if (args.markdown.trim().length < minLen) {
+        errors.push(`Markdown too short: ${args.markdown.trim().length} chars (minimum ${minLen} for ${args.docType}).`);
       }
-      errors.push(...validateDocumentQuality(args.docType as WikiDocType, args.blocks));
+      errors.push(...validateDocumentQuality(args.docType, args.markdown, args.references ?? []));
 
-      for (let i = 0; i < args.blocks.length; i++) {
-        const block = args.blocks[i];
-        const validation = validateBlockContent(block.blockType as WikiBlockType, block.content);
-        if (!validation.ok) {
-          errors.push(`Block ${i + 1} (${block.blockType}): ${validation.errors?.join('; ')}`);
-        }
-        if (block.blockType !== 'heading' && (!block.sourceHints || block.sourceHints.length === 0)) {
-          errors.push(`Block ${i + 1} (${block.blockType}) missing sourceHints.`);
-        }
+      if (!args.claims || args.claims.length === 0) {
+        errors.push('At least one verifiable claim is required.');
       }
 
       if (errors.length > 0) {
@@ -105,11 +108,21 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
         };
       }
 
-      committedDocuments.push(args);
+      const draft: WikiDocumentDraft = {
+        title: args.title,
+        docType: args.docType,
+        sortOrder: args.sortOrder,
+        parentPlanId: args.parentPlanId,
+        markdown: args.markdown,
+        references: args.references,
+        claims: args.claims,
+      };
+
+      committedDocuments.push(draft);
       return {
-        result: { ok: true, index: committedDocuments.length - 1, title: args.title, docType: args.docType, blockCount: args.blocks.length },
-        displaySummary: `Committed "${args.title}" (${args.docType}, ${args.blocks.length} blocks). Total: ${committedDocuments.length}.`,
-        artifacts: [{ kind: 'evidence', title: `Wiki: ${args.title}`, summary: `Generated ${args.docType} with ${args.blocks.length} blocks.`, risk: 'low' }],
+        result: { ok: true, index: committedDocuments.length - 1, title: args.title, docType: args.docType },
+        displaySummary: `Committed "${args.title}" (${args.docType}). Total: ${committedDocuments.length}.`,
+        artifacts: [{ kind: 'evidence', title: `Wiki: ${args.title}`, summary: `Generated ${args.docType} document.`, risk: 'low' }],
       };
     },
   };

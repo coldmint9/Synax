@@ -63,3 +63,71 @@
 .wiki-code-block[data-theme="light"] code > [data-theme="light"] {
   display: inline;
 }
+
+.wiki-markdown {
+  color: var(--wiki-text);
+}
+
+.wiki-markdown :where(h1, h2, h3, h4) {
+  color: var(--wiki-text);
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+.wiki-markdown :where(h1) { font-size: 1.5rem; }
+.wiki-markdown :where(h2) { font-size: 1.25rem; }
+.wiki-markdown :where(h3) { font-size: 1.1rem; }
+
+.wiki-markdown :where(p, ul, ol, blockquote, pre) {
+  margin: 0.75em 0;
+}
+
+.wiki-markdown :where(a) {
+  color: var(--wiki-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.wiki-markdown :where(code:not(pre code)) {
+  font-family: var(--wiki-mono);
+  font-size: 0.875em;
+  background: var(--wiki-raised);
+  border: 1px solid var(--wiki-border-subtle);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.wiki-markdown :where(pre) {
+  background: var(--wiki-raised);
+  border: 1px solid var(--wiki-border);
+  border-radius: var(--wiki-radius);
+  overflow-x: auto;
+  padding: 0.75rem 1rem;
+}
+
+.wiki-markdown :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875em;
+}
+
+.wiki-markdown :where(th, td) {
+  border: 1px solid var(--wiki-border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+.wiki-markdown :where(th) {
+  background: var(--wiki-surface);
+  font-weight: 600;
+}
+
+.wiki-search-highlight {
+  background: rgba(251, 191, 36, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+

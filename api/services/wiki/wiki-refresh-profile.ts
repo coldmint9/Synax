@@ -9,7 +9,7 @@ export const refreshAgentProfile: AgentProfile = {
   description: '分析代码变更对文档的影响，生成文档更新草稿。',
   defaultThinkingMode: 'deep',
   allowedCapabilities: [
-    'refresh.read_block',
+    'refresh.read_document',
     'refresh.submit_changes',
   ],
   permissionDefaults: [
@@ -24,9 +24,9 @@ export const refreshAgentProfile: AgentProfile = {
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
     'All context you need is in the prompt. Do NOT try to explore the codebase.',
-    'Use refresh.read_block ONLY if a block content is truncated and you need the full text.',
+    'Use refresh.read_document if you need the full current markdown.',
     'Call refresh.submit_changes IMMEDIATELY after analyzing the provided context.',
-    'If no blocks need updating, call refresh.submit_changes with an empty changes array.',
+    'If no update is needed, call refresh.submit_changes with the unchanged markdown and explain why.',
   ],
 }
 

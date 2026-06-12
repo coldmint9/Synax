@@ -1,39 +1,30 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Pencil } from 'lucide-react'
 import { useWikiStore } from '../../state/wikiStore'
-import type { DraftBlockChange } from '../../../lib/contracts/wiki'
+import type { DraftDocumentChange } from '../../../lib/contracts/wiki'
 
-export default function WikiDraftBlockChange({
+export default function WikiDraftDocumentChange({
   change,
   draftId,
   checked,
 }: {
-  change: DraftBlockChange
+  change: DraftDocumentChange
   draftId: string
   checked: boolean
 }) {
   const [showReasoning, setShowReasoning] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
-  const toggleDraftBlock = useWikiStore(s => s.toggleDraftBlock)
-  const editDraftBlock = useWikiStore(s => s.editDraftBlock)
-  const blocksById = useWikiStore(s => s.blocksById)
-
-  const block = blocksById[change.blockId]
-  const blockTitle = block?.blockType === 'heading'
-    ? String((block.content as { text?: string })?.text ?? change.blockId.slice(0, 8))
-    : change.blockId.slice(0, 8)
+  const toggleDraftChange = useWikiStore(s => s.toggleDraftChange)
+  const editDraftChange = useWikiStore(s => s.editDraftChange)
 
   const handleEdit = () => {
-    const content = typeof change.newContent === 'string'
-      ? change.newContent
-      : JSON.stringify(change.newContent, null, 2)
-    setEditValue(content)
+    setEditValue(change.newContentMd ?? '')
     setEditing(true)
   }
 
   const handleSaveEdit = () => {
-    editDraftBlock(draftId, change.blockId, editValue)
+    editDraftChange(draftId, change.documentId, editValue)
     setEditing(false)
   }
 
@@ -45,20 +36,13 @@ export default function WikiDraftBlockChange({
         <input
           type="checkbox"
           checked={checked}
-          onChange={() => toggleDraftBlock(draftId, change.blockId)}
+          onChange={() => toggleDraftChange(draftId, change.documentId)}
           className="mt-0.5 shrink-0"
         />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-medium text-foreground">
-              {blockTitle}
-            </span>
-            <span className={`rounded px-1 py-0.5 text-[9px] ${
-              change.action === 'delete' ? 'bg-destructive/15 text-destructive' :
-              change.action === 'insert_after' ? 'bg-emerald-500/15 text-emerald-600' :
-              'bg-primary/15 text-primary'
-            }`}>
-              {change.action}
+              Document update
             </span>
             {!editing && (
               <button
@@ -71,39 +55,31 @@ export default function WikiDraftBlockChange({
             )}
           </div>
 
-          {/* Diff display */}
-          {!editing && change.action !== 'delete' && (
-            <div className="mt-1.5 rounded bg-secondary/30 p-2 text-[10px] font-mono leading-relaxed">
-              {change.oldContent ? (
-                <div className="text-destructive/70 line-through">
-                  {typeof change.oldContent === 'string'
-                    ? change.oldContent.slice(0, 200)
-                    : JSON.stringify(change.oldContent).slice(0, 200)}
+          {!editing && (
+            <div className="mt-1.5 space-y-1.5 rounded bg-secondary/30 p-2 text-[10px] font-mono leading-relaxed max-h-[240px] overflow-y-auto">
+              {change.oldContentMd ? (
+                <div className="text-destructive/70 whitespace-pre-wrap line-through">
+                  {change.oldContentMd.slice(0, 800)}
+                  {change.oldContentMd.length > 800 ? '…' : ''}
                 </div>
               ) : null}
-              <div className="text-emerald-600">
-                {typeof change.newContent === 'string'
-                  ? change.newContent.slice(0, 200)
-                  : JSON.stringify(change.newContent).slice(0, 200)}
-              </div>
+              {change.newContentMd ? (
+                <div className="text-emerald-600 whitespace-pre-wrap">
+                  {change.newContentMd.slice(0, 800)}
+                  {change.newContentMd.length > 800 ? '…' : ''}
+                </div>
+              ) : (
+                <div className="text-destructive/70 italic">(content removed)</div>
+              )}
             </div>
           )}
 
-          {change.action === 'delete' && !editing && (
-            <div className="mt-1.5 rounded bg-destructive/5 p-2 text-[10px] font-mono text-destructive/70 line-through">
-              {typeof change.oldContent === 'string'
-                ? change.oldContent.slice(0, 200)
-                : JSON.stringify(change.oldContent).slice(0, 200)}
-            </div>
-          )}
-
-          {/* Edit mode */}
           {editing && (
             <div className="mt-1.5 space-y-1.5">
               <textarea
                 value={editValue}
                 onChange={e => setEditValue(e.target.value)}
-                rows={4}
+                rows={8}
                 className="w-full rounded border border-border bg-background p-2 text-[10px] font-mono focus:border-primary focus:outline-none"
               />
               <div className="flex gap-1.5">
@@ -125,7 +101,6 @@ export default function WikiDraftBlockChange({
             </div>
           )}
 
-          {/* Reasoning toggle */}
           {change.reasoning && (
             <button
               type="button"

@@ -14,19 +14,19 @@ export default function WikiDraftActions({
   const exitDraftPreview = useWikiStore(s => s.exitDraftPreview)
   const draftPreviewActive = useWikiStore(s => s.draftPreviewActive)
   const draftPreviewId = useWikiStore(s => s.draftPreviewId)
-  const selectedBlockIds = useWikiStore(s => s.draftSelectedBlockIds)
+  const selectedDocumentIds = useWikiStore(s => s.draftSelectedDocumentIds)
   const draft = useWikiStore(s => s.draftsById[draftId])
 
   const totalCount = draft?.changes.length ?? 0
   const isAllSelected = checkedCount === totalCount
-  const blockIds = selectedBlockIds[draftId] ?? []
+  const documentIds = selectedDocumentIds[draftId] ?? []
   const isPreviewing = draftPreviewActive && draftPreviewId === draftId
 
   const handleApply = () => {
     if (isAllSelected) {
       applyDraft(draftId)
     } else {
-      applyDraft(draftId, blockIds)
+      applyDraft(draftId, documentIds)
     }
   }
 

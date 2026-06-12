@@ -209,15 +209,15 @@ function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
   ensureColumn(sqlite, 'agent_runtime_artifacts', 'metadata_json', "metadata_json TEXT NOT NULL DEFAULT '{}'");
   ensureColumn(sqlite, 'agent_runtime_context_bundles', 'blocks_json', "blocks_json TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(sqlite, 'agent_runtime_thinking_summaries', 'evidence_used_json', "evidence_used_json TEXT NOT NULL DEFAULT '[]'");
-  ensureColumn(sqlite, 'wiki_source_bindings', 'file_path', 'file_path TEXT');
-  ensureColumn(sqlite, 'wiki_source_bindings', 'start_line', 'start_line INTEGER');
-  ensureColumn(sqlite, 'wiki_source_bindings', 'end_line', 'end_line INTEGER');
-  ensureColumn(sqlite, 'wiki_source_bindings', 'qualified_name', 'qualified_name TEXT');
   ensureColumn(sqlite, 'wiki_refresh_tasks', 'draft_ids_json', "draft_ids_json TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(sqlite, 'wiki_refresh_tasks', 'affected_document_ids_json', "affected_document_ids_json TEXT NOT NULL DEFAULT '[]'");
-  ensureColumn(sqlite, 'wiki_block_revisions', 'draft_id', 'draft_id TEXT');
   ensureColumn(sqlite, 'wiki_documents', 'pipeline_stage', "pipeline_stage TEXT NOT NULL DEFAULT 'pending'");
-  ensureColumn(sqlite, 'wiki_blocks', 'search_text', "search_text TEXT NOT NULL DEFAULT ''");
+  ensureColumn(sqlite, 'wiki_documents', 'content_md', "content_md TEXT NOT NULL DEFAULT ''");
+  ensureColumn(sqlite, 'wiki_documents', 'references_json', "references_json TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(sqlite, 'wiki_documents', 'search_text', "search_text TEXT NOT NULL DEFAULT ''");
+  ensureColumn(sqlite, 'wiki_documents', 'manual_state', "manual_state TEXT NOT NULL DEFAULT 'none'");
+  ensureColumn(sqlite, 'wiki_documents', 'stale_state', "stale_state TEXT NOT NULL DEFAULT 'fresh'");
+  ensureColumn(sqlite, 'wiki_evaluations', 'document_id', 'document_id TEXT');
 }
 
 function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {

@@ -5,13 +5,11 @@ import * as z from 'zod/v4';
 import { wikiStore } from '../services/wiki/wiki-store.js';
 import { wikiExportService } from '../services/wiki/wiki-export-service.js';
 import { wikiLoopService } from '../services/wiki/wiki-loop-service.js';
-import { wikiCoordinateService } from '../services/wiki/wiki-coordinate-service.js';
 import { wikiRefreshService } from '../services/wiki/wiki-refresh-service.js';
-import { wikiPatchService, WikiPatchConflictError } from '../services/wiki/wiki-patch-service.js';
 import { wikiDraftService } from '../services/wiki/wiki-draft-service.js';
-import { wikiDesignMappingService } from '../services/wiki/wiki-design-mapping-service.js';
 import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from '../services/wiki/wiki-snapshot-events.js';
-import { searchWikiBlocks } from '../services/wiki/wiki-fts.js';
+import { searchWikiDocuments } from '../services/wiki/wiki-fts.js';
+import { WikiManualProtectionError } from '../services/wiki/contracts.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 import { AgentProviderNotConfiguredError } from '../services/agent-runtime/runtime-errors.js';
 import { logger } from '../lib/logger.js';
@@ -32,49 +30,37 @@ const refreshBodySchema = z.object({
   locale: z.enum(['zh', 'en']).optional(),
 });
 
-const patchActionBodySchema = z.object({
-  actorId: z.string().max(128).optional(),
-  confirmManualOverride: z.boolean().optional(),
-});
-
 const draftApplyBodySchema = z.object({
   actorId: z.string().max(128).optional(),
   confirmManualOverride: z.boolean().optional(),
 });
 
 const draftApplyPartialBodySchema = z.object({
-  blockIds: z.array(z.string().min(1).max(128)).min(1),
+  documentIds: z.array(z.string().min(1).max(128)).min(1),
   actorId: z.string().max(128).optional(),
   confirmManualOverride: z.boolean().optional(),
 });
 
 const draftEditBodySchema = z.object({
   changes: z.array(z.object({
-    blockId: z.string().min(1).max(128),
-    newContent: z.unknown(),
+    documentId: z.string().min(1).max(128),
+    newContentMd: z.string().min(1),
   })).min(1),
   actorId: z.string().max(128).optional(),
   confirmManualOverride: z.boolean().optional(),
 });
 
-const blockUpdateBodySchema = z.object({
-  content: z.unknown(),
+const documentUpdateBodySchema = z.object({
+  contentMd: z.string(),
+  references: z.array(z.object({
+    filePath: z.string().min(1),
+    startLine: z.number().int().optional(),
+    endLine: z.number().int().optional(),
+    symbol: z.string().optional(),
+    confidence: z.number().min(0).max(1).optional(),
+  })).optional(),
   manualState: z.enum(['edited', 'locked']).optional(),
   actorId: z.string().max(128).optional(),
-});
-
-const designMappingPlanBodySchema = z.object({
-  projectId: z.string().min(1).max(128),
-  snapshotId: z.string().min(1).max(128),
-  selectedBlockIds: z.array(z.string().max(128)).max(64).optional(),
-  selectedText: z.string().max(8192).optional(),
-  instruction: z.string().min(1).max(4096),
-});
-
-const designMappingConfirmBodySchema = z.object({
-  workDir: z.string().min(1).max(4096).optional(),
-  providerId: z.string().max(64).optional(),
-  userId: z.string().max(128).optional(),
 });
 
 async function parseBody<T>(
@@ -116,7 +102,7 @@ wikiRoutes.get('/projects/:projectId/search', async (c) => {
     return c.json({ results: [], total: 0 });
   }
 
-  const results = searchWikiBlocks({ projectId, query: q, limit, documentId });
+  const results = searchWikiDocuments({ projectId, query: q, limit, documentId });
 
   // Enrich with document titles
   const docIds = [...new Set(results.map(r => r.documentId))];
@@ -139,21 +125,30 @@ wikiRoutes.get('/projects/:projectId/search', async (c) => {
   return c.json({ results: enriched, total: enriched.length });
 });
 
-// ── PATCH /api/wiki/blocks/:blockId ──────────────────────────────────────────
-wikiRoutes.patch('/blocks/:blockId', async (c) => {
-  const { blockId } = c.req.param();
-  const parsed = await parseBody(c, blockUpdateBodySchema);
+// ── PATCH /api/wiki/documents/:documentId ────────────────────────────────────
+wikiRoutes.patch('/documents/:documentId', async (c) => {
+  const { documentId } = c.req.param();
+  const parsed = await parseBody(c, documentUpdateBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
-  const block = await wikiStore.getBlock(blockId);
-  if (!block) return c.json({ error: 'not found' }, 404);
-  const updated = await wikiStore.updateBlockContent(blockId, {
-    content: parsed.data.content,
-    manualState: parsed.data.manualState,
-    actorId: parsed.data.actorId,
-  });
-  await publishLatestWikiSnapshot(updated.projectId, WikiSnapshotEventReason.BlockUpdated);
-  return c.json(updated);
+  const doc = await wikiStore.getDocument(documentId);
+  if (!doc) return c.json({ error: 'not found' }, 404);
+
+  try {
+    const updated = await wikiStore.updateDocumentContent(documentId, {
+      contentMd: parsed.data.contentMd,
+      references: parsed.data.references,
+      manualState: parsed.data.manualState ?? 'edited',
+      actorId: parsed.data.actorId,
+    });
+    await publishLatestWikiSnapshot(updated.projectId, WikiSnapshotEventReason.DocumentUpdated);
+    return c.json(updated);
+  } catch (err) {
+    if (err instanceof WikiManualProtectionError) {
+      return c.json({ error: err.message, code: 'manual_override_required', documentId: err.documentId, manualState: err.manualState }, 409);
+    }
+    throw err;
+  }
 });
 
 // ── GET /api/wiki/snapshots/:snapshotId/export.md ────────────────────────────
@@ -295,20 +290,13 @@ wikiRoutes.post('/snapshots/:snapshotId/approve', async (c) => {
     snapshotId,
     workDir: parsed.data.workDir,
     locale: parsed.data.locale ?? 'zh',
-  }).catch((err) => {
+  }).catch((err: unknown) => {
     logger.error({ err, snapshotId }, '[wiki] approve outline failed');
   });
 
   return c.json({ status: 'queued', message: 'Wiki content generation started.' });
 });
 
-// ── GET /api/wiki/source-bindings/:bindingId/resolve ─────────────────────────
-wikiRoutes.get('/source-bindings/:bindingId/resolve', async (c) => {
-  const { bindingId } = c.req.param();
-  // Locator is persisted on the binding row — no scan required.
-  const resolution = await wikiCoordinateService.resolveBinding(bindingId);
-  return c.json(resolution);
-});
 
 // ── POST /api/wiki/snapshots/:snapshotId/refresh ─────────────────────────────
 wikiRoutes.post('/snapshots/:snapshotId/refresh', async (c) => {
@@ -343,102 +331,6 @@ wikiRoutes.get('/refresh-tasks/:taskId', async (c) => {
   const task = await wikiRefreshService.getTask(taskId);
   if (!task) return c.json({ error: 'not found' }, 404);
   return c.json(task);
-});
-
-// ── POST /api/wiki/patches/:patchId/accept ───────────────────────────────────
-wikiRoutes.post('/patches/:patchId/accept', async (c) => {
-  const { patchId } = c.req.param();
-  const parsed = await parseBody(c, patchActionBodySchema);
-  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-
-  try {
-    const patch = await wikiPatchService.accept(patchId, parsed.data);
-    await publishLatestWikiSnapshot(patch.projectId, WikiSnapshotEventReason.PatchAccepted);
-    return c.json(patch);
-  } catch (err) {
-    if (err instanceof WikiPatchConflictError) {
-      const patch = await wikiPatchService.getPatch(patchId);
-      if (patch) await publishLatestWikiSnapshot(patch.projectId, WikiSnapshotEventReason.PatchConflict);
-      return c.json({ error: err.message, code: 'manual_override_required', blockId: err.blockId, manualState: err.manualState }, 409);
-    }
-    throw err;
-  }
-});
-
-// ── POST /api/wiki/patches/:patchId/dismiss ──────────────────────────────────
-wikiRoutes.post('/patches/:patchId/dismiss', async (c) => {
-  const { patchId } = c.req.param();
-  const parsed = await parseBody(c, patchActionBodySchema);
-  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-
-  const patch = await wikiPatchService.dismiss(patchId, { actorId: parsed.data.actorId });
-  await publishLatestWikiSnapshot(patch.projectId, WikiSnapshotEventReason.PatchDismissed);
-  return c.json(patch);
-});
-
-// ── POST /api/wiki/design-mapping/plan ───────────────────────────────────────
-wikiRoutes.post('/design-mapping/plan', async (c) => {
-  const parsed = await parseBody(c, designMappingPlanBodySchema);
-  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-
-  try {
-    assertLlmProviderConfigured(parsed.data.projectId);
-  } catch (err) {
-    if (err instanceof AgentProviderNotConfiguredError) {
-      logger.warn({ projectId: parsed.data.projectId }, '[wiki] LLM provider not configured for design-mapping plan');
-      return c.json({ error: err.message, code: err.code }, 422);
-    }
-    return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
-  }
-
-  const result = await wikiDesignMappingService.plan({
-    projectId: parsed.data.projectId,
-    snapshotId: parsed.data.snapshotId,
-    selectedBlockIds: parsed.data.selectedBlockIds ?? [],
-    selectedText: parsed.data.selectedText ?? '',
-    instruction: parsed.data.instruction,
-  });
-  return c.json(result);
-});
-
-// ── POST /api/wiki/design-mapping/:taskId/confirm ────────────────────────────
-wikiRoutes.post('/design-mapping/:taskId/confirm', async (c) => {
-  const { taskId } = c.req.param();
-  const parsed = await parseBody(c, designMappingConfirmBodySchema);
-  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-
-  try {
-    assertLlmProviderConfigured();
-  } catch (err) {
-    if (err instanceof AgentProviderNotConfiguredError) {
-      logger.warn({ taskId }, '[wiki] LLM provider not configured for design-mapping confirm');
-      return c.json({ error: err.message, code: err.code }, 422);
-    }
-    return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
-  }
-
-  try {
-    const result = await wikiDesignMappingService.confirm(taskId, parsed.data);
-    return c.json(result);
-  } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : 'confirm failed' }, 400);
-  }
-});
-
-// ── GET /api/wiki/design-mapping/:taskId ─────────────────────────────────────
-wikiRoutes.get('/design-mapping/:taskId', async (c) => {
-  const { taskId } = c.req.param();
-  const task = await wikiDesignMappingService.getTask(taskId);
-  if (!task) return c.json({ error: 'not found' }, 404);
-  return c.json(task);
-});
-
-// ── GET /api/wiki/projects/:projectId/patches ────────────────────────────────
-wikiRoutes.get('/projects/:projectId/patches', async (c) => {
-  const { projectId } = c.req.param();
-  const status = c.req.query('status') as 'pending' | 'accepted' | 'dismissed' | undefined;
-  const patches = await wikiStore.getPatchesByProject(projectId, status);
-  return c.json({ patches });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -482,7 +374,7 @@ wikiRoutes.post('/drafts/:draftId/apply-partial', async (c) => {
   const parsed = await parseBody(c, draftApplyPartialBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   try {
-    const result = await wikiDraftService.applyPartial(draftId, parsed.data.blockIds, {
+    const result = await wikiDraftService.applyPartial(draftId, parsed.data.documentIds, {
       actorId: parsed.data.actorId,
       confirmManualOverride: parsed.data.confirmManualOverride,
     });
@@ -534,7 +426,7 @@ import * as evalService from '../services/wiki/wiki-evaluation-service.js';
 import { generatePlan, generatePlanStream } from '../services/wiki/wiki-plan-generator.js';
 
 const createEvalBodySchema = z.object({
-  blockId: z.string().min(1).max(128),
+  documentId: z.string().min(1).max(128),
   content: z.string().min(1).max(4096),
 });
 
@@ -551,7 +443,7 @@ wikiRoutes.post('/projects/:projectId/evaluations', async (c) => {
   const { projectId } = c.req.param();
   const parsed = await parseBody(c, createEvalBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-  const evaluation = await evalService.createEvaluation(projectId, parsed.data.blockId, parsed.data.content);
+  const evaluation = await evalService.createEvaluation(projectId, parsed.data.documentId, parsed.data.content);
   return c.json(evaluation, 201);
 });
 
@@ -571,10 +463,10 @@ wikiRoutes.patch('/evaluations/:evalId/status', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── GET /api/wiki/blocks/:blockId/evaluations ────────────────────────────────
-wikiRoutes.get('/blocks/:blockId/evaluations', async (c) => {
-  const { blockId } = c.req.param();
-  const evaluations = await evalService.listEvaluationsByBlock(blockId);
+// ── GET /api/wiki/documents/:documentId/evaluations ──────────────────────────
+wikiRoutes.get('/documents/:documentId/evaluations', async (c) => {
+  const { documentId } = c.req.param();
+  const evaluations = await evalService.listEvaluationsByDocument(documentId);
   return c.json({ evaluations });
 });
 

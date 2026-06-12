@@ -13,7 +13,7 @@ import {
   updateEvaluationStatus,
   type WikiEvaluation,
 } from './wiki-evaluation-service.js'
-import type { WikiBlock, WikiSourceBinding } from './contracts.js'
+import type { WikiDocument } from './contracts.js'
 
 export interface GeneratePlanResult {
   planId: string
@@ -44,32 +44,21 @@ export async function generatePlan(
   const tree = await wikiStore.getSnapshotTree(snapshotId)
   if (!tree) throw new Error('Snapshot not found')
 
-  const blocksById: Record<string, WikiBlock> = {}
-  for (const b of tree.blocks) blocksById[b.id] = b
+  const documentsById: Record<string, WikiDocument> = {}
+  for (const d of tree.documents) documentsById[d.id] = d
 
-  const bindingsById: Record<string, WikiSourceBinding> = {}
-  for (const b of tree.sourceBindings) bindingsById[b.id] = b
-
-  // Collect bindings for issue-related blocks
-  const issueBlockIds = new Set(issues.map(e => e.blockId))
-  const relevantBindings = tree.sourceBindings.filter(b => issueBlockIds.has(b.wikiBlockId))
-
-  // Build wiki overview
   const wikiOverview = tree.documents
     .map(d => `- ${d.title} (${d.docType})`)
     .join('\n')
 
-  // 2. Build prompt
   const prompt = buildPlanPrompt({
     issues,
-    blocks: blocksById,
-    bindings: relevantBindings,
+    documents: documentsById,
     wikiOverview,
     locale,
   })
 
-  // 3. Register tools
-  const handle = createPlanTools({ projectId, blocksById, bindingsById })
+  const handle = createPlanTools({ projectId, documentsById })
   const registeredToolIds: string[] = []
   for (const tool of handle.tools) {
     toolRegistry.register(tool)
@@ -140,21 +129,15 @@ export async function* generatePlanStream(
   const tree = await wikiStore.getSnapshotTree(snapshotId)
   if (!tree) throw new Error('Snapshot not found')
 
-  const blocksById: Record<string, WikiBlock> = {}
-  for (const b of tree.blocks) blocksById[b.id] = b
-
-  const bindingsById: Record<string, WikiSourceBinding> = {}
-  for (const b of tree.sourceBindings) bindingsById[b.id] = b
-
-  const issueBlockIds = new Set(issues.map(e => e.blockId))
-  const relevantBindings = tree.sourceBindings.filter(b => issueBlockIds.has(b.wikiBlockId))
+  const documentsById: Record<string, WikiDocument> = {}
+  for (const d of tree.documents) documentsById[d.id] = d
   const wikiOverview = tree.documents.map(d => `- ${d.title} (${d.docType})`).join('\n')
 
-  const prompt = buildPlanPrompt({ issues, blocks: blocksById, bindings: relevantBindings, wikiOverview, locale })
+  const prompt = buildPlanPrompt({ issues, documents: documentsById, wikiOverview, locale })
 
   const pendingNodeEvents: PlanStreamEvent[] = []
   const handle = createPlanTools({
-    projectId, blocksById, bindingsById,
+    projectId, documentsById,
     onNodeSubmitted: (node, index) => {
       pendingNodeEvents.push({ type: 'node_submitted', node, index })
     },
@@ -175,8 +158,8 @@ export async function* generatePlanStream(
       switch (chunk.type) {
         case 'tool_call': {
           const toolId = chunk.toolCall?.toolId ?? ''
-          if (toolId === 'plan.read_wiki_block') {
-            yield { type: 'tool_call', tool: 'read_wiki_block', summary: chunk.toolCall?.inputSummary ?? '' }
+          if (toolId === 'plan.read_wiki_document') {
+            yield { type: 'tool_call', tool: 'read_wiki_document', summary: chunk.toolCall?.inputSummary ?? '' }
           } else if (toolId === 'grep.search') {
             yield { type: 'phase', phase: 'reading_source' }
             yield { type: 'tool_call', tool: 'grep_search', summary: chunk.toolCall?.inputSummary ?? '' }

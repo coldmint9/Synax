@@ -1,6 +1,6 @@
 import * as z from 'zod/v4'
 import type { RegisteredTool } from '../agent-runtime/contracts.js'
-import type { WikiBlock, WikiSourceBinding } from './contracts.js'
+import type { WikiDocument } from './contracts.js'
 
 export interface PlanNodeDraft {
   title: string
@@ -12,32 +12,35 @@ export interface PlanNodeDraft {
 
 export interface PlanContext {
   projectId: string
-  blocksById: Record<string, WikiBlock>
-  bindingsById: Record<string, WikiSourceBinding>
+  documentsById: Record<string, WikiDocument>
   onNodeSubmitted?: (node: PlanNodeDraft, index: number) => void
 }
 
 export function createPlanTools(context: PlanContext) {
   const submittedNodes: PlanNodeDraft[] = []
 
-  const readWikiBlockTool: RegisteredTool = {
-    id: 'plan.read_wiki_block',
-    label: 'Read Wiki Block',
-    description: 'Read the full content of a wiki block by its ID.',
+  const readWikiDocumentTool: RegisteredTool = {
+    id: 'plan.read_wiki_document',
+    label: 'Read Wiki Document',
+    description: 'Read the full markdown content of a wiki document by its ID.',
     category: 'read',
     mutability: 'read',
     resumeBehavior: 'auto',
     internalGate: 'none',
     inputSchema: z.object({
-      blockId: z.string().describe('The wiki block ID to read'),
+      documentId: z.string().describe('The wiki document ID to read'),
     }),
     async execute(input) {
-      const args = input.args as { blockId: string }
-      const block = context.blocksById[args.blockId]
-      if (!block) {
-        return { result: { error: 'Block not found' }, displaySummary: `Block not found: ${args.blockId}`, artifacts: [] }
+      const args = input.args as { documentId: string }
+      const doc = context.documentsById[args.documentId]
+      if (!doc) {
+        return { result: { error: 'Document not found' }, displaySummary: `Document not found: ${args.documentId}`, artifacts: [] }
       }
-      return { result: { blockId: block.id, blockType: block.blockType, content: block.content }, displaySummary: `Read block ${args.blockId.slice(0, 8)}`, artifacts: [] }
+      return {
+        result: { documentId: doc.id, title: doc.title, contentMd: doc.contentMd, references: doc.references },
+        displaySummary: `Read document ${doc.title}`,
+        artifacts: [],
+      }
     },
   }
 
@@ -74,7 +77,7 @@ export function createPlanTools(context: PlanContext) {
   }
 
   return {
-    tools: [readWikiBlockTool, submitNodeTool],
+    tools: [readWikiDocumentTool, submitNodeTool],
     getPlan: () => (submittedNodes.length > 0 ? submittedNodes : null),
   }
 }

@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { RegisteredTool } from '../../agent-runtime/contracts.js';
 import { wikiStore } from '../wiki-store.js';
+import { searchWikiDocuments } from '../wiki-fts.js';
 
 export function createWikiExplorerTools(): RegisteredTool[] {
   const listDocumentsTool: RegisteredTool = {
     id: 'wiki.list_documents',
     label: 'List Wiki Documents',
-    description: 'List all document metadata under a given wiki snapshot. Returns id, title, docType, parentId, blockIds, sortOrder, and timestamps.',
+    description: 'List all document metadata under a given wiki snapshot.',
     category: 'read',
     mutability: 'read',
     resumeBehavior: 'auto',
@@ -20,7 +21,16 @@ export function createWikiExplorerTools(): RegisteredTool[] {
       if (docs.length === 0) {
         return { result: { documents: [], message: 'No documents found in this snapshot.' }, displaySummary: 'No documents', artifacts: [] };
       }
-      const items = docs.map(d => ({ id: d.id, title: d.title, docType: d.docType, parentId: d.parentId, blockIds: d.blockIds, sortOrder: d.sortOrder, createdAt: d.createdAt, updatedAt: d.updatedAt }));
+      const items = docs.map(d => ({
+        id: d.id,
+        title: d.title,
+        docType: d.docType,
+        parentId: d.parentId,
+        hasContent: d.contentMd.trim().length > 0,
+        sortOrder: d.sortOrder,
+        createdAt: d.createdAt,
+        updatedAt: d.updatedAt,
+      }));
       return { result: { snapshotId: args.snapshotId, documents: items }, displaySummary: `Listed ${items.length} wiki documents`, artifacts: [] };
     },
   };
@@ -28,7 +38,7 @@ export function createWikiExplorerTools(): RegisteredTool[] {
   const readDocumentTool: RegisteredTool = {
     id: 'wiki.read_document',
     label: 'Read Wiki Document',
-    description: 'Read the full content of a wiki document by its ID. Returns all blocks with their content.',
+    description: 'Read the full markdown content of a wiki document by its ID.',
     category: 'read',
     mutability: 'read',
     resumeBehavior: 'auto',
@@ -38,19 +48,27 @@ export function createWikiExplorerTools(): RegisteredTool[] {
     }),
     async execute(input) {
       const args = input.args as { documentId: string };
-      const blocks = await wikiStore.getBlocksByDocument(args.documentId);
-      if (blocks.length === 0) {
-        return { result: { error: 'Document not found or has no content.' }, displaySummary: 'Document empty', artifacts: [] };
+      const doc = await wikiStore.getDocument(args.documentId);
+      if (!doc) {
+        return { result: { error: 'Document not found.' }, displaySummary: 'Document not found', artifacts: [] };
       }
-      const content = blocks.map(b => ({ id: b.id, blockType: b.blockType, content: b.content }));
-      return { result: { documentId: args.documentId, blocks: content }, displaySummary: `Read ${blocks.length} blocks`, artifacts: [] };
+      return {
+        result: {
+          documentId: doc.id,
+          title: doc.title,
+          contentMd: doc.contentMd,
+          references: doc.references,
+        },
+        displaySummary: `Read document "${doc.title}"`,
+        artifacts: [],
+      };
     },
   };
 
   const searchContentTool: RegisteredTool = {
     id: 'wiki.search_content',
     label: 'Search Wiki Content',
-    description: 'Search wiki document content by keyword. Returns matching blocks with surrounding context.',
+    description: 'Search wiki document content by keyword.',
     category: 'read',
     mutability: 'read',
     resumeBehavior: 'auto',
@@ -61,28 +79,19 @@ export function createWikiExplorerTools(): RegisteredTool[] {
     }),
     async execute(input) {
       const args = input.args as { projectId: string; query: string };
+      const results = searchWikiDocuments({ projectId: args.projectId, query: args.query, limit: 20 });
       const snapshot = await wikiStore.getLatestSnapshot(args.projectId);
-      if (!snapshot) {
-        return { result: { matches: [], message: 'No wiki snapshot found.' }, displaySummary: 'No wiki found', artifacts: [] };
-      }
-      const tree = await wikiStore.getSnapshotTree(snapshot.id);
-      if (!tree) {
-        return { result: { matches: [] }, displaySummary: 'No content', artifacts: [] };
-      }
-      const queryLower = args.query.toLowerCase();
-      const matches: Array<{ documentId: string; documentTitle: string; blockId: string; blockType: string; snippet: string }> = [];
-      const docById = new Map(tree.documents.map(d => [d.id, d]));
-      for (const block of tree.blocks) {
-        const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
-        const idx = text.toLowerCase().indexOf(queryLower);
-        if (idx !== -1) {
-          const doc = docById.get(block.documentId);
-          const start = Math.max(0, idx - 80);
-          const end = Math.min(text.length, idx + args.query.length + 80);
-          matches.push({ documentId: block.documentId, documentTitle: doc?.title ?? '', blockId: block.id, blockType: block.blockType, snippet: text.slice(start, end) });
+      const docTitleMap = new Map<string, string>();
+      if (snapshot) {
+        for (const d of await wikiStore.getDocumentsBySnapshot(snapshot.id)) {
+          docTitleMap.set(d.id, d.title);
         }
-        if (matches.length >= 20) break;
       }
+      const matches = results.map(r => ({
+        documentId: r.documentId,
+        documentTitle: docTitleMap.get(r.documentId) ?? '',
+        snippet: r.snippet,
+      }));
       return { result: { matches, total: matches.length }, displaySummary: `Found ${matches.length} matches for "${args.query}"`, artifacts: [] };
     },
   };

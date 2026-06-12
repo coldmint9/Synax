@@ -7,7 +7,7 @@ import { buildReadTools } from './read-tools.js';
 import { buildCheckMermaidTool, buildCommitDocumentTool } from './write-tools.js';
 
 export type { WikiDocumentDraft, WikiOutlineEntry, WikiPlanEntry, WikiPlannerHandle, WikiWriterHandle } from './contracts.js';
-export { WIKI_DOC_TYPES, WIKI_BLOCK_TYPES, MIN_CONTENT_LENGTH, MIN_BLOCKS, PAGE_SIZE } from './contracts.js';
+export { WIKI_DOC_TYPES, MIN_CONTENT_LENGTH, MIN_MARKDOWN_LENGTH, PAGE_SIZE } from './contracts.js';
 export { buildTreeString } from './helpers.js';
 export { buildReadTools } from './read-tools.js';
 export { buildCheckMermaidTool, buildCommitDocumentTool } from './write-tools.js';

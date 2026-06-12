@@ -1,184 +1,104 @@
-import type { WikiBlockType, WikiDocType } from './contracts.js';
-import { MIN_CONTENT_LENGTH } from './tools/contracts.js';
-
-export interface DocumentBlockInput {
-  blockType: WikiBlockType;
-  content: Record<string, unknown>;
-}
+import type { WikiDocType, WikiReference } from './contracts.js';
+import { MIN_MARKDOWN_LENGTH } from './tools/contracts.js';
 
 export interface DocumentQualityOptions {
   minContentLength?: number;
 }
 
-function segmentCharCount(segments: unknown): number {
-  if (!Array.isArray(segments)) return 0;
-  return segments.reduce((sum, segment) => {
-    if (!segment || typeof segment !== 'object') return sum;
-    const value = (segment as { value?: unknown }).value;
-    return sum + (typeof value === 'string' ? value.length : 0);
-  }, 0);
+function countHeadings(markdown: string, level: 2 | 3): number {
+  const prefix = '#'.repeat(level) + ' ';
+  return markdown.split('\n').filter(line => line.startsWith(prefix)).length;
 }
 
-export function proseCharCount(content: Record<string, unknown>): number {
-  return segmentCharCount(content.segments);
+function countMermaidFences(markdown: string, diagramType?: string): number {
+  const fences = markdown.match(/```mermaid[\s\S]*?```/g) ?? [];
+  if (!diagramType) return fences.length;
+  return fences.filter(f => f.toLowerCase().includes(diagramType.toLowerCase())).length;
 }
 
-export function calloutCharCount(content: Record<string, unknown>): number {
-  return segmentCharCount(content.body);
-}
-
-export function countBlocksByType(blocks: DocumentBlockInput[]): Record<WikiBlockType, number> {
-  const counts: Record<WikiBlockType, number> = {
-    heading: 0,
-    prose: 0,
-    signature: 0,
-    callout: 0,
-    table: 0,
-    diagram: 0,
-    list: 0,
-  };
-  for (const block of blocks) {
-    counts[block.blockType] += 1;
+function countTables(markdown: string): number {
+  const lines = markdown.split('\n');
+  let count = 0;
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (lines[i].includes('|') && /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1])) {
+      count++;
+    }
   }
-  return counts;
+  return count;
 }
 
-export function countHeadingLevels(blocks: DocumentBlockInput[]): Record<1 | 2 | 3, number> {
-  const counts = { 1: 0, 2: 0, 3: 0 };
-  for (const block of blocks) {
-    if (block.blockType !== 'heading') continue;
-    const level = block.content.level;
-    if (level === 1 || level === 2 || level === 3) counts[level] += 1;
-  }
-  return counts;
+function countCodeBlocks(markdown: string): number {
+  const all = markdown.match(/```[\s\S]*?```/g) ?? [];
+  return all.filter(f => !f.startsWith('```mermaid')).length;
+}
+
+function countLists(markdown: string): number {
+  return markdown.split('\n').filter(line => /^(\s*[-*+]|\s*\d+\.)\s+/.test(line)).length;
 }
 
 const STRUCTURE_REQUIREMENTS: Record<
   WikiDocType,
   {
-    minProseBlocks: number;
-    minCallouts: number;
-    minSignatures: number;
-    minTables: number;
-    minDiagrams: number;
-    minLists: number;
     minLevel2Headings: number;
+    minTables: number;
+    minMermaid: number;
+    minCodeBlocks: number;
+    minListItems: number;
     requireDiagramType?: string;
   }
 > = {
-  landscape: {
-    minProseBlocks: 2,
-    minCallouts: 0,
-    minSignatures: 0,
-    minTables: 1,
-    minDiagrams: 0,
-    minLists: 1,
-    minLevel2Headings: 2,
-  },
-  topology: {
-    minProseBlocks: 2,
-    minCallouts: 1,
-    minSignatures: 0,
-    minTables: 1,
-    minDiagrams: 1,
-    minLists: 0,
-    minLevel2Headings: 2,
-    requireDiagramType: 'flowchart',
-  },
-  module: {
-    minProseBlocks: 3,
-    minCallouts: 1,
-    minSignatures: 1,
-    minTables: 1,
-    minDiagrams: 0,
-    minLists: 1,
-    minLevel2Headings: 3,
-  },
-  flow: {
-    minProseBlocks: 2,
-    minCallouts: 1,
-    minSignatures: 0,
-    minTables: 0,
-    minDiagrams: 1,
-    minLists: 1,
-    minLevel2Headings: 2,
-    requireDiagramType: 'sequence',
-  },
-  data: {
-    minProseBlocks: 2,
-    minCallouts: 0,
-    minSignatures: 0,
-    minTables: 1,
-    minDiagrams: 1,
-    minLists: 0,
-    minLevel2Headings: 2,
-    requireDiagramType: 'er',
-  },
+  landscape: { minLevel2Headings: 2, minTables: 1, minMermaid: 0, minCodeBlocks: 0, minListItems: 1 },
+  topology: { minLevel2Headings: 2, minTables: 1, minMermaid: 1, minCodeBlocks: 0, minListItems: 0, requireDiagramType: 'flowchart' },
+  module: { minLevel2Headings: 3, minTables: 1, minMermaid: 0, minCodeBlocks: 1, minListItems: 1 },
+  flow: { minLevel2Headings: 2, minTables: 0, minMermaid: 1, minCodeBlocks: 0, minListItems: 1, requireDiagramType: 'sequence' },
+  data: { minLevel2Headings: 2, minTables: 1, minMermaid: 1, minCodeBlocks: 0, minListItems: 0, requireDiagramType: 'er' },
 };
 
 export function validateDocumentQuality(
   docType: WikiDocType,
-  blocks: DocumentBlockInput[],
+  markdown: string,
+  references: WikiReference[],
   options: DocumentQualityOptions = {},
 ): string[] {
-  const minContentLength = options.minContentLength ?? MIN_CONTENT_LENGTH;
+  const minContentLength = options.minContentLength ?? MIN_MARKDOWN_LENGTH[docType] ?? 350;
   const errors: string[] = [];
-  const counts = countBlocksByType(blocks);
-  const headingLevels = countHeadingLevels(blocks);
   const requirements = STRUCTURE_REQUIREMENTS[docType];
+  const stripped = markdown.replace(/```[\s\S]*?```/g, ' ').replace(/^#{1,6}\s+/gm, '').trim();
 
-  if (counts.prose < requirements.minProseBlocks) {
-    errors.push(`Need at least ${requirements.minProseBlocks} prose blocks (found ${counts.prose}).`);
-  }
-  if (counts.callout < requirements.minCallouts) {
-    errors.push(`Need at least ${requirements.minCallouts} callout block(s) for design decisions (found ${counts.callout}).`);
-  }
-  if (counts.signature < requirements.minSignatures) {
-    errors.push(`Need at least ${requirements.minSignatures} signature block(s) (found ${counts.signature}).`);
-  }
-  if (counts.table < requirements.minTables) {
-    errors.push(`Need at least ${requirements.minTables} table block(s) (found ${counts.table}).`);
-  }
-  if (counts.diagram < requirements.minDiagrams) {
-    errors.push(`Need at least ${requirements.minDiagrams} diagram block(s) (found ${counts.diagram}).`);
-  }
-  if (counts.list < requirements.minLists) {
-    errors.push(`Need at least ${requirements.minLists} list block(s) (found ${counts.list}).`);
-  }
-  if (headingLevels[2] < requirements.minLevel2Headings) {
-    errors.push(`Need at least ${requirements.minLevel2Headings} level-2 heading blocks for section structure (found ${headingLevels[2]}).`);
+  if (stripped.length < minContentLength) {
+    errors.push(`Markdown body too short: ${stripped.length} chars (minimum ${minContentLength}).`);
   }
 
-  if (requirements.requireDiagramType) {
-    const hasRequiredDiagram = blocks.some(block => {
-      if (block.blockType !== 'diagram') return false;
-      return block.content.diagramType === requirements.requireDiagramType;
-    });
-    if (!hasRequiredDiagram) {
-      errors.push(`Need at least one ${requirements.requireDiagramType} diagram block.`);
-    }
+  const level2 = countHeadings(markdown, 2);
+  if (level2 < requirements.minLevel2Headings) {
+    errors.push(`Need at least ${requirements.minLevel2Headings} ## headings (found ${level2}).`);
   }
 
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i];
-    if (block.blockType === 'prose') {
-      const length = proseCharCount(block.content);
-      if (length < minContentLength) {
-        errors.push(`Block ${i + 1} (prose): ${length} chars (minimum ${minContentLength}). Expand with mechanisms, trade-offs, and concrete examples.`);
-      }
-    }
-    if (block.blockType === 'callout') {
-      const length = calloutCharCount(block.content);
-      if (length < Math.max(120, Math.floor(minContentLength * 0.6))) {
-        errors.push(`Block ${i + 1} (callout): ${length} chars — callouts must explain a concrete design decision, not a one-liner.`);
-      }
-    }
+  const tables = countTables(markdown);
+  if (tables < requirements.minTables) {
+    errors.push(`Need at least ${requirements.minTables} markdown table(s) (found ${tables}).`);
   }
 
-  const nonHeadingBlocks = blocks.filter(b => b.blockType !== 'heading').length;
-  const distinctTypes = new Set(blocks.map(b => b.blockType)).size;
-  if (nonHeadingBlocks >= 6 && distinctTypes < 4) {
-    errors.push(`Document mixes too few block types (${distinctTypes}). Design docs should combine prose, tables/diagrams, callouts, and signatures/lists.`);
+  const mermaid = requirements.requireDiagramType
+    ? countMermaidFences(markdown, requirements.requireDiagramType)
+    : countMermaidFences(markdown);
+  if (mermaid < requirements.minMermaid) {
+    const hint = requirements.requireDiagramType ? ` ${requirements.requireDiagramType}` : '';
+    errors.push(`Need at least ${requirements.minMermaid}${hint} mermaid diagram(s) (found ${mermaid}).`);
+  }
+
+  const codeBlocks = countCodeBlocks(markdown);
+  if (codeBlocks < requirements.minCodeBlocks) {
+    errors.push(`Need at least ${requirements.minCodeBlocks} code block(s) (found ${codeBlocks}).`);
+  }
+
+  const listItems = countLists(markdown);
+  if (listItems < requirements.minListItems) {
+    errors.push(`Need at least ${requirements.minListItems} list item(s) (found ${listItems}).`);
+  }
+
+  if (!references || references.length === 0) {
+    errors.push('references array must be non-empty — cite source files or symbols.');
   }
 
   return errors;

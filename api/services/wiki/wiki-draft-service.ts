@@ -1,16 +1,14 @@
 // ---------------------------------------------------------------------------
 // api/services/wiki/wiki-draft-service.ts
 //
-// Document-level refresh drafts: apply, partial-apply, edit, discard, expire
+// Document-level refresh drafts: apply, edit, discard, expire
 // ---------------------------------------------------------------------------
 
-import { createHash } from 'node:crypto';
 import { eq, and, desc } from 'drizzle-orm';
-import { nanoid } from 'nanoid';
 import { getDb } from '../../db/index.js';
-import { wikiRefreshDrafts, wikiBlocks, wikiBlockRevisions } from '../../db/schema.js';
-import { wikiStore } from './wiki-store.js';
-import type { WikiRefreshDraft, DraftBlockChange } from './contracts.js';
+import { wikiRefreshDrafts } from '../../db/schema.js';
+import { wikiStore, WikiManualProtectionError } from './wiki-store.js';
+import type { WikiRefreshDraft, DraftDocumentChange } from './contracts.js';
 
 function rowToDraft(r: typeof wikiRefreshDrafts.$inferSelect): WikiRefreshDraft {
   return {
@@ -20,7 +18,7 @@ function rowToDraft(r: typeof wikiRefreshDrafts.$inferSelect): WikiRefreshDraft 
     refreshTaskId: r.refreshTaskId ?? null,
     documentId: r.documentId,
     status: r.status as WikiRefreshDraft['status'],
-    changes: JSON.parse(r.changesJson) as DraftBlockChange[],
+    changes: JSON.parse(r.changesJson) as DraftDocumentChange[],
     summary: r.summary ?? null,
     sourceCommitSha: r.sourceCommitSha ?? null,
     createdAt: r.createdAt,
@@ -32,7 +30,7 @@ function rowToDraft(r: typeof wikiRefreshDrafts.$inferSelect): WikiRefreshDraft 
 
 export interface ApplyResult {
   applied: string[];
-  conflicts: Array<{ blockId: string; manualState: string }>;
+  conflicts: Array<{ documentId: string; manualState: string }>;
 }
 
 export const wikiDraftService = {
@@ -62,15 +60,13 @@ export const wikiDraftService = {
     if (draft.status !== 'ready' && draft.status !== 'partially_applied') {
       throw new Error(`Draft ${draftId} is not in ready/partially_applied state (current: ${draft.status})`);
     }
-    const blockIds = draft.changes
-      .filter(c => c.action !== 'insert_after')
-      .map(c => c.blockId);
-    return this._applyChanges(draft, blockIds, opts);
+    const documentIds = draft.changes.map(c => c.documentId);
+    return this._applyChanges(draft, documentIds, opts);
   },
 
   async applyPartial(
     draftId: string,
-    blockIds: string[],
+    documentIds: string[],
     opts: { actorId?: string; confirmManualOverride?: boolean } = {},
   ): Promise<ApplyResult> {
     const draft = await this.getDraft(draftId);
@@ -78,12 +74,12 @@ export const wikiDraftService = {
     if (draft.status !== 'ready' && draft.status !== 'partially_applied') {
       throw new Error(`Draft ${draftId} is not in ready/partially_applied state`);
     }
-    return this._applyChanges(draft, blockIds, opts);
+    return this._applyChanges(draft, documentIds, opts);
   },
 
   async editAndApply(
     draftId: string,
-    edits: Array<{ blockId: string; newContent: unknown }>,
+    edits: Array<{ documentId: string; newContentMd: string }>,
     opts: { actorId?: string; confirmManualOverride?: boolean } = {},
   ): Promise<ApplyResult> {
     const db = getDb();
@@ -94,8 +90,8 @@ export const wikiDraftService = {
     }
 
     const updatedChanges = draft.changes.map(change => {
-      const edit = edits.find(e => e.blockId === change.blockId);
-      if (edit) return { ...change, newContent: edit.newContent };
+      const edit = edits.find(e => e.documentId === change.documentId);
+      if (edit) return { ...change, newContentMd: edit.newContentMd };
       return change;
     });
 
@@ -103,9 +99,9 @@ export const wikiDraftService = {
       changesJson: JSON.stringify(updatedChanges),
     }).where(eq(wikiRefreshDrafts.id, draftId));
 
-    const blockIds = edits.map(e => e.blockId);
+    const documentIds = edits.map(e => e.documentId);
     const freshDraft = (await this.getDraft(draftId))!;
-    return this._applyChanges(freshDraft, blockIds, opts);
+    return this._applyChanges(freshDraft, documentIds, opts);
   },
 
   async discardDraft(draftId: string, opts: { actorId?: string } = {}): Promise<WikiRefreshDraft> {
@@ -140,66 +136,46 @@ export const wikiDraftService = {
 
   async _applyChanges(
     draft: WikiRefreshDraft,
-    blockIds: string[],
+    documentIds: string[],
     opts: { actorId?: string; confirmManualOverride?: boolean } = {},
   ): Promise<ApplyResult> {
     const db = getDb();
     const now = new Date().toISOString();
     const applied: string[] = [];
-    const conflicts: Array<{ blockId: string; manualState: string }> = [];
+    const conflicts: Array<{ documentId: string; manualState: string }> = [];
 
-    for (const blockId of blockIds) {
-      const change = draft.changes.find(c => c.blockId === blockId);
+    for (const documentId of documentIds) {
+      const change = draft.changes.find(c => c.documentId === documentId);
       if (!change) continue;
 
-      const block = await wikiStore.getBlock(blockId);
-      if (!block) continue;
+      const doc = await wikiStore.getDocument(documentId);
+      if (!doc) continue;
 
-      if (block.manualState !== 'none' && !opts.confirmManualOverride) {
-        conflicts.push({ blockId, manualState: block.manualState });
+      if (doc.manualState !== 'none' && !opts.confirmManualOverride) {
+        conflicts.push({ documentId, manualState: doc.manualState });
         continue;
       }
 
-      if (change.action === 'delete') {
-        await wikiStore.markBlocksStale([blockId], 'stale');
-        applied.push(blockId);
-        continue;
+      if (change.newContentMd == null) continue;
+
+      try {
+        await wikiStore.updateDocumentContent(documentId, {
+          contentMd: change.newContentMd,
+          manualState: opts.confirmManualOverride ? 'edited' : undefined,
+          actorId: opts.actorId,
+        });
+        applied.push(documentId);
+      } catch (err) {
+        if (err instanceof WikiManualProtectionError) {
+          conflicts.push({ documentId, manualState: err.manualState });
+        } else {
+          throw err;
+        }
       }
-
-      await db.update(wikiBlocks).set({
-        contentJson: JSON.stringify(change.newContent),
-        staleState: 'fresh',
-        updatedAt: now,
-      }).where(eq(wikiBlocks.id, blockId));
-
-      const revisions = await db.select().from(wikiBlockRevisions)
-        .where(eq(wikiBlockRevisions.blockId, blockId))
-        .orderBy(desc(wikiBlockRevisions.revision))
-        .limit(1);
-      const nextRevision = (revisions[0]?.revision ?? 0) + 1;
-      const contentHash = createHash('sha256')
-        .update(JSON.stringify(change.newContent))
-        .digest('hex')
-        .slice(0, 32);
-
-      await db.insert(wikiBlockRevisions).values({
-        id: nanoid(),
-        projectId: draft.projectId,
-        blockId,
-        revision: nextRevision,
-        contentJson: JSON.stringify(change.newContent),
-        contentHash,
-        source: 'draft',
-        draftId: draft.id,
-        createdAt: now,
-        createdBy: opts.actorId ?? null,
-      });
-
-      applied.push(blockId);
     }
 
-    const allBlockIds = draft.changes.map(c => c.blockId);
-    const allApplied = allBlockIds.every(id => applied.includes(id));
+    const allDocumentIds = draft.changes.map(c => c.documentId);
+    const allApplied = allDocumentIds.every(id => applied.includes(id));
     const newStatus = allApplied ? 'applied'
       : applied.length > 0 ? 'partially_applied'
       : draft.status;

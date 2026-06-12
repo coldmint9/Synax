@@ -6,7 +6,7 @@ const BASE = '/api/wiki'
 export type WikiEvaluation = {
   id: string
   projectId: string
-  blockId: string
+  documentId: string
   content: string
   status: 'active' | 'planned' | 'resolved'
   planNodeId: string | null
@@ -76,11 +76,11 @@ export const evaluationApi = {
     return data.evaluations
   },
 
-  async create(projectId: string, blockId: string, content: string): Promise<WikiEvaluation> {
+  async create(projectId: string, documentId: string, content: string): Promise<WikiEvaluation> {
     const res = await apiFetch(`${BASE}/projects/${projectId}/evaluations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ blockId, content }),
+      body: JSON.stringify({ documentId, content }),
     })
     if (!res.ok) throw new Error(`evaluations/create failed: ${res.status}`)
     return res.json() as Promise<WikiEvaluation>
@@ -100,9 +100,9 @@ export const evaluationApi = {
     if (!res.ok) throw new Error(`evaluations/updateStatus failed: ${res.status}`)
   },
 
-  async listByBlock(blockId: string): Promise<WikiEvaluation[]> {
-    const res = await apiFetch(`${BASE}/blocks/${blockId}/evaluations`)
-    if (!res.ok) throw new Error(`evaluations/listByBlock failed: ${res.status}`)
+  async listByDocument(documentId: string): Promise<WikiEvaluation[]> {
+    const res = await apiFetch(`${BASE}/documents/${documentId}/evaluations`)
+    if (!res.ok) throw new Error(`evaluations/listByDocument failed: ${res.status}`)
     const data = await res.json() as { evaluations: WikiEvaluation[] }
     return data.evaluations
   },
