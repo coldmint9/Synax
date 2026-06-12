@@ -21,8 +21,8 @@ CREATE TABLE IF NOT EXISTS wiki_evaluations (
 CREATE INDEX IF NOT EXISTS idx_wiki_evaluations_project_status
   ON wiki_evaluations(project_id, status);
 
-CREATE INDEX IF NOT EXISTS idx_wiki_evaluations_block
-  ON wiki_evaluations(block_id, status);
+-- block_id index omitted: idempotent re-runs after 0020_wiki_drop_blocks leave
+-- wiki_evaluations on document_id; document index is created in that migration.
 
 -- ── wiki_plans ──────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS wiki_plans (

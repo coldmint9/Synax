@@ -1,11 +1,13 @@
 import { AlertTriangle, FileText, Loader2, Lock, MessageCircle, Pencil, X } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { Streamdown } from 'streamdown'
+import type { BundledTheme } from 'shiki'
 import { Button, TextArea } from '@heroui/react'
 import { streamdownPlugins } from '../../../lib/streamdown-plugins'
 import { evaluationApi, type WikiEvaluation } from '../../../lib/api/evaluation'
-import type { WikiDocument, WikiManualState, WikiStaleState } from '../../../lib/contracts/wiki'
+import type { WikiDocument, WikiDocType, WikiManualState, WikiStaleState } from '../../../lib/contracts/wiki'
 import { useWikiStore } from '../../state/wikiStore'
+import { useShellStore } from '../../state/shellStore'
 import { useSearchHighlight } from './useSearchHighlight'
 import './wiki-theme.css'
 
@@ -130,14 +132,22 @@ function DocumentIssues({ documentId, projectId }: { documentId: string; project
   )
 }
 
+const DOC_TYPE_LABEL: Record<WikiDocType, string> = {
+  landscape: 'landscape',
+  topology: 'topology',
+  module: 'module_spec',
+  flow: 'flow',
+  data: 'data',
+}
+
 function ReferencesSection({ references }: { references: WikiDocument['references'] }) {
   if (references.length === 0) return null
 
   const uniquePaths = [...new Map(references.map(r => [r.filePath, r])).values()]
 
   return (
-    <section className="mt-8 border-t border-border/30 pt-5">
-      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+    <section className="wiki-references">
+      <h3 className="wiki-references-title">
         References
       </h3>
       <ul className="space-y-1.5">
@@ -185,6 +195,8 @@ export default function WikiDocumentView({
 
   const contentMd = previewChange?.newContentMd ?? document.contentMd
   const issueCount = evaluations.filter(e => e.documentId === document.id).length
+  const colorTheme = useShellStore(s => s.preferences.theme)
+  const shikiTheme: [BundledTheme, BundledTheme] = ['github-light', 'github-dark']
 
   useSearchHighlight(document.id, searchHighlightQuery, Boolean(contentMd))
 
@@ -213,9 +225,9 @@ export default function WikiDocumentView({
       id={`wiki-document-${document.id}`}
       className="wiki-doc max-w-3xl"
     >
-      <header className="mb-5 space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-semibold text-[var(--wiki-text)]">{document.title}</h1>
+      <header className="wiki-doc-header">
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <span className="wiki-doc-type-badge">{DOC_TYPE_LABEL[document.docType]}</span>
           <StaleBadge state={document.staleState} />
           <ManualBadge state={document.manualState} />
           {issueCount > 0 && (
@@ -224,13 +236,19 @@ export default function WikiDocumentView({
             </span>
           )}
         </div>
+        <h1 className="wiki-doc-title">{document.title}</h1>
         {previewChange && (
-          <p className="text-[11px] text-amber-600">Draft preview — showing proposed changes</p>
+          <p className="mt-2 text-[11px] text-amber-600">Draft preview — showing proposed changes</p>
         )}
       </header>
 
       <div className="wiki-markdown">
-        <Streamdown mode="static" plugins={streamdownPlugins}>
+        <Streamdown
+          mode="static"
+          plugins={streamdownPlugins}
+          shikiTheme={shikiTheme}
+          mermaid={{ config: { theme: colorTheme === 'dark' ? 'dark' : 'neutral' } }}
+        >
           {contentMd}
         </Streamdown>
       </div>

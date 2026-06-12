@@ -36,6 +36,29 @@ function countLists(markdown: string): number {
   return markdown.split('\n').filter(line => /^(\s*[-*+]|\s*\d+\.)\s+/.test(line)).length;
 }
 
+function countCallouts(markdown: string): number {
+  return (markdown.match(/^>\s*\[![\w]+\]/gm) ?? []).length;
+}
+
+/** Prose lines long enough to be substantive (excludes structure, callouts, tables). */
+function countSubstantiveProseLines(markdown: string, minChars = 80): number {
+  const withoutFences = markdown.replace(/```[\s\S]*?```/g, '');
+  return withoutFences.split('\n').filter(line => {
+    const t = line.trim();
+    if (t.length < minChars) return false;
+    if (/^#{1,6}\s/.test(t)) return false;
+    if (/^>\s/.test(t)) return false;
+    if (/^(\s*[-*+]|\s*\d+\.)\s+/.test(t)) return false;
+    if (t.includes('|')) return false;
+    if (/^\*Source:/i.test(t)) return false;
+    return true;
+  }).length;
+}
+
+function hasSourceCitation(markdown: string): boolean {
+  return /\*Source:\s*`[^`]+`/i.test(markdown) || /Source:\s*`[^`]+`/i.test(markdown);
+}
+
 const STRUCTURE_REQUIREMENTS: Record<
   WikiDocType,
   {
@@ -44,14 +67,17 @@ const STRUCTURE_REQUIREMENTS: Record<
     minMermaid: number;
     minCodeBlocks: number;
     minListItems: number;
+    minCallouts: number;
+    minSubstantiveProseLines: number;
+    requireSourceCitation?: boolean;
     requireDiagramType?: string;
   }
 > = {
-  landscape: { minLevel2Headings: 2, minTables: 1, minMermaid: 0, minCodeBlocks: 0, minListItems: 1 },
-  topology: { minLevel2Headings: 2, minTables: 1, minMermaid: 1, minCodeBlocks: 0, minListItems: 0, requireDiagramType: 'flowchart' },
-  module: { minLevel2Headings: 3, minTables: 1, minMermaid: 0, minCodeBlocks: 1, minListItems: 1 },
-  flow: { minLevel2Headings: 2, minTables: 0, minMermaid: 1, minCodeBlocks: 0, minListItems: 1, requireDiagramType: 'sequence' },
-  data: { minLevel2Headings: 2, minTables: 1, minMermaid: 1, minCodeBlocks: 0, minListItems: 0, requireDiagramType: 'er' },
+  landscape: { minLevel2Headings: 2, minTables: 1, minMermaid: 0, minCodeBlocks: 0, minListItems: 1, minCallouts: 0, minSubstantiveProseLines: 4 },
+  topology: { minLevel2Headings: 2, minTables: 1, minMermaid: 1, minCodeBlocks: 0, minListItems: 0, minCallouts: 1, minSubstantiveProseLines: 4, requireDiagramType: 'flowchart' },
+  module: { minLevel2Headings: 3, minTables: 1, minMermaid: 0, minCodeBlocks: 1, minListItems: 1, minCallouts: 1, minSubstantiveProseLines: 8, requireSourceCitation: true },
+  flow: { minLevel2Headings: 2, minTables: 0, minMermaid: 1, minCodeBlocks: 0, minListItems: 1, minCallouts: 1, minSubstantiveProseLines: 5, requireDiagramType: 'sequence' },
+  data: { minLevel2Headings: 2, minTables: 1, minMermaid: 1, minCodeBlocks: 0, minListItems: 0, minCallouts: 1, minSubstantiveProseLines: 4, requireDiagramType: 'er' },
 };
 
 export function validateDocumentQuality(
@@ -95,6 +121,20 @@ export function validateDocumentQuality(
   const listItems = countLists(markdown);
   if (listItems < requirements.minListItems) {
     errors.push(`Need at least ${requirements.minListItems} list item(s) (found ${listItems}).`);
+  }
+
+  const callouts = countCallouts(markdown);
+  if (callouts < requirements.minCallouts) {
+    errors.push(`Need at least ${requirements.minCallouts} callout(s) using > [!NOTE], > [!IMPORTANT], or > [!WARNING] (found ${callouts}).`);
+  }
+
+  const proseLines = countSubstantiveProseLines(markdown);
+  if (proseLines < requirements.minSubstantiveProseLines) {
+    errors.push(`Need at least ${requirements.minSubstantiveProseLines} substantive prose lines (~80+ chars, not headings/lists/tables) (found ${proseLines}). Expand ## sections with design-review depth.`);
+  }
+
+  if (requirements.requireSourceCitation && !hasSourceCitation(markdown)) {
+    errors.push('Module docs must include a *Source: `path:line`* line after a primary code fence.');
   }
 
   if (!references || references.length === 0) {

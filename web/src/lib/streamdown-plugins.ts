@@ -2,7 +2,7 @@ import type { CodeHighlighterPlugin, DiagramPlugin, PluginConfig } from 'streamd
 import type { BundledLanguage, BundledTheme } from 'shiki'
 import mermaid from 'mermaid'
 
-mermaid.initialize({ startOnLoad: false, theme: 'dark' })
+mermaid.initialize({ startOnLoad: false, theme: 'neutral' })
 
 const DARK_THEME: BundledTheme = 'github-dark'
 const LIGHT_THEME: BundledTheme = 'github-light'

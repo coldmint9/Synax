@@ -1,11 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { validateDocumentQuality } from '../document-quality-gates.js';
 
+const proseLine =
+  'This subsystem orchestrates the full request lifecycle with explicit state transitions and failure handling at each boundary.';
+
 const baseMd = [
   '# Title',
+  '',
+  '*One-line subtitle describing scope and integration points for readers who skim headers only.*',
+  '',
   '## Section One',
+  proseLine,
+  proseLine.replace('request lifecycle', 'concurrency model'),
+  '',
   '## Section Two',
-  'Some prose explaining the design in enough detail to pass length checks for landscape documents.',
+  proseLine.replace('subsystem', 'module'),
+  proseLine.replace('failure handling', 'backpressure semantics'),
+  '',
   '| Col | Val |',
   '| --- | --- |',
   '| a | b |',

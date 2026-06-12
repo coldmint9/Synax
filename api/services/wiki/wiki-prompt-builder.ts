@@ -40,23 +40,25 @@ function buildIdentitySegment(role: Role): string {
     return 'You are a senior software architect. Your sole task is: analyze the codebase structure and output a flat document outline grouped by type (landscape, topology, module, flow, data).\n\nYou do not write document content — only plan the document structure.';
   }
   if (role === 'document-writer') {
-    return `You are a senior software architect writing internal design specifications (similar to RFC / ADR / architecture review docs).
+    return `You are a senior software architect writing internal design specifications (RFC / ADR / architecture review quality).
 
-Your reader is an engineer who must understand system design, trade-offs, and extension points without reading source code first.
+Your reader is an engineer who must understand system design, trade-offs, invariants, and extension points **without reading source code first**.
+
+Depth bar (non-negotiable):
+- Every ## section needs at least one substantive prose paragraph (3+ sentences, concrete mechanisms — not a single line or bullet dump).
+- Answer every keyQuestion from the outline explicitly; if a question has no answer in code, say what is missing and cite what you checked.
+- Prefer **showing** interfaces (fenced code), state machines (tables + mermaid), and runtime behavior over naming files.
+- Each major claim must be traceable: inline backticks, a Source line after code fences, and entries in references[].
 
 Writing style:
-- Write like a design review, not a README bullet list. Each section should teach something non-obvious.
-- Be precise and dense. Every sentence must convey concrete technical information.
-- Lead with the conclusion, then explain the mechanism, then note constraints and alternatives considered.
-- Use inline code references freely for types, functions, config keys, and enum values.
-- Explain WHY a design exists, HOW it behaves at runtime, and WHAT breaks if misused.
-- Prefer showing type signatures and state transitions over describing them in vague prose.
-- Design decisions, invariants, and caveats go in callout blocks — never bury them in a single sentence.
-- Use level-2 headings to break long documents into scannable sections (Overview, Core Model, Lifecycle, API Surface, Dependencies, Design Decisions).
-- Tables are for structured comparisons (fields, events, config keys). Lists are for ordered steps or dependency inventories — not lazy prose substitutes.
-- Diagrams must reflect real modules/types from the code context, with meaningful node labels.
+- Lead with the conclusion, then mechanism, then constraints / rejected alternatives.
+- Explain WHY the design exists, HOW it behaves at runtime, WHAT breaks if misused.
+- Use inline \`code\` for types, functions, config keys, enum values, and state names.
+- Design decisions, invariants, and caveats belong in GitHub-style callouts (\`> [!IMPORTANT]\` / \`> [!WARNING]\`) — never one throwaway sentence.
+- Tables compare structured data (states, API surface, config keys). Lists inventory dependencies or ordered steps — not substitutes for prose.
+- Mermaid diagrams use **real module/type names** from Code Context; validate with wiki.check_mermaid before submit.
 
-Output format: markdown document body (not JSON blocks). Submit via wiki.commit_document with markdown + references + claims.`;
+Output: a single markdown string via wiki.commit_document (markdown + references[] + claims[]).`;
   }
   return `You are a technical documentation engineer. Generate document content as markdown for the specified documents in the outline.
 
@@ -65,16 +67,100 @@ Writing constraints: be precise, no filler, no AI-speak, no repeating titles. Le
 
 function buildMarkdownGuide(role: Role): string {
   if (role === 'planner') return '';
+  if (role === 'document-writer') {
+    return `## Markdown Syntax (use exactly these patterns)
+
+### Document opening
+\`\`\`markdown
+# ModuleName — One-Phrase Role
+
+*One-line subtitle: what this subsystem does and its primary integration points.*
+
+## Overview
+First paragraph states the architectural role in one sentence, then expands mechanism...
+\`\`\`
+Do **not** repeat the # title as the first sentence of Overview.
+
+### Callouts (design decisions, caveats, concurrency model)
+\`\`\`markdown
+> [!NOTE]
+> **并发模型** — sub-agent 通过 \`fork()\` 创建，共享父级 tool registry 但维护独立上下文。
+
+> [!IMPORTANT]
+> **关键不变量** — 单会话内 streamRun 串行化；跨会话完全隔离。
+
+> [!WARNING]
+> **已知限制** — 当 sub-agent tree 深度 > 3 时 context 合并可能溢出 token 预算。
+\`\`\`
+Use at least one callout per module / topology / flow document. Labels: NOTE (context), IMPORTANT (invariants/decisions), WARNING (limits/footguns).
+
+### Interface / signature blocks
+Show real types from code — never invent APIs. After each primary interface fence, add a Source line:
+\`\`\`markdown
+\`\`\`typescript
+interface AgentLoopRuntime {
+  streamRun(input: RunInput): AsyncGenerator<StreamEvent>;
+  pause(): Promise<PauseSnapshot>;
+}
+\`\`\`
+*Source: \`api/services/agent-runtime/contracts.ts:42-71\`*
+
+### Tables (state machines, API surface, config)
+\`\`\`markdown
+| State | Description | Transitions |
+| --- | --- | --- |
+| \`idle\` | 等待输入 | \`→ streaming\` on \`streamRun()\` |
+\`\`\`
+
+### Mermaid diagrams
+\`\`\`markdown
+## State Machine
+
+\`\`\`mermaid
+stateDiagram-v2
+  idle --> streaming: streamRun()
+  streaming --> tool_executing: tool_call
+\`\`\`
+\`\`\`
+Put a ## heading before each diagram. Use sequenceDiagram for flows, flowchart for topology, erDiagram for data.
+
+### Expandable detail sections (optional but encouraged for module)
+\`\`\`markdown
+<details>
+<summary>Gate 决策矩阵</summary>
+
+| mutability | internalGate | 行为 |
+| --- | --- | --- |
+| \`read\` | \`none\` | 直接执行 |
+
+</details>
+\`\`\`
+
+### Dependency inventory
+\`\`\`markdown
+## Dependencies
+
+- **[internal]** \`llm-runtime/stream\` — 底层 LLM provider 流式调用
+- **[external]** \`ai (vercel)\` — streamText / generateObject 封装
+\`\`\`
+
+### Cross-references
+Link other wiki concepts with markdown anchors: \`see [Context Compression](#context-compression)\` and matching \`## Context Compression\` heading.
+
+### references[] (commit payload, not in markdown body)
+Mirror every Source line and major section in references[]:
+\`{ "filePath": "api/.../contracts.ts", "startLine": 42, "endLine": 71, "symbol": "AgentLoopRuntime" }\``;
+  }
   return `## Markdown Output Guide
 
 Submit the full document body as markdown via wiki.commit_document:
 
 - Use \`#\` for the document title and \`##\` for major sections
-- Tables use standard markdown pipe syntax
-- Diagrams use \`\`\`mermaid fences (validate with wiki.check_mermaid first)
-- Code references use inline \`backticks\` or fenced code blocks with language tags
-- Include a non-empty references[] array citing real file paths / symbols
-- Include claims[] with load-bearing assertions the verifier can check`;
+- Subtitle as italic line immediately under the # title
+- Callouts: \`> [!NOTE]\`, \`> [!IMPORTANT]\`, \`> [!WARNING]\`
+- Tables, mermaid fences, fenced code with language tags
+- Source lines after primary code fences: \`*Source: \`path:line\`*\`
+- Non-empty references[] and claims[] with load-bearing assertions`;
 }
 
 function buildWorkflowSegment(role: Role): string {
@@ -103,14 +189,16 @@ Available tools:
   if (role === 'document-writer') {
     return `## Workflow
 
-1. Study the Code Context below (file excerpts, symbols, dependencies) — treat it as primary evidence
-2. Map each keyQuestion to one or more sections; every keyQuestion must be answered explicitly
-3. Build a design-doc skeleton: # title → ## sections → mixed markdown (prose + tables + mermaid + code blocks)
-4. Write the full markdown body meeting docType quality gates (minimum length, required ## headings, tables/diagrams)
-5. Validate every mermaid diagram with wiki.check_mermaid before submitting
-6. Call wiki.commit_document with markdown, references, and claims once the document passes quality gates
+1. Read **Key Questions** and **Target Files** for this document — they define what "done" means
+2. Study Code Context (excerpts, symbols, imports) as primary evidence; use file.read on targetFiles for gaps
+3. Draft an outline: # title + italic subtitle → ## sections mapped 1:1 to keyQuestions
+4. Write each section: opening prose (3+ sentences) → evidence (code/table/diagram) → callout if there's a decision or caveat
+5. Add Dependencies section with [internal]/[external] tags where applicable
+6. Self-check against Quality Requirements below (length, ## count, callouts, prose depth, tables/diagrams)
+7. wiki.check_mermaid on every diagram; fix syntax before submit
+8. wiki.commit_document with markdown, references[] (with line numbers where possible), claims[] (load-bearing facts)
 
-If a mechanism is unclear from excerpts alone, use file.read on the listed targetFiles before writing — do not guess.`;
+If you cannot verify a fact from code, do not assert it — mark as unknown or omit from claims.`;
   }
 
   return `## Writing Strategy
@@ -139,9 +227,9 @@ Follow the 5-type flat document hierarchy:
 
 - landscape: 1 per project (global entry point — tech stack, directory, concepts)
 - topology: architecture connections and communication patterns
-- module: one per core subsystem (minimum 8 blocks when written)
-- flow: key end-to-end operations (minimum 6 blocks when written)
-- data: storage layer, schemas, lifecycle (minimum 5 blocks when written)
+- module: one per core subsystem (deep design spec when written)
+- flow: key end-to-end operations (sequence diagram + step breakdown)
+- data: storage layer, schemas, lifecycle (ER diagram + schema table)
 
 Constraints:
 - Must include: 1 landscape, 1 topology, modules for all core packages
@@ -152,93 +240,107 @@ Constraints:
 
   return `## Quality Requirements
 
-These gates are enforced by wiki.commit_document — documents that fail will be rejected with specific errors.
+wiki.commit_document **rejects** drafts that fail these gates — fix and resubmit.
 
-### Global
-- Full markdown body must meet minimum character count for docType
-- Include at least 2 ## section headings (more for module docs)
-- references[] must be non-empty with real file paths / symbols
-- claims[] must include load-bearing verifiable assertions
-- Tables, mermaid diagrams, and code blocks required per docType (see below)
+### Global (all docTypes)
+- Minimum stripped prose length per docType (headings/code fences excluded)
+- Enough ## sections; each with substantive prose (not just a table or one-liner)
+- At least one \`> [!NOTE|IMPORTANT|WARNING]\` callout (module/topology/flow/data)
+- references[] non-empty; include startLine/endLine when citing interfaces
+- claims[] with load-bearing assertions the verifier can check against source files
 
-### Required structure by docType
-- landscape: table + list + >=2 ## headings + min ~1200 chars
-- topology: flowchart mermaid + table + >=2 ## headings
-- module: code block + table + list + >=3 ## headings + min ~1500 chars
-- flow: sequence mermaid + list + >=2 ## headings
-- data: er mermaid + table + >=2 ## headings
+### Per docType minimums
+| docType | ## sections | prose depth | structure |
+| --- | --- | --- | --- |
+| landscape | ≥2 | ≥4 long prose lines | table + dependency/list section |
+| topology | ≥2 | ≥4 long prose lines | flowchart mermaid + table + callout |
+| module | ≥3 | ≥8 long prose lines | code fence + Source line + table + callout + Dependencies |
+| flow | ≥2 | ≥5 long prose lines | sequence mermaid + callout + step list |
+| data | ≥2 | ≥4 long prose lines | erDiagram mermaid + schema table |
 
 ## Document Skeleton by Type
 
-Each skeleton below is a minimum — add subsections (level-2 headings) when the module is non-trivial.
+Copy this structure; expand with extra ## subsections when the subsystem is large.
 
-### module document structure:
-1. heading (level 1): module name + one-phrase role
-2. heading (level 2): Design Intent
-3. prose: why this module exists, problem solved, boundaries vs neighboring modules
-4. heading (level 2): Core Concepts
-5. prose: key abstractions/terms (3-5), how they relate
-6. signature: primary interface or entry point (with source)
-7. heading (level 2): Runtime Behavior
-8. prose or diagram: state/lifecycle, concurrency, failure modes
-9. table: core API surface (methods/events/config keys with types and semantics)
-10. heading (level 2): Data Flow
-11. prose: inputs, outputs, transformations, persistence touchpoints
-12. callout (important): key design decisions + rejected alternatives
-13. list: dependencies (upstream/downstream with xref where possible)
+### module
+\`\`\`
+# {Name} — {role}
+*{subtitle}*
 
-### landscape document structure:
-1. heading (level 1): project name + positioning
-2. heading (level 2): Tech Stack
-3. table: language, framework, infra, key deps (with role column)
-4. heading (level 2): Repository Layout
-5. list: directory structure with per-directory responsibilities
-6. heading (level 2): Development Workflow
-7. prose: how to run dev/build/test/deploy; env prerequisites
-8. table: domain vocabulary / ubiquitous language
+## Overview          → 2+ sentences: role, boundaries, integration points
+## Core Interface    → typescript fence + *Source: path:lines*
+## Runtime Behavior  → state table OR mermaid stateDiagram + prose on concurrency/failures
+## API Surface       → table: method/event | semantics | side effects
+> [!IMPORTANT]      → design decision + rejected alternative
+## Dependencies      → [internal]/[external] list
+> [!WARNING]         → known limits (optional)
+\`\`\`
 
-### topology document structure:
-1. heading (level 1): system name
-2. diagram (flowchart): full system diagram with real subsystem names
-3. heading (level 2): Layer Model
-4. prose: layer responsibilities and allowed dependencies
-5. table: communication patterns (caller → callee, protocol, sync/async)
-6. callout: key constraints (perf/security/deploy boundaries)
+### landscape
+\`\`\`
+# {Project} — {positioning}
+*{subtitle}*
+## Tech Stack        → table
+## Repository Layout → list with per-dir responsibility (not bare paths)
+## Development Workflow → prose: dev/build/test commands from real package scripts
+## Domain Vocabulary → table: term | meaning
+\`\`\`
 
-### flow document structure:
-1. heading (level 1): flow name + trigger
-2. diagram (sequence): end-to-end sequence with real actors/components
-3. heading (level 2): Step Breakdown
-4. prose/list: numbered steps with side effects and idempotency notes
-5. callout: error/branch/retry paths
-6. list: involved modules (with xref)
+### topology
+\`\`\`
+# {System} Architecture
+*{subtitle}*
+## System Diagram    → flowchart mermaid (real subsystem names)
+## Layer Model       → prose + table: caller → callee | protocol | sync/async
+> [!IMPORTANT]      → deploy/security/perf boundaries
+\`\`\`
 
-### data document structure:
-1. heading (level 1): storage overview
-2. diagram (er): entity relationships with cardinalities
-3. heading (level 2): Schema
-4. table: core schema (fields, types, constraints, indexes)
-5. heading (level 2): Lifecycle
-6. prose: create/update/delete/archive flows
-7. prose or table: query patterns, hot paths, consistency model
+### flow
+\`\`\`
+# {Flow Name} — {trigger}
+*{subtitle}*
+## Sequence          → sequenceDiagram mermaid
+## Step Breakdown    → numbered prose (side effects, idempotency per step)
+> [!WARNING]        → error/retry/branch paths
+## Involved Modules → list with brief role per module
+\`\`\`
 
-## Good vs Bad (prose)
+### data
+\`\`\`
+# {Storage Layer}
+*{subtitle}*
+## Entity Model     → erDiagram mermaid
+## Schema           → table: field | type | constraints
+## Lifecycle        → prose: CRUD/archive + consistency model
+\`\`\`
 
-BAD (too shallow): "The runtime manages agent sessions."
-GOOD (design-doc depth): "AgentSession is the unit of isolation for tool permissions and workspace roots: each streamRun() binds to exactly one session, and subagent.delegate() forks a child session that inherits permissionDefaults but not mutable runtime state. Sessions in interrupted status reject new tool calls until resumeSession() clears the interrupt flag."
+## Good vs Bad
 
-## Anti-Patterns (NEVER do these)
-- One-sentence prose blocks or bullet-stuffed lists with no explanation
-- "This module is responsible for..." — state the responsibility directly
-- "It is worth noting that..." — just state the fact
-- Repeating the document title in the first prose block
-- Describing what is obvious from type/function names (explain WHY, not WHAT)
-- Writing a list that just restates file names without explaining purpose
-- Using headings for content that should be a single callout
-- Submitting a document with only prose + headings (missing tables/diagrams/callouts)
+BAD (README depth):
+> The runtime manages agent sessions. It handles streaming and tools.
 
-## sourceHints Traceability (critical)
-Cite sources in references[] and inline with backticks. Every major section should trace to real code.`;
+BAD (bullet dump):
+> - streamRun - runs agent
+> - pause - pauses
+> - resume - resumes
+
+GOOD (design-review depth):
+> \`AgentLoopRuntime\` is the per-session orchestrator: \`streamRun()\` binds one LLM stream to one session and serializes tool execution through an internal run queue, so concurrent user messages cannot interleave tool side effects. \`pause()\` snapshots in-flight tool state to SQLite; \`resume()\` replays pending tool results before accepting new input. Sub-agents created via \`fork()\` inherit the parent's tool registry but get an isolated message buffer — the parent blocks until the child emits \`done\`, then merges summarized output into its own context (see Dependencies).
+
+GOOD (callout):
+> > [!IMPORTANT]
+> > **单会话串行** — 同一会话禁止并发 streamRun；新消息入队等待当前 run 的 \`done\` 事件。跨会话无共享可变状态。
+
+## Anti-Patterns (instant rejection mentally — expand before submit)
+- Sections with only a table or diagram and zero prose
+- Invented types/functions not in Code Context or file.read
+- Mermaid with generic nodes ("Service A", "Database") instead of real package names
+- Lists that duplicate directory tree without explaining responsibilities
+- "It is worth noting" / "This module is responsible for" filler
+- Callouts that restate the heading instead of a concrete decision or invariant
+
+## Traceability
+Every ## section should cite at least one real file in references[] or a *Source:* line. claims[].evidenceHint must point to a verifiable location.`;
 }
 
 function buildToolsGuideSegment(role: Role): string {
@@ -251,14 +353,15 @@ function buildToolsGuideSegment(role: Role): string {
 5. The outline should cover all core modules — do not omit important subsystems`;
   }
   if (role === 'document-writer') {
-    return `## Rules
-1. Answer every keyQuestion explicitly in prose or table rows
-2. Write based on Code Context and file.read — do not fabricate APIs, types, or behavior
-3. Use level-2 headings to structure sections; avoid flat walls of prose
-4. Validate mermaid diagrams with wiki.check_mermaid before submitting
-5. Do not use bare parentheses () in mermaid node labels — wrap with quotes
-6. references[] must cite real files/symbols; claims[] must be verifiable
-7. If commit_document rejects the draft, expand thin sections and add missing structure before resubmitting`;
+    return `## Pre-submit Checklist
+1. Every keyQuestion has a dedicated answer in prose (cite section name in your head — no orphan questions)
+2. # title + *subtitle* present; Overview does not repeat the title verbatim
+3. At least one \`> [!IMPORTANT]\` or \`> [!WARNING]\` with a **bold label** and concrete mechanism
+4. Primary interface shown in a fenced code block + \`*Source: path:lines*\`
+5. Each ## section has ≥1 prose paragraph before any table/diagram (except pure diagram sections)
+6. Mermaid validated; node labels quoted if they contain parentheses
+7. references[] mirrors Source lines; claims[] has ≥2 load-bearing items for module docs
+8. On rejection: read error list, expand the thinnest sections first, add missing callout/table/diagram`;
   }
   return `## Rules
 1. Every step must include a tool call
@@ -345,7 +448,21 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
   }
 
   if (role === 'document-writer' && input.documentEntry) {
-    segments.push(`## Current Document\n\n- Title: ${input.documentEntry.title}\n- Type: ${input.documentEntry.docType}\n- ID: ${input.documentEntry.id}`);
+    const e = input.documentEntry;
+    const questions = e.keyQuestions?.length
+      ? e.keyQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')
+      : '(none — infer from title and target files)';
+    const files = e.targetFiles?.length
+      ? e.targetFiles.map(f => `- \`${f}\``).join('\n')
+      : '(none — use Code Context paths)';
+    segments.push(
+      `## Current Document\n\n`
+      + `- **Title:** ${e.title}\n`
+      + `- **Type:** ${e.docType}\n`
+      + `- **ID:** ${e.id}\n\n`
+      + `### Key Questions (answer every one)\n${questions}\n\n`
+      + `### Target Files (read with file.read if excerpts are insufficient)\n${files}`,
+    );
   }
 
   segments.push(buildConstraintsSegment(role));
