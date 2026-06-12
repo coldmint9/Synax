@@ -9,15 +9,15 @@ export const WIKI_BLOCK_TYPES: WikiBlockType[] = [
   'heading', 'prose', 'signature', 'callout', 'table', 'diagram', 'list',
 ];
 
-export const MIN_CONTENT_LENGTH = 200;
+export const MIN_CONTENT_LENGTH = 350;
 export const MIN_BLOCKS_BY_DOC_TYPE: Record<WikiDocType, number> = {
-  landscape: 6,
-  topology: 5,
-  module: 8,
-  flow: 6,
-  data: 5,
+  landscape: 8,
+  topology: 7,
+  module: 10,
+  flow: 8,
+  data: 7,
 };
-export const MIN_BLOCKS = 5;
+export const MIN_BLOCKS = 6;
 export const PAGE_SIZE = 80;
 
 // Package baseline thresholds for outline quality gates

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { RegisteredTool } from '../../agent-runtime/contracts.js';
 import { validateBlockContent, type WikiBlockType, type WikiDocType } from '../contracts.js';
+import { validateDocumentQuality } from '../document-quality-gates.js';
 import { WIKI_DOC_TYPES, WIKI_BLOCK_TYPES, MIN_BLOCKS_BY_DOC_TYPE, MIN_BLOCKS } from './contracts.js';
 import type { WikiDocumentDraft, WikiOutlineEntry } from './contracts.js';
 
@@ -45,7 +46,7 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
   return {
     id: 'wiki.commit_document',
     label: 'Commit Wiki Document',
-    description: 'Submit a completed wiki document. Quality gates: minimum blocks per doc type, structured block content validation, non-heading blocks must have sourceHints.',
+    description: 'Submit a completed wiki document. Quality gates: minimum blocks per docType, required block mix (diagrams/callouts/tables), prose depth, structured block validation, non-heading blocks must have sourceHints.',
     category: 'write',
     mutability: 'write',
     resumeBehavior: 'auto',
@@ -83,13 +84,14 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
       if (args.blocks.length < minBlocks) {
         errors.push(`Too few blocks: ${args.blocks.length} (minimum ${minBlocks} for ${args.docType}).`);
       }
+      errors.push(...validateDocumentQuality(args.docType as WikiDocType, args.blocks));
+
       for (let i = 0; i < args.blocks.length; i++) {
         const block = args.blocks[i];
         const validation = validateBlockContent(block.blockType as WikiBlockType, block.content);
         if (!validation.ok) {
           errors.push(`Block ${i + 1} (${block.blockType}): ${validation.errors?.join('; ')}`);
         }
-        // sourceHints still required for non-heading blocks
         if (block.blockType !== 'heading' && (!block.sourceHints || block.sourceHints.length === 0)) {
           errors.push(`Block ${i + 1} (${block.blockType}) missing sourceHints.`);
         }
