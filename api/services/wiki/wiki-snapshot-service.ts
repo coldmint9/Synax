@@ -6,12 +6,10 @@
 
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { nanoid } from 'nanoid';
-import { runCodeMapScan } from '../analyzer/scan.js';
-import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { wikiStore } from './wiki-store.js';
 import { wikiAgentService } from './wiki-agent-service.js';
 import { logger } from '../../lib/logger.js';
+import { fallbackGitState } from './wiki-scan-cache.js';
 import type { WikiSnapshot } from './contracts.js';
 
 export interface WikiGitState {
@@ -69,12 +67,7 @@ export const wikiSnapshotService = {
       gitState = readGitState(workDir);
     } catch (err) {
       logger.warn({ err, workDir }, 'wiki: failed to read git state, using defaults');
-      gitState = {
-        branch: 'unknown',
-        headCommitSha: '0000000000000000000000000000000000000000',
-        workingTreeHash: nanoid(16),
-        dirty: false,
-      };
+      gitState = fallbackGitState();
     }
 
     const snapshot = await wikiStore.createSnapshot({

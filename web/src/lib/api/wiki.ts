@@ -11,6 +11,10 @@ import { apiRequest } from './origin';
 const BASE = '/api/wiki';
 
 export const wikiApi = {
+  getProjectSnapshot(projectId: string): Promise<WikiSnapshotTree> {
+    return apiRequest<WikiSnapshotTree>(`${BASE}/projects/${projectId}/snapshot`);
+  },
+
   getSnapshot(snapshotId: string): Promise<WikiSnapshotTree> {
     return apiRequest<WikiSnapshotTree>(`${BASE}/snapshots/${snapshotId}`);
   },

@@ -3,7 +3,7 @@ import type { WikiOutlineEntry } from './wiki-loop-tools.js';
 import { derivePackages, filterBaselineForPrompt } from './tools/package-baseline.js';
 import { FILE_SPLIT, SYM_SPLIT } from './tools/contracts.js';
 import { buildTreeString } from './tools/helpers.js';
-import { buildLanguageDirective, type Locale } from '../prompts/language-directive.js';
+import { buildLanguageDirective, buildOutlineLanguageRequirement, type Locale } from '../prompts/language-directive.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -431,6 +431,26 @@ function buildPackageBaselineSegment(scan: CodeMapScanResult): string {
   return lines.join('\n');
 }
 
+// ── Fast-path planner prompt (single structured-output call) ─────────────────
+
+/**
+ * System prompt for the fast outline generator: planner identity + outline
+ * structure constraints, without the agentic tool-loop instructions.
+ */
+export function buildFastPlannerSystemPrompt(locale: Locale): string {
+  return [
+    buildLanguageDirective(locale),
+    buildOutlineLanguageRequirement(locale),
+    buildIdentitySegment('planner'),
+    buildConstraintsSegment('planner'),
+    `## Quality Bar
+- Every document needs at least 2 specific keyQuestions — never vague one-liners.
+- targetFiles must be real paths taken from the provided context; every core package must be covered by at least one module document.
+- Include at least 1 flow document for a key end-to-end operation, and a data document if the project has a storage layer.
+- titles must be concise — no parenthetical elaborations.`,
+  ].join('\n\n');
+}
+
 // ── Main builder ─────────────────────────────────────────────────────────────
 
 export function buildWikiPrompt(input: WikiPromptInput): string {
@@ -439,6 +459,10 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
 
   // Language output directive — tells the LLM which language to produce user-facing text in
   segments.push(buildLanguageDirective(locale));
+
+  if (role === 'planner') {
+    segments.push(buildOutlineLanguageRequirement(locale));
+  }
 
   segments.push(buildIdentitySegment(role));
   segments.push(buildWorkflowSegment(role));

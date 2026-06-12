@@ -130,10 +130,12 @@ export const wikiStore = {
 
   async recoverOrphanedSnapshots(): Promise<number> {
     const db = getDb();
+    // outline_ready is a stable user-approval gate — documents are already persisted.
+    // Only mark in-flight generation states as failed after a server restart.
     const result = await db
       .update(wikiSnapshots)
       .set({ status: 'failed' })
-      .where(inArray(wikiSnapshots.status, ['refreshing', 'outline_ready', 'writing']));
+      .where(inArray(wikiSnapshots.status, ['refreshing', 'writing']));
     return Number(result.rowsAffected ?? 0);
   },
 

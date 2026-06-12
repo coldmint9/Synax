@@ -12,6 +12,11 @@ const defaultStrategy: ProviderStrategy = {
   modelOptions: () => undefined,
 }
 
+/** OpenAI-compatible chat APIs need structuredOutputs (not responseFormat) for Output.object(). */
+function objectModeModelOptions(mode: { kind: string }): Record<string, unknown> | undefined {
+  return mode.kind === 'object' ? { structuredOutputs: true } : undefined
+}
+
 const nativeReasoningStrategy: ProviderStrategy = {
   ...defaultStrategy,
   needsReasoningMiddleware: () => false,
@@ -27,17 +32,22 @@ const anthropicStrategy: ProviderStrategy = {
 
 const openaiStrategy: ProviderStrategy = {
   ...nativeReasoningStrategy,
-  modelOptions: (mode) => mode.kind === 'object' ? { structuredOutputs: true } : undefined,
+  modelOptions: objectModeModelOptions,
+}
+
+const openaiCompatibleStrategy: ProviderStrategy = {
+  ...nativeReasoningStrategy,
+  modelOptions: objectModeModelOptions,
 }
 
 const strategies = new Map<string, ProviderStrategy>([
   ['@ai-sdk/anthropic', anthropicStrategy],
   ['@ai-sdk/openai', openaiStrategy],
-  ['@ai-sdk/deepseek', nativeReasoningStrategy],
+  ['@ai-sdk/openai-compatible', openaiCompatibleStrategy],
+  ['@ai-sdk/deepseek', openaiCompatibleStrategy],
   ['@ai-sdk/google', nativeReasoningStrategy],
   ['@ai-sdk/xai', nativeReasoningStrategy],
-  ['@ai-sdk/groq', nativeReasoningStrategy],
-  ['@ai-sdk/openai-compatible', nativeReasoningStrategy],
+  ['@ai-sdk/groq', openaiCompatibleStrategy],
 ])
 
 export function getStrategy(npm: string | undefined): ProviderStrategy {

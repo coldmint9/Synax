@@ -6,88 +6,16 @@ import type {
   WikiOutlineEntry,
   WikiPlannerHandle,
   OutlineDraft,
-  ValidationError,
   OutlineEditOp,
 } from './contracts.js';
 import { buildReadTools } from './read-tools.js';
-import { derivePackages } from './package-baseline.js';
-
-// ── Validation helpers ──────────────────────────────────────────────────────
-
-function validateStructure(documents: WikiOutlineEntry[]): ValidationError[] {
-  const errors: ValidationError[] = [];
-
-  if (documents.length === 0) {
-    errors.push({ severity: 'error', field: 'documents', message: 'At least 1 document is required.' });
-    return errors;
-  }
-
-  const idSet = new Set(documents.map(d => d.id));
-  if (documents.length - idSet.size > 0) {
-    errors.push({ severity: 'error', field: 'id', message: 'Duplicate document IDs detected.' });
-  }
-
-  for (const doc of documents) {
-    if (doc.parentId && !idSet.has(doc.parentId)) {
-      errors.push({ severity: 'error', field: 'parentId', message: `"${doc.title}" references unknown parentId "${doc.parentId}".` });
-    }
-  }
-
-  const depthOf = (docId: string, visited = new Set<string>()): number => {
-    if (visited.has(docId)) return Infinity;
-    visited.add(docId);
-    const doc = documents.find(d => d.id === docId);
-    if (!doc?.parentId) return 0;
-    return 1 + depthOf(doc.parentId, visited);
-  };
-  for (const doc of documents) {
-    const depth = depthOf(doc.id);
-    if (depth === Infinity) {
-      errors.push({ severity: 'error', field: 'parentId', message: `Circular reference involving "${doc.title}".` });
-    } else if (depth > 4) {
-      errors.push({ severity: 'error', field: 'parentId', message: `"${doc.title}" exceeds max depth 4 (found ${depth}).` });
-    }
-  }
-
-  const typeCount = (t: string) => documents.filter(d => d.docType === t).length;
-  if (typeCount('landscape') < 1) {
-    errors.push({ severity: 'error', field: 'docType', message: 'Need at least 1 landscape document.' });
-  }
-  if (typeCount('topology') < 1) {
-    errors.push({ severity: 'error', field: 'docType', message: 'Need at least 1 topology document.' });
-  }
-
-  return errors;
-}
-
-function validateFilePaths(documents: WikiOutlineEntry[], validPaths: Set<string>): ValidationError[] {
-  const errors: ValidationError[] = [];
-  for (const doc of documents) {
-    const badFiles = doc.targetFiles.filter(p => !validPaths.has(p));
-    if (badFiles.length > 0) {
-      errors.push({
-        severity: 'error',
-        field: 'targetFiles',
-        message: `"${doc.title}" has ${badFiles.length} non-existent targetFile(s): ${badFiles.slice(0, 3).join(', ')}.`,
-      });
-    }
-  }
-  return errors;
-}
-
-function fullValidation(
-  documents: WikiOutlineEntry[],
-  validPaths: Set<string>,
-): ValidationError[] {
-  return [
-    ...validateStructure(documents),
-    ...validateFilePaths(documents, validPaths),
-  ];
-}
-
-function formatErrors(errors: ValidationError[]): string {
-  return errors.map(e => `  - [${e.severity}] ${e.field}: ${e.message}`).join('\n');
-}
+import { derivePackages, filterBaselineForPrompt } from './package-baseline.js';
+import {
+  validateStructure,
+  fullValidation,
+  formatErrors,
+  blockingErrors,
+} from './outline-validation.js';
 
 // ── Tool factory ────────────────────────────────────────────────────────────
 
@@ -97,6 +25,7 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
   const allReadTools = buildReadTools(scan);
   const readTreeTool = allReadTools.find(t => t.id === 'wiki.read_tree')!;
   const baseline = derivePackages(scan);
+  const corePackages = filterBaselineForPrompt(baseline);
   const validPaths = new Set(scan.codeIndex.files.map(f => f.path));
   const pathToPkg = buildPathToPackage(baseline, scan.codeIndex.files);
 
@@ -216,7 +145,7 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
         }
       }
 
-      const ve = fullValidation(docs, validPaths);
+      const ve = fullValidation(docs, validPaths, { corePackages, strictQuality: true });
       draft = { documents: docs, locked: false, validationErrors: ve };
 
       const summary = docs.map(d => {
@@ -258,18 +187,19 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
         return { result: { ok: false, error: 'Outline is already submitted.' }, displaySummary: 'Outline already submitted.', artifacts: [] };
       }
 
-      const ve = fullValidation(draft.documents, validPaths);
-      if (ve.length > 0) {
+      const ve = fullValidation(draft.documents, validPaths, { corePackages, strictQuality: true });
+      const blocking = blockingErrors(ve);
+      if (blocking.length > 0) {
         draft.validationErrors = ve;
         return {
-          result: { ok: false, validationErrors: ve.map(e => e.message), documentCount: draft.documents.length },
-          displaySummary: `Submit failed — ${ve.length} issue(s) remain:\n${formatErrors(ve)}\nUse wiki.edit_outline_draft to fix them.`,
-          artifacts: [{ kind: 'decision', title: 'Wiki outline submit failed', summary: `${ve.length} issues remain.`, risk: 'low' }],
+          result: { ok: false, validationErrors: blocking.map(e => e.message), documentCount: draft.documents.length },
+          displaySummary: `Submit failed — ${blocking.length} issue(s) remain:\n${formatErrors(blocking)}\nUse wiki.edit_outline_draft to fix them.`,
+          artifacts: [{ kind: 'decision', title: 'Wiki outline submit failed', summary: `${blocking.length} issues remain.`, risk: 'low' }],
         };
       }
 
       draft.locked = true;
-      draft.validationErrors = [];
+      draft.validationErrors = ve.filter(e => e.severity === 'warning');
 
       const summary = draft.documents.map(d => {
         const indent = d.parentId ? '    ' : '  ';

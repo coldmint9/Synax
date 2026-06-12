@@ -7,7 +7,7 @@ import { wikiExportService } from '../services/wiki/wiki-export-service.js';
 import { wikiLoopService } from '../services/wiki/wiki-loop-service.js';
 import { wikiRefreshService } from '../services/wiki/wiki-refresh-service.js';
 import { wikiDraftService } from '../services/wiki/wiki-draft-service.js';
-import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from '../services/wiki/wiki-snapshot-events.js';
+import { getLatestWikiSnapshotTree, publishLatestWikiSnapshot, WikiSnapshotEventReason } from '../services/wiki/wiki-snapshot-events.js';
 import { searchWikiDocuments } from '../services/wiki/wiki-fts.js';
 import { WikiManualProtectionError } from '../services/wiki/contracts.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
@@ -177,6 +177,13 @@ wikiRoutes.get('/documents/:documentId/export.md', async (c) => {
   } catch {
     return c.json({ error: 'not found' }, 404);
   }
+});
+
+// ── GET /api/wiki/projects/:projectId/snapshot ───────────────────────────────
+wikiRoutes.get('/projects/:projectId/snapshot', async (c) => {
+  const { projectId } = c.req.param();
+  const tree = await getLatestWikiSnapshotTree(projectId);
+  return c.json(tree);
 });
 
 // ── POST /api/wiki/projects/:projectId/generate ──────────────────────────────

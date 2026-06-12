@@ -15,6 +15,18 @@ const LANGUAGE_LABELS: Record<Locale, string> = {
 };
 
 /**
+ * Reminder for wiki outline generation: titles and keyQuestions follow UI locale.
+ */
+export function buildOutlineLanguageRequirement(locale: Locale): string {
+  const lang = LANGUAGE_LABELS[locale];
+  return [
+    '## Outline Language',
+    `Write every document **title** and **keyQuestion** in ${lang}.`,
+    'Keep document ids, docType values, and targetFiles paths in English.',
+  ].join('\n');
+}
+
+/**
  * Build a language output directive to be prepended to LLM system prompts.
  *
  * Tells the model to think/process internally in English but produce all

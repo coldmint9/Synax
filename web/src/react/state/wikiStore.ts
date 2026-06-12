@@ -68,6 +68,7 @@ export interface WikiState {
 
   setViewMode: (mode: WikiViewMode) => void;
   setSnapshotLoading: () => void;
+  loadProjectSnapshot: (projectId: string) => Promise<void>;
   applySnapshotTree: (tree: WikiSnapshotTree) => void;
   applyDocumentUpdate: (document: WikiDocument) => void;
   selectDocument: (documentId: string | null) => void;
@@ -158,6 +159,20 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
   setSnapshotLoading: () => {
     set(s => ({ ...s, loading: { ...s.loading, snapshot: true }, error: null }));
+  },
+
+  loadProjectSnapshot: async (projectId: string) => {
+    set(s => ({ ...s, loading: { ...s.loading, snapshot: true }, error: null }));
+    try {
+      const tree = await wikiApi.getProjectSnapshot(projectId);
+      get().applySnapshotTree(tree);
+    } catch (err) {
+      set(s => ({
+        ...s,
+        loading: { ...s.loading, snapshot: false },
+        error: err instanceof Error ? err.message : 'Failed to load wiki snapshot',
+      }));
+    }
   },
 
   applySnapshotTree: (tree: WikiSnapshotTree) => {

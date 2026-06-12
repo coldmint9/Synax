@@ -19,7 +19,7 @@ import { handleError, createAppError, AppError } from '../../../lib/errors'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
 function EmptyState({ projectId, gen }: { projectId: string; gen: ReturnType<typeof useWikiGenerationEvents> }) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
   // gen is now passed from parent WikiWorkspace
@@ -45,7 +45,7 @@ function EmptyState({ projectId, gen }: { projectId: string; gen: ReturnType<typ
     gen.start()
 
     try {
-      await wikiApi.generate(projectId, { workDir, locale: 'zh' })
+      await wikiApi.generate(projectId, { workDir, locale })
     } catch (err) {
       gen.reset()
       setError(err instanceof Error ? err.message : t('wikiGenerationError'))
@@ -114,7 +114,7 @@ function EmptyState({ projectId, gen }: { projectId: string; gen: ReturnType<typ
 }
 
 function FailedState({ projectId, gen }: { projectId: string; gen: ReturnType<typeof useWikiGenerationEvents> }) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
   // gen is now passed from parent WikiWorkspace
@@ -140,7 +140,7 @@ function FailedState({ projectId, gen }: { projectId: string; gen: ReturnType<ty
     gen.start()
 
     try {
-      await wikiApi.generate(projectId, { workDir, locale: 'zh' })
+      await wikiApi.generate(projectId, { workDir, locale })
     } catch (err) {
       gen.reset()
       setError(err instanceof Error ? err.message : t('wikiRetryError'))
@@ -205,7 +205,7 @@ function FailedState({ projectId, gen }: { projectId: string; gen: ReturnType<ty
 }
 
 export default function WikiWorkspace({ projectId }: { projectId: string }) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const snapshot = useWikiStore(s => s.snapshot)
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
   const documents = useWikiStore(s => s.documents)
@@ -301,7 +301,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       const res = await apiFetch(`/api/wiki/snapshots/${snapshot.id}/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workDir }),
+        body: JSON.stringify({ workDir, locale }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string; code?: string; message?: string }
@@ -326,7 +326,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     setShowReinitConfirm(false)
     setReinitializing(true)
     try {
-      await wikiApi.reinitialize(projectId, { workDir, locale: 'zh' })
+      await wikiApi.reinitialize(projectId, { workDir, locale })
     } finally {
       setReinitializing(false)
     }
@@ -343,7 +343,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
     setContinuing(true)
     try {
-      await wikiApi.continueGeneration(snapshot.id, { workDir, locale: 'zh' })
+      await wikiApi.continueGeneration(snapshot.id, { workDir, locale })
     } finally {
       setContinuing(false)
     }
@@ -360,7 +360,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
     setApprovingOutline(true)
     try {
-      await wikiApi.approveSnapshot(snapshot.id, { workDir, locale: 'zh' })
+      await wikiApi.approveSnapshot(snapshot.id, { workDir, locale })
     } catch (err) {
       handleError(err)
     } finally {

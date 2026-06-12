@@ -10,6 +10,7 @@ export type LlmPurpose =
   | 'seed'
   | 'review'
   | 'wiki'
+  | 'wiki-outline'
   | 'context-signal'
   | 'validate'
 

@@ -103,3 +103,17 @@ describe('wikiStore.markDocumentsStale', () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
+
+describe('wikiStore.recoverOrphanedSnapshots', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('marks in-flight generation snapshots as failed but preserves outline_ready', async () => {
+    mockSetWhere.mockResolvedValueOnce({ rowsAffected: 2 });
+
+    const count = await wikiStore.recoverOrphanedSnapshots();
+
+    expect(count).toBe(2);
+    expect(mockSet).toHaveBeenCalledWith({ status: 'failed' });
+    expect(mockSetWhere).toHaveBeenCalled();
+  });
+});
