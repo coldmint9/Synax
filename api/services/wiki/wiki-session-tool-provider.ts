@@ -87,7 +87,8 @@ class WikiSessionToolProvider implements SessionToolProvider {
               docType: (result.docType as WikiDocumentDraft['docType']) ?? 'module',
               parentId: null,
               sortOrder: 0,
-              blockIds: [],
+              contentMd: '',
+              references: [],
             });
             logger.info({ snapshotId: sid, title: result.title },
               '[wiki-session-tool-provider] created document on resume commit');

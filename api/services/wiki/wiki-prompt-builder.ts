@@ -56,61 +56,25 @@ Writing style:
 - Tables are for structured comparisons (fields, events, config keys). Lists are for ordered steps or dependency inventories — not lazy prose substitutes.
 - Diagrams must reflect real modules/types from the code context, with meaningful node labels.
 
-Output format: structured JSON blocks (not markdown). Each block has a blockType and a content object matching the schema below.`;
+Output format: markdown document body (not JSON blocks). Submit via wiki.commit_document with markdown + references + claims.`;
   }
-  return `You are a technical documentation engineer. Generate document content as structured JSON blocks for the specified documents in the outline.
+  return `You are a technical documentation engineer. Generate document content as markdown for the specified documents in the outline.
 
-Writing constraints: be precise, no filler, no AI-speak, no repeating titles. Lead with conclusions. Design decisions go in callout blocks.`;
+Writing constraints: be precise, no filler, no AI-speak, no repeating titles. Lead with conclusions. Use ## headings, tables, mermaid diagrams, and code fences as appropriate.`;
 }
 
-function buildJsonSchemaGuide(role: Role): string {
+function buildMarkdownGuide(role: Role): string {
   if (role === 'planner') return '';
-  return `## Block Content JSON Schema
+  return `## Markdown Output Guide
 
-Each block submitted to wiki.commit_document must have blockType + content (JSON object). Reference:
+Submit the full document body as markdown via wiki.commit_document:
 
-### heading
-{ "level": 1|2|3, "text": "Section title", "anchor": "optional-slug" }
-
-### prose
-{ "segments": [
-  { "type": "text", "value": "plain text" },
-  { "type": "bold", "value": "emphasized text" },
-  { "type": "code", "value": "functionName()" },
-  { "type": "xref", "target": "document-id", "label": "display text" }
-] }
-
-### signature
-{ "language": "typescript",
-  "tokens": [
-    { "type": "keyword"|"type"|"name"|"param"|"punctuation"|"comment", "value": "..." }
-  ],
-  "source": { "file": "path/to/file.ts", "line": 42 }
-}
-Token types: keyword (async, export, function, class, interface, type, const, let, return, extends, implements), type (type names, interfaces, generics), name (function/method/variable names), param (parameter names), punctuation (braces, parens, colons, arrows, commas), comment (inline notes).
-
-### callout
-{ "level": "info"|"warn"|"important",
-  "title": "Optional heading",
-  "body": [/* Segment[] — same as prose.segments */]
-}
-Use for: design decisions, constraints, non-obvious behavior, caveats.
-
-### table
-{ "headers": [{ "key": "field", "label": "Field" }, { "key": "type", "label": "Type" }],
-  "rows": [{ "field": "id", "type": { "type": "code", "value": "string" } }]
-}
-Cell values: plain string OR { "type": "code", "value": "..." } for mono rendering.
-
-### diagram
-{ "diagramType": "flowchart"|"sequence"|"er"|"state",
-  "code": "graph TD\\n  A --> B",
-  "caption": "Optional description"
-}
-Must validate with wiki.check_mermaid before submitting.
-
-### list
-{ "ordered": boolean, "items": [{ "segments": [/* Segment[] */], "children": [/* recursive */] }] }`;
+- Use \`#\` for the document title and \`##\` for major sections
+- Tables use standard markdown pipe syntax
+- Diagrams use \`\`\`mermaid fences (validate with wiki.check_mermaid first)
+- Code references use inline \`backticks\` or fenced code blocks with language tags
+- Include a non-empty references[] array citing real file paths / symbols
+- Include claims[] with load-bearing assertions the verifier can check`;
 }
 
 function buildWorkflowSegment(role: Role): string {
@@ -141,10 +105,10 @@ Available tools:
 
 1. Study the Code Context below (file excerpts, symbols, dependencies) — treat it as primary evidence
 2. Map each keyQuestion to one or more sections; every keyQuestion must be answered explicitly
-3. Build a design-doc skeleton: level-1 title → level-2 sections → mixed block types (prose + table/diagram + callout + signature/list)
-4. Generate all blocks as structured JSON (minimum count and block mix depend on docType — see Quality Requirements)
-5. Validate every diagram with wiki.check_mermaid before submitting
-6. Call wiki.commit_document once the document passes the quality gates
+3. Build a design-doc skeleton: # title → ## sections → mixed markdown (prose + tables + mermaid + code blocks)
+4. Write the full markdown body meeting docType quality gates (minimum length, required ## headings, tables/diagrams)
+5. Validate every mermaid diagram with wiki.check_mermaid before submitting
+6. Call wiki.commit_document with markdown, references, and claims once the document passes quality gates
 
 If a mechanism is unclear from excerpts alone, use file.read on the listed targetFiles before writing — do not guess.`;
   }
@@ -191,21 +155,18 @@ Constraints:
 These gates are enforced by wiki.commit_document — documents that fail will be rejected with specific errors.
 
 ### Global
-- All block content must be valid JSON matching the schema for its blockType
-- prose blocks: segments total character count >= 350 (aim for 400–800 for major sections)
-- callout blocks: explain a concrete design decision with rationale (>= 120 chars in body)
-- signature blocks must include source file reference with real file path
-- table blocks: headers and row keys must be consistent; prefer 4+ rows for API/schema tables
-- diagram blocks: mermaid code must pass wiki.check_mermaid; labels must name real modules/types
-- Use at least 4 distinct block types when the document has 6+ non-heading blocks
-- Minimum blocks by docType: landscape=8, topology=7, module=10, flow=8, data=7
+- Full markdown body must meet minimum character count for docType
+- Include at least 2 ## section headings (more for module docs)
+- references[] must be non-empty with real file paths / symbols
+- claims[] must include load-bearing verifiable assertions
+- Tables, mermaid diagrams, and code blocks required per docType (see below)
 
-### Required block mix by docType
-- landscape: table + list + >=2 prose + >=2 level-2 headings
-- topology: flowchart diagram + table + callout + >=2 prose + >=2 level-2 headings
-- module: signature + table + callout + list + >=3 prose + >=3 level-2 headings
-- flow: sequence diagram + callout + list + >=2 prose + >=2 level-2 headings
-- data: er diagram + table + >=2 prose + >=2 level-2 headings
+### Required structure by docType
+- landscape: table + list + >=2 ## headings + min ~1200 chars
+- topology: flowchart mermaid + table + >=2 ## headings
+- module: code block + table + list + >=3 ## headings + min ~1500 chars
+- flow: sequence mermaid + list + >=2 ## headings
+- data: er mermaid + table + >=2 ## headings
 
 ## Document Skeleton by Type
 
@@ -277,7 +238,7 @@ GOOD (design-doc depth): "AgentSession is the unit of isolation for tool permiss
 - Submitting a document with only prose + headings (missing tables/diagrams/callouts)
 
 ## sourceHints Traceability (critical)
-Every non-heading block MUST have sourceHints. Use qualified names (e.g. ClassName.methodName) or file paths.`;
+Cite sources in references[] and inline with backticks. Every major section should trace to real code.`;
 }
 
 function buildToolsGuideSegment(role: Role): string {
@@ -294,10 +255,10 @@ function buildToolsGuideSegment(role: Role): string {
 1. Answer every keyQuestion explicitly in prose or table rows
 2. Write based on Code Context and file.read — do not fabricate APIs, types, or behavior
 3. Use level-2 headings to structure sections; avoid flat walls of prose
-4. Validate diagram blocks with wiki.check_mermaid before submitting
+4. Validate mermaid diagrams with wiki.check_mermaid before submitting
 5. Do not use bare parentheses () in mermaid node labels — wrap with quotes
-6. Every non-heading block must have sourceHints
-7. If commit_document rejects the draft, expand thin sections and add missing block types before resubmitting`;
+6. references[] must cite real files/symbols; claims[] must be verifiable
+7. If commit_document rejects the draft, expand thin sections and add missing structure before resubmitting`;
   }
   return `## Rules
 1. Every step must include a tool call
@@ -388,7 +349,7 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
   }
 
   segments.push(buildConstraintsSegment(role));
-  segments.push(buildJsonSchemaGuide(role));
+  segments.push(buildMarkdownGuide(role));
   segments.push(buildToolsGuideSegment(role));
 
   const ctx = buildContextSegment(input.languages, role);

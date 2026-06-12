@@ -15,7 +15,6 @@ import { logger } from '../../lib/logger.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { wikiStore } from './wiki-store.js';
-import { wikiCoordinateService } from './wiki-coordinate-service.js';
 import { publishLatestWikiSnapshot, publishDocumentCommittedEvent, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
 import { ensureWikiProfileRegistered } from './wiki-loop-profile.js';
 import {
@@ -238,281 +237,8 @@ export const wikiLoopService = {
         meta: { snapshotId: snapshot.id, snapshotStatus: 'outline_ready', phase: 1, docCount: docIds.length, activity: outlineActivity.activity, activityPhase: outlineActivity.phase },
       });
 
-      // ═══ Phase 2: Content Generation (per-document) ═══
-      await wikiStore.updateSnapshotStatus(snapshot.id, 'writing', docIds);
-      await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.WritingStarted);
-
-      notify({
-        type: TaskNotificationEventType.TaskProgress,
-        taskKind: 'wiki_generate',
-        projectId,
-        taskId: snapshot.id,
-        title: wikiMsg(locale).genTitle,
-        message: wikiMsg(locale).writingContent,
-        severity: 'info',
-        meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, totalDocs: docIds.length },
-      });
-
-      const writerHandle = createWriterTools(scan, outline);
-      for (const tool of writerHandle.tools) {
-        toolRegistry.register(tool);
-        registeredToolIds.push(tool.id);
-      }
-
-      const commitHookId = `wiki-commit-${snapshot.id}`;
-      hookIds.push(commitHookId);
-      const persistedDocIds = [...docIds];
-
-      toolRegistry.registerHook({
-        id: commitHookId,
-        toolId: 'wiki.commit_document',
-        async afterExecute(ctx) {
-          const commitResult = ctx.result.result as { ok: boolean; index?: number };
-          if (!commitResult?.ok) return;
-          const docs = writerHandle.getCommittedDocuments();
-          const idx = commitResult.index ?? docs.length - 1;
-          const latestDoc = docs[idx];
-          if (!latestDoc) return;
-
-          const resolvedParentId = latestDoc.parentPlanId
-            ? planIdToDocId.get(latestDoc.parentPlanId) ?? null
-            : null;
-
-          let committedDocId: string;
-          const existingDocId = findExistingDocId(latestDoc, outline, planIdToDocId);
-          if (existingDocId) {
-            await fillDocumentContent(existingDocId, latestDoc, projectId, scan);
-            await wikiStore.updateDocumentPipelineStage(existingDocId, 'drafted');
-            committedDocId = existingDocId;
-          } else {
-            const newId = await persistSingleDocument(latestDoc, snapshot.id, projectId, scan, resolvedParentId);
-            persistedDocIds.push(newId);
-            const planEntry = outline.find(p => p.title === latestDoc.title && p.docType === latestDoc.docType);
-            if (planEntry) planIdToDocId.set(planEntry.id, newId);
-            await wikiStore.updateDocumentPipelineStage(newId, 'drafted');
-            committedDocId = newId;
-          }
-
-          logger.info({ projectId, title: latestDoc.title, docId: committedDocId }, 'wiki-loop: document content committed');
-          await publishDocumentCommittedEvent(projectId, committedDocId);
-        },
-      });
-
-      const sortedOutline = topologicalSort(outline);
-      const totalDocs = sortedOutline.length;
-      const MAX_CONCURRENT_DOCS = 3;
-
-      // ═══ Phase 2: Writer → Skeptic → Corrector Pipeline ═══
-      const processDocument = async (entry: WikiOutlineEntry, i: number) => {
-        const documentContext = buildDocumentContext(scan, entry);
-
-        const docPrompt = buildWikiPrompt({
-          role: 'document-writer',
-          languages,
-          locale,
-          documentEntry: entry,
-          documentContext,
-        });
-
-        // Stage 1: Writer
-        const docSession = agentSessionRuntime.create({
-          projectId,
-          profileId: 'wiki-document-writer',
-          prompt: docPrompt,
-          sessionMetadata: { snapshotId: snapshot.id, phase: 'document-writer', docTitle: entry.title },
-        });
-        agentRuntimeStore.updateSession(docSession.id, {
-          title: `Wiki: ${entry.title}`,
-          updatedAt: nowIso(),
-        });
-        sessionIds.push(docSession.id);
-        setSessionWorkspaceRoot(docSession.id, workDir);
-
-        agentEventService.append({
-          sessionId: docSession.id,
-          type: 'progress_updated',
-          summary: `Phase 2: Generating document ${i + 1}/${totalDocs}: ${entry.title}`,
-          payload: { snapshotId: snapshot.id, phase: 2, docIndex: i, docTitle: entry.title },
-        });
-
-        notify({
-          type: TaskNotificationEventType.TaskProgress,
-          taskKind: 'wiki_generate',
-          projectId,
-          taskId: snapshot.id,
-          title: wikiMsg(locale).genTitle,
-          message: wikiMsg(locale).generating(entry.title, i + 1, totalDocs),
-          severity: 'info',
-          meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, docIndex: i, totalDocs, docTitle: entry.title },
-        });
-
-        logger.info({ projectId, docTitle: entry.title, index: i, total: totalDocs }, 'wiki-loop: generating document');
-        const stream = agentLoopRuntime.streamRun(docSession.id, { locale });
-        for await (const chunk of stream) {
-          if (chunk.type === 'run_failed') throw new Error(chunk.error ?? `Document writer failed for: ${entry.title}`);
-          if (chunk.type === 'done') {
-            const s = agentRuntimeStore.tryGetSession(docSession.id);
-            if (s && s.status === 'interrupted') throw new Error(`Document writer interrupted for: ${entry.title}`);
-          }
-        }
-
-        // Stage 2: Skeptic verification (only load-bearing claims)
-        const committedDocs = writerHandle.getCommittedDocuments();
-        const targetDoc = committedDocs.find(d => d.title === entry.title && d.docType === entry.docType)
-          ?? committedDocs[committedDocs.length - 1];
-
-        const docId = planIdToDocId.get(entry.id);
-
-        // Verify the document was actually committed by checking if it now has blocks
-        const docAfterWriter = docId ? await wikiStore.getDocument(docId) : null;
-        const wasCommitted = targetDoc != null && docAfterWriter != null && docAfterWriter.blockIds.length > 0;
-        if (!wasCommitted) {
-          logger.warn({ projectId, docTitle: entry.title, docId }, 'wiki-loop: writer completed but document was not committed — skipping verification');
-          // Leave as 'drafted' or 'pending' so it can be retried via continueGeneration
-          return;
-        }
-
-        const claims: WikiClaim[] = (targetDoc as unknown as { claims?: WikiClaim[] })?.claims ?? [];
-        const loadBearing = claims.filter(c => c.centrality === 'load-bearing');
-
-        if (loadBearing.length > 0) {
-          logger.info({ projectId, docTitle: entry.title, claimCount: loadBearing.length }, 'wiki-loop: verifying claims');
-
-          // Batch all load-bearing claims into ONE verifier session
-          const verifierHandle = createVerifierTools(scan);
-          for (const t of verifierHandle.tools) {
-            toolRegistry.register(t);
-            registeredToolIds.push(t.id);
-          }
-
-          const claimsList = loadBearing.map(c =>
-            `- ID: ${c.id} | Subject: ${c.subject} | Assertion: "${c.assertion}" | Evidence hint: ${c.evidenceHint}`
-          ).join('\n');
-
-          const verifierPrompt = buildLanguageDirective(locale) + [
-            `Verify the following claims by reading the actual source code.`,
-            `For each claim, call wiki.submit_verdict with your findings.`,
-            `If you cannot find supporting evidence for a claim, default to refuted=true.`,
-            ``,
-            `## Claims to verify`,
-            claimsList,
-            ``,
-            `Language composition: ${languages}`,
-          ].join('\n');
-
-          const verifierSession = agentSessionRuntime.create({
-            projectId,
-            profileId: 'wiki-verifier',
-            prompt: verifierPrompt,
-            sessionMetadata: { snapshotId: snapshot.id, phase: 'verifier', docTitle: entry.title },
-          });
-          sessionIds.push(verifierSession.id);
-          setSessionWorkspaceRoot(verifierSession.id, workDir);
-
-          const vStream = agentLoopRuntime.streamRun(verifierSession.id, { locale });
-          for await (const chunk of vStream) {
-            if (chunk.type === 'run_failed') {
-              logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: verifier failed');
-              break;
-            }
-            if (chunk.type === 'done') break;
-          }
-
-          const verdicts = verifierHandle.getVerdicts();
-          logger.info({ projectId, docTitle: entry.title, verdictCount: verdicts.length }, 'wiki-loop: verification complete');
-
-          for (const t of verifierHandle.tools) {
-            toolRegistry.unregister(t.id);
-            registeredToolIds.splice(registeredToolIds.indexOf(t.id), 1);
-          }
-
-          // Stage 3: Corrector (if any claims were refuted)
-          const refuted = verdicts.filter(v => v.refuted);
-
-          if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'verified');
-
-          if (refuted.length > 0) {
-            logger.info({ projectId, docTitle: entry.title, refutedCount: refuted.length }, 'wiki-loop: correcting refuted claims');
-
-            const corrections = refuted.map(v =>
-              `- Claim "${v.claimId}": REFUTED. Evidence: ${v.evidence}. Correction: ${v.correction ?? 'remove assertion'}`
-            ).join('\n');
-
-            const correctorPrompt = buildLanguageDirective(locale) + [
-              `You are rewriting a wiki document to fix factual errors found by verification.`,
-              ``,
-              `Document: "${entry.title}" (${entry.docType})`,
-              ``,
-              `The following claims were refuted with evidence:`,
-              corrections,
-              ``,
-              `Rewrite the document incorporating the corrections. Keep all other content intact.`,
-              `Call wiki.commit_document when done. Include updated claims.`,
-            ].join('\n');
-
-            const correctorSession = agentSessionRuntime.create({
-              projectId,
-              profileId: 'wiki-document-writer',
-              prompt: correctorPrompt,
-              sessionMetadata: { snapshotId: snapshot.id, phase: 'corrector', docTitle: entry.title },
-            });
-            sessionIds.push(correctorSession.id);
-            setSessionWorkspaceRoot(correctorSession.id, workDir);
-
-            const cStream = agentLoopRuntime.streamRun(correctorSession.id, { locale });
-            for await (const chunk of cStream) {
-              if (chunk.type === 'run_failed') {
-                logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: corrector failed');
-                break;
-              }
-              if (chunk.type === 'done') break;
-            }
-
-            if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
-          } else {
-            if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
-          }
-        } else {
-          logger.debug({ projectId, docTitle: entry.title }, 'wiki-loop: no load-bearing claims, skipping verification');
-          if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
-        }
-      };
-
-      // Run documents with concurrency limit (topological order respected via queue)
-      const queue = [...sortedOutline.entries()];
-      const running: Promise<void>[] = [];
-
-      while (queue.length > 0 || running.length > 0) {
-        while (running.length < MAX_CONCURRENT_DOCS && queue.length > 0) {
-          const [i, entry] = queue.shift()!;
-          const task = processDocument(entry, i).then(() => {
-            running.splice(running.indexOf(task), 1);
-          });
-          running.push(task);
-        }
-        if (running.length > 0) {
-          await Promise.race(running);
-        }
-      }
-
-      await wikiStore.updateSnapshotStatus(snapshot.id, 'ready', persistedDocIds);
-      await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.GenerationCompleted);
-      logger.info({ projectId, snapshotId: snapshot.id, docCount: persistedDocIds.length }, 'wiki-loop: generation complete');
-      notify({
-        type: TaskNotificationEventType.TaskCompleted,
-        taskKind: 'wiki_generate',
-        projectId,
-        taskId: snapshot.id,
-        title: wikiMsg(locale).genTitle,
-        message: wikiMsg(locale).genComplete(persistedDocIds.length),
-        severity: 'success',
-        meta: { snapshotId: snapshot.id, docCount: persistedDocIds.length },
-      });
-
-      for (const hid of hookIds) toolRegistry.unregisterHook(hid);
       for (const tid of registeredToolIds) toolRegistry.unregister(tid);
-
-      return { snapshotId: snapshot.id, status: 'completed' };
+      return { snapshotId: snapshot.id, status: 'outline_ready', docCount: docIds.length };
     } catch (err) {
       logger.error({ err, projectId, snapshotId: snapshot.id }, 'wiki-loop: generation failed');
       notify({
@@ -532,6 +258,58 @@ export const wikiLoopService = {
     } finally {
       for (const sid of sessionIds) clearSessionWorkspaceRoot(sid);
     }
+  },
+
+  async approveOutline(input: { snapshotId: string; workDir: string; locale?: 'zh' | 'en' }): Promise<GenerateWikiResult> {
+    const { snapshotId, locale = 'zh' } = input;
+    const workDir = resolveWorkspaceRoot(input.workDir);
+
+    const snapshot = await wikiStore.getSnapshot(snapshotId);
+    if (!snapshot) throw new Error(`Snapshot ${snapshotId} not found`);
+    if (snapshot.status !== 'outline_ready') {
+      throw new Error(`Snapshot status must be outline_ready to approve, got "${snapshot.status}"`);
+    }
+
+    const documents = await wikiStore.getDocumentsBySnapshot(snapshotId);
+    if (documents.length === 0) throw new Error('No documents in snapshot to write');
+
+    ensureWikiProfileRegistered();
+
+    let gitState: WikiGitState;
+    try {
+      gitState = readGitState(workDir);
+    } catch {
+      gitState = { branch: 'unknown', headCommitSha: '0'.repeat(40), workingTreeHash: nanoid(16), dirty: false };
+    }
+
+    const cachedScan = await loadCachedScanByGitState(snapshot.projectId, gitState);
+    const scan = cachedScan ?? await runCodeMapScan({ projectId: snapshot.projectId, workDir, include: ['all'] });
+    if (!cachedScan) {
+      await persistScanCacheByGitState(snapshot.projectId, scan, gitState);
+    }
+
+    const outline: WikiOutlineEntry[] = documents.map(doc => ({
+      id: doc.id,
+      docType: doc.docType,
+      title: doc.title,
+      parentId: doc.parentId ?? undefined,
+      sortOrder: doc.sortOrder,
+      targetFiles: [],
+      keyQuestions: [],
+    }));
+    const planIdToDocId = new Map(documents.map(d => [d.id, d.id]));
+    const docIds = documents.map(d => d.id);
+
+    return runWritingPhase({
+      snapshot,
+      workDir,
+      locale,
+      scan,
+      outline,
+      planIdToDocId,
+      docIds,
+      languages: formatLanguages(scan),
+    });
   },
 
   async continueGeneration(input: { snapshotId: string; workDir: string; locale?: 'zh' | 'en' }): Promise<GenerateWikiResult> {
@@ -620,7 +398,7 @@ export const wikiLoopService = {
         locale,
         outline,
         continuation: {
-          completedTitles: documents.filter(d => d.blockIds.length > 0).map(d => d.title),
+          completedTitles: documents.filter(d => d.contentMd.trim().length > 0).map(d => d.title),
           remainingCount: unfilled.length,
         },
       });
@@ -645,7 +423,7 @@ export const wikiLoopService = {
 
       // Re-check unfilled count after the writer finishes
       const updatedDocs = await wikiStore.getDocumentsBySnapshot(snapshotId);
-      const stillUnfilled = updatedDocs.filter(d => d.pipelineStage !== 'done' && d.blockIds.length === 0);
+      const stillUnfilled = updatedDocs.filter(d => d.pipelineStage !== 'done' && d.contentMd.trim().length === 0);
       const filledCount = unfilled.length - stillUnfilled.length;
 
       if (stillUnfilled.length > 0) {
@@ -703,6 +481,309 @@ export const wikiLoopService = {
   },
 };
 
+interface WritingPhaseInput {
+  snapshot: { id: string; projectId: string };
+  workDir: string;
+  locale: 'zh' | 'en';
+  scan: import('../contracts/code-map.js').CodeMapScanResult;
+  outline: WikiOutlineEntry[];
+  planIdToDocId: Map<string, string>;
+  docIds: string[];
+  languages: string;
+}
+
+async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiResult> {
+  const { snapshot, workDir, locale, scan, outline, planIdToDocId, docIds, languages } = input;
+  const projectId = snapshot.projectId;
+  const sessionIds: string[] = [];
+  const registeredToolIds: string[] = [];
+  const hookIds: string[] = [];
+
+  try {
+    await wikiStore.updateSnapshotStatus(snapshot.id, 'writing', docIds);
+    await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.WritingStarted);
+
+    notify({
+      type: TaskNotificationEventType.TaskProgress,
+      taskKind: 'wiki_generate',
+      projectId,
+      taskId: snapshot.id,
+      title: wikiMsg(locale).genTitle,
+      message: wikiMsg(locale).writingContent,
+      severity: 'info',
+      meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, totalDocs: docIds.length },
+    });
+
+    const writerHandle = createWriterTools(scan, outline);
+    for (const tool of writerHandle.tools) {
+      toolRegistry.register(tool);
+      registeredToolIds.push(tool.id);
+    }
+
+    const commitHookId = `wiki-commit-${snapshot.id}`;
+    hookIds.push(commitHookId);
+    const persistedDocIds = [...docIds];
+
+    toolRegistry.registerHook({
+      id: commitHookId,
+      toolId: 'wiki.commit_document',
+      async afterExecute(ctx) {
+        const commitResult = ctx.result.result as { ok: boolean; index?: number };
+        if (!commitResult?.ok) return;
+        const docs = writerHandle.getCommittedDocuments();
+        const idx = commitResult.index ?? docs.length - 1;
+        const latestDoc = docs[idx];
+        if (!latestDoc) return;
+
+        const resolvedParentId = latestDoc.parentPlanId
+          ? planIdToDocId.get(latestDoc.parentPlanId) ?? null
+          : null;
+
+        let committedDocId: string;
+        const existingDocId = findExistingDocId(latestDoc, outline, planIdToDocId);
+        if (existingDocId) {
+          await fillDocumentContent(existingDocId, latestDoc, projectId, scan);
+          await wikiStore.updateDocumentPipelineStage(existingDocId, 'drafted');
+          committedDocId = existingDocId;
+        } else {
+          const newId = await persistSingleDocument(latestDoc, snapshot.id, projectId, scan, resolvedParentId);
+          persistedDocIds.push(newId);
+          const planEntry = outline.find(p => p.title === latestDoc.title && p.docType === latestDoc.docType);
+          if (planEntry) planIdToDocId.set(planEntry.id, newId);
+          await wikiStore.updateDocumentPipelineStage(newId, 'drafted');
+          committedDocId = newId;
+        }
+
+        logger.info({ projectId, title: latestDoc.title, docId: committedDocId }, 'wiki-loop: document content committed');
+        await publishDocumentCommittedEvent(projectId, committedDocId);
+      },
+    });
+
+    const sortedOutline = topologicalSort(outline);
+    const totalDocs = sortedOutline.length;
+    const MAX_CONCURRENT_DOCS = 3;
+
+    const processDocument = async (entry: WikiOutlineEntry, i: number) => {
+      const documentContext = buildDocumentContext(scan, entry);
+
+      const docPrompt = buildWikiPrompt({
+        role: 'document-writer',
+        languages,
+        locale,
+        documentEntry: entry,
+        documentContext,
+      });
+
+      const docSession = agentSessionRuntime.create({
+        projectId,
+        profileId: 'wiki-document-writer',
+        prompt: docPrompt,
+        sessionMetadata: { snapshotId: snapshot.id, phase: 'document-writer', docTitle: entry.title },
+      });
+      agentRuntimeStore.updateSession(docSession.id, {
+        title: `Wiki: ${entry.title}`,
+        updatedAt: nowIso(),
+      });
+      sessionIds.push(docSession.id);
+      setSessionWorkspaceRoot(docSession.id, workDir);
+
+      agentEventService.append({
+        sessionId: docSession.id,
+        type: 'progress_updated',
+        summary: `Phase 2: Generating document ${i + 1}/${totalDocs}: ${entry.title}`,
+        payload: { snapshotId: snapshot.id, phase: 2, docIndex: i, docTitle: entry.title },
+      });
+
+      notify({
+        type: TaskNotificationEventType.TaskProgress,
+        taskKind: 'wiki_generate',
+        projectId,
+        taskId: snapshot.id,
+        title: wikiMsg(locale).genTitle,
+        message: wikiMsg(locale).generating(entry.title, i + 1, totalDocs),
+        severity: 'info',
+        meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, docIndex: i, totalDocs, docTitle: entry.title },
+      });
+
+      logger.info({ projectId, docTitle: entry.title, index: i, total: totalDocs }, 'wiki-loop: generating document');
+      const stream = agentLoopRuntime.streamRun(docSession.id, { locale });
+      for await (const chunk of stream) {
+        if (chunk.type === 'run_failed') throw new Error(chunk.error ?? `Document writer failed for: ${entry.title}`);
+        if (chunk.type === 'done') {
+          const s = agentRuntimeStore.tryGetSession(docSession.id);
+          if (s && s.status === 'interrupted') throw new Error(`Document writer interrupted for: ${entry.title}`);
+        }
+      }
+
+      const committedDocs = writerHandle.getCommittedDocuments();
+      const targetDoc = committedDocs.find(d => d.title === entry.title && d.docType === entry.docType)
+        ?? committedDocs[committedDocs.length - 1];
+
+      const docId = planIdToDocId.get(entry.id);
+      const docAfterWriter = docId ? await wikiStore.getDocument(docId) : null;
+      const wasCommitted = targetDoc != null && docAfterWriter != null && docAfterWriter.contentMd.trim().length > 0;
+      if (!wasCommitted) {
+        logger.warn({ projectId, docTitle: entry.title, docId }, 'wiki-loop: writer completed but document was not committed — skipping verification');
+        return;
+      }
+
+      const claims: WikiClaim[] = (targetDoc as unknown as { claims?: WikiClaim[] })?.claims ?? [];
+      const loadBearing = claims.filter(c => c.centrality === 'load-bearing');
+
+      if (loadBearing.length > 0) {
+        logger.info({ projectId, docTitle: entry.title, claimCount: loadBearing.length }, 'wiki-loop: verifying claims');
+
+        const verifierHandle = createVerifierTools(scan);
+        for (const t of verifierHandle.tools) {
+          toolRegistry.register(t);
+          registeredToolIds.push(t.id);
+        }
+
+        const claimsList = loadBearing.map(c =>
+          `- ID: ${c.id} | Subject: ${c.subject} | Assertion: "${c.assertion}" | Evidence hint: ${c.evidenceHint}`
+        ).join('\n');
+
+        const verifierPrompt = buildLanguageDirective(locale) + [
+          `Verify the following claims by reading the actual source code.`,
+          `For each claim, call wiki.submit_verdict with your findings.`,
+          `If you cannot find supporting evidence for a claim, default to refuted=true.`,
+          ``,
+          `## Claims to verify`,
+          claimsList,
+          ``,
+          `Language composition: ${languages}`,
+        ].join('\n');
+
+        const verifierSession = agentSessionRuntime.create({
+          projectId,
+          profileId: 'wiki-verifier',
+          prompt: verifierPrompt,
+          sessionMetadata: { snapshotId: snapshot.id, phase: 'verifier', docTitle: entry.title },
+        });
+        sessionIds.push(verifierSession.id);
+        setSessionWorkspaceRoot(verifierSession.id, workDir);
+
+        const vStream = agentLoopRuntime.streamRun(verifierSession.id, { locale });
+        for await (const chunk of vStream) {
+          if (chunk.type === 'run_failed') {
+            logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: verifier failed');
+            break;
+          }
+          if (chunk.type === 'done') break;
+        }
+
+        const verdicts = verifierHandle.getVerdicts();
+        logger.info({ projectId, docTitle: entry.title, verdictCount: verdicts.length }, 'wiki-loop: verification complete');
+
+        for (const t of verifierHandle.tools) {
+          toolRegistry.unregister(t.id);
+          registeredToolIds.splice(registeredToolIds.indexOf(t.id), 1);
+        }
+
+        const refuted = verdicts.filter(v => v.refuted);
+        if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'verified');
+
+        if (refuted.length > 0) {
+          logger.info({ projectId, docTitle: entry.title, refutedCount: refuted.length }, 'wiki-loop: correcting refuted claims');
+
+          const corrections = refuted.map(v =>
+            `- Claim "${v.claimId}": REFUTED. Evidence: ${v.evidence}. Correction: ${v.correction ?? 'remove assertion'}`
+          ).join('\n');
+
+          const correctorPrompt = buildLanguageDirective(locale) + [
+            `You are rewriting a wiki document to fix factual errors found by verification.`,
+            ``,
+            `Document: "${entry.title}" (${entry.docType})`,
+            ``,
+            `The following claims were refuted with evidence:`,
+            corrections,
+            ``,
+            `Rewrite the document incorporating the corrections. Keep all other content intact.`,
+            `Call wiki.commit_document when done. Include updated claims.`,
+          ].join('\n');
+
+          const correctorSession = agentSessionRuntime.create({
+            projectId,
+            profileId: 'wiki-document-writer',
+            prompt: correctorPrompt,
+            sessionMetadata: { snapshotId: snapshot.id, phase: 'corrector', docTitle: entry.title },
+          });
+          sessionIds.push(correctorSession.id);
+          setSessionWorkspaceRoot(correctorSession.id, workDir);
+
+          const cStream = agentLoopRuntime.streamRun(correctorSession.id, { locale });
+          for await (const chunk of cStream) {
+            if (chunk.type === 'run_failed') {
+              logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: corrector failed');
+              break;
+            }
+            if (chunk.type === 'done') break;
+          }
+
+          if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
+        } else if (docId) {
+          await wikiStore.updateDocumentPipelineStage(docId, 'done');
+        }
+      } else {
+        logger.debug({ projectId, docTitle: entry.title }, 'wiki-loop: no load-bearing claims, skipping verification');
+        if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
+      }
+    };
+
+    const queue = [...sortedOutline.entries()];
+    const running: Promise<void>[] = [];
+
+    while (queue.length > 0 || running.length > 0) {
+      while (running.length < MAX_CONCURRENT_DOCS && queue.length > 0) {
+        const [i, entry] = queue.shift()!;
+        const task = processDocument(entry, i).then(() => {
+          running.splice(running.indexOf(task), 1);
+        });
+        running.push(task);
+      }
+      if (running.length > 0) {
+        await Promise.race(running);
+      }
+    }
+
+    await wikiStore.updateSnapshotStatus(snapshot.id, 'ready', persistedDocIds);
+    await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.GenerationCompleted);
+    logger.info({ projectId, snapshotId: snapshot.id, docCount: persistedDocIds.length }, 'wiki-loop: generation complete');
+    notify({
+      type: TaskNotificationEventType.TaskCompleted,
+      taskKind: 'wiki_generate',
+      projectId,
+      taskId: snapshot.id,
+      title: wikiMsg(locale).genTitle,
+      message: wikiMsg(locale).genComplete(persistedDocIds.length),
+      severity: 'success',
+      meta: { snapshotId: snapshot.id, docCount: persistedDocIds.length },
+    });
+
+    return { snapshotId: snapshot.id, status: 'completed' };
+  } catch (err) {
+    logger.error({ err, projectId, snapshotId: snapshot.id }, 'wiki-loop: writing phase failed');
+    notify({
+      type: TaskNotificationEventType.TaskFailed,
+      taskKind: 'wiki_generate',
+      projectId,
+      taskId: snapshot.id,
+      title: wikiMsg(locale).genFailed,
+      message: err instanceof Error ? err.message : String(err),
+      severity: 'error',
+      meta: { snapshotId: snapshot.id },
+    });
+    await failSession(sessionIds[sessionIds.length - 1], err);
+    await wikiStore.updateSnapshotStatus(snapshot.id, 'failed');
+    await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.GenerationFailed);
+    return { snapshotId: snapshot.id, status: 'failed', error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    for (const sid of sessionIds) clearSessionWorkspaceRoot(sid);
+    for (const hid of hookIds) toolRegistry.unregisterHook(hid);
+    for (const tid of registeredToolIds) toolRegistry.unregister(tid);
+  }
+}
+
 async function persistOutlineAsEmptyDocs(
   outline: WikiOutlineEntry[],
   snapshotId: string,
@@ -721,7 +802,8 @@ async function persistOutlineAsEmptyDocs(
       docType: entry.docType,
       parentId,
       sortOrder: entry.sortOrder ?? 0,
-      blockIds: [],
+      contentMd: '',
+      references: [],
     });
     planIdToDocId.set(entry.id, doc.id);
     docIds.push(doc.id);
@@ -763,68 +845,25 @@ function findExistingDocId(
   return null;
 }
 
-/**
- * Infer the correct contentFormat from the block draft.
- * When contentFormat is explicitly set, use it; otherwise infer from content type.
- * This prevents structured JSON objects from being mislabeled as 'markdown_fragment',
- * which would cause empty search_text and broken FTS indexing.
- */
-function inferContentFormat(
-  explicit: string | undefined,
-  content: unknown,
-): 'structured_json' | 'markdown_fragment' {
-  if (explicit === 'structured_json' || explicit === 'markdown_fragment') {
-    return explicit;
-  }
-  // Infer: structured objects → structured_json, strings → markdown_fragment
-  return typeof content === 'object' && content !== null
-    ? 'structured_json'
-    : 'markdown_fragment';
-}
-
 async function fillDocumentContent(
   docId: string,
   draft: WikiDocumentDraft,
-  projectId: string,
-  scan: import('../contracts/code-map.js').CodeMapScanResult,
+  _projectId: string,
+  _scan: import('../contracts/code-map.js').CodeMapScanResult,
 ): Promise<void> {
-  const repoIndexId = scan.scanId;
-  const blockIds: string[] = [];
-  const blockLinkMap: Array<{ blockId: string; links: import('../contracts/forest.js').SourceLink[] }> = [];
-
-  for (const blockDraft of draft.blocks) {
-    const block = await wikiStore.upsertBlock({
-      projectId,
-      documentId: docId,
-      blockType: blockDraft.blockType,
-      content: blockDraft.content,
-      contentFormat: inferContentFormat(blockDraft.contentFormat, blockDraft.content),
-      confidence: blockDraft.confidence ?? 0.5,
-      generatedBy: { agentRunId: docId, model: 'wiki-writer' },
-    });
-    blockIds.push(block.id);
-
-    const sourceHints = blockDraft.sourceHints ?? [];
-    if (sourceHints.length > 0) {
-      const links = resolveSourceHints(sourceHints, scan.codeIndex, block.id);
-      if (links.length > 0) blockLinkMap.push({ blockId: block.id, links });
-    }
-  }
-
-  await wikiStore.updateDocumentBlockIds(docId, blockIds);
-  if (blockLinkMap.length > 0) {
-    await wikiCoordinateService.createBindingsFromLinks(projectId, repoIndexId, blockLinkMap, scan.codeIndex);
-  }
+  await wikiStore.updateDocumentContent(docId, {
+    contentMd: draft.markdown,
+    references: draft.references,
+  });
 }
 
 async function persistSingleDocument(
   draft: WikiDocumentDraft,
   snapshotId: string,
   projectId: string,
-  scan: import('../contracts/code-map.js').CodeMapScanResult,
+  _scan: import('../contracts/code-map.js').CodeMapScanResult,
   parentId?: string | null,
 ): Promise<string> {
-  const repoIndexId = scan.scanId;
   const doc = await wikiStore.upsertDocument({
     snapshotId,
     projectId,
@@ -832,56 +871,10 @@ async function persistSingleDocument(
     docType: draft.docType,
     parentId: parentId ?? null,
     sortOrder: draft.sortOrder,
-    blockIds: [],
+    contentMd: draft.markdown,
+    references: draft.references,
   });
-
-  const blockIds: string[] = [];
-  const blockLinkMap: Array<{ blockId: string; links: import('../contracts/forest.js').SourceLink[] }> = [];
-
-  for (const blockDraft of draft.blocks) {
-    const block = await wikiStore.upsertBlock({
-      projectId,
-      documentId: doc.id,
-      blockType: blockDraft.blockType,
-      content: blockDraft.content,
-      contentFormat: inferContentFormat(blockDraft.contentFormat, blockDraft.content),
-      confidence: blockDraft.confidence ?? 0.5,
-      generatedBy: { agentRunId: snapshotId, model: 'wiki-writer' },
-    });
-    blockIds.push(block.id);
-
-    const sourceHints = blockDraft.sourceHints ?? [];
-    if (sourceHints.length > 0) {
-      const links = resolveSourceHints(sourceHints, scan.codeIndex, block.id);
-      if (links.length > 0) blockLinkMap.push({ blockId: block.id, links });
-    }
-  }
-
-  await wikiStore.updateDocumentBlockIds(doc.id, blockIds);
-  if (blockLinkMap.length > 0) {
-    await wikiCoordinateService.createBindingsFromLinks(projectId, repoIndexId, blockLinkMap, scan.codeIndex);
-  }
   return doc.id;
-}
-
-function resolveSourceHints(
-  hints: string[],
-  codeIndex: import('../contracts/code-map.js').CodeMapCodeIndex,
-  blockId: string,
-): import('../contracts/forest.js').SourceLink[] {
-  const links: import('../contracts/forest.js').SourceLink[] = [];
-  for (const hint of hints) {
-    const sym = codeIndex.symbols.find(s => s.qualifiedName === hint || s.name === hint);
-    if (sym) {
-      links.push({ id: nanoid(), nodeId: blockId, anchor: { kind: 'symbol', symbolId: sym.id }, confidence: 0.8, createdBy: 'analyzer' });
-      continue;
-    }
-    const file = codeIndex.files.find(f => f.path === hint || f.path.endsWith(hint));
-    if (file) {
-      links.push({ id: nanoid(), nodeId: blockId, anchor: { kind: 'file', fileId: file.id }, confidence: 0.6, createdBy: 'analyzer' });
-    }
-  }
-  return links;
 }
 
 async function failSession(sessionId: string | undefined, err: unknown): Promise<void> {

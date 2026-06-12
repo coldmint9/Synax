@@ -1,11 +1,10 @@
 import type { WikiEvaluation } from './wiki-evaluation-service.js'
-import type { WikiBlock, WikiSourceBinding } from './contracts.js'
+import type { WikiDocument } from './contracts.js'
 import { buildLanguageDirective } from '../prompts/language-directive.js'
 
 export interface PlanPromptContext {
   issues: WikiEvaluation[]
-  blocks: Record<string, WikiBlock>
-  bindings: WikiSourceBinding[]
+  documents: Record<string, WikiDocument>
   wikiOverview: string
   locale?: 'zh' | 'en'
 }
@@ -22,27 +21,23 @@ export function buildPlanPrompt(ctx: PlanPromptContext): string {
 
 function buildIssueDetails(ctx: PlanPromptContext): string {
   return ctx.issues.map((issue, i) => {
-    const block = ctx.blocks[issue.blockId]
-    const blockTitle = block ? extractBlockTitle(block) : issue.blockId.slice(0, 8)
-    const blockType = block?.blockType ?? 'unknown'
-    const blockContent = block ? extractContent(block) : '(unavailable)'
+    const doc = ctx.documents[issue.documentId]
+    const docTitle = doc?.title ?? issue.documentId.slice(0, 8)
+    const docExcerpt = doc?.contentMd ? doc.contentMd.slice(0, 800) : '(unavailable)'
 
-    const relatedBindings = ctx.bindings
-      .filter(b => b.wikiBlockId === issue.blockId)
-      .map(b => {
-        const loc = b.filePath
-          ? `${b.filePath}${b.startLine ? `:${b.startLine}-${b.endLine}` : ''}`
-          : b.sourceId
-        return `    - ${loc} (${b.sourceType}, confidence: ${b.confidence})`
-      })
-      .join('\n')
+    const refs = doc?.references?.map(ref => {
+      const loc = ref.startLine != null
+        ? `${ref.filePath}:${ref.startLine}${ref.endLine != null ? `-${ref.endLine}` : ''}`
+        : ref.filePath
+      return `    - ${loc}${ref.symbol ? ` (${ref.symbol})` : ''}`
+    }).join('\n') ?? '    (no references)'
 
     return `### Issue ${i + 1}: [${issue.id}]
 - **Content**: ${issue.content}
-- **Related Block**: "${blockTitle}" (${blockType})
-- **Block Summary**: ${blockContent}
-- **Source Bindings**:
-${relatedBindings || '    (no direct bindings)'}`;
+- **Related Document**: "${docTitle}"
+- **Document Excerpt**: ${docExcerpt}
+- **Source References**:
+${refs}`;
   }).join('\n\n');
 }
 
@@ -65,12 +60,12 @@ Analyze each Issue one by one:
 1. What exactly does this issue require? Are there implicit requirements?
 2. Which modules/components are involved? What is the impact scope?
 3. Are there dependencies or conflicts with other issues?
-4. If block content is unclear, use plan.read_wiki_block for additional understanding
+4. If document content is unclear, use plan.read_wiki_document for additional understanding
 
 In your thinking, output the clarification analysis for each issue before proceeding.
 
 ### Phase 2 — Search and Verify
-Based on Phase 1 understanding and the source binding clues listed above:
+Based on Phase 1 understanding and the source references listed above:
 1. Use grep.search to search for key symbols, types, function names to understand code structure
 2. Use file.read to read key code snippets when necessary (do not read entire files)
 3. Verify that the problems described in issues actually exist in the code
@@ -90,24 +85,4 @@ Each node contains:
 - expectedFiles: List of file paths expected to be modified
 
 Node granularity: one node = one independently completable and verifiable code change.`;
-}
-
-function extractBlockTitle(block: WikiBlock): string {
-  try {
-    const content = typeof block.content === 'string' ? JSON.parse(block.content) : block.content
-    if (content?.title) return content.title
-    if (content?.text) return content.text.slice(0, 40)
-    if (typeof content === 'string') return content.slice(0, 40)
-  } catch { /* ignore */ }
-  return block.blockType
-}
-
-function extractContent(block: WikiBlock): string {
-  try {
-    const content = typeof block.content === 'string' ? JSON.parse(block.content) : block.content
-    if (typeof content === 'string') return content.slice(0, 800)
-    if (content?.text) return content.text.slice(0, 800)
-    return JSON.stringify(content).slice(0, 800)
-  } catch { /* ignore */ }
-  return '(content unavailable)'
 }

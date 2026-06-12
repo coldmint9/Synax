@@ -1,19 +1,7 @@
-import { useEffect, useRef, useCallback } from 'react'
-import { Hash, AlignLeft, List, Table2, Code, Share2, AlertTriangle } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { FileText } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
-import { useWikiStore } from '../../state/wikiStore'
 import { useWikiSearch, type SearchResult } from './hooks/useWikiSearch'
-import type { WikiBlockType } from '../../../lib/contracts/wiki'
-
-const blockTypeIcons: Record<WikiBlockType, typeof Hash> = {
-  heading: Hash,
-  prose: AlignLeft,
-  signature: Code,
-  callout: AlertTriangle,
-  list: List,
-  table: Table2,
-  diagram: Share2,
-}
 
 interface Props {
   query: string
@@ -69,7 +57,7 @@ export default function WikiSearchPanel({ query, activeIndex, onActiveIndexChang
   if (loading) {
     return (
       <div ref={listRef} className="p-3">
-        <p className="text-center text-xs text-muted-foreground py-4 animate-pulse">{t('wikiSearchLoading') ?? 'Searching…'}</p>
+        <p className="text-center text-xs text-muted-foreground py-4 animate-pulse">Searching…</p>
       </div>
     )
   }
@@ -91,10 +79,9 @@ export default function WikiSearchPanel({ query, activeIndex, onActiveIndexChang
           </p>
           {items.map(result => {
             const idx = flatIndex++
-            const Icon = blockTypeIcons[result.blockType] ?? AlignLeft
             return (
               <button
-                key={result.blockId}
+                key={`${result.documentId}-${idx}`}
                 type="button"
                 data-index={idx}
                 className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-colors ${
@@ -103,7 +90,7 @@ export default function WikiSearchPanel({ query, activeIndex, onActiveIndexChang
                 onMouseDown={e => { e.preventDefault(); onSelect(result) }}
                 onMouseEnter={() => onActiveIndexChange(idx)}
               >
-                <Icon size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
+                <FileText size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
                 <span className="line-clamp-2 break-all">{renderSnippet(result)}</span>
               </button>
             )

@@ -1,5 +1,5 @@
 import { AlertCircle, BookOpen, CheckCircle2, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Skeleton, Spinner } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
 import { useLocale } from '../../../hooks/useLocale'
@@ -8,7 +8,7 @@ import { useWikiRefreshListener } from '../../../hooks/useWikiRefreshListener'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import WikiDocumentTree from './WikiDocumentTree'
-import WikiBlockRenderer from './WikiBlockRenderer'
+import WikiDocumentView from './WikiDocumentView'
 import WikiDraftPanel from './WikiDraftPanel'
 import WikiOutlineProgress from './WikiOutlineProgress'
 import PlanView from './PlanView'
@@ -209,7 +209,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const snapshot = useWikiStore(s => s.snapshot)
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
   const documents = useWikiStore(s => s.documents)
-  const evaluations = useWikiStore(s => s.evaluations)
   const loading = useWikiStore(s => s.loading)
   const loadEvaluations = useWikiStore(s => s.loadEvaluations)
   const draftPanelOpen = useWikiStore(s => s.draftPanelOpen)
@@ -266,15 +265,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       handleError(new Error(refreshTask.message))
     }
   }, [refreshTask.phase, refreshTask.message, projectId, loadDrafts, toggleDraftPanel])
-
-  // Compute issuesByBlockId
-  const issuesByBlockId = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const ev of evaluations) {
-      map.set(ev.blockId, (map.get(ev.blockId) ?? 0) + 1)
-    }
-    return map
-  }, [evaluations])
 
   const isResizing = useRef(false)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -462,7 +452,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               <div className="flex items-center gap-1.5">
                 <AlertCircle size={11} className="shrink-0 text-destructive" />
                 <span className="text-[11px] text-destructive">
-                  {t('wikiGenerationIncomplete', { done: documents.filter(d => d.blockIds.length > 0).length, total: documents.length })}
+                  {t('wikiGenerationIncomplete', { done: documents.filter(d => d.contentMd).length, total: documents.length })}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
@@ -521,7 +511,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
               <Loader2 size={11} className="animate-spin text-primary" />
               <span className="text-[11px] text-primary">
-                {t('wikiWriting', { done: documents.filter(d => d.blockIds.length > 0).length, total: documents.length })}
+                {t('wikiWriting', { done: documents.filter(d => d.contentMd).length, total: documents.length })}
               </span>
             </div>
           )}
@@ -545,7 +535,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
         <div className={`min-h-0 flex-1 flex flex-col overflow-hidden ${viewMode !== 'document' ? 'hidden' : ''}`}>
           {selectedDoc ? (
             <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-14">
-              <WikiBlockRenderer document={selectedDoc} issuesByBlockId={issuesByBlockId} projectId={projectId} />
+              <WikiDocumentView document={selectedDoc} projectId={projectId} />
             </div>
           ) : (
             <div className="flex h-full items-center justify-center pt-14">

@@ -1,10 +1,8 @@
 import { EventEmitter } from "node:events";
 import { SseEventType } from "../../lib/sse-events.js";
 import type {
-  WikiBlock,
   WikiDocument,
   WikiSnapshot,
-  WikiSourceBinding,
 } from "../wiki/contracts.js";
 import type { WikiSnapshotEventReason } from "../wiki/wiki-snapshot-events.js";
 
@@ -49,9 +47,6 @@ export interface TaskLifecycleNotificationEvent {
 export interface WikiSnapshotEventTree {
   snapshot: WikiSnapshot | null;
   documents: WikiDocument[];
-  blocks: WikiBlock[];
-  sourceBindings: WikiSourceBinding[];
-  patchesSummary: { pending: number; conflict: number };
   draftsSummary: { ready: number; generating: number };
 }
 
@@ -71,7 +66,6 @@ export interface WikiDocumentCommittedNotificationEvent {
   timestamp: number;
   documentId: string;
   document: WikiDocument;
-  blocks: WikiBlock[];
 }
 
 export type TaskNotificationEvent = TaskLifecycleNotificationEvent | WikiSnapshotNotificationEvent | WikiDocumentCommittedNotificationEvent;
@@ -96,15 +90,6 @@ class TaskNotificationBus {
     this.emitter.on(channel, handler);
     return () => {
       this.emitter.off(channel, handler);
-    };
-  }
-
-  subscribeAll(
-    handler: (event: TaskNotificationEvent) => void,
-  ): () => void {
-    this.emitter.on("*", handler);
-    return () => {
-      this.emitter.off("*", handler);
     };
   }
 }

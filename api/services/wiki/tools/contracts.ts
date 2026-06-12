@@ -1,26 +1,21 @@
 import type { RegisteredTool } from '../../agent-runtime/contracts.js';
-import type { WikiDocType, WikiBlockType, WikiBlockContentFormat } from '../contracts.js';
+import type { WikiDocType, WikiReference } from '../contracts.js';
 
 export const WIKI_DOC_TYPES: WikiDocType[] = [
   'landscape', 'topology', 'module', 'flow', 'data',
 ];
 
-export const WIKI_BLOCK_TYPES: WikiBlockType[] = [
-  'heading', 'prose', 'signature', 'callout', 'table', 'diagram', 'list',
-];
+export const MIN_MARKDOWN_LENGTH: Record<WikiDocType, number> = {
+  landscape: 1200,
+  topology: 1000,
+  module: 1500,
+  flow: 1000,
+  data: 900,
+};
 
 export const MIN_CONTENT_LENGTH = 350;
-export const MIN_BLOCKS_BY_DOC_TYPE: Record<WikiDocType, number> = {
-  landscape: 8,
-  topology: 7,
-  module: 10,
-  flow: 8,
-  data: 7,
-};
-export const MIN_BLOCKS = 6;
 export const PAGE_SIZE = 80;
 
-// Package baseline thresholds for outline quality gates
 export const MIN_PACKAGE_FILES = 3;
 export const COVERAGE_MIN = 0.85;
 export const FILE_SPLIT = 20;
@@ -31,13 +26,9 @@ export interface WikiDocumentDraft {
   docType: WikiDocType;
   sortOrder?: number;
   parentPlanId?: string;
-  blocks: Array<{
-    blockType: WikiBlockType;
-    content: unknown;
-    contentFormat?: WikiBlockContentFormat;
-    sourceHints?: string[];
-    confidence?: number;
-  }>;
+  markdown: string;
+  references: WikiReference[];
+  claims: WikiClaim[];
 }
 
 export interface WikiOutlineEntry {

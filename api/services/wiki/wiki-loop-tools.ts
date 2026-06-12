@@ -12,9 +12,8 @@ export {
   buildCommitDocumentTool,
   buildTreeString,
   WIKI_DOC_TYPES,
-  WIKI_BLOCK_TYPES,
   MIN_CONTENT_LENGTH,
-  MIN_BLOCKS,
+  MIN_MARKDOWN_LENGTH,
   PAGE_SIZE,
 } from './tools/index.js';
 

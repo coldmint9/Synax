@@ -6,7 +6,7 @@ import { wikiEvaluations, wikiPlans, wikiPlanNodes, wikiPlanNodeArtifacts } from
 export type WikiEvaluation = {
   id: string
   projectId: string
-  blockId: string
+  documentId: string
   content: string
   status: 'active' | 'planned' | 'resolved'
   planNodeId: string | null
@@ -66,17 +66,15 @@ export type WikiPlanNodeArtifact = {
 
 const now = () => new Date().toISOString()
 
-// ── Evaluations CRUD ────────────────────────────────────────────────────────
-
-export async function createEvaluation(projectId: string, blockId: string, content: string): Promise<WikiEvaluation> {
+export async function createEvaluation(projectId: string, documentId: string, content: string): Promise<WikiEvaluation> {
   const db = getDb()
   const id = nanoid()
   const ts = now()
   await db.insert(wikiEvaluations).values({
-    id, projectId, blockId, content,
+    id, projectId, documentId, content,
     status: 'active', createdAt: ts, updatedAt: ts,
   })
-  return { id, projectId, blockId, content, status: 'active', planNodeId: null, createdAt: ts, updatedAt: ts, resolvedAt: null }
+  return { id, projectId, documentId, content, status: 'active', planNodeId: null, createdAt: ts, updatedAt: ts, resolvedAt: null }
 }
 
 export async function listEvaluations(projectId: string, status?: string): Promise<WikiEvaluation[]> {
@@ -88,13 +86,16 @@ export async function listEvaluations(projectId: string, status?: string): Promi
   return rows.map(rowToEvaluation)
 }
 
-export async function listEvaluationsByBlock(blockId: string): Promise<WikiEvaluation[]> {
+export async function listEvaluationsByDocument(documentId: string): Promise<WikiEvaluation[]> {
   const db = getDb()
   const rows = await db.select().from(wikiEvaluations)
-    .where(eq(wikiEvaluations.blockId, blockId))
+    .where(eq(wikiEvaluations.documentId, documentId))
     .orderBy(desc(wikiEvaluations.createdAt))
   return rows.map(rowToEvaluation)
 }
+
+/** @deprecated Use listEvaluationsByDocument */
+export const listEvaluationsByBlock = listEvaluationsByDocument;
 
 export async function updateEvaluationStatus(id: string, status: WikiEvaluation['status']): Promise<void> {
   const db = getDb()
@@ -107,8 +108,6 @@ export async function deleteEvaluation(id: string): Promise<void> {
   const db = getDb()
   await db.delete(wikiEvaluations).where(eq(wikiEvaluations.id, id))
 }
-
-// ── Plans CRUD ──────────────────────────────────────────────────────────────
 
 export async function createPlan(projectId: string, snapshotId: string, evaluationIds: string[]): Promise<WikiPlan> {
   const db = getDb()
@@ -141,8 +140,6 @@ export async function confirmPlan(id: string): Promise<void> {
   const db = getDb()
   await db.update(wikiPlans).set({ status: 'confirmed', confirmedAt: now(), updatedAt: now() }).where(eq(wikiPlans.id, id))
 }
-
-// ── Plan Nodes ──────────────────────────────────────────────────────────────
 
 export async function createPlanNode(input: {
   planId: string; projectId: string; title: string; description?: string;
@@ -184,8 +181,6 @@ export async function updatePlanNodeStatus(id: string, status: WikiPlanNode['sta
   if (status === 'committed') updates.completedAt = now()
   await db.update(wikiPlanNodes).set(updates).where(eq(wikiPlanNodes.id, id))
 }
-
-// ── Plan status transitions ────────────────────────────────────────────────
 
 export async function updatePlanStatus(id: string, status: WikiPlan['status']): Promise<void> {
   const db = getDb()
@@ -242,8 +237,6 @@ export async function getNextPendingNode(planId: string): Promise<WikiPlanNode |
   return rows.length ? rowToPlanNode(rows[0]) : null
 }
 
-// ── Plan Node CRUD (draft editing) ────────────────────────────────────────
-
 export async function updatePlanNode(id: string, updates: {
   title?: string; description?: string; evaluationIds?: string[];
   dependsOn?: string[]; expectedFiles?: string[];
@@ -278,8 +271,6 @@ export async function reorderPlanNodes(planId: string, nodeIds: string[]): Promi
       .where(and(eq(wikiPlanNodes.id, nodeIds[i]), eq(wikiPlanNodes.planId, planId)))
   }
 }
-
-// ── Artifacts CRUD ─────────────────────────────────────────────────────────
 
 export async function createArtifact(input: {
   nodeId: string; planId: string; sessionId?: string;
@@ -341,11 +332,9 @@ export async function discardArtifact(id: string): Promise<void> {
     .where(eq(wikiPlanNodeArtifacts.id, id))
 }
 
-// ── Row mappers ─────────────────────────────────────────────────────────────
-
 function rowToEvaluation(r: typeof wikiEvaluations.$inferSelect): WikiEvaluation {
   return {
-    id: r.id, projectId: r.projectId, blockId: r.blockId,
+    id: r.id, projectId: r.projectId, documentId: r.documentId,
     content: r.content, status: r.status as WikiEvaluation['status'],
     planNodeId: r.planNodeId ?? null,
     createdAt: r.createdAt, updatedAt: r.updatedAt, resolvedAt: r.resolvedAt ?? null,
@@ -386,4 +375,3 @@ function rowToArtifact(r: typeof wikiPlanNodeArtifacts.$inferSelect): WikiPlanNo
     createdAt: r.createdAt, updatedAt: r.updatedAt,
   }
 }
-

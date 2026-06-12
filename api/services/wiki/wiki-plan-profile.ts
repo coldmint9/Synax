@@ -13,7 +13,7 @@ export const planGeneratorProfile: AgentProfile = {
     'file.list',
     'file.read',
     'grep.search',
-    'plan.read_wiki_block',
+    'plan.read_wiki_document',
     'plan.submit_node',
     'tools.escalate',
   ],

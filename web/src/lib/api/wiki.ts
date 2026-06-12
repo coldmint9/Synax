@@ -4,8 +4,6 @@
 
 import type {
   WikiSnapshotTree,
-  WikiBlock,
-  WikiPatch,
   WikiRefreshDraft,
 } from '../contracts/wiki';
 import { apiRequest } from './origin';
@@ -15,24 +13,6 @@ const BASE = '/api/wiki';
 export const wikiApi = {
   getSnapshot(snapshotId: string): Promise<WikiSnapshotTree> {
     return apiRequest<WikiSnapshotTree>(`${BASE}/snapshots/${snapshotId}`);
-  },
-
-  updateBlock(
-    blockId: string,
-    body: { content: unknown; manualState?: 'edited' | 'locked'; actorId?: string },
-  ): Promise<WikiBlock> {
-    return apiRequest<WikiBlock>(`${BASE}/blocks/${blockId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    });
-  },
-
-  async getPatches(projectId: string, status?: string): Promise<WikiPatch[]> {
-    const url = status
-      ? `${BASE}/projects/${projectId}/patches?status=${status}`
-      : `${BASE}/projects/${projectId}/patches`;
-    const data = await apiRequest<{ patches: WikiPatch[] }>(url);
-    return data.patches;
   },
 
   exportSnapshotUrl(snapshotId: string, refs = false): string {
@@ -83,19 +63,6 @@ export const wikiApi = {
     });
   },
 
-  resolveBinding(bindingId: string): Promise<{
-    resolved: boolean;
-    precision: string;
-    filePath?: string;
-    startLine?: number;
-    endLine?: number;
-    qualifiedName?: string;
-    ideUri?: string;
-    fallbackSearchQuery?: string;
-  }> {
-    return apiRequest(`${BASE}/source-bindings/${bindingId}/resolve`);
-  },
-
   // ── Draft API ───────────────────────────────────────────────────────────────
 
   async getDrafts(projectId: string, status?: string): Promise<WikiRefreshDraft[]> {
@@ -110,18 +77,18 @@ export const wikiApi = {
     return apiRequest<WikiRefreshDraft>(`${BASE}/drafts/${draftId}`);
   },
 
-  applyDraft(draftId: string): Promise<{ applied: string[]; conflicts: Array<{ blockId: string; manualState: string }> }> {
+  applyDraft(draftId: string): Promise<{ applied: string[]; conflicts: Array<{ documentId: string; manualState: string }> }> {
     return apiRequest(`${BASE}/drafts/${draftId}/apply`, { method: 'POST', body: JSON.stringify({}) });
   },
 
-  applyPartialDraft(draftId: string, blockIds: string[]): Promise<{ applied: string[]; conflicts: Array<{ blockId: string; manualState: string }> }> {
+  applyPartialDraft(draftId: string, documentIds: string[]): Promise<{ applied: string[]; conflicts: Array<{ documentId: string; manualState: string }> }> {
     return apiRequest(`${BASE}/drafts/${draftId}/apply-partial`, {
       method: 'POST',
-      body: JSON.stringify({ blockIds }),
+      body: JSON.stringify({ documentIds }),
     });
   },
 
-  editDraft(draftId: string, changes: Array<{ blockId: string; newContent: unknown }>): Promise<{ applied: string[]; conflicts: Array<{ blockId: string; manualState: string }> }> {
+  editDraft(draftId: string, changes: Array<{ documentId: string; newContentMd: string }>): Promise<{ applied: string[]; conflicts: Array<{ documentId: string; manualState: string }> }> {
     return apiRequest(`${BASE}/drafts/${draftId}/edit`, {
       method: 'POST',
       body: JSON.stringify({ changes }),
@@ -144,10 +111,8 @@ export const wikiApi = {
 
 export interface WikiSearchApiResult {
   results: Array<{
-    blockId: string;
     documentId: string;
     documentTitle: string;
-    blockType: string;
     snippet: string;
     rank: number;
   }>;

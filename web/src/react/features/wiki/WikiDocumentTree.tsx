@@ -26,7 +26,7 @@ function DocItem({
   issueCount?: number
   draftInfo?: { count: number; status: 'ready' | 'generating' | 'partially_applied' }
 }) {
-  const isEmpty = doc.blockIds.length === 0
+  const isEmpty = !doc.contentMd
   return (
     <button
       type="button"
@@ -71,17 +71,8 @@ export default function WikiDocumentTree() {
 
   // Compute issue counts per document
   const issuesByDocId = new Map<string, number>()
-  if (evaluations.length > 0) {
-    const blockToDoc = new Map<string, string>()
-    for (const doc of documents) {
-      for (const blockId of doc.blockIds) {
-        blockToDoc.set(blockId, doc.id)
-      }
-    }
-    for (const ev of evaluations) {
-      const docId = blockToDoc.get(ev.blockId)
-      if (docId) issuesByDocId.set(docId, (issuesByDocId.get(docId) ?? 0) + 1)
-    }
+  for (const ev of evaluations) {
+    issuesByDocId.set(ev.documentId, (issuesByDocId.get(ev.documentId) ?? 0) + 1)
   }
 
   // Compute draft info per document

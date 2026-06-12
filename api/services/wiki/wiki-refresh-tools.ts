@@ -1,44 +1,40 @@
 import * as z from 'zod/v4'
 import type { RegisteredTool } from '../agent-runtime/contracts.js'
-import type { WikiBlock } from './contracts.js'
+import type { WikiDocument } from './contracts.js'
 
-export interface DraftChangeDraft {
-  blockId: string
-  action: 'update' | 'delete' | 'insert_after'
-  newContent: unknown
+export interface DraftDocumentChangeDraft {
+  documentId: string
+  newContentMd: string
   reasoning: string
 }
 
 export interface RefreshToolContext {
-  allBlocks: WikiBlock[]
-  affectedBlockIds: string[]
+  document: WikiDocument
   documentTitle: string
 }
 
 export function createRefreshTools(context: RefreshToolContext) {
   let submittedSummary: string | null = null
-  let submittedChanges: DraftChangeDraft[] = []
+  let submittedChange: DraftDocumentChangeDraft | null = null
 
-  const readBlockTool: RegisteredTool = {
-    id: 'refresh.read_block',
-    label: 'Read Wiki Block',
-    description: 'Read the full content of a wiki block by ID.',
+  const readDocumentTool: RegisteredTool = {
+    id: 'refresh.read_document',
+    label: 'Read Wiki Document',
+    description: 'Read the full markdown content of the current wiki document.',
     category: 'read',
     mutability: 'read',
     resumeBehavior: 'auto',
     internalGate: 'none',
-    inputSchema: z.object({
-      blockId: z.string().describe('The wiki block ID to read'),
-    }),
-    async execute(input) {
-      const args = input.args as { blockId: string }
-      const block = context.allBlocks.find(b => b.id === args.blockId)
-      if (!block) {
-        return { result: { error: 'Block not found' }, displaySummary: `Block not found: ${args.blockId}`, artifacts: [] }
-      }
+    inputSchema: z.object({}),
+    async execute() {
       return {
-        result: { blockId: block.id, blockType: block.blockType, contentFormat: block.contentFormat, content: block.content },
-        displaySummary: `Read block ${block.blockType} [${args.blockId.slice(0, 8)}]`,
+        result: {
+          documentId: context.document.id,
+          title: context.document.title,
+          contentMd: context.document.contentMd,
+          references: context.document.references,
+        },
+        displaySummary: `Read document "${context.documentTitle}"`,
         artifacts: [],
       }
     },
@@ -46,35 +42,35 @@ export function createRefreshTools(context: RefreshToolContext) {
 
   const submitChangesTool: RegisteredTool = {
     id: 'refresh.submit_changes',
-    label: 'Submit Draft Changes',
-    description: 'Submit the final set of block changes for this document. Call once with all changes.',
+    label: 'Submit Document Update',
+    description: 'Submit the updated markdown for this document. Call once with the full revised body.',
     category: 'write',
     mutability: 'write',
     resumeBehavior: 'auto',
     internalGate: 'none',
     inputSchema: z.object({
       summary: z.string().describe('One-line summary of what changed in this document'),
-      changes: z.array(z.object({
-        blockId: z.string().describe('ID of the block to modify'),
-        action: z.enum(['update', 'delete', 'insert_after']).describe('Type of change'),
-        newContent: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('New block content — use a plain markdown string for markdown_fragment blocks, or a JSON object for structured blocks (heading, list, etc.)'),
-        reasoning: z.string().describe('One sentence explaining why this block needs updating'),
-      })),
+      newContentMd: z.string().describe('Full updated markdown body for the document'),
+      reasoning: z.string().describe('Why the document needs updating based on code changes'),
     }),
     async execute(input) {
-      const args = input.args as { summary: string; changes: DraftChangeDraft[] }
+      const args = input.args as { summary: string; newContentMd: string; reasoning: string }
       submittedSummary = args.summary
-      submittedChanges = args.changes
+      submittedChange = {
+        documentId: context.document.id,
+        newContentMd: args.newContentMd,
+        reasoning: args.reasoning,
+      }
       return {
-        result: { ok: true, count: args.changes.length },
-        displaySummary: `Submitted ${args.changes.length} changes for "${context.documentTitle}"`,
+        result: { ok: true },
+        displaySummary: `Submitted update for "${context.documentTitle}"`,
         artifacts: [],
       }
     },
   }
 
   return {
-    tools: [readBlockTool, submitChangesTool],
-    getResult: () => submittedChanges.length > 0 ? { summary: submittedSummary, changes: submittedChanges } : null,
+    tools: [readDocumentTool, submitChangesTool],
+    getResult: () => submittedChange ? { summary: submittedSummary, change: submittedChange } : null,
   }
 }
