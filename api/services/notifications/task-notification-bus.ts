@@ -14,6 +14,7 @@ export const TaskNotificationEventType = {
   TaskCompleted: "task_completed",
   TaskFailed: "task_failed",
   WikiSnapshot: "wiki_snapshot",
+  DocumentCommitted: "document_committed",
 } as const;
 
 export const NotificationStreamEventType = {
@@ -29,7 +30,8 @@ export type TaskLifecycleNotificationType =
 
 export type TaskNotificationType =
   | TaskLifecycleNotificationType
-  | typeof TaskNotificationEventType.WikiSnapshot;
+  | typeof TaskNotificationEventType.WikiSnapshot
+  | typeof TaskNotificationEventType.DocumentCommitted;
 
 export interface TaskLifecycleNotificationEvent {
   id: string;
@@ -62,7 +64,17 @@ export interface WikiSnapshotNotificationEvent {
   tree: WikiSnapshotEventTree;
 }
 
-export type TaskNotificationEvent = TaskLifecycleNotificationEvent | WikiSnapshotNotificationEvent;
+export interface WikiDocumentCommittedNotificationEvent {
+  id: string;
+  type: typeof TaskNotificationEventType.DocumentCommitted;
+  projectId: string;
+  timestamp: number;
+  documentId: string;
+  document: WikiDocument;
+  blocks: WikiBlock[];
+}
+
+export type TaskNotificationEvent = TaskLifecycleNotificationEvent | WikiSnapshotNotificationEvent | WikiDocumentCommittedNotificationEvent;
 
 class TaskNotificationBus {
   private emitter = new EventEmitter();

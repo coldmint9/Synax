@@ -3,6 +3,7 @@ import { logger } from "../../lib/logger.js";
 import {
   taskNotificationBus,
   TaskNotificationEventType,
+  type WikiDocumentCommittedNotificationEvent,
   type WikiSnapshotNotificationEvent,
   type WikiSnapshotEventTree,
 } from "../notifications/task-notification-bus.js";
@@ -77,5 +78,26 @@ export async function publishLatestWikiSnapshot(projectId: string, reason?: Wiki
     taskNotificationBus.emit(await buildWikiSnapshotEvent(projectId, reason));
   } catch (err) {
     logger.warn({ err, projectId, reason }, "wiki snapshot event: emit failed");
+  }
+}
+
+export async function publishDocumentCommittedEvent(projectId: string, documentId: string): Promise<void> {
+  try {
+    const doc = await wikiStore.getDocument(documentId);
+    if (!doc) return;
+    const blocks = await wikiStore.getBlocksByDocument(documentId);
+    const event: WikiDocumentCommittedNotificationEvent = {
+      id: nanoid(12),
+      type: TaskNotificationEventType.DocumentCommitted,
+      projectId,
+      timestamp: Date.now(),
+      documentId,
+      document: doc,
+      blocks,
+    };
+    taskNotificationBus.emit(event);
+    logger.debug({ projectId, documentId, blockCount: blocks.length }, 'wiki-snapshot-events: document committed event published');
+  } catch (err) {
+    logger.warn({ err, projectId, documentId }, "wiki-snapshot-events: document committed event failed");
   }
 }

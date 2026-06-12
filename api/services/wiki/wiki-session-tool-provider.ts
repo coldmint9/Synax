@@ -30,15 +30,16 @@ class WikiSessionToolProvider implements SessionToolProvider {
 
     const phase = meta.phase as string | undefined;
 
-    // For writer/document-writer/corrector: provide commit + mermaid tools
-    if (phase === 'writer' || phase === 'document-writer' || phase === 'corrector') {
-      // Fresh empty state — the model continues from where it left off,
-      // new commits go into a fresh array. Previous commits are already in DB.
-      const committedDocuments: WikiDocumentDraft[] = [];
-      const commitTool = buildCommitDocumentTool(committedDocuments, []);
-      const checkMermaid = buildCheckMermaidTool();
-      return [commitTool, checkMermaid];
-    }
+    // For writer/document-writer/corrector: the global tool registry already
+    // has wiki.commit_document and wiki.check_mermaid registered via
+    // createWriterTools() before agent execution. The provider must NOT shadow
+    // these global tools — the global tools share the committedDocuments array
+    // with the afterExecute hook that persists blocks to DB. A fresh array inside
+    // the provider would cause the hook to find no committed documents, silently
+    // dropping all block content.
+    //
+    // Provider tools are only supplied for phases where global tools are absent
+    // (e.g. explorer, verifier — which use different commit/verdict tools).
 
     return [];
   }

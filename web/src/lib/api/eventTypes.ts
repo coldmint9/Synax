@@ -4,6 +4,7 @@ export const TaskNotificationEventType = {
   TaskCompleted: 'task_completed',
   TaskFailed: 'task_failed',
   WikiSnapshot: 'wiki_snapshot',
+  DocumentCommitted: 'document_committed',
 } as const
 
 export type TaskNotificationEventType =

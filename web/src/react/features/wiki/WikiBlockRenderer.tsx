@@ -360,7 +360,8 @@ export default function WikiBlockRenderer({ document, issuesByBlockId, projectId
   }, [contentBlocks, selectedBlockId, selectBlock])
 
   if (blocks.length === 0) {
-    const isGenerating = snapshot?.status === 'outline_ready' || snapshot?.status === 'writing'
+    const isGenerating = (snapshot?.status === 'outline_ready' || snapshot?.status === 'writing')
+      && document.pipelineStage === 'pending'
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
         {isGenerating ? (
