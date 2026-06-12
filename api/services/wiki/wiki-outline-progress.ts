@@ -192,10 +192,22 @@ export function scanCompleteActivity(
   fileCount: number,
   languages: string,
   locale: 'zh' | 'en',
+  fromCache = false,
 ): OutlineActivityEvent {
+  if (fromCache) {
+    return locale === 'en'
+      ? { activity: `Scan cache hit — reusing analysis of ${fileCount} files (${languages})`, phase: 'scan' }
+      : { activity: `命中代码分析缓存，复用 ${fileCount} 个文件的结果（${languages}）`, phase: 'scan' };
+  }
   return locale === 'en'
     ? { activity: `Scan complete! Found ${fileCount} files. Primary languages: ${languages}`, phase: 'scan' }
-    : { activity: `扫描完成！发现 ${fileCount} 个文件，主要语言：${languages}`, phase: 'scan' }
+    : { activity: `扫描完成！发现 ${fileCount} 个文件，主要语言：${languages}`, phase: 'scan' };
+}
+
+export function scanCheckingActivity(locale: 'zh' | 'en'): OutlineActivityEvent {
+  return locale === 'en'
+    ? { activity: 'Checking code analysis cache…', phase: 'scan' }
+    : { activity: '正在查找代码分析缓存…', phase: 'scan' };
 }
 
 /**

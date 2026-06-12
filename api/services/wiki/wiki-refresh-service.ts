@@ -31,7 +31,8 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '../../db/index.js';
 import { wikiRefreshTasks, wikiRefreshDrafts, wikiScanCache } from '../../db/schema.js';
 import { wikiStore } from './wiki-store.js';
-import { runCodeMapScan, compareScans, type ScanDiff } from '../analyzer/scan.js';
+import type { CodeMapScanResult } from '../contracts/code-map.js';
+import { compareScans, type ScanDiff } from '../analyzer/scan.js';
 import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
 import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
@@ -45,9 +46,8 @@ import { TaskNotificationEventType } from '../notifications/task-notification-bu
 import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
 import { readGitState } from './wiki-snapshot-service.js';
 import type { WikiGitState } from './wiki-snapshot-service.js';
-import { loadCachedScanByGitState, persistScanCacheByGitState } from './wiki-scan-cache.js';
+import { acquireCodeMapScan, fallbackGitState } from './wiki-scan-cache.js';
 import type { WikiRefreshTask, DraftDocumentChange } from './contracts.js';
-import type { CodeMapScanResult } from '../contracts/code-map.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -157,13 +157,9 @@ export const wikiRefreshService = {
       try {
         gitState = readGitState(workDir);
       } catch {
-        gitState = { branch: 'unknown', headCommitSha: '0'.repeat(40), workingTreeHash: nanoid(16), dirty: false };
+        gitState = fallbackGitState();
       }
-      const cachedScan = await loadCachedScanByGitState(projectId, gitState);
-      const scan = cachedScan ?? await runCodeMapScan({ projectId, workDir, include: ['all'] });
-      if (!cachedScan) {
-        await persistScanCacheByGitState(projectId, scan, gitState);
-      }
+      const { scan } = await acquireCodeMapScan({ projectId, workDir, gitState });
       const nextRepoIndexId = scan.scanId;
       await updateTask(taskId, { nextRepoIndexId });
 
@@ -282,7 +278,7 @@ export const wikiRefreshService = {
     snapshotId: string,
     taskId: string,
     documentId: string,
-    scan: Awaited<ReturnType<typeof runCodeMapScan>>,
+    scan: CodeMapScanResult,
     scanDiff: ScanDiff | null,
     locale: 'zh' | 'en' = 'zh',
   ): Promise<string | null> {

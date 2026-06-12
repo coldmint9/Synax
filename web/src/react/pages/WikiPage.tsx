@@ -8,7 +8,6 @@ export default memo(function WikiPage({ projectId: propId }: { projectId?: strin
   const { projectId: routeId = '' } = useParams()
   const projectId = propId || routeId
   useWikiSnapshotListener(projectId || null)
-  const setSnapshotLoading = useWikiStore(s => s.setSnapshotLoading)
   const reset = useWikiStore(s => s.reset)
   const loadedRef = useRef<string | null>(null)
 
@@ -16,8 +15,7 @@ export default memo(function WikiPage({ projectId: propId }: { projectId?: strin
     if (!projectId || projectId === loadedRef.current) return
     if (loadedRef.current) reset()
     loadedRef.current = projectId
-    setSnapshotLoading()
-  }, [projectId, setSnapshotLoading, reset])
+  }, [projectId, reset])
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">

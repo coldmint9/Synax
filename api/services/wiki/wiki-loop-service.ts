@@ -1,5 +1,3 @@
-import { nanoid } from 'nanoid';
-import { runCodeMapScan } from '../analyzer/scan.js';
 import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
 import { agentEventService } from '../agent-runtime/event-service.js';
 import { nowIso } from '../agent-runtime/runtime-ids.js';
@@ -12,7 +10,8 @@ import {
   setSessionWorkspaceRoot,
 } from '../agent-runtime/tools/workspace.js';
 import { logger } from '../../lib/logger.js';
-import { WIKI_VERIFY_CONCURRENCY, WIKI_WRITE_CONCURRENCY } from '../../lib/env.js';
+import { WIKI_FAST_INIT, WIKI_VERIFY_CONCURRENCY, WIKI_WRITE_CONCURRENCY } from '../../lib/env.js';
+import { generateOutlineFast } from './wiki-fast-planner.js';
 import { runBoundedConcurrency } from './bounded-concurrency.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
@@ -31,14 +30,16 @@ import { buildDocumentContext } from './wiki-document-context.js';
 import { createVerifierTools, type WikiVerdict } from './tools/verifier-tools.js';
 import type { WikiClaim } from './tools/contracts.js';
 import { buildLanguageDirective } from '../prompts/language-directive.js';
-import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
-import { loadCachedScanByGitState, persistScanCacheByGitState } from './wiki-scan-cache.js';
+import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, scanCheckingActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
+import { acquireCodeMapScan, fallbackGitState } from './wiki-scan-cache.js';
 import { persistWikiDocumentCommit, toCommitInput } from './wiki-commit-persistence.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
   return locale === 'en' ? {
     genTitle: 'Wiki Generation',
     genStarted: 'Document generation task started',
+    scanChecking: 'Checking code analysis cache',
+    skeletonGenerating: 'Generating document skeleton',
     outlineReady: 'Document outline ready, preparing to generate content',
     writingContent: 'Writing document content',
     generating: (title: string, i: number, total: number) => `Generating: ${title} (${i}/${total})`,
@@ -52,6 +53,8 @@ function wikiMsg(locale: 'zh' | 'en') {
   } : {
     genTitle: 'Wiki 生成',
     genStarted: '文档生成任务已启动',
+    scanChecking: '正在查找代码分析缓存',
+    skeletonGenerating: '正在生成文档骨架',
     outlineReady: '文档大纲已就绪，准备生成内容',
     writingContent: '正在撰写文档内容',
     generating: (title: string, i: number, total: number) => `正在生成: ${title} (${i}/${total})`,
@@ -74,7 +77,7 @@ export const wikiLoopService = {
     try {
       gitState = readGitState(workDir);
     } catch {
-      gitState = { branch: 'unknown', headCommitSha: '0'.repeat(40), workingTreeHash: nanoid(16), dirty: false };
+      gitState = fallbackGitState();
     }
 
     const snapshot = await wikiStore.createSnapshot({
@@ -105,15 +108,22 @@ export const wikiLoopService = {
     try {
       ensureWikiProfileRegistered();
 
-      logger.info({ projectId, workDir }, 'wiki-loop: running code map scan');
-      const cachedScan = await loadCachedScanByGitState(projectId, gitState);
-      const scan = cachedScan ?? await runCodeMapScan({ projectId, workDir, include: ['all'] });
-      if (!cachedScan) {
-        await persistScanCacheByGitState(projectId, scan, gitState);
-      }
+      const checkingActivity = scanCheckingActivity(locale);
+      notify({
+        type: TaskNotificationEventType.TaskProgress,
+        taskKind: 'wiki_generate',
+        projectId,
+        taskId: snapshot.id,
+        title: wikiMsg(locale).genTitle,
+        message: checkingActivity.activity,
+        severity: 'info',
+        meta: { snapshotId: snapshot.id, snapshotStatus: 'refreshing', phase: 1, activity: checkingActivity.activity, activityPhase: checkingActivity.phase },
+      });
+
+      const { scan, fromCache } = await acquireCodeMapScan({ projectId, workDir, gitState });
       const languages = formatLanguages(scan);
 
-      const scanActivity = scanCompleteActivity(scan.codeIndex.files.length, languages, locale);
+      const scanActivity = scanCompleteActivity(scan.codeIndex.files.length, languages, locale, fromCache);
       notify({
         type: TaskNotificationEventType.TaskProgress,
         taskKind: 'wiki_generate',
@@ -125,7 +135,31 @@ export const wikiLoopService = {
         meta: { snapshotId: snapshot.id, snapshotStatus: 'refreshing', phase: 1, activity: scanActivity.activity, activityPhase: scanActivity.phase },
       });
 
-      // ═══ Phase 1: Outline Generation ═══
+      // ═══ Phase 1 fast path: single structured-output call + validation ═══
+      if (WIKI_FAST_INIT) {
+        notify({
+          type: TaskNotificationEventType.TaskProgress,
+          taskKind: 'wiki_generate',
+          projectId,
+          taskId: snapshot.id,
+          title: wikiMsg(locale).genTitle,
+          message: wikiMsg(locale).skeletonGenerating,
+          severity: 'info',
+          meta: { snapshotId: snapshot.id, snapshotStatus: 'refreshing', phase: 1, activity: wikiMsg(locale).skeletonGenerating, activityPhase: 'plan' },
+        });
+
+        const fast = await generateOutlineFast(scan, { projectId, workDir, locale });
+        if (fast) {
+          logger.info(
+            { projectId, outlineCount: fast.outline.length, repaired: fast.repaired },
+            'wiki-loop: fast outline generation succeeded',
+          );
+          return await finalizeOutlineReady(fast.outline, snapshot.id, projectId, locale);
+        }
+        logger.warn({ projectId }, 'wiki-loop: fast outline generation failed, falling back to planner agent');
+      }
+
+      // ═══ Phase 1: Outline Generation (agentic fallback) ═══
       const plannerHandle = createPlannerTools(scan);
       for (const tool of plannerHandle.tools) {
         toolRegistry.register(tool);
@@ -222,25 +256,9 @@ export const wikiLoopService = {
         throw new Error('Planner agent did not produce an outline');
       }
 
-      logger.info({ projectId, outlineCount: outline.length }, 'wiki-loop: Phase 1 outline received, persisting empty documents');
-      const { docIds, planIdToDocId } = await persistOutlineAsEmptyDocs(outline, snapshot.id, projectId);
-      await wikiStore.updateSnapshotStatus(snapshot.id, 'outline_ready', docIds);
-      await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.OutlineReady);
-
-      const outlineActivity = outlineCompleteActivity(outline.length, locale);
-      notify({
-        type: TaskNotificationEventType.TaskProgress,
-        taskKind: 'wiki_generate',
-        projectId,
-        taskId: snapshot.id,
-        title: wikiMsg(locale).genTitle,
-        message: outlineActivity.activity,
-        severity: 'info',
-        meta: { snapshotId: snapshot.id, snapshotStatus: 'outline_ready', phase: 1, docCount: docIds.length, activity: outlineActivity.activity, activityPhase: outlineActivity.phase },
-      });
-
+      const result = await finalizeOutlineReady(outline, snapshot.id, projectId, locale);
       for (const tid of registeredToolIds) toolRegistry.unregister(tid);
-      return { snapshotId: snapshot.id, status: 'outline_ready', docCount: docIds.length };
+      return result;
     } catch (err) {
       logger.error({ err, projectId, snapshotId: snapshot.id }, 'wiki-loop: generation failed');
       notify({
@@ -281,14 +299,10 @@ export const wikiLoopService = {
     try {
       gitState = readGitState(workDir);
     } catch {
-      gitState = { branch: 'unknown', headCommitSha: '0'.repeat(40), workingTreeHash: nanoid(16), dirty: false };
+      gitState = fallbackGitState();
     }
 
-    const cachedScan = await loadCachedScanByGitState(snapshot.projectId, gitState);
-    const scan = cachedScan ?? await runCodeMapScan({ projectId: snapshot.projectId, workDir, include: ['all'] });
-    if (!cachedScan) {
-      await persistScanCacheByGitState(snapshot.projectId, scan, gitState);
-    }
+    const { scan } = await acquireCodeMapScan({ projectId: snapshot.projectId, workDir, gitState });
 
     const outline: WikiOutlineEntry[] = documents.map(doc => ({
       id: doc.id,
@@ -346,14 +360,10 @@ export const wikiLoopService = {
       try {
         gitState = readGitState(workDir);
       } catch {
-        gitState = { branch: 'unknown', headCommitSha: '0'.repeat(40), workingTreeHash: nanoid(16), dirty: false };
+        gitState = fallbackGitState();
       }
 
-      const cachedScan = await loadCachedScanByGitState(snapshot.projectId, gitState);
-      const scan = cachedScan ?? await runCodeMapScan({ projectId: snapshot.projectId, workDir, include: ['all'] });
-      if (!cachedScan) {
-        await persistScanCacheByGitState(snapshot.projectId, scan, gitState);
-      }
+      const { scan } = await acquireCodeMapScan({ projectId: snapshot.projectId, workDir, gitState });
 
       const outline: WikiOutlineEntry[] = unfilled.map(doc => ({
         id: doc.id,
@@ -800,6 +810,33 @@ async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiRe
     for (const hid of hookIds) toolRegistry.unregisterHook(hid);
     for (const tid of registeredToolIds) toolRegistry.unregister(tid);
   }
+}
+
+/** Persist the outline as empty docs, flip the snapshot to outline_ready, and notify. */
+async function finalizeOutlineReady(
+  outline: WikiOutlineEntry[],
+  snapshotId: string,
+  projectId: string,
+  locale: 'zh' | 'en',
+): Promise<GenerateWikiResult> {
+  logger.info({ projectId, outlineCount: outline.length }, 'wiki-loop: Phase 1 outline received, persisting empty documents');
+  const { docIds } = await persistOutlineAsEmptyDocs(outline, snapshotId, projectId);
+  await wikiStore.updateSnapshotStatus(snapshotId, 'outline_ready', docIds);
+  await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.OutlineReady);
+
+  const outlineActivity = outlineCompleteActivity(outline.length, locale);
+  notify({
+    type: TaskNotificationEventType.TaskProgress,
+    taskKind: 'wiki_generate',
+    projectId,
+    taskId: snapshotId,
+    title: wikiMsg(locale).genTitle,
+    message: outlineActivity.activity,
+    severity: 'info',
+    meta: { snapshotId, snapshotStatus: 'outline_ready', phase: 1, docCount: docIds.length, activity: outlineActivity.activity, activityPhase: outlineActivity.phase },
+  });
+
+  return { snapshotId, status: 'outline_ready', docCount: docIds.length };
 }
 
 async function persistOutlineAsEmptyDocs(

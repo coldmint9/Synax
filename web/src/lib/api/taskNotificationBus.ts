@@ -59,6 +59,7 @@ function scheduleReconnect(projectId: string) {
 }
 
 export function subscribe(projectId: string, sub: Subscription): () => void {
+  const alreadyOpen = es?.readyState === EventSource.OPEN
   subscribers.add(sub)
   if (currentProjectId !== projectId) {
     es?.close()
@@ -66,6 +67,10 @@ export function subscribe(projectId: string, sub: Subscription): () => void {
     currentProjectId = null
   }
   if (subscribers.size >= 1) connect(projectId)
+  // Late subscribers miss the initial wiki_snapshot pushed on connect — refetch then.
+  if (alreadyOpen && es?.readyState === EventSource.OPEN) {
+    queueMicrotask(() => sub.onConnect?.())
+  }
   return () => {
     subscribers.delete(sub)
     if (subscribers.size === 0) {

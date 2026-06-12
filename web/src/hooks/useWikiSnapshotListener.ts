@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { TaskNotificationEventType } from '../lib/api/eventTypes'
 import { subscribe } from '../lib/api/taskNotificationBus'
 import type { WikiDocument, WikiSnapshotTree } from '../lib/contracts/wiki'
@@ -18,8 +18,15 @@ interface WikiDocumentCommittedPayload {
 }
 
 export function useWikiSnapshotListener(projectId: string | null) {
+  const loadSnapshot = useCallback(() => {
+    if (!projectId) return
+    void useWikiStore.getState().loadProjectSnapshot(projectId)
+  }, [projectId])
+
   useEffect(() => {
     if (!projectId) return
+
+    loadSnapshot()
 
     const handleSnapshot = (e: MessageEvent) => {
       try {
@@ -44,10 +51,11 @@ export function useWikiSnapshotListener(projectId: string | null) {
     }
 
     return subscribe(projectId, {
+      onConnect: loadSnapshot,
       events: {
         [TaskNotificationEventType.WikiSnapshot]: handleSnapshot,
         [TaskNotificationEventType.DocumentCommitted]: handleDocumentCommitted,
       },
     })
-  }, [projectId])
+  }, [projectId, loadSnapshot])
 }
