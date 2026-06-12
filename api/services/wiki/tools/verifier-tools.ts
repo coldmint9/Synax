@@ -12,11 +12,12 @@ export interface WikiVerdict {
 
 export interface WikiVerifierHandle {
   tools: RegisteredTool[];
-  getVerdicts(): WikiVerdict[];
+  getVerdicts(sessionId?: string): WikiVerdict[];
+  clearVerdicts(sessionId: string): void;
 }
 
 export function createVerifierTools(scan: CodeMapScanResult): WikiVerifierHandle {
-  const verdicts: WikiVerdict[] = [];
+  const verdictsBySession = new Map<string, WikiVerdict[]>();
 
   const readTools = buildReadTools(scan);
 
@@ -64,10 +65,13 @@ export function createVerifierTools(scan: CodeMapScanResult): WikiVerifierHandle
         evidence: args.evidence,
         correction: args.correction,
       };
+      const sessionId = input.sessionId;
+      const verdicts = verdictsBySession.get(sessionId) ?? [];
       // Deduplicate: replace existing verdict for same claim
       const idx = verdicts.findIndex(v => v.claimId === verdict.claimId);
       if (idx >= 0) verdicts[idx] = verdict;
       else verdicts.push(verdict);
+      verdictsBySession.set(sessionId, verdicts);
 
       const status = args.refuted ? 'REFUTED' : 'CONFIRMED';
       return {
@@ -87,6 +91,9 @@ export function createVerifierTools(scan: CodeMapScanResult): WikiVerifierHandle
 
   return {
     tools: [...readTools, submitVerdictTool],
-    getVerdicts: () => verdicts,
+    getVerdicts: (sessionId?: string) => (sessionId ? verdictsBySession.get(sessionId) ?? [] : []),
+    clearVerdicts: (sessionId: string) => {
+      verdictsBySession.delete(sessionId);
+    },
   };
 }

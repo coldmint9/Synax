@@ -12,6 +12,8 @@ import {
   setSessionWorkspaceRoot,
 } from '../agent-runtime/tools/workspace.js';
 import { logger } from '../../lib/logger.js';
+import { WIKI_VERIFY_CONCURRENCY, WIKI_WRITE_CONCURRENCY } from '../../lib/env.js';
+import { runBoundedConcurrency } from './bounded-concurrency.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { wikiStore } from './wiki-store.js';
@@ -501,6 +503,38 @@ interface WritingPhaseInput {
   languages: string;
 }
 
+interface WrittenDocumentResult {
+  entry: WikiOutlineEntry;
+  index: number;
+  docId: string | undefined;
+  claims: WikiClaim[];
+  wasCommitted: boolean;
+}
+
+async function awaitAgentStream(
+  sessionId: string,
+  locale: 'zh' | 'en',
+  opts?: { failOnError?: string; softFail?: boolean },
+): Promise<void> {
+  const stream = agentLoopRuntime.streamRun(sessionId, { locale });
+  for await (const chunk of stream) {
+    if (chunk.type === 'run_failed') {
+      if (opts?.softFail) {
+        logger.warn({ sessionId, error: chunk.error }, 'wiki-loop: agent run failed (soft)');
+        return;
+      }
+      throw new Error(chunk.error ?? opts?.failOnError ?? 'Agent run failed');
+    }
+    if (chunk.type === 'done') {
+      const s = agentRuntimeStore.tryGetSession(sessionId);
+      if (s?.status === 'interrupted') {
+        if (opts?.softFail) return;
+        throw new Error(opts?.failOnError ?? 'Agent run was interrupted');
+      }
+    }
+  }
+}
+
 async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiResult> {
   const { snapshot, workDir, locale, scan, outline, planIdToDocId, docIds, languages } = input;
   const projectId = snapshot.projectId;
@@ -561,9 +595,17 @@ async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiRe
 
     const sortedOutline = topologicalSort(outline);
     const totalDocs = sortedOutline.length;
-    const MAX_CONCURRENT_DOCS = 3;
+    const writeConcurrency = WIKI_WRITE_CONCURRENCY;
+    const verifyConcurrency = WIKI_VERIFY_CONCURRENCY;
 
-    const processDocument = async (entry: WikiOutlineEntry, i: number) => {
+    logger.info(
+      { projectId, totalDocs, writeConcurrency, verifyConcurrency },
+      'wiki-loop: Phase 2 starting (write then verify)',
+    );
+
+    const writtenResults: WrittenDocumentResult[] = new Array(totalDocs);
+
+    const writeDocument = async (entry: WikiOutlineEntry, i: number) => {
       const documentContext = buildDocumentContext(scan, entry);
 
       const docPrompt = buildWikiPrompt({
@@ -606,14 +648,9 @@ async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiRe
       });
 
       logger.info({ projectId, docTitle: entry.title, index: i, total: totalDocs }, 'wiki-loop: generating document');
-      const stream = agentLoopRuntime.streamRun(docSession.id, { locale });
-      for await (const chunk of stream) {
-        if (chunk.type === 'run_failed') throw new Error(chunk.error ?? `Document writer failed for: ${entry.title}`);
-        if (chunk.type === 'done') {
-          const s = agentRuntimeStore.tryGetSession(docSession.id);
-          if (s && s.status === 'interrupted') throw new Error(`Document writer interrupted for: ${entry.title}`);
-        }
-      }
+      await awaitAgentStream(docSession.id, locale, {
+        failOnError: `Document writer failed for: ${entry.title}`,
+      });
 
       const committedDocs = writerHandle.getCommittedDocuments();
       const targetDoc = committedDocs.find(d => d.title === entry.title && d.docType === entry.docType);
@@ -623,127 +660,109 @@ async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiRe
       const wasCommitted = docAfterWriter != null && docAfterWriter.contentMd.trim().length > 0;
       if (!wasCommitted) {
         logger.warn({ projectId, docTitle: entry.title, docId }, 'wiki-loop: writer completed but document was not committed — skipping verification');
+      }
+
+      writtenResults[i] = {
+        entry,
+        index: i,
+        docId,
+        claims: targetDoc?.claims ?? [],
+        wasCommitted,
+      };
+    };
+
+    await runBoundedConcurrency(sortedOutline, writeConcurrency, writeDocument);
+
+    const verifierHandle = createVerifierTools(scan);
+    for (const t of verifierHandle.tools) {
+      toolRegistry.register(t);
+      registeredToolIds.push(t.id);
+    }
+
+    const verifyDocument = async (result: WrittenDocumentResult) => {
+      const { entry, docId, claims, wasCommitted } = result;
+      if (!wasCommitted) return;
+
+      const loadBearing = claims.filter(c => c.centrality === 'load-bearing');
+      if (loadBearing.length === 0) {
+        logger.debug({ projectId, docTitle: entry.title }, 'wiki-loop: no load-bearing claims, skipping verification');
+        if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
         return;
       }
 
-      const claims: WikiClaim[] = targetDoc?.claims ?? [];
-      const loadBearing = claims.filter(c => c.centrality === 'load-bearing');
+      logger.info({ projectId, docTitle: entry.title, claimCount: loadBearing.length }, 'wiki-loop: verifying claims');
 
-      if (loadBearing.length > 0) {
-        logger.info({ projectId, docTitle: entry.title, claimCount: loadBearing.length }, 'wiki-loop: verifying claims');
+      const claimsList = loadBearing.map(c =>
+        `- ID: ${c.id} | Subject: ${c.subject} | Assertion: "${c.assertion}" | Evidence hint: ${c.evidenceHint}`,
+      ).join('\n');
 
-        const verifierHandle = createVerifierTools(scan);
-        for (const t of verifierHandle.tools) {
-          toolRegistry.register(t);
-          registeredToolIds.push(t.id);
-        }
+      const verifierPrompt = buildLanguageDirective(locale) + [
+        `Verify the following claims by reading the actual source code.`,
+        `For each claim, call wiki.submit_verdict with your findings.`,
+        `If you cannot find supporting evidence for a claim, default to refuted=true.`,
+        ``,
+        `## Claims to verify`,
+        claimsList,
+        ``,
+        `Language composition: ${languages}`,
+      ].join('\n');
 
-        const claimsList = loadBearing.map(c =>
-          `- ID: ${c.id} | Subject: ${c.subject} | Assertion: "${c.assertion}" | Evidence hint: ${c.evidenceHint}`
+      const verifierSession = agentSessionRuntime.create({
+        projectId,
+        profileId: 'wiki-verifier',
+        prompt: verifierPrompt,
+        sessionMetadata: { snapshotId: snapshot.id, phase: 'verifier', docTitle: entry.title },
+      });
+      sessionIds.push(verifierSession.id);
+      setSessionWorkspaceRoot(verifierSession.id, workDir);
+
+      await awaitAgentStream(verifierSession.id, locale, { softFail: true });
+
+      const verdicts = verifierHandle.getVerdicts(verifierSession.id);
+      verifierHandle.clearVerdicts(verifierSession.id);
+      logger.info({ projectId, docTitle: entry.title, verdictCount: verdicts.length }, 'wiki-loop: verification complete');
+
+      const refuted = verdicts.filter((v: WikiVerdict) => v.refuted);
+      if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'verified');
+
+      if (refuted.length > 0) {
+        logger.info({ projectId, docTitle: entry.title, refutedCount: refuted.length }, 'wiki-loop: correcting refuted claims');
+
+        const corrections = refuted.map(v =>
+          `- Claim "${v.claimId}": REFUTED. Evidence: ${v.evidence}. Correction: ${v.correction ?? 'remove assertion'}`,
         ).join('\n');
 
-        const verifierPrompt = buildLanguageDirective(locale) + [
-          `Verify the following claims by reading the actual source code.`,
-          `For each claim, call wiki.submit_verdict with your findings.`,
-          `If you cannot find supporting evidence for a claim, default to refuted=true.`,
+        const correctorPrompt = buildLanguageDirective(locale) + [
+          `You are rewriting a wiki document to fix factual errors found by verification.`,
           ``,
-          `## Claims to verify`,
-          claimsList,
+          `Document: "${entry.title}" (${entry.docType})`,
           ``,
-          `Language composition: ${languages}`,
+          `The following claims were refuted with evidence:`,
+          corrections,
+          ``,
+          `Rewrite the document incorporating the corrections. Keep all other content intact.`,
+          `Call wiki.commit_document when done. Include updated claims.`,
         ].join('\n');
 
-        const verifierSession = agentSessionRuntime.create({
+        const correctorSession = agentSessionRuntime.create({
           projectId,
-          profileId: 'wiki-verifier',
-          prompt: verifierPrompt,
-          sessionMetadata: { snapshotId: snapshot.id, phase: 'verifier', docTitle: entry.title },
+          profileId: 'wiki-document-writer',
+          prompt: correctorPrompt,
+          sessionMetadata: { snapshotId: snapshot.id, phase: 'corrector', docTitle: entry.title },
         });
-        sessionIds.push(verifierSession.id);
-        setSessionWorkspaceRoot(verifierSession.id, workDir);
+        sessionIds.push(correctorSession.id);
+        setSessionWorkspaceRoot(correctorSession.id, workDir);
 
-        const vStream = agentLoopRuntime.streamRun(verifierSession.id, { locale });
-        for await (const chunk of vStream) {
-          if (chunk.type === 'run_failed') {
-            logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: verifier failed');
-            break;
-          }
-          if (chunk.type === 'done') break;
-        }
+        await awaitAgentStream(correctorSession.id, locale, { softFail: true });
 
-        const verdicts = verifierHandle.getVerdicts();
-        logger.info({ projectId, docTitle: entry.title, verdictCount: verdicts.length }, 'wiki-loop: verification complete');
-
-        for (const t of verifierHandle.tools) {
-          toolRegistry.unregister(t.id);
-          registeredToolIds.splice(registeredToolIds.indexOf(t.id), 1);
-        }
-
-        const refuted = verdicts.filter(v => v.refuted);
-        if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'verified');
-
-        if (refuted.length > 0) {
-          logger.info({ projectId, docTitle: entry.title, refutedCount: refuted.length }, 'wiki-loop: correcting refuted claims');
-
-          const corrections = refuted.map(v =>
-            `- Claim "${v.claimId}": REFUTED. Evidence: ${v.evidence}. Correction: ${v.correction ?? 'remove assertion'}`
-          ).join('\n');
-
-          const correctorPrompt = buildLanguageDirective(locale) + [
-            `You are rewriting a wiki document to fix factual errors found by verification.`,
-            ``,
-            `Document: "${entry.title}" (${entry.docType})`,
-            ``,
-            `The following claims were refuted with evidence:`,
-            corrections,
-            ``,
-            `Rewrite the document incorporating the corrections. Keep all other content intact.`,
-            `Call wiki.commit_document when done. Include updated claims.`,
-          ].join('\n');
-
-          const correctorSession = agentSessionRuntime.create({
-            projectId,
-            profileId: 'wiki-document-writer',
-            prompt: correctorPrompt,
-            sessionMetadata: { snapshotId: snapshot.id, phase: 'corrector', docTitle: entry.title },
-          });
-          sessionIds.push(correctorSession.id);
-          setSessionWorkspaceRoot(correctorSession.id, workDir);
-
-          const cStream = agentLoopRuntime.streamRun(correctorSession.id, { locale });
-          for await (const chunk of cStream) {
-            if (chunk.type === 'run_failed') {
-              logger.warn({ projectId, docTitle: entry.title }, 'wiki-loop: corrector failed');
-              break;
-            }
-            if (chunk.type === 'done') break;
-          }
-
-          if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
-        } else if (docId) {
-          await wikiStore.updateDocumentPipelineStage(docId, 'done');
-        }
-      } else {
-        logger.debug({ projectId, docTitle: entry.title }, 'wiki-loop: no load-bearing claims, skipping verification');
         if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
+      } else if (docId) {
+        await wikiStore.updateDocumentPipelineStage(docId, 'done');
       }
     };
 
-    const queue = [...sortedOutline.entries()];
-    const running: Promise<void>[] = [];
-
-    while (queue.length > 0 || running.length > 0) {
-      while (running.length < MAX_CONCURRENT_DOCS && queue.length > 0) {
-        const [i, entry] = queue.shift()!;
-        const task = processDocument(entry, i).then(() => {
-          running.splice(running.indexOf(task), 1);
-        });
-        running.push(task);
-      }
-      if (running.length > 0) {
-        await Promise.race(running);
-      }
-    }
+    const toVerify = writtenResults.filter((r): r is WrittenDocumentResult => r != null);
+    await runBoundedConcurrency(toVerify, verifyConcurrency, verifyDocument);
 
     await wikiStore.updateSnapshotStatus(snapshot.id, 'ready', persistedDocIds);
     await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.GenerationCompleted);
