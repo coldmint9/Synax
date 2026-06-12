@@ -32,7 +32,7 @@ export async function resolveGatewaySelection(
     purpose: request.purpose,
     modelOverride: request.model,
     // Latency-sensitive purposes route to the fast/small model tier.
-    useSmallModel: request.purpose === 'context-signal' || request.purpose === 'wiki-outline',
+    useSmallModel: request.purpose === 'context-signal',
   })
 }
 

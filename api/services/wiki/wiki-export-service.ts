@@ -37,6 +37,7 @@ export const wikiExportService = {
     const includeSourceRefs = opts.includeSourceRefs ?? false;
 
     const sections = documents
+      .filter(doc => !doc.isSection)
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map(doc => documentToMarkdown(doc, includeSourceRefs));
 

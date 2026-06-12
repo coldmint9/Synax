@@ -217,6 +217,7 @@ function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
   ensureColumn(sqlite, 'wiki_documents', 'search_text', "search_text TEXT NOT NULL DEFAULT ''");
   ensureColumn(sqlite, 'wiki_documents', 'manual_state', "manual_state TEXT NOT NULL DEFAULT 'none'");
   ensureColumn(sqlite, 'wiki_documents', 'stale_state', "stale_state TEXT NOT NULL DEFAULT 'fresh'");
+  ensureColumn(sqlite, 'wiki_documents', 'is_section', 'is_section INTEGER NOT NULL DEFAULT 0');
   ensureColumn(sqlite, 'wiki_evaluations', 'document_id', 'document_id TEXT');
 }
 

@@ -62,6 +62,7 @@ function rowToDocument(r: typeof wikiDocuments.$inferSelect): WikiDocument {
     sortOrder: r.sortOrder,
     manualState: r.manualState as WikiDocument['manualState'],
     staleState: r.staleState as WikiDocument['staleState'],
+    isSection: Boolean(r.isSection),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -185,6 +186,7 @@ export const wikiStore = {
         sortOrder: input.sortOrder ?? 0,
         manualState: input.manualState ?? 'none',
         staleState: input.staleState ?? 'fresh',
+        isSection: input.isSection ? 1 : 0,
         createdAt: now,
         updatedAt: now,
       })
@@ -201,6 +203,7 @@ export const wikiStore = {
           sortOrder: input.sortOrder ?? 0,
           manualState: input.manualState ?? undefined,
           staleState: input.staleState ?? undefined,
+          isSection: input.isSection !== undefined ? (input.isSection ? 1 : 0) : undefined,
           updatedAt: now,
         },
       });

@@ -26,6 +26,7 @@ function makeDoc(overrides: Partial<WikiDocument> = {}): WikiDocument {
     sortOrder: 0,
     manualState: 'none',
     staleState: 'fresh',
+    isSection: false,
     createdAt: '2026-01-01',
     updatedAt: '2026-01-01',
     ...overrides,

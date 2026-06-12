@@ -51,9 +51,6 @@ export const CONTEXT_TOOL_CLEAR_KEEP_RECENT = Number(env('CONTEXT_TOOL_CLEAR_KEE
 /** 确定性工具结果清除：排除的工具 ID（逗号分隔） */
 export const CONTEXT_TOOL_CLEAR_EXCLUDE = env('CONTEXT_TOOL_CLEAR_EXCLUDE', 'task.create,task.update,task.get,task.list').split(',');
 
-/** Wiki Phase 1: use the fast single-call outline generator (falls back to agent planner on failure) */
-export const WIKI_FAST_INIT = env('WIKI_FAST_INIT', 'true') !== 'false';
-
 /** Wiki Phase 2: max document-writer agents in flight */
 export const WIKI_WRITE_CONCURRENCY = Number(env('WIKI_WRITE_CONCURRENCY', '5'));
 

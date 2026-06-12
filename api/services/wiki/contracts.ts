@@ -52,6 +52,7 @@ export interface WikiDocument {
   sortOrder: number;
   manualState: WikiManualState;
   staleState: WikiStaleState;
+  isSection: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -102,6 +103,7 @@ export interface UpsertWikiDocumentInput {
   sortOrder?: number;
   manualState?: WikiManualState;
   staleState?: WikiStaleState;
+  isSection?: boolean;
 }
 
 export interface UpdateDocumentContentInput {

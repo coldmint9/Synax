@@ -31,8 +31,11 @@ export interface WikiDocumentDraft {
   claims: WikiClaim[];
 }
 
+export type WikiOutlineNodeKind = 'section' | 'document';
+
 export interface WikiOutlineEntry {
   id: string;
+  nodeKind?: WikiOutlineNodeKind;
   docType: WikiDocType;
   title: string;
   parentId?: string;

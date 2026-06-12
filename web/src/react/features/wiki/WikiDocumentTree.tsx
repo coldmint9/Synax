@@ -1,17 +1,9 @@
-import { BookOpen, FileText, Globe, Network, Box, Workflow, Database } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { BookOpen, ChevronRight, FileText, Folder } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
-import type { WikiDocument, WikiDocType } from '../../../lib/contracts/wiki'
-
-const DOC_TYPE_CONFIG: Record<WikiDocType, { icon: typeof Globe; label: string; color: string }> = {
-  landscape: { icon: Globe, label: 'Landscape', color: 'text-emerald-600 dark:text-emerald-400' },
-  topology: { icon: Network, label: 'Topology', color: 'text-sky-600 dark:text-sky-400' },
-  module: { icon: Box, label: 'Modules', color: 'text-violet-600 dark:text-violet-400' },
-  flow: { icon: Workflow, label: 'Flows', color: 'text-amber-600 dark:text-amber-400' },
-  data: { icon: Database, label: 'Data', color: 'text-rose-600 dark:text-rose-400' },
-}
-
-const DOC_TYPE_ORDER: WikiDocType[] = ['landscape', 'topology', 'module', 'flow', 'data']
+import type { WikiDocument } from '../../../lib/contracts/wiki'
+import { buildWikiDocumentTree, type WikiDocTreeNode } from './buildWikiDocumentTree'
 
 function DocItem({
   doc,
@@ -19,19 +11,22 @@ function DocItem({
   onSelect,
   issueCount,
   draftInfo,
+  depth,
 }: {
   doc: WikiDocument
   isSelected: boolean
   onSelect: () => void
   issueCount?: number
   draftInfo?: { count: number; status: 'ready' | 'generating' | 'partially_applied' }
+  depth: number
 }) {
   const isEmpty = !doc.contentMd
   return (
     <button
       type="button"
       onClick={onSelect}
-      className={`group flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors ${
+      style={{ paddingLeft: `${8 + depth * 12}px` }}
+      className={`group flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2.5 text-left text-[12px] transition-colors ${
         isSelected
           ? 'bg-primary/15 text-primary'
           : isEmpty
@@ -59,6 +54,108 @@ function DocItem({
   )
 }
 
+function SectionFolder({
+  title,
+  depth,
+  expanded,
+  onToggle,
+  hasChildren,
+}: {
+  title: string
+  depth: number
+  expanded: boolean
+  onToggle: () => void
+  hasChildren: boolean
+}) {
+  return (
+    <div
+      className="flex w-full items-stretch"
+      style={{ paddingLeft: `${8 + depth * 12}px` }}
+    >
+      {hasChildren ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={onToggle}
+          className="flex shrink-0 items-center py-1.5 pr-0.5 text-muted-foreground/50 hover:text-muted-foreground"
+        >
+          <ChevronRight
+            size={11}
+            className={`shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          />
+        </button>
+      ) : (
+        <span className="w-3.5 shrink-0" aria-hidden />
+      )}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-2.5 text-[12px] font-medium text-muted-foreground/80">
+        <Folder size={11} className="shrink-0 opacity-60" />
+        <span className="min-w-0 flex-1 leading-snug break-words">{title}</span>
+      </div>
+    </div>
+  )
+}
+
+function TreeNode({
+  node,
+  depth,
+  selectedDocumentId,
+  onSelect,
+  issuesByDocId,
+  draftsByDocId,
+  defaultExpanded,
+}: {
+  node: WikiDocTreeNode
+  depth: number
+  selectedDocumentId: string | null
+  onSelect: (id: string) => void
+  issuesByDocId: Map<string, number>
+  draftsByDocId: Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>
+  defaultExpanded: boolean
+}) {
+  const hasChildren = node.children.length > 0
+  const [expanded, setExpanded] = useState(defaultExpanded)
+  const isSection = node.document.isSection
+
+  return (
+    <div>
+      {isSection ? (
+        <SectionFolder
+          title={node.document.title}
+          depth={depth}
+          expanded={expanded}
+          hasChildren={hasChildren}
+          onToggle={() => setExpanded(v => !v)}
+        />
+      ) : (
+        <DocItem
+          doc={node.document}
+          depth={depth}
+          isSelected={selectedDocumentId === node.document.id}
+          onSelect={() => onSelect(node.document.id)}
+          issueCount={issuesByDocId.get(node.document.id)}
+          draftInfo={draftsByDocId.get(node.document.id)}
+        />
+      )}
+      {hasChildren && expanded && (
+        <div className="space-y-0.5">
+          {node.children.map(child => (
+            <TreeNode
+              key={child.document.id}
+              node={child}
+              depth={depth + 1}
+              selectedDocumentId={selectedDocumentId}
+              onSelect={onSelect}
+              issuesByDocId={issuesByDocId}
+              draftsByDocId={draftsByDocId}
+              defaultExpanded={depth + 1 <= 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function WikiDocumentTree() {
   const { t } = useLocale()
   const documents = useWikiStore(s => s.documents)
@@ -69,40 +166,34 @@ export default function WikiDocumentTree() {
   const draftsById = useWikiStore(s => s.draftsById)
   const evaluations = useWikiStore(s => s.evaluations)
 
-  // Compute issue counts per document
-  const issuesByDocId = new Map<string, number>()
-  for (const ev of evaluations) {
-    issuesByDocId.set(ev.documentId, (issuesByDocId.get(ev.documentId) ?? 0) + 1)
-  }
+  const tree = useMemo(() => buildWikiDocumentTree(documents), [documents])
 
-  // Compute draft info per document
-  const draftsByDocId = new Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>()
-  for (const draft of Object.values(draftsById)) {
-    if (draft.status === 'applied' || draft.status === 'discarded' || draft.status === 'expired') continue
-    const existing = draftsByDocId.get(draft.documentId)
-    const count = draft.changes.length
-    if (!existing) {
-      draftsByDocId.set(draft.documentId, { count, status: draft.status as 'ready' | 'generating' | 'partially_applied' })
-    } else {
-      existing.count += count
-      if (draft.status === 'generating') existing.status = 'generating'
+  const issuesByDocId = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const ev of evaluations) {
+      map.set(ev.documentId, (map.get(ev.documentId) ?? 0) + 1)
     }
-  }
+    return map
+  }, [evaluations])
 
-  // Group documents by docType
-  const grouped = new Map<WikiDocType, WikiDocument[]>()
-  for (const docType of DOC_TYPE_ORDER) {
-    grouped.set(docType, [])
-  }
-  for (const doc of documents) {
-    const group = grouped.get(doc.docType as WikiDocType)
-    if (group) group.push(doc)
-    else grouped.get('module')!.push(doc) // fallback unknown types to module
-  }
+  const draftsByDocId = useMemo(() => {
+    const map = new Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>()
+    for (const draft of Object.values(draftsById)) {
+      if (draft.status === 'applied' || draft.status === 'discarded' || draft.status === 'expired') continue
+      const existing = map.get(draft.documentId)
+      const count = draft.changes.length
+      if (!existing) {
+        map.set(draft.documentId, { count, status: draft.status as 'ready' | 'generating' | 'partially_applied' })
+      } else {
+        existing.count += count
+        if (draft.status === 'generating') existing.status = 'generating'
+      }
+    }
+    return map
+  }, [draftsById])
 
   return (
     <div className="flex h-full flex-col gap-1 px-2 py-3">
-      {/* Snapshot meta */}
       {snapshot && (
         <div className="mb-2 rounded-lg border border-border/40 bg-card/60 px-3 py-2">
           <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
@@ -127,35 +218,19 @@ export default function WikiDocumentTree() {
         </div>
       )}
 
-      {/* Document groups by docType */}
-      <div className="space-y-3">
-        {DOC_TYPE_ORDER.map(docType => {
-          const docs = grouped.get(docType) ?? []
-          if (docs.length === 0) return null
-          const config = DOC_TYPE_CONFIG[docType]
-          const Icon = config.icon
-          return (
-            <div key={docType}>
-              <div className={`flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${config.color}`}>
-                <Icon size={11} />
-                <span>{config.label}</span>
-                <span className="text-muted-foreground/40 font-normal normal-case">({docs.length})</span>
-              </div>
-              <div className="mt-0.5 space-y-0.5">
-                {docs.sort((a, b) => a.sortOrder - b.sortOrder).map(doc => (
-                  <DocItem
-                    key={doc.id}
-                    doc={doc}
-                    isSelected={selectedDocumentId === doc.id}
-                    onSelect={() => selectDocument(doc.id)}
-                    issueCount={issuesByDocId.get(doc.id)}
-                    draftInfo={draftsByDocId.get(doc.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          )
-        })}
+      <div className="space-y-0.5">
+        {tree.map(node => (
+          <TreeNode
+            key={node.document.id}
+            node={node}
+            depth={0}
+            selectedDocumentId={selectedDocumentId}
+            onSelect={selectDocument}
+            issuesByDocId={issuesByDocId}
+            draftsByDocId={draftsByDocId}
+            defaultExpanded
+          />
+        ))}
       </div>
 
       {documents.length === 0 && (
