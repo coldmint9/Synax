@@ -12,7 +12,14 @@ import {
   type ToolCallRecord,
 } from '../../../lib/api/agentRuntime'
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
+import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { useNotificationStore } from '../../state/notificationStore'
+
+function ensureLiveStream(sessionId: string): void {
+  ensureSessionLiveSubscription(sessionId, (event) => {
+    useDebugConsole.getState().applyLiveEvent(event)
+  })
+}
 
 // --- Delta backpressure: drain buffered text at a controlled rate per frame ---
 let _textBuffer = ''
@@ -208,10 +215,14 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
       _textBuffer = ''
       _thinkingBuffer = ''
     }
+    ensureLiveStream(sessionId)
     void get().refreshDetail()
   },
 
-  closePanel: () => set({ panelOpen: false }),
+  closePanel: () => {
+    releaseSessionLiveSubscription()
+    set({ panelOpen: false })
+  },
 
   refreshDetail: async () => {
     const { selectedSessionId } = get()
@@ -280,6 +291,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   },
 
   resumeSession: async (sessionId, message) => {
+    ensureLiveStream(sessionId)
     set({
       sessions: get().sessions.map(s =>
         s.id === sessionId ? { ...s, status: 'running' as const } : s,

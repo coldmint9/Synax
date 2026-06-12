@@ -51,8 +51,9 @@ export default function AgentLoopTestPage() {
     streamingStepId, streamingText, streamingThinking, streamingToolCalls,
     streamingCompletedSteps } = debugStore
 
-  // Subscribe to SSE live events when session is active
-  useSessionLiveStream(session?.id ?? null)
+  const selectedSessionId = useDebugConsole(s => s.selectedSessionId)
+  // Keep live stream aligned with the store session id (set synchronously in openPanel).
+  useSessionLiveStream(selectedSessionId ?? session?.id ?? null)
 
   const pendingPermissions = permissions.filter(
     (p) => p.action === 'ask' && !p.resolvedAt,
