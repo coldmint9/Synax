@@ -1,7 +1,15 @@
-/* web/src/react/features/wiki/wiki-theme.css */
+/* web/src/react/features/wiki/wiki-theme.css — design-doc reading surface (light + dark) */
 
+/* ── Shared tokens ── */
 .wiki-doc {
-  /* ── Dark theme (default) ── */
+  --wiki-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  --wiki-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  --wiki-radius: 6px;
+}
+
+/* ── Dark theme (default; matches docs/wiki-mockup.html) ── */
+.dark .wiki-doc,
+.wiki-doc {
   --wiki-bg: #0f1115;
   --wiki-surface: #161920;
   --wiki-raised: #1c2028;
@@ -13,18 +21,22 @@
   --wiki-accent: #7c9aff;
   --wiki-accent-dim: #5b7bd4;
   --wiki-accent-bg: rgba(124, 154, 255, 0.08);
+  --wiki-accent-border: rgba(124, 154, 255, 0.15);
   --wiki-green: #4ade80;
   --wiki-green-bg: rgba(74, 222, 128, 0.08);
+  --wiki-green-border: rgba(74, 222, 128, 0.15);
   --wiki-orange: #fb923c;
   --wiki-orange-bg: rgba(251, 146, 60, 0.08);
+  --wiki-orange-border: rgba(251, 146, 60, 0.15);
   --wiki-red: #f87171;
   --wiki-purple: #a78bfa;
   --wiki-purple-bg: rgba(167, 139, 250, 0.06);
-  --wiki-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
-  --wiki-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
-  --wiki-radius: 6px;
+  --wiki-row-hover: rgba(255, 255, 255, 0.015);
+  --wiki-summary-hover: rgba(255, 255, 255, 0.02);
+  --wiki-search-highlight: rgba(251, 191, 36, 0.35);
 }
 
+/* ── Light theme ── */
 :root:not(.dark) .wiki-doc {
   --wiki-bg: #ffffff;
   --wiki-surface: #f8f9fa;
@@ -37,16 +49,22 @@
   --wiki-accent: #4969e1;
   --wiki-accent-dim: #3b5bca;
   --wiki-accent-bg: rgba(73, 105, 225, 0.06);
+  --wiki-accent-border: rgba(73, 105, 225, 0.18);
   --wiki-green: #1a8d48;
   --wiki-green-bg: rgba(26, 141, 72, 0.06);
+  --wiki-green-border: rgba(26, 141, 72, 0.18);
   --wiki-orange: #d97706;
   --wiki-orange-bg: rgba(217, 119, 6, 0.06);
+  --wiki-orange-border: rgba(217, 119, 6, 0.18);
   --wiki-red: #dc2626;
   --wiki-purple: #7c3aed;
   --wiki-purple-bg: rgba(124, 58, 237, 0.05);
+  --wiki-row-hover: rgba(0, 0, 0, 0.02);
+  --wiki-summary-hover: rgba(0, 0, 0, 0.03);
+  --wiki-search-highlight: rgba(251, 191, 36, 0.45);
 }
 
-/* ── Base typography ── */
+/* ── Document shell ── */
 .wiki-doc {
   font-family: var(--wiki-sans);
   color: var(--wiki-text);
@@ -54,80 +72,378 @@
   line-height: 1.7;
 }
 
-/* ── rehype-pretty-code dual-theme toggling ── */
+.wiki-doc-header {
+  margin-bottom: 28px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--wiki-border);
+}
+
+.wiki-doc-type-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--wiki-accent);
+  background: var(--wiki-accent-bg);
+  padding: 3px 8px;
+  border-radius: 3px;
+  margin-bottom: 10px;
+}
+
+.wiki-doc-title {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  color: var(--wiki-text);
+}
+
+/* ── Shiki dual-theme code blocks ── */
+.wiki-markdown [data-streamdown="code-block"][data-theme="dark"] code > [data-theme="light"],
+.wiki-markdown [data-streamdown="code-block"][data-theme="light"] code > [data-theme="dark"],
 .wiki-code-block[data-theme="dark"] code > [data-theme="light"],
 .wiki-code-block[data-theme="light"] code > [data-theme="dark"] {
   display: none;
 }
+
+.wiki-markdown [data-streamdown="code-block"][data-theme="dark"] code > [data-theme="dark"],
+.wiki-markdown [data-streamdown="code-block"][data-theme="light"] code > [data-theme="light"],
 .wiki-code-block[data-theme="dark"] code > [data-theme="dark"],
 .wiki-code-block[data-theme="light"] code > [data-theme="light"] {
   display: inline;
 }
 
+/* ── Markdown body ── */
 .wiki-markdown {
   color: var(--wiki-text);
 }
 
-.wiki-markdown :where(h1, h2, h3, h4) {
-  color: var(--wiki-text);
-  font-weight: 600;
-  margin-top: 1.5em;
-  margin-bottom: 0.5em;
-  line-height: 1.3;
+/* Hide duplicate # title — shown in .wiki-doc-header */
+.wiki-markdown > h1:first-child {
+  display: none;
 }
 
-.wiki-markdown :where(h1) { font-size: 1.5rem; }
-.wiki-markdown :where(h2) { font-size: 1.25rem; }
-.wiki-markdown :where(h3) { font-size: 1.1rem; }
+/* Subtitle: italic line immediately after hidden h1, or first em-only paragraph */
+.wiki-markdown > h1:first-child + p:has(> em:only-child),
+.wiki-markdown > p:first-child:has(> em:only-child) {
+  font-size: 14px;
+  color: var(--wiki-text-secondary);
+  margin: 0 0 20px;
+  line-height: 1.65;
+}
+
+.wiki-markdown :where(h2) {
+  font-size: 17px;
+  font-weight: 650;
+  color: var(--wiki-text);
+  margin-top: 40px;
+  margin-bottom: 14px;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+.wiki-markdown :where(h2)::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--wiki-accent);
+  margin-right: 10px;
+  vertical-align: middle;
+}
+
+.wiki-markdown :where(h3) {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--wiki-text);
+  margin-top: 28px;
+  margin-bottom: 10px;
+}
+
+.wiki-markdown :where(h4) {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--wiki-text);
+  margin-top: 20px;
+  margin-bottom: 8px;
+}
 
 .wiki-markdown :where(p, ul, ol, blockquote, pre) {
   margin: 0.75em 0;
 }
 
-.wiki-markdown :where(a) {
+.wiki-markdown :where(p) {
+  color: var(--wiki-text-secondary);
+  line-height: 1.75;
+}
+
+.wiki-markdown :where(p strong, li strong, blockquote strong) {
+  color: var(--wiki-text);
+  font-weight: 600;
+}
+
+/* In-paragraph links */
+.wiki-markdown :where(a:not([href^="#"])) {
   color: var(--wiki-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
-.wiki-markdown :where(code:not(pre code)) {
-  font-family: var(--wiki-mono);
-  font-size: 0.875em;
-  background: var(--wiki-raised);
-  border: 1px solid var(--wiki-border-subtle);
-  border-radius: 4px;
-  padding: 0.1em 0.35em;
+/* Cross-reference anchor links */
+.wiki-markdown :where(a[href^="#"]) {
+  color: var(--wiki-accent);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--wiki-accent-dim);
 }
 
+.wiki-markdown :where(a[href^="#"]:hover) {
+  border-bottom-style: solid;
+}
+
+/* Inline code */
+.wiki-markdown :where(:not(pre) > code) {
+  font-family: var(--wiki-mono);
+  font-size: 0.88em;
+  background: var(--wiki-raised);
+  border: 1px solid var(--wiki-border-subtle);
+  border-radius: 3px;
+  padding: 2px 6px;
+  color: var(--wiki-accent);
+}
+
+.wiki-markdown :where(td code, th code) {
+  color: var(--wiki-text);
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* Code fences (signature blocks) */
 .wiki-markdown :where(pre) {
   background: var(--wiki-raised);
   border: 1px solid var(--wiki-border);
   border-radius: var(--wiki-radius);
   overflow-x: auto;
-  padding: 0.75rem 1rem;
+  padding: 14px 18px;
+  margin: 16px 0;
+  font-family: var(--wiki-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
 }
 
+/* Source citation line after code: *Source: `path:lines`* */
+.wiki-markdown :where(p > em:has(code)) {
+  display: block;
+  margin-top: -8px;
+  margin-bottom: 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--wiki-border-subtle);
+  font-size: 11px;
+  color: var(--wiki-text-muted);
+  font-family: var(--wiki-mono);
+  font-style: normal;
+}
+
+.wiki-markdown :where(p > em:has(code) code) {
+  color: var(--wiki-accent-dim);
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+}
+
+/* ── Callouts: GFM alerts + blockquote fallback ── */
+.wiki-markdown :where(blockquote) {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border-radius: var(--wiki-radius);
+  border: 1px solid var(--wiki-accent-border);
+  background: var(--wiki-accent-bg);
+  border-left: none;
+}
+
+.wiki-markdown :where(blockquote p) {
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0.25em 0;
+}
+
+.wiki-markdown :where(.markdown-alert-note, blockquote:has(p:first-child:is([class*="markdown-alert"]))) {
+  border-color: var(--wiki-accent-border);
+  background: var(--wiki-accent-bg);
+}
+
+.wiki-markdown :where(.markdown-alert-important) {
+  border-color: var(--wiki-green-border);
+  background: var(--wiki-green-bg);
+}
+
+.wiki-markdown :where(.markdown-alert-warning, .markdown-alert-caution) {
+  border-color: var(--wiki-orange-border);
+  background: var(--wiki-orange-bg);
+}
+
+.wiki-markdown :where(.markdown-alert-title) {
+  font-weight: 600;
+  color: var(--wiki-text);
+  margin-bottom: 0.35em;
+}
+
+/* ── Tables ── */
 .wiki-markdown :where(table) {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875em;
+  font-size: 13px;
+  margin: 16px 0;
+  border: 1px solid var(--wiki-border);
+  border-radius: var(--wiki-radius);
+  overflow: hidden;
+  display: block;
+  overflow-x: auto;
 }
 
-.wiki-markdown :where(th, td) {
-  border: 1px solid var(--wiki-border);
-  padding: 0.4rem 0.6rem;
-  text-align: left;
+.wiki-markdown :where(thead) {
+  background: var(--wiki-raised);
 }
 
 .wiki-markdown :where(th) {
-  background: var(--wiki-surface);
+  text-align: left;
   font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--wiki-text-muted);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--wiki-border);
 }
 
+.wiki-markdown :where(td) {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--wiki-border-subtle);
+  color: var(--wiki-text-secondary);
+  vertical-align: top;
+}
+
+.wiki-markdown :where(tbody tr:last-child td) {
+  border-bottom: none;
+}
+
+.wiki-markdown :where(tbody tr:hover td) {
+  background: var(--wiki-row-hover);
+}
+
+/* ── Lists & dependency inventory ── */
+.wiki-markdown :where(ul, ol) {
+  color: var(--wiki-text-secondary);
+  font-size: 13px;
+  padding-left: 1.25em;
+}
+
+.wiki-markdown :where(li) {
+  margin: 0.35em 0;
+  line-height: 1.65;
+}
+
+/* - **[internal]** `pkg` — description */
+.wiki-markdown :where(li > strong:first-child) {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--wiki-purple-bg);
+  color: var(--wiki-purple);
+  margin-right: 6px;
+}
+
+/* ── Mermaid / diagram container ── */
+.wiki-markdown :where([data-streamdown="mermaid"], .mermaid, pre:has(code.language-mermaid)) {
+  background: var(--wiki-surface);
+  border: 1px solid var(--wiki-border);
+  border-radius: var(--wiki-radius);
+  padding: 24px;
+  margin: 20px 0;
+  text-align: center;
+  overflow-x: auto;
+}
+
+/* ── Expandable sections ── */
+.wiki-markdown :where(details) {
+  margin: 12px 0;
+  border: 1px solid var(--wiki-border-subtle);
+  border-radius: var(--wiki-radius);
+  background: transparent;
+}
+
+.wiki-markdown :where(summary) {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--wiki-text);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.wiki-markdown :where(summary::-webkit-details-marker) {
+  display: none;
+}
+
+.wiki-markdown :where(summary:hover) {
+  background: var(--wiki-summary-hover);
+}
+
+.wiki-markdown :where(details[open] > summary) {
+  border-bottom: 1px solid var(--wiki-border-subtle);
+}
+
+.wiki-markdown :where(details > *:not(summary)) {
+  padding: 14px;
+  font-size: 13px;
+  color: var(--wiki-text-secondary);
+}
+
+/* ── Divider ── */
+.wiki-markdown :where(hr) {
+  border: none;
+  border-top: 1px solid var(--wiki-border-subtle);
+  margin: 32px 0;
+}
+
+/* ── References footer ── */
+.wiki-references {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--wiki-border);
+}
+
+.wiki-references-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--wiki-text-muted);
+  margin-bottom: 12px;
+}
+
+.wiki-references :where(code) {
+  font-family: var(--wiki-mono);
+  font-size: 11px;
+  color: var(--wiki-text-secondary);
+  background: var(--wiki-raised);
+  border: 1px solid var(--wiki-border-subtle);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+
+/* ── Search highlight ── */
 .wiki-search-highlight {
-  background: rgba(251, 191, 36, 0.35);
+  background: var(--wiki-search-highlight);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
 }
-

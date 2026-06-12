@@ -54,7 +54,7 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
   return {
     id: 'wiki.commit_document',
     label: 'Commit Wiki Document',
-    description: 'Submit a completed wiki document as markdown with references and verifiable claims.',
+    description: 'Submit a completed wiki design doc as markdown. Gates: min length, ## sections, substantive prose, callouts (> [!IMPORTANT]), tables/diagrams/code per docType, references[], claims[].',
     category: 'write',
     mutability: 'write',
     resumeBehavior: 'auto',
