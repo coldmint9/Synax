@@ -42,6 +42,7 @@ export interface WikiDocument {
   sortOrder: number;
   manualState: WikiManualState;
   staleState: WikiStaleState;
+  isSection: boolean;
   createdAt: string;
   updatedAt: string;
 }

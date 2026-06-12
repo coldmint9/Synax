@@ -11,11 +11,31 @@ import type {
 import { buildReadTools } from './read-tools.js';
 import { derivePackages, filterBaselineForPrompt } from './package-baseline.js';
 import {
-  validateStructure,
   fullValidation,
   formatErrors,
   blockingErrors,
 } from './outline-validation.js';
+import { sanitizeOutline } from './outline-sanitize.js';
+import { isSectionEntry } from './outline-node.js';
+
+const outlineEntrySchema = z.object({
+  id: z.string().min(1).describe('Unique local ID (e.g. "sec-modules", "mod-auth").'),
+  nodeKind: z.enum(['section', 'document']).default('document').describe('section = fold-only folder (no content); document = writable page.'),
+  docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]).optional().describe('Required for nodeKind=document.'),
+  title: z.string().min(1).describe('Title shown in the tree.'),
+  parentId: z.string().optional().describe('ID of parent node. Omit for root-level.'),
+  sortOrder: z.number().int().optional().describe('Display order among siblings (default 0).'),
+  targetFiles: z.array(z.string()).default([]).describe('Writable documents only — real file paths.'),
+  keyQuestions: z.array(z.string()).default([]).describe('Writable documents only — at least 2 specific questions.'),
+});
+
+function formatOutlineSummary(docs: WikiOutlineEntry[]): string {
+  return docs.map(d => {
+    const indent = d.parentId ? '    ' : '  ';
+    const label = isSectionEntry(d) ? `[section] "${d.title}"` : `${d.docType}: "${d.title}"`;
+    return `${indent}- ${label} [${d.id}]`;
+  }).join('\n');
+}
 
 // ── Tool factory ────────────────────────────────────────────────────────────
 
@@ -33,21 +53,13 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
   const createDraftTool: RegisteredTool = {
     id: 'wiki.create_outline_draft',
     label: 'Create Wiki Outline Draft',
-    description: 'Create a draft document outline. Validates basic structure (duplicate IDs, circular refs, depth, min doc types) but does NOT check targetFiles paths. The draft is always saved; validation errors are returned for reference. Use wiki.edit_outline_draft to fix issues and wiki.submit_outline to lock the final outline.',
+    description: 'Create a draft outline in one call. Use nodeKind=section for folder headers (title + parentId only, no content). Use nodeKind=document for writable pages (docType, targetFiles, keyQuestions). Sections organize the tree; only documents are written.',
     category: 'write',
     mutability: 'write',
     resumeBehavior: 'auto',
     internalGate: 'none',
     inputSchema: z.object({
-      documents: z.array(z.object({
-        id: z.string().min(1).describe('Unique local ID (e.g. "root-overview", "mod-auth").'),
-        docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]).describe('Document type.'),
-        title: z.string().min(1).describe('Document title.'),
-        parentId: z.string().optional().describe('ID of parent document. Omit for root-level.'),
-        sortOrder: z.number().int().optional().describe('Display order among siblings (default 0).'),
-        targetFiles: z.array(z.string()).default([]).describe('File paths to read when writing this document.'),
-        keyQuestions: z.array(z.string()).default([]).describe('Core questions this document must answer.'),
-      })).min(1).describe('Planned documents with hierarchy.'),
+      documents: z.array(outlineEntrySchema).min(1).describe('Full outline: section nodes for folders + document nodes for pages.'),
     }),
     execute(input) {
       const args = input.args as { documents: WikiOutlineEntry[] };
@@ -58,26 +70,25 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
         return { result: { ok: false, error: 'Outline is already locked (submitted). Cannot create a new draft.' }, displaySummary: 'Create draft failed — outline already submitted.', artifacts: [] };
       }
 
-      const ve = validateStructure(args.documents);
-      draft = { documents: args.documents, locked: false, validationErrors: ve };
+      const sanitized = sanitizeOutline(args.documents, validPaths);
+      const ve = fullValidation(sanitized, validPaths, { corePackages, strictQuality: true });
+      const blocking = blockingErrors(ve);
+      draft = { documents: sanitized, locked: false, validationErrors: ve };
 
-      const summary = args.documents.map(d => {
-        const indent = d.parentId ? '    ' : '  ';
-        return `${indent}- ${d.docType}: "${d.title}" [${d.id}]`;
-      }).join('\n');
+      const summary = formatOutlineSummary(sanitized);
 
-      if (ve.length > 0) {
+      if (blocking.length > 0) {
         return {
-          result: { ok: true, validationErrors: ve.map(e => e.message), documentCount: args.documents.length },
-          displaySummary: `Draft saved with ${ve.length} issue(s):\n${formatErrors(ve)}\n\n${summary}`,
-          artifacts: [{ kind: 'decision', title: 'Wiki outline draft created (with issues)', summary: `${args.documents.length} documents drafted, ${ve.length} issues to fix.`, risk: 'low' }],
+          result: { ok: true, validationErrors: blocking.map(e => e.message), documentCount: sanitized.length },
+          displaySummary: `Draft saved with ${blocking.length} blocking issue(s):\n${formatErrors(blocking)}\n\n${summary}`,
+          artifacts: [{ kind: 'decision', title: 'Wiki outline draft created (with issues)', summary: `${sanitized.length} nodes drafted, ${blocking.length} issues to fix.`, risk: 'low' }],
         };
       }
 
       return {
-        result: { ok: true, validationErrors: [], documentCount: args.documents.length },
-        displaySummary: `Draft saved successfully (no structural issues):\n${summary}`,
-        artifacts: [{ kind: 'decision', title: 'Wiki outline draft created', summary: `${args.documents.length} documents drafted.`, risk: 'low' }],
+        result: { ok: true, validationErrors: ve.filter(e => e.severity === 'warning').map(e => e.message), documentCount: sanitized.length },
+        displaySummary: `Draft saved successfully (no blocking issues):\n${summary}`,
+        artifacts: [{ kind: 'decision', title: 'Wiki outline draft created', summary: `${sanitized.length} outline nodes drafted.`, risk: 'low' }],
       };
     },
   };
@@ -93,15 +104,7 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
     internalGate: 'none',
     inputSchema: z.object({
       operations: z.array(z.union([
-        z.object({ type: z.literal('add'), document: z.object({
-          id: z.string().min(1),
-          docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]),
-          title: z.string().min(1),
-          parentId: z.string().optional(),
-          sortOrder: z.number().int().optional(),
-          targetFiles: z.array(z.string()).default([]),
-          keyQuestions: z.array(z.string()).default([]),
-        }) }),
+        z.object({ type: z.literal('add'), document: outlineEntrySchema }),
         z.object({ type: z.literal('remove'), docId: z.string() }),
         z.object({ type: z.literal('update'), docId: z.string(), changes: z.object({
           targetFiles: z.array(z.string()).optional(),
@@ -109,6 +112,8 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
           title: z.string().optional(),
           parentId: z.string().optional(),
           sortOrder: z.number().int().optional(),
+          nodeKind: z.enum(['section', 'document']).optional(),
+          docType: z.enum(WIKI_DOC_TYPES as [string, ...string[]]).optional(),
         }) }),
       ])).min(1),
     }),
@@ -145,26 +150,24 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
         }
       }
 
-      const ve = fullValidation(docs, validPaths, { corePackages, strictQuality: true });
-      draft = { documents: docs, locked: false, validationErrors: ve };
+      const sanitized = sanitizeOutline(docs, validPaths);
+      const ve = fullValidation(sanitized, validPaths, { corePackages, strictQuality: true });
+      const blocking = blockingErrors(ve);
+      draft = { documents: sanitized, locked: false, validationErrors: ve };
 
-      const summary = docs.map(d => {
-        const indent = d.parentId ? '    ' : '  ';
-        return `${indent}- ${d.docType}: "${d.title}" [${d.id}]`;
-      }).join('\n');
-
-      if (ve.length > 0) {
+      const summary = formatOutlineSummary(sanitized);
+      if (blocking.length > 0) {
         return {
-          result: { ok: true, validationErrors: ve.map(e => e.message), documentCount: docs.length },
-          displaySummary: `Draft updated with ${ve.length} issue(s):\n${formatErrors(ve)}\n\n${summary}`,
-          artifacts: [{ kind: 'decision', title: 'Wiki outline draft edited (with issues)', summary: `${docs.length} documents, ${ve.length} issues remain.`, risk: 'low' }],
+          result: { ok: true, validationErrors: blocking.map(e => e.message), documentCount: sanitized.length },
+          displaySummary: `Draft updated with ${blocking.length} blocking issue(s):\n${formatErrors(blocking)}\n\n${summary}`,
+          artifacts: [{ kind: 'decision', title: 'Wiki outline draft edited (with issues)', summary: `${sanitized.length} documents, ${blocking.length} issues remain.`, risk: 'low' }],
         };
       }
 
       return {
-        result: { ok: true, validationErrors: [], documentCount: docs.length },
+        result: { ok: true, validationErrors: ve.filter(e => e.severity === 'warning').map(e => e.message), documentCount: sanitized.length },
         displaySummary: `Draft updated — all checks passed:\n${summary}`,
-        artifacts: [{ kind: 'decision', title: 'Wiki outline draft edited', summary: `${docs.length} documents, no issues.`, risk: 'low' }],
+        artifacts: [{ kind: 'decision', title: 'Wiki outline draft edited', summary: `${sanitized.length} documents, no blocking issues.`, risk: 'low' }],
       };
     },
   };
@@ -201,10 +204,7 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
       draft.locked = true;
       draft.validationErrors = ve.filter(e => e.severity === 'warning');
 
-      const summary = draft.documents.map(d => {
-        const indent = d.parentId ? '    ' : '  ';
-        return `${indent}- ${d.docType}: "${d.title}" [${d.id}]${d.parentId ? ` (child of ${d.parentId})` : ''}`;
-      }).join('\n');
+      const summary = formatOutlineSummary(draft.documents);
       return {
         result: { ok: true, count: draft.documents.length },
         displaySummary: `Outline accepted and locked: ${draft.documents.length} documents.\n${summary}`,

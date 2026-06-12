@@ -1,5 +1,6 @@
 import type { WikiOutlineEntry, ValidationError } from './contracts.js';
 import type { PackageBaseline } from './package-baseline.js';
+import { isSectionEntry, isWritableOutlineEntry } from './outline-node.js';
 
 const MIN_KEY_QUESTIONS = 2;
 const MIN_KEY_QUESTION_LENGTH = 12;
@@ -42,7 +43,12 @@ export function validateStructure(documents: WikiOutlineEntry[]): ValidationErro
     }
   }
 
-  const typeCount = (t: string) => documents.filter(d => d.docType === t).length;
+  const writable = documents.filter(isWritableOutlineEntry);
+  if (writable.length === 0) {
+    errors.push({ severity: 'error', field: 'documents', message: 'Need at least 1 writable document (nodeKind=document).' });
+  }
+
+  const typeCount = (t: string) => writable.filter(d => d.docType === t).length;
   if (typeCount('landscape') < 1) {
     errors.push({ severity: 'error', field: 'docType', message: 'Need at least 1 landscape document.' });
   }
@@ -55,7 +61,7 @@ export function validateStructure(documents: WikiOutlineEntry[]): ValidationErro
 
 export function validateFilePaths(documents: WikiOutlineEntry[], validPaths: Set<string>): ValidationError[] {
   const errors: ValidationError[] = [];
-  for (const doc of documents) {
+  for (const doc of documents.filter(isWritableOutlineEntry)) {
     const badFiles = doc.targetFiles.filter(p => !validPaths.has(p));
     if (badFiles.length > 0) {
       errors.push({
@@ -74,7 +80,7 @@ export function validatePackageCoverage(
   corePackages: PackageBaseline[],
 ): ValidationError[] {
   const errors: ValidationError[] = [];
-  const moduleDocs = documents.filter(d => d.docType === 'module');
+  const moduleDocs = documents.filter(d => d.docType === 'module' && isWritableOutlineEntry(d));
   for (const pkg of corePackages) {
     const prefix = pkg.dirPath + '/';
     const covered = moduleDocs.some(d => d.targetFiles.some(p => p.startsWith(prefix)));
@@ -92,7 +98,7 @@ export function validatePackageCoverage(
 /** Each document needs specific key questions — not empty, not one-liners. */
 export function validateKeyQuestions(documents: WikiOutlineEntry[]): ValidationError[] {
   const errors: ValidationError[] = [];
-  for (const doc of documents) {
+  for (const doc of documents.filter(isWritableOutlineEntry)) {
     const qs = doc.keyQuestions ?? [];
     if (qs.length < MIN_KEY_QUESTIONS) {
       errors.push({
@@ -114,17 +120,32 @@ export function validateKeyQuestions(documents: WikiOutlineEntry[]): ValidationE
   return errors;
 }
 
+/** Soft expectation: prefer hierarchical parentId over a fully flat outline. */
+export function validateHierarchy(documents: WikiOutlineEntry[]): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const hasNesting = documents.some(d => d.parentId);
+  if (!hasNesting && documents.length > 1) {
+    errors.push({
+      severity: 'warning',
+      field: 'parentId',
+      message: 'Outline is flat — prefer hierarchical parentId structure for a professional TOC.',
+    });
+  }
+  return errors;
+}
+
 /** Soft expectations: at least 1 flow doc; a data doc when a storage layer is detectable. */
 export function validateDocTypeMix(
   documents: WikiOutlineEntry[],
   validPaths: Set<string>,
 ): ValidationError[] {
   const errors: ValidationError[] = [];
-  if (!documents.some(d => d.docType === 'flow')) {
+  const writable = documents.filter(isWritableOutlineEntry);
+  if (!writable.some(d => d.docType === 'flow')) {
     errors.push({ severity: 'warning', field: 'docType', message: 'No flow document — consider documenting at least one end-to-end operation.' });
   }
   const hasDataLayer = [...validPaths].some(p => DATA_LAYER_HINT.test(p));
-  if (hasDataLayer && !documents.some(d => d.docType === 'data')) {
+  if (hasDataLayer && !writable.some(d => d.docType === 'data')) {
     errors.push({ severity: 'warning', field: 'docType', message: 'Project appears to have a storage layer but the outline has no data document.' });
   }
   return errors;
@@ -151,6 +172,7 @@ export function fullValidation(
   }
   if (opts.strictQuality) {
     errors.push(...validateKeyQuestions(documents));
+    errors.push(...validateHierarchy(documents));
     errors.push(...validateDocTypeMix(documents, validPaths));
   }
   return errors;

@@ -4,6 +4,7 @@ import { derivePackages, filterBaselineForPrompt } from './tools/package-baselin
 import { FILE_SPLIT, SYM_SPLIT } from './tools/contracts.js';
 import { buildTreeString } from './tools/helpers.js';
 import { buildLanguageDirective, buildOutlineLanguageRequirement, type Locale } from '../prompts/language-directive.js';
+import { buildOutlineContext } from './wiki-outline-context.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,6 +13,7 @@ export interface WikiPromptInput {
   languages: string;
   locale: 'zh' | 'en';
   scan?: CodeMapScanResult;
+  workDir?: string;
   outline?: WikiOutlineEntry[];
   continuation?: { completedTitles: string[]; remainingCount: number };
   preloadedContext?: string;
@@ -37,7 +39,7 @@ type Role = 'planner' | 'writer' | 'document-writer';
 
 function buildIdentitySegment(role: Role): string {
   if (role === 'planner') {
-    return 'You are a senior software architect. Your sole task is: analyze the codebase structure and output a flat document outline grouped by type (landscape, topology, module, flow, data).\n\nYou do not write document content — only plan the document structure.';
+    return 'You are a senior software architect. Your sole task is: analyze the codebase structure and output a hierarchical document outline (TOC) using parentId to express professional documentation structure.\n\nYou do not write document content — only plan the document structure. Titles express the hierarchy; docType is internal metadata for content rules, not UI grouping.';
   }
   if (role === 'document-writer') {
     return `You are a senior software architect writing internal design specifications (RFC / ADR / architecture review quality).
@@ -167,23 +169,28 @@ function buildWorkflowSegment(role: Role): string {
   if (role === 'planner') {
     return `## Task
 
-Analyze the codebase and submit a hierarchical document outline.
+Analyze the codebase and submit a hierarchical document outline via tool calls.
 
-### Exploration Strategy
+### One-Shot Outline Workflow
 
-The project directory tree and package baseline are provided in the system prompt. Use them directly.
+The enriched context below (Core Packages, directory tree, dependencies, entry files) is pre-loaded. **Do not** explore by default.
 
-1. Review the directory tree and package baseline above.
-2. For packages you need to understand deeper, use wiki.read_tree(path, depth) to explore subdirectories.
-3. For core packages that need detailed analysis, delegate to subagent.delegate(profileId: "wiki-package-explorer").
-   - Max 3 concurrent sub-agents.
-   - Give each sub-agent clear questions: responsibility, main types, dependencies, data flows.
-4. Synthesize all findings and use the 3-step outline flow:
-   wiki.create_outline_draft -> wiki.edit_outline_draft -> wiki.submit_outline
+1. Review the pre-loaded context above — it contains everything needed to plan the outline.
+2. **Single call** to \`wiki.create_outline_draft\` with the **complete** outline: nodeKind=section folder headers + nodeKind=document pages (parentId hierarchy, all core packages covered).
+3. If validationErrors are returned, fix with \`wiki.edit_outline_draft\` (prefer one repair pass).
+4. Call \`wiki.submit_outline\` to lock the outline.
+
+### Optional Fallback (only when context is clearly insufficient)
+
+- Use \`wiki.read_tree(path, depth)\` sparingly to verify a missing path.
+- Use \`subagent.delegate(profileId: "wiki-package-explorer")\` only when a core package lacks any file paths in context. Max 1 concurrent sub-agent.
 
 Available tools:
-- wiki.read_tree — browse directory structure at any depth
-- subagent.delegate — delegate deep exploration to sub-agents`;
+- wiki.create_outline_draft — submit full outline in one call
+- wiki.edit_outline_draft — fix validation issues
+- wiki.submit_outline — lock final outline
+- wiki.read_tree — optional directory browse
+- subagent.delegate — optional deep exploration`;
   }
 
   if (role === 'document-writer') {
@@ -223,18 +230,31 @@ function buildConstraintsSegment(role: Role): string {
   if (role === 'planner') {
     return `## Outline Structure Requirements
 
-Follow the 5-type flat document hierarchy:
+Build a hierarchical TOC with parentId (max depth 4). Use human-readable titles in the configured language — never use docType names (landscape, topology, etc.) as titles.
 
+Required docType coverage (internal metadata — assign appropriate docType per entry):
 - landscape: 1 per project (global entry point — tech stack, directory, concepts)
 - topology: architecture connections and communication patterns
 - module: one per core subsystem (deep design spec when written)
 - flow: key end-to-end operations (sequence diagram + step breakdown)
 - data: storage layer, schemas, lifecycle (ER diagram + schema table)
 
+Hierarchy pattern (adapt titles to the project; parentId links children to parents):
+- Use nodeKind=section for folder headers that only organize the tree (title + parentId + sortOrder — no docType, targetFiles, or keyQuestions)
+- Use nodeKind=document for every page that will be written
+- Example structure:
+  - [section] 系统概览 (root folder)
+    - [document] 项目全景 (landscape)
+  - [section] 核心子系统
+    - [document] 认证模块 (module)
+  - [section] 关键流程
+    - [document] 登录流程 (flow)
+
 Constraints:
-- Must include: 1 landscape, 1 topology, modules for all core packages
-- Documents are FLAT — no parentId nesting. Use xref cross-references instead.
-- Each entry must specify targetFiles (real file paths) and keyQuestions
+- Must include writable documents: 1 landscape, 1 topology, modules for all core packages
+- Use parentId to nest nodes; sortOrder orders siblings at the same level
+- Section nodes are never written — only fold/collapse headers in the UI
+- Writable documents need targetFiles (real file paths) and keyQuestions
 - title must be concise — no parenthetical elaborations`;
   }
 
@@ -347,10 +367,11 @@ function buildToolsGuideSegment(role: Role): string {
   if (role === 'planner') {
     return `## Rules
 1. Every step must include at least one tool call
-2. Use the 3-step flow: wiki.create_outline_draft -> wiki.edit_outline_draft -> wiki.submit_outline
-3. targetFiles must be real file paths — check wiki.read_tree to see which files exist
+2. Submit the **full** outline in a single wiki.create_outline_draft call — do not create partial drafts
+3. targetFiles must be real paths from the pre-loaded context — never invent paths
 4. keyQuestions must be specific (e.g. "What state transitions does AgentLoopRuntime.streamRun have?"), not vague
-5. The outline should cover all core modules — do not omit important subsystems`;
+5. The outline must cover all core packages with module documents; use nodeKind=section for folder headers and nodeKind=document for pages
+6. Flow: create_outline_draft → edit_outline_draft (if needed) → submit_outline`;
   }
   if (role === 'document-writer') {
     return `## Pre-submit Checklist
@@ -431,26 +452,6 @@ function buildPackageBaselineSegment(scan: CodeMapScanResult): string {
   return lines.join('\n');
 }
 
-// ── Fast-path planner prompt (single structured-output call) ─────────────────
-
-/**
- * System prompt for the fast outline generator: planner identity + outline
- * structure constraints, without the agentic tool-loop instructions.
- */
-export function buildFastPlannerSystemPrompt(locale: Locale): string {
-  return [
-    buildLanguageDirective(locale),
-    buildOutlineLanguageRequirement(locale),
-    buildIdentitySegment('planner'),
-    buildConstraintsSegment('planner'),
-    `## Quality Bar
-- Every document needs at least 2 specific keyQuestions — never vague one-liners.
-- targetFiles must be real paths taken from the provided context; every core package must be covered by at least one module document.
-- Include at least 1 flow document for a key end-to-end operation, and a data document if the project has a storage layer.
-- titles must be concise — no parenthetical elaborations.`,
-  ].join('\n\n');
-}
-
 // ── Main builder ─────────────────────────────────────────────────────────────
 
 export function buildWikiPrompt(input: WikiPromptInput): string {
@@ -496,7 +497,9 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
   const ctx = buildContextSegment(input.languages, role);
   if (ctx) segments.push(ctx);
 
-  if (role === 'planner' && input.scan) {
+  if (role === 'planner' && input.scan && input.workDir) {
+    segments.push(buildOutlineContext(input.scan, input.workDir).context);
+  } else if (role === 'planner' && input.scan) {
     segments.push(buildRootTreeSegment(input.scan));
     segments.push(buildPackageBaselineSegment(input.scan));
   }

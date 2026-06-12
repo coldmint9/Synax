@@ -1,7 +1,7 @@
 /**
- * Deterministic, millisecond-level context enrichment for the fast-path
- * outline generator. Extracts everything the LLM needs to plan a high-quality
- * wiki skeleton in a single call — no agentic exploration required.
+ * Deterministic context enrichment for the wiki planner agent.
+ * Extracts everything the LLM needs to plan a high-quality wiki skeleton
+ * without default exploration.
  */
 import fs from 'node:fs';
 import path from 'node:path';

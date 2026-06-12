@@ -35,16 +35,17 @@ export const wikiPlannerProfile: AgentProfile = {
     { gate: 'shell', pattern: '*', action: 'allow', reason: 'Planner uses bash for file exploration.' },
   ],
   defaultSkills: [],
-  maxSteps: 40,
+  maxSteps: 12,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   toolProviderId: 'wiki-session-tools',
   loopHints: [
-    'Step 1: Review the directory tree and package baseline in the system prompt.',
-    'Step 2: For packages you need to understand deeper, use wiki.read_tree(path, depth) to explore subdirectories.',
-    'Step 3: For core packages that need detailed analysis, delegate to subagent.delegate(profileId: "wiki-package-explorer"). Max 3 concurrent sub-agents.',
-    'Step 4: Synthesize all findings and use the 3-step outline flow: create_outline_draft -> edit_outline_draft -> submit_outline.',
+    'Step 1: Review the pre-loaded Core Packages, directory tree, and dependencies in the system prompt.',
+    'Step 2: Call wiki.create_outline_draft ONCE with section folder nodes + document page nodes (parentId hierarchy, all core packages as documents).',
+    'Step 3: If validationErrors returned, fix with wiki.edit_outline_draft (prefer one repair pass).',
+    'Step 4: Call wiki.submit_outline to lock the outline.',
+    'Optional: wiki.read_tree or subagent.delegate only when context is clearly missing paths for a core package.',
   ],
 };
 

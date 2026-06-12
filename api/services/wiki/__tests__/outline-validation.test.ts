@@ -5,6 +5,7 @@ import {
   validatePackageCoverage,
   validateKeyQuestions,
   validateDocTypeMix,
+  validateHierarchy,
   fullValidation,
   blockingErrors,
 } from '../tools/outline-validation.js';
@@ -54,6 +55,35 @@ describe('validateStructure', () => {
   it('passes a well-formed outline', () => {
     expect(validateStructure(baseOutline())).toEqual([]);
   });
+
+  it('flags unknown parentId', () => {
+    const errors = validateStructure([
+      ...baseOutline(),
+      doc({ id: 'orphan', parentId: 'missing-parent' }),
+    ]);
+    expect(errors.some(e => e.field === 'parentId' && /unknown parentId/.test(e.message))).toBe(true);
+  });
+
+  it('flags circular parentId references', () => {
+    const errors = validateStructure([
+      doc({ id: 'a', docType: 'landscape', parentId: 'b' }),
+      doc({ id: 'b', docType: 'topology', parentId: 'a' }),
+    ]);
+    expect(errors.some(e => e.field === 'parentId' && /Circular/.test(e.message))).toBe(true);
+  });
+
+  it('flags depth exceeding 4', () => {
+    const chain = ['d0', 'd1', 'd2', 'd3', 'd4', 'd5'];
+    const outline = chain.map((id, i) =>
+      doc({
+        id,
+        docType: i === 0 ? 'landscape' : 'module',
+        parentId: i === 0 ? undefined : chain[i - 1],
+      }),
+    );
+    const errors = validateStructure(outline);
+    expect(errors.some(e => e.field === 'parentId' && /max depth/.test(e.message))).toBe(true);
+  });
 });
 
 describe('validateFilePaths', () => {
@@ -87,6 +117,23 @@ describe('validateKeyQuestions', () => {
   it('rejects vague one-word questions', () => {
     const errors = validateKeyQuestions([doc({ id: 'a', keyQuestions: ['why?', 'how?'] })]);
     expect(errors).toHaveLength(1);
+  });
+});
+
+describe('validateHierarchy', () => {
+  it('warns when all documents are flat', () => {
+    const errors = validateHierarchy(baseOutline());
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe('warning');
+    expect(errors[0].field).toBe('parentId');
+  });
+
+  it('passes when at least one document has parentId', () => {
+    const hierarchical = [
+      ...baseOutline(),
+      doc({ id: 'section-modules', docType: 'landscape', parentId: 'landscape' }),
+    ];
+    expect(validateHierarchy(hierarchical)).toEqual([]);
   });
 });
 

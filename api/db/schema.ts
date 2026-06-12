@@ -560,6 +560,7 @@ export const wikiDocuments = sqliteTable('wiki_documents', {
   sortOrder: integer('sort_order').notNull().default(0),
   manualState: text('manual_state').notNull().default('none'),
   staleState: text('stale_state').notNull().default('fresh'),
+  isSection: integer('is_section').notNull().default(0),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

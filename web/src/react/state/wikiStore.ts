@@ -189,12 +189,13 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     const draftsChanged = prev.draftsSummary.ready !== (tree.draftsSummary?.ready ?? 0)
       || prev.draftsSummary.generating !== (tree.draftsSummary?.generating ?? 0);
 
-    const firstDocId = tree.documents[0]?.id ?? null;
+    const isSelectable = (d: { id: string; isSection?: boolean }) => !d.isSection;
+    const firstDocId = tree.documents.find(isSelectable)?.id ?? null;
     const currentSelected = prev.selectedDocumentId;
     const savedDocId = !currentSelected ? (localStorage.getItem('wiki-selected-doc') ?? null) : null;
-    const restoredId = savedDocId && tree.documents.some(d => d.id === savedDocId) ? savedDocId : null;
+    const restoredId = savedDocId && tree.documents.some(d => d.id === savedDocId && isSelectable(d)) ? savedDocId : null;
     const selectedDocumentId =
-      currentSelected && tree.documents.some(d => d.id === currentSelected)
+      currentSelected && tree.documents.some(d => d.id === currentSelected && isSelectable(d))
         ? currentSelected
         : (restoredId ?? firstDocId);
 

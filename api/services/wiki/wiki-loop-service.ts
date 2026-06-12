@@ -10,8 +10,7 @@ import {
   setSessionWorkspaceRoot,
 } from '../agent-runtime/tools/workspace.js';
 import { logger } from '../../lib/logger.js';
-import { WIKI_FAST_INIT, WIKI_VERIFY_CONCURRENCY, WIKI_WRITE_CONCURRENCY } from '../../lib/env.js';
-import { generateOutlineFast } from './wiki-fast-planner.js';
+import { WIKI_VERIFY_CONCURRENCY, WIKI_WRITE_CONCURRENCY } from '../../lib/env.js';
 import { runBoundedConcurrency } from './bounded-concurrency.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
@@ -33,6 +32,7 @@ import { buildLanguageDirective } from '../prompts/language-directive.js';
 import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, scanCheckingActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
 import { acquireCodeMapScan, fallbackGitState } from './wiki-scan-cache.js';
 import { persistWikiDocumentCommit, toCommitInput } from './wiki-commit-persistence.js';
+import { countWritableOutlineEntries, isSectionEntry, isWritableOutlineEntry } from './tools/outline-node.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
   return locale === 'en' ? {
@@ -135,31 +135,18 @@ export const wikiLoopService = {
         meta: { snapshotId: snapshot.id, snapshotStatus: 'refreshing', phase: 1, activity: scanActivity.activity, activityPhase: scanActivity.phase },
       });
 
-      // ═══ Phase 1 fast path: single structured-output call + validation ═══
-      if (WIKI_FAST_INIT) {
-        notify({
-          type: TaskNotificationEventType.TaskProgress,
-          taskKind: 'wiki_generate',
-          projectId,
-          taskId: snapshot.id,
-          title: wikiMsg(locale).genTitle,
-          message: wikiMsg(locale).skeletonGenerating,
-          severity: 'info',
-          meta: { snapshotId: snapshot.id, snapshotStatus: 'refreshing', phase: 1, activity: wikiMsg(locale).skeletonGenerating, activityPhase: 'plan' },
-        });
+      // ═══ Phase 1: Outline Generation (planner agent + tool-call outline) ═══
+      notify({
+        type: TaskNotificationEventType.TaskProgress,
+        taskKind: 'wiki_generate',
+        projectId,
+        taskId: snapshot.id,
+        title: wikiMsg(locale).genTitle,
+        message: wikiMsg(locale).skeletonGenerating,
+        severity: 'info',
+        meta: { snapshotId: snapshot.id, snapshotStatus: 'refreshing', phase: 1, activity: wikiMsg(locale).skeletonGenerating, activityPhase: 'plan' },
+      });
 
-        const fast = await generateOutlineFast(scan, { projectId, workDir, locale });
-        if (fast) {
-          logger.info(
-            { projectId, outlineCount: fast.outline.length, repaired: fast.repaired },
-            'wiki-loop: fast outline generation succeeded',
-          );
-          return await finalizeOutlineReady(fast.outline, snapshot.id, projectId, locale);
-        }
-        logger.warn({ projectId }, 'wiki-loop: fast outline generation failed, falling back to planner agent');
-      }
-
-      // ═══ Phase 1: Outline Generation (agentic fallback) ═══
       const plannerHandle = createPlannerTools(scan);
       for (const tool of plannerHandle.tools) {
         toolRegistry.register(tool);
@@ -169,7 +156,7 @@ export const wikiLoopService = {
       const plannerSession = agentSessionRuntime.create({
         projectId,
         profileId: 'wiki-planner',
-        prompt: buildWikiPrompt({ role: 'planner', languages, locale, scan }),
+        prompt: buildWikiPrompt({ role: 'planner', languages, locale, scan, workDir }),
         sessionMetadata: { snapshotId: snapshot.id, phase: 'planner' },
       });
       agentRuntimeStore.updateSession(plannerSession.id, { title: wikiMsg(locale).sessionInit, updatedAt: nowIso() });
@@ -184,7 +171,7 @@ export const wikiLoopService = {
       });
 
       // Phase 1b: planner agent explores, delegates to sub-agents, and produces outline
-      const plannerPrompt = buildWikiPrompt({ role: 'planner', languages, locale, scan });
+      const plannerPrompt = buildWikiPrompt({ role: 'planner', languages, locale, scan, workDir });
       logger.info({ projectId, sessionId: plannerSession.id }, 'wiki-loop: Phase 1 starting planner agent');
       const stream1 = agentLoopRuntime.streamRun(plannerSession.id, { locale, message: plannerPrompt });
       let lastActivityTs = 0;
@@ -306,6 +293,7 @@ export const wikiLoopService = {
 
     const outline: WikiOutlineEntry[] = documents.map(doc => ({
       id: doc.id,
+      nodeKind: doc.isSection ? 'section' : 'document',
       docType: doc.docType,
       title: doc.title,
       parentId: doc.parentId ?? undefined,
@@ -314,7 +302,7 @@ export const wikiLoopService = {
       keyQuestions: [],
     }));
     const planIdToDocId = new Map(documents.map(d => [d.id, d.id]));
-    const docIds = documents.map(d => d.id);
+    const docIds = documents.filter(d => !d.isSection).map(d => d.id);
 
     return runWritingPhase({
       snapshot,
@@ -337,7 +325,7 @@ export const wikiLoopService = {
     if (snapshot.status !== 'failed') throw new Error(`Snapshot status must be "failed" to continue, got "${snapshot.status}"`);
 
     const documents = await wikiStore.getDocumentsBySnapshot(snapshotId);
-    const unfilled = documents.filter(d => d.pipelineStage !== 'done');
+    const unfilled = documents.filter(d => !d.isSection && d.pipelineStage !== 'done');
 
     if (unfilled.length === 0) {
       await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
@@ -367,6 +355,7 @@ export const wikiLoopService = {
 
       const outline: WikiOutlineEntry[] = unfilled.map(doc => ({
         id: doc.id,
+        nodeKind: doc.isSection ? 'section' : 'document',
         docType: doc.docType as WikiOutlineEntry['docType'],
         title: doc.title,
         parentId: doc.parentId ?? undefined,
@@ -603,7 +592,7 @@ async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiRe
       },
     });
 
-    const sortedOutline = topologicalSort(outline);
+    const sortedOutline = topologicalSort(outline).filter(isWritableOutlineEntry);
     const totalDocs = sortedOutline.length;
     const writeConcurrency = WIKI_WRITE_CONCURRENCY;
     const verifyConcurrency = WIKI_VERIFY_CONCURRENCY;
@@ -819,12 +808,12 @@ async function finalizeOutlineReady(
   projectId: string,
   locale: 'zh' | 'en',
 ): Promise<GenerateWikiResult> {
-  logger.info({ projectId, outlineCount: outline.length }, 'wiki-loop: Phase 1 outline received, persisting empty documents');
+  logger.info({ projectId, outlineCount: outline.length, writableCount: countWritableOutlineEntries(outline) }, 'wiki-loop: Phase 1 outline received, persisting empty documents');
   const { docIds } = await persistOutlineAsEmptyDocs(outline, snapshotId, projectId);
   await wikiStore.updateSnapshotStatus(snapshotId, 'outline_ready', docIds);
   await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.OutlineReady);
 
-  const outlineActivity = outlineCompleteActivity(outline.length, locale);
+  const outlineActivity = outlineCompleteActivity(countWritableOutlineEntries(outline), locale);
   notify({
     type: TaskNotificationEventType.TaskProgress,
     taskKind: 'wiki_generate',
@@ -836,7 +825,7 @@ async function finalizeOutlineReady(
     meta: { snapshotId, snapshotStatus: 'outline_ready', phase: 1, docCount: docIds.length, activity: outlineActivity.activity, activityPhase: outlineActivity.phase },
   });
 
-  return { snapshotId, status: 'outline_ready', docCount: docIds.length };
+  return { snapshotId, status: 'outline_ready', docCount: countWritableOutlineEntries(outline) };
 }
 
 async function persistOutlineAsEmptyDocs(
@@ -859,6 +848,8 @@ async function persistOutlineAsEmptyDocs(
       sortOrder: entry.sortOrder ?? 0,
       contentMd: '',
       references: [],
+      isSection: isSectionEntry(entry),
+      pipelineStage: isSectionEntry(entry) ? 'done' : 'pending',
     });
     planIdToDocId.set(entry.id, doc.id);
     docIds.push(doc.id);
