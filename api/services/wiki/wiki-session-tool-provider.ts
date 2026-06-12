@@ -1,9 +1,8 @@
-import type { RegisteredTool, SessionToolProvider, ToolHook } from '../agent-runtime/contracts.js';
+import type { SessionToolProvider, ToolHook } from '../agent-runtime/contracts.js';
 import { agentRuntimeStore } from '../agent-runtime/session-store.js';
 import { logger } from '../../lib/logger.js';
+import { persistWikiDocumentCommit, toCommitInput } from './wiki-commit-persistence.js';
 import { wikiStore } from './wiki-store.js';
-import type { WikiDocumentDraft } from './tools/contracts.js';
-import { buildCheckMermaidTool, buildCommitDocumentTool } from './tools/write-tools.js';
 
 const PROVIDER_ID = 'wiki-session-tools';
 
@@ -23,24 +22,9 @@ const PROVIDER_ID = 'wiki-session-tools';
 class WikiSessionToolProvider implements SessionToolProvider {
   id = PROVIDER_ID;
 
-  getTools(sessionId: string): RegisteredTool[] {
-    const session = agentRuntimeStore.getSession(sessionId);
-    const meta = session.sessionMetadata;
-    if (!meta?.snapshotId) return [];
-
-    const phase = meta.phase as string | undefined;
-
-    // For writer/document-writer/corrector: the global tool registry already
-    // has wiki.commit_document and wiki.check_mermaid registered via
-    // createWriterTools() before agent execution. The provider must NOT shadow
-    // these global tools — the global tools share the committedDocuments array
-    // with the afterExecute hook that persists blocks to DB. A fresh array inside
-    // the provider would cause the hook to find no committed documents, silently
-    // dropping all block content.
-    //
-    // Provider tools are only supplied for phases where global tools are absent
-    // (e.g. explorer, verifier — which use different commit/verdict tools).
-
+  getTools(_sessionId: string): [] {
+    // Writer/document-writer/corrector phases rely on globally registered wiki tools.
+    // Provider tools must not shadow them or split committedDocuments state.
     return [];
   }
 
@@ -56,43 +40,32 @@ class WikiSessionToolProvider implements SessionToolProvider {
       return [];
     }
 
-    // Commit hook: on resume, each wiki.commit_document call persists to DB
     const hookId = `wiki-resume-commit-${snapshotId}`;
     return [{
       id: hookId,
       toolId: 'wiki.commit_document',
       afterExecute: async (ctx) => {
-        const result = ctx.result.result as {
-          ok?: boolean; title?: string; docType?: string; index?: number;
-        } | undefined;
-        if (!result?.ok) return;
+        const commitResult = ctx.result.result as { ok?: boolean } | undefined;
+        if (!commitResult?.ok) return;
+
+        const draft = toCommitInput(ctx.args);
+        if (!draft) return;
 
         try {
-          const session = agentRuntimeStore.getSession(ctx.sessionId);
-          const sid = (session.sessionMetadata as Record<string, unknown> | null)?.snapshotId as string | undefined;
+          const activeSession = agentRuntimeStore.getSession(ctx.sessionId);
+          const sid = (activeSession.sessionMetadata as Record<string, unknown> | null)?.snapshotId as string | undefined;
           if (!sid) return;
 
-          // Upsert document — find by title within snapshot, create if new
-          const docs = await wikiStore.getDocumentsBySnapshot(sid);
-          const existing = docs.find(d => d.title === (result.title ?? ''));
-
-          if (!existing) {
-            // Create a new document with empty blocks initially.
-            // The actual block content is stored in the hook's result context
-            // but for resume we keep it simple: just ensure the doc record exists.
-            await wikiStore.upsertDocument({
-              snapshotId: sid,
-              projectId: session.projectId,
-              title: result.title ?? 'Untitled',
-              docType: (result.docType as WikiDocumentDraft['docType']) ?? 'module',
-              parentId: null,
-              sortOrder: 0,
-              contentMd: '',
-              references: [],
-            });
-            logger.info({ snapshotId: sid, title: result.title },
-              '[wiki-session-tool-provider] created document on resume commit');
-          }
+          const committedDocId = await persistWikiDocumentCommit({
+            draft,
+            snapshotId: sid,
+            projectId: activeSession.projectId,
+            outline: null,
+            planIdToDocId: new Map(),
+          });
+          await wikiStore.updateDocumentPipelineStage(committedDocId, 'drafted');
+          logger.info({ snapshotId: sid, title: draft.title, docId: committedDocId },
+            '[wiki-session-tool-provider] persisted document on resume commit');
         } catch (err) {
           logger.warn({ hookId, sessionId: ctx.sessionId, err },
             '[wiki-session-tool-provider] commit hook failed');

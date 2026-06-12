@@ -20,7 +20,6 @@ import { ensureWikiProfileRegistered } from './wiki-loop-profile.js';
 import {
   createPlannerTools,
   createWriterTools,
-  type WikiDocumentDraft,
   type WikiOutlineEntry,
 } from './wiki-loop-tools.js';
 import type { GenerateWikiInput, GenerateWikiResult, WikiGitState } from './wiki-snapshot-service.js';
@@ -32,6 +31,7 @@ import type { WikiClaim } from './tools/contracts.js';
 import { buildLanguageDirective } from '../prompts/language-directive.js';
 import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
 import { loadCachedScanByGitState, persistScanCacheByGitState } from './wiki-scan-cache.js';
+import { persistWikiDocumentCommit, toCommitInput } from './wiki-commit-persistence.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
   return locale === 'en' ? {
@@ -372,23 +372,32 @@ export const wikiLoopService = {
       const commitHookId = `wiki-continue-commit-${snapshotId}`;
       hookIds.push(commitHookId);
 
+      const continuePlanIdToDocId = new Map(
+        unfilled.map(doc => {
+          const outlineEntry = outline.find(e => e.title === doc.title && e.docType === doc.docType);
+          return outlineEntry ? [outlineEntry.id, doc.id] as const : null;
+        }).filter((entry): entry is readonly [string, string] => entry != null),
+      );
+
       toolRegistry.registerHook({
         id: commitHookId,
         toolId: 'wiki.commit_document',
         async afterExecute(ctx) {
-          const commitResult = ctx.result.result as { ok: boolean };
+          const commitResult = ctx.result.result as { ok?: boolean };
           if (!commitResult?.ok) return;
-          const docs = writerHandle.getCommittedDocuments();
-          const latestDoc = docs[docs.length - 1];
-          if (!latestDoc) return;
+          const draft = toCommitInput(ctx.args);
+          if (!draft) return;
 
-          const existingDoc = unfilled.find(d => d.title === latestDoc.title);
-          if (existingDoc) {
-            await fillDocumentContent(existingDoc.id, latestDoc, snapshot.projectId, scan);
-            await wikiStore.updateDocumentPipelineStage(existingDoc.id, 'drafted');
-            logger.info({ projectId: snapshot.projectId, title: latestDoc.title, docId: existingDoc.id }, 'wiki-loop: continue - document content committed');
-            await publishDocumentCommittedEvent(snapshot.projectId, existingDoc.id);
-          }
+          const committedDocId = await persistWikiDocumentCommit({
+            draft,
+            snapshotId: snapshot.id,
+            projectId: snapshot.projectId,
+            outline,
+            planIdToDocId: continuePlanIdToDocId,
+          });
+          await wikiStore.updateDocumentPipelineStage(committedDocId, 'drafted');
+          logger.info({ projectId: snapshot.projectId, title: draft.title, docId: committedDocId }, 'wiki-loop: continue - document content committed');
+          await publishDocumentCommittedEvent(snapshot.projectId, committedDocId);
         },
       });
 
@@ -528,33 +537,24 @@ async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiRe
       id: commitHookId,
       toolId: 'wiki.commit_document',
       async afterExecute(ctx) {
-        const commitResult = ctx.result.result as { ok: boolean; index?: number };
+        const commitResult = ctx.result.result as { ok?: boolean };
         if (!commitResult?.ok) return;
-        const docs = writerHandle.getCommittedDocuments();
-        const idx = commitResult.index ?? docs.length - 1;
-        const latestDoc = docs[idx];
-        if (!latestDoc) return;
+        const draft = toCommitInput(ctx.args);
+        if (!draft) return;
 
-        const resolvedParentId = latestDoc.parentPlanId
-          ? planIdToDocId.get(latestDoc.parentPlanId) ?? null
-          : null;
+        const committedDocId = await persistWikiDocumentCommit({
+          draft,
+          snapshotId: snapshot.id,
+          projectId,
+          outline,
+          planIdToDocId,
+        });
 
-        let committedDocId: string;
-        const existingDocId = findExistingDocId(latestDoc, outline, planIdToDocId);
-        if (existingDocId) {
-          await fillDocumentContent(existingDocId, latestDoc, projectId, scan);
-          await wikiStore.updateDocumentPipelineStage(existingDocId, 'drafted');
-          committedDocId = existingDocId;
-        } else {
-          const newId = await persistSingleDocument(latestDoc, snapshot.id, projectId, scan, resolvedParentId);
-          persistedDocIds.push(newId);
-          const planEntry = outline.find(p => p.title === latestDoc.title && p.docType === latestDoc.docType);
-          if (planEntry) planIdToDocId.set(planEntry.id, newId);
-          await wikiStore.updateDocumentPipelineStage(newId, 'drafted');
-          committedDocId = newId;
+        if (!persistedDocIds.includes(committedDocId)) {
+          persistedDocIds.push(committedDocId);
         }
-
-        logger.info({ projectId, title: latestDoc.title, docId: committedDocId }, 'wiki-loop: document content committed');
+        await wikiStore.updateDocumentPipelineStage(committedDocId, 'drafted');
+        logger.info({ projectId, title: draft.title, docId: committedDocId }, 'wiki-loop: document content committed');
         await publishDocumentCommittedEvent(projectId, committedDocId);
       },
     });
@@ -616,18 +616,17 @@ async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiRe
       }
 
       const committedDocs = writerHandle.getCommittedDocuments();
-      const targetDoc = committedDocs.find(d => d.title === entry.title && d.docType === entry.docType)
-        ?? committedDocs[committedDocs.length - 1];
+      const targetDoc = committedDocs.find(d => d.title === entry.title && d.docType === entry.docType);
 
       const docId = planIdToDocId.get(entry.id);
       const docAfterWriter = docId ? await wikiStore.getDocument(docId) : null;
-      const wasCommitted = targetDoc != null && docAfterWriter != null && docAfterWriter.contentMd.trim().length > 0;
+      const wasCommitted = docAfterWriter != null && docAfterWriter.contentMd.trim().length > 0;
       if (!wasCommitted) {
         logger.warn({ projectId, docTitle: entry.title, docId }, 'wiki-loop: writer completed but document was not committed — skipping verification');
         return;
       }
 
-      const claims: WikiClaim[] = (targetDoc as unknown as { claims?: WikiClaim[] })?.claims ?? [];
+      const claims: WikiClaim[] = targetDoc?.claims ?? [];
       const loadBearing = claims.filter(c => c.centrality === 'load-bearing');
 
       if (loadBearing.length > 0) {
@@ -826,55 +825,6 @@ function topologicalSort(entries: WikiOutlineEntry[]): WikiOutlineEntry[] {
   };
   for (const entry of entries) visit(entry);
   return sorted;
-}
-
-function findExistingDocId(
-  doc: WikiDocumentDraft,
-  outline: WikiOutlineEntry[],
-  planIdToDocId: Map<string, string>,
-): string | null {
-  if (doc.parentPlanId) {
-    const planEntry = outline.find(p => p.id === doc.parentPlanId);
-    if (planEntry) {
-      const docId = planIdToDocId.get(planEntry.id);
-      if (docId) return null;
-    }
-  }
-  const match = outline.find(p => p.title === doc.title && p.docType === doc.docType);
-  if (match) return planIdToDocId.get(match.id) ?? null;
-  return null;
-}
-
-async function fillDocumentContent(
-  docId: string,
-  draft: WikiDocumentDraft,
-  _projectId: string,
-  _scan: import('../contracts/code-map.js').CodeMapScanResult,
-): Promise<void> {
-  await wikiStore.updateDocumentContent(docId, {
-    contentMd: draft.markdown,
-    references: draft.references,
-  });
-}
-
-async function persistSingleDocument(
-  draft: WikiDocumentDraft,
-  snapshotId: string,
-  projectId: string,
-  _scan: import('../contracts/code-map.js').CodeMapScanResult,
-  parentId?: string | null,
-): Promise<string> {
-  const doc = await wikiStore.upsertDocument({
-    snapshotId,
-    projectId,
-    title: draft.title,
-    docType: draft.docType,
-    parentId: parentId ?? null,
-    sortOrder: draft.sortOrder,
-    contentMd: draft.markdown,
-    references: draft.references,
-  });
-  return doc.id;
 }
 
 async function failSession(sessionId: string | undefined, err: unknown): Promise<void> {
