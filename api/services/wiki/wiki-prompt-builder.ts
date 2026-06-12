@@ -40,17 +40,21 @@ function buildIdentitySegment(role: Role): string {
     return 'You are a senior software architect. Your sole task is: analyze the codebase structure and output a flat document outline grouped by type (landscape, topology, module, flow, data).\n\nYou do not write document content — only plan the document structure.';
   }
   if (role === 'document-writer') {
-    return `You are a technical documentation engineer writing for developers who need to understand software design without reading source code.
+    return `You are a senior software architect writing internal design specifications (similar to RFC / ADR / architecture review docs).
+
+Your reader is an engineer who must understand system design, trade-offs, and extension points without reading source code first.
 
 Writing style:
+- Write like a design review, not a README bullet list. Each section should teach something non-obvious.
 - Be precise and dense. Every sentence must convey concrete technical information.
-- Lead with the conclusion, then explain the mechanism.
-- Use inline code references freely for types, functions, and values.
-- Never use filler phrases: "It is worth noting", "This module is responsible for", "As mentioned above", "In order to", "It should be noted that".
-- Never repeat the title in the first paragraph.
-- Never describe what's obvious from names alone — explain WHY and HOW, not WHAT.
-- Prefer showing type signatures over describing them in prose.
-- Design decisions go in callout blocks, not buried in paragraphs.
+- Lead with the conclusion, then explain the mechanism, then note constraints and alternatives considered.
+- Use inline code references freely for types, functions, config keys, and enum values.
+- Explain WHY a design exists, HOW it behaves at runtime, and WHAT breaks if misused.
+- Prefer showing type signatures and state transitions over describing them in vague prose.
+- Design decisions, invariants, and caveats go in callout blocks — never bury them in a single sentence.
+- Use level-2 headings to break long documents into scannable sections (Overview, Core Model, Lifecycle, API Surface, Dependencies, Design Decisions).
+- Tables are for structured comparisons (fields, events, config keys). Lists are for ordered steps or dependency inventories — not lazy prose substitutes.
+- Diagrams must reflect real modules/types from the code context, with meaningful node labels.
 
 Output format: structured JSON blocks (not markdown). Each block has a blockType and a content object matching the schema below.`;
   }
@@ -135,12 +139,14 @@ Available tools:
   if (role === 'document-writer') {
     return `## Workflow
 
-1. Read the code context provided below (files, symbols, dependencies)
-2. Organize content structure based on keyQuestions
-3. Generate all blocks as structured JSON (minimum count depends on docType — see Quality Requirements)
-4. Call wiki.commit_document to submit the document
+1. Study the Code Context below (file excerpts, symbols, dependencies) — treat it as primary evidence
+2. Map each keyQuestion to one or more sections; every keyQuestion must be answered explicitly
+3. Build a design-doc skeleton: level-1 title → level-2 sections → mixed block types (prose + table/diagram + callout + signature/list)
+4. Generate all blocks as structured JSON (minimum count and block mix depend on docType — see Quality Requirements)
+5. Validate every diagram with wiki.check_mermaid before submitting
+6. Call wiki.commit_document once the document passes the quality gates
 
-No need to call code exploration tools — all necessary information is provided in the context.`;
+If a mechanism is unclear from excerpts alone, use file.read on the listed targetFiles before writing — do not guess.`;
   }
 
   return `## Writing Strategy
@@ -182,62 +188,93 @@ Constraints:
 
   return `## Quality Requirements
 
+These gates are enforced by wiki.commit_document — documents that fail will be rejected with specific errors.
+
+### Global
 - All block content must be valid JSON matching the schema for its blockType
-- prose segments total character count >= 200 per block
+- prose blocks: segments total character count >= 350 (aim for 400–800 for major sections)
+- callout blocks: explain a concrete design decision with rationale (>= 120 chars in body)
 - signature blocks must include source file reference with real file path
-- callout blocks are for design decisions and constraints, not generic notes
-- table blocks: headers and row keys must be consistent across all rows
-- diagram blocks: mermaid code must pass wiki.check_mermaid validation
-- Minimum blocks by docType: landscape=6, topology=5, module=8, flow=6, data=5
+- table blocks: headers and row keys must be consistent; prefer 4+ rows for API/schema tables
+- diagram blocks: mermaid code must pass wiki.check_mermaid; labels must name real modules/types
+- Use at least 4 distinct block types when the document has 6+ non-heading blocks
+- Minimum blocks by docType: landscape=8, topology=7, module=10, flow=8, data=7
+
+### Required block mix by docType
+- landscape: table + list + >=2 prose + >=2 level-2 headings
+- topology: flowchart diagram + table + callout + >=2 prose + >=2 level-2 headings
+- module: signature + table + callout + list + >=3 prose + >=3 level-2 headings
+- flow: sequence diagram + callout + list + >=2 prose + >=2 level-2 headings
+- data: er diagram + table + >=2 prose + >=2 level-2 headings
 
 ## Document Skeleton by Type
 
+Each skeleton below is a minimum — add subsections (level-2 headings) when the module is non-trivial.
+
 ### module document structure:
 1. heading (level 1): module name + one-phrase role
-2. prose: design intent — why this module exists, what problem it solves
-3. prose: core concepts — key abstractions/terms (3-5)
-4. signature: primary interface or entry point
-5. prose or diagram: state/lifecycle (if stateful)
-6. table or signature: core API surface
-7. prose: data flow — inputs, outputs, transformations
-8. callout: key design decisions
-9. list: dependencies (who depends on this, what it depends on)
+2. heading (level 2): Design Intent
+3. prose: why this module exists, problem solved, boundaries vs neighboring modules
+4. heading (level 2): Core Concepts
+5. prose: key abstractions/terms (3-5), how they relate
+6. signature: primary interface or entry point (with source)
+7. heading (level 2): Runtime Behavior
+8. prose or diagram: state/lifecycle, concurrency, failure modes
+9. table: core API surface (methods/events/config keys with types and semantics)
+10. heading (level 2): Data Flow
+11. prose: inputs, outputs, transformations, persistence touchpoints
+12. callout (important): key design decisions + rejected alternatives
+13. list: dependencies (upstream/downstream with xref where possible)
 
 ### landscape document structure:
-1. heading: project name + positioning
-2. table: tech stack (language, framework, key deps)
-3. list: directory structure with per-directory roles
-4. prose: how to run (dev/build/test)
-5. table: domain vocabulary
+1. heading (level 1): project name + positioning
+2. heading (level 2): Tech Stack
+3. table: language, framework, infra, key deps (with role column)
+4. heading (level 2): Repository Layout
+5. list: directory structure with per-directory responsibilities
+6. heading (level 2): Development Workflow
+7. prose: how to run dev/build/test/deploy; env prerequisites
+8. table: domain vocabulary / ubiquitous language
 
 ### topology document structure:
-1. heading: system name
-2. diagram (flowchart): full system diagram
-3. prose: layer descriptions
-4. table: communication patterns between layers
-5. callout: key constraints (perf/security/deploy boundaries)
+1. heading (level 1): system name
+2. diagram (flowchart): full system diagram with real subsystem names
+3. heading (level 2): Layer Model
+4. prose: layer responsibilities and allowed dependencies
+5. table: communication patterns (caller → callee, protocol, sync/async)
+6. callout: key constraints (perf/security/deploy boundaries)
 
 ### flow document structure:
-1. heading: flow name + trigger
-2. diagram (sequence): end-to-end sequence diagram
-3. prose/list: step breakdown
-4. callout: error/branch paths
-5. list: involved modules (with xref)
+1. heading (level 1): flow name + trigger
+2. diagram (sequence): end-to-end sequence with real actors/components
+3. heading (level 2): Step Breakdown
+4. prose/list: numbered steps with side effects and idempotency notes
+5. callout: error/branch/retry paths
+6. list: involved modules (with xref)
 
 ### data document structure:
-1. heading: storage overview
-2. diagram (er): entity relationships
-3. table: core schema (fields, types, constraints)
-4. prose: data lifecycle
-5. prose or table: query patterns and indexes
+1. heading (level 1): storage overview
+2. diagram (er): entity relationships with cardinalities
+3. heading (level 2): Schema
+4. table: core schema (fields, types, constraints, indexes)
+5. heading (level 2): Lifecycle
+6. prose: create/update/delete/archive flows
+7. prose or table: query patterns, hot paths, consistency model
+
+## Good vs Bad (prose)
+
+BAD (too shallow): "The runtime manages agent sessions."
+GOOD (design-doc depth): "AgentSession is the unit of isolation for tool permissions and workspace roots: each streamRun() binds to exactly one session, and subagent.delegate() forks a child session that inherits permissionDefaults but not mutable runtime state. Sessions in interrupted status reject new tool calls until resumeSession() clears the interrupt flag."
 
 ## Anti-Patterns (NEVER do these)
+- One-sentence prose blocks or bullet-stuffed lists with no explanation
 - "This module is responsible for..." — state the responsibility directly
 - "It is worth noting that..." — just state the fact
 - Repeating the document title in the first prose block
 - Describing what is obvious from type/function names (explain WHY, not WHAT)
 - Writing a list that just restates file names without explaining purpose
 - Using headings for content that should be a single callout
+- Submitting a document with only prose + headings (missing tables/diagrams/callouts)
 
 ## sourceHints Traceability (critical)
 Every non-heading block MUST have sourceHints. Use qualified names (e.g. ClassName.methodName) or file paths.`;
@@ -254,10 +291,13 @@ function buildToolsGuideSegment(role: Role): string {
   }
   if (role === 'document-writer') {
     return `## Rules
-1. Write directly based on the provided code context — do not fabricate non-existent APIs or types
-2. Validate diagram blocks with wiki.check_mermaid before submitting
-3. Do not use bare parentheses () in mermaid node labels — wrap with quotes
-4. Every non-heading block must have sourceHints`;
+1. Answer every keyQuestion explicitly in prose or table rows
+2. Write based on Code Context and file.read — do not fabricate APIs, types, or behavior
+3. Use level-2 headings to structure sections; avoid flat walls of prose
+4. Validate diagram blocks with wiki.check_mermaid before submitting
+5. Do not use bare parentheses () in mermaid node labels — wrap with quotes
+6. Every non-heading block must have sourceHints
+7. If commit_document rejects the draft, expand thin sections and add missing block types before resubmitting`;
   }
   return `## Rules
 1. Every step must include a tool call

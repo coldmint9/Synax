@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { CodeMapScanResult, CodeMapImport, CodeMapModuleSummary } from '../contracts/code-map.js';
 import type { FileEntry, SymbolEntry } from '../contracts/forest.js';
 import type { WikiOutlineEntry } from './wiki-loop-tools.js';
@@ -5,7 +7,9 @@ import { topDirFromPath } from '../analyzer/shared.js';
 
 const MAX_SYMBOLS_PER_FILE = 20;
 const MAX_IMPORTS_PER_FILE = 15;
-const MAX_CONTEXT_CHARS = 24000;
+const MAX_SOURCE_FILES = 5;
+const MAX_SOURCE_LINES = 120;
+const MAX_CONTEXT_CHARS = 32000;
 
 export function buildDocumentContext(scan: CodeMapScanResult, entry: WikiOutlineEntry): string {
   const { codeIndex, moduleMap } = scan;
@@ -29,6 +33,7 @@ export function buildDocumentContext(scan: CodeMapScanResult, entry: WikiOutline
   const fileImports = codeIndex.imports.filter(i => fileIds.has(i.sourceFileId));
 
   sections.push(formatFileSection(targetFiles));
+  sections.push(formatSourceExcerptSection(scan.workDir, targetFiles));
   sections.push(formatSymbolSection(targetFiles, fileSymbols));
   sections.push(formatImportSection(targetFiles, fileImports, codeIndex.files));
 
@@ -58,6 +63,37 @@ function resolveTargetFiles(targetPaths: string[], allFiles: FileEntry[]): FileE
 function formatFileSection(files: FileEntry[]): string {
   const lines = files.map(f => `- ${f.path} (${f.language}, ${f.size}B)`);
   return `\n## Target Files (${files.length})\n${lines.join('\n')}`;
+}
+
+function formatSourceExcerptSection(workDir: string, files: FileEntry[]): string {
+  const prioritized = [...files]
+    .sort((a, b) => b.size - a.size)
+    .slice(0, MAX_SOURCE_FILES);
+
+  const sections: string[] = ['\n## Source Excerpts'];
+  for (const file of prioritized) {
+    const excerpt = readSourceExcerpt(workDir, file.path);
+    if (!excerpt) continue;
+    sections.push(`\n### ${file.path}\n\`\`\`${file.language}\n${excerpt}\n\`\`\``);
+  }
+
+  return sections.length > 1 ? sections.join('\n') : '';
+}
+
+function readSourceExcerpt(workDir: string, relativePath: string): string | null {
+  try {
+    const absolutePath = join(workDir, relativePath);
+    const raw = readFileSync(absolutePath, 'utf8');
+    const lines = raw.split(/\r?\n/).slice(0, MAX_SOURCE_LINES);
+    const excerpt = lines.join('\n').trimEnd();
+    if (!excerpt) return null;
+    if (raw.split(/\r?\n/).length > MAX_SOURCE_LINES) {
+      return `${excerpt}\n// …(${MAX_SOURCE_LINES} lines shown)`;
+    }
+    return excerpt;
+  } catch {
+    return null;
+  }
 }
 
 function formatSymbolSection(files: FileEntry[], symbols: SymbolEntry[]): string {
