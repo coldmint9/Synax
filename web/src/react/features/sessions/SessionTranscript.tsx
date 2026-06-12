@@ -32,7 +32,7 @@ export function SessionTranscript() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [steps.length, streamingText, streamingToolCalls.length])
+  }, [steps.length, streamingText, streamingThinking, streamingToolCalls.length])
 
   return (
     <div className="flex flex-col flex-1 min-h-0">

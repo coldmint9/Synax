@@ -9,8 +9,11 @@ export type SessionLiveEvent =
   | { type: 'tool_result'; stepId: string; toolCall: ToolCallRecord }
   | { type: 'context_compacted'; stepId: string; originalTokens: number; compressedTokens: number; messageCount: number };
 
+const MAX_BUFFERED_EVENTS = 2000;
+
 class SessionLiveBus {
   private readonly emitters = new Map<string, EventEmitter>();
+  private readonly buffers = new Map<string, SessionLiveEvent[]>();
 
   private getOrCreate(sessionId: string): EventEmitter {
     let emitter = this.emitters.get(sessionId);
@@ -22,12 +25,34 @@ class SessionLiveBus {
     return emitter;
   }
 
+  private bufferEvent(sessionId: string, event: SessionLiveEvent): void {
+    const buf = this.buffers.get(sessionId) ?? [];
+    buf.push(event);
+    if (buf.length > MAX_BUFFERED_EVENTS) {
+      buf.splice(0, buf.length - MAX_BUFFERED_EVENTS);
+    }
+    this.buffers.set(sessionId, buf);
+  }
+
   emit(sessionId: string, event: SessionLiveEvent): void {
-    this.emitters.get(sessionId)?.emit('event', event);
+    const emitter = this.emitters.get(sessionId);
+    const listenerCount = emitter?.listenerCount('event') ?? 0;
+    if (listenerCount > 0) {
+      emitter!.emit('event', event);
+      return;
+    }
+    this.bufferEvent(sessionId, event);
   }
 
   subscribe(sessionId: string, handler: (event: SessionLiveEvent) => void): () => void {
     const emitter = this.getOrCreate(sessionId);
+    const buffered = this.buffers.get(sessionId);
+    if (buffered?.length) {
+      this.buffers.delete(sessionId);
+      for (const event of buffered) {
+        handler(event);
+      }
+    }
     emitter.on('event', handler);
     return () => {
       emitter.off('event', handler);
@@ -35,6 +60,7 @@ class SessionLiveBus {
   }
 
   cleanup(sessionId: string): void {
+    this.buffers.delete(sessionId);
     const emitter = this.emitters.get(sessionId);
     if (emitter) {
       emitter.removeAllListeners();

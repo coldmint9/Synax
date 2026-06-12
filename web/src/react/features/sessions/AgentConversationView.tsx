@@ -239,6 +239,7 @@ export function AgentConversationView({
                   <Bot size={14} className="text-[var(--color-agent)]" />
                 </div>
                 <div className="flex-1 min-w-0 flex flex-col gap-2">
+                  {cs.thinking && <ThinkingBlock content={cs.thinking} />}
                   {cs.text && <StreamingTextBlock text={cs.text} isStreaming={false} />}
                   {cs.toolCalls.length > 1 ? (
                     <ParallelToolCallGroup
@@ -272,7 +273,6 @@ export function AgentConversationView({
                       }}
                     />
                   ))}
-                  {cs.thinking && <ThinkingBlock content={cs.thinking} />}
                 </div>
               </div>
             ))}
@@ -284,6 +284,7 @@ export function AgentConversationView({
                   <Bot size={14} className="text-[var(--color-agent)]" />
                 </div>
                 <div className="flex-1 min-w-0 flex flex-col gap-2">
+                  {streamingThinking && <ThinkingBlock content={streamingThinking} isStreaming />}
                   {streamingText && (
                     <StreamingTextBlock text={streamingText} isStreaming />
                   )}
@@ -319,7 +320,6 @@ export function AgentConversationView({
                       }}
                     />
                   ))}
-                  {streamingThinking && <ThinkingBlock content={streamingThinking} isStreaming />}
                   {!streamingText && !streamingThinking && (streamingToolCalls ?? []).length === 0 && (
                     <ThinkingIndicator />
                   )}
