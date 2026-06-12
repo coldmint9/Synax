@@ -4,9 +4,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 describe('log routes', () => {
   beforeEach(async () => {
     const { clearApiLogStoreForTests } = await import('../../lib/log-store.js');
+    const { clearDailyLogFilesForTests } = await import('../../lib/log-file-store.js');
     clearApiLogStoreForTests();
-    const { API_SESSION_LOG_FILE } = await import('../../lib/logger.js');
-    fs.writeFileSync(API_SESSION_LOG_FILE, '', 'utf8');
+    clearDailyLogFilesForTests();
   });
 
   it('persists logs and exposes daily stats', async () => {
@@ -64,11 +64,11 @@ describe('log routes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('writes the current startup log file', async () => {
-    const { API_SESSION_LOG_FILE, logger } = await import('../../lib/logger.js');
+  it('writes the current daily log file', async () => {
+    const { getApiLogFilePath, logger } = await import('../../lib/logger.js');
     logger.info({ method: 'GET', path: '/api/health', status: 200, ms: 9 }, 'request');
 
-    const text = fs.readFileSync(API_SESSION_LOG_FILE, 'utf8');
+    const text = fs.readFileSync(getApiLogFilePath(), 'utf8');
 
     expect(text).toContain('INFO request');
     expect(text).toContain('"path":"/api/health"');
