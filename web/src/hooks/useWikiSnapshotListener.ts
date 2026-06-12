@@ -1,13 +1,21 @@
 import { useEffect } from 'react'
 import { TaskNotificationEventType } from '../lib/api/eventTypes'
 import { subscribe } from '../lib/api/taskNotificationBus'
-import type { WikiSnapshotTree } from '../lib/contracts/wiki'
+import type { WikiBlock, WikiDocument, WikiSnapshotTree } from '../lib/contracts/wiki'
 import { useWikiStore } from '../react/state/wikiStore'
 
 interface WikiSnapshotPayload {
   type: typeof TaskNotificationEventType.WikiSnapshot
   projectId: string
   tree: WikiSnapshotTree
+}
+
+interface WikiDocumentCommittedPayload {
+  type: typeof TaskNotificationEventType.DocumentCommitted
+  projectId: string
+  documentId: string
+  document: WikiDocument
+  blocks: WikiBlock[]
 }
 
 export function useWikiSnapshotListener(projectId: string | null) {
@@ -25,9 +33,24 @@ export function useWikiSnapshotListener(projectId: string | null) {
       }
     }
 
+    const handleDocumentCommitted = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data) as WikiDocumentCommittedPayload
+        if (data.type !== TaskNotificationEventType.DocumentCommitted) return
+        if (data.projectId !== projectId) return
+        useWikiStore.getState().applyDocumentUpdate(data.documentId, {
+          blockIds: data.document.blockIds,
+          pipelineStage: data.document.pipelineStage,
+        }, data.blocks)
+      } catch (err) {
+        console.warn('[useWikiSnapshotListener] Failed to process document_committed event:', err)
+      }
+    }
+
     return subscribe(projectId, {
       events: {
         [TaskNotificationEventType.WikiSnapshot]: handleSnapshot,
+        [TaskNotificationEventType.DocumentCommitted]: handleDocumentCommitted,
       },
     })
   }, [projectId])

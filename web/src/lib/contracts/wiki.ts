@@ -108,6 +108,7 @@ export interface WikiDocument {
   docType: WikiDocType;
   parentId: string | null;
   blockIds: string[];
+  pipelineStage: string;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;

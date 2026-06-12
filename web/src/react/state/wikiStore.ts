@@ -83,6 +83,7 @@ export interface WikiState {
   setViewMode: (mode: WikiViewMode) => void;
   setSnapshotLoading: () => void;
   applySnapshotTree: (tree: WikiSnapshotTree) => void;
+  applyDocumentUpdate: (documentId: string, update: { blockIds: string[]; pipelineStage: string }, blocks: WikiBlock[]) => void;
   selectDocument: (documentId: string | null) => void;
   selectBlock: (blockId: string | null) => void;
   setSearchHighlightQuery: (query: string | null) => void;
@@ -239,6 +240,25 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     if (selectedDocumentId !== prev.selectedDocumentId) patch.selectedDocumentId = selectedDocumentId;
 
     set(patch);
+  },
+
+  applyDocumentUpdate: (documentId, update, blocks) => {
+    const prev = get();
+    const docIndex = prev.documents.findIndex(d => d.id === documentId);
+    if (docIndex < 0) return;
+
+    const updatedDocs = [...prev.documents];
+    updatedDocs[docIndex] = { ...updatedDocs[docIndex], blockIds: update.blockIds, pipelineStage: update.pipelineStage };
+
+    const nextBlocksById = { ...prev.blocksById };
+    for (const block of blocks) {
+      nextBlocksById[block.id] = block;
+    }
+
+    set({
+      documents: updatedDocs,
+      blocksById: nextBlocksById,
+    });
   },
 
   selectDocument: (documentId) => {

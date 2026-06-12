@@ -33,6 +33,7 @@ function connect(projectId: string) {
     TaskNotificationEventType.TaskCompleted,
     TaskNotificationEventType.TaskFailed,
     TaskNotificationEventType.WikiSnapshot,
+    TaskNotificationEventType.DocumentCommitted,
   ]
   for (const type of eventTypes) {
     es.addEventListener(type, (e: MessageEvent) => {

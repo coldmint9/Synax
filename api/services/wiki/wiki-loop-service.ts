@@ -16,7 +16,7 @@ import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { wikiStore } from './wiki-store.js';
 import { wikiCoordinateService } from './wiki-coordinate-service.js';
-import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
+import { publishLatestWikiSnapshot, publishDocumentCommittedEvent, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
 import { ensureWikiProfileRegistered } from './wiki-loop-profile.js';
 import {
   createPlannerTools,
@@ -278,20 +278,23 @@ export const wikiLoopService = {
             ? planIdToDocId.get(latestDoc.parentPlanId) ?? null
             : null;
 
+          let committedDocId: string;
           const existingDocId = findExistingDocId(latestDoc, outline, planIdToDocId);
           if (existingDocId) {
             await fillDocumentContent(existingDocId, latestDoc, projectId, scan);
             await wikiStore.updateDocumentPipelineStage(existingDocId, 'drafted');
+            committedDocId = existingDocId;
           } else {
             const newId = await persistSingleDocument(latestDoc, snapshot.id, projectId, scan, resolvedParentId);
             persistedDocIds.push(newId);
             const planEntry = outline.find(p => p.title === latestDoc.title && p.docType === latestDoc.docType);
             if (planEntry) planIdToDocId.set(planEntry.id, newId);
             await wikiStore.updateDocumentPipelineStage(newId, 'drafted');
+            committedDocId = newId;
           }
 
-          logger.info({ projectId, title: latestDoc.title }, 'wiki-loop: document content committed');
-          await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.DocumentCommitted);
+          logger.info({ projectId, title: latestDoc.title, docId: committedDocId }, 'wiki-loop: document content committed');
+          await publishDocumentCommittedEvent(projectId, committedDocId);
         },
       });
 
@@ -605,9 +608,9 @@ export const wikiLoopService = {
           if (existingDoc) {
             await fillDocumentContent(existingDoc.id, latestDoc, snapshot.projectId, scan);
             await wikiStore.updateDocumentPipelineStage(existingDoc.id, 'drafted');
+            logger.info({ projectId: snapshot.projectId, title: latestDoc.title, docId: existingDoc.id }, 'wiki-loop: continue - document content committed');
+            await publishDocumentCommittedEvent(snapshot.projectId, existingDoc.id);
           }
-          logger.info({ projectId: snapshot.projectId, title: latestDoc.title }, 'wiki-loop: continue - document content committed');
-          await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.DocumentCommitted);
         },
       });
 
