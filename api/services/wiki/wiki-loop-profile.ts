@@ -207,6 +207,7 @@ export const wikiGeneratorProfile: AgentProfile = {
     'wiki.read_tree',
     'wiki.submit_plan',
     'wiki.commit_document',
+    'wiki.check_mermaid',
     'tools.escalate',
   ],
   permissionDefaults: [

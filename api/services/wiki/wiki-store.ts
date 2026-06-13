@@ -14,6 +14,7 @@ import {
   wikiPlanNodes,
   wikiPlanNodeArtifacts,
   wikiEvaluations,
+  wikiWriteBatches,
 } from '../../db/schema.js';
 import type {
   WikiSnapshot,
@@ -131,13 +132,42 @@ export const wikiStore = {
 
   async recoverOrphanedSnapshots(): Promise<number> {
     const db = getDb();
-    // outline_ready is a stable user-approval gate — documents are already persisted.
-    // Only mark in-flight generation states as failed after a server restart.
-    const result = await db
+
+    const refreshingResult = await db
       .update(wikiSnapshots)
       .set({ status: 'failed' })
-      .where(inArray(wikiSnapshots.status, ['refreshing', 'writing']));
-    return Number(result.rowsAffected ?? 0);
+      .where(eq(wikiSnapshots.status, 'refreshing'));
+
+    const writingSnapshots = await db
+      .select()
+      .from(wikiSnapshots)
+      .where(eq(wikiSnapshots.status, 'writing'));
+
+    let writingRecovered = 0;
+    for (const row of writingSnapshots) {
+      const activeBatches = await db
+        .select()
+        .from(wikiWriteBatches)
+        .where(and(
+          eq(wikiWriteBatches.snapshotId, row.id),
+          eq(wikiWriteBatches.status, 'running'),
+        ));
+      if (activeBatches.length > 0) {
+        continue;
+      }
+
+      const docs = await this.getDocumentsBySnapshot(row.id);
+      const hasWrittenContent = docs.some(
+        (doc) => !doc.isSection && doc.contentMd.trim().length > 0,
+      );
+      await db
+        .update(wikiSnapshots)
+        .set({ status: hasWrittenContent ? 'failed' : 'outline_ready' })
+        .where(eq(wikiSnapshots.id, row.id));
+      writingRecovered++;
+    }
+
+    return Number(refreshingResult.rowsAffected ?? 0) + writingRecovered;
   },
 
   // ── Documents ─────────────────────────────────────────────────────────────

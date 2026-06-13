@@ -695,6 +695,38 @@ export const wikiPlanNodeArtifacts = sqliteTable('wiki_plan_node_artifacts', {
 export type WikiPlanNodeArtifactRow = typeof wikiPlanNodeArtifacts.$inferSelect;
 export type NewWikiPlanNodeArtifactRow = typeof wikiPlanNodeArtifacts.$inferInsert;
 
+export const wikiWriteBatches = sqliteTable('wiki_write_batches', {
+  id: text('id').primaryKey(),
+  snapshotId: text('snapshot_id').notNull(),
+  projectId: text('project_id').notNull(),
+  workDir: text('work_dir').notNull(),
+  locale: text('locale').notNull().default('zh'),
+  status: text('status').notNull().default('running'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+  completedAt: text('completed_at'),
+  error: text('error'),
+});
+
+export const wikiWriteQueueItems = sqliteTable('wiki_write_queue_items', {
+  id: text('id').primaryKey(),
+  batchId: text('batch_id').notNull(),
+  snapshotId: text('snapshot_id').notNull(),
+  projectId: text('project_id').notNull(),
+  documentId: text('document_id').notNull(),
+  documentTitle: text('document_title').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+  status: text('status').notNull().default('queued'),
+  sessionId: text('session_id'),
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+  startedAt: text('started_at'),
+  completedAt: text('completed_at'),
+});
+
+export type WikiWriteBatchRow = typeof wikiWriteBatches.$inferSelect;
+export type WikiWriteQueueItemRow = typeof wikiWriteQueueItems.$inferSelect;
+
 export const wikiJobs = sqliteTable('wiki_jobs', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),

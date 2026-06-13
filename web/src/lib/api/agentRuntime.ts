@@ -226,6 +226,26 @@ export interface TodoItem {
   status: 'pending' | 'in_progress' | 'done'
 }
 
+export interface AgentToolSummary {
+  id: string
+  label: string
+  description: string
+  category: string
+  mutability: 'read' | 'write' | 'task'
+}
+
+export interface SessionCapabilities {
+  profile: { id: string; label: string; kind: string }
+  tools: {
+    available: AgentToolSummary[]
+    visible: AgentToolSummary[]
+  }
+  skills: {
+    active: AgentSkillSummary[]
+    candidates: AgentSkillSummary[]
+  }
+}
+
 export interface StreamTurnRequest {
   message?: string
   model?: string
@@ -309,6 +329,8 @@ export const agentRuntimeApi = {
     request<SessionStats>(`/sessions/${encodeURIComponent(sessionId)}/stats`),
   getSessionTodos: (sessionId: string) =>
     request<{ items: TodoItem[] }>(`/sessions/${encodeURIComponent(sessionId)}/todos`),
+  getSessionCapabilities: (sessionId: string) =>
+    request<SessionCapabilities>(`/sessions/${encodeURIComponent(sessionId)}/capabilities`),
   pauseSession: (sessionId: string) =>
     request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/pause`, { method: 'POST' }),
   resumeStream: async (

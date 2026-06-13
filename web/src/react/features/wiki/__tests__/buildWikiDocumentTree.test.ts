@@ -64,4 +64,21 @@ describe('buildWikiDocumentTree', () => {
     expect(tree.map(n => n.document.id)).toEqual(['b', 'a', 'c'])
     expect(tree.every(n => n.children.length === 0)).toBe(true)
   })
+
+  it('groups flat section outlines without parentId by creation order', () => {
+    const documents = [
+      makeDoc({ id: 'sec-a', title: 'Overview', sortOrder: 1, isSection: true, createdAt: '2026-01-01T00:00:01Z' }),
+      makeDoc({ id: 'sec-b', title: 'Architecture', sortOrder: 2, isSection: true, createdAt: '2026-01-01T00:00:02Z' }),
+      makeDoc({ id: 'page-a1', title: 'Landscape', sortOrder: 1, createdAt: '2026-01-01T00:00:03Z' }),
+      makeDoc({ id: 'page-b1', title: 'Topology', sortOrder: 1, createdAt: '2026-01-01T00:00:04Z' }),
+      makeDoc({ id: 'page-b2', title: 'Auth Module', sortOrder: 2, createdAt: '2026-01-01T00:00:05Z' }),
+    ]
+
+    const tree = buildWikiDocumentTree(documents)
+    expect(tree).toHaveLength(2)
+    expect(tree[0].document.id).toBe('sec-a')
+    expect(tree[0].children.map(n => n.document.id)).toEqual(['page-a1'])
+    expect(tree[1].document.id).toBe('sec-b')
+    expect(tree[1].children.map(n => n.document.id)).toEqual(['page-b1', 'page-b2'])
+  })
 })

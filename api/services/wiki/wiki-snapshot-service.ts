@@ -27,7 +27,7 @@ export interface GenerateWikiInput {
 
 export interface GenerateWikiResult {
   snapshotId: string;
-  status: 'completed' | 'failed' | 'outline_ready';
+  status: 'completed' | 'failed' | 'outline_ready' | 'writing';
   error?: string;
   docCount?: number;
 }

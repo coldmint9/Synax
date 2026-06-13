@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { BookOpen, Folder, FolderOpen } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
@@ -85,14 +85,7 @@ function SectionFolder({
   onToggle: () => void
   hasChildren: boolean
 }) {
-  const FolderIcon = hasChildren && expanded ? FolderOpen : Folder
-
-  const content = (
-    <>
-      <FolderIcon size={12} className="shrink-0 text-muted-foreground/50 transition-colors duration-150" />
-      <span className="min-w-0 flex-1 truncate text-left">{title}</span>
-    </>
-  )
+  const FolderIcon = expanded ? FolderOpen : Folder
 
   const rowClass =
     'flex w-full items-center gap-1.5 py-1.5 pr-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70'
@@ -102,18 +95,23 @@ function SectionFolder({
       <button
         type="button"
         aria-expanded={expanded}
-        onClick={onToggle}
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggle()
+        }}
         style={{ paddingLeft: `${indentPx(depth)}px` }}
         className={`${rowClass} transition-colors duration-150 hover:text-muted-foreground`}
       >
-        {content}
+        <FolderIcon size={12} className="shrink-0 text-muted-foreground/50 transition-colors duration-150" />
+        <span className="min-w-0 flex-1 truncate text-left">{title}</span>
       </button>
     )
   }
 
   return (
     <div style={{ paddingLeft: `${indentPx(depth)}px` }} className={rowClass}>
-      {content}
+      <Folder size={12} className="shrink-0 text-muted-foreground/50" />
+      <span className="min-w-0 flex-1 truncate text-left">{title}</span>
     </div>
   )
 }
@@ -126,6 +124,8 @@ function TreeNode({
   issuesByDocId,
   draftsByDocId,
   defaultExpanded,
+  isExpanded,
+  onToggleExpanded,
 }: {
   node: WikiDocTreeNode
   depth: number
@@ -134,9 +134,12 @@ function TreeNode({
   issuesByDocId: Map<string, number>
   draftsByDocId: Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>
   defaultExpanded: boolean
+  isExpanded: (id: string, defaultExpanded: boolean) => boolean
+  onToggleExpanded: (id: string, defaultExpanded: boolean) => void
 }) {
   const hasChildren = node.children.length > 0
-  const [expanded, setExpanded] = useState(defaultExpanded)
+  const nodeId = node.document.id
+  const expanded = isExpanded(nodeId, defaultExpanded)
   const isSection = node.document.isSection
 
   return (
@@ -147,7 +150,7 @@ function TreeNode({
           depth={depth}
           expanded={expanded}
           hasChildren={hasChildren}
-          onToggle={() => setExpanded(v => !v)}
+          onToggle={() => onToggleExpanded(nodeId, defaultExpanded)}
         />
       ) : (
         <DocItem
@@ -171,6 +174,8 @@ function TreeNode({
               issuesByDocId={issuesByDocId}
               draftsByDocId={draftsByDocId}
               defaultExpanded={depth + 1 <= 1}
+              isExpanded={isExpanded}
+              onToggleExpanded={onToggleExpanded}
             />
           ))}
         </div>
@@ -190,6 +195,20 @@ export default function WikiDocumentTree() {
   const evaluations = useWikiStore(s => s.evaluations)
 
   const tree = useMemo(() => buildWikiDocumentTree(documents), [documents])
+
+  const [expansionState, setExpansionState] = useState<Record<string, boolean>>({})
+
+  const isExpanded = useCallback(
+    (id: string, defaultExpanded: boolean) => expansionState[id] ?? defaultExpanded,
+    [expansionState],
+  )
+
+  const toggleExpanded = useCallback((id: string, defaultExpanded: boolean) => {
+    setExpansionState(prev => ({
+      ...prev,
+      [id]: !(prev[id] ?? defaultExpanded),
+    }))
+  }, [])
 
   const issuesByDocId = useMemo(() => {
     const map = new Map<string, number>()
@@ -252,6 +271,8 @@ export default function WikiDocumentTree() {
             issuesByDocId={issuesByDocId}
             draftsByDocId={draftsByDocId}
             defaultExpanded
+            isExpanded={isExpanded}
+            onToggleExpanded={toggleExpanded}
           />
         ))}
       </div>

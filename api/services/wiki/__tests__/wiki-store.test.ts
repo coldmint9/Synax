@@ -107,13 +107,29 @@ describe('wikiStore.markDocumentsStale', () => {
 describe('wikiStore.recoverOrphanedSnapshots', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('marks in-flight generation snapshots as failed but preserves outline_ready', async () => {
-    mockSetWhere.mockResolvedValueOnce({ rowsAffected: 2 });
+  it('marks refreshing snapshots as failed', async () => {
+    mockSetWhere.mockResolvedValueOnce({ rowsAffected: 1 });
+    mockWhere.mockResolvedValueOnce([]);
 
     const count = await wikiStore.recoverOrphanedSnapshots();
 
-    expect(count).toBe(2);
+    expect(count).toBe(1);
     expect(mockSet).toHaveBeenCalledWith({ status: 'failed' });
-    expect(mockSetWhere).toHaveBeenCalled();
+  });
+
+  it('restores writing snapshots to outline_ready when no content was written', async () => {
+    mockSetWhere.mockResolvedValueOnce({ rowsAffected: 0 });
+    mockWhere.mockResolvedValueOnce([
+      makeSnapshotRow({ id: 'snap-writing', status: 'writing' }),
+    ]);
+    mockOrderBy.mockResolvedValueOnce([
+      makeDocumentRow({ id: 'doc-1', contentMd: '', pipelineStage: 'pending' }),
+    ]);
+    mockSetWhere.mockResolvedValueOnce(undefined);
+
+    const count = await wikiStore.recoverOrphanedSnapshots();
+
+    expect(count).toBe(1);
+    expect(mockSet).toHaveBeenCalledWith({ status: 'outline_ready' });
   });
 });

@@ -5,6 +5,7 @@
 import type {
   WikiSnapshotTree,
   WikiRefreshDraft,
+  WikiWriteQueueState,
 } from '../contracts/wiki';
 import { apiRequest } from './origin';
 
@@ -17,6 +18,10 @@ export const wikiApi = {
 
   getSnapshot(snapshotId: string): Promise<WikiSnapshotTree> {
     return apiRequest<WikiSnapshotTree>(`${BASE}/snapshots/${snapshotId}`);
+  },
+
+  getWriteQueue(snapshotId: string): Promise<WikiWriteQueueState> {
+    return apiRequest<WikiWriteQueueState>(`${BASE}/snapshots/${snapshotId}/write-queue`);
   },
 
   exportSnapshotUrl(snapshotId: string, refs = false): string {

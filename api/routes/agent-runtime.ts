@@ -17,6 +17,7 @@ import {
   permissionPolicy,
   permissionReplyRequestSchema,
   profileService,
+  resolveSessionCapabilities,
   skillRegistry,
   streamTurnRequestSchema,
   toHttpError,
@@ -434,6 +435,16 @@ agentRuntimeRoutes.get('/sessions/:sessionId/stats', (c) => {
   try {
     const stats = agentRuntimeStore.getSessionStats(c.req.param('sessionId'));
     return c.json(stats);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.get('/sessions/:sessionId/capabilities', (c) => {
+  try {
+    const sessionId = c.req.param('sessionId');
+    agentSessionRuntime.get(sessionId);
+    return c.json(resolveSessionCapabilities(sessionId));
   } catch (error) {
     return runtimeError(c, error);
   }

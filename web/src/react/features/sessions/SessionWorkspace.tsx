@@ -3,6 +3,7 @@ import { CheckCircle2, Circle, Clock, Cpu, FileEdit, FilePlus, FileX, File, Load
 import { useLocale } from '../../../hooks/useLocale'
 import { useDebugConsole } from '../debug-console/debugConsoleStore'
 import type { SessionStats, TodoItem } from '../../../lib/api/agentRuntime'
+import { SessionCapabilitiesPanel } from './SessionCapabilitiesPanel'
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -144,6 +145,7 @@ export function SessionWorkspace() {
   const events = useDebugConsole(s => s.events)
   const sessionStats = useDebugConsole(s => s.sessionStats)
   const sessionTodos = useDebugConsole(s => s.sessionTodos)
+  const sessionCapabilities = useDebugConsole(s => s.sessionCapabilities)
 
   const fileChanges = useMemo<FileChange[]>(() => {
     const paths = new Map<string, FileChange>()
@@ -160,6 +162,7 @@ export function SessionWorkspace() {
   return (
     <div className="flex h-full flex-col overflow-y-auto text-[10px]">
       {sessionStats && <SessionStatusCard stats={sessionStats} />}
+      {sessionCapabilities && <SessionCapabilitiesPanel capabilities={sessionCapabilities} />}
       <TodoCard items={sessionTodos} />
       <FilesCard files={fileChanges} />
     </div>

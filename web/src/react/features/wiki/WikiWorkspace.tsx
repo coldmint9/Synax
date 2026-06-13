@@ -11,6 +11,8 @@ import WikiDocumentTree from './WikiDocumentTree'
 import WikiDocumentView from './WikiDocumentView'
 import WikiDraftPanel from './WikiDraftPanel'
 import WikiOutlineProgress from './WikiOutlineProgress'
+import WikiWriteQueuePanel from './WikiWriteQueuePanel'
+import { countWrittenDocuments, countWritableDocuments } from './wikiDocumentCounts'
 import PlanView from './PlanView'
 import PlanListView from './PlanListView'
 import { wikiApi } from '../../../lib/api/wiki'
@@ -231,6 +233,9 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     if (snapshot?.status === 'refreshing' && !gen.active) {
       gen.start(snapshot.id)
     }
+    if (snapshot?.status === 'writing' && !gen.active) {
+      gen.start(snapshot.id)
+    }
   }, [snapshot?.status, snapshot?.id, gen.active, gen.start])
 
   const refreshing = refreshTask.phase !== 'idle' && refreshTask.phase !== 'completed' && refreshTask.phase !== 'failed'
@@ -242,6 +247,8 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   const selectedDoc = documents.find(d => d.id === selectedDocumentId)
   const scrollRef = useScrollRestore(selectedDocumentId)
+  const writableDocTotal = countWritableDocuments(documents)
+  const writtenDocCount = countWrittenDocuments(documents)
 
   // Load evaluations when projectId changes
   useEffect(() => {
@@ -383,7 +390,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
         </aside>
         <div className="wiki-separator shrink-0" />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden pt-14 px-5">
-          <div className="max-w-2xl space-y-4">
+          <div className="mx-auto w-full max-w-[68ch] space-y-4">
             <Skeleton className="h-6 w-48 rounded-lg" />
             <Skeleton className="h-4 w-full rounded-md" />
             <Skeleton className="h-4 w-3/4 rounded-md" />
@@ -452,7 +459,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               <div className="flex items-center gap-1.5">
                 <AlertCircle size={11} className="shrink-0 text-destructive" />
                 <span className="text-[11px] text-destructive">
-                  {t('wikiGenerationIncomplete', { done: documents.filter(d => d.contentMd).length, total: documents.length })}
+                  {t('wikiGenerationIncomplete', { done: writtenDocCount, total: writableDocTotal })}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
@@ -508,12 +515,15 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             </div>
           )}
           {snapshot?.status === 'writing' && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
-              <Loader2 size={11} className="animate-spin text-primary" />
-              <span className="text-[11px] text-primary">
-                {t('wikiWriting', { done: documents.filter(d => d.contentMd).length, total: documents.length })}
-              </span>
-            </div>
+            <>
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
+                <Loader2 size={11} className="animate-spin text-primary" />
+                <span className="text-[11px] text-primary">
+                  {t('wikiWriting', { done: writtenDocCount, total: writableDocTotal })}
+                </span>
+              </div>
+              <WikiWriteQueuePanel snapshotId={snapshot.id} />
+            </>
           )}
           <WikiDocumentTree />
         </div>
@@ -534,7 +544,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
         </div>
         <div className={`min-h-0 flex-1 flex flex-col overflow-hidden ${viewMode !== 'document' ? 'hidden' : ''}`}>
           {selectedDoc ? (
-            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-14">
+            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-16 pt-14 sm:px-10">
               <WikiDocumentView document={selectedDoc} projectId={projectId} />
             </div>
           ) : (

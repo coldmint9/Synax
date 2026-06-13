@@ -223,7 +223,7 @@ export default function WikiDocumentView({
   return (
     <article
       id={`wiki-document-${document.id}`}
-      className="wiki-doc max-w-3xl"
+      className="wiki-doc mx-auto w-full"
     >
       <header className="wiki-doc-header">
         <div className="flex flex-wrap items-center gap-2 mb-2">
