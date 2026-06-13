@@ -146,6 +146,52 @@ export interface DebugConsoleState {
   applyLiveEvent: (event: SessionLiveEvent) => void
 }
 
+type SessionDetailState = Pick<
+  DebugConsoleState,
+  | 'selectedSessionId'
+  | 'panelOpen'
+  | 'runs'
+  | 'steps'
+  | 'events'
+  | 'messages'
+  | 'toolCalls'
+  | 'childSessions'
+  | 'permissions'
+  | 'sessionStats'
+  | 'sessionTodos'
+  | 'streamingStepId'
+  | 'streamingText'
+  | 'streamingThinking'
+  | 'streamingToolCalls'
+  | 'streamingCompletedSteps'
+>
+
+function emptySessionDetailState(): SessionDetailState {
+  return {
+    selectedSessionId: null,
+    panelOpen: false,
+    runs: [],
+    steps: [],
+    events: [],
+    messages: [],
+    toolCalls: [],
+    childSessions: {},
+    permissions: [],
+    sessionStats: null,
+    sessionTodos: [],
+    streamingStepId: null,
+    streamingText: '',
+    streamingThinking: '',
+    streamingToolCalls: [],
+    streamingCompletedSteps: [],
+  }
+}
+
+function clearStreamingBuffers(): void {
+  _textBuffer = ''
+  _thinkingBuffer = ''
+}
+
 export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   projectId: null,
   sessions: [],
@@ -168,7 +214,9 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
 
   setProjectId: (projectId) => {
     if (projectId === get().projectId) return
-    set({ projectId, sessions: [] })
+    releaseSessionLiveSubscription()
+    clearStreamingBuffers()
+    set({ projectId, sessions: [], ...emptySessionDetailState() })
     void get().refreshSessions()
   },
 
@@ -212,8 +260,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
     // Only clear persisted data if switching to a different session
     // refreshDetail will atomically replace with new data
     if (prev !== sessionId) {
-      _textBuffer = ''
-      _thinkingBuffer = ''
+      clearStreamingBuffers()
     }
     ensureLiveStream(sessionId)
     void get().refreshDetail()

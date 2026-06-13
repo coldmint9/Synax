@@ -191,9 +191,9 @@ export function AgentConversationView({
           <div className="flex flex-col gap-5">
             {visibleTurns.map(turn => (
               <div key={turn.stepId} className="flex gap-3">
-                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04]">
-                  <Bot size={14} className="text-[var(--color-agent)]" />
-                </div>
+                <span className="icon-surface mt-1" data-tone="agent" data-size="sm">
+                  <Bot size={14} />
+                </span>
                 <div className="flex-1 min-w-0 flex flex-col gap-2">
                   {turn.blocks.map((block, i) => {
                     if (block.type === 'text') {
@@ -235,9 +235,9 @@ export function AgentConversationView({
             {/* Completed streaming steps (buffered before refreshDetail syncs) */}
             {(streamingCompletedSteps ?? []).map(cs => (
               <div key={cs.stepId} className="flex gap-3 animate-[fade-up_0.3s_ease-out]">
-                <div className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04] ${isRunning ? 'animate-bot-glow' : ''}`}>
-                  <Bot size={14} className="text-[var(--color-agent)]" />
-                </div>
+                <span className={`icon-surface mt-1${isRunning ? ' animate-bot-glow' : ''}`} data-tone="agent" data-size="sm">
+                  <Bot size={14} />
+                </span>
                 <div className="flex-1 min-w-0 flex flex-col gap-2">
                   {cs.thinking && <ThinkingBlock content={cs.thinking} />}
                   {cs.text && <StreamingTextBlock text={cs.text} isStreaming={false} />}
@@ -280,9 +280,9 @@ export function AgentConversationView({
             {/* Streaming turn */}
             {showLiveBlock && (
               <div className="flex gap-3">
-                <div className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[hsl(var(--agent))]/15 bg-[hsl(var(--agent))]/[0.04] ${isRunning ? 'animate-bot-glow' : ''}`}>
-                  <Bot size={14} className="text-[var(--color-agent)]" />
-                </div>
+                <span className={`icon-surface mt-1${isRunning ? ' animate-bot-glow' : ''}`} data-tone="agent" data-size="sm">
+                  <Bot size={14} />
+                </span>
                 <div className="flex-1 min-w-0 flex flex-col gap-2">
                   {streamingThinking && <ThinkingBlock content={streamingThinking} isStreaming />}
                   {streamingText && (
