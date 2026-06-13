@@ -2,6 +2,11 @@ import { z } from 'zod';
 import type { RegisteredTool } from '../../agent-runtime/contracts.js';
 import type { WikiDocType, WikiReference } from '../contracts.js';
 import { validateDocumentQuality } from '../document-quality-gates.js';
+import {
+  formatMermaidValidationSummary,
+  validateAllMermaidInMarkdown,
+  validateMermaidInput,
+} from '../mermaid-validation.js';
 import { WIKI_DOC_TYPES, MIN_MARKDOWN_LENGTH } from './contracts.js';
 import type { WikiDocumentDraft, WikiOutlineEntry, WikiClaim } from './contracts.js';
 
@@ -9,35 +14,29 @@ export function buildCheckMermaidTool(): RegisteredTool {
   return {
     id: 'wiki.check_mermaid',
     label: 'Check Mermaid Syntax',
-    description: 'Validate mermaid diagram syntax before committing. Returns parse errors so you can fix them.',
+    description:
+      'Validate mermaid diagram syntax before committing. Also enforced at wiki.commit_document. Pass code (single diagram) or markdown (all ```mermaid blocks).',
     category: 'read',
     mutability: 'read',
     resumeBehavior: 'auto',
     internalGate: 'none',
     inputSchema: z.object({
-      code: z.string().min(1).describe('Raw mermaid diagram code (without ```mermaid fences).'),
+      code: z.string().optional().describe('Raw mermaid diagram code (fences optional).'),
+      markdown: z.string().optional().describe('Full markdown — validates every ```mermaid block.'),
+    }).refine((v) => Boolean(v.code?.trim() || v.markdown?.trim()), {
+      message: 'Provide either code or markdown.',
     }),
     async execute(input) {
-      const args = input.args as { code: string };
-      const code = args.code.trim();
-      try {
-        const mermaid = (await import('mermaid')).default;
-        mermaid.initialize({ startOnLoad: false });
-        const result = await mermaid.parse(code);
-        return {
-          result: { ok: true, diagramType: result?.diagramType ?? 'unknown' },
-          displaySummary: `Mermaid syntax valid (${result?.diagramType ?? 'unknown'}).`,
-          artifacts: [],
-        };
-      } catch (e: any) {
-        const message = e?.message ?? String(e);
-        return {
-          result: { ok: false, error: message },
-          displaySummary: `Mermaid syntax error:\n${message}`,
-          artifacts: [],
-          followUpHints: ['Fix the syntax error and re-check before committing.'],
-        };
-      }
+      const args = input.args as { code?: string; markdown?: string };
+      const results = await validateMermaidInput(args);
+      const ok = results.every((r) => r.ok);
+      const displaySummary = formatMermaidValidationSummary(results);
+      return {
+        result: { ok, results },
+        displaySummary,
+        artifacts: [],
+        followUpHints: ok ? [] : ['Fix syntax errors and re-check before committing.'],
+      };
     },
   };
 }
@@ -74,7 +73,7 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
         centrality: z.enum(['load-bearing', 'incidental']),
       })).min(1).describe('Discrete verifiable claims made in this document.'),
     }),
-    execute(input) {
+    async execute(input) {
       const args = input.args as {
         title: string;
         docType: WikiDocType;
@@ -95,6 +94,7 @@ export function buildCommitDocumentTool(committedDocuments: WikiDocumentDraft[],
         errors.push(`Markdown too short: ${args.markdown.trim().length} chars (minimum ${minLen} for ${args.docType}).`);
       }
       errors.push(...validateDocumentQuality(args.docType, args.markdown, args.references ?? []));
+      errors.push(...await validateAllMermaidInMarkdown(args.markdown));
 
       if (!args.claims || args.claims.length === 0) {
         errors.push('At least one verifiable claim is required.');

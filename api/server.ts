@@ -18,6 +18,7 @@ import { getDb } from "./db/index.js";
 import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
 import { wikiStore } from "./services/wiki/wiki-store.js";
 import { ensureWikiProfileRegistered } from "./services/wiki/wiki-loop-profile.js";
+import { wikiWriteQueue } from "./services/wiki/wiki-write-queue-service.js";
 import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
 
 export const app = new Hono();
@@ -68,6 +69,16 @@ try {
 } catch (err) {
   pinoLogger.error({ err }, "failed to recover orphaned sessions");
 }
+
+// --- 启动时恢复 wiki 文档写入队列（先于 snapshot 恢复，避免误标记 writing 为 failed）---
+wikiWriteQueue.recoverOrphaned().then(({ batches, items }) => {
+  if (batches > 0 || items > 0) {
+    pinoLogger.warn({ batches, items }, "recovered orphaned wiki write queue on startup");
+  }
+  wikiWriteQueue.resume();
+}).catch((err) => {
+  pinoLogger.error({ err }, "failed to recover wiki write queue");
+});
 
 // --- 启动时恢复孤儿 wiki snapshot（服务器重启后卡在生成中状态）---
 wikiStore.recoverOrphanedSnapshots().then((count) => {

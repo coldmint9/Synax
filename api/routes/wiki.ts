@@ -5,6 +5,7 @@ import * as z from 'zod/v4';
 import { wikiStore } from '../services/wiki/wiki-store.js';
 import { wikiExportService } from '../services/wiki/wiki-export-service.js';
 import { wikiLoopService } from '../services/wiki/wiki-loop-service.js';
+import { wikiWriteQueue } from '../services/wiki/wiki-write-queue-service.js';
 import { wikiRefreshService } from '../services/wiki/wiki-refresh-service.js';
 import { wikiDraftService } from '../services/wiki/wiki-draft-service.js';
 import { getLatestWikiSnapshotTree, publishLatestWikiSnapshot, WikiSnapshotEventReason } from '../services/wiki/wiki-snapshot-events.js';
@@ -302,6 +303,15 @@ wikiRoutes.post('/snapshots/:snapshotId/approve', async (c) => {
   });
 
   return c.json({ status: 'queued', message: 'Wiki content generation started.' });
+});
+
+// ── GET /api/wiki/snapshots/:snapshotId/write-queue ───────────────────────
+wikiRoutes.get('/snapshots/:snapshotId/write-queue', async (c) => {
+  const { snapshotId } = c.req.param();
+  const snapshot = await wikiStore.getSnapshot(snapshotId);
+  if (!snapshot) return c.json({ error: 'Snapshot not found' }, 404);
+  const state = await wikiWriteQueue.getQueueState(snapshotId);
+  return c.json(state);
 });
 
 

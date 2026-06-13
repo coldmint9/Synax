@@ -7,6 +7,7 @@ export * from './profile-service.js';
 export * from './runtime-errors.js';
 export * from './runtime-ids.js';
 export * from './session-runtime.js';
+export * from './session-capabilities.js';
 export * from './session-store.js';
 export * from './skill-registry.js';
 export * from './tool-registry.js';

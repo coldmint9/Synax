@@ -1,5 +1,6 @@
 import type { WikiDocType, WikiReference } from './contracts.js';
 import { MIN_MARKDOWN_LENGTH } from './tools/contracts.js';
+import { detectDiagramKind, diagramKindMatchesRequirement, extractMermaidBlocks } from './mermaid-validation.js';
 
 export interface DocumentQualityOptions {
   minContentLength?: number;
@@ -11,9 +12,12 @@ function countHeadings(markdown: string, level: 2 | 3): number {
 }
 
 function countMermaidFences(markdown: string, diagramType?: string): number {
-  const fences = markdown.match(/```mermaid[\s\S]*?```/g) ?? [];
-  if (!diagramType) return fences.length;
-  return fences.filter(f => f.toLowerCase().includes(diagramType.toLowerCase())).length;
+  const blocks = extractMermaidBlocks(markdown);
+  if (!diagramType) return blocks.length;
+  return blocks.filter((block) => {
+    const kind = detectDiagramKind(block.code);
+    return diagramKindMatchesRequirement(kind, diagramType);
+  }).length;
 }
 
 function countTables(markdown: string): number {

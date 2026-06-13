@@ -51,8 +51,11 @@ export const CONTEXT_TOOL_CLEAR_KEEP_RECENT = Number(env('CONTEXT_TOOL_CLEAR_KEE
 /** 确定性工具结果清除：排除的工具 ID（逗号分隔） */
 export const CONTEXT_TOOL_CLEAR_EXCLUDE = env('CONTEXT_TOOL_CLEAR_EXCLUDE', 'task.create,task.update,task.get,task.list').split(',');
 
-/** Wiki Phase 2: max document-writer agents in flight */
-export const WIKI_WRITE_CONCURRENCY = Number(env('WIKI_WRITE_CONCURRENCY', '5'));
+/** Wiki Phase 2: max document-writer agents in flight (queue worker slots) */
+export const WIKI_WRITE_CONCURRENCY = Number(env('WIKI_WRITE_CONCURRENCY', '2'));
+
+/** Wall-clock timeout for a single wiki agent run (document writer / verifier / corrector) */
+export const WIKI_AGENT_RUN_TIMEOUT_MS = Number(env('WIKI_AGENT_RUN_TIMEOUT_MS', '900000'));
 
 /** Wiki Phase 2: max verifier/corrector agents in flight */
 export const WIKI_VERIFY_CONCURRENCY = Number(env('WIKI_VERIFY_CONCURRENCY', '3'));

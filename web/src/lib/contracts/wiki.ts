@@ -53,6 +53,48 @@ export interface WikiSnapshotTree {
   draftsSummary: { ready: number; generating: number };
 }
 
+export type WikiWriteQueueItemStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type WikiWriteBatchStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface WikiWriteQueueItem {
+  id: string;
+  batchId: string;
+  snapshotId: string;
+  projectId: string;
+  documentId: string;
+  documentTitle: string;
+  sortOrder: number;
+  status: WikiWriteQueueItemStatus;
+  sessionId: string | null;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface WikiWriteBatch {
+  id: string;
+  snapshotId: string;
+  projectId: string;
+  workDir: string;
+  locale: 'zh' | 'en';
+  status: WikiWriteBatchStatus;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  error: string | null;
+}
+
+export interface WikiWriteQueueState {
+  batch: WikiWriteBatch | null;
+  items: WikiWriteQueueItem[];
+  runningCount: number;
+  queuedCount: number;
+  completedCount: number;
+  failedCount: number;
+  concurrency: number;
+}
+
 // ── Refresh Draft types ─────────────────────────────────────────────────────
 
 export type WikiRefreshDraftStatus =

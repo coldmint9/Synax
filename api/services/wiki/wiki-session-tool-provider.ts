@@ -1,46 +1,60 @@
-import type { SessionToolProvider, ToolHook } from '../agent-runtime/contracts.js';
+import type { RegisteredTool, SessionToolProvider, ToolHook } from '../agent-runtime/contracts.js';
 import { agentRuntimeStore } from '../agent-runtime/session-store.js';
 import { logger } from '../../lib/logger.js';
 import { persistWikiDocumentCommit, toCommitInput } from './wiki-commit-persistence.js';
 import { wikiStore } from './wiki-store.js';
+import type { WikiDocumentDraft } from './tools/contracts.js';
+import { buildCheckMermaidTool, buildCommitDocumentTool } from './tools/write-tools.js';
 
 const PROVIDER_ID = 'wiki-session-tools';
+const WRITE_PHASES = new Set(['writer', 'document-writer', 'corrector']);
 
 /**
- * SessionToolProvider that ensures wiki-specific tools (wiki.commit_document,
- * wiki.check_mermaid, etc.) are available when a wiki session is resumed.
- *
- * On resume after pause/interrupt/server-restart, the global toolRegistry
- * may have lost wiki tools that were temporarily registered during generation.
- * This provider reconstructs the essential write tools with fresh session state.
- *
- * Read tools (wiki.read_code_index, etc.) are NOT reconstructed here because
- * the wiki profiles' allowedCapabilities include bash + file tools which cover
- * the same needs on resume. Only the unique commit/check/verdict tools are
- * provider-supplied since they have no built-in equivalent.
+ * Per-session tool instances so concurrent queue workers do not share commit state.
  */
 class WikiSessionToolProvider implements SessionToolProvider {
   id = PROVIDER_ID;
+  private readonly sessionTools = new Map<string, RegisteredTool[]>();
+  private readonly sessionCommitted = new Map<string, WikiDocumentDraft[]>();
 
-  getTools(_sessionId: string): [] {
-    // Writer/document-writer/corrector phases rely on globally registered wiki tools.
-    // Provider tools must not shadow them or split committedDocuments state.
-    return [];
+  getTools(sessionId: string): RegisteredTool[] {
+    const cached = this.sessionTools.get(sessionId);
+    if (cached) return cached;
+
+    const session = agentRuntimeStore.tryGetSession(sessionId);
+    if (!session?.sessionMetadata?.snapshotId) return [];
+
+    const phase = session.sessionMetadata.phase as string | undefined;
+    if (!phase || !WRITE_PHASES.has(phase)) return [];
+
+    const committedDocuments: WikiDocumentDraft[] = [];
+    const tools = [
+      buildCommitDocumentTool(committedDocuments, null),
+      buildCheckMermaidTool(),
+    ];
+    this.sessionTools.set(sessionId, tools);
+    this.sessionCommitted.set(sessionId, committedDocuments);
+    return tools;
+  }
+
+  getCommittedDocuments(sessionId: string): WikiDocumentDraft[] {
+    return this.sessionCommitted.get(sessionId) ?? [];
+  }
+
+  clearSessionTools(sessionId: string): void {
+    this.sessionTools.delete(sessionId);
+    this.sessionCommitted.delete(sessionId);
   }
 
   getHooks(sessionId: string): ToolHook[] {
-    const session = agentRuntimeStore.getSession(sessionId);
-    const meta = session.sessionMetadata;
-    if (!meta?.snapshotId) return [];
+    const session = agentRuntimeStore.tryGetSession(sessionId);
+    if (!session?.sessionMetadata?.snapshotId) return [];
 
-    const snapshotId = meta.snapshotId as string;
-    const phase = meta.phase as string | undefined;
+    const phase = session.sessionMetadata.phase as string | undefined;
+    if (!phase || !WRITE_PHASES.has(phase)) return [];
 
-    if (phase !== 'writer' && phase !== 'document-writer' && phase !== 'corrector') {
-      return [];
-    }
-
-    const hookId = `wiki-resume-commit-${snapshotId}`;
+    const snapshotId = session.sessionMetadata.snapshotId as string;
+    const hookId = `wiki-resume-commit-${snapshotId}-${sessionId}`;
     return [{
       id: hookId,
       toolId: 'wiki.commit_document',
@@ -65,7 +79,7 @@ class WikiSessionToolProvider implements SessionToolProvider {
           });
           await wikiStore.updateDocumentPipelineStage(committedDocId, 'drafted');
           logger.info({ snapshotId: sid, title: draft.title, docId: committedDocId },
-            '[wiki-session-tool-provider] persisted document on resume commit');
+            '[wiki-session-tool-provider] persisted document on commit');
         } catch (err) {
           logger.warn({ hookId, sessionId: ctx.sessionId, err },
             '[wiki-session-tool-provider] commit hook failed');

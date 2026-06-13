@@ -1070,13 +1070,25 @@ export class AgentRuntimeStore {
 
   recoverOrphanedSessions(): number {
     const db = getRawSqlite();
+    const now = nowIso();
+    const reason = 'Server restarted.';
+    db.prepare(
+      `UPDATE agent_runtime_run_steps
+       SET status = 'interrupted', completed_at = ?, finish_reason = 'server_restarted'
+       WHERE status = 'running'`,
+    ).run(now);
+    db.prepare(
+      `UPDATE agent_runtime_runs
+       SET status = 'interrupted', completed_at = ?, stop_reason = ?
+       WHERE status IN ('running', 'waiting_permission')`,
+    ).run(now, reason);
     const result = db
       .prepare(
         `UPDATE agent_runtime_sessions
-         SET status = 'interrupted', updated_at = ?, active_run_id = NULL, blocked_reason = 'Server restarted.'
-         WHERE status IN ('running', 'queued')`,
+         SET status = 'interrupted', updated_at = ?, active_run_id = NULL, blocked_reason = ?
+         WHERE status IN ('running', 'queued', 'waiting_permission')`,
       )
-      .run(nowIso());
+      .run(now, reason);
     return Number(result.changes ?? 0);
   }
 

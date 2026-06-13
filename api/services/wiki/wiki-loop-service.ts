@@ -10,28 +10,21 @@ import {
   setSessionWorkspaceRoot,
 } from '../agent-runtime/tools/workspace.js';
 import { logger } from '../../lib/logger.js';
-import { WIKI_VERIFY_CONCURRENCY, WIKI_WRITE_CONCURRENCY } from '../../lib/env.js';
-import { runBoundedConcurrency } from './bounded-concurrency.js';
+import { wikiWriteQueue } from './wiki-write-queue-service.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { wikiStore } from './wiki-store.js';
-import { publishLatestWikiSnapshot, publishDocumentCommittedEvent, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
+import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
 import { ensureWikiProfileRegistered } from './wiki-loop-profile.js';
 import {
   createPlannerTools,
-  createWriterTools,
   type WikiOutlineEntry,
 } from './wiki-loop-tools.js';
 import type { GenerateWikiInput, GenerateWikiResult, WikiGitState } from './wiki-snapshot-service.js';
 import { readGitState } from './wiki-snapshot-service.js';
 import { buildWikiPrompt, formatLanguages } from './wiki-prompt-builder.js';
-import { buildDocumentContext } from './wiki-document-context.js';
-import { createVerifierTools, type WikiVerdict } from './tools/verifier-tools.js';
-import type { WikiClaim } from './tools/contracts.js';
-import { buildLanguageDirective } from '../prompts/language-directive.js';
 import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, scanCheckingActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
 import { acquireCodeMapScan, fallbackGitState } from './wiki-scan-cache.js';
-import { persistWikiDocumentCommit, toCommitInput } from './wiki-commit-persistence.js';
 import { countWritableOutlineEntries, isSectionEntry, isWritableOutlineEntry } from './tools/outline-node.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
@@ -325,7 +318,7 @@ export const wikiLoopService = {
     if (snapshot.status !== 'failed') throw new Error(`Snapshot status must be "failed" to continue, got "${snapshot.status}"`);
 
     const documents = await wikiStore.getDocumentsBySnapshot(snapshotId);
-    const unfilled = documents.filter(d => !d.isSection && d.pipelineStage !== 'done');
+    const unfilled = documents.filter(d => !d.isSection && d.pipelineStage !== 'done' && d.contentMd.trim().length === 0);
 
     if (unfilled.length === 0) {
       await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
@@ -333,161 +326,36 @@ export const wikiLoopService = {
       return { snapshotId, status: 'completed' };
     }
 
+    ensureWikiProfileRegistered();
+
     await wikiStore.updateSnapshotStatus(snapshotId, 'writing', documents.map(d => d.id));
     await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueStarted);
 
-    const sessionIds: string[] = [];
-    const registeredToolIds: string[] = [];
-    const hookIds: string[] = [];
+    notify({
+      type: TaskNotificationEventType.TaskProgress,
+      taskKind: 'wiki_generate',
+      projectId: snapshot.projectId,
+      taskId: snapshotId,
+      title: wikiMsg(locale).continueTitle,
+      message: wikiMsg(locale).writingContent,
+      severity: 'info',
+      meta: { snapshotId, snapshotStatus: 'writing', phase: 2, totalDocs: unfilled.length },
+    });
 
-    try {
-      ensureWikiProfileRegistered();
+    const sorted = [...unfilled].sort((a, b) => a.sortOrder - b.sortOrder);
+    await wikiWriteQueue.enqueueBatch({
+      snapshotId,
+      projectId: snapshot.projectId,
+      workDir,
+      locale,
+      items: sorted.map((doc, i) => ({
+        documentId: doc.id,
+        documentTitle: doc.title,
+        sortOrder: i,
+      })),
+    });
 
-      // 捕获当前 git state 用于 git 缓存检查
-      let gitState: WikiGitState;
-      try {
-        gitState = readGitState(workDir);
-      } catch {
-        gitState = fallbackGitState();
-      }
-
-      const { scan } = await acquireCodeMapScan({ projectId: snapshot.projectId, workDir, gitState });
-
-      const outline: WikiOutlineEntry[] = unfilled.map(doc => ({
-        id: doc.id,
-        nodeKind: doc.isSection ? 'section' : 'document',
-        docType: doc.docType as WikiOutlineEntry['docType'],
-        title: doc.title,
-        parentId: doc.parentId ?? undefined,
-        sortOrder: doc.sortOrder,
-        targetFiles: [],
-        keyQuestions: [],
-      }));
-
-      const writerHandle = createWriterTools(scan, outline);
-      for (const tool of writerHandle.tools) {
-        toolRegistry.register(tool);
-        registeredToolIds.push(tool.id);
-      }
-
-      const commitHookId = `wiki-continue-commit-${snapshotId}`;
-      hookIds.push(commitHookId);
-
-      const continuePlanIdToDocId = new Map(
-        unfilled.map(doc => {
-          const outlineEntry = outline.find(e => e.title === doc.title && e.docType === doc.docType);
-          return outlineEntry ? [outlineEntry.id, doc.id] as const : null;
-        }).filter((entry): entry is readonly [string, string] => entry != null),
-      );
-
-      toolRegistry.registerHook({
-        id: commitHookId,
-        toolId: 'wiki.commit_document',
-        async afterExecute(ctx) {
-          const commitResult = ctx.result.result as { ok?: boolean };
-          if (!commitResult?.ok) return;
-          const draft = toCommitInput(ctx.args);
-          if (!draft) return;
-
-          const committedDocId = await persistWikiDocumentCommit({
-            draft,
-            snapshotId: snapshot.id,
-            projectId: snapshot.projectId,
-            outline,
-            planIdToDocId: continuePlanIdToDocId,
-          });
-          await wikiStore.updateDocumentPipelineStage(committedDocId, 'drafted');
-          logger.info({ projectId: snapshot.projectId, title: draft.title, docId: committedDocId }, 'wiki-loop: continue - document content committed');
-          await publishDocumentCommittedEvent(snapshot.projectId, committedDocId);
-        },
-      });
-
-      const writerPrompt = buildWikiPrompt({
-        role: 'writer',
-        languages: formatLanguages(scan),
-        locale,
-        outline,
-        continuation: {
-          completedTitles: documents.filter(d => d.contentMd.trim().length > 0).map(d => d.title),
-          remainingCount: unfilled.length,
-        },
-      });
-      const writerSession = agentSessionRuntime.create({
-        projectId: snapshot.projectId,
-        profileId: 'wiki-writer',
-        prompt: writerPrompt,
-        sessionMetadata: { snapshotId: snapshot.id, phase: 'writer' },
-      });
-      agentRuntimeStore.updateSession(writerSession.id, { title: wikiMsg(locale).sessionContinue, updatedAt: nowIso() });
-      sessionIds.push(writerSession.id);
-      setSessionWorkspaceRoot(writerSession.id, workDir);
-
-      const stream = agentLoopRuntime.streamRun(writerSession.id, { locale });
-      for await (const chunk of stream) {
-        if (chunk.type === 'run_failed') throw new Error(chunk.error ?? 'Writer agent failed');
-        if (chunk.type === 'done') {
-          const s = agentRuntimeStore.tryGetSession(writerSession.id);
-          if (s && s.status === 'interrupted') throw new Error('Writer agent was interrupted');
-        }
-      }
-
-      // Re-check unfilled count after the writer finishes
-      const updatedDocs = await wikiStore.getDocumentsBySnapshot(snapshotId);
-      const stillUnfilled = updatedDocs.filter(d => d.pipelineStage !== 'done' && d.contentMd.trim().length === 0);
-      const filledCount = unfilled.length - stillUnfilled.length;
-
-      if (stillUnfilled.length > 0) {
-        // Writer didn't finish all documents — mark as failed so user can continue again
-        logger.warn({ snapshotId, stillUnfilled: stillUnfilled.length, filledCount }, 'wiki-loop: continue generation incomplete');
-        await wikiStore.updateSnapshotStatus(snapshotId, 'failed', documents.map(d => d.id));
-        await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueFailed);
-        notify({
-          type: TaskNotificationEventType.TaskFailed,
-          taskKind: 'wiki_generate',
-          projectId: snapshot.projectId,
-          taskId: snapshotId,
-          title: wikiMsg(locale).continueTitle,
-          message: `Writer stopped after filling ${filledCount} of ${unfilled.length} documents. ${stillUnfilled.length} remain. You can continue again.`,
-          severity: 'warning',
-          meta: { snapshotId, docCount: filledCount, remainingCount: stillUnfilled.length },
-        });
-      } else {
-        await wikiStore.updateSnapshotStatus(snapshotId, 'ready', documents.map(d => d.id));
-        await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueCompleted);
-        logger.info({ snapshotId, unfilledCount: unfilled.length }, 'wiki-loop: continue generation complete');
-        notify({
-          type: TaskNotificationEventType.TaskCompleted,
-          taskKind: 'wiki_generate',
-          projectId: snapshot.projectId,
-          taskId: snapshotId,
-          title: wikiMsg(locale).continueTitle,
-          message: wikiMsg(locale).continueComplete(filledCount),
-          severity: 'success',
-          meta: { snapshotId, docCount: filledCount },
-        });
-      }
-      return { snapshotId, status: 'completed' };
-    } catch (err) {
-      logger.error({ err, snapshotId }, 'wiki-loop: continue generation failed');
-      notify({
-        type: TaskNotificationEventType.TaskFailed,
-        taskKind: 'wiki_generate',
-        projectId: snapshot.projectId,
-        taskId: snapshotId,
-        title: wikiMsg(locale).continueFailed,
-        message: err instanceof Error ? err.message : String(err),
-        severity: 'error',
-        meta: { snapshotId },
-      });
-      await failSession(sessionIds[sessionIds.length - 1], err);
-      await wikiStore.updateSnapshotStatus(snapshotId, 'failed');
-      await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueFailed);
-      return { snapshotId, status: 'failed', error: err instanceof Error ? err.message : String(err) };
-    } finally {
-      for (const sid of sessionIds) clearSessionWorkspaceRoot(sid);
-      for (const hid of hookIds) toolRegistry.unregisterHook(hid);
-      for (const tid of registeredToolIds) toolRegistry.unregister(tid);
-    }
+    return { snapshotId, status: 'writing' };
   },
 };
 
@@ -502,303 +370,42 @@ interface WritingPhaseInput {
   languages: string;
 }
 
-interface WrittenDocumentResult {
-  entry: WikiOutlineEntry;
-  index: number;
-  docId: string | undefined;
-  claims: WikiClaim[];
-  wasCommitted: boolean;
-}
-
-async function awaitAgentStream(
-  sessionId: string,
-  locale: 'zh' | 'en',
-  opts?: { failOnError?: string; softFail?: boolean },
-): Promise<void> {
-  const stream = agentLoopRuntime.streamRun(sessionId, { locale });
-  for await (const chunk of stream) {
-    if (chunk.type === 'run_failed') {
-      if (opts?.softFail) {
-        logger.warn({ sessionId, error: chunk.error }, 'wiki-loop: agent run failed (soft)');
-        return;
-      }
-      throw new Error(chunk.error ?? opts?.failOnError ?? 'Agent run failed');
-    }
-    if (chunk.type === 'done') {
-      const s = agentRuntimeStore.tryGetSession(sessionId);
-      if (s?.status === 'interrupted') {
-        if (opts?.softFail) return;
-        throw new Error(opts?.failOnError ?? 'Agent run was interrupted');
-      }
-    }
-  }
-}
-
 async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiResult> {
-  const { snapshot, workDir, locale, scan, outline, planIdToDocId, docIds, languages } = input;
+  const { snapshot, workDir, locale, outline, planIdToDocId, docIds } = input;
   const projectId = snapshot.projectId;
-  const sessionIds: string[] = [];
-  const registeredToolIds: string[] = [];
-  const hookIds: string[] = [];
 
-  try {
-    await wikiStore.updateSnapshotStatus(snapshot.id, 'writing', docIds);
-    await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.WritingStarted);
+  const sortedOutline = topologicalSort(outline).filter(isWritableOutlineEntry);
+  const totalDocs = sortedOutline.length;
 
-    notify({
-      type: TaskNotificationEventType.TaskProgress,
-      taskKind: 'wiki_generate',
-      projectId,
-      taskId: snapshot.id,
-      title: wikiMsg(locale).genTitle,
-      message: wikiMsg(locale).writingContent,
-      severity: 'info',
-      meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, totalDocs: docIds.length },
-    });
+  await wikiStore.updateSnapshotStatus(snapshot.id, 'writing', docIds);
+  await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.WritingStarted);
 
-    const writerHandle = createWriterTools(scan, outline);
-    for (const tool of writerHandle.tools) {
-      toolRegistry.register(tool);
-      registeredToolIds.push(tool.id);
-    }
+  notify({
+    type: TaskNotificationEventType.TaskProgress,
+    taskKind: 'wiki_generate',
+    projectId,
+    taskId: snapshot.id,
+    title: wikiMsg(locale).genTitle,
+    message: wikiMsg(locale).writingContent,
+    severity: 'info',
+    meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, totalDocs },
+  });
 
-    const commitHookId = `wiki-commit-${snapshot.id}`;
-    hookIds.push(commitHookId);
-    const persistedDocIds = [...docIds];
+  logger.info({ projectId, totalDocs }, 'wiki-loop: Phase 2 enqueued to write queue');
 
-    toolRegistry.registerHook({
-      id: commitHookId,
-      toolId: 'wiki.commit_document',
-      async afterExecute(ctx) {
-        const commitResult = ctx.result.result as { ok?: boolean };
-        if (!commitResult?.ok) return;
-        const draft = toCommitInput(ctx.args);
-        if (!draft) return;
+  await wikiWriteQueue.enqueueBatch({
+    snapshotId: snapshot.id,
+    projectId,
+    workDir,
+    locale,
+    items: sortedOutline.map((entry, i) => ({
+      documentId: planIdToDocId.get(entry.id) ?? entry.id,
+      documentTitle: entry.title,
+      sortOrder: i,
+    })),
+  });
 
-        const committedDocId = await persistWikiDocumentCommit({
-          draft,
-          snapshotId: snapshot.id,
-          projectId,
-          outline,
-          planIdToDocId,
-        });
-
-        if (!persistedDocIds.includes(committedDocId)) {
-          persistedDocIds.push(committedDocId);
-        }
-        await wikiStore.updateDocumentPipelineStage(committedDocId, 'drafted');
-        logger.info({ projectId, title: draft.title, docId: committedDocId }, 'wiki-loop: document content committed');
-        await publishDocumentCommittedEvent(projectId, committedDocId);
-      },
-    });
-
-    const sortedOutline = topologicalSort(outline).filter(isWritableOutlineEntry);
-    const totalDocs = sortedOutline.length;
-    const writeConcurrency = WIKI_WRITE_CONCURRENCY;
-    const verifyConcurrency = WIKI_VERIFY_CONCURRENCY;
-
-    logger.info(
-      { projectId, totalDocs, writeConcurrency, verifyConcurrency },
-      'wiki-loop: Phase 2 starting (write then verify)',
-    );
-
-    const writtenResults: WrittenDocumentResult[] = new Array(totalDocs);
-
-    const writeDocument = async (entry: WikiOutlineEntry, i: number) => {
-      const documentContext = buildDocumentContext(scan, entry);
-
-      const docPrompt = buildWikiPrompt({
-        role: 'document-writer',
-        languages,
-        locale,
-        documentEntry: entry,
-        documentContext,
-      });
-
-      const docSession = agentSessionRuntime.create({
-        projectId,
-        profileId: 'wiki-document-writer',
-        prompt: docPrompt,
-        sessionMetadata: { snapshotId: snapshot.id, phase: 'document-writer', docTitle: entry.title },
-      });
-      agentRuntimeStore.updateSession(docSession.id, {
-        title: `Wiki: ${entry.title}`,
-        updatedAt: nowIso(),
-      });
-      sessionIds.push(docSession.id);
-      setSessionWorkspaceRoot(docSession.id, workDir);
-
-      agentEventService.append({
-        sessionId: docSession.id,
-        type: 'progress_updated',
-        summary: `Phase 2: Generating document ${i + 1}/${totalDocs}: ${entry.title}`,
-        payload: { snapshotId: snapshot.id, phase: 2, docIndex: i, docTitle: entry.title },
-      });
-
-      notify({
-        type: TaskNotificationEventType.TaskProgress,
-        taskKind: 'wiki_generate',
-        projectId,
-        taskId: snapshot.id,
-        title: wikiMsg(locale).genTitle,
-        message: wikiMsg(locale).generating(entry.title, i + 1, totalDocs),
-        severity: 'info',
-        meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, docIndex: i, totalDocs, docTitle: entry.title },
-      });
-
-      logger.info({ projectId, docTitle: entry.title, index: i, total: totalDocs }, 'wiki-loop: generating document');
-      await awaitAgentStream(docSession.id, locale, {
-        failOnError: `Document writer failed for: ${entry.title}`,
-      });
-
-      const committedDocs = writerHandle.getCommittedDocuments();
-      const targetDoc = committedDocs.find(d => d.title === entry.title && d.docType === entry.docType);
-
-      const docId = planIdToDocId.get(entry.id);
-      const docAfterWriter = docId ? await wikiStore.getDocument(docId) : null;
-      const wasCommitted = docAfterWriter != null && docAfterWriter.contentMd.trim().length > 0;
-      if (!wasCommitted) {
-        logger.warn({ projectId, docTitle: entry.title, docId }, 'wiki-loop: writer completed but document was not committed — skipping verification');
-      }
-
-      writtenResults[i] = {
-        entry,
-        index: i,
-        docId,
-        claims: targetDoc?.claims ?? [],
-        wasCommitted,
-      };
-    };
-
-    await runBoundedConcurrency(sortedOutline, writeConcurrency, writeDocument);
-
-    const verifierHandle = createVerifierTools(scan);
-    for (const t of verifierHandle.tools) {
-      toolRegistry.register(t);
-      registeredToolIds.push(t.id);
-    }
-
-    const verifyDocument = async (result: WrittenDocumentResult) => {
-      const { entry, docId, claims, wasCommitted } = result;
-      if (!wasCommitted) return;
-
-      const loadBearing = claims.filter(c => c.centrality === 'load-bearing');
-      if (loadBearing.length === 0) {
-        logger.debug({ projectId, docTitle: entry.title }, 'wiki-loop: no load-bearing claims, skipping verification');
-        if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
-        return;
-      }
-
-      logger.info({ projectId, docTitle: entry.title, claimCount: loadBearing.length }, 'wiki-loop: verifying claims');
-
-      const claimsList = loadBearing.map(c =>
-        `- ID: ${c.id} | Subject: ${c.subject} | Assertion: "${c.assertion}" | Evidence hint: ${c.evidenceHint}`,
-      ).join('\n');
-
-      const verifierPrompt = buildLanguageDirective(locale) + [
-        `Verify the following claims by reading the actual source code.`,
-        `For each claim, call wiki.submit_verdict with your findings.`,
-        `If you cannot find supporting evidence for a claim, default to refuted=true.`,
-        ``,
-        `## Claims to verify`,
-        claimsList,
-        ``,
-        `Language composition: ${languages}`,
-      ].join('\n');
-
-      const verifierSession = agentSessionRuntime.create({
-        projectId,
-        profileId: 'wiki-verifier',
-        prompt: verifierPrompt,
-        sessionMetadata: { snapshotId: snapshot.id, phase: 'verifier', docTitle: entry.title },
-      });
-      sessionIds.push(verifierSession.id);
-      setSessionWorkspaceRoot(verifierSession.id, workDir);
-
-      await awaitAgentStream(verifierSession.id, locale, { softFail: true });
-
-      const verdicts = verifierHandle.getVerdicts(verifierSession.id);
-      verifierHandle.clearVerdicts(verifierSession.id);
-      logger.info({ projectId, docTitle: entry.title, verdictCount: verdicts.length }, 'wiki-loop: verification complete');
-
-      const refuted = verdicts.filter((v: WikiVerdict) => v.refuted);
-      if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'verified');
-
-      if (refuted.length > 0) {
-        logger.info({ projectId, docTitle: entry.title, refutedCount: refuted.length }, 'wiki-loop: correcting refuted claims');
-
-        const corrections = refuted.map(v =>
-          `- Claim "${v.claimId}": REFUTED. Evidence: ${v.evidence}. Correction: ${v.correction ?? 'remove assertion'}`,
-        ).join('\n');
-
-        const correctorPrompt = buildLanguageDirective(locale) + [
-          `You are rewriting a wiki document to fix factual errors found by verification.`,
-          ``,
-          `Document: "${entry.title}" (${entry.docType})`,
-          ``,
-          `The following claims were refuted with evidence:`,
-          corrections,
-          ``,
-          `Rewrite the document incorporating the corrections. Keep all other content intact.`,
-          `Call wiki.commit_document when done. Include updated claims.`,
-        ].join('\n');
-
-        const correctorSession = agentSessionRuntime.create({
-          projectId,
-          profileId: 'wiki-document-writer',
-          prompt: correctorPrompt,
-          sessionMetadata: { snapshotId: snapshot.id, phase: 'corrector', docTitle: entry.title },
-        });
-        sessionIds.push(correctorSession.id);
-        setSessionWorkspaceRoot(correctorSession.id, workDir);
-
-        await awaitAgentStream(correctorSession.id, locale, { softFail: true });
-
-        if (docId) await wikiStore.updateDocumentPipelineStage(docId, 'done');
-      } else if (docId) {
-        await wikiStore.updateDocumentPipelineStage(docId, 'done');
-      }
-    };
-
-    const toVerify = writtenResults.filter((r): r is WrittenDocumentResult => r != null);
-    await runBoundedConcurrency(toVerify, verifyConcurrency, verifyDocument);
-
-    await wikiStore.updateSnapshotStatus(snapshot.id, 'ready', persistedDocIds);
-    await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.GenerationCompleted);
-    logger.info({ projectId, snapshotId: snapshot.id, docCount: persistedDocIds.length }, 'wiki-loop: generation complete');
-    notify({
-      type: TaskNotificationEventType.TaskCompleted,
-      taskKind: 'wiki_generate',
-      projectId,
-      taskId: snapshot.id,
-      title: wikiMsg(locale).genTitle,
-      message: wikiMsg(locale).genComplete(persistedDocIds.length),
-      severity: 'success',
-      meta: { snapshotId: snapshot.id, docCount: persistedDocIds.length },
-    });
-
-    return { snapshotId: snapshot.id, status: 'completed' };
-  } catch (err) {
-    logger.error({ err, projectId, snapshotId: snapshot.id }, 'wiki-loop: writing phase failed');
-    notify({
-      type: TaskNotificationEventType.TaskFailed,
-      taskKind: 'wiki_generate',
-      projectId,
-      taskId: snapshot.id,
-      title: wikiMsg(locale).genFailed,
-      message: err instanceof Error ? err.message : String(err),
-      severity: 'error',
-      meta: { snapshotId: snapshot.id },
-    });
-    await failSession(sessionIds[sessionIds.length - 1], err);
-    await wikiStore.updateSnapshotStatus(snapshot.id, 'failed');
-    await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.GenerationFailed);
-    return { snapshotId: snapshot.id, status: 'failed', error: err instanceof Error ? err.message : String(err) };
-  } finally {
-    for (const sid of sessionIds) clearSessionWorkspaceRoot(sid);
-    for (const hid of hookIds) toolRegistry.unregisterHook(hid);
-    for (const tid of registeredToolIds) toolRegistry.unregister(tid);
-  }
+  return { snapshotId: snapshot.id, status: 'writing' };
 }
 
 /** Persist the outline as empty docs, flip the snapshot to outline_ready, and notify. */
@@ -822,7 +429,7 @@ async function finalizeOutlineReady(
     title: wikiMsg(locale).genTitle,
     message: outlineActivity.activity,
     severity: 'info',
-    meta: { snapshotId, snapshotStatus: 'outline_ready', phase: 1, docCount: docIds.length, activity: outlineActivity.activity, activityPhase: outlineActivity.phase },
+    meta: { snapshotId, snapshotStatus: 'outline_ready', phase: 1, docCount: countWritableOutlineEntries(outline), activity: outlineActivity.activity, activityPhase: outlineActivity.phase },
   });
 
   return { snapshotId, status: 'outline_ready', docCount: countWritableOutlineEntries(outline) };

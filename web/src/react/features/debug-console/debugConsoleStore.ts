@@ -8,6 +8,7 @@ import {
   type PermissionDecision,
   type RuntimeEvent,
   type SessionStats,
+  type SessionCapabilities,
   type TodoItem,
   type ToolCallRecord,
 } from '../../../lib/api/agentRuntime'
@@ -117,6 +118,7 @@ export interface DebugConsoleState {
   permissions: PermissionDecision[]
   sessionStats: SessionStats | null
   sessionTodos: TodoItem[]
+  sessionCapabilities: SessionCapabilities | null
 
   // 流式进行中状态
   streamingStepId: string | null
@@ -142,6 +144,7 @@ export interface DebugConsoleState {
   resumeSession: (sessionId: string, message?: string) => Promise<void>
   fetchSessionStats: () => Promise<void>
   fetchSessionTodos: () => Promise<void>
+  fetchSessionCapabilities: () => Promise<void>
   replyPermission: (permissionId: string, reply: 'once' | 'always' | 'reject') => Promise<void>
   applyLiveEvent: (event: SessionLiveEvent) => void
 }
@@ -159,6 +162,7 @@ type SessionDetailState = Pick<
   | 'permissions'
   | 'sessionStats'
   | 'sessionTodos'
+  | 'sessionCapabilities'
   | 'streamingStepId'
   | 'streamingText'
   | 'streamingThinking'
@@ -179,6 +183,7 @@ function emptySessionDetailState(): SessionDetailState {
     permissions: [],
     sessionStats: null,
     sessionTodos: [],
+    sessionCapabilities: null,
     streamingStepId: null,
     streamingText: '',
     streamingThinking: '',
@@ -206,6 +211,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   permissions: [],
   sessionStats: null,
   sessionTodos: [],
+  sessionCapabilities: null,
   streamingStepId: null,
   streamingText: '',
   streamingThinking: '',
@@ -318,6 +324,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
       // Fetch stats and todos in parallel
       void get().fetchSessionStats()
       void get().fetchSessionTodos()
+      void get().fetchSessionCapabilities()
     } catch { /* silent */ }
   },
 
@@ -379,6 +386,15 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
     } catch { /* silent */ }
   },
 
+  fetchSessionCapabilities: async () => {
+    const { selectedSessionId } = get()
+    if (!selectedSessionId) return
+    try {
+      const capabilities = await agentRuntimeApi.getSessionCapabilities(selectedSessionId)
+      set({ sessionCapabilities: capabilities })
+    } catch { /* silent */ }
+  },
+
   replyPermission: async (permissionId, reply) => {
     const { selectedSessionId } = get()
     if (!selectedSessionId) return
@@ -436,6 +452,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
             tc.id === event.toolCall.id ? event.toolCall : tc,
           ),
         }))
+        void get().fetchSessionCapabilities()
         break
     }
   },
