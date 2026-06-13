@@ -5,6 +5,7 @@ import * as z from 'zod/v4';
 import { wikiStore } from '../services/wiki/wiki-store.js';
 import { wikiExportService } from '../services/wiki/wiki-export-service.js';
 import { wikiLoopService } from '../services/wiki/wiki-loop-service.js';
+import { queueReinitialize } from '../services/wiki/wiki-reinitialize-service.js';
 import { wikiWriteQueue } from '../services/wiki/wiki-write-queue-service.js';
 import { wikiRefreshService } from '../services/wiki/wiki-refresh-service.js';
 import { wikiDraftService } from '../services/wiki/wiki-draft-service.js';
@@ -250,18 +251,19 @@ wikiRoutes.post('/projects/:projectId/reinitialize', async (c) => {
     }, 409);
   }
 
-  await wikiStore.purgeProject(projectId);
-  await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.ProjectPurged);
-
-  void wikiLoopService.generate({
+  const queued = queueReinitialize({
     projectId,
     workDir: parsed.data.workDir,
     locale: parsed.data.locale ?? 'zh',
-  }).catch((err) => {
-    logger.error({ err, projectId }, '[wiki] reinitialize task failed before service handler completed');
   });
+  if (!queued) {
+    return c.json({
+      error: 'Wiki reinitialize is already in progress for this project.',
+      code: 'GENERATION_IN_PROGRESS',
+    }, 409);
+  }
 
-  return c.json({ status: 'queued', message: 'Wiki purged and regeneration started.' });
+  return c.json({ status: 'queued', message: 'Wiki purge and regeneration queued.' });
 });
 
 // ── POST /api/wiki/snapshots/:snapshotId/continue ───────────────────────────

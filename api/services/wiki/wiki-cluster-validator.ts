@@ -6,7 +6,7 @@
 
 import path from 'node:path';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
-import { buildAnalyzerGraph } from '../analyzer/graph.js';
+import { buildAnalyzerGraph, type AnalyzerGraph } from '../analyzer/graph.js';
 import { FILE_SPLIT, SYM_SPLIT } from './tools/contracts.js';
 import type { WikiOutlineEntry } from './tools/contracts.js';
 
@@ -41,10 +41,15 @@ export default function validateOutlineClusters(
 
   const docDirs = getDocumentDirectories(outline, scan);
 
+  // Build the analyzer graph once and share it across all dimensions. Rebuilding
+  // it per directory-pair (the previous behavior) is O(pairs) graph builds and
+  // makes this validator too slow to run inside the planner loop.
+  const graph = buildAnalyzerGraph(scan.codeIndex);
+
   const feedback: ClusterFeedback[] = [];
-  feedback.push(...checkImportDensity(outline, scan, docDirs));
-  feedback.push(...checkCallCoupling(outline, scan, docDirs));
-  feedback.push(...checkInternalSplit(outline, scan, docDirs));
+  feedback.push(...checkImportDensity(outline, scan, docDirs, graph));
+  feedback.push(...checkCallCoupling(outline, scan, docDirs, graph));
+  feedback.push(...checkInternalSplit(outline, scan, docDirs, graph));
   return feedback;
 }
 
@@ -92,8 +97,15 @@ export function computeImportDensity(
   dirB: string,
   scan: CodeMapScanResult,
 ): number {
-  const graph = buildAnalyzerGraph(scan.codeIndex);
+  return computeImportDensityWithGraph(dirA, dirB, scan, buildAnalyzerGraph(scan.codeIndex));
+}
 
+function computeImportDensityWithGraph(
+  dirA: string,
+  dirB: string,
+  scan: CodeMapScanResult,
+  graph: AnalyzerGraph,
+): number {
   const filesInA = scan.codeIndex.files.filter((f) => f.path.startsWith(dirA + '/'));
   const filesInB = scan.codeIndex.files.filter((f) => f.path.startsWith(dirB + '/'));
   const fileIdsA = new Set(filesInA.map((f) => f.id));
@@ -130,6 +142,7 @@ function checkImportDensity(
   outline: WikiOutlineEntry[],
   scan: CodeMapScanResult,
   docDirs: Map<string, Set<string>>,
+  graph: AnalyzerGraph,
 ): ClusterFeedback[] {
   const results: ClusterFeedback[] = [];
   const entries = [...docDirs.entries()];
@@ -149,7 +162,7 @@ function checkImportDensity(
           if (seen.has(pairKey)) continue;
           seen.add(pairKey);
 
-          const density = computeImportDensity(dirA, dirB, scan);
+          const density = computeImportDensityWithGraph(dirA, dirB, scan, graph);
           if (density >= MERGE_DENSITY_THRESHOLD) {
             results.push({
               type: 'merge_suggest',
@@ -182,6 +195,7 @@ function checkCallCoupling(
   outline: WikiOutlineEntry[],
   scan: CodeMapScanResult,
   docDirs: Map<string, Set<string>>,
+  graph: AnalyzerGraph,
 ): ClusterFeedback[] {
   // Build directory → document title lookup
   const dirToDoc = new Map<string, string>();
@@ -192,8 +206,6 @@ function checkCallCoupling(
   }
 
   if (dirToDoc.size < 2) return [];
-
-  const graph = buildAnalyzerGraph(scan.codeIndex);
 
   // Build symbol → file → directory resolution caches
   const symbolFile = new Map(scan.codeIndex.symbols.map((s) => [s.id, s.fileId] as const));
@@ -277,6 +289,7 @@ function checkInternalSplit(
   outline: WikiOutlineEntry[],
   scan: CodeMapScanResult,
   docDirs: Map<string, Set<string>>,
+  graph: AnalyzerGraph,
 ): ClusterFeedback[] {
   const results: ClusterFeedback[] = [];
 
@@ -295,7 +308,6 @@ function checkInternalSplit(
       if (symbolsInDir.length < SYM_SPLIT) continue;
 
       // Compute internal import density
-      const graph = buildAnalyzerGraph(scan.codeIndex);
       let internalImports = 0;
       for (const edge of graph.resolvedImports) {
         if (

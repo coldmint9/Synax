@@ -17,6 +17,27 @@ import {
 } from './outline-validation.js';
 import { sanitizeOutline } from './outline-sanitize.js';
 import { isSectionEntry } from './outline-node.js';
+import validateOutlineClusters, { type ClusterFeedback } from '../wiki-cluster-validator.js';
+
+const MAX_CLUSTER_ADVISORIES = 5;
+
+/**
+ * Advisory cohesion feedback from the code graph (merge over-split docs, flag
+ * mis-aligned boundaries, suggest splitting sparse mega-docs). Non-blocking —
+ * surfaced to the planner so it can tighten the outline against real coupling.
+ */
+function formatClusterAdvisories(documents: WikiOutlineEntry[], scan: CodeMapScanResult): string {
+  let feedback: ClusterFeedback[];
+  try {
+    feedback = validateOutlineClusters(documents, scan);
+  } catch {
+    return '';
+  }
+  const actionable = feedback.filter(f => f.severity === 'warn').slice(0, MAX_CLUSTER_ADVISORIES);
+  if (actionable.length === 0) return '';
+  const lines = actionable.map(f => `  - [${f.type}] ${f.subjects.join(' ↔ ')}: ${f.suggestion}`);
+  return `\n\nCohesion advisories (from code graph — advisory, not blocking):\n${lines.join('\n')}`;
+}
 
 const outlineEntrySchema = z.object({
   id: z.string().min(1).describe('Unique local ID (e.g. "sec-modules", "mod-auth").'),
@@ -87,7 +108,7 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
 
       return {
         result: { ok: true, validationErrors: ve.filter(e => e.severity === 'warning').map(e => e.message), documentCount: sanitized.length },
-        displaySummary: `Draft saved successfully (no blocking issues):\n${summary}`,
+        displaySummary: `Draft saved successfully (no blocking issues):\n${summary}${formatClusterAdvisories(sanitized, scan)}`,
         artifacts: [{ kind: 'decision', title: 'Wiki outline draft created', summary: `${sanitized.length} outline nodes drafted.`, risk: 'low' }],
       };
     },
@@ -166,7 +187,7 @@ export function createPlannerTools(scan: CodeMapScanResult): WikiPlannerHandle {
 
       return {
         result: { ok: true, validationErrors: ve.filter(e => e.severity === 'warning').map(e => e.message), documentCount: sanitized.length },
-        displaySummary: `Draft updated — all checks passed:\n${summary}`,
+        displaySummary: `Draft updated — all checks passed:\n${summary}${formatClusterAdvisories(sanitized, scan)}`,
         artifacts: [{ kind: 'decision', title: 'Wiki outline draft edited', summary: `${sanitized.length} documents, no blocking issues.`, risk: 'low' }],
       };
     },

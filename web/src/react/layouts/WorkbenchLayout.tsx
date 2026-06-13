@@ -16,8 +16,6 @@ import { ToastContainer } from '../components/ToastContainer'
 import WikiPage from '../pages/WikiPage'
 import SessionsPage from '../pages/SessionsPage'
 
-const isElectron = document.documentElement.classList.contains('electron')
-
 export default function WorkbenchLayout() {
   const { projectId: routeProjectId = '' } = useParams()
   const currentProjectId = useShellStore(s => s.currentProjectId)
@@ -138,7 +136,6 @@ export default function WorkbenchLayout() {
 
   return (
     <div className="workbench-shell">
-      {isElectron && <div className="traffic-light-pill" />}
       <WorkbenchHeader
         activePanel={activePanel}
         onPanelToggle={handlePanelToggle}
