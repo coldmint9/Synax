@@ -11,6 +11,8 @@ const STATUS_ICON = {
   failed: XCircle,
 } as const
 
+const POLL_INTERVAL_MS = 30_000
+
 function statusLabel(status: WikiWriteQueueItem['status'], t: (key: string) => string) {
   switch (status) {
     case 'queued': return t('wikiWriteQueueStatusQueued')
@@ -29,7 +31,13 @@ function statusClass(status: WikiWriteQueueItem['status']) {
   }
 }
 
-export default function WikiWriteQueuePanel({ snapshotId }: { snapshotId: string }) {
+export default function WikiWriteQueuePanel({
+  snapshotId,
+  refreshKey = 0,
+}: {
+  snapshotId: string
+  refreshKey?: number
+}) {
   const { t } = useLocale()
   const [state, setState] = useState<WikiWriteQueueState | null>(null)
 
@@ -46,12 +54,12 @@ export default function WikiWriteQueuePanel({ snapshotId }: { snapshotId: string
     }
 
     void poll()
-    const timer = setInterval(poll, 2000)
+    const timer = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(timer)
     }
-  }, [snapshotId])
+  }, [snapshotId, refreshKey])
 
   if (!state || state.items.length === 0) {
     return (
@@ -61,46 +69,33 @@ export default function WikiWriteQueuePanel({ snapshotId }: { snapshotId: string
     )
   }
 
-  const running = state.runningCount
-  const max = state.concurrency
-
   return (
-    <div className="border-b border-primary/10 bg-primary/[0.03]">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/10">
-        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-          {t('wikiWriteQueueTitle')}
-        </span>
-        <span className="text-[10px] text-muted-foreground/60">
-          {t('wikiWriteQueueConcurrency', { running: String(running), max: String(max) })}
-        </span>
+    <div className="border-b border-border/20">
+      <div className="flex items-center justify-between px-3 py-1.5 text-[10px] text-muted-foreground/60">
+        <span>{t('wikiWriteQueueTitle')}</span>
+        <span>{t('wikiWriteQueueConcurrency', { running: state.runningCount, max: state.concurrency })}</span>
       </div>
-      <div className="max-h-[160px] overflow-y-auto px-2 py-1.5 space-y-0.5">
-        {state.items.map(item => {
+      {state.rateLimited && state.queuedCount > 0 && (
+        <div className="mx-3 mb-2 flex items-start gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-700">
+          <AlertCircle size={11} className="mt-0.5 shrink-0" />
+          <span>{t('wikiWriteQueueRateLimited')}</span>
+        </div>
+      )}
+      <ul className="max-h-40 overflow-y-auto px-2 pb-2 space-y-0.5">
+        {state.items.map((item) => {
           const Icon = STATUS_ICON[item.status]
-          const spinning = item.status === 'running'
           return (
-            <div
+            <li
               key={item.id}
-              className="flex items-start gap-1.5 rounded-md px-1.5 py-1 hover:bg-card/40"
-              title={item.error ?? undefined}
+              className={`flex items-center gap-2 rounded px-1.5 py-1 text-[10px] ${statusClass(item.status)}`}
             >
-              <Icon
-                size={11}
-                className={`shrink-0 mt-0.5 ${statusClass(item.status)} ${spinning ? 'animate-spin' : ''}`}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-[11px] text-foreground/80 truncate">{item.documentTitle}</p>
-                <p className={`text-[9px] ${statusClass(item.status)}`}>
-                  {statusLabel(item.status, t)}
-                </p>
-              </div>
-              {item.status === 'failed' && item.error && (
-                <AlertCircle size={10} className="shrink-0 text-destructive/70 mt-0.5" />
-              )}
-            </div>
+              <Icon size={11} className={item.status === 'running' ? 'animate-spin' : ''} />
+              <span className="truncate flex-1">{item.documentTitle}</span>
+              <span className="shrink-0 opacity-70">{statusLabel(item.status, t)}</span>
+            </li>
           )
         })}
-      </div>
+      </ul>
     </div>
   )
 }

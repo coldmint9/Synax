@@ -14,6 +14,7 @@ import {
 } from '../../../lib/api/agentRuntime'
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
 import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
+import { AppError } from '../../../lib/errors'
 import { useNotificationStore } from '../../state/notificationStore'
 
 function ensureLiveStream(sessionId: string): void {
@@ -362,7 +363,14 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
       void get().refreshSessions()
       void get().refreshDetail()
     }).catch((err) => {
-      console.error('[resume] stream failed:', err)
+      if (err instanceof AppError && err.code === 'SESSION_BUSY') {
+        useNotificationStore.getState().push({
+          type: 'warning',
+          message: 'This session already has an active run.',
+        })
+      } else {
+        console.error('[resume] stream failed:', err)
+      }
       void get().refreshSessions()
       void get().refreshDetail()
     })

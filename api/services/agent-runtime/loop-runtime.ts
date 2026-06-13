@@ -165,6 +165,7 @@ export class AgentLoopRuntime {
     abortSignal?: AbortSignal,
     resume = false,
   ): AsyncGenerator<AgentRunStreamChunk> {
+    this.assertSessionNotBusy(sessionId);
     const session = this.store.getSession(sessionId);
     const activeExecution = this.beginSessionExecution(sessionId, abortSignal);
     const runAbortSignal = activeExecution.signal;
@@ -1798,6 +1799,17 @@ export class AgentLoopRuntime {
     }
 
     return parts.join('\n\n');
+  }
+
+  private assertSessionNotBusy(sessionId: string): void {
+    const active = this.activeSessionControllers.get(sessionId);
+    if ((active?.size ?? 0) > 0) {
+      throw new AgentRuntimeError(
+        "Session already has an active run.",
+        "SESSION_BUSY",
+        409,
+      );
+    }
   }
 
   private beginSessionExecution(

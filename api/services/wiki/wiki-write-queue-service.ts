@@ -74,15 +74,17 @@ export interface WikiWriteQueueState {
   completedCount: number;
   failedCount: number;
   concurrency: number;
+  rateLimited: boolean;
 }
+
+const POLL_INTERVAL_MS = 1500;
+const RATE_LIMIT_NOTIFY_INTERVAL_MS = 30_000;
 
 interface BatchRuntimeContext {
   scan: CodeMapScanResult;
   verifierHandle: ReturnType<typeof createVerifierTools>;
   registeredToolIds: string[];
 }
-
-const POLL_INTERVAL_MS = 1500;
 
 function wikiMsg(locale: 'zh' | 'en') {
   return locale === 'en' ? {
@@ -134,6 +136,7 @@ class WikiWriteQueueService {
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private inFlight = 0;
   private readonly batchContexts = new Map<string, BatchRuntimeContext>();
+  private readonly lastRateLimitedNotifyAt = new Map<string, number>();
 
   async enqueueBatch(input: EnqueueBatchInput): Promise<WikiWriteBatch> {
     if (input.items.length === 0) {
@@ -200,6 +203,7 @@ class WikiWriteQueueService {
         completedCount: 0,
         failedCount: 0,
         concurrency: WIKI_WRITE_CONCURRENCY,
+        rateLimited: isSaturated(),
       };
     }
 
@@ -218,6 +222,7 @@ class WikiWriteQueueService {
       completedCount: mapped.filter(i => i.status === 'completed').length,
       failedCount: mapped.filter(i => i.status === 'failed').length,
       concurrency: WIKI_WRITE_CONCURRENCY,
+      rateLimited: isSaturated(),
     };
   }
 
@@ -324,7 +329,10 @@ class WikiWriteQueueService {
   }
 
   private async tryDispatch(): Promise<void> {
-    if (isSaturated()) return;
+    if (isSaturated()) {
+      await this.notifyRateLimitedIfNeeded();
+      return;
+    }
 
     const slots = WIKI_WRITE_CONCURRENCY - this.inFlight;
     if (slots <= 0) return;
@@ -370,6 +378,50 @@ class WikiWriteQueueService {
 
       if (!claimed || !batch) break;
       void this.executeItem(batch, claimed);
+    }
+  }
+
+  private async notifyRateLimitedIfNeeded(): Promise<void> {
+    const db = getDb();
+    const runningBatches = await db
+      .select()
+      .from(wikiWriteBatches)
+      .where(eq(wikiWriteBatches.status, 'running'))
+      .orderBy(wikiWriteBatches.createdAt);
+
+    const now = Date.now();
+    for (const batchRow of runningBatches) {
+      const queued = await db
+        .select()
+        .from(wikiWriteQueueItems)
+        .where(and(
+          eq(wikiWriteQueueItems.batchId, batchRow.id),
+          eq(wikiWriteQueueItems.status, 'queued'),
+        ))
+        .limit(1);
+      if (queued.length === 0) continue;
+
+      const last = this.lastRateLimitedNotifyAt.get(batchRow.snapshotId) ?? 0;
+      if (now - last < RATE_LIMIT_NOTIFY_INTERVAL_MS) continue;
+
+      this.lastRateLimitedNotifyAt.set(batchRow.snapshotId, now);
+      const locale = (batchRow.locale ?? 'zh') as 'zh' | 'en';
+      notify({
+        type: TaskNotificationEventType.TaskProgress,
+        taskKind: 'wiki_generate',
+        projectId: batchRow.projectId,
+        taskId: batchRow.snapshotId,
+        title: wikiMsg(locale).genTitle,
+        message: locale === 'en'
+          ? 'Waiting for LLM rate limit to clear'
+          : '等待 LLM 速率限制恢复',
+        severity: 'info',
+        meta: {
+          snapshotId: batchRow.snapshotId,
+          snapshotStatus: 'writing',
+          rateLimited: true,
+        },
+      });
     }
   }
 
@@ -432,6 +484,9 @@ class WikiWriteQueueService {
         planIdToDocId,
         scan: ctx.scan,
         verifierHandle: ctx.verifierHandle,
+        onWriterSessionCreated: async (sessionId) => {
+          await db.update(wikiWriteQueueItems).set({ sessionId }).where(eq(wikiWriteQueueItems.id, item.id));
+        },
       });
 
       const now = new Date().toISOString();

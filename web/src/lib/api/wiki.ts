@@ -7,9 +7,55 @@ import type {
   WikiRefreshDraft,
   WikiWriteQueueState,
 } from '../contracts/wiki';
-import { apiRequest } from './origin';
+import { apiFetch, apiRequest } from './origin';
+import { createAppError, handleError, AppError } from '../errors';
 
 const BASE = '/api/wiki';
+
+export class WikiGenerationConflictError extends AppError {
+  snapshotId?: string;
+  generationStatus?: string;
+
+  constructor(message: string, snapshotId?: string, generationStatus?: string) {
+    super(message, { level: 'business', code: 'GENERATION_IN_PROGRESS', statusCode: 409 });
+    this.snapshotId = snapshotId;
+    this.generationStatus = generationStatus;
+  }
+}
+
+async function postWikiAction<T>(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<T> {
+  const resp = await apiFetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  let payload: { error?: string; code?: string; snapshotId?: string; status?: string } = {};
+  try {
+    payload = await resp.json() as typeof payload;
+  } catch {
+    // ignore parse errors
+  }
+
+  if (resp.status === 409 && payload.code === 'GENERATION_IN_PROGRESS') {
+    throw new WikiGenerationConflictError(
+      payload.error ?? 'Wiki generation is already in progress.',
+      payload.snapshotId,
+      payload.status,
+    );
+  }
+
+  if (!resp.ok) {
+    const appErr = createAppError(payload.error ?? `请求失败 (${resp.status})`, resp.status, payload.code);
+    handleError(appErr);
+    throw appErr;
+  }
+
+  return payload as T;
+}
 
 export const wikiApi = {
   getProjectSnapshot(projectId: string): Promise<WikiSnapshotTree> {
@@ -36,20 +82,14 @@ export const wikiApi = {
     projectId: string,
     body: { workDir: string; locale?: 'zh' | 'en' },
   ): Promise<{ status: string }> {
-    return apiRequest<{ status: string }>(`${BASE}/projects/${projectId}/generate`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    return postWikiAction<{ status: string }>(`/projects/${projectId}/generate`, body);
   },
 
   reinitialize(
     projectId: string,
     body: { workDir: string; locale?: 'zh' | 'en' },
   ): Promise<{ status: string }> {
-    return apiRequest<{ status: string }>(`${BASE}/projects/${projectId}/reinitialize`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    return postWikiAction<{ status: string }>(`/projects/${projectId}/reinitialize`, body);
   },
 
   approveSnapshot(

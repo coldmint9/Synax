@@ -629,4 +629,20 @@ describe('agentLoopRuntime', () => {
     const minResultIndex = Math.min(...toolResultIndices.filter((idx) => idx >= 0));
     expect(maxCallIndex).toBeLessThan(minResultIndex);
   });
+
+  it('rejects concurrent streamRun with SESSION_BUSY', async () => {
+    const session = agentSessionRuntime.create(executorInput);
+    const runtime = agentLoopRuntime as unknown as {
+      activeSessionControllers: Map<string, Set<AbortController>>;
+    };
+    runtime.activeSessionControllers.set(session.id, new Set([new AbortController()]));
+
+    try {
+      await expect(
+        collectChunks(agentLoopRuntime.streamRun(session.id, { message: 'Second run should be rejected.' })),
+      ).rejects.toMatchObject({ code: 'SESSION_BUSY', status: 409 });
+    } finally {
+      runtime.activeSessionControllers.delete(session.id);
+    }
+  });
 });

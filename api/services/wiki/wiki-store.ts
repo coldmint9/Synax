@@ -85,6 +85,19 @@ export const wikiStore = {
     return rows[0] ? rowToSnapshot(rows[0]) : null;
   },
 
+  async hasActiveGeneration(projectId: string): Promise<{
+    active: boolean;
+    snapshotId?: string;
+    status?: WikiSnapshot['status'];
+  }> {
+    const latest = await this.getLatestSnapshot(projectId);
+    if (!latest) return { active: false };
+    if (latest.status === 'refreshing' || latest.status === 'writing') {
+      return { active: true, snapshotId: latest.id, status: latest.status };
+    }
+    return { active: false };
+  },
+
   async getSnapshot(snapshotId: string): Promise<WikiSnapshot | null> {
     const db = getDb();
     const rows = await db

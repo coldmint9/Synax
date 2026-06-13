@@ -4,7 +4,7 @@ import { getDb } from '../../../db/index.js';
 import { wikiWriteBatches, wikiWriteQueueItems } from '../../../db/schema.js';
 
 vi.mock('../../llm-runtime/middleware/rate-limiter.js', () => ({
-  isSaturated: () => false,
+  isSaturated: vi.fn(() => false),
 }));
 
 vi.mock('../wiki-document-processor.js', () => ({
@@ -20,7 +20,9 @@ vi.mock('../wiki-document-processor.js', () => ({
       ? new Map([['doc-1', 'doc-1'], ['doc-2', 'doc-2']])
       : new Map([['doc-1', 'doc-1']]),
   })),
-  processQueueDocument: vi.fn(async () => undefined),
+  processQueueDocument: vi.fn(async (input: { onWriterSessionCreated?: (sessionId: string) => void | Promise<void> }) => {
+    await input.onWriterSessionCreated?.('ars_writer_session');
+  }),
 }));
 
 vi.mock('../tools/verifier-tools.js', () => ({
@@ -45,11 +47,22 @@ vi.mock('../../lib/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+const tryGetSessionMock = vi.fn();
+
+vi.mock('../../agent-runtime/session-store.js', () => ({
+  agentRuntimeStore: {
+    tryGetSession: (...args: unknown[]) => tryGetSessionMock(...args),
+  },
+}));
+
 import { wikiWriteQueue } from '../wiki-write-queue-service.js';
+import { processQueueDocument } from '../wiki-document-processor.js';
+import { isSaturated } from '../../llm-runtime/middleware/rate-limiter.js';
 
 describe('wikiWriteQueue', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    tryGetSessionMock.mockReturnValue(null);
     wikiWriteQueue.stop();
   });
 
@@ -129,5 +142,88 @@ describe('wikiWriteQueue', () => {
 
     const after = await db.select().from(wikiWriteQueueItems).where(eq(wikiWriteQueueItems.id, itemId));
     expect(after[0].status).toBe('queued');
+  });
+
+  it('persists writer sessionId while processing queue items', async () => {
+    wikiWriteQueue.stop();
+    const batch = await wikiWriteQueue.enqueueBatch({
+      snapshotId: 'snap-session-test',
+      projectId: 'proj-1',
+      workDir: '/tmp/repo',
+      items: [{ documentId: 'doc-1', documentTitle: 'Doc', sortOrder: 0 }],
+    });
+
+    wikiWriteQueue.resume();
+    await vi.waitFor(() => {
+      expect(processQueueDocument).toHaveBeenCalled();
+    }, { timeout: 5_000 });
+
+    const db = getDb();
+    const items = await db
+      .select()
+      .from(wikiWriteQueueItems)
+      .where(eq(wikiWriteQueueItems.batchId, batch.id));
+    expect(items[0]?.sessionId).toBe('ars_writer_session');
+    wikiWriteQueue.stop();
+  });
+
+  it('recoverOrphaned keeps running items when writer session is still active', async () => {
+    wikiWriteQueue.stop();
+    tryGetSessionMock.mockReturnValue({ id: 'ars_active', status: 'running' });
+
+    const db = getDb();
+    const batchId = 'batch-active-session';
+    const itemId = 'item-active-session';
+    const now = new Date().toISOString();
+
+    await db.insert(wikiWriteBatches).values({
+      id: batchId,
+      snapshotId: 'snap-active',
+      projectId: 'proj-1',
+      workDir: '/tmp/repo',
+      locale: 'zh',
+      status: 'running',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(wikiWriteQueueItems).values({
+      id: itemId,
+      batchId,
+      snapshotId: 'snap-active',
+      projectId: 'proj-1',
+      documentId: 'doc-1',
+      documentTitle: 'Doc',
+      sortOrder: 0,
+      status: 'running',
+      sessionId: 'ars_active',
+      createdAt: now,
+      startedAt: now,
+    });
+
+    const { items: recovered } = await wikiWriteQueue.recoverOrphaned();
+    expect(recovered).toBe(0);
+
+    const after = await db.select().from(wikiWriteQueueItems).where(eq(wikiWriteQueueItems.id, itemId));
+    expect(after[0].status).toBe('running');
+    expect(after[0].sessionId).toBe('ars_active');
+  });
+
+  it('getQueueState reports rateLimited when token bucket is saturated', async () => {
+    wikiWriteQueue.stop();
+    vi.mocked(isSaturated).mockReturnValue(true);
+
+    const batch = await wikiWriteQueue.enqueueBatch({
+      snapshotId: 'snap-rate-limit',
+      projectId: 'proj-1',
+      workDir: '/tmp/repo',
+      items: [{ documentId: 'doc-1', documentTitle: 'Doc', sortOrder: 0 }],
+    });
+
+    const state = await wikiWriteQueue.getQueueState('snap-rate-limit');
+    expect(state.batch?.id).toBe(batch.id);
+    expect(state.rateLimited).toBe(true);
+
+    vi.mocked(isSaturated).mockReturnValue(false);
   });
 });

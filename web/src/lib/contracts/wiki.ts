@@ -93,6 +93,7 @@ export interface WikiWriteQueueState {
   completedCount: number;
   failedCount: number;
   concurrency: number;
+  rateLimited: boolean;
 }
 
 // ── Refresh Draft types ─────────────────────────────────────────────────────

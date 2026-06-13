@@ -30,6 +30,7 @@ vi.mock('../../../db/schema.js', () => ({
   wikiPlanNodes: {},
   wikiPlanNodeArtifacts: {},
   wikiEvaluations: { projectId: 'project_id' },
+  wikiWriteBatches: { snapshotId: 'snapshot_id', status: 'status' },
 }));
 vi.mock('nanoid', () => ({ nanoid: () => 'test-id' }));
 vi.mock('../wiki-fts.js', () => ({ extractSearchText: (md: string) => md.replace(/#/g, '') }));
@@ -70,6 +71,24 @@ describe('wikiStore.getLatestSnapshot', () => {
     const result = await wikiStore.getLatestSnapshot('proj-1');
     expect(result?.id).toBe('snap-1');
     expect(result?.documentIds).toEqual([]);
+  });
+});
+
+describe('wikiStore.hasActiveGeneration', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns active when latest snapshot is writing', async () => {
+    mockLimit.mockResolvedValueOnce([makeSnapshotRow({ id: 'snap-writing', status: 'writing' })]);
+    await expect(wikiStore.hasActiveGeneration('proj-1')).resolves.toEqual({
+      active: true,
+      snapshotId: 'snap-writing',
+      status: 'writing',
+    });
+  });
+
+  it('returns inactive when latest snapshot is ready', async () => {
+    mockLimit.mockResolvedValueOnce([makeSnapshotRow({ status: 'ready' })]);
+    await expect(wikiStore.hasActiveGeneration('proj-1')).resolves.toEqual({ active: false });
   });
 });
 
@@ -122,6 +141,7 @@ describe('wikiStore.recoverOrphanedSnapshots', () => {
     mockWhere.mockResolvedValueOnce([
       makeSnapshotRow({ id: 'snap-writing', status: 'writing' }),
     ]);
+    mockWhere.mockResolvedValueOnce([]);
     mockOrderBy.mockResolvedValueOnce([
       makeDocumentRow({ id: 'doc-1', contentMd: '', pipelineStage: 'pending' }),
     ]);

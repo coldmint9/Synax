@@ -20,6 +20,7 @@ import { wikiStore } from "./services/wiki/wiki-store.js";
 import { ensureWikiProfileRegistered } from "./services/wiki/wiki-loop-profile.js";
 import { wikiWriteQueue } from "./services/wiki/wiki-write-queue-service.js";
 import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
+import { startPermissionTimeoutSweeper } from "./services/agent-runtime/permission-timeout-sweeper.js";
 
 export const app = new Hono();
 
@@ -93,6 +94,8 @@ wikiStore.recoverOrphanedSnapshots().then((count) => {
 rebuildWikiFtsIndex().catch((err) => {
   pinoLogger.error({ err }, "failed to rebuild wiki FTS index on startup");
 });
+
+startPermissionTimeoutSweeper();
 
 function startServer(): void {
   serve({
