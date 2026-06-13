@@ -1,5 +1,6 @@
 import { ListChecks, CheckCircle2, Loader2, Clock, XCircle, Trash2 } from 'lucide-react'
 import { Card } from '@heroui/react'
+import { iconBadgeClass, type IconTone } from '../../../lib/icon-tones'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { type WikiPlanWithSummary } from '../../../lib/api/evaluation'
@@ -11,18 +12,18 @@ interface Props {
 
 function PlanStatusBadge({ status }: { status: WikiPlanWithSummary['status'] }) {
   const { t } = useLocale()
-  const map: Record<string, { labelKey: 'planStatusDraft' | 'planStatusConfirmed' | 'planStatusExecuting' | 'planStatusReviewing' | 'planStatusCommitting' | 'planStatusCompleted' | 'planStatusDiscarded'; icon: typeof CheckCircle2; cls: string }> = {
-    draft: { labelKey: 'planStatusDraft', icon: Clock, cls: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
-    confirmed: { labelKey: 'planStatusConfirmed', icon: CheckCircle2, cls: 'bg-primary/10 text-primary border-primary/20' },
-    executing: { labelKey: 'planStatusExecuting', icon: Loader2, cls: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
-    reviewing: { labelKey: 'planStatusReviewing', icon: Clock, cls: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
-    committing: { labelKey: 'planStatusCommitting', icon: Loader2, cls: 'bg-purple-500/10 text-purple-500 border-purple-500/20' },
-    completed: { labelKey: 'planStatusCompleted', icon: CheckCircle2, cls: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
-    discarded: { labelKey: 'planStatusDiscarded', icon: XCircle, cls: 'bg-muted/10 text-muted-foreground/60 border-muted/20' },
+  const map: Record<string, { labelKey: 'planStatusDraft' | 'planStatusConfirmed' | 'planStatusExecuting' | 'planStatusReviewing' | 'planStatusCommitting' | 'planStatusCompleted' | 'planStatusDiscarded'; icon: typeof CheckCircle2; tone: IconTone }> = {
+    draft: { labelKey: 'planStatusDraft', icon: Clock, tone: 'warning' },
+    confirmed: { labelKey: 'planStatusConfirmed', icon: CheckCircle2, tone: 'primary' },
+    executing: { labelKey: 'planStatusExecuting', icon: Loader2, tone: 'info' },
+    reviewing: { labelKey: 'planStatusReviewing', icon: Clock, tone: 'warning' },
+    committing: { labelKey: 'planStatusCommitting', icon: Loader2, tone: 'purple' },
+    completed: { labelKey: 'planStatusCompleted', icon: CheckCircle2, tone: 'success' },
+    discarded: { labelKey: 'planStatusDiscarded', icon: XCircle, tone: 'muted' },
   }
-  const { labelKey, icon: Icon, cls } = map[status] ?? map.draft
+  const { labelKey, icon: Icon, tone } = map[status] ?? map.draft
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${cls}`}>
+    <span className={iconBadgeClass(tone, 'px-2 py-0.5')} data-tone={tone}>
       <Icon size={10} className={status === 'executing' || status === 'committing' ? 'animate-spin' : ''} />
       {t(labelKey)}
     </span>

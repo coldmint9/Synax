@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import { Plus, FolderCode } from 'lucide-react'
+import { IconSurface } from '../components/IconSurface'
 import { useShellStore } from '../state/shellStore'
 import { useLocale } from '../../hooks/useLocale'
 
@@ -38,9 +39,9 @@ export function WelcomeView() {
   return (
     <div className="flex h-full items-center justify-center">
       <div className="text-center">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary/60">
-          <FolderCode size={24} className="text-muted-foreground" />
-        </div>
+        <IconSurface tone="muted" size="xl" className="mx-auto rounded-2xl">
+          <FolderCode size={24} />
+        </IconSurface>
         <p className="mt-4 text-sm font-medium text-foreground">{t('welcomeImportHint')}</p>
         <p className="mt-1 text-xs text-muted-foreground">
           {t('welcomeConnectHint')}

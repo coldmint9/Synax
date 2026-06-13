@@ -173,9 +173,9 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
         <div className="dialog-overlay" onClick={deleting ? undefined : () => setDeleteTarget(null)}>
           <div className="dialog-content" onClick={e => e.stopPropagation()}>
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-destructive/10">
-                <Trash2 size={18} className="text-destructive" />
-              </div>
+              <span className="icon-surface shrink-0 rounded-xl" data-tone="danger" data-size="md">
+                <Trash2 size={18} />
+              </span>
               <div className="flex-1 min-w-0">
                 <h3>{t('projectDeleteTitle', { name: deleteTarget.name })}</h3>
                 <p className="mt-1">{t('projectDeleteIrreversible')}</p>

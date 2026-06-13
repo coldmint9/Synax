@@ -1,5 +1,6 @@
 import { ScrollShadow, Surface, Typography, Chip, Separator } from '@heroui/react'
 import { ExternalLink } from 'lucide-react'
+import { IconSurface } from '../components/IconSurface'
 
 const VERSION = '0.1.0-snapshot'
 const REPO_URL = 'https://github.com/coldmint9/Synax'
@@ -21,9 +22,9 @@ export default function AboutPage() {
       <Surface variant="default" className="min-h-full">
         <div className="mx-auto max-w-2xl px-6 pt-20 pb-12">
           <div className="mb-8 flex items-start gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
-              <span className="text-2xl font-bold text-primary">S</span>
-            </div>
+            <IconSurface tone="primary" size="xl" className="rounded-2xl">
+              <span className="text-2xl font-bold">S</span>
+            </IconSurface>
             <div>
               <Typography type="h4">Synax</Typography>
               <Typography type="body-sm" color="muted" className="mt-1">

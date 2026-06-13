@@ -1,7 +1,8 @@
 import { Button, Card, Chip } from '@heroui/react'
 import { ChevronDown, ChevronRight, Loader2, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
 import { type ApiProviderDraft, PROVIDER_LOGO_ASSETS } from '../lib/providerPresets'
-import { useShellStore } from '../../../state/shellStore'
+import { ProviderLogo } from '../../../components/ProviderLogo'
+import { IconSurface } from '../../../components/IconSurface'
 import { useLocale } from '../../../../hooks/useLocale'
 
 interface LlmProviderCardProps {
@@ -27,7 +28,6 @@ export function LlmProviderCard({
   onSetDefault,
   onRemove,
 }: LlmProviderCardProps) {
-  const theme = useShellStore(s => s.preferences.theme)
   const { t } = useLocale()
   const logo = PROVIDER_LOGO_ASSETS[draft.id]
 
@@ -39,15 +39,11 @@ export function LlmProviderCard({
         onClick={onToggleExpand}
       >
         {logo ? (
-          <img
-            src={logo.src}
-            alt={draft.label}
-            className={`h-5 w-5 rounded object-contain${logo.invertOnDark && theme === 'dark' ? ' invert' : ''}`}
-          />
+          <ProviderLogo src={logo.src} alt={draft.label} invertOnDark={logo.invertOnDark} />
         ) : (
-          <div className="flex h-5 w-5 items-center justify-center rounded bg-muted text-[10px] font-bold text-muted-foreground">
-            {draft.label[0]?.toUpperCase()}
-          </div>
+          <IconSurface tone="muted" size="xs">
+            <span className="text-[10px] font-bold">{draft.label[0]?.toUpperCase()}</span>
+          </IconSurface>
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
