@@ -29,6 +29,8 @@ import type {
 import { WikiManualProtectionError } from './contracts.js';
 import { extractSearchText } from './wiki-fts.js';
 
+import { isProjectReinitializing } from './wiki-project-locks.js';
+
 export { WikiManualProtectionError };
 
 // ── Row → Domain mappers ─────────────────────────────────────────────────────
@@ -88,8 +90,11 @@ export const wikiStore = {
   async hasActiveGeneration(projectId: string): Promise<{
     active: boolean;
     snapshotId?: string;
-    status?: WikiSnapshot['status'];
+    status?: WikiSnapshot['status'] | 'reinitializing';
   }> {
+    if (isProjectReinitializing(projectId)) {
+      return { active: true, status: 'reinitializing' };
+    }
     const latest = await this.getLatestSnapshot(projectId);
     if (!latest) return { active: false };
     if (latest.status === 'refreshing' || latest.status === 'writing') {

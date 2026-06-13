@@ -34,8 +34,12 @@ vi.mock('../../../db/schema.js', () => ({
 }));
 vi.mock('nanoid', () => ({ nanoid: () => 'test-id' }));
 vi.mock('../wiki-fts.js', () => ({ extractSearchText: (md: string) => md.replace(/#/g, '') }));
+vi.mock('../wiki-project-locks.js', () => ({
+  isProjectReinitializing: vi.fn(() => false),
+}));
 
 import { wikiStore, WikiManualProtectionError } from '../wiki-store.js';
+import { isProjectReinitializing } from '../wiki-project-locks.js';
 
 function makeSnapshotRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -89,6 +93,14 @@ describe('wikiStore.hasActiveGeneration', () => {
   it('returns inactive when latest snapshot is ready', async () => {
     mockLimit.mockResolvedValueOnce([makeSnapshotRow({ status: 'ready' })]);
     await expect(wikiStore.hasActiveGeneration('proj-1')).resolves.toEqual({ active: false });
+  });
+
+  it('returns active when project is reinitializing', async () => {
+    vi.mocked(isProjectReinitializing).mockReturnValueOnce(true);
+    await expect(wikiStore.hasActiveGeneration('proj-1')).resolves.toEqual({
+      active: true,
+      status: 'reinitializing',
+    });
   });
 });
 

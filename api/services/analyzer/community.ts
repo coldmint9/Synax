@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type { SemanticEdge, SemanticGraph, SemanticNode } from '../contracts/forest.js'
 import type { CodeMapCodeIndex, CodeMapCommunity, CodeMapSymbolSummary } from '../contracts/code-map.js'
 import type { AnalyzerGraph } from './graph.js'
@@ -10,18 +11,13 @@ export interface CommunityDetectionResult {
 }
 
 export function detectCommunities(codeIndex: CodeMapCodeIndex, graph: AnalyzerGraph): CommunityDetectionResult {
-  const labels = runLabelPropagation([...codeIndex.files.map((file) => file.id)], graph.fileNeighbors)
-  const groups = new Map<string, string[]>()
-  for (const [fileId, label] of labels) {
-    const bucket = groups.get(label) ?? []
-    bucket.push(fileId)
-    groups.set(label, bucket)
-  }
+  const fileIds = codeIndex.files.map((file) => file.id)
+  const partition = partitionBySizeBoundedAgglomeration(fileIds, graph)
 
   const symbolIdsByFile = graph.symbolIdsByFile
   const fileById = new Map(codeIndex.files.map((file) => [file.id, file] as const))
-  const orderedGroups = [...groups.values()]
-    .map((fileIds) => fileIds.sort((left, right) => (fileById.get(left)?.path ?? '').localeCompare(fileById.get(right)?.path ?? '')))
+  const orderedGroups = partition
+    .map((ids) => ids.sort((left, right) => (fileById.get(left)?.path ?? '').localeCompare(fileById.get(right)?.path ?? '')))
     .sort((left, right) => scoreCommunity(right, graph) - scoreCommunity(left, graph) || compareCommunityPath(left, right, fileById))
 
   const communities: CodeMapCommunity[] = []
@@ -54,34 +50,154 @@ export function detectCommunities(codeIndex: CodeMapCodeIndex, graph: AnalyzerGr
   return { communities, semanticGraph, communityByFileId }
 }
 
-function runLabelPropagation(fileIds: string[], neighbors: Map<string, Map<string, number>>): Map<string, string> {
-  const labels = new Map(fileIds.map((fileId) => [fileId, fileId] as const))
-  const order = [...fileIds].sort((left, right) => {
-    const leftScore = [...(neighbors.get(left)?.values() ?? [])].reduce((sum, weight) => sum + weight, 0)
-    const rightScore = [...(neighbors.get(right)?.values() ?? [])].reduce((sum, weight) => sum + weight, 0)
-    return rightScore - leftScore || left.localeCompare(right)
-  })
+// ── Size-bounded agglomerative partitioning ───────────────────────────────────
+//
+// Replaces label propagation, which is prone to the "monster community" failure:
+// in graphs with a dense core or high-degree hubs (e.g. a flat directory where
+// every file imports a shared types/utils module), one label avalanches and
+// swallows most of the graph, producing a single giant package.
+//
+// Instead we grow clusters bottom-up by contracting the strongest edges first,
+// and *refuse any merge that would exceed a size budget*. This makes giant
+// communities structurally impossible and keeps each community at roughly one
+// document's worth of code. Edge weights are normalized by endpoint degree
+// (Salton index) so hub edges no longer dominate.
+//
+// Thresholds mirror the wiki SPLIT semantics (FILE_SPLIT=20 / SYM_SPLIT=80);
+// kept local so the analyzer layer does not depend on the wiki layer.
+const MAX_COMMUNITY_FILES = 20
+const MAX_COMMUNITY_SYMBOLS = 80
+const MIN_MERGE_SCORE = 0.04
 
-  for (let iteration = 0; iteration < 20; iteration += 1) {
-    let changed = false
-    for (const fileId of order) {
-      const adjacent = neighbors.get(fileId)
-      if (!adjacent || adjacent.size === 0) continue
-      const scores = new Map<string, number>()
-      for (const [neighborId, weight] of adjacent) {
-        const label = labels.get(neighborId) ?? neighborId
-        scores.set(label, (scores.get(label) ?? 0) + weight)
-      }
-      const best = [...scores.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0]
-      if (best && best !== labels.get(fileId)) {
-        labels.set(fileId, best)
-        changed = true
-      }
-    }
-    if (!changed) break
+interface MergeEdge {
+  a: string
+  b: string
+  score: number
+}
+
+function partitionBySizeBoundedAgglomeration(fileIds: string[], graph: AnalyzerGraph): string[][] {
+  if (fileIds.length === 0) return []
+
+  const symbolsOf = (fileId: string): number => graph.symbolIdsByFile.get(fileId)?.length ?? 0
+  const pathOf = (fileId: string): string => graph.fileToPath.get(fileId) ?? fileId
+
+  const inScope = new Set(fileIds)
+  const parent = new Map<string, string>()
+  const clusterFiles = new Map<string, number>()
+  const clusterSymbols = new Map<string, number>()
+  for (const id of fileIds) {
+    parent.set(id, id)
+    clusterFiles.set(id, 1)
+    clusterSymbols.set(id, symbolsOf(id))
   }
 
-  return labels
+  const find = (x: string): string => {
+    let root = x
+    while (parent.get(root) !== root) root = parent.get(root)!
+    let cur = x
+    while (parent.get(cur) !== root) {
+      const next = parent.get(cur)!
+      parent.set(cur, root)
+      cur = next
+    }
+    return root
+  }
+
+  // Build undirected, deduplicated, degree-normalized candidate edges.
+  const edges: MergeEdge[] = []
+  const seen = new Set<string>()
+  for (const [u, neighbors] of graph.fileNeighbors) {
+    if (!inScope.has(u)) continue
+    const degreeU = graph.fileDegree.get(u) ?? 0
+    for (const [v, weight] of neighbors) {
+      if (u === v || !inScope.has(v)) continue
+      const key = u < v ? `${u}\u0000${v}` : `${v}\u0000${u}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const degreeV = graph.fileDegree.get(v) ?? 0
+      const denom = Math.sqrt(degreeU * degreeV) || 1
+      const score = weight / denom
+      if (score < MIN_MERGE_SCORE) continue
+      edges.push({ a: u, b: v, score })
+    }
+  }
+
+  edges.sort(
+    (left, right) =>
+      right.score - left.score ||
+      pathOf(left.a).localeCompare(pathOf(right.a)) ||
+      pathOf(left.b).localeCompare(pathOf(right.b)),
+  )
+
+  for (const edge of edges) {
+    const rootA = find(edge.a)
+    const rootB = find(edge.b)
+    if (rootA === rootB) continue
+    const mergedFiles = clusterFiles.get(rootA)! + clusterFiles.get(rootB)!
+    if (mergedFiles > MAX_COMMUNITY_FILES) continue
+    const mergedSymbols = clusterSymbols.get(rootA)! + clusterSymbols.get(rootB)!
+    if (mergedSymbols > MAX_COMMUNITY_SYMBOLS) continue
+    // Deterministic root: the cluster whose representative has the smaller path.
+    const keep = pathOf(rootA) <= pathOf(rootB) ? rootA : rootB
+    const drop = keep === rootA ? rootB : rootA
+    parent.set(drop, keep)
+    clusterFiles.set(keep, mergedFiles)
+    clusterSymbols.set(keep, mergedSymbols)
+  }
+
+  const groups = new Map<string, string[]>()
+  for (const id of fileIds) {
+    const root = find(id)
+    const bucket = groups.get(root) ?? []
+    bucket.push(id)
+    groups.set(root, bucket)
+  }
+
+  return repoolLeftovers([...groups.values()], graph)
+}
+
+// A 1-file group means the file could not merge into any neighbor — either it has
+// no import/call edges, or every candidate merge was blocked by the size budget.
+// Standalone singletons are pure noise as communities, so pool them by their
+// folder and bin-pack within the same budget. A file that alone exceeds the
+// symbol budget (e.g. a large generated module) stays its own community.
+function repoolLeftovers(groups: string[][], graph: AnalyzerGraph): string[][] {
+  const symbolsOf = (fileId: string): number => graph.symbolIdsByFile.get(fileId)?.length ?? 0
+  const pathOf = (fileId: string): string => graph.fileToPath.get(fileId) ?? fileId
+
+  const result: string[][] = []
+  const leftoversByDir = new Map<string, string[]>()
+
+  for (const group of groups) {
+    if (group.length === 1) {
+      const dir = path.posix.dirname(pathOf(group[0]))
+      const bucket = leftoversByDir.get(dir) ?? []
+      bucket.push(group[0])
+      leftoversByDir.set(dir, bucket)
+      continue
+    }
+    result.push(group)
+  }
+
+  for (const [, ids] of [...leftoversByDir.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
+    ids.sort((left, right) => pathOf(left).localeCompare(pathOf(right)))
+    let bin: string[] = []
+    let binSymbols = 0
+    for (const id of ids) {
+      const symbols = symbolsOf(id)
+      const wouldOverflow = bin.length >= MAX_COMMUNITY_FILES || binSymbols + symbols > MAX_COMMUNITY_SYMBOLS
+      if (bin.length > 0 && wouldOverflow) {
+        result.push(bin)
+        bin = []
+        binSymbols = 0
+      }
+      bin.push(id)
+      binSymbols += symbols
+    }
+    if (bin.length > 0) result.push(bin)
+  }
+
+  return result
 }
 
 function scoreCommunity(fileIds: string[], graph: AnalyzerGraph): number {

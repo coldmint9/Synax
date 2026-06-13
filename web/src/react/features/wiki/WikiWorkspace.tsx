@@ -1,6 +1,6 @@
 import { AlertCircle, BookOpen, CheckCircle2, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Skeleton, Spinner } from '@heroui/react'
+import { Button, Skeleton } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiGenerationEvents, type WikiGenPhase } from '../../../hooks/useWikiGenerationEvents'
@@ -20,48 +20,56 @@ import { apiFetch, apiRequest } from '../../../lib/api/origin'
 import { handleError, createAppError, AppError } from '../../../lib/errors'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
-function EmptyState({
-  projectId,
+function WikiGeneratingShell({
   gen,
-  onGenerationConflict,
+  sidebarWidth,
+  onMouseDown,
 }: {
-  projectId: string
   gen: ReturnType<typeof useWikiGenerationEvents>
-  onGenerationConflict: (err: WikiGenerationConflictError) => Promise<void>
+  sidebarWidth: number
+  onMouseDown: (e: React.MouseEvent) => void
 }) {
-  const { t, locale } = useLocale()
+  const { t } = useLocale()
+
+  return (
+    <div className="flex h-full min-h-0 overflow-hidden">
+      <aside style={{ width: sidebarWidth }} className="flex shrink-0 flex-col wiki-panel">
+        <div className="wiki-panel-header shrink-0 justify-between">
+          <span className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider">
+            {t('wikiDocuments')}
+          </span>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <WikiOutlineProgress
+            activities={gen.outlineActivities}
+            currentActivity={gen.currentActivity}
+            phase={gen.phase}
+          />
+          <WikiDocumentTree />
+        </div>
+      </aside>
+      <div
+        onMouseDown={onMouseDown}
+        className="wiki-separator shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
+      />
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden" />
+    </div>
+  )
+}
+
+function EmptyState({
+  onStartGeneration,
+}: {
+  onStartGeneration: () => Promise<void>
+}) {
+  const { t } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
-  // gen is now passed from parent WikiWorkspace
-
-  const phase = gen.phase === 'starting' ? t('wikiPhaseStarting')
-    : gen.phase === 'refreshing' ? t('wikiPhaseAgentAnalyzing')
-    : gen.phase === 'outline_ready' ? t('wikiPhaseOutlineReady')
-    : gen.phase === 'writing' && gen.progress
-      ? `${t('wikiPhaseWriting')} (${(gen.progress.docIndex ?? 0) + 1}/${gen.progress.totalDocs})`
-    : gen.phase === 'writing' ? t('wikiPhaseWriting')
-    : null
-
   async function handleGenerate() {
-    const projects = useShellStore.getState().projects
-    const project = projects.find(p => p.id === projectId)
-    const workDir = project?.source?.localPath
-    if (!workDir) {
-      setError(t('wikiNoLocalPath'))
-      return
-    }
-
     setError(null)
-    gen.start()
-
     try {
-      await wikiApi.generate(projectId, { workDir, locale })
+      await onStartGeneration()
     } catch (err) {
-      if (err instanceof WikiGenerationConflictError) {
-        await onGenerationConflict(err)
-        return
-      }
-      gen.reset()
       setError(err instanceof Error ? err.message : t('wikiGenerationError'))
     }
   }
@@ -90,37 +98,12 @@ function EmptyState({
           )
         )}
 
-        {gen.active && (
-          <div className="mt-3 space-y-2">
-            <div className="flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
-              <Spinner size="sm" className="text-primary" />
-              <p className="text-[11px] text-primary">
-                {gen.currentActivity ?? phase ?? t('wikiPhaseAgentAnalyzing')}
-              </p>
-            </div>
-            {gen.outlineActivities.length > 0 && (
-              <div className="rounded-lg bg-card/40 border border-border/20 px-3 py-1.5 max-h-[80px] overflow-y-auto text-left">
-                <div className="space-y-0.5">
-                  {gen.outlineActivities.slice(-5).map((a, i) => (
-                    <div key={i} className="text-[10px] text-muted-foreground/50 truncate">
-                      {a.activity}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
         <Button
           className="mt-4 w-full"
           onPress={handleGenerate}
-          isDisabled={gen.active}
         >
-          {gen.active
-            ? <Spinner size="sm" />
-            : <Sparkles size={14} />}
-          {gen.active ? t('wikiGenerating') : t('wikiGenerate')}
+          <Sparkles size={14} />
+          {t('wikiGenerate')}
         </Button>
       </div>
     </div>
@@ -128,47 +111,18 @@ function EmptyState({
 }
 
 function FailedState({
-  projectId,
-  gen,
-  onGenerationConflict,
+  onStartGeneration,
 }: {
-  projectId: string
-  gen: ReturnType<typeof useWikiGenerationEvents>
-  onGenerationConflict: (err: WikiGenerationConflictError) => Promise<void>
+  onStartGeneration: () => Promise<void>
 }) {
-  const { t, locale } = useLocale()
+  const { t } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
-  // gen is now passed from parent WikiWorkspace
-
-  const phase = gen.phase === 'starting' ? t('wikiPhaseRestarting')
-    : gen.phase === 'refreshing' ? t('wikiPhaseAgentAnalyzing')
-    : gen.phase === 'outline_ready' ? t('wikiPhaseOutlineReady')
-    : gen.phase === 'writing' && gen.progress
-      ? `${t('wikiPhaseWriting')} (${(gen.progress.docIndex ?? 0) + 1}/${gen.progress.totalDocs})`
-    : gen.phase === 'writing' ? t('wikiPhaseWriting')
-    : null
-
   async function handleRetry() {
-    const projects = useShellStore.getState().projects
-    const project = projects.find(p => p.id === projectId)
-    const workDir = project?.source?.localPath
-    if (!workDir) {
-      setError(t('wikiNoLocalPathRetry'))
-      return
-    }
-
     setError(null)
-    gen.start()
-
     try {
-      await wikiApi.generate(projectId, { workDir, locale })
+      await onStartGeneration()
     } catch (err) {
-      if (err instanceof WikiGenerationConflictError) {
-        await onGenerationConflict(err)
-        return
-      }
-      gen.reset()
       setError(err instanceof Error ? err.message : t('wikiRetryError'))
     }
   }
@@ -195,35 +149,12 @@ function FailedState({
           )
         )}
 
-        {gen.active && (
-          <div className="mt-3 space-y-2">
-            <div className="flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
-              <Spinner size="sm" className="text-primary" />
-              <p className="text-[11px] text-primary">
-                {gen.currentActivity ?? phase ?? t('wikiPhaseAgentAnalyzing')}
-              </p>
-            </div>
-            {gen.outlineActivities.length > 0 && (
-              <div className="rounded-lg bg-card/40 border border-border/20 px-3 py-1.5 max-h-[80px] overflow-y-auto text-left">
-                <div className="space-y-0.5">
-                  {gen.outlineActivities.slice(-5).map((a, i) => (
-                    <div key={i} className="text-[10px] text-muted-foreground/50 truncate">
-                      {a.activity}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
         <Button
           className="mt-4 w-full"
           onPress={handleRetry}
-          isDisabled={gen.active}
         >
-          {gen.active ? <Spinner size="sm" /> : <RefreshCw size={14} />}
-          {gen.active ? t('wikiRetrying') : t('wikiRetry')}
+          <RefreshCw size={14} />
+          {t('wikiRetry')}
         </Button>
       </div>
     </div>
@@ -246,6 +177,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const setRefreshStarted = useWikiStore(s => s.setRefreshStarted)
   const showReinitConfirm = useWikiStore(s => s.showReinitConfirm)
   const setShowReinitConfirm = useWikiStore(s => s.setShowReinitConfirm)
+  const clearForRegeneration = useWikiStore(s => s.clearForRegeneration)
 
   const loadProjectSnapshot = useWikiStore(s => s.loadProjectSnapshot)
   const [queueRefreshKey, setQueueRefreshKey] = useState(0)
@@ -263,9 +195,33 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   const handleGenerationConflict = useCallback(async (err: WikiGenerationConflictError) => {
     await loadProjectSnapshot(projectId)
-    const phase: WikiGenPhase = err.generationStatus === 'writing' ? 'writing' : 'refreshing'
+    const phase: WikiGenPhase =
+      err.generationStatus === 'writing' ? 'writing'
+        : err.generationStatus === 'reinitializing' ? 'refreshing'
+          : 'refreshing'
     gen.start(err.snapshotId, phase)
   }, [projectId, loadProjectSnapshot, gen])
+
+  const handleStartGeneration = useCallback(async () => {
+    const projects = useShellStore.getState().projects
+    const project = projects.find(p => p.id === projectId)
+    const workDir = project?.source?.localPath
+    if (!workDir) {
+      throw new Error(t('wikiNoLocalPath'))
+    }
+    clearForRegeneration()
+    gen.start()
+    try {
+      await wikiApi.generate(projectId, { workDir, locale })
+    } catch (err) {
+      if (err instanceof WikiGenerationConflictError) {
+        await handleGenerationConflict(err)
+        return
+      }
+      gen.reset()
+      throw err
+    }
+  }, [projectId, locale, t, clearForRegeneration, gen, handleGenerationConflict])
 
   // Auto-activate generation tracking when a refreshing snapshot is detected
   // (handles page refresh during generation or loading an in-progress snapshot)
@@ -280,7 +236,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   const refreshing = refreshTask.phase !== 'idle' && refreshTask.phase !== 'completed' && refreshTask.phase !== 'failed'
 
-  const [reinitializing, setReinitializing] = useState(false)
   const [continuing, setContinuing] = useState(false)
   const [approvingOutline, setApprovingOutline] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(260)
@@ -371,11 +326,18 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       return
     }
     setShowReinitConfirm(false)
-    setReinitializing(true)
+    clearForRegeneration()
+    gen.start()
     try {
       await wikiApi.reinitialize(projectId, { workDir, locale })
-    } finally {
-      setReinitializing(false)
+    } catch (err) {
+      if (err instanceof WikiGenerationConflictError) {
+        await handleGenerationConflict(err)
+        return
+      }
+      gen.reset()
+      handleError(err)
+      await loadProjectSnapshot(projectId)
     }
   }
 
@@ -415,7 +377,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
   }
 
-  if (loading.snapshot) {
+  if (loading.snapshot && !gen.active) {
     return (
       <div className="flex h-full min-h-0 overflow-hidden">
         <aside style={{ width: 260 }} className="flex shrink-0 flex-col wiki-panel">
@@ -446,12 +408,22 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     )
   }
 
-  if (!snapshot) {
-    return <EmptyState projectId={projectId} gen={gen} onGenerationConflict={handleGenerationConflict} />
+  if (gen.active && !snapshot) {
+    return (
+      <WikiGeneratingShell
+        gen={gen}
+        sidebarWidth={sidebarWidth}
+        onMouseDown={handleMouseDown}
+      />
+    )
   }
 
-  if (snapshot.status === 'failed' && documents.length === 0) {
-    return <FailedState projectId={projectId} gen={gen} onGenerationConflict={handleGenerationConflict} />
+  if (!snapshot) {
+    return <EmptyState onStartGeneration={handleStartGeneration} />
+  }
+
+  if (snapshot.status === 'failed' && documents.length === 0 && !gen.active) {
+    return <FailedState onStartGeneration={handleStartGeneration} />
   }
 
   return (
@@ -480,7 +452,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   onClick={handleRefresh}
-                  disabled={refreshing || reinitializing}
+                  disabled={refreshing || gen.active}
                   className="wh-btn !w-6 !h-6 disabled:opacity-40"
                   title="更新 Wiki（检测代码变更）"
                 >
@@ -506,7 +478,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   onClick={handleContinue}
-                  disabled={continuing || reinitializing}
+                  disabled={continuing || gen.active}
                   className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
                   {continuing ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
@@ -515,10 +487,10 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   onClick={() => setShowReinitConfirm(true)}
-                  disabled={continuing || reinitializing}
+                  disabled={continuing || gen.active}
                   className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-[10px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
                 >
-                  {reinitializing ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
+                  {gen.active ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
                   {t('wikiRegenerate')}
                 </button>
               </div>
@@ -542,7 +514,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               <button
                 type="button"
                 onClick={handleApproveOutline}
-                disabled={approvingOutline || reinitializing}
+                disabled={approvingOutline || gen.active}
                 className="flex items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
               >
                 {approvingOutline ? (

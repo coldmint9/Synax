@@ -28,6 +28,7 @@ export function buildOutlineContext(scan: CodeMapScanResult, workDir: string): O
 
   const segments = [
     buildPackagesSegment(scan, corePackages),
+    buildCommunityBreakdownSegment(scan, corePackages),
     buildDependencySegment(scan),
     buildEntryFilesSegment(scan),
     buildAnchorsSegment(workDir),
@@ -35,6 +36,67 @@ export function buildOutlineContext(scan: CodeMapScanResult, workDir: string): O
   ].filter(Boolean);
 
   return { context: segments.join('\n\n'), corePackages };
+}
+
+// ── Deterministic sub-module breakdown from code clustering ──────────────────
+//
+// For packages large enough to warrant splitting, intersect the analyzer's
+// cohesion-based communities with each package to propose concrete sub-modules.
+// This turns "this package is big, split it somehow" into a grounded list of
+// cohesive sub-documents the planner can name and refine — instead of inventing
+// the breakdown from the file tree.
+
+const MIN_SUBDOC_OVERLAP = 3;
+const MAX_SUBDOCS_PER_PACKAGE = 8;
+const MAX_SUBDOC_SEED_FILES = 5;
+
+export function buildCommunityBreakdownSegment(scan: CodeMapScanResult, corePackages: PackageBaseline[]): string {
+  const communities = scan.communities ?? [];
+  if (communities.length === 0 || corePackages.length === 0) return '';
+
+  const filePathById = new Map(scan.codeIndex.files.map(f => [f.id, f.path]));
+  const symbolCountByFile = new Map<string, number>();
+  for (const s of scan.codeIndex.symbols) {
+    symbolCountByFile.set(s.fileId, (symbolCountByFile.get(s.fileId) ?? 0) + 1);
+  }
+
+  const blocks: string[] = [];
+  for (const pkg of corePackages) {
+    const needsSplit = pkg.fileCount >= FILE_SPLIT && pkg.symbolCount >= SYM_SPLIT;
+    if (!needsSplit) continue;
+
+    const pkgFiles = new Set(pkg.fileIds);
+    const candidates = communities
+      .map(community => ({ community, overlap: community.fileIds.filter(fid => pkgFiles.has(fid)) }))
+      .filter(c => c.overlap.length >= MIN_SUBDOC_OVERLAP)
+      .sort((a, b) => b.overlap.length - a.overlap.length)
+      .slice(0, MAX_SUBDOCS_PER_PACKAGE);
+
+    // Only suggest a breakdown when clustering found multiple cohesive groups.
+    if (candidates.length < 2) continue;
+
+    const lines = [`### ${pkg.label} (${pkg.dirPath}) — ${candidates.length} suggested sub-modules`];
+    candidates.forEach((cand, i) => {
+      const seedFiles = cand.overlap
+        .map(fid => ({ path: filePathById.get(fid) ?? fid, symbols: symbolCountByFile.get(fid) ?? 0 }))
+        .sort((a, b) => b.symbols - a.symbols || a.path.localeCompare(b.path))
+        .slice(0, MAX_SUBDOC_SEED_FILES)
+        .map(f => f.path);
+      const hub = cand.community.hubSymbols.find(h => pkgFiles.has(h.fileId))?.name;
+      const hubHint = hub ? ` (hub: ${hub})` : '';
+      lines.push(`${i + 1}. ${cand.overlap.length} files${hubHint} — seed targetFiles: ${seedFiles.join(', ')}`);
+    });
+    blocks.push(lines.join('\n'));
+  }
+
+  if (blocks.length === 0) return '';
+
+  return [
+    '## Suggested Sub-Module Breakdown (deterministic, from import/call cohesion)',
+    'Each [SPLIT] package below was clustered by code cohesion. For each one, create a parent module document plus one child module document per suggested sub-module, seeding its targetFiles from the listed files. Adjust titles to be human-readable; only merge adjacent items when they are clearly the same concern.',
+    '',
+    blocks.join('\n\n'),
+  ].join('\n');
 }
 
 // ── Packages with hub symbol signatures and file inventories ────────────────

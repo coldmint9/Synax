@@ -76,6 +76,7 @@ export interface WikiState {
   loadEvaluations: (projectId: string) => Promise<void>;
   deleteEvaluations: (evalIds: string[]) => Promise<void>;
   reset: () => void;
+  clearForRegeneration: () => void;
 
   loadDrafts: (projectId: string, status?: string) => Promise<void>;
   selectDraft: (draftId: string) => void;
@@ -243,6 +244,32 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   },
 
   reset: () => set(initialState),
+  clearForRegeneration: () => set({
+    snapshot: null,
+    documents: [],
+    selectedDocumentId: null,
+    searchHighlightQuery: null,
+    evaluations: [],
+    draftsSummary: { ready: 0, generating: 0 },
+    draftsById: {},
+    selectedDraftId: null,
+    draftPanelOpen: false,
+    draftPanelLayer: 'list',
+    draftSelectedDocumentIds: {},
+    draftEditedContentMd: {},
+    draftPreviewActive: false,
+    draftPreviewId: null,
+    refreshTask: { taskId: null, phase: 'idle', message: null, meta: null },
+    error: null,
+    loading: { snapshot: false, plans: false, drafts: false },
+    viewMode: 'document',
+    plans: [],
+    activePlan: null,
+    activePlanNodes: [],
+    planNav: 'detail',
+    selectedPlanId: null,
+    planGeneration: { ...initialState.planGeneration },
+  }),
   setShowReinitConfirm: (show: boolean) => set({ showReinitConfirm: show }),
 
   loadDrafts: async (projectId, status) => {
