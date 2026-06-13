@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Skeleton, Spinner } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
 import { useLocale } from '../../../hooks/useLocale'
-import { useWikiGenerationEvents } from '../../../hooks/useWikiGenerationEvents'
+import { useWikiGenerationEvents, type WikiGenPhase } from '../../../hooks/useWikiGenerationEvents'
 import { useWikiRefreshListener } from '../../../hooks/useWikiRefreshListener'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
@@ -15,12 +15,20 @@ import WikiWriteQueuePanel from './WikiWriteQueuePanel'
 import { countWrittenDocuments, countWritableDocuments } from './wikiDocumentCounts'
 import PlanView from './PlanView'
 import PlanListView from './PlanListView'
-import { wikiApi } from '../../../lib/api/wiki'
+import { wikiApi, WikiGenerationConflictError } from '../../../lib/api/wiki'
 import { apiFetch, apiRequest } from '../../../lib/api/origin'
 import { handleError, createAppError, AppError } from '../../../lib/errors'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../components/LlmProviderRequiredBanner'
 
-function EmptyState({ projectId, gen }: { projectId: string; gen: ReturnType<typeof useWikiGenerationEvents> }) {
+function EmptyState({
+  projectId,
+  gen,
+  onGenerationConflict,
+}: {
+  projectId: string
+  gen: ReturnType<typeof useWikiGenerationEvents>
+  onGenerationConflict: (err: WikiGenerationConflictError) => Promise<void>
+}) {
   const { t, locale } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
@@ -49,6 +57,10 @@ function EmptyState({ projectId, gen }: { projectId: string; gen: ReturnType<typ
     try {
       await wikiApi.generate(projectId, { workDir, locale })
     } catch (err) {
+      if (err instanceof WikiGenerationConflictError) {
+        await onGenerationConflict(err)
+        return
+      }
       gen.reset()
       setError(err instanceof Error ? err.message : t('wikiGenerationError'))
     }
@@ -115,7 +127,15 @@ function EmptyState({ projectId, gen }: { projectId: string; gen: ReturnType<typ
   )
 }
 
-function FailedState({ projectId, gen }: { projectId: string; gen: ReturnType<typeof useWikiGenerationEvents> }) {
+function FailedState({
+  projectId,
+  gen,
+  onGenerationConflict,
+}: {
+  projectId: string
+  gen: ReturnType<typeof useWikiGenerationEvents>
+  onGenerationConflict: (err: WikiGenerationConflictError) => Promise<void>
+}) {
   const { t, locale } = useLocale()
   const [error, setError] = useState<string | null>(null)
 
@@ -144,6 +164,10 @@ function FailedState({ projectId, gen }: { projectId: string; gen: ReturnType<ty
     try {
       await wikiApi.generate(projectId, { workDir, locale })
     } catch (err) {
+      if (err instanceof WikiGenerationConflictError) {
+        await onGenerationConflict(err)
+        return
+      }
       gen.reset()
       setError(err instanceof Error ? err.message : t('wikiRetryError'))
     }
@@ -223,18 +247,34 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const showReinitConfirm = useWikiStore(s => s.showReinitConfirm)
   const setShowReinitConfirm = useWikiStore(s => s.setShowReinitConfirm)
 
+  const loadProjectSnapshot = useWikiStore(s => s.loadProjectSnapshot)
+  const [queueRefreshKey, setQueueRefreshKey] = useState(0)
+
   useWikiRefreshListener(projectId)
 
-  const gen = useWikiGenerationEvents({ projectId })
+  const gen = useWikiGenerationEvents({
+    projectId,
+    onReconnect: () => {
+      void loadProjectSnapshot(projectId)
+      setQueueRefreshKey((key) => key + 1)
+    },
+    onProgress: () => setQueueRefreshKey((key) => key + 1),
+  })
+
+  const handleGenerationConflict = useCallback(async (err: WikiGenerationConflictError) => {
+    await loadProjectSnapshot(projectId)
+    const phase: WikiGenPhase = err.generationStatus === 'writing' ? 'writing' : 'refreshing'
+    gen.start(err.snapshotId, phase)
+  }, [projectId, loadProjectSnapshot, gen])
 
   // Auto-activate generation tracking when a refreshing snapshot is detected
   // (handles page refresh during generation or loading an in-progress snapshot)
   useEffect(() => {
     if (snapshot?.status === 'refreshing' && !gen.active) {
-      gen.start(snapshot.id)
+      gen.start(snapshot.id, 'refreshing')
     }
     if (snapshot?.status === 'writing' && !gen.active) {
-      gen.start(snapshot.id)
+      gen.start(snapshot.id, 'writing')
     }
   }, [snapshot?.status, snapshot?.id, gen.active, gen.start])
 
@@ -407,11 +447,11 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   }
 
   if (!snapshot) {
-    return <EmptyState projectId={projectId} gen={gen} />
+    return <EmptyState projectId={projectId} gen={gen} onGenerationConflict={handleGenerationConflict} />
   }
 
   if (snapshot.status === 'failed' && documents.length === 0) {
-    return <FailedState projectId={projectId} gen={gen} />
+    return <FailedState projectId={projectId} gen={gen} onGenerationConflict={handleGenerationConflict} />
   }
 
   return (
@@ -522,7 +562,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                   {t('wikiWriting', { done: writtenDocCount, total: writableDocTotal })}
                 </span>
               </div>
-              <WikiWriteQueuePanel snapshotId={snapshot.id} />
+              <WikiWriteQueuePanel snapshotId={snapshot.id} refreshKey={queueRefreshKey} />
             </>
           )}
           <WikiDocumentTree />

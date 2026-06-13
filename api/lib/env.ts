@@ -57,5 +57,8 @@ export const WIKI_WRITE_CONCURRENCY = Number(env('WIKI_WRITE_CONCURRENCY', '2'))
 /** Wall-clock timeout for a single wiki agent run (document writer / verifier / corrector) */
 export const WIKI_AGENT_RUN_TIMEOUT_MS = Number(env('WIKI_AGENT_RUN_TIMEOUT_MS', '900000'));
 
+/** Auto-reject permission requests after this duration (ms). Default 10 min. */
+export const PERMISSION_TIMEOUT_MS = Number(env('PERMISSION_TIMEOUT_MS', '600000'));
+
 /** Wiki Phase 2: max verifier/corrector agents in flight */
 export const WIKI_VERIFY_CONCURRENCY = Number(env('WIKI_VERIFY_CONCURRENCY', '3'));

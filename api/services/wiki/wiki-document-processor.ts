@@ -96,11 +96,13 @@ export interface ProcessQueueDocumentInput {
   planIdToDocId: Map<string, string>;
   scan: CodeMapScanResult;
   verifierHandle: ReturnType<typeof createVerifierTools>;
+  onWriterSessionCreated?: (sessionId: string) => void | Promise<void>;
 }
 
 export async function processQueueDocument(input: ProcessQueueDocumentInput): Promise<void> {
   const {
     batch, item, entry, itemIndex, totalItems, outline, planIdToDocId, scan, verifierHandle,
+    onWriterSessionCreated,
   } = input;
   const { projectId, snapshotId, workDir, locale } = batch;
   const languages = formatLanguages(scan);
@@ -155,6 +157,7 @@ export async function processQueueDocument(input: ProcessQueueDocumentInput): Pr
     });
     sessionIds.push(docSession.id);
     setSessionWorkspaceRoot(docSession.id, workDir);
+    await onWriterSessionCreated?.(docSession.id);
 
     agentEventService.append({
       sessionId: docSession.id,

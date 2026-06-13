@@ -203,6 +203,16 @@ wikiRoutes.post('/projects/:projectId/generate', async (c) => {
     return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
   }
 
+  const activeGeneration = await wikiStore.hasActiveGeneration(projectId);
+  if (activeGeneration.active) {
+    return c.json({
+      error: 'Wiki generation is already in progress for this project.',
+      code: 'GENERATION_IN_PROGRESS',
+      snapshotId: activeGeneration.snapshotId,
+      status: activeGeneration.status,
+    }, 409);
+  }
+
   void wikiLoopService.generate({
     projectId,
     workDir: parsed.data.workDir,
@@ -228,6 +238,16 @@ wikiRoutes.post('/projects/:projectId/reinitialize', async (c) => {
       return c.json({ error: err.message, code: err.code }, 422);
     }
     return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
+  }
+
+  const activeGeneration = await wikiStore.hasActiveGeneration(projectId);
+  if (activeGeneration.active) {
+    return c.json({
+      error: 'Wiki generation is already in progress for this project.',
+      code: 'GENERATION_IN_PROGRESS',
+      snapshotId: activeGeneration.snapshotId,
+      status: activeGeneration.status,
+    }, 409);
   }
 
   await wikiStore.purgeProject(projectId);

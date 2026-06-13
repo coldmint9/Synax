@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { subscribe } from '../lib/api/taskNotificationBus'
 import { TaskNotificationEventType } from '../lib/api/eventTypes'
 import type { WikiSnapshotTree } from '../lib/contracts/wiki'
+import { wikiGenTimeoutForPhase } from '../lib/constants/wikiGeneration'
 
 export type WikiGenPhase = 'starting' | 'refreshing' | 'outline_ready' | 'writing' | 'ready' | 'failed'
 
@@ -21,6 +22,7 @@ interface WikiGenProgress {
 
 interface WikiGenerationState {
   active: boolean
+  stale: boolean
   phase: WikiGenPhase | null
   progress: WikiGenProgress | null
   error: string | null
@@ -33,19 +35,30 @@ interface UseWikiGenerationEventsOptions {
   projectId: string | null
   onCompleted?: (snapshotId: string) => void
   onFailed?: (error: string) => void
+  onStale?: (message: string) => void
+  onReconnect?: () => void
+  onProgress?: () => void
+  /** Override default phase-based inactivity timeout. */
   timeoutMs?: number
 }
 
 export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
-  const { projectId, onCompleted, onFailed, timeoutMs = 180_000 } = opts
+  const { projectId, onCompleted, onFailed, onStale, onReconnect, onProgress, timeoutMs } = opts
   const [state, setState] = useState<WikiGenerationState>({
-    active: false, phase: null, progress: null, error: null, snapshotId: null,
-    outlineActivities: [], currentActivity: null,
+    active: false,
+    stale: false,
+    phase: null,
+    progress: null,
+    error: null,
+    snapshotId: null,
+    outlineActivities: [],
+    currentActivity: null,
   })
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const snapshotIdRef = useRef<string | null>(null)
-  const callbacksRef = useRef({ onCompleted, onFailed })
-  callbacksRef.current = { onCompleted, onFailed }
+  const phaseRef = useRef<WikiGenPhase | null>(null)
+  const callbacksRef = useRef({ onCompleted, onFailed, onStale, onReconnect, onProgress })
+  callbacksRef.current = { onCompleted, onFailed, onStale, onReconnect, onProgress }
 
   const clearTimer = useCallback(() => {
     if (timeoutRef.current) {
@@ -54,26 +67,66 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
     }
   }, [])
 
-  const start = useCallback((snapshotId?: string) => {
-    snapshotIdRef.current = snapshotId ?? null
-    setState({ active: true, phase: 'starting', progress: null, error: null, snapshotId: snapshotId ?? null, outlineActivities: [], currentActivity: null })
+  const resetTimer = useCallback((phase?: WikiGenPhase | null) => {
+    if (phase !== undefined) {
+      phaseRef.current = phase
+    }
     clearTimer()
+    const duration = timeoutMs ?? wikiGenTimeoutForPhase(phaseRef.current)
     timeoutRef.current = setTimeout(() => {
-      setState(s => ({ ...s, active: false, phase: 'failed', error: 'Generation timeout' }))
-      callbacksRef.current.onFailed?.('Generation timeout')
-    }, timeoutMs)
+      const message = 'Generation progress tracking timed out'
+      setState(s => ({
+        ...s,
+        active: false,
+        stale: true,
+        phase: null,
+        error: null,
+      }))
+      callbacksRef.current.onStale?.(message)
+      callbacksRef.current.onFailed?.(message)
+    }, duration)
   }, [timeoutMs, clearTimer])
+
+  const start = useCallback((snapshotId?: string, initialPhase: WikiGenPhase = 'starting') => {
+    snapshotIdRef.current = snapshotId ?? null
+    phaseRef.current = initialPhase
+    setState({
+      active: true,
+      stale: false,
+      phase: initialPhase,
+      progress: null,
+      error: null,
+      snapshotId: snapshotId ?? null,
+      outlineActivities: [],
+      currentActivity: null,
+    })
+    resetTimer(initialPhase)
+  }, [resetTimer])
 
   const reset = useCallback(() => {
     clearTimer()
     snapshotIdRef.current = null
-    setState({ active: false, phase: null, progress: null, error: null, snapshotId: null, outlineActivities: [], currentActivity: null })
+    phaseRef.current = null
+    setState({
+      active: false,
+      stale: false,
+      phase: null,
+      progress: null,
+      error: null,
+      snapshotId: null,
+      outlineActivities: [],
+      currentActivity: null,
+    })
   }, [clearTimer])
 
   useEffect(() => {
     if (!projectId || !state.active) return
 
     return subscribe(projectId, {
+      onConnect: () => {
+        resetTimer(phaseRef.current)
+        callbacksRef.current.onReconnect?.()
+      },
       events: {
         [TaskNotificationEventType.TaskStarted]: (e: MessageEvent) => {
           try {
@@ -82,7 +135,15 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
             const sid = data.meta?.snapshotId as string | undefined
             if (sid) {
               snapshotIdRef.current = sid
-              setState(s => ({ ...s, snapshotId: sid, phase: 'refreshing', outlineActivities: [], currentActivity: null }))
+              phaseRef.current = 'refreshing'
+              setState(s => ({
+                ...s,
+                snapshotId: sid,
+                phase: 'refreshing',
+                outlineActivities: [],
+                currentActivity: null,
+              }))
+              resetTimer('refreshing')
             }
           } catch { /* ignore */ }
         },
@@ -90,10 +151,17 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
           try {
             const data = JSON.parse(e.data)
             if (data.taskKind !== 'wiki_generate') return
+            callbacksRef.current.onProgress?.()
             const meta = data.meta as Record<string, unknown> | undefined
             const status = meta?.snapshotStatus as WikiGenPhase | undefined
             if (meta?.snapshotId) snapshotIdRef.current = meta.snapshotId as string
-            if (status) setState(s => ({ ...s, phase: status, snapshotId: (meta?.snapshotId as string) ?? s.snapshotId }))
+            if (status) {
+              phaseRef.current = status
+              setState(s => ({ ...s, phase: status, snapshotId: (meta?.snapshotId as string) ?? s.snapshotId }))
+              resetTimer(status)
+            } else {
+              resetTimer()
+            }
             if (meta?.docIndex != null) {
               setState(s => ({ ...s, progress: {
                 docIndex: meta.docIndex as number,
@@ -101,7 +169,6 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
                 docTitle: meta.docTitle as string,
               }}))
             }
-            // Phase 1 outline activity tracking
             if (meta?.activity && meta?.activityPhase) {
               const entry: OutlineActivity = {
                 activity: meta.activity as string,
@@ -121,9 +188,10 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
             const data = JSON.parse(e.data)
             if (data.taskKind !== 'wiki_generate') return
             clearTimer()
-            const sid = (data.meta?.snapshotId as string) ?? state.snapshotId ?? ''
+            const sid = (data.meta?.snapshotId as string) ?? snapshotIdRef.current ?? ''
             snapshotIdRef.current = sid || snapshotIdRef.current
-            setState(s => ({ ...s, active: false, phase: 'ready', snapshotId: sid }))
+            phaseRef.current = 'ready'
+            setState(s => ({ ...s, active: false, stale: false, phase: 'ready', snapshotId: sid }))
             callbacksRef.current.onCompleted?.(sid)
           } catch { /* ignore */ }
         },
@@ -133,7 +201,8 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
             if (data.taskKind !== 'wiki_generate') return
             clearTimer()
             const msg = data.message ?? 'Generation failed'
-            setState(s => ({ ...s, active: false, phase: 'failed', error: msg }))
+            phaseRef.current = 'failed'
+            setState(s => ({ ...s, active: false, stale: false, phase: 'failed', error: msg }))
             callbacksRef.current.onFailed?.(msg)
           } catch { /* ignore */ }
         },
@@ -144,20 +213,27 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
             if (!data.tree.snapshot) return
             const expectedSnapshotId = snapshotIdRef.current
             if (!expectedSnapshotId || data.tree.snapshot.id !== expectedSnapshotId) return
-            if (data.tree.snapshot.status === 'ready') {
+            const snapStatus = data.tree.snapshot.status
+            if (snapStatus === 'ready') {
               clearTimer()
-              setState(s => ({ ...s, active: false, phase: 'ready', snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))
+              phaseRef.current = 'ready'
+              setState(s => ({ ...s, active: false, stale: false, phase: 'ready', snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))
               callbacksRef.current.onCompleted?.(data.tree.snapshot.id)
-            } else if (data.tree.snapshot.status === 'failed') {
+            } else if (snapStatus === 'failed') {
               clearTimer()
-              setState(s => ({ ...s, active: false, phase: 'failed', error: 'Generation failed', snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))
+              phaseRef.current = 'failed'
+              setState(s => ({ ...s, active: false, stale: false, phase: 'failed', error: 'Generation failed', snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))
               callbacksRef.current.onFailed?.('Generation failed')
+            } else if (snapStatus === 'refreshing' || snapStatus === 'writing' || snapStatus === 'outline_ready') {
+              phaseRef.current = snapStatus
+              setState(s => ({ ...s, phase: snapStatus, snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))
+              resetTimer(snapStatus)
             }
           } catch { /* ignore */ }
         },
       },
     })
-  }, [projectId, state.active, clearTimer])
+  }, [projectId, state.active, clearTimer, resetTimer])
 
   useEffect(() => () => clearTimer(), [clearTimer])
 
