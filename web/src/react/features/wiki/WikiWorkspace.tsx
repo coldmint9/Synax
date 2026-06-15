@@ -14,7 +14,7 @@ import WikiDraftPanel from './WikiDraftPanel'
 import WikiOutlineProgress from './WikiOutlineProgress'
 import WikiOutlineReady from './WikiOutlineReady'
 import WikiWritingProgress from './WikiWritingProgress'
-import { countWrittenDocuments, countWritableDocuments } from './wikiDocumentCounts'
+import { resolveWikiWritingProgressCounts, resolveGeneratingDocumentId } from './wikiWritingProgressCounts'
 import PlanView from './PlanView'
 import PlanListView from './PlanListView'
 import { wikiApi, WikiGenerationConflictError } from '../../../lib/api/wiki'
@@ -24,10 +24,12 @@ import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../../c
 
 function WikiGeneratingShell({
   gen,
+  generatingDocumentId,
   sidebarWidth,
   onMouseDown,
 }: {
   gen: ReturnType<typeof useWikiGenerationEvents>
+  generatingDocumentId: string | null
   sidebarWidth: number
   onMouseDown: (e: React.MouseEvent) => void
 }) {
@@ -47,7 +49,7 @@ function WikiGeneratingShell({
             currentActivity={gen.currentActivity}
             phase={gen.phase}
           />
-          <WikiDocumentTree />
+          <WikiDocumentTree generatingDocumentId={generatingDocumentId} />
         </div>
       </aside>
       <div
@@ -182,6 +184,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const clearForRegeneration = useWikiStore(s => s.clearForRegeneration)
 
   const loadProjectSnapshot = useWikiStore(s => s.loadProjectSnapshot)
+  const patchSnapshotStatus = useWikiStore(s => s.patchSnapshotStatus)
 
   useWikiRefreshListener(projectId)
 
@@ -245,8 +248,14 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   const selectedDoc = documents.find(d => d.id === selectedDocumentId)
   const scrollRef = useScrollRestore(selectedDocumentId)
-  const writableDocTotal = countWritableDocuments(documents)
-  const writtenDocCount = countWrittenDocuments(documents)
+  const writingProgress = resolveWikiWritingProgressCounts(documents, gen.progress)
+  const { done: writtenDocCount, total: writableDocTotal } = writingProgress
+  const isActivelyWriting = snapshot?.status === 'writing'
+    || (gen.active && gen.phase === 'writing')
+  const showIncompleteBanner = (snapshot?.status === 'failed' || snapshot?.status === 'partial')
+    && documents.length > 0
+    && !isActivelyWriting
+  const generatingDocumentId = resolveGeneratingDocumentId(documents, gen.progress, isActivelyWriting)
 
   // Load evaluations when projectId changes
   useEffect(() => {
@@ -369,8 +378,14 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
     setContinuing(true)
     gen.start(snapshot.id, 'writing')
+    patchSnapshotStatus('writing')
     try {
       await wikiApi.continueGeneration(snapshot.id, { workDir, locale })
+      await loadProjectSnapshot(projectId)
+    } catch (err) {
+      gen.reset()
+      handleError(err)
+      await loadProjectSnapshot(projectId)
     } finally {
       setContinuing(false)
     }
@@ -429,6 +444,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     return (
       <WikiGeneratingShell
         gen={gen}
+        generatingDocumentId={resolveGeneratingDocumentId(documents, gen.progress, gen.active && gen.phase === 'writing')}
         sidebarWidth={sidebarWidth}
         onMouseDown={handleMouseDown}
       />
@@ -483,7 +499,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               </div>
             </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {(snapshot?.status === 'failed' || snapshot?.status === 'partial') && documents.length > 0 && (
+          {showIncompleteBanner && (
             <div className={`flex flex-col gap-2 px-3 py-2 border-b ${
               snapshot.status === 'partial'
                 ? 'bg-amber-500/5 border-amber-500/10'
@@ -501,15 +517,12 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                     : t('wikiGenerationIncomplete', { done: writtenDocCount, total: writableDocTotal })}
                 </span>
               </div>
-              {(writableDocTotal > 0 || continuing || gen.active) && (
+              {writableDocTotal > 0 && (
                 <WikiProgressBar
                   aria-label={t('wikiWritingProgress', { done: writtenDocCount, total: writableDocTotal })}
-                  isIndeterminate={continuing || gen.active || writableDocTotal === 0}
-                  value={
-                    continuing || gen.active || writableDocTotal === 0
-                      ? undefined
-                      : Math.min(100, Math.round((writtenDocCount / writableDocTotal) * 100))
-                  }
+                  done={writtenDocCount}
+                  total={writableDocTotal}
+                  value={writingProgress.percent}
                   color={snapshot.status === 'partial' ? 'warning' : 'danger'}
                 />
               )}
@@ -549,15 +562,15 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               onApprove={handleApproveOutline}
             />
           )}
-          {snapshot?.status === 'writing' && (
+          {isActivelyWriting && (
             <WikiWritingProgress
-              done={writtenDocCount}
-              total={writableDocTotal}
+              documents={documents}
+              genProgress={gen.progress}
               pausing={pausing}
               onPause={handlePause}
             />
           )}
-          <WikiDocumentTree />
+          <WikiDocumentTree generatingDocumentId={generatingDocumentId} />
         </div>
           </>
         )}

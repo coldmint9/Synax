@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { BookOpen, Folder, FolderOpen } from 'lucide-react'
+import { BookOpen, Folder, FolderOpen, Loader2 } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import type { WikiDocument } from '../../../lib/contracts/wiki'
@@ -16,6 +16,7 @@ function indentPx(depth: number): number {
 function DocItem({
   doc,
   isSelected,
+  isGenerating,
   onSelect,
   issueCount,
   draftInfo,
@@ -23,6 +24,7 @@ function DocItem({
 }: {
   doc: WikiDocument
   isSelected: boolean
+  isGenerating: boolean
   onSelect: () => void
   issueCount?: number
   draftInfo?: { count: number; status: 'ready' | 'generating' | 'partially_applied' }
@@ -33,9 +35,15 @@ function DocItem({
     <button
       type="button"
       onClick={onSelect}
+      aria-busy={isGenerating}
       style={{ paddingLeft: `${indentPx(depth) + FOLDER_ICON_OFFSET}px` }}
-      className={`list-row ${isSelected ? 'list-row--active' : ''} ${isEmpty && !isSelected ? 'list-row--empty' : ''}`}
+      className={`list-row ${isSelected ? 'list-row--active' : ''} ${isGenerating ? 'list-row--generating' : ''} ${isEmpty && !isSelected && !isGenerating ? 'list-row--empty' : ''}`}
     >
+      {isGenerating ? (
+        <Loader2 size={12} className="shrink-0 animate-spin text-primary" aria-hidden />
+      ) : (
+        <span className="w-3 shrink-0" aria-hidden />
+      )}
       <span className="min-w-0 flex-1 break-words">{doc.title}</span>
       <span className="flex shrink-0 items-center gap-1">
         {draftInfo && draftInfo.count > 0 && (
@@ -107,6 +115,7 @@ function TreeNode({
   onSelect,
   issuesByDocId,
   draftsByDocId,
+  generatingDocumentId,
   defaultExpanded,
   isExpanded,
   onToggleExpanded,
@@ -117,6 +126,7 @@ function TreeNode({
   onSelect: (id: string) => void
   issuesByDocId: Map<string, number>
   draftsByDocId: Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>
+  generatingDocumentId: string | null
   defaultExpanded: boolean
   isExpanded: (id: string, defaultExpanded: boolean) => boolean
   onToggleExpanded: (id: string, defaultExpanded: boolean) => void
@@ -141,6 +151,7 @@ function TreeNode({
           doc={node.document}
           depth={depth}
           isSelected={selectedDocumentId === node.document.id}
+          isGenerating={generatingDocumentId === node.document.id}
           onSelect={() => onSelect(node.document.id)}
           issueCount={issuesByDocId.get(node.document.id)}
           draftInfo={draftsByDocId.get(node.document.id)}
@@ -157,6 +168,7 @@ function TreeNode({
               onSelect={onSelect}
               issuesByDocId={issuesByDocId}
               draftsByDocId={draftsByDocId}
+              generatingDocumentId={generatingDocumentId}
               defaultExpanded={depth + 1 <= 1}
               isExpanded={isExpanded}
               onToggleExpanded={onToggleExpanded}
@@ -168,7 +180,11 @@ function TreeNode({
   )
 }
 
-export default function WikiDocumentTree() {
+export default function WikiDocumentTree({
+  generatingDocumentId = null,
+}: {
+  generatingDocumentId?: string | null
+}) {
   const { t } = useLocale()
   const documents = useWikiStore(s => s.documents)
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
@@ -250,6 +266,7 @@ export default function WikiDocumentTree() {
             onSelect={selectDocument}
             issuesByDocId={issuesByDocId}
             draftsByDocId={draftsByDocId}
+            generatingDocumentId={generatingDocumentId}
             defaultExpanded
             isExpanded={isExpanded}
             onToggleExpanded={toggleExpanded}

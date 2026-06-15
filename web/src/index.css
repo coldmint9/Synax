@@ -1063,6 +1063,10 @@
     color: var(--foreground);
   }
 
+  .list-row--generating:not(.list-row--active) {
+    color: hsl(var(--primary));
+  }
+
   .list-section {
     margin-top: 8px;
   }
@@ -1681,10 +1685,24 @@
 }
 /* END_UTILITIES */
 
+/* Auto-hide scrollbars — visible only while scrolling (.is-scrolling) */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--background); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+  transition: background 180ms ease;
+}
+.is-scrolling::-webkit-scrollbar-thumb { background: var(--border); }
+.is-scrolling::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.is-scrolling {
+  scrollbar-color: var(--border) transparent;
+}
 
 [contenteditable]:focus { outline: none; }
 [contenteditable]:empty::before { content: attr(data-placeholder); color: hsl(var(--muted-foreground)); }
@@ -1769,3 +1787,4 @@
 
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+.scrollbar-none.is-scrolling { scrollbar-width: none; }
