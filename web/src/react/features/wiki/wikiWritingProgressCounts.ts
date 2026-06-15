@@ -13,12 +13,14 @@ export function resolveGeneratingDocumentId(
   documents: WikiDocument[],
   genProgress: WikiGenProgressCounts | null | undefined,
   isActivelyWriting: boolean,
+  snapshotStatus?: string | null,
 ): string | null {
-  if (!isActivelyWriting || !genProgress) return null
+  const writing = isActivelyWriting || snapshotStatus === 'writing'
+  if (!writing) return null
   if (genProgress.documentId && documents.some(d => d.id === genProgress.documentId)) {
     return genProgress.documentId
   }
-  if (genProgress.docTitle) {
+  if (genProgress?.docTitle) {
     return documents.find(d => !d.isSection && d.title === genProgress.docTitle)?.id ?? null
   }
   return null

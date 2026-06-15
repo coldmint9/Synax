@@ -255,7 +255,12 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const showIncompleteBanner = (snapshot?.status === 'failed' || snapshot?.status === 'partial')
     && documents.length > 0
     && !isActivelyWriting
-  const generatingDocumentId = resolveGeneratingDocumentId(documents, gen.progress, isActivelyWriting)
+  const generatingDocumentId = resolveGeneratingDocumentId(
+    documents,
+    gen.progress,
+    isActivelyWriting,
+    snapshot?.status,
+  )
 
   // Load evaluations when projectId changes
   useEffect(() => {
@@ -444,7 +449,12 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     return (
       <WikiGeneratingShell
         gen={gen}
-        generatingDocumentId={resolveGeneratingDocumentId(documents, gen.progress, gen.active && gen.phase === 'writing')}
+        generatingDocumentId={resolveGeneratingDocumentId(
+          documents,
+          gen.progress,
+          gen.active && gen.phase === 'writing',
+          snapshot?.status,
+        )}
         sidebarWidth={sidebarWidth}
         onMouseDown={handleMouseDown}
       />

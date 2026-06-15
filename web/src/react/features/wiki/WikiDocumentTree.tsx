@@ -42,7 +42,7 @@ function DocItem({
       {isGenerating ? (
         <Loader2 size={12} className="shrink-0 animate-spin text-primary" aria-hidden />
       ) : (
-        <span className="w-3 shrink-0" aria-hidden />
+        <span className="inline-flex w-3 shrink-0 justify-center" aria-hidden />
       )}
       <span className="min-w-0 flex-1 break-words">{doc.title}</span>
       <span className="flex shrink-0 items-center gap-1">

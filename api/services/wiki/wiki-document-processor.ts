@@ -7,7 +7,6 @@ import { agentEventService } from '../agent-runtime/event-service.js';
 import { nowIso } from '../agent-runtime/runtime-ids.js';
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
 import { agentRuntimeStore } from '../agent-runtime/session-store.js';
-import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import {
   clearSessionWorkspaceRoot,
   setSessionWorkspaceRoot,
@@ -17,7 +16,6 @@ import { WIKI_AGENT_RUN_TIMEOUT_MS } from '../../lib/env.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { wikiStore } from './wiki-store.js';
-import { publishDocumentCommittedEvent } from './wiki-snapshot-events.js';
 import { countSnapshotWritingProgress } from './wiki-writing-progress.js';
 import { buildWikiPrompt, formatLanguages } from './wiki-prompt-builder.js';
 import { buildDocumentContext } from './wiki-document-context.js';
@@ -26,7 +24,6 @@ import type { WikiOutlineEntry } from './tools/contracts.js';
 import { buildLanguageDirective } from '../prompts/language-directive.js';
 import { acquireCodeMapScan, fallbackGitState } from './wiki-scan-cache.js';
 import { readGitState } from './wiki-snapshot-service.js';
-import { persistWikiDocumentCommit, toCommitInput } from './wiki-commit-persistence.js';
 import { wikiSessionToolProvider } from './wiki-session-tool-provider.js';
 import type { WikiWriteBatch, WikiWriteQueueItem } from './wiki-write-queue-service.js';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
@@ -109,28 +106,7 @@ export async function processQueueDocument(input: ProcessQueueDocumentInput): Pr
   const { projectId, snapshotId, workDir, locale } = batch;
   const languages = formatLanguages(scan);
 
-  const commitHookId = `wiki-queue-commit-${item.id}`;
   const sessionIds: string[] = [];
-
-  toolRegistry.registerHook({
-    id: commitHookId,
-    toolId: 'wiki.commit_document',
-    async afterExecute(ctx) {
-      const commitResult = ctx.result.result as { ok?: boolean };
-      if (!commitResult?.ok) return;
-      const draft = toCommitInput(ctx.args);
-      if (!draft) return;
-      const committedDocId = await persistWikiDocumentCommit({
-        draft,
-        snapshotId,
-        projectId,
-        outline,
-        planIdToDocId,
-      });
-      await wikiStore.updateDocumentPipelineStage(committedDocId, 'drafted');
-      await publishDocumentCommittedEvent(projectId, committedDocId);
-    },
-  });
 
   try {
     const documentContext = buildDocumentContext(scan, entry);
@@ -150,6 +126,7 @@ export async function processQueueDocument(input: ProcessQueueDocumentInput): Pr
       sessionMetadata: {
         snapshotId,
         phase: 'document-writer',
+        documentId: item.documentId,
         docTitle: entry.title,
         queueItemId: item.id,
       },
@@ -224,7 +201,6 @@ export async function processQueueDocument(input: ProcessQueueDocumentInput): Pr
       clearSessionWorkspaceRoot(sid);
       wikiSessionToolProvider.clearSessionTools(sid);
     }
-    toolRegistry.unregisterHook(commitHookId);
   }
 }
 
@@ -304,7 +280,12 @@ async function runVerificationIfNeeded(opts: {
       projectId: batch.projectId,
       profileId: 'wiki-document-writer',
       prompt: correctorPrompt,
-      sessionMetadata: { snapshotId: batch.snapshotId, phase: 'corrector', docTitle: entry.title },
+      sessionMetadata: {
+        snapshotId: batch.snapshotId,
+        phase: 'corrector',
+        documentId: docId,
+        docTitle: entry.title,
+      },
     });
     sessionIds.push(correctorSession.id);
     setSessionWorkspaceRoot(correctorSession.id, workDir);
