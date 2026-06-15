@@ -60,5 +60,11 @@ export const WIKI_AGENT_RUN_TIMEOUT_MS = Number(env('WIKI_AGENT_RUN_TIMEOUT_MS',
 /** Auto-reject permission requests after this duration (ms). Default 10 min. */
 export const PERMISSION_TIMEOUT_MS = Number(env('PERMISSION_TIMEOUT_MS', '600000'));
 
+/** Max concurrent root agent session child processes. */
+export const MAX_AGENT_SESSION_PROCESSES = Number(env('MAX_AGENT_SESSION_PROCESSES', '8'));
+
+/** Agent session child ready handshake timeout (ms). */
+export const AGENT_SESSION_CHILD_READY_TIMEOUT_MS = Number(env('AGENT_SESSION_CHILD_READY_TIMEOUT_MS', '30000'));
+
 /** Wiki Phase 2: max verifier/corrector agents in flight */
 export const WIKI_VERIFY_CONCURRENCY = Number(env('WIKI_VERIFY_CONCURRENCY', '3'));

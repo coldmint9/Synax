@@ -6,6 +6,7 @@ import { Button, TextArea } from '@heroui/react'
 import { streamdownPlugins } from '../../../lib/streamdown-plugins'
 import { evaluationApi, type WikiEvaluation } from '../../../lib/api/evaluation'
 import type { WikiDocument, WikiDocType, WikiManualState, WikiStaleState } from '../../../lib/contracts/wiki'
+import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
 import { useSearchHighlight } from './useSearchHighlight'
@@ -180,6 +181,7 @@ export default function WikiDocumentView({
   document: WikiDocument
   projectId: string
 }) {
+  const { t } = useLocale()
   const snapshot = useWikiStore(s => s.snapshot)
   const searchHighlightQuery = useWikiStore(s => s.searchHighlightQuery)
   const draftPreviewActive = useWikiStore(s => s.draftPreviewActive)
@@ -201,19 +203,19 @@ export default function WikiDocumentView({
   useSearchHighlight(document.id, searchHighlightQuery, Boolean(contentMd))
 
   if (!contentMd) {
-    const isGenerating = (snapshot?.status === 'outline_ready' || snapshot?.status === 'writing')
+    const isGenerating = snapshot?.status === 'writing'
       && document.pipelineStage === 'pending'
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
         {isGenerating ? (
           <>
             <Loader2 size={20} className="animate-spin text-muted-foreground/30" />
-            <p className="text-[12px] text-muted-foreground/50">内容生成中，请稍候…</p>
+            <p className="text-[12px] text-muted-foreground/50">{t('wikiWritingLabel')}</p>
           </>
         ) : (
           <>
             <FileText size={24} className="text-muted-foreground/20" />
-            <p className="text-[12px] text-muted-foreground/40">此文档暂无内容</p>
+            <p className="text-[12px] text-muted-foreground/40">{t('wikiNoDocuments')}</p>
           </>
         )}
       </div>

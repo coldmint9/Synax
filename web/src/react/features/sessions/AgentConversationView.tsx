@@ -116,7 +116,7 @@ export function AgentConversationView({
             <button
               type="button"
               onClick={() => onPause(session.id)}
-              className="flex items-center gap-1 rounded-md border border-border/50 px-2 py-1 text-[10px] text-muted-foreground hover:bg-secondary/50"
+              className="wh-pill-btn wh-pill-btn--neutral"
             >
               <Pause size={10} /> {t('sessionPause')}
             </button>
@@ -125,7 +125,7 @@ export function AgentConversationView({
             <button
               type="button"
               onClick={() => onResume(session.id)}
-              className="flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] text-primary hover:bg-primary/10"
+              className="wh-pill-btn wh-pill-btn--soft"
             >
               <Play size={10} /> {t('sessionResume')}
             </button>
@@ -134,7 +134,7 @@ export function AgentConversationView({
             <button
               type="button"
               onClick={() => onCancel(session.id)}
-              className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-[10px] text-destructive/70 hover:bg-destructive/5"
+              className="wh-pill-btn wh-pill-btn--danger-soft"
             >
               <XCircle size={10} /> {t('sessionCancel')}
             </button>

@@ -34,10 +34,12 @@ describe('buildWikiDocumentTree', () => {
     const tree = buildWikiDocumentTree(documents)
     expect(tree).toHaveLength(1)
     expect(tree[0].document.id).toBe('root')
-    expect(tree[0].children.map(n => n.document.id)).toEqual(['arch', 'modules'])
+    expect(tree[0].children.map(n => n.document.id)).toEqual(['modules', 'arch'])
 
-    const modulesNode = tree[0].children[1]
+    const modulesNode = tree[0].children[0]
     expect(modulesNode.document.isSection).toBe(true)
+    expect(modulesNode.document.id).toBe('modules')
+    expect(tree[0].children[1].document.id).toBe('arch')
     expect(modulesNode.children.map(n => n.document.id)).toEqual(['mod-a', 'mod-b'])
   })
 
@@ -63,6 +65,30 @@ describe('buildWikiDocumentTree', () => {
     expect(tree).toHaveLength(3)
     expect(tree.map(n => n.document.id)).toEqual(['b', 'a', 'c'])
     expect(tree.every(n => n.children.length === 0)).toBe(true)
+  })
+
+  it('places section folders before sibling documents at the same level', () => {
+    const documents = [
+      makeDoc({ id: 'root', title: '系统概览', sortOrder: 0, isSection: true }),
+      makeDoc({ id: 'api', title: '前端 API 层', parentId: 'root', sortOrder: 1 }),
+      makeDoc({ id: 'contract', title: '前端合约定义', parentId: 'root', sortOrder: 2 }),
+      makeDoc({ id: 'wiki-folder', title: 'WIKI 功能', parentId: 'root', sortOrder: 3, isSection: true }),
+      makeDoc({ id: 'session', title: '会话功能', parentId: 'root', sortOrder: 4 }),
+      makeDoc({ id: 'settings', title: '设置功能', parentId: 'root', sortOrder: 5 }),
+      makeDoc({ id: 'wiki-page', title: 'Wiki 文档树', parentId: 'wiki-folder', sortOrder: 1 }),
+    ]
+
+    const tree = buildWikiDocumentTree(documents)
+    expect(tree).toHaveLength(1)
+    expect(tree[0].children.map(n => n.document.id)).toEqual([
+      'wiki-folder',
+      'api',
+      'contract',
+      'session',
+      'settings',
+    ])
+    expect(tree[0].children[0].document.isSection).toBe(true)
+    expect(tree[0].children[0].children.map(n => n.document.id)).toEqual(['wiki-page'])
   })
 
   it('groups flat section outlines without parentId by creation order', () => {

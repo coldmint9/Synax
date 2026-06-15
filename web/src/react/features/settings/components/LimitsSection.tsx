@@ -53,7 +53,7 @@ export function LimitsSection({ config, onUpdate }: LimitsSectionProps) {
         <FormRow label={t('settingsMaxAgents')} description={t('settingsMaxAgentsDesc')}>
           <input
             type="number"
-            className={`w-24 rounded-md border px-2 py-1 text-sm bg-transparent outline-none focus:ring-1 ${fieldError('maxAgentsPerProject') ? 'border-danger focus:ring-danger' : 'border-default-300 focus:ring-primary'}`}
+            className={`settings-input ${fieldError('maxAgentsPerProject') ? 'settings-input--invalid' : ''}`}
             value={maxAgents}
             min={1}
             max={100}
@@ -63,7 +63,7 @@ export function LimitsSection({ config, onUpdate }: LimitsSectionProps) {
         <FormRow label={t('settingsAgentTimeout')} description={t('settingsAgentTimeoutDesc')}>
           <input
             type="number"
-            className={`w-24 rounded-md border px-2 py-1 text-sm bg-transparent outline-none focus:ring-1 ${fieldError('agentTimeoutSeconds') ? 'border-danger focus:ring-danger' : 'border-default-300 focus:ring-primary'}`}
+            className={`settings-input ${fieldError('agentTimeoutSeconds') ? 'settings-input--invalid' : ''}`}
             value={timeout}
             min={10}
             max={3600}

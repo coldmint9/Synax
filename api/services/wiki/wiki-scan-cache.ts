@@ -9,8 +9,11 @@ import { eq, and, desc } from 'drizzle-orm';
 import { getDb } from '../../db/index.js';
 import { wikiScanGitCache } from '../../db/schema.js';
 import { runCodeMapScan } from '../analyzer/scan.js';
+import { setScanProgressListener } from '../analyzer/scan-progress.js';
 import type { WikiGitState } from './wiki-snapshot-service.js';
 import type { CodeMapScanResult } from '../contracts/code-map.js';
+import { notify } from '../notifications/notify.js';
+import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { logger } from '../../lib/logger.js';
 
 /** Stable hash used when git is unavailable — must not be random per request. */
@@ -158,9 +161,31 @@ export async function acquireCodeMapScan(input: {
   }
 
   logger.info({ projectId, workDir }, 'wiki-scan-cache: running code map scan');
-  const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
-  await persistScanCacheByGitState(projectId, scan, gitState);
-  return { scan, fromCache: false, cacheKind: null };
+  setScanProgressListener((payload) => {
+    notify({
+      type: TaskNotificationEventType.TaskProgress,
+      taskKind: 'wiki_generate',
+      projectId,
+      taskId: projectId,
+      title: 'Wiki',
+      message: payload.message,
+      severity: 'info',
+      meta: {
+        phase: 'scan',
+        activity: payload.message,
+        pct: payload.pct,
+        completed: payload.completed,
+        total: payload.total,
+      },
+    });
+  });
+  try {
+    const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
+    await persistScanCacheByGitState(projectId, scan, gitState);
+    return { scan, fromCache: false, cacheKind: null };
+  } finally {
+    setScanProgressListener(null);
+  }
 }
 
 /**

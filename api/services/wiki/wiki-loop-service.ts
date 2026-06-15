@@ -1,4 +1,3 @@
-import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
 import { agentEventService } from '../agent-runtime/event-service.js';
 import { nowIso } from '../agent-runtime/runtime-ids.js';
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
@@ -25,6 +24,7 @@ import { readGitState } from './wiki-snapshot-service.js';
 import { buildWikiPrompt, formatLanguages } from './wiki-prompt-builder.js';
 import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, scanCheckingActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
 import { acquireCodeMapScan, fallbackGitState } from './wiki-scan-cache.js';
+import { streamWikiAgent } from './wiki-agent-stream.js';
 import { countWritableOutlineEntries, isSectionEntry, isWritableOutlineEntry } from './tools/outline-node.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
@@ -33,6 +33,7 @@ function wikiMsg(locale: 'zh' | 'en') {
     genStarted: 'Document generation task started',
     scanChecking: 'Checking code analysis cache',
     skeletonGenerating: 'Generating document skeleton',
+    preparingPlanner: 'Preparing planner tools and session',
     outlineReady: 'Document outline ready, preparing to generate content',
     writingContent: 'Writing document content',
     generating: (title: string, i: number, total: number) => `Generating: ${title} (${i}/${total})`,
@@ -48,6 +49,7 @@ function wikiMsg(locale: 'zh' | 'en') {
     genStarted: '文档生成任务已启动',
     scanChecking: '正在查找代码分析缓存',
     skeletonGenerating: '正在生成文档骨架',
+    preparingPlanner: '正在准备 planner 工具与会话',
     outlineReady: '文档大纲已就绪，准备生成内容',
     writingContent: '正在撰写文档内容',
     generating: (title: string, i: number, total: number) => `正在生成: ${title} (${i}/${total})`,
@@ -68,7 +70,7 @@ export const wikiLoopService = {
 
     let gitState: WikiGitState;
     try {
-      gitState = readGitState(workDir);
+      gitState = await readGitState(workDir);
     } catch {
       gitState = fallbackGitState();
     }
@@ -135,17 +137,35 @@ export const wikiLoopService = {
         projectId,
         taskId: snapshot.id,
         title: wikiMsg(locale).genTitle,
-        message: wikiMsg(locale).skeletonGenerating,
+        message: wikiMsg(locale).preparingPlanner,
         severity: 'info',
-        meta: { snapshotId: snapshot.id, snapshotStatus: 'refreshing', phase: 1, activity: wikiMsg(locale).skeletonGenerating, activityPhase: 'plan' },
+        meta: {
+          snapshotId: snapshot.id,
+          snapshotStatus: 'refreshing',
+          phase: 1,
+          activity: wikiMsg(locale).preparingPlanner,
+          activityPhase: 'plan',
+        },
       });
 
+      logger.info({ projectId, snapshotId: snapshot.id, fileCount: scan.codeIndex.files.length }, 'wiki-loop: preparing planner tools');
+      const toolsStarted = Date.now();
       const plannerHandle = createPlannerTools(scan);
       for (const tool of plannerHandle.tools) {
         toolRegistry.register(tool);
         registeredToolIds.push(tool.id);
       }
+      logger.info(
+        {
+          projectId,
+          snapshotId: snapshot.id,
+          toolCount: plannerHandle.tools.length,
+          durationMs: Date.now() - toolsStarted,
+        },
+        'wiki-loop: planner tools ready',
+      );
 
+      logger.info({ projectId, snapshotId: snapshot.id, profileId: 'wiki-planner' }, 'wiki-loop: creating planner session');
       const plannerSession = agentSessionRuntime.create({
         projectId,
         profileId: 'wiki-planner',
@@ -155,6 +175,28 @@ export const wikiLoopService = {
       agentRuntimeStore.updateSession(plannerSession.id, { title: wikiMsg(locale).sessionInit, updatedAt: nowIso() });
       sessionIds.push(plannerSession.id);
       setSessionWorkspaceRoot(plannerSession.id, workDir);
+      logger.info(
+        { projectId, snapshotId: snapshot.id, sessionId: plannerSession.id, title: wikiMsg(locale).sessionInit },
+        'wiki-loop: planner session ready',
+      );
+
+      notify({
+        type: TaskNotificationEventType.TaskProgress,
+        taskKind: 'wiki_generate',
+        projectId,
+        taskId: snapshot.id,
+        title: wikiMsg(locale).genTitle,
+        message: wikiMsg(locale).skeletonGenerating,
+        severity: 'info',
+        meta: {
+          snapshotId: snapshot.id,
+          snapshotStatus: 'refreshing',
+          phase: 1,
+          activity: wikiMsg(locale).skeletonGenerating,
+          activityPhase: 'plan',
+          sessionId: plannerSession.id,
+        },
+      });
 
       agentEventService.append({
         sessionId: plannerSession.id,
@@ -166,7 +208,7 @@ export const wikiLoopService = {
       // Phase 1b: planner agent explores, delegates to sub-agents, and produces outline
       const plannerPrompt = buildWikiPrompt({ role: 'planner', languages, locale, scan, workDir });
       logger.info({ projectId, sessionId: plannerSession.id }, 'wiki-loop: Phase 1 starting planner agent');
-      const stream1 = agentLoopRuntime.streamRun(plannerSession.id, { locale, message: plannerPrompt });
+      const stream1 = streamWikiAgent(plannerSession.id, { locale, message: plannerPrompt });
       let lastActivityTs = 0;
       const ACTIVITY_THROTTLE_MS = 800;
       const SYNTHESIZE_THROTTLE_MS = 2000;
@@ -277,7 +319,7 @@ export const wikiLoopService = {
 
     let gitState: WikiGitState;
     try {
-      gitState = readGitState(workDir);
+      gitState = await readGitState(workDir);
     } catch {
       gitState = fallbackGitState();
     }
@@ -315,7 +357,9 @@ export const wikiLoopService = {
 
     const snapshot = await wikiStore.getSnapshot(snapshotId);
     if (!snapshot) throw new Error(`Snapshot ${snapshotId} not found`);
-    if (snapshot.status !== 'failed') throw new Error(`Snapshot status must be "failed" to continue, got "${snapshot.status}"`);
+    if (snapshot.status !== 'failed' && snapshot.status !== 'partial') {
+      throw new Error(`Snapshot status must be "failed" or "partial" to continue, got "${snapshot.status}"`);
+    }
 
     const documents = await wikiStore.getDocumentsBySnapshot(snapshotId);
     const unfilled = documents.filter(d => !d.isSection && d.pipelineStage !== 'done' && d.contentMd.trim().length === 0);

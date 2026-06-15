@@ -5,6 +5,7 @@ import {
   type TaskLifecycleNotificationEvent,
 } from "./task-notification-bus.js";
 import { logger } from "../../lib/logger.js";
+import { sendToParent } from "../../lib/ipc/child-forward.js";
 
 interface NotifyOptions {
   type: TaskLifecycleNotificationType;
@@ -19,6 +20,7 @@ interface NotifyOptions {
 
 export function notify(opts: NotifyOptions): void {
   try {
+    if (sendToParent({ type: 'ipc:notify', opts })) return;
     taskNotificationBus.emit({
       id: nanoid(12),
       timestamp: Date.now(),

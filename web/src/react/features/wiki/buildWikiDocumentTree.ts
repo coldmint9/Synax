@@ -15,6 +15,12 @@ function sortByCreatedAt(a: WikiDocument, b: WikiDocument): number {
   return sortByOrder(a, b)
 }
 
+/** Sections (folders) before pages at the same tree level, then by sortOrder. */
+function sortSiblings(a: WikiDocument, b: WikiDocument): number {
+  if (a.isSection !== b.isSection) return a.isSection ? -1 : 1
+  return sortByOrder(a, b)
+}
+
 function hasParentLinks(documents: WikiDocument[]): boolean {
   const byId = new Set(documents.map(d => d.id))
   return documents.some(d => d.parentId != null && d.parentId !== '' && byId.has(d.parentId))
@@ -26,7 +32,7 @@ function buildSubtree(
 ): WikiDocTreeNode {
   const children = (childrenByParent.get(document.id) ?? [])
     .slice()
-    .sort(sortByOrder)
+    .sort(sortSiblings)
     .map(child => buildSubtree(child, childrenByParent))
 
   return { document, children }
@@ -104,7 +110,7 @@ export function buildWikiDocumentTree(documents: WikiDocument[]): WikiDocTreeNod
   const roots = documents
     .filter(doc => !doc.parentId || !byId.has(doc.parentId))
     .slice()
-    .sort(sortByOrder)
+    .sort(sortSiblings)
 
   return roots.map(root => buildSubtree(root, childrenByParent))
 }

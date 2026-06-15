@@ -22,6 +22,11 @@ import {
   streamTurnRequestSchema,
   toHttpError,
 } from '../services/agent-runtime/index.js';
+import {
+  interruptAgentSessionsAndWait,
+  resumeAgentSessionInBackground,
+  streamAgentSession,
+} from '../services/agent-runtime/agent-stream-proxy.js';
 import { runtimeBus } from '../services/agent-runtime/runtime-bus.js';
 import { sessionLiveBus } from '../services/agent-runtime/session-live-bus.js';
 import { logger } from '../lib/logger.js';
@@ -142,7 +147,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/pause', (c) => {
 agentRuntimeRoutes.delete('/sessions/:sessionId', async (c) => {
   try {
     const sessionIds = agentSessionRuntime.listSessionTree(c.req.param('sessionId')).map((session) => session.id);
-    await agentLoopRuntime.interruptAndWaitForSessions(sessionIds);
+    await interruptAgentSessionsAndWait(sessionIds);
     return c.json({
       ok: true,
       deletedSessionIds: agentSessionRuntime.delete(c.req.param('sessionId')),
@@ -328,7 +333,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/turns/stream', async (c) => {
     });
 
     try {
-      for await (const chunk of agentLoopRuntime.streamRun(sessionId, parsed.data, abortController.signal)) {
+      for await (const chunk of streamAgentSession(sessionId, 'turn', parsed.data, abortController.signal)) {
         await stream.writeSSE({ data: JSON.stringify(chunk) });
       }
     } finally {
@@ -397,7 +402,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/resume/stream', async (c) => {
     });
 
     try {
-      for await (const chunk of agentLoopRuntime.streamContinue(sessionId, parsed.data, abortController.signal)) {
+      for await (const chunk of streamAgentSession(sessionId, 'continue', parsed.data, abortController.signal)) {
         await stream.writeSSE({ data: JSON.stringify(chunk) });
       }
     } catch (error) {
@@ -529,15 +534,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/permissions/:permissionId/reply', 
         },
         '[agent-runtime] scheduling run resume after permission reply',
       );
-      void agentLoopRuntime.resumeRun(sessionId, parsed.data.message ? { message: parsed.data.message } : {}).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        agentEventService.append({
-          sessionId,
-          type: 'run_failed',
-          summary: message,
-          payload: { source: 'permission_reply_resume', error: message },
-        });
-      });
+      resumeAgentSessionInBackground(sessionId, parsed.data.message ? { message: parsed.data.message } : {});
     }
     return c.json(decision);
   } catch (error) {

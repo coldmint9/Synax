@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Button, Checkbox, Chip } from '@heroui/react'
+import { Button, Checkbox } from '@heroui/react'
 import { Server, RefreshCw } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { SaveIndicator } from './SaveIndicator'
@@ -14,12 +14,12 @@ interface AcpSectionProps {
   onReload: () => Promise<void>
 }
 
-const statusColor = (s: AcpDiscoveryItem['status']): 'success' | 'accent' | 'default' | 'danger' => {
+const statusChipClass = (s: AcpDiscoveryItem['status']): string => {
   switch (s) {
-    case 'available': return 'success'
-    case 'installed': return 'accent'
-    case 'missing': return 'default'
-    case 'failed': return 'danger'
+    case 'available': return 'settings-chip settings-chip--success'
+    case 'installed': return 'settings-chip'
+    case 'missing': return 'settings-chip settings-chip--muted'
+    case 'failed': return 'settings-chip settings-chip--muted'
   }
 }
 
@@ -83,6 +83,7 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
           <Button
             size="sm"
             variant="secondary"
+            className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm"
             isPending={discovering}
             onPress={loadDiscovery}
           >
@@ -109,7 +110,7 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
           return (
             <div
               key={item.id}
-              className={`flex items-start gap-3 rounded-lg border p-3 transition ${disabled ? 'opacity-50' : ''} ${checked && !disabled ? 'border-primary bg-primary/5' : 'border-border/50 hover:bg-secondary/30'}`}
+              className={`settings-item flex items-start gap-3 p-3 ${disabled ? 'settings-item--disabled' : ''} ${checked && !disabled ? 'settings-item--active' : ''}`}
             >
               <Checkbox
                 isSelected={checked}
@@ -122,9 +123,7 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-foreground">{item.label}</span>
-                  <Chip size="sm" color={statusColor(item.status)} variant="soft" className="h-4 text-[9px]">
-                    <Chip.Label>{statusLabel(item.status)}</Chip.Label>
-                  </Chip>
+                  <span className={statusChipClass(item.status)}>{statusLabel(item.status)}</span>
                 </div>
                 <div className="mt-0.5 text-[11px] text-muted-foreground">{item.command} · {item.compatibility}</div>
                 {item.error && <div className="mt-0.5 text-[11px] text-destructive">{item.error}</div>}

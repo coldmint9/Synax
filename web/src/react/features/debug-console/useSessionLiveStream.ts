@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { ensureSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
+import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { useDebugConsole } from './debugConsoleStore'
 
 export function useSessionLiveStream(sessionId: string | null) {
@@ -8,5 +8,8 @@ export function useSessionLiveStream(sessionId: string | null) {
     ensureSessionLiveSubscription(sessionId, (event) => {
       useDebugConsole.getState().applyLiveEvent(event)
     })
+    return () => {
+      releaseSessionLiveSubscription()
+    }
   }, [sessionId])
 }

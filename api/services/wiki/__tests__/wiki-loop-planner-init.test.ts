@@ -29,7 +29,7 @@ vi.mock('../wiki-scan-cache.js', () => ({
 }));
 
 vi.mock('../wiki-snapshot-service.js', () => ({
-  readGitState: vi.fn(() => ({ branch: 'main', headCommitSha: 'a'.repeat(40), workingTreeHash: 'wt', dirty: false })),
+  readGitState: vi.fn(async () => ({ branch: 'main', headCommitSha: 'a'.repeat(40), workingTreeHash: 'wt', dirty: false })),
 }));
 
 vi.mock('../wiki-store.js', () => ({
@@ -61,8 +61,8 @@ vi.mock('../wiki-loop-profile.js', () => ({
   ensureWikiProfileRegistered: vi.fn(),
 }));
 
-vi.mock('../../agent-runtime/loop-runtime.js', () => ({
-  agentLoopRuntime: { streamRun: (...args: unknown[]) => mockStreamRun(...args) },
+vi.mock('../wiki-agent-stream.js', () => ({
+  streamWikiAgent: (...args: unknown[]) => mockStreamRun(...args),
 }));
 
 vi.mock('../../agent-runtime/event-service.js', () => ({

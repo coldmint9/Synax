@@ -8,6 +8,7 @@ import {
   type WikiSnapshotEventTree,
 } from "../notifications/task-notification-bus.js";
 import { wikiStore } from "./wiki-store.js";
+import { sendToParent } from "../../lib/ipc/child-forward.js";
 
 export const WikiSnapshotEventReason = {
   Connected: "connected",
@@ -24,6 +25,7 @@ export const WikiSnapshotEventReason = {
   ContinueStarted: "continue_started",
   ContinueCompleted: "continue_completed",
   ContinueFailed: "continue_failed",
+  WritingPaused: "writing_paused",
   DocumentsMarkedStale: "documents_marked_stale",
   RefreshCompleted: "refresh_completed",
   RefreshFailed: "refresh_failed",
@@ -66,7 +68,9 @@ export async function buildWikiSnapshotEvent(
 
 export async function publishLatestWikiSnapshot(projectId: string, reason?: WikiSnapshotEventReason): Promise<void> {
   try {
-    taskNotificationBus.emit(await buildWikiSnapshotEvent(projectId, reason));
+    const event = await buildWikiSnapshotEvent(projectId, reason);
+    if (sendToParent({ type: 'ipc:event', event })) return;
+    taskNotificationBus.emit(event);
   } catch (err) {
     logger.warn({ err, projectId, reason }, "wiki snapshot event: emit failed");
   }
@@ -84,6 +88,7 @@ export async function publishDocumentCommittedEvent(projectId: string, documentI
       documentId,
       document: doc,
     };
+    if (sendToParent({ type: 'ipc:event', event })) return;
     taskNotificationBus.emit(event);
     logger.debug({ projectId, documentId }, 'wiki-snapshot-events: document committed event published');
   } catch (err) {

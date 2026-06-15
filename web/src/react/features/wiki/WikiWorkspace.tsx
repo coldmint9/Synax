@@ -1,6 +1,6 @@
-import { AlertCircle, BookOpen, CheckCircle2, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
+import { AlertCircle, BookOpen, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Skeleton } from '@heroui/react'
+import { Button, ProgressBar, Skeleton } from '@heroui/react'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiGenerationEvents, type WikiGenPhase } from '../../../hooks/useWikiGenerationEvents'
@@ -11,7 +11,8 @@ import WikiDocumentTree from './WikiDocumentTree'
 import WikiDocumentView from './WikiDocumentView'
 import WikiDraftPanel from './WikiDraftPanel'
 import WikiOutlineProgress from './WikiOutlineProgress'
-import WikiWriteQueuePanel from './WikiWriteQueuePanel'
+import WikiOutlineReady from './WikiOutlineReady'
+import WikiWritingProgress from './WikiWritingProgress'
 import { countWrittenDocuments, countWritableDocuments } from './wikiDocumentCounts'
 import PlanView from './PlanView'
 import PlanListView from './PlanListView'
@@ -50,7 +51,7 @@ function WikiGeneratingShell({
       </aside>
       <div
         onMouseDown={onMouseDown}
-        className="wiki-separator shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
+        className="wiki-separator shrink-0"
       />
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden" />
     </div>
@@ -180,7 +181,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const clearForRegeneration = useWikiStore(s => s.clearForRegeneration)
 
   const loadProjectSnapshot = useWikiStore(s => s.loadProjectSnapshot)
-  const [queueRefreshKey, setQueueRefreshKey] = useState(0)
 
   useWikiRefreshListener(projectId)
 
@@ -188,9 +188,10 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     projectId,
     onReconnect: () => {
       void loadProjectSnapshot(projectId)
-      setQueueRefreshKey((key) => key + 1)
     },
-    onProgress: () => setQueueRefreshKey((key) => key + 1),
+    onProgress: () => {
+      void loadProjectSnapshot(projectId)
+    },
   })
 
   const handleGenerationConflict = useCallback(async (err: WikiGenerationConflictError) => {
@@ -237,6 +238,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const refreshing = refreshTask.phase !== 'idle' && refreshTask.phase !== 'completed' && refreshTask.phase !== 'failed'
 
   const [continuing, setContinuing] = useState(false)
+  const [pausing, setPausing] = useState(false)
   const [approvingOutline, setApprovingOutline] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(260)
 
@@ -341,6 +343,20 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
   }
 
+  async function handlePause() {
+    if (!snapshot) return
+    setPausing(true)
+    try {
+      await wikiApi.pauseGeneration(snapshot.id)
+      gen.reset()
+      await loadProjectSnapshot(projectId)
+    } catch (err) {
+      handleError(err)
+    } finally {
+      setPausing(false)
+    }
+  }
+
   async function handleContinue() {
     if (!snapshot) return
     const projects = useShellStore.getState().projects
@@ -351,6 +367,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       return
     }
     setContinuing(true)
+    gen.start(snapshot.id, 'writing')
     try {
       await wikiApi.continueGeneration(snapshot.id, { workDir, locale })
     } finally {
@@ -390,7 +407,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             ))}
           </div>
         </aside>
-        <div className="wiki-separator shrink-0" />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden pt-14 px-5">
           <div className="mx-auto w-full max-w-[68ch] space-y-4">
             <Skeleton className="h-6 w-48 rounded-lg" />
@@ -466,20 +482,39 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
               </div>
             </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {snapshot?.status === 'failed' && documents.length > 0 && (
-            <div className="flex flex-col gap-2 px-3 py-2 bg-destructive/5 border-b border-destructive/20">
+          {(snapshot?.status === 'failed' || snapshot?.status === 'partial') && documents.length > 0 && (
+            <div className={`flex flex-col gap-2 px-3 py-2 border-b ${
+              snapshot.status === 'partial'
+                ? 'bg-amber-500/5 border-amber-500/10'
+                : 'bg-destructive/5 border-destructive/20'
+            }`}>
               <div className="flex items-center gap-1.5">
-                <AlertCircle size={11} className="shrink-0 text-destructive" />
-                <span className="text-[11px] text-destructive">
-                  {t('wikiGenerationIncomplete', { done: writtenDocCount, total: writableDocTotal })}
+                <AlertCircle size={11} className={`shrink-0 ${
+                  snapshot.status === 'partial' ? 'text-amber-600' : 'text-destructive'
+                }`} />
+                <span className={`text-[11px] ${
+                  snapshot.status === 'partial' ? 'text-amber-700' : 'text-destructive'
+                }`}>
+                  {snapshot.status === 'partial'
+                    ? t('wikiGenerationPaused', { done: writtenDocCount, total: writableDocTotal })
+                    : t('wikiGenerationIncomplete', { done: writtenDocCount, total: writableDocTotal })}
                 </span>
               </div>
+              {writableDocTotal > 0 && (
+                <ProgressBar
+                  aria-label={t('wikiWritingProgress', { done: writtenDocCount, total: writableDocTotal })}
+                  value={Math.min(100, Math.round((writtenDocCount / writableDocTotal) * 100))}
+                  size="sm"
+                  color={snapshot.status === 'partial' ? 'warning' : 'danger'}
+                  className="w-full"
+                />
+              )}
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={handleContinue}
                   disabled={continuing || gen.active}
-                  className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  className="wh-pill-btn wh-pill-btn--primary wh-pill-btn--sm"
                 >
                   {continuing ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
                   {t('wikiContinueGenerate')}
@@ -488,7 +523,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                   type="button"
                   onClick={() => setShowReinitConfirm(true)}
                   disabled={continuing || gen.active}
-                  className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-[10px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                  className="wh-pill-btn wh-pill-btn--danger-soft wh-pill-btn--sm"
                 >
                   {gen.active ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
                   {t('wikiRegenerate')}
@@ -504,38 +539,19 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
             />
           )}
           {snapshot?.status === 'outline_ready' && (
-            <div className="flex flex-col gap-2 px-3 py-2 bg-amber-500/5 border-b border-amber-500/10">
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 size={11} className="text-amber-600" />
-                <span className="text-[11px] text-amber-600 font-medium">
-                  {t('wikiOutlineReady')}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={handleApproveOutline}
-                disabled={approvingOutline || gen.active}
-                className="flex items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-              >
-                {approvingOutline ? (
-                  <Loader2 size={11} className="animate-spin" />
-                ) : (
-                  <Sparkles size={11} />
-                )}
-                {approvingOutline ? t('wikiApprovingOutline') : t('wikiApproveOutline')}
-              </button>
-            </div>
+            <WikiOutlineReady
+              approving={approvingOutline}
+              disabled={approvingOutline || gen.active}
+              onApprove={handleApproveOutline}
+            />
           )}
           {snapshot?.status === 'writing' && (
-            <>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-primary/10">
-                <Loader2 size={11} className="animate-spin text-primary" />
-                <span className="text-[11px] text-primary">
-                  {t('wikiWriting', { done: writtenDocCount, total: writableDocTotal })}
-                </span>
-              </div>
-              <WikiWriteQueuePanel snapshotId={snapshot.id} refreshKey={queueRefreshKey} />
-            </>
+            <WikiWritingProgress
+              done={writtenDocCount}
+              total={writableDocTotal}
+              pausing={pausing}
+              onPause={handlePause}
+            />
           )}
           <WikiDocumentTree />
         </div>
@@ -546,7 +562,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       {/* ── Resize handle ── */}
       <div
         onMouseDown={handleMouseDown}
-        className="wiki-separator shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
+        className="wiki-separator shrink-0"
       />
 
       {/* ── Center: Block content or Plan view ── */}

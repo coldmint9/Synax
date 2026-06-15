@@ -1,4 +1,4 @@
-import { Button, Card, Chip } from '@heroui/react'
+import { Button } from '@heroui/react'
 import { ChevronDown, ChevronRight, Loader2, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
 import { type ApiProviderDraft, PROVIDER_LOGO_ASSETS } from '../lib/providerPresets'
 import { ProviderLogo } from '../../../components/ProviderLogo'
@@ -32,10 +32,10 @@ export function LlmProviderCard({
   const logo = PROVIDER_LOGO_ASSETS[draft.id]
 
   return (
-    <Card variant="transparent" className="overflow-hidden border border-border/50">
+    <div className="settings-item overflow-hidden">
       <button
         type="button"
-        className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-secondary/30"
+        className="flex w-full items-center gap-3 p-3 text-left transition-colors"
         onClick={onToggleExpand}
       >
         {logo ? (
@@ -49,9 +49,7 @@ export function LlmProviderCard({
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-foreground truncate">{draft.label}</span>
             {isDefault && (
-              <Chip size="sm" color="accent" variant="soft" className="h-4 text-[9px]">
-                <Chip.Label>{t('llmCardDefault')}</Chip.Label>
-              </Chip>
+              <span className="settings-chip">{t('llmCardDefault')}</span>
             )}
           </div>
           <div className="text-[11px] text-muted-foreground truncate">{draft.model}</div>
@@ -61,7 +59,7 @@ export function LlmProviderCard({
       </button>
 
       {expanded && (
-        <div className="border-t border-border/30 p-3 space-y-2">
+        <div className="space-y-2 border-t wiki-soft-rule p-3">
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[11px]">
             <span className="text-muted-foreground">API Key</span>
             <span className="text-foreground font-mono truncate">
@@ -96,7 +94,7 @@ export function LlmProviderCard({
           </div>
         </div>
       )}
-    </Card>
+    </div>
   )
 }
 

@@ -6,6 +6,8 @@ import { WIKI_WRITE_CONCURRENCY } from '../../lib/env.js';
 import { logger } from '../../lib/logger.js';
 import { isSaturated } from '../llm-runtime/middleware/rate-limiter.js';
 import { agentRuntimeStore } from '../agent-runtime/session-store.js';
+import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
+import { interruptAgentSessionsAndWait } from '../agent-runtime/agent-stream-proxy.js';
 import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
@@ -290,6 +292,84 @@ class WikiWriteQueueService {
     this.start();
   }
 
+  /** Pause an in-progress write batch: stop dispatch, interrupt running sessions, mark snapshot partial. */
+  async pauseBatch(snapshotId: string): Promise<void> {
+    const db = getDb();
+    const batchRows = await db
+      .select()
+      .from(wikiWriteBatches)
+      .where(and(
+        eq(wikiWriteBatches.snapshotId, snapshotId),
+        eq(wikiWriteBatches.status, 'running'),
+      ))
+      .orderBy(wikiWriteBatches.createdAt);
+
+    const batchRow = batchRows[batchRows.length - 1];
+    if (!batchRow) {
+      throw new Error('No active write batch for this snapshot');
+    }
+
+    const now = new Date().toISOString();
+    await db.update(wikiWriteBatches).set({
+      status: 'cancelled',
+      updatedAt: now,
+      completedAt: now,
+      error: 'Paused by user',
+    }).where(eq(wikiWriteBatches.id, batchRow.id));
+
+    const runningItems = await db
+      .select()
+      .from(wikiWriteQueueItems)
+      .where(and(
+        eq(wikiWriteQueueItems.batchId, batchRow.id),
+        eq(wikiWriteQueueItems.status, 'running'),
+      ));
+
+    const sessionIds = runningItems
+      .map(item => item.sessionId)
+      .filter((id): id is string => id != null);
+
+    if (sessionIds.length > 0) {
+      await interruptAgentSessionsAndWait(sessionIds, 'Wiki generation paused.');
+      for (const sessionId of sessionIds) {
+        if (agentRuntimeStore.tryGetSession(sessionId)) {
+          agentSessionRuntime.cancel(sessionId);
+        }
+      }
+    }
+
+    await db.update(wikiWriteQueueItems).set({
+      status: 'queued',
+      sessionId: null,
+      startedAt: null,
+      error: null,
+    }).where(and(
+      eq(wikiWriteQueueItems.batchId, batchRow.id),
+      eq(wikiWriteQueueItems.status, 'running'),
+    ));
+
+    this.releaseBatchContext(batchRow.id);
+
+    const { projectId } = batchRow;
+    const documents = await wikiStore.getDocumentsBySnapshot(snapshotId);
+    await wikiStore.updateSnapshotStatus(snapshotId, 'partial', documents.map(d => d.id));
+    await publishLatestWikiSnapshot(projectId, WikiSnapshotEventReason.WritingPaused);
+
+    const locale = (batchRow.locale ?? 'zh') as 'zh' | 'en';
+    notify({
+      type: TaskNotificationEventType.TaskProgress,
+      taskKind: 'wiki_generate',
+      projectId,
+      taskId: snapshotId,
+      title: wikiMsg(locale).genTitle,
+      message: locale === 'en' ? 'Content generation paused' : '文档内容生成已暂停',
+      severity: 'info',
+      meta: { snapshotId, snapshotStatus: 'partial', paused: true },
+    });
+
+    logger.info({ snapshotId, batchId: batchRow.id }, '[wiki-write-queue] batch paused');
+  }
+
   start(): void {
     this.ensurePolling();
   }
@@ -456,6 +536,17 @@ class WikiWriteQueueService {
     const db = getDb();
 
     try {
+      const batchRows = await db.select().from(wikiWriteBatches).where(eq(wikiWriteBatches.id, batch.id)).limit(1);
+      if (batchRows[0]?.status === 'cancelled') {
+        await db.update(wikiWriteQueueItems).set({
+          status: 'queued',
+          sessionId: null,
+          startedAt: null,
+          error: null,
+        }).where(eq(wikiWriteQueueItems.id, item.id));
+        return;
+      }
+
       const ctx = await this.getOrCreateBatchContext(batch);
       const { outline, planIdToDocId } = await loadOutlineForSnapshot(batch.snapshotId);
       const entry = outline.find(e => e.id === item.documentId);
@@ -498,6 +589,17 @@ class WikiWriteQueueService {
 
       logger.info({ batchId: batch.id, itemId: item.id, title: item.documentTitle }, '[wiki-write-queue] item completed');
     } catch (err) {
+      const batchRows = await db.select().from(wikiWriteBatches).where(eq(wikiWriteBatches.id, batch.id)).limit(1);
+      if (batchRows[0]?.status === 'cancelled') {
+        await db.update(wikiWriteQueueItems).set({
+          status: 'queued',
+          sessionId: null,
+          startedAt: null,
+          error: null,
+        }).where(eq(wikiWriteQueueItems.id, item.id));
+        return;
+      }
+
       const message = err instanceof Error ? err.message : String(err);
       logger.error({ err, batchId: batch.id, itemId: item.id }, '[wiki-write-queue] item failed');
 
