@@ -1,7 +1,7 @@
 {
   "name": "synax",
   "private": true,
-  "version": "0.1.0-snapshot",
+  "version": "0.1.1",
   "license": "MIT",
   "author": "Synax",
   "description": "AI-powered code analysis platform",
