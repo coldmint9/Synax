@@ -17,7 +17,9 @@ export interface OutlineActivity {
 interface WikiGenProgress {
   docIndex?: number
   totalDocs?: number
+  doneDocs?: number
   docTitle?: string
+  documentId?: string
 }
 
 interface WikiGenerationState {
@@ -162,11 +164,13 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
             } else {
               resetTimer()
             }
-            if (meta?.docIndex != null) {
+            if (meta?.docIndex != null || meta?.doneDocs != null || meta?.totalDocs != null) {
               setState(s => ({ ...s, progress: {
-                docIndex: meta.docIndex as number,
-                totalDocs: meta.totalDocs as number,
-                docTitle: meta.docTitle as string,
+                docIndex: meta.docIndex as number | undefined,
+                totalDocs: meta.totalDocs as number | undefined,
+                doneDocs: meta.doneDocs as number | undefined,
+                docTitle: meta.docTitle as string | undefined,
+                documentId: meta.documentId as string | undefined,
               }}))
             }
             if (meta?.activity && meta?.activityPhase) {

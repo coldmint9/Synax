@@ -59,6 +59,14 @@ describe('WikiDocumentTree', () => {
     expect(screen.getByText('Module B')).toBeInTheDocument()
   })
 
+  it('shows a spinner on the document currently being generated', () => {
+    render(<WikiDocumentTree generatingDocumentId="mod-b" />)
+
+    const generatingRow = screen.getByRole('button', { name: /module b/i })
+    expect(generatingRow).toHaveAttribute('aria-busy', 'true')
+    expect(generatingRow.querySelector('.animate-spin')).toBeTruthy()
+  })
+
   it('keeps collapse state after documents update', () => {
     const { rerender } = render(<WikiDocumentTree />)
 

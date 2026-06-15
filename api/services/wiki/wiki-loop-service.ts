@@ -14,6 +14,7 @@ import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { wikiStore } from './wiki-store.js';
 import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from './wiki-snapshot-events.js';
+import { countSnapshotWritingProgress } from './wiki-writing-progress.js';
 import { ensureWikiProfileRegistered } from './wiki-loop-profile.js';
 import {
   createPlannerTools,
@@ -377,6 +378,8 @@ export const wikiLoopService = {
     await wikiStore.updateSnapshotStatus(snapshotId, 'writing', documents.map(d => d.id));
     await publishLatestWikiSnapshot(snapshot.projectId, WikiSnapshotEventReason.ContinueStarted);
 
+    const { doneDocs, totalDocs } = await countSnapshotWritingProgress(snapshotId);
+
     notify({
       type: TaskNotificationEventType.TaskProgress,
       taskKind: 'wiki_generate',
@@ -385,7 +388,14 @@ export const wikiLoopService = {
       title: wikiMsg(locale).continueTitle,
       message: wikiMsg(locale).writingContent,
       severity: 'info',
-      meta: { snapshotId, snapshotStatus: 'writing', phase: 2, totalDocs: unfilled.length },
+      meta: {
+        snapshotId,
+        snapshotStatus: 'writing',
+        phase: 2,
+        doneDocs,
+        totalDocs,
+        remainingDocs: unfilled.length,
+      },
     });
 
     const sorted = [...unfilled].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -434,7 +444,13 @@ async function runWritingPhase(input: WritingPhaseInput): Promise<GenerateWikiRe
     title: wikiMsg(locale).genTitle,
     message: wikiMsg(locale).writingContent,
     severity: 'info',
-    meta: { snapshotId: snapshot.id, snapshotStatus: 'writing', phase: 2, totalDocs },
+    meta: {
+      snapshotId: snapshot.id,
+      snapshotStatus: 'writing',
+      phase: 2,
+      doneDocs: 0,
+      totalDocs,
+    },
   });
 
   logger.info({ projectId, totalDocs }, 'wiki-loop: Phase 2 enqueued to write queue');

@@ -70,6 +70,7 @@ export interface WikiState {
   setSnapshotLoading: () => void;
   loadProjectSnapshot: (projectId: string) => Promise<void>;
   applySnapshotTree: (tree: WikiSnapshotTree) => void;
+  patchSnapshotStatus: (status: WikiSnapshot['status']) => void;
   applyDocumentUpdate: (document: WikiDocument) => void;
   selectDocument: (documentId: string | null) => void;
   setSearchHighlightQuery: (query: string | null) => void;
@@ -210,6 +211,14 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     if (selectedDocumentId !== prev.selectedDocumentId) patch.selectedDocumentId = selectedDocumentId;
 
     set(patch);
+  },
+
+  patchSnapshotStatus: (status) => {
+    set(s => {
+      if (!s.snapshot) return s;
+      if (s.snapshot.status === status) return s;
+      return { snapshot: { ...s.snapshot, status } };
+    });
   },
 
   applyDocumentUpdate: (document) => {

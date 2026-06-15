@@ -7,8 +7,10 @@ import './index.css'
 import 'streamdown/styles.css'
 import { hydrateShellPreferences, useShellStore } from './react/state/shellStore'
 import { initApiOrigin } from './lib/api/origin'
+import { installScrollRevealScrollbar } from './lib/scrollRevealScrollbar'
 
 hydrateShellPreferences()
+installScrollRevealScrollbar()
 const theme = useShellStore.getState().preferences.theme
 document.documentElement.classList.toggle('dark', theme === 'dark')
 

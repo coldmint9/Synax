@@ -18,6 +18,7 @@ import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { wikiStore } from './wiki-store.js';
 import { publishDocumentCommittedEvent } from './wiki-snapshot-events.js';
+import { countSnapshotWritingProgress } from './wiki-writing-progress.js';
 import { buildWikiPrompt, formatLanguages } from './wiki-prompt-builder.js';
 import { buildDocumentContext } from './wiki-document-context.js';
 import { createVerifierTools, type WikiVerdict } from './tools/verifier-tools.js';
@@ -168,6 +169,8 @@ export async function processQueueDocument(input: ProcessQueueDocumentInput): Pr
       payload: { snapshotId, phase: 2, docIndex: itemIndex, docTitle: entry.title, queueItemId: item.id },
     });
 
+    const { doneDocs, totalDocs } = await countSnapshotWritingProgress(snapshotId);
+
     notify({
       type: TaskNotificationEventType.TaskProgress,
       taskKind: 'wiki_generate',
@@ -181,7 +184,10 @@ export async function processQueueDocument(input: ProcessQueueDocumentInput): Pr
         snapshotStatus: 'writing',
         phase: 2,
         docIndex: itemIndex,
-        totalDocs: totalItems,
+        batchTotalDocs: totalItems,
+        doneDocs,
+        totalDocs,
+        documentId: item.documentId,
         docTitle: entry.title,
         queueItemId: item.id,
       },
