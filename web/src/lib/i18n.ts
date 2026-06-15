@@ -383,7 +383,6 @@ const messages = {
     sessionDeleteAgent: '删除 agent 会话',
     sessionDelete: '删除',
     sessionClearInactive: '清理不活跃会话',
-    sessionDeleteConfirm: '删除「{title}」及其所有子会话？此操作不可撤销。',
     sessionSearch: '搜索会话…',
     sessionNoResults: '没有找到会话',
     sessionLoadMore: '加载更多',

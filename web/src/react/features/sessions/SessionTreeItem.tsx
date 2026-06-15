@@ -4,8 +4,8 @@ import { Trash2 } from 'lucide-react'
 import type { SessionTreeNode } from './useSessionList'
 import type { AgentSessionStatus } from '../../../lib/api/agentRuntime'
 
-const STATUS_CHIP: Record<AgentSessionStatus, { color: 'primary' | 'success' | 'danger' | 'warning' | 'default'; label: string }> = {
-  running: { color: 'primary', label: 'running' },
+const STATUS_CHIP: Record<AgentSessionStatus, { color: 'accent' | 'success' | 'danger' | 'warning' | 'default'; label: string }> = {
+  running: { color: 'accent', label: 'running' },
   waiting_permission: { color: 'warning', label: 'waiting' },
   blocked: { color: 'warning', label: 'blocked' },
   completed: { color: 'success', label: 'done' },

@@ -27,8 +27,8 @@ export function SessionFilterChips({ value, onChange, countByStatus, totalCount 
           <Chip
             key={f.key}
             size="sm"
-            variant={active ? 'solid' : 'flat'}
-            color={active ? 'primary' : 'default'}
+            variant={active ? 'secondary' : 'soft'}
+            color={active ? 'accent' : 'default'}
             className="cursor-pointer shrink-0 text-[10px] transition-colors"
             onClick={() => onChange(f.key)}
           >
