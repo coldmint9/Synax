@@ -35,7 +35,7 @@ import type { CodeMapScanResult } from '../contracts/code-map.js';
 import { compareScans, type ScanDiff } from '../analyzer/scan.js';
 import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
-import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
+import { streamWikiAgent } from './wiki-agent-stream.js';
 import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import { createRefreshTools } from './wiki-refresh-tools.js';
 import { ensureRefreshProfileRegistered } from './wiki-refresh-profile.js';
@@ -155,7 +155,7 @@ export const wikiRefreshService = {
       // 捕获当前 git state 并检查缓存，同一分支版本跳过重复扫描
       let gitState: WikiGitState;
       try {
-        gitState = readGitState(workDir);
+        gitState = await readGitState(workDir);
       } catch {
         gitState = fallbackGitState();
       }
@@ -329,7 +329,7 @@ export const wikiRefreshService = {
         prompt,
       });
 
-      const stream = agentLoopRuntime.streamRun(session.id, { locale });
+      const stream = streamWikiAgent(session.id, { locale });
       for await (const chunk of stream) {
         if (chunk.type === 'run_failed') {
           logger.warn({ documentId, error: chunk.error }, 'wiki refresh: agent run failed');

@@ -7,6 +7,7 @@ import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
 import { sessionHooks } from './session-hooks.js';
+import { logger } from '../../lib/logger.js';
 
 export class AgentSessionRuntime {
   constructor(
@@ -16,6 +17,17 @@ export class AgentSessionRuntime {
   ) {}
 
   create(input: CreateSessionRequest): AgentSession {
+    const started = Date.now();
+    logger.info(
+      {
+        projectId: input.projectId,
+        profileId: input.profileId,
+        parentSessionId: input.parentSessionId ?? null,
+        nodeId: input.nodeId ?? null,
+      },
+      '[agent-session] creating session…',
+    );
+
     const parent = input.parentSessionId ? this.store.getSession(input.parentSessionId) : undefined;
     const profile = this.profiles.assertCanStart(input.profileId, { parentSessionId: input.parentSessionId });
     if (parent && parent.projectId !== input.projectId) {
@@ -69,6 +81,17 @@ export class AgentSessionRuntime {
     }
     const created = this.store.getSession(saved.id);
     void sessionHooks.emit({ type: 'session:created', session: created });
+    logger.info(
+      {
+        sessionId: created.id,
+        projectId: created.projectId,
+        profileId: created.profileId,
+        parentSessionId: created.parentSessionId,
+        title: created.title,
+        durationMs: Date.now() - started,
+      },
+      '[agent-session] session created',
+    );
     return created;
   }
 

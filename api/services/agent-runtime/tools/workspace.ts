@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { DATA_ROOT } from '../../../lib/env.js';
 import { sandboxPolicy } from '../sandbox/index.js';
 
 const SECRET_SEGMENTS = new Set(['.env', '.ssh', '.git', 'node_modules', 'dist', 'build']);
@@ -24,6 +25,43 @@ export function setSessionWorkspaceRoot(sessionId: string, inputPath: string): s
   const root = resolveWorkspaceRoot(inputPath);
   sessionWorkspaceRoots.set(sessionId, root);
   return root;
+}
+
+export function tryGetSessionWorkspaceRoot(sessionId: string): string | undefined {
+  return sessionWorkspaceRoots.get(sessionId);
+}
+
+interface ProjectWorkDirEntry {
+  id: string;
+  source?: { localPath?: string };
+}
+
+function readProjectWorkDirEntries(): ProjectWorkDirEntry[] {
+  const projectsFile = path.join(DATA_ROOT, 'projects.json');
+  const raw = JSON.parse(fs.readFileSync(projectsFile, 'utf8')) as unknown;
+  if (Array.isArray(raw)) return raw as ProjectWorkDirEntry[];
+  if (raw && typeof raw === 'object' && Array.isArray((raw as { items?: unknown }).items)) {
+    return (raw as { items: ProjectWorkDirEntry[] }).items;
+  }
+  return [];
+}
+
+/** Resolve a project's workspace root from the on-disk project registry. */
+export function resolveProjectWorkDir(projectId: string): string {
+  try {
+    const project = readProjectWorkDirEntries().find((entry) => entry.id === projectId);
+    if (project?.source?.localPath) {
+      return path.resolve(project.source.localPath);
+    }
+  } catch {
+    // fall through
+  }
+  return path.resolve(process.cwd());
+}
+
+/** Prefer an explicit session workspace root, then the project's registered path. */
+export function resolveSessionWorkDir(sessionId: string, projectId: string): string {
+  return tryGetSessionWorkspaceRoot(sessionId) ?? resolveProjectWorkDir(projectId);
 }
 
 export function clearSessionWorkspaceRoot(sessionId: string): void {

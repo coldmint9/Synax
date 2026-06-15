@@ -1,7 +1,11 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['api/server.ts'],
+    entry: {
+    server: 'api/server.ts',
+    'workers/wiki-job-runner': 'api/workers/wiki-job-runner.ts',
+    'workers/agent-session-runner': 'api/workers/agent-session-runner.ts',
+  },
   format: ['cjs'],
   outDir: 'server-dist',
   clean: false,

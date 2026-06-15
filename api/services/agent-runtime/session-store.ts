@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { getRawSqlite } from '../../db/index.js';
 import { nowIso } from './runtime-ids.js';
-import { runtimeBus } from './runtime-bus.js';
+import { emitRuntimeBusEvent } from './runtime-bus-bridge.js';
 import { sessionHooks } from './session-hooks.js';
 import type {
   AgentContextBundle,
@@ -440,7 +440,7 @@ export class AgentRuntimeStore {
     const current = this.getSession(id);
     const next = { ...current, ...patch };
     this.upsertSession(next);
-    runtimeBus.emit({ type: 'session_changed', sessionId: id, patch: patch as Record<string, unknown> });
+    emitRuntimeBusEvent({ type: 'session_changed', sessionId: id, patch: patch as Record<string, unknown> });
     if (patch.status && patch.status !== current.status) {
       void sessionHooks.emit({ type: 'session:status_changed', sessionId: id, from: current.status, to: patch.status, patch: patch as Record<string, unknown> });
     }
@@ -566,7 +566,7 @@ export class AgentRuntimeStore {
     });
     tx();
     for (const id of deleteIds) {
-      runtimeBus.emit({ type: 'session_deleted', sessionId: id });
+      emitRuntimeBusEvent({ type: 'session_deleted', sessionId: id });
     }
     return deleteIds;
   }

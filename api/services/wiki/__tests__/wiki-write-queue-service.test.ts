@@ -38,7 +38,11 @@ vi.mock('../wiki-store.js', () => ({
 
 vi.mock('../wiki-snapshot-events.js', () => ({
   publishLatestWikiSnapshot: vi.fn(),
-  WikiSnapshotEventReason: { GenerationCompleted: 'completed', GenerationFailed: 'failed' },
+  WikiSnapshotEventReason: {
+    GenerationCompleted: 'completed',
+    GenerationFailed: 'failed',
+    WritingPaused: 'writing_paused',
+  },
 }));
 
 vi.mock('../../notifications/notify.js', () => ({ notify: vi.fn() }));
@@ -55,9 +59,21 @@ vi.mock('../../agent-runtime/session-store.js', () => ({
   },
 }));
 
+vi.mock('../../agent-runtime/agent-stream-proxy.js', () => ({
+  interruptAgentSessionsAndWait: vi.fn(async () => {}),
+}));
+
+vi.mock('../../agent-runtime/session-runtime.js', () => ({
+  agentSessionRuntime: {
+    cancel: vi.fn(),
+  },
+}));
+
 import { wikiWriteQueue } from '../wiki-write-queue-service.js';
 import { processQueueDocument } from '../wiki-document-processor.js';
 import { isSaturated } from '../../llm-runtime/middleware/rate-limiter.js';
+import { wikiStore } from '../wiki-store.js';
+import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from '../wiki-snapshot-events.js';
 
 describe('wikiWriteQueue', () => {
   beforeEach(() => {
@@ -225,5 +241,52 @@ describe('wikiWriteQueue', () => {
     expect(state.rateLimited).toBe(true);
 
     vi.mocked(isSaturated).mockReturnValue(false);
+  });
+
+  it('pauseBatch cancels running batch and marks snapshot partial', async () => {
+    wikiWriteQueue.stop();
+    const db = getDb();
+    const batchId = 'batch-pause-test';
+    const itemId = 'item-pause-test';
+    const now = new Date().toISOString();
+
+    await db.insert(wikiWriteBatches).values({
+      id: batchId,
+      snapshotId: 'snap-pause',
+      projectId: 'proj-1',
+      workDir: '/tmp/repo',
+      locale: 'zh',
+      status: 'running',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(wikiWriteQueueItems).values({
+      id: itemId,
+      batchId,
+      snapshotId: 'snap-pause',
+      projectId: 'proj-1',
+      documentId: 'doc-1',
+      documentTitle: 'Doc',
+      sortOrder: 0,
+      status: 'running',
+      sessionId: 'ars_pause',
+      createdAt: now,
+      startedAt: now,
+    });
+
+    tryGetSessionMock.mockReturnValue({ id: 'ars_pause', status: 'running' });
+
+    await wikiWriteQueue.pauseBatch('snap-pause');
+
+    const batch = await db.select().from(wikiWriteBatches).where(eq(wikiWriteBatches.id, batchId));
+    expect(batch[0].status).toBe('cancelled');
+
+    const item = await db.select().from(wikiWriteQueueItems).where(eq(wikiWriteQueueItems.id, itemId));
+    expect(item[0].status).toBe('queued');
+    expect(item[0].sessionId).toBeNull();
+
+    expect(wikiStore.updateSnapshotStatus).toHaveBeenCalledWith('snap-pause', 'partial', ['doc-1']);
+    expect(publishLatestWikiSnapshot).toHaveBeenCalledWith('proj-1', WikiSnapshotEventReason.WritingPaused);
   });
 });

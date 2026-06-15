@@ -1,6 +1,6 @@
 import { logger } from '../../lib/logger.js'
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js'
-import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js'
+import { streamWikiAgent } from './wiki-agent-stream.js'
 import { toolRegistry } from '../agent-runtime/tool-registry.js'
 import { wikiStore } from './wiki-store.js'
 import { createPlanTools, type PlanNodeDraft } from './wiki-plan-tools.js'
@@ -73,7 +73,7 @@ export async function generatePlan(
       prompt,
     })
 
-    const stream = agentLoopRuntime.streamRun(session.id, { locale })
+    const stream = streamWikiAgent(session.id, { locale })
     for await (const chunk of stream) {
       if (chunk.type === 'run_failed') {
         throw new Error(`Plan generation failed: ${chunk.error}`)
@@ -153,7 +153,7 @@ export async function* generatePlanStream(
     yield { type: 'started', sessionId: session.id }
     yield { type: 'phase', phase: 'analyzing' }
 
-    const stream = agentLoopRuntime.streamRun(session.id, { locale })
+    const stream = streamWikiAgent(session.id, { locale })
     for await (const chunk of stream) {
       switch (chunk.type) {
         case 'tool_call': {

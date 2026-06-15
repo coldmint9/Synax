@@ -1,7 +1,7 @@
 /**
  * Process a single wiki document (write → verify → optional correct) for the write queue.
  */
-import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
+import { streamWikiAgent } from './wiki-agent-stream.js';
 import { agentEventService } from '../agent-runtime/event-service.js';
 import { nowIso } from '../agent-runtime/runtime-ids.js';
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
@@ -64,7 +64,7 @@ async function awaitAgentStream(
   }
 
   try {
-    const stream = agentLoopRuntime.streamRun(sessionId, { locale }, controller.signal);
+    const stream = streamWikiAgent(sessionId, { locale }, controller.signal);
     for await (const chunk of stream) {
       if (chunk.type === 'run_failed') {
         if (opts?.softFail) {
@@ -307,7 +307,7 @@ async function runVerificationIfNeeded(opts: {
 export async function loadScanForBatch(workDir: string, projectId: string) {
   let gitState;
   try {
-    gitState = readGitState(workDir);
+    gitState = await readGitState(workDir);
   } catch {
     gitState = fallbackGitState();
   }

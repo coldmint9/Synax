@@ -230,7 +230,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
   refreshSessions: async () => {
     const { projectId } = get()
     try {
-      const query = projectId ? { projectId } : {}
+      const query = projectId ? { projectId, limit: 200 } : { limit: 200 }
       const { items } = await agentRuntimeApi.listSessions(query)
       set({ sessions: items })
     } catch { /* API not available */ }

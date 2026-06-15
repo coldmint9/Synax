@@ -1,4 +1,3 @@
-import { Card } from '@heroui/react'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -13,10 +12,10 @@ interface SettingsCardProps {
 
 export function SettingsCard({ title, description, icon: Icon, trailing, badge, children }: SettingsCardProps) {
   return (
-    <Card variant="secondary">
-      <Card.Header className="flex-row items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          {Icon && <Icon size={15} className="text-muted-foreground shrink-0" />}
+    <section className="wiki-workbench-card overflow-hidden rounded-[14px]">
+      <header className="flex flex-row items-center justify-between gap-2 border-b wiki-soft-rule px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {Icon && <Icon size={15} className="shrink-0 text-primary/70" />}
           <span className="text-sm font-semibold text-foreground">{title}</span>
           {badge}
         </div>
@@ -26,8 +25,8 @@ export function SettingsCard({ title, description, icon: Icon, trailing, badge, 
             {trailing}
           </div>
         )}
-      </Card.Header>
-      <Card.Content>{children}</Card.Content>
-    </Card>
+      </header>
+      <div className="px-4 py-3">{children}</div>
+    </section>
   )
 }

@@ -4,8 +4,9 @@
 // 首次生成 WikiSnapshot：Git 状态 + analyzer scan + Agent 生成 + 落库
 // ---------------------------------------------------------------------------
 
-import { execSync } from 'node:child_process';
+import { exec } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { promisify } from 'node:util';
 import { wikiStore } from './wiki-store.js';
 import { wikiAgentService } from './wiki-agent-service.js';
 import { logger } from '../../lib/logger.js';
@@ -32,20 +33,28 @@ export interface GenerateWikiResult {
   docCount?: number;
 }
 
-export function readGitState(workDir: string): WikiGitState {
-  const run = (cmd: string) => {
+const execAsync = promisify(exec);
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+
+export async function readGitState(workDir: string): Promise<WikiGitState> {
+  const run = async (cmd: string): Promise<string> => {
     try {
-      return execSync(cmd, { cwd: workDir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      const { stdout } = await execAsync(cmd, { cwd: workDir, maxBuffer: GIT_MAX_BUFFER });
+      return stdout.trim();
     } catch {
       return '';
     }
   };
 
-  const branch = run('git rev-parse --abbrev-ref HEAD') || 'unknown';
-  const headCommitSha = run('git rev-parse HEAD') || '0000000000000000000000000000000000000000';
-  const statusOutput = run('git status --porcelain');
-  const diffOutput = run('git diff --binary');
-  const cachedOutput = run('git diff --cached --binary');
+  const [branchRaw, headCommitSha, statusOutput, diffOutput, cachedOutput] = await Promise.all([
+    run('git rev-parse --abbrev-ref HEAD'),
+    run('git rev-parse HEAD'),
+    run('git status --porcelain'),
+    run('git diff --binary'),
+    run('git diff --cached --binary'),
+  ]);
+
+  const branch = branchRaw || 'unknown';
   const dirty = statusOutput.length > 0;
 
   const workingTreeHash = createHash('sha256')
@@ -53,7 +62,12 @@ export function readGitState(workDir: string): WikiGitState {
     .digest('hex')
     .slice(0, 16);
 
-  return { branch, headCommitSha, workingTreeHash, dirty };
+  return {
+    branch,
+    headCommitSha: headCommitSha || '0000000000000000000000000000000000000000',
+    workingTreeHash,
+    dirty,
+  };
 }
 
 export const wikiSnapshotService = {
@@ -64,7 +78,7 @@ export const wikiSnapshotService = {
 
     let gitState: WikiGitState;
     try {
-      gitState = readGitState(workDir);
+      gitState = await readGitState(workDir);
     } catch (err) {
       logger.warn({ err, workDir }, 'wiki: failed to read git state, using defaults');
       gitState = fallbackGitState();

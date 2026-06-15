@@ -82,7 +82,7 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
       <SettingsCard
         title={t('settingsMcpTitle')}
         icon={Plug}
-        badge={<span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] text-foreground/60">{t('settingsMcpComingSoon')}</span>}
+        badge={<span className="settings-chip settings-chip--muted">{t('settingsMcpComingSoon')}</span>}
       >
         <p className="text-xs text-muted-foreground">{t('settingsMcpDesc')}</p>
       </SettingsCard>

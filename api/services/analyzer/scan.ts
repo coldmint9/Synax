@@ -43,6 +43,7 @@ import { contextService } from '../context/context-service.js'
 import { searchService } from '../context/search-service.js'
 import { resolveWorkspacePath, workspaceRoot } from '../agent-runtime/tools/workspace.js'
 import { logger } from '../../lib/logger.js'
+import { reportScanProgress } from './scan-progress.js'
 
 export interface ScanDiffEntry {
   kind:
@@ -98,21 +99,33 @@ export async function normalizeScanRequest(req: CodeMapScanRequest): Promise<Nor
 
 export async function runCodeMapScan(req: CodeMapScanRequest): Promise<CodeMapScanResult> {
   const normalized = await normalizeScanRequest(req)
+  if (process.env.SYNAX_SCAN_IN_PROCESS === '1') {
+    return runCodeMapScanCore(req, normalized)
+  }
+  const { runCodeMapScanOffThread } = await import('./scan-pipeline-worker.js')
+  return runCodeMapScanOffThread(req, normalized)
+}
+
+/** CPU-heavy scan body — safe to run off the main thread. */
+export async function runCodeMapScanCore(
+  req: CodeMapScanRequest,
+  normalized: NormalizedScanRequest,
+): Promise<CodeMapScanResult> {
   const started = now()
 
-  logger.info('[analyzer] ▶ scan started', { workDir: normalized.workDirAbs })
+  reportScanProgress({ message: `▶ scan started — ${normalized.workDirAbs}`, pct: 0, projectId: req.projectId })
   const parsed = await parseRepository(normalized.workDirAbs)
 
-  logger.info(`[analyzer] ███████░░░ 70% — building dependency graph...`)
+  reportScanProgress({ message: '███████░░░ 70% — building dependency graph...', pct: 70, projectId: req.projectId })
   const graph = buildAnalyzerGraph(parsed.codeIndex)
 
-  logger.info(`[analyzer] ████████░░ 80% — detecting communities...`)
+  reportScanProgress({ message: '████████░░ 80% — detecting communities...', pct: 80, projectId: req.projectId })
   const communityResult = detectCommunities(parsed.codeIndex, graph)
 
-  logger.info(`[analyzer] █████████░ 90% — building module map...`)
+  reportScanProgress({ message: '█████████░ 90% — building module map...', pct: 90, projectId: req.projectId })
   const moduleMap = buildModuleMap(parsed.codeIndex, graph)
 
-  logger.info(`[analyzer] █████████▓ 95% — generating coordinate seed...`)
+  reportScanProgress({ message: '█████████▓ 95% — generating coordinate seed...', pct: 95, projectId: req.projectId })
   const coordSeed = buildCoordSeed(req.projectId, parsed.codeIndex, moduleMap, communityResult.communities, graph)
 
   const result: CodeMapScanResult = {
@@ -130,6 +143,14 @@ export async function runCodeMapScan(req: CodeMapScanRequest): Promise<CodeMapSc
     warnings: [...normalized.warnings, ...parsed.warnings],
   }
 
+  const completeMsg = `██████████ 100% — scan complete (${parsed.codeIndex.files.length} files, ${parsed.codeIndex.symbols.length} symbols)`
+  reportScanProgress({
+    message: completeMsg,
+    pct: 100,
+    completed: parsed.codeIndex.files.length,
+    total: parsed.codeIndex.files.length,
+    projectId: req.projectId,
+  })
   logger.info(`[analyzer] ██████████ 100% — scan complete`, {
     files: parsed.codeIndex.files.length,
     symbols: parsed.codeIndex.symbols.length,

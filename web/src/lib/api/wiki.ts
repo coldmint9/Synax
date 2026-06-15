@@ -70,6 +70,13 @@ export const wikiApi = {
     return apiRequest<WikiWriteQueueState>(`${BASE}/snapshots/${snapshotId}/write-queue`);
   },
 
+  pauseGeneration(snapshotId: string): Promise<{ status: string; message: string }> {
+    return apiRequest<{ status: string; message: string }>(`${BASE}/snapshots/${snapshotId}/pause`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+
   exportSnapshotUrl(snapshotId: string, refs = false): string {
     return `${BASE}/snapshots/${snapshotId}/export.md${refs ? '?refs=1' : ''}`;
   },

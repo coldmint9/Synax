@@ -256,7 +256,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
         <div className="flex items-center gap-2">
           <SaveIndicator saving={Boolean(savingId)} saved={saved} error={saveError} />
           <Dropdown>
-            <Button size="sm" variant="secondary">
+            <Button size="sm" variant="secondary" className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm">
               <Plus size={12} />
               {t('llmProviderAdd')}
             </Button>

@@ -5,6 +5,7 @@ import * as z from 'zod/v4';
 import { wikiStore } from '../services/wiki/wiki-store.js';
 import { wikiExportService } from '../services/wiki/wiki-export-service.js';
 import { wikiLoopService } from '../services/wiki/wiki-loop-service.js';
+import { wikiJobProcess } from '../services/wiki/wiki-job-process.js';
 import { queueReinitialize } from '../services/wiki/wiki-reinitialize-service.js';
 import { wikiWriteQueue } from '../services/wiki/wiki-write-queue-service.js';
 import { wikiRefreshService } from '../services/wiki/wiki-refresh-service.js';
@@ -214,12 +215,26 @@ wikiRoutes.post('/projects/:projectId/generate', async (c) => {
     }, 409);
   }
 
-  void wikiLoopService.generate({
-    projectId,
-    workDir: parsed.data.workDir,
-    locale: parsed.data.locale ?? 'zh',
-  }).catch((err) => {
-    logger.error({ err, projectId }, '[wiki] generate task failed before service handler completed');
+  const workDir = parsed.data.workDir;
+  const locale = parsed.data.locale ?? 'zh';
+
+  if (wikiJobProcess.isRunning()) {
+    return c.json({
+      error: 'Wiki generation is already in progress for this project.',
+      code: 'GENERATION_IN_PROGRESS',
+    }, 409);
+  }
+
+  setImmediate(() => {
+    const started = wikiJobProcess.start({
+      kind: 'generate',
+      projectId,
+      workDir,
+      locale,
+    });
+    if (!started) {
+      logger.warn({ projectId }, '[wiki] failed to start wiki job child process');
+    }
   });
 
   return c.json({ status: 'queued', message: 'Wiki generation started.' });
@@ -334,6 +349,23 @@ wikiRoutes.get('/snapshots/:snapshotId/write-queue', async (c) => {
   if (!snapshot) return c.json({ error: 'Snapshot not found' }, 404);
   const state = await wikiWriteQueue.getQueueState(snapshotId);
   return c.json(state);
+});
+
+// ── POST /api/wiki/snapshots/:snapshotId/pause ──────────────────────────────
+wikiRoutes.post('/snapshots/:snapshotId/pause', async (c) => {
+  const { snapshotId } = c.req.param();
+  const snapshot = await wikiStore.getSnapshot(snapshotId);
+  if (!snapshot) return c.json({ error: 'Snapshot not found' }, 404);
+  if (snapshot.status !== 'writing') {
+    return c.json({ error: `Snapshot must be writing to pause, got "${snapshot.status}"` }, 409);
+  }
+
+  try {
+    await wikiWriteQueue.pauseBatch(snapshotId);
+    return c.json({ status: 'paused', message: 'Wiki content generation paused.' });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'pause failed' }, 400);
+  }
 });
 
 

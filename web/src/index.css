@@ -653,6 +653,70 @@
   .wh-btn:hover { background: hsl(var(--secondary)); color: var(--foreground); }
   .wh-btn.active { background: hsl(var(--primary) / 0.12); color: hsl(var(--primary)); }
 
+  /* Compact pill action buttons — matches wh-tabs / wiki-view-tabs selected indicator */
+  .wh-pill-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 999px;
+    height: 26px;
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    background: transparent;
+    transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+  }
+  .wh-pill-btn:active:not(:disabled) { transform: scale(0.97); }
+  .wh-pill-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .wh-pill-btn--sm {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 10px;
+    gap: 3px;
+  }
+
+  .wh-pill-btn--primary {
+    background: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+  }
+  .wh-pill-btn--primary:hover:not(:disabled) {
+    background: hsl(var(--primary) / 0.16);
+    color: hsl(var(--primary));
+  }
+
+  .wh-pill-btn--soft {
+    background: hsl(var(--primary) / 0.06);
+    color: hsl(var(--primary));
+  }
+  .wh-pill-btn--soft:hover:not(:disabled) {
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+
+  .wh-pill-btn--neutral {
+    background: hsl(var(--secondary) / 0.55);
+    color: hsl(var(--muted-foreground));
+  }
+  .wh-pill-btn--neutral:hover:not(:disabled) {
+    background: hsl(var(--secondary) / 0.85);
+    color: var(--foreground);
+  }
+
+  .wh-pill-btn--danger-soft {
+    background: hsl(var(--destructive) / 0.08);
+    color: hsl(var(--destructive));
+  }
+  .wh-pill-btn--danger-soft:hover:not(:disabled) {
+    background: hsl(var(--destructive) / 0.14);
+    color: hsl(var(--destructive));
+  }
+
   .wh-issue-btn-wrapper {
     display: flex;
     align-items: center;
@@ -718,12 +782,23 @@
 
   /* ── Wiki Workspace panels ── */
   .wiki-panel {
+    margin: 10px 0 10px 10px;
+    border-radius: 14px;
+    border: 1px solid hsl(var(--border-hsl) / 0.55);
+    overflow: hidden;
     background: hsl(var(--card) / 0.6);
     backdrop-filter: blur(12px) saturate(1.2);
     -webkit-backdrop-filter: blur(12px) saturate(1.2);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.18) inset,
+      0 4px 16px hsl(var(--wiki-shadow) / 0.06);
   }
   .dark .wiki-panel {
     background: hsl(var(--card) / 0.5);
+    border-color: hsl(var(--border-hsl) / 0.45);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.04) inset,
+      0 4px 16px hsl(0 0% 0% / 0.2);
   }
 
   .wiki-panel-header {
@@ -735,10 +810,33 @@
   }
 
   .wiki-separator {
-    width: 1px;
-    background: hsl(var(--border-hsl) / 0.4);
-    align-self: stretch;
+    width: 6px;
     margin: 8px 0;
+    align-self: stretch;
+    flex-shrink: 0;
+    cursor: col-resize;
+  }
+
+  /* Wiki sidebar progress — visible track even at 0% */
+  .wiki-panel .progress-bar .progress-bar__track {
+    height: 4px !important;
+    border-radius: 999px !important;
+    background: hsl(var(--border-hsl) / 0.42) !important;
+  }
+  .wiki-panel .progress-bar .progress-bar__fill {
+    border-radius: 999px !important;
+  }
+  .wiki-panel .progress-bar--accent {
+    --progress-bar-fill: hsl(var(--primary));
+  }
+  .wiki-panel .progress-bar--success {
+    --progress-bar-fill: hsl(var(--success));
+  }
+  .wiki-panel .progress-bar--warning {
+    --progress-bar-fill: hsl(var(--warning));
+  }
+  .wiki-panel .progress-bar--danger {
+    --progress-bar-fill: hsl(var(--destructive));
   }
 
   .wiki-tabs { display: flex; align-items: center; width: 100%; }
@@ -825,6 +923,66 @@
   .wiki-kicker { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
   .wiki-soft-rule { border-color: hsl(var(--border-hsl) / 0.55); }
   .wiki-fade-in { animation: float-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+  /* ── Settings surfaces (wiki token palette) ── */
+  .settings-item {
+    border: 1px solid hsl(var(--border-hsl) / 0.55);
+    border-radius: 12px;
+    background: hsl(var(--wiki-panel) / 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .settings-item:hover:not(.settings-item--disabled) {
+    background: hsl(var(--wiki-accent) / 0.35);
+  }
+  .settings-item--active {
+    border-color: hsl(var(--primary) / 0.22);
+    background: hsl(var(--primary) / 0.08);
+  }
+  .settings-item--disabled { opacity: 0.5; }
+
+  .settings-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0 6px;
+    height: 16px;
+    font-size: 9px;
+    font-weight: 500;
+    line-height: 1;
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+  .settings-chip--success {
+    background: hsl(var(--success) / 0.12);
+    color: hsl(var(--success));
+  }
+  .settings-chip--muted {
+    background: hsl(var(--wiki-panel-muted) / 0.8);
+    color: hsl(var(--muted-foreground));
+  }
+
+  .settings-input {
+    width: 6rem;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--border-hsl) / 0.55);
+    background: hsl(var(--wiki-panel) / 0.6);
+    padding: 4px 10px;
+    font-size: 12px;
+    outline: none;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .settings-input:focus {
+    border-color: hsl(var(--primary) / 0.35);
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.08);
+  }
+  .settings-input--invalid {
+    border-color: hsl(var(--destructive) / 0.5);
+  }
+  .settings-input--invalid:focus {
+    box-shadow: 0 0 0 2px hsl(var(--destructive) / 0.08);
+  }
 
   /* ── Search keyword highlight inside wiki blocks ──────────────────────── */
   mark.wiki-search-highlight {

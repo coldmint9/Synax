@@ -50,7 +50,7 @@ import { shouldCompact, compactMessages, getCompactionConfig } from "./context-c
 import { buildTaskDriftReminder } from "./tools/task-tools.js";
 import { runChildToCompletion, DEFAULT_PER_CHILD_TIMEOUT_MS } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
-import { sessionLiveBus } from "./session-live-bus.js";
+import { emitSessionLive } from "../../lib/ipc/agent-session-protocol.js";
 import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
 import { logger } from "../../lib/logger.js";
 import { CONTEXT_TOOL_CLEAR_THRESHOLD, CONTEXT_TOOL_CLEAR_KEEP_RECENT, CONTEXT_TOOL_CLEAR_EXCLUDE } from "../../lib/env.js";
@@ -398,7 +398,7 @@ export class AgentLoopRuntime {
           "[agent-runtime] step started",
         );
         yield { type: "step_started", step, event: stepStarted };
-        sessionLiveBus.emit(sessionId, { type: 'step_started', stepId: step.id, stepIndex: step.index, modelCapabilities });
+        emitSessionLive(sessionId, { type: 'step_started', stepId: step.id, stepIndex: step.index, modelCapabilities });
 
         const history = this.store
           .listMessages(sessionId)
@@ -453,7 +453,7 @@ export class AgentLoopRuntime {
               delta: event.delta,
               event: evt,
             };
-            sessionLiveBus.emit(sessionId, { type: 'thought_delta', stepId: step.id, delta: event.delta });
+            emitSessionLive(sessionId, { type: 'thought_delta', stepId: step.id, delta: event.delta });
           }
           if (event.type === "text_delta") {
             const evt = this.events.append({
@@ -470,7 +470,7 @@ export class AgentLoopRuntime {
               delta: event.delta,
               event: evt,
             };
-            sessionLiveBus.emit(sessionId, { type: 'message_delta', stepId: step.id, delta: event.delta });
+            emitSessionLive(sessionId, { type: 'message_delta', stepId: step.id, delta: event.delta });
           }
           if (event.type === "step_complete") {
             modelResult = { model: event.model, step: event.step };
@@ -491,7 +491,7 @@ export class AgentLoopRuntime {
               messageCount: event.messageCount,
               event: compactEvt,
             };
-            sessionLiveBus.emit(sessionId, { type: 'context_compacted', stepId: step.id, originalTokens: event.originalTokens, compressedTokens: event.compressedTokens, messageCount: event.messageCount });
+            emitSessionLive(sessionId, { type: 'context_compacted', stepId: step.id, originalTokens: event.originalTokens, compressedTokens: event.compressedTokens, messageCount: event.messageCount });
           }
         }
 
@@ -778,7 +778,7 @@ export class AgentLoopRuntime {
             type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record,
             event: this.events.append({ sessionId, type: "tool_call", summary: `${call.toolId} requested`, payload: { runId: run.id, stepId: step.id, toolCallId: exec.record.id, modelToolCallId: call.id } }),
           };
-          sessionLiveBus.emit(sessionId, { type: 'tool_call', stepId: step.id, toolCall: exec.record });
+          emitSessionLive(sessionId, { type: 'tool_call', stepId: step.id, toolCall: exec.record });
           logger.info(
             { sessionId, runId: run.id, stepId: step.id, toolCallId: exec.record.id, toolId: call.toolId, status: exec.record.status, permissionAction: exec.permission?.action ?? null },
             "[agent-runtime] tool call executed",
@@ -817,7 +817,7 @@ export class AgentLoopRuntime {
               "[agent-runtime] tool result recorded",
             );
             yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
-            sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
+            emitSessionLive(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
             if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
               disclosureState = promoteDisclosure(disclosureState);
             }
@@ -848,7 +848,7 @@ export class AgentLoopRuntime {
               "[agent-runtime] tool result recorded",
             );
             yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
-            sessionLiveBus.emit(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
+            emitSessionLive(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
             if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
               disclosureState = promoteDisclosure(disclosureState);
             }
@@ -878,7 +878,7 @@ export class AgentLoopRuntime {
                   summary: `Fallback tools unlocked: ${profile.fallbackDisclosure.fallbackToolIds.join(', ')}`,
                   payload: { kind: 'fallback_disclosure', tools: profile.fallbackDisclosure.fallbackToolIds },
                 });
-                sessionLiveBus.emit(sessionId, { type: 'fallback_disclosed', tools: profile.fallbackDisclosure.fallbackToolIds } as any);
+                emitSessionLive(sessionId, { type: 'fallback_disclosed', tools: profile.fallbackDisclosure.fallbackToolIds } as any);
               }
             }
           }
