@@ -98,8 +98,20 @@ export async function persistWikiDocumentCommit(input: {
   projectId: string;
   outline: WikiOutlineEntry[] | null;
   planIdToDocId: Map<string, string>;
+  targetDocumentId?: string | null;
 }): Promise<string> {
-  const { draft, snapshotId, projectId, outline, planIdToDocId } = input;
+  const { draft, snapshotId, projectId, outline, planIdToDocId, targetDocumentId } = input;
+
+  if (targetDocumentId) {
+    const target = await wikiStore.getDocument(targetDocumentId);
+    if (target?.snapshotId === snapshotId) {
+      await fillDocumentContent(targetDocumentId, draft);
+      return targetDocumentId;
+    }
+    throw new Error(
+      `Wiki commit target document "${targetDocumentId}" is missing or belongs to another snapshot`,
+    );
+  }
 
   const existingDocId = await resolveCommittedDocumentId(draft, snapshotId, outline, planIdToDocId);
   if (existingDocId) {

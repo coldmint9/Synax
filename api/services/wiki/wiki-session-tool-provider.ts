@@ -2,6 +2,7 @@ import type { RegisteredTool, SessionToolProvider, ToolHook } from '../agent-run
 import { agentRuntimeStore } from '../agent-runtime/session-store.js';
 import { logger } from '../../lib/logger.js';
 import { persistWikiDocumentCommit, toCommitInput } from './wiki-commit-persistence.js';
+import { publishDocumentCommittedEvent } from './wiki-snapshot-events.js';
 import { wikiStore } from './wiki-store.js';
 import type { WikiDocumentDraft } from './tools/contracts.js';
 import { buildCheckMermaidTool, buildCommitDocumentTool } from './tools/write-tools.js';
@@ -67,8 +68,11 @@ class WikiSessionToolProvider implements SessionToolProvider {
 
         try {
           const activeSession = agentRuntimeStore.getSession(ctx.sessionId);
-          const sid = (activeSession.sessionMetadata as Record<string, unknown> | null)?.snapshotId as string | undefined;
+          const meta = activeSession.sessionMetadata as Record<string, unknown> | null;
+          const sid = meta?.snapshotId as string | undefined;
           if (!sid) return;
+
+          const targetDocumentId = typeof meta?.documentId === 'string' ? meta.documentId : null;
 
           const committedDocId = await persistWikiDocumentCommit({
             draft,
@@ -76,9 +80,11 @@ class WikiSessionToolProvider implements SessionToolProvider {
             projectId: activeSession.projectId,
             outline: null,
             planIdToDocId: new Map(),
+            targetDocumentId,
           });
           await wikiStore.updateDocumentPipelineStage(committedDocId, 'drafted');
-          logger.info({ snapshotId: sid, title: draft.title, docId: committedDocId },
+          await publishDocumentCommittedEvent(activeSession.projectId, committedDocId);
+          logger.info({ snapshotId: sid, title: draft.title, docId: committedDocId, targetDocumentId },
             '[wiki-session-tool-provider] persisted document on commit');
         } catch (err) {
           logger.warn({ hookId, sessionId: ctx.sessionId, err },

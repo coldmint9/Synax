@@ -1063,8 +1063,13 @@
     color: var(--foreground);
   }
 
-  .list-row--generating:not(.list-row--active) {
+  .list-row--generating {
     color: hsl(var(--primary));
+  }
+  .list-row--generating.list-row--active {
+    box-shadow:
+      0 0 0 1px hsl(var(--primary) / 0.25),
+      0 1px 2px hsl(var(--primary) / 0.08);
   }
 
   .list-section {

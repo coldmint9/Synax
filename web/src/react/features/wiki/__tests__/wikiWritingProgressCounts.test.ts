@@ -56,8 +56,13 @@ describe('resolveGeneratingDocumentId', () => {
     expect(resolveGeneratingDocumentId(documents, { docTitle: 'beta' }, true)).toBe('beta')
   })
 
-  it('returns null when not actively writing', () => {
+  it('uses snapshot writing status when gen tracking is inactive', () => {
+    const documents = [doc('alpha'), doc('beta')]
+    expect(resolveGeneratingDocumentId(documents, { documentId: 'beta' }, false, 'writing')).toBe('beta')
+  })
+
+  it('returns null when not writing', () => {
     const documents = [doc('alpha')]
-    expect(resolveGeneratingDocumentId(documents, { documentId: 'alpha' }, false)).toBeNull()
+    expect(resolveGeneratingDocumentId(documents, { documentId: 'alpha' }, false, 'partial')).toBeNull()
   })
 })

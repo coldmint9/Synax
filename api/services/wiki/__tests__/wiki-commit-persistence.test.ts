@@ -1,6 +1,18 @@
-import { describe, expect, it } from 'vitest';
-import { findExistingDocId } from '../wiki-commit-persistence.js';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { findExistingDocId, persistWikiDocumentCommit } from '../wiki-commit-persistence.js';
 import type { WikiOutlineEntry } from '../tools/contracts.js';
+
+const mockGetDocument = vi.fn();
+const mockUpdateDocumentContent = vi.fn();
+
+vi.mock('../wiki-store.js', () => ({
+  wikiStore: {
+    getDocument: (...args: unknown[]) => mockGetDocument(...args),
+    updateDocumentContent: (...args: unknown[]) => mockUpdateDocumentContent(...args),
+    getDocumentsBySnapshot: vi.fn(),
+    upsertDocument: vi.fn(),
+  },
+}));
 
 describe('findExistingDocId', () => {
   const outline: WikiOutlineEntry[] = [
@@ -43,5 +55,41 @@ describe('findExistingDocId', () => {
       outline,
       planIdToDocId,
     )).toBeNull();
+  });
+});
+
+describe('persistWikiDocumentCommit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fills the target skeleton document when targetDocumentId is provided', async () => {
+    mockGetDocument.mockResolvedValue({
+      id: 'doc-child',
+      snapshotId: 'snap-1',
+      title: 'Auth Module',
+      docType: 'module',
+    });
+    mockUpdateDocumentContent.mockResolvedValue(undefined);
+
+    const docId = await persistWikiDocumentCommit({
+      draft: {
+        title: 'Renamed By Model',
+        docType: 'module',
+        markdown: '# Body',
+        references: [],
+      },
+      snapshotId: 'snap-1',
+      projectId: 'proj-1',
+      outline: null,
+      planIdToDocId: new Map(),
+      targetDocumentId: 'doc-child',
+    });
+
+    expect(docId).toBe('doc-child');
+    expect(mockUpdateDocumentContent).toHaveBeenCalledWith('doc-child', {
+      contentMd: '# Body',
+      references: [],
+    });
   });
 });
