@@ -2,6 +2,7 @@
  * Process a single wiki document (write → verify → optional correct) for the write queue.
  */
 import { streamWikiAgent } from './wiki-agent-stream.js';
+import { assertCanStartAgentSessionProcess } from '../agent-runtime/agent-stream-proxy.js';
 import { agentEventService } from '../agent-runtime/event-service.js';
 import { nowIso } from '../agent-runtime/runtime-ids.js';
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
@@ -140,6 +141,7 @@ export async function processQueueDocument(input: ProcessQueueDocumentInput): Pr
       documentContext,
     });
 
+    assertCanStartAgentSessionProcess();
     const docSession = agentSessionRuntime.create({
       projectId,
       profileId: 'wiki-document-writer',
@@ -256,6 +258,7 @@ async function runVerificationIfNeeded(opts: {
     `Language composition: ${languages}`,
   ].join('\n');
 
+  assertCanStartAgentSessionProcess();
   const verifierSession = agentSessionRuntime.create({
     projectId: batch.projectId,
     profileId: 'wiki-verifier',
@@ -290,6 +293,7 @@ async function runVerificationIfNeeded(opts: {
       `Call wiki.commit_document when done. Include updated claims.`,
     ].join('\n');
 
+    assertCanStartAgentSessionProcess();
     const correctorSession = agentSessionRuntime.create({
       projectId: batch.projectId,
       profileId: 'wiki-document-writer',

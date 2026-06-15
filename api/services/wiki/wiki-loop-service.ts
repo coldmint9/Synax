@@ -25,6 +25,7 @@ import { buildWikiPrompt, formatLanguages } from './wiki-prompt-builder.js';
 import { mapToolCallToActivity, synthesizeActivity, scanCompleteActivity, scanCheckingActivity, outlineCompleteActivity } from './wiki-outline-progress.js';
 import { acquireCodeMapScan, fallbackGitState } from './wiki-scan-cache.js';
 import { streamWikiAgent } from './wiki-agent-stream.js';
+import { assertCanStartAgentSessionProcess } from '../agent-runtime/agent-stream-proxy.js';
 import { countWritableOutlineEntries, isSectionEntry, isWritableOutlineEntry } from './tools/outline-node.js';
 
 function wikiMsg(locale: 'zh' | 'en') {
@@ -166,6 +167,7 @@ export const wikiLoopService = {
       );
 
       logger.info({ projectId, snapshotId: snapshot.id, profileId: 'wiki-planner' }, 'wiki-loop: creating planner session');
+      assertCanStartAgentSessionProcess();
       const plannerSession = agentSessionRuntime.create({
         projectId,
         profileId: 'wiki-planner',

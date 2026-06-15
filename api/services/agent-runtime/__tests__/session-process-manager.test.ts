@@ -6,6 +6,11 @@ describe('sessionProcessManager', () => {
     expect(sessionProcessManager.isSessionStreaming('sess-1')).toBe(false);
   });
 
+  it('allows spawning child processes when under capacity', () => {
+    expect(sessionProcessManager.canSpawnChild()).toBe(true);
+    expect(() => sessionProcessManager.assertCanSpawnChild()).not.toThrow();
+  });
+
   it('interruptSessions on unknown sessions is a no-op', async () => {
     sessionProcessManager.interruptSessions(['missing-session']);
     await sessionProcessManager.waitForIdleSessions(['missing-session']);

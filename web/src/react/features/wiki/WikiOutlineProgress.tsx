@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Search, FileCode, Users, Brain, Send } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
+import WikiProgressBar from './WikiProgressBar'
 import type { OutlineActivity, OutlineActivityPhase } from '../../../hooks/useWikiGenerationEvents'
 
 const PHASE_ICONS: Record<OutlineActivityPhase, typeof Search> = {
@@ -34,12 +35,12 @@ export default function WikiOutlineProgress({ activities, currentActivity, phase
   const recentActivities = activities.slice(-8)
 
   return (
-    <div className="flex flex-col border-b border-primary/10 bg-primary/[0.02]">
+    <div className="flex flex-col gap-2 border-b border-primary/10 bg-primary/[0.02] px-3 py-2">
       {/* ── Current activity bar ── */}
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}
-        className="flex items-center justify-between px-3 py-1.5 hover:bg-primary/[0.04] transition-colors"
+        className="flex items-center justify-between hover:bg-primary/[0.04] transition-colors -mx-1 px-1 py-0.5 rounded-md"
       >
         <div className="flex items-center gap-2 min-w-0">
           {isActive ? (
@@ -63,7 +64,7 @@ export default function WikiOutlineProgress({ activities, currentActivity, phase
 
       {/* ── Activity log (collapsible via click on bar) ── */}
       {expanded && recentActivities.length > 0 && (
-        <div className="px-3 pb-1.5 max-h-[120px] overflow-y-auto">
+        <div className="max-h-[120px] overflow-y-auto">
           <div className="space-y-0.5">
             {recentActivities.map((a, i) => {
               const Icon = PHASE_ICONS[a.phase] ?? FileCode
@@ -81,6 +82,14 @@ export default function WikiOutlineProgress({ activities, currentActivity, phase
             })}
           </div>
         </div>
+      )}
+
+      {isActive && (
+        <WikiProgressBar
+          aria-label={currentActivity ?? t('wikiPhaseAgentAnalyzing')}
+          isIndeterminate
+          color="accent"
+        />
       )}
     </div>
   )

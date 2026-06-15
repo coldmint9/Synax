@@ -41,11 +41,11 @@ export function SessionTimeGroups({
   const totalItems = nonEmptyGroups.reduce((sum, g) => sum + g.sessions.length, 0)
 
   return (
-    <div className="flex-1 overflow-y-auto" onScroll={onScroll}>
+    <div className="flex-1 overflow-y-auto px-1 py-1" onScroll={onScroll}>
       {nonEmptyGroups.map(g => (
         <div key={g.key}>
           <button
-            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-muted-foreground hover:bg-secondary/20 cursor-pointer sticky top-0 bg-background/95 backdrop-blur-sm z-10"
+            className="list-section-label sticky top-0 z-10 w-full cursor-pointer bg-background/95 backdrop-blur-sm"
             onClick={() => onToggleGroup(g.key)}
           >
             <span className="text-[10px] w-3 text-center text-muted-foreground/60">

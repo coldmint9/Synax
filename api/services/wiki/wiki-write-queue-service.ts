@@ -7,7 +7,8 @@ import { logger } from '../../lib/logger.js';
 import { isSaturated } from '../llm-runtime/middleware/rate-limiter.js';
 import { agentRuntimeStore } from '../agent-runtime/session-store.js';
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js';
-import { interruptAgentSessionsAndWait } from '../agent-runtime/agent-stream-proxy.js';
+import { interruptAgentSessionsAndWait, canStartAgentSessionProcess } from '../agent-runtime/agent-stream-proxy.js';
+import { AgentRuntimeError } from '../agent-runtime/runtime-errors.js';
 import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
@@ -139,6 +140,7 @@ class WikiWriteQueueService {
   private inFlight = 0;
   private readonly batchContexts = new Map<string, BatchRuntimeContext>();
   private readonly lastRateLimitedNotifyAt = new Map<string, number>();
+  private readonly lastSessionLimitNotifyAt = new Map<string, number>();
 
   async enqueueBatch(input: EnqueueBatchInput): Promise<WikiWriteBatch> {
     if (input.items.length === 0) {
@@ -414,6 +416,11 @@ class WikiWriteQueueService {
       return;
     }
 
+    if (!canStartAgentSessionProcess()) {
+      await this.notifySessionLimitIfNeeded();
+      return;
+    }
+
     const slots = WIKI_WRITE_CONCURRENCY - this.inFlight;
     if (slots <= 0) return;
 
@@ -500,6 +507,50 @@ class WikiWriteQueueService {
           snapshotId: batchRow.snapshotId,
           snapshotStatus: 'writing',
           rateLimited: true,
+        },
+      });
+    }
+  }
+
+  private async notifySessionLimitIfNeeded(): Promise<void> {
+    const db = getDb();
+    const runningBatches = await db
+      .select()
+      .from(wikiWriteBatches)
+      .where(eq(wikiWriteBatches.status, 'running'))
+      .orderBy(wikiWriteBatches.createdAt);
+
+    const now = Date.now();
+    for (const batchRow of runningBatches) {
+      const queued = await db
+        .select()
+        .from(wikiWriteQueueItems)
+        .where(and(
+          eq(wikiWriteQueueItems.batchId, batchRow.id),
+          eq(wikiWriteQueueItems.status, 'queued'),
+        ))
+        .limit(1);
+      if (queued.length === 0) continue;
+
+      const last = this.lastSessionLimitNotifyAt.get(batchRow.snapshotId) ?? 0;
+      if (now - last < RATE_LIMIT_NOTIFY_INTERVAL_MS) continue;
+
+      this.lastSessionLimitNotifyAt.set(batchRow.snapshotId, now);
+      const locale = (batchRow.locale ?? 'zh') as 'zh' | 'en';
+      notify({
+        type: TaskNotificationEventType.TaskProgress,
+        taskKind: 'wiki_generate',
+        projectId: batchRow.projectId,
+        taskId: batchRow.snapshotId,
+        title: wikiMsg(locale).genTitle,
+        message: locale === 'en'
+          ? 'Waiting for agent session capacity'
+          : '等待 Agent 会话资源释放',
+        severity: 'info',
+        meta: {
+          snapshotId: batchRow.snapshotId,
+          snapshotStatus: 'writing',
+          sessionLimitReached: true,
         },
       });
     }
@@ -602,6 +653,27 @@ class WikiWriteQueueService {
 
       const message = err instanceof Error ? err.message : String(err);
       logger.error({ err, batchId: batch.id, itemId: item.id }, '[wiki-write-queue] item failed');
+
+      if (err instanceof AgentRuntimeError && err.code === 'SESSION_LIMIT') {
+        const itemRows = await db
+          .select()
+          .from(wikiWriteQueueItems)
+          .where(eq(wikiWriteQueueItems.id, item.id))
+          .limit(1);
+        const sessionId = itemRows[0]?.sessionId;
+        if (sessionId && agentRuntimeStore.tryGetSession(sessionId)) {
+          agentSessionRuntime.cancel(sessionId);
+        }
+
+        await db.update(wikiWriteQueueItems).set({
+          status: 'queued',
+          sessionId: null,
+          startedAt: null,
+          error: null,
+        }).where(eq(wikiWriteQueueItems.id, item.id));
+        logger.warn({ batchId: batch.id, itemId: item.id }, '[wiki-write-queue] item re-queued due to agent session limit');
+        return;
+      }
 
       await db.update(wikiWriteQueueItems).set({
         status: 'failed',

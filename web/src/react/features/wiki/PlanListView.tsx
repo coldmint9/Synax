@@ -1,5 +1,4 @@
 import { ListChecks, CheckCircle2, Loader2, Clock, XCircle, Trash2 } from 'lucide-react'
-import { Card } from '@heroui/react'
 import { iconBadgeClass, type IconTone } from '../../../lib/icon-tones'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
@@ -54,7 +53,7 @@ export default function PlanListView({ projectId }: Props) {
   const finishedPlans = plans.filter(p => p.status === 'completed' || p.status === 'discarded')
 
   return (
-    <div className="px-3 py-3 space-y-2">
+    <div className="list-surface px-1 py-2 space-y-2">
       {activePlans.map(plan => (
         <PlanRow key={plan.id} plan={plan} index={plans.indexOf(plan)} total={plans.length} onSelect={selectPlan} onDelete={deletePlan} selected={selectedPlanId === plan.id} />
       ))}
@@ -73,55 +72,42 @@ function PlanRow({ plan, index, total, onSelect, onDelete, selected }: { plan: W
   const isDiscarded = plan.status === 'discarded'
 
   return (
-    <Card
-      variant="transparent"
-      className={`cursor-pointer transition-all p-3 shadow-sm hover:shadow-md group ${
-        selected
-          ? 'border-primary bg-primary/10 ring-1 ring-primary/30 shadow-primary/10'
-          : isDiscarded
-            ? 'opacity-50 border-border/10 shadow-none hover:opacity-70'
-            : 'border-border/20 hover:bg-card/60'
-      }`}
+    <div
+      className={`list-card group ${selected ? 'list-card--active' : ''} ${isDiscarded ? 'list-card--muted' : ''}`}
       onClick={() => onSelect(plan.id)}
       role="button"
       tabIndex={0}
       onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') onSelect(plan.id) }}
     >
-      <Card.Header className="p-0 gap-0">
-        <div className="flex items-center justify-between w-full">
-          <Card.Title className="text-[12px] font-semibold text-foreground/85">#{num}</Card.Title>
-          <div className="flex items-center gap-1">
-            <button
-              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-danger/10 text-muted-foreground/40 hover:text-danger"
-              onClick={(e) => { e.stopPropagation(); onDelete(plan.id) }}
-              aria-label="Delete plan"
-            >
-              <Trash2 size={12} />
-            </button>
-            <PlanStatusBadge status={plan.status} />
-          </div>
+      <div className="flex items-center justify-between w-full">
+        <span className="text-[12px] font-semibold text-foreground/85">#{num}</span>
+        <div className="flex items-center gap-1">
+          <button
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-danger/10 text-muted-foreground/40 hover:text-danger"
+            onClick={(e) => { e.stopPropagation(); onDelete(plan.id) }}
+            aria-label="Delete plan"
+          >
+            <Trash2 size={12} />
+          </button>
+          <PlanStatusBadge status={plan.status} />
         </div>
-      </Card.Header>
+      </div>
       {nodeSummary.titles.length > 0 && (
-        <Card.Content className="p-0 mt-1.5">
-          <div className="space-y-0.5">
-            {nodeSummary.titles.map((title, i) => (
-              <div key={i} className="text-[11px] text-foreground/60 truncate">• {title}</div>
-            ))}
-            {nodeSummary.total > nodeSummary.titles.length && (
-              <div className="text-[10px] text-muted-foreground/40">{t('planMore', { count: nodeSummary.total - nodeSummary.titles.length })}</div>
-            )}
-          </div>
-        </Card.Content>
-      )}
-      <Card.Footer className="p-0 mt-1.5">
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground/50">
-          <span>{plan.evaluationIds.length} Issue</span>
-          {showProgress && <span>{t('planProgress', { done: nodeSummary.completed, total: nodeSummary.total })}</span>}
-          <span>{relativeTime(plan.createdAt)}</span>
+        <div className="space-y-0.5">
+          {nodeSummary.titles.map((title, i) => (
+            <div key={i} className="text-[11px] text-foreground/60 truncate">• {title}</div>
+          ))}
+          {nodeSummary.total > nodeSummary.titles.length && (
+            <div className="text-[10px] text-muted-foreground/40">{t('planMore', { count: nodeSummary.total - nodeSummary.titles.length })}</div>
+          )}
         </div>
-      </Card.Footer>
-    </Card>
+      )}
+      <div className="flex items-center gap-2 text-[10px] text-muted-foreground/50">
+        <span>{plan.evaluationIds.length} Issue</span>
+        {showProgress && <span>{t('planProgress', { done: nodeSummary.completed, total: nodeSummary.total })}</span>}
+        <span>{relativeTime(plan.createdAt)}</span>
+      </div>
+    </div>
   )
 }
 
