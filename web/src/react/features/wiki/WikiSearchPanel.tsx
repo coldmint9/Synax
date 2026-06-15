@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { FileText } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiSearch, type SearchResult } from './hooks/useWikiSearch'
+import { splitHighlightedSnippet } from './wikiSearchText'
+import './wiki-theme.css'
 
 interface Props {
   query: string
@@ -22,17 +24,15 @@ export default function WikiSearchPanel({ query, activeIndex, onActiveIndexChang
 
   function renderSnippet(result: SearchResult) {
     if (!query.trim()) return result.snippet
-    const lower = result.snippet.toLowerCase()
-    const idx = lower.indexOf(query.trim().toLowerCase())
-    if (idx === -1) return result.snippet
-    const before = result.snippet.slice(0, idx)
-    const match = result.snippet.slice(idx, idx + query.trim().length)
-    const after = result.snippet.slice(idx + query.trim().length)
+
+    const parts = splitHighlightedSnippet(result.snippet, query)
+    if (!parts) return result.snippet
+
     return (
       <>
-        {before}
-        <mark className="bg-warning/30 text-foreground rounded-sm px-0.5">{match}</mark>
-        {after}
+        {parts.before}
+        <mark className="wiki-search-snippet-mark">{parts.match}</mark>
+        {parts.after}
       </>
     )
   }
@@ -91,7 +91,7 @@ export default function WikiSearchPanel({ query, activeIndex, onActiveIndexChang
                 onMouseEnter={() => onActiveIndexChange(idx)}
               >
                 <FileText size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
-                <span className="line-clamp-2 break-all">{renderSnippet(result)}</span>
+                <span className="wiki-search-snippet min-w-0 flex-1">{renderSnippet(result)}</span>
               </button>
             )
           })}

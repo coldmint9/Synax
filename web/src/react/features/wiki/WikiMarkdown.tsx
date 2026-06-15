@@ -67,6 +67,13 @@ const markdownComponents: Components = {
   pre({ children }) {
     return <>{children}</>
   },
+  table({ children, ...props }) {
+    return (
+      <div className="wiki-table-wrap">
+        <table {...props}>{children}</table>
+      </div>
+    )
+  },
   code({ className, children, ...props }) {
     const match = /language-(\w+)/.exec(className ?? '')
     const language = match?.[1]

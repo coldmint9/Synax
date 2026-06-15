@@ -441,7 +441,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           </div>
         </aside>
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden pt-14 px-5">
-          <div className="mx-auto w-full max-w-[68ch] space-y-4">
+          <div className="mx-auto w-full max-w-[86.4ch] space-y-4">
             <Skeleton className="h-6 w-48 rounded-lg" />
             <Skeleton className="h-4 w-full rounded-md" />
             <Skeleton className="h-4 w-3/4 rounded-md" />

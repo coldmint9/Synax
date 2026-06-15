@@ -5,7 +5,7 @@
   --wiki-mono: ui-monospace, 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
   --wiki-sans: inherit;
   --wiki-radius: var(--radius);
-  --wiki-measure: 72ch;
+  --wiki-measure: 86.4ch;
   --wiki-space-section: 2.25rem;
   --wiki-space-block: 1rem;
   --wiki-text: var(--foreground);
@@ -367,23 +367,26 @@ html.dark .wiki-markdown .shiki span {
 }
 
 /* ── Tables ── */
-.wiki-markdown :where(table) {
+.wiki-markdown :where(.wiki-table-wrap) {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9375rem;
   margin: 1.125rem 0;
   border: 1px solid var(--wiki-border-subtle);
   border-radius: var(--wiki-radius);
-  overflow: hidden;
-  display: block;
   overflow-x: auto;
 }
 
-.wiki-markdown :where(thead) {
+.wiki-markdown :where(.wiki-table-wrap) table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.9375rem;
+}
+
+.wiki-markdown :where(.wiki-table-wrap) thead {
   background: hsl(var(--wiki-panel-muted) / 0.5);
 }
 
-.wiki-markdown :where(th) {
+.wiki-markdown :where(.wiki-table-wrap) th {
   text-align: left;
   font-weight: 600;
   font-size: 0.6875rem;
@@ -394,19 +397,20 @@ html.dark .wiki-markdown .shiki span {
   border-bottom: 1px solid var(--wiki-border);
 }
 
-.wiki-markdown :where(td) {
+.wiki-markdown :where(.wiki-table-wrap) td {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--wiki-border-subtle);
   color: var(--wiki-text-body);
   vertical-align: top;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
-.wiki-markdown :where(tbody tr:last-child td) {
+.wiki-markdown :where(.wiki-table-wrap tbody tr:last-child td) {
   border-bottom: none;
 }
 
-.wiki-markdown :where(tbody tr:hover td) {
+.wiki-markdown :where(.wiki-table-wrap tbody tr:hover td) {
   background: var(--wiki-row-hover);
 }
 
@@ -525,7 +529,63 @@ html.dark .wiki-markdown .shiki span {
   padding: 2px 6px;
 }
 
-/* ── Search highlight ── */
+.wiki-references :where(.wiki-ref-link) {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: inherit;
+}
+
+.wiki-references :where(.wiki-ref-link:hover code) {
+  color: var(--wiki-accent);
+  background: var(--wiki-accent-bg);
+}
+
+.wiki-references :where(.wiki-ref-link:focus-visible) {
+  outline: 2px solid var(--wiki-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Search panel (candidate list) ── */
+:root {
+  --wiki-search-snippet-bg: hsl(var(--warning-hsl) / 0.32);
+  --wiki-search-snippet-fg: hsl(var(--foreground-hsl) / 0.96);
+  --wiki-search-snippet-border: hsl(var(--warning-hsl) / 0.28);
+}
+
+html.dark {
+  --wiki-search-snippet-bg: hsl(var(--warning-hsl) / 0.42);
+  --wiki-search-snippet-fg: hsl(var(--foreground-hsl));
+  --wiki-search-snippet-border: hsl(var(--warning-hsl) / 0.38);
+}
+
+.wiki-search-snippet {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  color: hsl(var(--foreground-hsl) / 0.82);
+}
+
+.wiki-search-snippet-mark {
+  background: var(--wiki-search-snippet-bg);
+  color: var(--wiki-search-snippet-fg);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 700;
+  font-style: normal;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  box-shadow: inset 0 0 0 1px var(--wiki-search-snippet-border);
+}
+
+/* ── Search highlight (document body) ── */
 .wiki-search-highlight {
   background: var(--wiki-search-highlight);
   color: inherit;
@@ -533,8 +593,32 @@ html.dark .wiki-markdown .shiki span {
   padding: 0 1px;
 }
 
+@keyframes wiki-search-highlight-flash {
+  0% {
+    background: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+  25% {
+    background: hsl(var(--warning-hsl) / 0.55);
+    box-shadow: 0 0 0 2px hsl(var(--warning-hsl) / 0.25);
+  }
+  100% {
+    background: var(--wiki-search-highlight);
+    box-shadow: none;
+  }
+}
+
+.wiki-search-highlight--flash {
+  animation: wiki-search-highlight-flash 1.2s ease-out 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .wiki-markdown :where(a) {
     transition: none;
+  }
+
+  .wiki-search-highlight--flash {
+    animation: none;
+    background: var(--wiki-search-highlight);
   }
 }

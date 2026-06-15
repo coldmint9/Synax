@@ -3,8 +3,21 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef } from 'react'
+import { useWikiStore } from '../../state/wikiStore'
+import { cjkSeparate } from './wikiSearchText'
 
 const MARK_CLASS = 'wiki-search-highlight'
+const FLASH_CLASS = 'wiki-search-highlight--flash'
+const FLASH_MS = 1200
+
+function buildMatchPattern(query: string): string[] {
+  const trimmed = query.trim()
+  if (!trimmed) return []
+  const patterns = [trimmed.toLowerCase()]
+  const fts = cjkSeparate(trimmed).toLowerCase()
+  if (fts !== patterns[0]) patterns.push(fts)
+  return patterns
+}
 
 export function useSearchHighlight(
   documentId: string | undefined,
@@ -12,6 +25,8 @@ export function useSearchHighlight(
   enabled: boolean,
 ) {
   const marksRef = useRef<HTMLSpanElement[]>([])
+  const flashNonce = useWikiStore(s => s.searchHighlightNonce)
+  const consumedFlashNonce = useRef(0)
 
   function removeHighlights() {
     for (const mark of marksRef.current) {
@@ -30,11 +45,13 @@ export function useSearchHighlight(
     const trimmed = query?.trim()
     if (!trimmed || !documentId || !enabled) return
 
+    const shouldFlash = flashNonce > consumedFlashNonce.current
+
     const timer = setTimeout(() => {
       const docEl = document.getElementById(`wiki-document-${documentId}`)
       if (!docEl) return
 
-      const q = trimmed.toLowerCase()
+      const patterns = buildMatchPattern(trimmed)
       const walker = document.createTreeWalker(docEl, NodeFilter.SHOW_TEXT)
       const matchingNodes: Text[] = []
       let node: Text | null
@@ -44,7 +61,8 @@ export function useSearchHighlight(
         const tag = parent.tagName.toLowerCase()
         if (tag === 'mark' || tag === 'script' || tag === 'style' || tag === 'textarea' || tag === 'input') continue
         if (parent.closest('pre, code, .wiki-references, [data-no-highlight]')) continue
-        if (node.textContent?.toLowerCase().includes(q)) {
+        const textLower = node.textContent?.toLowerCase() ?? ''
+        if (patterns.some(pattern => textLower.includes(pattern))) {
           matchingNodes.push(node)
         }
       }
@@ -58,20 +76,37 @@ export function useSearchHighlight(
         const lower = text.toLowerCase()
         const fragment = document.createDocumentFragment()
         let lastIdx = 0
-        let matchIdx = lower.indexOf(q, lastIdx)
 
-        while (matchIdx !== -1) {
-          if (matchIdx > lastIdx) {
-            fragment.appendChild(document.createTextNode(text.slice(lastIdx, matchIdx)))
+        const ranges: Array<{ start: number; end: number }> = []
+        for (const pattern of patterns) {
+          let matchIdx = lower.indexOf(pattern)
+          while (matchIdx !== -1) {
+            ranges.push({ start: matchIdx, end: matchIdx + pattern.length })
+            matchIdx = lower.indexOf(pattern, matchIdx + pattern.length)
+          }
+        }
+
+        ranges.sort((a, b) => a.start - b.start)
+        const merged: Array<{ start: number; end: number }> = []
+        for (const range of ranges) {
+          const prev = merged[merged.length - 1]
+          if (!prev || range.start >= prev.end) {
+            merged.push({ ...range })
+          } else if (range.end > prev.end) {
+            prev.end = range.end
+          }
+        }
+
+        for (const { start, end } of merged) {
+          if (start > lastIdx) {
+            fragment.appendChild(document.createTextNode(text.slice(lastIdx, start)))
           }
           const mark = document.createElement('mark')
           mark.className = MARK_CLASS
-          mark.textContent = text.slice(matchIdx, matchIdx + q.length)
+          mark.textContent = text.slice(start, end)
           fragment.appendChild(mark)
           newMarks.push(mark)
-
-          lastIdx = matchIdx + q.length
-          matchIdx = lower.indexOf(q, lastIdx)
+          lastIdx = end
         }
 
         if (lastIdx < text.length) {
@@ -85,6 +120,17 @@ export function useSearchHighlight(
 
       if (newMarks.length > 0) {
         newMarks[0].scrollIntoView({ block: 'center', behavior: 'smooth' })
+        if (shouldFlash) {
+          consumedFlashNonce.current = flashNonce
+          for (const mark of newMarks) {
+            mark.classList.add(FLASH_CLASS)
+          }
+          window.setTimeout(() => {
+            for (const mark of newMarks) {
+              mark.classList.remove(FLASH_CLASS)
+            }
+          }, FLASH_MS)
+        }
       }
     }, 80)
 
@@ -92,5 +138,5 @@ export function useSearchHighlight(
       clearTimeout(timer)
       removeHighlights()
     }
-  }, [documentId, query, enabled])
+  }, [documentId, query, enabled, flashNonce])
 }

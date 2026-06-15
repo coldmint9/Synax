@@ -4,7 +4,10 @@ import { Button, TextArea } from '@heroui/react'
 import { WikiMarkdown } from './WikiMarkdown'
 import { evaluationApi, type WikiEvaluation } from '../../../lib/api/evaluation'
 import type { WikiDocument, WikiDocType, WikiManualState, WikiReference, WikiStaleState } from '../../../lib/contracts/wiki'
+import { configApi } from '../../../lib/api/config'
+import { handleError } from '../../../lib/errors'
 import { useLocale } from '../../../hooks/useLocale'
+import { useShellStore } from '../../state/shellStore'
 import { useWikiStore } from '../../state/wikiStore'
 import { useSearchHighlight } from './useSearchHighlight'
 import './wiki-theme.css'
@@ -147,12 +150,38 @@ function referenceIdentity(ref: WikiReference): string {
   ].join(':')
 }
 
-function ReferencesSection({ references }: { references: WikiDocument['references'] }) {
+function resolveProjectFilePath(projectRoot: string, filePath: string): string {
+  if (!filePath) return ''
+  if (filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath)) return filePath
+  const root = projectRoot.replace(/[/\\]+$/, '')
+  const rel = filePath.replace(/^[/\\]+/, '')
+  return `${root}/${rel}`
+}
+
+function ReferencesSection({
+  references,
+  projectRoot,
+}: {
+  references: WikiDocument['references']
+  projectRoot?: string
+}) {
   if (references.length === 0) return null
 
   const uniqueRefs = [...new Map(
     references.map(ref => [referenceIdentity(ref), ref]),
   ).values()]
+
+  async function openReference(ref: WikiReference) {
+    if (!projectRoot || !ref.filePath) return
+    try {
+      await configApi.openFile(
+        resolveProjectFilePath(projectRoot, ref.filePath),
+        ref.startLine,
+      )
+    } catch (err) {
+      handleError(err)
+    }
+  }
 
   return (
     <section className="wiki-references">
@@ -166,11 +195,25 @@ function ReferencesSection({ references }: { references: WikiDocument['reference
               ? `:${ref.startLine}-${ref.endLine}`
               : `:${ref.startLine}`
             : ''
+          const canOpen = Boolean(projectRoot && ref.filePath)
           return (
             <li key={`${referenceIdentity(ref)}:${index}`}>
-              <code className="rounded bg-secondary/50 px-1.5 py-0.5 text-[11px] font-mono text-foreground/80">
-                {ref.filePath}{lineSuffix}
-              </code>
+              {canOpen ? (
+                <button
+                  type="button"
+                  className="wiki-ref-link"
+                  onClick={() => void openReference(ref)}
+                  title="Open in editor"
+                >
+                  <code>
+                    {ref.filePath}{lineSuffix}
+                  </code>
+                </button>
+              ) : (
+                <code>
+                  {ref.filePath}{lineSuffix}
+                </code>
+              )}
               {ref.symbol && (
                 <span className="ml-2 text-[10px] text-muted-foreground/60">{ref.symbol}</span>
               )}
@@ -190,6 +233,7 @@ export default function WikiDocumentView({
   projectId: string
 }) {
   const { t } = useLocale()
+  const projectRoot = useShellStore(s => s.projects.find(p => p.id === projectId)?.source?.localPath)
   const snapshot = useWikiStore(s => s.snapshot)
   const searchHighlightQuery = useWikiStore(s => s.searchHighlightQuery)
   const draftPreviewActive = useWikiStore(s => s.draftPreviewActive)
@@ -253,7 +297,7 @@ export default function WikiDocumentView({
         <WikiMarkdown content={contentMd} />
       </div>
 
-      <ReferencesSection references={document.references} />
+      <ReferencesSection references={document.references} projectRoot={projectRoot} />
       <DocumentIssues documentId={document.id} projectId={projectId} />
     </article>
   )
