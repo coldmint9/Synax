@@ -827,15 +827,16 @@
   .wiki-panel [data-slot="progress-bar-fill"],
   .wiki-panel .progress-bar__fill {
     border-radius: 999px !important;
+    background-color: var(--progress-bar-fill) !important;
   }
   .wiki-panel .progress-bar--accent {
     --progress-bar-fill: hsl(var(--primary));
   }
   .wiki-panel .progress-bar--success {
-    --progress-bar-fill: hsl(var(--success));
+    --progress-bar-fill: var(--success);
   }
   .wiki-panel .progress-bar--warning {
-    --progress-bar-fill: hsl(var(--warning));
+    --progress-bar-fill: var(--warning);
   }
   .wiki-panel .progress-bar--danger {
     --progress-bar-fill: hsl(var(--destructive));

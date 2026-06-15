@@ -61,6 +61,11 @@ describe('resolveGeneratingDocumentId', () => {
     expect(resolveGeneratingDocumentId(documents, { documentId: 'beta' }, false, 'writing')).toBe('beta')
   })
 
+  it('returns null when writing but progress has not arrived yet', () => {
+    const documents = [doc('alpha')]
+    expect(resolveGeneratingDocumentId(documents, null, true, 'writing')).toBeNull()
+  })
+
   it('returns null when not writing', () => {
     const documents = [doc('alpha')]
     expect(resolveGeneratingDocumentId(documents, { documentId: 'alpha' }, false, 'partial')).toBeNull()

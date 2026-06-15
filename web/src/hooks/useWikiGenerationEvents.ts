@@ -173,6 +173,17 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
                 documentId: meta.documentId as string | undefined,
               }}))
             }
+            if (meta?.paused === true || status === 'partial') {
+              clearTimer()
+              phaseRef.current = null
+              setState(s => ({
+                ...s,
+                active: false,
+                phase: null,
+                progress: null,
+                snapshotId: (meta?.snapshotId as string) ?? s.snapshotId,
+              }))
+            }
             if (meta?.activity && meta?.activityPhase) {
               const entry: OutlineActivity = {
                 activity: meta.activity as string,
@@ -228,6 +239,17 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
               phaseRef.current = 'failed'
               setState(s => ({ ...s, active: false, stale: false, phase: 'failed', error: 'Generation failed', snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))
               callbacksRef.current.onFailed?.('Generation failed')
+            } else if (snapStatus === 'partial') {
+              clearTimer()
+              phaseRef.current = null
+              setState(s => ({
+                ...s,
+                active: false,
+                stale: false,
+                phase: null,
+                progress: null,
+                snapshotId: data.tree.snapshot?.id ?? s.snapshotId,
+              }))
             } else if (snapStatus === 'refreshing' || snapStatus === 'writing' || snapStatus === 'outline_ready') {
               phaseRef.current = snapStatus
               setState(s => ({ ...s, phase: snapStatus, snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))

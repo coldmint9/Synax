@@ -17,7 +17,7 @@ export function resolveGeneratingDocumentId(
 ): string | null {
   const writing = isActivelyWriting || snapshotStatus === 'writing'
   if (!writing) return null
-  if (genProgress.documentId && documents.some(d => d.id === genProgress.documentId)) {
+  if (genProgress?.documentId && documents.some(d => d.id === genProgress.documentId)) {
     return genProgress.documentId
   }
   if (genProgress?.docTitle) {
