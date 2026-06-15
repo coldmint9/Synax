@@ -27,9 +27,7 @@ export function SessionTreeItem({ node, depth = 0, selectedId, onSelect }: Props
   return (
     <>
       <li
-        className={`group cursor-pointer px-2 py-1.5 transition ${
-          active ? 'bg-primary/10 text-foreground' : 'hover:bg-secondary/40'
-        }`}
+        className={`list-row ${active ? 'list-row--active' : ''}`}
         style={{ paddingLeft: `${8 + depth * 12}px` }}
         onClick={() => onSelect(session.id)}
       >

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../../../db/index.js';
 import { wikiWriteBatches, wikiWriteQueueItems } from '../../../db/schema.js';
@@ -61,6 +61,7 @@ vi.mock('../../agent-runtime/session-store.js', () => ({
 
 vi.mock('../../agent-runtime/agent-stream-proxy.js', () => ({
   interruptAgentSessionsAndWait: vi.fn(async () => {}),
+  canStartAgentSessionProcess: vi.fn(() => true),
 }));
 
 vi.mock('../../agent-runtime/session-runtime.js', () => ({
@@ -72,13 +73,24 @@ vi.mock('../../agent-runtime/session-runtime.js', () => ({
 import { wikiWriteQueue } from '../wiki-write-queue-service.js';
 import { processQueueDocument } from '../wiki-document-processor.js';
 import { isSaturated } from '../../llm-runtime/middleware/rate-limiter.js';
+import { canStartAgentSessionProcess } from '../../agent-runtime/agent-stream-proxy.js';
+import { AgentRuntimeError } from '../../agent-runtime/runtime-errors.js';
 import { wikiStore } from '../wiki-store.js';
 import { publishLatestWikiSnapshot, WikiSnapshotEventReason } from '../wiki-snapshot-events.js';
 
-describe('wikiWriteQueue', () => {
+describe.sequential('wikiWriteQueue', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     tryGetSessionMock.mockReturnValue(null);
+    vi.mocked(isSaturated).mockReturnValue(false);
+    vi.mocked(canStartAgentSessionProcess).mockReturnValue(true);
+    vi.mocked(processQueueDocument).mockImplementation(async (input: { onWriterSessionCreated?: (sessionId: string) => void | Promise<void> }) => {
+      await input.onWriterSessionCreated?.('ars_writer_session');
+    });
+    wikiWriteQueue.stop();
+  });
+
+  afterEach(() => {
     wikiWriteQueue.stop();
   });
 
@@ -170,8 +182,38 @@ describe('wikiWriteQueue', () => {
     });
 
     wikiWriteQueue.resume();
-    await vi.waitFor(() => {
-      expect(processQueueDocument).toHaveBeenCalled();
+    await vi.waitFor(async () => {
+      const db = getDb();
+      const items = await db
+        .select()
+        .from(wikiWriteQueueItems)
+        .where(eq(wikiWriteQueueItems.batchId, batch.id));
+      expect(items[0]?.sessionId).toBe('ars_writer_session');
+    }, { timeout: 5_000 });
+    wikiWriteQueue.stop();
+  });
+
+  it('re-queues items when agent session limit is reached during processing', async () => {
+    wikiWriteQueue.stop();
+    vi.mocked(processQueueDocument).mockRejectedValue(
+      new AgentRuntimeError('Too many active agent session processes (max 8).', 'SESSION_LIMIT', 429),
+    );
+
+    const batch = await wikiWriteQueue.enqueueBatch({
+      snapshotId: 'snap-session-limit',
+      projectId: 'proj-1',
+      workDir: '/tmp/repo',
+      items: [{ documentId: 'doc-1', documentTitle: 'Doc', sortOrder: 0 }],
+    });
+
+    wikiWriteQueue.resume();
+    await vi.waitFor(async () => {
+      const db = getDb();
+      const items = await db
+        .select()
+        .from(wikiWriteQueueItems)
+        .where(eq(wikiWriteQueueItems.batchId, batch.id));
+      expect(items[0]?.status).toBe('queued');
     }, { timeout: 5_000 });
 
     const db = getDb();
@@ -179,7 +221,34 @@ describe('wikiWriteQueue', () => {
       .select()
       .from(wikiWriteQueueItems)
       .where(eq(wikiWriteQueueItems.batchId, batch.id));
-    expect(items[0]?.sessionId).toBe('ars_writer_session');
+    expect(items[0]?.error).toBeNull();
+    wikiWriteQueue.stop();
+  });
+
+  it('does not dispatch when agent session capacity is exhausted', async () => {
+    wikiWriteQueue.stop();
+    vi.mocked(canStartAgentSessionProcess).mockReturnValue(false);
+    vi.mocked(processQueueDocument).mockClear();
+
+    await wikiWriteQueue.enqueueBatch({
+      snapshotId: 'snap-no-capacity',
+      projectId: 'proj-1',
+      workDir: '/tmp/repo',
+      items: [{ documentId: 'doc-1', documentTitle: 'Doc', sortOrder: 0 }],
+    });
+
+    wikiWriteQueue.resume();
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+
+    const db = getDb();
+    const items = await db
+      .select()
+      .from(wikiWriteQueueItems)
+      .where(eq(wikiWriteQueueItems.snapshotId, 'snap-no-capacity'));
+    expect(items[0]?.status).toBe('queued');
+    expect(vi.mocked(processQueueDocument).mock.calls.some(
+      ([input]) => input.batch.snapshotId === 'snap-no-capacity',
+    )).toBe(false);
     wikiWriteQueue.stop();
   });
 

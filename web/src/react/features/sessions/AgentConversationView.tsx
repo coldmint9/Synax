@@ -143,7 +143,13 @@ export function AgentConversationView({
       </div>
 
       {/* Progress bar when running */}
-      {isRunning && <ProgressBar isIndeterminate size="sm" color="accent" className="w-full" />}
+      {isRunning && (
+        <ProgressBar size="sm" color="accent" className="w-full" isIndeterminate>
+          <ProgressBar.Track>
+            <ProgressBar.Fill />
+          </ProgressBar.Track>
+        </ProgressBar>
+      )}
 
       {/* Compaction indicators */}
       {compactions && compactions.length > 0 && compactions.map((c, i) => (

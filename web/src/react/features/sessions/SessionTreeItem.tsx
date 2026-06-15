@@ -77,15 +77,18 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   const isParent = depth === 0
   const chip = STATUS_CHIP[session.status] ?? { color: 'default' as const, label: session.status }
 
+  const shellClass = isParent
+    ? `list-card group ${isSelected ? 'list-card--active' : ''}`
+    : `list-row group ${isSelected ? 'list-row--active' : ''}`
+
   return (
     <div
-      className={`group cursor-pointer border-b border-border/20 transition-colors duration-150
-        ${isSelected ? 'bg-accent/5 border-l-2 border-l-accent' : 'hover:bg-secondary/30 border-l-2 border-l-transparent'}`}
-      style={{ paddingLeft: `${12 + depth * 16}px`, paddingRight: 12 }}
+      className={shellClass}
+      style={{ marginLeft: `${depth * 12}px`, marginRight: 6 }}
       onClick={() => onSelect(session.id)}
     >
       {isParent ? (
-        <div className="py-2.5">
+        <>
           <div className="flex items-center gap-1.5">
             <button
               className="shrink-0 w-4 h-4 flex items-center justify-center text-[10px] text-muted-foreground hover:text-foreground"
@@ -103,7 +106,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             </Chip>
             <DeleteButton sessionId={session.id} onDelete={onDelete} />
           </div>
-          <div className="mt-0.5 flex items-center gap-2 pl-[22px] text-[10px] text-muted-foreground">
+          <div className="flex items-center gap-2 pl-[22px] text-[10px] text-muted-foreground">
             {hasKids && <span>{children.length} sub-agent{children.length > 1 ? 's' : ''}</span>}
             {hasKids && <span>·</span>}
             <span>{relTime(session.updatedAt)}</span>
@@ -111,20 +114,18 @@ export const SessionTreeItem = memo(function SessionTreeItem({
               <><span>·</span><span className="truncate max-w-[120px]">{session.resultSummary}</span></>
             )}
           </div>
-        </div>
+        </>
       ) : (
-        <div className="flex items-center gap-1.5 py-1.5">
+        <>
           <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
-          <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/80">
+          <span className="min-w-0 flex-1 truncate text-[11px]">
             {session.title ?? session.prompt.slice(0, 50)}
           </span>
           {session.profileId && PROFILES[session.profileId] && (
-            <Chip size="sm" variant="flat" className="h-3.5 text-[8px] text-muted-foreground shrink-0">
-              {PROFILES[session.profileId]}
-            </Chip>
+            <span className="list-badge">{PROFILES[session.profileId]}</span>
           )}
           <span className="shrink-0 text-[9px] text-muted-foreground/70">{relTime(session.updatedAt)}</span>
-        </div>
+        </>
       )}
     </div>
   )

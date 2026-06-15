@@ -1,5 +1,5 @@
 import { Loader2, Pause } from 'lucide-react'
-import { ProgressBar } from '@heroui/react'
+import WikiProgressBar from './WikiProgressBar'
 import { useLocale } from '../../../hooks/useLocale'
 
 export default function WikiWritingProgress({
@@ -14,7 +14,7 @@ export default function WikiWritingProgress({
   onPause: () => void
 }) {
   const { t } = useLocale()
-  const progress = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+  const hasKnownProgress = total > 0 && !pausing
 
   return (
     <div className="flex flex-col gap-2 border-b border-primary/10 bg-primary/5 px-3 py-2">
@@ -37,12 +37,11 @@ export default function WikiWritingProgress({
           {pausing ? t('wikiPausingGeneration') : t('wikiPauseGeneration')}
         </button>
       </div>
-      <ProgressBar
+      <WikiProgressBar
         aria-label={t('wikiWritingProgress', { done, total })}
-        value={progress}
-        size="sm"
+        isIndeterminate={!hasKnownProgress}
+        value={hasKnownProgress ? Math.min(100, Math.round((done / total) * 100)) : undefined}
         color="accent"
-        className="w-full"
       />
     </div>
   )

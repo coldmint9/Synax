@@ -818,12 +818,14 @@
   }
 
   /* Wiki sidebar progress — visible track even at 0% */
-  .wiki-panel .progress-bar .progress-bar__track {
+  .wiki-panel [data-slot="progress-bar-track"],
+  .wiki-panel .progress-bar__track {
     height: 4px !important;
     border-radius: 999px !important;
     background: hsl(var(--border-hsl) / 0.42) !important;
   }
-  .wiki-panel .progress-bar .progress-bar__fill {
+  .wiki-panel [data-slot="progress-bar-fill"],
+  .wiki-panel .progress-bar__fill {
     border-radius: 999px !important;
   }
   .wiki-panel .progress-bar--accent {
@@ -982,6 +984,168 @@
   }
   .settings-input--invalid:focus {
     box-shadow: 0 0 0 2px hsl(var(--destructive) / 0.08);
+  }
+
+  /* ── Shared list surfaces (wiki-aligned pill selection) ── */
+  .list-surface {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 6px;
+  }
+
+  .list-section-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: hsl(var(--muted-foreground) / 0.8);
+  }
+
+  .list-row {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.35;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  }
+  button.list-row { appearance: none; }
+  .list-row:hover:not(.list-row--active):not(.list-row--section):not(:disabled) {
+    background: hsl(var(--wiki-panel-muted) / 0.45);
+    color: var(--foreground);
+  }
+  .list-row--active {
+    background: hsl(var(--wiki-panel) / 0.96);
+    border-color: hsl(var(--border-hsl) / 0.55);
+    color: var(--foreground);
+    font-weight: 500;
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.55) inset,
+      0 2px 8px hsl(var(--wiki-shadow) / 0.06);
+  }
+  .dark .list-row--active {
+    background: hsl(var(--wiki-panel) / 0.72);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.06) inset,
+      0 2px 10px hsl(0 0% 0% / 0.22);
+  }
+  .list-row--section {
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: hsl(var(--muted-foreground) / 0.75);
+    cursor: pointer;
+  }
+  .list-row--section:hover {
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+  }
+  .list-row--empty {
+    font-style: italic;
+    color: hsl(var(--muted-foreground) / 0.55);
+  }
+  .list-row--empty.list-row--active {
+    font-style: normal;
+    color: var(--foreground);
+  }
+
+  .list-section {
+    margin-top: 8px;
+  }
+  .list-section:first-child {
+    margin-top: 0;
+  }
+
+  .list-nested {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .list-meta {
+    margin-bottom: 8px;
+    border-radius: 10px;
+    border: 1px solid hsl(var(--border-hsl) / 0.45);
+    background: hsl(var(--wiki-panel) / 0.55);
+    padding: 8px 12px;
+  }
+
+  .list-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid hsl(var(--border-hsl) / 0.45);
+    background: hsl(var(--wiki-panel) / 0.4);
+    cursor: pointer;
+    text-align: left;
+    transition: background 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  }
+  .list-card:hover:not(.list-card--active) {
+    background: hsl(var(--wiki-panel-muted) / 0.5);
+  }
+  .list-card--active {
+    background: hsl(var(--wiki-panel) / 0.96);
+    border-color: hsl(var(--border-hsl) / 0.55);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.55) inset,
+      0 2px 8px hsl(var(--wiki-shadow) / 0.06);
+  }
+  .dark .list-card--active {
+    background: hsl(var(--wiki-panel) / 0.72);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.06) inset,
+      0 2px 10px hsl(0 0% 0% / 0.22);
+  }
+  .list-card--muted { opacity: 0.55; }
+  .list-card--muted:hover { opacity: 0.72; }
+
+  .list-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0 6px;
+    height: 16px;
+    font-size: 9px;
+    font-weight: 500;
+    line-height: 1;
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+
+  .sp-list { display: flex; flex-direction: column; gap: 2px; padding: 4px; }
+  .sp-list-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    font-size: 13px;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  }
+  .sp-list-item:hover {
+    background: hsl(var(--wiki-panel-muted) / 0.45);
+    color: var(--foreground);
   }
 
   /* ── Search keyword highlight inside wiki blocks ──────────────────────── */

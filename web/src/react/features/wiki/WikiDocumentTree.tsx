@@ -5,9 +5,8 @@ import { useWikiStore } from '../../state/wikiStore'
 import type { WikiDocument } from '../../../lib/contracts/wiki'
 import { buildWikiDocumentTree, type WikiDocTreeNode } from './buildWikiDocumentTree'
 
-const INDENT_BASE = 10
-const INDENT_STEP = 14
-/** folder icon (12px) + gap-1.5 (6px) — aligns doc text with section titles */
+const INDENT_BASE = 8
+const INDENT_STEP = 12
 const FOLDER_ICON_OFFSET = 18
 
 function indentPx(depth: number): number {
@@ -35,37 +34,21 @@ function DocItem({
       type="button"
       onClick={onSelect}
       style={{ paddingLeft: `${indentPx(depth) + FOLDER_ICON_OFFSET}px` }}
-      className={`group flex w-full items-center gap-1 border-l-2 py-1.5 pr-2.5 text-left text-[13px] leading-snug transition-colors duration-150 ${
-        isSelected
-          ? 'border-l-primary bg-primary/8 text-primary'
-          : 'border-l-transparent hover:bg-secondary/40'
-      } ${
-        isEmpty
-          ? 'text-muted-foreground/45 italic'
-          : isSelected
-            ? ''
-            : 'text-muted-foreground hover:text-foreground'
-      }`}
+      className={`list-row ${isSelected ? 'list-row--active' : ''} ${isEmpty && !isSelected ? 'list-row--empty' : ''}`}
     >
       <span className="min-w-0 flex-1 break-words">{doc.title}</span>
       <span className="flex shrink-0 items-center gap-1">
         {draftInfo && draftInfo.count > 0 && (
           <span
-            className={`rounded-full px-1.5 py-px text-[9px] font-medium text-white ${
-              draftInfo.status === 'generating'
-                ? 'animate-pulse bg-primary'
-                : draftInfo.status === 'partially_applied'
-                  ? 'bg-amber-400'
-                  : 'bg-primary'
+            className={`list-badge ${draftInfo.status === 'generating' ? 'animate-pulse' : ''} ${
+              draftInfo.status === 'partially_applied' ? '!bg-amber-400/20 !text-amber-600' : ''
             }`}
           >
             {draftInfo.status === 'generating' ? '·' : draftInfo.count}
           </span>
         )}
         {(issueCount ?? 0) > 0 && (
-          <span className="rounded-full bg-amber-400/80 px-1.5 py-px text-[9px] font-medium text-white">
-            {issueCount}
-          </span>
+          <span className="list-badge !bg-amber-400/20 !text-amber-600">{issueCount}</span>
         )}
       </span>
     </button>
@@ -86,9 +69,12 @@ function SectionFolder({
   hasChildren: boolean
 }) {
   const FolderIcon = expanded ? FolderOpen : Folder
-
-  const rowClass =
-    'flex w-full items-center gap-1.5 py-1.5 pr-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70'
+  const content = (
+    <>
+      <FolderIcon size={12} className="shrink-0 text-muted-foreground/50" />
+      <span className="min-w-0 flex-1 truncate text-left">{title}</span>
+    </>
+  )
 
   if (hasChildren) {
     return (
@@ -100,18 +86,16 @@ function SectionFolder({
           onToggle()
         }}
         style={{ paddingLeft: `${indentPx(depth)}px` }}
-        className={`${rowClass} transition-colors duration-150 hover:text-muted-foreground`}
+        className="list-row list-row--section"
       >
-        <FolderIcon size={12} className="shrink-0 text-muted-foreground/50 transition-colors duration-150" />
-        <span className="min-w-0 flex-1 truncate text-left">{title}</span>
+        {content}
       </button>
     )
   }
 
   return (
-    <div style={{ paddingLeft: `${indentPx(depth)}px` }} className={rowClass}>
-      <Folder size={12} className="shrink-0 text-muted-foreground/50" />
-      <span className="min-w-0 flex-1 truncate text-left">{title}</span>
+    <div style={{ paddingLeft: `${indentPx(depth)}px` }} className="list-row list-row--section cursor-default">
+      {content}
     </div>
   )
 }
@@ -143,7 +127,7 @@ function TreeNode({
   const isSection = node.document.isSection
 
   return (
-    <div className={isSection && depth === 0 ? 'mt-2 first:mt-0' : undefined}>
+    <div className={isSection && depth === 0 ? 'list-section' : undefined}>
       {isSection ? (
         <SectionFolder
           title={node.document.title}
@@ -163,7 +147,7 @@ function TreeNode({
         />
       )}
       {hasChildren && expanded && (
-        <div className="space-y-px">
+        <div className="list-nested">
           {node.children.map(child => (
             <TreeNode
               key={child.document.id}
@@ -235,9 +219,9 @@ export default function WikiDocumentTree() {
   }, [draftsById])
 
   return (
-    <div className="flex h-full flex-col gap-1 px-2 py-3">
+    <div className="list-surface h-full">
       {snapshot && (
-        <div className="mb-2 rounded-lg bg-secondary/30 px-3 py-2">
+        <div className="list-meta">
           <div className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
             <BookOpen size={10} className="shrink-0" />
             <span className="truncate">{snapshot.branch}</span>
@@ -247,20 +231,16 @@ export default function WikiDocumentTree() {
           <div className="mt-1 flex items-center gap-2 text-[10px]">
             <span className="text-muted-foreground">rev {snapshot.revision}</span>
             {draftsSummary.ready > 0 && (
-              <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-primary">
-                {draftsSummary.ready} ready
-              </span>
+              <span className="list-badge">{draftsSummary.ready} ready</span>
             )}
             {draftsSummary.generating > 0 && (
-              <span className="animate-pulse rounded-full bg-primary/15 px-1.5 py-0.5 text-primary">
-                {draftsSummary.generating} generating
-              </span>
+              <span className="list-badge animate-pulse">{draftsSummary.generating} generating</span>
             )}
           </div>
         </div>
       )}
 
-      <div className="space-y-px">
+      <div className="list-nested flex-1">
         {tree.map(node => (
           <TreeNode
             key={node.document.id}

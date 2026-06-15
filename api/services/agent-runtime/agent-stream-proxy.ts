@@ -8,6 +8,20 @@ function useInProcessAgentSessions(): boolean {
   return process.env.SYNAX_AGENT_SESSION_IN_PROCESS === '1';
 }
 
+export function usesForkedAgentSessions(): boolean {
+  return !useInProcessAgentSessions();
+}
+
+export function canStartAgentSessionProcess(sessionId?: string): boolean {
+  if (!usesForkedAgentSessions()) return true;
+  return sessionProcessManager.canSpawnChild(sessionId);
+}
+
+export function assertCanStartAgentSessionProcess(sessionId?: string): void {
+  if (!usesForkedAgentSessions()) return;
+  sessionProcessManager.assertCanSpawnChild(sessionId);
+}
+
 async function* inProcessStream(
   sessionId: string,
   mode: AgentSessionStreamMode,

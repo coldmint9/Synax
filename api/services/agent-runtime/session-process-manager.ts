@@ -85,6 +85,23 @@ class SessionProcessManager {
     return this.activeMainStreams.has(sessionId);
   }
 
+  canSpawnChild(sessionId?: string): boolean {
+    if (sessionId) {
+      const existing = this.children.get(sessionId);
+      if (existing?.child.connected) return true;
+    }
+    return this.countChildren() < MAX_AGENT_SESSION_PROCESSES;
+  }
+
+  assertCanSpawnChild(sessionId?: string): void {
+    if (this.canSpawnChild(sessionId)) return;
+    throw new AgentRuntimeError(
+      `Too many active agent session processes (max ${MAX_AGENT_SESSION_PROCESSES}).`,
+      'SESSION_LIMIT',
+      429,
+    );
+  }
+
   async *streamSession(
     sessionId: string,
     mode: AgentSessionStreamMode,
@@ -98,6 +115,8 @@ class SessionProcessManager {
         409,
       );
     }
+
+    this.assertCanSpawnChild(sessionId);
 
     this.activeMainStreams.add(sessionId);
     const streamId = randomUUID();
@@ -213,13 +232,7 @@ class SessionProcessManager {
       this.children.delete(sessionId);
     }
 
-    if (this.countChildren() >= MAX_AGENT_SESSION_PROCESSES) {
-      throw new AgentRuntimeError(
-        `Too many active agent session processes (max ${MAX_AGENT_SESSION_PROCESSES}).`,
-        'SESSION_LIMIT',
-        429,
-      );
-    }
+    this.assertCanSpawnChild(sessionId);
 
     const session = agentRuntimeStore.getSession(sessionId);
     const init: AgentSessionChildInit = {

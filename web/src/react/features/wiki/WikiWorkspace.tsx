@@ -1,6 +1,7 @@
 import { AlertCircle, BookOpen, ListChecks, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, ProgressBar, Skeleton } from '@heroui/react'
+import { Button, Skeleton } from '@heroui/react'
+import WikiProgressBar from './WikiProgressBar'
 import { useScrollRestore } from '../../../hooks/useScrollRestore'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiGenerationEvents, type WikiGenPhase } from '../../../hooks/useWikiGenerationEvents'
@@ -500,13 +501,16 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                     : t('wikiGenerationIncomplete', { done: writtenDocCount, total: writableDocTotal })}
                 </span>
               </div>
-              {writableDocTotal > 0 && (
-                <ProgressBar
+              {(writableDocTotal > 0 || continuing || gen.active) && (
+                <WikiProgressBar
                   aria-label={t('wikiWritingProgress', { done: writtenDocCount, total: writableDocTotal })}
-                  value={Math.min(100, Math.round((writtenDocCount / writableDocTotal) * 100))}
-                  size="sm"
+                  isIndeterminate={continuing || gen.active || writableDocTotal === 0}
+                  value={
+                    continuing || gen.active || writableDocTotal === 0
+                      ? undefined
+                      : Math.min(100, Math.round((writtenDocCount / writableDocTotal) * 100))
+                  }
                   color={snapshot.status === 'partial' ? 'warning' : 'danger'}
-                  className="w-full"
                 />
               )}
               <div className="flex items-center gap-1.5">

@@ -1,5 +1,5 @@
 import { CheckCircle2, Loader2, Sparkles } from 'lucide-react'
-import { ProgressBar } from '@heroui/react'
+import WikiProgressBar from './WikiProgressBar'
 import { useLocale } from '../../../hooks/useLocale'
 
 export default function WikiOutlineReady({
@@ -38,12 +38,10 @@ export default function WikiOutlineReady({
         )}
       </div>
       {approving && (
-        <ProgressBar
+        <WikiProgressBar
           aria-label={tip}
           isIndeterminate
-          size="sm"
           color="success"
-          className="w-full"
         />
       )}
     </div>
