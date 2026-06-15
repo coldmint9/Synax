@@ -34,8 +34,10 @@ export default function WikiProgressBar({
       )}
       <ProgressBar
         aria-label={ariaLabel}
-        value={fillValue}
+        value={isIndeterminate ? undefined : (fillValue ?? 0)}
         isIndeterminate={isIndeterminate}
+        minValue={0}
+        maxValue={100}
         size="sm"
         color={color}
         className="w-full"

@@ -228,6 +228,14 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
   }, [projectId, locale, t, clearForRegeneration, gen, handleGenerationConflict])
 
+  const refreshing = refreshTask.phase !== 'idle' && refreshTask.phase !== 'completed' && refreshTask.phase !== 'failed'
+
+  const [continuing, setContinuing] = useState(false)
+  const [reinitializing, setReinitializing] = useState(false)
+  const [pausing, setPausing] = useState(false)
+  const [approvingOutline, setApprovingOutline] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(260)
+
   // Auto-activate generation tracking when a refreshing snapshot is detected
   // (handles page refresh during generation or loading an in-progress snapshot)
   useEffect(() => {
@@ -237,14 +245,15 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     if (snapshot?.status === 'writing' && !gen.active) {
       gen.start(snapshot.id, 'writing')
     }
-  }, [snapshot?.status, snapshot?.id, gen.active, gen.start])
-
-  const refreshing = refreshTask.phase !== 'idle' && refreshTask.phase !== 'completed' && refreshTask.phase !== 'failed'
-
-  const [continuing, setContinuing] = useState(false)
-  const [pausing, setPausing] = useState(false)
-  const [approvingOutline, setApprovingOutline] = useState(false)
-  const [sidebarWidth, setSidebarWidth] = useState(260)
+    if (
+      (snapshot?.status === 'partial' || snapshot?.status === 'failed')
+      && gen.active
+      && !continuing
+      && !reinitializing
+    ) {
+      gen.reset()
+    }
+  }, [snapshot?.status, snapshot?.id, gen.active, gen.start, gen.reset, continuing, reinitializing])
 
   const selectedDoc = documents.find(d => d.id === selectedDocumentId)
   const scrollRef = useScrollRestore(selectedDocumentId)
@@ -344,6 +353,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
     setShowReinitConfirm(false)
     clearForRegeneration()
+    setReinitializing(true)
     gen.start()
     try {
       await wikiApi.reinitialize(projectId, { workDir, locale })
@@ -355,6 +365,8 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       gen.reset()
       handleError(err)
       await loadProjectSnapshot(projectId)
+    } finally {
+      setReinitializing(false)
     }
   }
 
@@ -540,7 +552,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   onClick={handleContinue}
-                  disabled={continuing || gen.active}
+                  disabled={continuing || reinitializing || isActivelyWriting}
                   className="wh-pill-btn wh-pill-btn--primary wh-pill-btn--sm"
                 >
                   {continuing ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
@@ -549,10 +561,10 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
                 <button
                   type="button"
                   onClick={() => setShowReinitConfirm(true)}
-                  disabled={continuing || gen.active}
+                  disabled={continuing || reinitializing || isActivelyWriting}
                   className="wh-pill-btn wh-pill-btn--danger-soft wh-pill-btn--sm"
                 >
-                  {gen.active ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
+                  {reinitializing ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
                   {t('wikiRegenerate')}
                 </button>
               </div>

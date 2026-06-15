@@ -1,14 +1,11 @@
 import { AlertTriangle, FileText, Loader2, Lock, MessageCircle, Pencil, X } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
-import { Streamdown } from 'streamdown'
-import type { BundledTheme } from 'shiki'
 import { Button, TextArea } from '@heroui/react'
-import { streamdownPlugins } from '../../../lib/streamdown-plugins'
+import { WikiMarkdown } from './WikiMarkdown'
 import { evaluationApi, type WikiEvaluation } from '../../../lib/api/evaluation'
-import type { WikiDocument, WikiDocType, WikiManualState, WikiStaleState } from '../../../lib/contracts/wiki'
+import type { WikiDocument, WikiDocType, WikiManualState, WikiReference, WikiStaleState } from '../../../lib/contracts/wiki'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
-import { useShellStore } from '../../state/shellStore'
 import { useSearchHighlight } from './useSearchHighlight'
 import './wiki-theme.css'
 
@@ -141,10 +138,21 @@ const DOC_TYPE_LABEL: Record<WikiDocType, string> = {
   data: 'data',
 }
 
+function referenceIdentity(ref: WikiReference): string {
+  return [
+    ref.filePath || 'unknown',
+    ref.startLine ?? '',
+    ref.endLine ?? '',
+    ref.symbol ?? '',
+  ].join(':')
+}
+
 function ReferencesSection({ references }: { references: WikiDocument['references'] }) {
   if (references.length === 0) return null
 
-  const uniquePaths = [...new Map(references.map(r => [r.filePath, r])).values()]
+  const uniqueRefs = [...new Map(
+    references.map(ref => [referenceIdentity(ref), ref]),
+  ).values()]
 
   return (
     <section className="wiki-references">
@@ -152,14 +160,14 @@ function ReferencesSection({ references }: { references: WikiDocument['reference
         References
       </h3>
       <ul className="space-y-1.5">
-        {uniquePaths.map(ref => {
+        {uniqueRefs.map((ref, index) => {
           const lineSuffix = ref.startLine
             ? ref.endLine && ref.endLine !== ref.startLine
               ? `:${ref.startLine}-${ref.endLine}`
               : `:${ref.startLine}`
             : ''
           return (
-            <li key={ref.filePath}>
+            <li key={`${referenceIdentity(ref)}:${index}`}>
               <code className="rounded bg-secondary/50 px-1.5 py-0.5 text-[11px] font-mono text-foreground/80">
                 {ref.filePath}{lineSuffix}
               </code>
@@ -197,9 +205,6 @@ export default function WikiDocumentView({
 
   const contentMd = previewChange?.newContentMd ?? document.contentMd
   const issueCount = evaluations.filter(e => e.documentId === document.id).length
-  const colorTheme = useShellStore(s => s.preferences.theme)
-  const shikiTheme: [BundledTheme, BundledTheme] = ['github-light', 'github-dark']
-
   useSearchHighlight(document.id, searchHighlightQuery, Boolean(contentMd))
 
   if (!contentMd) {
@@ -245,14 +250,7 @@ export default function WikiDocumentView({
       </header>
 
       <div className="wiki-markdown">
-        <Streamdown
-          mode="static"
-          plugins={streamdownPlugins}
-          shikiTheme={shikiTheme}
-          mermaid={{ config: { theme: colorTheme === 'dark' ? 'dark' : 'neutral' } }}
-        >
-          {contentMd}
-        </Streamdown>
+        <WikiMarkdown content={contentMd} />
       </div>
 
       <ReferencesSection references={document.references} />
