@@ -31,6 +31,7 @@ export interface WikiState {
   documents: WikiDocument[];
   selectedDocumentId: string | null;
   searchHighlightQuery: string | null;
+  searchHighlightNonce: number;
   evaluations: WikiEvaluation[];
   draftsSummary: { ready: number; generating: number };
   loading: { snapshot: boolean; plans: boolean; drafts: boolean };
@@ -115,6 +116,7 @@ const initialState = {
   documents: [],
   selectedDocumentId: null,
   searchHighlightQuery: null,
+  searchHighlightNonce: 0,
   evaluations: [] as WikiEvaluation[],
   draftsSummary: { ready: 0, generating: 0 },
   loading: { snapshot: false, plans: false, drafts: false },
@@ -238,7 +240,10 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     }
   },
 
-  setSearchHighlightQuery: (query) => set({ searchHighlightQuery: query }),
+  setSearchHighlightQuery: (query) => set((state) => ({
+    searchHighlightQuery: query,
+    searchHighlightNonce: query ? state.searchHighlightNonce + 1 : state.searchHighlightNonce,
+  })),
 
   loadEvaluations: async (projectId: string) => {
     try {
@@ -258,6 +263,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     documents: [],
     selectedDocumentId: null,
     searchHighlightQuery: null,
+    searchHighlightNonce: 0,
     evaluations: [],
     draftsSummary: { ready: 0, generating: 0 },
     draftsById: {},

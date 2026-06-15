@@ -99,4 +99,11 @@ export const configApi = {
   async getEffective(projectId: string): Promise<EffectiveConfigResponse> {
     return request<EffectiveConfigResponse>(`${BASE}/projects/${projectId}/config/effective`)
   },
+
+  async openFile(filePath: string, line?: number): Promise<void> {
+    await request<{ ok: true }>(`${BASE}/open-file`, {
+      method: 'POST',
+      body: JSON.stringify({ filePath, ...(line != null ? { line } : {}) }),
+    })
+  },
 }

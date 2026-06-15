@@ -67,10 +67,6 @@ function WikiToolbar() {
     setViewMode('document')
     selectDocument(result.documentId)
     setSearchHighlightQuery(query.trim())
-    setTimeout(() => {
-      const el = document.getElementById(`wiki-document-${result.documentId}`)
-      el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-    }, 50)
     closeSearch()
   }
 
