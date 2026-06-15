@@ -465,7 +465,6 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           documents,
           gen.progress,
           gen.active && gen.phase === 'writing',
-          snapshot?.status,
         )}
         sidebarWidth={sidebarWidth}
         onMouseDown={handleMouseDown}

@@ -173,7 +173,7 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
                 documentId: meta.documentId as string | undefined,
               }}))
             }
-            if (meta?.paused === true || status === 'partial') {
+            if (meta?.paused === true || meta?.snapshotStatus === 'partial') {
               clearTimer()
               phaseRef.current = null
               setState(s => ({

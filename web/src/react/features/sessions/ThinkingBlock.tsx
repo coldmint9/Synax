@@ -26,7 +26,7 @@ export function ThinkingBlock({ content, isStreaming }: Props) {
           <Brain size={12} className="shrink-0 text-muted-foreground/60" />
           <span className="text-[11px] font-medium text-muted-foreground/70">{label}</span>
           {isStreaming && (
-            <Chip size="sm" color="accent" variant="solid" className="h-4 text-[9px]">
+            <Chip size="sm" color="accent" variant="secondary" className="h-4 text-[9px]">
               live
             </Chip>
           )}
