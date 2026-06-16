@@ -121,6 +121,10 @@ export class ProfileService {
     return profile;
   }
 
+  maybeGet(profileId: string): AgentProfile | undefined {
+    return this.profiles.get(profileId);
+  }
+
   tryGet(profileId: string): AgentProfile {
     const profile = this.profiles.get(profileId);
     if (!profile) return this.profiles.get('executor')!;

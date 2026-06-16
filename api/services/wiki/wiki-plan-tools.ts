@@ -5,7 +5,7 @@ import type { WikiDocument } from './contracts.js'
 export interface PlanNodeDraft {
   title: string
   description: string
-  evaluationIds: string[]
+  goalIds: string[]
   dependsOn: string[]
   expectedFiles: string[]
 }
@@ -55,7 +55,7 @@ export function createPlanTools(context: PlanContext) {
     inputSchema: z.object({
       title: z.string().describe('Short action title'),
       description: z.string().describe('What needs to be done and why'),
-      evaluationIds: z.array(z.string()).describe('Related issue IDs'),
+      goalIds: z.array(z.string()).describe('Related goal IDs'),
       dependsOn: z.array(z.string()).describe('Titles of previously submitted nodes this depends on'),
       expectedFiles: z.array(z.string()).describe('Files expected to be modified'),
     }),

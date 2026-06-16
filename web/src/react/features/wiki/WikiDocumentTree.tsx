@@ -18,7 +18,7 @@ function DocItem({
   isSelected,
   isGenerating,
   onSelect,
-  issueCount,
+  goalCount,
   draftInfo,
   depth,
 }: {
@@ -26,7 +26,7 @@ function DocItem({
   isSelected: boolean
   isGenerating: boolean
   onSelect: () => void
-  issueCount?: number
+  goalCount?: number
   draftInfo?: { count: number; status: 'ready' | 'generating' | 'partially_applied' }
   depth: number
 }) {
@@ -55,8 +55,8 @@ function DocItem({
             {draftInfo.status === 'generating' ? '·' : draftInfo.count}
           </span>
         )}
-        {(issueCount ?? 0) > 0 && (
-          <span className="list-badge !bg-amber-400/20 !text-amber-600">{issueCount}</span>
+        {(goalCount ?? 0) > 0 && (
+          <span className="list-badge !bg-amber-400/20 !text-amber-600">{goalCount}</span>
         )}
       </span>
     </button>
@@ -113,7 +113,7 @@ function TreeNode({
   depth,
   selectedDocumentId,
   onSelect,
-  issuesByDocId,
+  goalsByDocId,
   draftsByDocId,
   generatingDocumentId,
   defaultExpanded,
@@ -124,7 +124,7 @@ function TreeNode({
   depth: number
   selectedDocumentId: string | null
   onSelect: (id: string) => void
-  issuesByDocId: Map<string, number>
+  goalsByDocId: Map<string, number>
   draftsByDocId: Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>
   generatingDocumentId: string | null
   defaultExpanded: boolean
@@ -153,7 +153,7 @@ function TreeNode({
           isSelected={selectedDocumentId === node.document.id}
           isGenerating={generatingDocumentId === node.document.id}
           onSelect={() => onSelect(node.document.id)}
-          issueCount={issuesByDocId.get(node.document.id)}
+          goalCount={goalsByDocId.get(node.document.id)}
           draftInfo={draftsByDocId.get(node.document.id)}
         />
       )}
@@ -166,7 +166,7 @@ function TreeNode({
               depth={depth + 1}
               selectedDocumentId={selectedDocumentId}
               onSelect={onSelect}
-              issuesByDocId={issuesByDocId}
+              goalsByDocId={goalsByDocId}
               draftsByDocId={draftsByDocId}
               generatingDocumentId={generatingDocumentId}
               defaultExpanded={depth + 1 <= 1}
@@ -192,7 +192,7 @@ export default function WikiDocumentTree({
   const snapshot = useWikiStore(s => s.snapshot)
   const draftsSummary = useWikiStore(s => s.draftsSummary)
   const draftsById = useWikiStore(s => s.draftsById)
-  const evaluations = useWikiStore(s => s.evaluations)
+  const goals = useWikiStore(s => s.goals)
 
   const tree = useMemo(() => buildWikiDocumentTree(documents), [documents])
 
@@ -210,13 +210,14 @@ export default function WikiDocumentTree({
     }))
   }, [])
 
-  const issuesByDocId = useMemo(() => {
+  const goalsByDocId = useMemo(() => {
     const map = new Map<string, number>()
-    for (const ev of evaluations) {
-      map.set(ev.documentId, (map.get(ev.documentId) ?? 0) + 1)
+    for (const goal of goals) {
+      if (!goal.documentId) continue
+      map.set(goal.documentId, (map.get(goal.documentId) ?? 0) + 1)
     }
     return map
-  }, [evaluations])
+  }, [goals])
 
   const draftsByDocId = useMemo(() => {
     const map = new Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>()
@@ -264,7 +265,7 @@ export default function WikiDocumentTree({
             depth={0}
             selectedDocumentId={selectedDocumentId}
             onSelect={selectDocument}
-            issuesByDocId={issuesByDocId}
+            goalsByDocId={goalsByDocId}
             draftsByDocId={draftsByDocId}
             generatingDocumentId={generatingDocumentId}
             defaultExpanded

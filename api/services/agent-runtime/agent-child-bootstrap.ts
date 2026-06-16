@@ -2,6 +2,7 @@ import { agentRuntimeStore } from './session-store.js';
 import { ensureWikiProfileRegistered } from '../wiki/wiki-loop-profile.js';
 import { ensurePlanProfileRegistered } from '../wiki/wiki-plan-profile.js';
 import { ensureRefreshProfileRegistered } from '../wiki/wiki-refresh-profile.js';
+import { ensurePlanExecutorProfileRegistered } from '../wiki/wiki-plan-executor-profile.js';
 
 const WIKI_PROFILE_PREFIX = 'wiki-';
 
@@ -16,6 +17,9 @@ export function bootstrapAgentChildForSession(sessionId: string): void {
   }
   if (profileId === 'plan-generator') {
     ensurePlanProfileRegistered();
+  }
+  if (profileId === 'plan-executor') {
+    ensurePlanExecutorProfileRegistered();
   }
   if (profileId === 'wiki-refresh') {
     ensureRefreshProfileRegistered();

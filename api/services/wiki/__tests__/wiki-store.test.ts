@@ -29,7 +29,7 @@ vi.mock('../../../db/schema.js', () => ({
   wikiPlans: { projectId: 'project_id', status: 'status' },
   wikiPlanNodes: {},
   wikiPlanNodeArtifacts: {},
-  wikiEvaluations: { projectId: 'project_id' },
+  wikiGoals: { projectId: 'project_id' },
   wikiWriteBatches: { snapshotId: 'snapshot_id', status: 'status' },
 }));
 vi.mock('nanoid', () => ({ nanoid: () => 'test-id' }));

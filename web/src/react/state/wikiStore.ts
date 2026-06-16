@@ -4,18 +4,21 @@
 
 import { create } from 'zustand';
 import { wikiApi } from '../../lib/api/wiki';
-import { evaluationApi, type WikiEvaluation, type WikiPlan, type WikiPlanNode, type WikiPlanWithSummary, type PlanNodeDraft, type PlanStreamEvent } from '../../lib/api/evaluation';
+import { goalApi, type WikiGoal, type WikiPlan, type WikiPlanNode, type WikiPlanWithSummary, type PlanNodeDraft, type PlanStreamEvent, type PlanExecuteEvent, type WikiPlanNodeArtifact, type GoalAnchor } from '../../lib/api/goal';
 import { TaskNotificationEventType } from '../../lib/api/eventTypes';
 import { useNotificationStore } from './notificationStore';
+import { useShellStore } from './shellStore';
 import type {
   WikiSnapshot,
   WikiDocument,
   WikiRefreshDraft,
   WikiSnapshotTree,
 } from '../../lib/contracts/wiki';
+import type { GoalPermissionAction, GoalPermissionGate } from '../features/wiki/goal/goalAttachTypes';
 
 export type WikiViewMode = 'document' | 'plan';
 export type PlanNavView = 'list' | 'detail';
+export type GoalDockState = 'idle' | 'input' | 'working' | 'expanded';
 export type RefreshPhase = 'idle' | 'scanning' | 'stale_checking' | 'drafting' | 'completed' | 'failed';
 
 export interface RefreshTaskState {
@@ -32,7 +35,7 @@ export interface WikiState {
   selectedDocumentId: string | null;
   searchHighlightQuery: string | null;
   searchHighlightNonce: number;
-  evaluations: WikiEvaluation[];
+  goals: WikiGoal[];
   draftsSummary: { ready: number; generating: number };
   loading: { snapshot: boolean; plans: boolean; drafts: boolean };
   error: string | null;
@@ -75,8 +78,8 @@ export interface WikiState {
   applyDocumentUpdate: (document: WikiDocument) => void;
   selectDocument: (documentId: string | null) => void;
   setSearchHighlightQuery: (query: string | null) => void;
-  loadEvaluations: (projectId: string) => Promise<void>;
-  deleteEvaluations: (evalIds: string[]) => Promise<void>;
+  loadGoals: (projectId: string) => Promise<void>;
+  deleteGoals: (goalIds: string[]) => Promise<void>;
   reset: () => void;
   clearForRegeneration: () => void;
 
@@ -107,7 +110,42 @@ export interface WikiState {
   updatePlanNode: (nodeId: string, updates: Partial<Pick<WikiPlanNode, 'title' | 'description' | 'expectedFiles'>>) => Promise<void>;
   deletePlanNode: (nodeId: string) => Promise<void>;
   startPlanGeneration: (projectId: string, snapshotId: string) => void;
+  planExecution: {
+    status: 'idle' | 'running' | 'review' | 'completed' | 'failed'
+    activeNodeId: string | null
+    artifacts: Record<string, WikiPlanNodeArtifact>
+    error: string | null
+  };
+  startPlanExecutionStream: (planId: string) => void;
+  stopPlanExecutionStream: () => void;
+  acceptPlanNode: (planId: string, nodeId: string, workDir: string) => Promise<void>;
+  redoPlanNode: (planId: string, nodeId: string, feedback: string) => Promise<void>;
+  loadNodeArtifact: (planId: string, nodeId: string) => Promise<void>;
+  planExecutionAbort: (() => void) | null;
   resetPlanGeneration: () => void;
+
+  goalDockState: GoalDockState;
+  goalComposerContent: string;
+  goalComposerProviderId: string | null;
+  goalComposerModelId: string | null;
+  goalComposerDocumentId: string | null;
+  goalComposerAnchorJson: GoalAnchor | null;
+  goalComposerSkillIds: string[];
+  goalComposerPermissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null;
+  setGoalDockState: (state: GoalDockState) => void;
+  setGoalComposerContent: (content: string) => void;
+  setGoalComposerProviderId: (id: string | null) => void;
+  setGoalComposerModelId: (id: string | null) => void;
+  setGoalComposerDocumentId: (id: string | null) => void;
+  setGoalComposerSkillIds: (ids: string[]) => void;
+  setGoalComposerPermission: (gate: GoalPermissionGate, action: GoalPermissionAction) => void;
+  openGoalInput: (prefill?: {
+    content?: string;
+    documentId?: string | null;
+    anchor?: GoalAnchor | null;
+  }) => void;
+  submitGoal: (projectId: string) => Promise<void>;
+  stopGoal: () => void;
 }
 
 const initialState = {
@@ -117,7 +155,7 @@ const initialState = {
   selectedDocumentId: null,
   searchHighlightQuery: null,
   searchHighlightNonce: 0,
-  evaluations: [] as WikiEvaluation[],
+  goals: [] as WikiGoal[],
   draftsSummary: { ready: 0, generating: 0 },
   loading: { snapshot: false, plans: false, drafts: false },
   error: null,
@@ -145,6 +183,21 @@ const initialState = {
     sessionId: null as string | null,
     error: null as string | null,
   },
+  planExecution: {
+    status: 'idle' as 'idle' | 'running' | 'review' | 'completed' | 'failed',
+    activeNodeId: null as string | null,
+    artifacts: {} as Record<string, WikiPlanNodeArtifact>,
+    error: null as string | null,
+  },
+  goalDockState: 'idle' as GoalDockState,
+  goalComposerContent: '',
+  goalComposerProviderId: null as string | null,
+  goalComposerModelId: null as string | null,
+  goalComposerDocumentId: null as string | null,
+  goalComposerAnchorJson: null as GoalAnchor | null,
+  goalComposerSkillIds: [] as string[],
+  goalComposerPermissions: null as Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null,
+  planExecutionAbort: null as (() => void) | null,
 };
 
 function documentChanged(prev: WikiDocument | undefined, next: WikiDocument): boolean {
@@ -245,16 +298,16 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     searchHighlightNonce: query ? state.searchHighlightNonce + 1 : state.searchHighlightNonce,
   })),
 
-  loadEvaluations: async (projectId: string) => {
+  loadGoals: async (projectId: string) => {
     try {
-      const evals = await evaluationApi.list(projectId, 'active')
-      set({ evaluations: evals })
+      const goals = await goalApi.list(projectId, 'active')
+      set({ goals })
     } catch { /* ignore */ }
   },
 
-  deleteEvaluations: async (evalIds: string[]) => {
-    await Promise.all(evalIds.map(id => evaluationApi.delete(id)))
-    set(s => ({ evaluations: s.evaluations.filter(e => !evalIds.includes(e.id)) }))
+  deleteGoals: async (goalIds: string[]) => {
+    await Promise.all(goalIds.map(id => goalApi.delete(id)))
+    set(s => ({ goals: s.goals.filter(g => !goalIds.includes(g.id)) }))
   },
 
   reset: () => set(initialState),
@@ -264,7 +317,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     selectedDocumentId: null,
     searchHighlightQuery: null,
     searchHighlightNonce: 0,
-    evaluations: [],
+    goals: [],
     draftsSummary: { ready: 0, generating: 0 },
     draftsById: {},
     selectedDraftId: null,
@@ -430,7 +483,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   loadPlans: async (projectId: string) => {
     set(s => ({ ...s, loading: { ...s.loading, plans: true } }));
     try {
-      const plans = await evaluationApi.listPlans(projectId)
+      const plans = await goalApi.listPlans(projectId)
       const { selectedPlanId } = get()
       if (selectedPlanId) {
         set(s => ({ ...s, plans, loading: { ...s.loading, plans: false } }))
@@ -445,7 +498,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
   loadActivePlan: async (projectId: string) => {
     try {
-      const { plan, nodes } = await evaluationApi.getActivePlan(projectId)
+      const { plan, nodes } = await goalApi.getActivePlan(projectId)
       const { selectedPlanId } = get()
       if (!selectedPlanId) {
         set({ activePlan: plan, activePlanNodes: nodes })
@@ -455,7 +508,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
   loadPlanNodes: async (planId: string) => {
     try {
-      const nodes = await evaluationApi.getPlanNodes(planId)
+      const nodes = await goalApi.getPlanNodes(planId)
       set({ activePlanNodes: nodes })
     } catch { /* ignore */ }
   },
@@ -470,7 +523,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     const { plans } = get()
     const plan = plans.find(p => p.id === planId) ?? null
     set({ selectedPlanId: planId, activePlan: plan, activePlanNodes: [], planNav: 'detail' })
-    evaluationApi.getPlanNodes(planId).then(nodes => {
+    goalApi.getPlanNodes(planId).then(nodes => {
       if (get().selectedPlanId === planId) {
         set({ activePlanNodes: nodes })
       }
@@ -478,19 +531,23 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   },
 
   confirmPlan: async (projectId: string, planId: string) => {
-    await evaluationApi.confirmPlan(projectId, planId)
+    const projects = useShellStore.getState().projects
+    const project = projects.find(p => p.id === projectId)
+    const workDir = project?.source?.localPath
+    await goalApi.confirmPlan(projectId, planId, workDir)
     set(s => ({
-      activePlan: s.activePlan ? { ...s.activePlan, status: 'confirmed' as const } : null,
+      activePlan: s.activePlan ? { ...s.activePlan, status: 'executing' as const } : null,
     }))
+    get().startPlanExecutionStream(planId)
   },
 
   discardPlan: async (planId: string) => {
-    await evaluationApi.discardPlan(planId)
+    await goalApi.discardPlan(planId)
     set({ activePlan: null, activePlanNodes: [], selectedPlanId: null, planNav: 'list' })
   },
 
   deletePlan: async (planId: string) => {
-    await evaluationApi.deletePlan(planId)
+    await goalApi.deletePlan(planId)
     set(s => ({
       plans: s.plans.filter(p => p.id !== planId),
       activePlan: s.activePlan?.id === planId ? null : s.activePlan,
@@ -503,7 +560,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   updatePlanNode: async (nodeId: string, updates) => {
     const { activePlan } = get()
     if (!activePlan) return
-    await evaluationApi.updateNode(activePlan.id, nodeId, updates)
+    await goalApi.updateNode(activePlan.id, nodeId, updates)
     set(s => ({
       activePlanNodes: s.activePlanNodes.map(n => n.id === nodeId ? { ...n, ...updates } : n),
     }))
@@ -512,7 +569,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   deletePlanNode: async (nodeId: string) => {
     const { activePlan } = get()
     if (!activePlan) return
-    await evaluationApi.deleteNode(activePlan.id, nodeId)
+    await goalApi.deleteNode(activePlan.id, nodeId)
     set(s => ({
       activePlanNodes: s.activePlanNodes.filter(n => n.id !== nodeId),
     }))
@@ -535,12 +592,12 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
     toast.push({
       type: 'info',
-      message: '规划生成已启动，Agent 正在分析 Issues…',
+      message: '规划生成已启动，Agent 正在分析 Goals…',
       action: { label: '查看进度', onClick: () => set({ viewMode: 'plan' }) },
       duration: 4000,
     })
 
-    evaluationApi.streamGeneratePlan(projectId, snapshotId, (event) => {
+    goalApi.streamGeneratePlan(projectId, snapshotId, (event) => {
       const s = get()
       switch (event.type) {
         case 'started':
@@ -593,5 +650,135 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
   resetPlanGeneration: () => {
     set({ planGeneration: { status: 'idle', phase: null, toolCalls: [], streamingText: '', previewNodes: [], sessionId: null, error: null } })
+  },
+
+  setGoalDockState: (state) => set({ goalDockState: state }),
+  setGoalComposerContent: (content) => set({ goalComposerContent: content }),
+  setGoalComposerProviderId: (id) => set({ goalComposerProviderId: id }),
+  setGoalComposerModelId: (id) => set({ goalComposerModelId: id }),
+  setGoalComposerDocumentId: (id) => set({ goalComposerDocumentId: id }),
+  setGoalComposerSkillIds: (ids) => set({ goalComposerSkillIds: ids }),
+  setGoalComposerPermission: (gate, action) => set((s) => ({
+    goalComposerPermissions: { ...(s.goalComposerPermissions ?? {}), [gate]: action },
+  })),
+
+  openGoalInput: (prefill) => {
+    const s = get()
+    set({
+      goalDockState: 'input',
+      goalComposerContent: prefill?.content ?? s.goalComposerContent,
+      goalComposerDocumentId: prefill?.documentId !== undefined
+        ? prefill.documentId
+        : (s.goalComposerDocumentId ?? s.selectedDocumentId),
+      goalComposerAnchorJson: prefill?.anchor !== undefined
+        ? prefill.anchor
+        : s.goalComposerAnchorJson,
+    })
+  },
+
+  submitGoal: async (projectId) => {
+    const s = get()
+    const content = s.goalComposerContent.trim()
+    if (!content) return
+    const snapshot = s.snapshot
+    if (!snapshot) {
+      useNotificationStore.getState().push({
+        type: 'error',
+        message: 'Wiki 尚未就绪，无法提交 Goal',
+        duration: 4000,
+      })
+      return
+    }
+    try {
+      const documentId = s.goalComposerDocumentId ?? s.selectedDocumentId
+      await goalApi.create(projectId, {
+        content,
+        scope: documentId ? 'document' : 'project',
+        documentId: documentId ?? null,
+        anchorJson: s.goalComposerAnchorJson,
+      })
+      await get().loadGoals(projectId)
+      get().startPlanGeneration(projectId, snapshot.id)
+      set({ goalDockState: 'working', goalComposerContent: '', goalComposerAnchorJson: null })
+    } catch (err) {
+      useNotificationStore.getState().push({
+        type: 'error',
+        message: err instanceof Error ? err.message : '提交 Goal 失败',
+        duration: 6000,
+      })
+    }
+  },
+
+  stopGoal: () => {
+    get().resetPlanGeneration()
+    set({ goalDockState: 'idle' })
+  },
+
+  startPlanExecutionStream: (planId) => {
+    get().stopPlanExecutionStream()
+    set({ planExecution: { status: 'running', activeNodeId: null, artifacts: {}, error: null } })
+    const abort = goalApi.streamPlanExecution(planId, (event) => {
+      if (event.type === 'plan_status') {
+        set(s => ({
+          activePlan: s.activePlan
+            ? { ...s.activePlan, status: event.status as typeof s.activePlan.status }
+            : null,
+        }))
+      }
+      if (event.type === 'node_review') {
+        set(s => ({
+          planExecution: { ...s.planExecution, status: 'review', activeNodeId: event.nodeId },
+        }))
+        void get().loadNodeArtifact(planId, event.nodeId)
+      }
+      if (event.type === 'node_status') {
+        set(s => ({
+          planExecution: { ...s.planExecution, activeNodeId: event.nodeId },
+          activePlanNodes: s.activePlanNodes.map(n =>
+            n.id === event.nodeId ? { ...n, status: event.status as WikiPlanNode['status'] } : n),
+        }))
+      }
+      if (event.type === 'plan_completed') {
+        set(s => ({ planExecution: { ...s.planExecution, status: 'completed' } }))
+        if (get().activePlan) void get().loadActivePlan(get().activePlan!.projectId)
+      }
+      if (event.type === 'failed') {
+        set(s => ({ planExecution: { ...s.planExecution, status: 'failed', error: event.error } }))
+      }
+    })
+    set({ planExecutionAbort: abort })
+  },
+
+  stopPlanExecutionStream: () => {
+    const abort = get().planExecutionAbort
+    abort?.()
+    set({ planExecutionAbort: null })
+  },
+
+  loadNodeArtifact: async (planId, nodeId) => {
+    try {
+      const artifact = await goalApi.getNodeArtifact(planId, nodeId)
+      set(s => ({
+        planExecution: {
+          ...s.planExecution,
+          artifacts: { ...s.planExecution.artifacts, [nodeId]: artifact },
+        },
+      }))
+    } catch { /* ignore */ }
+  },
+
+  acceptPlanNode: async (planId, nodeId, workDir) => {
+    await goalApi.acceptPlanNode(planId, nodeId, workDir)
+    const projectId = get().activePlan?.projectId
+    if (projectId) await get().loadActivePlan(projectId)
+    set(s => ({
+      planExecution: { ...s.planExecution, status: 'running', activeNodeId: null },
+    }))
+  },
+
+  redoPlanNode: async (planId, nodeId, feedback) => {
+    await goalApi.redoPlanNode(planId, nodeId, feedback)
+    set(s => ({ planExecution: { ...s.planExecution, status: 'review', activeNodeId: nodeId } }))
+    await get().loadNodeArtifact(planId, nodeId)
   },
 }));

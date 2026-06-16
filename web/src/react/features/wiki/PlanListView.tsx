@@ -2,7 +2,7 @@ import { ListChecks, CheckCircle2, Loader2, Clock, XCircle, Trash2 } from 'lucid
 import { iconBadgeClass, type IconTone } from '../../../lib/icon-tones'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
-import { type WikiPlanWithSummary } from '../../../lib/api/evaluation'
+import { type WikiPlanWithSummary } from '../../../lib/api/goal'
 import { relativeTime } from './PlanNodeCard'
 
 interface Props {
@@ -103,7 +103,7 @@ function PlanRow({ plan, index, total, onSelect, onDelete, selected }: { plan: W
         </div>
       )}
       <div className="flex items-center gap-2 text-[10px] text-muted-foreground/50">
-        <span>{plan.evaluationIds.length} Issue</span>
+        <span>{t('planGoalCount', { count: plan.goalIds.length })}</span>
         {showProgress && <span>{t('planProgress', { done: nodeSummary.completed, total: nodeSummary.total })}</span>}
         <span>{relativeTime(plan.createdAt)}</span>
       </div>

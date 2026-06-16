@@ -74,7 +74,9 @@ export class SkillRegistry {
   ) {}
 
   listSummaries(input: { profileId?: string } = {}): SkillSummary[] {
-    const kind = input.profileId ? this.profiles.get(input.profileId).kind : undefined;
+    const profile = input.profileId ? this.profiles.maybeGet(input.profileId) : undefined;
+    if (input.profileId && !profile) return [];
+    const kind = profile?.kind;
     return [...this.skills.values()]
       .filter((skill) => skill.status === 'available')
       .filter((skill) => !kind || skill.appliesTo.includes(kind))

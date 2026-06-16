@@ -13,7 +13,7 @@ import {
 import dagre from '@dagrejs/dagre'
 import '@xyflow/react/dist/style.css'
 import { PlanDAGNode, type PlanDAGNodeData } from './PlanDAGNode'
-import type { PlanNodeDraft, WikiPlanNode } from '../../../lib/api/evaluation'
+import type { PlanNodeDraft, WikiPlanNode } from '../../../lib/api/goal'
 
 interface PlanDAGViewProps {
   nodes: (PlanNodeDraft | WikiPlanNode)[]

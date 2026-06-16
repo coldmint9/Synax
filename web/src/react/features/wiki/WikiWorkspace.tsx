@@ -17,6 +17,7 @@ import WikiWritingProgress from './WikiWritingProgress'
 import { resolveWikiWritingProgressCounts, resolveGeneratingDocumentId } from './wikiWritingProgressCounts'
 import PlanView from './PlanView'
 import PlanListView from './PlanListView'
+import { GoalPillDock } from './goal/GoalPillDock'
 import { wikiApi, WikiGenerationConflictError } from '../../../lib/api/wiki'
 import { apiFetch, apiRequest } from '../../../lib/api/origin'
 import { handleError, createAppError, AppError } from '../../../lib/errors'
@@ -171,7 +172,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
   const documents = useWikiStore(s => s.documents)
   const loading = useWikiStore(s => s.loading)
-  const loadEvaluations = useWikiStore(s => s.loadEvaluations)
+  const loadGoals = useWikiStore(s => s.loadGoals)
   const draftPanelOpen = useWikiStore(s => s.draftPanelOpen)
   const toggleDraftPanel = useWikiStore(s => s.toggleDraftPanel)
   const loadDrafts = useWikiStore(s => s.loadDrafts)
@@ -271,10 +272,10 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     snapshot?.status,
   )
 
-  // Load evaluations when projectId changes
+  // Load goals when projectId changes
   useEffect(() => {
-    if (projectId) void loadEvaluations(projectId)
-  }, [projectId, loadEvaluations])
+    if (projectId) void loadGoals(projectId)
+  }, [projectId, loadGoals])
 
   // Load drafts when panel opens
   useEffect(() => {
@@ -605,6 +606,7 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
       {/* ── Center: Block content or Plan view ── */}
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <GoalPillDock projectId={projectId} />
         <div className={`min-h-0 flex-1 flex flex-col overflow-hidden pt-14 ${viewMode !== 'plan' ? 'hidden' : ''}`}>
           <PlanView projectId={projectId} />
         </div>

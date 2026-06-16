@@ -18,6 +18,9 @@ import { getDb } from "./db/index.js";
 import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
 import { wikiStore } from "./services/wiki/wiki-store.js";
 import { ensureWikiProfileRegistered } from "./services/wiki/wiki-loop-profile.js";
+import { ensurePlanProfileRegistered } from "./services/wiki/wiki-plan-profile.js";
+import { ensurePlanExecutorProfileRegistered } from "./services/wiki/wiki-plan-executor-profile.js";
+import { ensureRefreshProfileRegistered } from "./services/wiki/wiki-refresh-profile.js";
 import { wikiWriteQueue } from "./services/wiki/wiki-write-queue-service.js";
 import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
 import { startPermissionTimeoutSweeper } from "./services/agent-runtime/permission-timeout-sweeper.js";
@@ -58,8 +61,11 @@ try {
   pinoLogger.error({ err }, "failed to initialize context db");
 }
 
-// --- 提前注册 wiki profiles，确保服务重启后能恢复 wiki session ---
+// --- 提前注册 wiki / plan profiles，确保服务重启后能恢复 session 并响应 skills 查询 ---
 ensureWikiProfileRegistered();
+ensurePlanProfileRegistered();
+ensurePlanExecutorProfileRegistered();
+ensureRefreshProfileRegistered();
 
 // --- 启动时恢复孤儿 running session ---
 try {

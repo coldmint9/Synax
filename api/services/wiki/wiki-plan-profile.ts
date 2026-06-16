@@ -6,7 +6,7 @@ export const planGeneratorProfile: AgentProfile = {
   label: 'Plan Generator',
   kind: 'planner',
   mode: 'primary',
-  description: '基于 Wiki Issues 分析代码库，生成可执行的规划节点图。',
+  description: '基于 Wiki Goals 分析代码库，生成可执行的规划节点图。',
   defaultThinkingMode: 'deep',
   allowedCapabilities: [
     'file.glob',
@@ -28,10 +28,8 @@ export const planGeneratorProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'IMPORTANT: First analyze and clarify each issue before searching code. Understand what each issue asks, identify ambiguities, and note dependencies between issues.',
-    'Use grep.search to find relevant symbols and patterns based on the source bindings provided in the prompt. Batch multiple searches in one step.',
-    'Use file.read only for targeted code snippets — never read entire files.',
-    'Submit each plan node individually using plan.submit_node as soon as you design it. Submit in dependency order — nodes with no dependencies first.',
+    'IMPORTANT: First analyze and clarify each goal before searching code.',
+    'Submit each plan node with goalIds linking to the goals it addresses.',
   ],
 }
 
