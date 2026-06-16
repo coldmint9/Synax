@@ -3,12 +3,20 @@ import { createAppError, handleError } from '../errors'
 
 const BASE = '/api/wiki'
 
-export type WikiEvaluation = {
+export type GoalAnchor = {
+  type: 'heading' | 'selection'
+  heading?: string
+  quote?: string
+}
+
+export type WikiGoal = {
   id: string
   projectId: string
-  documentId: string
+  scope: 'project' | 'document'
+  documentId: string | null
   content: string
-  status: 'active' | 'planned' | 'resolved'
+  anchorJson: GoalAnchor | null
+  status: 'active' | 'planned' | 'in_progress' | 'resolved'
   planNodeId: string | null
   createdAt: string
   updatedAt: string
@@ -21,7 +29,7 @@ export type WikiPlanNode = {
   projectId: string
   title: string
   description: string
-  evaluationIds: string[]
+  goalIds: string[]
   dependsOn: string[]
   expectedFiles: string[]
   status: 'pending' | 'executing' | 'review' | 'accepted' | 'committed'
@@ -36,23 +44,41 @@ export type WikiPlan = {
   id: string
   projectId: string
   snapshotId: string
-  evaluationIds: string[]
+  goalIds: string[]
   status: 'draft' | 'confirmed' | 'executing' | 'reviewing' | 'committing' | 'completed' | 'discarded'
   createdAt: string
   updatedAt: string
   confirmedAt: string | null
 }
 
+export type PlanNodeArtifactPatch = {
+  filePath: string
+  diff: string
+  action: 'create' | 'modify' | 'delete'
+}
+
+export type WikiPlanNodeArtifact = {
+  id: string
+  nodeId: string
+  planId: string
+  sessionId: string | null
+  patches: PlanNodeArtifactPatch[]
+  executionLog: string | null
+  commitMessage: string | null
+  status: 'pending' | 'generated' | 'accepted' | 'committed' | 'discarded'
+  redoCount: number
+  redoFeedback: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export type PlanNodeSummary = { total: number; completed: number; titles: string[] }
 export type WikiPlanWithSummary = WikiPlan & { nodeSummary: PlanNodeSummary }
-
-export type WikiPlanStatus = WikiPlan['status']
-export type WikiPlanNodeStatus = WikiPlanNode['status']
 
 export type PlanNodeDraft = {
   title: string
   description: string
-  evaluationIds: string[]
+  goalIds: string[]
   dependsOn: string[]
   expectedFiles: string[]
 }
@@ -67,44 +93,56 @@ export type PlanStreamEvent =
   | { type: 'completed'; planId: string; nodeCount: number }
   | { type: 'failed'; error: string }
 
-export const evaluationApi = {
-  async list(projectId: string, status?: string): Promise<WikiEvaluation[]> {
+export type PlanExecuteEvent =
+  | { type: 'plan_status'; status: string }
+  | { type: 'node_status'; nodeId: string; status: string; title: string }
+  | { type: 'node_review'; nodeId: string; artifactId: string }
+  | { type: 'plan_completed'; planId: string }
+  | { type: 'failed'; error: string }
+
+export const goalApi = {
+  async list(projectId: string, status?: string): Promise<WikiGoal[]> {
     const qs = status ? `?status=${status}` : ''
-    const res = await apiFetch(`${BASE}/projects/${projectId}/evaluations${qs}`)
-    if (!res.ok) throw new Error(`evaluations/list failed: ${res.status}`)
-    const data = await res.json() as { evaluations: WikiEvaluation[] }
-    return data.evaluations
+    const res = await apiFetch(`${BASE}/projects/${projectId}/goals${qs}`)
+    if (!res.ok) throw new Error(`goals/list failed: ${res.status}`)
+    const data = await res.json() as { goals: WikiGoal[] }
+    return data.goals
   },
 
-  async create(projectId: string, documentId: string, content: string): Promise<WikiEvaluation> {
-    const res = await apiFetch(`${BASE}/projects/${projectId}/evaluations`, {
+  async create(projectId: string, body: {
+    content: string
+    scope?: 'project' | 'document'
+    documentId?: string | null
+    anchorJson?: GoalAnchor | null
+  }): Promise<WikiGoal> {
+    const res = await apiFetch(`${BASE}/projects/${projectId}/goals`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ documentId, content }),
+      body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error(`evaluations/create failed: ${res.status}`)
-    return res.json() as Promise<WikiEvaluation>
+    if (!res.ok) throw new Error(`goals/create failed: ${res.status}`)
+    return res.json() as Promise<WikiGoal>
   },
 
-  async delete(evalId: string): Promise<void> {
-    const res = await apiFetch(`${BASE}/evaluations/${evalId}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(`evaluations/delete failed: ${res.status}`)
+  async delete(goalId: string): Promise<void> {
+    const res = await apiFetch(`${BASE}/goals/${goalId}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`goals/delete failed: ${res.status}`)
   },
 
-  async updateStatus(evalId: string, status: WikiEvaluation['status']): Promise<void> {
-    const res = await apiFetch(`${BASE}/evaluations/${evalId}/status`, {
+  async updateStatus(goalId: string, status: WikiGoal['status']): Promise<void> {
+    const res = await apiFetch(`${BASE}/goals/${goalId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     })
-    if (!res.ok) throw new Error(`evaluations/updateStatus failed: ${res.status}`)
+    if (!res.ok) throw new Error(`goals/updateStatus failed: ${res.status}`)
   },
 
-  async listByDocument(documentId: string): Promise<WikiEvaluation[]> {
-    const res = await apiFetch(`${BASE}/documents/${documentId}/evaluations`)
-    if (!res.ok) throw new Error(`evaluations/listByDocument failed: ${res.status}`)
-    const data = await res.json() as { evaluations: WikiEvaluation[] }
-    return data.evaluations
+  async listByDocument(documentId: string): Promise<WikiGoal[]> {
+    const res = await apiFetch(`${BASE}/documents/${documentId}/goals`)
+    if (!res.ok) throw new Error(`goals/listByDocument failed: ${res.status}`)
+    const data = await res.json() as { goals: WikiGoal[] }
+    return data.goals
   },
 
   async getActivePlan(projectId: string): Promise<{ plan: WikiPlan | null; nodes: WikiPlanNode[] }> {
@@ -113,8 +151,12 @@ export const evaluationApi = {
     return res.json() as Promise<{ plan: WikiPlan | null; nodes: WikiPlanNode[] }>
   },
 
-  async confirmPlan(projectId: string, planId: string): Promise<void> {
-    const res = await apiFetch(`${BASE}/projects/${projectId}/plans/${planId}/confirm`, { method: 'POST' })
+  async confirmPlan(projectId: string, planId: string, workDir?: string): Promise<void> {
+    const res = await apiFetch(`${BASE}/projects/${projectId}/plans/${planId}/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir }),
+    })
     if (!res.ok) throw new Error(`plans/confirm failed: ${res.status}`)
   },
 
@@ -143,6 +185,31 @@ export const evaluationApi = {
     if (!res.ok) throw new Error(`plans/detail failed: ${res.status}`)
     const data = await res.json() as { plan: WikiPlan; nodes: WikiPlanNode[] }
     return data.nodes
+  },
+
+  async getNodeArtifact(planId: string, nodeId: string): Promise<WikiPlanNodeArtifact> {
+    const res = await apiFetch(`${BASE}/plans/${planId}/nodes/${nodeId}/artifact`)
+    if (!res.ok) throw new Error(`artifact/get failed: ${res.status}`)
+    const data = await res.json() as { artifact: WikiPlanNodeArtifact }
+    return data.artifact
+  },
+
+  async acceptPlanNode(planId: string, nodeId: string, workDir: string): Promise<void> {
+    const res = await apiFetch(`${BASE}/plans/${planId}/nodes/${nodeId}/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir }),
+    })
+    if (!res.ok) throw new Error(`nodes/accept failed: ${res.status}`)
+  },
+
+  async redoPlanNode(planId: string, nodeId: string, feedback: string): Promise<void> {
+    const res = await apiFetch(`${BASE}/plans/${planId}/nodes/${nodeId}/redo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedback }),
+    })
+    if (!res.ok) throw new Error(`nodes/redo failed: ${res.status}`)
   },
 
   async discardPlan(planId: string): Promise<void> {
@@ -217,7 +284,48 @@ export const evaluationApi = {
             if (dataLines.length === 0) continue
             const payload = dataLines.join('\n').trim()
             if (payload === '[DONE]') return
-            try { onEvent(JSON.parse(payload)) } catch { /* ignore parse errors */ }
+            try { onEvent(JSON.parse(payload)) } catch { /* ignore */ }
+          }
+        }
+      } catch (err) {
+        if ((err as { name?: string }).name !== 'AbortError') onError?.(err)
+      }
+    })()
+    return () => controller.abort()
+  },
+
+  streamPlanExecution(
+    planId: string,
+    onEvent: (event: PlanExecuteEvent) => void,
+    onError?: (err: unknown) => void,
+  ): () => void {
+    const FRAME_SEP = new RegExp('\\r\\n\\r\\n|\\n\\n|\\r\\r')
+    const LINE_SEP = new RegExp('\\r\\n|\\r|\\n')
+    const controller = new AbortController()
+    ;(async () => {
+      try {
+        const resp = await apiFetch(`${BASE}/plans/${planId}/execute/stream`, {
+          method: 'GET',
+          headers: { Accept: 'text/event-stream' },
+          signal: controller.signal,
+        })
+        if (!resp.ok || !resp.body) throw new Error(`execute/stream failed: ${resp.status}`)
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          let sep: RegExpExecArray | null
+          while ((sep = FRAME_SEP.exec(buf))) {
+            const frame = buf.slice(0, sep.index)
+            buf = buf.slice(sep.index + sep[0].length)
+            const dataLines = frame.split(LINE_SEP).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, ''))
+            if (dataLines.length === 0) continue
+            const payload = dataLines.join('\n').trim()
+            if (payload === '[DONE]') return
+            try { onEvent(JSON.parse(payload)) } catch { /* ignore */ }
           }
         }
       } catch (err) {

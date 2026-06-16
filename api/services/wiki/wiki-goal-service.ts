@@ -1,14 +1,19 @@
 import { eq, and, desc, inArray } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { getDb } from '../../db/index.js'
-import { wikiEvaluations, wikiPlans, wikiPlanNodes, wikiPlanNodeArtifacts } from '../../db/schema.js'
+import { wikiGoals, wikiPlans, wikiPlanNodes, wikiPlanNodeArtifacts } from '../../db/schema.js'
+import type { GoalAnchor } from '../../db/schema.js'
 
-export type WikiEvaluation = {
+export type { GoalAnchor }
+
+export type WikiGoal = {
   id: string
   projectId: string
-  documentId: string
+  scope: 'project' | 'document'
+  documentId: string | null
   content: string
-  status: 'active' | 'planned' | 'resolved'
+  anchorJson: GoalAnchor | null
+  status: 'active' | 'planned' | 'in_progress' | 'resolved'
   planNodeId: string | null
   createdAt: string
   updatedAt: string
@@ -19,7 +24,7 @@ export type WikiPlan = {
   id: string
   projectId: string
   snapshotId: string
-  evaluationIds: string[]
+  goalIds: string[]
   status: 'draft' | 'confirmed' | 'executing' | 'reviewing' | 'committing' | 'completed' | 'discarded'
   createdAt: string
   updatedAt: string
@@ -32,7 +37,7 @@ export type WikiPlanNode = {
   projectId: string
   title: string
   description: string
-  evaluationIds: string[]
+  goalIds: string[]
   dependsOn: string[]
   expectedFiles: string[]
   status: 'pending' | 'executing' | 'review' | 'accepted' | 'committed'
@@ -66,59 +71,95 @@ export type WikiPlanNodeArtifact = {
 
 const now = () => new Date().toISOString()
 
-export async function createEvaluation(projectId: string, documentId: string, content: string): Promise<WikiEvaluation> {
+function parseGoalIds(row: { goalIdsJson?: string | null; evaluationIdsJson?: string | null }): string[] {
+  const raw = row.goalIdsJson && row.goalIdsJson !== '[]' ? row.goalIdsJson : row.evaluationIdsJson
+  try { return JSON.parse(raw ?? '[]') as string[] } catch { return [] }
+}
+
+export async function createGoal(input: {
+  projectId: string
+  content: string
+  scope?: 'project' | 'document'
+  documentId?: string | null
+  anchorJson?: GoalAnchor | null
+}): Promise<WikiGoal> {
   const db = getDb()
   const id = nanoid()
   const ts = now()
-  await db.insert(wikiEvaluations).values({
-    id, projectId, documentId, content,
-    status: 'active', createdAt: ts, updatedAt: ts,
+  const scope = input.scope ?? (input.documentId ? 'document' : 'project')
+  const documentId = scope === 'document' ? (input.documentId ?? null) : (input.documentId ?? null)
+  if (scope === 'document' && !documentId) {
+    throw new Error('documentId is required for document-scoped goals')
+  }
+  await db.insert(wikiGoals).values({
+    id,
+    projectId: input.projectId,
+    scope,
+    documentId,
+    content: input.content,
+    anchorJson: input.anchorJson ? JSON.stringify(input.anchorJson) : null,
+    status: 'active',
+    createdAt: ts,
+    updatedAt: ts,
   })
-  return { id, projectId, documentId, content, status: 'active', planNodeId: null, createdAt: ts, updatedAt: ts, resolvedAt: null }
+  return rowToGoal({
+    id, projectId: input.projectId, scope, documentId, content: input.content,
+    anchorJson: input.anchorJson ? JSON.stringify(input.anchorJson) : null,
+    status: 'active', planNodeId: null, createdAt: ts, updatedAt: ts, resolvedAt: null,
+  })
 }
 
-export async function listEvaluations(projectId: string, status?: string): Promise<WikiEvaluation[]> {
+export async function listGoals(projectId: string, status?: string): Promise<WikiGoal[]> {
   const db = getDb()
   const cond = status
-    ? and(eq(wikiEvaluations.projectId, projectId), eq(wikiEvaluations.status, status))
-    : eq(wikiEvaluations.projectId, projectId)
-  const rows = await db.select().from(wikiEvaluations).where(cond).orderBy(desc(wikiEvaluations.createdAt))
-  return rows.map(rowToEvaluation)
+    ? and(eq(wikiGoals.projectId, projectId), eq(wikiGoals.status, status))
+    : eq(wikiGoals.projectId, projectId)
+  const rows = await db.select().from(wikiGoals).where(cond).orderBy(desc(wikiGoals.createdAt))
+  return rows.map(rowToGoal)
 }
 
-export async function listEvaluationsByDocument(documentId: string): Promise<WikiEvaluation[]> {
+export async function listGoalsByDocument(documentId: string): Promise<WikiGoal[]> {
   const db = getDb()
-  const rows = await db.select().from(wikiEvaluations)
-    .where(eq(wikiEvaluations.documentId, documentId))
-    .orderBy(desc(wikiEvaluations.createdAt))
-  return rows.map(rowToEvaluation)
+  const rows = await db.select().from(wikiGoals)
+    .where(eq(wikiGoals.documentId, documentId))
+    .orderBy(desc(wikiGoals.createdAt))
+  return rows.map(rowToGoal)
 }
 
-/** @deprecated Use listEvaluationsByDocument */
-export const listEvaluationsByBlock = listEvaluationsByDocument;
+export async function getGoal(id: string): Promise<WikiGoal | null> {
+  const db = getDb()
+  const rows = await db.select().from(wikiGoals).where(eq(wikiGoals.id, id))
+  return rows.length ? rowToGoal(rows[0]) : null
+}
 
-export async function updateEvaluationStatus(id: string, status: WikiEvaluation['status']): Promise<void> {
+export async function updateGoalStatus(id: string, status: WikiGoal['status']): Promise<void> {
   const db = getDb()
   const updates: Record<string, string> = { status, updatedAt: now() }
   if (status === 'resolved') updates.resolvedAt = now()
-  await db.update(wikiEvaluations).set(updates).where(eq(wikiEvaluations.id, id))
+  await db.update(wikiGoals).set(updates).where(eq(wikiGoals.id, id))
 }
 
-export async function deleteEvaluation(id: string): Promise<void> {
+export async function updateGoalsStatus(ids: string[], status: WikiGoal['status']): Promise<void> {
+  for (const id of ids) await updateGoalStatus(id, status)
+}
+
+export async function deleteGoal(id: string): Promise<void> {
   const db = getDb()
-  await db.delete(wikiEvaluations).where(eq(wikiEvaluations.id, id))
+  await db.delete(wikiGoals).where(eq(wikiGoals.id, id))
 }
 
-export async function createPlan(projectId: string, snapshotId: string, evaluationIds: string[]): Promise<WikiPlan> {
+export async function createPlan(projectId: string, snapshotId: string, goalIds: string[]): Promise<WikiPlan> {
   const db = getDb()
   const id = nanoid()
   const ts = now()
+  const json = JSON.stringify(goalIds)
   await db.insert(wikiPlans).values({
     id, projectId, snapshotId,
-    evaluationIdsJson: JSON.stringify(evaluationIds),
+    goalIdsJson: json,
+    evaluationIdsJson: json,
     status: 'draft', createdAt: ts, updatedAt: ts,
   })
-  return { id, projectId, snapshotId, evaluationIds, status: 'draft', createdAt: ts, updatedAt: ts, confirmedAt: null }
+  return { id, projectId, snapshotId, goalIds, status: 'draft', createdAt: ts, updatedAt: ts, confirmedAt: null }
 }
 
 export async function getPlan(id: string): Promise<WikiPlan | null> {
@@ -132,7 +173,7 @@ export async function getActivePlan(projectId: string): Promise<WikiPlan | null>
   const rows = await db.select().from(wikiPlans)
     .where(eq(wikiPlans.projectId, projectId))
     .orderBy(desc(wikiPlans.createdAt))
-  const active = rows.map(rowToPlan).find(p => p.status !== 'completed')
+  const active = rows.map(rowToPlan).find(p => p.status !== 'completed' && p.status !== 'discarded')
   return active ?? null
 }
 
@@ -143,15 +184,17 @@ export async function confirmPlan(id: string): Promise<void> {
 
 export async function createPlanNode(input: {
   planId: string; projectId: string; title: string; description?: string;
-  evaluationIds?: string[]; dependsOn?: string[]; expectedFiles?: string[]; sortOrder?: number;
+  goalIds?: string[]; dependsOn?: string[]; expectedFiles?: string[]; sortOrder?: number;
 }): Promise<WikiPlanNode> {
   const db = getDb()
   const id = nanoid()
   const ts = now()
+  const goalJson = JSON.stringify(input.goalIds ?? [])
   await db.insert(wikiPlanNodes).values({
     id, planId: input.planId, projectId: input.projectId,
     title: input.title, description: input.description ?? '',
-    evaluationIdsJson: JSON.stringify(input.evaluationIds ?? []),
+    goalIdsJson: goalJson,
+    evaluationIdsJson: goalJson,
     dependsOnJson: JSON.stringify(input.dependsOn ?? []),
     expectedFilesJson: JSON.stringify(input.expectedFiles ?? []),
     sortOrder: input.sortOrder ?? 0,
@@ -160,7 +203,7 @@ export async function createPlanNode(input: {
   return {
     id, planId: input.planId, projectId: input.projectId,
     title: input.title, description: input.description ?? '',
-    evaluationIds: input.evaluationIds ?? [], dependsOn: input.dependsOn ?? [],
+    goalIds: input.goalIds ?? [], dependsOn: input.dependsOn ?? [],
     expectedFiles: input.expectedFiles ?? [], status: 'pending',
     sortOrder: input.sortOrder ?? 0, reviewResult: null,
     createdAt: ts, updatedAt: ts, completedAt: null,
@@ -228,24 +271,30 @@ export async function listPlansWithSummary(projectId: string): Promise<WikiPlanW
   })
 }
 
-export async function getNextPendingNode(planId: string): Promise<WikiPlanNode | null> {
-  const db = getDb()
-  const rows = await db.select().from(wikiPlanNodes)
-    .where(and(eq(wikiPlanNodes.planId, planId), eq(wikiPlanNodes.status, 'pending')))
-    .orderBy(wikiPlanNodes.sortOrder)
-    .limit(1)
-  return rows.length ? rowToPlanNode(rows[0]) : null
+export async function getNextExecutableNode(planId: string): Promise<WikiPlanNode | null> {
+  const nodes = await listPlanNodes(planId)
+  const committedTitles = new Set(nodes.filter(n => n.status === 'committed' || n.status === 'accepted').map(n => n.title))
+  for (const node of nodes) {
+    if (node.status !== 'pending') continue
+    const depsOk = node.dependsOn.every(dep => committedTitles.has(dep))
+    if (depsOk) return node
+  }
+  return null
 }
 
 export async function updatePlanNode(id: string, updates: {
-  title?: string; description?: string; evaluationIds?: string[];
+  title?: string; description?: string; goalIds?: string[];
   dependsOn?: string[]; expectedFiles?: string[];
 }): Promise<void> {
   const db = getDb()
   const set: Record<string, unknown> = { updatedAt: now() }
   if (updates.title !== undefined) set.title = updates.title
   if (updates.description !== undefined) set.description = updates.description
-  if (updates.evaluationIds !== undefined) set.evaluationIdsJson = JSON.stringify(updates.evaluationIds)
+  if (updates.goalIds !== undefined) {
+    const json = JSON.stringify(updates.goalIds)
+    set.goalIdsJson = json
+    set.evaluationIdsJson = json
+  }
   if (updates.dependsOn !== undefined) set.dependsOnJson = JSON.stringify(updates.dependsOn)
   if (updates.expectedFiles !== undefined) set.expectedFilesJson = JSON.stringify(updates.expectedFiles)
   await db.update(wikiPlanNodes).set(set).where(eq(wikiPlanNodes.id, id))
@@ -332,10 +381,17 @@ export async function discardArtifact(id: string): Promise<void> {
     .where(eq(wikiPlanNodeArtifacts.id, id))
 }
 
-function rowToEvaluation(r: typeof wikiEvaluations.$inferSelect): WikiEvaluation {
+function rowToGoal(r: typeof wikiGoals.$inferSelect): WikiGoal {
+  let anchorJson: GoalAnchor | null = null
+  if (r.anchorJson) {
+    try { anchorJson = JSON.parse(r.anchorJson) as GoalAnchor } catch { anchorJson = null }
+  }
   return {
-    id: r.id, projectId: r.projectId, documentId: r.documentId,
-    content: r.content, status: r.status as WikiEvaluation['status'],
+    id: r.id, projectId: r.projectId,
+    scope: (r.scope as WikiGoal['scope']) ?? 'document',
+    documentId: r.documentId ?? null,
+    content: r.content, anchorJson,
+    status: r.status as WikiGoal['status'],
     planNodeId: r.planNodeId ?? null,
     createdAt: r.createdAt, updatedAt: r.updatedAt, resolvedAt: r.resolvedAt ?? null,
   }
@@ -344,7 +400,7 @@ function rowToEvaluation(r: typeof wikiEvaluations.$inferSelect): WikiEvaluation
 function rowToPlan(r: typeof wikiPlans.$inferSelect): WikiPlan {
   return {
     id: r.id, projectId: r.projectId, snapshotId: r.snapshotId,
-    evaluationIds: JSON.parse(r.evaluationIdsJson),
+    goalIds: parseGoalIds(r),
     status: r.status as WikiPlan['status'],
     createdAt: r.createdAt, updatedAt: r.updatedAt, confirmedAt: r.confirmedAt ?? null,
   }
@@ -354,7 +410,7 @@ function rowToPlanNode(r: typeof wikiPlanNodes.$inferSelect): WikiPlanNode {
   return {
     id: r.id, planId: r.planId, projectId: r.projectId,
     title: r.title, description: r.description,
-    evaluationIds: JSON.parse(r.evaluationIdsJson),
+    goalIds: parseGoalIds(r),
     dependsOn: JSON.parse(r.dependsOnJson),
     expectedFiles: JSON.parse(r.expectedFilesJson),
     status: r.status as WikiPlanNode['status'],

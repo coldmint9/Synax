@@ -35,7 +35,7 @@ describe('WikiDocumentTree', () => {
       snapshot: null,
       draftsSummary: { ready: 0, generating: 0 },
       draftsById: {},
-      evaluations: [],
+      goals: [],
     })
   })
 

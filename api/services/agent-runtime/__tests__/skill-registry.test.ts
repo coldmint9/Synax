@@ -6,6 +6,10 @@ import { plannerSessionInput, resetAgentRuntimeFixtures } from './agent-runtime-
 describe('skillRegistry', () => {
   beforeEach(resetAgentRuntimeFixtures);
 
+  it('returns empty list for unknown profile ids', () => {
+    expect(skillRegistry.listSummaries({ profileId: 'plan-generator' })).toEqual([]);
+  });
+
   it('discloses summaries without full skill content', () => {
     const skills = skillRegistry.listSummaries({ profileId: 'planner' });
 

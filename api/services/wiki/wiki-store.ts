@@ -13,7 +13,7 @@ import {
   wikiPlans,
   wikiPlanNodes,
   wikiPlanNodeArtifacts,
-  wikiEvaluations,
+  wikiGoals,
   wikiWriteBatches,
 } from '../../db/schema.js';
 import type {
@@ -336,7 +336,7 @@ export const wikiStore = {
         notInArray(wikiPlans.status, terminalStatuses),
       ));
 
-    await db.delete(wikiEvaluations).where(eq(wikiEvaluations.projectId, projectId));
+    await db.delete(wikiGoals).where(eq(wikiGoals.projectId, projectId));
   },
 
   async deleteDocumentsBySnapshot(snapshotId: string): Promise<void> {

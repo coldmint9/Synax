@@ -493,67 +493,90 @@ wikiRoutes.post('/drafts/:draftId/discard', async (c) => {
 // Evaluations & Plans
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import * as evalService from '../services/wiki/wiki-evaluation-service.js';
+import * as goalService from '../services/wiki/wiki-goal-service.js';
+import * as planExecutor from '../services/wiki/wiki-plan-executor-service.js';
 import { generatePlan, generatePlanStream } from '../services/wiki/wiki-plan-generator.js';
 
-const createEvalBodySchema = z.object({
-  documentId: z.string().min(1).max(128),
+const createGoalBodySchema = z.object({
   content: z.string().min(1).max(4096),
+  scope: z.enum(['project', 'document']).optional(),
+  documentId: z.string().min(1).max(128).optional().nullable(),
+  anchorJson: z.object({
+    type: z.enum(['heading', 'selection']),
+    heading: z.string().optional(),
+    quote: z.string().optional(),
+  }).optional().nullable(),
 });
 
-// ── GET /api/wiki/projects/:projectId/evaluations ────────────────────────────
-wikiRoutes.get('/projects/:projectId/evaluations', async (c) => {
+// ── GET /api/wiki/projects/:projectId/goals ────────────────────────────
+wikiRoutes.get('/projects/:projectId/goals', async (c) => {
   const { projectId } = c.req.param();
   const status = c.req.query('status') || undefined;
-  const evaluations = await evalService.listEvaluations(projectId, status);
-  return c.json({ evaluations });
+  const goals = await goalService.listGoals(projectId, status);
+  return c.json({ goals });
 });
 
-// ── POST /api/wiki/projects/:projectId/evaluations ───────────────────────────
-wikiRoutes.post('/projects/:projectId/evaluations', async (c) => {
+// ── POST /api/wiki/projects/:projectId/goals ───────────────────────────
+wikiRoutes.post('/projects/:projectId/goals', async (c) => {
   const { projectId } = c.req.param();
-  const parsed = await parseBody(c, createEvalBodySchema);
+  const parsed = await parseBody(c, createGoalBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-  const evaluation = await evalService.createEvaluation(projectId, parsed.data.documentId, parsed.data.content);
-  return c.json(evaluation, 201);
+  const goal = await goalService.createGoal({
+    projectId,
+    content: parsed.data.content,
+    scope: parsed.data.scope,
+    documentId: parsed.data.documentId,
+    anchorJson: parsed.data.anchorJson ?? null,
+  });
+  return c.json(goal, 201);
 });
 
-// ── DELETE /api/wiki/evaluations/:evalId ──────────────────────────────────────
-wikiRoutes.delete('/evaluations/:evalId', async (c) => {
-  const { evalId } = c.req.param();
-  await evalService.deleteEvaluation(evalId);
+// ── DELETE /api/wiki/goals/:goalId ──────────────────────────────────────
+wikiRoutes.delete('/goals/:goalId', async (c) => {
+  const { goalId } = c.req.param();
+  await goalService.deleteGoal(goalId);
   return c.json({ ok: true });
 });
 
-// ── PATCH /api/wiki/evaluations/:evalId/status ───────────────────────────────
-wikiRoutes.patch('/evaluations/:evalId/status', async (c) => {
-  const { evalId } = c.req.param();
-  const parsed = await parseBody(c, z.object({ status: z.enum(['active', 'planned', 'resolved']) }));
+// ── PATCH /api/wiki/goals/:goalId/status ───────────────────────────────
+wikiRoutes.patch('/goals/:goalId/status', async (c) => {
+  const { goalId } = c.req.param();
+  const parsed = await parseBody(c, z.object({ status: z.enum(['active', 'planned', 'in_progress', 'resolved']) }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-  await evalService.updateEvaluationStatus(evalId, parsed.data.status);
+  await goalService.updateGoalStatus(goalId, parsed.data.status);
   return c.json({ ok: true });
 });
 
-// ── GET /api/wiki/documents/:documentId/evaluations ──────────────────────────
-wikiRoutes.get('/documents/:documentId/evaluations', async (c) => {
+// ── GET /api/wiki/documents/:documentId/goals ──────────────────────────
+wikiRoutes.get('/documents/:documentId/goals', async (c) => {
   const { documentId } = c.req.param();
-  const evaluations = await evalService.listEvaluationsByDocument(documentId);
-  return c.json({ evaluations });
+  const goals = await goalService.listGoalsByDocument(documentId);
+  return c.json({ goals });
 });
+
+// Legacy evaluation routes removed — use /goals
 
 // ── GET /api/wiki/projects/:projectId/plans/active ───────────────────────────
 wikiRoutes.get('/projects/:projectId/plans/active', async (c) => {
   const { projectId } = c.req.param();
-  const plan = await evalService.getActivePlan(projectId);
+  const plan = await goalService.getActivePlan(projectId);
   if (!plan) return c.json({ plan: null, nodes: [] });
-  const nodes = await evalService.listPlanNodes(plan.id);
+  const nodes = await goalService.listPlanNodes(plan.id);
   return c.json({ plan, nodes });
 });
 
 // ── POST /api/wiki/projects/:projectId/plans/:planId/confirm ─────────────────
 wikiRoutes.post('/projects/:projectId/plans/:planId/confirm', async (c) => {
   const { planId } = c.req.param();
-  await evalService.confirmPlan(planId);
+  const parsed = await parseBody(c, z.object({
+    workDir: z.string().min(1).optional(),
+    locale: z.enum(['zh', 'en']).optional(),
+  }));
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  await goalService.confirmPlan(planId);
+  const workDir = parsed.data.workDir;
+  const locale = parsed.data.locale ?? 'zh';
+  void planExecutor.startExecution(planId, workDir, locale);
   return c.json({ ok: true });
 });
 
@@ -567,7 +590,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate', async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
   // Multi-round rule: only one active (non-completed) plan at a time
-  const existing = await evalService.getActivePlan(projectId);
+  const existing = await goalService.getActivePlan(projectId);
   if (existing) {
     return c.json({ error: 'An active plan already exists. Complete or discard it first.', code: 'PLAN_ALREADY_EXISTS' }, 409);
   }
@@ -575,8 +598,8 @@ wikiRoutes.post('/projects/:projectId/plans/generate', async (c) => {
   try {
     assertLlmProviderConfigured(projectId);
     const result = await generatePlan(projectId, parsed.data.snapshotId, parsed.data.locale);
-    const plan = await evalService.getPlan(result.planId);
-    const nodes = await evalService.listPlanNodes(result.planId);
+    const plan = await goalService.getPlan(result.planId);
+    const nodes = await goalService.listPlanNodes(result.planId);
     return c.json({ plan, nodes });
   } catch (err) {
     if (err instanceof AgentProviderNotConfiguredError) {
@@ -596,7 +619,7 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
   }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
-  const existing = await evalService.getActivePlan(projectId);
+  const existing = await goalService.getActivePlan(projectId);
   if (existing) {
     return c.json({ error: 'An active plan already exists.', code: 'PLAN_ALREADY_EXISTS' }, 409);
   }
@@ -635,31 +658,31 @@ wikiRoutes.post('/projects/:projectId/plans/generate/stream', async (c) => {
 // ── GET /api/wiki/projects/:projectId/plans ──────────────────────────────────
 wikiRoutes.get('/projects/:projectId/plans', async (c) => {
   const { projectId } = c.req.param();
-  const plans = await evalService.listPlansWithSummary(projectId);
+  const plans = await goalService.listPlansWithSummary(projectId);
   return c.json({ plans });
 });
 
 // ── GET /api/wiki/plans/:planId ──────────────────────────────────────────────
 wikiRoutes.get('/plans/:planId', async (c) => {
   const { planId } = c.req.param();
-  const plan = await evalService.getPlan(planId);
+  const plan = await goalService.getPlan(planId);
   if (!plan) return c.json({ error: 'Plan not found' }, 404);
-  const nodes = await evalService.listPlanNodes(planId);
-  const artifacts = await evalService.listArtifacts(planId);
+  const nodes = await goalService.listPlanNodes(planId);
+  const artifacts = await goalService.listArtifacts(planId);
   return c.json({ plan, nodes, artifacts });
 });
 
 // ── DELETE /api/wiki/plans/:planId ───────────────────────────────────────────
 wikiRoutes.delete('/plans/:planId', async (c) => {
   const { planId } = c.req.param();
-  const plan = await evalService.getPlan(planId);
+  const plan = await goalService.getPlan(planId);
   if (!plan) return c.json({ error: 'Plan not found' }, 404);
   const permanent = c.req.query('permanent') === 'true';
   if (permanent) {
-    await evalService.deletePlan(planId);
+    await goalService.deletePlan(planId);
   } else {
     if (plan.status === 'completed' || plan.status === 'discarded') return c.json({ error: 'Plan already finalized' }, 409);
-    await evalService.updatePlanStatus(planId, 'discarded');
+    await goalService.updatePlanStatus(planId, 'discarded');
   }
   return c.json({ ok: true });
 });
@@ -667,22 +690,22 @@ wikiRoutes.delete('/plans/:planId', async (c) => {
 // ── POST /api/wiki/plans/:planId/nodes ───────────────────────────────────────
 wikiRoutes.post('/plans/:planId/nodes', async (c) => {
   const { planId } = c.req.param();
-  const plan = await evalService.getPlan(planId);
+  const plan = await goalService.getPlan(planId);
   if (!plan) return c.json({ error: 'Plan not found' }, 404);
   if (plan.status !== 'draft') return c.json({ error: 'Plan is not in draft' }, 409);
   const parsed = await parseBody(c, z.object({
     title: z.string().min(1).max(256),
     description: z.string().max(4096).optional(),
-    evaluationIds: z.array(z.string()).optional(),
+    goalIds: z.array(z.string()).optional(),
     dependsOn: z.array(z.string()).optional(),
     expectedFiles: z.array(z.string()).optional(),
   }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-  const nodes = await evalService.listPlanNodes(planId);
-  const node = await evalService.createPlanNode({
+  const nodes = await goalService.listPlanNodes(planId);
+  const node = await goalService.createPlanNode({
     planId, projectId: plan.projectId,
     title: parsed.data.title, description: parsed.data.description,
-    evaluationIds: parsed.data.evaluationIds,
+    goalIds: parsed.data.goalIds,
     dependsOn: parsed.data.dependsOn,
     expectedFiles: parsed.data.expectedFiles,
     sortOrder: nodes.length,
@@ -694,41 +717,103 @@ wikiRoutes.post('/plans/:planId/nodes', async (c) => {
 // Must be registered before :nodeId to avoid "reorder" matching as a nodeId
 wikiRoutes.patch('/plans/:planId/nodes/reorder', async (c) => {
   const { planId } = c.req.param();
-  const plan = await evalService.getPlan(planId);
+  const plan = await goalService.getPlan(planId);
   if (!plan) return c.json({ error: 'Plan not found' }, 404);
   if (plan.status !== 'draft') return c.json({ error: 'Plan is not in draft' }, 409);
   const parsed = await parseBody(c, z.object({
     nodeIds: z.array(z.string().min(1)).min(1),
   }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-  await evalService.reorderPlanNodes(planId, parsed.data.nodeIds);
+  await goalService.reorderPlanNodes(planId, parsed.data.nodeIds);
   return c.json({ ok: true });
 });
 
 // ── PATCH /api/wiki/plans/:planId/nodes/:nodeId ──────────────────────────────
 wikiRoutes.patch('/plans/:planId/nodes/:nodeId', async (c) => {
   const { planId, nodeId } = c.req.param();
-  const plan = await evalService.getPlan(planId);
+  const plan = await goalService.getPlan(planId);
   if (!plan) return c.json({ error: 'Plan not found' }, 404);
   if (plan.status !== 'draft') return c.json({ error: 'Plan is not in draft' }, 409);
   const parsed = await parseBody(c, z.object({
     title: z.string().min(1).max(256).optional(),
     description: z.string().max(4096).optional(),
-    evaluationIds: z.array(z.string()).optional(),
+    goalIds: z.array(z.string()).optional(),
     dependsOn: z.array(z.string()).optional(),
     expectedFiles: z.array(z.string()).optional(),
   }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-  await evalService.updatePlanNode(nodeId, parsed.data);
+  await goalService.updatePlanNode(nodeId, parsed.data);
   return c.json({ ok: true });
 });
 
 // ── DELETE /api/wiki/plans/:planId/nodes/:nodeId ─────────────────────────────
 wikiRoutes.delete('/plans/:planId/nodes/:nodeId', async (c) => {
   const { planId, nodeId } = c.req.param();
-  const plan = await evalService.getPlan(planId);
+  const plan = await goalService.getPlan(planId);
   if (!plan) return c.json({ error: 'Plan not found' }, 404);
   if (plan.status !== 'draft') return c.json({ error: 'Plan is not in draft' }, 409);
-  await evalService.deletePlanNode(nodeId);
+  await goalService.deletePlanNode(nodeId);
   return c.json({ ok: true });
+});
+
+// ── GET /api/wiki/plans/:planId/execute/stream ─────────────────────────────
+wikiRoutes.get('/plans/:planId/execute/stream', async (c) => {
+  const { planId } = c.req.param();
+  const plan = await goalService.getPlan(planId);
+  if (!plan) return c.json({ error: 'Plan not found' }, 404);
+
+  return streamSSE(c, async (stream) => {
+    const heartbeat = setInterval(() => {
+      stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) }).catch(() => {});
+    }, 10_000);
+
+    const unsub = planExecutor.subscribePlanExecution(planId, async (event) => {
+      await stream.writeSSE({ data: JSON.stringify(event) }).catch(() => {});
+    });
+
+    try {
+      await new Promise<void>((resolve) => {
+        const check = planExecutor.subscribePlanExecution(planId, (event) => {
+          if (event.type === 'plan_completed' || event.type === 'failed') {
+            resolve();
+          }
+        });
+        setTimeout(resolve, 30 * 60 * 1000);
+        void check;
+      });
+    } finally {
+      unsub();
+      clearInterval(heartbeat);
+    }
+    await stream.writeSSE({ data: '[DONE]' }).catch(() => {});
+  });
+});
+
+// ── POST /api/wiki/plans/:planId/nodes/:nodeId/accept ──────────────────────
+wikiRoutes.post('/plans/:planId/nodes/:nodeId/accept', async (c) => {
+  const { planId, nodeId } = c.req.param();
+  const parsed = await parseBody(c, z.object({ workDir: z.string().min(1) }));
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  await planExecutor.acceptPlanNode(planId, nodeId, parsed.data.workDir);
+  return c.json({ ok: true });
+});
+
+// ── POST /api/wiki/plans/:planId/nodes/:nodeId/redo ────────────────────────
+wikiRoutes.post('/plans/:planId/nodes/:nodeId/redo', async (c) => {
+  const { planId, nodeId } = c.req.param();
+  const parsed = await parseBody(c, z.object({
+    feedback: z.string().min(1).max(4096),
+    locale: z.enum(['zh', 'en']).optional(),
+  }));
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  await planExecutor.redoPlanNode(planId, nodeId, parsed.data.feedback, parsed.data.locale ?? 'zh');
+  return c.json({ ok: true });
+});
+
+// ── GET /api/wiki/plans/:planId/nodes/:nodeId/artifact ─────────────────────
+wikiRoutes.get('/plans/:planId/nodes/:nodeId/artifact', async (c) => {
+  const { nodeId } = c.req.param();
+  const artifact = await goalService.getArtifact(nodeId);
+  if (!artifact) return c.json({ error: 'Artifact not found' }, 404);
+  return c.json({ artifact });
 });

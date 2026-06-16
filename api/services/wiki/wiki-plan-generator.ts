@@ -7,12 +7,11 @@ import { createPlanTools, type PlanNodeDraft } from './wiki-plan-tools.js'
 import { ensurePlanProfileRegistered } from './wiki-plan-profile.js'
 import { buildPlanPrompt } from './wiki-plan-prompt.js'
 import {
-  listEvaluations,
+  listGoals,
   createPlan,
   createPlanNode,
-  updateEvaluationStatus,
-  type WikiEvaluation,
-} from './wiki-evaluation-service.js'
+  updateGoalStatus,
+} from './wiki-goal-service.js'
 import type { WikiDocument } from './contracts.js'
 
 export interface GeneratePlanResult {
@@ -37,9 +36,8 @@ export async function generatePlan(
 ): Promise<GeneratePlanResult> {
   ensurePlanProfileRegistered()
 
-  // 1. Collect context
-  const issues = await listEvaluations(projectId, 'active')
-  if (issues.length === 0) throw new Error('No active issues to plan')
+  const goals = await listGoals(projectId, 'active')
+  if (goals.length === 0) throw new Error('No active goals to plan')
 
   const tree = await wikiStore.getSnapshotTree(snapshotId)
   if (!tree) throw new Error('Snapshot not found')
@@ -52,7 +50,7 @@ export async function generatePlan(
     .join('\n')
 
   const prompt = buildPlanPrompt({
-    issues,
+    goals,
     documents: documentsById,
     wikiOverview,
     locale,
@@ -66,7 +64,6 @@ export async function generatePlan(
   }
 
   try {
-    // 4. Create session and run loop
     const session = agentSessionRuntime.create({
       projectId,
       profileId: 'plan-generator',
@@ -81,35 +78,32 @@ export async function generatePlan(
       if (chunk.type === 'done') break
     }
 
-    // 5. Extract results and persist
     const planNodes = handle.getPlan()
     if (!planNodes || planNodes.length === 0) {
       throw new Error('Agent did not produce a plan')
     }
 
-    const plan = await createPlan(projectId, snapshotId, issues.map(e => e.id))
+    const plan = await createPlan(projectId, snapshotId, goals.map(g => g.id))
     for (const [i, node] of planNodes.entries()) {
       await createPlanNode({
         planId: plan.id,
         projectId,
         title: node.title,
         description: node.description,
-        evaluationIds: node.evaluationIds,
+        goalIds: node.goalIds,
         dependsOn: node.dependsOn,
         expectedFiles: node.expectedFiles,
         sortOrder: i,
       })
     }
 
-    // 6. Update issues status to 'planned'
-    for (const issue of issues) {
-      await updateEvaluationStatus(issue.id, 'planned')
+    for (const goal of goals) {
+      await updateGoalStatus(goal.id, 'planned')
     }
 
     logger.info({ planId: plan.id, nodeCount: planNodes.length }, 'Plan generated')
     return { planId: plan.id, nodeCount: planNodes.length }
   } finally {
-    // 7. Cleanup
     for (const tid of registeredToolIds) {
       toolRegistry.unregister(tid)
     }
@@ -123,8 +117,8 @@ export async function* generatePlanStream(
 ): AsyncGenerator<PlanStreamEvent> {
   ensurePlanProfileRegistered()
 
-  const issues = await listEvaluations(projectId, 'active')
-  if (issues.length === 0) throw new Error('No active issues to plan')
+  const goals = await listGoals(projectId, 'active')
+  if (goals.length === 0) throw new Error('No active goals to plan')
 
   const tree = await wikiStore.getSnapshotTree(snapshotId)
   if (!tree) throw new Error('Snapshot not found')
@@ -133,7 +127,7 @@ export async function* generatePlanStream(
   for (const d of tree.documents) documentsById[d.id] = d
   const wikiOverview = tree.documents.map(d => `- ${d.title} (${d.docType})`).join('\n')
 
-  const prompt = buildPlanPrompt({ issues, documents: documentsById, wikiOverview, locale })
+  const prompt = buildPlanPrompt({ goals, documents: documentsById, wikiOverview, locale })
 
   const pendingNodeEvents: PlanStreamEvent[] = []
   const handle = createPlanTools({
@@ -184,31 +178,29 @@ export async function* generatePlanStream(
         case 'done':
           break
       }
-      // Drain pending node events after each chunk
       while (pendingNodeEvents.length > 0) {
         yield pendingNodeEvents.shift()!
       }
       if (chunk.type === 'done') break
     }
 
-    // Persist plan
     const planNodes = handle.getPlan()
     if (!planNodes || planNodes.length === 0) {
       yield { type: 'failed', error: 'Agent did not produce a plan' }
       return
     }
 
-    const plan = await createPlan(projectId, snapshotId, issues.map(e => e.id))
+    const plan = await createPlan(projectId, snapshotId, goals.map(g => g.id))
     for (const [i, node] of planNodes.entries()) {
       await createPlanNode({
         planId: plan.id, projectId,
         title: node.title, description: node.description,
-        evaluationIds: node.evaluationIds, dependsOn: node.dependsOn,
+        goalIds: node.goalIds, dependsOn: node.dependsOn,
         expectedFiles: node.expectedFiles, sortOrder: i,
       })
     }
-    for (const issue of issues) {
-      await updateEvaluationStatus(issue.id, 'planned')
+    for (const goal of goals) {
+      await updateGoalStatus(goal.id, 'planned')
     }
 
     logger.info({ planId: plan.id, nodeCount: planNodes.length }, 'Plan generated (stream)')

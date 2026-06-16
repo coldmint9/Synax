@@ -3,7 +3,7 @@ import { Zap, X, Loader2 } from 'lucide-react'
 import { Button, Modal } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
-import { type WikiPlanNode } from '../../../lib/api/evaluation'
+import { type WikiPlanNode } from '../../../lib/api/goal'
 import PlanDAGView from './PlanDAGView'
 
 interface Props {
@@ -47,7 +47,7 @@ export default function PlanDraftView({ projectId }: Props) {
           <Zap size={14} className="text-amber-500" />
           <span className="text-[13px] font-semibold text-foreground/80">{t('planDraftTitle')}</span>
           <span className="text-[11px] text-muted-foreground/50">
-            基于 {activePlan.evaluationIds.length} 个 Issue · {nodes.length} 个节点
+            {t('planBasedOnGoals', { goals: activePlan.goalIds.length, nodes: nodes.length })}
           </span>
         </div>
         <div className="flex items-center gap-2">

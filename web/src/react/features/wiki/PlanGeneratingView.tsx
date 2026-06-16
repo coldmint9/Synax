@@ -3,7 +3,7 @@ import { Loader2, FileCode, AlertCircle, RotateCcw, Search, Brain, Send, CheckCi
 import { Button } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
-import type { WikiEvaluation } from '../../../lib/api/evaluation'
+import type { WikiGoal } from '../../../lib/api/goal'
 import PlanDAGView from './PlanDAGView'
 
 const PHASES = [
@@ -20,7 +20,7 @@ interface Props {
 export default function PlanGeneratingView({ projectId }: Props) {
   const { t } = useLocale()
   const gen = useWikiStore(s => s.planGeneration)
-  const evaluations = useWikiStore(s => s.evaluations)
+  const goals = useWikiStore(s => s.goals)
   const resetPlanGeneration = useWikiStore(s => s.resetPlanGeneration)
   const logRef = useRef<HTMLDivElement>(null)
   const [elapsed, setElapsed] = useState(0)
@@ -46,7 +46,7 @@ export default function PlanGeneratingView({ projectId }: Props) {
           <>
             <div ref={logRef} className="shrink-0 max-h-[180px] overflow-y-auto px-5 py-3 border-b border-border/10">
               <div className="max-w-2xl mx-auto space-y-3">
-                <IssueContext issues={evaluations} />
+                <GoalContext goals={goals} />
                 <ActivityFeed toolCalls={gen.toolCalls} text={gen.streamingText} />
               </div>
             </div>
@@ -57,7 +57,7 @@ export default function PlanGeneratingView({ projectId }: Props) {
         ) : (
           <div ref={logRef} className="flex-1 overflow-y-auto px-5 py-5">
             <div className="max-w-2xl mx-auto space-y-4">
-              <IssueContext issues={evaluations} />
+              <GoalContext goals={goals} />
               <ActivityFeed toolCalls={gen.toolCalls} text={gen.streamingText} />
             </div>
           </div>
@@ -106,21 +106,19 @@ function PhaseSteps({ current, elapsed }: { current: string | null; elapsed: num
   )
 }
 
-// PLACEHOLDER_REMAINING_COMPONENTS
-
-function IssueContext({ issues }: { issues: WikiEvaluation[] }) {
+function GoalContext({ goals }: { goals: WikiGoal[] }) {
   const { t } = useLocale()
-  const active = issues.filter(e => e.status === 'active')
+  const active = goals.filter(g => g.status === 'active')
   if (active.length === 0) return null
 
   return (
     <div className="rounded-xl border border-border/20 bg-card/30 p-3">
-      <span className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider">{t('planAnalyzingIssues')}</span>
+      <span className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider">{t('planAnalyzingGoals')}</span>
       <div className="mt-2 space-y-1.5">
-        {active.slice(0, 5).map(issue => (
-          <div key={issue.id} className="flex items-start gap-2">
+        {active.slice(0, 5).map(goal => (
+          <div key={goal.id} className="flex items-start gap-2">
             <div className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400/80" />
-            <span className="text-[11px] text-foreground/70 leading-relaxed line-clamp-1">{issue.content}</span>
+            <span className="text-[11px] text-foreground/70 leading-relaxed line-clamp-1">{goal.content}</span>
           </div>
         ))}
         {active.length > 5 && (

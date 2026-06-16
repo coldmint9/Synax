@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { FileCode } from 'lucide-react'
-import type { PlanNodeDraft } from '../../../lib/api/evaluation'
+import type { PlanNodeDraft } from '../../../lib/api/goal'
 
 export interface PlanDAGNodeData {
   [key: string]: unknown

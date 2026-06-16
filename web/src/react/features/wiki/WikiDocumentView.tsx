@@ -1,8 +1,8 @@
-import { AlertTriangle, FileText, Loader2, Lock, MessageCircle, Pencil, X } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { AlertTriangle, FileText, Loader2, Lock, MessageCircle, Pencil, Target, X } from 'lucide-react'
+import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import { Button, TextArea } from '@heroui/react'
 import { WikiMarkdown } from './WikiMarkdown'
-import { evaluationApi, type WikiEvaluation } from '../../../lib/api/evaluation'
+import { goalApi, type WikiGoal } from '../../../lib/api/goal'
 import type { WikiDocument, WikiDocType, WikiManualState, WikiReference, WikiStaleState } from '../../../lib/contracts/wiki'
 import { configApi } from '../../../lib/api/config'
 import { handleError } from '../../../lib/errors'
@@ -11,6 +11,81 @@ import { useShellStore } from '../../state/shellStore'
 import { useWikiStore } from '../../state/wikiStore'
 import { useSearchHighlight } from './useSearchHighlight'
 import './wiki-theme.css'
+
+function findNearestHeading(contentMd: string, quote: string): string | undefined {
+  const idx = contentMd.indexOf(quote)
+  if (idx < 0) return undefined
+  const before = contentMd.slice(0, idx)
+  const lines = before.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /^(#{1,6})\s+(.+)$/.exec(lines[i].trim())
+    if (m) return m[2].trim()
+  }
+  return undefined
+}
+
+function GoalSelectionToolbar({
+  documentId,
+  contentMd,
+  containerClass,
+}: {
+  documentId: string
+  contentMd: string
+  containerClass: string
+}) {
+  const { t } = useLocale()
+  const openGoalInput = useWikiStore(s => s.openGoalInput)
+  const [toolbar, setToolbar] = useState<{ x: number; y: number; quote: string } | null>(null)
+
+  const handleMouseUp = useCallback(() => {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || !sel.rangeCount) {
+      setToolbar(null)
+      return
+    }
+    const quote = sel.toString().trim()
+    if (quote.length < 3) {
+      setToolbar(null)
+      return
+    }
+    const container = document.querySelector(`.${containerClass}`)
+    if (!container || !sel.anchorNode || !container.contains(sel.anchorNode)) {
+      setToolbar(null)
+      return
+    }
+    const rect = sel.getRangeAt(0).getBoundingClientRect()
+    setToolbar({ x: rect.left + rect.width / 2, y: rect.top - 10, quote })
+  }, [containerClass])
+
+  useEffect(() => {
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => document.removeEventListener('mouseup', handleMouseUp)
+  }, [handleMouseUp])
+
+  if (!toolbar) return null
+
+  return (
+    <button
+      type="button"
+      className="fixed z-50 flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded-full border border-amber-400/40 bg-background/95 px-2.5 py-1 text-[10px] font-medium text-amber-600 shadow-md backdrop-blur-sm hover:bg-amber-400/10"
+      style={{ left: toolbar.x, top: toolbar.y }}
+      onMouseDown={e => e.preventDefault()}
+      onClick={() => {
+        const heading = findNearestHeading(contentMd, toolbar.quote)
+        openGoalInput({
+          content: toolbar.quote,
+          documentId,
+          anchor: { type: 'selection', quote: toolbar.quote, heading },
+        })
+        setToolbar(null)
+        window.getSelection()?.removeAllRanges()
+      }}
+    >
+      <Target size={10} />
+      {t('goalAddFromSelection')}
+    </button>
+  )
+}
 
 function StaleBadge({ state }: { state: WikiStaleState }) {
   if (state === 'fresh') return null
@@ -41,37 +116,43 @@ function ManualBadge({ state }: { state: WikiManualState }) {
   )
 }
 
-const statusDot: Record<WikiEvaluation['status'], string> = {
+const statusDot: Record<WikiGoal['status'], string> = {
   active: 'bg-amber-400',
   planned: 'bg-blue-400',
+  in_progress: 'bg-blue-500',
   resolved: 'bg-emerald-400',
 }
 
-function DocumentIssues({ documentId, projectId }: { documentId: string; projectId: string }) {
-  const evaluations = useWikiStore(s => s.evaluations)
-  const loadEvaluations = useWikiStore(s => s.loadEvaluations)
+function DocumentGoals({ documentId, projectId }: { documentId: string; projectId: string }) {
+  const { t } = useLocale()
+  const goals = useWikiStore(s => s.goals)
+  const loadGoals = useWikiStore(s => s.loadGoals)
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const docIssues = evaluations.filter(e => e.documentId === documentId)
+  const docGoals = goals.filter(g => g.documentId === documentId)
 
   async function handleSubmit() {
     if (!content.trim()) return
     setSubmitting(true)
     try {
-      await evaluationApi.create(projectId, documentId, content.trim())
+      await goalApi.create(projectId, {
+        content: content.trim(),
+        scope: 'document',
+        documentId,
+      })
       setContent('')
-      await loadEvaluations(projectId)
+      await loadGoals(projectId)
     } finally {
       setSubmitting(false)
     }
   }
 
   async function handleDelete(id: string) {
-    await evaluationApi.delete(id)
-    await loadEvaluations(projectId)
+    await goalApi.delete(id)
+    await loadGoals(projectId)
   }
 
   return (
@@ -82,20 +163,20 @@ function DocumentIssues({ documentId, projectId }: { documentId: string; project
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] text-muted-foreground hover:text-foreground"
       >
         <MessageCircle size={12} />
-        <span>Issues ({docIssues.length})</span>
+        <span>{t('documentGoals', { count: docGoals.length })}</span>
       </button>
 
       {expanded && (
         <div className="border-t border-border/20">
-          {docIssues.length > 0 && (
+          {docGoals.length > 0 && (
             <div className="max-h-[160px] overflow-y-auto border-b border-border/10">
-              {docIssues.map(ev => (
-                <div key={ev.id} className="group/item flex items-start gap-2 px-3 py-2 border-b border-border/5 last:border-0">
-                  <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${statusDot[ev.status]}`} />
-                  <p className="flex-1 min-w-0 text-[11px] text-foreground/80 leading-relaxed">{ev.content}</p>
+              {docGoals.map(goal => (
+                <div key={goal.id} className="group/item flex items-start gap-2 px-3 py-2 border-b border-border/5 last:border-0">
+                  <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${statusDot[goal.status]}`} />
+                  <p className="flex-1 min-w-0 text-[11px] text-foreground/80 leading-relaxed">{goal.content}</p>
                   <button
                     type="button"
-                    onClick={() => void handleDelete(ev.id)}
+                    onClick={() => void handleDelete(goal.id)}
                     className="shrink-0 rounded p-0.5 text-muted-foreground/30 opacity-0 group-hover/item:opacity-100 hover:text-destructive transition-all"
                   >
                     <X size={10} />
@@ -108,10 +189,10 @@ function DocumentIssues({ documentId, projectId }: { documentId: string; project
           <div className="flex items-end gap-2 p-2.5">
             <TextArea
               ref={textareaRef}
-              aria-label="Issue description"
+              aria-label={t('documentGoalAriaLabel')}
               value={content}
               onChange={e => setContent(e.target.value)}
-              placeholder="Add issue for this document…"
+              placeholder={t('documentGoalPlaceholder')}
               rows={1}
               className="flex-1 text-[12px]"
               onKeyDown={e => {
@@ -124,7 +205,7 @@ function DocumentIssues({ documentId, projectId }: { documentId: string; project
               isDisabled={!content.trim() || submitting}
               onPress={() => void handleSubmit()}
             >
-              Add
+              {t('documentGoalAdd')}
             </Button>
           </div>
         </div>
@@ -239,7 +320,7 @@ export default function WikiDocumentView({
   const draftPreviewActive = useWikiStore(s => s.draftPreviewActive)
   const draftPreviewId = useWikiStore(s => s.draftPreviewId)
   const draftsById = useWikiStore(s => s.draftsById)
-  const evaluations = useWikiStore(s => s.evaluations)
+  const goals = useWikiStore(s => s.goals)
 
   const previewDraft = draftPreviewActive && draftPreviewId ? draftsById[draftPreviewId] : null
   const previewChange = useMemo(() => {
@@ -248,7 +329,7 @@ export default function WikiDocumentView({
   }, [previewDraft, document.id])
 
   const contentMd = previewChange?.newContentMd ?? document.contentMd
-  const issueCount = evaluations.filter(e => e.documentId === document.id).length
+  const goalCount = goals.filter(g => g.documentId === document.id).length
   useSearchHighlight(document.id, searchHighlightQuery, Boolean(contentMd))
 
   if (!contentMd) {
@@ -281,9 +362,9 @@ export default function WikiDocumentView({
           <span className="wiki-doc-type-badge">{DOC_TYPE_LABEL[document.docType]}</span>
           <StaleBadge state={document.staleState} />
           <ManualBadge state={document.manualState} />
-          {issueCount > 0 && (
+          {goalCount > 0 && (
             <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400/80 px-1 text-[9px] font-bold text-white">
-              {issueCount}
+              {goalCount}
             </span>
           )}
         </div>
@@ -293,12 +374,13 @@ export default function WikiDocumentView({
         )}
       </header>
 
-      <div className="wiki-markdown">
+      <div className="wiki-markdown relative">
         <WikiMarkdown content={contentMd} />
+        <GoalSelectionToolbar documentId={document.id} contentMd={contentMd} containerClass="wiki-markdown" />
       </div>
 
       <ReferencesSection references={document.references} projectRoot={projectRoot} />
-      <DocumentIssues documentId={document.id} projectId={projectId} />
+      <DocumentGoals documentId={document.id} projectId={projectId} />
     </article>
   )
 }

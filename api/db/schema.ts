@@ -627,13 +627,21 @@ export const wikiScanGitCache = sqliteTable('wiki_scan_git_cache', {
 export type WikiScanGitCacheRow = typeof wikiScanGitCache.$inferSelect;
 export type NewWikiScanGitCacheRow = typeof wikiScanGitCache.$inferInsert;
 
-// ── Wiki Evaluations & Plans ────────────────────────────────────────────────
+// ── Wiki Goals & Plans ────────────────────────────────────────────────────────
 
-export const wikiEvaluations = sqliteTable('wiki_evaluations', {
+export type GoalAnchor = {
+  type: 'heading' | 'selection'
+  heading?: string
+  quote?: string
+}
+
+export const wikiGoals = sqliteTable('wiki_goals', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
-  documentId: text('document_id').notNull(),
+  scope: text('scope').notNull().default('document'),
+  documentId: text('document_id'),
   content: text('content').notNull(),
+  anchorJson: text('anchor_json'),
   status: text('status').notNull().default('active'),
   planNodeId: text('plan_node_id'),
   createdAt: text('created_at').notNull(),
@@ -645,6 +653,7 @@ export const wikiPlans = sqliteTable('wiki_plans', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
   snapshotId: text('snapshot_id').notNull(),
+  goalIdsJson: text('goal_ids_json').notNull().default('[]'),
   evaluationIdsJson: text('evaluation_ids_json').notNull().default('[]'),
   nodesJson: text('nodes_json').notNull().default('[]'),
   status: text('status').notNull().default('draft'),
@@ -659,6 +668,7 @@ export const wikiPlanNodes = sqliteTable('wiki_plan_nodes', {
   projectId: text('project_id').notNull(),
   title: text('title').notNull(),
   description: text('description').notNull().default(''),
+  goalIdsJson: text('goal_ids_json').notNull().default('[]'),
   evaluationIdsJson: text('evaluation_ids_json').notNull().default('[]'),
   dependsOnJson: text('depends_on_json').notNull().default('[]'),
   expectedFilesJson: text('expected_files_json').notNull().default('[]'),
@@ -670,8 +680,8 @@ export const wikiPlanNodes = sqliteTable('wiki_plan_nodes', {
   completedAt: text('completed_at'),
 });
 
-export type WikiEvaluationRow = typeof wikiEvaluations.$inferSelect;
-export type NewWikiEvaluationRow = typeof wikiEvaluations.$inferInsert;
+export type WikiGoalRow = typeof wikiGoals.$inferSelect;
+export type NewWikiGoalRow = typeof wikiGoals.$inferInsert;
 export type WikiPlanRow = typeof wikiPlans.$inferSelect;
 export type NewWikiPlanRow = typeof wikiPlans.$inferInsert;
 export type WikiPlanNodeRow = typeof wikiPlanNodes.$inferSelect;
