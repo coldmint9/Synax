@@ -18,6 +18,7 @@ export type WikiGoal = {
   anchorJson: GoalAnchor | null
   status: 'active' | 'planned' | 'in_progress' | 'resolved'
   planNodeId: string | null
+  lastSessionId: string | null
   createdAt: string
   updatedAt: string
   resolvedAt: string | null
@@ -122,6 +123,33 @@ export const goalApi = {
     })
     if (!res.ok) throw new Error(`goals/create failed: ${res.status}`)
     return res.json() as Promise<WikiGoal>
+  },
+
+  async buildSessionPrompt(projectId: string, body: {
+    mode?: 'direct' | 'plan_node'
+    content: string
+    documentId?: string | null
+    documentTitle?: string | null
+    anchorJson?: GoalAnchor | null
+    locale?: 'zh' | 'en'
+  }): Promise<string> {
+    const res = await apiFetch(`${BASE}/projects/${projectId}/goals/session-prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(`goals/session-prompt failed: ${res.status}`)
+    const data = await res.json() as { prompt: string }
+    return data.prompt
+  },
+
+  async linkLastSession(goalId: string, sessionId: string): Promise<void> {
+    const res = await apiFetch(`${BASE}/goals/${goalId}/last-session`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    })
+    if (!res.ok) throw new Error(`goals/last-session failed: ${res.status}`)
   },
 
   async delete(goalId: string): Promise<void> {

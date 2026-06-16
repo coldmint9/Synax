@@ -4,8 +4,9 @@ import { logger } from '../../lib/logger.js'
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js'
 import { agentRuntimeStore } from '../agent-runtime/session-store.js'
 import { streamWikiAgent } from './wiki-agent-stream.js'
-import { ensurePlanExecutorProfileRegistered } from './wiki-plan-executor-profile.js'
-import { buildPlanExecutorPrompt } from './wiki-plan-executor-prompt.js'
+import { ensureGoalProfileRegistered, GOAL_AGENT_PROFILE_ID } from './wiki-goal-profile.js'
+import { buildGoalSessionPrompt } from './wiki-goal-prompt.js'
+import { PLAN_NODE_PERMISSION_OVERRIDES } from './wiki-goal-permissions.js'
 import {
   getPlan,
   listPlanNodes,
@@ -17,6 +18,7 @@ import {
   updateArtifact,
   getArtifact,
   updateGoalsStatus,
+  updateGoalLastSessionId,
   type WikiPlanNode,
   type PlanNodeArtifactPatch,
 } from './wiki-goal-service.js'
@@ -165,17 +167,47 @@ async function executeNode(
   locale: 'zh' | 'en',
   feedback?: string,
 ): Promise<void> {
-  ensurePlanExecutorProfileRegistered()
+  ensureGoalProfileRegistered()
   await updatePlanNodeStatus(node.id, 'executing')
   emit(plan.id, { type: 'node_status', nodeId: node.id, status: 'executing', title: node.title })
 
   const allGoals = await listGoals(plan.projectId)
   const linkedGoals = allGoals.filter(g => node.goalIds.includes(g.id))
-  const prompt = buildPlanExecutorPrompt(node, linkedGoals, feedback, locale)
+  const allNodes = await listPlanNodes(plan.id)
+  const committedTitles = new Set(
+    allNodes
+      .filter(n => n.status === 'committed' || n.status === 'accepted')
+      .map(n => n.title),
+  )
+  const completedNodes = allNodes
+    .filter(n => committedTitles.has(n.title) && n.id !== node.id)
+    .map(n => ({ title: n.title }))
+
+  const prompt = buildGoalSessionPrompt({
+    mode: 'plan_node',
+    content: node.description,
+    node: {
+      title: node.title,
+      description: node.description,
+      expectedFiles: node.expectedFiles,
+      dependsOn: node.dependsOn,
+    },
+    linkedGoals,
+    completedNodes,
+    redoFeedback: feedback,
+    locale,
+  })
   const session = agentSessionRuntime.create({
     projectId: plan.projectId,
-    profileId: 'plan-executor',
+    profileId: GOAL_AGENT_PROFILE_ID,
     prompt,
+    permissionOverrides: PLAN_NODE_PERMISSION_OVERRIDES,
+    sessionMetadata: {
+      source: 'plan-execution',
+      planId: plan.id,
+      planNodeId: node.id,
+      goalIds: node.goalIds,
+    },
   })
 
   const artifact = await createArtifact({ nodeId: node.id, planId: plan.id, sessionId: session.id })
@@ -196,7 +228,12 @@ async function executeNode(
     sessionId: session.id,
   })
   await updatePlanNodeStatus(node.id, 'review')
-  if (node.goalIds.length > 0) await updateGoalsStatus(node.goalIds, 'in_progress')
+  if (node.goalIds.length > 0) {
+    await updateGoalsStatus(node.goalIds, 'in_progress')
+    for (const goalId of node.goalIds) {
+      await updateGoalLastSessionId(goalId, session.id)
+    }
+  }
   emit(plan.id, { type: 'node_status', nodeId: node.id, status: 'review', title: node.title })
 }
 

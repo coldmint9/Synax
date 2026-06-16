@@ -190,6 +190,8 @@ export interface CreateSessionRequest {
   prompt: string
   thinkingMode?: ThinkingMode
   skillIds?: string[]
+  sessionMetadata?: Record<string, unknown> | null
+  permissionOverrides?: Partial<Record<'read' | 'write' | 'shell' | 'task', 'allow' | 'ask' | 'deny'>>
 }
 
 export interface SessionPayload {

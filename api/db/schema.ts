@@ -644,6 +644,7 @@ export const wikiGoals = sqliteTable('wiki_goals', {
   anchorJson: text('anchor_json'),
   status: text('status').notNull().default('active'),
   planNodeId: text('plan_node_id'),
+  lastSessionId: text('last_session_id'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
   resolvedAt: text('resolved_at'),

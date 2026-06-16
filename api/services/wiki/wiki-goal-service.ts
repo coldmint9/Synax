@@ -15,6 +15,7 @@ export type WikiGoal = {
   anchorJson: GoalAnchor | null
   status: 'active' | 'planned' | 'in_progress' | 'resolved'
   planNodeId: string | null
+  lastSessionId: string | null
   createdAt: string
   updatedAt: string
   resolvedAt: string | null
@@ -105,7 +106,7 @@ export async function createGoal(input: {
   return rowToGoal({
     id, projectId: input.projectId, scope, documentId, content: input.content,
     anchorJson: input.anchorJson ? JSON.stringify(input.anchorJson) : null,
-    status: 'active', planNodeId: null, createdAt: ts, updatedAt: ts, resolvedAt: null,
+    status: 'active', planNodeId: null, lastSessionId: null, createdAt: ts, updatedAt: ts, resolvedAt: null,
   })
 }
 
@@ -141,6 +142,11 @@ export async function updateGoalStatus(id: string, status: WikiGoal['status']): 
 
 export async function updateGoalsStatus(ids: string[], status: WikiGoal['status']): Promise<void> {
   for (const id of ids) await updateGoalStatus(id, status)
+}
+
+export async function updateGoalLastSessionId(id: string, sessionId: string): Promise<void> {
+  const db = getDb()
+  await db.update(wikiGoals).set({ lastSessionId: sessionId, updatedAt: now() }).where(eq(wikiGoals.id, id))
 }
 
 export async function deleteGoal(id: string): Promise<void> {
@@ -393,6 +399,7 @@ function rowToGoal(r: typeof wikiGoals.$inferSelect): WikiGoal {
     content: r.content, anchorJson,
     status: r.status as WikiGoal['status'],
     planNodeId: r.planNodeId ?? null,
+    lastSessionId: r.lastSessionId ?? null,
     createdAt: r.createdAt, updatedAt: r.updatedAt, resolvedAt: r.resolvedAt ?? null,
   }
 }

@@ -7,7 +7,7 @@ import { useLocale } from '../../../../hooks/useLocale'
 import {
   GOAL_PERMISSION_DEFAULTS,
   GOAL_PERMISSION_GATES,
-  GOAL_PLAN_PROFILE_ID,
+  GOAL_PROFILE_ID,
   hasGoalPermissionOverrides,
   type GoalPermissionAction,
   type GoalPermissionGate,
@@ -107,7 +107,7 @@ export function GoalAttachMenu({
     skillsLoadingRef.current = true
     setSkillsLoading(true)
     void agentRuntimeApi
-      .listSkills(GOAL_PLAN_PROFILE_ID)
+      .listSkills(GOAL_PROFILE_ID)
       .then(res => {
         skillsLoadedRef.current = true
         setSkills(res.items.filter(s => s.status === 'available'))
