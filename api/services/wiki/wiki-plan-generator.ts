@@ -4,7 +4,7 @@ import { streamWikiAgent } from './wiki-agent-stream.js'
 import { toolRegistry } from '../agent-runtime/tool-registry.js'
 import { wikiStore } from './wiki-store.js'
 import { createPlanTools, type PlanNodeDraft } from './wiki-plan-tools.js'
-import { ensurePlanProfileRegistered } from './wiki-plan-profile.js'
+import { ensurePlanProfileRegistered, PLAN_PLANNER_PROFILE_ID } from './wiki-plan-profile.js'
 import { buildPlanPrompt } from './wiki-plan-prompt.js'
 import {
   listGoals,
@@ -66,7 +66,7 @@ export async function generatePlan(
   try {
     const session = agentSessionRuntime.create({
       projectId,
-      profileId: 'plan-generator',
+      profileId: PLAN_PLANNER_PROFILE_ID,
       prompt,
     })
 
@@ -143,7 +143,7 @@ export async function* generatePlanStream(
   }
 
   try {
-    const session = agentSessionRuntime.create({ projectId, profileId: 'plan-generator', prompt })
+    const session = agentSessionRuntime.create({ projectId, profileId: PLAN_PLANNER_PROFILE_ID, prompt })
     yield { type: 'started', sessionId: session.id }
     yield { type: 'phase', phase: 'analyzing' }
 

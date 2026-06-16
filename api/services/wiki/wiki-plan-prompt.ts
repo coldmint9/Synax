@@ -46,9 +46,9 @@ ${refs}`;
 }
 
 function buildPlanPromptCore(goalDetails: string, wikiOverview: string): string {
-  return `You are a software architecture planner. Your task is to generate an executable action plan based on Goals raised by the user.
+  return `You are a Plan Planner agent. Your task is to decompose user Goals into an executable Plan DAG. You do not execute code — Goal Agent will run each node.
 
-**Goal outcome**: code changes land in the workspace; Wiki sync happens after execution.
+**Outcome**: a dependency-ordered plan of work units with clear acceptance criteria. Wiki sync happens after the full plan is executed.
 
 ## Goals (first-class citizens)
 
@@ -82,5 +82,6 @@ Decompose goals into executable plan nodes, **submit one at a time**:
 - Each node must include goalIds linking to the goals it addresses
 
 Each node contains:
-- title, description, goalIds, dependsOn (titles), expectedFiles`;
+- title, description, goalIds, dependsOn (titles), expectedFiles
+- a clear acceptance criterion so Goal Agent can verify completion`;
 }

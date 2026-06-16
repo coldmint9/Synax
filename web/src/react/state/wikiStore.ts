@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import { wikiApi } from '../../lib/api/wiki';
 import { goalApi, type WikiGoal, type WikiPlan, type WikiPlanNode, type WikiPlanWithSummary, type PlanNodeDraft, type PlanStreamEvent, type PlanExecuteEvent, type WikiPlanNodeArtifact, type GoalAnchor } from '../../lib/api/goal';
+import { agentRuntimeApi } from '../../lib/api/agentRuntime';
 import { TaskNotificationEventType } from '../../lib/api/eventTypes';
 import { useNotificationStore } from './notificationStore';
 import { useShellStore } from './shellStore';
@@ -14,7 +15,13 @@ import type {
   WikiRefreshDraft,
   WikiSnapshotTree,
 } from '../../lib/contracts/wiki';
-import type { GoalPermissionAction, GoalPermissionGate } from '../features/wiki/goal/goalAttachTypes';
+import { GOAL_PROFILE_ID, toPermissionOverrides, type GoalPermissionAction, type GoalPermissionGate } from '../features/wiki/goal/goalAttachTypes';
+import {
+  applyGoalStreamChunk,
+  initialGoalSessionState,
+  streamGoalAgentTurn,
+  type GoalSessionState,
+} from '../features/wiki/goal/goalSessionStream';
 
 export type WikiViewMode = 'document' | 'plan';
 export type PlanNavView = 'list' | 'detail';
@@ -132,6 +139,7 @@ export interface WikiState {
   goalComposerAnchorJson: GoalAnchor | null;
   goalComposerSkillIds: string[];
   goalComposerPermissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null;
+  goalSession: GoalSessionState;
   setGoalDockState: (state: GoalDockState) => void;
   setGoalComposerContent: (content: string) => void;
   setGoalComposerProviderId: (id: string | null) => void;
@@ -146,6 +154,7 @@ export interface WikiState {
   }) => void;
   submitGoal: (projectId: string) => Promise<void>;
   stopGoal: () => void;
+  resetGoalSession: () => void;
 }
 
 const initialState = {
@@ -197,6 +206,7 @@ const initialState = {
   goalComposerAnchorJson: null as GoalAnchor | null,
   goalComposerSkillIds: [] as string[],
   goalComposerPermissions: null as Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null,
+  goalSession: initialGoalSessionState,
   planExecutionAbort: null as (() => void) | null,
 };
 
@@ -680,38 +690,143 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     const s = get()
     const content = s.goalComposerContent.trim()
     if (!content) return
-    const snapshot = s.snapshot
-    if (!snapshot) {
-      useNotificationStore.getState().push({
-        type: 'error',
-        message: 'Wiki 尚未就绪，无法提交 Goal',
-        duration: 4000,
-      })
-      return
-    }
+
+    const isFollowUp = Boolean(s.goalSession.sessionId)
+      && (s.goalDockState === 'expanded' || s.goalSession.status === 'failed' || s.goalSession.status === 'completed')
+
+    const modelId = s.goalComposerModelId
+    const toast = useNotificationStore.getState()
+
     try {
+      if (isFollowUp && s.goalSession.sessionId) {
+        set({
+          goalSession: { ...s.goalSession, status: 'running', error: null },
+          goalDockState: 'working',
+          goalComposerContent: '',
+        })
+        await streamGoalAgentTurn(
+          s.goalSession.sessionId,
+          { message: content, model: modelId },
+          (chunk) => {
+            set(state => ({
+              goalSession: applyGoalStreamChunk(state.goalSession, chunk),
+            }))
+          },
+        )
+        const final = get().goalSession
+        set({
+          goalDockState: final.status === 'failed' ? 'expanded' : 'idle',
+        })
+        return
+      }
+
       const documentId = s.goalComposerDocumentId ?? s.selectedDocumentId
-      await goalApi.create(projectId, {
+      const document = documentId ? s.documents.find(d => d.id === documentId) : undefined
+      const prompt = await goalApi.buildSessionPrompt(projectId, {
+        mode: 'direct',
+        content,
+        documentId: documentId ?? null,
+        documentTitle: document?.title ?? null,
+        anchorJson: s.goalComposerAnchorJson,
+      })
+
+      const goal = await goalApi.create(projectId, {
         content,
         scope: documentId ? 'document' : 'project',
         documentId: documentId ?? null,
         anchorJson: s.goalComposerAnchorJson,
       })
       await get().loadGoals(projectId)
-      get().startPlanGeneration(projectId, snapshot.id)
-      set({ goalDockState: 'working', goalComposerContent: '', goalComposerAnchorJson: null })
-    } catch (err) {
-      useNotificationStore.getState().push({
-        type: 'error',
-        message: err instanceof Error ? err.message : '提交 Goal 失败',
-        duration: 6000,
+
+      const permissionOverrides = toPermissionOverrides(s.goalComposerPermissions)
+
+      const payload = await agentRuntimeApi.createSession({
+        projectId,
+        profileId: GOAL_PROFILE_ID,
+        prompt,
+        skillIds: s.goalComposerSkillIds.length > 0 ? s.goalComposerSkillIds : undefined,
+        permissionOverrides,
+        sessionMetadata: {
+          source: 'goal-dock',
+          goalId: goal.id,
+          documentId: documentId ?? null,
+          goalContent: content,
+        },
       })
+
+      void goalApi.linkLastSession(goal.id, payload.session.id).catch(() => {})
+
+      set({
+        goalSession: {
+          status: 'running',
+          sessionId: payload.session.id,
+          toolCalls: [],
+          error: null,
+        },
+        goalDockState: 'working',
+        goalComposerContent: '',
+        goalComposerAnchorJson: null,
+      })
+
+      toast.push({
+        type: 'info',
+        message: 'Goal Agent 已启动',
+        duration: 3000,
+      })
+
+      await streamGoalAgentTurn(
+        payload.session.id,
+        { model: modelId },
+        (chunk) => {
+          set(state => ({
+            goalSession: applyGoalStreamChunk(state.goalSession, chunk),
+          }))
+        },
+      )
+
+      const final = get().goalSession
+      if (final.status === 'failed') {
+        set({ goalDockState: 'expanded' })
+        toast.push({
+          type: 'error',
+          message: final.error ?? 'Goal Agent 执行失败',
+          duration: 6000,
+        })
+      } else {
+        set({ goalDockState: 'idle' })
+        toast.push({
+          type: 'success',
+          message: 'Goal Agent 已完成',
+          duration: 4000,
+        })
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '提交 Goal 失败'
+      set(state => ({
+        goalSession: {
+          ...state.goalSession,
+          status: 'failed',
+          error: message,
+        },
+        goalDockState: 'expanded',
+      }))
+      toast.push({ type: 'error', message, duration: 6000 })
     }
   },
 
   stopGoal: () => {
-    get().resetPlanGeneration()
-    set({ goalDockState: 'idle' })
+    const sessionId = get().goalSession.sessionId
+    if (sessionId) {
+      void agentRuntimeApi.cancelSession(sessionId).catch(() => {})
+    }
+    set({
+      goalSession: { ...get().goalSession, status: 'failed', error: '已停止' },
+      goalDockState: 'expanded',
+    })
+  },
+
+  resetGoalSession: () => {
+    set({ goalSession: initialGoalSessionState })
   },
 
   startPlanExecutionStream: (planId) => {

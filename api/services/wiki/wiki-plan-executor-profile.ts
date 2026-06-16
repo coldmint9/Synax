@@ -26,7 +26,7 @@ export const planExecutorProfile: AgentProfile = {
   ],
   defaultSkills: [],
   maxSteps: 40,
-  status: 'active',
+  status: 'disabled',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
     'Implement the plan node description. Use file.patch for edits.',

@@ -13,13 +13,6 @@ interface Props {
   projectId: string
 }
 
-const PHASE_LABEL_KEYS: Record<string, 'planPhaseAnalyzing' | 'planPhaseReadingSource' | 'planPhasePlanning' | 'planPhaseSubmitting'> = {
-  analyzing: 'planPhaseAnalyzing',
-  reading_source: 'planPhaseReadingSource',
-  planning: 'planPhasePlanning',
-  submitting: 'planPhaseSubmitting',
-}
-
 export function GoalPillDock({ projectId }: Props) {
   const { t } = useLocale()
   const navigate = useNavigate()
@@ -44,7 +37,7 @@ export function GoalPillDock({ projectId }: Props) {
   const goals = useWikiStore(s => s.goals)
   const submitGoal = useWikiStore(s => s.submitGoal)
   const stopGoal = useWikiStore(s => s.stopGoal)
-  const planGen = useWikiStore(s => s.planGeneration)
+  const goalSession = useWikiStore(s => s.goalSession)
 
   const wasGenerating = useRef(false)
   const dockHoverRef = useRef(false)
@@ -57,7 +50,8 @@ export function GoalPillDock({ projectId }: Props) {
   const showComposer = morph === 'pill-input' || morph === 'pill-expanded'
   const showMini = morph === 'mini'
   const hasPendingGoals = goals.length > 0
-  const latestTool = planGen.toolCalls[planGen.toolCalls.length - 1]
+  const latestTool = goalSession.toolCalls[goalSession.toolCalls.length - 1]
+  const isGenerating = goalSession.status === 'running'
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current !== null) {
@@ -111,28 +105,28 @@ export function GoalPillDock({ projectId }: Props) {
   }, [documentId, selectedDocumentId, setDocumentId])
 
   useEffect(() => {
-    if (planGen.status === 'generating') {
+    if (goalSession.status === 'running') {
       wasGenerating.current = true
       if (goalDockState === 'input') setGoalDockState('working')
     }
-    if (wasGenerating.current && planGen.status === 'idle') {
+    if (wasGenerating.current && (goalSession.status === 'completed' || goalSession.status === 'idle')) {
       wasGenerating.current = false
-      if (goalDockState === 'working' || goalDockState === 'expanded') {
+      if (goalDockState === 'working') {
         setGoalDockState('idle')
       }
     }
-    if (planGen.status === 'failed' && goalDockState === 'working') {
+    if (goalSession.status === 'failed' && goalDockState === 'working') {
       setGoalDockState('expanded')
     }
-  }, [planGen.status, goalDockState, setGoalDockState])
+  }, [goalSession.status, goalDockState, setGoalDockState])
 
   useEffect(() => () => clearCloseTimer(), [clearCloseTimer])
 
   const openInput = useCallback(() => {
     if (goalDockState === 'working' || goalDockState === 'expanded') return
-    if (planGen.status === 'generating') return
+    if (isGenerating) return
     setGoalDockState('input')
-  }, [goalDockState, planGen.status, setGoalDockState])
+  }, [goalDockState, isGenerating, setGoalDockState])
 
   const handleDockEnter = useCallback(() => {
     clearCloseTimer()
@@ -181,9 +175,7 @@ export function GoalPillDock({ projectId }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [isExpanded, setGoalDockState])
 
-  const phaseLabel = planGen.phase && PHASE_LABEL_KEYS[planGen.phase]
-    ? t(PHASE_LABEL_KEYS[planGen.phase])
-    : t('goalPlanning')
+  const phaseLabel = t('goalWorking')
 
   return (
     <>
@@ -209,11 +201,11 @@ export function GoalPillDock({ projectId }: Props) {
             <div className="goal-dock-dialog-slot mb-2.5 w-full">
               <GoalDialogPanel
                 statusLabel={phaseLabel}
-                toolCalls={planGen.toolCalls}
-                phase={planGen.phase}
-                error={planGen.error}
+                toolCalls={goalSession.toolCalls}
+                phase={null}
+                error={goalSession.error}
                 onOpenSession={() => {
-                  const sessionId = planGen.sessionId
+                  const sessionId = goalSession.sessionId
                   if (sessionId) {
                     navigate(`/projects/${projectId}/sessions?session=${sessionId}`)
                   } else {
@@ -258,7 +250,7 @@ export function GoalPillDock({ projectId }: Props) {
                   onContentChange={setContent}
                   onSubmit={() => void submitGoal(projectId)}
                   onStop={stopGoal}
-                  isGenerating={planGen.status === 'generating'}
+                  isGenerating={isGenerating}
                   providerId={providerId}
                   modelId={modelId}
                   onModelSelect={(selection) => {
@@ -274,7 +266,7 @@ export function GoalPillDock({ projectId }: Props) {
                   onSkillIdsChange={setSkillIds}
                   permissions={permissions}
                   onPermissionChange={setPermission}
-                  disabled={planGen.status === 'generating'}
+                  disabled={isGenerating}
                   onOverlayOpenChange={handleOverlayOpenChange}
                 />
               </div>

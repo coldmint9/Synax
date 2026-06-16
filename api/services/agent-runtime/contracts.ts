@@ -47,6 +47,16 @@ export type AgentRunStepStatus = z.infer<typeof stepStatusSchema>;
 export const permissionActionSchema = z.enum(['allow', 'ask', 'deny']);
 export type PermissionAction = z.infer<typeof permissionActionSchema>;
 
+export const permissionOverrideGateSchema = z.enum(['read', 'write', 'shell', 'task']);
+export type PermissionOverrideGate = z.infer<typeof permissionOverrideGateSchema>;
+
+export const permissionOverridesSchema = z.partialRecord(
+  permissionOverrideGateSchema,
+  permissionActionSchema,
+);
+export type PermissionOverrides = z.infer<typeof permissionOverridesSchema>;
+
+
 export const permissionReplySchema = z.enum(['once', 'always', 'reject']);
 export type PermissionReply = z.infer<typeof permissionReplySchema>;
 
@@ -387,6 +397,7 @@ export const createSessionRequestSchema = z.object({
   thinkingMode: thinkingModeSchema.optional(),
   skillIds: z.array(z.string().min(1).max(128)).max(20).optional(),
   sessionMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  permissionOverrides: permissionOverridesSchema.optional(),
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 

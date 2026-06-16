@@ -496,6 +496,7 @@ wikiRoutes.post('/drafts/:draftId/discard', async (c) => {
 import * as goalService from '../services/wiki/wiki-goal-service.js';
 import * as planExecutor from '../services/wiki/wiki-plan-executor-service.js';
 import { generatePlan, generatePlanStream } from '../services/wiki/wiki-plan-generator.js';
+import { buildGoalSessionPrompt } from '../services/wiki/wiki-goal-prompt.js';
 
 const createGoalBodySchema = z.object({
   content: z.string().min(1).max(4096),
@@ -506,6 +507,39 @@ const createGoalBodySchema = z.object({
     heading: z.string().optional(),
     quote: z.string().optional(),
   }).optional().nullable(),
+});
+
+const buildGoalSessionPromptBodySchema = z.object({
+  mode: z.enum(['direct', 'plan_node']).optional(),
+  content: z.string().min(1).max(100_000),
+  documentId: z.string().nullable().optional(),
+  documentTitle: z.string().nullable().optional(),
+  anchorJson: createGoalBodySchema.shape.anchorJson,
+  locale: z.enum(['zh', 'en']).optional(),
+});
+
+// ── POST /api/wiki/projects/:projectId/goals/session-prompt ────────────
+wikiRoutes.post('/projects/:projectId/goals/session-prompt', async (c) => {
+  const parsed = await parseBody(c, buildGoalSessionPromptBodySchema);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const prompt = buildGoalSessionPrompt({
+    mode: parsed.data.mode ?? 'direct',
+    content: parsed.data.content,
+    documentId: parsed.data.documentId ?? null,
+    documentTitle: parsed.data.documentTitle ?? null,
+    anchorJson: parsed.data.anchorJson ?? null,
+    locale: parsed.data.locale,
+  });
+  return c.json({ prompt });
+});
+
+// ── PATCH /api/wiki/goals/:goalId/last-session ─────────────────────────
+wikiRoutes.patch('/goals/:goalId/last-session', async (c) => {
+  const { goalId } = c.req.param();
+  const parsed = await parseBody(c, z.object({ sessionId: z.string().min(1).max(64) }));
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  await goalService.updateGoalLastSessionId(goalId, parsed.data.sessionId);
+  return c.json({ ok: true });
 });
 
 // ── GET /api/wiki/projects/:projectId/goals ────────────────────────────
