@@ -1,8 +1,6 @@
-import { AlertTriangle, FileText, Loader2, Lock, MessageCircle, Pencil, Target, X } from 'lucide-react'
-import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
-import { Button, TextArea } from '@heroui/react'
+import { AlertTriangle, FileText, Loader2, Lock, Pencil, Target } from 'lucide-react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import { WikiMarkdown } from './WikiMarkdown'
-import { goalApi, type WikiGoal } from '../../../lib/api/goal'
 import type { WikiDocument, WikiDocType, WikiManualState, WikiReference, WikiStaleState } from '../../../lib/contracts/wiki'
 import { configApi } from '../../../lib/api/config'
 import { handleError } from '../../../lib/errors'
@@ -116,104 +114,6 @@ function ManualBadge({ state }: { state: WikiManualState }) {
   )
 }
 
-const statusDot: Record<WikiGoal['status'], string> = {
-  active: 'bg-amber-400',
-  planned: 'bg-blue-400',
-  in_progress: 'bg-blue-500',
-  resolved: 'bg-emerald-400',
-}
-
-function DocumentGoals({ documentId, projectId }: { documentId: string; projectId: string }) {
-  const { t } = useLocale()
-  const goals = useWikiStore(s => s.goals)
-  const loadGoals = useWikiStore(s => s.loadGoals)
-  const [content, setContent] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [expanded, setExpanded] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  const docGoals = goals.filter(g => g.documentId === documentId)
-
-  async function handleSubmit() {
-    if (!content.trim()) return
-    setSubmitting(true)
-    try {
-      await goalApi.create(projectId, {
-        content: content.trim(),
-        scope: 'document',
-        documentId,
-      })
-      setContent('')
-      await loadGoals(projectId)
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  async function handleDelete(id: string) {
-    await goalApi.delete(id)
-    await loadGoals(projectId)
-  }
-
-  return (
-    <div className="mt-4 rounded-lg border border-border/30 bg-card/30">
-      <button
-        type="button"
-        onClick={() => setExpanded(v => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] text-muted-foreground hover:text-foreground"
-      >
-        <MessageCircle size={12} />
-        <span>{t('documentGoals', { count: docGoals.length })}</span>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-border/20">
-          {docGoals.length > 0 && (
-            <div className="max-h-[160px] overflow-y-auto border-b border-border/10">
-              {docGoals.map(goal => (
-                <div key={goal.id} className="group/item flex items-start gap-2 px-3 py-2 border-b border-border/5 last:border-0">
-                  <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${statusDot[goal.status]}`} />
-                  <p className="flex-1 min-w-0 text-[11px] text-foreground/80 leading-relaxed">{goal.content}</p>
-                  <button
-                    type="button"
-                    onClick={() => void handleDelete(goal.id)}
-                    className="shrink-0 rounded p-0.5 text-muted-foreground/30 opacity-0 group-hover/item:opacity-100 hover:text-destructive transition-all"
-                  >
-                    <X size={10} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="flex items-end gap-2 p-2.5">
-            <TextArea
-              ref={textareaRef}
-              aria-label={t('documentGoalAriaLabel')}
-              value={content}
-              onChange={e => setContent(e.target.value)}
-              placeholder={t('documentGoalPlaceholder')}
-              rows={1}
-              className="flex-1 text-[12px]"
-              onKeyDown={e => {
-                if (e.key === 'Enter' && e.metaKey) { e.preventDefault(); void handleSubmit() }
-              }}
-            />
-            <Button
-              size="sm"
-              variant="primary"
-              isDisabled={!content.trim() || submitting}
-              onPress={() => void handleSubmit()}
-            >
-              {t('documentGoalAdd')}
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 const DOC_TYPE_LABEL: Record<WikiDocType, string> = {
   landscape: 'landscape',
   topology: 'topology',
@@ -320,7 +220,6 @@ export default function WikiDocumentView({
   const draftPreviewActive = useWikiStore(s => s.draftPreviewActive)
   const draftPreviewId = useWikiStore(s => s.draftPreviewId)
   const draftsById = useWikiStore(s => s.draftsById)
-  const goals = useWikiStore(s => s.goals)
 
   const previewDraft = draftPreviewActive && draftPreviewId ? draftsById[draftPreviewId] : null
   const previewChange = useMemo(() => {
@@ -329,7 +228,6 @@ export default function WikiDocumentView({
   }, [previewDraft, document.id])
 
   const contentMd = previewChange?.newContentMd ?? document.contentMd
-  const goalCount = goals.filter(g => g.documentId === document.id).length
   useSearchHighlight(document.id, searchHighlightQuery, Boolean(contentMd))
 
   if (!contentMd) {
@@ -362,11 +260,6 @@ export default function WikiDocumentView({
           <span className="wiki-doc-type-badge">{DOC_TYPE_LABEL[document.docType]}</span>
           <StaleBadge state={document.staleState} />
           <ManualBadge state={document.manualState} />
-          {goalCount > 0 && (
-            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400/80 px-1 text-[9px] font-bold text-white">
-              {goalCount}
-            </span>
-          )}
         </div>
         <h1 className="wiki-doc-title">{document.title}</h1>
         {previewChange && (
@@ -380,7 +273,6 @@ export default function WikiDocumentView({
       </div>
 
       <ReferencesSection references={document.references} projectRoot={projectRoot} />
-      <DocumentGoals documentId={document.id} projectId={projectId} />
     </article>
   )
 }

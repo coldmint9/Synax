@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { BookOpen, Plug, Plus, Shield, Sparkles } from 'lucide-react'
-import { Button, Dropdown, Header, Label } from '@heroui/react'
+import { BookOpen, Check, Plug, Plus, Shield, Sparkles } from 'lucide-react'
+import { Button, Dropdown, Header, Label, Switch } from '@heroui/react'
 import type { WikiDocument } from '../../../../lib/contracts/wiki'
 import { agentRuntimeApi, type AgentSkillSummary } from '../../../../lib/api/agentRuntime'
 import { useLocale } from '../../../../hooks/useLocale'
@@ -11,11 +11,14 @@ import {
   hasGoalPermissionOverrides,
   type GoalPermissionAction,
   type GoalPermissionGate,
+  type GoalWikiAttachMode,
 } from './goalAttachTypes'
 
 interface Props {
   documentId: string | null
   onDocumentChange: (id: string | null) => void
+  wikiAttachMode: GoalWikiAttachMode
+  onWikiAttachModeChange: (mode: GoalWikiAttachMode) => void
   documents: WikiDocument[]
   skillIds: string[]
   onSkillIdsChange: (ids: string[]) => void
@@ -25,13 +28,24 @@ interface Props {
   onOverlayOpenChange?: (open: boolean) => void
 }
 
-function AttachBadge({ count }: { count: number }) {
-  if (count <= 0) return null
+function AttachBadge({ count, label }: { count?: number; label?: string }) {
+  if (label) {
+    return (
+      <span className="ms-auto rounded-full bg-amber-500/15 px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+        {label}
+      </span>
+    )
+  }
+  if (!count || count <= 0) return null
   return (
     <span className="ms-auto rounded-full bg-amber-500/15 px-1.5 py-px text-[9px] font-medium text-amber-700 dark:text-amber-300">
       {count}
     </span>
   )
+}
+
+function isGeneratedWikiDocument(doc: WikiDocument): boolean {
+  return !doc.isSection && doc.contentMd.trim().length > 0
 }
 
 const GATE_LABEL_KEYS = {
@@ -85,9 +99,91 @@ function PermissionPanel({
   )
 }
 
+function WikiAttachPanel({
+  documentId,
+  onDocumentChange,
+  wikiAttachMode,
+  onWikiAttachModeChange,
+  documents,
+}: {
+  documentId: string | null
+  onDocumentChange: (id: string | null) => void
+  wikiAttachMode: GoalWikiAttachMode
+  onWikiAttachModeChange: (mode: GoalWikiAttachMode) => void
+  documents: WikiDocument[]
+}) {
+  const { t } = useLocale()
+  const isAuto = wikiAttachMode === 'auto'
+  const generatedDocuments = useMemo(
+    () => documents.filter(isGeneratedWikiDocument),
+    [documents],
+  )
+
+  return (
+    <div className="w-56 py-1">
+      <div className="flex items-center justify-between gap-3 px-2.5 py-2">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium text-foreground">{t('goalWikiAuto')}</p>
+          <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+            {isAuto ? t('goalWikiAutoOnDesc') : t('goalWikiAutoOffDesc')}
+          </p>
+        </div>
+        <Switch
+          size="sm"
+          isSelected={isAuto}
+          onChange={(selected) => onWikiAttachModeChange(selected ? 'auto' : 'manual')}
+          aria-label={t('goalWikiAuto')}
+        >
+          <Switch.Control><Switch.Thumb /></Switch.Control>
+        </Switch>
+      </div>
+
+      {!isAuto && (
+        <Dropdown.Menu
+          aria-label={t('goalWikiContext')}
+          selectedKeys={new Set([documentId ?? '__none__'])}
+          selectionMode="single"
+          onSelectionChange={(keys) => {
+            const key = [...keys][0]
+            if (key) onDocumentChange(String(key) === '__none__' ? null : String(key))
+          }}
+        >
+          <Dropdown.Section>
+            <Header>{t('goalWikiContext')}</Header>
+            <Dropdown.Item id="__none__" textValue={t('goalWikiNone')}>
+              {documentId === null
+                ? <Check size={14} className="shrink-0 text-primary" />
+                : <span className="size-3.5 shrink-0" aria-hidden />}
+              <Label className={documentId === null ? 'font-medium text-primary' : ''}>
+                {t('goalWikiNone')}
+              </Label>
+            </Dropdown.Item>
+            {generatedDocuments.length === 0 ? (
+              <div className="px-3 py-2 text-[10px] text-muted-foreground">
+                {t('goalWikiGeneratedEmpty')}
+              </div>
+            ) : generatedDocuments.map(doc => (
+              <Dropdown.Item key={doc.id} id={doc.id} textValue={doc.title}>
+                {documentId === doc.id
+                  ? <Check size={14} className="shrink-0 text-primary" />
+                  : <span className="size-3.5 shrink-0" aria-hidden />}
+                <Label className={`truncate ${documentId === doc.id ? 'font-medium text-primary' : ''}`}>
+                  {doc.title}
+                </Label>
+              </Dropdown.Item>
+            ))}
+          </Dropdown.Section>
+        </Dropdown.Menu>
+      )}
+    </div>
+  )
+}
+
 export function GoalAttachMenu({
   documentId,
   onDocumentChange,
+  wikiAttachMode,
+  onWikiAttachModeChange,
   documents,
   skillIds,
   onSkillIdsChange,
@@ -127,27 +223,24 @@ export function GoalAttachMenu({
     if (open) loadSkills()
   }, [loadSkills, onOverlayOpenChange])
 
+  const hasWikiAttachment = wikiAttachMode === 'auto' || Boolean(documentId)
+
   const hasAttachments = useMemo(
-    () => Boolean(documentId) || skillIds.length > 0 || hasGoalPermissionOverrides(permissions),
-    [documentId, skillIds.length, permissions],
+    () => hasWikiAttachment || skillIds.length > 0 || hasGoalPermissionOverrides(permissions),
+    [hasWikiAttachment, skillIds.length, permissions],
   )
 
   return (
     <Dropdown onOpenChange={handleOpenChange}>
-      <Dropdown.Trigger>
-        <Button
-          isIconOnly
-          variant="tertiary"
-          size="sm"
-          aria-label={t('goalAttach')}
-          className={`relative size-7 shrink-0 rounded-full${hasAttachments ? ' text-amber-600' : ''}`}
-          isDisabled={disabled}
-        >
-          <Plus size={14} />
-          {hasAttachments && (
-            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-background" />
-          )}
-        </Button>
+      <Dropdown.Trigger
+        isDisabled={disabled}
+        aria-label={t('goalAttach')}
+        className="button button--icon-only button--sm button--tertiary relative inline-flex size-7 shrink-0 items-center justify-center rounded-full p-0 text-foreground/80"
+      >
+        <Plus size={14} className="shrink-0" strokeWidth={2} />
+        {hasAttachments && (
+          <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-green-500 ring-2 ring-background" />
+        )}
       </Dropdown.Trigger>
       <Dropdown.Popover placement="top start" className="z-50">
         <Dropdown.Menu aria-label={t('goalAttach')}>
@@ -155,31 +248,21 @@ export function GoalAttachMenu({
             <Dropdown.Item id="wiki" textValue={t('goalAttachWiki')}>
               <BookOpen size={14} className="shrink-0 text-muted-foreground/70" />
               <Label>{t('goalAttachWiki')}</Label>
-              {documentId && <AttachBadge count={1} />}
+              {wikiAttachMode === 'auto'
+                ? <AttachBadge label="auto" />
+                : documentId
+                  ? <AttachBadge count={1} />
+                  : null}
               <Dropdown.SubmenuIndicator />
             </Dropdown.Item>
             <Dropdown.Popover>
-              <Dropdown.Menu
-                aria-label={t('goalWikiContext')}
-                selectedKeys={new Set([documentId ?? '__none__'])}
-                selectionMode="single"
-                onSelectionChange={(keys) => {
-                  const key = [...keys][0]
-                  if (key) onDocumentChange(String(key) === '__none__' ? null : String(key))
-                }}
-              >
-                <Dropdown.Section>
-                  <Header>{t('goalWikiContext')}</Header>
-                  <Dropdown.Item id="__none__" textValue={t('goalWikiNone')}>
-                    <Label>{t('goalWikiNone')}</Label>
-                  </Dropdown.Item>
-                  {documents.map(doc => (
-                    <Dropdown.Item key={doc.id} id={doc.id} textValue={doc.title}>
-                      <Label className="truncate">{doc.title}</Label>
-                    </Dropdown.Item>
-                  ))}
-                </Dropdown.Section>
-              </Dropdown.Menu>
+              <WikiAttachPanel
+                documentId={documentId}
+                onDocumentChange={onDocumentChange}
+                wikiAttachMode={wikiAttachMode}
+                onWikiAttachModeChange={onWikiAttachModeChange}
+                documents={documents}
+              />
             </Dropdown.Popover>
           </Dropdown.SubmenuTrigger>
 

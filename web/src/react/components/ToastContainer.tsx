@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useMemo, useState, useRef } from 'react'
 import { X, CheckCircle2, AlertCircle, Info, AlertTriangle } from 'lucide-react'
 import { useNotificationStore, type Notification, type NotificationType } from '../state/notificationStore'
 
@@ -27,14 +27,17 @@ const MAX_VISIBLE_STACK = 3
 
 export function ToastContainer() {
   const notifications = useNotificationStore(s => s.notifications)
-  const visibleToasts = notifications.filter(n => n.visible)
+  const visibleToasts = useMemo(
+    () => notifications.filter(n => n.visible),
+    [notifications],
+  )
   const [expanded, setExpanded] = useState(false)
 
   if (visibleToasts.length === 0) return null
 
   return (
     <div
-      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[100] w-[340px]"
+      className="fixed top-16 right-4 z-[100] w-[340px] max-sm:right-3 max-sm:top-[4.5rem]"
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
     >
@@ -71,7 +74,7 @@ function ToastItem({ notification, index, total, expanded }: {
 
   const hidden = !expanded && index >= MAX_VISIBLE_STACK
   const scale = expanded ? 1 : 1 - index * 0.05
-  const translateY = expanded ? -(index * 52) : -(index * 8)
+  const translateY = expanded ? index * 52 : index * 8
   const opacity = hidden ? 0 : 1
 
   return (
@@ -82,13 +85,13 @@ function ToastItem({ notification, index, total, expanded }: {
         opacity,
         zIndex: total - index,
         position: index === 0 ? 'relative' : 'absolute',
-        bottom: 0,
+        top: 0,
         left: 0,
         right: 0,
         pointerEvents: hidden ? 'none' : 'auto',
         transition: 'transform 0.3s ease, opacity 0.3s ease',
       }}
-      className={`flex items-start gap-2.5 rounded-xl border px-3.5 py-3 shadow-lg backdrop-blur-sm ${index === 0 ? 'animate-in slide-in-from-bottom-5 fade-in duration-300' : ''} ${TYPE_STYLES[notification.type]}`}
+      className={`flex items-start gap-2.5 rounded-xl border px-3.5 py-3 shadow-lg backdrop-blur-sm ${index === 0 ? 'animate-in slide-in-from-right-5 fade-in duration-300' : ''} ${TYPE_STYLES[notification.type]}`}
     >
       <Icon size={15} className={`shrink-0 mt-0.5 ${ICON_STYLES[notification.type]}`} />
       <div className="flex-1 min-w-0">

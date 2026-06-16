@@ -2,6 +2,11 @@ import { useState, useMemo, useCallback } from 'react'
 import { useDebugConsole } from '../debug-console/debugConsoleStore'
 import { agentRuntimeApi } from '../../../lib/api/agentRuntime'
 import type { AgentSession, AgentSessionStatus } from '../../../lib/api/agentRuntime'
+import {
+  isGoalSession,
+  isWorkflowSession,
+  type SessionListView,
+} from './sessionBuckets'
 
 // ---- Types ----
 
@@ -12,36 +17,17 @@ export interface SessionTreeNode {
   expanded: boolean
 }
 
-export interface TimeGroup {
-  key: string
+export interface SessionGroup {
+  key: SessionListView
   label: string
   sessions: SessionTreeNode[]
   collapsed: boolean
   count: number
 }
 
-export type StatusFilter = AgentSessionStatus | 'all'
-
 // ---- Constants ----
 
 const PAGE_SIZE = 30
-const GROUP_ORDER = ['last3days', 'thisWeek', 'earlier'] as const
-const GROUP_LABELS: Record<string, string> = {
-  last3days: 'Last 3 Days',
-  thisWeek: 'This Week',
-  earlier: 'Earlier',
-}
-
-// ---- Time grouping helpers ----
-
-function getTimeGroupKey(updatedAt: string): string {
-  const diff = Date.now() - new Date(updatedAt).getTime()
-  const h72 = 72 * 3600000
-  const h168 = 168 * 3600000
-  if (diff <= h72) return 'last3days'
-  if (diff <= h168) return 'thisWeek'
-  return 'earlier'
-}
 
 // ---- Tree building ----
 
@@ -76,7 +62,7 @@ function flattenTree(nodes: SessionTreeNode[]): SessionTreeNode[] {
 
 // ---- Hook ----
 
-export function useSessionList() {
+export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionListView = 'goal') {
   const storeSessions = useDebugConsole(s => s.sessions)
   const storeRefresh = useDebugConsole(s => s.refreshSessions)
   const selectedSessionId = useDebugConsole(s => s.selectedSessionId)
@@ -85,51 +71,43 @@ export function useSessionList() {
   const deleteSession = useDebugConsole(s => s.deleteSession)
   const projectId = useDebugConsole(s => s.projectId)
 
-  // Pagination state
   const [page, setPage] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
-  const [countByStatus, setCountByStatus] = useState<Record<string, number>>({})
   const [hasMore, setHasMore] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
-
-  // Refresh state
   const [isRefreshing, setIsRefreshing] = useState(false)
-
-  // Filter & search state
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
-
-  // Collapse state
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set(['earlier']))
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
 
-  // ---- Derived: filtered + grouped ----
+  const viewCounts = useMemo(() => {
+    const topLevel = storeSessions.filter(s => !s.parentSessionId)
+    let goal = 0
+    let workflow = 0
+    for (const session of topLevel) {
+      if (isWorkflowSession(session)) workflow += 1
+      else if (isGoalSession(session)) goal += 1
+    }
+    return { goal, workflow }
+  }, [storeSessions])
 
   const grouped = useMemo(() => {
-    let list = storeSessions
-    if (statusFilter !== 'all') list = list.filter(s => s.status === statusFilter)
+    let list = storeSessions.filter(s =>
+      listView === 'workflow' ? isWorkflowSession(s) : isGoalSession(s),
+    )
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
       list = list.filter(s => (s.title ?? s.prompt).toLowerCase().includes(q))
     }
     const tree = buildTree(list)
-    const gm = new Map<string, SessionTreeNode[]>()
-    for (const n of tree) {
-      const gk = getTimeGroupKey(n.session.updatedAt)
-      const a = gm.get(gk) ?? []
-      a.push(n)
-      gm.set(gk, a)
-    }
-    return GROUP_ORDER.filter(gk => gm.has(gk)).map(gk => ({
-      key: gk,
-      label: GROUP_LABELS[gk],
-      sessions: gm.get(gk)!,
-      collapsed: collapsedGroups.has(gk),
-      count: gm.get(gk)!.length,
-    }))
-  }, [storeSessions, statusFilter, searchQuery, collapsedGroups])
-
-  // ---- Derived: apply expand/collapse to tree nodes ----
+    return [{
+      key: listView,
+      label: listView === 'goal' ? (locale === 'zh' ? 'Goal' : 'Goals') : (locale === 'zh' ? 'Workflow' : 'Workflows'),
+      sessions: tree,
+      collapsed: collapsedGroups.has(listView),
+      count: tree.length,
+    }]
+  }, [storeSessions, searchQuery, collapsedGroups, locale, listView])
 
   const visibleGroups = useMemo(() =>
     grouped.map(g => g.collapsed ? { ...g, sessions: [] } : {
@@ -141,19 +119,14 @@ export function useSessionList() {
     }),
   [grouped, expandedNodes])
 
-  // ---- Actions ----
-
   const refresh = useCallback(async () => {
     setIsRefreshing(true)
     setPage(0)
     setHasMore(true)
-    // Populate store sessions — needed for grouping to render
     await storeRefresh()
     try {
-      // Fetch paginated counts for display
       const r = await agentRuntimeApi.listSessions({ projectId: projectId ?? undefined, limit: PAGE_SIZE, offset: 0 })
       setTotalCount(r.totalCount)
-      setCountByStatus(r.countByStatus)
       setHasMore(r.items.length >= PAGE_SIZE)
     } finally {
       setIsRefreshing(false)
@@ -183,12 +156,11 @@ export function useSessionList() {
 
   return {
     groups: visibleGroups,
+    listView,
+    viewCounts,
     totalCount,
-    countByStatus,
     hasMore,
     isLoadingMore,
-    statusFilter,
-    setStatusFilter,
     searchQuery,
     setSearchQuery,
     selectedId: panelOpen ? selectedSessionId : null,
@@ -201,3 +173,9 @@ export function useSessionList() {
     isRefreshing,
   }
 }
+
+// Backward-compatible alias for SessionTimeGroups
+export type TimeGroup = SessionGroup
+
+/** @deprecated Status filter removed from Sessions page */
+export type StatusFilter = AgentSessionStatus | 'all'

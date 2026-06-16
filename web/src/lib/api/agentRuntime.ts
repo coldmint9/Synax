@@ -61,6 +61,7 @@ export interface AgentSession {
   activeRunId: string | null
   pendingResumeToken: string | null
   model: string | null
+  sessionMetadata?: Record<string, unknown> | null
 }
 
 export interface AgentRun {

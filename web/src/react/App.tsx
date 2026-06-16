@@ -32,6 +32,7 @@ export default function App() {
             {/* wiki/sessions 由 WorkbenchLayout keep-alive 块渲染，路由仅用于 URL 匹配 */}
             <Route path="/projects/:projectId/wiki" element={null} />
             <Route path="/projects/:projectId/sessions" element={null} />
+            <Route path="/projects/:projectId/sessions/workflows" element={null} />
             <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />
           </Route>
           <Route path="/agent-loop-test" element={<AgentLoopTestPage />} />

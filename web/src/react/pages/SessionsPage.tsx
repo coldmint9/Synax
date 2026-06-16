@@ -1,13 +1,19 @@
 import { memo } from 'react'
+import { useLocation, useParams } from 'react-router-dom'
 import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
 import { useDebugPolling } from '../features/debug-console/useDebugPolling'
 import { useSessionLiveStream } from '../features/debug-console/useSessionLiveStream'
 import { SessionTranscript } from '../features/sessions/SessionTranscript'
 import { SessionWorkspace } from '../features/sessions/SessionWorkspace'
 import { SessionListPanel } from '../features/sessions/SessionListPanel'
+import type { SessionListView } from '../features/sessions/sessionBuckets'
 
 export default memo(function SessionsPage() {
   useDebugPolling()
+  const { projectId = '' } = useParams()
+  const location = useLocation()
+  const listView: SessionListView = location.pathname.includes('/sessions/workflows') ? 'workflow' : 'goal'
+
   const agentSessionId = useDebugConsole(s => s.selectedSessionId)
   const agentPanelOpen = useDebugConsole(s => s.panelOpen)
 
@@ -17,12 +23,10 @@ export default memo(function SessionsPage() {
 
   return (
     <div className="flex h-full min-h-0">
-      {/* 左侧会话列表 — 260px */}
       <aside className="w-[260px] shrink-0 border-r border-border/40 overflow-hidden">
-        <SessionListPanel />
+        <SessionListPanel listView={listView} projectId={projectId} />
       </aside>
 
-      {/* 主内容区 */}
       {showTranscript ? (
         <>
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
