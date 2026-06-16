@@ -128,19 +128,37 @@ export const goalApi = {
   async buildSessionPrompt(projectId: string, body: {
     mode?: 'direct' | 'plan_node'
     content: string
+    wikiAttachMode?: 'auto' | 'manual'
     documentId?: string | null
     documentTitle?: string | null
     anchorJson?: GoalAnchor | null
     locale?: 'zh' | 'en'
-  }): Promise<string> {
+  }): Promise<{
+    prompt: string
+    wikiContext: {
+      mode: 'auto' | 'manual'
+      documentId: string | null
+      documentTitle: string | null
+      anchorJson: GoalAnchor | null
+      autoMatched: boolean
+    }
+  }> {
     const res = await apiFetch(`${BASE}/projects/${projectId}/goals/session-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(`goals/session-prompt failed: ${res.status}`)
-    const data = await res.json() as { prompt: string }
-    return data.prompt
+    return res.json() as Promise<{
+      prompt: string
+      wikiContext: {
+        mode: 'auto' | 'manual'
+        documentId: string | null
+        documentTitle: string | null
+        anchorJson: GoalAnchor | null
+        autoMatched: boolean
+      }
+    }>
   },
 
   async linkLastSession(goalId: string, sessionId: string): Promise<void> {

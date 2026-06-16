@@ -1778,20 +1778,113 @@
 
 /* ── Goal Pill Dock — bar → pill 弹性 morph ── */
 .goal-dock-zone {
+  pointer-events: none;
+}
+
+/* 稳定命中层：展开时立即占满 pill 区域，避免 morph 动画导致 mouseenter/leave 抖动 */
+.goal-dock-hit {
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  width: var(--goal-bar-width);
+}
+
+.goal-dock-hit[data-hit="composer"] {
+  width: min(100%, var(--goal-pill-max-width));
+  min-height: 2.75rem;
+}
+
+.goal-dock-hit[data-hit="composer-active"] {
+  width: min(100%, var(--goal-pill-max-width));
+  min-height: calc(2.75rem + 2.5rem);
+}
+
+.goal-dock-stack {
+  width: 100%;
+}
+
+.goal-dock-mini-inner--hover {
+  transform: translateY(-1px);
+}
+
+.goal-dock-morph[data-morph="mini"] .goal-dock-shell:has(.goal-dock-mini-inner--hover) {
+  transform: translateY(-1px);
+  border-color: hsl(0 0% 100% / 0.78);
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.9) inset,
+    0 8px 20px hsl(0 0% 0% / 0.07);
+}
+
+.dark .goal-dock-morph[data-morph="mini"] .goal-dock-shell:has(.goal-dock-mini-inner--hover) {
+  border-color: hsl(0 0% 100% / 0.2);
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.18) inset,
+    0 10px 24px hsl(0 0% 0% / 0.4);
+}
+
+@keyframes goal-mini-carousel-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.goal-dock-mini-carousel-item {
+  animation: goal-mini-carousel-in 0.16s ease-out;
+}
+
+.goal-dock-preview-pill {
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
+  backdrop-filter: blur(16px) saturate(1.5);
+}
+
+.goal-dock-dialog-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--foreground) / 0.12) transparent;
+}
+
+.goal-dock-hit[data-hit="mini"] {
+  width: min(100%, 18.75rem);
+  min-height: 1.75rem;
+}
+
+.goal-dock-hit[data-hit="dialog"] {
+  width: min(100%, var(--goal-pill-max-width));
 }
 
 .goal-dock-morph {
-  --goal-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --goal-dur: 520ms;
+  --goal-ease: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --goal-dur: 220ms;
+  --goal-pill-max-width: 36rem;
+  --goal-bar-width: 5.75rem;
+  --goal-bar-height: 0.3125rem;
+  --goal-glass-bg: hsl(0 0% 100% / 0.52);
+  --goal-glass-border: hsl(0 0% 100% / 0.72);
+  --goal-glass-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.88) inset,
+    0 4px 16px hsl(0 0% 0% / 0.05);
   display: flex;
   flex-direction: column;
   align-items: center;
   width: 100%;
   transition:
-    max-width var(--goal-dur) var(--goal-spring),
-    transform var(--goal-dur) var(--goal-spring);
+    max-width var(--goal-dur) var(--goal-ease),
+    transform var(--goal-dur) var(--goal-ease);
   transform: translateY(0);
+}
+
+.dark .goal-dock-morph {
+  --goal-glass-bg: hsl(var(--card) / 0.55);
+  --goal-glass-border: hsl(0 0% 100% / 0.14);
+  --goal-glass-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.14) inset,
+    0 4px 16px hsl(0 0% 0% / 0.35);
 }
 
 /* 统一 morph 外壳：idle bar 与 pill 为同一元素 */
@@ -1800,50 +1893,54 @@
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  width: 4.5rem;
-  height: 0.625rem;
-  min-height: 0.625rem;
-  border-radius: 999px;
+  width: var(--goal-bar-width);
+  height: var(--goal-bar-height);
+  min-height: var(--goal-bar-height);
+  border-radius: 9999px;
+  border: 1px solid var(--goal-glass-border);
   overflow: hidden;
   transform-origin: center bottom;
-  background: hsl(var(--foreground) / 0.48);
-  box-shadow:
-    inset 0 1px 0 hsl(0 0% 100% / 0.22),
-    0 2px 10px hsl(0 0% 0% / 0.22),
-    0 0 0 0.5px hsl(0 0% 0% / 0.12);
+  background: var(--goal-glass-bg);
+  -webkit-backdrop-filter: blur(14px) saturate(1.65);
+  backdrop-filter: blur(14px) saturate(1.65);
+  box-shadow: var(--goal-glass-shadow);
   transition:
-    width var(--goal-dur) var(--goal-spring),
-    height var(--goal-dur) var(--goal-spring),
-    min-height var(--goal-dur) var(--goal-spring),
-    background var(--goal-dur) ease,
-    border-color var(--goal-dur) ease,
-    box-shadow var(--goal-dur) ease,
-    backdrop-filter var(--goal-dur) ease;
+    width var(--goal-dur) var(--goal-ease),
+    height var(--goal-dur) var(--goal-ease),
+    min-height var(--goal-dur) var(--goal-ease),
+    transform var(--goal-dur) var(--goal-ease),
+    background var(--goal-dur) ease-out,
+    border-color var(--goal-dur) ease-out,
+    box-shadow var(--goal-dur) ease-out,
+    backdrop-filter var(--goal-dur) ease-out;
 }
 
 .dark .goal-dock-shell {
   background: hsl(var(--foreground) / 0.62);
+  border-color: hsl(0 0% 100% / 0.08);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
   box-shadow:
     inset 0 1px 0 hsl(0 0% 100% / 0.14),
-    0 2px 12px hsl(0 0% 0% / 0.45),
-    0 0 0 0.5px hsl(0 0% 100% / 0.06);
+    0 2px 12px hsl(0 0% 0% / 0.45);
 }
 
 .goal-dock-shell--pending {
-  background: hsl(32 90% 38% / 0.92);
+  background: hsl(0 0% 100% / 0.66);
+  border-color: hsl(0 0% 100% / 0.82);
   box-shadow:
-    inset 0 1px 0 hsl(0 0% 100% / 0.28),
-    0 0 14px hsl(38 92% 42% / 0.5),
-    0 2px 10px hsl(0 0% 0% / 0.25);
-  animation: goal-dock-bar-pulse 2.4s ease-in-out infinite;
+    0 1px 0 hsl(0 0% 100% / 0.95) inset,
+    0 0 12px hsl(142 71% 45% / 0.2),
+    0 4px 12px hsl(0 0% 0% / 0.05);
+  animation: goal-dock-bar-pulse 1.8s ease-in-out infinite;
 }
 
 .dark .goal-dock-shell--pending {
-  background: hsl(36 88% 44% / 0.95);
+  background: hsl(142 71% 45% / 0.95);
   box-shadow:
-    inset 0 1px 0 hsl(0 0% 100% / 0.2),
-    0 0 18px hsl(38 92% 48% / 0.55),
-    0 2px 12px hsl(0 0% 0% / 0.4);
+    inset 0 0.5px 0 hsl(0 0% 100% / 0.14),
+    0 0 10px hsl(142 71% 45% / 0.34),
+    0 1px 6px hsl(0 0% 0% / 0.32);
 }
 
 @keyframes goal-dock-bar-pulse {
@@ -1855,19 +1952,20 @@
 .goal-dock-mini-inner {
   width: 100%;
   transition:
-    opacity calc(var(--goal-dur) * 0.55) ease,
-    max-height var(--goal-dur) var(--goal-spring),
-    transform var(--goal-dur) var(--goal-spring);
+    opacity calc(var(--goal-dur) * 0.7) ease-out,
+    max-height var(--goal-dur) var(--goal-ease),
+    transform calc(var(--goal-dur) * 0.85) var(--goal-ease);
 }
 
 /* ── Bar（idle）── */
 .goal-dock-morph[data-morph="bar"] {
-  max-width: 4.5rem;
+  width: var(--goal-bar-width);
+  max-width: var(--goal-bar-width);
 }
 .goal-dock-morph[data-morph="bar"] .goal-dock-shell {
-  width: 4.5rem;
-  height: 0.625rem;
-  min-height: 0.625rem;
+  width: var(--goal-bar-width);
+  height: var(--goal-bar-height);
+  min-height: var(--goal-bar-height);
 }
 .goal-dock-morph[data-morph="bar"] .goal-dock-shell-content,
 .goal-dock-morph[data-morph="bar"] .goal-dock-mini-inner,
@@ -1877,29 +1975,24 @@
   overflow: hidden;
   margin: 0;
   pointer-events: none;
-  transform: scale(0.96);
+  transform: scale(0.98);
 }
 
 /* ── Pill Input（hover 展开：bar 形变为 pill）── */
 .goal-dock-morph[data-morph="pill-input"] {
-  max-width: 26.25rem;
-  transform: translateY(-6px);
+  max-width: var(--goal-pill-max-width);
 }
 .goal-dock-morph[data-morph="pill-input"] .goal-dock-shell {
+  transform: translateY(-4px);
   width: 100%;
   height: auto;
   min-height: 2.75rem;
-  overflow: visible;
-  border: 1px solid hsl(0deg 0% 100% / 10%);
-  background: hsl(0deg 0% 100% / 5%);
-  -webkit-backdrop-filter: blur(28px) saturate(1.8) brightness(1.06);
-  backdrop-filter: blur(28px) saturate(2) brightness(1);
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.7) inset,
-    0 -1px 0 hsl(0 0% 0% / 0.06) inset,
-    0 4px 24px hsl(0 0% 0% / 0.10),
-    0 1px 4px hsl(0 0% 0% / 0.06),
-    0 0 0 0.5px hsl(0 0% 0% / 0.06);
+  overflow: hidden;
+  border-color: var(--goal-glass-border);
+  background: var(--goal-glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.75) brightness(1.03);
+  backdrop-filter: blur(24px) saturate(1.75) brightness(1.03);
+  box-shadow: var(--goal-glass-shadow);
   animation: none;
   filter: none;
 }
@@ -1908,21 +2001,16 @@
   background:
     linear-gradient(180deg, hsl(0 0% 100% / 0.07), hsl(0 0% 100% / 0.015) 42%, transparent),
     hsl(var(--card) / 0.55);
-  -webkit-backdrop-filter: blur(32px) saturate(1.9) brightness(1.08);
-  backdrop-filter: blur(32px) saturate(1.9) brightness(1.08);
+  -webkit-backdrop-filter: blur(28px) saturate(1.85) brightness(1.06);
+  backdrop-filter: blur(28px) saturate(1.85) brightness(1.06);
   box-shadow:
     0 1px 0 hsl(0 0% 100% / 0.18) inset,
-    0 0 0 0.5px hsl(0 0% 100% / 0.04) inset,
-    0 -1px 0 hsl(0 0% 0% / 0.30) inset,
-    0 8px 32px hsl(0 0% 0% / 0.45),
-    0 2px 8px hsl(0 0% 0% / 0.25),
-    0 0 0 0.5px hsl(0 0% 0% / 0.35);
+    0 8px 28px hsl(0 0% 0% / 0.42);
 }
 .goal-dock-morph[data-morph="pill-input"] .goal-dock-shell-content {
   opacity: 1;
   max-height: 4rem;
   transform: scale(1);
-  transition-delay: calc(var(--goal-dur) * 0.12);
 }
 .goal-dock-morph[data-morph="pill-input"] .goal-dock-dialog-slot,
 .goal-dock-morph[data-morph="pill-input"] .goal-dock-mini-inner {
@@ -1934,21 +2022,19 @@
 
 /* ── Mini Pill（working）── */
 .goal-dock-morph[data-morph="mini"] {
+  width: min(100%, 18.75rem);
   max-width: 18.75rem;
 }
 .goal-dock-morph[data-morph="mini"] .goal-dock-shell {
   width: 100%;
   height: 1.75rem;
   min-height: 1.75rem;
-  overflow: visible;
-  border: 1px solid hsl(0deg 0% 100% / 10%);
-  background: hsl(0deg 0% 100% / 5%);
-  -webkit-backdrop-filter: blur(28px) saturate(1.8) brightness(1.06);
-  backdrop-filter: blur(28px) saturate(2) brightness(1);
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.7) inset,
-    0 4px 24px hsl(0 0% 0% / 0.10),
-    0 0 0 0.5px hsl(0 0% 0% / 0.06);
+  overflow: hidden;
+  border-color: var(--goal-glass-border);
+  background: var(--goal-glass-bg);
+  -webkit-backdrop-filter: blur(22px) saturate(1.75) brightness(1.02);
+  backdrop-filter: blur(22px) saturate(1.75) brightness(1.02);
+  box-shadow: var(--goal-glass-shadow);
   animation: none;
   filter: none;
 }
@@ -1959,10 +2045,10 @@
     hsl(var(--card) / 0.55);
   box-shadow:
     0 1px 0 hsl(0 0% 100% / 0.18) inset,
-    0 8px 32px hsl(0 0% 0% / 0.45),
-    0 0 0 0.5px hsl(0 0% 0% / 0.35);
+    0 8px 28px hsl(0 0% 0% / 0.42);
 }
 .goal-dock-morph[data-morph="mini"] .goal-dock-mini-inner {
+  border-radius: inherit;
   opacity: 1;
   max-height: 2rem;
   transform: scale(1);
@@ -1977,22 +2063,19 @@
 
 /* ── Pill Expanded ── */
 .goal-dock-morph[data-morph="pill-expanded"] {
-  max-width: 26.25rem;
-  transform: translateY(-8px);
+  max-width: var(--goal-pill-max-width);
 }
 .goal-dock-morph[data-morph="pill-expanded"] .goal-dock-shell {
+  transform: translateY(-5px);
   width: 100%;
   height: auto;
   min-height: 2.75rem;
-  overflow: visible;
-  border: 1px solid hsl(0deg 0% 100% / 10%);
-  background: hsl(0deg 0% 100% / 5%);
-  -webkit-backdrop-filter: blur(28px) saturate(1.8) brightness(1.06);
-  backdrop-filter: blur(28px) saturate(2) brightness(1);
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.7) inset,
-    0 4px 24px hsl(0 0% 0% / 0.10),
-    0 0 0 0.5px hsl(0 0% 0% / 0.06);
+  overflow: hidden;
+  border-color: var(--goal-glass-border);
+  background: var(--goal-glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.75) brightness(1.03);
+  backdrop-filter: blur(24px) saturate(1.75) brightness(1.03);
+  box-shadow: var(--goal-glass-shadow);
   animation: none;
   filter: none;
 }
@@ -2003,8 +2086,7 @@
     hsl(var(--card) / 0.55);
   box-shadow:
     0 1px 0 hsl(0 0% 100% / 0.18) inset,
-    0 8px 32px hsl(0 0% 0% / 0.45),
-    0 0 0 0.5px hsl(0 0% 0% / 0.35);
+    0 8px 28px hsl(0 0% 0% / 0.42);
 }
 .goal-dock-morph[data-morph="pill-expanded"] .goal-dock-shell-content {
   opacity: 1;
@@ -2022,19 +2104,19 @@
   transform: scaleY(1);
   transform-origin: center bottom;
   transition:
-    opacity calc(var(--goal-dur) * 0.65) ease,
-    max-height var(--goal-dur) var(--goal-spring),
-    transform var(--goal-dur) var(--goal-spring);
+    opacity calc(var(--goal-dur) * 0.85) ease-out,
+    max-height var(--goal-dur) var(--goal-ease),
+    transform var(--goal-dur) var(--goal-ease);
 }
 
 .goal-dock-dialog-slot {
   width: 100%;
   margin-bottom: 0.625rem;
   transition:
-    opacity calc(var(--goal-dur) * 0.5) ease,
-    max-height var(--goal-dur) var(--goal-spring),
-    margin var(--goal-dur) var(--goal-spring),
-    transform var(--goal-dur) var(--goal-spring);
+    opacity calc(var(--goal-dur) * 0.7) ease-out,
+    max-height var(--goal-dur) var(--goal-ease),
+    margin var(--goal-dur) var(--goal-ease),
+    transform var(--goal-dur) var(--goal-ease);
 }
 
 .goal-dock-composer {
@@ -2044,6 +2126,14 @@
 .goal-dock-dialog {
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
   backdrop-filter: blur(24px) saturate(1.6);
+}
+
+.goal-dock-dialog-permissions .permission-approval-bar > div:first-child {
+  border-top: none;
+}
+
+.goal-dock-dialog-permissions .permission-approval-bar > div {
+  padding: 0.5rem 0.75rem;
 }
 
 .goal-dock-tool-list {

@@ -33,6 +33,10 @@ function subscribeSessionLive(sessionId: string, handler: LiveHandler): () => vo
   }
 }
 
+export function addSessionLiveListener(sessionId: string, handler: LiveHandler): () => void {
+  return subscribeSessionLive(sessionId, handler)
+}
+
 export function ensureSessionLiveSubscription(sessionId: string, handler: LiveHandler): void {
   if (activeSessionId === sessionId && activeRelease) return
   releaseSessionLiveSubscription()

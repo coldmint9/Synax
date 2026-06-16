@@ -18,7 +18,6 @@ function DocItem({
   isSelected,
   isGenerating,
   onSelect,
-  goalCount,
   draftInfo,
   depth,
 }: {
@@ -26,11 +25,14 @@ function DocItem({
   isSelected: boolean
   isGenerating: boolean
   onSelect: () => void
-  goalCount?: number
   draftInfo?: { count: number; status: 'ready' | 'generating' | 'partially_applied' }
   depth: number
 }) {
+  const { t } = useLocale()
   const isEmpty = !doc.contentMd
+  const hasNewVersion = draftInfo
+    && draftInfo.count > 0
+    && (draftInfo.status === 'ready' || draftInfo.status === 'partially_applied')
   return (
     <button
       type="button"
@@ -46,17 +48,18 @@ function DocItem({
       )}
       <span className="min-w-0 flex-1 break-words">{doc.title}</span>
       <span className="flex shrink-0 items-center gap-1">
-        {draftInfo && draftInfo.count > 0 && (
-          <span
-            className={`list-badge ${draftInfo.status === 'generating' ? 'animate-pulse' : ''} ${
-              draftInfo.status === 'partially_applied' ? '!bg-amber-400/20 !text-amber-600' : ''
-            }`}
-          >
-            {draftInfo.status === 'generating' ? '·' : draftInfo.count}
-          </span>
+        {draftInfo && draftInfo.count > 0 && draftInfo.status === 'generating' && (
+          <span className="list-badge animate-pulse">·</span>
         )}
-        {(goalCount ?? 0) > 0 && (
-          <span className="list-badge !bg-amber-400/20 !text-amber-600">{goalCount}</span>
+        {hasNewVersion && (
+          <span
+            className={`list-badge ${
+              draftInfo?.status === 'partially_applied' ? '!bg-amber-400/20 !text-amber-600' : ''
+            }`}
+            title={t('wikiNewVersionTitle')}
+          >
+            {t('wikiNewVersionBadge')}
+          </span>
         )}
       </span>
     </button>
@@ -113,7 +116,6 @@ function TreeNode({
   depth,
   selectedDocumentId,
   onSelect,
-  goalsByDocId,
   draftsByDocId,
   generatingDocumentId,
   defaultExpanded,
@@ -124,7 +126,6 @@ function TreeNode({
   depth: number
   selectedDocumentId: string | null
   onSelect: (id: string) => void
-  goalsByDocId: Map<string, number>
   draftsByDocId: Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>
   generatingDocumentId: string | null
   defaultExpanded: boolean
@@ -153,7 +154,6 @@ function TreeNode({
           isSelected={selectedDocumentId === node.document.id}
           isGenerating={generatingDocumentId === node.document.id}
           onSelect={() => onSelect(node.document.id)}
-          goalCount={goalsByDocId.get(node.document.id)}
           draftInfo={draftsByDocId.get(node.document.id)}
         />
       )}
@@ -166,7 +166,6 @@ function TreeNode({
               depth={depth + 1}
               selectedDocumentId={selectedDocumentId}
               onSelect={onSelect}
-              goalsByDocId={goalsByDocId}
               draftsByDocId={draftsByDocId}
               generatingDocumentId={generatingDocumentId}
               defaultExpanded={depth + 1 <= 1}
@@ -192,7 +191,6 @@ export default function WikiDocumentTree({
   const snapshot = useWikiStore(s => s.snapshot)
   const draftsSummary = useWikiStore(s => s.draftsSummary)
   const draftsById = useWikiStore(s => s.draftsById)
-  const goals = useWikiStore(s => s.goals)
 
   const tree = useMemo(() => buildWikiDocumentTree(documents), [documents])
 
@@ -209,15 +207,6 @@ export default function WikiDocumentTree({
       [id]: !(prev[id] ?? defaultExpanded),
     }))
   }, [])
-
-  const goalsByDocId = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const goal of goals) {
-      if (!goal.documentId) continue
-      map.set(goal.documentId, (map.get(goal.documentId) ?? 0) + 1)
-    }
-    return map
-  }, [goals])
 
   const draftsByDocId = useMemo(() => {
     const map = new Map<string, { count: number; status: 'ready' | 'generating' | 'partially_applied' }>()
@@ -265,7 +254,6 @@ export default function WikiDocumentTree({
             depth={0}
             selectedDocumentId={selectedDocumentId}
             onSelect={selectDocument}
-            goalsByDocId={goalsByDocId}
             draftsByDocId={draftsByDocId}
             generatingDocumentId={generatingDocumentId}
             defaultExpanded

@@ -1,5 +1,6 @@
 import type { GoalAnchor, WikiGoal } from './wiki-goal-service.js'
 import { buildLanguageDirective } from '../prompts/language-directive.js'
+import type { GoalWikiAttachMode } from './wiki-goal-wiki-context.js'
 
 export type GoalPromptMode = 'direct' | 'plan_node'
 
@@ -21,6 +22,8 @@ export function buildGoalSessionPrompt(input: {
   documentTitle?: string | null
   documentId?: string | null
   anchorJson?: GoalAnchor | null
+  wikiAttachMode?: GoalWikiAttachMode
+  wikiAutoMatched?: boolean
   node?: GoalPlanNodeContext
   linkedGoals?: WikiGoal[]
   completedNodes?: GoalCompletedNodeContext[]
@@ -42,6 +45,8 @@ function buildDirectPrompt(
     documentTitle?: string | null
     documentId?: string | null
     anchorJson?: GoalAnchor | null
+    wikiAttachMode?: GoalWikiAttachMode
+    wikiAutoMatched?: boolean
   },
   locale: 'zh' | 'en',
 ): string {
@@ -52,14 +57,26 @@ function buildDirectPrompt(
     input.content.trim(),
   ]
 
+  const wikiMode = input.wikiAttachMode ?? 'manual'
+
   if (input.documentId || input.documentTitle) {
-    lines.push('', '## Wiki Context')
+    lines.push('', wikiMode === 'auto' && input.wikiAutoMatched ? '## Wiki Context (auto-matched)' : '## Wiki Context')
+    if (wikiMode === 'auto' && input.wikiAutoMatched) {
+      lines.push('- Matched automatically from goal intent.')
+    }
     if (input.documentTitle) lines.push(`- Document: ${input.documentTitle}`)
     if (input.documentId) lines.push(`- Document ID: ${input.documentId}`)
     if (input.anchorJson) {
       appendAnchorLines(lines, input.anchorJson)
     }
     lines.push('- Keep wiki documentation aligned when you change related code.')
+  } else if (wikiMode === 'auto') {
+    lines.push(
+      '',
+      '## Wiki Context (auto)',
+      '- No specific wiki document matched automatically.',
+      '- Infer related design context from the codebase and keep wiki aligned when you change related areas.',
+    )
   }
 
   lines.push(

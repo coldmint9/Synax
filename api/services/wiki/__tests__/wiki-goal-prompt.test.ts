@@ -76,4 +76,34 @@ describe('buildGoalSessionPrompt', () => {
     expect(prompt).toContain('## Redo Feedback')
     expect(prompt).toContain('Tests still failing on edge case')
   })
+
+  it('builds auto mode with matched wiki document', () => {
+    const prompt = buildGoalSessionPrompt({
+      mode: 'direct',
+      content: 'Fix auth flow',
+      documentTitle: 'Authentication',
+      documentId: 'doc-1',
+      wikiAttachMode: 'auto',
+      wikiAutoMatched: true,
+      locale: 'en',
+    })
+
+    expect(prompt).toContain('## Wiki Context (auto-matched)')
+    expect(prompt).toContain('Matched automatically from goal intent.')
+    expect(prompt).toContain('Authentication')
+  })
+
+  it('builds auto mode without matched wiki document', () => {
+    const prompt = buildGoalSessionPrompt({
+      mode: 'direct',
+      content: 'Refactor utils',
+      wikiAttachMode: 'auto',
+      wikiAutoMatched: false,
+      locale: 'en',
+    })
+
+    expect(prompt).toContain('## Wiki Context (auto)')
+    expect(prompt).toContain('No specific wiki document matched automatically.')
+    expect(prompt).not.toContain('Document:')
+  })
 })

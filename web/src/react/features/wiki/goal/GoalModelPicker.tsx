@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Popover, useOverlayState } from '@heroui/react'
+import { Popover, useOverlayState } from '@heroui/react'
 import { configApi } from '../../../../lib/api/config'
 import type { AcpDiscoveryItem, GlobalConfig, ProviderDef } from '../../../../lib/contracts/config'
 import { useLocale } from '../../../../hooks/useLocale'
@@ -111,19 +111,23 @@ export function GoalModelPicker({
     state.close()
   }
 
+  const triggerDisabled = Boolean(disabled || isEmpty)
+
   return (
-    <Popover isOpen={state.isOpen} onOpenChange={state.setOpen}>
-      <Popover.Trigger>
-        <Button
-          variant="tertiary"
-          size="sm"
-          className="h-7 max-w-[9.5rem] shrink-0 rounded-full px-2.5 text-[11px] font-normal text-muted-foreground"
-          aria-label={t('goalModelSelect')}
-          isDisabled={disabled || isEmpty}
-        >
-          <span className="truncate">{selected?.label ?? t('goalModelSelect')}</span>
-          <span className="ml-0.5 text-[8px] opacity-60">▾</span>
-        </Button>
+    <Popover
+      isOpen={triggerDisabled ? false : state.isOpen}
+      onOpenChange={(open) => {
+        if (triggerDisabled) return
+        state.setOpen(open)
+      }}
+    >
+      <Popover.Trigger
+        aria-label={t('goalModelSelect')}
+        aria-disabled={triggerDisabled}
+        className={`button button--sm button--tertiary inline-flex h-7 max-w-[9.5rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${triggerDisabled ? ' pointer-events-none opacity-50' : ''}`}
+      >
+        <span className="truncate">{selected?.label ?? t('goalModelSelect')}</span>
+        <span className="ml-0.5 text-[8px] opacity-60">▾</span>
       </Popover.Trigger>
       <Popover.Content placement="top end" offset={8} className="z-50 w-[22rem] p-0 overflow-hidden">
         <div className="grid max-h-56 grid-cols-2 divide-x divide-border/25">

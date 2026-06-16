@@ -7,7 +7,7 @@ import { useLocale } from '../../../../hooks/useLocale'
 import { GoalAttachMenu } from './GoalAttachMenu'
 import { GoalModelPicker } from './GoalModelPicker'
 import type { GoalModelSelection } from './goalModelOptions'
-import type { GoalPermissionAction, GoalPermissionGate } from './goalAttachTypes'
+import type { GoalPermissionAction, GoalPermissionGate, GoalWikiAttachMode } from './goalAttachTypes'
 
 interface Props {
   content: string
@@ -22,6 +22,8 @@ interface Props {
   globalConfig: GlobalConfig | null
   documentId: string | null
   onDocumentChange: (id: string | null) => void
+  wikiAttachMode: GoalWikiAttachMode
+  onWikiAttachModeChange: (mode: GoalWikiAttachMode) => void
   documents: WikiDocument[]
   skillIds: string[]
   onSkillIdsChange: (ids: string[]) => void
@@ -44,6 +46,8 @@ export function GoalComposerPill({
   globalConfig,
   documentId,
   onDocumentChange,
+  wikiAttachMode,
+  onWikiAttachModeChange,
   documents,
   skillIds,
   onSkillIdsChange,
@@ -55,10 +59,9 @@ export function GoalComposerPill({
   const { t } = useLocale()
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault()
-      if (!disabled && !isGenerating && content.trim()) onSubmit()
-    }
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+    e.preventDefault()
+    if (!disabled && !isGenerating && content.trim()) onSubmit()
   }
 
   return (
@@ -66,6 +69,8 @@ export function GoalComposerPill({
       <GoalAttachMenu
         documentId={documentId}
         onDocumentChange={onDocumentChange}
+        wikiAttachMode={wikiAttachMode}
+        onWikiAttachModeChange={onWikiAttachModeChange}
         documents={documents}
         skillIds={skillIds}
         onSkillIdsChange={onSkillIdsChange}

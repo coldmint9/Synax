@@ -1,5 +1,7 @@
 export const GOAL_PROFILE_ID = 'goal'
 
+export type GoalWikiAttachMode = 'auto' | 'manual'
+
 export const GOAL_PERMISSION_GATES = ['read', 'write', 'shell', 'task'] as const
 
 export type GoalPermissionGate = (typeof GOAL_PERMISSION_GATES)[number]

@@ -1,5 +1,7 @@
 import type { AgentProfile } from '../agent-runtime/contracts.js'
 import { profileService } from '../agent-runtime/profile-service.js'
+import { registerTitleGenerator } from '../agent-runtime/session-title-service.js'
+import { goalTitleGenerator } from './wiki-goal-title.js'
 
 export const GOAL_AGENT_PROFILE_ID = 'goal'
 
@@ -50,5 +52,6 @@ let registered = false
 export function ensureGoalProfileRegistered(): void {
   if (registered) return
   profileService.register(goalAgentProfile)
+  registerTitleGenerator(GOAL_AGENT_PROFILE_ID, goalTitleGenerator)
   registered = true
 }

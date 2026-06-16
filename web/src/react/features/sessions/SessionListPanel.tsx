@@ -1,54 +1,60 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Surface } from '@heroui/react'
 import { useSessionList } from './useSessionList'
 import { SessionListHeader } from './SessionListHeader'
-import { SessionFilterChips } from './SessionFilterChips'
 import { SessionTimeGroups } from './SessionTimeGroups'
 import { SessionDeleteDialog } from './SessionDeleteDialog'
 import { SessionClearInactiveDialog } from './SessionClearInactiveDialog'
 import { useDebugConsole } from '../debug-console/debugConsoleStore'
+import { useLocale } from '../../../hooks/useLocale'
+import type { SessionListView } from './sessionBuckets'
 
-export function SessionListPanel() {
-  const list = useSessionList()
-  const projectId = useDebugConsole(s => s.projectId)
+interface Props {
+  listView?: SessionListView
+  projectId: string
+}
 
-  // Delete modal state
+export function SessionListPanel({ listView = 'goal', projectId }: Props) {
+  const { locale, t } = useLocale()
+  const navigate = useNavigate()
+  const list = useSessionList(locale, listView)
+  const { refresh } = list
+
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
-
-  // Clear inactive modal
   const [showClear, setShowClear] = useState(false)
 
-  // Initial load + reload when project changes
-  useEffect(() => { void list.refresh() }, [projectId])
+  useEffect(() => { void refresh() }, [projectId, listView, refresh])
 
-  // Derive delete title
   const deleteTitle = deleteId
     ? (list.groups.flatMap(g => g.sessions).find(n => n.session.id === deleteId)?.session.title
       ?? list.groups.flatMap(g => g.sessions).find(n => n.session.id === deleteId)?.session.prompt.slice(0, 50) ?? '')
     : ''
 
+  const visibleCount = list.groups.reduce((sum, g) => sum + g.sessions.length, 0)
+
   return (
     <Surface className="flex h-full flex-col bg-background" variant="default">
       <SessionListHeader
-        totalCount={list.totalCount}
+        listView={listView}
+        visibleCount={visibleCount}
+        workflowCount={list.viewCounts.workflow}
         searchQuery={list.searchQuery}
         onSearchChange={list.setSearchQuery}
         onRefresh={() => { void list.refresh() }}
         onClearInactive={() => setShowClear(true)}
+        onOpenWorkflows={() => navigate(`/projects/${projectId}/sessions/workflows`)}
+        onBackToGoals={() => navigate(`/projects/${projectId}/sessions`)}
         isRefreshing={list.isRefreshing}
-      />
-      <SessionFilterChips
-        value={list.statusFilter}
-        onChange={list.setStatusFilter}
-        countByStatus={list.countByStatus}
-        totalCount={list.totalCount}
       />
       <SessionTimeGroups
         groups={list.groups}
         selectedId={list.selectedId}
         isLoadingMore={list.isLoadingMore}
         hasMore={list.hasMore}
+        hideGroupHeaders
+        emptyLabel={listView === 'workflow' ? t('sessionWorkflowEmpty') : t('sessionGoalEmpty')}
         onSelect={list.select}
         onToggleGroup={list.toggleGroup}
         onToggleExpand={list.toggleExpand}
@@ -56,7 +62,6 @@ export function SessionListPanel() {
         onDelete={id => setDeleteId(id)}
       />
 
-      {/* Delete confirmation modal */}
       <SessionDeleteDialog
         isOpen={deleteId !== null}
         sessionTitle={deleteTitle}
@@ -72,7 +77,6 @@ export function SessionListPanel() {
         onClose={() => { if (!deleting) setDeleteId(null) }}
       />
 
-      {/* Clear inactive modal */}
       <SessionClearInactiveDialog
         isOpen={showClear}
         projectId={projectId}
@@ -80,7 +84,6 @@ export function SessionListPanel() {
         onCleared={() => { void list.refresh() }}
       />
 
-      {/* Connection status */}
       <div className="flex items-center gap-1.5 px-3 py-1.5 border-t border-border/20 text-[9px] text-muted-foreground">
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
         Connected

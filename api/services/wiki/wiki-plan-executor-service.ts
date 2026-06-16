@@ -206,6 +206,7 @@ async function executeNode(
       source: 'plan-execution',
       planId: plan.id,
       planNodeId: node.id,
+      planNodeTitle: node.title,
       goalIds: node.goalIds,
     },
   })

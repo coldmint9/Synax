@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLocale } from '../../../../hooks/useLocale'
 import { useConfig } from '../../settings/useConfig'
 import { useWikiStore } from '../../../state/wikiStore'
 import { GoalComposerPill } from './GoalComposerPill'
 import { GoalDialogPanel } from './GoalDialogPanel'
-import { GoalAsciiMood } from './GoalAsciiMood'
+import { GoalMiniPill } from './GoalMiniPill'
+import { GoalPromptPill } from './GoalPromptPill'
+import { GoalPreviewPill } from './GoalPreviewPill'
 import { goalDockStateToMorph } from './goalDockTypes'
 import { buildGoalModelOptions, pickDefaultSelection } from './goalModelOptions'
+import { isGoalSessionActive } from './goalSessionStream'
+import { useGoalSessionBridge } from './useGoalSessionBridge'
 
 interface Props {
   projectId: string
@@ -28,30 +32,47 @@ export function GoalPillDock({ projectId }: Props) {
   const setModelId = useWikiStore(s => s.setGoalComposerModelId)
   const documentId = useWikiStore(s => s.goalComposerDocumentId)
   const setDocumentId = useWikiStore(s => s.setGoalComposerDocumentId)
+  const wikiAttachMode = useWikiStore(s => s.goalComposerWikiAttachMode)
+  const setWikiAttachMode = useWikiStore(s => s.setGoalComposerWikiAttachMode)
   const skillIds = useWikiStore(s => s.goalComposerSkillIds)
   const setSkillIds = useWikiStore(s => s.setGoalComposerSkillIds)
   const permissions = useWikiStore(s => s.goalComposerPermissions)
   const setPermission = useWikiStore(s => s.setGoalComposerPermission)
-  const selectedDocumentId = useWikiStore(s => s.selectedDocumentId)
   const documents = useWikiStore(s => s.documents)
   const goals = useWikiStore(s => s.goals)
   const submitGoal = useWikiStore(s => s.submitGoal)
   const stopGoal = useWikiStore(s => s.stopGoal)
+  const replyGoalPermission = useWikiStore(s => s.replyGoalPermission)
   const goalSession = useWikiStore(s => s.goalSession)
 
-  const wasGenerating = useRef(false)
+  useGoalSessionBridge(projectId)
+
+  const [miniHovered, setMiniHovered] = useState(false)
   const dockHoverRef = useRef(false)
   const dockFocusRef = useRef(false)
   const dockOverlayRef = useRef(false)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hitRef = useRef<HTMLDivElement>(null)
 
   const morph = goalDockStateToMorph(goalDockState)
-  const isExpanded = goalDockState === 'expanded'
-  const showComposer = morph === 'pill-input' || morph === 'pill-expanded'
-  const showMini = morph === 'mini'
+  const isBar = goalDockState === 'idle'
+  const isPrompt = goalDockState === 'prompt'
+  const isMini = goalDockState === 'working'
+  const isCompose = goalDockState === 'input'
+  const isChat = goalDockState === 'expanded'
+
+  const hasActiveWork = isGoalSessionActive(goalSession.status)
+  const hasSession = Boolean(goalSession.sessionId) && goalSession.status !== 'idle'
   const hasPendingGoals = goals.length > 0
   const latestTool = goalSession.toolCalls[goalSession.toolCalls.length - 1]
   const isGenerating = goalSession.status === 'running'
+  const isWaitingPermission = goalSession.status === 'waiting_permission'
+
+  const sessionStatusLabel =
+    goalSession.status === 'completed' ? t('goalCompleted')
+      : goalSession.status === 'failed' ? t('goalFailed')
+        : isWaitingPermission ? t('goalWaitingApproval')
+          : t('goalWorking')
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current !== null) {
@@ -60,10 +81,16 @@ export function GoalPillDock({ projectId }: Props) {
     }
   }, [])
 
-  const tryCloseInput = useCallback(() => {
+  const collapseCompose = useCallback(() => {
     if (dockHoverRef.current || dockFocusRef.current || dockOverlayRef.current) return
-    if (goalDockState === 'input') setGoalDockState('idle')
-  }, [goalDockState, setGoalDockState])
+    if (isChat) {
+      setGoalDockState(hasActiveWork ? 'working' : 'idle')
+      return
+    }
+    if (isCompose || isPrompt) {
+      setGoalDockState('idle')
+    }
+  }, [hasActiveWork, isChat, isCompose, isPrompt, setGoalDockState])
 
   const handleOverlayOpenChange = useCallback((open: boolean) => {
     dockOverlayRef.current = open
@@ -73,16 +100,16 @@ export function GoalPillDock({ projectId }: Props) {
       return
     }
     window.setTimeout(() => {
-      const root = document.querySelector('.goal-dock-zone')
+      const root = hitRef.current
       const active = document.activeElement
       if (active && root?.contains(active)) {
         dockFocusRef.current = true
         return
       }
       dockFocusRef.current = false
-      tryCloseInput()
+      collapseCompose()
     }, 0)
-  }, [clearCloseTimer, tryCloseInput])
+  }, [clearCloseTimer, collapseCompose])
 
   useEffect(() => {
     if (!globalConfig) return
@@ -99,49 +126,55 @@ export function GoalPillDock({ projectId }: Props) {
   }, [globalConfig, providers, effectiveConfig, providerId, modelId, setProviderId, setModelId])
 
   useEffect(() => {
-    if (documentId === null && selectedDocumentId) {
-      setDocumentId(selectedDocumentId)
+    if (hasActiveWork && (isBar || isPrompt)) {
+      setGoalDockState('working')
     }
-  }, [documentId, selectedDocumentId, setDocumentId])
-
-  useEffect(() => {
-    if (goalSession.status === 'running') {
-      wasGenerating.current = true
-      if (goalDockState === 'input') setGoalDockState('working')
-    }
-    if (wasGenerating.current && (goalSession.status === 'completed' || goalSession.status === 'idle')) {
-      wasGenerating.current = false
-      if (goalDockState === 'working') {
-        setGoalDockState('idle')
-      }
-    }
-    if (goalSession.status === 'failed' && goalDockState === 'working') {
-      setGoalDockState('expanded')
-    }
-  }, [goalSession.status, goalDockState, setGoalDockState])
+  }, [hasActiveWork, isBar, isPrompt, setGoalDockState])
 
   useEffect(() => () => clearCloseTimer(), [clearCloseTimer])
 
-  const openInput = useCallback(() => {
-    if (goalDockState === 'working' || goalDockState === 'expanded') return
-    if (isGenerating) return
-    setGoalDockState('input')
-  }, [goalDockState, isGenerating, setGoalDockState])
+  const settleToBarIfIdle = useCallback(() => {
+    if (hasActiveWork || isChat || isCompose) return
+    if (dockHoverRef.current || miniHovered) return
+    if (goalDockState === 'working' || goalDockState === 'prompt') {
+      setGoalDockState('idle')
+    }
+  }, [hasActiveWork, isChat, isCompose, goalDockState, miniHovered, setGoalDockState])
 
-  const handleDockEnter = useCallback(() => {
+  useEffect(() => {
+    settleToBarIfIdle()
+  }, [hasActiveWork, goalDockState, miniHovered, settleToBarIfIdle])
+
+  const handleMiniLeave = useCallback(() => {
+    setMiniHovered(false)
+    window.setTimeout(() => settleToBarIfIdle(), 0)
+  }, [settleToBarIfIdle])
+
+  const openPromptFromBar = useCallback(() => {
+    if (!isBar || hasActiveWork) return
+    setGoalDockState('prompt')
+  }, [hasActiveWork, isBar, setGoalDockState])
+
+  const handleBarEnter = useCallback(() => {
     clearCloseTimer()
     dockHoverRef.current = true
-    openInput()
-  }, [clearCloseTimer, openInput])
+    openPromptFromBar()
+  }, [clearCloseTimer, openPromptFromBar])
 
-  const handleDockLeave = useCallback(() => {
+  const handlePromptOrComposeEnter = useCallback(() => {
+    clearCloseTimer()
+    dockHoverRef.current = true
+  }, [clearCloseTimer])
+
+  const handleLeave = useCallback(() => {
     dockHoverRef.current = false
+    setMiniHovered(false)
     clearCloseTimer()
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null
-      tryCloseInput()
+      collapseCompose()
     }, 120)
-  }, [clearCloseTimer, tryCloseInput])
+  }, [clearCloseTimer, collapseCompose])
 
   const handleFocusCapture = useCallback(() => {
     clearCloseTimer()
@@ -162,115 +195,147 @@ export function GoalPillDock({ projectId }: Props) {
       }
       if (dockOverlayRef.current) return
       dockFocusRef.current = false
-      tryCloseInput()
+      collapseCompose()
     }, 0)
-  }, [tryCloseInput])
+  }, [collapseCompose])
 
   useEffect(() => {
-    if (!isExpanded) return
+    if (!isChat) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setGoalDockState('working')
+      if (e.key === 'Escape') setGoalDockState(hasActiveWork ? 'working' : 'idle')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [isExpanded, setGoalDockState])
+  }, [isChat, hasActiveWork, setGoalDockState])
 
-  const phaseLabel = t('goalWorking')
+  const openSessionPage = useCallback(() => {
+    const sessionId = goalSession.sessionId
+    if (sessionId) {
+      navigate(`/projects/${projectId}/sessions?session=${sessionId}`)
+    } else {
+      navigate(`/projects/${projectId}/sessions`)
+    }
+  }, [goalSession.sessionId, navigate, projectId])
+
+  const hitMode = isChat
+    ? 'dialog'
+    : isCompose
+      ? (hasSession ? 'composer-active' : 'composer')
+      : isPrompt || isMini
+        ? 'mini'
+        : 'bar'
+
+  const composer = (
+    <GoalComposerPill
+      content={content}
+      onContentChange={setContent}
+      onSubmit={() => void submitGoal(projectId)}
+      onStop={stopGoal}
+      isGenerating={isGenerating}
+      providerId={providerId}
+      modelId={modelId}
+      onModelSelect={(selection) => {
+        setProviderId(selection.providerId)
+        setModelId(selection.modelId)
+      }}
+      providers={providers}
+      globalConfig={globalConfig}
+      documentId={documentId}
+      onDocumentChange={setDocumentId}
+      wikiAttachMode={wikiAttachMode}
+      onWikiAttachModeChange={setWikiAttachMode}
+      documents={documents}
+      skillIds={skillIds}
+      onSkillIdsChange={setSkillIds}
+      permissions={permissions}
+      onPermissionChange={setPermission}
+      disabled={isGenerating}
+      onOverlayOpenChange={handleOverlayOpenChange}
+    />
+  )
 
   return (
     <>
-      {isExpanded && (
+      {isChat && (
         <div
           className="pointer-events-none absolute inset-0 z-20 bg-background/25 backdrop-blur-[1px]"
           aria-hidden="true"
         />
       )}
 
-      <div
-        className="goal-dock-zone absolute inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-3 pt-24"
-        onMouseEnter={handleDockEnter}
-        onMouseLeave={handleDockLeave}
-        onFocusCapture={handleFocusCapture}
-        onBlurCapture={handleBlurCapture}
-      >
+      <div className="goal-dock-zone absolute inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-3">
         <div
-          className="goal-dock-morph flex w-full max-w-[26.25rem] flex-col items-center"
-          data-morph={morph}
+          ref={hitRef}
+          className="goal-dock-hit"
+          data-hit={hitMode}
+          onMouseEnter={isBar ? handleBarEnter : isPrompt || isCompose || isChat ? handlePromptOrComposeEnter : undefined}
+          onMouseLeave={isBar || isPrompt || isCompose || isChat ? handleLeave : undefined}
+          onFocusCapture={isCompose || isChat ? handleFocusCapture : undefined}
+          onBlurCapture={isCompose || isChat ? handleBlurCapture : undefined}
         >
-          {isExpanded && (
-            <div className="goal-dock-dialog-slot mb-2.5 w-full">
-              <GoalDialogPanel
-                statusLabel={phaseLabel}
-                toolCalls={goalSession.toolCalls}
-                phase={null}
-                error={goalSession.error}
-                onOpenSession={() => {
-                  const sessionId = goalSession.sessionId
-                  if (sessionId) {
-                    navigate(`/projects/${projectId}/sessions?session=${sessionId}`)
-                  } else {
-                    navigate(`/projects/${projectId}/sessions`)
-                  }
-                }}
-              />
-            </div>
-          )}
-
-          <div
-            className={`goal-dock-shell${hasPendingGoals ? ' goal-dock-shell--pending' : ''}`}
-            data-shell={morph}
-          >
-            {showMini && (
-              <button
-                type="button"
-                className="goal-dock-mini-inner flex h-full w-full items-center gap-2 px-3 text-[11px] transition-transform active:scale-[0.98]"
-                onClick={() => setGoalDockState('expanded')}
-                aria-label={t('goalExpandSession')}
-              >
-                <GoalAsciiMood />
-                <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                  {latestTool ? (
-                    <>
-                      <span className="font-medium text-foreground">{latestTool.tool}</span>
-                      {' '}
-                      {latestTool.summary}
-                    </>
-                  ) : (
-                    t('goalWorking')
-                  )}
-                </span>
-                <span className="text-[9px] text-muted-foreground/40">▲</span>
-              </button>
-            )}
-
-            {showComposer && (
-              <div className="goal-dock-shell-content">
-                <GoalComposerPill
-                  content={content}
-                  onContentChange={setContent}
-                  onSubmit={() => void submitGoal(projectId)}
-                  onStop={stopGoal}
-                  isGenerating={isGenerating}
-                  providerId={providerId}
-                  modelId={modelId}
-                  onModelSelect={(selection) => {
-                    setProviderId(selection.providerId)
-                    setModelId(selection.modelId)
-                  }}
-                  providers={providers}
-                  globalConfig={globalConfig}
-                  documentId={documentId}
-                  onDocumentChange={setDocumentId}
-                  documents={documents}
-                  skillIds={skillIds}
-                  onSkillIdsChange={setSkillIds}
-                  permissions={permissions}
-                  onPermissionChange={setPermission}
-                  disabled={isGenerating}
-                  onOverlayOpenChange={handleOverlayOpenChange}
+          <div className="goal-dock-morph flex flex-col items-center" data-morph={morph}>
+            {isChat && (
+              <div className="goal-dock-dialog-slot mb-2.5 w-full">
+                <GoalDialogPanel
+                  statusLabel={sessionStatusLabel}
+                  toolCalls={goalSession.toolCalls}
+                  permissions={goalSession.permissions}
+                  thinking={goalSession.streamingThinking}
+                  streamingText={goalSession.streamingText}
+                  isRunning={isGenerating}
+                  isWaitingPermission={isWaitingPermission}
+                  error={goalSession.error}
+                  onOpenSession={openSessionPage}
+                  onReplyPermission={(id, reply) => void replyGoalPermission(id, reply)}
                 />
               </div>
             )}
+
+            <div className="goal-dock-stack flex w-full flex-col items-center">
+              {isCompose && hasSession && (
+                <GoalPreviewPill
+                  status={goalSession.status}
+                  latestTool={latestTool}
+                  thinkingPreview={goalSession.streamingThinking}
+                  statusLabel={sessionStatusLabel}
+                  onClick={() => setGoalDockState('expanded')}
+                />
+              )}
+
+              <div
+                className={`goal-dock-shell w-full${hasPendingGoals && isBar ? ' goal-dock-shell--pending' : ''}`}
+                data-shell={morph}
+              >
+                {isPrompt && (
+                  <GoalPromptPill
+                    label={t('goalSoulPrompt')}
+                    hovered={miniHovered}
+                    onClick={() => setGoalDockState('input')}
+                    onMouseEnter={() => setMiniHovered(true)}
+                    onMouseLeave={() => setMiniHovered(false)}
+                  />
+                )}
+
+                {isMini && (
+                  <GoalMiniPill
+                    status={goalSession.status}
+                    toolCalls={goalSession.toolCalls}
+                    thinking={goalSession.streamingThinking}
+                    statusLabel={sessionStatusLabel}
+                    hovered={miniHovered}
+                    onClick={() => setGoalDockState('expanded')}
+                    onMouseEnter={() => setMiniHovered(true)}
+                    onMouseLeave={handleMiniLeave}
+                  />
+                )}
+
+                {(isCompose || isChat) && (
+                  <div className="goal-dock-shell-content">
+                    {composer}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>

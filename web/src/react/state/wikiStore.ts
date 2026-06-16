@@ -9,13 +9,14 @@ import { agentRuntimeApi } from '../../lib/api/agentRuntime';
 import { TaskNotificationEventType } from '../../lib/api/eventTypes';
 import { useNotificationStore } from './notificationStore';
 import { useShellStore } from './shellStore';
+import { useDebugConsole } from '../features/debug-console/debugConsoleStore';
 import type {
   WikiSnapshot,
   WikiDocument,
   WikiRefreshDraft,
   WikiSnapshotTree,
 } from '../../lib/contracts/wiki';
-import { GOAL_PROFILE_ID, toPermissionOverrides, type GoalPermissionAction, type GoalPermissionGate } from '../features/wiki/goal/goalAttachTypes';
+import { GOAL_PROFILE_ID, toPermissionOverrides, type GoalPermissionAction, type GoalPermissionGate, type GoalWikiAttachMode } from '../features/wiki/goal/goalAttachTypes';
 import {
   applyGoalStreamChunk,
   initialGoalSessionState,
@@ -23,9 +24,33 @@ import {
   type GoalSessionState,
 } from '../features/wiki/goal/goalSessionStream';
 
+function settleGoalDockAfterRun(dock: GoalDockState): GoalDockState {
+  return dock === 'expanded' ? 'expanded' : 'idle'
+}
+
+function pushGoalResultToast(final: GoalSessionState): void {
+  if (final.status === 'waiting_permission') return
+  const toast = useNotificationStore.getState()
+  if (final.status === 'failed') {
+    toast.push({
+      type: 'error',
+      message: final.error ?? 'Goal Agent 执行失败',
+      duration: 6000,
+    })
+    return
+  }
+  if (final.status === 'completed') {
+    toast.push({
+      type: 'success',
+      message: 'Goal Agent 已完成',
+      duration: 4000,
+    })
+  }
+}
+
 export type WikiViewMode = 'document' | 'plan';
 export type PlanNavView = 'list' | 'detail';
-export type GoalDockState = 'idle' | 'input' | 'working' | 'expanded';
+export type GoalDockState = 'idle' | 'prompt' | 'input' | 'working' | 'expanded';
 export type RefreshPhase = 'idle' | 'scanning' | 'stale_checking' | 'drafting' | 'completed' | 'failed';
 
 export interface RefreshTaskState {
@@ -136,6 +161,7 @@ export interface WikiState {
   goalComposerProviderId: string | null;
   goalComposerModelId: string | null;
   goalComposerDocumentId: string | null;
+  goalComposerWikiAttachMode: GoalWikiAttachMode;
   goalComposerAnchorJson: GoalAnchor | null;
   goalComposerSkillIds: string[];
   goalComposerPermissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null;
@@ -145,6 +171,7 @@ export interface WikiState {
   setGoalComposerProviderId: (id: string | null) => void;
   setGoalComposerModelId: (id: string | null) => void;
   setGoalComposerDocumentId: (id: string | null) => void;
+  setGoalComposerWikiAttachMode: (mode: GoalWikiAttachMode) => void;
   setGoalComposerSkillIds: (ids: string[]) => void;
   setGoalComposerPermission: (gate: GoalPermissionGate, action: GoalPermissionAction) => void;
   openGoalInput: (prefill?: {
@@ -154,6 +181,7 @@ export interface WikiState {
   }) => void;
   submitGoal: (projectId: string) => Promise<void>;
   stopGoal: () => void;
+  replyGoalPermission: (permissionId: string, reply: 'once' | 'always' | 'reject') => Promise<void>;
   resetGoalSession: () => void;
 }
 
@@ -203,6 +231,7 @@ const initialState = {
   goalComposerProviderId: null as string | null,
   goalComposerModelId: null as string | null,
   goalComposerDocumentId: null as string | null,
+  goalComposerWikiAttachMode: 'auto' as GoalWikiAttachMode,
   goalComposerAnchorJson: null as GoalAnchor | null,
   goalComposerSkillIds: [] as string[],
   goalComposerPermissions: null as Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null,
@@ -667,6 +696,11 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   setGoalComposerProviderId: (id) => set({ goalComposerProviderId: id }),
   setGoalComposerModelId: (id) => set({ goalComposerModelId: id }),
   setGoalComposerDocumentId: (id) => set({ goalComposerDocumentId: id }),
+  setGoalComposerWikiAttachMode: (mode) => set((s) => ({
+    goalComposerWikiAttachMode: mode,
+    goalComposerDocumentId: mode === 'auto' ? null : s.goalComposerDocumentId,
+    goalComposerAnchorJson: mode === 'auto' ? null : s.goalComposerAnchorJson,
+  })),
   setGoalComposerSkillIds: (ids) => set({ goalComposerSkillIds: ids }),
   setGoalComposerPermission: (gate, action) => set((s) => ({
     goalComposerPermissions: { ...(s.goalComposerPermissions ?? {}), [gate]: action },
@@ -679,7 +713,10 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       goalComposerContent: prefill?.content ?? s.goalComposerContent,
       goalComposerDocumentId: prefill?.documentId !== undefined
         ? prefill.documentId
-        : (s.goalComposerDocumentId ?? s.selectedDocumentId),
+        : s.goalComposerDocumentId,
+      goalComposerWikiAttachMode: prefill?.documentId !== undefined || prefill?.anchor !== undefined
+        ? 'manual'
+        : s.goalComposerWikiAttachMode,
       goalComposerAnchorJson: prefill?.anchor !== undefined
         ? prefill.anchor
         : s.goalComposerAnchorJson,
@@ -695,13 +732,19 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       && (s.goalDockState === 'expanded' || s.goalSession.status === 'failed' || s.goalSession.status === 'completed')
 
     const modelId = s.goalComposerModelId
-    const toast = useNotificationStore.getState()
 
     try {
       if (isFollowUp && s.goalSession.sessionId) {
         set({
-          goalSession: { ...s.goalSession, status: 'running', error: null },
-          goalDockState: 'working',
+          goalSession: {
+            ...s.goalSession,
+            status: 'running',
+            error: null,
+            permissions: [],
+            streamingThinking: '',
+            streamingText: '',
+          },
+          goalDockState: s.goalDockState === 'expanded' ? 'expanded' : 'working',
           goalComposerContent: '',
         })
         await streamGoalAgentTurn(
@@ -714,27 +757,34 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           },
         )
         const final = get().goalSession
+        const dock = get().goalDockState
         set({
-          goalDockState: final.status === 'failed' ? 'expanded' : 'idle',
+          goalDockState: final.status === 'waiting_permission'
+            ? 'expanded'
+            : settleGoalDockAfterRun(dock),
         })
+        pushGoalResultToast(final)
         return
       }
 
-      const documentId = s.goalComposerDocumentId ?? s.selectedDocumentId
-      const document = documentId ? s.documents.find(d => d.id === documentId) : undefined
-      const prompt = await goalApi.buildSessionPrompt(projectId, {
+      const wikiAttachMode = s.goalComposerWikiAttachMode
+      const { prompt, wikiContext } = await goalApi.buildSessionPrompt(projectId, {
         mode: 'direct',
         content,
-        documentId: documentId ?? null,
-        documentTitle: document?.title ?? null,
-        anchorJson: s.goalComposerAnchorJson,
+        wikiAttachMode,
+        documentId: wikiAttachMode === 'manual' ? s.goalComposerDocumentId : null,
+        documentTitle: wikiAttachMode === 'manual' && s.goalComposerDocumentId
+          ? s.documents.find(d => d.id === s.goalComposerDocumentId)?.title ?? null
+          : null,
+        anchorJson: wikiAttachMode === 'manual' ? s.goalComposerAnchorJson : null,
       })
 
+      const documentId = wikiContext.documentId
       const goal = await goalApi.create(projectId, {
         content,
         scope: documentId ? 'document' : 'project',
         documentId: documentId ?? null,
-        anchorJson: s.goalComposerAnchorJson,
+        anchorJson: wikiContext.anchorJson,
       })
       await get().loadGoals(projectId)
 
@@ -750,6 +800,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           source: 'goal-dock',
           goalId: goal.id,
           documentId: documentId ?? null,
+          wikiAttachMode,
           goalContent: content,
         },
       })
@@ -761,17 +812,14 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           status: 'running',
           sessionId: payload.session.id,
           toolCalls: [],
+          permissions: [],
+          streamingThinking: '',
+          streamingText: '',
           error: null,
         },
         goalDockState: 'working',
         goalComposerContent: '',
         goalComposerAnchorJson: null,
-      })
-
-      toast.push({
-        type: 'info',
-        message: 'Goal Agent 已启动',
-        duration: 3000,
       })
 
       await streamGoalAgentTurn(
@@ -785,21 +833,13 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       )
 
       const final = get().goalSession
-      if (final.status === 'failed') {
-        set({ goalDockState: 'expanded' })
-        toast.push({
-          type: 'error',
-          message: final.error ?? 'Goal Agent 执行失败',
-          duration: 6000,
-        })
-      } else {
-        set({ goalDockState: 'idle' })
-        toast.push({
-          type: 'success',
-          message: 'Goal Agent 已完成',
-          duration: 4000,
-        })
-      }
+      const dock = get().goalDockState
+      set({
+        goalDockState: final.status === 'waiting_permission'
+          ? 'expanded'
+          : settleGoalDockAfterRun(dock),
+      })
+      pushGoalResultToast(final)
     } catch (err) {
       const message = err instanceof Error ? err.message : '提交 Goal 失败'
       set(state => ({
@@ -808,9 +848,9 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           status: 'failed',
           error: message,
         },
-        goalDockState: 'expanded',
+        goalDockState: state.goalDockState === 'expanded' ? 'expanded' : 'idle',
       }))
-      toast.push({ type: 'error', message, duration: 6000 })
+      pushGoalResultToast(get().goalSession)
     }
   },
 
@@ -821,8 +861,37 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     }
     set({
       goalSession: { ...get().goalSession, status: 'failed', error: '已停止' },
-      goalDockState: 'expanded',
+      goalDockState: get().goalDockState === 'expanded' ? 'expanded' : 'idle',
     })
+  },
+
+  replyGoalPermission: async (permissionId, reply) => {
+    const sessionId = get().goalSession.sessionId
+    if (!sessionId) return
+    try {
+      const updated = await agentRuntimeApi.replyPermission(sessionId, permissionId, reply)
+      set(s => ({
+        goalSession: {
+          ...s.goalSession,
+          permissions: s.goalSession.permissions.map(p => p.id === permissionId ? updated : p),
+          status: reply !== 'reject' ? 'running' : s.goalSession.status,
+          error: reply === 'reject' ? updated.reason : s.goalSession.error,
+        },
+      }))
+      useNotificationStore.getState().dismiss(`perm-${permissionId}`)
+
+      const selected = useDebugConsole.getState().selectedSessionId
+      if (selected === sessionId) {
+        useDebugConsole.setState(s => ({
+          permissions: s.permissions.map(p => p.id === permissionId ? updated : p),
+        }))
+        if (reply !== 'reject') {
+          void useDebugConsole.getState().refreshDetail()
+        }
+      }
+    } catch {
+      /* silent */
+    }
   },
 
   resetGoalSession: () => {

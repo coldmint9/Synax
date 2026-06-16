@@ -497,6 +497,7 @@ import * as goalService from '../services/wiki/wiki-goal-service.js';
 import * as planExecutor from '../services/wiki/wiki-plan-executor-service.js';
 import { generatePlan, generatePlanStream } from '../services/wiki/wiki-plan-generator.js';
 import { buildGoalSessionPrompt } from '../services/wiki/wiki-goal-prompt.js';
+import { resolveGoalWikiContext } from '../services/wiki/wiki-goal-wiki-context.js';
 
 const createGoalBodySchema = z.object({
   content: z.string().min(1).max(4096),
@@ -515,22 +516,34 @@ const buildGoalSessionPromptBodySchema = z.object({
   documentId: z.string().nullable().optional(),
   documentTitle: z.string().nullable().optional(),
   anchorJson: createGoalBodySchema.shape.anchorJson,
+  wikiAttachMode: z.enum(['auto', 'manual']).optional(),
   locale: z.enum(['zh', 'en']).optional(),
 });
 
 // ── POST /api/wiki/projects/:projectId/goals/session-prompt ────────────
 wikiRoutes.post('/projects/:projectId/goals/session-prompt', async (c) => {
+  const { projectId } = c.req.param();
   const parsed = await parseBody(c, buildGoalSessionPromptBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const wikiAttachMode = parsed.data.wikiAttachMode ?? 'manual';
+  const wikiContext = await resolveGoalWikiContext({
+    projectId,
+    goalContent: parsed.data.content,
+    mode: wikiAttachMode,
+    documentId: parsed.data.documentId ?? null,
+    anchorJson: parsed.data.anchorJson ?? null,
+  });
   const prompt = buildGoalSessionPrompt({
     mode: parsed.data.mode ?? 'direct',
     content: parsed.data.content,
-    documentId: parsed.data.documentId ?? null,
-    documentTitle: parsed.data.documentTitle ?? null,
-    anchorJson: parsed.data.anchorJson ?? null,
+    documentId: wikiContext.documentId,
+    documentTitle: wikiContext.documentTitle,
+    anchorJson: wikiContext.anchorJson,
+    wikiAttachMode: wikiContext.mode,
+    wikiAutoMatched: wikiContext.autoMatched,
     locale: parsed.data.locale,
   });
-  return c.json({ prompt });
+  return c.json({ prompt, wikiContext });
 });
 
 // ── PATCH /api/wiki/goals/:goalId/last-session ─────────────────────────
