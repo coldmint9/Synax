@@ -15,6 +15,35 @@ export const GOAL_PERMISSION_DEFAULTS: Record<GoalPermissionGate, GoalPermission
   task: 'ask',
 }
 
+export type GoalPermissionPreset = 'standard' | 'autonomous'
+
+export const GOAL_PERMISSION_PRESETS: Record<
+  GoalPermissionPreset,
+  Record<GoalPermissionGate, GoalPermissionAction>
+> = {
+  standard: GOAL_PERMISSION_DEFAULTS,
+  autonomous: {
+    read: 'allow',
+    write: 'allow',
+    shell: 'allow',
+    task: 'ask',
+  },
+}
+
+export function getGoalPermissionPreset(
+  permissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null,
+): GoalPermissionPreset {
+  if (permissions?.write === 'allow' && permissions?.shell === 'allow') return 'autonomous'
+  return 'standard'
+}
+
+export function goalPermissionsForPreset(
+  preset: GoalPermissionPreset,
+): Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null {
+  if (preset === 'standard') return null
+  return { ...GOAL_PERMISSION_PRESETS.autonomous }
+}
+
 export function hasGoalPermissionOverrides(
   permissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null,
 ): boolean {

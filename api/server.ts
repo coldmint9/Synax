@@ -21,6 +21,7 @@ import { ensureWikiProfileRegistered } from "./services/wiki/wiki-loop-profile.j
 import { ensurePlanProfileRegistered } from "./services/wiki/wiki-plan-profile.js";
 import { ensureRefreshProfileRegistered } from "./services/wiki/wiki-refresh-profile.js";
 import { ensureGoalProfileRegistered } from "./services/wiki/wiki-goal-profile.js";
+import { registerSessionTitleHooks } from "./services/agent-runtime/session-title-service.js";
 import { wikiWriteQueue } from "./services/wiki/wiki-write-queue-service.js";
 import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
 import { startPermissionTimeoutSweeper } from "./services/agent-runtime/permission-timeout-sweeper.js";
@@ -66,6 +67,7 @@ ensureWikiProfileRegistered();
 ensurePlanProfileRegistered();
 ensureRefreshProfileRegistered();
 ensureGoalProfileRegistered();
+registerSessionTitleHooks();
 
 // --- 启动时恢复孤儿 running session ---
 try {

@@ -147,6 +147,8 @@ export interface DebugConsoleState {
   fetchSessionTodos: () => Promise<void>
   fetchSessionCapabilities: () => Promise<void>
   replyPermission: (permissionId: string, reply: 'once' | 'always' | 'reject') => Promise<void>
+  sendSessionMessage: (sessionId: string, body: { message: string; model?: string | null }) => Promise<void>
+  cancelSessionRun: (sessionId: string) => Promise<void>
   applyLiveEvent: (event: SessionLiveEvent) => void
 }
 
@@ -416,6 +418,30 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
         void get().refreshDetail()
       }
     } catch { /* silent */ }
+  },
+
+  sendSessionMessage: async (sessionId, body) => {
+    ensureLiveStream(sessionId)
+    set(s => ({
+      sessions: s.sessions.map(sess =>
+        sess.id === sessionId ? { ...sess, status: 'running' as const } : sess,
+      ),
+    }))
+    try {
+      await agentRuntimeApi.streamTurn(sessionId, body, () => {})
+    } finally {
+      void get().refreshSessions()
+      void get().refreshDetail()
+    }
+  },
+
+  cancelSessionRun: async (sessionId) => {
+    try {
+      await agentRuntimeApi.cancelSession(sessionId)
+    } finally {
+      void get().refreshSessions()
+      void get().refreshDetail()
+    }
   },
 
   applyLiveEvent: (event) => {

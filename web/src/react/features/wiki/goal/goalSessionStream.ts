@@ -19,6 +19,8 @@ export interface GoalToolCall {
 export interface GoalSessionState {
   status: GoalSessionStatus
   sessionId: string | null
+  title: string | null
+  promptFallback: string | null
   toolCalls: GoalToolCall[]
   permissions: PermissionDecision[]
   streamingThinking: string
@@ -29,11 +31,25 @@ export interface GoalSessionState {
 export const initialGoalSessionState: GoalSessionState = {
   status: 'idle',
   sessionId: null,
+  title: null,
+  promptFallback: null,
   toolCalls: [],
   permissions: [],
   streamingThinking: '',
   streamingText: '',
   error: null,
+}
+
+export function resolveGoalSessionDisplayTitle(
+  session: GoalSessionState,
+  workingLabel: string,
+): string {
+  const title = session.title?.trim()
+  if (title) return title
+  const fallback = session.promptFallback?.trim()
+  if (fallback) return fallback
+  if (isGoalSessionActive(session.status)) return workingLabel
+  return ''
 }
 
 type StreamChunk = {
@@ -189,6 +205,9 @@ export function applyGoalSessionPatch(
   }
   if (typeof patch.blockedReason === 'string') {
     next.error = patch.blockedReason
+  }
+  if (typeof patch.title === 'string') {
+    next.title = patch.title.trim() || null
   }
   return next
 }

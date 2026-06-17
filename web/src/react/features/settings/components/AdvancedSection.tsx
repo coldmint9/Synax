@@ -8,7 +8,6 @@ import { useAutoSave } from '../useAutoSave'
 import { apiFetch } from '../../../../lib/api/origin'
 import type { GlobalConfig } from '../../../../lib/contracts/config'
 import { useLocale } from '../../../../hooks/useLocale'
-import { useShellStore } from '../../../state/shellStore'
 
 interface AdvancedSectionProps {
   config: GlobalConfig
@@ -17,8 +16,6 @@ interface AdvancedSectionProps {
 
 export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
   const { t } = useLocale()
-  const showSessionsTab = useShellStore(s => s.preferences.showSessionsTab)
-  const setShowSessionsTab = useShellStore(s => s.setShowSessionsTab)
   const saveFn = useCallback(async (features: GlobalConfig['features']) => {
     await onUpdate({ features })
   }, [onUpdate])
@@ -41,17 +38,6 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
     <div className="space-y-3">
       <SettingsCard title={t('settingsAdvancedTitle')} icon={Wrench} trailing={<SaveIndicator saving={saving} saved={saved} error={error} />}>
         <div className="space-y-3">
-          <FormRow label={t('settingsShowSessionsTab')} description={t('settingsShowSessionsTabDesc')}>
-            <Switch
-              size="sm"
-              isSelected={showSessionsTab}
-              onChange={(v) => setShowSessionsTab(v)}
-              aria-label={t('settingsShowSessionsTab')}
-            >
-              <Switch.Control><Switch.Thumb /></Switch.Control>
-            </Switch>
-          </FormRow>
-
           <FormRow label={t('settingsAllowProjectOverride')} description={t('settingsAllowProjectOverrideDesc')}>
             <Switch
               size="sm"

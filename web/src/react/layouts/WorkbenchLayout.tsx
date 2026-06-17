@@ -8,6 +8,7 @@ import { useAgentPermissionNotifier } from '../../hooks/useAgentPermissionNotifi
 import { useDesktopNotification } from '../../hooks/useDesktopNotification'
 import { useTaskNotificationListener } from '../../hooks/useTaskNotificationListener'
 import { useRuntimeSSE } from '../features/debug-console/useRuntimeSSE'
+import { useSessionTitleSync } from '../features/sessions/useSessionDisplayTitle'
 import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
 import type { ActivityPanel } from './ActivityBar'
 import { WorkbenchHeader } from './WorkbenchHeader'
@@ -55,6 +56,7 @@ export default function WorkbenchLayout() {
     setDebugProjectId(effectiveProjectId || null)
   }, [effectiveProjectId, setDebugProjectId])
   useRuntimeSSE()
+  useSessionTitleSync()
 
   const navigate = useNavigate()
   const location = useLocation()
@@ -111,8 +113,6 @@ export default function WorkbenchLayout() {
 
   const isCachedPanel = effectiveProjectId && (activePanel === 'wiki' || activePanel === 'sessions')
 
-  const showSessionsTab = useShellStore(s => s.preferences.showSessionsTab)
-
   const unbindContext = useContextStore(s => s.unbind)
   const removeFromStore = useShellStore(s => s.removeProject)
 
@@ -158,14 +158,12 @@ export default function WorkbenchLayout() {
               >
                 <WikiPage projectId={effectiveProjectId} />
               </div>
-              {showSessionsTab && (
-                <div
-                  className="absolute inset-0 flex flex-col"
-                  style={{ visibility: activePanel === 'sessions' ? 'visible' : 'hidden', zIndex: activePanel === 'sessions' ? 1 : 0 }}
-                >
-                  <SessionsPage />
-                </div>
-              )}
+              <div
+                className="absolute inset-0 flex flex-col"
+                style={{ visibility: activePanel === 'sessions' ? 'visible' : 'hidden', zIndex: activePanel === 'sessions' ? 1 : 0 }}
+              >
+                <SessionsPage />
+              </div>
             </>
           )}
           {/* Outlet for non-cached routes (welcome, settings) */}

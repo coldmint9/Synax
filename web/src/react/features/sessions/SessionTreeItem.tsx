@@ -3,6 +3,7 @@ import { Chip } from '@heroui/react'
 import { Trash2 } from 'lucide-react'
 import type { SessionTreeNode } from './useSessionList'
 import type { AgentSessionStatus } from '../../../lib/api/agentRuntime'
+import { useSessionDisplayTitle } from './useSessionDisplayTitle'
 
 const STATUS_CHIP: Record<AgentSessionStatus, { color: 'accent' | 'success' | 'danger' | 'warning' | 'default'; label: string }> = {
   running: { color: 'accent', label: 'running' },
@@ -69,6 +70,24 @@ function DeleteButton({ sessionId, onDelete }: { sessionId: string; onDelete?: (
   )
 }
 
+function SessionTitle({ session }: { session: SessionTreeNode['session'] }) {
+  const title = useSessionDisplayTitle(session)
+  return (
+    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+      {title}
+    </span>
+  )
+}
+
+function SessionChildTitle({ session }: { session: SessionTreeNode['session'] }) {
+  const title = useSessionDisplayTitle(session)
+  return (
+    <span className="min-w-0 flex-1 truncate text-[11px]">
+      {title}
+    </span>
+  )
+}
+
 export const SessionTreeItem = memo(function SessionTreeItem({
   node, isSelected, onSelect, onToggleExpand, onDelete, onPause, onCancel,
 }: Props) {
@@ -98,9 +117,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
               {hasKids ? (node.expanded ? '▾' : '▸') : <span className="w-3" />}
             </button>
             <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
-            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
-              {session.title ?? session.prompt.slice(0, 50)}
-            </span>
+            <SessionTitle session={session} />
             <Chip size="sm" variant="soft" color={chip.color} className="h-4 text-[9px] shrink-0">
               {chip.label}
             </Chip>
@@ -118,9 +135,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
       ) : (
         <>
           <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
-          <span className="min-w-0 flex-1 truncate text-[11px]">
-            {session.title ?? session.prompt.slice(0, 50)}
-          </span>
+          <SessionChildTitle session={session} />
           {session.profileId && PROFILES[session.profileId] && (
             <span className="list-badge">{PROFILES[session.profileId]}</span>
           )}

@@ -16,7 +16,7 @@ import type {
   WikiRefreshDraft,
   WikiSnapshotTree,
 } from '../../lib/contracts/wiki';
-import { GOAL_PROFILE_ID, toPermissionOverrides, type GoalPermissionAction, type GoalPermissionGate, type GoalWikiAttachMode } from '../features/wiki/goal/goalAttachTypes';
+import { GOAL_PROFILE_ID, goalPermissionsForPreset, toPermissionOverrides, type GoalPermissionAction, type GoalPermissionGate, type GoalPermissionPreset, type GoalWikiAttachMode } from '../features/wiki/goal/goalAttachTypes';
 import {
   applyGoalStreamChunk,
   initialGoalSessionState,
@@ -173,7 +173,7 @@ export interface WikiState {
   setGoalComposerDocumentId: (id: string | null) => void;
   setGoalComposerWikiAttachMode: (mode: GoalWikiAttachMode) => void;
   setGoalComposerSkillIds: (ids: string[]) => void;
-  setGoalComposerPermission: (gate: GoalPermissionGate, action: GoalPermissionAction) => void;
+  setGoalPermissionPreset: (preset: GoalPermissionPreset) => void;
   openGoalInput: (prefill?: {
     content?: string;
     documentId?: string | null;
@@ -702,9 +702,9 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     goalComposerAnchorJson: mode === 'auto' ? null : s.goalComposerAnchorJson,
   })),
   setGoalComposerSkillIds: (ids) => set({ goalComposerSkillIds: ids }),
-  setGoalComposerPermission: (gate, action) => set((s) => ({
-    goalComposerPermissions: { ...(s.goalComposerPermissions ?? {}), [gate]: action },
-  })),
+  setGoalPermissionPreset: (preset) => set({
+    goalComposerPermissions: goalPermissionsForPreset(preset),
+  }),
 
   openGoalInput: (prefill) => {
     const s = get()
@@ -811,6 +811,8 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         goalSession: {
           status: 'running',
           sessionId: payload.session.id,
+          title: payload.session.title,
+          promptFallback: content,
           toolCalls: [],
           permissions: [],
           streamingThinking: '',

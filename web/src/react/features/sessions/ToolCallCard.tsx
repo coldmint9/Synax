@@ -35,7 +35,7 @@ export function ToolCallCard({ call }: Props) {
         onClick={() => hasOutput && setExpanded(!expanded)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left"
       >
-        <Icon size={13} className="shrink-0 text-accent" />
+        <Icon size={13} className="shrink-0 text-primary" />
         <span className="shrink-0 font-mono text-xs font-semibold text-foreground">
           {call.toolId}
         </span>

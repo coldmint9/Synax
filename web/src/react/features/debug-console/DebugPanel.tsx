@@ -8,6 +8,7 @@ interface Props {
 
 export function DebugPanel({ sessionId }: Props) {
   const session = useDebugConsole(s => s.sessions.find(ss => ss.id === sessionId))
+  const runs = useDebugConsole(s => s.runs)
   const steps = useDebugConsole(s => s.steps)
   const toolCalls = useDebugConsole(s => s.toolCalls)
   const messages = useDebugConsole(s => s.messages)
@@ -34,6 +35,7 @@ export function DebugPanel({ sessionId }: Props) {
       <div className="max-h-[55vh] overflow-y-auto">
         <AgentConversationView
           session={session}
+          runs={runs}
           steps={steps}
           toolCalls={toolCalls}
           messages={messages}

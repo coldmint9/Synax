@@ -1,35 +1,36 @@
-import { ExternalLink, Sparkles } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import { useLocale } from '../../../../hooks/useLocale'
-import { PermissionApprovalBar } from '../../sessions/PermissionApprovalBar'
 import { ThinkingBlock } from '../../sessions/ThinkingBlock'
+import { AgentWorkingIndicator } from './AgentWorkingIndicator'
+import { GoalQuickApproval, listPendingGoalPermissions } from './GoalQuickApproval'
 import { GoalToolRow } from './GoalToolRow'
-import type { GoalToolCall } from './goalSessionStream'
+import type { GoalSessionStatus, GoalToolCall } from './goalSessionStream'
 import type { PermissionDecision } from '../../../../lib/api/agentRuntime'
 
 interface Props {
-  statusLabel: string
+  status: GoalSessionStatus
+  sessionTitle: string
   toolCalls: GoalToolCall[]
-  permissions: PermissionDecision[]
   thinking: string
   streamingText: string
   isRunning: boolean
-  isWaitingPermission: boolean
   error: string | null
-  onOpenSession?: () => void
+  permissions?: PermissionDecision[]
   onReplyPermission?: (permissionId: string, reply: 'once' | 'always' | 'reject') => void
+  onOpenSession?: () => void
 }
 
 export function GoalDialogPanel({
-  statusLabel,
+  status,
+  sessionTitle,
   toolCalls,
-  permissions,
   thinking,
   streamingText,
   isRunning,
-  isWaitingPermission,
   error,
-  onOpenSession,
+  permissions = [],
   onReplyPermission,
+  onOpenSession,
 }: Props) {
   const { t } = useLocale()
   const recent = toolCalls.slice(-16)
@@ -49,13 +50,8 @@ export function GoalDialogPanel({
       )}
 
       <div className="mb-2.5 flex items-center gap-1.5 pr-7 text-[13px] font-medium text-foreground">
-        <Sparkles size={12} className="text-primary" />
-        {statusLabel}
-        {(isRunning || isWaitingPermission) && (
-          <span className="text-[11px] font-normal text-muted-foreground/60">
-            · {isWaitingPermission ? t('goalWaitingApproval') : 'live'}
-          </span>
-        )}
+        <AgentWorkingIndicator status={status} />
+        {sessionTitle}
       </div>
 
       {error && (
@@ -78,8 +74,6 @@ export function GoalDialogPanel({
               />
             ))}
           </div>
-        ) : !thinking.trim() ? (
-          <p className="py-1 text-[11px] text-muted-foreground/50">{t('goalWorking')}</p>
         ) : null}
 
         {streamingText.trim() && (
@@ -89,11 +83,13 @@ export function GoalDialogPanel({
         )}
       </div>
 
-      {onReplyPermission && (
-        <div className="goal-dock-dialog-permissions mt-2 overflow-hidden rounded-xl border border-border/35">
-          <PermissionApprovalBar
+      {onReplyPermission && listPendingGoalPermissions(permissions).length > 0 && (
+        <div className="goal-dock-dialog-permissions mt-2 border-t border-border/25 pt-2">
+          <GoalQuickApproval
             permissions={permissions}
             onReply={onReplyPermission}
+            variant="strip"
+            showIndicator
           />
         </div>
       )}

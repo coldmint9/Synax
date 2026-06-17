@@ -37,18 +37,34 @@ export function resolveGoalTitleSource(input: {
     ?? extractPlanNodeTitleFromPrompt(input.prompt)
 }
 
-async function generateGoalTitleWithLlm(projectId: string, task: string): Promise<string | null> {
-  const truncated = task.slice(0, 300)
+function firstAssistantSnippet(sessionId: string): string | null {
+  for (const msg of agentRuntimeStore.listMessages(sessionId)) {
+    if (msg.role !== 'assistant') continue
+    if (msg.metadata?.type === 'thinking') continue
+    const text = msg.content.trim()
+    if (text) return text.slice(0, 400)
+  }
+  return null
+}
+
+function buildGoalTitleContext(sessionId: string, source: string): string {
+  const assistant = firstAssistantSnippet(sessionId)
+  if (!assistant) return source
+  return [`User: ${source}`, `Assistant: ${assistant}`].join('\n\n')
+}
+
+async function generateGoalTitleWithLlm(projectId: string, context: string): Promise<string | null> {
+  const truncated = context.slice(0, 600)
   const result = await generateGatewayTextResult({
     projectId,
     purpose: 'session-title',
     messages: [{
       role: 'user',
       content: [
-        'Generate a short title (max 10 Chinese characters or 6 English words) for this coding goal.',
+        'Summarize this coding session into a short title (max 10 Chinese characters or 6 English words).',
         'Return ONLY the title, no quotes or punctuation.',
         '',
-        `Goal: ${truncated}`,
+        truncated,
       ].join('\n'),
     }],
     maxTokens: 30,
@@ -67,6 +83,7 @@ export const goalTitleGenerator: TitleGenerator = {
       prompt: ctx.prompt,
     })
     if (!source) return null
-    return generateGoalTitleWithLlm(ctx.projectId, source)
+    const context = buildGoalTitleContext(ctx.sessionId, source)
+    return generateGoalTitleWithLlm(ctx.projectId, context)
   },
 }

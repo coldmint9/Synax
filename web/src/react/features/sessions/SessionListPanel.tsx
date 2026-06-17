@@ -9,6 +9,7 @@ import { SessionClearInactiveDialog } from './SessionClearInactiveDialog'
 import { useDebugConsole } from '../debug-console/debugConsoleStore'
 import { useLocale } from '../../../hooks/useLocale'
 import type { SessionListView } from './sessionBuckets'
+import { getSessionDisplayTitle } from './useSessionDisplayTitle'
 
 interface Props {
   listView?: SessionListView
@@ -27,10 +28,10 @@ export function SessionListPanel({ listView = 'goal', projectId }: Props) {
 
   useEffect(() => { void refresh() }, [projectId, listView, refresh])
 
-  const deleteTitle = deleteId
-    ? (list.groups.flatMap(g => g.sessions).find(n => n.session.id === deleteId)?.session.title
-      ?? list.groups.flatMap(g => g.sessions).find(n => n.session.id === deleteId)?.session.prompt.slice(0, 50) ?? '')
-    : ''
+  const deleteSession = deleteId
+    ? list.groups.flatMap(g => g.sessions).find(n => n.session.id === deleteId)?.session
+    : undefined
+  const deleteTitle = deleteSession ? getSessionDisplayTitle(deleteSession) : ''
 
   const visibleCount = list.groups.reduce((sum, g) => sum + g.sessions.length, 0)
 

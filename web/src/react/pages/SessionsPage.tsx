@@ -1,9 +1,10 @@
-import { memo } from 'react'
+import { memo, useRef } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
 import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
 import { useDebugPolling } from '../features/debug-console/useDebugPolling'
 import { useSessionLiveStream } from '../features/debug-console/useSessionLiveStream'
 import { SessionTranscript } from '../features/sessions/SessionTranscript'
+import { SessionSystemPromptPanel } from '../features/sessions/SessionSystemPromptPanel'
 import { SessionWorkspace } from '../features/sessions/SessionWorkspace'
 import { SessionListPanel } from '../features/sessions/SessionListPanel'
 import type { SessionListView } from '../features/sessions/sessionBuckets'
@@ -13,6 +14,7 @@ export default memo(function SessionsPage() {
   const { projectId = '' } = useParams()
   const location = useLocation()
   const listView: SessionListView = location.pathname.includes('/sessions/workflows') ? 'workflow' : 'goal'
+  const transcriptScrollRef = useRef<HTMLDivElement>(null)
 
   const agentSessionId = useDebugConsole(s => s.selectedSessionId)
   const agentPanelOpen = useDebugConsole(s => s.panelOpen)
@@ -30,9 +32,10 @@ export default memo(function SessionsPage() {
       {showTranscript ? (
         <>
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <SessionTranscript />
+            <SessionTranscript scrollRef={transcriptScrollRef} />
           </div>
           <aside className="w-[220px] shrink-0 border-l border-border/40 bg-background/50">
+            <SessionSystemPromptPanel />
             <SessionWorkspace />
           </aside>
         </>

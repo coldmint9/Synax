@@ -1,4 +1,4 @@
-import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Home } from 'lucide-react'
+import { BookOpen, Bot, Search, Settings2, Sun, Moon, Home } from 'lucide-react'
 import { useShellStore } from '../state/shellStore'
 import { useLocale } from '../../hooks/useLocale'
 
@@ -18,7 +18,7 @@ export function ActivityBar({ activePanel, onPanelToggle, onHome, hasProject }: 
 
   const topItems: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
     { id: 'wiki', icon: BookOpen, label: 'Wiki' },
-    { id: 'sessions', icon: Monitor, label: 'Sessions' },
+    { id: 'sessions', icon: Bot, label: t('titlebarAgent') },
     { id: 'search', icon: Search, label: t('appSearch') },
   ]
 

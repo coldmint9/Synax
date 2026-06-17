@@ -8,9 +8,10 @@ import { GoalDialogPanel } from './GoalDialogPanel'
 import { GoalMiniPill } from './GoalMiniPill'
 import { GoalPromptPill } from './GoalPromptPill'
 import { GoalPreviewPill } from './GoalPreviewPill'
+import { listPendingGoalPermissions } from './GoalQuickApproval'
 import { goalDockStateToMorph } from './goalDockTypes'
 import { buildGoalModelOptions, pickDefaultSelection } from './goalModelOptions'
-import { isGoalSessionActive } from './goalSessionStream'
+import { isGoalSessionActive, resolveGoalSessionDisplayTitle } from './goalSessionStream'
 import { useGoalSessionBridge } from './useGoalSessionBridge'
 
 interface Props {
@@ -37,7 +38,7 @@ export function GoalPillDock({ projectId }: Props) {
   const skillIds = useWikiStore(s => s.goalComposerSkillIds)
   const setSkillIds = useWikiStore(s => s.setGoalComposerSkillIds)
   const permissions = useWikiStore(s => s.goalComposerPermissions)
-  const setPermission = useWikiStore(s => s.setGoalComposerPermission)
+  const setPermissionPreset = useWikiStore(s => s.setGoalPermissionPreset)
   const documents = useWikiStore(s => s.documents)
   const goals = useWikiStore(s => s.goals)
   const submitGoal = useWikiStore(s => s.submitGoal)
@@ -48,10 +49,7 @@ export function GoalPillDock({ projectId }: Props) {
   useGoalSessionBridge(projectId)
 
   const [miniHovered, setMiniHovered] = useState(false)
-  const dockHoverRef = useRef(false)
-  const dockFocusRef = useRef(false)
   const dockOverlayRef = useRef(false)
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hitRef = useRef<HTMLDivElement>(null)
 
   const morph = goalDockStateToMorph(goalDockState)
@@ -66,23 +64,27 @@ export function GoalPillDock({ projectId }: Props) {
   const hasPendingGoals = goals.length > 0
   const latestTool = goalSession.toolCalls[goalSession.toolCalls.length - 1]
   const isGenerating = goalSession.status === 'running'
-  const isWaitingPermission = goalSession.status === 'waiting_permission'
 
-  const sessionStatusLabel =
-    goalSession.status === 'completed' ? t('goalCompleted')
-      : goalSession.status === 'failed' ? t('goalFailed')
-        : isWaitingPermission ? t('goalWaitingApproval')
-          : t('goalWorking')
+  const sessionDisplayTitle = resolveGoalSessionDisplayTitle(goalSession, t('goalWorking'))
+  const pendingPermissions = listPendingGoalPermissions(goalSession.permissions)
+  const hasPendingApproval = pendingPermissions.length > 0
+  const isComposerMultiline = content.includes('\n')
+  const isDismissible = isChat || isCompose || isPrompt
 
-  const clearCloseTimer = useCallback(() => {
-    if (closeTimerRef.current !== null) {
-      clearTimeout(closeTimerRef.current)
-      closeTimerRef.current = null
+  const handleReplyPermission = useCallback(
+    (permissionId: string, reply: 'once' | 'always' | 'reject') => {
+      void replyGoalPermission(permissionId, reply)
+    },
+    [replyGoalPermission],
+  )
+
+  const dismissDock = useCallback(() => {
+    if (dockOverlayRef.current) return
+    const root = hitRef.current
+    const active = document.activeElement
+    if (active instanceof HTMLElement && root?.contains(active)) {
+      active.blur()
     }
-  }, [])
-
-  const collapseCompose = useCallback(() => {
-    if (dockHoverRef.current || dockFocusRef.current || dockOverlayRef.current) return
     if (isChat) {
       setGoalDockState(hasActiveWork ? 'working' : 'idle')
       return
@@ -92,24 +94,18 @@ export function GoalPillDock({ projectId }: Props) {
     }
   }, [hasActiveWork, isChat, isCompose, isPrompt, setGoalDockState])
 
+  const isOutsideDismissTarget = useCallback((target: EventTarget | null) => {
+    if (!(target instanceof Node)) return false
+    const root = hitRef.current
+    if (!root || root.contains(target)) return false
+    const el = target instanceof Element ? target : target.parentElement
+    if (el?.closest('[role="menu"], [role="listbox"], [data-slot="popover"]')) return false
+    return true
+  }, [])
+
   const handleOverlayOpenChange = useCallback((open: boolean) => {
     dockOverlayRef.current = open
-    if (open) {
-      clearCloseTimer()
-      dockFocusRef.current = true
-      return
-    }
-    window.setTimeout(() => {
-      const root = hitRef.current
-      const active = document.activeElement
-      if (active && root?.contains(active)) {
-        dockFocusRef.current = true
-        return
-      }
-      dockFocusRef.current = false
-      collapseCompose()
-    }, 0)
-  }, [clearCloseTimer, collapseCompose])
+  }, [])
 
   useEffect(() => {
     if (!globalConfig) return
@@ -131,82 +127,38 @@ export function GoalPillDock({ projectId }: Props) {
     }
   }, [hasActiveWork, isBar, isPrompt, setGoalDockState])
 
-  useEffect(() => () => clearCloseTimer(), [clearCloseTimer])
-
-  const settleToBarIfIdle = useCallback(() => {
-    if (hasActiveWork || isChat || isCompose) return
-    if (dockHoverRef.current || miniHovered) return
-    if (goalDockState === 'working' || goalDockState === 'prompt') {
-      setGoalDockState('idle')
-    }
-  }, [hasActiveWork, isChat, isCompose, goalDockState, miniHovered, setGoalDockState])
-
-  useEffect(() => {
-    settleToBarIfIdle()
-  }, [hasActiveWork, goalDockState, miniHovered, settleToBarIfIdle])
-
-  const handleMiniLeave = useCallback(() => {
-    setMiniHovered(false)
-    window.setTimeout(() => settleToBarIfIdle(), 0)
-  }, [settleToBarIfIdle])
-
   const openPromptFromBar = useCallback(() => {
     if (!isBar || hasActiveWork) return
     setGoalDockState('prompt')
   }, [hasActiveWork, isBar, setGoalDockState])
 
   const handleBarEnter = useCallback(() => {
-    clearCloseTimer()
-    dockHoverRef.current = true
     openPromptFromBar()
-  }, [clearCloseTimer, openPromptFromBar])
-
-  const handlePromptOrComposeEnter = useCallback(() => {
-    clearCloseTimer()
-    dockHoverRef.current = true
-  }, [clearCloseTimer])
-
-  const handleLeave = useCallback(() => {
-    dockHoverRef.current = false
-    setMiniHovered(false)
-    clearCloseTimer()
-    closeTimerRef.current = setTimeout(() => {
-      closeTimerRef.current = null
-      collapseCompose()
-    }, 120)
-  }, [clearCloseTimer, collapseCompose])
-
-  const handleFocusCapture = useCallback(() => {
-    clearCloseTimer()
-    dockFocusRef.current = true
-  }, [clearCloseTimer])
-
-  const handleBlurCapture = useCallback((e: React.FocusEvent<HTMLDivElement>) => {
-    const root = e.currentTarget
-    const related = e.relatedTarget as Node | null
-    if (related && root.contains(related)) return
-
-    window.setTimeout(() => {
-      const active = document.activeElement
-      if (active && root.contains(active)) return
-      if (active?.closest('[role="menu"], [role="listbox"]')) {
-        dockFocusRef.current = true
-        return
-      }
-      if (dockOverlayRef.current) return
-      dockFocusRef.current = false
-      collapseCompose()
-    }, 0)
-  }, [collapseCompose])
+  }, [openPromptFromBar])
 
   useEffect(() => {
-    if (!isChat) return
+    if (!isDismissible) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!isOutsideDismissTarget(e.target)) return
+      dismissDock()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [isDismissible, dismissDock, isOutsideDismissTarget])
+
+  useEffect(() => {
+    if (!isDismissible) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setGoalDockState(hasActiveWork ? 'working' : 'idle')
+      if (e.key !== 'Escape') return
+      if (isChat) {
+        setGoalDockState(hasActiveWork ? 'working' : 'idle')
+      } else {
+        setGoalDockState('idle')
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [isChat, hasActiveWork, setGoalDockState])
+  }, [isDismissible, isChat, hasActiveWork, setGoalDockState])
 
   const openSessionPage = useCallback(() => {
     const sessionId = goalSession.sessionId
@@ -224,6 +176,8 @@ export function GoalPillDock({ projectId }: Props) {
       : isPrompt || isMini
         ? 'mini'
         : 'bar'
+
+  const showContextDialog = isChat || (isCompose && hasPendingApproval && hasSession)
 
   const composer = (
     <GoalComposerPill
@@ -248,7 +202,7 @@ export function GoalPillDock({ projectId }: Props) {
       skillIds={skillIds}
       onSkillIdsChange={setSkillIds}
       permissions={permissions}
-      onPermissionChange={setPermission}
+      onPermissionPresetChange={setPermissionPreset}
       disabled={isGenerating}
       onOverlayOpenChange={handleOverlayOpenChange}
     />
@@ -258,8 +212,12 @@ export function GoalPillDock({ projectId }: Props) {
     <>
       {isChat && (
         <div
-          className="pointer-events-none absolute inset-0 z-20 bg-background/25 backdrop-blur-[1px]"
+          className="absolute inset-0 z-20 bg-background/25 backdrop-blur-[1px]"
           aria-hidden="true"
+          onPointerDown={(e) => {
+            e.preventDefault()
+            dismissDock()
+          }}
         />
       )}
 
@@ -268,36 +226,37 @@ export function GoalPillDock({ projectId }: Props) {
           ref={hitRef}
           className="goal-dock-hit"
           data-hit={hitMode}
-          onMouseEnter={isBar ? handleBarEnter : isPrompt || isCompose || isChat ? handlePromptOrComposeEnter : undefined}
-          onMouseLeave={isBar || isPrompt || isCompose || isChat ? handleLeave : undefined}
-          onFocusCapture={isCompose || isChat ? handleFocusCapture : undefined}
-          onBlurCapture={isCompose || isChat ? handleBlurCapture : undefined}
+          onMouseEnter={isBar ? handleBarEnter : undefined}
         >
-          <div className="goal-dock-morph flex flex-col items-center" data-morph={morph}>
-            {isChat && (
+          <div
+            className="goal-dock-morph flex flex-col items-center"
+            data-morph={morph}
+            data-awaiting-permission={hasPendingApproval ? 'true' : undefined}
+          >
+            {showContextDialog && (
               <div className="goal-dock-dialog-slot mb-2.5 w-full">
                 <GoalDialogPanel
-                  statusLabel={sessionStatusLabel}
+                  status={goalSession.status}
+                  sessionTitle={sessionDisplayTitle}
                   toolCalls={goalSession.toolCalls}
-                  permissions={goalSession.permissions}
                   thinking={goalSession.streamingThinking}
                   streamingText={goalSession.streamingText}
                   isRunning={isGenerating}
-                  isWaitingPermission={isWaitingPermission}
                   error={goalSession.error}
-                  onOpenSession={openSessionPage}
-                  onReplyPermission={(id, reply) => void replyGoalPermission(id, reply)}
+                  permissions={goalSession.permissions}
+                  onReplyPermission={handleReplyPermission}
+                  onOpenSession={isChat ? openSessionPage : undefined}
                 />
               </div>
             )}
 
             <div className="goal-dock-stack flex w-full flex-col items-center">
-              {isCompose && hasSession && (
+              {isCompose && hasSession && !hasPendingApproval && (
                 <GoalPreviewPill
                   status={goalSession.status}
                   latestTool={latestTool}
                   thinkingPreview={goalSession.streamingThinking}
-                  statusLabel={sessionStatusLabel}
+                  sessionTitle={sessionDisplayTitle}
                   onClick={() => setGoalDockState('expanded')}
                 />
               )}
@@ -305,6 +264,7 @@ export function GoalPillDock({ projectId }: Props) {
               <div
                 className={`goal-dock-shell w-full${hasPendingGoals && isBar ? ' goal-dock-shell--pending' : ''}`}
                 data-shell={morph}
+                data-multiline={(isCompose || isChat) && isComposerMultiline ? 'true' : undefined}
               >
                 {isPrompt && (
                   <GoalPromptPill
@@ -321,11 +281,13 @@ export function GoalPillDock({ projectId }: Props) {
                     status={goalSession.status}
                     toolCalls={goalSession.toolCalls}
                     thinking={goalSession.streamingThinking}
-                    statusLabel={sessionStatusLabel}
+                    sessionTitle={sessionDisplayTitle}
+                    permissions={goalSession.permissions}
+                    onReplyPermission={handleReplyPermission}
                     hovered={miniHovered}
                     onClick={() => setGoalDockState('expanded')}
                     onMouseEnter={() => setMiniHovered(true)}
-                    onMouseLeave={handleMiniLeave}
+                    onMouseLeave={() => setMiniHovered(false)}
                   />
                 )}
 

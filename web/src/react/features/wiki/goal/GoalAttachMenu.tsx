@@ -1,16 +1,16 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { BookOpen, Check, Plug, Plus, Shield, Sparkles } from 'lucide-react'
-import { Button, Dropdown, Header, Label, Switch } from '@heroui/react'
+import { Dropdown, Header, Label, Switch } from '@heroui/react'
 import type { WikiDocument } from '../../../../lib/contracts/wiki'
 import { agentRuntimeApi, type AgentSkillSummary } from '../../../../lib/api/agentRuntime'
 import { useLocale } from '../../../../hooks/useLocale'
 import {
-  GOAL_PERMISSION_DEFAULTS,
-  GOAL_PERMISSION_GATES,
+  getGoalPermissionPreset,
   GOAL_PROFILE_ID,
   hasGoalPermissionOverrides,
   type GoalPermissionAction,
   type GoalPermissionGate,
+  type GoalPermissionPreset,
   type GoalWikiAttachMode,
 } from './goalAttachTypes'
 
@@ -23,7 +23,7 @@ interface Props {
   skillIds: string[]
   onSkillIdsChange: (ids: string[]) => void
   permissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null
-  onPermissionChange: (gate: GoalPermissionGate, action: GoalPermissionAction) => void
+  onPermissionPresetChange: (preset: GoalPermissionPreset) => void
   disabled?: boolean
   onOverlayOpenChange?: (open: boolean) => void
 }
@@ -48,53 +48,35 @@ function isGeneratedWikiDocument(doc: WikiDocument): boolean {
   return !doc.isSection && doc.contentMd.trim().length > 0
 }
 
-const GATE_LABEL_KEYS = {
-  read: 'goalPermGateRead',
-  write: 'goalPermGateWrite',
-  shell: 'goalPermGateShell',
-  task: 'goalPermGateTask',
-} as const satisfies Record<GoalPermissionGate, 'goalPermGateRead' | 'goalPermGateWrite' | 'goalPermGateShell' | 'goalPermGateTask'>
-
-const ACTION_LABEL_KEYS = {
-  allow: 'goalPermAllow',
-  ask: 'goalPermAsk',
-  deny: 'goalPermDeny',
-} as const
-
 function PermissionPanel({
   permissions,
-  onPermissionChange,
+  onPermissionPresetChange,
 }: {
   permissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null
-  onPermissionChange: (gate: GoalPermissionGate, action: GoalPermissionAction) => void
+  onPermissionPresetChange: (preset: GoalPermissionPreset) => void
 }) {
   const { t } = useLocale()
+  const preset = getGoalPermissionPreset(permissions)
+  const isAutonomous = preset === 'autonomous'
 
   return (
-    <div className="w-56 space-y-2.5 p-2.5">
-      {GOAL_PERMISSION_GATES.map(gate => {
-        const current = permissions?.[gate] ?? GOAL_PERMISSION_DEFAULTS[gate]
-        return (
-          <div key={gate}>
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              {t(GATE_LABEL_KEYS[gate])}
-            </div>
-            <div className="flex gap-1">
-              {(['allow', 'ask', 'deny'] as const).map(action => (
-                <Button
-                  key={action}
-                  size="sm"
-                  variant={current === action ? 'primary' : 'tertiary'}
-                  className="h-6 min-w-0 flex-1 px-1.5 text-[10px]"
-                  onPress={() => onPermissionChange(gate, action)}
-                >
-                  {t(ACTION_LABEL_KEYS[action])}
-                </Button>
-              ))}
-            </div>
-          </div>
-        )
-      })}
+    <div className="w-52 p-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium text-foreground">{t('goalPermTrustMode')}</p>
+          <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+            {t('goalPermTrustDesc')}
+          </p>
+        </div>
+        <Switch
+          size="sm"
+          isSelected={isAutonomous}
+          onChange={(selected) => onPermissionPresetChange(selected ? 'autonomous' : 'standard')}
+          aria-label={t('goalPermTrustMode')}
+        >
+          <Switch.Control><Switch.Thumb /></Switch.Control>
+        </Switch>
+      </div>
     </div>
   )
 }
@@ -188,7 +170,7 @@ export function GoalAttachMenu({
   skillIds,
   onSkillIdsChange,
   permissions,
-  onPermissionChange,
+  onPermissionPresetChange,
   disabled,
   onOverlayOpenChange,
 }: Props) {
@@ -325,7 +307,7 @@ export function GoalAttachMenu({
               <Dropdown.SubmenuIndicator />
             </Dropdown.Item>
             <Dropdown.Popover>
-              <PermissionPanel permissions={permissions} onPermissionChange={onPermissionChange} />
+              <PermissionPanel permissions={permissions} onPermissionPresetChange={onPermissionPresetChange} />
             </Dropdown.Popover>
           </Dropdown.SubmenuTrigger>
         </Dropdown.Menu>

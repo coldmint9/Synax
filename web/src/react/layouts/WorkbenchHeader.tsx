@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
-import { BookOpen, Monitor, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw } from 'lucide-react'
+import { BookOpen, Bot, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
 import { useLocale } from '../../hooks/useLocale'
@@ -22,9 +22,9 @@ interface WorkbenchHeaderProps {
   onRemoveProject: (projectId: string) => Promise<void>
 }
 
-const navTabs: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
+const navTabs: { id: ActivityPanel; icon: typeof BookOpen; labelKey?: 'titlebarAgent'; label?: string }[] = [
   { id: 'wiki', icon: BookOpen, label: 'Wiki' },
-  { id: 'sessions', icon: Monitor, label: 'Sessions' },
+  { id: 'sessions', icon: Bot, labelKey: 'titlebarAgent' },
 ]
 
 function WikiToolbar() {
@@ -256,10 +256,6 @@ export function WorkbenchHeader({
   const { t } = useLocale()
   const theme = useShellStore(s => s.preferences.theme)
   const setTheme = useShellStore(s => s.setTheme)
-  const showSessionsTab = useShellStore(s => s.preferences.showSessionsTab)
-
-  const visibleTabs = showSessionsTab ? navTabs : navTabs.filter(t => t.id !== 'sessions')
-
   const confirmState = useOverlayState()
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -336,8 +332,9 @@ export function WorkbenchHeader({
         >
           <Tabs.ListContainer>
             <Tabs.List aria-label="主导航" className="wh-tabs-list">
-              {visibleTabs.map((tab, i) => {
+              {navTabs.map((tab, i) => {
                 const Icon = tab.icon
+                const label = tab.labelKey ? t(tab.labelKey) : tab.label!
                 return (
                   <Tabs.Tab
                     key={tab.id}
@@ -347,7 +344,7 @@ export function WorkbenchHeader({
                   >
                     {i > 0 && <Tabs.Separator />}
                     <Icon size={13} />
-                    <span>{tab.label}</span>
+                    <span>{label}</span>
                     <Tabs.Indicator />
                   </Tabs.Tab>
                 )
