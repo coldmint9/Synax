@@ -1,5 +1,6 @@
 import type { AgentSession, AgentSessionStatus } from '../../../lib/api/agentRuntime'
 import type { SessionTreeNode } from '../sessions/sessionGrouping'
+import { getSessionDisplayTitle } from '../sessions/useSessionDisplayTitle'
 
 interface Props {
   node: SessionTreeNode
@@ -33,8 +34,8 @@ export function SessionTreeItem({ node, depth = 0, selectedId, onSelect }: Props
       >
         <div className="flex items-center gap-2">
           <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[session.status] ?? 'bg-muted-foreground/30'}`} />
-          <span className="truncate font-medium" title={session.title ?? session.prompt}>
-            {(session.title ?? session.prompt).slice(0, 40)}
+          <span className="truncate font-medium" title={getSessionDisplayTitle(session)}>
+            {getSessionDisplayTitle(session).slice(0, 40)}
           </span>
         </div>
         <div className="mt-0.5 flex items-center gap-2 pl-3.5 text-[9px] text-muted-foreground">

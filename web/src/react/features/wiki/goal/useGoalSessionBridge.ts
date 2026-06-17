@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { agentRuntimeApi } from '../../../../lib/api/agentRuntime'
 import { subscribe } from '../../../../lib/api/runtimeEventBus'
 import { addSessionLiveListener } from '../../../../lib/api/sessionLiveClient'
 import { useDebugConsole } from '../../debug-console/debugConsoleStore'
@@ -13,21 +14,27 @@ export function useGoalSessionBridge(_projectId: string) {
   const goalSession = useWikiStore(s => s.goalSession)
   const goalDockState = useWikiStore(s => s.goalDockState)
   const sessionId = goalSession.sessionId
-  const status = goalSession.status
   const isChat = goalDockState === 'expanded'
 
   useEffect(() => {
     if (!sessionId) return
 
+    void agentRuntimeApi.getSession(sessionId).then(({ session }) => {
+      useWikiStore.setState(s => {
+        if (s.goalSession.sessionId !== sessionId) return s
+        return {
+          goalSession: {
+            ...s.goalSession,
+            title: session.title ?? s.goalSession.title,
+          },
+        }
+      })
+    }).catch(() => {})
+
     const releaseLive = addSessionLiveListener(sessionId, (event) => {
       useWikiStore.setState(s => ({
         goalSession: applyGoalLiveEvent(s.goalSession, event),
       }))
-
-      const selected = useDebugConsole.getState().selectedSessionId
-      if (selected === sessionId) {
-        useDebugConsole.getState().applyLiveEvent(event)
-      }
     })
 
     return releaseLive
@@ -56,9 +63,6 @@ export function useGoalSessionBridge(_projectId: string) {
                 goalSession: { ...s.goalSession, permissions: items },
               }))
             })
-            if (useWikiStore.getState().goalDockState === 'working') {
-              useWikiStore.getState().setGoalDockState('expanded')
-            }
           }
           if (nextStatus === 'running') {
             void fetchGoalSessionPermissions(sessionId).then(items => {
@@ -93,10 +97,4 @@ export function useGoalSessionBridge(_projectId: string) {
       }))
     })
   }, [sessionId, isChat])
-
-  useEffect(() => {
-    if (status === 'waiting_permission' && goalDockState === 'working') {
-      useWikiStore.getState().setGoalDockState('expanded')
-    }
-  }, [status, goalDockState])
 }

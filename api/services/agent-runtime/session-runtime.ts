@@ -8,6 +8,7 @@ import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
 import { sessionHooks } from './session-hooks.js';
+import { resolveInitialSessionTitle } from './session-title-service.js';
 import { logger } from '../../lib/logger.js';
 
 export class AgentSessionRuntime {
@@ -44,7 +45,10 @@ export class AgentSessionRuntime {
       nodeId: input.nodeId ?? null,
       profileId: profile.id,
       status: 'running',
-      title: null,
+      title: resolveInitialSessionTitle({
+        sessionMetadata: input.sessionMetadata ?? null,
+        prompt: input.prompt,
+      }),
       prompt: input.prompt,
       contextSnapshotId: null,
       thinkingMode: input.thinkingMode ?? profile.defaultThinkingMode,

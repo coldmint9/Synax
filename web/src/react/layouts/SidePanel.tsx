@@ -16,7 +16,7 @@ export function SidePanel({ activePanel, open, position, onClose, onFlipPosition
 
   const panelTitles: Record<ActivityPanel, string> = {
     wiki: 'Wiki',
-    sessions: 'Sessions',
+    sessions: t('titlebarAgent'),
     search: t('panelSearch'),
     settings: t('panelSettings'),
     projects: t('panelProjects'),

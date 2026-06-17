@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { GoalAsciiMood } from './GoalAsciiMood'
+import { AgentWorkingIndicator } from './AgentWorkingIndicator'
+import { GoalQuickApproval, listPendingGoalPermissions } from './GoalQuickApproval'
+import type { PermissionDecision } from '../../../../lib/api/agentRuntime'
 import type { GoalSessionStatus, GoalToolCall } from './goalSessionStream'
 
 interface Props {
   status: GoalSessionStatus
   toolCalls: GoalToolCall[]
   thinking: string
-  statusLabel: string
+  sessionTitle: string
+  permissions: PermissionDecision[]
+  onReplyPermission?: (permissionId: string, reply: 'once' | 'always' | 'reject') => void
   hovered?: boolean
   onClick: () => void
   onMouseEnter?: () => void
@@ -14,21 +18,19 @@ interface Props {
 }
 
 function buildCarouselItems(
-  status: GoalSessionStatus,
+  sessionTitle: string,
   toolCalls: GoalToolCall[],
   thinking: string,
-  statusLabel: string,
 ): string[] {
   const items: string[] = []
-  if (status === 'running' || status === 'waiting_permission') items.push(statusLabel)
+  const title = sessionTitle.trim()
+  if (title) items.push(title)
   const tail = thinking.trim()
   if (tail) items.push(tail.slice(-100))
   for (const call of toolCalls.slice(-4)) {
     items.push(`${call.tool} · ${call.outputSummary ?? call.summary}`)
   }
-  if (status === 'completed') items.push(statusLabel)
-  if (status === 'failed') items.push(statusLabel)
-  if (items.length === 0) items.push(statusLabel)
+  if (items.length === 0 && title) items.push(title)
   return items
 }
 
@@ -36,15 +38,19 @@ export function GoalMiniPill({
   status,
   toolCalls,
   thinking,
-  statusLabel,
+  sessionTitle,
+  permissions,
+  onReplyPermission,
   hovered = false,
   onClick,
   onMouseEnter,
   onMouseLeave,
 }: Props) {
+  const pending = listPendingGoalPermissions(permissions)
+  const hasPendingApproval = pending.length > 0 && Boolean(onReplyPermission)
   const items = useMemo(
-    () => buildCarouselItems(status, toolCalls, thinking, statusLabel),
-    [status, toolCalls, thinking, statusLabel],
+    () => buildCarouselItems(sessionTitle, toolCalls, thinking),
+    [sessionTitle, toolCalls, thinking],
   )
   const [index, setIndex] = useState(0)
 
@@ -53,16 +59,34 @@ export function GoalMiniPill({
   }, [items])
 
   useEffect(() => {
-    if (items.length <= 1) return
+    if (items.length <= 1 || hasPendingApproval) return
     const timer = window.setInterval(() => {
       setIndex(i => (i + 1) % items.length)
     }, 2800)
     return () => window.clearInterval(timer)
-  }, [items])
+  }, [items, hasPendingApproval])
 
   const isRunning = status === 'running'
   const isWaiting = status === 'waiting_permission'
-  const text = items[index] ?? statusLabel
+  const text = items[index] ?? sessionTitle
+
+  if (hasPendingApproval) {
+    return (
+      <div
+        className={`goal-dock-mini-inner goal-dock-mini-inner--approval ${hovered ? 'goal-dock-mini-inner--hover' : ''}`}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
+        <GoalQuickApproval
+          permissions={permissions}
+          onReply={onReplyPermission!}
+          variant="mini"
+          showIndicator
+          onLabelClick={onClick}
+        />
+      </div>
+    )
+  }
 
   return (
     <button
@@ -73,20 +97,14 @@ export function GoalMiniPill({
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      aria-label={statusLabel}
+      aria-label={sessionTitle}
     >
-      <GoalAsciiMood />
+      <AgentWorkingIndicator status={status} />
       <span className="relative min-h-[1.25rem] min-w-0 flex-1 overflow-hidden text-muted-foreground">
         <span
           key={index}
           className="goal-dock-mini-carousel-item absolute inset-0 flex items-center truncate"
         >
-          {isRunning && (
-            <span className="mr-1.5 inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
-          )}
-          {isWaiting && (
-            <span className="mr-1.5 inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-amber-500" />
-          )}
           <span className={`truncate ${isRunning || isWaiting ? 'text-foreground' : ''}`}>
             {text}
           </span>
