@@ -15,8 +15,103 @@ import {
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
 import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { AppError } from '../../../lib/errors'
-import { GOAL_PROFILE_ID } from '../wiki/goal/goalAttachTypes'
+import { SYNAX_PROFILE_ID, createSynaxSessionMetadata } from '../wiki/goal/goalAttachTypes'
 import { useNotificationStore } from '../../state/notificationStore'
+
+const READ_MARKERS_KEY = 'synax-session-read-markers'
+
+function loadReadMarkers(projectId: string | null): Record<string, string> {
+  if (!projectId || typeof sessionStorage === 'undefined') return {}
+  try {
+    const raw = sessionStorage.getItem(`${READ_MARKERS_KEY}:${projectId}`)
+    return raw ? JSON.parse(raw) as Record<string, string> : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveReadMarkers(projectId: string | null, markers: Record<string, string>): void {
+  if (!projectId || typeof sessionStorage === 'undefined') return
+  try {
+    sessionStorage.setItem(`${READ_MARKERS_KEY}:${projectId}`, JSON.stringify(markers))
+  } catch { /* quota */ }
+}
+
+export function isSessionUnread(
+  session: AgentSession,
+  readMarkers: Record<string, string>,
+): boolean {
+  const readUpdatedAt = readMarkers[session.id]
+  if (!readUpdatedAt) return true
+  return new Date(session.updatedAt).getTime() > new Date(readUpdatedAt).getTime()
+}
+
+const SESSION_DETAIL_CACHE_LIMIT = 16
+const SESSION_DETAIL_CACHE_TTL_MS = 45_000
+
+export interface SessionDetailCacheEntry {
+  runs: AgentRun[]
+  steps: AgentRunStep[]
+  events: RuntimeEvent[]
+  messages: AgentRuntimeMessage[]
+  toolCalls: ToolCallRecord[]
+  permissions: PermissionDecision[]
+  sessionStats: SessionStats | null
+  sessionTodos: TodoItem[]
+  sessionCapabilities: SessionCapabilities | null
+  cachedAt: number
+}
+
+let activeDetailRefresh: { sessionId: string; promise: Promise<void> } | null = null
+
+function trimSessionDetailCache(
+  cache: Record<string, SessionDetailCacheEntry>,
+): Record<string, SessionDetailCacheEntry> {
+  const keys = Object.keys(cache)
+  if (keys.length <= SESSION_DETAIL_CACHE_LIMIT) return cache
+  const drop = keys
+    .sort((a, b) => cache[a].cachedAt - cache[b].cachedAt)
+    .slice(0, keys.length - SESSION_DETAIL_CACHE_LIMIT)
+  const next = { ...cache }
+  for (const key of drop) delete next[key]
+  return next
+}
+
+function emptyDetailPayload(): Pick<
+  AgentSessionStoreState,
+  'runs' | 'steps' | 'events' | 'messages' | 'toolCalls' | 'permissions'
+  | 'sessionStats' | 'sessionTodos' | 'sessionCapabilities'
+> {
+  return {
+    runs: [],
+    steps: [],
+    events: [],
+    messages: [],
+    toolCalls: [],
+    permissions: [],
+    sessionStats: null,
+    sessionTodos: [],
+    sessionCapabilities: null,
+  }
+}
+
+function isActiveSessionStatus(status: AgentSession['status'] | undefined): boolean {
+  return status === 'running' || status === 'waiting_permission'
+}
+
+function patchSessionDetailCache(
+  sessionId: string,
+  patch: Partial<SessionDetailCacheEntry>,
+): void {
+  const existing = useAgentSessionStore.getState().sessionDetailCache[sessionId]
+  if (!existing) return
+  useAgentSessionStore.setState(s => ({
+    sessionDetailCache: trimSessionDetailCache({
+      ...s.sessionDetailCache,
+      [sessionId]: { ...existing, ...patch, cachedAt: Date.now() },
+    }),
+  }))
+}
 
 function ensureLiveStream(sessionId: string): void {
   ensureSessionLiveSubscription(sessionId, (event) => {
@@ -121,6 +216,8 @@ export interface AgentSessionStoreState {
   sessionStats: SessionStats | null
   sessionTodos: TodoItem[]
   sessionCapabilities: SessionCapabilities | null
+  readSessionMarkers: Record<string, string>
+  sessionDetailCache: Record<string, SessionDetailCacheEntry>
 
   // 流式进行中状态
   streamingStepId: string | null
@@ -153,6 +250,7 @@ export interface AgentSessionStoreState {
   sendSessionMessage: (sessionId: string, body: { message: string; model?: string | null }) => Promise<void>
   cancelSessionRun: (sessionId: string) => Promise<void>
   applyLiveEvent: (event: SessionLiveEvent) => void
+  markSessionRead: (sessionId: string) => void
 }
 
 type SessionDetailState = Pick<
@@ -218,6 +316,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   sessionStats: null,
   sessionTodos: [],
   sessionCapabilities: null,
+  readSessionMarkers: {},
+  sessionDetailCache: {},
   streamingStepId: null,
   streamingText: '',
   streamingThinking: '',
@@ -228,7 +328,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     if (projectId === get().projectId) return
     releaseSessionLiveSubscription()
     clearStreamingBuffers()
-    set({ projectId, sessions: [], ...emptySessionDetailState() })
+    set({
+      projectId,
+      sessions: [],
+      readSessionMarkers: loadReadMarkers(projectId),
+      sessionDetailCache: {},
+      ...emptySessionDetailState(),
+    })
     void get().refreshSessions()
   },
 
@@ -271,12 +377,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     }
     const payload = await agentRuntimeApi.createSession({
       projectId,
-      profileId: GOAL_PROFILE_ID,
+      profileId: SYNAX_PROFILE_ID,
       prompt: message,
-      sessionMetadata: {
+      sessionMetadata: createSynaxSessionMetadata('goal', {
         source: 'session-page',
         goalContent: message,
-      },
+      }),
     })
     set(s => ({
       sessions: [payload.session, ...s.sessions.filter(item => item.id !== payload.session.id)],
@@ -289,8 +395,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     const { deletedSessionIds } = await agentRuntimeApi.deleteSession(sessionId)
     const deleted = new Set(deletedSessionIds)
     const shouldClosePanel = Boolean(get().selectedSessionId && deleted.has(get().selectedSessionId!))
+    const nextCache = { ...get().sessionDetailCache }
+    for (const id of deleted) delete nextCache[id]
     set({
       sessions: get().sessions.filter((session) => !deleted.has(session.id)),
+      sessionDetailCache: nextCache,
       selectedSessionId: shouldClosePanel ? null : get().selectedSessionId,
       panelOpen: shouldClosePanel ? false : get().panelOpen,
       runs: shouldClosePanel ? [] : get().runs,
@@ -304,6 +413,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
 
   openPanel: (sessionId) => {
     const prev = get().selectedSessionId
+    const isSwitch = prev !== sessionId
+    get().markSessionRead(sessionId)
+    const session = get().sessions.find(s => s.id === sessionId)
+    const cached = isSwitch ? get().sessionDetailCache[sessionId] : null
+    const cacheFresh = Boolean(cached && Date.now() - cached.cachedAt < SESSION_DETAIL_CACHE_TTL_MS)
+
     set({
       panelOpen: true,
       selectedSessionId: sessionId,
@@ -312,14 +427,27 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       streamingThinking: '',
       streamingToolCalls: [],
       streamingCompletedSteps: [],
+      ...(cached
+        ? {
+            runs: cached.runs,
+            steps: cached.steps,
+            events: cached.events,
+            messages: cached.messages,
+            toolCalls: cached.toolCalls,
+            permissions: cached.permissions,
+            sessionStats: cached.sessionStats,
+            sessionTodos: cached.sessionTodos,
+            sessionCapabilities: cached.sessionCapabilities,
+          }
+        : isSwitch
+          ? emptyDetailPayload()
+          : {}),
     })
-    // Only clear persisted data if switching to a different session
-    // refreshDetail will atomically replace with new data
-    if (prev !== sessionId) {
-      clearStreamingBuffers()
-    }
+    if (isSwitch) clearStreamingBuffers()
     ensureLiveStream(sessionId)
-    void get().refreshDetail()
+
+    const needsRefresh = !cached || isActiveSessionStatus(session?.status) || !cacheFresh
+    if (needsRefresh) void get().refreshDetail()
   },
 
   closePanel: () => {
@@ -328,54 +456,91 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   },
 
   refreshDetail: async () => {
-    const { selectedSessionId } = get()
-    if (!selectedSessionId) return
-    const targetSessionId = selectedSessionId
+    const targetSessionId = get().selectedSessionId
+    if (!targetSessionId) return
+
+    if (activeDetailRefresh?.sessionId === targetSessionId) {
+      return activeDetailRefresh.promise
+    }
+
+    const promise = (async () => {
+      try {
+        const [
+          runsRes,
+          eventsRes,
+          messagesRes,
+          toolCallsRes,
+          permissionsRes,
+          stepsRes,
+          stats,
+          todosRes,
+          capabilities,
+        ] = await Promise.all([
+          agentRuntimeApi.listRuns(targetSessionId),
+          agentRuntimeApi.listEvents(targetSessionId),
+          agentRuntimeApi.listMessages(targetSessionId),
+          agentRuntimeApi.listToolCalls(targetSessionId),
+          agentRuntimeApi.listPermissions(targetSessionId),
+          agentRuntimeApi.listSessionSteps(targetSessionId),
+          agentRuntimeApi.getSessionStats(targetSessionId).catch(() => null),
+          agentRuntimeApi.getSessionTodos(targetSessionId).catch(() => ({ items: [] as TodoItem[] })),
+          agentRuntimeApi.getSessionCapabilities(targetSessionId).catch(() => null),
+        ])
+        if (get().selectedSessionId !== targetSessionId) return
+
+        const sessionStillRunning =
+          get().sessions.find(s => s.id === targetSessionId)?.status === 'running'
+        const cacheEntry: SessionDetailCacheEntry = {
+          runs: runsRes.items,
+          steps: stepsRes.items,
+          events: eventsRes.items,
+          messages: messagesRes.items,
+          toolCalls: toolCallsRes.items,
+          permissions: permissionsRes.items,
+          sessionStats: stats,
+          sessionTodos: todosRes.items,
+          sessionCapabilities: capabilities,
+          cachedAt: Date.now(),
+        }
+
+        set(s => ({
+          runs: cacheEntry.runs,
+          events: cacheEntry.events,
+          messages: cacheEntry.messages,
+          toolCalls: cacheEntry.toolCalls,
+          permissions: cacheEntry.permissions,
+          steps: cacheEntry.steps,
+          sessionStats: cacheEntry.sessionStats,
+          sessionTodos: cacheEntry.sessionTodos,
+          sessionCapabilities: cacheEntry.sessionCapabilities,
+          sessionDetailCache: trimSessionDetailCache({
+            ...s.sessionDetailCache,
+            [targetSessionId]: cacheEntry,
+          }),
+          ...(sessionStillRunning ? {} : {
+            streamingStepId: null,
+            streamingText: '',
+            streamingThinking: '',
+            streamingToolCalls: [],
+            streamingCompletedSteps: [],
+          }),
+        }))
+
+        const session = get().sessions.find(s => s.id === targetSessionId)
+        if (session && session.childSessionIds.length > 0) {
+          void get().fetchChildSessions(targetSessionId)
+        }
+      } catch { /* silent */ }
+    })()
+
+    activeDetailRefresh = { sessionId: targetSessionId, promise }
     try {
-      const [runsRes, eventsRes, messagesRes, toolCallsRes, permissionsRes] = await Promise.all([
-        agentRuntimeApi.listRuns(targetSessionId),
-        agentRuntimeApi.listEvents(targetSessionId),
-        agentRuntimeApi.listMessages(targetSessionId),
-        agentRuntimeApi.listToolCalls(targetSessionId),
-        agentRuntimeApi.listPermissions(targetSessionId),
-      ])
-      // Guard: if session changed during fetch, discard stale results
-      if (get().selectedSessionId !== targetSessionId) return
-      // While the session is still running, deltas are actively accumulating in
-      // streamingText/Thinking/ToolCalls (fed by the live EventSource). A bulk
-      // refresh must NOT wipe that in-flight state, or the live block resets to
-      // empty on every step-completion poll and the stream looks frozen until the
-      // whole step lands in the DB. Only clear streaming state once settled.
-      const sessionStillRunning =
-        get().sessions.find(s => s.id === targetSessionId)?.status === 'running'
-      set({
-        runs: runsRes.items,
-        events: eventsRes.items,
-        messages: messagesRes.items,
-        toolCalls: toolCallsRes.items,
-        permissions: permissionsRes.items,
-        ...(sessionStillRunning ? {} : {
-          streamingStepId: null,
-          streamingText: '',
-          streamingThinking: '',
-          streamingToolCalls: [],
-          streamingCompletedSteps: [],
-        }),
-      })
-      // Load all steps for this session in a single request
-      const stepsRes = await agentRuntimeApi.listSessionSteps(targetSessionId)
-      if (get().selectedSessionId !== targetSessionId) return
-      set({ steps: stepsRes.items })
-      // Fetch child sessions if any
-      const session = get().sessions.find(s => s.id === selectedSessionId)
-      if (session && session.childSessionIds.length > 0) {
-        void get().fetchChildSessions(selectedSessionId)
+      await promise
+    } finally {
+      if (activeDetailRefresh?.sessionId === targetSessionId) {
+        activeDetailRefresh = null
       }
-      // Fetch stats and todos in parallel
-      void get().fetchSessionStats()
-      void get().fetchSessionTodos()
-      void get().fetchSessionCapabilities()
-    } catch { /* silent */ }
+    }
   },
 
   fetchChildSessions: async (parentId) => {
@@ -430,7 +595,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     if (!selectedSessionId) return
     try {
       const stats = await agentRuntimeApi.getSessionStats(selectedSessionId)
+      if (get().selectedSessionId !== selectedSessionId) return
       set({ sessionStats: stats })
+      patchSessionDetailCache(selectedSessionId, { sessionStats: stats })
     } catch { /* silent */ }
   },
 
@@ -439,7 +606,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     if (!selectedSessionId) return
     try {
       const { items } = await agentRuntimeApi.getSessionTodos(selectedSessionId)
+      if (get().selectedSessionId !== selectedSessionId) return
       set({ sessionTodos: items })
+      patchSessionDetailCache(selectedSessionId, { sessionTodos: items })
     } catch { /* silent */ }
   },
 
@@ -448,7 +617,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     if (!selectedSessionId) return
     try {
       const capabilities = await agentRuntimeApi.getSessionCapabilities(selectedSessionId)
+      if (get().selectedSessionId !== selectedSessionId) return
       set({ sessionCapabilities: capabilities })
+      patchSessionDetailCache(selectedSessionId, { sessionCapabilities: capabilities })
     } catch { /* silent */ }
   },
 
@@ -469,13 +640,21 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
 
   sendSessionMessage: async (sessionId, body) => {
     ensureLiveStream(sessionId)
+    const session = get().sessions.find(s => s.id === sessionId)
+    const shouldResume = session
+      && ['interrupted', 'paused', 'cancelled', 'failed', 'blocked', 'completed'].includes(session.status)
+
     set(s => ({
       sessions: s.sessions.map(sess =>
         sess.id === sessionId ? { ...sess, status: 'running' as const } : sess,
       ),
     }))
     try {
-      await agentRuntimeApi.streamTurn(sessionId, body, () => {})
+      if (shouldResume) {
+        await agentRuntimeApi.resumeStream(sessionId, body, () => {})
+      } else {
+        await agentRuntimeApi.streamTurn(sessionId, body, () => {})
+      }
     } finally {
       void get().refreshSessions()
       void get().refreshDetail()
@@ -536,5 +715,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
         void get().fetchSessionCapabilities()
         break
     }
+  },
+
+  markSessionRead: (sessionId) => {
+    const session = get().sessions.find(s => s.id === sessionId)
+    if (!session) return
+    const readSessionMarkers = {
+      ...get().readSessionMarkers,
+      [sessionId]: session.updatedAt,
+    }
+    set({ readSessionMarkers })
+    saveReadMarkers(get().projectId, readSessionMarkers)
   },
 }))

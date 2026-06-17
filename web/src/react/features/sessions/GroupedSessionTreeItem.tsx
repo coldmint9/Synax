@@ -1,4 +1,3 @@
-import type { AgentSessionStatus } from '../../../lib/api/agentRuntime'
 import type { SessionTreeNode } from './sessionGrouping'
 import { getSessionDisplayTitle } from './useSessionDisplayTitle'
 
@@ -7,18 +6,6 @@ interface Props {
   depth?: number
   selectedId: string | null
   onSelect: (sessionId: string) => void
-}
-
-const STATUS_DOT: Record<AgentSessionStatus, string> = {
-  running: 'bg-[var(--color-run)] animate-pulse',
-  waiting_permission: 'bg-warning',
-  blocked: 'bg-warning',
-  completed: 'bg-success',
-  failed: 'bg-danger',
-  interrupted: 'bg-amber-400',
-  paused: 'bg-sky-400',
-  queued: 'bg-muted-foreground/50',
-  cancelled: 'bg-muted-foreground/30',
 }
 
 export function GroupedSessionTreeItem({ node, depth = 0, selectedId, onSelect }: Props) {
@@ -32,16 +19,16 @@ export function GroupedSessionTreeItem({ node, depth = 0, selectedId, onSelect }
         style={{ paddingLeft: `${8 + depth * 12}px` }}
         onClick={() => onSelect(session.id)}
       >
-        <div className="flex items-center gap-2">
-          <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[session.status] ?? 'bg-muted-foreground/30'}`} />
-          <span className="truncate font-medium" title={getSessionDisplayTitle(session)}>
-            {getSessionDisplayTitle(session).slice(0, 40)}
+        {/* Title: always visible */}
+        <span className="flex-1 truncate font-medium" title={getSessionDisplayTitle(session)}>
+          {getSessionDisplayTitle(session).slice(0, 40)}
+        </span>
+        {/* Detail info: only visible when active */}
+        {active && (
+          <span className="truncate max-w-[60px] text-right text-[9px] text-muted-foreground">
+            {session.status}
           </span>
-        </div>
-        <div className="mt-0.5 flex items-center gap-2 pl-3.5 text-[9px] text-muted-foreground">
-          <span>{session.status}</span>
-          {session.model && <span className="font-mono">{session.model}</span>}
-        </div>
+        )}
       </li>
       {node.children.map(child => (
         <GroupedSessionTreeItem

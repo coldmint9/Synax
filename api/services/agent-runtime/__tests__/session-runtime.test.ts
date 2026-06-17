@@ -40,14 +40,15 @@ describe('agentSessionRuntime', () => {
     expect(agentRuntimeStore.listPermissions(session.id)[0].action).toBe('ask');
   });
 
-  it('cancels a session and clears pending runtime state', () => {
+  it('stops a session and leaves it resumable', () => {
     const session = agentSessionRuntime.create(executorInput);
-    const cancelled = agentSessionRuntime.cancel(session.id);
+    const stopped = agentSessionRuntime.cancel(session.id);
 
-    expect(cancelled.status).toBe('cancelled');
-    expect(cancelled.activeRunId).toBeNull();
-    expect(cancelled.pendingResumeToken).toBeNull();
-    expect(agentRuntimeStore.listEvents(session.id).map((event) => event.summary)).toContain('Session cancelled');
+    expect(stopped.status).toBe('interrupted');
+    expect(stopped.activeRunId).toBeNull();
+    expect(stopped.pendingResumeToken).toBeNull();
+    expect(stopped.completedAt).toBeNull();
+    expect(agentRuntimeStore.listEvents(session.id).map((event) => event.summary)).toContain('Session stopped');
   });
 
   it('deletes a session tree and cascades all runtime records', () => {

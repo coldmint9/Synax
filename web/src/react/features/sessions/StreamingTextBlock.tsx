@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { ScrollShadow } from '@heroui/react'
 import { SessionMarkdown } from './SessionMarkdown'
 
@@ -8,7 +9,12 @@ interface Props {
   markdown?: boolean
 }
 
-export function StreamingTextBlock({ text, isStreaming, maxHeight = '400px', markdown = false }: Props) {
+export const StreamingTextBlock = memo(function StreamingTextBlock({
+  text,
+  isStreaming,
+  maxHeight = '400px',
+  markdown = false,
+}: Props) {
   if (!text && !isStreaming) return null
 
   return (
@@ -25,4 +31,4 @@ export function StreamingTextBlock({ text, isStreaming, maxHeight = '400px', mar
       )}
     </ScrollShadow>
   )
-}
+})

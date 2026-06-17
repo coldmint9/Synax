@@ -10,6 +10,7 @@ import {
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
 import { useSessionLiveStream } from '../features/sessions/useSessionLiveStream'
 import { AgentConversationView } from '../features/sessions/AgentConversationView'
+import { SessionLiveTurn } from '../features/sessions/SessionLiveTurn'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../components/LlmProviderRequiredBanner'
 
 type StreamChunk = {
@@ -181,11 +182,18 @@ export default function AgentLoopTestPage() {
                   toolCalls={toolCalls}
                   messages={storeMessages}
                   childSessions={childSessions[sessionIdRef.current ?? ''] ?? []}
-                  streamingStepId={streamingStepId}
-                  streamingText={streamingText}
-                  streamingThinking={streamingThinking}
-                  streamingToolCalls={streamingToolCalls}
-                  streamingCompletedSteps={streamingCompletedSteps}
+                  excludeStepId={streamingStepId}
+                  liveTurn={(
+                    <SessionLiveTurn
+                      steps={steps}
+                      streamingStepId={streamingStepId}
+                      streamingText={streamingText}
+                      streamingThinking={streamingThinking}
+                      streamingToolCalls={streamingToolCalls}
+                      streamingCompletedSteps={streamingCompletedSteps}
+                      permissions={[]}
+                    />
+                  )}
                 />
               </div>
 

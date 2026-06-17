@@ -3,6 +3,7 @@ import { applyPermissionOverrides } from './permission-overrides.js';
 import { agentContextBuilder } from './context-builder.js';
 import { agentEventService, type AgentEventService } from './event-service.js';
 import { agentLoopRuntime } from './loop-runtime.js';
+import { sessionProcessManager } from './session-process-manager.js';
 import { profileService, type ProfileService } from './profile-service.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { AgentValidationError } from './runtime-errors.js';
@@ -118,12 +119,17 @@ export class AgentSessionRuntime {
   cancel(sessionId: string): AgentSession {
     const current = this.store.getSession(sessionId);
     const now = nowIso();
+    const reason = 'User stopped run.';
+
+    agentLoopRuntime.interruptSessions([sessionId], reason);
+    sessionProcessManager.interruptSessions([sessionId], reason);
+
     if (current.activeRunId) {
       const run = this.store.getRun(current.activeRunId);
       this.store.updateRun(run.id, {
-        status: 'cancelled',
+        status: 'interrupted',
         completedAt: now,
-        stopReason: 'Session cancelled.',
+        stopReason: reason,
       });
       for (const step of this.store.listRunSteps(run.id)) {
         if (!step.completedAt) {
@@ -136,10 +142,10 @@ export class AgentSessionRuntime {
       }
     }
     const session = this.store.updateSession(sessionId, {
-      status: 'cancelled',
+      status: 'interrupted',
       updatedAt: now,
-      completedAt: now,
-      resultSummary: 'Session cancelled.',
+      completedAt: null,
+      resultSummary: reason,
       blockedReason: null,
       activeRunId: null,
       pendingResumeToken: null,
@@ -147,8 +153,8 @@ export class AgentSessionRuntime {
     this.events.append({
       sessionId,
       type: 'progress_updated',
-      summary: 'Session cancelled',
-      payload: { reason: 'User cancelled run.', preservedEvents: true },
+      summary: 'Session stopped',
+      payload: { reason, preservedEvents: true, resumable: true },
     });
     return session;
   }

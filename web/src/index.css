@@ -992,8 +992,10 @@
     width: 100%;
     align-items: center;
     gap: 8px;
-    padding: 7px 10px;
+    padding: 8px 10px;
+    margin-bottom: 4px;
     border: 1px solid transparent;
+    border-left: 2px solid transparent;
     border-radius: 10px;
     background: transparent;
     text-align: left;
@@ -1011,17 +1013,22 @@
   .list-row--active {
     background: hsl(var(--wiki-panel) / 0.96);
     border-color: hsl(var(--border-hsl) / 0.55);
+    border-left: 2px solid hsl(var(--primary) / 0.6);
     color: var(--foreground);
     font-weight: 500;
     box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.55) inset,
-      0 2px 8px hsl(var(--wiki-shadow) / 0.06);
+      0 1px 0 hsl(0 0% 100% / 0.7) inset,
+      0 3px 12px hsl(var(--wiki-shadow) / 0.08),
+      0 1px 3px hsl(var(--primary) / 0.06);
+    transform: translateY(-0.5px);
   }
   .dark .list-row--active {
     background: hsl(var(--wiki-panel) / 0.72);
+    border-left: 2px solid hsl(var(--primary) / 0.5);
     box-shadow:
       0 1px 0 hsl(0 0% 100% / 0.06) inset,
-      0 2px 10px hsl(0 0% 0% / 0.22);
+      0 3px 12px hsl(0 0% 0% / 0.24),
+      0 1px 3px hsl(var(--primary) / 0.04);
   }
   .list-row--section {
     padding: 6px 10px;
@@ -1078,9 +1085,10 @@
   .list-card {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 10px 12px;
-    border-radius: 10px;
+    gap: 4px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    margin-bottom: 4px;
     border: 1px solid hsl(var(--border-hsl) / 0.45);
     background: hsl(var(--wiki-panel) / 0.4);
     cursor: pointer;
@@ -1091,17 +1099,23 @@
     background: hsl(var(--wiki-panel-muted) / 0.5);
   }
   .list-card--active {
-    background: hsl(var(--wiki-panel) / 0.96);
+    background: hsl(var(--wiki-panel) / 1);
     border-color: hsl(var(--border-hsl) / 0.55);
+    color: var(--foreground);
+    font-weight: 500;
     box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.55) inset,
-      0 2px 8px hsl(var(--wiki-shadow) / 0.06);
+      0 1px 0 hsl(0 0% 100% / 0.7) inset,
+      0 4px 16px hsl(var(--wiki-shadow) / 0.10),
+      0 1px 4px hsl(0 0% 0% / 0.06);
+    transform: translateY(-1px);
   }
   .dark .list-card--active {
-    background: hsl(var(--wiki-panel) / 0.72);
+    background: hsl(var(--wiki-panel) / 0.85);
+    border-color: hsl(var(--border-hsl) / 0.6);
     box-shadow:
       0 1px 0 hsl(0 0% 100% / 0.06) inset,
-      0 2px 10px hsl(0 0% 0% / 0.22);
+      0 4px 16px hsl(0 0% 0% / 0.28),
+      0 1px 4px hsl(0 0% 0% / 0.12);
   }
   .list-card--muted { opacity: 0.55; }
   .list-card--muted:hover { opacity: 0.72; }
@@ -1779,6 +1793,24 @@
 /* ── Goal Pill Dock — bar → pill 弹性 morph ── */
 .goal-dock-zone {
   pointer-events: none;
+  --goal-ease: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --goal-dur: 220ms;
+  --goal-pill-max-width: 48rem;
+  --goal-bar-width: 5.75rem;
+  --goal-bar-height: 0.3125rem;
+  --goal-glass-bg: hsl(0 0% 100% / 0.52);
+  --goal-glass-border: hsl(0 0% 100% / 0.72);
+  --goal-glass-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.88) inset,
+    0 4px 16px hsl(0 0% 0% / 0.05);
+}
+
+.dark .goal-dock-zone {
+  --goal-glass-bg: hsl(var(--card) / 0.55);
+  --goal-glass-border: hsl(0 0% 100% / 0.14);
+  --goal-glass-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.14) inset,
+    0 4px 16px hsl(0 0% 0% / 0.35);
 }
 
 /* 稳定命中层：展开时立即占满 pill 区域，避免 morph 动画导致 mouseenter/leave 抖动 */
@@ -1791,13 +1823,17 @@
   width: var(--goal-bar-width);
 }
 
-.goal-dock-hit[data-hit="composer"] {
+.goal-dock-hit[data-hit="composer"],
+.goal-dock-hit[data-hit="composer-active"],
+.goal-dock-hit[data-hit="dialog"] {
   width: min(100%, var(--goal-pill-max-width));
+}
+
+.goal-dock-hit[data-hit="composer"] {
   min-height: 2.75rem;
 }
 
 .goal-dock-hit[data-hit="composer-active"] {
-  width: min(100%, var(--goal-pill-max-width));
   min-height: calc(2.75rem + 2.5rem);
 }
 
@@ -1906,21 +1942,7 @@
   min-height: 1.75rem;
 }
 
-.goal-dock-hit[data-hit="dialog"] {
-  width: min(100%, var(--goal-pill-max-width));
-}
-
 .goal-dock-morph {
-  --goal-ease: cubic-bezier(0.2, 0.9, 0.3, 1);
-  --goal-dur: 220ms;
-  --goal-pill-max-width: 36rem;
-  --goal-bar-width: 5.75rem;
-  --goal-bar-height: 0.3125rem;
-  --goal-glass-bg: hsl(0 0% 100% / 0.52);
-  --goal-glass-border: hsl(0 0% 100% / 0.72);
-  --goal-glass-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.88) inset,
-    0 4px 16px hsl(0 0% 0% / 0.05);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1929,14 +1951,6 @@
     max-width var(--goal-dur) var(--goal-ease),
     transform var(--goal-dur) var(--goal-ease);
   transform: translateY(0);
-}
-
-.dark .goal-dock-morph {
-  --goal-glass-bg: hsl(var(--card) / 0.55);
-  --goal-glass-border: hsl(0 0% 100% / 0.14);
-  --goal-glass-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.14) inset,
-    0 4px 16px hsl(0 0% 0% / 0.35);
 }
 
 /* 统一 morph 外壳：idle bar 与 pill 为同一元素 */
@@ -2032,7 +2046,11 @@
 
 /* ── Pill Input（compose）── */
 .goal-dock-morph[data-morph="pill-input"] {
+  width: min(100%, var(--goal-pill-max-width));
   max-width: var(--goal-pill-max-width);
+}
+.goal-dock-morph[data-morph="pill-input"] .goal-dock-stack {
+  align-items: stretch;
 }
 .goal-dock-morph[data-morph="pill-input"] .goal-dock-shell {
   transform: translateY(-4px);
@@ -2206,7 +2224,11 @@
 
 /* ── Pill Expanded ── */
 .goal-dock-morph[data-morph="pill-expanded"] {
+  width: min(100%, var(--goal-pill-max-width));
   max-width: var(--goal-pill-max-width);
+}
+.goal-dock-morph[data-morph="pill-expanded"] .goal-dock-stack {
+  align-items: stretch;
 }
 .goal-dock-morph[data-morph="pill-expanded"] .goal-dock-shell {
   transform: translateY(-5px);
@@ -2280,18 +2302,34 @@
 .goal-dock-morph[data-morph="pill-input"] .goal-dock-shell-content:has(.goal-dock-composer[data-multiline="true"]),
 .goal-dock-morph[data-morph="pill-expanded"] .goal-dock-shell-content:has(.goal-dock-composer[data-multiline="true"]),
 .goal-session-composer-shell .goal-dock-shell-content {
+  width: 100%;
   max-height: none;
 }
 .goal-session-composer {
   background: transparent;
 }
 .goal-session-composer-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  height: auto;
+  min-height: 2.75rem;
+  border-radius: 1rem;
   overflow: hidden;
   box-shadow:
     0 1px 0 hsl(0 0% 100% / 0.9) inset,
     0 -2px 16px hsl(0 0% 0% / 0.04),
     0 8px 28px hsl(0 0% 0% / 0.1),
     0 2px 8px hsl(0 0% 0% / 0.06);
+}
+.goal-session-composer-shell.goal-dock-shell {
+  width: 100%;
+  height: auto;
+  min-height: 2.75rem;
+  border-radius: 1rem;
+  align-items: stretch;
 }
 .goal-session-composer-shell--draft {
   border-radius: 1rem;

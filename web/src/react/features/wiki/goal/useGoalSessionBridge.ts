@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { agentRuntimeApi } from '../../../../lib/api/agentRuntime'
 import { subscribe } from '../../../../lib/api/runtimeEventBus'
 import { addSessionLiveListener } from '../../../../lib/api/sessionLiveClient'
-import { useAgentSessionStore } from '../sessions/agentSessionStore'
+import { useAgentSessionStore } from '../../sessions/agentSessionStore'
 import { useWikiStore } from '../../../state/wikiStore'
 import {
   applyGoalLiveEvent,

@@ -89,12 +89,25 @@ export function buildInterleavedTurns(
 ): InterleavedTurn[] {
   const sorted = [...steps].sort((a, b) => a.index - b.index)
 
+  const messagesByStep = new Map<string, AgentRuntimeMessage[]>()
+  for (const message of messages) {
+    if (!message.stepId || message.role !== 'assistant') continue
+    const bucket = messagesByStep.get(message.stepId)
+    if (bucket) bucket.push(message)
+    else messagesByStep.set(message.stepId, [message])
+  }
+
+  const toolCallsByStep = new Map<string, ToolCallRecord[]>()
+  for (const toolCall of toolCallRecords) {
+    const bucket = toolCallsByStep.get(toolCall.stepId)
+    if (bucket) bucket.push(toolCall)
+    else toolCallsByStep.set(toolCall.stepId, [toolCall])
+  }
+
   return sorted.map(step => {
     const items: Array<{ timestamp: number; block: TurnContentBlock }> = []
 
-    const stepMessages = messages.filter(
-      m => m.stepId === step.id && m.role === 'assistant',
-    )
+    const stepMessages = messagesByStep.get(step.id) ?? []
     for (const msg of stepMessages) {
       const isThinking = msg.metadata?.type === 'thinking' || msg.metadata?.kind === 'thought'
       items.push({
@@ -105,7 +118,7 @@ export function buildInterleavedTurns(
       })
     }
 
-    const stepToolCalls = toolCallRecords.filter(tc => tc.stepId === step.id)
+    const stepToolCalls = toolCallsByStep.get(step.id) ?? []
     for (const tc of stepToolCalls) {
       items.push({
         timestamp: new Date(tc.startedAt).getTime(),

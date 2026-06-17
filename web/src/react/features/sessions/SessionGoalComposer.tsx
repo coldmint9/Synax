@@ -76,53 +76,63 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
   const isCentered = layout === 'centered'
   const expandedShell = isCentered || content.includes('\n')
 
+  const composer = (
+    <GoalComposerPill
+      content={content}
+      onContentChange={setContent}
+      onSubmit={() => void handleSubmit()}
+      onStop={handleStop}
+      isGenerating={isGenerating}
+      defaultExpanded={isCentered}
+      providerId={providerId}
+      modelId={modelId}
+      onModelSelect={(selection) => {
+        setProviderId(selection.providerId)
+        setModelId(selection.modelId)
+      }}
+      providers={providers}
+      globalConfig={globalConfig}
+      documentId={null}
+      onDocumentChange={() => {}}
+      wikiAttachMode="auto"
+      onWikiAttachModeChange={() => {}}
+      documents={[]}
+      skillIds={[]}
+      onSkillIdsChange={() => {}}
+      permissions={composerPermissions}
+      onPermissionPresetChange={setPermissionPreset}
+      disabled={isGenerating}
+    />
+  )
+
+  const composerShell = (
+    <div
+      className={`goal-session-composer-shell goal-dock-shell w-full${isCentered ? ' goal-session-composer-shell--draft' : ''}`}
+      data-multiline={expandedShell ? 'true' : undefined}
+    >
+      <div className="goal-dock-shell-content">{composer}</div>
+    </div>
+  )
+
   return (
     <div
       className={
         isCentered
-          ? 'flex flex-1 flex-col items-center justify-center gap-6 px-6 py-10'
+          ? 'flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-10'
           : 'goal-session-composer shrink-0 px-4 pb-4 pt-2'
       }
     >
       {isCentered ? (
-        <div className="max-w-lg text-center">
-          <h2 className="text-lg font-medium text-foreground">{t('sessionDraftTitle')}</h2>
-          <p className="mt-2 text-sm text-muted-foreground">{t('sessionDraftHint')}</p>
+        <div className="flex w-full max-w-3xl flex-col items-center gap-6">
+          <div className="max-w-lg text-center">
+            <h2 className="text-lg font-medium text-foreground">{t('sessionDraftTitle')}</h2>
+            <p className="mt-2 text-sm text-muted-foreground">{t('sessionDraftHint')}</p>
+          </div>
+          <div className="w-full min-w-0">{composerShell}</div>
         </div>
-      ) : null}
-      <div
-        className={`goal-session-composer-shell goal-dock-shell w-full max-w-3xl${isCentered ? ' goal-session-composer-shell--draft' : ' mx-auto'}`}
-        data-multiline={expandedShell ? 'true' : undefined}
-      >
-        <div className="goal-dock-shell-content">
-          <GoalComposerPill
-            content={content}
-            onContentChange={setContent}
-            onSubmit={() => void handleSubmit()}
-            onStop={handleStop}
-            isGenerating={isGenerating}
-            defaultExpanded={isCentered}
-            providerId={providerId}
-            modelId={modelId}
-            onModelSelect={(selection) => {
-              setProviderId(selection.providerId)
-              setModelId(selection.modelId)
-            }}
-            providers={providers}
-            globalConfig={globalConfig}
-            documentId={null}
-            onDocumentChange={() => {}}
-            wikiAttachMode="auto"
-            onWikiAttachModeChange={() => {}}
-            documents={[]}
-            skillIds={[]}
-            onSkillIdsChange={() => {}}
-            permissions={composerPermissions}
-            onPermissionPresetChange={setPermissionPreset}
-            disabled={isGenerating}
-          />
-        </div>
-      </div>
+      ) : (
+        <div className="mx-auto w-full min-w-0 max-w-3xl">{composerShell}</div>
+      )}
     </div>
   )
 }

@@ -159,6 +159,7 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
 
   const select = useCallback((id: string) => {
     if (!routeProjectId) return
+    useAgentSessionStore.getState().markSessionRead(id)
     navigate(goalSessionPath(routeProjectId, id))
   }, [navigate, routeProjectId])
 
