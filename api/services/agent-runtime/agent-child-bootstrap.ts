@@ -2,7 +2,10 @@ import { agentRuntimeStore } from './session-store.js';
 import { ensureWikiProfileRegistered } from '../wiki/wiki-loop-profile.js';
 import { ensurePlanProfileRegistered, PLAN_GENERATOR_LEGACY_ID, PLAN_PLANNER_PROFILE_ID } from '../wiki/wiki-plan-profile.js';
 import { ensureRefreshProfileRegistered } from '../wiki/wiki-refresh-profile.js';
-import { ensureGoalProfileRegistered, GOAL_AGENT_PROFILE_ID } from '../wiki/wiki-goal-profile.js';
+import {
+  ensureLegacyGoalProfileRegistered,
+  isSynaxProfile,
+} from './synax/index.js';
 
 const WIKI_PROFILE_PREFIX = 'wiki-';
 
@@ -18,8 +21,8 @@ export function bootstrapAgentChildForSession(sessionId: string): void {
   if (profileId === PLAN_PLANNER_PROFILE_ID || profileId === PLAN_GENERATOR_LEGACY_ID) {
     ensurePlanProfileRegistered();
   }
-  if (profileId === GOAL_AGENT_PROFILE_ID) {
-    ensureGoalProfileRegistered();
+  if (isSynaxProfile(profileId)) {
+    ensureLegacyGoalProfileRegistered();
   }
   if (profileId === 'wiki-refresh') {
     ensureRefreshProfileRegistered();

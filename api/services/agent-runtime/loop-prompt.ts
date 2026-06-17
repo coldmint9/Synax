@@ -21,6 +21,12 @@ interface BuildLoopPromptInput {
   disclosureHint?: string;
   /** Hint shown when fallback tools are disclosed after bash failures. */
   fallbackHint?: string;
+  /** Synax session mode prompt section when profileId is synax. */
+  modePromptSection?: string | null;
+  /** Synax active variant prompt section. */
+  variantPromptSection?: string | null;
+  /** Override profile loop hints (Synax variant overlay). */
+  loopHintsOverride?: string[] | null;
   /** If set, a language output directive is prepended to the system prompt. */
   locale?: 'zh' | 'en';
 }
@@ -31,7 +37,9 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     .map((block) => `## ${block.title}\n${block.content}`)
     .join('\n\n') ?? 'No context bundle is attached.';
   const warnings = input.context?.warnings.length ? `\n\nContext warnings:\n${input.context.warnings.join('\n')}` : '';
-  const loopHints = input.profile.loopHints?.length ? `\nLoop hints:\n${input.profile.loopHints.join('\n')}` : '';
+  const loopHints = (input.loopHintsOverride ?? input.profile.loopHints)?.length
+    ? `\nLoop hints:\n${(input.loopHintsOverride ?? input.profile.loopHints)!.join('\n')}`
+    : '';
   return [
     directive,
     `You are the Synax ${input.profile.label} runtime agent.`,
@@ -49,6 +57,8 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     input.fallbackHint ?? '',
     'When proposing file changes, prefer specific file paths and bounded edits.',
     loopHints,
+    input.modePromptSection ? `\n${input.modePromptSection}` : '',
+    input.variantPromptSection ? `\n${input.variantPromptSection}` : '',
     input.disclosureHint ?? '',
     '',
     '[Synax Context]',

@@ -1,4 +1,16 @@
-export const GOAL_PROFILE_ID = 'goal'
+export const SYNAX_PROFILE_ID = 'synax'
+
+/** @deprecated Use SYNAX_PROFILE_ID with sessionMetadata.mode === 'goal'. */
+export const GOAL_PROFILE_ID = SYNAX_PROFILE_ID
+
+export type SynaxSessionMode = 'chat' | 'goal' | 'plan_node'
+
+export function createSynaxSessionMetadata(
+  mode: SynaxSessionMode,
+  extras: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return { mode, ...extras }
+}
 
 export type GoalWikiAttachMode = 'auto' | 'manual'
 

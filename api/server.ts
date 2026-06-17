@@ -20,7 +20,7 @@ import { wikiStore } from "./services/wiki/wiki-store.js";
 import { ensureWikiProfileRegistered } from "./services/wiki/wiki-loop-profile.js";
 import { ensurePlanProfileRegistered } from "./services/wiki/wiki-plan-profile.js";
 import { ensureRefreshProfileRegistered } from "./services/wiki/wiki-refresh-profile.js";
-import { ensureGoalProfileRegistered } from "./services/wiki/wiki-goal-profile.js";
+import { ensureSynaxAgentRegistered, ensureLegacyGoalProfileRegistered } from "./services/agent-runtime/synax/index.js";
 import { registerSessionTitleHooks } from "./services/agent-runtime/session-title-service.js";
 import { wikiWriteQueue } from "./services/wiki/wiki-write-queue-service.js";
 import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
@@ -66,7 +66,8 @@ try {
 ensureWikiProfileRegistered();
 ensurePlanProfileRegistered();
 ensureRefreshProfileRegistered();
-ensureGoalProfileRegistered();
+ensureSynaxAgentRegistered();
+ensureLegacyGoalProfileRegistered();
 registerSessionTitleHooks();
 
 // --- 启动时恢复孤儿 running session ---
