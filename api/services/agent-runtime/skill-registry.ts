@@ -29,7 +29,7 @@ const BUILTIN_SKILLS: AgentSkill[] = [
     requiredCapabilities: ['bash', 'grep.search', 'diff.read', 'file.write', 'file.patch', 'subagent.delegate'],
     permissionHints: ['task', 'write'],
     contentRef: 'system://skills/action-executor',
-    content: 'Read first, then perform bounded file changes through Synax tools. Preserve session evidence.',
+    content: 'Read first. For multi-step work, outline steps with task.create and track progress with task.update. Then perform bounded file changes through Synax tools. Preserve session evidence.',
     status: 'available',
   },
   {

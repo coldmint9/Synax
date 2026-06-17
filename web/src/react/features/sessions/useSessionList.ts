@@ -107,7 +107,7 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
     const tree = buildTree(list)
     return [{
       key: listView,
-      label: listView === 'goal' ? (locale === 'zh' ? 'Goal' : 'Goals') : (locale === 'zh' ? 'Workflow' : 'Workflows'),
+      label: listView === 'goal' ? (locale === 'zh' ? '会话' : 'Sessions') : (locale === 'zh' ? 'Workflow' : 'Workflows'),
       sessions: tree,
       collapsed: collapsedGroups.has(listView),
       count: tree.length,

@@ -68,7 +68,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     maxSteps: 16,
     status: 'active',
     toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
-    loopHints: ['Use read tools to build context before any write.'],
+    loopHints: ['Use read tools to build context before any write.', 'For multi-step work, track steps with task.create and task.update.'],
   },
   {
     id: 'reviewer',

@@ -24,6 +24,7 @@ describe('resolveSessionCapabilities', () => {
     const session = agentSessionRuntime.create(executorInput);
     const beforeEscalation = resolveSessionCapabilities(session.id);
     expect(beforeEscalation.tools.visible.some((tool) => tool.id === 'file.write')).toBe(false);
+    expect(beforeEscalation.tools.visible.some((tool) => tool.id === 'task.create')).toBe(true);
     expect(beforeEscalation.tools.available.some((tool) => tool.id === 'file.write')).toBe(true);
 
     agentRuntimeStore.appendToolCall({

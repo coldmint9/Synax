@@ -73,6 +73,6 @@ export function classifySession(session: AgentSession): SessionListView {
 }
 
 export const SESSION_LIST_VIEW_LABELS: Record<SessionListView, { zh: string; en: string }> = {
-  goal: { zh: 'Goal', en: 'Goals' },
+  goal: { zh: '会话', en: 'Sessions' },
   workflow: { zh: 'Workflow', en: 'Workflows' },
 }

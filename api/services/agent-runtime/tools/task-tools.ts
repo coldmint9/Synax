@@ -159,10 +159,11 @@ export function buildTaskDriftReminder(sessionId: string): string | null {
 export const taskCreateTool: RegisteredTool = {
   id: 'task.create',
   label: 'Create Task',
-  description: 'Create a new task to track work progress.',
+  description:
+    'Add a step to the session TODO list (visible to the user). Use for multi-step work — not the same as subagent.delegate.',
   category: 'task',
   internalGate: 'none',
-  mutability: 'write',
+  mutability: 'task',
   resumeBehavior: 'auto',
   inputSchema: z.object({
     subject: z.string().min(1).describe('Brief imperative title, e.g. "Fix auth bug"'),
@@ -185,10 +186,10 @@ export const taskCreateTool: RegisteredTool = {
 export const taskUpdateTool: RegisteredTool = {
   id: 'task.update',
   label: 'Update Task',
-  description: 'Update a task status, details, or dependencies.',
+  description: 'Update a session TODO item: mark in_progress, completed, or adjust dependencies.',
   category: 'task',
   internalGate: 'none',
-  mutability: 'write',
+  mutability: 'task',
   resumeBehavior: 'auto',
   inputSchema: z.object({
     taskId: z.string().min(1).describe('Task ID to update'),

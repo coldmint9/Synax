@@ -40,3 +40,20 @@ export {
   type SynaxRouteDecision,
 } from './synax-intent-router.js';
 export { SYNAX_ADAPT_TOOL_ID, createSynaxAdaptTool } from './synax-adapt-tool.js';
+export {
+  loadProjectInstructions,
+  loadMergedProjectInstructions,
+  truncateForPrompt,
+} from './synax-instructions.js';
+export { buildSynaxMdContent, ensureSynaxMd, readPackageJson } from './synax-md.js';
+export { bootstrapSynaxFromScan } from './synax-bootstrap.js';
+export {
+  buildSynaxRuntimeBlocks,
+  loadLatestCachedScan,
+  resolveWikiLandscapeTitle,
+} from './synax-runtime-context.js';
+export {
+  SYNAX_MD_FILENAME,
+  SYNAX_LOCAL_FILENAME,
+  type LoadedInstructions,
+} from './synax-context-types.js';
