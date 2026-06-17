@@ -37,7 +37,6 @@ export const agentRuntimeRoutes = new Hono();
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
 
 function isHealthyAgentRuntimeSession(session: ReturnType<typeof agentSessionRuntime.get>): boolean {
-  if (session.status === 'cancelled' || session.status === 'failed') return false;
   if (session.status === 'running' || session.status === 'waiting_permission') {
     return session.activeRunId !== null;
   }

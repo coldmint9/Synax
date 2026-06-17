@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { ChevronDown, ChevronUp, ScrollText } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useAgentSessionStore } from './agentSessionStore'
 
-export function SessionSystemPromptPanel() {
+export const SessionSystemPromptPanel = memo(function SessionSystemPromptPanel() {
   const { t } = useLocale()
-  const session = useAgentSessionStore(s => {
+  const session = useAgentSessionStore(useShallow(s => {
     const id = s.selectedSessionId
     return id ? s.sessions.find(item => item.id === id) : undefined
-  })
+  }))
   const [open, setOpen] = useState(false)
   const prompt = session?.prompt?.trim()
 
@@ -43,4 +44,4 @@ export function SessionSystemPromptPanel() {
       )}
     </div>
   )
-}
+})

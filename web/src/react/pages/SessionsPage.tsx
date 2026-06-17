@@ -15,6 +15,15 @@ import { useSessionRouteSync } from '../features/sessions/useSessionRouteSync'
 import { isNewGoalSessionPath, newGoalSessionPath } from '../features/sessions/sessionRoutes'
 import type { SessionListView } from '../features/sessions/sessionBuckets'
 
+const SessionDetailSidebar = memo(function SessionDetailSidebar() {
+  return (
+    <aside className="hidden w-[220px] shrink-0 border-l border-border/40 bg-background/50 xl:block">
+      <SessionSystemPromptPanel />
+      <SessionWorkspace />
+    </aside>
+  )
+})
+
 export default memo(function SessionsPage() {
   useSessionDetailPolling()
   const { t } = useLocale()
@@ -45,10 +54,7 @@ export default memo(function SessionsPage() {
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <SessionTranscript />
           </div>
-          <aside className="w-[220px] shrink-0 border-l border-border/40 bg-background/50">
-            <SessionSystemPromptPanel />
-            <SessionWorkspace />
-          </aside>
+          <SessionDetailSidebar />
         </>
       ) : isNewDraft ? (
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">

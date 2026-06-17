@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { ScrollShadow } from '@heroui/react'
 import type { TurnContentBlock } from './buildInterleavedTurns'
 import { toolBlocksToBatches } from './toolCallUtils'
@@ -8,7 +9,10 @@ interface Props {
   maxHeight?: string
 }
 
-export function ToolCallRoundPanel({ toolBlocks, maxHeight = '160px' }: Props) {
+export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
+  toolBlocks,
+  maxHeight = '160px',
+}: Props) {
   if (toolBlocks.length === 0) return null
 
   const batches = toolBlocksToBatches(toolBlocks)
@@ -28,4 +32,4 @@ export function ToolCallRoundPanel({ toolBlocks, maxHeight = '160px' }: Props) {
       </div>
     </ScrollShadow>
   )
-}
+})

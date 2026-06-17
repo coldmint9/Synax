@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useLocale } from '../../../hooks/useLocale'
 import { useAgentSessionStore } from './agentSessionStore'
 import {
@@ -18,14 +19,16 @@ function scrollToEntry(scrollRoot: HTMLElement | null, entryId: string) {
   }
 }
 
-export function SessionNavigationPanel({ scrollRootRef }: Props) {
+export const SessionNavigationPanel = memo(function SessionNavigationPanel({ scrollRootRef }: Props) {
   const { t } = useLocale()
-  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
-  const session = useAgentSessionStore(s => {
+  const { selectedSessionId, session, messages } = useAgentSessionStore(useShallow(s => {
     const id = s.selectedSessionId
-    return id ? s.sessions.find(item => item.id === id) : undefined
-  })
-  const messages = useAgentSessionStore(s => s.messages)
+    return {
+      selectedSessionId: id,
+      session: id ? s.sessions.find(item => item.id === id) : undefined,
+      messages: s.messages,
+    }
+  }))
 
   const entries = useMemo(
     () => buildUserMessageEntries(messages, session),
@@ -94,7 +97,7 @@ export function SessionNavigationPanel({ scrollRootRef }: Props) {
       </div>
     </nav>
   )
-}
+})
 
 function TimelineMark({
   entry,

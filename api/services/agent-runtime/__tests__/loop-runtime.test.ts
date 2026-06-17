@@ -645,4 +645,18 @@ describe('agentLoopRuntime', () => {
       runtime.activeSessionControllers.delete(session.id);
     }
   });
+
+  it('continues with a new message after user stop', async () => {
+    const session = agentSessionRuntime.create(executorInput);
+    agentSessionRuntime.cancel(session.id);
+
+    queueMockStep(makeTextStep('Continued after stop.'));
+    const chunks = await collectChunks(
+      agentLoopRuntime.streamContinue(session.id, { message: 'Please continue.' }),
+    );
+
+    expect(chunks.some((chunk) => chunk.type === 'run_started')).toBe(true);
+    expect(chunks.some((chunk) => chunk.type === 'message')).toBe(true);
+    expect(agentRuntimeStore.getSession(session.id).status).toBe('completed');
+  });
 });

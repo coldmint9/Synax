@@ -221,7 +221,7 @@ export function GoalPillDock({ projectId }: Props) {
         />
       )}
 
-      <div className="goal-dock-zone absolute inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-3">
+      <div className="goal-dock-zone absolute inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-3 sm:px-6">
         <div
           ref={hitRef}
           className="goal-dock-hit"

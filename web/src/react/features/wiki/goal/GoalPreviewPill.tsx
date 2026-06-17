@@ -40,7 +40,7 @@ export function GoalPreviewPill({
       type="button"
       onClick={onClick}
       aria-label={sessionTitle}
-      className={`goal-dock-preview-pill mb-1.5 flex w-[min(100%,20rem)] items-center gap-2 rounded-full px-3 py-1.5 text-left text-[11px] transition-transform duration-150 active:scale-[0.98] ${
+      className={`goal-dock-preview-pill mb-1.5 flex w-[min(100%,20rem)] self-center items-center gap-2 rounded-full px-3 py-1.5 text-left text-[11px] transition-transform duration-150 active:scale-[0.98] ${
         isRunning
           ? 'text-foreground'
           : status === 'failed'

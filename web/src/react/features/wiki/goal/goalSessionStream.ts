@@ -200,7 +200,7 @@ export function applyGoalSessionPatch(
     next.status = 'completed'
     next.error = null
   }
-  if (patch.status === 'failed') {
+  if (patch.status === 'failed' || patch.status === 'interrupted' || patch.status === 'cancelled') {
     next.status = 'failed'
   }
   if (typeof patch.blockedReason === 'string') {
@@ -220,12 +220,17 @@ export async function streamGoalAgentTurn(
   sessionId: string,
   input: { message?: string; model?: string | null },
   onChunk: (chunk: unknown) => void,
+  options?: { continue?: boolean },
 ): Promise<void> {
   const body = {
     ...(input.message ? { message: input.message } : {}),
     ...(input.model ? { model: input.model } : {}),
   }
-  await agentRuntimeApi.streamTurn(sessionId, body, onChunk)
+  if (options?.continue) {
+    await agentRuntimeApi.resumeStream(sessionId, body, onChunk)
+  } else {
+    await agentRuntimeApi.streamTurn(sessionId, body, onChunk)
+  }
 }
 
 export async function fetchGoalSessionPermissions(sessionId: string): Promise<PermissionDecision[]> {

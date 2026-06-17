@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { CheckCircle2, Circle, Clock, Cpu, FileEdit, FilePlus, FileX, File, Loader2, Users } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { useAgentSessionStore } from './agentSessionStore'
-import type { SessionStats, TodoItem } from '../../../lib/api/agentRuntime'
+import type { SessionStats, TodoItem, AgentRunStep } from '../../../lib/api/agentRuntime'
 import { SessionCapabilitiesPanel } from './SessionCapabilitiesPanel'
+import { sumAgentTurnDurationMs } from './sumAgentTurnDuration'
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -44,15 +46,20 @@ const CHANGE_COLOR = {
   unknown: 'text-muted-foreground',
 }
 
-function SessionStatusCard({ stats }: { stats: SessionStats }) {
-  const [elapsed, setElapsed] = useState(stats.runningDuration)
+function SessionStatusCard({ stats, steps }: { stats: SessionStats; steps: AgentRunStep[] }) {
+  const [tick, setTick] = useState(0)
+  const isLive = stats.status === 'running' || steps.some(step => step.status === 'running')
 
   useEffect(() => {
-    if (stats.status !== 'running') { setElapsed(stats.runningDuration); return }
-    const start = Date.now() - stats.runningDuration
-    const t = setInterval(() => setElapsed(Date.now() - start), 1000)
-    return () => clearInterval(t)
-  }, [stats.runningDuration, stats.status])
+    if (!isLive) return
+    const timer = setInterval(() => setTick(value => value + 1), 1000)
+    return () => clearInterval(timer)
+  }, [isLive])
+
+  const elapsed = useMemo(() => {
+    if (steps.length > 0) return sumAgentTurnDurationMs(steps)
+    return stats.runningDuration
+  }, [steps, stats.runningDuration, tick])
 
   const badgeClass = STATUS_BADGE[stats.status] ?? 'bg-secondary/70 text-foreground/80'
 
@@ -145,11 +152,14 @@ function FilesCard({ files }: { files: FileChange[] }) {
   )
 }
 
-export function SessionWorkspace() {
-  const events = useAgentSessionStore(s => s.events)
-  const sessionStats = useAgentSessionStore(s => s.sessionStats)
-  const sessionTodos = useAgentSessionStore(s => s.sessionTodos)
-  const sessionCapabilities = useAgentSessionStore(s => s.sessionCapabilities)
+export const SessionWorkspace = memo(function SessionWorkspace() {
+  const { events, sessionStats, sessionTodos, sessionCapabilities, steps } = useAgentSessionStore(useShallow(s => ({
+    events: s.events,
+    sessionStats: s.sessionStats,
+    sessionTodos: s.sessionTodos,
+    sessionCapabilities: s.sessionCapabilities,
+    steps: s.steps,
+  })))
 
   const fileChanges = useMemo<FileChange[]>(() => {
     const paths = new Map<string, FileChange>()
@@ -165,10 +175,10 @@ export function SessionWorkspace() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto text-[10px]">
-      {sessionStats && <SessionStatusCard stats={sessionStats} />}
+      {sessionStats && <SessionStatusCard stats={sessionStats} steps={steps} />}
       {sessionCapabilities && <SessionCapabilitiesPanel capabilities={sessionCapabilities} />}
       <TodoCard items={sessionTodos} />
       <FilesCard files={fileChanges} />
     </div>
   )
-}
+})

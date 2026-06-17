@@ -1018,19 +1018,40 @@ export class AgentRuntimeStore {
     const db = getRawSqlite();
 
     const stepRows = db
-      .prepare("SELECT metadata_json FROM agent_runtime_run_steps WHERE session_id = ? ORDER BY step_index ASC")
-      .all(sessionId) as Array<{ metadata_json: string }>;
+      .prepare(
+        `SELECT metadata_json, started_at, completed_at, status
+         FROM agent_runtime_run_steps
+         WHERE session_id = ?
+         ORDER BY step_index ASC`,
+      )
+      .all(sessionId) as Array<{
+        metadata_json: string
+        started_at: string
+        completed_at: string | null
+        status: string
+      }>
 
-    let cumulativeOutput = 0;
-    let latestInputTokens = 0;
+    let cumulativeOutput = 0
+    let latestInputTokens = 0
+    let totalTurnDurationMs = 0
+    const now = Date.now()
     for (const row of stepRows) {
+      const start = new Date(row.started_at).getTime()
+      if (Number.isFinite(start)) {
+        const end = row.completed_at
+          ? new Date(row.completed_at).getTime()
+          : row.status === 'running'
+            ? now
+            : start
+        totalTurnDurationMs += Math.max(0, end - start)
+      }
       try {
-        const meta = JSON.parse(row.metadata_json || '{}');
-        const u = meta.usage ?? {};
-        const stepInput = u.inputTokens ?? u.promptTokens ?? u.input_tokens ?? 0;
-        const stepOutput = u.outputTokens ?? u.completionTokens ?? u.output_tokens ?? 0;
-        cumulativeOutput += stepOutput;
-        if (stepInput > 0) latestInputTokens = stepInput;
+        const meta = JSON.parse(row.metadata_json || '{}')
+        const u = meta.usage ?? {}
+        const stepInput = u.inputTokens ?? u.promptTokens ?? u.input_tokens ?? 0
+        const stepOutput = u.outputTokens ?? u.completionTokens ?? u.output_tokens ?? 0
+        cumulativeOutput += stepOutput
+        if (stepInput > 0) latestInputTokens = stepInput
       } catch { /* skip */ }
     }
     const input = latestInputTokens;
@@ -1045,7 +1066,7 @@ export class AgentRuntimeStore {
       .get(sessionId) as { cnt: number };
     const toolCallCount = toolCountRow?.cnt ?? 0;
 
-    const runningDuration = Date.now() - new Date(session.createdAt).getTime();
+    const runningDuration = totalTurnDurationMs
 
     let activeSubAgentCount = 0;
     if (session.childSessionIds.length > 0) {

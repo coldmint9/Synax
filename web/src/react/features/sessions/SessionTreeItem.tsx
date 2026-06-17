@@ -1,21 +1,9 @@
 import { memo } from 'react'
-import { Chip } from '@heroui/react'
 import { Trash2 } from 'lucide-react'
 import type { SessionTreeNode } from './useSessionList'
-import type { AgentSessionStatus } from '../../../lib/api/agentRuntime'
+import { isSessionUnread, useAgentSessionStore } from './agentSessionStore'
 import { useSessionDisplayTitle } from './useSessionDisplayTitle'
-
-const STATUS_CHIP: Record<AgentSessionStatus, { color: 'accent' | 'success' | 'danger' | 'warning' | 'default'; label: string }> = {
-  running: { color: 'accent', label: 'running' },
-  waiting_permission: { color: 'warning', label: 'waiting' },
-  blocked: { color: 'warning', label: 'blocked' },
-  completed: { color: 'success', label: 'done' },
-  failed: { color: 'danger', label: 'failed' },
-  interrupted: { color: 'warning', label: 'interrupted' },
-  paused: { color: 'default', label: 'paused' },
-  queued: { color: 'default', label: 'queued' },
-  cancelled: { color: 'default', label: 'cancelled' },
-}
+import { isSynaxSession, resolveSynaxAgentLabel } from './synaxDisplay'
 
 const DOT: Record<string, string> = {
   running: 'bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)]',
@@ -94,7 +82,8 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   const { session, depth, children } = node
   const hasKids = children.length > 0
   const isParent = depth === 0
-  const chip = STATUS_CHIP[session.status] ?? { color: 'default' as const, label: session.status }
+  const readMarkers = useAgentSessionStore(s => s.readSessionMarkers)
+  const showStatusDot = isSessionUnread(session, readMarkers)
 
   const shellClass = isParent
     ? `list-card group ${isSelected ? 'list-card--active' : ''}`
@@ -114,32 +103,34 @@ export const SessionTreeItem = memo(function SessionTreeItem({
               onClick={e => { e.stopPropagation(); onToggleExpand(session.id) }}
               aria-label={node.expanded ? 'Collapse' : 'Expand'}
             >
-              {hasKids ? (node.expanded ? '▾' : '▸') : <span className="w-3" />}
+              {hasKids ? (node.expanded ? '\u25BE' : '\u25B8') : <span className="w-3" />}
             </button>
-            <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
-            <SessionTitle session={session} />
-            <Chip size="sm" variant="soft" color={chip.color} className="h-4 text-[9px] shrink-0">
-              {chip.label}
-            </Chip>
-            <DeleteButton sessionId={session.id} onDelete={onDelete} />
-          </div>
-          <div className="flex items-center gap-2 pl-[22px] text-[10px] text-muted-foreground">
-            {hasKids && <span>{children.length} sub-agent{children.length > 1 ? 's' : ''}</span>}
-            {hasKids && <span>·</span>}
-            <span>{relTime(session.updatedAt)}</span>
-            {session.resultSummary && (
-              <><span>·</span><span className="truncate max-w-[120px]">{session.resultSummary}</span></>
+            {showStatusDot && (
+              <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
             )}
+            <SessionTitle session={session} />
+            <span className="shrink-0 text-[10px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
+              {relTime(session.updatedAt)}
+            </span>
+            <DeleteButton sessionId={session.id} onDelete={onDelete} />
           </div>
         </>
       ) : (
         <>
-          <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
+          {/* Dot: only show when active */}
+          {isSelected && (
+            <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
+          )}
           <SessionChildTitle session={session} />
-          {session.profileId && PROFILES[session.profileId] && (
+          {isSelected && session.profileId && !isSynaxSession(session) && PROFILES[session.profileId] && (
             <span className="list-badge">{PROFILES[session.profileId]}</span>
           )}
-          <span className="shrink-0 text-[9px] text-muted-foreground/70">{relTime(session.updatedAt)}</span>
+          {isSelected && isSynaxSession(session) ? (
+            <span className="list-badge">{resolveSynaxAgentLabel(session)}</span>
+          ) : null}
+          <span className="shrink-0 text-[9px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
+            {relTime(session.updatedAt)}
+          </span>
         </>
       )}
     </div>

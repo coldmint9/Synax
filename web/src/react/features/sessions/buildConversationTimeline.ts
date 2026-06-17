@@ -120,6 +120,7 @@ function buildByTimestamp(
   agentTurns: InterleavedTurn[],
   userEntries: UserMessageTimelineEntry[],
 ): ConversationTimelineEntry[] {
+  const stepById = new Map(steps.map(step => [step.id, step]))
   const items: Array<{ timestamp: number; entry: ConversationTimelineEntry }> = []
 
   for (const user of userEntries) {
@@ -130,7 +131,7 @@ function buildByTimestamp(
   }
 
   for (const turn of agentTurns) {
-    const step = steps.find(item => item.id === turn.stepId)
+    const step = stepById.get(turn.stepId)
     items.push({
       timestamp: step ? toTimestamp(step.startedAt) : 0,
       entry: agentEntry(turn, step),
