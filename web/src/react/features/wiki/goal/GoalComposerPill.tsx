@@ -95,6 +95,11 @@ export function GoalComposerPill({
   useLayoutEffect(() => {
     const el = textareaRef.current
     if (!el) return
+    // Inline pill stays single-line; scrollHeight includes placeholder padding and breaks alignment.
+    if (!expandedLayout) {
+      el.style.height = ''
+      return
+    }
     if (defaultExpanded && !isMultiline) {
       el.style.height = ''
       return
@@ -102,7 +107,7 @@ export function GoalComposerPill({
     const maxHeight = defaultExpanded ? 192 : 128
     el.style.height = '0px'
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
-  }, [content, defaultExpanded, isMultiline])
+  }, [content, defaultExpanded, expandedLayout, isMultiline])
 
   useLayoutEffect(() => {
     if (!defaultExpanded) return
@@ -214,7 +219,7 @@ export function GoalComposerPill({
             aria-label={t('goalPlaceholder')}
             disabled={disabled}
             rows={1}
-            className="goal-dock-composer-input min-h-[1.25rem] max-h-32 min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1 text-[13px] leading-normal text-foreground/85 outline-none placeholder:text-muted-foreground/45"
+            className="goal-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
           />
           <GoalModelPicker
             globalConfig={globalConfig}

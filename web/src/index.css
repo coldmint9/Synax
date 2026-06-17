@@ -2274,6 +2274,16 @@
 .goal-dock-composer-inline {
   width: 100%;
 }
+.goal-dock-composer-inline .goal-dock-composer-input {
+  box-sizing: border-box;
+  field-sizing: fixed;
+  height: 1.25rem;
+  min-height: 1.25rem;
+  max-height: 1.25rem;
+  padding-block: 0;
+  margin-block: 0;
+  overflow: hidden;
+}
 .goal-dock-composer[data-multiline="true"] {
   display: flex;
   flex-direction: column;
@@ -2283,7 +2293,7 @@
 .goal-dock-composer-toolbar {
   width: 100%;
 }
-.goal-dock-composer-input {
+.goal-dock-composer[data-multiline="true"] .goal-dock-composer-input {
   field-sizing: content;
 }
 .goal-dock-shell[data-multiline="true"],

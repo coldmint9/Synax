@@ -2,25 +2,53 @@ import type { AgentContextBlock, AgentContextBundle, BuildContextRequest } from 
 import { contextService } from '../context/context-service.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
+import { resolveSessionWorkDir } from './tools/workspace.js';
+import { buildSynaxRuntimeBlocks } from './synax/synax-runtime-context.js';
 
 export class AgentContextBuilder {
   constructor(private readonly store: AgentRuntimeStore = agentRuntimeStore) {}
 
   build(projectId: string, input: BuildContextRequest & { sessionId?: string } = {}): AgentContextBundle {
     const include = input.include ?? ['coord', 'memory', 'graph', 'review'];
-    const blocks: AgentContextBlock[] = include.map((kind) => {
+    const warnings: string[] = [];
+    const blocks: AgentContextBlock[] = [];
+
+    if (input.sessionId) {
+      try {
+        const workDir = resolveSessionWorkDir(input.sessionId, projectId);
+        const instructions = loadMergedProjectInstructions(workDir);
+        if (instructions) {
+          blocks.push({
+            id: makeRuntimeId('acblk'),
+            kind: 'system',
+            title: 'SYNAX.md',
+            content: truncateForPrompt(instructions),
+            sourceType: 'synax',
+            sourceId: 'SYNAX.md',
+          });
+        }
+        blocks.push(...buildSynaxRuntimeBlocks(projectId, workDir));
+      } catch (error) {
+        warnings.push(`Synax runtime context unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    for (const kind of include) {
       const normalizedKind =
         kind === 'coord' ? ('goal' as const) : kind === 'graph' ? ('code' as const) : kind;
-      return {
+      if (kind === 'graph' && blocks.some((b) => b.sourceType === 'code-map')) {
+        continue;
+      }
+      blocks.push({
         id: makeRuntimeId('acblk'),
         kind: normalizedKind,
         title: `${kind} context`,
         content: this.describeContext(projectId, kind, input.nodeId ?? null),
         sourceType: kind,
         sourceId: input.nodeId ?? projectId,
-      };
-    });
-    const warnings: string[] = [];
+      });
+    }
+
     if (!input.nodeId) warnings.push('No CoordForest node id supplied; bundle is project-level.');
     try {
       const suggestions = contextService.suggestContextBlocks({
@@ -43,6 +71,7 @@ export class AgentContextBuilder {
     } catch (error) {
       warnings.push(`Synax context adapter unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
+
     const bundle: AgentContextBundle = {
       id: makeRuntimeId('acb'),
       projectId,
@@ -69,7 +98,7 @@ export class AgentContextBuilder {
         return 'Project memory adapter unavailable.';
       }
     }
-    if (kind === 'graph') return 'Graph evidence hook prepared; concrete retrieval is attached through existing context services.';
+    if (kind === 'graph') return 'Use the Code Map block when present; otherwise run a code-map scan.';
     if (kind === 'review') return 'Review evidence hook prepared for completed action and goal review results.';
     return 'Additional context hook prepared.';
   }

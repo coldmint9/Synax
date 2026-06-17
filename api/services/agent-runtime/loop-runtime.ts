@@ -19,6 +19,8 @@ import { buildLoopModelMessages, computeClearedToolCallIds } from "./loop-model-
 import { generateLoopModelStep, streamLoopModelStep } from "./loop-model-stream.js";
 import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
 import { synaxAgent } from "./synax/index.js";
+import { loadProjectRulesSection } from "./synax/synax-instructions.js";
+import { memoryManager } from "../context/memory-manager.js";
 import { loopResumeService, type LoopResumeService } from "./loop-resume.js";
 import {
   permissionPolicy,
@@ -48,6 +50,7 @@ import {
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
 import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
 import { buildTaskDriftReminder } from "./tools/task-tools.js";
+import { resolveSessionWorkDir } from "./tools/workspace.js";
 import { runChildToCompletion, DEFAULT_PER_CHILD_TIMEOUT_MS } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../lib/ipc/agent-session-protocol.js";
@@ -1289,6 +1292,26 @@ export class AgentLoopRuntime {
     );
 
     const session = this.store.getSession(input.sessionId);
+    const relevantMemories = memoryManager.getRelevantMemories(
+      session.projectId,
+      input.prompt,
+      5,
+    );
+    const projectMemoriesSection = relevantMemories.length > 0
+      ? [
+        '## Relevant project memories',
+        ...relevantMemories.map((m) => `- [${m.memoryType}] ${m.title}: ${m.content.slice(0, 400)}`),
+      ].join('\n')
+      : null;
+
+    let projectRulesSection: string | null = null;
+    try {
+      const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
+      projectRulesSection = loadProjectRulesSection(workDir);
+    } catch {
+      projectRulesSection = null;
+    }
+
     const systemPromptContent = buildLoopSystemPrompt({
       profile: input.profile,
       context: input.context,
@@ -1305,6 +1328,7 @@ export class AgentLoopRuntime {
       loopHintsOverride: synaxAgent.isSynaxSession(session)
         ? synaxAgent.buildEffectiveLoopHints(session)
         : null,
+      projectMemoriesSection,
       disclosureHint:
         input.disclosureState && input.disclosureStrategy && !isTerminalTier(input.disclosureState, input.disclosureStrategy)
           ? 'Currently in exploration mode. Call tools_escalate when ready to write files.'

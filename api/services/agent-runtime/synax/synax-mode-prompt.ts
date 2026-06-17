@@ -18,7 +18,8 @@ class ChatModePromptStrategy extends SynaxModePromptStrategy {
   buildSection(): string | null {
     return [
       'Session mode: chat.',
-      'Adapt to the user intent. Delegate large exploration to subagent.delegate(profileId: "explorer").',
+      'Adapt to the user intent. For multi-step requests, start with task.create to outline steps.',
+      'Delegate large exploration to subagent.delegate(profileId: "explorer").',
       'Use subagent.delegate(profileId: "reviewer") when a structured review is needed.',
     ].join('\n');
   }
@@ -32,6 +33,7 @@ class GoalModePromptStrategy extends SynaxModePromptStrategy {
     const lines = [
       'Session mode: goal.',
       'Work toward the user goal with bounded, verifiable steps.',
+      'Break the goal into task.create items when there are multiple steps; update status as you complete each.',
       'Read and search before editing. Prefer file.patch for surgical changes.',
     ];
     if (goal) {
@@ -61,6 +63,7 @@ class PlanNodeModePromptStrategy extends SynaxModePromptStrategy {
     const lines = [
       'Session mode: plan_node.',
       'Execute one bounded plan node. Prefer minimal, focused diffs.',
+      'Use task.create for sub-steps within this node; mark them completed with task.update.',
       'Explain blockers clearly if you cannot finish.',
     ];
     if (context.metadata.planNodeTitle) {

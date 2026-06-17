@@ -27,8 +27,21 @@ interface BuildLoopPromptInput {
   variantPromptSection?: string | null;
   /** Override profile loop hints (Synax variant overlay). */
   loopHintsOverride?: string[] | null;
+  /** Relevant project memories (L2) for this turn. */
+  projectMemoriesSection?: string | null;
+  /** SYNAX.md / CLAUDE.md / AGENTS.md merged for the rules section. */
+  projectRulesSection?: string | null;
   /** If set, a language output directive is prepended to the system prompt. */
   locale?: 'zh' | 'en';
+}
+
+function buildTaskTrackingSection(profile: AgentProfile): string {
+  if (!profile.allowedCapabilities.includes('task.create')) return '';
+  return [
+    'Session TODO tracking: For work with 2+ steps, call task.create early to build a visible task list for the user.',
+    'Mark progress with task.update (pending → in_progress → completed). Review with task.list.',
+    'task.create/update track session todos — they are not subagent.delegate (child agent sessions).',
+  ].join(' ');
 }
 
 export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
@@ -56,10 +69,16 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     'Prefer the bash tool for file search, listing, and text inspection. It accepts read-only Unix commands (rg, grep, find, ls, cat, head, tail, wc, sort, uniq, sed, awk, git diff/log/show, etc.) and supports pipes and command chaining. Combine multiple operations into a single bash call to reduce round trips.',
     input.fallbackHint ?? '',
     'When proposing file changes, prefer specific file paths and bounded edits.',
+    buildTaskTrackingSection(input.profile),
     loopHints,
     input.modePromptSection ? `\n${input.modePromptSection}` : '',
     input.variantPromptSection ? `\n${input.variantPromptSection}` : '',
+    input.projectMemoriesSection ? `\n${input.projectMemoriesSection}` : '',
     input.disclosureHint ?? '',
+    '',
+    input.projectRulesSection
+      ? `[Project Rules]\nFollow these repository instruction files:\n\n${input.projectRulesSection}`
+      : '',
     '',
     '[Synax Context]',
     blocks,

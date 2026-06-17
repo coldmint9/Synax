@@ -22,7 +22,7 @@ export const ESCALATION_TOOL_ID = 'tools.escalate';
 
 export const EXECUTOR_STRATEGY: DisclosureStrategy = {
   tiers: [
-    { id: 'explore', filter: (t) => t.mutability === 'read' || t.category === 'skill' },
+    { id: 'explore', filter: (t) => t.mutability === 'read' || t.mutability === 'task' || t.category === 'skill' },
     { id: 'act', filter: () => true },
   ],
   escalationToolId: ESCALATION_TOOL_ID,

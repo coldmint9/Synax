@@ -15,6 +15,7 @@ import type { CodeMapScanResult } from '../contracts/code-map.js';
 import { notify } from '../notifications/notify.js';
 import { TaskNotificationEventType } from '../notifications/task-notification-bus.js';
 import { logger } from '../../lib/logger.js';
+import { bootstrapSynaxFromScan } from '../agent-runtime/synax/synax-bootstrap.js';
 
 /** Stable hash used when git is unavailable — must not be random per request. */
 export const NO_GIT_WORKING_TREE_HASH = '0000000000000000';
@@ -157,6 +158,7 @@ export async function acquireCodeMapScan(input: {
   const { projectId, workDir, gitState } = input;
   const cached = await loadCachedScanWithFallback(projectId, gitState);
   if (cached) {
+    bootstrapSynaxFromScan(projectId, workDir, cached.scan);
     return { scan: cached.scan, fromCache: true, cacheKind: cached.kind };
   }
 
@@ -182,6 +184,7 @@ export async function acquireCodeMapScan(input: {
   try {
     const scan = await runCodeMapScan({ projectId, workDir, include: ['all'] });
     await persistScanCacheByGitState(projectId, scan, gitState);
+    bootstrapSynaxFromScan(projectId, workDir, scan);
     return { scan, fromCache: false, cacheKind: null };
   } finally {
     setScanProgressListener(null);
