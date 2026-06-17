@@ -1,21 +1,33 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useDebugConsole } from '../debug-console/debugConsoleStore'
+import { useNavigate } from 'react-router-dom'
+import { useAgentSessionStore } from './agentSessionStore'
 import { useConfig } from '../settings/useConfig'
 import { useWikiStore } from '../../state/wikiStore'
+import { useLocale } from '../../../hooks/useLocale'
 import { GoalComposerPill } from '../wiki/goal/GoalComposerPill'
 import { buildGoalModelOptions, pickDefaultSelection } from '../wiki/goal/goalModelOptions'
+import { goalSessionPath } from './sessionRoutes'
 import type { AgentSession } from '../../../lib/api/agentRuntime'
 
 interface Props {
-  session: AgentSession
   projectId: string
+  session?: AgentSession
+  layout?: 'footer' | 'centered'
 }
 
-export function SessionGoalComposer({ session, projectId }: Props) {
+export function SessionGoalComposer({ session, projectId, layout = 'footer' }: Props) {
+  const { t } = useLocale()
+  const navigate = useNavigate()
   const [content, setContent] = useState('')
-  const sendSessionMessage = useDebugConsole(s => s.sendSessionMessage)
-  const cancelSessionRun = useDebugConsole(s => s.cancelSessionRun)
-  const isGenerating = session.status === 'running' || session.status === 'waiting_permission'
+  const [submitting, setSubmitting] = useState(false)
+  const sendSessionMessage = useAgentSessionStore(s => s.sendSessionMessage)
+  const submitGoalDraft = useAgentSessionStore(s => s.submitGoalDraft)
+  const cancelSessionRun = useAgentSessionStore(s => s.cancelSessionRun)
+  const isDraft = !session
+  const isGenerating =
+    submitting
+    || (!isDraft && session.status === 'waiting_permission')
+    || (!isDraft && session.status === 'running' && Boolean(session.activeRunId))
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId)
   const providerId = useWikiStore(s => s.goalComposerProviderId)
@@ -43,20 +55,44 @@ export function SessionGoalComposer({ session, projectId }: Props) {
     const message = content.trim()
     if (!message || isGenerating) return
     setContent('')
-    await sendSessionMessage(session.id, { message, model: modelId })
-  }, [content, isGenerating, modelId, sendSessionMessage, session.id])
+    setSubmitting(true)
+    try {
+      if (isDraft) {
+        const created = await submitGoalDraft(projectId, { message, model: modelId })
+        navigate(goalSessionPath(projectId, created.id))
+        await sendSessionMessage(created.id, { message, model: modelId })
+      } else {
+        await sendSessionMessage(session.id, { message, model: modelId })
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }, [content, isDraft, isGenerating, modelId, navigate, projectId, sendSessionMessage, session, submitGoalDraft])
 
   const handleStop = useCallback(() => {
-    void cancelSessionRun(session.id)
-  }, [cancelSessionRun, session.id])
+    if (session) void cancelSessionRun(session.id)
+  }, [cancelSessionRun, session])
 
-  const isMultiline = content.includes('\n')
+  const isCentered = layout === 'centered'
+  const expandedShell = isCentered || content.includes('\n')
 
   return (
-    <div className="goal-session-composer shrink-0 px-4 pb-4 pt-2">
+    <div
+      className={
+        isCentered
+          ? 'flex flex-1 flex-col items-center justify-center gap-6 px-6 py-10'
+          : 'goal-session-composer shrink-0 px-4 pb-4 pt-2'
+      }
+    >
+      {isCentered ? (
+        <div className="max-w-lg text-center">
+          <h2 className="text-lg font-medium text-foreground">{t('sessionDraftTitle')}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">{t('sessionDraftHint')}</p>
+        </div>
+      ) : null}
       <div
-        className="goal-session-composer-shell goal-dock-shell mx-auto w-full max-w-3xl"
-        data-multiline={isMultiline ? 'true' : undefined}
+        className={`goal-session-composer-shell goal-dock-shell w-full max-w-3xl${isCentered ? ' goal-session-composer-shell--draft' : ' mx-auto'}`}
+        data-multiline={expandedShell ? 'true' : undefined}
       >
         <div className="goal-dock-shell-content">
           <GoalComposerPill
@@ -65,6 +101,7 @@ export function SessionGoalComposer({ session, projectId }: Props) {
             onSubmit={() => void handleSubmit()}
             onStop={handleStop}
             isGenerating={isGenerating}
+            defaultExpanded={isCentered}
             providerId={providerId}
             modelId={modelId}
             onModelSelect={(selection) => {

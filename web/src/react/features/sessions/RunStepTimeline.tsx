@@ -1,6 +1,6 @@
 import { CheckCircle2, Circle, Loader2, XCircle, AlertCircle } from 'lucide-react'
 import type { AgentRunStep, RuntimeEvent } from '../../../lib/api/agentRuntime'
-import { DebugToolCall } from './DebugToolCall'
+import { RunStepToolCallRow } from './RunStepToolCallRow'
 
 interface Props {
   steps: AgentRunStep[]
@@ -24,7 +24,7 @@ function stepDuration(step: AgentRunStep): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
-export function DebugStepTimeline({ steps, events }: Props) {
+export function RunStepTimeline({ steps, events }: Props) {
   return (
     <div className="space-y-1">
       {steps.map(step => {
@@ -36,7 +36,7 @@ export function DebugStepTimeline({ steps, events }: Props) {
         return (
           <div
             key={step.id}
-            className="debug-step-border"
+            className="run-step-border"
             data-status={step.status}
           >
             <div className="flex items-center gap-2 py-1">
@@ -51,7 +51,7 @@ export function DebugStepTimeline({ steps, events }: Props) {
             {toolCalls.length > 0 && (
               <div className="ml-5 space-y-0.5 pb-1">
                 {toolCalls.map(event => (
-                  <DebugToolCall key={event.id} event={event} />
+                  <RunStepToolCallRow key={event.id} event={event} />
                 ))}
               </div>
             )}

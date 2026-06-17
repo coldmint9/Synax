@@ -1,4 +1,4 @@
-import { ArrowLeft, Search, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowLeft, Search, RefreshCw, Trash2, Plus } from 'lucide-react'
 import { Button } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { SessionListView } from './sessionBuckets'
@@ -11,6 +11,8 @@ interface Props {
   onSearchChange: (q: string) => void
   onRefresh: () => void
   onClearInactive: () => void
+  onNewSession?: () => void
+  isCreatingSession?: boolean
   onOpenWorkflows?: () => void
   onBackToGoals?: () => void
   isRefreshing: boolean
@@ -24,6 +26,8 @@ export function SessionListHeader({
   onSearchChange,
   onRefresh,
   onClearInactive,
+  onNewSession,
+  isCreatingSession = false,
   onOpenWorkflows,
   onBackToGoals,
   isRefreshing,
@@ -50,6 +54,19 @@ export function SessionListHeader({
           <span className="ml-1 font-normal text-muted-foreground">({visibleCount})</span>
         </span>
         <div className="flex items-center gap-0.5">
+          {!isWorkflowView && onNewSession ? (
+            <Button
+              isIconOnly
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 min-w-0 text-primary"
+              onPress={onNewSession}
+              isDisabled={isCreatingSession}
+              aria-label={t('sessionNew')}
+            >
+              <Plus size={14} className={isCreatingSession ? 'animate-pulse' : ''} />
+            </Button>
+          ) : null}
           <Button isIconOnly variant="ghost" size="sm" className="h-7 w-7 min-w-0 text-muted-foreground" onPress={onRefresh} aria-label="Refresh">
             <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
           </Button>

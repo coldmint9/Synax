@@ -30,6 +30,7 @@ export function isGoalSession(session: AgentSession): boolean {
   return (
     session.profileId === 'goal'
     || source === 'goal-dock'
+    || source === 'session-page'
     || source === 'plan-execution'
   )
 }

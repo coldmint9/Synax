@@ -39,11 +39,11 @@ export interface AgentRuntimeState {
   isStreaming: boolean
   error: string | null
 
-  // Debug console
+  // Run inspector (legacy agent loop test UI)
   runs: AgentRun[]
   steps: AgentRunStep[]
-  debugPanelOpen: boolean
-  debugSessionId: string | null
+  runInspectorOpen: boolean
+  runInspectorSessionId: string | null
 
   refreshSessions: () => Promise<void>
   selectSession: (sessionId: string) => Promise<void>
@@ -54,8 +54,8 @@ export interface AgentRuntimeState {
   clearError: () => void
   refreshRuns: (sessionId: string) => Promise<void>
   refreshSteps: (sessionId: string, runId: string) => Promise<void>
-  openDebugPanel: (sessionId: string) => void
-  closeDebugPanel: () => void
+  openRunInspector: (sessionId: string) => void
+  closeRunInspector: () => void
 }
 
 const stores = new Map<string, StoreApi<AgentRuntimeState>>()
@@ -123,17 +123,17 @@ function createAgentRuntimeStore(projectId: string): StoreApi<AgentRuntimeState>
     error: null,
     runs: [],
     steps: [],
-    debugPanelOpen: false,
-    debugSessionId: null,
+    runInspectorOpen: false,
+    runInspectorSessionId: null,
 
     clearError: () => set({ error: null }),
 
-    openDebugPanel: (sessionId) => {
-      set({ debugPanelOpen: true, debugSessionId: sessionId })
+    openRunInspector: (sessionId) => {
+      set({ runInspectorOpen: true, runInspectorSessionId: sessionId })
       void get().refreshRuns(sessionId)
     },
 
-    closeDebugPanel: () => set({ debugPanelOpen: false, debugSessionId: null, runs: [], steps: [] }),
+    closeRunInspector: () => set({ runInspectorOpen: false, runInspectorSessionId: null, runs: [], steps: [] }),
 
     refreshRuns: async (sessionId) => {
       try {

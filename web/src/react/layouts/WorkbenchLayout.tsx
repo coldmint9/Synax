@@ -7,9 +7,9 @@ import { useContextStream } from '../../hooks/useContextStream'
 import { useAgentPermissionNotifier } from '../../hooks/useAgentPermissionNotifier'
 import { useDesktopNotification } from '../../hooks/useDesktopNotification'
 import { useTaskNotificationListener } from '../../hooks/useTaskNotificationListener'
-import { useRuntimeSSE } from '../features/debug-console/useRuntimeSSE'
+import { useRuntimeSSE } from '../features/sessions/useRuntimeSSE'
 import { useSessionTitleSync } from '../features/sessions/useSessionDisplayTitle'
-import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
+import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
 import type { ActivityPanel } from './ActivityBar'
 import { WorkbenchHeader } from './WorkbenchHeader'
 import { ProjectCreateDialog } from '../features/project-create/ProjectCreateDialog'
@@ -50,11 +50,11 @@ export default function WorkbenchLayout() {
   }, [effectiveProjectId, boundProjectId, bindContext])
   useContextStream()
 
-  // 单例 SSE 订阅 + 绑定 projectId 到 debugConsoleStore
-  const setDebugProjectId = useDebugConsole(s => s.setProjectId)
+  // 单例 SSE 订阅 + 绑定 projectId 到 agentSessionStore
+  const setSessionProjectId = useAgentSessionStore(s => s.setProjectId)
   useEffect(() => {
-    setDebugProjectId(effectiveProjectId || null)
-  }, [effectiveProjectId, setDebugProjectId])
+    setSessionProjectId(effectiveProjectId || null)
+  }, [effectiveProjectId, setSessionProjectId])
   useRuntimeSSE()
   useSessionTitleSync()
 

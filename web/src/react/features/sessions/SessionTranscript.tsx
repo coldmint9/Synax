@@ -1,39 +1,36 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { useDebugConsole } from '../debug-console/debugConsoleStore'
+import { useAgentSessionStore } from './agentSessionStore'
 import { AgentConversationView } from './AgentConversationView'
 import { SessionGoalComposer } from './SessionGoalComposer'
 import { SessionNavigationPanel } from './SessionNavigationPanel'
 import { isGoalSession } from './sessionBuckets'
 
-interface Props {
-  scrollRef: RefObject<HTMLDivElement | null>
-}
-
-export function SessionTranscript({ scrollRef }: Props) {
+export function SessionTranscript() {
+  const scrollRef = useRef<HTMLDivElement>(null)
   const { projectId = '' } = useParams()
 
-  const session = useDebugConsole((s) => {
+  const session = useAgentSessionStore((s) => {
     const id = s.selectedSessionId
     return id ? s.sessions.find(ss => ss.id === id) : undefined
   })
-  const runs = useDebugConsole((s) => s.runs)
-  const steps = useDebugConsole((s) => s.steps)
-  const toolCalls = useDebugConsole((s) => s.toolCalls)
-  const messages = useDebugConsole((s) => s.messages)
-  const childSessions = useDebugConsole((s) => {
+  const runs = useAgentSessionStore((s) => s.runs)
+  const steps = useAgentSessionStore((s) => s.steps)
+  const toolCalls = useAgentSessionStore((s) => s.toolCalls)
+  const messages = useAgentSessionStore((s) => s.messages)
+  const childSessions = useAgentSessionStore((s) => {
     const id = s.selectedSessionId
     return id ? s.childSessions[id] : undefined
   })
-  const pauseSession = useDebugConsole((s) => s.pauseSession)
-  const resumeSession = useDebugConsole((s) => s.resumeSession)
-  const streamingStepId = useDebugConsole((s) => s.streamingStepId)
-  const streamingText = useDebugConsole((s) => s.streamingText)
-  const streamingThinking = useDebugConsole((s) => s.streamingThinking)
-  const streamingToolCalls = useDebugConsole((s) => s.streamingToolCalls)
-  const streamingCompletedSteps = useDebugConsole((s) => s.streamingCompletedSteps)
-  const permissions = useDebugConsole((s) => s.permissions)
-  const replyPermission = useDebugConsole((s) => s.replyPermission)
+  const pauseSession = useAgentSessionStore((s) => s.pauseSession)
+  const resumeSession = useAgentSessionStore((s) => s.resumeSession)
+  const streamingStepId = useAgentSessionStore((s) => s.streamingStepId)
+  const streamingText = useAgentSessionStore((s) => s.streamingText)
+  const streamingThinking = useAgentSessionStore((s) => s.streamingThinking)
+  const streamingToolCalls = useAgentSessionStore((s) => s.streamingToolCalls)
+  const streamingCompletedSteps = useAgentSessionStore((s) => s.streamingCompletedSteps)
+  const permissions = useAgentSessionStore((s) => s.permissions)
+  const replyPermission = useAgentSessionStore((s) => s.replyPermission)
 
   const showGoalComposer = Boolean(session && isGoalSession(session))
 
@@ -41,7 +38,7 @@ export function SessionTranscript({ scrollRef }: Props) {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [steps.length, messages.length, streamingText, streamingThinking, streamingToolCalls.length])
+  }, [scrollRef, steps.length, messages.length, streamingText, streamingThinking, streamingToolCalls.length])
 
   return (
     <div className="session-chat flex min-h-0 flex-1 flex-col">

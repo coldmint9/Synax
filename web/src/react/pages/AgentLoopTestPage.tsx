@@ -7,8 +7,8 @@ import {
   type PermissionDecision,
   type RuntimeEvent,
 } from '../../lib/api/agentRuntime'
-import { useDebugConsole } from '../features/debug-console/debugConsoleStore'
-import { useSessionLiveStream } from '../features/debug-console/useSessionLiveStream'
+import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
+import { useSessionLiveStream } from '../features/sessions/useSessionLiveStream'
 import { AgentConversationView } from '../features/sessions/AgentConversationView'
 import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../components/LlmProviderRequiredBanner'
 
@@ -45,13 +45,13 @@ export default function AgentLoopTestPage() {
   const [approvingId, setApprovingId] = useState<string | null>(null)
   const sessionIdRef = useRef<string | null>(null)
 
-  // Wire up debugConsoleStore for rich rendering
-  const debugStore = useDebugConsole()
+  // Wire up agentSessionStore for rich rendering
+  const sessionStore = useAgentSessionStore()
   const { steps, toolCalls, messages: storeMessages, childSessions,
     streamingStepId, streamingText, streamingThinking, streamingToolCalls,
-    streamingCompletedSteps } = debugStore
+    streamingCompletedSteps } = sessionStore
 
-  const selectedSessionId = useDebugConsole(s => s.selectedSessionId)
+  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
   // Keep live stream aligned with the store session id (set synchronously in openPanel).
   useSessionLiveStream(selectedSessionId ?? session?.id ?? null)
 
@@ -91,8 +91,8 @@ export default function AgentLoopTestPage() {
     try {
       const activeSession = await ensureSession()
       sessionIdRef.current = activeSession.id
-      // Open panel in debugConsoleStore to load data and enable SSE rendering
-      debugStore.openPanel(activeSession.id)
+      // Open panel in agentSessionStore to load data and enable SSE rendering
+      sessionStore.openPanel(activeSession.id)
       await agentRuntimeApi.streamTurn(activeSession.id, { message: text }, (raw) => {
         const chunk = raw as StreamChunk
         if (chunk.event) {
@@ -107,13 +107,13 @@ export default function AgentLoopTestPage() {
       })
       setInput('')
       await refreshSessionData(activeSession.id)
-      await debugStore.refreshDetail()
+      await sessionStore.refreshDetail()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setStreaming(false)
     }
-  }, [ensureSession, input, refreshSessionData, streaming, debugStore])
+  }, [ensureSession, input, refreshSessionData, streaming, sessionStore])
 
   const replyPermission = useCallback(
     async (permissionId: string, reply: 'once' | 'reject') => {
@@ -123,22 +123,22 @@ export default function AgentLoopTestPage() {
       try {
         await agentRuntimeApi.replyPermission(sessionIdRef.current, permissionId, reply)
         await refreshSessionData(sessionIdRef.current)
-        await debugStore.refreshDetail()
+        await sessionStore.refreshDetail()
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
       } finally {
         setApprovingId(null)
       }
     },
-    [refreshSessionData, debugStore],
+    [refreshSessionData, sessionStore],
   )
 
   // Sync session into store when sessionIdRef changes
   useEffect(() => {
-    if (sessionIdRef.current && !debugStore.selectedSessionId) {
-      debugStore.openPanel(sessionIdRef.current)
+    if (sessionIdRef.current && !sessionStore.selectedSessionId) {
+      sessionStore.openPanel(sessionIdRef.current)
     }
-  }, [session, debugStore])
+  }, [session, sessionStore])
 
   return (
     <div className="h-full overflow-hidden bg-background text-foreground">
@@ -161,7 +161,7 @@ export default function AgentLoopTestPage() {
             variant="outline"
             size="sm"
             className="mt-6 w-full"
-            onPress={() => { void refreshSessionData(); void debugStore.refreshDetail() }}
+            onPress={() => { void refreshSessionData(); void sessionStore.refreshDetail() }}
             isDisabled={!sessionIdRef.current}
           >
             <RefreshCw size={14} />

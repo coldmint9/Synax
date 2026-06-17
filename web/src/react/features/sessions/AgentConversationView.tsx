@@ -53,6 +53,7 @@ const STATUS_MAP: Record<string, { text: string; color: 'accent' | 'success' | '
   waiting_permission: { text: 'waiting', color: 'warning' },
   blocked: { text: 'blocked', color: 'warning' },
   cancelled: { text: 'cancelled', color: 'default' },
+  queued: { text: 'draft', color: 'default' },
 }
 
 function toolCallsToBlocks(toolCalls: ToolCallRecord[]): TurnContentBlock[] {
@@ -194,7 +195,7 @@ export function AgentConversationView({
     [runs, steps, messages, toolCalls, childSessions, showLiveBlock, streamingStepId, session],
   )
 
-  const isRunning = session?.status === 'running'
+  const isRunning = session?.status === 'running' && Boolean(session.activeRunId)
   const isResumable = session?.status === 'interrupted' || session?.status === 'paused' || session?.status === 'failed' || session?.status === 'blocked'
   const cat = session ? getSessionCategory(session.profileId) : null
   const statusInfo = session ? STATUS_MAP[session.status] : null

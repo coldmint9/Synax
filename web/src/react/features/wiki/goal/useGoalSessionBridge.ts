@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { agentRuntimeApi } from '../../../../lib/api/agentRuntime'
 import { subscribe } from '../../../../lib/api/runtimeEventBus'
 import { addSessionLiveListener } from '../../../../lib/api/sessionLiveClient'
-import { useDebugConsole } from '../../debug-console/debugConsoleStore'
+import { useAgentSessionStore } from '../sessions/agentSessionStore'
 import { useWikiStore } from '../../../state/wikiStore'
 import {
   applyGoalLiveEvent,
@@ -72,17 +72,17 @@ export function useGoalSessionBridge(_projectId: string) {
             })
           }
 
-          const selected = useDebugConsole.getState().selectedSessionId
+          const selected = useAgentSessionStore.getState().selectedSessionId
           if (selected === sessionId) {
-            void useDebugConsole.getState().refreshDetail()
+            void useAgentSessionStore.getState().refreshDetail()
           }
         },
         session_step_completed: (event) => {
           const data = JSON.parse(event.data) as { sessionId: string }
           if (data.sessionId !== sessionId) return
-          const selected = useDebugConsole.getState().selectedSessionId
+          const selected = useAgentSessionStore.getState().selectedSessionId
           if (selected === sessionId) {
-            void useDebugConsole.getState().refreshDetail()
+            void useAgentSessionStore.getState().refreshDetail()
           }
         },
       },

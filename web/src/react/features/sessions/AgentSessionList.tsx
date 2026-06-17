@@ -2,10 +2,10 @@ import { useMemo } from 'react'
 import { BookOpen, Compass, ClipboardCheck, Bot, Radio, ChevronDown, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useDebugConsole } from './debugConsoleStore'
-import { useDebugPolling } from './useDebugPolling'
-import { groupSessions, type SessionGroup } from '../sessions/sessionGrouping'
-import { SessionTreeItem } from './SessionTreeItem'
+import { useAgentSessionStore } from './agentSessionStore'
+import { useSessionDetailPolling } from './useSessionDetailPolling'
+import { groupSessions } from './sessionGrouping'
+import { GroupedSessionTreeItem } from './GroupedSessionTreeItem'
 
 const GROUP_ICONS: Record<string, typeof Bot> = {
   BookOpen,
@@ -14,16 +14,16 @@ const GROUP_ICONS: Record<string, typeof Bot> = {
   Bot,
 }
 
-export function GroupedSessionList() {
-  useDebugPolling()
+export function AgentSessionList() {
+  useSessionDetailPolling()
 
   const { projectId = '' } = useParams()
   const navigate = useNavigate()
-  const sessions = useDebugConsole(s => s.sessions)
-  const panelOpen = useDebugConsole(s => s.panelOpen)
-  const selectedSessionId = useDebugConsole(s => s.selectedSessionId)
-  const openPanel = useDebugConsole(s => s.openPanel)
-  const closePanel = useDebugConsole(s => s.closePanel)
+  const sessions = useAgentSessionStore(s => s.sessions)
+  const panelOpen = useAgentSessionStore(s => s.panelOpen)
+  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
+  const openPanel = useAgentSessionStore(s => s.openPanel)
+  const closePanel = useAgentSessionStore(s => s.closePanel)
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
@@ -96,7 +96,7 @@ export function GroupedSessionList() {
                 {!collapsed && (
                   <ul>
                     {group.sessions.map(node => (
-                      <SessionTreeItem
+                      <GroupedSessionTreeItem
                         key={node.session.id}
                         node={node}
                         selectedId={selectedSessionId}

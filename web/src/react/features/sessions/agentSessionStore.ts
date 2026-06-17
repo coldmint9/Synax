@@ -15,11 +15,12 @@ import {
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
 import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { AppError } from '../../../lib/errors'
+import { GOAL_PROFILE_ID } from '../wiki/goal/goalAttachTypes'
 import { useNotificationStore } from '../../state/notificationStore'
 
 function ensureLiveStream(sessionId: string): void {
   ensureSessionLiveSubscription(sessionId, (event) => {
-    useDebugConsole.getState().applyLiveEvent(event)
+    useAgentSessionStore.getState().applyLiveEvent(event)
   })
 }
 
@@ -65,7 +66,7 @@ function _drainLoop() {
   }
 
   if (t || th) {
-    useDebugConsole.setState(s => ({
+    useAgentSessionStore.setState(s => ({
       ...(t ? { streamingText: s.streamingText + t } : {}),
       ...(th ? { streamingThinking: s.streamingThinking + th } : {}),
     }))
@@ -105,7 +106,7 @@ if (typeof document !== 'undefined') {
   })
 }
 
-export interface DebugConsoleState {
+export interface AgentSessionStoreState {
   projectId: string | null
   sessions: AgentSession[]
   selectedSessionId: string | null
@@ -136,6 +137,8 @@ export interface DebugConsoleState {
 
   setProjectId: (projectId: string | null) => void
   refreshSessions: () => Promise<void>
+  resetSessionDetailForDraft: () => void
+  submitGoalDraft: (projectId: string, body: { message: string; model?: string | null }) => Promise<AgentSession>
   deleteSession: (sessionId: string) => Promise<string[]>
   openPanel: (sessionId: string) => void
   closePanel: () => void
@@ -153,7 +156,7 @@ export interface DebugConsoleState {
 }
 
 type SessionDetailState = Pick<
-  DebugConsoleState,
+  AgentSessionStoreState,
   | 'selectedSessionId'
   | 'panelOpen'
   | 'runs'
@@ -200,7 +203,7 @@ function clearStreamingBuffers(): void {
   _thinkingBuffer = ''
 }
 
-export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
+export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) => ({
   projectId: null,
   sessions: [],
   selectedSessionId: null,
@@ -236,6 +239,50 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
       const { items } = await agentRuntimeApi.listSessions(query)
       set({ sessions: items })
     } catch { /* API not available */ }
+  },
+
+  resetSessionDetailForDraft: () => {
+    releaseSessionLiveSubscription()
+    clearStreamingBuffers()
+    set({
+      panelOpen: false,
+      selectedSessionId: null,
+      runs: [],
+      steps: [],
+      events: [],
+      messages: [],
+      toolCalls: [],
+      permissions: [],
+      sessionStats: null,
+      sessionTodos: [],
+      sessionCapabilities: null,
+      streamingStepId: null,
+      streamingText: '',
+      streamingThinking: '',
+      streamingToolCalls: [],
+      streamingCompletedSteps: [],
+    })
+  },
+
+  submitGoalDraft: async (projectId, body) => {
+    const message = body.message.trim()
+    if (!message) {
+      throw new AppError('Goal message is required.', { level: 'business', code: 'VALIDATION' })
+    }
+    const payload = await agentRuntimeApi.createSession({
+      projectId,
+      profileId: GOAL_PROFILE_ID,
+      prompt: message,
+      sessionMetadata: {
+        source: 'session-page',
+        goalContent: message,
+      },
+    })
+    set(s => ({
+      sessions: [payload.session, ...s.sessions.filter(item => item.id !== payload.session.id)],
+    }))
+    void get().refreshSessions()
+    return payload.session
   },
 
   deleteSession: async (sessionId) => {

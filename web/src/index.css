@@ -1731,7 +1731,7 @@
 .feed-prose th { @apply bg-secondary/60 font-medium; }
 .feed-prose img { @apply max-w-full rounded; }
 
-.debug-toolbar {
+.session-quick-toolbar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -1745,9 +1745,9 @@
   flex-shrink: 0;
 }
 
-.debug-panel { border-bottom: 1px solid hsl(var(--border-hsl) / 0.5); z-index: 29; flex-shrink: 0; }
+.session-floating-panel { border-bottom: 1px solid hsl(var(--border-hsl) / 0.5); z-index: 29; flex-shrink: 0; }
 
-.debug-pill {
+.session-quick-pill {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -1762,15 +1762,15 @@
   transition: background 120ms ease, border-color 120ms ease;
   white-space: nowrap;
 }
-.debug-pill:hover { background: hsl(var(--secondary) / 0.7); border-color: var(--border); }
-.debug-pill-active { background: hsl(var(--primary) / 0.1); border-color: hsl(var(--primary) / 0.4); color: var(--foreground); }
+.session-quick-pill:hover { background: hsl(var(--secondary) / 0.7); border-color: var(--border); }
+.session-quick-pill-active { background: hsl(var(--primary) / 0.1); border-color: hsl(var(--primary) / 0.4); color: var(--foreground); }
 
-.debug-step-border { border-left: 2px solid hsl(var(--border-hsl) / 0.5); padding-left: 0.75rem; margin-left: 0.25rem; }
-.debug-step-border[data-status="running"] { border-color: hsl(var(--run)); }
-.debug-step-border[data-status="completed"] { border-color: var(--success); }
-.debug-step-border[data-status="failed"] { border-color: hsl(var(--destructive)); }
-.debug-step-border[data-status="waiting_permission"] { border-color: var(--warning); }
-.debug-step-border[data-status="blocked"] { border-color: var(--warning); }
+.run-step-border { border-left: 2px solid hsl(var(--border-hsl) / 0.5); padding-left: 0.75rem; margin-left: 0.25rem; }
+.run-step-border[data-status="running"] { border-color: hsl(var(--run)); }
+.run-step-border[data-status="completed"] { border-color: var(--success); }
+.run-step-border[data-status="failed"] { border-color: hsl(var(--destructive)); }
+.run-step-border[data-status="waiting_permission"] { border-color: var(--warning); }
+.run-step-border[data-status="blocked"] { border-color: var(--warning); }
 
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
@@ -2292,6 +2292,19 @@
     0 -2px 16px hsl(0 0% 0% / 0.04),
     0 8px 28px hsl(0 0% 0% / 0.1),
     0 2px 8px hsl(0 0% 0% / 0.06);
+}
+.goal-session-composer-shell--draft {
+  border-radius: 1rem;
+  min-height: 8.5rem;
+}
+.goal-session-composer-shell--draft .goal-dock-shell-content {
+  max-height: none;
+}
+.goal-session-composer-shell--draft .goal-dock-composer[data-expanded="true"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  padding: 0.875rem 0.875rem 0.75rem;
 }
 .dark .goal-session-composer-shell {
   box-shadow:

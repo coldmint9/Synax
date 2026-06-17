@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, Circle, Clock, Cpu, FileEdit, FilePlus, FileX, File, Loader2, Users } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
-import { useDebugConsole } from '../debug-console/debugConsoleStore'
+import { useAgentSessionStore } from './agentSessionStore'
 import type { SessionStats, TodoItem } from '../../../lib/api/agentRuntime'
 import { SessionCapabilitiesPanel } from './SessionCapabilitiesPanel'
 
@@ -20,11 +20,15 @@ function progressColor(percent: number): string {
 }
 
 const STATUS_BADGE: Record<string, string> = {
+  queued: 'bg-primary/12 text-primary',
   running: 'bg-[var(--color-run)]/15 text-[var(--color-run)]',
+  waiting_permission: 'bg-warning/15 text-warning',
+  blocked: 'bg-warning/15 text-warning',
   completed: 'bg-success/15 text-success',
   failed: 'bg-danger/15 text-danger',
   paused: 'bg-sky-400/15 text-sky-400',
   interrupted: 'bg-amber-400/15 text-amber-400',
+  cancelled: 'bg-foreground/10 text-foreground/70',
 }
 
 interface FileChange {
@@ -50,7 +54,7 @@ function SessionStatusCard({ stats }: { stats: SessionStats }) {
     return () => clearInterval(t)
   }, [stats.runningDuration, stats.status])
 
-  const badgeClass = STATUS_BADGE[stats.status] ?? 'bg-muted text-muted-foreground'
+  const badgeClass = STATUS_BADGE[stats.status] ?? 'bg-secondary/70 text-foreground/80'
 
   return (
     <div className="border-b border-border/40 px-2 py-2 space-y-2">
@@ -142,10 +146,10 @@ function FilesCard({ files }: { files: FileChange[] }) {
 }
 
 export function SessionWorkspace() {
-  const events = useDebugConsole(s => s.events)
-  const sessionStats = useDebugConsole(s => s.sessionStats)
-  const sessionTodos = useDebugConsole(s => s.sessionTodos)
-  const sessionCapabilities = useDebugConsole(s => s.sessionCapabilities)
+  const events = useAgentSessionStore(s => s.events)
+  const sessionStats = useAgentSessionStore(s => s.sessionStats)
+  const sessionTodos = useAgentSessionStore(s => s.sessionTodos)
+  const sessionCapabilities = useAgentSessionStore(s => s.sessionCapabilities)
 
   const fileChanges = useMemo<FileChange[]>(() => {
     const paths = new Map<string, FileChange>()
