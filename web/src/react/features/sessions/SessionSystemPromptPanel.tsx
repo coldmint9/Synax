@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp, ScrollText } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
-import { useDebugConsole } from '../debug-console/debugConsoleStore'
+import { useAgentSessionStore } from './agentSessionStore'
 
 export function SessionSystemPromptPanel() {
   const { t } = useLocale()
-  const session = useDebugConsole(s => {
+  const session = useAgentSessionStore(s => {
     const id = s.selectedSessionId
     return id ? s.sessions.find(item => item.id === id) : undefined
   })

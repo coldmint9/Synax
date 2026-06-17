@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocale } from '../../../hooks/useLocale'
-import { useDebugConsole } from '../debug-console/debugConsoleStore'
+import { useAgentSessionStore } from './agentSessionStore'
 import {
   buildUserMessageEntries,
   sessionEntryDomId,
@@ -20,12 +20,12 @@ function scrollToEntry(scrollRoot: HTMLElement | null, entryId: string) {
 
 export function SessionNavigationPanel({ scrollRootRef }: Props) {
   const { t } = useLocale()
-  const selectedSessionId = useDebugConsole(s => s.selectedSessionId)
-  const session = useDebugConsole(s => {
+  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
+  const session = useAgentSessionStore(s => {
     const id = s.selectedSessionId
     return id ? s.sessions.find(item => item.id === id) : undefined
   })
-  const messages = useDebugConsole(s => s.messages)
+  const messages = useAgentSessionStore(s => s.messages)
 
   const entries = useMemo(
     () => buildUserMessageEntries(messages, session),

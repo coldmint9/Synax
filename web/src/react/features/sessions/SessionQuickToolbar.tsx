@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, Radio } from 'lucide-react'
-import { useDebugConsole } from './debugConsoleStore'
-import { useDebugPolling } from './useDebugPolling'
-import { DebugPanel } from './DebugPanel'
+import { useAgentSessionStore } from './agentSessionStore'
+import { useSessionDetailPolling } from './useSessionDetailPolling'
+import { SessionFloatingPanel } from './SessionFloatingPanel'
 import type { AgentSessionStatus } from '../../../lib/api/agentRuntime'
 
 const STATUS_DOT: Record<AgentSessionStatus, string> = {
@@ -16,14 +16,14 @@ const STATUS_DOT: Record<AgentSessionStatus, string> = {
   cancelled: 'bg-muted-foreground/30',
 }
 
-export function DebugToolbar() {
-  useDebugPolling()
+export function SessionQuickToolbar() {
+  useSessionDetailPolling()
 
-  const sessions = useDebugConsole(s => s.sessions)
-  const panelOpen = useDebugConsole(s => s.panelOpen)
-  const selectedSessionId = useDebugConsole(s => s.selectedSessionId)
-  const openPanel = useDebugConsole(s => s.openPanel)
-  const closePanel = useDebugConsole(s => s.closePanel)
+  const sessions = useAgentSessionStore(s => s.sessions)
+  const panelOpen = useAgentSessionStore(s => s.panelOpen)
+  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
+  const openPanel = useAgentSessionStore(s => s.openPanel)
+  const closePanel = useAgentSessionStore(s => s.closePanel)
 
   const runningCount = sessions.filter(s =>
     s.status === 'running' || s.status === 'waiting_permission'
@@ -31,7 +31,7 @@ export function DebugToolbar() {
 
   return (
     <>
-      <div className="debug-toolbar">
+      <div className="session-quick-toolbar">
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <Radio size={12} className={runningCount > 0 ? 'text-[var(--color-run)]' : ''} />
           <span className="font-medium">{sessions.length}</span>
@@ -50,8 +50,8 @@ export function DebugToolbar() {
                   : openPanel(session.id)
                 }
                 className={[
-                  'debug-pill',
-                  selectedSessionId === session.id && panelOpen ? 'debug-pill-active' : '',
+                  'session-quick-pill',
+                  selectedSessionId === session.id && panelOpen ? 'session-quick-pill-active' : '',
                 ].join(' ')}
                 title={session.prompt}
               >
@@ -74,7 +74,7 @@ export function DebugToolbar() {
       </div>
 
       {panelOpen && selectedSessionId && (
-        <DebugPanel sessionId={selectedSessionId} />
+        <SessionFloatingPanel sessionId={selectedSessionId} />
       )}
     </>
   )

@@ -31,6 +31,8 @@ interface Props {
   onPermissionPresetChange: (preset: GoalPermissionPreset) => void
   disabled?: boolean
   onOverlayOpenChange?: (open: boolean) => void
+  /** Start in expanded editor layout (textarea + toolbar) instead of compact inline pill. */
+  defaultExpanded?: boolean
 }
 
 export function GoalComposerPill({
@@ -55,12 +57,14 @@ export function GoalComposerPill({
   onPermissionPresetChange,
   disabled,
   onOverlayOpenChange,
+  defaultExpanded = false,
 }: Props) {
   const { t } = useLocale()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const isComposingRef = useRef(false)
   const suppressEnterRef = useRef(false)
   const isMultiline = content.includes('\n')
+  const expandedLayout = defaultExpanded || isMultiline
 
   const handleCompositionStart = useCallback(() => {
     isComposingRef.current = true
@@ -91,9 +95,19 @@ export function GoalComposerPill({
   useLayoutEffect(() => {
     const el = textareaRef.current
     if (!el) return
+    if (defaultExpanded && !isMultiline) {
+      el.style.height = ''
+      return
+    }
+    const maxHeight = defaultExpanded ? 192 : 128
     el.style.height = '0px'
-    el.style.height = `${Math.min(el.scrollHeight, 128)}px`
-  }, [content, isMultiline])
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
+  }, [content, defaultExpanded, isMultiline])
+
+  useLayoutEffect(() => {
+    if (!defaultExpanded) return
+    textareaRef.current?.focus()
+  }, [defaultExpanded])
 
   const compositionProps = {
     onCompositionStart: handleCompositionStart,
@@ -152,9 +166,10 @@ export function GoalComposerPill({
   return (
     <div
       className="goal-dock-composer w-full"
-      data-multiline={isMultiline ? 'true' : undefined}
+      data-multiline={expandedLayout ? 'true' : undefined}
+      data-expanded={defaultExpanded ? 'true' : undefined}
     >
-      {isMultiline ? (
+      {expandedLayout ? (
         <>
           <textarea
             ref={textareaRef}
@@ -165,8 +180,10 @@ export function GoalComposerPill({
             placeholder={t('goalPlaceholder')}
             aria-label={t('goalPlaceholder')}
             disabled={disabled}
-            rows={1}
-            className="goal-dock-composer-input min-h-[1.5rem] max-h-32 w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[13px] leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45"
+            rows={defaultExpanded && !isMultiline ? 4 : 1}
+            className={`goal-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[13px] leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
+              defaultExpanded && !isMultiline ? 'min-h-[5.5rem] max-h-48' : 'min-h-[1.5rem] max-h-32'
+            }`}
           />
           <div className="goal-dock-composer-toolbar flex items-center gap-1.5">
             {toolbar}

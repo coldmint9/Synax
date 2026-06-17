@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react'
-import { useDebugConsole } from '../debug-console/debugConsoleStore'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { useAgentSessionStore } from './agentSessionStore'
 import { agentRuntimeApi } from '../../../lib/api/agentRuntime'
 import type { AgentSession, AgentSessionStatus } from '../../../lib/api/agentRuntime'
 import {
@@ -7,6 +8,7 @@ import {
   isWorkflowSession,
   type SessionListView,
 } from './sessionBuckets'
+import { goalSessionPath, isNewGoalSessionPath, newGoalSessionPath } from './sessionRoutes'
 
 // ---- Types ----
 
@@ -62,14 +64,14 @@ function flattenTree(nodes: SessionTreeNode[]): SessionTreeNode[] {
 
 // ---- Hook ----
 
-export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionListView = 'goal') {
-  const storeSessions = useDebugConsole(s => s.sessions)
-  const storeRefresh = useDebugConsole(s => s.refreshSessions)
-  const selectedSessionId = useDebugConsole(s => s.selectedSessionId)
-  const panelOpen = useDebugConsole(s => s.panelOpen)
-  const openPanel = useDebugConsole(s => s.openPanel)
-  const deleteSession = useDebugConsole(s => s.deleteSession)
-  const projectId = useDebugConsole(s => s.projectId)
+export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionListView = 'goal', routeProjectId = '') {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
+  const storeSessions = useAgentSessionStore(s => s.sessions)
+  const storeRefresh = useAgentSessionStore(s => s.refreshSessions)
+  const deleteSession = useAgentSessionStore(s => s.deleteSession)
+  const projectId = useAgentSessionStore(s => s.projectId)
 
   const [page, setPage] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
@@ -79,6 +81,9 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+
+  const isDraftOpen = listView === 'goal' && isNewGoalSessionPath(location.pathname)
+  const selectedIdFromUrl = searchParams.get('session')
 
   const viewCounts = useMemo(() => {
     const topLevel = storeSessions.filter(s => !s.parentSessionId)
@@ -152,7 +157,15 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
   const toggleExpand = useCallback((id: string) =>
     setExpandedNodes(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n }), [])
 
-  const select = useCallback((id: string) => openPanel(id), [openPanel])
+  const select = useCallback((id: string) => {
+    if (!routeProjectId) return
+    navigate(goalSessionPath(routeProjectId, id))
+  }, [navigate, routeProjectId])
+
+  const openNewDraft = useCallback(() => {
+    if (!routeProjectId || listView !== 'goal') return
+    navigate(newGoalSessionPath(routeProjectId))
+  }, [listView, navigate, routeProjectId])
 
   return {
     groups: visibleGroups,
@@ -163,8 +176,10 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
     isLoadingMore,
     searchQuery,
     setSearchQuery,
-    selectedId: panelOpen ? selectedSessionId : null,
+    selectedId: isDraftOpen ? null : selectedIdFromUrl,
     select,
+    openNewDraft,
+    isDraftOpen,
     refresh,
     loadMore,
     toggleGroup,

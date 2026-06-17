@@ -1,6 +1,6 @@
-import type { AgentSession, AgentSessionStatus } from '../../../lib/api/agentRuntime'
-import type { SessionTreeNode } from '../sessions/sessionGrouping'
-import { getSessionDisplayTitle } from '../sessions/useSessionDisplayTitle'
+import type { AgentSessionStatus } from '../../../lib/api/agentRuntime'
+import type { SessionTreeNode } from './sessionGrouping'
+import { getSessionDisplayTitle } from './useSessionDisplayTitle'
 
 interface Props {
   node: SessionTreeNode
@@ -21,7 +21,7 @@ const STATUS_DOT: Record<AgentSessionStatus, string> = {
   cancelled: 'bg-muted-foreground/30',
 }
 
-export function SessionTreeItem({ node, depth = 0, selectedId, onSelect }: Props) {
+export function GroupedSessionTreeItem({ node, depth = 0, selectedId, onSelect }: Props) {
   const { session } = node
   const active = session.id === selectedId
 
@@ -44,7 +44,7 @@ export function SessionTreeItem({ node, depth = 0, selectedId, onSelect }: Props
         </div>
       </li>
       {node.children.map(child => (
-        <SessionTreeItem
+        <GroupedSessionTreeItem
           key={child.session.id}
           node={child}
           depth={depth + 1}

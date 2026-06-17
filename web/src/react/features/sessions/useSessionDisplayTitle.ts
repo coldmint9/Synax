@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import type { AgentSession } from '../../../lib/api/agentRuntime'
 import { subscribe } from '../../../lib/api/runtimeEventBus'
-import { useDebugConsole } from '../debug-console/debugConsoleStore'
+import { useAgentSessionStore } from './agentSessionStore'
 
 export const SESSION_DISPLAY_TITLE_MAX = 80
 
@@ -68,7 +68,7 @@ export function useSessionTitleSync(): void {
           const nextTitle = data.patch?.title
           if (typeof nextTitle !== 'string') return
 
-          useDebugConsole.setState((state) => ({
+          useAgentSessionStore.setState((state) => ({
             sessions: state.sessions.map((session) =>
               session.id === data.sessionId
                 ? { ...session, title: nextTitle.trim() || null }

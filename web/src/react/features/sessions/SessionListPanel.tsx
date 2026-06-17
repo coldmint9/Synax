@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Surface } from '@heroui/react'
 import { useSessionList } from './useSessionList'
 import { SessionListHeader } from './SessionListHeader'
 import { SessionTimeGroups } from './SessionTimeGroups'
 import { SessionDeleteDialog } from './SessionDeleteDialog'
 import { SessionClearInactiveDialog } from './SessionClearInactiveDialog'
-import { useDebugConsole } from '../debug-console/debugConsoleStore'
 import { useLocale } from '../../../hooks/useLocale'
 import type { SessionListView } from './sessionBuckets'
 import { getSessionDisplayTitle } from './useSessionDisplayTitle'
+import { goalSessionsPath, workflowSessionsPath } from './sessionRoutes'
 
 interface Props {
   listView?: SessionListView
@@ -19,7 +19,8 @@ interface Props {
 export function SessionListPanel({ listView = 'goal', projectId }: Props) {
   const { locale, t } = useLocale()
   const navigate = useNavigate()
-  const list = useSessionList(locale, listView)
+  const [searchParams] = useSearchParams()
+  const list = useSessionList(locale, listView, projectId)
   const { refresh } = list
 
   const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -35,6 +36,10 @@ export function SessionListPanel({ listView = 'goal', projectId }: Props) {
 
   const visibleCount = list.groups.reduce((sum, g) => sum + g.sessions.length, 0)
 
+  const handleNewSession = () => {
+    list.openNewDraft()
+  }
+
   return (
     <Surface className="flex h-full flex-col bg-background" variant="default">
       <SessionListHeader
@@ -45,8 +50,9 @@ export function SessionListPanel({ listView = 'goal', projectId }: Props) {
         onSearchChange={list.setSearchQuery}
         onRefresh={() => { void list.refresh() }}
         onClearInactive={() => setShowClear(true)}
-        onOpenWorkflows={() => navigate(`/projects/${projectId}/sessions/workflows`)}
-        onBackToGoals={() => navigate(`/projects/${projectId}/sessions`)}
+        onNewSession={handleNewSession}
+        onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
+        onBackToGoals={() => navigate(goalSessionsPath(projectId))}
         isRefreshing={list.isRefreshing}
       />
       <SessionTimeGroups
@@ -71,7 +77,14 @@ export function SessionListPanel({ listView = 'goal', projectId }: Props) {
           const id = deleteId
           if (!id) return
           setDeleting(true)
-          try { await list.deleteSession(id); setDeleteId(null); void list.refresh() }
+          try {
+            await list.deleteSession(id)
+            if (searchParams.get('session') === id) {
+              navigate(goalSessionsPath(projectId))
+            }
+            setDeleteId(null)
+            void list.refresh()
+          }
           catch (err) { console.error('[DeleteSession]', err) }
           finally { setDeleting(false) }
         }}

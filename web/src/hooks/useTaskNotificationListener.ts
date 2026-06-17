@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useNotificationStore, type NotificationType } from '../react/state/notificationStore'
 import { subscribe } from '../lib/api/taskNotificationBus'
 import { TaskNotificationEventType } from '../lib/api/eventTypes'
-import { useDebugConsole } from '../react/features/debug-console/debugConsoleStore'
+import { useAgentSessionStore } from '../react/features/sessions/agentSessionStore'
 
 interface TaskNotificationPayload {
   id: string
@@ -33,7 +33,7 @@ export function useTaskNotificationListener(projectId: string | null) {
       if (refreshTimer.current) return
       refreshTimer.current = setTimeout(() => {
         refreshTimer.current = null
-        void useDebugConsole.getState().refreshSessions()
+        void useAgentSessionStore.getState().refreshSessions()
       }, 300)
     }
 

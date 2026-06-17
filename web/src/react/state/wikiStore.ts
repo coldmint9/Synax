@@ -9,7 +9,7 @@ import { agentRuntimeApi } from '../../lib/api/agentRuntime';
 import { TaskNotificationEventType } from '../../lib/api/eventTypes';
 import { useNotificationStore } from './notificationStore';
 import { useShellStore } from './shellStore';
-import { useDebugConsole } from '../features/debug-console/debugConsoleStore';
+import { useAgentSessionStore } from '../features/sessions/agentSessionStore';
 import type {
   WikiSnapshot,
   WikiDocument,
@@ -882,13 +882,13 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       }))
       useNotificationStore.getState().dismiss(`perm-${permissionId}`)
 
-      const selected = useDebugConsole.getState().selectedSessionId
+      const selected = useAgentSessionStore.getState().selectedSessionId
       if (selected === sessionId) {
-        useDebugConsole.setState(s => ({
+        useAgentSessionStore.setState(s => ({
           permissions: s.permissions.map(p => p.id === permissionId ? updated : p),
         }))
         if (reply !== 'reject') {
-          void useDebugConsole.getState().refreshDetail()
+          void useAgentSessionStore.getState().refreshDetail()
         }
       }
     } catch {

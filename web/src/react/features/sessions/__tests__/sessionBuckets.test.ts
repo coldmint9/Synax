@@ -39,6 +39,10 @@ describe('sessionBuckets', () => {
       profileId: 'goal',
       sessionMetadata: { source: 'plan-execution' },
     }))).toBe(true)
+    expect(isGoalSession(makeSession({
+      profileId: 'goal',
+      sessionMetadata: { source: 'session-page' },
+    }))).toBe(true)
   })
 
   it('detects wiki workflow sessions', () => {

@@ -22,7 +22,7 @@ function getToolIcon(payload: Record<string, unknown>) {
   return Wrench
 }
 
-export function DebugToolCall({ event }: Props) {
+export function RunStepToolCallRow({ event }: Props) {
   const [expanded, setExpanded] = useState(false)
   const payload = event.payload as Record<string, unknown>
   const toolId = (payload.toolId as string) ?? 'tool'
