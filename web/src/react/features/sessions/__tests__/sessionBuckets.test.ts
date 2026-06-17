@@ -32,17 +32,28 @@ describe('sessionBuckets', () => {
   it('detects goal sessions', () => {
     expect(isGoalSession(makeSession({ profileId: 'goal' }))).toBe(true)
     expect(isGoalSession(makeSession({
+      profileId: 'synax',
+      sessionMetadata: { mode: 'goal', source: 'goal-dock' },
+    }))).toBe(true)
+    expect(isGoalSession(makeSession({
+      profileId: 'synax',
+      sessionMetadata: { mode: 'plan_node', source: 'plan-execution' },
+    }))).toBe(true)
+    expect(isGoalSession(makeSession({
+      profileId: 'synax',
+      sessionMetadata: { mode: 'goal', source: 'session-page' },
+    }))).toBe(true)
+    expect(isGoalSession(makeSession({
       profileId: 'goal',
       sessionMetadata: { source: 'goal-dock' },
     }))).toBe(true)
+  })
+
+  it('does not treat synax chat sessions as goal sessions', () => {
     expect(isGoalSession(makeSession({
-      profileId: 'goal',
-      sessionMetadata: { source: 'plan-execution' },
-    }))).toBe(true)
-    expect(isGoalSession(makeSession({
-      profileId: 'goal',
-      sessionMetadata: { source: 'session-page' },
-    }))).toBe(true)
+      profileId: 'synax',
+      sessionMetadata: { mode: 'chat' },
+    }))).toBe(false)
   })
 
   it('detects wiki workflow sessions', () => {

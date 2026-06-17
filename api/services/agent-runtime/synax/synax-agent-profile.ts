@@ -1,0 +1,47 @@
+import type { AgentProfile } from '../contracts.js';
+import { SYNAX_AGENT_PROFILE_ID } from './synax-session-mode.js';
+
+export const synaxAgentProfile: AgentProfile = {
+  id: SYNAX_AGENT_PROFILE_ID,
+  label: 'Synax Agent',
+  kind: 'executor',
+  mode: 'primary',
+  description: 'General-purpose agent that adapts to user intent and delegates specialized work.',
+  defaultThinkingMode: 'standard',
+  allowedCapabilities: [
+    'bash',
+    'file.read',
+    'file.glob',
+    'file.list',
+    'grep.search',
+    'diff.read',
+    'file.write',
+    'file.patch',
+    'task.create',
+    'task.update',
+    'task.get',
+    'task.list',
+    'subagent.delegate',
+    'skill.load',
+    'tools.escalate',
+    'agent.adapt',
+  ],
+  permissionDefaults: [
+    { gate: 'read', pattern: '*', action: 'allow', reason: 'Synax agent reads freely.' },
+    { gate: 'write', pattern: '*', action: 'ask', reason: 'Writes require approval.' },
+    { gate: 'shell', pattern: '*', action: 'ask', reason: 'Shell execution requires approval.' },
+    { gate: 'task', pattern: '*', action: 'ask', reason: 'Task delegation requires approval.' },
+  ],
+  defaultSkills: ['action-executor'],
+  maxSteps: 64,
+  status: 'active',
+  toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
+  loopHints: [
+    'Understand user intent before acting.',
+    'Delegate large exploration to subagent.delegate(profileId: "explorer").',
+    'Delegate structured review to subagent.delegate(profileId: "reviewer").',
+    'For sustained planning, exploration, or review work, call agent.adapt with the matching variant.',
+    'Prefer minimal, verifiable steps and concrete evidence.',
+  ],
+  allowsSubsessions: true,
+};

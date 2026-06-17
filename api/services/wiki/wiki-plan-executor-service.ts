@@ -4,7 +4,7 @@ import { logger } from '../../lib/logger.js'
 import { agentSessionRuntime } from '../agent-runtime/session-runtime.js'
 import { agentRuntimeStore } from '../agent-runtime/session-store.js'
 import { streamWikiAgent } from './wiki-agent-stream.js'
-import { ensureGoalProfileRegistered, GOAL_AGENT_PROFILE_ID } from './wiki-goal-profile.js'
+import { ensureLegacyGoalProfileRegistered, SYNAX_AGENT_PROFILE_ID } from '../agent-runtime/synax/index.js'
 import { buildGoalSessionPrompt } from './wiki-goal-prompt.js'
 import { PLAN_NODE_PERMISSION_OVERRIDES } from './wiki-goal-permissions.js'
 import {
@@ -167,7 +167,7 @@ async function executeNode(
   locale: 'zh' | 'en',
   feedback?: string,
 ): Promise<void> {
-  ensureGoalProfileRegistered()
+  ensureLegacyGoalProfileRegistered()
   await updatePlanNodeStatus(node.id, 'executing')
   emit(plan.id, { type: 'node_status', nodeId: node.id, status: 'executing', title: node.title })
 
@@ -199,10 +199,11 @@ async function executeNode(
   })
   const session = agentSessionRuntime.create({
     projectId: plan.projectId,
-    profileId: GOAL_AGENT_PROFILE_ID,
+    profileId: SYNAX_AGENT_PROFILE_ID,
     prompt,
     permissionOverrides: PLAN_NODE_PERMISSION_OVERRIDES,
     sessionMetadata: {
+      mode: 'plan_node',
       source: 'plan-execution',
       planId: plan.id,
       planNodeId: node.id,

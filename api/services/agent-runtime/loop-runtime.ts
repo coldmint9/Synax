@@ -18,6 +18,7 @@ import { buildLoopToolSet } from "./loop-ai-tools.js";
 import { buildLoopModelMessages, computeClearedToolCallIds } from "./loop-model-messages.js";
 import { generateLoopModelStep, streamLoopModelStep } from "./loop-model-stream.js";
 import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
+import { synaxAgent } from "./synax/index.js";
 import { loopResumeService, type LoopResumeService } from "./loop-resume.js";
 import {
   permissionPolicy,
@@ -116,7 +117,7 @@ export class AgentLoopRuntime {
   ): AsyncGenerator<AgentRunStreamChunk> {
     const session = this.store.getSession(sessionId);
 
-    const RESUMABLE: string[] = ['interrupted', 'paused', 'completed', 'blocked', 'failed'];
+    const RESUMABLE: string[] = ['interrupted', 'paused', 'completed', 'blocked', 'failed', 'cancelled'];
     if (!RESUMABLE.includes(session.status)) {
       throw new AgentValidationError(
         `Session status "${session.status}" cannot be resumed. Resumable statuses: ${RESUMABLE.join(', ')}`,
@@ -165,7 +166,7 @@ export class AgentLoopRuntime {
     resume = false,
   ): AsyncGenerator<AgentRunStreamChunk> {
     this.assertSessionNotBusy(sessionId);
-    const session = this.store.getSession(sessionId);
+    let session = this.store.getSession(sessionId);
     const activeExecution = this.beginSessionExecution(sessionId, abortSignal);
     const runAbortSignal = activeExecution.signal;
     const profile = this.profiles.tryGet(session.profileId);
@@ -271,6 +272,13 @@ export class AgentLoopRuntime {
       );
       yield { type: "run_started", run, event: startedEvent };
       void sessionHooks.emit({ type: 'run:started', sessionId, runId: run.id });
+    }
+
+    if (!resume && synaxAgent.isSynaxSession(session)) {
+      const routed = synaxAgent.maybeAutoRoute(sessionId, prompt);
+      if (routed) {
+        session = this.store.getSession(sessionId);
+      }
     }
 
     try {
@@ -1134,6 +1142,7 @@ export class AgentLoopRuntime {
           controller.abort(new Error(reason));
         }
       }
+      this.activeSessionControllers.delete(sessionId);
     }
   }
 
@@ -1279,6 +1288,7 @@ export class AgentLoopRuntime {
       },
     );
 
+    const session = this.store.getSession(input.sessionId);
     const systemPromptContent = buildLoopSystemPrompt({
       profile: input.profile,
       context: input.context,
@@ -1290,6 +1300,11 @@ export class AgentLoopRuntime {
       stepIndex: input.stepIndex,
       mustFinalize: input.mustFinalize,
       locale: input.input.locale,
+      modePromptSection: synaxAgent.buildModePromptSection(session),
+      variantPromptSection: synaxAgent.buildVariantPromptSection(session),
+      loopHintsOverride: synaxAgent.isSynaxSession(session)
+        ? synaxAgent.buildEffectiveLoopHints(session)
+        : null,
       disclosureHint:
         input.disclosureState && input.disclosureStrategy && !isTerminalTier(input.disclosureState, input.disclosureStrategy)
           ? 'Currently in exploration mode. Call tools_escalate when ready to write files.'

@@ -16,7 +16,7 @@ import type {
   WikiRefreshDraft,
   WikiSnapshotTree,
 } from '../../lib/contracts/wiki';
-import { GOAL_PROFILE_ID, goalPermissionsForPreset, toPermissionOverrides, type GoalPermissionAction, type GoalPermissionGate, type GoalPermissionPreset, type GoalWikiAttachMode } from '../features/wiki/goal/goalAttachTypes';
+import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, goalPermissionsForPreset, toPermissionOverrides, type GoalPermissionAction, type GoalPermissionGate, type GoalPermissionPreset, type GoalWikiAttachMode } from '../features/wiki/goal/goalAttachTypes';
 import {
   applyGoalStreamChunk,
   initialGoalSessionState,
@@ -792,17 +792,17 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
       const payload = await agentRuntimeApi.createSession({
         projectId,
-        profileId: GOAL_PROFILE_ID,
+        profileId: SYNAX_PROFILE_ID,
         prompt,
         skillIds: s.goalComposerSkillIds.length > 0 ? s.goalComposerSkillIds : undefined,
         permissionOverrides,
-        sessionMetadata: {
+        sessionMetadata: createSynaxSessionMetadata('goal', {
           source: 'goal-dock',
           goalId: goal.id,
           documentId: documentId ?? null,
           wikiAttachMode,
           goalContent: content,
-        },
+        }),
       })
 
       void goalApi.linkLastSession(goal.id, payload.session.id).catch(() => {})

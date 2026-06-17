@@ -6,7 +6,7 @@ import { agentRuntimeApi, type AgentSkillSummary } from '../../../../lib/api/age
 import { useLocale } from '../../../../hooks/useLocale'
 import {
   getGoalPermissionPreset,
-  GOAL_PROFILE_ID,
+  SYNAX_PROFILE_ID,
   hasGoalPermissionOverrides,
   type GoalPermissionAction,
   type GoalPermissionGate,
@@ -185,7 +185,7 @@ export function GoalAttachMenu({
     skillsLoadingRef.current = true
     setSkillsLoading(true)
     void agentRuntimeApi
-      .listSkills(GOAL_PROFILE_ID)
+      .listSkills(SYNAX_PROFILE_ID)
       .then(res => {
         skillsLoadedRef.current = true
         setSkills(res.items.filter(s => s.status === 'available'))
