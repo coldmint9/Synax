@@ -17,32 +17,56 @@ import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '.
 import { AppError } from '../../../lib/errors'
 import { SYNAX_PROFILE_ID, createSynaxSessionMetadata } from '../wiki/goal/goalAttachTypes'
 import { useNotificationStore } from '../../state/notificationStore'
+import { patchAgentSession } from './sessionComposerState'
 
 const READ_MARKERS_KEY = 'synax-session-read-markers'
 
+function readMarkersStorageKey(projectId: string): string {
+  return `${READ_MARKERS_KEY}:${projectId}`
+}
+
 function loadReadMarkers(projectId: string | null): Record<string, string> {
-  if (!projectId || typeof sessionStorage === 'undefined') return {}
+  if (!projectId || typeof localStorage === 'undefined') return {}
+  const key = readMarkersStorageKey(projectId)
   try {
-    const raw = sessionStorage.getItem(`${READ_MARKERS_KEY}:${projectId}`)
-    return raw ? JSON.parse(raw) as Record<string, string> : {}
+    const raw = localStorage.getItem(key)
+    if (raw) return JSON.parse(raw) as Record<string, string>
+    if (typeof sessionStorage !== 'undefined') {
+      const legacy = sessionStorage.getItem(`${READ_MARKERS_KEY}:${projectId}`)
+      if (legacy) {
+        localStorage.setItem(key, legacy)
+        sessionStorage.removeItem(`${READ_MARKERS_KEY}:${projectId}`)
+        return JSON.parse(legacy) as Record<string, string>
+      }
+    }
   } catch {
     return {}
   }
+  return {}
 }
 
 function saveReadMarkers(projectId: string | null, markers: Record<string, string>): void {
-  if (!projectId || typeof sessionStorage === 'undefined') return
+  if (!projectId || typeof localStorage === 'undefined') return
   try {
-    sessionStorage.setItem(`${READ_MARKERS_KEY}:${projectId}`, JSON.stringify(markers))
+    localStorage.setItem(readMarkersStorageKey(projectId), JSON.stringify(markers))
   } catch { /* quota */ }
 }
+
+/** Sessions that no longer need attention unless explicitly updated after read. */
+const ATTENTION_SESSION_STATUSES = new Set<AgentSession['status']>([
+  'running',
+  'waiting_permission',
+  'queued',
+])
 
 export function isSessionUnread(
   session: AgentSession,
   readMarkers: Record<string, string>,
 ): boolean {
   const readUpdatedAt = readMarkers[session.id]
-  if (!readUpdatedAt) return true
+  if (!readUpdatedAt) {
+    return ATTENTION_SESSION_STATUSES.has(session.status)
+  }
   return new Date(session.updatedAt).getTime() > new Date(readUpdatedAt).getTime()
 }
 
@@ -97,6 +121,49 @@ function emptyDetailPayload(): Pick<
 
 function isActiveSessionStatus(status: AgentSession['status'] | undefined): boolean {
   return status === 'running' || status === 'waiting_permission'
+}
+
+type AgentRunStreamChunk = {
+  type?: string
+  run?: { id: string; status?: string }
+  runId?: string
+  sessionId?: string
+}
+
+function applySessionStreamChunk(sessionId: string, chunk: unknown): Partial<AgentSession> | null {
+  if (!chunk || typeof chunk !== 'object') return null
+  const typed = chunk as AgentRunStreamChunk
+  switch (typed.type) {
+    case 'run_started':
+    case 'run_resumed':
+      return typed.run
+        ? { status: 'running', activeRunId: typed.run.id, blockedReason: null }
+        : { status: 'running' }
+    case 'permission_requested':
+      return typed.runId
+        ? { status: 'waiting_permission', activeRunId: typed.runId }
+        : { status: 'waiting_permission' }
+    case 'run_completed':
+      return { status: 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null }
+    case 'run_failed':
+      return { status: 'failed', activeRunId: null, pendingResumeToken: null }
+    case 'done': {
+      const current = useAgentSessionStore.getState().sessions.find(s => s.id === sessionId)
+      if (current?.status === 'waiting_permission') {
+        return { activeRunId: null }
+      }
+      return { status: 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null }
+    }
+    default:
+      return null
+  }
+}
+
+function onSessionStreamChunk(sessionId: string, chunk: unknown): void {
+  const patch = applySessionStreamChunk(sessionId, chunk)
+  if (patch) {
+    useAgentSessionStore.getState().patchSession(sessionId, patch)
+  }
 }
 
 function patchSessionDetailCache(
@@ -250,6 +317,7 @@ export interface AgentSessionStoreState {
   sendSessionMessage: (sessionId: string, body: { message: string; model?: string | null }) => Promise<void>
   cancelSessionRun: (sessionId: string) => Promise<void>
   applyLiveEvent: (event: SessionLiveEvent) => void
+  patchSession: (sessionId: string, patch: Partial<AgentSession>) => void
   markSessionRead: (sessionId: string) => void
 }
 
@@ -340,9 +408,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
 
   refreshSessions: async () => {
     const { projectId } = get()
+    if (!projectId) return
     try {
-      const query = projectId ? { projectId, limit: 200 } : { limit: 200 }
-      const { items } = await agentRuntimeApi.listSessions(query)
+      const { items } = await agentRuntimeApi.listSessions({ projectId, limit: 200 })
       set({ sessions: items })
     } catch { /* API not available */ }
   },
@@ -567,6 +635,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       ),
     })
     agentRuntimeApi.resumeStream(sessionId, message ? { message } : {}, (chunk) => {
+      onSessionStreamChunk(sessionId, chunk)
       const c = chunk as { type?: string; error?: string }
       if (c.type === 'error') {
         console.error('[resume] backend error:', c.error)
@@ -651,9 +720,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     }))
     try {
       if (shouldResume) {
-        await agentRuntimeApi.resumeStream(sessionId, body, () => {})
+        await agentRuntimeApi.resumeStream(sessionId, body, (chunk) => {
+          onSessionStreamChunk(sessionId, chunk)
+        })
       } else {
-        await agentRuntimeApi.streamTurn(sessionId, body, () => {})
+        await agentRuntimeApi.streamTurn(sessionId, body, (chunk) => {
+          onSessionStreamChunk(sessionId, chunk)
+        })
       }
     } finally {
       void get().refreshSessions()
@@ -725,6 +798,24 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       [sessionId]: session.updatedAt,
     }
     set({ readSessionMarkers })
-    saveReadMarkers(get().projectId, readSessionMarkers)
+    saveReadMarkers(get().projectId ?? session.projectId, readSessionMarkers)
+  },
+
+  patchSession: (sessionId, patch) => {
+    set(s => {
+      const index = s.sessions.findIndex(sess => sess.id === sessionId)
+      if (index === -1) return s
+      const sessions = [...s.sessions]
+      sessions[index] = patchAgentSession(sessions[index], patch)
+      return { sessions }
+    })
+    const terminal = patch.status === 'completed'
+      || patch.status === 'failed'
+      || patch.status === 'cancelled'
+      || patch.status === 'interrupted'
+      || patch.status === 'blocked'
+    if (terminal && get().selectedSessionId === sessionId && get().panelOpen) {
+      get().markSessionRead(sessionId)
+    }
   },
 }))

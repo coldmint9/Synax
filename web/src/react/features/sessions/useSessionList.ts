@@ -68,10 +68,17 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
+  const storeProjectId = useAgentSessionStore(s => s.projectId)
   const storeSessions = useAgentSessionStore(s => s.sessions)
   const storeRefresh = useAgentSessionStore(s => s.refreshSessions)
   const deleteSession = useAgentSessionStore(s => s.deleteSession)
-  const projectId = useAgentSessionStore(s => s.projectId)
+
+  const projectSessions = useMemo(() => {
+    if (!routeProjectId) return []
+    return storeSessions.filter(s => s.projectId === routeProjectId)
+  }, [routeProjectId, storeSessions])
+
+  const isProjectReady = Boolean(routeProjectId) && storeProjectId === routeProjectId
 
   const [page, setPage] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
@@ -86,7 +93,7 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
   const selectedIdFromUrl = searchParams.get('session')
 
   const viewCounts = useMemo(() => {
-    const topLevel = storeSessions.filter(s => !s.parentSessionId)
+    const topLevel = projectSessions.filter(s => !s.parentSessionId)
     let goal = 0
     let workflow = 0
     for (const session of topLevel) {
@@ -94,10 +101,10 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
       else if (isGoalSession(session)) goal += 1
     }
     return { goal, workflow }
-  }, [storeSessions])
+  }, [projectSessions])
 
   const grouped = useMemo(() => {
-    let list = storeSessions.filter(s =>
+    let list = projectSessions.filter(s =>
       listView === 'workflow' ? isWorkflowSession(s) : isGoalSession(s),
     )
     if (searchQuery.trim()) {
@@ -112,7 +119,7 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
       collapsed: collapsedGroups.has(listView),
       count: tree.length,
     }]
-  }, [storeSessions, searchQuery, collapsedGroups, locale, listView])
+  }, [projectSessions, searchQuery, collapsedGroups, locale, listView])
 
   const visibleGroups = useMemo(() =>
     grouped.map(g => g.collapsed ? { ...g, sessions: [] } : {
@@ -125,31 +132,32 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
   [grouped, expandedNodes])
 
   const refresh = useCallback(async () => {
+    if (!routeProjectId || !isProjectReady) return
     setIsRefreshing(true)
     setPage(0)
     setHasMore(true)
     await storeRefresh()
     try {
-      const r = await agentRuntimeApi.listSessions({ projectId: projectId ?? undefined, limit: PAGE_SIZE, offset: 0 })
+      const r = await agentRuntimeApi.listSessions({ projectId: routeProjectId, limit: PAGE_SIZE, offset: 0 })
       setTotalCount(r.totalCount)
       setHasMore(r.items.length >= PAGE_SIZE)
     } finally {
       setIsRefreshing(false)
     }
-  }, [projectId, storeRefresh])
+  }, [isProjectReady, routeProjectId, storeRefresh])
 
   const loadMore = useCallback(async () => {
-    if (isLoadingMore || !hasMore) return
+    if (!routeProjectId || !isProjectReady || isLoadingMore || !hasMore) return
     setIsLoadingMore(true)
     const next = page + 1
     try {
-      const r = await agentRuntimeApi.listSessions({ projectId: projectId ?? undefined, limit: PAGE_SIZE, offset: next * PAGE_SIZE })
+      const r = await agentRuntimeApi.listSessions({ projectId: routeProjectId, limit: PAGE_SIZE, offset: next * PAGE_SIZE })
       setPage(next)
       setHasMore(r.items.length >= PAGE_SIZE)
     } finally {
       setIsLoadingMore(false)
     }
-  }, [projectId, page, isLoadingMore, hasMore])
+  }, [routeProjectId, isProjectReady, page, isLoadingMore, hasMore])
 
   const toggleGroup = useCallback((key: string) =>
     setCollapsedGroups(p => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n }), [])
@@ -187,6 +195,7 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
     toggleExpand,
     deleteSession,
     isRefreshing,
+    isProjectReady,
   }
 }
 
