@@ -192,7 +192,8 @@ export interface CreateSessionRequest {
   thinkingMode?: ThinkingMode
   skillIds?: string[]
   sessionMetadata?: Record<string, unknown> | null
-  permissionOverrides?: Partial<Record<'read' | 'write' | 'shell' | 'task', 'allow' | 'ask' | 'deny'>>
+  permissionTier?: 'readonly' | 'readwrite' | 'unrestricted'
+  permissionOverrides?: Partial<Record<'read' | 'write' | 'delete' | 'shell' | 'task', 'allow' | 'ask' | 'deny'>>
 }
 
 export interface SessionPayload {

@@ -6,6 +6,7 @@ export {
   createPlannerTools,
   createWriterTools,
   createWikiTools,
+  createWikiAgentTools,
   createWikiExplorerTools,
   buildReadTools,
   buildCheckMermaidTool,

@@ -18,6 +18,7 @@ import {
   type SynaxSessionMetadata,
   type SynaxSessionMode,
 } from './synax-session-mode.js';
+import { buildSynaxIntentPromptSection } from './synax-intent-hints.js';
 import { synaxModePromptRegistry } from './synax-mode-prompt.js';
 import { synaxVariantRegistry, type SynaxVariantId } from './synax-variant.js';
 
@@ -90,6 +91,19 @@ export class SynaxAgent {
     });
   }
 
+  buildIntentPromptSection(
+    session: Pick<AgentSession, 'profileId' | 'sessionMetadata'>,
+    message: string,
+    stepIndex = 1,
+  ): string | null {
+    if (!this.isSynaxSession(session)) return null;
+    return buildSynaxIntentPromptSection({
+      message,
+      mode: this.resolveMode(session),
+      stepIndex,
+    });
+  }
+
   buildVariantPromptSection(session: Pick<AgentSession, 'profileId' | 'sessionMetadata'>): string | null {
     if (!this.isSynaxSession(session)) return null;
     const state = this.resolveVariantState(session);
@@ -104,8 +118,10 @@ export class SynaxAgent {
       'Variant hints:',
       ...variant.loopHints.map((hint) => `- ${hint}`),
     ];
-    if (variant.delegateProfileId) {
-      lines.push(`- For isolated deep work, you may still delegate via subagent.delegate(profileId: "${variant.delegateProfileId}").`);
+    if (variant.id === 'explorer') {
+      lines.push('- Exploration is active: delegate wide read-only investigation via subagent.delegate(profileId: "explorer") on step 1 instead of serial bash sweeps.');
+    } else if (variant.delegateProfileId) {
+      lines.push(`- For isolated deep work, delegate via subagent.delegate(profileId: "${variant.delegateProfileId}").`);
     }
     return lines.join('\n');
   }

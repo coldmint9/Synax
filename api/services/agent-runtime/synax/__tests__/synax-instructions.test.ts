@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   loadMergedProjectInstructions,
   loadProjectInstructions,
+  loadProjectRulesSection,
 } from '../synax-instructions.js';
 import { buildSynaxMdContent, ensureSynaxMd } from '../synax-md.js';
 
@@ -39,8 +40,39 @@ describe('synax instructions loader', () => {
     expect(loaded?.body).toContain('manual rule');
 
     const merged = loadMergedProjectInstructions(dir);
-    expect(merged).toContain('Local Overrides');
+    expect(merged).toContain('### SYNAX.local.md');
     expect(merged).toContain('Use pnpm locally.');
+  });
+
+  it('merges SYNAX.md, CLAUDE.md, and AGENTS.md for rules injection', () => {
+    const dir = makeTempProject({
+      'SYNAX.md': '# Synax playbook',
+      'CLAUDE.md': '# Claude rules',
+      'AGENTS.md': '# Agent rules',
+    });
+
+    const rules = loadProjectRulesSection(dir);
+    expect(rules).toContain('### SYNAX.md');
+    expect(rules).toContain('Synax playbook');
+    expect(rules).toContain('### CLAUDE.md');
+    expect(rules).toContain('Claude rules');
+    expect(rules).toContain('### AGENTS.md');
+    expect(rules).toContain('Agent rules');
+  });
+
+  it('synax-only scope loads SYNAX.md and skips CLAUDE.md / AGENTS.md', () => {
+    const dir = makeTempProject({
+      'SYNAX.md': '# Synax playbook',
+      'CLAUDE.md': '# Claude rules',
+      'AGENTS.md': '# Agent rules',
+      'SYNAX.local.md': 'local override',
+    });
+
+    const rules = loadProjectRulesSection(dir, { scope: 'synax-only' });
+    expect(rules).toContain('Synax playbook');
+    expect(rules).not.toContain('Claude rules');
+    expect(rules).not.toContain('Agent rules');
+    expect(rules).not.toContain('local override');
   });
 
   it('falls back to AGENTS.md when SYNAX.md is missing', () => {

@@ -25,6 +25,8 @@ interface BuildLoopPromptInput {
   modePromptSection?: string | null;
   /** Synax active variant prompt section. */
   variantPromptSection?: string | null;
+  /** Synax intent-specific prompt section (explore delegate, coding discipline). */
+  intentPromptSection?: string | null;
   /** Override profile loop hints (Synax variant overlay). */
   loopHintsOverride?: string[] | null;
   /** Relevant project memories (L2) for this turn. */
@@ -73,6 +75,7 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     loopHints,
     input.modePromptSection ? `\n${input.modePromptSection}` : '',
     input.variantPromptSection ? `\n${input.variantPromptSection}` : '',
+    input.intentPromptSection ? `\n${input.intentPromptSection}` : '',
     input.projectMemoriesSection ? `\n${input.projectMemoriesSection}` : '',
     input.disclosureHint ?? '',
     '',

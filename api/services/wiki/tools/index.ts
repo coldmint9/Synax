@@ -12,6 +12,9 @@ export { buildTreeString } from './helpers.js';
 export { buildReadTools } from './read-tools.js';
 export { buildCheckMermaidTool, buildCommitDocumentTool } from './write-tools.js';
 export { createPlannerTools } from './planner-tools.js';
+export { createWikiAgentTools } from './agent-tools.js';
+export { extractMarkdownSection, normalizeHeadingText } from './section-utils.js';
+export { enrichWikiSearchMatches } from './search-utils.js';
 export { createWikiExplorerTools } from './explorer-tools.js';
 
 export function createWriterTools(scan: CodeMapScanResult, outline: WikiOutlineEntry[]): WikiWriterHandle {

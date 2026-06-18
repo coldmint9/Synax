@@ -54,7 +54,7 @@ export class SynaxVariantRegistry {
       this.variants.set('explorer', variantFromProfile('explorer', explorer, {
         loopHints: [
           ...(explorer.loopHints ?? []),
-          'Prefer read-only investigation. Delegate wide searches via subagent.delegate(profileId: "explorer").',
+          'On step 1, delegate wide read-only investigation via subagent.delegate(profileId: "explorer") — do not serial bash sweeps yourself.',
         ],
         delegateProfileId: 'explorer',
       }));

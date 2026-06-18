@@ -16,7 +16,7 @@ import type {
   WikiRefreshDraft,
   WikiSnapshotTree,
 } from '../../lib/contracts/wiki';
-import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, goalPermissionsForPreset, toPermissionOverrides, type GoalPermissionAction, type GoalPermissionGate, type GoalPermissionPreset, type GoalWikiAttachMode } from '../features/wiki/goal/goalAttachTypes';
+import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, DEFAULT_GOAL_PERMISSION_TIER, type GoalPermissionTier, type GoalWikiAttachMode } from '../features/wiki/goal/goalAttachTypes';
 import {
   applyGoalStreamChunk,
   initialGoalSessionState,
@@ -164,7 +164,7 @@ export interface WikiState {
   goalComposerWikiAttachMode: GoalWikiAttachMode;
   goalComposerAnchorJson: GoalAnchor | null;
   goalComposerSkillIds: string[];
-  goalComposerPermissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null;
+  goalComposerPermissionTier: GoalPermissionTier;
   goalSession: GoalSessionState;
   setGoalDockState: (state: GoalDockState) => void;
   setGoalComposerContent: (content: string) => void;
@@ -173,7 +173,7 @@ export interface WikiState {
   setGoalComposerDocumentId: (id: string | null) => void;
   setGoalComposerWikiAttachMode: (mode: GoalWikiAttachMode) => void;
   setGoalComposerSkillIds: (ids: string[]) => void;
-  setGoalPermissionPreset: (preset: GoalPermissionPreset) => void;
+  setGoalPermissionTier: (tier: GoalPermissionTier) => void;
   openGoalInput: (prefill?: {
     content?: string;
     documentId?: string | null;
@@ -234,7 +234,7 @@ const initialState = {
   goalComposerWikiAttachMode: 'auto' as GoalWikiAttachMode,
   goalComposerAnchorJson: null as GoalAnchor | null,
   goalComposerSkillIds: [] as string[],
-  goalComposerPermissions: null as Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null,
+  goalComposerPermissionTier: DEFAULT_GOAL_PERMISSION_TIER,
   goalSession: initialGoalSessionState,
   planExecutionAbort: null as (() => void) | null,
 };
@@ -702,9 +702,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     goalComposerAnchorJson: mode === 'auto' ? null : s.goalComposerAnchorJson,
   })),
   setGoalComposerSkillIds: (ids) => set({ goalComposerSkillIds: ids }),
-  setGoalPermissionPreset: (preset) => set({
-    goalComposerPermissions: goalPermissionsForPreset(preset),
-  }),
+  setGoalPermissionTier: (tier) => set({ goalComposerPermissionTier: tier }),
 
   openGoalInput: (prefill) => {
     const s = get()
@@ -788,14 +786,12 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       })
       await get().loadGoals(projectId)
 
-      const permissionOverrides = toPermissionOverrides(s.goalComposerPermissions)
-
       const payload = await agentRuntimeApi.createSession({
         projectId,
         profileId: SYNAX_PROFILE_ID,
         prompt,
         skillIds: s.goalComposerSkillIds.length > 0 ? s.goalComposerSkillIds : undefined,
-        permissionOverrides,
+        permissionTier: s.goalComposerPermissionTier,
         sessionMetadata: createSynaxSessionMetadata('goal', {
           source: 'goal-dock',
           goalId: goal.id,

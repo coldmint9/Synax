@@ -47,8 +47,11 @@ export type AgentRunStepStatus = z.infer<typeof stepStatusSchema>;
 export const permissionActionSchema = z.enum(['allow', 'ask', 'deny']);
 export type PermissionAction = z.infer<typeof permissionActionSchema>;
 
-export const permissionOverrideGateSchema = z.enum(['read', 'write', 'shell', 'task']);
+export const permissionOverrideGateSchema = z.enum(['read', 'write', 'delete', 'shell', 'task']);
 export type PermissionOverrideGate = z.infer<typeof permissionOverrideGateSchema>;
+
+export const permissionTierSchema = z.enum(['readonly', 'readwrite', 'unrestricted']);
+export type PermissionTier = z.infer<typeof permissionTierSchema>;
 
 export const permissionOverridesSchema = z.partialRecord(
   permissionOverrideGateSchema,
@@ -73,7 +76,7 @@ export const capabilityCategorySchema = z.enum([
 ]);
 export type CapabilityCategory = z.infer<typeof capabilityCategorySchema>;
 
-export const internalGateSchema = z.enum(['task', 'skill', 'external_path', 'write', 'shell', 'none']);
+export const internalGateSchema = z.enum(['task', 'skill', 'external_path', 'write', 'delete', 'shell', 'none']);
 export type InternalGate = z.infer<typeof internalGateSchema>;
 
 export const toolMutabilitySchema = z.enum(['read', 'write', 'task']);
@@ -397,6 +400,7 @@ export const createSessionRequestSchema = z.object({
   thinkingMode: thinkingModeSchema.optional(),
   skillIds: z.array(z.string().min(1).max(128)).max(20).optional(),
   sessionMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  permissionTier: permissionTierSchema.optional(),
   permissionOverrides: permissionOverridesSchema.optional(),
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;

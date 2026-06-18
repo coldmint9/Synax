@@ -2,10 +2,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { resolveSessionCapabilities } from '../session-capabilities.js';
+import { toolRegistry } from '../tool-registry.js';
+import { wikiAgentToolProvider } from '../../wiki/wiki-agent-tool-provider.js';
 import { explorerSessionInput, executorInput, resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
 describe('resolveSessionCapabilities', () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(() => {
+    resetAgentRuntimeFixtures();
+    toolRegistry.registerProvider(wikiAgentToolProvider);
+  });
 
   it('returns profile-scoped tools and active skills for explorer sessions', () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
@@ -13,7 +18,15 @@ describe('resolveSessionCapabilities', () => {
 
     expect(caps.profile.id).toBe('explorer');
     expect(caps.tools.available.map((tool) => tool.id)).toEqual(
-      expect.arrayContaining(['bash', 'file.glob', 'grep.search', 'skill.load']),
+      expect.arrayContaining([
+        'bash',
+        'file.glob',
+        'grep.search',
+        'skill.load',
+        'wiki.search_content',
+        'wiki.search_batch',
+        'wiki.read_section',
+      ]),
     );
     expect(caps.tools.available.some((tool) => tool.id === 'file.write')).toBe(false);
     expect(caps.skills.active.map((skill) => skill.id)).toEqual(['code-explorer']);

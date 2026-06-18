@@ -7,7 +7,7 @@ export function applyPermissionOverrides(
   if (!overrides || Object.keys(overrides).length === 0) return defaults;
   return defaults.map((rule) => {
     const gate = rule.gate;
-    if (gate === 'read' || gate === 'write' || gate === 'shell' || gate === 'task') {
+    if (gate === 'read' || gate === 'write' || gate === 'delete' || gate === 'shell' || gate === 'task') {
       const action = overrides[gate];
       if (action) return { ...rule, action: action as PermissionAction };
     }

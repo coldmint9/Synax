@@ -14,6 +14,7 @@ export const planExecutorProfile: AgentProfile = {
     'file.read',
     'file.write',
     'file.patch',
+    'file.delete',
     'grep.search',
     'diff.read',
     'tools.escalate',
