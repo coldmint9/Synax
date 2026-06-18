@@ -21,6 +21,7 @@ import { fileListTool } from './tools/file-list.js';
 import { filePatchTool } from './tools/file-patch.js';
 import { bashTool } from './tools/bash.js';
 import { fileReadTool } from './tools/file-read.js';
+import { fileDeleteTool } from './tools/file-delete.js';
 import { fileWriteTool } from './tools/file-write.js';
 import { grepSearchTool } from './tools/grep-search.js';
 import { taskCreateTool, taskUpdateTool, taskGetTool, taskListTool } from './tools/task-tools.js';
@@ -61,7 +62,7 @@ export class ToolRegistry {
     private readonly evidence: EvidenceService = evidenceService,
     private readonly profiles: ProfileService = profileService,
   ) {
-    [bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, filePatchTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, ESCALATION_TOOL, INVALID_TOOL].forEach((tool) =>
+    [bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, filePatchTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, ESCALATION_TOOL, INVALID_TOOL].forEach((tool) =>
       this.register(tool),
     );
     this.register({

@@ -50,6 +50,9 @@ function defaultDecision(input: PermissionRequestInput): { action: PermissionAct
   if (input.internalGate === 'write' || input.category === 'write') {
     return { action: 'ask', reason: 'Writes require explicit approval.' };
   }
+  if (input.internalGate === 'delete') {
+    return { action: 'ask', reason: 'Deletes require explicit approval.' };
+  }
   if (input.internalGate === 'task' || input.category === 'task') {
     return { action: 'ask', reason: 'Task delegation requires explicit approval.' };
   }
@@ -72,10 +75,7 @@ export class PermissionPolicy {
   constructor(private readonly store: AgentRuntimeStore = agentRuntimeStore) {}
 
   evaluate(input: PermissionRequestInput): PermissionDecision {
-    // Shell access is controlled by the bash tool's internal command
-    // whitelist — session-level shell rules are ignored.
-    const effectiveRules = (input.rules ?? []).filter((r) => r.gate !== 'shell');
-    const rule = [...effectiveRules].reverse().find((candidate) => matches(candidate, input));
+    const rule = [...(input.rules ?? [])].reverse().find((candidate) => matches(candidate, input));
     const fallback = defaultDecision(input);
     const action = rule?.action ?? fallback.action;
     const reason = rule?.reason ?? fallback.reason;

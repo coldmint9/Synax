@@ -7,7 +7,7 @@ import { useLocale } from '../../../../hooks/useLocale'
 import { GoalAttachMenu } from './GoalAttachMenu'
 import { GoalModelPicker } from './GoalModelPicker'
 import type { GoalModelSelection } from './goalModelOptions'
-import type { GoalPermissionGate, GoalPermissionAction, GoalPermissionPreset, GoalWikiAttachMode } from './goalAttachTypes'
+import type { GoalPermissionTier, GoalWikiAttachMode } from './goalAttachTypes'
 
 interface Props {
   content: string
@@ -27,8 +27,8 @@ interface Props {
   documents: WikiDocument[]
   skillIds: string[]
   onSkillIdsChange: (ids: string[]) => void
-  permissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null
-  onPermissionPresetChange: (preset: GoalPermissionPreset) => void
+  permissionTier: GoalPermissionTier
+  onPermissionTierChange: (tier: GoalPermissionTier) => void
   disabled?: boolean
   onOverlayOpenChange?: (open: boolean) => void
   /** Start in expanded editor layout (textarea + toolbar) instead of compact inline pill. */
@@ -53,8 +53,8 @@ export function GoalComposerPill({
   documents,
   skillIds,
   onSkillIdsChange,
-  permissions,
-  onPermissionPresetChange,
+  permissionTier,
+  onPermissionTierChange,
   disabled,
   onOverlayOpenChange,
   defaultExpanded = false,
@@ -129,8 +129,8 @@ export function GoalComposerPill({
         documents={documents}
         skillIds={skillIds}
         onSkillIdsChange={onSkillIdsChange}
-        permissions={permissions}
-        onPermissionPresetChange={onPermissionPresetChange}
+        permissionTier={permissionTier}
+        onPermissionTierChange={onPermissionTierChange}
         disabled={disabled}
         onOverlayOpenChange={onOverlayOpenChange}
       />
@@ -204,8 +204,8 @@ export function GoalComposerPill({
             documents={documents}
             skillIds={skillIds}
             onSkillIdsChange={onSkillIdsChange}
-            permissions={permissions}
-            onPermissionPresetChange={onPermissionPresetChange}
+            permissionTier={permissionTier}
+            onPermissionTierChange={onPermissionTierChange}
             disabled={disabled}
             onOverlayOpenChange={onOverlayOpenChange}
           />

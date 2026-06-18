@@ -16,17 +16,6 @@ export class AgentContextBuilder {
     if (input.sessionId) {
       try {
         const workDir = resolveSessionWorkDir(input.sessionId, projectId);
-        const instructions = loadMergedProjectInstructions(workDir);
-        if (instructions) {
-          blocks.push({
-            id: makeRuntimeId('acblk'),
-            kind: 'system',
-            title: 'SYNAX.md',
-            content: truncateForPrompt(instructions),
-            sourceType: 'synax',
-            sourceId: 'SYNAX.md',
-          });
-        }
         blocks.push(...buildSynaxRuntimeBlocks(projectId, workDir));
       } catch (error) {
         warnings.push(`Synax runtime context unavailable: ${error instanceof Error ? error.message : String(error)}`);

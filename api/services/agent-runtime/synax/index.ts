@@ -41,9 +41,18 @@ export {
 } from './synax-intent-router.js';
 export { SYNAX_ADAPT_TOOL_ID, createSynaxAdaptTool } from './synax-adapt-tool.js';
 export {
+  classifySynaxIntent,
+  buildSynaxIntentPromptSection,
+  SYNAX_VARIANT_INTENT_RULES,
+  type SynaxIntentKind,
+  type SynaxIntentHintInput,
+} from './synax-intent-hints.js';
+export {
   loadProjectInstructions,
   loadMergedProjectInstructions,
+  loadProjectRulesSection,
   truncateForPrompt,
+  type ProjectRulesScope,
 } from './synax-instructions.js';
 export { buildSynaxMdContent, ensureSynaxMd, readPackageJson } from './synax-md.js';
 export { bootstrapSynaxFromScan } from './synax-bootstrap.js';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bashTool, extractBashPaths } from '../tools/bash.js';
+import { bashPermissionPattern, bashTool, extractBashPaths } from '../tools/bash.js';
 
 describe('bashTool', () => {
   describe('tool definition', () => {
@@ -52,39 +52,9 @@ describe('bashTool', () => {
       ).toThrow('null byte');
     });
 
-    it('blocks disallowed command', () => {
-      const result = bashTool.execute({
-        sessionId: 's1',
-        runId: null,
-        stepId: null,
-        toolCallId: 'tc1',
-        toolId: 'bash',
-        category: 'shell',
-        mutability: 'read',
-        args: { command: 'rm -rf /' },
-      });
-      expect(result.result).toBeDefined();
-      const r = result.result as Record<string, unknown>;
-      expect(r.exitCode).toBeNull();
-      expect(r.stderr).toContain('rm');
-      expect(r.stderr).toContain('not allowed');
-    });
-
-    it('blocks rm even in a pipeline', () => {
-      const result = bashTool.execute({
-        sessionId: 's1',
-        runId: null,
-        stepId: null,
-        toolCallId: 'tc1',
-        toolId: 'bash',
-        category: 'shell',
-        mutability: 'read',
-        args: { command: 'cat file.txt | rm -rf /' },
-      });
-      const r = result.result as Record<string, unknown>;
-      expect(r.exitCode).toBeNull();
-      expect(r.stderr).toContain('rm');
-      expect(r.stderr).toContain('not allowed');
+    it('classifies disallowed commands for permission evaluation', () => {
+      expect(bashPermissionPattern('rm -rf /')).toBe('non-whitelist');
+      expect(bashPermissionPattern('cat file.txt | rm -rf /')).toBe('non-whitelist');
     });
 
     it('blocks file redirect to unsafe target', () => {
@@ -232,20 +202,8 @@ describe('bashTool', () => {
       expect(r.exitCode).not.toBeNull();
     });
 
-    it('blocks git push', () => {
-      const result = bashTool.execute({
-        sessionId: 's1',
-        runId: null,
-        stepId: null,
-        toolCallId: 'tc1',
-        toolId: 'bash',
-        category: 'shell',
-        mutability: 'read',
-        args: { command: 'git push origin main' },
-      });
-      const r = result.result as Record<string, unknown>;
-      expect(r.exitCode).toBeNull();
-      expect(r.stderr).toContain('push');
+    it('classifies disallowed git subcommands for permission evaluation', () => {
+      expect(bashPermissionPattern('git push origin main')).toBe('non-whitelist');
     });
   });
 
@@ -268,21 +226,8 @@ describe('bashTool', () => {
       expect(r.exitCode).toBe(0);
     });
 
-    it('returns fallback hint for blocked commands', () => {
-      const result = bashTool.execute({
-        sessionId: 's1',
-        runId: null,
-        stepId: null,
-        toolCallId: 'tc1',
-        toolId: 'bash',
-        category: 'shell',
-        mutability: 'read',
-        args: { command: 'nonexistentcmd123456 --help' },
-      });
-      const r = result.result as Record<string, unknown>;
-      // Blocked by whitelist before reaching shell — exitCode is null
-      expect(r.exitCode).toBeNull();
-      expect(r.stderr).toContain('not allowed');
+    it('classifies unknown commands for permission evaluation', () => {
+      expect(bashPermissionPattern('nonexistentcmd123456 --help')).toBe('non-whitelist');
     });
   });
 
@@ -324,22 +269,9 @@ describe('bashTool', () => {
     });
   });
 
-  describe('execute - npx blocked', () => {
-    it('blocks npx command', () => {
-      const result = bashTool.execute({
-        sessionId: 's1',
-        runId: null,
-        stepId: null,
-        toolCallId: 'tc1',
-        toolId: 'bash',
-        category: 'shell',
-        mutability: 'read',
-        args: { command: 'npx eslint .' },
-      });
-      const r = result.result as Record<string, unknown>;
-      expect(r.exitCode).toBeNull();
-      expect(r.stderr).toContain('npx');
-      expect(r.stderr).toContain('not allowed');
+  describe('bashPermissionPattern', () => {
+    it('classifies npx as non-whitelisted', () => {
+      expect(bashPermissionPattern('npx eslint .')).toBe('non-whitelist');
     });
   });
 });

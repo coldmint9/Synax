@@ -5,12 +5,10 @@ import type { WikiDocument } from '../../../../lib/contracts/wiki'
 import { agentRuntimeApi, type AgentSkillSummary } from '../../../../lib/api/agentRuntime'
 import { useLocale } from '../../../../hooks/useLocale'
 import {
-  getGoalPermissionPreset,
+  GOAL_PERMISSION_TIER_LABELS,
   SYNAX_PROFILE_ID,
-  hasGoalPermissionOverrides,
-  type GoalPermissionAction,
-  type GoalPermissionGate,
-  type GoalPermissionPreset,
+  hasNonDefaultGoalPermissionTier,
+  type GoalPermissionTier,
   type GoalWikiAttachMode,
 } from './goalAttachTypes'
 
@@ -22,8 +20,8 @@ interface Props {
   documents: WikiDocument[]
   skillIds: string[]
   onSkillIdsChange: (ids: string[]) => void
-  permissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null
-  onPermissionPresetChange: (preset: GoalPermissionPreset) => void
+  permissionTier: GoalPermissionTier
+  onPermissionTierChange: (tier: GoalPermissionTier) => void
   disabled?: boolean
   onOverlayOpenChange?: (open: boolean) => void
 }
@@ -48,35 +46,39 @@ function isGeneratedWikiDocument(doc: WikiDocument): boolean {
   return !doc.isSection && doc.contentMd.trim().length > 0
 }
 
+const PERMISSION_TIERS: GoalPermissionTier[] = ['readonly', 'readwrite', 'unrestricted']
+
 function PermissionPanel({
-  permissions,
-  onPermissionPresetChange,
+  permissionTier,
+  onPermissionTierChange,
 }: {
-  permissions: Partial<Record<GoalPermissionGate, GoalPermissionAction>> | null
-  onPermissionPresetChange: (preset: GoalPermissionPreset) => void
+  permissionTier: GoalPermissionTier
+  onPermissionTierChange: (tier: GoalPermissionTier) => void
 }) {
   const { t } = useLocale()
-  const preset = getGoalPermissionPreset(permissions)
-  const isAutonomous = preset === 'autonomous'
 
   return (
-    <div className="w-52 p-2.5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium text-foreground">{t('goalPermTrustMode')}</p>
-          <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
-            {t('goalPermTrustDesc')}
-          </p>
-        </div>
-        <Switch
-          size="sm"
-          isSelected={isAutonomous}
-          onChange={(selected) => onPermissionPresetChange(selected ? 'autonomous' : 'standard')}
-          aria-label={t('goalPermTrustMode')}
-        >
-          <Switch.Control><Switch.Thumb /></Switch.Control>
-        </Switch>
-      </div>
+    <div className="w-56 py-1">
+      {PERMISSION_TIERS.map((tier) => {
+        const labels = GOAL_PERMISSION_TIER_LABELS[tier]
+        const selected = permissionTier === tier
+        return (
+          <button
+            key={tier}
+            type="button"
+            className="flex w-full items-start gap-2 px-2.5 py-2 text-left hover:bg-muted/50"
+            onClick={() => onPermissionTierChange(tier)}
+          >
+            {selected
+              ? <Check size={14} className="mt-0.5 shrink-0 text-primary" />
+              : <span className="size-3.5 shrink-0" aria-hidden />}
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium text-foreground">{t(labels.titleKey)}</p>
+              <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">{t(labels.descKey)}</p>
+            </div>
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -169,8 +171,8 @@ export function GoalAttachMenu({
   documents,
   skillIds,
   onSkillIdsChange,
-  permissions,
-  onPermissionPresetChange,
+  permissionTier,
+  onPermissionTierChange,
   disabled,
   onOverlayOpenChange,
 }: Props) {
@@ -208,8 +210,8 @@ export function GoalAttachMenu({
   const hasWikiAttachment = wikiAttachMode === 'auto' || Boolean(documentId)
 
   const hasAttachments = useMemo(
-    () => hasWikiAttachment || skillIds.length > 0 || hasGoalPermissionOverrides(permissions),
-    [hasWikiAttachment, skillIds.length, permissions],
+    () => hasWikiAttachment || skillIds.length > 0 || hasNonDefaultGoalPermissionTier(permissionTier),
+    [hasWikiAttachment, skillIds.length, permissionTier],
   )
 
   return (
@@ -303,11 +305,11 @@ export function GoalAttachMenu({
             <Dropdown.Item id="permissions" textValue={t('goalAttachPermissions')}>
               <Shield size={14} className="shrink-0 text-muted-foreground/70" />
               <Label>{t('goalAttachPermissions')}</Label>
-              {hasGoalPermissionOverrides(permissions) && <AttachBadge count={1} />}
+              {hasNonDefaultGoalPermissionTier(permissionTier) && <AttachBadge count={1} />}
               <Dropdown.SubmenuIndicator />
             </Dropdown.Item>
             <Dropdown.Popover>
-              <PermissionPanel permissions={permissions} onPermissionPresetChange={onPermissionPresetChange} />
+              <PermissionPanel permissionTier={permissionTier} onPermissionTierChange={onPermissionTierChange} />
             </Dropdown.Popover>
           </Dropdown.SubmenuTrigger>
         </Dropdown.Menu>

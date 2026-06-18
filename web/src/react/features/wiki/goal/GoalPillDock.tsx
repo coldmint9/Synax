@@ -37,8 +37,8 @@ export function GoalPillDock({ projectId }: Props) {
   const setWikiAttachMode = useWikiStore(s => s.setGoalComposerWikiAttachMode)
   const skillIds = useWikiStore(s => s.goalComposerSkillIds)
   const setSkillIds = useWikiStore(s => s.setGoalComposerSkillIds)
-  const permissions = useWikiStore(s => s.goalComposerPermissions)
-  const setPermissionPreset = useWikiStore(s => s.setGoalPermissionPreset)
+  const permissionTier = useWikiStore(s => s.goalComposerPermissionTier)
+  const setPermissionTier = useWikiStore(s => s.setGoalPermissionTier)
   const documents = useWikiStore(s => s.documents)
   const goals = useWikiStore(s => s.goals)
   const submitGoal = useWikiStore(s => s.submitGoal)
@@ -201,8 +201,8 @@ export function GoalPillDock({ projectId }: Props) {
       documents={documents}
       skillIds={skillIds}
       onSkillIdsChange={setSkillIds}
-      permissions={permissions}
-      onPermissionPresetChange={setPermissionPreset}
+      permissionTier={permissionTier}
+      onPermissionTierChange={setPermissionTier}
       disabled={isGenerating}
       onOverlayOpenChange={handleOverlayOpenChange}
     />

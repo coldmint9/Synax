@@ -77,6 +77,14 @@ function extractPatchesFromSession(sessionId: string): PlanNodeArtifactPatch[] {
         diff: input.patch ?? input.content ?? '',
         action: 'modify',
       })
+      continue
+    }
+    if (call.toolId === 'file.delete') {
+      patches.push({
+        filePath: input.path,
+        diff: '',
+        action: 'delete',
+      })
     }
   }
   return patches

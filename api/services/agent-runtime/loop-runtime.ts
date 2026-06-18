@@ -20,6 +20,7 @@ import { generateLoopModelStep, streamLoopModelStep } from "./loop-model-stream.
 import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
 import { synaxAgent } from "./synax/index.js";
 import { loadProjectRulesSection } from "./synax/synax-instructions.js";
+import { isWikiAgentProfile } from "../wiki/wiki-agent-profiles.js";
 import { memoryManager } from "../context/memory-manager.js";
 import { loopResumeService, type LoopResumeService } from "./loop-resume.js";
 import {
@@ -1307,7 +1308,9 @@ export class AgentLoopRuntime {
     let projectRulesSection: string | null = null;
     try {
       const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
-      projectRulesSection = loadProjectRulesSection(workDir);
+      projectRulesSection = loadProjectRulesSection(workDir, {
+        scope: isWikiAgentProfile(input.profile.id) ? 'synax-only' : 'all',
+      });
     } catch {
       projectRulesSection = null;
     }
@@ -1325,10 +1328,14 @@ export class AgentLoopRuntime {
       locale: input.input.locale,
       modePromptSection: synaxAgent.buildModePromptSection(session),
       variantPromptSection: synaxAgent.buildVariantPromptSection(session),
+      intentPromptSection: synaxAgent.isSynaxSession(session)
+        ? synaxAgent.buildIntentPromptSection(session, input.prompt, input.stepIndex)
+        : null,
       loopHintsOverride: synaxAgent.isSynaxSession(session)
         ? synaxAgent.buildEffectiveLoopHints(session)
         : null,
       projectMemoriesSection,
+      projectRulesSection,
       disclosureHint:
         input.disclosureState && input.disclosureStrategy && !isTerminalTier(input.disclosureState, input.disclosureStrategy)
           ? 'Currently in exploration mode. Call tools_escalate when ready to write files.'

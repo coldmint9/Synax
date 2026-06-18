@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
+import { isUnrestrictedPermissionRules } from '../permission-tiers.js';
+import { agentRuntimeStore } from '../session-store.js';
 import { resolveWorkspacePath, workspaceRoot } from './workspace.js';
 
 // ---------------------------------------------------------------------------
@@ -168,6 +170,20 @@ function validateWhitelist(command: string): string | null {
   return null;
 }
 
+/** Permission pattern for shell gate evaluation (`whitelist` vs `non-whitelist`). */
+export function bashPermissionPattern(command: string): 'whitelist' | 'non-whitelist' {
+  return validateWhitelist(command) === null ? 'whitelist' : 'non-whitelist';
+}
+
+function isUnrestrictedSession(sessionId: string): boolean {
+  try {
+    const session = agentRuntimeStore.getSession(sessionId);
+    return isUnrestrictedPermissionRules(session.permissionRules);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Detect file redirections (>, >>) to unsafe targets. Only /dev/null,
  * /dev/stdout, and /dev/stderr are allowed.
@@ -299,8 +315,7 @@ export const bashTool: RegisteredTool = {
     'Accepts { command: string, workdir?: string, stdin?: string }. Executes read-only Unix commands (cat, rg, grep, find, ls, git diff/log/show, wc, sort, uniq, sed, awk, etc.) with full pipe/chain support. Combine operations to reduce tool calls. If a command is unavailable, fall back to dedicated tools.',
   getPattern(args) {
     if (typeof args === 'object' && args && 'command' in args && typeof (args as { command?: unknown }).command === 'string') {
-      const paths = extractBashPaths((args as { command: string }).command);
-      return paths.length > 0 ? paths[0] : undefined;
+      return bashPermissionPattern((args as { command: string }).command);
     }
     return undefined;
   },
@@ -316,27 +331,19 @@ export const bashTool: RegisteredTool = {
       throw new Error('Command contains null byte.');
     }
 
-    // 2. Validate whitelist
-    const whitelistError = validateWhitelist(command);
-    if (whitelistError) {
-      return {
-        result: { command, exitCode: null, stdout: '', stderr: whitelistError, stdoutTruncated: false, stderrTruncated: false },
-        displaySummary: `bash blocked: ${commandPreview}`,
-        artifacts: [{ kind: 'evidence', title: 'Bash blocked', summary: whitelistError, risk: 'medium' }],
-      };
+    // 2. Block file redirects unless the session is unrestricted
+    if (!isUnrestrictedSession(input.sessionId)) {
+      const redirectError = checkFileRedirects(command);
+      if (redirectError) {
+        return {
+          result: { command, exitCode: null, stdout: '', stderr: redirectError, stdoutTruncated: false, stderrTruncated: false },
+          displaySummary: `bash blocked: ${commandPreview}`,
+          artifacts: [{ kind: 'evidence', title: 'Bash blocked', summary: redirectError, risk: 'medium' }],
+        };
+      }
     }
 
-    // 3. Block file redirects
-    const redirectError = checkFileRedirects(command);
-    if (redirectError) {
-      return {
-        result: { command, exitCode: null, stdout: '', stderr: redirectError, stdoutTruncated: false, stderrTruncated: false },
-        displaySummary: `bash blocked: ${commandPreview}`,
-        artifacts: [{ kind: 'evidence', title: 'Bash blocked', summary: redirectError, risk: 'medium' }],
-      };
-    }
-
-    // 4. Resolve working directory
+    // 3. Resolve working directory
     const root = workspaceRoot(input.sessionId);
     const cwd = args.workdir ? resolveWorkspacePath(args.workdir, input.sessionId) : root;
 

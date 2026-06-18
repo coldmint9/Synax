@@ -58,12 +58,20 @@ export function loadProjectInstructions(workDir: string): LoadedInstructions | n
   return loadInstructionFile(primary, resolved);
 }
 
+export type ProjectRulesScope = 'all' | 'synax-only';
+
 /** All project rule files for system-prompt injection (SYNAX → CLAUDE → AGENTS + local). */
-export function loadProjectRulesSection(workDir: string, maxChars = 24_000): string | null {
+export function loadProjectRulesSection(
+  workDir: string,
+  options: { maxChars?: number; scope?: ProjectRulesScope } = {},
+): string | null {
+  const { maxChars = 24_000, scope = 'all' } = options;
   const resolved = resolveInstructionWorkDir(workDir) ?? workDir;
   const parts: string[] = [];
 
-  for (const name of PROJECT_RULE_FILES) {
+  const files = scope === 'synax-only' ? [SYNAX_MD_FILENAME] : PROJECT_RULE_FILES;
+
+  for (const name of files) {
     const filePath = path.join(resolved, name);
     if (!fs.existsSync(filePath)) continue;
     const loaded = loadInstructionFile(filePath, resolved);
@@ -72,11 +80,13 @@ export function loadProjectRulesSection(workDir: string, maxChars = 24_000): str
     }
   }
 
-  const localPath = path.join(resolved, SYNAX_LOCAL_FILENAME);
-  if (fs.existsSync(localPath)) {
-    const local = loadInstructionFile(localPath, resolved);
-    if (local?.body) {
-      parts.push(`### ${SYNAX_LOCAL_FILENAME}\n\n${local.body}`);
+  if (scope === 'all') {
+    const localPath = path.join(resolved, SYNAX_LOCAL_FILENAME);
+    if (fs.existsSync(localPath)) {
+      const local = loadInstructionFile(localPath, resolved);
+      if (local?.body) {
+        parts.push(`### ${SYNAX_LOCAL_FILENAME}\n\n${local.body}`);
+      }
     }
   }
 

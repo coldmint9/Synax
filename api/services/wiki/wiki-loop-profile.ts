@@ -2,7 +2,7 @@ import type { AgentProfile, FallbackDisclosureConfig } from '../agent-runtime/co
 import { profileService } from '../agent-runtime/profile-service.js';
 import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import { registerTitleGenerator } from '../agent-runtime/session-title-service.js';
-import { createWikiExplorerTools } from './wiki-loop-tools.js';
+import { wikiAgentToolProvider } from './wiki-agent-tool-provider.js';
 import { wikiSessionToolProvider } from './wiki-session-tool-provider.js';
 
 /** Shared fallback config: file/grep tools hidden until bash errors 4 times in a row. */
@@ -100,9 +100,14 @@ export const wikiExplorerProfile: AgentProfile = {
   description: 'Search and read generated wiki documents to provide design context.',
   defaultThinkingMode: 'fast',
   allowedCapabilities: [
+    'wiki.get_snapshot',
+    'wiki.get_tree',
     'wiki.list_documents',
     'wiki.read_document',
+    'wiki.read_section',
+    'wiki.get_references',
     'wiki.search_content',
+    'wiki.search_batch',
     'grep.search',
   ],
   permissionDefaults: [
@@ -116,8 +121,10 @@ export const wikiExplorerProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'List documents first to understand available wiki content.',
-    'Read specific documents relevant to the query.',
+    'Start with wiki.get_snapshot to confirm wiki content exists.',
+    'Use wiki.search_content or wiki.search_batch (FTS) for keyword recall, then wiki.read_section or wiki.read_document for full context.',
+    'Use wiki.get_references to jump from wiki docs to source files.',
+    'Use wiki.get_tree when you need document hierarchy.',
     'Return a focused summary answering the parent agent\'s question.',
   ],
 };
@@ -292,9 +299,7 @@ export function ensureWikiProfileRegistered(): void {
   profileService.register(wikiVerifierProfile);
   profileService.register(wikiPackageExplorerProfile);
   profileService.register(wikiGeneratorProfile);
-  for (const tool of createWikiExplorerTools()) {
-    toolRegistry.register(tool);
-  }
+  toolRegistry.registerProvider(wikiAgentToolProvider);
   toolRegistry.registerProvider(wikiSessionToolProvider);
   registerTitleGenerator('wiki-planner', wikiTitleGenerator);
   registerTitleGenerator('wiki-writer', wikiTitleGenerator);

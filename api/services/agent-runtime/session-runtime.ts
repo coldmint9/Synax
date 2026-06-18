@@ -1,5 +1,5 @@
 import type { AgentSession, CreateSessionRequest } from './contracts.js';
-import { applyPermissionOverrides } from './permission-overrides.js';
+import { resolveSessionPermissionRules } from './permission-tiers.js';
 import { agentContextBuilder } from './context-builder.js';
 import { agentEventService, type AgentEventService } from './event-service.js';
 import { agentLoopRuntime } from './loop-runtime.js';
@@ -55,7 +55,10 @@ export class AgentSessionRuntime {
       thinkingMode: input.thinkingMode ?? profile.defaultThinkingMode,
       permissionRules: [
         ...inheritedRules,
-        ...applyPermissionOverrides(profile.permissionDefaults, input.permissionOverrides),
+        ...resolveSessionPermissionRules(profile.permissionDefaults, {
+          permissionTier: input.permissionTier,
+          permissionOverrides: input.permissionOverrides,
+        }),
       ],
       createdAt,
       updatedAt: createdAt,
