@@ -3,9 +3,10 @@ import { useAgentSessionStore } from './agentSessionStore'
 
 const ACTIVE_SESSION_POLL_MS = 4_000
 
-/** Poll detail only while the selected session is actively running. */
+/** Poll session list + detail while the selected session is actively running. */
 export function useSessionDetailPolling() {
   const refreshDetail = useAgentSessionStore(s => s.refreshDetail)
+  const refreshSessions = useAgentSessionStore(s => s.refreshSessions)
   const panelOpen = useAgentSessionStore(s => s.panelOpen)
   const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
   const selectedStatus = useAgentSessionStore(s => {
@@ -18,10 +19,14 @@ export function useSessionDetailPolling() {
     const isActive = selectedStatus === 'running' || selectedStatus === 'waiting_permission'
     if (!isActive) return
 
-    const timer = window.setInterval(() => {
+    const refresh = () => {
+      void refreshSessions()
       void refreshDetail()
-    }, ACTIVE_SESSION_POLL_MS)
+    }
+
+    refresh()
+    const timer = window.setInterval(refresh, ACTIVE_SESSION_POLL_MS)
 
     return () => window.clearInterval(timer)
-  }, [panelOpen, selectedSessionId, selectedStatus, refreshDetail])
+  }, [panelOpen, selectedSessionId, selectedStatus, refreshDetail, refreshSessions])
 }

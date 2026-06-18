@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAgentSessionStore } from './agentSessionStore'
 import { useConfig } from '../settings/useConfig'
@@ -7,6 +7,10 @@ import { useLocale } from '../../../hooks/useLocale'
 import { GoalComposerPill } from '../wiki/goal/GoalComposerPill'
 import { buildGoalModelOptions, pickDefaultSelection } from '../wiki/goal/goalModelOptions'
 import { goalSessionPath } from './sessionRoutes'
+import {
+  isSessionComposerLocked,
+  sessionHasPendingPermissions,
+} from './sessionComposerState'
 import type { AgentSession } from '../../../lib/api/agentRuntime'
 
 interface Props {
@@ -23,19 +27,35 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
   const sendSessionMessage = useAgentSessionStore(s => s.sendSessionMessage)
   const submitGoalDraft = useAgentSessionStore(s => s.submitGoalDraft)
   const cancelSessionRun = useAgentSessionStore(s => s.cancelSessionRun)
+  const refreshSessions = useAgentSessionStore(s => s.refreshSessions)
+  const sessionId = session?.id
+  const hasPendingPermissions = useAgentSessionStore(s =>
+    sessionHasPendingPermissions(sessionId, s.selectedSessionId, s.permissions),
+  )
   const isDraft = !session
-  const isGenerating =
-    submitting
-    || (!isDraft && session.status === 'waiting_permission')
-    || (!isDraft && session.status === 'running' && Boolean(session.activeRunId))
+  const isGenerating = isSessionComposerLocked(session, { submitting, hasPendingPermissions })
+  const resyncedStaleWaitingRef = useRef(false)
+
+  useEffect(() => {
+    resyncedStaleWaitingRef.current = false
+  }, [sessionId])
+
+  useEffect(() => {
+    if (isDraft || !sessionId) return
+    if (session?.status !== 'waiting_permission') return
+    if (hasPendingPermissions) return
+    if (resyncedStaleWaitingRef.current) return
+    resyncedStaleWaitingRef.current = true
+    void refreshSessions()
+  }, [hasPendingPermissions, isDraft, refreshSessions, session?.status, sessionId])
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId)
   const providerId = useWikiStore(s => s.goalComposerProviderId)
   const modelId = useWikiStore(s => s.goalComposerModelId)
   const setProviderId = useWikiStore(s => s.setGoalComposerProviderId)
   const setModelId = useWikiStore(s => s.setGoalComposerModelId)
-  const composerPermissions = useWikiStore(s => s.goalComposerPermissions)
-  const setPermissionPreset = useWikiStore(s => s.setGoalPermissionPreset)
+  const permissionTier = useWikiStore(s => s.goalComposerPermissionTier)
+  const setPermissionTier = useWikiStore(s => s.setGoalPermissionTier)
 
   useEffect(() => {
     if (!globalConfig) return
@@ -99,8 +119,8 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
       documents={[]}
       skillIds={[]}
       onSkillIdsChange={() => {}}
-      permissions={composerPermissions}
-      onPermissionPresetChange={setPermissionPreset}
+      permissionTier={permissionTier}
+      onPermissionTierChange={setPermissionTier}
       disabled={isGenerating}
     />
   )

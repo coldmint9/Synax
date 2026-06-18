@@ -27,7 +27,10 @@ export function SessionListPanel({ listView = 'goal', projectId }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [showClear, setShowClear] = useState(false)
 
-  useEffect(() => { void refresh() }, [projectId, listView, refresh])
+  useEffect(() => {
+    if (!projectId || !list.isProjectReady) return
+    void refresh()
+  }, [projectId, listView, list.isProjectReady, refresh])
 
   const deleteSession = deleteId
     ? list.groups.flatMap(g => g.sessions).find(n => n.session.id === deleteId)?.session
