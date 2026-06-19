@@ -727,12 +727,31 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     if (!content) return
 
     const isFollowUp = Boolean(s.goalSession.sessionId)
-      && (s.goalDockState === 'expanded' || s.goalSession.status === 'failed' || s.goalSession.status === 'completed')
+      && (
+        s.goalDockState === 'expanded'
+        || s.goalDockState === 'input'
+        || s.goalSession.status === 'failed'
+        || s.goalSession.status === 'completed'
+        || s.goalSession.status === 'running'
+        || s.goalSession.status === 'waiting_permission'
+      )
 
     const modelId = s.goalComposerModelId
 
     try {
       if (isFollowUp && s.goalSession.sessionId) {
+        const shouldQueue = s.goalSession.status === 'running'
+          || s.goalSession.status === 'waiting_permission'
+
+        if (shouldQueue) {
+          set({ goalComposerContent: '' })
+          await useAgentSessionStore.getState().enqueueSessionInput(
+            s.goalSession.sessionId,
+            { message: content, model: modelId },
+          )
+          return
+        }
+
         set({
           goalSession: {
             ...s.goalSession,

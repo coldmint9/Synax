@@ -11,6 +11,8 @@ import {
   buildContextRequestSchema,
   clearInactiveSessionsBodySchema,
   createSessionRequestSchema,
+  enqueueInputRequestSchema,
+  inputQueueService,
   listEventsQuerySchema,
   listSessionsQuerySchema,
   listSkillsQuerySchema,
@@ -536,6 +538,45 @@ agentRuntimeRoutes.post('/sessions/:sessionId/permissions/:permissionId/reply', 
       resumeAgentSessionInBackground(sessionId, parsed.data.message ? { message: parsed.data.message } : {});
     }
     return c.json(decision);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.get('/sessions/:sessionId/input-queue', (c) => {
+  try {
+    return c.json({ items: inputQueueService.list(c.req.param('sessionId')) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post('/sessions/:sessionId/input-queue', async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = enqueueInputRequestSchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const items = inputQueueService.enqueue(c.req.param('sessionId'), parsed.data);
+    return c.json({ items });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.delete('/sessions/:sessionId/input-queue/:itemId', (c) => {
+  try {
+    const items = inputQueueService.remove(c.req.param('sessionId'), c.req.param('itemId'));
+    return c.json({ items });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post('/sessions/:sessionId/input-queue/:itemId/force', (c) => {
+  try {
+    const items = inputQueueService.markForceInject(c.req.param('sessionId'), c.req.param('itemId'));
+    return c.json({ items, forceInjectItemId: c.req.param('itemId') });
   } catch (error) {
     return runtimeError(c, error);
   }

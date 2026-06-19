@@ -13,6 +13,8 @@ import { goalDockStateToMorph } from './goalDockTypes'
 import { buildGoalModelOptions, pickDefaultSelection } from './goalModelOptions'
 import { isGoalSessionActive, resolveGoalSessionDisplayTitle } from './goalSessionStream'
 import { useGoalSessionBridge } from './useGoalSessionBridge'
+import { useAgentSessionStore } from '../../sessions/agentSessionStore'
+import { InputQueueStrip } from '../../sessions/InputQueueStrip'
 
 interface Props {
   projectId: string
@@ -45,8 +47,19 @@ export function GoalPillDock({ projectId }: Props) {
   const stopGoal = useWikiStore(s => s.stopGoal)
   const replyGoalPermission = useWikiStore(s => s.replyGoalPermission)
   const goalSession = useWikiStore(s => s.goalSession)
+  const loadInputQueue = useAgentSessionStore(s => s.loadInputQueue)
+  const removeQueuedInput = useAgentSessionStore(s => s.removeQueuedInput)
+  const forceQueuedInput = useAgentSessionStore(s => s.forceQueuedInput)
+  const queuedInputs = useAgentSessionStore(s =>
+    goalSession.sessionId ? (s.inputQueues[goalSession.sessionId] ?? []) : [],
+  )
 
   useGoalSessionBridge(projectId)
+
+  useEffect(() => {
+    if (!goalSession.sessionId) return
+    void loadInputQueue(goalSession.sessionId)
+  }, [goalSession.sessionId, loadInputQueue])
 
   const [miniHovered, setMiniHovered] = useState(false)
   const dockOverlayRef = useRef(false)
@@ -64,6 +77,8 @@ export function GoalPillDock({ projectId }: Props) {
   const hasPendingGoals = goals.length > 0
   const latestTool = goalSession.toolCalls[goalSession.toolCalls.length - 1]
   const isGenerating = goalSession.status === 'running'
+  const queueWhileGenerating = Boolean(goalSession.sessionId)
+    && (goalSession.status === 'running' || goalSession.status === 'waiting_permission')
 
   const sessionDisplayTitle = resolveGoalSessionDisplayTitle(goalSession, t('goalWorking'))
   const pendingPermissions = listPendingGoalPermissions(goalSession.permissions)
@@ -203,7 +218,8 @@ export function GoalPillDock({ projectId }: Props) {
       onSkillIdsChange={setSkillIds}
       permissionTier={permissionTier}
       onPermissionTierChange={setPermissionTier}
-      disabled={isGenerating}
+      disabled={isGenerating && !queueWhileGenerating}
+      queueWhileGenerating={queueWhileGenerating}
       onOverlayOpenChange={handleOverlayOpenChange}
     />
   )
@@ -258,6 +274,14 @@ export function GoalPillDock({ projectId }: Props) {
                   thinkingPreview={goalSession.streamingThinking}
                   sessionTitle={sessionDisplayTitle}
                   onClick={() => setGoalDockState('expanded')}
+                />
+              )}
+
+              {goalSession.sessionId && (isCompose || isChat) && (
+                <InputQueueStrip
+                  items={queuedInputs}
+                  onRemove={(itemId) => void removeQueuedInput(goalSession.sessionId!, itemId)}
+                  onForce={(itemId) => void forceQueuedInput(goalSession.sessionId!, itemId)}
                 />
               )}
 

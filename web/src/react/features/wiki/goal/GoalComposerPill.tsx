@@ -31,6 +31,8 @@ interface Props {
   onPermissionTierChange: (tier: GoalPermissionTier) => void
   disabled?: boolean
   onOverlayOpenChange?: (open: boolean) => void
+  /** Allow enqueue submit while the session is actively running. */
+  queueWhileGenerating?: boolean
   /** Start in expanded editor layout (textarea + toolbar) instead of compact inline pill. */
   defaultExpanded?: boolean
 }
@@ -57,6 +59,7 @@ export function GoalComposerPill({
   onPermissionTierChange,
   disabled,
   onOverlayOpenChange,
+  queueWhileGenerating = false,
   defaultExpanded = false,
 }: Props) {
   const { t } = useLocale()
@@ -89,8 +92,10 @@ export function GoalComposerPill({
       || e.keyCode === 229
     ) return
     e.preventDefault()
-    if (!disabled && !isGenerating && content.trim()) onSubmit()
-  }, [content, disabled, isGenerating, onSubmit])
+    if (disabled && !queueWhileGenerating) return
+    if (!content.trim()) return
+    onSubmit()
+  }, [content, disabled, isGenerating, onSubmit, queueWhileGenerating])
 
   useLayoutEffect(() => {
     const el = textareaRef.current
@@ -146,14 +151,38 @@ export function GoalComposerPill({
       />
 
       {isGenerating ? (
-        <button
-          type="button"
-          aria-label={t('goalStop')}
-          className="goal-dock-composer-chip goal-dock-composer-stop ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
-          onClick={onStop}
-        >
-          <Square size={12} fill="currentColor" />
-        </button>
+        queueWhileGenerating ? (
+          <>
+            {onStop && (
+              <button
+                type="button"
+                aria-label={t('goalStop')}
+                className="goal-dock-composer-chip goal-dock-composer-stop inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+                onClick={onStop}
+              >
+                <Square size={12} fill="currentColor" />
+              </button>
+            )}
+            <button
+              type="button"
+              aria-label={t('goalSend')}
+              className="goal-dock-composer-chip goal-dock-composer-send ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
+              disabled={(disabled && !queueWhileGenerating) || !content.trim()}
+              onClick={onSubmit}
+            >
+              <ArrowUp size={15} />
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            aria-label={t('goalStop')}
+            className="goal-dock-composer-chip goal-dock-composer-stop ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+            onClick={onStop}
+          >
+            <Square size={12} fill="currentColor" />
+          </button>
+        )
       ) : (
         <button
           type="button"
@@ -184,7 +213,7 @@ export function GoalComposerPill({
             {...compositionProps}
             placeholder={t('goalPlaceholder')}
             aria-label={t('goalPlaceholder')}
-            disabled={disabled}
+            disabled={disabled && !queueWhileGenerating}
             rows={defaultExpanded && !isMultiline ? 4 : 1}
             className={`goal-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[13px] leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
               defaultExpanded && !isMultiline ? 'min-h-[5.5rem] max-h-48' : 'min-h-[1.5rem] max-h-32'
@@ -206,7 +235,7 @@ export function GoalComposerPill({
             onSkillIdsChange={onSkillIdsChange}
             permissionTier={permissionTier}
             onPermissionTierChange={onPermissionTierChange}
-            disabled={disabled}
+            disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}
           />
           <textarea
@@ -217,7 +246,7 @@ export function GoalComposerPill({
             {...compositionProps}
             placeholder={t('goalPlaceholder')}
             aria-label={t('goalPlaceholder')}
-            disabled={disabled}
+            disabled={disabled && !queueWhileGenerating}
             rows={1}
             className="goal-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
           />
@@ -227,18 +256,42 @@ export function GoalComposerPill({
             providerId={providerId}
             modelId={modelId}
             onSelect={onModelSelect}
-            disabled={disabled}
+            disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}
           />
           {isGenerating ? (
-            <button
-              type="button"
-              aria-label={t('goalStop')}
-              className="goal-dock-composer-chip goal-dock-composer-stop inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
-              onClick={onStop}
-            >
-              <Square size={12} fill="currentColor" />
-            </button>
+            queueWhileGenerating ? (
+              <>
+                {onStop && (
+                  <button
+                    type="button"
+                    aria-label={t('goalStop')}
+                    className="goal-dock-composer-chip goal-dock-composer-stop inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+                    onClick={onStop}
+                  >
+                    <Square size={12} fill="currentColor" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label={t('goalSend')}
+                  className="goal-dock-composer-chip goal-dock-composer-send inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
+                  disabled={(disabled && !queueWhileGenerating) || !content.trim()}
+                  onClick={onSubmit}
+                >
+                  <ArrowUp size={15} />
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                aria-label={t('goalStop')}
+                className="goal-dock-composer-chip goal-dock-composer-stop inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+                onClick={onStop}
+              >
+                <Square size={12} fill="currentColor" />
+              </button>
+            )
           ) : (
             <button
               type="button"

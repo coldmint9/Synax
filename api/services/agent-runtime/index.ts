@@ -15,3 +15,4 @@ export * from './loop-guards.js';
 export * from './loop-prompt.js';
 export * from './loop-resume.js';
 export * from './loop-runtime.js';
+export * from './input-queue-service.js';

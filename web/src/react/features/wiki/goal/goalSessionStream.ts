@@ -5,6 +5,7 @@ import {
   type ToolCallStatus,
 } from '../../../../lib/api/agentRuntime'
 import type { SessionLiveEvent } from '../../../../lib/api/sessionLive'
+import { useAgentSessionStore } from '../../sessions/agentSessionStore'
 
 export type GoalSessionStatus = 'idle' | 'running' | 'waiting_permission' | 'completed' | 'failed'
 
@@ -141,6 +142,16 @@ export function applyGoalStreamChunk(
       }
     case 'run_completed':
       return { ...state, status: 'completed', error: null }
+    case 'input_injected':
+      if (state.sessionId) {
+        void useAgentSessionStore.getState().loadInputQueue(state.sessionId)
+      }
+      return {
+        ...state,
+        status: 'running',
+        streamingThinking: '',
+        streamingText: '',
+      }
     case 'done':
       if (state.status === 'waiting_permission') return state
       return { ...state, status: 'completed', error: null }

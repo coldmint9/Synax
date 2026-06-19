@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentSession, PermissionDecision } from '../../../lib/api/agentRuntime'
 import {
+  canEnqueueSessionInput,
   isSessionComposerLocked,
   patchAgentSession,
   sessionHasPendingPermissions,
@@ -77,6 +78,13 @@ describe('sessionComposerState', () => {
     const session = makeSession({ status: 'waiting_permission', activeRunId: 'run-1' })
     expect(isSessionComposerLocked(session, { hasPendingPermissions: false })).toBe(false)
     expect(isSessionComposerLocked(session, { hasPendingPermissions: true })).toBe(true)
+  })
+
+  it('allows enqueue while running or waiting permission', () => {
+    expect(canEnqueueSessionInput(makeSession({ status: 'running', activeRunId: 'run-1' }))).toBe(true)
+    expect(canEnqueueSessionInput(makeSession({ status: 'waiting_permission', activeRunId: 'run-1' }))).toBe(true)
+    expect(canEnqueueSessionInput(makeSession({ status: 'completed' }))).toBe(false)
+    expect(canEnqueueSessionInput(undefined)).toBe(false)
   })
 
   it('patches session fields locally', () => {

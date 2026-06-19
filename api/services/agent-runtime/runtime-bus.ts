@@ -1,6 +1,11 @@
 import { EventEmitter } from 'node:events';
 
-export type RuntimeBusEventType = 'session_changed' | 'session_created' | 'session_deleted' | 'session_step_completed';
+export type RuntimeBusEventType =
+  | 'session_changed'
+  | 'session_created'
+  | 'session_deleted'
+  | 'session_step_completed'
+  | 'session_input_queue_changed';
 
 export interface RuntimeBusEvent {
   type: RuntimeBusEventType;

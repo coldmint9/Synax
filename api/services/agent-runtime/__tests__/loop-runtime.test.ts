@@ -214,6 +214,7 @@ vi.mock('../../llm-runtime/gateway.js', () => ({
 }));
 
 import { agentLoopRuntime } from '../loop-runtime.js';
+import { inputQueueService } from '../input-queue-service.js';
 import { permissionPolicy } from '../permission-policy.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { agentRuntimeStore } from '../session-store.js';
@@ -658,5 +659,33 @@ describe('agentLoopRuntime', () => {
     expect(chunks.some((chunk) => chunk.type === 'run_started')).toBe(true);
     expect(chunks.some((chunk) => chunk.type === 'message')).toBe(true);
     expect(agentRuntimeStore.getSession(session.id).status).toBe('completed');
+  });
+
+  it('injects queued user input between steps', async () => {
+    const readPath = 'tmp/agent-loop-runtime-read.txt';
+    fs.mkdirSync(path.dirname(path.resolve(readPath)), { recursive: true });
+    fs.writeFileSync(path.resolve(readPath), 'queued inject file', 'utf8');
+
+    const session = agentSessionRuntime.create(executorInput);
+    inputQueueService.enqueue(session.id, { message: 'Please summarize after reading.' });
+
+    queueMockStep(
+      makeToolStep({
+        message: 'Reading file first.',
+        toolName: 'file_read',
+        toolCallId: 'call-read',
+        args: { path: readPath },
+      }),
+    );
+    queueMockStep(makeTextStep('Summary after queued input.'));
+
+    const chunks = await collectChunks(
+      agentLoopRuntime.streamRun(session.id, { message: 'Start by reading the file.' }),
+    );
+
+    expect(chunks.some((chunk) => chunk.type === 'input_injected')).toBe(true);
+    expect(inputQueueService.list(session.id)).toHaveLength(0);
+    const userMessages = agentRuntimeStore.listMessages(session.id).filter((m) => m.role === 'user');
+    expect(userMessages.some((m) => m.content.includes('Please summarize after reading.'))).toBe(true);
   });
 });

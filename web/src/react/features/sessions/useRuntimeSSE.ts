@@ -30,6 +30,10 @@ export function useRuntimeSSE() {
           const selected = useAgentSessionStore.getState().selectedSessionId
           if (sessionId === selected) void refreshDetail()
         },
+        session_input_queue_changed: (e) => {
+          const { sessionId } = JSON.parse(e.data) as { sessionId: string }
+          void useAgentSessionStore.getState().loadInputQueue(sessionId)
+        },
         session_created: () => void refreshSessions(),
         session_deleted: () => void refreshSessions(),
       },
