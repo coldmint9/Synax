@@ -10,7 +10,9 @@ import { goalSessionPath } from './sessionRoutes'
 import {
   isSessionComposerLocked,
   sessionHasPendingPermissions,
+  canEnqueueSessionInput,
 } from './sessionComposerState'
+import { InputQueueStrip } from './InputQueueStrip'
 import type { AgentSession } from '../../../lib/api/agentRuntime'
 
 interface Props {
@@ -25,6 +27,13 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const sendSessionMessage = useAgentSessionStore(s => s.sendSessionMessage)
+  const submitOrEnqueueSessionInput = useAgentSessionStore(s => s.submitOrEnqueueSessionInput)
+  const loadInputQueue = useAgentSessionStore(s => s.loadInputQueue)
+  const removeQueuedInput = useAgentSessionStore(s => s.removeQueuedInput)
+  const forceQueuedInput = useAgentSessionStore(s => s.forceQueuedInput)
+  const queuedInputs = useAgentSessionStore(s =>
+    sessionId ? (s.inputQueues[sessionId] ?? []) : [],
+  )
   const submitGoalDraft = useAgentSessionStore(s => s.submitGoalDraft)
   const cancelSessionRun = useAgentSessionStore(s => s.cancelSessionRun)
   const refreshSessions = useAgentSessionStore(s => s.refreshSessions)
@@ -34,6 +43,7 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
   )
   const isDraft = !session
   const isGenerating = isSessionComposerLocked(session, { submitting, hasPendingPermissions })
+  const queueWhileGenerating = canEnqueueSessionInput(session)
   const resyncedStaleWaitingRef = useRef(false)
 
   useEffect(() => {
@@ -71,9 +81,14 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
     }
   }, [globalConfig, providers, effectiveConfig, providerId, modelId, setProviderId, setModelId])
 
+  useEffect(() => {
+    if (!sessionId) return
+    void loadInputQueue(sessionId)
+  }, [loadInputQueue, sessionId])
+
   const handleSubmit = useCallback(async () => {
     const message = content.trim()
-    if (!message || isGenerating) return
+    if (!message || (isGenerating && !queueWhileGenerating)) return
     setContent('')
     setSubmitting(true)
     try {
@@ -82,12 +97,12 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
         navigate(goalSessionPath(projectId, created.id))
         await sendSessionMessage(created.id, { message, model: modelId })
       } else {
-        await sendSessionMessage(session.id, { message, model: modelId })
+        await submitOrEnqueueSessionInput(session.id, { message, model: modelId })
       }
     } finally {
       setSubmitting(false)
     }
-  }, [content, isDraft, isGenerating, modelId, navigate, projectId, sendSessionMessage, session, submitGoalDraft])
+  }, [content, isDraft, isGenerating, modelId, navigate, projectId, queueWhileGenerating, sendSessionMessage, session, submitGoalDraft, submitOrEnqueueSessionInput])
 
   const handleStop = useCallback(() => {
     if (session) void cancelSessionRun(session.id)
@@ -121,15 +136,23 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
       onSkillIdsChange={() => {}}
       permissionTier={permissionTier}
       onPermissionTierChange={setPermissionTier}
-      disabled={isGenerating}
+      disabled={isGenerating && !queueWhileGenerating}
+      queueWhileGenerating={queueWhileGenerating}
     />
   )
 
   const composerShell = (
     <div
-      className={`goal-session-composer-shell goal-dock-shell w-full${isCentered ? ' goal-session-composer-shell--draft' : ''}`}
+      className={`goal-session-composer-shell goal-dock-shell w-full flex flex-col items-center${isCentered ? ' goal-session-composer-shell--draft' : ''}`}
       data-multiline={expandedShell ? 'true' : undefined}
     >
+      {sessionId && (
+        <InputQueueStrip
+          items={queuedInputs}
+          onRemove={(itemId) => void removeQueuedInput(sessionId, itemId)}
+          onForce={(itemId) => void forceQueuedInput(sessionId, itemId)}
+        />
+      )}
       <div className="goal-dock-shell-content">{composer}</div>
     </div>
   )

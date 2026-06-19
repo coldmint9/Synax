@@ -26,6 +26,13 @@ export function isSessionComposerLocked(
   return session.status === 'running' && Boolean(session.activeRunId)
 }
 
+export function canEnqueueSessionInput(session: AgentSession | undefined): boolean {
+  if (!session) return false
+  if (session.status === 'running' && Boolean(session.activeRunId)) return true
+  if (session.status === 'waiting_permission') return true
+  return false
+}
+
 export function sessionHasPendingPermissions(
   sessionId: string | undefined,
   selectedSessionId: string | null,

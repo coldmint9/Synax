@@ -26,6 +26,7 @@ function connect() {
   const eventTypes = [
     'session_changed',
     'session_step_completed',
+    'session_input_queue_changed',
     'session_created',
     'session_deleted',
   ]

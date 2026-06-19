@@ -591,6 +591,7 @@ export type AgentRunStreamChunk =
   | { type: 'permission_requested'; runId: string; stepId: string; permission: PermissionDecision; toolCall: ToolCallRecord; event?: RuntimeEvent }
   | { type: 'run_resumed'; run: AgentRun; event?: RuntimeEvent }
   | { type: 'message'; message: AgentRuntimeMessage }
+  | { type: 'input_injected'; message: AgentRuntimeMessage; queueItemId: string }
   | { type: 'event'; event: RuntimeEvent }
   | { type: 'run_completed'; run: AgentRun; message?: AgentRuntimeMessage; event?: RuntimeEvent }
   | { type: 'context_compacted'; runId: string; stepId: string; originalTokens: number; compressedTokens: number; messageCount: number; event?: RuntimeEvent }

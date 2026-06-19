@@ -58,6 +58,7 @@ import { emitSessionLive } from "../../lib/ipc/agent-session-protocol.js";
 import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
 import { logger } from "../../lib/logger.js";
 import { CONTEXT_TOOL_CLEAR_THRESHOLD, CONTEXT_TOOL_CLEAR_KEEP_RECENT, CONTEXT_TOOL_CLEAR_EXCLUDE } from "../../lib/env.js";
+import { inputQueueService } from "./input-queue-service.js";
 
 const LOG_TEXT_LIMIT = 2000;
 const ACTIVE_SESSION_WAIT_MS = 25;
@@ -428,6 +429,7 @@ export class AgentLoopRuntime {
           : [];
 
         let modelResult: LoopStepModelResult | null = null;
+        let stepForceInjectRequested = false;
         void sessionHooks.emit({ type: 'step:before', sessionId, runId: run.id, stepIndex: step.index });
         for await (const event of this.generateStep({
           sessionId,
@@ -449,6 +451,10 @@ export class AgentLoopRuntime {
           abortSignal: runAbortSignal,
           clearingActivated,
         })) {
+          if (inputQueueService.getForceInjectId(sessionId)) {
+            stepForceInjectRequested = true;
+            break;
+          }
           if (event.type === "thought_delta") {
             const evt = this.events.append({
               sessionId,
@@ -504,6 +510,24 @@ export class AgentLoopRuntime {
             };
             emitSessionLive(sessionId, { type: 'context_compacted', stepId: step.id, originalTokens: event.originalTokens, compressedTokens: event.compressedTokens, messageCount: event.messageCount });
           }
+        }
+
+        if (stepForceInjectRequested) {
+          this.store.updateRunStep(step.id, {
+            status: "interrupted",
+            completedAt: nowIso(),
+            finishReason: "input_force_inject",
+          });
+          void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
+          const forced = this.injectQueuedInput(sessionId, run);
+          if (forced) {
+            yield { type: "input_injected", message: forced.userMessage, queueItemId: forced.queueItemId };
+            currentPrompt = forced.message;
+            if (forced.model) {
+              input = { ...input, model: forced.model };
+            }
+          }
+          continue;
         }
 
         if (!modelResult) {
@@ -676,6 +700,24 @@ export class AgentLoopRuntime {
           };
           yield { type: "done", sessionId, runId: completedRun.id };
           return;
+        }
+
+        if (inputQueueService.getForceInjectId(sessionId)) {
+          this.store.updateRunStep(step.id, {
+            status: "interrupted",
+            completedAt: nowIso(),
+            finishReason: "input_force_inject",
+          });
+          void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
+          const forced = this.injectQueuedInput(sessionId, run);
+          if (forced) {
+            yield { type: "input_injected", message: forced.userMessage, queueItemId: forced.queueItemId };
+            currentPrompt = forced.message;
+            if (forced.model) {
+              input = { ...input, model: forced.model };
+            }
+          }
+          continue;
         }
 
         let waitingPermission = null as null | {
@@ -1004,6 +1046,17 @@ export class AgentLoopRuntime {
 
         currentPrompt = prompt;
         pendingPermission = null;
+
+        if (inputQueueService.hasPending(sessionId)) {
+          const injected = this.injectQueuedInput(sessionId, run);
+          if (injected) {
+            yield { type: "input_injected", message: injected.userMessage, queueItemId: injected.queueItemId };
+            currentPrompt = injected.message;
+            if (injected.model) {
+              input = { ...input, model: injected.model };
+            }
+          }
+        }
       }
 
       const stoppedRun = this.store.updateRun(run.id, {
@@ -1175,6 +1228,42 @@ export class AgentLoopRuntime {
   ): Promise<void> {
     this.interruptSessions(sessionIds, reason);
     await this.waitForIdleSessions(sessionIds, timeoutMs);
+  }
+
+  private injectQueuedInput(
+    sessionId: string,
+    run: AgentRun,
+  ): { message: string; model: string | null; userMessage: AgentRuntimeMessage; queueItemId: string } | null {
+    const item = inputQueueService.consumeNext(sessionId);
+    if (!item) return null;
+
+    const userMessage = this.store.appendMessage({
+      id: makeRuntimeId("msg"),
+      sessionId,
+      runId: run.id,
+      stepId: null,
+      role: "user",
+      content: item.message,
+      metadata: { source: "input_queue", queueItemId: item.id },
+      createdAt: nowIso(),
+    });
+    this.events.append({
+      sessionId,
+      type: "progress_updated",
+      summary: `User input injected from queue`,
+      payload: { queueItemId: item.id, messageId: userMessage.id, runId: run.id },
+      visibility: "user_visible",
+    });
+    logger.info(
+      { sessionId, runId: run.id, queueItemId: item.id, messageId: userMessage.id },
+      "[agent-runtime] queued user input injected at step boundary",
+    );
+    return {
+      message: item.message,
+      model: item.model ?? null,
+      userMessage,
+      queueItemId: item.id,
+    };
   }
 
   private createRun(

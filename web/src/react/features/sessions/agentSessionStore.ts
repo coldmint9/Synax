@@ -6,6 +6,7 @@ import {
   type AgentRuntimeMessage,
   type AgentSession,
   type PermissionDecision,
+  type QueuedInput,
   type RuntimeEvent,
   type SessionStats,
   type SessionCapabilities,
@@ -17,7 +18,7 @@ import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '.
 import { AppError } from '../../../lib/errors'
 import { SYNAX_PROFILE_ID, createSynaxSessionMetadata } from '../wiki/goal/goalAttachTypes'
 import { useNotificationStore } from '../../state/notificationStore'
-import { patchAgentSession } from './sessionComposerState'
+import { patchAgentSession, canEnqueueSessionInput } from './sessionComposerState'
 
 const READ_MARKERS_KEY = 'synax-session-read-markers'
 
@@ -164,6 +165,12 @@ function onSessionStreamChunk(sessionId: string, chunk: unknown): void {
   if (patch) {
     useAgentSessionStore.getState().patchSession(sessionId, patch)
   }
+  if (chunk && typeof chunk === 'object' && (chunk as { type?: string }).type === 'input_injected') {
+    void useAgentSessionStore.getState().loadInputQueue(sessionId)
+    if (useAgentSessionStore.getState().selectedSessionId === sessionId) {
+      void useAgentSessionStore.getState().refreshDetail()
+    }
+  }
 }
 
 function patchSessionDetailCache(
@@ -299,6 +306,8 @@ export interface AgentSessionStoreState {
     toolCalls: ToolCallRecord[]
   }>
 
+  inputQueues: Record<string, QueuedInput[]>
+
   setProjectId: (projectId: string | null) => void
   refreshSessions: () => Promise<void>
   resetSessionDetailForDraft: () => void
@@ -315,6 +324,12 @@ export interface AgentSessionStoreState {
   fetchSessionCapabilities: () => Promise<void>
   replyPermission: (permissionId: string, reply: 'once' | 'always' | 'reject') => Promise<void>
   sendSessionMessage: (sessionId: string, body: { message: string; model?: string | null }) => Promise<void>
+  submitOrEnqueueSessionInput: (sessionId: string, body: { message: string; model?: string | null }) => Promise<'sent' | 'queued'>
+  loadInputQueue: (sessionId: string) => Promise<void>
+  enqueueSessionInput: (sessionId: string, body: { message: string; model?: string | null }) => Promise<void>
+  removeQueuedInput: (sessionId: string, itemId: string) => Promise<void>
+  forceQueuedInput: (sessionId: string, itemId: string) => Promise<void>
+  setInputQueue: (sessionId: string, items: QueuedInput[]) => void
   cancelSessionRun: (sessionId: string) => Promise<void>
   applyLiveEvent: (event: SessionLiveEvent) => void
   patchSession: (sessionId: string, patch: Partial<AgentSession>) => void
@@ -391,6 +406,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   streamingThinking: '',
   streamingToolCalls: [],
   streamingCompletedSteps: [],
+  inputQueues: {},
 
   setProjectId: (projectId) => {
     if (projectId === get().projectId) return
@@ -513,6 +529,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     })
     if (isSwitch) clearStreamingBuffers()
     ensureLiveStream(sessionId)
+    void get().loadInputQueue(sessionId)
 
     const needsRefresh = !cached || isActiveSessionStatus(session?.status) || !cacheFresh
     if (needsRefresh) void get().refreshDetail()
@@ -732,6 +749,44 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       void get().refreshSessions()
       void get().refreshDetail()
     }
+  },
+
+  submitOrEnqueueSessionInput: async (sessionId, body) => {
+    const session = get().sessions.find(s => s.id === sessionId)
+    if (canEnqueueSessionInput(session)) {
+      await get().enqueueSessionInput(sessionId, body)
+      return 'queued'
+    }
+    await get().sendSessionMessage(sessionId, body)
+    return 'sent'
+  },
+
+  loadInputQueue: async (sessionId) => {
+    try {
+      const { items } = await agentRuntimeApi.listInputQueue(sessionId)
+      get().setInputQueue(sessionId, items)
+    } catch { /* silent */ }
+  },
+
+  enqueueSessionInput: async (sessionId, body) => {
+    const { items } = await agentRuntimeApi.enqueueInput(sessionId, body)
+    get().setInputQueue(sessionId, items)
+  },
+
+  removeQueuedInput: async (sessionId, itemId) => {
+    const { items } = await agentRuntimeApi.removeQueuedInput(sessionId, itemId)
+    get().setInputQueue(sessionId, items)
+  },
+
+  forceQueuedInput: async (sessionId, itemId) => {
+    const { items } = await agentRuntimeApi.forceQueuedInput(sessionId, itemId)
+    get().setInputQueue(sessionId, items)
+  },
+
+  setInputQueue: (sessionId, items) => {
+    set(s => ({
+      inputQueues: { ...s.inputQueues, [sessionId]: items },
+    }))
   },
 
   cancelSessionRun: async (sessionId) => {

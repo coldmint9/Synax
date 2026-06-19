@@ -154,6 +154,13 @@ export interface AgentContextBundle {
   createdAt: string
 }
 
+export interface QueuedInput {
+  id: string
+  message: string
+  model: string | null
+  enqueuedAt: string
+}
+
 export interface PermissionDecision {
   id: string
   sessionId: string
@@ -432,4 +439,26 @@ export const agentRuntimeApi = {
       }
     }
   },
+
+  listInputQueue: (sessionId: string) =>
+    apiRequest<{ items: QueuedInput[] }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue`),
+
+  enqueueInput: (sessionId: string, body: { message: string; model?: string | null }) =>
+    apiRequest<{ items: QueuedInput[] }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
+  removeQueuedInput: (sessionId: string, itemId: string) =>
+    apiRequest<{ items: QueuedInput[] }>(
+      `${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue/${encodeURIComponent(itemId)}`,
+      { method: 'DELETE' },
+    ),
+
+  forceQueuedInput: (sessionId: string, itemId: string) =>
+    apiRequest<{ items: QueuedInput[]; forceInjectItemId: string }>(
+      `${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue/${encodeURIComponent(itemId)}/force`,
+      { method: 'POST' },
+    ),
 }
