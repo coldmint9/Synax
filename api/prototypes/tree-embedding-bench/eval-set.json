@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "description": "自然语言 → 代码符号 retrieval 测评集（语料：fixtures/samples）",
+  "cases": [
+    {
+      "id": "jwt-validate",
+      "category": "auth",
+      "difficulty": "easy",
+      "target": { "file": "auth.ts", "symbol": "validateToken" },
+      "queries": [
+        { "lang": "en", "text": "validate JWT token expiration and signature" },
+        { "lang": "zh", "text": "校验 JWT 令牌是否过期并验证签名" },
+        { "lang": "zh", "text": "检查 token 三段式结构和 exp 字段" }
+      ]
+    },
+    {
+      "id": "password-hash",
+      "category": "auth",
+      "difficulty": "easy",
+      "target": { "file": "auth.ts", "symbol": "hashPassword" },
+      "queries": [
+        { "lang": "en", "text": "hash user password with salt for storage" },
+        { "lang": "zh", "text": "用 salt 哈希用户密码以便存储" },
+        { "lang": "zh", "text": "密码加密 pbkdf2" }
+      ]
+    },
+    {
+      "id": "session-store",
+      "category": "auth",
+      "difficulty": "medium",
+      "target": { "file": "auth.ts", "symbol": "SessionStore" },
+      "queries": [
+        { "lang": "en", "text": "in-memory session store with TTL expiration" },
+        { "lang": "zh", "text": "内存会话存储，支持过期时间" },
+        { "lang": "zh", "text": "管理用户登录 session 的类" }
+      ]
+    },
+    {
+      "id": "jwt-decode",
+      "category": "auth",
+      "difficulty": "hard",
+      "target": { "file": "auth.ts", "symbol": "decodePayload" },
+      "queries": [
+        { "lang": "en", "text": "decode base64url JWT payload segment to JSON" },
+        { "lang": "zh", "text": "把 JWT 中间段 base64 解码成 JSON" },
+        { "lang": "zh", "text": "解析 token payload 里的 exp 过期时间" }
+      ]
+    },
+    {
+      "id": "search-tokenize",
+      "category": "search",
+      "difficulty": "easy",
+      "target": { "file": "search.ts", "symbol": "tokenizeQuery" },
+      "queries": [
+        { "lang": "en", "text": "split search query into normalized tokens" },
+        { "lang": "zh", "text": "把搜索词拆分成归一化 token" },
+        { "lang": "zh", "text": "用户输入的分词预处理" }
+      ]
+    },
+    {
+      "id": "search-rank",
+      "category": "search",
+      "difficulty": "medium",
+      "target": { "file": "search.ts", "symbol": "rankHits" },
+      "queries": [
+        { "lang": "en", "text": "rank documents by query token overlap score" },
+        { "lang": "zh", "text": "按 query 与文档 token 重叠度排序" },
+        { "lang": "zh", "text": "搜索结果打分和排序" }
+      ]
+    },
+    {
+      "id": "search-auth-gate",
+      "category": "search",
+      "difficulty": "medium",
+      "target": { "file": "search.ts", "symbol": "searchWithAuth" },
+      "queries": [
+        { "lang": "en", "text": "search documents after validating auth token" },
+        { "lang": "zh", "text": "先验证 token 再执行全文搜索" },
+        { "lang": "zh", "text": "带鉴权的搜索入口" }
+      ]
+    },
+    {
+      "id": "router-class",
+      "category": "http",
+      "difficulty": "easy",
+      "target": { "file": "router.ts", "symbol": "Router" },
+      "queries": [
+        { "lang": "en", "text": "HTTP router that registers and matches routes" },
+        { "lang": "zh", "text": "HTTP 路由器，注册和匹配路径" },
+        { "lang": "zh", "text": "管理 GET POST 路由表的类" }
+      ]
+    },
+    {
+      "id": "route-dispatch",
+      "category": "http",
+      "difficulty": "medium",
+      "target": { "file": "router.ts", "symbol": "dispatch" },
+      "queries": [
+        { "lang": "en", "text": "dispatch HTTP request to registered route handler" },
+        { "lang": "zh", "text": "把 HTTP 请求分发给对应 handler" },
+        { "lang": "zh", "text": "根据 method 和 path 调用处理函数" }
+      ]
+    },
+    {
+      "id": "route-register",
+      "category": "http",
+      "difficulty": "medium",
+      "target": { "file": "router.ts", "symbol": "register" },
+      "queries": [
+        { "lang": "en", "text": "register a route handler for method and path" },
+        { "lang": "zh", "text": "注册路由和处理函数" },
+        { "lang": "zh", "text": "添加 GET 或 POST 端点" }
+      ]
+    },
+    {
+      "id": "json-response",
+      "category": "http",
+      "difficulty": "easy",
+      "target": { "file": "router.ts", "symbol": "jsonResponse" },
+      "queries": [
+        { "lang": "en", "text": "build JSON HTTP response with status code" },
+        { "lang": "zh", "text": "构造 JSON 格式的 HTTP 响应" },
+        { "lang": "zh", "text": "返回 application/json 响应体" }
+      ]
+    },
+    {
+      "id": "json-parse-body",
+      "category": "http",
+      "difficulty": "easy",
+      "target": { "file": "router.ts", "symbol": "parseJsonBody" },
+      "queries": [
+        { "lang": "en", "text": "parse JSON request body into typed object" },
+        { "lang": "zh", "text": "解析请求体 JSON 字符串" },
+        { "lang": "zh", "text": "把 POST body 转成对象" }
+      ]
+    }
+  ]
+}

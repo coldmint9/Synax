@@ -68,3 +68,6 @@ export const AGENT_SESSION_CHILD_READY_TIMEOUT_MS = Number(env('AGENT_SESSION_CH
 
 /** Wiki Phase 2: max verifier/corrector agents in flight */
 export const WIKI_VERIFY_CONCURRENCY = Number(env('WIKI_VERIFY_CONCURRENCY', '3'));
+
+/** 本地 EmbeddingGemma (llama.cpp) 服务地址，供 tree-embedding-bench 原型使用 */
+export const EMBEDDING_BASE_URL = env('EMBEDDING_BASE_URL', 'http://127.0.0.1:8080');
