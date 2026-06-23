@@ -29,6 +29,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint api/",
     "test": "vitest run",
+    "bench:repl": "tsx scripts/tree-embedding-repl.ts",
+    "bench:eval": "tsx scripts/tree-embedding-repl.ts --eval",
     "dev:desktop": "tsx scripts/dev-desktop.ts",
     "build:electron": "tsc -p electron/tsconfig.json",
     "build:desktop": "npm run build && npm run web:build && npm run build:electron && electron-forge package",
