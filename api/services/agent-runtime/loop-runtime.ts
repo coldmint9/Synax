@@ -32,22 +32,8 @@ import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
-import {
-  type DisclosureState,
-  type DisclosureStrategy,
-  type FallbackDisclosureState,
-  advance as advanceDisclosure,
-  createState as createDisclosureState,
-  filterByDisclosure,
-  filterFallbackTools,
-  getStrategyForProfile,
-  isTerminalTier,
-  promote as promoteDisclosure,
-  rebuildState as rebuildDisclosureState,
-  rebuildFallbackState,
-  advanceFallbackState,
-  createFallbackState,
-} from "./tool-disclosure.js";
+import { rebuildSessionFileReads } from "./read-tracker.js";
+import { skillRegistry } from "./skill-registry.js";
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
 import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
 import { buildTaskDriftReminder } from "./tools/task-tools.js";
@@ -348,24 +334,7 @@ export class AgentLoopRuntime {
         pendingResume = null;
       }
 
-      const disclosureStrategy = getStrategyForProfile(profile.kind);
-      // Rebuild disclosure state from ALL session tool calls — not just the
-      // current run. When a session is interrupted and resumed, a new run is
-      // created (resume=false), and run-level tool calls would be empty,
-      // causing disclosure state (and therefore tool permissions) to reset.
-      let disclosureState: DisclosureState | null = disclosureStrategy
-        ? rebuildDisclosureState(
-            this.store.listToolCalls(sessionId),
-            disclosureStrategy.escalationToolId,
-          )
-        : null;
-
-      let fallbackState: FallbackDisclosureState | null = profile.fallbackDisclosure
-        ? rebuildFallbackState(
-            this.store.listToolCalls(sessionId),
-            profile.fallbackDisclosure,
-          )
-        : null;
+      rebuildSessionFileReads(sessionId, this.store.listToolCalls(sessionId));
 
       let clearingActivated = false;
 
@@ -444,9 +413,6 @@ export class AgentLoopRuntime {
           maxSteps,
           mustFinalize: shouldForceFinalSummary(step.index, maxSteps),
           blockedByPermission: pendingPermission?.userReply === "reject",
-          disclosureState: disclosureState,
-          disclosureStrategy: disclosureStrategy,
-          fallbackState: fallbackState,
           previousStepUsage: previousStep?.metadata?.usage as Record<string, unknown> | undefined,
           abortSignal: runAbortSignal,
           clearingActivated,
@@ -864,9 +830,6 @@ export class AgentLoopRuntime {
             );
             yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
             emitSessionLive(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
-            if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
-              disclosureState = promoteDisclosure(disclosureState);
-            }
           }
         } else {
           // No permission issues — resolve subagent delegation results in parallel,
@@ -895,38 +858,6 @@ export class AgentLoopRuntime {
             );
             yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
             emitSessionLive(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
-            if (disclosureState && disclosureStrategy && call.toolId === disclosureStrategy.escalationToolId) {
-              disclosureState = promoteDisclosure(disclosureState);
-            }
-          }
-        }
-
-        if (disclosureState) {
-          disclosureState = advanceDisclosure(disclosureState);
-        }
-
-        // Advance fallback disclosure based on bash results in this step.
-        if (fallbackState && profile.fallbackDisclosure) {
-          for (const { exec } of executions) {
-            if (exec.record.toolId === profile.fallbackDisclosure.trackedToolId) {
-              const { state: nextState, justDisclosed } = advanceFallbackState(
-                fallbackState, exec.record, profile.fallbackDisclosure,
-              );
-              fallbackState = nextState;
-              if (justDisclosed) {
-                logger.info(
-                  { sessionId, runId: run.id, stepId: step.id, fallbackTools: profile.fallbackDisclosure.fallbackToolIds },
-                  "[agent-runtime] fallback tools disclosed after consecutive bash errors",
-                );
-                this.events.append({
-                  sessionId,
-                  type: 'progress_updated',
-                  summary: `Fallback tools unlocked: ${profile.fallbackDisclosure.fallbackToolIds.join(', ')}`,
-                  payload: { kind: 'fallback_disclosure', tools: profile.fallbackDisclosure.fallbackToolIds },
-                });
-                emitSessionLive(sessionId, { type: 'fallback_disclosed', tools: profile.fallbackDisclosure.fallbackToolIds } as any);
-              }
-            }
           }
         }
 
@@ -1298,9 +1229,6 @@ export class AgentLoopRuntime {
     maxSteps: number;
     mustFinalize: boolean;
     blockedByPermission: boolean;
-    disclosureState: DisclosureState | null;
-    disclosureStrategy: DisclosureStrategy | null;
-    fallbackState: FallbackDisclosureState | null;
     previousStepUsage?: Record<string, unknown> | null;
     abortSignal?: AbortSignal;
     clearingActivated?: boolean;
@@ -1350,15 +1278,7 @@ export class AgentLoopRuntime {
           tool.category === "skill" ||
           tool.id === "tools.invalid",
       );
-    let visibleTools =
-      input.disclosureState && input.disclosureStrategy
-        ? filterByDisclosure(availableTools, input.disclosureState, input.disclosureStrategy)
-        : availableTools;
-    // Apply fallback disclosure — hide tools that bash can cover until bash fails repeatedly.
-    if (input.fallbackState && input.profile.fallbackDisclosure) {
-      visibleTools = filterFallbackTools(visibleTools, input.fallbackState, input.profile.fallbackDisclosure);
-    }
-    const toolSet = buildLoopToolSet(availableTools, visibleTools);
+    const toolSet = buildLoopToolSet(availableTools);
     const contextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
 
     const prevInputTokens = typeof input.previousStepUsage?.inputTokens === 'number'
@@ -1404,6 +1324,15 @@ export class AgentLoopRuntime {
       projectRulesSection = null;
     }
 
+    const skillCandidates = skillRegistry.listSummaries({ profileId: input.profile.id });
+    const skillsSection = skillCandidates.length > 0
+      ? [
+        '## Available skills',
+        'Call skill.load with skillId when a skill description matches the task. Full instructions load on demand.',
+        ...skillCandidates.map((skill) => `- ${skill.id}: ${skill.label} — ${skill.description}`),
+      ].join('\n')
+      : null;
+
     const systemPromptContent = buildLoopSystemPrompt({
       profile: input.profile,
       context: input.context,
@@ -1425,14 +1354,7 @@ export class AgentLoopRuntime {
         : null,
       projectMemoriesSection,
       projectRulesSection,
-      disclosureHint:
-        input.disclosureState && input.disclosureStrategy && !isTerminalTier(input.disclosureState, input.disclosureStrategy)
-          ? 'Currently in exploration mode. Call tools_escalate when ready to write files.'
-          : undefined,
-      fallbackHint:
-        input.fallbackState?.disclosed
-          ? 'Fallback tools (file.read, file.glob, file.list, grep.search, diff.read) are now available after repeated bash failures. Use them if bash is not working for this task.'
-          : undefined,
+      skillsSection,
     });
 
     const compactionConfig = getCompactionConfig();
@@ -1443,7 +1365,7 @@ export class AgentLoopRuntime {
         conversationMessages as unknown as import('../llm-runtime/types.js').LlmGatewayMessage[],
         input.input.model ?? undefined,
       ) +
-      estimateToolDefinitionsTokens(visibleTools.length, input.input.model ?? undefined)
+      estimateToolDefinitionsTokens(availableTools.length, input.input.model ?? undefined)
     );
 
     if (shouldCompact(totalTokens, contextLimit, compactionConfig)) {

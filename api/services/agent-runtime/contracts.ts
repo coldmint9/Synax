@@ -162,15 +162,6 @@ export interface ToolPolicy {
   maxParallelReadTools?: number;
 }
 
-export interface FallbackDisclosureConfig {
-  /** Tool IDs that are hidden initially and only disclosed on repeated failures. */
-  fallbackToolIds: string[];
-  /** The tool whose errors are tracked (typically 'bash'). */
-  trackedToolId: string;
-  /** How many consecutive tracked-tool errors trigger disclosure. */
-  consecutiveErrorThreshold: number;
-}
-
 export interface AgentProfile {
   id: string;
   label: string;
@@ -192,7 +183,6 @@ export interface AgentProfile {
    *  to 3 when unset. Read-only exploration profiles (explorer/verifier) may set
    *  a higher value since their bash probing fails more freely while self-healing. */
   consecutiveFailureReminderThreshold?: number;
-  fallbackDisclosure?: FallbackDisclosureConfig;
   /** ID of a SessionToolProvider that supplies tools/hooks for this profile's sessions.
    *  The provider is consulted on every tool listing and execution so that
    *  paused/interrupted sessions recover their tool set on resume. */

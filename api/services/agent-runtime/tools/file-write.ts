@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
+import { assertSessionFileReadForWrite } from '../read-tracker.js';
 import { resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
 
 export const fileWriteTool: RegisteredTool = {
@@ -28,6 +29,7 @@ export const fileWriteTool: RegisteredTool = {
     const args = input.args as { path?: string; content?: string };
     if (!args?.path) throw new Error('path is required.');
     if (typeof args.content !== 'string') throw new Error('content must be a string.');
+    assertSessionFileReadForWrite(input.sessionId, args.path);
     const filePath = resolveWorkspacePath(args.path, input.sessionId);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, args.content, 'utf8');

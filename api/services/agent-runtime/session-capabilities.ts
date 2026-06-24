@@ -1,16 +1,8 @@
 import type { AgentProfile, AgentSkill, RegisteredTool } from './contracts.js';
 import { profileService } from './profile-service.js';
 import { agentSessionRuntime } from './session-runtime.js';
-import { agentRuntimeStore } from './session-store.js';
 import { skillRegistry } from './skill-registry.js';
 import { toolRegistry } from './tool-registry.js';
-import {
-  filterByDisclosure,
-  filterFallbackTools,
-  getStrategyForProfile,
-  rebuildFallbackState,
-  rebuildState as rebuildDisclosureState,
-} from './tool-disclosure.js';
 
 export type ToolSummary = Omit<RegisteredTool, 'execute'>;
 type SkillSummary = Omit<AgentSkill, 'content'>;
@@ -62,22 +54,9 @@ export function resolveSessionCapabilities(sessionId: string): SessionCapabiliti
   const profile = profileService.get(session.profileId);
   const available = filterAvailableTools(toolRegistry.listForSession(sessionId), profile);
 
-  const disclosureStrategy = getStrategyForProfile(profile.kind);
-  const toolCalls = agentRuntimeStore.listToolCalls(sessionId);
-
-  let visible = available;
-  if (disclosureStrategy) {
-    const disclosureState = rebuildDisclosureState(toolCalls, disclosureStrategy.escalationToolId);
-    visible = filterByDisclosure(available, disclosureState, disclosureStrategy);
-  }
-  if (profile.fallbackDisclosure) {
-    const fallbackState = rebuildFallbackState(toolCalls, profile.fallbackDisclosure);
-    visible = filterFallbackTools(visible, fallbackState, profile.fallbackDisclosure);
-  }
-
   return {
     profile: { id: profile.id, label: profile.label, kind: profile.kind },
-    tools: { available, visible },
+    tools: { available, visible: available },
     skills: {
       active: resolveActiveSkills(session.skillIds),
       candidates: skillRegistry.listSummaries({ profileId: profile.id }),

@@ -16,7 +16,6 @@ const planPlannerBase: Omit<AgentProfile, 'id' | 'label'> = {
     'grep.search',
     'plan.read_wiki_document',
     'plan.submit_node',
-    'tools.escalate',
   ],
   permissionDefaults: [
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Plan planner reads freely.' },

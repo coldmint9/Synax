@@ -18,9 +18,8 @@ interface BuildLoopPromptInput {
   maxSteps: number;
   stepIndex: number;
   mustFinalize?: boolean;
-  disclosureHint?: string;
-  /** Hint shown when fallback tools are disclosed after bash failures. */
-  fallbackHint?: string;
+  /** Skill summaries (id, label, description) for on-demand skill.load. */
+  skillsSection?: string | null;
   /** Synax session mode prompt section when profileId is synax. */
   modePromptSection?: string | null;
   /** Synax active variant prompt section. */
@@ -69,7 +68,7 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     'If a write depends on a read result, call the read tool first, receive the result, then call the write tool in the next step.',
     'Compatibility fallback only when native tool calling is unavailable: start the response with exactly {"tool":"tool.id","args":{...}} followed by optional short status text.',
     'Prefer the bash tool for file search, listing, and text inspection. It accepts read-only Unix commands (rg, grep, find, ls, cat, head, tail, wc, sort, uniq, sed, awk, git diff/log/show, etc.) and supports pipes and command chaining. Combine multiple operations into a single bash call to reduce round trips.',
-    input.fallbackHint ?? '',
+    'When overwriting an existing file with file.write or file.patch, you must file.read that file first in this session.',
     'When proposing file changes, prefer specific file paths and bounded edits.',
     buildTaskTrackingSection(input.profile),
     loopHints,
@@ -77,7 +76,7 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     input.variantPromptSection ? `\n${input.variantPromptSection}` : '',
     input.intentPromptSection ? `\n${input.intentPromptSection}` : '',
     input.projectMemoriesSection ? `\n${input.projectMemoriesSection}` : '',
-    input.disclosureHint ?? '',
+    input.skillsSection ? `\n${input.skillsSection}` : '',
     '',
     input.projectRulesSection
       ? `[Project Rules]\nFollow these repository instruction files:\n\n${input.projectRulesSection}`

@@ -17,7 +17,6 @@ export const planExecutorProfile: AgentProfile = {
     'file.delete',
     'grep.search',
     'diff.read',
-    'tools.escalate',
   ],
   permissionDefaults: [
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Executor reads freely.' },
