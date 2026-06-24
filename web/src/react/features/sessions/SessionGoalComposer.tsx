@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAgentSessionStore } from './agentSessionStore'
+import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from './agentSessionStore'
 import { useConfig } from '../settings/useConfig'
 import { useWikiStore } from '../../state/wikiStore'
 import { useLocale } from '../../../hooks/useLocale'
@@ -31,13 +31,13 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
   const loadInputQueue = useAgentSessionStore(s => s.loadInputQueue)
   const removeQueuedInput = useAgentSessionStore(s => s.removeQueuedInput)
   const forceQueuedInput = useAgentSessionStore(s => s.forceQueuedInput)
+  const sessionId = session?.id
   const queuedInputs = useAgentSessionStore(s =>
-    sessionId ? (s.inputQueues[sessionId] ?? []) : [],
+    sessionId ? (s.inputQueues[sessionId] ?? EMPTY_INPUT_QUEUE) : EMPTY_INPUT_QUEUE,
   )
   const submitGoalDraft = useAgentSessionStore(s => s.submitGoalDraft)
   const cancelSessionRun = useAgentSessionStore(s => s.cancelSessionRun)
   const refreshSessions = useAgentSessionStore(s => s.refreshSessions)
-  const sessionId = session?.id
   const hasPendingPermissions = useAgentSessionStore(s =>
     sessionHasPendingPermissions(sessionId, s.selectedSessionId, s.permissions),
   )
