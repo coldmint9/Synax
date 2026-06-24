@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
+import { assertSessionFileReadForWrite } from '../read-tracker.js';
 import { resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
 import { deriveNewContentsFromChunks, parseApplyPatchEnvelope } from './patch-format.js';
 
@@ -82,6 +83,7 @@ export const filePatchTool: RegisteredTool = {
     if (!args.patch && typeof args.content !== 'string') {
       throw new Error('patch or content is required.');
     }
+    assertSessionFileReadForWrite(input.sessionId, args.path);
     const filePath = resolveWorkspacePath(args.path, input.sessionId);
     const current = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
     let next = current;

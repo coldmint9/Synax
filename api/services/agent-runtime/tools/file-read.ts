@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
+import { recordSessionFileRead } from '../read-tracker.js';
 import { resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
 
 const MAX_READ_BYTES = 64_000;
@@ -70,6 +71,7 @@ export const fileReadTool: RegisteredTool = {
     const truncated = buffer.length > maxBytes;
     const content = buffer.subarray(0, maxBytes).toString('utf8');
     const relPath = toWorkspaceRelative(filePath, input.sessionId);
+    recordSessionFileRead(input.sessionId, relPath);
 
     const truncationNotice = truncated
       ? `\n\n[FILE TRUNCATED: showing ${maxBytes} of ${buffer.length} bytes. Use maxBytes or re-read with an offset to see more.]`

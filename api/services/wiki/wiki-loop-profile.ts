@@ -1,16 +1,9 @@
-import type { AgentProfile, FallbackDisclosureConfig } from '../agent-runtime/contracts.js';
+import type { AgentProfile } from '../agent-runtime/contracts.js';
 import { profileService } from '../agent-runtime/profile-service.js';
 import { toolRegistry } from '../agent-runtime/tool-registry.js';
 import { registerTitleGenerator } from '../agent-runtime/session-title-service.js';
 import { wikiAgentToolProvider } from './wiki-agent-tool-provider.js';
 import { wikiSessionToolProvider } from './wiki-session-tool-provider.js';
-
-/** Shared fallback config: file/grep tools hidden until bash errors 4 times in a row. */
-const WIKI_FALLBACK_DISCLOSURE: FallbackDisclosureConfig = {
-  fallbackToolIds: ['file.read', 'file.list', 'file.glob', 'grep.search', 'diff.read'],
-  trackedToolId: 'bash',
-  consecutiveErrorThreshold: 4,
-};
 
 export const wikiPlannerProfile: AgentProfile = {
   id: 'wiki-planner',
@@ -26,7 +19,6 @@ export const wikiPlannerProfile: AgentProfile = {
     'wiki.create_outline_draft',
     'wiki.edit_outline_draft',
     'subagent.delegate',
-    'tools.escalate',
   ],
   permissionDefaults: [
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki planner reads freely.' },
@@ -38,7 +30,6 @@ export const wikiPlannerProfile: AgentProfile = {
   maxSteps: 12,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
-  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   toolProviderId: 'wiki-session-tools',
   loopHints: [
     'Step 1: Review the pre-loaded Core Packages, directory tree, and dependencies in the system prompt.',
@@ -69,7 +60,6 @@ export const wikiWriterProfile: AgentProfile = {
     'wiki.commit_document',
     'wiki.check_mermaid',
     'subagent.delegate',
-    'tools.escalate',
   ],
   permissionDefaults: [
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki writer reads freely.' },
@@ -82,7 +72,6 @@ export const wikiWriterProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   doomLoopThreshold: 6,
-  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   toolProviderId: 'wiki-session-tools',
   loopHints: [
     'Generate root-level documents (directory_tree, overview, architecture) yourself — they need global context.',
@@ -172,7 +161,6 @@ export const wikiDocumentWriterProfile: AgentProfile = {
     'grep.search',
     'wiki.commit_document',
     'wiki.check_mermaid',
-    'tools.escalate',
   ],
   permissionDefaults: [
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Document writer reads context.' },
@@ -184,7 +172,6 @@ export const wikiDocumentWriterProfile: AgentProfile = {
   maxSteps: 20,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
-  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   toolProviderId: 'wiki-session-tools',
   loopHints: [
     'Study Source Excerpts in the prompt before writing; use file.read when behavior is still unclear.',
@@ -215,7 +202,6 @@ export const wikiGeneratorProfile: AgentProfile = {
     'wiki.submit_plan',
     'wiki.commit_document',
     'wiki.check_mermaid',
-    'tools.escalate',
   ],
   permissionDefaults: [
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Wiki generation reads freely.' },
@@ -227,7 +213,6 @@ export const wikiGeneratorProfile: AgentProfile = {
   maxSteps: 50,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
-  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   toolProviderId: 'wiki-session-tools',
   loopHints: [],
 };
@@ -247,7 +232,6 @@ export const wikiVerifierProfile: AgentProfile = {
     'grep.search',
     'diff.read',
     'wiki.submit_verdict',
-    'tools.escalate',
   ],
   permissionDefaults: [
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Verifier reads source freely.' },
@@ -259,7 +243,6 @@ export const wikiVerifierProfile: AgentProfile = {
   maxSteps: 6,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
-  fallbackDisclosure: WIKI_FALLBACK_DISCLOSURE,
   toolProviderId: 'wiki-session-tools',
   loopHints: [
     'Verify each claim by reading actual source files. Call wiki.submit_verdict once per claim.',
