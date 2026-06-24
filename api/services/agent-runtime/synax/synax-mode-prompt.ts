@@ -35,7 +35,7 @@ class GoalModePromptStrategy extends SynaxModePromptStrategy {
       'Session mode: goal.',
       'Work toward the user goal with bounded, verifiable steps.',
       'Break the goal into task.create items when there are multiple steps; update status as you complete each.',
-      'Read and search before editing. Prefer file.patch for surgical changes.',
+      'Read and search before editing. Prefer edit for surgical changes.',
     ];
     if (goal) {
       lines.push('', '## User Goal', goal);

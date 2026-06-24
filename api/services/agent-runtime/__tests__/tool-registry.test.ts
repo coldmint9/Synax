@@ -10,7 +10,7 @@ describe('toolRegistry', () => {
   it('registers progressively described core tools', () => {
     const tools = toolRegistry.list();
     expect(tools.map((tool) => tool.id)).toEqual(expect.arrayContaining(['file.list', 'file.read', 'grep.search']));
-    for (const id of ['file.read', 'file.list', 'grep.search', 'bash', 'file.write', 'file.patch']) {
+    for (const id of ['file.read', 'file.list', 'grep.search', 'bash', 'file.write', 'edit']) {
       const tool = tools.find((candidate) => candidate.id === id);
       expect(typeof tool?.progressiveDetails).toBe('string');
     }

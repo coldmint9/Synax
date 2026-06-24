@@ -1,5 +1,6 @@
 import type { ApiFormat, ProviderConnection, ProviderDef } from '../../lib/config/config-types.js'
 import { isProviderSupported } from './providers/provider-registry.js'
+import { inferReasoningCapability, resolvePreferredProviderAdapter } from './thinking-mode-strategy.js'
 import type {
   ModelOverrideConfig,
   ResolveLlmSelectionInput,
@@ -107,9 +108,11 @@ function findModel(provider: RuntimeProvider, modelId: string, config: ResolvedP
   if (fromCatalog) return fromCatalog
   const override = config.models?.[modelId]
   if (!override) return null
+  const reasoningCapable = inferReasoningCapability({ providerId: provider.id, baseUrl: config.baseUrl })
   return {
     id: modelId,
     label: override.label || modelId,
+    ...(reasoningCapable ? { reasoning: true, toolCall: true } : {}),
   }
 }
 
@@ -286,6 +289,18 @@ function resolveConfiguredProviderAdapter(
     }
   }
 
+  const preferredAdapter = resolvePreferredProviderAdapter({
+    providerId,
+    baseUrl: connection?.baseUrl,
+  })
+  if (preferredAdapter) {
+    return {
+      npm: preferredAdapter.npm,
+      api: connection?.baseUrl ?? preferredAdapter.api,
+      env: preferredAdapter.env,
+    }
+  }
+
   // Use dedicated provider when available and no custom baseUrl override
   const known = KNOWN_PROVIDER_ADAPTERS[providerId]
   if (known && (!connection?.baseUrl || connection.baseUrl === known.api)) {
@@ -305,11 +320,13 @@ function resolveConfiguredProviderAdapter(
 
 function toRuntimeModels(provider: ProviderDef, connection?: ProviderConnection): RuntimeModel[] {
   const configuredModelId = resolveModelIdFromConnection(connection)
+  const reasoningCapable = inferReasoningCapability({ providerId: provider.id, baseUrl: connection?.baseUrl })
   const baseModels = provider.models.map((model) => ({
     id: model.id,
     label: model.label,
     isDefault: model.isDefault,
     maxTokens: model.maxTokens,
+    ...(reasoningCapable ? { reasoning: true, toolCall: true } : {}),
   }))
 
   if (!configuredModelId) {
@@ -330,6 +347,7 @@ function toRuntimeModels(provider: ProviderDef, connection?: ProviderConnection)
       id: configuredModelId,
       label: configuredModelId,
       isDefault: !baseModels.some((model) => model.isDefault),
+      ...(reasoningCapable ? { reasoning: true, toolCall: true } : {}),
     },
   ]
 }

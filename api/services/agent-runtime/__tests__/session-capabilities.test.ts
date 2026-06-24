@@ -44,7 +44,7 @@ describe('resolveSessionCapabilities', () => {
     const caps = resolveSessionCapabilities(session.id);
 
     expect(caps.tools.visible.some((tool) => tool.id === 'file.write')).toBe(true);
-    expect(caps.tools.visible.some((tool) => tool.id === 'file.patch')).toBe(true);
+    expect(caps.tools.visible.some((tool) => tool.id === 'edit')).toBe(true);
     expect(caps.tools.visible.some((tool) => tool.id === 'task.create')).toBe(true);
   });
 });

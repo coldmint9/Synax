@@ -17,7 +17,7 @@ import { INVALID_TOOL, INVALID_TOOL_ID } from './tool-invalid.js';
 import { diffReadTool } from './tools/diff-read.js';
 import { fileGlobTool } from './tools/file-glob.js';
 import { fileListTool } from './tools/file-list.js';
-import { filePatchTool } from './tools/file-patch.js';
+import { editTool } from './tools/edit.js';
 import { bashTool } from './tools/bash.js';
 import { fileReadTool } from './tools/file-read.js';
 import { fileDeleteTool } from './tools/file-delete.js';
@@ -65,7 +65,7 @@ export class ToolRegistry {
     private readonly evidence: EvidenceService = evidenceService,
     private readonly profiles: ProfileService = profileService,
   ) {
-    [bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, filePatchTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, INVALID_TOOL].forEach((tool) =>
+    [bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, editTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, INVALID_TOOL].forEach((tool) =>
       this.register(tool),
     );
     this.register({

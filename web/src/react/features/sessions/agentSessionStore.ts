@@ -19,6 +19,17 @@ import { AppError } from '../../../lib/errors'
 import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, type SynaxPermissionTier } from './synaxSessionTypes'
 import { useNotificationStore } from '../../state/notificationStore'
 import { patchAgentSession, canEnqueueSessionInput } from './sessionComposerState'
+import type { TurnContentBlock } from './buildInterleavedTurns'
+import {
+  EMPTY_STREAMING_BUFFERS,
+  applyMessageDelta,
+  applyThoughtDelta,
+  applyToolCall,
+  applyToolResult,
+  hasStreamingContent,
+  snapshotStreamingBuffers,
+  type StreamingLiveBuffers,
+} from './streamingLiveBlocks'
 
 const READ_MARKERS_KEY = 'synax-session-read-markers'
 
@@ -244,10 +255,12 @@ function _drainLoop() {
   }
 
   if (t || th) {
-    useAgentSessionStore.setState(s => ({
-      ...(t ? { streamingText: s.streamingText + t } : {}),
-      ...(th ? { streamingThinking: s.streamingThinking + th } : {}),
-    }))
+    useAgentSessionStore.setState(s => {
+      let streamingLive = s.streamingLive
+      if (th) streamingLive = applyThoughtDelta(streamingLive, th)
+      if (t) streamingLive = applyMessageDelta(streamingLive, t)
+      return { streamingLive }
+    })
   }
 
   if (_textBuffer.length > 0 || _thinkingBuffer.length > 0) {
@@ -304,15 +317,11 @@ export interface AgentSessionStoreState {
 
   // 流式进行中状态
   streamingStepId: string | null
-  streamingText: string
-  streamingThinking: string
-  streamingToolCalls: ToolCallRecord[]
+  streamingLive: StreamingLiveBuffers
   streamingCompletedSteps: Array<{
     stepId: string
     stepIndex: number
-    text: string
-    thinking: string
-    toolCalls: ToolCallRecord[]
+    blocks: TurnContentBlock[]
   }>
 
   inputQueues: Record<string, QueuedInput[]>
@@ -361,9 +370,7 @@ type SessionDetailState = Pick<
   | 'sessionTodos'
   | 'sessionCapabilities'
   | 'streamingStepId'
-  | 'streamingText'
-  | 'streamingThinking'
-  | 'streamingToolCalls'
+  | 'streamingLive'
   | 'streamingCompletedSteps'
 >
 
@@ -382,9 +389,7 @@ function emptySessionDetailState(): SessionDetailState {
     sessionTodos: [],
     sessionCapabilities: null,
     streamingStepId: null,
-    streamingText: '',
-    streamingThinking: '',
-    streamingToolCalls: [],
+    streamingLive: EMPTY_STREAMING_BUFFERS,
     streamingCompletedSteps: [],
   }
 }
@@ -412,9 +417,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   readSessionMarkers: {},
   sessionDetailCache: {},
   streamingStepId: null,
-  streamingText: '',
-  streamingThinking: '',
-  streamingToolCalls: [],
+  streamingLive: EMPTY_STREAMING_BUFFERS,
   streamingCompletedSteps: [],
   inputQueues: {},
 
@@ -457,9 +460,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       sessionTodos: [],
       sessionCapabilities: null,
       streamingStepId: null,
-      streamingText: '',
-      streamingThinking: '',
-      streamingToolCalls: [],
+      streamingLive: EMPTY_STREAMING_BUFFERS,
       streamingCompletedSteps: [],
     })
   },
@@ -520,9 +521,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       panelOpen: true,
       selectedSessionId: sessionId,
       streamingStepId: null,
-      streamingText: '',
-      streamingThinking: '',
-      streamingToolCalls: [],
+      streamingLive: EMPTY_STREAMING_BUFFERS,
       streamingCompletedSteps: [],
       ...(cached
         ? {
@@ -617,9 +616,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
           }),
           ...(sessionStillRunning ? {} : {
             streamingStepId: null,
-            streamingText: '',
-            streamingThinking: '',
-            streamingToolCalls: [],
+            streamingLive: EMPTY_STREAMING_BUFFERS,
             streamingCompletedSteps: [],
           }),
         }))
@@ -831,23 +828,19 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     switch (event.type) {
       case 'step_started': {
         const s = get()
-        const hasContent = s.streamingStepId && (s.streamingText || s.streamingThinking || s.streamingToolCalls.length > 0)
+        const hasContent = s.streamingStepId && hasStreamingContent(s.streamingLive)
         const completedSteps = hasContent
           ? [...s.streamingCompletedSteps, {
               stepId: s.streamingStepId!,
               stepIndex: s.streamingCompletedSteps.length + 1,
-              text: s.streamingText,
-              thinking: s.streamingThinking,
-              toolCalls: s.streamingToolCalls,
+              blocks: snapshotStreamingBuffers(s.streamingLive),
             }]
           : s.streamingCompletedSteps
         _textBuffer = ''
         _thinkingBuffer = ''
         set({
           streamingStepId: event.stepId,
-          streamingText: '',
-          streamingThinking: '',
-          streamingToolCalls: [],
+          streamingLive: EMPTY_STREAMING_BUFFERS,
           streamingCompletedSteps: completedSteps,
         })
         break
@@ -861,13 +854,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
         _scheduleFlush()
         break
       case 'tool_call':
-        set(s => ({ streamingToolCalls: [...s.streamingToolCalls, event.toolCall] }))
+        set(s => ({ streamingLive: applyToolCall(s.streamingLive, event.toolCall) }))
         break
       case 'tool_result':
         set(s => ({
-          streamingToolCalls: s.streamingToolCalls.map(tc =>
-            tc.id === event.toolCall.id ? event.toolCall : tc,
-          ),
+          streamingLive: applyToolResult(s.streamingLive, event.toolCall),
         }))
         void get().fetchSessionCapabilities()
         break

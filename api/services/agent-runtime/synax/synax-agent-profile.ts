@@ -16,7 +16,7 @@ export const synaxAgentProfile: AgentProfile = {
     'grep.search',
     'diff.read',
     'file.write',
-    'file.patch',
+    'edit',
     'file.delete',
     'wiki.get_snapshot',
     'wiki.get_tree',

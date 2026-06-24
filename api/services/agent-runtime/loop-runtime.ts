@@ -43,6 +43,7 @@ import { runChildToCompletion, DEFAULT_PER_CHILD_TIMEOUT_MS } from "./subagent-o
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../lib/ipc/agent-session-protocol.js";
 import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
+import { mapThinkingModeToReasoningEffort } from "../llm-runtime/thinking-mode-strategy.js";
 import { logger } from "../../lib/logger.js";
 import { CONTEXT_TOOL_CLEAR_THRESHOLD, CONTEXT_TOOL_CLEAR_KEEP_RECENT, CONTEXT_TOOL_CLEAR_EXCLUDE } from "../../lib/env.js";
 import { inputQueueService } from "./input-queue-service.js";
@@ -1364,6 +1365,14 @@ export class AgentLoopRuntime {
       skillsSection,
     });
 
+
+    // Store the dynamic system prompt so the frontend can display the latest version
+    try {
+      this.store.updateSessionMetadata(input.sessionId, { latestSystemPrompt: systemPromptContent });
+    } catch {
+      // Non-critical: metadata write failure should not block the step
+    }
+
     const compactionConfig = getCompactionConfig();
 
     const totalTokens = prevInputTokens ?? (
@@ -1459,6 +1468,7 @@ export class AgentLoopRuntime {
       purpose: input.input.purpose ?? input.profile.kind,
       model: input.input.model,
       cacheControl: true,
+      reasoningEffort: mapThinkingModeToReasoningEffort(session.thinkingMode),
       messages: [
         {
           role: "system" as const,
@@ -1541,6 +1551,7 @@ export class AgentLoopRuntime {
         },
         "[agent-runtime] step message",
       );
+      const textCreatedAt = nowIso();
       parts.push(
         this.store.appendRunPart({
           id: makeRuntimeId("prt"),
@@ -1552,9 +1563,19 @@ export class AgentLoopRuntime {
           content: step.message.trim(),
           toolCallId: null,
           metadata: {},
-          createdAt: nowIso(),
+          createdAt: textCreatedAt,
         }),
       );
+      this.store.appendMessage({
+        id: makeRuntimeId("msg"),
+        sessionId,
+        runId,
+        stepId,
+        role: "assistant",
+        content: step.message.trim(),
+        metadata: {},
+        createdAt: textCreatedAt,
+      });
     }
     return parts;
   }

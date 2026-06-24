@@ -1,5 +1,6 @@
 import { logger } from '../../../lib/logger.js'
 import type { ResolvedProviderConfig, RuntimeProvider } from '../types.js'
+import { buildOpenAICompatibleClientSettings } from '../custom-api-compat.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ProviderFactory = (options?: any) => unknown
@@ -41,13 +42,7 @@ export async function instantiateProvider(
   const baseURL = config.baseUrl ?? provider.api
 
   if (provider.npm === '@ai-sdk/openai-compatible') {
-    return create({
-      name: provider.id,
-      baseURL: baseURL ?? 'https://api.openai.com/v1',
-      apiKey: config.apiKey,
-      headers,
-      ...options,
-    })
+    return create(buildOpenAICompatibleClientSettings(provider, config))
   }
 
   if (provider.npm === '@openrouter/ai-sdk-provider') {

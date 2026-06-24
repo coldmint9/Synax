@@ -1,67 +1,75 @@
 import { memo, useDeferredValue, useEffect, useRef } from 'react'
-import type { AgentRunStep, PermissionDecision, ToolCallRecord } from '../../../lib/api/agentRuntime'
+import type { AgentRunStep, PermissionDecision } from '../../../lib/api/agentRuntime'
 import { GoalQuickApproval, listPendingGoalPermissions } from '../wiki/goal/GoalQuickApproval'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { ToolCallRoundPanel } from './ToolCallRoundPanel'
-import { toolCallRecordToView } from './toolCallUtils'
 import type { TurnContentBlock } from './buildInterleavedTurns'
+import { buildTurnRenderSegments } from './toolCallUtils'
+import { materializeLiveBlocks, type StreamingLiveBuffers } from './streamingLiveBlocks'
 
-function toolCallsToBlocks(toolCalls: ToolCallRecord[]): TurnContentBlock[] {
-  if (toolCalls.length === 0) return []
-  if (toolCalls.length === 1) {
-    return [{ type: 'tool_call', call: toolCallRecordToView(toolCalls[0]) }]
-  }
-  return [{
-    type: 'tool_call_group',
-    calls: toolCalls.map(toolCallRecordToView),
-  }]
+function renderLiveSegments(
+  blocks: TurnContentBlock[],
+  isStreaming: boolean,
+) {
+  const segments = buildTurnRenderSegments(blocks)
+
+  return segments.map((segment, i) => {
+    const segmentIsLive = isStreaming && i === segments.length - 1
+    if (segment.type === 'thinking') {
+      return (
+        <ThinkingBlock
+          key={i}
+          content={segment.content}
+          isStreaming={segmentIsLive}
+        />
+      )
+    }
+    if (segment.type === 'tool_round') {
+      return <ToolCallRoundPanel key={i} toolBlocks={segment.toolBlocks} />
+    }
+    if (segment.type === 'text') {
+      return (
+        <StreamingTextBlock
+          key={i}
+          text={segment.content}
+          isStreaming={segmentIsLive}
+          markdown={segment.markdown && !segmentIsLive}
+        />
+      )
+    }
+    return null
+  })
 }
 
 const CompletedStepView = memo(function CompletedStepView({
-  thinking,
-  text,
-  toolCalls,
+  blocks,
 }: {
-  thinking: string
-  text: string
-  toolCalls: ToolCallRecord[]
+  blocks: TurnContentBlock[]
 }) {
-  const hasTools = toolCalls.length > 0
+  if (blocks.length === 0) return null
   return (
     <div className="animate-[fade-up_0.3s_ease-out]">
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        {thinking ? <ThinkingBlock content={thinking} /> : null}
-        {hasTools ? <ToolCallRoundPanel toolBlocks={toolCallsToBlocks(toolCalls)} /> : null}
-        {text ? <StreamingTextBlock text={text} isStreaming={false} markdown={!hasTools} /> : null}
+        {renderLiveSegments(blocks, false)}
       </div>
     </div>
   )
 })
 
 const LiveStepView = memo(function LiveStepView({
-  thinking,
-  text,
-  toolCalls,
+  streamingLive,
 }: {
-  thinking: string
-  text: string
-  toolCalls: ToolCallRecord[]
+  streamingLive: StreamingLiveBuffers
 }) {
-  const deferredText = useDeferredValue(text)
-  const deferredThinking = useDeferredValue(thinking)
-  const hasTools = toolCalls.length > 0
-  const showFinalMarkdown = Boolean(deferredText) && !hasTools
+  const deferredLive = useDeferredValue(streamingLive)
+  const blocks = materializeLiveBlocks(deferredLive)
+  const hasContent = blocks.length > 0
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-2">
-      {deferredThinking ? <ThinkingBlock content={deferredThinking} isStreaming /> : null}
-      {hasTools ? <ToolCallRoundPanel toolBlocks={toolCallsToBlocks(toolCalls)} /> : null}
-      {deferredText ? (
-        <StreamingTextBlock text={deferredText} isStreaming markdown={showFinalMarkdown} />
-      ) : null}
-      {!deferredText && !deferredThinking && !hasTools ? <ThinkingIndicator /> : null}
+      {hasContent ? renderLiveSegments(blocks, true) : <ThinkingIndicator />}
     </div>
   )
 })
@@ -69,15 +77,11 @@ const LiveStepView = memo(function LiveStepView({
 interface Props {
   steps: AgentRunStep[]
   streamingStepId: string | null
-  streamingText: string
-  streamingThinking: string
-  streamingToolCalls: ToolCallRecord[]
+  streamingLive: StreamingLiveBuffers
   streamingCompletedSteps: Array<{
     stepId: string
     stepIndex: number
-    text: string
-    thinking: string
-    toolCalls: ToolCallRecord[]
+    blocks: TurnContentBlock[]
   }>
   permissions: PermissionDecision[]
   onReplyPermission?: (permissionId: string, reply: 'once' | 'always' | 'reject') => void
@@ -87,9 +91,7 @@ interface Props {
 export const SessionLiveTurn = memo(function SessionLiveTurn({
   steps,
   streamingStepId,
-  streamingText,
-  streamingThinking,
-  streamingToolCalls,
+  streamingLive,
   streamingCompletedSteps,
   permissions,
   onReplyPermission,
@@ -116,7 +118,7 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
     if (isNearBottom.current && el) {
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
     }
-  }, [scrollContainerRef, streamingText, streamingThinking, streamingToolCalls, streamingCompletedSteps.length])
+  }, [scrollContainerRef, streamingLive, streamingCompletedSteps.length])
 
   if (!showLiveBlock && streamingCompletedSteps.length === 0 && !(onReplyPermission && hasPendingApproval)) {
     return null
@@ -127,17 +129,11 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
       {streamingCompletedSteps.map(step => (
         <CompletedStepView
           key={step.stepId}
-          thinking={step.thinking}
-          text={step.text}
-          toolCalls={step.toolCalls}
+          blocks={step.blocks}
         />
       ))}
       {showLiveBlock ? (
-        <LiveStepView
-          thinking={streamingThinking}
-          text={streamingText}
-          toolCalls={streamingToolCalls}
-        />
+        <LiveStepView streamingLive={streamingLive} />
       ) : null}
       {onReplyPermission && hasPendingApproval ? (
         <div className="session-context-approval mx-auto w-full max-w-3xl rounded-2xl border border-border/50 bg-card/80 p-3 shadow-sm backdrop-blur-sm">

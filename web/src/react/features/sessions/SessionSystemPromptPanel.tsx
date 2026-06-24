@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { ChevronDown, ChevronUp, ScrollText } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
@@ -11,7 +11,11 @@ export const SessionSystemPromptPanel = memo(function SessionSystemPromptPanel()
     return id ? s.sessions.find(item => item.id === id) : undefined
   }))
   const [open, setOpen] = useState(false)
-  const prompt = session?.prompt?.trim()
+  // Prefer the dynamically built system prompt, fall back to the initial session prompt
+  const prompt =
+    (session?.sessionMetadata as Record<string, unknown> | null)?.latestSystemPrompt ??
+    session?.prompt ??
+    ''
 
   useEffect(() => {
     setOpen(false)
