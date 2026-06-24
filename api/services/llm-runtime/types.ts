@@ -73,6 +73,8 @@ export interface LlmGatewayRequest {
   model?: string
   messages: LlmGatewayMessage[]
   temperature?: number
+  /** DeepSeek thinking strength when thinking mode is enabled. */
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   maxTokens?: number
   stop?: string[]
   tools?: ToolSet

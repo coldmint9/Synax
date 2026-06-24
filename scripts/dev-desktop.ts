@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
-import { ROOT_DIR, WEB_DIR, ensureWorkspaceInstall, logStart, readPort, spawnProcess, waitForExit } from './_shared'
+import { ROOT_DIR, WEB_DIR, ensureWorkspaceInstall, logStart, readPort, resolveApiDevCommand, spawnProcess, waitForExit } from './_shared'
 
 const apiPort = readPort('PORT', 3210)
 const webPort = readPort('WEB_PORT', 5173)
@@ -15,7 +15,7 @@ await waitForExit(buildElectron)
 logStart('dev:desktop', `API http://localhost:${apiPort}`)
 logStart('dev:desktop', `Web http://${webHost}:${webPort}`)
 
-const api = spawnProcess(['npx', 'tsx', '--watch', 'api/server.ts'], ROOT_DIR)
+const api = spawnProcess(resolveApiDevCommand(), ROOT_DIR)
 const web = spawnProcess(['npx', 'vite', '--force', '--host', webHost, '--port', String(webPort)], WEB_DIR)
 
 // Watch electron source and recompile on change

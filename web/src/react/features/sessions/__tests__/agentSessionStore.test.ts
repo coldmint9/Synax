@@ -27,9 +27,7 @@ afterEach(() => {
     readSessionMarkers: {},
     sessionDetailCache: {},
     streamingStepId: null,
-    streamingText: '',
-    streamingThinking: '',
-    streamingToolCalls: [],
+    streamingLive: { blocks: [], pendingThinking: '', pendingText: '', pendingToolCalls: [] },
     streamingCompletedSteps: [],
   })
   vi.clearAllMocks()

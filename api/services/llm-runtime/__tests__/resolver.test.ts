@@ -252,4 +252,40 @@ describe('resolveLlmSelection', () => {
 
     expect(result.model).toBe('openai/gpt-4o-mini')
   })
+
+  it('routes custom DeepSeek API providers to the native DeepSeek SDK', () => {
+    const providerId = 'custom-api:deepseek'
+    const result = resolveLlmSelection({
+      catalog,
+      globalConfig: {
+        ...createGlobalConfig(),
+        providers: [
+          {
+            id: providerId,
+            label: 'DeepSeek',
+            status: 'live',
+            kind: 'api',
+            caps: { canFollowUp: true, canCancel: true },
+            models: [{ id: 'deepseek-v4-flash', label: 'deepseek-v4-flash', isDefault: true }],
+          },
+        ],
+        defaultApiProviderId: providerId,
+        providerConnections: {
+          [providerId]: {
+            providerId,
+            baseUrl: 'https://api.deepseek.com',
+            extra: {
+              kind: 'api',
+              apiFormat: 'openai',
+              model: 'deepseek-v4-flash',
+            },
+          },
+        },
+      },
+      purpose: 'wiki',
+    })
+
+    expect(result.provider.npm).toBe('@ai-sdk/deepseek')
+    expect(result.modelDef.reasoning).toBe(true)
+  })
 })

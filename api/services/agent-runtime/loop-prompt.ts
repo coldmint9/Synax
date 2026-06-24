@@ -68,7 +68,7 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     'If a write depends on a read result, call the read tool first, receive the result, then call the write tool in the next step.',
     'Compatibility fallback only when native tool calling is unavailable: start the response with exactly {"tool":"tool.id","args":{...}} followed by optional short status text.',
     'Prefer the bash tool for file search, listing, and text inspection. It accepts read-only Unix commands (rg, grep, find, ls, cat, head, tail, wc, sort, uniq, sed, awk, git diff/log/show, etc.) and supports pipes and command chaining. Combine multiple operations into a single bash call to reduce round trips.',
-    'When overwriting an existing file with file.write or file.patch, you must file.read that file first in this session.',
+    'When overwriting an existing file with file.write or edit, you must file.read that file first in this session.',
     'When proposing file changes, prefer specific file paths and bounded edits.',
     buildTaskTrackingSection(input.profile),
     loopHints,

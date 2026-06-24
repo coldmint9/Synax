@@ -29,9 +29,7 @@ function useSessionLiveState() {
   return useAgentSessionStore(useShallow(s => ({
     steps: s.steps,
     streamingStepId: s.streamingStepId,
-    streamingText: s.streamingText,
-    streamingThinking: s.streamingThinking,
-    streamingToolCalls: s.streamingToolCalls,
+    streamingLive: s.streamingLive,
     streamingCompletedSteps: s.streamingCompletedSteps,
     permissions: s.permissions,
     replyPermission: s.replyPermission,
@@ -48,9 +46,7 @@ function SessionLiveTurnLayer({
     <SessionLiveTurn
       steps={liveState.steps}
       streamingStepId={liveState.streamingStepId}
-      streamingText={liveState.streamingText}
-      streamingThinking={liveState.streamingThinking}
-      streamingToolCalls={liveState.streamingToolCalls}
+      streamingLive={liveState.streamingLive}
       streamingCompletedSteps={liveState.streamingCompletedSteps}
       permissions={liveState.permissions}
       onReplyPermission={liveState.replyPermission}

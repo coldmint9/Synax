@@ -18,6 +18,14 @@ export function logStart(label: string, url: string) {
   console.log(`[${label}] ${url}`)
 }
 
+/** API dev entrypoint; set SYNAX_API_WATCH=1 to restart on file changes. */
+export function resolveApiDevCommand(): string[] {
+  const watch = process.env.SYNAX_API_WATCH === '1' || process.env.SYNAX_API_WATCH === 'true'
+  return watch
+    ? ['npx', 'tsx', '--watch', 'api/server.ts']
+    : ['npx', 'tsx', 'api/server.ts']
+}
+
 export async function ensureWorkspaceInstall() {
   const hasRootDeps = existsSync(join(ROOT_DIR, 'node_modules'))
   const hasWebDeps = existsSync(join(WEB_DIR, 'node_modules'))

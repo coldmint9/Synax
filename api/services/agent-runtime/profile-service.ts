@@ -49,7 +49,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
       'grep.search',
       'diff.read',
       'file.write',
-      'file.patch',
+      'edit',
       'file.delete',
       'wiki.search_content',
       'wiki.search_batch',

@@ -10,6 +10,7 @@ import { getStrategy } from './providers/provider-strategy.js'
 import { applyReasoningMiddleware } from './middleware/reasoning.js'
 import { buildHookCallbacks } from './middleware/hook-callbacks.js'
 import { toModelPrompt, ensureJsonObjectResponseFormatInstruction } from './prompt.js'
+import { buildThinkingStreamOptions, type ThinkingStreamOptions } from './thinking-mode-strategy.js'
 
 export type ExecutionMode =
   | {
@@ -71,12 +72,13 @@ export async function executePipeline(
 
   const enableCache = strategy.supportsCacheControl(selection) && request.cacheControl
   const callbacks = buildHookCallbacks(request)
+  const thinkingStream = buildThinkingStreamOptions(selection, request)
 
   switch (mode.kind) {
     case 'stream':
-      return dispatchStream(model, request, mode, callbacks, enableCache, abortSignal)
+      return dispatchStream(model, request, mode, callbacks, enableCache, thinkingStream, abortSignal)
     case 'text':
-      return dispatchText(model, request, callbacks, enableCache, abortSignal)
+      return dispatchText(model, request, callbacks, enableCache, thinkingStream, abortSignal)
     case 'object':
       return dispatchObject(model, request, mode.schema, callbacks, abortSignal)
   }
@@ -88,6 +90,7 @@ function dispatchStream(
   mode: Extract<ExecutionMode, { kind: 'stream' }>,
   callbacks: ReturnType<typeof buildHookCallbacks>,
   enableCache: boolean | undefined,
+  thinkingStream: ThinkingStreamOptions,
   abortSignal?: AbortSignal,
 ) {
   const { system, messages } = toModelPrompt(request.messages, enableCache)
@@ -99,7 +102,8 @@ function dispatchStream(
     toolChoice: mode.toolChoice,
     activeTools: mode.activeTools,
     experimental_repairToolCall: mode.repairToolCall,
-    temperature: request.temperature,
+    temperature: thinkingStream.temperature ?? request.temperature,
+    providerOptions: thinkingStream.providerOptions,
     maxOutputTokens: request.maxTokens,
     stopSequences: request.stop,
     maxRetries: mode.maxRetries,
@@ -113,6 +117,7 @@ function dispatchText(
   request: LlmGatewayRequest,
   callbacks: ReturnType<typeof buildHookCallbacks>,
   enableCache: boolean | undefined,
+  thinkingStream: ThinkingStreamOptions,
   abortSignal?: AbortSignal,
 ) {
   const { system, messages } = toModelPrompt(request.messages, enableCache)
@@ -120,7 +125,8 @@ function dispatchText(
     model,
     system,
     messages,
-    temperature: request.temperature,
+    temperature: thinkingStream.temperature ?? request.temperature,
+    providerOptions: thinkingStream.providerOptions,
     maxOutputTokens: request.maxTokens,
     stopSequences: request.stop,
     abortSignal,

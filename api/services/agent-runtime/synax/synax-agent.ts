@@ -222,7 +222,7 @@ export function ensureLegacyGoalProfileRegistered(): void {
       maxSteps: 48,
       loopHints: [
         'Work toward the user goal with bounded, verifiable steps.',
-        'Read and search before editing. Prefer file.patch for surgical changes.',
+        'Read and search before editing. Prefer edit for surgical changes.',
         'When wiki context is attached, keep documentation in sync after code changes.',
       ],
     });

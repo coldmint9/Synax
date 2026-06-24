@@ -56,11 +56,11 @@ function applySimplePatch(current: string, patch: string): string {
   return output.join('\n');
 }
 
-export const filePatchTool: RegisteredTool = {
-  id: 'file.patch',
-  label: 'Patch File',
+export const editTool: RegisteredTool = {
+  id: 'edit',
+  label: 'Edit File',
   description:
-    'Apply a bounded file edit or an opencode-style apply_patch envelope. Prefer targeted patches over full rewrites when modifying existing files.',
+    'Apply a bounded file edit or an opencode-style apply_patch envelope. Prefer targeted edits over full rewrites when modifying existing files.',
   category: 'write',
   internalGate: 'write',
   mutability: 'write',
@@ -68,7 +68,7 @@ export const filePatchTool: RegisteredTool = {
   progressiveDetails:
     'Accepts { path: string, patch?: string, content?: string }. Supports the *** Begin Patch / *** End Patch format with Add/Update/Delete headers, and keeps a legacy single-file patch fallback for simple +/- hunks.',
   inputSchema: z.object({
-    path: z.string().min(1).describe('Workspace-relative file path to patch.'),
+    path: z.string().min(1).describe('Workspace-relative file path to edit.'),
     patch: z.string().optional().describe('Patch content. Prefer the apply_patch envelope format.'),
     content: z.string().optional().describe('Complete replacement content when a patch is not used.'),
   }),
@@ -93,7 +93,7 @@ export const filePatchTool: RegisteredTool = {
     } else if ((args.patch ?? '').includes('*** Begin Patch')) {
       const hunks = parseApplyPatchEnvelope(args.patch ?? '');
       if (hunks.length !== 1) {
-        throw new Error('file.patch accepts exactly one file operation per call.');
+        throw new Error('edit accepts exactly one file operation per call.');
       }
       const hunk = hunks[0];
       const expectedPath = args.path.replace(/\\/g, '/');
@@ -106,7 +106,7 @@ export const filePatchTool: RegisteredTool = {
         deleted = true;
       } else {
         if (hunk.movePath && path.normalize(hunk.movePath) !== path.normalize(args.path)) {
-          throw new Error('file.patch does not support moving files; use a direct write to the destination path.');
+          throw new Error('edit does not support moving files; use file.write to the destination path.');
         }
         next = deriveNewContentsFromChunks(args.path, hunk.chunks, current);
       }
@@ -124,12 +124,12 @@ export const filePatchTool: RegisteredTool = {
         bytes: deleted ? 0 : Buffer.byteLength(next, 'utf8'),
         deleted,
       },
-      displaySummary: `${deleted ? 'Deleted' : 'Patched'} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
+      displaySummary: `${deleted ? 'Deleted' : 'Edited'} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
       artifacts: [
         {
           kind: 'decision',
-          title: 'File patch',
-          summary: `${deleted ? 'Deleted' : 'Patched'} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
+          title: 'File edit',
+          summary: `${deleted ? 'Deleted' : 'Edited'} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
           risk: 'medium',
         },
       ],

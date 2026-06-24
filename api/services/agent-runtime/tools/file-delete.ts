@@ -7,7 +7,7 @@ export const fileDeleteTool: RegisteredTool = {
   id: 'file.delete',
   label: 'Delete File',
   description:
-    'Delete a single workspace file. Does not remove directories. Prefer file.patch for partial edits when the file should be kept.',
+    'Delete a single workspace file. Does not remove directories. Prefer edit for partial edits when the file should be kept.',
   category: 'write',
   internalGate: 'delete',
   mutability: 'write',

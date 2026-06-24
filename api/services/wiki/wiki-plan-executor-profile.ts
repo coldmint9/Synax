@@ -13,7 +13,7 @@ export const planExecutorProfile: AgentProfile = {
     'file.list',
     'file.read',
     'file.write',
-    'file.patch',
+    'edit',
     'file.delete',
     'grep.search',
     'diff.read',
@@ -29,7 +29,7 @@ export const planExecutorProfile: AgentProfile = {
   status: 'disabled',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'Implement the plan node description. Use file.patch for edits.',
+    'Implement the plan node description. Use edit for edits.',
     'Read before write. Verify expected files match your changes.',
   ],
 }

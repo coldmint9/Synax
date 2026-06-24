@@ -71,7 +71,7 @@ function extractPatchesFromSession(sessionId: string): PlanNodeArtifactPatch[] {
       })
       continue
     }
-    if (call.toolId === 'file.patch') {
+    if (call.toolId === 'edit' || call.toolId === 'file.patch') {
       patches.push({
         filePath: input.path,
         diff: input.patch ?? input.content ?? '',

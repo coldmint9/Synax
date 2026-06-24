@@ -60,7 +60,7 @@ export const LLM_CATALOG_SNAPSHOT: Record<string, ModelsDevProvider> = {
     env: ['DEEPSEEK_API_KEY'],
     doc: 'https://api-docs.deepseek.com/',
     models: {
-      'deepseek-chat': { id: 'deepseek-chat', name: 'DeepSeek Chat', tool_call: true, reasoning: false, limit: { context: 128000, output: 8192 } },
+      'deepseek-chat': { id: 'deepseek-chat', name: 'DeepSeek Chat', tool_call: true, reasoning: true, limit: { context: 128000, output: 8192 } },
       'deepseek-reasoner': { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', tool_call: true, reasoning: true, limit: { context: 128000, output: 8192 } },
     },
   },

@@ -40,11 +40,17 @@ const openaiCompatibleStrategy: ProviderStrategy = {
   modelOptions: objectModeModelOptions,
 }
 
+/** Native DeepSeek SDK parses reasoning_content; thinking is enabled via providerOptions. */
+const deepseekStrategy: ProviderStrategy = {
+  ...nativeReasoningStrategy,
+  modelOptions: objectModeModelOptions,
+}
+
 const strategies = new Map<string, ProviderStrategy>([
   ['@ai-sdk/anthropic', anthropicStrategy],
   ['@ai-sdk/openai', openaiStrategy],
   ['@ai-sdk/openai-compatible', openaiCompatibleStrategy],
-  ['@ai-sdk/deepseek', openaiCompatibleStrategy],
+  ['@ai-sdk/deepseek', deepseekStrategy],
   ['@ai-sdk/google', nativeReasoningStrategy],
   ['@ai-sdk/xai', nativeReasoningStrategy],
   ['@ai-sdk/groq', openaiCompatibleStrategy],

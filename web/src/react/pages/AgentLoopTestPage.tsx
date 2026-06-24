@@ -49,8 +49,7 @@ export default function AgentLoopTestPage() {
   // Wire up agentSessionStore for rich rendering
   const sessionStore = useAgentSessionStore()
   const { steps, toolCalls, messages: storeMessages, childSessions,
-    streamingStepId, streamingText, streamingThinking, streamingToolCalls,
-    streamingCompletedSteps } = sessionStore
+    streamingStepId, streamingLive, streamingCompletedSteps } = sessionStore
 
   const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
   // Keep live stream aligned with the store session id (set synchronously in openPanel).
@@ -187,9 +186,7 @@ export default function AgentLoopTestPage() {
                     <SessionLiveTurn
                       steps={steps}
                       streamingStepId={streamingStepId}
-                      streamingText={streamingText}
-                      streamingThinking={streamingThinking}
-                      streamingToolCalls={streamingToolCalls}
+                      streamingLive={streamingLive}
                       streamingCompletedSteps={streamingCompletedSteps}
                       permissions={[]}
                     />
