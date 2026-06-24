@@ -16,7 +16,7 @@ import {
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
 import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { AppError } from '../../../lib/errors'
-import { SYNAX_PROFILE_ID, createSynaxSessionMetadata } from '../wiki/goal/goalAttachTypes'
+import { SYNAX_PROFILE_ID, createSynaxSessionMetadata } from './synaxSessionTypes'
 import { useNotificationStore } from '../../state/notificationStore'
 import { patchAgentSession, canEnqueueSessionInput } from './sessionComposerState'
 
@@ -314,7 +314,7 @@ export interface AgentSessionStoreState {
   setProjectId: (projectId: string | null) => void
   refreshSessions: () => Promise<void>
   resetSessionDetailForDraft: () => void
-  submitGoalDraft: (projectId: string, body: { message: string; model?: string | null }) => Promise<AgentSession>
+  submitSessionDraft: (projectId: string, body: { message: string; model?: string | null }) => Promise<AgentSession>
   deleteSession: (sessionId: string) => Promise<string[]>
   openPanel: (sessionId: string) => void
   closePanel: () => void
@@ -457,10 +457,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     })
   },
 
-  submitGoalDraft: async (projectId, body) => {
+  submitSessionDraft: async (projectId, body) => {
     const message = body.message.trim()
     if (!message) {
-      throw new AppError('Goal message is required.', { level: 'business', code: 'VALIDATION' })
+      throw new AppError('Session message is required.', { level: 'business', code: 'VALIDATION' })
     }
     const payload = await agentRuntimeApi.createSession({
       projectId,

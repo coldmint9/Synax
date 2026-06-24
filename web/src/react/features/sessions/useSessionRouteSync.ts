@@ -2,10 +2,10 @@ import { useEffect } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAgentSessionStore } from './agentSessionStore'
 import {
-  goalSessionPath,
-  isBareGoalSessionsPath,
-  isNewGoalSessionPath,
-  newGoalSessionPath,
+  sessionPath,
+  isBareSessionsPath,
+  isNewSessionPath,
+  newSessionPath,
 } from './sessionRoutes'
 import {
   clearSessionLastVisit,
@@ -28,15 +28,15 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
   const isProjectReady = Boolean(projectId) && storeProjectId === projectId
 
   useEffect(() => {
-    if (!isProjectReady || listView !== 'goal' || !projectId) return
-    if (sessionIdFromUrl || isNewGoalSessionPath(location.pathname)) return
-    if (!isBareGoalSessionsPath(location.pathname, projectId)) return
+    if (!isProjectReady || listView !== 'sessions' || !projectId) return
+    if (sessionIdFromUrl || isNewSessionPath(location.pathname)) return
+    if (!isBareSessionsPath(location.pathname, projectId)) return
 
     const last = loadSessionLastVisit(projectId)
     if (!last) return
 
     if (last.kind === 'new') {
-      navigate(newGoalSessionPath(projectId), { replace: true })
+      navigate(newSessionPath(projectId), { replace: true })
       return
     }
 
@@ -48,7 +48,7 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
       }
     }
 
-    navigate(goalSessionPath(projectId, last.sessionId), { replace: true })
+    navigate(sessionPath(projectId, last.sessionId), { replace: true })
   }, [
     isProjectReady,
     listView,
@@ -60,12 +60,12 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
   ])
 
   useEffect(() => {
-    if (listView !== 'goal') {
+    if (listView !== 'sessions') {
       closePanel()
       return
     }
 
-    if (isNewGoalSessionPath(location.pathname)) {
+    if (isNewSessionPath(location.pathname)) {
       if (projectId) saveSessionLastVisit(projectId, { kind: 'new' })
       resetForDraft()
       return
@@ -79,7 +79,7 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
       return
     }
 
-    if (isBareGoalSessionsPath(location.pathname, projectId || undefined)) {
+    if (isBareSessionsPath(location.pathname, projectId || undefined)) {
       closePanel()
     }
   }, [

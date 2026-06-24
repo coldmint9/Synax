@@ -123,7 +123,7 @@ function buildPlanNodePrompt(
 
   return [
     buildLanguageDirective(locale),
-    'You are a Goal Agent executing a single plan node. Implement the node by making real code changes in the workspace.',
+    'You are Synax executing a single plan node (plan_node mode). Implement the node by making real code changes in the workspace.',
     '',
     '## Plan Node',
     `- **Title**: ${node?.title ?? input.content}`,

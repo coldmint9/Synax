@@ -1,7 +1,7 @@
 import {
-  goalSessionPath,
-  goalSessionsPath,
-  newGoalSessionPath,
+  sessionPath,
+  sessionsPath,
+  newSessionPath,
 } from './sessionRoutes'
 
 const STORAGE_KEY = 'synax.sessionLastVisit'
@@ -45,13 +45,13 @@ export function clearSessionLastVisit(projectId: string): void {
 }
 
 export function sessionLastVisitPath(projectId: string, visit: SessionLastVisit): string {
-  if (visit.kind === 'new') return newGoalSessionPath(projectId)
-  return goalSessionPath(projectId, visit.sessionId)
+  if (visit.kind === 'new') return newSessionPath(projectId)
+  return sessionPath(projectId, visit.sessionId)
 }
 
 /** Default sessions tab target — last visit or bare list. */
-export function resolveGoalSessionsEntryPath(projectId: string): string {
+export function resolveSessionsEntryPath(projectId: string): string {
   const last = loadSessionLastVisit(projectId)
-  if (!last) return goalSessionsPath(projectId)
+  if (!last) return sessionsPath(projectId)
   return sessionLastVisitPath(projectId, last)
 }

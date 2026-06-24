@@ -10,9 +10,9 @@ import { SessionTranscript } from '../features/sessions/SessionTranscript'
 import { SessionSystemPromptPanel } from '../features/sessions/SessionSystemPromptPanel'
 import { SessionWorkspace } from '../features/sessions/SessionWorkspace'
 import { SessionListPanel } from '../features/sessions/SessionListPanel'
-import { SessionGoalComposer } from '../features/sessions/SessionGoalComposer'
+import { SessionComposer } from '../features/sessions/SessionComposer'
 import { useSessionRouteSync } from '../features/sessions/useSessionRouteSync'
-import { isNewGoalSessionPath, newGoalSessionPath } from '../features/sessions/sessionRoutes'
+import { isNewSessionPath, newSessionPath } from '../features/sessions/sessionRoutes'
 import type { SessionListView } from '../features/sessions/sessionBuckets'
 
 const SessionDetailSidebar = memo(function SessionDetailSidebar() {
@@ -30,7 +30,7 @@ export default memo(function SessionsPage() {
   const navigate = useNavigate()
   const { projectId = '' } = useParams()
   const location = useLocation()
-  const listView: SessionListView = location.pathname.includes('/sessions/workflows') ? 'workflow' : 'goal'
+  const listView: SessionListView = location.pathname.includes('/sessions/workflows') ? 'workflow' : 'sessions'
 
   useSessionRouteSync(listView, projectId)
 
@@ -39,9 +39,9 @@ export default memo(function SessionsPage() {
 
   useSessionLiveStream(agentPanelOpen ? agentSessionId : null)
 
-  const isNewDraft = listView === 'goal' && isNewGoalSessionPath(location.pathname)
+  const isNewDraft = listView === 'sessions' && isNewSessionPath(location.pathname)
   const showTranscript = agentPanelOpen && agentSessionId
-  const canCreateSession = listView === 'goal' && Boolean(projectId)
+  const canCreateSession = listView === 'sessions' && Boolean(projectId)
 
   return (
     <div className="flex h-full min-h-0">
@@ -58,7 +58,7 @@ export default memo(function SessionsPage() {
         </>
       ) : isNewDraft ? (
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <SessionGoalComposer projectId={projectId} layout="centered" />
+          <SessionComposer projectId={projectId} layout="centered" />
         </div>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
@@ -70,7 +70,7 @@ export default memo(function SessionsPage() {
               variant="secondary"
               size="sm"
               className="gap-1.5"
-              onPress={() => navigate(newGoalSessionPath(projectId))}
+              onPress={() => navigate(newSessionPath(projectId))}
             >
               <Plus size={14} />
               {t('sessionNew')}

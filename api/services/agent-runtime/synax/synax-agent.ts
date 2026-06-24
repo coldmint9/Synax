@@ -217,8 +217,8 @@ export function ensureLegacyGoalProfileRegistered(): void {
     profileService.register({
       ...synaxAgentProfile,
       id: LEGACY_GOAL_PROFILE_ID,
-      label: 'Goal Agent',
-      description: 'Deprecated alias of Synax Agent goal mode.',
+      label: 'Synax',
+      description: 'Deprecated profileId alias for legacy sessions; use profileId "synax" with sessionMetadata.mode.',
       maxSteps: 48,
       loopHints: [
         'Work toward the user goal with bounded, verifiable steps.',

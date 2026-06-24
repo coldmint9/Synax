@@ -9,7 +9,7 @@ import { SessionClearInactiveDialog } from './SessionClearInactiveDialog'
 import { useLocale } from '../../../hooks/useLocale'
 import type { SessionListView } from './sessionBuckets'
 import { getSessionDisplayTitle } from './useSessionDisplayTitle'
-import { goalSessionsPath, workflowSessionsPath } from './sessionRoutes'
+import { sessionsPath, workflowSessionsPath } from './sessionRoutes'
 import { clearSessionLastVisit, loadSessionLastVisit } from './sessionLastVisit'
 
 interface Props {
@@ -17,7 +17,7 @@ interface Props {
   projectId: string
 }
 
-export function SessionListPanel({ listView = 'goal', projectId }: Props) {
+export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
   const { locale, t } = useLocale()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -56,7 +56,7 @@ export function SessionListPanel({ listView = 'goal', projectId }: Props) {
         onClearInactive={() => setShowClear(true)}
         onNewSession={handleNewSession}
         onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
-        onBackToGoals={() => navigate(goalSessionsPath(projectId))}
+        onBackToSessions={() => navigate(sessionsPath(projectId))}
         isRefreshing={list.isRefreshing}
       />
       <SessionTimeGroups
@@ -65,7 +65,7 @@ export function SessionListPanel({ listView = 'goal', projectId }: Props) {
         isLoadingMore={list.isLoadingMore}
         hasMore={list.hasMore}
         hideGroupHeaders
-        emptyLabel={listView === 'workflow' ? t('sessionWorkflowEmpty') : t('sessionGoalEmpty')}
+        emptyLabel={listView === 'workflow' ? t('sessionWorkflowEmpty') : t('sessionListEmpty')}
         onSelect={list.select}
         onToggleGroup={list.toggleGroup}
         onToggleExpand={list.toggleExpand}
@@ -88,7 +88,7 @@ export function SessionListPanel({ listView = 'goal', projectId }: Props) {
               clearSessionLastVisit(projectId)
             }
             if (searchParams.get('session') === id) {
-              navigate(goalSessionsPath(projectId))
+              navigate(sessionsPath(projectId))
             }
             setDeleteId(null)
             void list.refresh()

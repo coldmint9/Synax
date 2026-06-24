@@ -1,7 +1,7 @@
 import type { AgentSession } from '../../../lib/api/agentRuntime'
 
 /** Primary sessions page vs wiki/automation workflow sub-page. */
-export type SessionListView = 'goal' | 'workflow'
+export type SessionListView = 'sessions' | 'workflow'
 
 const WORKFLOW_PROFILE_IDS = new Set([
   'wiki-refresh',
@@ -12,8 +12,8 @@ const WORKFLOW_PROFILE_IDS = new Set([
 const LEGACY_GOAL_PROFILE_ID = 'goal'
 const SYNAX_PROFILE_ID = 'synax'
 
-const GOAL_LIKE_MODES = new Set(['goal', 'plan_node'])
-const GOAL_LIKE_SOURCES = new Set(['goal-dock', 'session-page', 'plan-execution'])
+const GOAL_MODE_VALUES = new Set(['goal', 'plan_node'])
+const GOAL_MODE_SOURCES = new Set(['goal-dock', 'session-page', 'plan-execution'])
 
 function isSynaxProfile(profileId: string): boolean {
   return profileId === SYNAX_PROFILE_ID || profileId === LEGACY_GOAL_PROFILE_ID
@@ -29,7 +29,7 @@ function resolveSynaxMode(session: AgentSession): string | null {
   }
 
   const source = session.sessionMetadata?.source
-  if (typeof source === 'string' && GOAL_LIKE_SOURCES.has(source)) {
+  if (typeof source === 'string' && GOAL_MODE_SOURCES.has(source)) {
     return source === 'plan-execution' ? 'plan_node' : 'goal'
   }
 
@@ -50,9 +50,10 @@ export function isWorkflowSession(session: AgentSession): boolean {
   return false
 }
 
-export function isGoalSession(session: AgentSession): boolean {
+/** Synax session running in goal or plan_node mode (not a separate agent profile). */
+export function isGoalModeSession(session: AgentSession): boolean {
   const mode = resolveSynaxMode(session)
-  if (mode && GOAL_LIKE_MODES.has(mode)) return true
+  if (mode && GOAL_MODE_VALUES.has(mode)) return true
 
   const source = typeof session.sessionMetadata?.source === 'string'
     ? session.sessionMetadata.source
@@ -66,13 +67,13 @@ export function isGoalSession(session: AgentSession): boolean {
   )
 }
 
-/** Goal page shows user goals; workflow page shows wiki/plan automation sessions. */
+/** Sessions page shows interactive Synax sessions; workflow page shows wiki/plan automation. */
 export function classifySession(session: AgentSession): SessionListView {
   if (isWorkflowSession(session)) return 'workflow'
-  return 'goal'
+  return 'sessions'
 }
 
 export const SESSION_LIST_VIEW_LABELS: Record<SessionListView, { zh: string; en: string }> = {
-  goal: { zh: '会话', en: 'Sessions' },
+  sessions: { zh: '会话', en: 'Sessions' },
   workflow: { zh: 'Workflow', en: 'Workflows' },
 }

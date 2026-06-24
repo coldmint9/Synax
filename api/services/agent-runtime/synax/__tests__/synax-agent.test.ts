@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   inferSynaxSessionMode,
-  isGoalLikeSession,
+  isGoalModeSession,
   isSynaxProfile,
   SYNAX_AGENT_PROFILE_ID,
 } from '../synax-session-mode.js';
@@ -43,15 +43,15 @@ describe('synax session mode', () => {
   });
 
   it('detects goal-like sessions across synax and legacy profiles', () => {
-    expect(isGoalLikeSession({
+    expect(isGoalModeSession({
       profileId: SYNAX_AGENT_PROFILE_ID,
       sessionMetadata: { mode: 'goal' },
     })).toBe(true);
-    expect(isGoalLikeSession({
+    expect(isGoalModeSession({
       profileId: 'goal',
       sessionMetadata: null,
     })).toBe(true);
-    expect(isGoalLikeSession({
+    expect(isGoalModeSession({
       profileId: SYNAX_AGENT_PROFILE_ID,
       sessionMetadata: { mode: 'chat' },
     })).toBe(false);

@@ -3,10 +3,10 @@ import { useParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { useAgentSessionStore } from './agentSessionStore'
 import { AgentConversationView } from './AgentConversationView'
-import { SessionGoalComposer } from './SessionGoalComposer'
+import { SessionComposer } from './SessionComposer'
 import { SessionLiveTurn } from './SessionLiveTurn'
 import { SessionNavigationPanel } from './SessionNavigationPanel'
-import { isGoalSession } from './sessionBuckets'
+import { isGoalModeSession } from './sessionBuckets'
 
 function useSessionTranscriptStatic() {
   return useAgentSessionStore(useShallow(s => {
@@ -75,7 +75,7 @@ export function SessionTranscript() {
     resumeSession,
   } = useSessionTranscriptStatic()
 
-  const showGoalComposer = Boolean(session && isGoalSession(session))
+  const showSessionComposer = Boolean(session && isGoalModeSession(session))
   const streamingStep = streamingStepId ? steps.find(s => s.id === streamingStepId) : undefined
   const showLiveBlock = Boolean(streamingStepId) && (!streamingStep || streamingStep.status === 'running')
 
@@ -103,8 +103,8 @@ export function SessionTranscript() {
         </div>
         <SessionNavigationPanel scrollRootRef={scrollRef} />
       </div>
-      {showGoalComposer && session ? (
-        <SessionGoalComposer session={session} projectId={projectId} />
+      {showSessionComposer && session ? (
+        <SessionComposer session={session} projectId={projectId} />
       ) : null}
     </div>
   )

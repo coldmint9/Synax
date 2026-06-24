@@ -7,7 +7,7 @@ export {
   parseSynaxSessionMode,
   inferSynaxSessionMode,
   isGoalLikeMode,
-  isGoalLikeSession,
+  isGoalModeSession,
   type SynaxSessionMode,
   type SynaxSessionSource,
   type SynaxSessionMetadata,

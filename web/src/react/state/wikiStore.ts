@@ -34,7 +34,7 @@ function pushGoalResultToast(final: GoalSessionState): void {
   if (final.status === 'failed') {
     toast.push({
       type: 'error',
-      message: final.error ?? 'Goal Agent 执行失败',
+      message: final.error ?? 'Synax 执行失败',
       duration: 6000,
     })
     return
@@ -42,7 +42,7 @@ function pushGoalResultToast(final: GoalSessionState): void {
   if (final.status === 'completed') {
     toast.push({
       type: 'success',
-      message: 'Goal Agent 已完成',
+      message: 'Synax 已完成',
       duration: 4000,
     })
   }

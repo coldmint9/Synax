@@ -9,7 +9,7 @@ export const GOAL_AGENT_PROFILE_ID = LEGACY_GOAL_PROFILE_ID;
 
 export { SYNAX_AGENT_PROFILE_ID };
 
-/** @deprecated Registers legacy goal profile alias. Prefer ensureSynaxAgentRegistered(). */
+/** @deprecated Registers legacy profileId alias. Prefer ensureSynaxAgentRegistered(). */
 export function ensureGoalProfileRegistered(): void {
   ensureLegacyGoalProfileRegistered();
 }

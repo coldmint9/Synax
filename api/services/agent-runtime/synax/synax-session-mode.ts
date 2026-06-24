@@ -68,7 +68,7 @@ export function isGoalLikeMode(mode: SynaxSessionMode): boolean {
   return mode === 'goal' || mode === 'plan_node';
 }
 
-export function isGoalLikeSession(input: {
+export function isGoalModeSession(input: {
   profileId: string;
   sessionMetadata: Record<string, unknown> | null | undefined;
 }): boolean {
