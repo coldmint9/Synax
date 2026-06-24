@@ -5,7 +5,8 @@ import { RouterProvider } from '@heroui/react'
 import App from './react/App'
 import './index.css'
 import { hydrateShellPreferences, useShellStore } from './react/state/shellStore'
-import { initApiOrigin } from './lib/api/origin'
+import { initApiOrigin } from './lib/api/originConfig'
+import { startApiConnectivityMonitor } from './lib/apiConnectivity'
 import { installScrollRevealScrollbar } from './lib/scrollRevealScrollbar'
 
 hydrateShellPreferences()
@@ -24,6 +25,7 @@ function HeroUIRouter({ children }: { children: React.ReactNode }) {
 
 async function bootstrap() {
   await initApiOrigin()
+  startApiConnectivityMonitor()
   ReactDOM.createRoot(document.getElementById('app')!).render(
     <React.StrictMode>
       <BrowserRouter>

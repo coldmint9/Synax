@@ -1,10 +1,12 @@
 import { useEffect } from 'react'
+import { useApiConnectivityStore } from '../../../lib/apiConnectivity'
 import { useAgentSessionStore } from './agentSessionStore'
 
 const ACTIVE_SESSION_POLL_MS = 4_000
 
 /** Poll session list + detail while the selected session is actively running. */
 export function useSessionDetailPolling() {
+  const apiReachable = useApiConnectivityStore(s => s.apiReachable)
   const refreshDetail = useAgentSessionStore(s => s.refreshDetail)
   const refreshSessions = useAgentSessionStore(s => s.refreshSessions)
   const panelOpen = useAgentSessionStore(s => s.panelOpen)
@@ -15,6 +17,7 @@ export function useSessionDetailPolling() {
   })
 
   useEffect(() => {
+    if (apiReachable === 'unreachable') return
     if (!panelOpen || !selectedSessionId) return
     const isActive = selectedStatus === 'running' || selectedStatus === 'waiting_permission'
     if (!isActive) return
@@ -28,5 +31,5 @@ export function useSessionDetailPolling() {
     const timer = window.setInterval(refresh, ACTIVE_SESSION_POLL_MS)
 
     return () => window.clearInterval(timer)
-  }, [panelOpen, selectedSessionId, selectedStatus, refreshDetail, refreshSessions])
+  }, [apiReachable, panelOpen, selectedSessionId, selectedStatus, refreshDetail, refreshSessions])
 }

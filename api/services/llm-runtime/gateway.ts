@@ -110,11 +110,11 @@ export async function validateGatewayModel(input: ValidateLlmRequest): Promise<{
     }
     const client = await instantiateProvider(provider, config)
     const model = selectLanguageModel(client, parsed.modelId)
-    await generateText({
+    await withRetry(() => generateText({
       model: model as Parameters<typeof generateText>[0]['model'],
       messages: [{ role: 'user', content: 'ping' }] satisfies ModelMessage[],
       maxOutputTokens: 1,
-    })
+    }), { maxRetries: 2, baseDelayMs: 500, maxDelayMs: 5000 })
     return { ok: true, message: `${parsed.providerId}/${parsed.modelId} validated` }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
