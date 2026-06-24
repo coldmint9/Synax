@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { bashPermissionPattern, bashTool, extractBashPaths } from '../tools/bash.js';
+import { parseBashInvocations } from '../tools/bash-command-policy.js';
+import { bashTool, extractBashPaths } from '../tools/bash.js';
 
 describe('bashTool', () => {
   describe('tool definition', () => {
@@ -53,8 +54,8 @@ describe('bashTool', () => {
     });
 
     it('classifies disallowed commands for permission evaluation', () => {
-      expect(bashPermissionPattern('rm -rf /')).toBe('non-whitelist');
-      expect(bashPermissionPattern('cat file.txt | rm -rf /')).toBe('non-whitelist');
+      expect(parseBashInvocations('rm -rf /')[0]?.risk).toBe('write');
+      expect(parseBashInvocations('cat file.txt | rm -rf /')[1]?.risk).toBe('write');
     });
 
     it('blocks file redirect to unsafe target', () => {
@@ -203,7 +204,8 @@ describe('bashTool', () => {
     });
 
     it('classifies disallowed git subcommands for permission evaluation', () => {
-      expect(bashPermissionPattern('git push origin main')).toBe('non-whitelist');
+      expect(parseBashInvocations('git push origin main')[0]?.pattern).toBe('git:push');
+      expect(parseBashInvocations('git push origin main')[0]?.risk).toBe('write');
     });
   });
 
@@ -226,8 +228,8 @@ describe('bashTool', () => {
       expect(r.exitCode).toBe(0);
     });
 
-    it('classifies unknown commands for permission evaluation', () => {
-      expect(bashPermissionPattern('nonexistentcmd123456 --help')).toBe('non-whitelist');
+    it('classifies unknown commands as mutating', () => {
+      expect(parseBashInvocations('nonexistentcmd123456 --help')[0]?.risk).toBe('write');
     });
   });
 
@@ -269,9 +271,9 @@ describe('bashTool', () => {
     });
   });
 
-  describe('bashPermissionPattern', () => {
-    it('classifies npx as non-whitelisted', () => {
-      expect(bashPermissionPattern('npx eslint .')).toBe('non-whitelist');
+  describe('parseBashInvocations', () => {
+    it('classifies npx as mutating', () => {
+      expect(parseBashInvocations('npx eslint .')[0]?.risk).toBe('write');
     });
   });
 });

@@ -13,7 +13,6 @@ import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
 import { sessionHooks } from './session-hooks.js';
 import { logger } from '../../lib/logger.js';
 import { skillRegistry } from './skill-registry.js';
-import { ESCALATION_TOOL } from './tool-disclosure.js';
 import { INVALID_TOOL, INVALID_TOOL_ID } from './tool-invalid.js';
 import { diffReadTool } from './tools/diff-read.js';
 import { fileGlobTool } from './tools/file-glob.js';
@@ -24,6 +23,10 @@ import { fileReadTool } from './tools/file-read.js';
 import { fileDeleteTool } from './tools/file-delete.js';
 import { fileWriteTool } from './tools/file-write.js';
 import { grepSearchTool } from './tools/grep-search.js';
+import {
+  buildExplorerSubagentPrompt,
+  shouldWrapExplorerDelegatePrompt,
+} from './synax/synax-explorer-delegate.js';
 import { taskCreateTool, taskUpdateTool, taskGetTool, taskListTool } from './tools/task-tools.js';
 
 const SUMMARY_LIMIT = 1_000;
@@ -62,7 +65,7 @@ export class ToolRegistry {
     private readonly evidence: EvidenceService = evidenceService,
     private readonly profiles: ProfileService = profileService,
   ) {
-    [bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, filePatchTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, ESCALATION_TOOL, INVALID_TOOL].forEach((tool) =>
+    [bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, filePatchTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, INVALID_TOOL].forEach((tool) =>
       this.register(tool),
     );
     this.register({
@@ -73,7 +76,7 @@ export class ToolRegistry {
       category: 'task',
       internalGate: 'task',
       mutability: 'task',
-      resumeBehavior: 'wait_permission',
+      resumeBehavior: 'auto',
       progressiveDetails:
         'Accepts { profileId?: string, prompt: string, nodeId?: string | null, thinkingMode?: "fast" | "standard" | "deep" }. Max depth: 3, max concurrent: 3.',
       inputSchema: z.object({
@@ -100,6 +103,10 @@ export class ToolRegistry {
         }
         if (!args.prompt?.trim()) throw new AgentValidationError('prompt is required for subagent.delegate.');
 
+        const childPrompt = shouldWrapExplorerDelegatePrompt(profileId)
+          ? buildExplorerSubagentPrompt(args.prompt)
+          : args.prompt.trim();
+
         // Concurrency check: count active children of the immediate parent
         const siblings = (parent.childSessionIds ?? [])
           .map(id => { try { return this.store.getSession(id); } catch { return null; } })
@@ -113,7 +120,7 @@ export class ToolRegistry {
           nodeId: args.nodeId ?? parent.nodeId,
           profileId,
           parentSessionId: parent.id,
-          prompt: args.prompt,
+          prompt: childPrompt,
           thinkingMode: args.thinkingMode,
         });
         return {
@@ -315,23 +322,49 @@ export class ToolRegistry {
       },
     });
 
-    const decision = this.permissions.evaluate({
-      sessionId,
-      runId: options.runId ?? null,
-      stepId: options.stepId ?? null,
-      toolCallId: record.id,
-      category: tool.category,
-      internalGate: tool.internalGate ?? 'none',
-      pattern: tool.getPattern?.(args) ?? tool.patterns?.[0] ?? tool.id,
-      rules: session.permissionRules,
-      isSubSession: Boolean(session.parentSessionId),
-      resumeToken: options.resumeToken ?? null,
-      metadata: {
-        toolId: tool.id,
-        args,
-        mutability: tool.mutability,
-      },
-    });
+    const bashCommand = tool.id === 'bash'
+      && typeof args === 'object'
+      && args
+      && 'command' in args
+      && typeof (args as { command?: unknown }).command === 'string'
+      ? (args as { command: string }).command
+      : null;
+
+    const decision = bashCommand
+      ? this.permissions.evaluateShellCommand({
+          sessionId,
+          runId: options.runId ?? null,
+          stepId: options.stepId ?? null,
+          toolCallId: record.id,
+          category: tool.category,
+          internalGate: tool.internalGate ?? 'none',
+          rules: session.permissionRules,
+          isSubSession: Boolean(session.parentSessionId),
+          resumeToken: options.resumeToken ?? null,
+          command: bashCommand,
+          metadata: {
+            toolId: tool.id,
+            args,
+            mutability: tool.mutability,
+          },
+        })
+      : this.permissions.evaluate({
+          sessionId,
+          runId: options.runId ?? null,
+          stepId: options.stepId ?? null,
+          toolCallId: record.id,
+          category: tool.category,
+          internalGate: tool.internalGate ?? 'none',
+          pattern: tool.getPattern?.(args) ?? tool.patterns?.[0] ?? tool.id,
+          rules: session.permissionRules,
+          isSubSession: Boolean(session.parentSessionId),
+          resumeToken: options.resumeToken ?? null,
+          metadata: {
+            toolId: tool.id,
+            args,
+            mutability: tool.mutability,
+          },
+        });
     this.store.updateToolCall(sessionId, record.id, { permissionDecisionId: decision.id });
 
     if (decision.action === 'ask') {

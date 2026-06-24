@@ -1,179 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
+import { recordBashFileReads } from '../read-tracker.js';
 import { isUnrestrictedPermissionRules } from '../permission-tiers.js';
 import { agentRuntimeStore } from '../session-store.js';
+import { bashPermissionSummary, parseBashInvocations } from './bash-command-policy.js';
 import { resolveWorkspacePath, workspaceRoot } from './workspace.js';
 
-// ---------------------------------------------------------------------------
-// Whitelist
-// ---------------------------------------------------------------------------
-
-const ALLOWED_COMMANDS = new Set([
-  'cat', 'head', 'tail', 'rg', 'grep', 'git',
-  'find', 'ls', 'wc', 'sort', 'uniq', 'tr', 'cut', 'sed', 'awk',
-  'echo', 'printf', 'xargs', 'tee',
-  'basename', 'dirname', 'realpath', 'file', 'stat', 'du',
-  'date', 'env', 'which', 'pwd', 'id', 'uname',
-]);
-
-const ALLOWED_GIT_SUBCOMMANDS = new Set([
-  'diff', 'log', 'show', 'status', 'branch', 'blame',
-  'ls-files', 'ls-tree', 'rev-parse', 'rev-list',
-]);
-
 const SAFE_REDIRECT_TARGETS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr']);
-
 const MAX_OUTPUT_BYTES = 64_000;
 const EXEC_TIMEOUT_MS = 30_000;
-
-// ---------------------------------------------------------------------------
-// Helpers: command splitting
-// ---------------------------------------------------------------------------
-
-/**
- * Split a shell command string on top-level pipes, chain operators, and
- * semicolons while respecting single/double quote boundaries.
- */
-function splitCommands(command: string): string[] {
-  const segments: string[] = [];
-  let current = '';
-  let inSingle = false;
-  let inDouble = false;
-
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i];
-
-    if (inSingle) {
-      current += ch;
-      if (ch === "'") inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      current += ch;
-      if (ch === '"') inDouble = false;
-      continue;
-    }
-
-    if (ch === "'") { current += ch; inSingle = true; continue; }
-    if (ch === '"') { current += ch; inDouble = true; continue; }
-
-    // `||` chain operator
-    if (ch === '|' && i + 1 < command.length && command[i + 1] === '|') {
-      if (current.trim()) segments.push(current.trim());
-      current = '';
-      i++; // skip second |
-      continue;
-    }
-
-    // `|` pipe
-    if (ch === '|') {
-      if (current.trim()) segments.push(current.trim());
-      current = '';
-      continue;
-    }
-
-    // `&&` chain operator
-    if (ch === '&' && i + 1 < command.length && command[i + 1] === '&') {
-      if (current.trim()) segments.push(current.trim());
-      current = '';
-      i++; // skip second &
-      continue;
-    }
-
-    // `;` separator
-    if (ch === ';') {
-      if (current.trim()) segments.push(current.trim());
-      current = '';
-      continue;
-    }
-
-    current += ch;
-  }
-
-  if (current.trim()) segments.push(current.trim());
-  return segments;
-}
-
-/**
- * Extract the base command name from a segment (the first non-assignment
- * token after stripping any leading path prefix).
- */
-function extractCommandName(segment: string): string | null {
-  const tokens = segment.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return null;
-
-  let idx = 0;
-
-  // Skip env-var assignments like FOO=bar BAZ=qux ...
-  while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx])) {
-    idx++;
-  }
-  if (idx >= tokens.length) return null;
-
-  let cmd = tokens[idx];
-
-  // Strip leading path prefix (e.g. /usr/bin/grep → grep)
-  const lastSlash = cmd.lastIndexOf('/');
-  if (lastSlash >= 0) {
-    cmd = cmd.substring(lastSlash + 1);
-  }
-
-  return cmd || null;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers: validation
-// ---------------------------------------------------------------------------
-
-/**
- * Validate that every command in the command string is whitelisted.
- * Returns an error message string, or null on success.
- */
-function validateWhitelist(command: string): string | null {
-  const segments = splitCommands(command);
-
-  for (const segment of segments) {
-    const tokens = segment.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) continue;
-
-    let idx = 0;
-    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx])) {
-      idx++;
-    }
-    if (idx >= tokens.length) continue;
-
-    let cmd = tokens[idx];
-    const lastSlash = cmd.lastIndexOf('/');
-    if (lastSlash >= 0) cmd = cmd.substring(lastSlash + 1);
-
-    if (!ALLOWED_COMMANDS.has(cmd)) {
-      return `Command '${cmd}' is not allowed. Whitelisted commands: ${Array.from(ALLOWED_COMMANDS).sort().join(', ')}.`;
-    }
-
-    // Validate git subcommands
-    if (cmd === 'git') {
-      let subIdx = idx + 1;
-      // Skip flags before the subcommand
-      while (subIdx < tokens.length && tokens[subIdx].startsWith('-')) {
-        subIdx++;
-      }
-      if (subIdx < tokens.length) {
-        const subcommand = tokens[subIdx];
-        if (!ALLOWED_GIT_SUBCOMMANDS.has(subcommand)) {
-          return `Git subcommand '${subcommand}' is not allowed. Allowed subcommands: ${Array.from(ALLOWED_GIT_SUBCOMMANDS).sort().join(', ')}.`;
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
-/** Permission pattern for shell gate evaluation (`whitelist` vs `non-whitelist`). */
-export function bashPermissionPattern(command: string): 'whitelist' | 'non-whitelist' {
-  return validateWhitelist(command) === null ? 'whitelist' : 'non-whitelist';
-}
 
 function isUnrestrictedSession(sessionId: string): boolean {
   try {
@@ -240,7 +76,8 @@ function detectCommandNotFound(stderr: string, command: string): { notFound: boo
     if (match) {
       // Try to extract the offending command name from stderr
       const cmdMatch = stderr.match(/(?:'|")([^'"]+)(?:'|")/);
-      const cmdName = cmdMatch?.[1] ?? extractCommandName(command) ?? 'unknown';
+      const firstInvocation = parseBashInvocations(command)[0];
+      const cmdName = cmdMatch?.[1] ?? firstInvocation?.command ?? 'unknown';
       return { notFound: true, commandName: cmdName };
     }
   }
@@ -301,7 +138,7 @@ export const bashTool: RegisteredTool = {
   id: 'bash',
   label: 'Bash',
   description:
-    'Executes a bash command in the workspace. Only read-only commands are permitted (cat, head, tail, grep, rg, find, ls, git diff/log/show/status, etc.). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr. Use this as a fallback when dedicated tools (file.read, grep.search, file.glob, file.list) do not cover your use case.',
+    'Executes a bash command in the workspace. Permission is enforced per command and subcommand (e.g. git:diff vs git:push). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr unless the session is unrestricted. Prefer dedicated tools (file.read, grep.search, file.glob, file.list) when possible.',
   category: 'shell',
   internalGate: 'shell',
   mutability: 'read',
@@ -312,10 +149,10 @@ export const bashTool: RegisteredTool = {
     stdin: z.string().optional().describe('Optional text to pipe into the command via stdin.'),
   }),
   progressiveDetails:
-    'Accepts { command: string, workdir?: string, stdin?: string }. Executes read-only Unix commands (cat, rg, grep, find, ls, git diff/log/show, wc, sort, uniq, sed, awk, etc.) with full pipe/chain support. Combine operations to reduce tool calls. If a command is unavailable, fall back to dedicated tools.',
+    'Accepts { command: string, workdir?: string, stdin?: string }. Commands are classified as read-only or mutating for permission checks (e.g. rg, git:diff vs npm, git:push). Pipes and chains evaluate every segment. If a command is unavailable, fall back to dedicated tools.',
   getPattern(args) {
     if (typeof args === 'object' && args && 'command' in args && typeof (args as { command?: unknown }).command === 'string') {
-      return bashPermissionPattern((args as { command: string }).command);
+      return bashPermissionSummary((args as { command: string }).command);
     }
     return undefined;
   },
@@ -402,6 +239,7 @@ export const bashTool: RegisteredTool = {
       : stderr;
 
     const exitCode = result.status ?? null;
+    recordBashFileReads(input.sessionId, command, exitCode);
 
     // 9. Command-not-found detection
     const { notFound, commandName } = detectCommandNotFound(stderr, command);

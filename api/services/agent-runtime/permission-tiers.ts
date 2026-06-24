@@ -36,38 +36,30 @@ const askDelete = (reason = 'Deletes require approval.'): PermissionRule => ({
   reason,
 });
 
-
-const askTask = (reason = 'Task delegation requires approval.'): PermissionRule => ({
-  gate: 'task',
-  pattern: '*',
-  action: 'ask',
-  reason,
-});
-
-const denyNonWhitelistShell = (reason = 'Only whitelisted shell commands are permitted in readonly mode.'): PermissionRule => ({
+const denyWriteShell = (reason = 'Mutating shell commands are not permitted in readonly mode.'): PermissionRule => ({
   gate: 'shell',
-  pattern: 'non-whitelist',
+  pattern: 'write',
   action: 'deny',
   reason,
 });
 
-const allowWhitelistShell = (reason = 'Whitelisted shell commands are allowed.'): PermissionRule => ({
+const askReadShell = (reason = 'Read-only shell commands require approval.'): PermissionRule => ({
   gate: 'shell',
-  pattern: 'whitelist',
-  action: 'allow',
-  reason,
-});
-
-const askWhitelistShell = (reason = 'Whitelisted shell commands require approval.'): PermissionRule => ({
-  gate: 'shell',
-  pattern: 'whitelist',
+  pattern: 'read',
   action: 'ask',
   reason,
 });
 
-const askNonWhitelistShell = (reason = 'Non-whitelisted shell commands require approval.'): PermissionRule => ({
+const allowReadShell = (reason = 'Read-only shell commands are allowed.'): PermissionRule => ({
   gate: 'shell',
-  pattern: 'non-whitelist',
+  pattern: 'read',
+  action: 'allow',
+  reason,
+});
+
+const askWriteShell = (reason = 'Mutating shell commands require approval.'): PermissionRule => ({
+  gate: 'shell',
+  pattern: 'write',
   action: 'ask',
   reason,
 });
@@ -75,8 +67,8 @@ const askNonWhitelistShell = (reason = 'Non-whitelisted shell commands require a
 /**
  * Three permission tiers:
  *
- * 1. readonly — read freely; write, delete, and whitelisted shell commands require approval.
- * 2. readwrite — full read/write/delete; non-whitelisted shell commands require approval.
+ * 1. readonly — read freely; write/delete and read shell need approval; mutating shell denied.
+ * 2. readwrite — full read/write/delete; read shell allowed; mutating shell needs approval.
  * 3. unrestricted — no permission gates.
  */
 export function permissionRulesForTier(tier: PermissionTier): PermissionRule[] {
@@ -86,18 +78,16 @@ export function permissionRulesForTier(tier: PermissionTier): PermissionRule[] {
         allowRead(),
         askWrite(),
         askDelete(),
-        denyNonWhitelistShell(),
-        askWhitelistShell(),
-        askTask(),
+        denyWriteShell(),
+        askReadShell(),
       ];
     case 'readwrite':
       return [
         allowRead(),
         allowWrite(),
         allowDelete(),
-        allowWhitelistShell(),
-        askNonWhitelistShell(),
-        askTask(),
+        allowReadShell(),
+        askWriteShell(),
       ];
     case 'unrestricted':
       return [{ gate: '*', pattern: '*', action: 'allow', reason: 'Unrestricted access.' }];

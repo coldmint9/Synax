@@ -10,6 +10,13 @@ import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { AgentNotFoundError, AgentPermissionError } from './runtime-errors.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
 import { matchWildcard } from './wildcard.js';
+import { parseBashInvocations, type BashInvocation } from './tools/bash-command-policy.js';
+
+function strictestPermissionAction(actions: PermissionAction[]): PermissionAction {
+  if (actions.includes('deny')) return 'deny';
+  if (actions.includes('ask')) return 'ask';
+  return 'allow';
+}
 
 export interface PermissionRequestInput {
   sessionId: string;
@@ -33,16 +40,24 @@ function coarseCategory(category: CapabilityCategory): PermissionDecision['coars
 }
 
 function matches(rule: PermissionRule, input: PermissionRequestInput): boolean {
-  if (rule.gate !== '*' && rule.gate !== input.category && rule.gate !== (input.internalGate ?? 'none')) return false;
+  // `gate: 'task'` controls subagent delegation (`internalGate: 'task'`), not session TODO tools (`task.*`).
+  if (rule.gate === 'task') {
+    if (input.internalGate !== 'task') return false;
+  } else if (rule.gate !== '*' && rule.gate !== input.category && rule.gate !== (input.internalGate ?? 'none')) {
+    return false;
+  }
   return matchWildcard(input.pattern ?? '*', rule.pattern);
 }
 
 function defaultDecision(input: PermissionRequestInput): { action: PermissionAction; reason: string } {
   if (input.internalGate === 'shell' || input.category === 'shell') {
-    return { action: 'allow', reason: 'Shell access is restricted to read-only whitelisted commands.' };
+    return { action: 'ask', reason: 'Shell commands require explicit approval by default.' };
   }
-  if (input.isSubSession && input.category === 'task') {
+  if (input.isSubSession && input.internalGate === 'task') {
     return { action: 'deny', reason: 'Child sessions cannot recursively delegate tasks in v1.' };
+  }
+  if (input.category === 'task' && input.internalGate !== 'task') {
+    return { action: 'allow', reason: 'Session task tools do not require approval.' };
   }
   if (input.isSubSession && (input.category === 'write' || input.internalGate === 'write')) {
     return { action: 'deny', reason: 'v1 sub-sessions cannot write source files.' };
@@ -53,8 +68,8 @@ function defaultDecision(input: PermissionRequestInput): { action: PermissionAct
   if (input.internalGate === 'delete') {
     return { action: 'ask', reason: 'Deletes require explicit approval.' };
   }
-  if (input.internalGate === 'task' || input.category === 'task') {
-    return { action: 'ask', reason: 'Task delegation requires explicit approval.' };
+  if (input.internalGate === 'task') {
+    return { action: 'allow', reason: 'Subagent delegation is allowed by default.' };
   }
   if (input.internalGate === 'external_path') {
     return { action: 'ask', reason: 'Project-external path access requires approval.' };
@@ -73,6 +88,70 @@ function defaultDecision(input: PermissionRequestInput): { action: PermissionAct
 
 export class PermissionPolicy {
   constructor(private readonly store: AgentRuntimeStore = agentRuntimeStore) {}
+
+  private resolveShellInvocation(
+    invocation: BashInvocation,
+    input: Omit<PermissionRequestInput, 'pattern'>,
+  ): { action: PermissionAction; reason: string; pattern: string } {
+    const shellInput: PermissionRequestInput = {
+      ...input,
+      category: 'shell',
+      internalGate: 'shell',
+    };
+    const patternCandidates = [invocation.pattern, invocation.risk, '*'];
+    for (const pattern of patternCandidates) {
+      const rule = [...(input.rules ?? [])]
+        .reverse()
+        .find((candidate) => matches(candidate, { ...shellInput, pattern }));
+      if (rule) {
+        return {
+          action: rule.action,
+          reason: rule.reason ?? 'Shell command matched a permission rule.',
+          pattern,
+        };
+      }
+    }
+    const fallback = defaultDecision({ ...shellInput, pattern: invocation.pattern });
+    return { action: fallback.action, reason: fallback.reason, pattern: invocation.pattern };
+  }
+
+  evaluateShellCommand(input: Omit<PermissionRequestInput, 'pattern'> & { command: string }): PermissionDecision {
+    const invocations = parseBashInvocations(input.command);
+    const evaluated = (invocations.length > 0 ? invocations : [{
+      command: '*',
+      subcommand: null,
+      pattern: '*',
+      risk: 'write' as const,
+    }]).map((invocation) => this.resolveShellInvocation(invocation, input));
+
+    const action = strictestPermissionAction(evaluated.map((item) => item.action));
+    const matched = evaluated.find((item) => item.action === action) ?? evaluated[0]!;
+    const reason = matched.reason;
+    const patterns = invocations.map((invocation) => invocation.pattern);
+    const now = nowIso();
+
+    return this.store.appendPermission({
+      id: makeRuntimeId('pd'),
+      sessionId: input.sessionId,
+      runId: input.runId ?? null,
+      stepId: input.stepId ?? null,
+      toolCallId: input.toolCallId ?? null,
+      coarseCategory: 'high_risk',
+      internalGate: 'shell',
+      action,
+      reason,
+      patterns: patterns.length > 0 ? patterns : ['*'],
+      userReply: action === 'ask' ? null : action === 'allow' ? 'once' : 'reject',
+      createdAt: now,
+      resolvedAt: action === 'ask' ? null : now,
+      resumeToken: input.resumeToken ?? null,
+      metadata: {
+        ...input.metadata ?? {},
+        command: input.command,
+        invocations,
+      },
+    });
+  }
 
   evaluate(input: PermissionRequestInput): PermissionDecision {
     const rule = [...(input.rules ?? [])].reverse().find((candidate) => matches(candidate, input));

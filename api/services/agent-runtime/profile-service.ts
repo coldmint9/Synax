@@ -26,7 +26,6 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     allowedCapabilities: ['subagent.delegate', 'task.create', 'task.update', 'task.get', 'task.list', 'skill.load'],
     permissionDefaults: [
       allowRead(),
-      { gate: 'task', pattern: '*', action: 'ask', reason: 'Planner subtask delegation requires approval.' },
       { gate: 'write', pattern: '*', action: 'ask', reason: 'Planning changes require approval.' },
     ],
     defaultSkills: ['coord-planner'],
@@ -63,11 +62,9 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
       'task.list',
       'subagent.delegate',
       'skill.load',
-      'tools.escalate',
     ],
     permissionDefaults: [
       allowRead(),
-      { gate: 'task', pattern: '*', action: 'ask', reason: 'Task delegation requires approval.' },
       { gate: 'write', pattern: '*', action: 'ask', reason: 'Writes require approval.' },
     ],
     defaultSkills: ['action-executor'],
@@ -109,7 +106,11 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     maxSteps: 8,
     status: 'active',
     toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
-    loopHints: ['Use read-only tools and summarize concrete evidence.', 'For design/architecture questions, try wiki.search_batch before wide grep sweeps.'],
+    loopHints: [
+      'Wiki-first: wiki.get_snapshot → wiki.search_batch/wiki.search_content → wiki.read_section → wiki.get_tree.',
+      'Use file/grep/bash only after wiki coverage or for symbol-level evidence wiki lacks.',
+      'Summarize concrete evidence with cited wiki sections and file paths.',
+    ],
     allowsSubsessions: true,
   },
 ];
