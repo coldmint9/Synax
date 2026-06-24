@@ -23,6 +23,8 @@ import {
   skillRegistry,
   streamTurnRequestSchema,
   toHttpError,
+  applySessionPermissionUpdate,
+  updateSessionPermissionRequestSchema,
 } from '../services/agent-runtime/index.js';
 import {
   interruptAgentSessionsAndWait,
@@ -485,6 +487,21 @@ agentRuntimeRoutes.get('/sessions/:sessionId/permissions', (c) => {
   try {
     agentSessionRuntime.get(c.req.param('sessionId'));
     return c.json({ items: permissionPolicy.list(c.req.param('sessionId')) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.patch('/sessions/:sessionId/permissions', async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = updateSessionPermissionRequestSchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  const sessionId = c.req.param('sessionId');
+  try {
+    agentSessionRuntime.get(sessionId);
+    const session = applySessionPermissionUpdate(sessionId, parsed.data);
+    return c.json(withSessionPayload(session.id));
   } catch (error) {
     return runtimeError(c, error);
   }

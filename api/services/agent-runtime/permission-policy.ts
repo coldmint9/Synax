@@ -8,6 +8,7 @@ import type {
 } from './contracts.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { AgentNotFoundError, AgentPermissionError } from './runtime-errors.js';
+import { appendAlwaysPermissionRule } from './session-permissions.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
 import { matchWildcard } from './wildcard.js';
 import { parseBashInvocations, type BashInvocation } from './tools/bash-command-policy.js';
@@ -192,14 +193,12 @@ export class PermissionPolicy {
       reason: message ? `${decision.reason} ${message}` : decision.reason,
     });
     if (reply === 'always') {
-      const session = this.store.getSession(sessionId);
       const pattern = decision.patterns[0] ?? '*';
       const gate = decision.internalGate === 'none' ? decision.coarseCategory : decision.internalGate;
-      const permissionRules = [...session.permissionRules, { gate, pattern, action, reason: updated.reason }];
+      appendAlwaysPermissionRule(sessionId, { gate, pattern, action, reason: updated.reason });
       this.store.updateSession(sessionId, {
-        permissionRules,
-        updatedAt: nowIso(),
         pendingResumeToken: decision.resumeToken ?? null,
+        updatedAt: nowIso(),
       });
     }
     return updated;

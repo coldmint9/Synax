@@ -702,7 +702,20 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     goalComposerAnchorJson: mode === 'auto' ? null : s.goalComposerAnchorJson,
   })),
   setGoalComposerSkillIds: (ids) => set({ goalComposerSkillIds: ids }),
-  setGoalPermissionTier: (tier) => set({ goalComposerPermissionTier: tier }),
+  setGoalPermissionTier: (tier) => {
+    set({ goalComposerPermissionTier: tier })
+    const sessionId = get().goalSession.sessionId
+    if (sessionId) {
+      void agentRuntimeApi.updateSessionPermissions(sessionId, { permissionTier: tier })
+        .then((payload) => {
+          useAgentSessionStore.getState().patchSession(sessionId, {
+            sessionMetadata: payload.session.sessionMetadata,
+            updatedAt: payload.session.updatedAt,
+          })
+        })
+        .catch(() => {})
+    }
+  },
 
   openGoalInput: (prefill) => {
     const s = get()
@@ -747,7 +760,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           set({ goalComposerContent: '' })
           await useAgentSessionStore.getState().enqueueSessionInput(
             s.goalSession.sessionId,
-            { message: content, model: modelId },
+            { message: content, model: modelId, permissionTier: s.goalComposerPermissionTier },
           )
           return
         }
@@ -766,7 +779,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         })
         await streamGoalAgentTurn(
           s.goalSession.sessionId,
-          { message: content, model: modelId },
+          { message: content, model: modelId, permissionTier: s.goalComposerPermissionTier },
           (chunk) => {
             set(state => ({
               goalSession: applyGoalStreamChunk(state.goalSession, chunk),
@@ -841,7 +854,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
       await streamGoalAgentTurn(
         payload.session.id,
-        { model: modelId },
+        { model: modelId, permissionTier: s.goalComposerPermissionTier },
         (chunk) => {
           set(state => ({
             goalSession: applyGoalStreamChunk(state.goalSession, chunk),

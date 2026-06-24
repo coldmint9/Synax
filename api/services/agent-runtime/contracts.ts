@@ -447,6 +447,8 @@ export const streamTurnRequestSchema = z.object({
   maxTokens: z.number().int().positive().max(200_000).optional(),
   maxSteps: z.number().int().positive().max(500).optional(),
   locale: z.enum(['zh', 'en']).optional(),
+  permissionTier: permissionTierSchema.optional(),
+  permissionOverrides: permissionOverridesSchema.optional(),
 });
 export type StreamTurnRequest = z.infer<typeof streamTurnRequestSchema>;
 

@@ -264,6 +264,8 @@ export interface StreamTurnRequest {
   temperature?: number
   maxTokens?: number
   maxSteps?: number
+  permissionTier?: 'readonly' | 'readwrite' | 'unrestricted'
+  permissionOverrides?: Partial<Record<'read' | 'write' | 'delete' | 'shell' | 'task', 'allow' | 'ask' | 'deny'>>
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -332,6 +334,14 @@ export const agentRuntimeApi = {
         body: JSON.stringify({ reply, message }),
       },
     ),
+  updateSessionPermissions: (
+    sessionId: string,
+    body: Pick<CreateSessionRequest, 'permissionTier' | 'permissionOverrides'>,
+  ) =>
+    request<SessionPayload>(`/sessions/${encodeURIComponent(sessionId)}/permissions`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
   listArtifacts: (sessionId: string) =>
     request<{ items: EvidenceArtifact[] }>(`/sessions/${encodeURIComponent(sessionId)}/artifacts`),
   listToolCalls: (sessionId: string) =>

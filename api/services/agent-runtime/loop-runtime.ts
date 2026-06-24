@@ -31,6 +31,7 @@ import { profileService, type ProfileService } from "./profile-service.js";
 import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
+import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
 import { rebuildSessionFileReads } from "./read-tracker.js";
 import { skillRegistry } from "./skill-registry.js";
@@ -157,6 +158,12 @@ export class AgentLoopRuntime {
     resume = false,
   ): AsyncGenerator<AgentRunStreamChunk> {
     this.assertSessionNotBusy(sessionId);
+    if (input.permissionTier !== undefined || input.permissionOverrides !== undefined) {
+      applySessionPermissionUpdate(sessionId, {
+        permissionTier: input.permissionTier,
+        permissionOverrides: input.permissionOverrides,
+      });
+    }
     let session = this.store.getSession(sessionId);
     const activeExecution = this.beginSessionExecution(sessionId, abortSignal);
     const runAbortSignal = activeExecution.signal;

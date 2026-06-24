@@ -229,13 +229,14 @@ export function isGoalSessionActive(status: GoalSessionStatus): boolean {
 
 export async function streamGoalAgentTurn(
   sessionId: string,
-  input: { message?: string; model?: string | null },
+  input: { message?: string; model?: string | null; permissionTier?: 'readonly' | 'readwrite' | 'unrestricted' },
   onChunk: (chunk: unknown) => void,
   options?: { continue?: boolean },
 ): Promise<void> {
   const body = {
     ...(input.message ? { message: input.message } : {}),
     ...(input.model ? { model: input.model } : {}),
+    ...(input.permissionTier ? { permissionTier: input.permissionTier } : {}),
   }
   if (options?.continue) {
     await agentRuntimeApi.resumeStream(sessionId, body, onChunk)
