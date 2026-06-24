@@ -1,5 +1,6 @@
 import type { SynaxSessionMode } from './synax-session-mode.js';
 import { isGoalLikeMode } from './synax-session-mode.js';
+import { EXPLORER_WIKI_PLAYBOOK } from './synax-explorer-delegate.js';
 
 export type SynaxIntentKind = 'explore' | 'coding' | 'review' | 'plan';
 
@@ -104,14 +105,17 @@ function buildExploreIntentSection(stepIndex: number): string {
   const firstStep = stepIndex <= 1;
   const lines = [
     '## Exploration Intent',
-    'The user wants fast codebase discovery — not implementation yet.',
-    '- Delegate immediately via subagent.delegate(profileId: "explorer", prompt: "<focused investigation question>").',
-    '- The explorer sub-agent runs read-only parallel searches and returns concrete evidence (paths, symbols, call flows).',
-    '- Do not perform wide bash/grep sweeps yourself when explorer can do it faster; synthesize delegate results for the user.',
-    '- Only re-search locally if the delegate report has gaps.',
+    'The user wants discovery/research — not implementation. The parent agent orchestrates; exploration runs in a child session.',
+    '- Delegate via subagent.delegate(profileId: "explorer", prompt: "<pass the user question verbatim plus any focus constraints>").',
+    '- The explorer child is wiki-first: it will run wiki FTS/search, read wiki sections, then code tools for evidence.',
+    '- Do NOT call bash, wiki.*, file.read, grep.search, or file.glob on the parent for this exploration — only subagent.delegate.',
+    '- After the child returns, synthesize its report for the user. Re-delegate only for a clearly new sub-question.',
+    '',
+    'Explorer child playbook (for reference — injected automatically into the delegate prompt):',
+    EXPLORER_WIKI_PLAYBOOK,
   ];
   if (firstStep) {
-    lines.push('- This is step 1: your first action should be subagent.delegate to explorer unless the answer is already in context.');
+    lines.push('', 'Step 1 rule: your first and only tool call must be subagent.delegate to explorer unless the answer is already complete in context.');
   }
   return lines.join('\n');
 }
@@ -126,7 +130,7 @@ function buildCodingIntentSection(): string {
     '## Task Breakdown',
     '- For 2+ steps, call task.create early and keep task.update current.',
     '- One logical change per step; read/search before write.',
-    '- Call tools_escalate before file.write or file.patch when still in exploration tier.',
+    '- file.write and file.patch on existing files require file.read first (enforced by runtime).',
     '',
     '## Coding Style',
     '- Match naming, patterns, and formatting of touched files.',

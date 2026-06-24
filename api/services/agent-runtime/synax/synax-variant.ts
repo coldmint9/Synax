@@ -54,7 +54,7 @@ export class SynaxVariantRegistry {
       this.variants.set('explorer', variantFromProfile('explorer', explorer, {
         loopHints: [
           ...(explorer.loopHints ?? []),
-          'On step 1, delegate wide read-only investigation via subagent.delegate(profileId: "explorer") — do not serial bash sweeps yourself.',
+          'Exploration variant: delegate each discovery question via subagent.delegate(profileId: "explorer") so wiki-first research runs in an isolated child session.',
         ],
         delegateProfileId: 'explorer',
       }));
