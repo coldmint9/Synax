@@ -6,14 +6,7 @@ import { agentRuntimeStore } from './session-store.js';
 import { nowIso } from './runtime-ids.js';
 
 const INITIAL_TITLE_MAX_LEN = 80;
-const TERMINAL_RUN_STATUSES = new Set([
-  'completed',
-  'failed',
-  'waiting_permission',
-  'blocked',
-  'cancelled',
-  'interrupted',
-]);
+export const DEFAULT_NEW_AGENT_SESSION_TITLE = 'new agent';
 
 export interface TitleGeneratorContext {
   sessionId: string;
@@ -50,6 +43,11 @@ export function resolveInitialSessionTitle(input: {
   sessionMetadata: Record<string, unknown> | null;
   prompt: string;
 }): string | null {
+  const meta = input.sessionMetadata;
+  if (meta?.source === 'session-page') {
+    return DEFAULT_NEW_AGENT_SESSION_TITLE;
+  }
+
   const fromGoal = resolveGoalTitleSource(input);
   if (fromGoal) return truncateInitialTitle(fromGoal);
 
@@ -69,9 +67,9 @@ export function registerSessionTitleHooks(): void {
 
   sessionHooks.register({
     id: 'session-title-after-first-run',
-    filter: { eventTypes: ['run:completed'] },
+    filter: { eventTypes: ['run:started'] },
     handler: (event) => {
-      if (event.type !== 'run:completed') return;
+      if (event.type !== 'run:started') return;
       void summarizeTitleAfterFirstRun(event.sessionId, event.runId);
     },
   });
@@ -83,8 +81,7 @@ async function summarizeTitleAfterFirstRun(sessionId: string, runId: string): Pr
   if (session.sessionMetadata?.titleSummarized === true) return;
 
   const runs = agentRuntimeStore.listRuns(sessionId);
-  const terminalRuns = runs.filter((run) => TERMINAL_RUN_STATUSES.has(run.status));
-  if (terminalRuns.length !== 1 || terminalRuns[0]?.id !== runId) return;
+  if (runs.length !== 1 || runs[0]?.id !== runId) return;
 
   agentRuntimeStore.updateSessionMetadata(sessionId, { titleSummarized: true });
   generateSessionTitle(sessionId, session.projectId, session.profileId, session.prompt);

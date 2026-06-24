@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   goalSessionPath,
   goalSessionsPath,
+  isBareGoalSessionsPath,
   isNewGoalSessionPath,
   newGoalSessionPath,
   workflowSessionsPath,
@@ -18,5 +19,12 @@ describe('sessionRoutes', () => {
   it('detects new draft route', () => {
     expect(isNewGoalSessionPath('/projects/p1/sessions/new')).toBe(true)
     expect(isNewGoalSessionPath('/projects/p1/sessions')).toBe(false)
+  })
+
+  it('detects bare goal sessions list', () => {
+    expect(isBareGoalSessionsPath('/projects/p1/sessions', 'p1')).toBe(true)
+    expect(isBareGoalSessionsPath('/projects/p1/sessions/new', 'p1')).toBe(false)
+    expect(isBareGoalSessionsPath('/projects/p1/sessions/workflows', 'p1')).toBe(false)
+    expect(isBareGoalSessionsPath('/projects/p1/sessions?session=x', 'p1')).toBe(false)
   })
 })

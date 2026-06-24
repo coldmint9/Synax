@@ -2,6 +2,15 @@ import { agentRuntimeStore } from '../agent-runtime/session-store.js'
 import type { TitleGenerator, TitleGeneratorContext } from '../agent-runtime/session-title-service.js'
 import { generateGatewayTextResult } from '../llm-runtime/gateway.js'
 
+export const SHORT_GOAL_TITLE_MAX_CHARS = 7
+
+export function resolveShortGoalTitle(source: string): string | null {
+  const trimmed = source.trim()
+  if (!trimmed) return null
+  if ([...trimmed].length > SHORT_GOAL_TITLE_MAX_CHARS) return null
+  return trimmed.slice(0, 50)
+}
+
 export function extractUserGoalFromPrompt(prompt: string): string | null {
   const marker = '## User Goal'
   const idx = prompt.indexOf(marker)
@@ -83,6 +92,8 @@ export const goalTitleGenerator: TitleGenerator = {
       prompt: ctx.prompt,
     })
     if (!source) return null
+    const shortTitle = resolveShortGoalTitle(source)
+    if (shortTitle) return shortTitle
     const context = buildGoalTitleContext(ctx.sessionId, source)
     return generateGoalTitleWithLlm(ctx.projectId, context)
   },

@@ -10,6 +10,7 @@ import { useLocale } from '../../../hooks/useLocale'
 import type { SessionListView } from './sessionBuckets'
 import { getSessionDisplayTitle } from './useSessionDisplayTitle'
 import { goalSessionsPath, workflowSessionsPath } from './sessionRoutes'
+import { clearSessionLastVisit, loadSessionLastVisit } from './sessionLastVisit'
 
 interface Props {
   listView?: SessionListView
@@ -82,6 +83,10 @@ export function SessionListPanel({ listView = 'goal', projectId }: Props) {
           setDeleting(true)
           try {
             await list.deleteSession(id)
+            const last = loadSessionLastVisit(projectId)
+            if (last?.kind === 'session' && last.sessionId === id) {
+              clearSessionLastVisit(projectId)
+            }
             if (searchParams.get('session') === id) {
               navigate(goalSessionsPath(projectId))
             }

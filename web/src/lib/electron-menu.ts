@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useShellStore } from '../react/state/shellStore';
+import { resolveGoalSessionsEntryPath } from '../react/features/sessions/sessionLastVisit';
 
 const api = (window as any).electronAPI;
 
@@ -25,7 +26,7 @@ export function useElectronMenu() {
           if (projectId) navigate(`/projects/${projectId}/wiki`);
           break;
         case 'view:sessions':
-          if (projectId) navigate(`/projects/${projectId}/sessions`);
+          if (projectId) navigate(resolveGoalSessionsEntryPath(projectId));
           break;
         case 'toggle:sidebar':
           document.dispatchEvent(new CustomEvent('menu:toggle-sidebar'));
