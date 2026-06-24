@@ -22,6 +22,9 @@ import { patchAgentSession, canEnqueueSessionInput } from './sessionComposerStat
 
 const READ_MARKERS_KEY = 'synax-session-read-markers'
 
+/** Stable fallback — never use inline `?? []` in Zustand selectors (breaks getSnapshot caching). */
+export const EMPTY_INPUT_QUEUE: QueuedInput[] = []
+
 function readMarkersStorageKey(projectId: string): string {
   return `${READ_MARKERS_KEY}:${projectId}`
 }
@@ -496,7 +499,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   },
 
   openPanel: (sessionId) => {
-    const prev = get().selectedSessionId
+    const { panelOpen, selectedSessionId: prev } = get()
+    if (panelOpen && prev === sessionId) return
+
     const isSwitch = prev !== sessionId
     get().markSessionRead(sessionId)
     const session = get().sessions.find(s => s.id === sessionId)
@@ -848,6 +853,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   markSessionRead: (sessionId) => {
     const session = get().sessions.find(s => s.id === sessionId)
     if (!session) return
+    if (get().readSessionMarkers[sessionId] === session.updatedAt) return
     const readSessionMarkers = {
       ...get().readSessionMarkers,
       [sessionId]: session.updatedAt,
