@@ -14,6 +14,7 @@ import {
 } from './sessionComposerState'
 import { InputQueueStrip } from './InputQueueStrip'
 import type { AgentSession } from '../../../lib/api/agentRuntime'
+import { readSynaxPermissionTier, type GoalPermissionTier } from './synaxSessionTypes'
 
 interface Props {
   projectId: string
@@ -66,6 +67,19 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
   const setModelId = useWikiStore(s => s.setGoalComposerModelId)
   const permissionTier = useWikiStore(s => s.goalComposerPermissionTier)
   const setPermissionTier = useWikiStore(s => s.setGoalPermissionTier)
+  const updateSessionPermissions = useAgentSessionStore(s => s.updateSessionPermissions)
+
+  useEffect(() => {
+    if (!session) return
+    setPermissionTier(readSynaxPermissionTier(session.sessionMetadata))
+  }, [session?.id, session?.sessionMetadata, setPermissionTier])
+
+  const handlePermissionTierChange = useCallback((tier: GoalPermissionTier) => {
+    setPermissionTier(tier)
+    if (sessionId) {
+      void updateSessionPermissions(sessionId, { permissionTier: tier })
+    }
+  }, [sessionId, setPermissionTier, updateSessionPermissions])
 
   useEffect(() => {
     if (!globalConfig) return
@@ -93,16 +107,16 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     setSubmitting(true)
     try {
       if (isDraft) {
-        const created = await submitSessionDraft(projectId, { message, model: modelId })
+        const created = await submitSessionDraft(projectId, { message, model: modelId, permissionTier })
         navigate(sessionPath(projectId, created.id))
-        await sendSessionMessage(created.id, { message, model: modelId })
+        await sendSessionMessage(created.id, { message, model: modelId, permissionTier })
       } else {
-        await submitOrEnqueueSessionInput(session.id, { message, model: modelId })
+        await submitOrEnqueueSessionInput(session.id, { message, model: modelId, permissionTier })
       }
     } finally {
       setSubmitting(false)
     }
-  }, [content, isDraft, isGenerating, modelId, navigate, projectId, queueWhileGenerating, sendSessionMessage, session, submitSessionDraft, submitOrEnqueueSessionInput])
+  }, [content, isDraft, isGenerating, modelId, navigate, permissionTier, projectId, queueWhileGenerating, sendSessionMessage, session, submitSessionDraft, submitOrEnqueueSessionInput])
 
   const handleStop = useCallback(() => {
     if (session) void cancelSessionRun(session.id)
@@ -135,7 +149,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
       skillIds={[]}
       onSkillIdsChange={() => {}}
       permissionTier={permissionTier}
-      onPermissionTierChange={setPermissionTier}
+      onPermissionTierChange={handlePermissionTierChange}
       disabled={isGenerating && !queueWhileGenerating}
       queueWhileGenerating={queueWhileGenerating}
     />

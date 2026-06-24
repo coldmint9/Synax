@@ -3,6 +3,7 @@ export * from './context-builder.js';
 export * from './event-service.js';
 export * from './evidence-service.js';
 export * from './permission-policy.js';
+export * from './session-permissions.js';
 export * from './profile-service.js';
 export * from './runtime-errors.js';
 export * from './runtime-ids.js';

@@ -16,11 +16,17 @@ import {
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
 import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { AppError } from '../../../lib/errors'
-import { SYNAX_PROFILE_ID, createSynaxSessionMetadata } from './synaxSessionTypes'
+import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, type SynaxPermissionTier } from './synaxSessionTypes'
 import { useNotificationStore } from '../../state/notificationStore'
 import { patchAgentSession, canEnqueueSessionInput } from './sessionComposerState'
 
 const READ_MARKERS_KEY = 'synax-session-read-markers'
+
+export type SessionInputBody = {
+  message: string
+  model?: string | null
+  permissionTier?: SynaxPermissionTier
+}
 
 /** Stable fallback — never use inline `?? []` in Zustand selectors (breaks getSnapshot caching). */
 export const EMPTY_INPUT_QUEUE: QueuedInput[] = []
@@ -314,7 +320,7 @@ export interface AgentSessionStoreState {
   setProjectId: (projectId: string | null) => void
   refreshSessions: () => Promise<void>
   resetSessionDetailForDraft: () => void
-  submitSessionDraft: (projectId: string, body: { message: string; model?: string | null }) => Promise<AgentSession>
+  submitSessionDraft: (projectId: string, body: SessionInputBody) => Promise<AgentSession>
   deleteSession: (sessionId: string) => Promise<string[]>
   openPanel: (sessionId: string) => void
   closePanel: () => void
@@ -326,10 +332,11 @@ export interface AgentSessionStoreState {
   fetchSessionTodos: () => Promise<void>
   fetchSessionCapabilities: () => Promise<void>
   replyPermission: (permissionId: string, reply: 'once' | 'always' | 'reject') => Promise<void>
-  sendSessionMessage: (sessionId: string, body: { message: string; model?: string | null }) => Promise<void>
-  submitOrEnqueueSessionInput: (sessionId: string, body: { message: string; model?: string | null }) => Promise<'sent' | 'queued'>
+  updateSessionPermissions: (sessionId: string, body: { permissionTier?: SynaxPermissionTier }) => Promise<void>
+  sendSessionMessage: (sessionId: string, body: SessionInputBody) => Promise<void>
+  submitOrEnqueueSessionInput: (sessionId: string, body: SessionInputBody) => Promise<'sent' | 'queued'>
   loadInputQueue: (sessionId: string) => Promise<void>
-  enqueueSessionInput: (sessionId: string, body: { message: string; model?: string | null }) => Promise<void>
+  enqueueSessionInput: (sessionId: string, body: SessionInputBody) => Promise<void>
   removeQueuedInput: (sessionId: string, itemId: string) => Promise<void>
   forceQueuedInput: (sessionId: string, itemId: string) => Promise<void>
   setInputQueue: (sessionId: string, items: QueuedInput[]) => void
@@ -466,6 +473,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       projectId,
       profileId: SYNAX_PROFILE_ID,
       prompt: message,
+      permissionTier: body.permissionTier,
       sessionMetadata: createSynaxSessionMetadata('goal', {
         source: 'session-page',
         goalContent: message,
@@ -729,6 +737,14 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     } catch { /* silent */ }
   },
 
+  updateSessionPermissions: async (sessionId, body) => {
+    const payload = await agentRuntimeApi.updateSessionPermissions(sessionId, body)
+    get().patchSession(sessionId, {
+      sessionMetadata: payload.session.sessionMetadata,
+      updatedAt: payload.session.updatedAt,
+    })
+  },
+
   sendSessionMessage: async (sessionId, body) => {
     ensureLiveStream(sessionId)
     const session = get().sessions.find(s => s.id === sessionId)
@@ -742,11 +758,19 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     }))
     try {
       if (shouldResume) {
-        await agentRuntimeApi.resumeStream(sessionId, body, (chunk) => {
+        await agentRuntimeApi.resumeStream(sessionId, {
+          message: body.message,
+          model: body.model ?? undefined,
+          permissionTier: body.permissionTier,
+        }, (chunk) => {
           onSessionStreamChunk(sessionId, chunk)
         })
       } else {
-        await agentRuntimeApi.streamTurn(sessionId, body, (chunk) => {
+        await agentRuntimeApi.streamTurn(sessionId, {
+          message: body.message,
+          model: body.model ?? undefined,
+          permissionTier: body.permissionTier,
+        }, (chunk) => {
           onSessionStreamChunk(sessionId, chunk)
         })
       }

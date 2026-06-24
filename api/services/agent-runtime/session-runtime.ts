@@ -1,5 +1,8 @@
 import type { AgentSession, CreateSessionRequest } from './contracts.js';
-import { resolveSessionPermissionRules } from './permission-tiers.js';
+import {
+  rebuildSessionPermissionRules,
+  seedSessionPermissionMetadata,
+} from './session-permissions.js';
 import { agentContextBuilder } from './context-builder.js';
 import { agentEventService, type AgentEventService } from './event-service.js';
 import { agentLoopRuntime } from './loop-runtime.js';
@@ -37,8 +40,11 @@ export class AgentSessionRuntime {
       throw new AgentValidationError('Sub-session projectId must match parent session projectId.');
     }
     const createdAt = nowIso();
-    const inheritedRules = parent?.permissionRules ?? [];
-    const session: AgentSession = {
+    const sessionMetadata = seedSessionPermissionMetadata(input.sessionMetadata ?? null, {
+      permissionTier: input.permissionTier,
+      permissionOverrides: input.permissionOverrides,
+    });
+    const sessionDraft: AgentSession = {
       id: makeRuntimeId('ars'),
       projectId: input.projectId,
       parentSessionId: input.parentSessionId ?? null,
@@ -47,19 +53,13 @@ export class AgentSessionRuntime {
       profileId: profile.id,
       status: 'running',
       title: resolveInitialSessionTitle({
-        sessionMetadata: input.sessionMetadata ?? null,
+        sessionMetadata,
         prompt: input.prompt,
       }),
       prompt: input.prompt,
       contextSnapshotId: null,
       thinkingMode: input.thinkingMode ?? profile.defaultThinkingMode,
-      permissionRules: [
-        ...inheritedRules,
-        ...resolveSessionPermissionRules(profile.permissionDefaults, {
-          permissionTier: input.permissionTier,
-          permissionOverrides: input.permissionOverrides,
-        }),
-      ],
+      permissionRules: [],
       createdAt,
       updatedAt: createdAt,
       completedAt: null,
@@ -68,7 +68,11 @@ export class AgentSessionRuntime {
       skillIds: input.skillIds ?? profile.defaultSkills,
       activeRunId: null,
       pendingResumeToken: null,
-      sessionMetadata: input.sessionMetadata ?? null,
+      sessionMetadata,
+    };
+    const session: AgentSession = {
+      ...sessionDraft,
+      permissionRules: rebuildSessionPermissionRules(sessionDraft, profile.permissionDefaults),
     };
     const saved = this.store.createSession(session);
     const bundle = agentContextBuilder.build(input.projectId, {

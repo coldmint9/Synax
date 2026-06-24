@@ -33,3 +33,13 @@ export const SYNAX_PERMISSION_TIER_LABELS: Record<SynaxPermissionTier, { titleKe
 export function hasNonDefaultSynaxPermissionTier(tier: SynaxPermissionTier): boolean {
   return tier !== DEFAULT_SYNAX_PERMISSION_TIER
 }
+
+export function readSynaxPermissionTier(
+  metadata: Record<string, unknown> | null | undefined,
+): SynaxPermissionTier {
+  const tier = metadata?.permissionTier
+  if (tier === 'readonly' || tier === 'readwrite' || tier === 'unrestricted') {
+    return tier
+  }
+  return DEFAULT_SYNAX_PERMISSION_TIER
+}
