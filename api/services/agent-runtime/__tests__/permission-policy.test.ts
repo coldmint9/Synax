@@ -5,12 +5,12 @@ import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 describe('permissionPolicy', () => {
   beforeEach(resetAgentRuntimeFixtures);
 
-  it('allows project-contained reads and shell by default (whitelist-restricted)', () => {
+  it('asks for shell commands by default', () => {
     const read = permissionPolicy.evaluate({ sessionId: 's1', category: 'read' });
-    const shell = permissionPolicy.evaluate({ sessionId: 's1', category: 'shell', internalGate: 'shell' });
+    const shell = permissionPolicy.evaluate({ sessionId: 's1', category: 'shell', internalGate: 'shell', pattern: 'rg' });
 
     expect(read.action).toBe('allow');
-    expect(shell.action).toBe('allow');
+    expect(shell.action).toBe('ask');
   });
 
   it('asks for writes and denies external execution', () => {
@@ -21,17 +21,25 @@ describe('permissionPolicy', () => {
     expect(external.action).toBe('deny');
   });
 
-  it('asks for task delegation by default and respects profile rules', () => {
+  it('allows session task tools without approval', () => {
+    const create = permissionPolicy.evaluate({ sessionId: 's1', category: 'task', internalGate: 'none' });
+    const update = permissionPolicy.evaluate({ sessionId: 's1', category: 'task', internalGate: 'none', metadata: { toolId: 'task.update' } });
+
+    expect(create.action).toBe('allow');
+    expect(update.action).toBe('allow');
+  });
+
+  it('allows subagent delegation by default and respects profile deny rules', () => {
     const defaultDecision = permissionPolicy.evaluate({ sessionId: 's1', category: 'task', internalGate: 'task' });
-    const allowedByProfile = permissionPolicy.evaluate({
+    const deniedByProfile = permissionPolicy.evaluate({
       sessionId: 's1',
       category: 'task',
       internalGate: 'task',
-      rules: [{ gate: 'task', pattern: '*', action: 'ask', reason: 'Profile allows task approval.' }],
+      rules: [{ gate: 'task', pattern: '*', action: 'deny', reason: 'Profile blocks delegation.' }],
     });
 
-    expect(defaultDecision.action).toBe('ask');
-    expect(allowedByProfile.action).toBe('ask');
+    expect(defaultDecision.action).toBe('allow');
+    expect(deniedByProfile.action).toBe('deny');
   });
 
   it('hard-denies sub-session write attempts in v1', () => {
@@ -63,6 +71,6 @@ describe('permissionPolicy', () => {
     });
 
     expect(denied.action).toBe('deny');
-    expect(fallback.action).toBe('ask');
+    expect(fallback.action).toBe('allow');
   });
 });
