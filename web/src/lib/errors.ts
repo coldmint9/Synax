@@ -1,4 +1,11 @@
 import { useNotificationStore, type NotificationType } from '../react/state/notificationStore'
+import {
+  notifyConnectivityFailure,
+  useApiConnectivityStore,
+} from './apiConnectivity'
+import { AppError, createOfflineError, isOfflineError } from './appError'
+
+export { AppError, createOfflineError, isOfflineError } from './appError'
 
 type ToastType = NotificationType
 
@@ -34,20 +41,6 @@ const STATUS_TOAST_TYPE: Record<number, ToastType> = {
   404: 'warning',
 }
 
-export class AppError extends Error {
-  level: ErrorLevel
-  code: string | undefined
-  statusCode: number | undefined
-
-  constructor(message: string, opts: { level: ErrorLevel; code?: string; statusCode?: number }) {
-    super(message)
-    this.name = 'AppError'
-    this.level = opts.level
-    this.code = opts.code
-    this.statusCode = opts.statusCode
-  }
-}
-
 export function classifyError(statusCode?: number, code?: string): ErrorLevel {
   if (statusCode && statusCode >= 500) return 'system'
   if (code && code in ERROR_MESSAGES) return 'business'
@@ -79,13 +72,18 @@ function userMessage(err: AppError): string {
 
 export function handleError(err: unknown): AppError {
   if (err instanceof AppError) {
+    if (isOfflineError(err) || isNetworkAppError(err)) {
+      routeConnectivityError(err.message)
+      return err
+    }
     routeError(err)
     return err
   }
 
   if (isNetworkError(err)) {
-    const appErr = new AppError('网络连接失败', { level: 'system' })
-    routeError(appErr)
+    useApiConnectivityStore.getState().markFailure()
+    const appErr = createOfflineError()
+    routeConnectivityError(appErr.message)
     return appErr
   }
 
@@ -95,13 +93,22 @@ export function handleError(err: unknown): AppError {
   return appErr
 }
 
+function isNetworkAppError(err: AppError): boolean {
+  return err.level === 'system' && (err.statusCode === 0 || err.statusCode === undefined)
+}
+
+function routeConnectivityError(message: string): void {
+  console.error('[connectivity]', message)
+  notifyConnectivityFailure(message)
+}
+
 const LLM_CONFIG_ERROR_CODES = new Set(['LLM_PROVIDER_NOT_CONFIGURED', 'API_KEY_MISSING'])
 
 function routeError(err: AppError): void {
   if (err.level === 'system') {
     console.error('[system]', err.message, err.code ?? '', err.statusCode ?? '')
-    useNotificationStore.getState().push({
-      id: `sys-${Date.now().toString(36)}`,
+    useNotificationStore.getState().pushAggregated({
+      id: `sys-${err.code ?? 'unknown'}`,
       type: 'warning',
       message: err.message,
       duration: 3000,
@@ -128,4 +135,3 @@ export function createAppError(
   const level = classifyError(statusCode, code)
   return new AppError(message, { level, code, statusCode })
 }
-

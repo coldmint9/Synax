@@ -1,23 +1,29 @@
-import { createAppError, handleError, AppError } from '../errors'
+import {
+  createOfflineError,
+  useApiConnectivityStore,
+} from '../apiConnectivity'
+import { createAppError, handleError } from '../errors'
+import { AppError, isOfflineError } from '../appError'
+import { getApiOrigin } from './originConfig'
 
-let apiOrigin = ''
-
-export function getApiOrigin(): string {
-  return apiOrigin
-}
-
-export async function initApiOrigin(): Promise<void> {
-  const electronAPI = (window as any).electronAPI
-  if (!electronAPI?.getApiPort) return
-
-  const port = await electronAPI.getApiPort()
-  if (port) {
-    apiOrigin = `http://localhost:${port}`
-  }
-}
+export { getApiOrigin, initApiOrigin } from './originConfig'
+export { isOfflineError }
 
 export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${apiOrigin}${input}`, init)
+  if (useApiConnectivityStore.getState().shouldSkipRequest()) {
+    return Promise.reject(createOfflineError())
+  }
+
+  return fetch(`${getApiOrigin()}${input}`, init).then(
+    (resp) => {
+      useApiConnectivityStore.getState().markSuccess()
+      return resp
+    },
+    (err) => {
+      useApiConnectivityStore.getState().markFailure()
+      throw err
+    },
+  )
 }
 
 export interface ApiRequestOptions extends RequestInit {
@@ -29,6 +35,11 @@ export async function apiRequest<T>(
   init?: ApiRequestOptions,
 ): Promise<T> {
   const { silent, ...fetchInit } = init ?? {}
+
+  if (useApiConnectivityStore.getState().shouldSkipRequest()) {
+    throw createOfflineError()
+  }
+
   let resp: Response
   try {
     resp = await apiFetch(path, {
@@ -37,10 +48,7 @@ export async function apiRequest<T>(
     })
   } catch (err) {
     if (!silent) handleError(err)
-    throw err instanceof AppError ? err : new AppError(
-      '网络连接失败',
-      { level: 'system', statusCode: 0 },
-    )
+    throw err instanceof AppError ? err : createOfflineError()
   }
 
   if (!resp.ok) {
@@ -63,4 +71,3 @@ async function parseErrorBody(resp: Response): Promise<{ message: string; code?:
     return { message: `请求失败 (${resp.status})` }
   }
 }
-

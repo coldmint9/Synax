@@ -19,6 +19,8 @@ export interface Notification {
   /** toast 是否仍在屏幕上展示 */
   visible: boolean
   duration?: number
+  /** 聚合计数（同 id 重复错误） */
+  aggregateCount?: number
 }
 
 export interface PushOptions {
@@ -33,13 +35,38 @@ export interface PushOptions {
   silent?: boolean
 }
 
+export interface PushAggregatedOptions extends PushOptions {
+  id: string
+  /** false 时仅更新已有通知，不创建新通知 */
+  bump?: boolean
+}
+
 const MAX_NOTIFICATIONS = 100
+
+const aggregateDismissTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function formatAggregatedMessage(base: string, count: number): string {
+  const stripped = base.replace(/\s*\(\d+\s*次.*?\)\s*$/, '')
+  if (count <= 1) return stripped
+  return `${stripped} (${count} 次请求失败)`
+}
+
+function scheduleDismiss(id: string, duration: number): void {
+  const prev = aggregateDismissTimers.get(id)
+  if (prev) clearTimeout(prev)
+  if (duration <= 0) return
+  aggregateDismissTimers.set(id, setTimeout(() => {
+    aggregateDismissTimers.delete(id)
+    useNotificationStore.getState().dismiss(id)
+  }, duration))
+}
 
 interface NotificationState {
   notifications: Notification[]
   unreadCount: number
 
   push: (opts: PushOptions) => string
+  pushAggregated: (opts: PushAggregatedOptions) => string
   dismiss: (id: string) => void
   markRead: (id: string) => void
   markAllRead: () => void
@@ -89,6 +116,57 @@ export const useNotificationStore = create<NotificationState>((set) => ({
     }
 
     return id
+  },
+
+  pushAggregated: (opts) => {
+    const { bump = true, duration = 5000, ...rest } = opts
+    const existing = useNotificationStore.getState().notifications.find(n => n.id === opts.id)
+
+    if (existing) {
+      if (!bump) return opts.id
+      const count = (existing.aggregateCount ?? 1) + 1
+      set(s => ({
+        notifications: s.notifications.map(n =>
+          n.id === opts.id
+            ? {
+                ...n,
+                type: rest.type,
+                message: formatAggregatedMessage(rest.message, count),
+                aggregateCount: count,
+                timestamp: Date.now(),
+                read: false,
+                visible: !rest.silent,
+                duration,
+              }
+            : n,
+        ),
+        unreadCount: computeUnread(s.notifications.map(n =>
+          n.id === opts.id ? { ...n, read: false } : n,
+        )),
+      }))
+      scheduleDismiss(opts.id, duration)
+      return opts.id
+    }
+
+    const entry: Notification = {
+      id: opts.id,
+      type: rest.type,
+      message: formatAggregatedMessage(rest.message, 1),
+      action: rest.action,
+      actions: rest.actions,
+      duration,
+      timestamp: Date.now(),
+      read: false,
+      visible: !rest.silent,
+      aggregateCount: 1,
+    }
+
+    set(s => {
+      const next = [entry, ...s.notifications].slice(0, MAX_NOTIFICATIONS)
+      return { notifications: next, unreadCount: computeUnread(next) }
+    })
+    scheduleDismiss(opts.id, duration)
+    return opts.id
   },
 
   dismiss: (id) => set(s => ({

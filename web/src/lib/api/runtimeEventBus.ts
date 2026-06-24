@@ -1,3 +1,5 @@
+import { useApiConnectivityStore } from '../apiConnectivity'
+
 type EventHandler = (e: MessageEvent) => void
 type ConnectHandler = () => void
 
@@ -15,6 +17,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let subscribers = new Set<Subscription>()
 
 function connect() {
+  if (useApiConnectivityStore.getState().shouldSkipRequest()) return
   if (es && es.readyState !== EventSource.CLOSED) return
   es = new EventSource('/api/agent-runtime/events/stream')
 
@@ -46,6 +49,7 @@ function connect() {
 
 function scheduleReconnect() {
   if (reconnectTimer) return
+  if (useApiConnectivityStore.getState().shouldSkipRequest()) return
   const delay = Math.min(RECONNECT_BASE_MS * 2 ** retries, RECONNECT_MAX_MS)
   retries++
   reconnectTimer = setTimeout(() => {
@@ -69,6 +73,11 @@ export function subscribe(sub: Subscription): () => void {
       retries = 0
     }
   }
+}
+
+/** Resume SSE after backend connectivity is restored. */
+export function resumeRuntimeEventBus(): void {
+  if (subscribers.size > 0) connect()
 }
 
 export type { Subscription }
