@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { resolveInitialSessionTitle } from '../session-title-service.js';
 
 describe('resolveInitialSessionTitle', () => {
+  it('uses placeholder title for agent page draft sessions', () => {
+    expect(resolveInitialSessionTitle({
+      sessionMetadata: { source: 'session-page', goalContent: '帮我看看认证模块' },
+      prompt: '帮我看看认证模块',
+    })).toBe('new agent');
+  });
+
   it('uses goalContent from session metadata', () => {
     expect(resolveInitialSessionTitle({
       sessionMetadata: { goalContent: '你好，帮我看看认证模块' },

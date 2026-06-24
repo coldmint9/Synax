@@ -13,7 +13,9 @@ import { goalDockStateToMorph } from './goalDockTypes'
 import { buildGoalModelOptions, pickDefaultSelection } from './goalModelOptions'
 import { isGoalSessionActive, resolveGoalSessionDisplayTitle } from './goalSessionStream'
 import { useGoalSessionBridge } from './useGoalSessionBridge'
-import { useAgentSessionStore } from '../../sessions/agentSessionStore'
+import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from '../../sessions/agentSessionStore'
+import { goalSessionPath } from '../../sessions/sessionRoutes'
+import { resolveGoalSessionsEntryPath } from '../../sessions/sessionLastVisit'
 import { InputQueueStrip } from '../../sessions/InputQueueStrip'
 
 interface Props {
@@ -51,7 +53,9 @@ export function GoalPillDock({ projectId }: Props) {
   const removeQueuedInput = useAgentSessionStore(s => s.removeQueuedInput)
   const forceQueuedInput = useAgentSessionStore(s => s.forceQueuedInput)
   const queuedInputs = useAgentSessionStore(s =>
-    goalSession.sessionId ? (s.inputQueues[goalSession.sessionId] ?? []) : [],
+    goalSession.sessionId
+      ? (s.inputQueues[goalSession.sessionId] ?? EMPTY_INPUT_QUEUE)
+      : EMPTY_INPUT_QUEUE,
   )
 
   useGoalSessionBridge(projectId)
@@ -178,9 +182,9 @@ export function GoalPillDock({ projectId }: Props) {
   const openSessionPage = useCallback(() => {
     const sessionId = goalSession.sessionId
     if (sessionId) {
-      navigate(`/projects/${projectId}/sessions?session=${sessionId}`)
+      navigate(goalSessionPath(projectId, sessionId))
     } else {
-      navigate(`/projects/${projectId}/sessions`)
+      navigate(resolveGoalSessionsEntryPath(projectId))
     }
   }, [goalSession.sessionId, navigate, projectId])
 

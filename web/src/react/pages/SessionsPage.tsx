@@ -32,7 +32,7 @@ export default memo(function SessionsPage() {
   const location = useLocation()
   const listView: SessionListView = location.pathname.includes('/sessions/workflows') ? 'workflow' : 'goal'
 
-  useSessionRouteSync(listView)
+  useSessionRouteSync(listView, projectId)
 
   const agentSessionId = useAgentSessionStore(s => s.selectedSessionId)
   const agentPanelOpen = useAgentSessionStore(s => s.panelOpen)

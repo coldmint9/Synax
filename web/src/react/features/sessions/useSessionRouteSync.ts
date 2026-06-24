@@ -1,16 +1,63 @@
 import { useEffect } from 'react'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAgentSessionStore } from './agentSessionStore'
-import { isNewGoalSessionPath } from './sessionRoutes'
+import {
+  goalSessionPath,
+  isBareGoalSessionsPath,
+  isNewGoalSessionPath,
+  newGoalSessionPath,
+} from './sessionRoutes'
+import {
+  clearSessionLastVisit,
+  loadSessionLastVisit,
+  saveSessionLastVisit,
+} from './sessionLastVisit'
 import type { SessionListView } from './sessionBuckets'
 
 /** Keep agent session detail in sync with sessions URL. */
-export function useSessionRouteSync(listView: SessionListView) {
+export function useSessionRouteSync(listView: SessionListView, projectId: string) {
   const location = useLocation()
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const openPanel = useAgentSessionStore(s => s.openPanel)
   const resetForDraft = useAgentSessionStore(s => s.resetSessionDetailForDraft)
   const closePanel = useAgentSessionStore(s => s.closePanel)
+  const storeProjectId = useAgentSessionStore(s => s.projectId)
+  const sessions = useAgentSessionStore(s => s.sessions)
+  const sessionIdFromUrl = searchParams.get('session')
+  const isProjectReady = Boolean(projectId) && storeProjectId === projectId
+
+  useEffect(() => {
+    if (!isProjectReady || listView !== 'goal' || !projectId) return
+    if (sessionIdFromUrl || isNewGoalSessionPath(location.pathname)) return
+    if (!isBareGoalSessionsPath(location.pathname, projectId)) return
+
+    const last = loadSessionLastVisit(projectId)
+    if (!last) return
+
+    if (last.kind === 'new') {
+      navigate(newGoalSessionPath(projectId), { replace: true })
+      return
+    }
+
+    if (sessions.length > 0) {
+      const exists = sessions.some(s => s.id === last.sessionId)
+      if (!exists) {
+        clearSessionLastVisit(projectId)
+        return
+      }
+    }
+
+    navigate(goalSessionPath(projectId, last.sessionId), { replace: true })
+  }, [
+    isProjectReady,
+    listView,
+    location.pathname,
+    projectId,
+    sessionIdFromUrl,
+    sessions,
+    navigate,
+  ])
 
   useEffect(() => {
     if (listView !== 'goal') {
@@ -19,18 +66,29 @@ export function useSessionRouteSync(listView: SessionListView) {
     }
 
     if (isNewGoalSessionPath(location.pathname)) {
+      if (projectId) saveSessionLastVisit(projectId, { kind: 'new' })
       resetForDraft()
       return
     }
 
-    const sessionId = searchParams.get('session')
-    if (sessionId) {
-      openPanel(sessionId)
+    if (sessionIdFromUrl) {
+      if (projectId) {
+        saveSessionLastVisit(projectId, { kind: 'session', sessionId: sessionIdFromUrl })
+      }
+      openPanel(sessionIdFromUrl)
       return
     }
 
-    if (location.pathname.endsWith('/sessions')) {
+    if (isBareGoalSessionsPath(location.pathname, projectId || undefined)) {
       closePanel()
     }
-  }, [listView, location.pathname, searchParams, openPanel, resetForDraft, closePanel])
+  }, [
+    listView,
+    location.pathname,
+    sessionIdFromUrl,
+    projectId,
+    openPanel,
+    resetForDraft,
+    closePanel,
+  ])
 }
