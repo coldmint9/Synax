@@ -4,11 +4,11 @@ import { useAgentSessionStore } from './agentSessionStore'
 import { agentRuntimeApi } from '../../../lib/api/agentRuntime'
 import type { AgentSession, AgentSessionStatus } from '../../../lib/api/agentRuntime'
 import {
-  isGoalSession,
+  isGoalModeSession,
   isWorkflowSession,
   type SessionListView,
 } from './sessionBuckets'
-import { goalSessionPath, isNewGoalSessionPath, newGoalSessionPath } from './sessionRoutes'
+import { sessionPath, isNewSessionPath, newSessionPath } from './sessionRoutes'
 
 // ---- Types ----
 
@@ -64,7 +64,7 @@ function flattenTree(nodes: SessionTreeNode[]): SessionTreeNode[] {
 
 // ---- Hook ----
 
-export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionListView = 'goal', routeProjectId = '') {
+export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionListView = 'sessions', routeProjectId = '') {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
@@ -89,23 +89,23 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
 
-  const isDraftOpen = listView === 'goal' && isNewGoalSessionPath(location.pathname)
+  const isDraftOpen = listView === 'sessions' && isNewSessionPath(location.pathname)
   const selectedIdFromUrl = searchParams.get('session')
 
   const viewCounts = useMemo(() => {
     const topLevel = projectSessions.filter(s => !s.parentSessionId)
-    let goal = 0
+    let sessionsCount = 0
     let workflow = 0
     for (const session of topLevel) {
       if (isWorkflowSession(session)) workflow += 1
-      else if (isGoalSession(session)) goal += 1
+      else if (isGoalModeSession(session)) sessionsCount += 1
     }
-    return { goal, workflow }
+    return { sessions: sessionsCount, workflow }
   }, [projectSessions])
 
   const grouped = useMemo(() => {
     let list = projectSessions.filter(s =>
-      listView === 'workflow' ? isWorkflowSession(s) : isGoalSession(s),
+      listView === 'workflow' ? isWorkflowSession(s) : isGoalModeSession(s),
     )
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
@@ -114,7 +114,7 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
     const tree = buildTree(list)
     return [{
       key: listView,
-      label: listView === 'goal' ? (locale === 'zh' ? '会话' : 'Sessions') : (locale === 'zh' ? 'Workflow' : 'Workflows'),
+      label: listView === 'sessions' ? (locale === 'zh' ? '会话' : 'Sessions') : (locale === 'zh' ? 'Workflow' : 'Workflows'),
       sessions: tree,
       collapsed: collapsedGroups.has(listView),
       count: tree.length,
@@ -168,12 +168,12 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
   const select = useCallback((id: string) => {
     if (!routeProjectId) return
     useAgentSessionStore.getState().markSessionRead(id)
-    navigate(goalSessionPath(routeProjectId, id))
+    navigate(sessionPath(routeProjectId, id))
   }, [navigate, routeProjectId])
 
   const openNewDraft = useCallback(() => {
-    if (!routeProjectId || listView !== 'goal') return
-    navigate(newGoalSessionPath(routeProjectId))
+    if (!routeProjectId || listView !== 'sessions') return
+    navigate(newSessionPath(routeProjectId))
   }, [listView, navigate, routeProjectId])
 
   return {

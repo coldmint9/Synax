@@ -14,7 +14,7 @@ interface Props {
   onNewSession?: () => void
   isCreatingSession?: boolean
   onOpenWorkflows?: () => void
-  onBackToGoals?: () => void
+  onBackToSessions?: () => void
   isRefreshing: boolean
 }
 
@@ -29,7 +29,7 @@ export function SessionListHeader({
   onNewSession,
   isCreatingSession = false,
   onOpenWorkflows,
-  onBackToGoals,
+  onBackToSessions,
   isRefreshing,
 }: Props) {
   const { t } = useLocale()
@@ -40,17 +40,17 @@ export function SessionListHeader({
       {isWorkflowView ? (
         <button
           type="button"
-          onClick={onBackToGoals}
+          onClick={onBackToSessions}
           className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft size={12} />
-          {t('sessionBackToGoals')}
+          {t('sessionBackToList')}
         </button>
       ) : null}
 
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-foreground">
-          {isWorkflowView ? t('sessionWorkflowTitle') : t('sessionGoalTitle')}
+          {isWorkflowView ? t('sessionWorkflowTitle') : t('sessionListTitle')}
           <span className="ml-1 font-normal text-muted-foreground">({visibleCount})</span>
         </span>
         <div className="flex items-center gap-0.5">

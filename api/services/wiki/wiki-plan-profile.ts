@@ -7,7 +7,7 @@ export const PLAN_GENERATOR_LEGACY_ID = 'plan-generator'
 const planPlannerBase: Omit<AgentProfile, 'id' | 'label'> = {
   kind: 'planner',
   mode: 'primary',
-  description: 'Decompose user Goals into an executable Plan DAG for Goal Agent.',
+  description: 'Decompose user Goals into an executable Plan DAG for Synax plan_node execution.',
   defaultThinkingMode: 'deep',
   allowedCapabilities: [
     'file.glob',
@@ -28,7 +28,7 @@ const planPlannerBase: Omit<AgentProfile, 'id' | 'label'> = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   loopHints: [
-    'Decompose goals into work units for Goal Agent execution.',
+    'Decompose goals into work units for Synax plan_node execution.',
     'First analyze and clarify each goal before searching code.',
     'Submit each plan node with goalIds and clear acceptance criteria.',
   ],

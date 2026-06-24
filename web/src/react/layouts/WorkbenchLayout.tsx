@@ -10,8 +10,8 @@ import { useTaskNotificationListener } from '../../hooks/useTaskNotificationList
 import { useRuntimeSSE } from '../features/sessions/useRuntimeSSE'
 import { useSessionTitleSync } from '../features/sessions/useSessionDisplayTitle'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
-import { goalSessionPath } from '../features/sessions/sessionRoutes'
-import { resolveGoalSessionsEntryPath } from '../features/sessions/sessionLastVisit'
+import { sessionPath } from '../features/sessions/sessionRoutes'
+import { resolveSessionsEntryPath } from '../features/sessions/sessionLastVisit'
 import type { ActivityPanel } from './ActivityBar'
 import { WorkbenchHeader } from './WorkbenchHeader'
 import { ProjectCreateDialog } from '../features/project-create/ProjectCreateDialog'
@@ -65,7 +65,7 @@ export default function WorkbenchLayout() {
 
   const navigateToSession = useCallback((sessionId: string) => {
     if (effectiveProjectId) {
-      navigate(goalSessionPath(effectiveProjectId, sessionId))
+      navigate(sessionPath(effectiveProjectId, sessionId))
     }
   }, [effectiveProjectId, navigate])
   useAgentPermissionNotifier(effectiveProjectId || null, navigateToSession)
@@ -97,7 +97,7 @@ export default function WorkbenchLayout() {
 
   const panelRoutes: Record<ActivityPanel, string> = {
     wiki: `/projects/${effectiveProjectId}/wiki`,
-    sessions: resolveGoalSessionsEntryPath(effectiveProjectId),
+    sessions: resolveSessionsEntryPath(effectiveProjectId),
     search: `/projects/${effectiveProjectId}/wiki`,
     settings: `/projects/${effectiveProjectId}/settings`,
     projects: `/projects/${effectiveProjectId}`,

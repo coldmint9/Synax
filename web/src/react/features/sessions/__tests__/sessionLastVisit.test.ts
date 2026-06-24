@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   clearSessionLastVisit,
   loadSessionLastVisit,
-  resolveGoalSessionsEntryPath,
+  resolveSessionsEntryPath,
   saveSessionLastVisit,
   sessionLastVisitPath,
 } from '../sessionLastVisit'
@@ -23,10 +23,10 @@ describe('sessionLastVisit', () => {
   it('persists session visit', () => {
     saveSessionLastVisit(PROJECT_ID, { kind: 'session', sessionId: 'ars_1' })
     expect(loadSessionLastVisit(PROJECT_ID)).toEqual({ kind: 'session', sessionId: 'ars_1' })
-    expect(resolveGoalSessionsEntryPath(PROJECT_ID)).toBe('/projects/p-test/sessions?session=ars_1')
+    expect(resolveSessionsEntryPath(PROJECT_ID)).toBe('/projects/p-test/sessions?session=ars_1')
   })
 
   it('falls back to bare list when no visit saved', () => {
-    expect(resolveGoalSessionsEntryPath(PROJECT_ID)).toBe('/projects/p-test/sessions')
+    expect(resolveSessionsEntryPath(PROJECT_ID)).toBe('/projects/p-test/sessions')
   })
 })

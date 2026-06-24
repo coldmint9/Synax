@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentSession } from '../../../../lib/api/agentRuntime'
-import { classifySession, isGoalSession, isWorkflowSession } from '../sessionBuckets'
+import { classifySession, isGoalModeSession, isWorkflowSession } from '../sessionBuckets'
 
 function makeSession(overrides: Partial<AgentSession>): AgentSession {
   return {
@@ -29,28 +29,28 @@ function makeSession(overrides: Partial<AgentSession>): AgentSession {
 }
 
 describe('sessionBuckets', () => {
-  it('detects goal sessions', () => {
-    expect(isGoalSession(makeSession({ profileId: 'goal' }))).toBe(true)
-    expect(isGoalSession(makeSession({
+  it('detects goal mode sessions', () => {
+    expect(isGoalModeSession(makeSession({ profileId: 'goal' }))).toBe(true)
+    expect(isGoalModeSession(makeSession({
       profileId: 'synax',
       sessionMetadata: { mode: 'goal', source: 'goal-dock' },
     }))).toBe(true)
-    expect(isGoalSession(makeSession({
+    expect(isGoalModeSession(makeSession({
       profileId: 'synax',
       sessionMetadata: { mode: 'plan_node', source: 'plan-execution' },
     }))).toBe(true)
-    expect(isGoalSession(makeSession({
+    expect(isGoalModeSession(makeSession({
       profileId: 'synax',
       sessionMetadata: { mode: 'goal', source: 'session-page' },
     }))).toBe(true)
-    expect(isGoalSession(makeSession({
+    expect(isGoalModeSession(makeSession({
       profileId: 'goal',
       sessionMetadata: { source: 'goal-dock' },
     }))).toBe(true)
   })
 
-  it('does not treat synax chat sessions as goal sessions', () => {
-    expect(isGoalSession(makeSession({
+  it('does not treat synax chat sessions as goal mode sessions', () => {
+    expect(isGoalModeSession(makeSession({
       profileId: 'synax',
       sessionMetadata: { mode: 'chat' },
     }))).toBe(false)
@@ -67,10 +67,10 @@ describe('sessionBuckets', () => {
     expect(isWorkflowSession(makeSession({ profileId: 'plan-planner' }))).toBe(true)
   })
 
-  it('classifies interactive sessions as goal view bucket but not goal sessions', () => {
-    expect(isGoalSession(makeSession({ profileId: 'explorer' }))).toBe(false)
-    expect(classifySession(makeSession({ profileId: 'explorer' }))).toBe('goal')
-    expect(isGoalSession(makeSession({ profileId: 'goal' }))).toBe(true)
+  it('classifies interactive sessions as sessions view bucket but not goal mode sessions', () => {
+    expect(isGoalModeSession(makeSession({ profileId: 'explorer' }))).toBe(false)
+    expect(classifySession(makeSession({ profileId: 'explorer' }))).toBe('sessions')
+    expect(isGoalModeSession(makeSession({ profileId: 'goal' }))).toBe(true)
   })
 
   it('classifies automation sessions as workflow view', () => {

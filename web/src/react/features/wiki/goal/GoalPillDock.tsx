@@ -14,8 +14,8 @@ import { buildGoalModelOptions, pickDefaultSelection } from './goalModelOptions'
 import { isGoalSessionActive, resolveGoalSessionDisplayTitle } from './goalSessionStream'
 import { useGoalSessionBridge } from './useGoalSessionBridge'
 import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from '../../sessions/agentSessionStore'
-import { goalSessionPath } from '../../sessions/sessionRoutes'
-import { resolveGoalSessionsEntryPath } from '../../sessions/sessionLastVisit'
+import { sessionPath } from '../../sessions/sessionRoutes'
+import { resolveSessionsEntryPath } from '../../sessions/sessionLastVisit'
 import { InputQueueStrip } from '../../sessions/InputQueueStrip'
 
 interface Props {
@@ -182,9 +182,9 @@ export function GoalPillDock({ projectId }: Props) {
   const openSessionPage = useCallback(() => {
     const sessionId = goalSession.sessionId
     if (sessionId) {
-      navigate(goalSessionPath(projectId, sessionId))
+      navigate(sessionPath(projectId, sessionId))
     } else {
-      navigate(resolveGoalSessionsEntryPath(projectId))
+      navigate(resolveSessionsEntryPath(projectId))
     }
   }, [goalSession.sessionId, navigate, projectId])
 

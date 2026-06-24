@@ -1,38 +1,13 @@
-export const SYNAX_PROFILE_ID = 'synax'
+export {
+  SYNAX_PROFILE_ID,
+  createSynaxSessionMetadata,
+  DEFAULT_SYNAX_PERMISSION_TIER as DEFAULT_GOAL_PERMISSION_TIER,
+  SYNAX_PERMISSION_TIER_LABELS as GOAL_PERMISSION_TIER_LABELS,
+  hasNonDefaultSynaxPermissionTier as hasNonDefaultGoalPermissionTier,
+  type SynaxSessionMode,
+  type SynaxPermissionTier as GoalPermissionTier,
+  type SynaxWikiAttachMode as GoalWikiAttachMode,
+} from '../../sessions/synaxSessionTypes'
 
 /** @deprecated Use SYNAX_PROFILE_ID with sessionMetadata.mode === 'goal'. */
-export const GOAL_PROFILE_ID = SYNAX_PROFILE_ID
-
-export type SynaxSessionMode = 'chat' | 'goal' | 'plan_node'
-
-export function createSynaxSessionMetadata(
-  mode: SynaxSessionMode,
-  extras: Record<string, unknown> = {},
-): Record<string, unknown> {
-  return { mode, ...extras }
-}
-
-export type GoalWikiAttachMode = 'auto' | 'manual'
-
-export type GoalPermissionTier = 'readonly' | 'readwrite' | 'unrestricted'
-
-export const DEFAULT_GOAL_PERMISSION_TIER: GoalPermissionTier = 'readonly'
-
-export const GOAL_PERMISSION_TIER_LABELS: Record<GoalPermissionTier, { titleKey: string; descKey: string }> = {
-  readonly: {
-    titleKey: 'goalPermTierReadonly',
-    descKey: 'goalPermTierReadonlyDesc',
-  },
-  readwrite: {
-    titleKey: 'goalPermTierReadwrite',
-    descKey: 'goalPermTierReadwriteDesc',
-  },
-  unrestricted: {
-    titleKey: 'goalPermTierUnrestricted',
-    descKey: 'goalPermTierUnrestrictedDesc',
-  },
-}
-
-export function hasNonDefaultGoalPermissionTier(tier: GoalPermissionTier): boolean {
-  return tier !== DEFAULT_GOAL_PERMISSION_TIER
-}
+export { SYNAX_PROFILE_ID as GOAL_PROFILE_ID } from '../../sessions/synaxSessionTypes'

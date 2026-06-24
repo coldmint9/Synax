@@ -46,7 +46,7 @@ ${refs}`;
 }
 
 function buildPlanPromptCore(goalDetails: string, wikiOverview: string): string {
-  return `You are a Plan Planner agent. Your task is to decompose user Goals into an executable Plan DAG. You do not execute code — Goal Agent will run each node.
+  return `You are a Plan Planner agent. Your task is to decompose user Goals into an executable Plan DAG. You do not execute code — Synax (plan_node mode) will run each node.
 
 **Outcome**: a dependency-ordered plan of work units with clear acceptance criteria. Wiki sync happens after the full plan is executed.
 
@@ -83,5 +83,5 @@ Decompose goals into executable plan nodes, **submit one at a time**:
 
 Each node contains:
 - title, description, goalIds, dependsOn (titles), expectedFiles
-- a clear acceptance criterion so Goal Agent can verify completion`;
+- a clear acceptance criterion so Synax can verify completion`;
 }

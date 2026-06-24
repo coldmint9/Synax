@@ -6,7 +6,7 @@ import { useWikiStore } from '../../state/wikiStore'
 import { useLocale } from '../../../hooks/useLocale'
 import { GoalComposerPill } from '../wiki/goal/GoalComposerPill'
 import { buildGoalModelOptions, pickDefaultSelection } from '../wiki/goal/goalModelOptions'
-import { goalSessionPath } from './sessionRoutes'
+import { sessionPath } from './sessionRoutes'
 import {
   isSessionComposerLocked,
   sessionHasPendingPermissions,
@@ -21,7 +21,7 @@ interface Props {
   layout?: 'footer' | 'centered'
 }
 
-export function SessionGoalComposer({ session, projectId, layout = 'footer' }: Props) {
+export function SessionComposer({ session, projectId, layout = 'footer' }: Props) {
   const { t } = useLocale()
   const navigate = useNavigate()
   const [content, setContent] = useState('')
@@ -35,7 +35,7 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
   const queuedInputs = useAgentSessionStore(s =>
     sessionId ? (s.inputQueues[sessionId] ?? EMPTY_INPUT_QUEUE) : EMPTY_INPUT_QUEUE,
   )
-  const submitGoalDraft = useAgentSessionStore(s => s.submitGoalDraft)
+  const submitSessionDraft = useAgentSessionStore(s => s.submitSessionDraft)
   const cancelSessionRun = useAgentSessionStore(s => s.cancelSessionRun)
   const refreshSessions = useAgentSessionStore(s => s.refreshSessions)
   const hasPendingPermissions = useAgentSessionStore(s =>
@@ -93,8 +93,8 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
     setSubmitting(true)
     try {
       if (isDraft) {
-        const created = await submitGoalDraft(projectId, { message, model: modelId })
-        navigate(goalSessionPath(projectId, created.id))
+        const created = await submitSessionDraft(projectId, { message, model: modelId })
+        navigate(sessionPath(projectId, created.id))
         await sendSessionMessage(created.id, { message, model: modelId })
       } else {
         await submitOrEnqueueSessionInput(session.id, { message, model: modelId })
@@ -102,7 +102,7 @@ export function SessionGoalComposer({ session, projectId, layout = 'footer' }: P
     } finally {
       setSubmitting(false)
     }
-  }, [content, isDraft, isGenerating, modelId, navigate, projectId, queueWhileGenerating, sendSessionMessage, session, submitGoalDraft, submitOrEnqueueSessionInput])
+  }, [content, isDraft, isGenerating, modelId, navigate, projectId, queueWhileGenerating, sendSessionMessage, session, submitSessionDraft, submitOrEnqueueSessionInput])
 
   const handleStop = useCallback(() => {
     if (session) void cancelSessionRun(session.id)
