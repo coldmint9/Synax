@@ -34,7 +34,9 @@ describe('buildSynaxIntentPromptSection', () => {
     });
     expect(section).toContain('## Exploration Intent');
     expect(section).toContain('subagent.delegate(profileId: "explorer"');
-    expect(section).toContain('step 1');
+    expect(section).toContain('wiki.search_batch');
+    expect(section).toContain('Do NOT call bash');
+    expect(section).toContain('Step 1 rule');
   });
 
   it('injects coding discipline hints for coding intent', () => {

@@ -55,7 +55,7 @@ const BUILTIN_SKILLS: AgentSkill[] = [
     requiredCapabilities: ['bash', 'file.glob', 'file.list', 'grep.search'],
     permissionHints: ['none'],
     contentRef: 'system://skills/code-explorer',
-    content: 'Use progressively disclosed read tools. Summarize evidence and cite files.',
+    content: 'Wiki-first exploration: wiki.search_batch or wiki.search_content, then wiki.read_section/wiki.read_document. Use wiki.get_tree for module navigation. After wiki coverage, use bash/file/grep for implementation evidence. Summarize with cited wiki sections and file paths.',
     status: 'available',
   },
 ];

@@ -66,3 +66,8 @@ export {
   SYNAX_LOCAL_FILENAME,
   type LoadedInstructions,
 } from './synax-context-types.js';
+export {
+  EXPLORER_WIKI_PLAYBOOK,
+  buildExplorerSubagentPrompt,
+  shouldWrapExplorerDelegatePrompt,
+} from './synax-explorer-delegate.js';

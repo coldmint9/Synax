@@ -19,7 +19,7 @@ class ChatModePromptStrategy extends SynaxModePromptStrategy {
     return [
       'Session mode: chat.',
       'Adapt to the user intent. For multi-step requests, start with task.create to outline steps.',
-      'For exploration or discovery requests, delegate immediately via subagent.delegate(profileId: "explorer") for fast parallel read-only research.',
+      'For exploration or discovery requests, delegate immediately via subagent.delegate(profileId: "explorer"). The child runs wiki-first research (FTS, sections, tree) then code evidence — do not explore on the parent.',
       'Use subagent.delegate(profileId: "reviewer") when a structured review is needed.',
       'For implementation requests, follow the injected coding-task hints (breakdown, style, tests, file summary).',
     ].join('\n');

@@ -119,7 +119,7 @@ export class SynaxAgent {
       ...variant.loopHints.map((hint) => `- ${hint}`),
     ];
     if (variant.id === 'explorer') {
-      lines.push('- Exploration is active: delegate wide read-only investigation via subagent.delegate(profileId: "explorer") on step 1 instead of serial bash sweeps.');
+      lines.push('- Exploration variant: delegate discovery via subagent.delegate(profileId: "explorer"); children run wiki-first then code evidence.');
     } else if (variant.delegateProfileId) {
       lines.push(`- For isolated deep work, delegate via subagent.delegate(profileId: "${variant.delegateProfileId}").`);
     }
