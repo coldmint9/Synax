@@ -128,9 +128,11 @@ export class SynaxAgent {
 
   buildEffectiveLoopHints(session: Pick<AgentSession, 'profileId' | 'sessionMetadata'>): string[] {
     if (!this.isSynaxSession(session)) return [];
+    const baseHints = synaxAgentProfile.loopHints ?? [];
     const variant = this.resolveVariantState(session);
-    if (!variant) return synaxAgentProfile.loopHints ?? [];
-    return synaxVariantRegistry.get(variant.activeVariant)?.loopHints ?? synaxAgentProfile.loopHints ?? [];
+    if (!variant) return baseHints;
+    const variantHints = synaxVariantRegistry.get(variant.activeVariant)?.loopHints ?? [];
+    return dedupeLoopHints([...baseHints, ...variantHints]);
   }
 
   createSessionMetadata(
@@ -198,6 +200,18 @@ export class SynaxAgent {
     });
     return decision;
   }
+}
+
+function dedupeLoopHints(hints: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const hint of hints) {
+    const key = hint.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(hint);
+  }
+  return result;
 }
 
 export const synaxAgent = new SynaxAgent();

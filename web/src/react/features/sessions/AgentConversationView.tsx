@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { Chip, ProgressBar, Card } from '@heroui/react'
+import { Chip, Card } from '@heroui/react'
 import { Pause, Play, XCircle, Zap } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
@@ -114,14 +114,6 @@ export const AgentConversationView = memo(function AgentConversationView({
           ) : null}
         </div>
       </div>
-
-      {isRunning ? (
-        <ProgressBar size="sm" color="accent" className="w-full" isIndeterminate>
-          <ProgressBar.Track>
-            <ProgressBar.Fill />
-          </ProgressBar.Track>
-        </ProgressBar>
-      ) : null}
 
       {compactions && compactions.length > 0
         ? compactions.map((c, i) => (

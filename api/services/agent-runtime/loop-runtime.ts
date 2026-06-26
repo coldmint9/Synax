@@ -20,6 +20,9 @@ import { generateLoopModelStep, streamLoopModelStep } from "./loop-model-stream.
 import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
 import { synaxAgent } from "./synax/index.js";
 import { loadProjectRulesSection } from "./synax/synax-instructions.js";
+import { enrichContextForPrompt } from "./synax/synax-runtime-context.js";
+import { resolvePromptLocale } from "../prompts/locale-infer.js";
+import { readSessionPermissionConfig } from "./session-permissions.js";
 import { isWikiAgentProfile } from "../wiki/wiki-agent-profiles.js";
 import { memoryManager } from "../context/memory-manager.js";
 import { loopResumeService, type LoopResumeService } from "./loop-resume.js";
@@ -516,11 +519,16 @@ export class AgentLoopRuntime {
           }
         }
 
+        const willEmitFinalAssistantMessage =
+          pendingPermission?.userReply === "reject" ||
+          modelResult.step.toolCalls.length === 0 ||
+          modelResult.step.final;
         await this.persistStepOutput(
           run.id,
           step.id,
           sessionId,
           modelResult.step,
+          { skipAssistantText: willEmitFinalAssistantMessage },
         );
         logger.info(
           {
@@ -1341,9 +1349,25 @@ export class AgentLoopRuntime {
       ].join('\n')
       : null;
 
+    const permissionConfig = readSessionPermissionConfig(session.sessionMetadata);
+    const locale = resolvePromptLocale(input.input.locale, input.prompt);
+
+    let contextForPrompt = input.context;
+    try {
+      const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
+      contextForPrompt = enrichContextForPrompt(
+        input.context,
+        session.projectId,
+        workDir,
+        input.prompt,
+      );
+    } catch {
+      contextForPrompt = input.context;
+    }
+
     const systemPromptContent = buildLoopSystemPrompt({
       profile: input.profile,
-      context: input.context,
+      context: contextForPrompt,
       history: input.history,
       previousParts: input.previousParts,
       previousToolCalls: input.previousToolCalls,
@@ -1351,7 +1375,9 @@ export class AgentLoopRuntime {
       maxSteps: input.maxSteps,
       stepIndex: input.stepIndex,
       mustFinalize: input.mustFinalize,
-      locale: input.input.locale,
+      locale,
+      permissionTier: permissionConfig.permissionTier,
+      includeToolCallFallback: false,
       modePromptSection: synaxAgent.buildModePromptSection(session),
       variantPromptSection: synaxAgent.buildVariantPromptSection(session),
       intentPromptSection: synaxAgent.isSynaxSession(session)
@@ -1502,6 +1528,7 @@ export class AgentLoopRuntime {
     stepId: string,
     sessionId: string,
     step: LoopStepModelResult["step"],
+    options?: { skipAssistantText?: boolean },
   ): Promise<AgentRunPart[]> {
     const parts: AgentRunPart[] = [];
     if (step.thought?.trim()) {
@@ -1566,16 +1593,18 @@ export class AgentLoopRuntime {
           createdAt: textCreatedAt,
         }),
       );
-      this.store.appendMessage({
-        id: makeRuntimeId("msg"),
-        sessionId,
-        runId,
-        stepId,
-        role: "assistant",
-        content: step.message.trim(),
-        metadata: {},
-        createdAt: textCreatedAt,
-      });
+      if (!options?.skipAssistantText) {
+        this.store.appendMessage({
+          id: makeRuntimeId("msg"),
+          sessionId,
+          runId,
+          stepId,
+          role: "assistant",
+          content: step.message.trim(),
+          metadata: {},
+          createdAt: textCreatedAt,
+        });
+      }
     }
     return parts;
   }

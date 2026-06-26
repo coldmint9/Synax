@@ -3,18 +3,9 @@ import {
   extractPlanNodeTitleFromPrompt,
   extractUserGoalFromPrompt,
   resolveGoalTitleSource,
-  resolveShortGoalTitle,
 } from '../wiki-goal-title.js'
 
 describe('wiki-goal-title', () => {
-  it('uses short user input directly as title', () => {
-    expect(resolveShortGoalTitle('修复登录')).toBe('修复登录')
-    expect(resolveShortGoalTitle('你好世界')).toBe('你好世界')
-    expect(resolveShortGoalTitle('1234567')).toBe('1234567')
-    expect(resolveShortGoalTitle('帮我看看认证模块')).toBeNull()
-    expect(resolveShortGoalTitle('12345678')).toBeNull()
-  })
-
   it('extracts user goal from direct mode prompt', () => {
     const prompt = [
       'Respond in English.',

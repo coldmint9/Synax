@@ -17,6 +17,10 @@ import { AgentRuntimeError } from './runtime-errors.js';
 import { agentRuntimeStore } from './session-store.js';
 import { sessionLiveBus } from './session-live-bus.js';
 import { runtimeBus } from './runtime-bus.js';
+import {
+  ensureSessionTitleGenerated,
+  maybeScheduleSessionTitleFromStreamChunk,
+} from './session-title-service.js';
 
 const ACTIVE_SESSION_WAIT_MS = 25;
 const ACTIVE_SESSION_TIMEOUT_MS = 5_000;
@@ -349,6 +353,7 @@ class SessionProcessManager {
     if (!state) return;
 
     if (message.type === 'stream:chunk') {
+      maybeScheduleSessionTitleFromStreamChunk(sessionId, message.chunk);
       forwardChunkToLiveBus(sessionId, message.chunk);
       const stream = state.streams.get(message.streamId);
       stream?.queue.push({ kind: 'chunk', chunk: message.chunk });
@@ -356,6 +361,7 @@ class SessionProcessManager {
     }
 
     if (message.type === 'stream:done') {
+      ensureSessionTitleGenerated(sessionId);
       const stream = state.streams.get(message.streamId);
       stream?.queue.push({ kind: 'done' });
       stream?.queue.close();

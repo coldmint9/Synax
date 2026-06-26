@@ -5,8 +5,9 @@ import {
   SYNAX_RULES_DIR,
   SYNAX_LOCAL_FILENAME,
   SYNAX_MD_FILENAME,
+  CLAUDE_MD_FILENAME,
+  AGENTS_MD_FILENAME,
   PROJECT_RULE_FILES,
-  INSTRUCTION_FALLBACK_FILES,
   type LoadedInstructions,
 } from './synax-context-types.js';
 
@@ -60,12 +61,31 @@ export function loadProjectInstructions(workDir: string): LoadedInstructions | n
 
 export type ProjectRulesScope = 'all' | 'synax-only';
 
+const PROJECT_RULE_FILE_BUDGETS: Record<string, number> = {
+  [SYNAX_MD_FILENAME]: 4_000,
+  [CLAUDE_MD_FILENAME]: 8_000,
+  [AGENTS_MD_FILENAME]: 4_000,
+  [SYNAX_LOCAL_FILENAME]: 2_000,
+};
+
+const TOTAL_PROJECT_RULES_CAP = 18_000;
+
+export function stripPromptBloat(body: string): string {
+  return body
+    .replace(/<!-- HEROUI-REACT-AGENTS-MD-START -->[\s\S]*?<!-- HEROUI-REACT-AGENTS-MD-END -->/g, '')
+    .trim();
+}
+
+function prepareRuleBody(body: string): string {
+  return stripPromptBloat(stripFrontmatter(body).trim());
+}
+
 /** All project rule files for system-prompt injection (SYNAX → CLAUDE → AGENTS + local). */
 export function loadProjectRulesSection(
   workDir: string,
   options: { maxChars?: number; scope?: ProjectRulesScope } = {},
 ): string | null {
-  const { maxChars = 24_000, scope = 'all' } = options;
+  const { maxChars = TOTAL_PROJECT_RULES_CAP, scope = 'all' } = options;
   const resolved = resolveInstructionWorkDir(workDir) ?? workDir;
   const parts: string[] = [];
 
@@ -74,18 +94,29 @@ export function loadProjectRulesSection(
   for (const name of files) {
     const filePath = path.join(resolved, name);
     if (!fs.existsSync(filePath)) continue;
-    const loaded = loadInstructionFile(filePath, resolved);
-    if (loaded?.body) {
-      parts.push(`### ${name}\n\n${loaded.body}`);
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const body = prepareRuleBody(raw);
+      if (!body) continue;
+      const fileBudget = PROJECT_RULE_FILE_BUDGETS[name] ?? 4_000;
+      parts.push(`### ${name}\n\n${truncateForPrompt(body, fileBudget)}`);
+    } catch {
+      continue;
     }
   }
 
   if (scope === 'all') {
     const localPath = path.join(resolved, SYNAX_LOCAL_FILENAME);
     if (fs.existsSync(localPath)) {
-      const local = loadInstructionFile(localPath, resolved);
-      if (local?.body) {
-        parts.push(`### ${SYNAX_LOCAL_FILENAME}\n\n${local.body}`);
+      try {
+        const raw = fs.readFileSync(localPath, 'utf8');
+        const body = prepareRuleBody(raw);
+        if (body) {
+          const fileBudget = PROJECT_RULE_FILE_BUDGETS[SYNAX_LOCAL_FILENAME] ?? 2_000;
+          parts.push(`### ${SYNAX_LOCAL_FILENAME}\n\n${truncateForPrompt(body, fileBudget)}`);
+        }
+      } catch {
+        // ignore local rules read failures
       }
     }
   }

@@ -12,6 +12,18 @@ import { buildHookCallbacks } from './middleware/hook-callbacks.js'
 import { toModelPrompt, ensureJsonObjectResponseFormatInstruction } from './prompt.js'
 import { buildThinkingStreamOptions, type ThinkingStreamOptions } from './thinking-mode-strategy.js'
 
+const THINKING_DISABLED_PURPOSES = new Set(['session-title', 'context-signal', 'validate'])
+
+function resolveThinkingOptions(
+  request: LlmGatewayRequest,
+  selection: ResolvedModelSelection,
+): ThinkingStreamOptions {
+  if (THINKING_DISABLED_PURPOSES.has(request.purpose)) {
+    return { temperature: request.temperature }
+  }
+  return buildThinkingStreamOptions(selection, request)
+}
+
 export type ExecutionMode =
   | {
       kind: 'stream'
@@ -72,7 +84,7 @@ export async function executePipeline(
 
   const enableCache = strategy.supportsCacheControl(selection) && request.cacheControl
   const callbacks = buildHookCallbacks(request)
-  const thinkingStream = buildThinkingStreamOptions(selection, request)
+  const thinkingStream = resolveThinkingOptions(request, selection)
 
   switch (mode.kind) {
     case 'stream':

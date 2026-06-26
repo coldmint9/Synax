@@ -1,5 +1,4 @@
 import type { SynaxSessionMode } from './synax-session-mode.js';
-import { isGoalLikeMode } from './synax-session-mode.js';
 import { EXPLORER_WIKI_PLAYBOOK } from './synax-explorer-delegate.js';
 
 export type SynaxIntentKind = 'explore' | 'coding' | 'review' | 'plan';
@@ -85,6 +84,9 @@ const INTENT_CLASSIFICATION_ORDER: IntentPatternRule[] = [
   ...SYNAX_VARIANT_INTENT_RULES.map((rule) => ({ kind: rule.kind, patterns: rule.patterns })),
 ];
 
+const CONVERSATIONAL_RE = /^(你好|您好|嗨|谢谢|感谢|好的|ok|okay|hi|hello|hey|thanks|thank you|bye|再见)[!.?\s]*$/i;
+const SHORT_MESSAGE_MAX = 20;
+
 function matchesAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
@@ -99,6 +101,14 @@ export function classifySynaxIntent(message: string): SynaxIntentKind | null {
     }
   }
   return null;
+}
+
+export function isConversationalMessage(message: string): boolean {
+  const text = message.trim();
+  if (!text) return true;
+  if (CONVERSATIONAL_RE.test(text)) return true;
+  if (text.length <= SHORT_MESSAGE_MAX && classifySynaxIntent(text) === null) return true;
+  return false;
 }
 
 function buildExploreIntentSection(stepIndex: number): string {
@@ -128,9 +138,7 @@ function buildCodingIntentSection(): string {
     '- Keep changes minimal and verifiable; avoid unrelated refactors.',
     '',
     '## Task Breakdown',
-    '- For 2+ steps, call task.create early and keep task.update current.',
     '- One logical change per step; read/search before write.',
-    '- file.write and edit on existing files require file.read first (enforced by runtime).',
     '',
     '## Coding Style',
     '- Match naming, patterns, and formatting of touched files.',
@@ -148,10 +156,11 @@ function buildCodingIntentSection(): string {
   ].join('\n');
 }
 
-function shouldApplyCodingHints(input: SynaxIntentHintInput, intent: SynaxIntentKind | null): boolean {
+export function shouldApplyCodingHints(input: SynaxIntentHintInput, intent: SynaxIntentKind | null): boolean {
   if (intent === 'coding') return true;
   if (intent === 'explore' || intent === 'review' || intent === 'plan') return false;
-  return isGoalLikeMode(input.mode);
+  if (isConversationalMessage(input.message)) return false;
+  return false;
 }
 
 export function buildSynaxIntentPromptSection(input: SynaxIntentHintInput): string | null {

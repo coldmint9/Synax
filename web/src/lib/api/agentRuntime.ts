@@ -264,6 +264,7 @@ export interface StreamTurnRequest {
   temperature?: number
   maxTokens?: number
   maxSteps?: number
+  locale?: 'zh' | 'en'
   permissionTier?: 'readonly' | 'readwrite' | 'unrestricted'
   permissionOverrides?: Partial<Record<'read' | 'write' | 'delete' | 'shell' | 'task', 'allow' | 'ask' | 'deny'>>
 }

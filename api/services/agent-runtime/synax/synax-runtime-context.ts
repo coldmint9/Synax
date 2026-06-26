@@ -1,9 +1,9 @@
-import type { AgentContextBlock } from '../contracts.js';
+import type { AgentContextBlock, AgentContextBundle } from '../contracts.js';
 import type { CodeMapScanResult } from '../../contracts/code-map.js';
 import { getRawSqlite } from '../../../db/index.js';
 import { makeRuntimeId } from '../runtime-ids.js';
-import { buildOutlineContext } from '../../wiki/wiki-outline-context.js';
 import { truncateForPrompt } from './synax-instructions.js';
+import { buildAgentCodeMapContext } from './agent-code-map-context.js';
 
 const MAX_CODE_MAP_CHARS = 8_000;
 const MAX_WIKI_EXCERPT_CHARS = 2_000;
@@ -64,15 +64,23 @@ function loadWikiLandscapeExcerpt(projectId: string): string | null {
   }
 }
 
+export interface BuildSynaxRuntimeBlocksOptions {
+  focusPrompt?: string;
+}
+
 export function buildSynaxRuntimeBlocks(
   projectId: string,
   workDir: string,
+  options: BuildSynaxRuntimeBlocksOptions = {},
 ): AgentContextBlock[] {
   const blocks: AgentContextBlock[] = [];
 
   const scan = loadLatestCachedScan(projectId);
   if (scan) {
-    const { context } = buildOutlineContext(scan, workDir);
+    const context = buildAgentCodeMapContext(scan, workDir, {
+      focusPrompt: options.focusPrompt,
+      maxChars: MAX_CODE_MAP_CHARS,
+    });
     blocks.push({
       id: makeRuntimeId('acblk'),
       kind: 'code',
@@ -96,4 +104,35 @@ export function buildSynaxRuntimeBlocks(
   }
 
   return blocks;
+}
+
+export function enrichContextForPrompt(
+  context: AgentContextBundle | null,
+  projectId: string,
+  workDir: string,
+  focusPrompt?: string,
+): AgentContextBundle | null {
+  const freshRuntimeBlocks = buildSynaxRuntimeBlocks(projectId, workDir, { focusPrompt });
+  if (freshRuntimeBlocks.length === 0) return context;
+  if (!context) {
+    return {
+      id: 'prompt-context',
+      projectId,
+      sessionId: null,
+      nodeId: null,
+      profileId: null,
+      blocks: freshRuntimeBlocks,
+      citations: [],
+      warnings: [],
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  const otherBlocks = context.blocks.filter(
+    (block) => block.sourceType !== 'code-map' && block.sourceType !== 'wiki',
+  );
+  return {
+    ...context,
+    blocks: [...freshRuntimeBlocks, ...otherBlocks],
+  };
 }

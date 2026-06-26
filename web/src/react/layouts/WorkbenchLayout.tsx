@@ -8,7 +8,6 @@ import { useAgentPermissionNotifier } from '../../hooks/useAgentPermissionNotifi
 import { useDesktopNotification } from '../../hooks/useDesktopNotification'
 import { useTaskNotificationListener } from '../../hooks/useTaskNotificationListener'
 import { useRuntimeSSE } from '../features/sessions/useRuntimeSSE'
-import { useSessionTitleSync } from '../features/sessions/useSessionDisplayTitle'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
 import { sessionPath } from '../features/sessions/sessionRoutes'
 import { resolveSessionsEntryPath } from '../features/sessions/sessionLastVisit'
@@ -58,7 +57,6 @@ export default function WorkbenchLayout() {
     setSessionProjectId(effectiveProjectId || null)
   }, [effectiveProjectId, setSessionProjectId])
   useRuntimeSSE()
-  useSessionTitleSync()
 
   const navigate = useNavigate()
   const location = useLocation()

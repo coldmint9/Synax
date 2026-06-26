@@ -6,6 +6,7 @@ import {
 } from '../../../../lib/api/agentRuntime'
 import type { SessionLiveEvent } from '../../../../lib/api/sessionLive'
 import { useAgentSessionStore } from '../../sessions/agentSessionStore'
+import { useShellStore } from '../../../state/shellStore'
 
 export type GoalSessionStatus = 'idle' | 'running' | 'waiting_permission' | 'completed' | 'failed'
 
@@ -233,10 +234,12 @@ export async function streamGoalAgentTurn(
   onChunk: (chunk: unknown) => void,
   options?: { continue?: boolean },
 ): Promise<void> {
+  const locale = useShellStore.getState().locale
   const body = {
     ...(input.message ? { message: input.message } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.permissionTier ? { permissionTier: input.permissionTier } : {}),
+    locale,
   }
   if (options?.continue) {
     await agentRuntimeApi.resumeStream(sessionId, body, onChunk)

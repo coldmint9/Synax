@@ -18,10 +18,10 @@ class ChatModePromptStrategy extends SynaxModePromptStrategy {
   buildSection(): string | null {
     return [
       'Session mode: chat.',
-      'Adapt to the user intent. For multi-step requests, start with task.create to outline steps.',
-      'For exploration or discovery requests, delegate immediately via subagent.delegate(profileId: "explorer"). The child runs wiki-first research (FTS, sections, tree) then code evidence — do not explore on the parent.',
+      'Adapt to the user intent.',
+      'For exploration or discovery requests, delegate immediately via subagent.delegate(profileId: "explorer"). The child runs wiki-first research — do not explore on the parent.',
       'Use subagent.delegate(profileId: "reviewer") when a structured review is needed.',
-      'For implementation requests, follow the injected coding-task hints (breakdown, style, tests, file summary).',
+      'For implementation requests, follow the injected coding-task hints when present.',
     ].join('\n');
   }
 }
@@ -34,8 +34,6 @@ class GoalModePromptStrategy extends SynaxModePromptStrategy {
     const lines = [
       'Session mode: goal.',
       'Work toward the user goal with bounded, verifiable steps.',
-      'Break the goal into task.create items when there are multiple steps; update status as you complete each.',
-      'Read and search before editing. Prefer edit for surgical changes.',
     ];
     if (goal) {
       lines.push('', '## User Goal', goal);
@@ -64,7 +62,6 @@ class PlanNodeModePromptStrategy extends SynaxModePromptStrategy {
     const lines = [
       'Session mode: plan_node.',
       'Execute one bounded plan node. Prefer minimal, focused diffs.',
-      'Use task.create for sub-steps within this node; mark them completed with task.update.',
       'Explain blockers clearly if you cannot finish.',
     ];
     if (context.metadata.planNodeTitle) {

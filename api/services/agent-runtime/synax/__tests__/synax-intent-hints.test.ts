@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSynaxIntentPromptSection,
   classifySynaxIntent,
+  isConversationalMessage,
 } from '../synax-intent-hints.js';
 
 describe('classifySynaxIntent', () => {
@@ -22,6 +23,14 @@ describe('classifySynaxIntent', () => {
   it('classifies review and plan intents', () => {
     expect(classifySynaxIntent('Please review this PR for regressions')).toBe('review');
     expect(classifySynaxIntent('Help me plan and break down this feature')).toBe('plan');
+  });
+});
+
+describe('isConversationalMessage', () => {
+  it('detects greetings and short non-task messages', () => {
+    expect(isConversationalMessage('你好')).toBe(true);
+    expect(isConversationalMessage('Hi there')).toBe(true);
+    expect(isConversationalMessage('Implement login')).toBe(false);
   });
 });
 
@@ -52,14 +61,30 @@ describe('buildSynaxIntentPromptSection', () => {
     expect(section).toContain('## File Change Summary');
   });
 
-  it('injects coding hints for goal mode even without explicit coding verbs', () => {
+  it('does not inject coding hints for goal mode without explicit coding verbs', () => {
     const section = buildSynaxIntentPromptSection({
       message: 'Improve session title handling',
       mode: 'goal',
       stepIndex: 1,
     });
+    expect(section).toBeNull();
+  });
+
+  it('returns null for conversational goal-mode greetings', () => {
+    expect(buildSynaxIntentPromptSection({
+      message: '你好',
+      mode: 'goal',
+      stepIndex: 1,
+    })).toBeNull();
+  });
+
+  it('injects coding hints for explicit implementation in goal mode', () => {
+    const section = buildSynaxIntentPromptSection({
+      message: 'Implement login endpoint',
+      mode: 'goal',
+      stepIndex: 1,
+    });
     expect(section).toContain('## Coding Task Role');
-    expect(section).not.toContain('## Exploration Intent');
   });
 
   it('skips coding hints for pure exploration in goal mode', () => {
