@@ -31,6 +31,7 @@ import {
   resumeAgentSessionInBackground,
   streamAgentSession,
 } from '../services/agent-runtime/agent-stream-proxy.js';
+import { ensureSessionTitleGenerated } from '../services/agent-runtime/session-title-service.js';
 import { runtimeBus } from '../services/agent-runtime/runtime-bus.js';
 import { sessionLiveBus } from '../services/agent-runtime/session-live-bus.js';
 import { logger } from '../lib/logger.js';
@@ -341,6 +342,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/turns/stream', async (c) => {
       }
     } finally {
       clearInterval(heartbeat);
+      ensureSessionTitleGenerated(sessionId);
     }
     if (!abortController.signal.aborted) {
       await stream.writeSSE({ data: '[DONE]' });
@@ -414,6 +416,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/resume/stream', async (c) => {
       await stream.writeSSE({ data: JSON.stringify({ type: 'error', error: message }) });
     } finally {
       clearInterval(heartbeat);
+      ensureSessionTitleGenerated(sessionId);
     }
     if (!abortController.signal.aborted) {
       await stream.writeSSE({ data: '[DONE]' });

@@ -4,9 +4,11 @@ import type {
   AgentRunPart,
   AgentRuntimeMessage,
   LoopModelStep,
+  PermissionTier,
   ToolCallRecord,
 } from './contracts.js';
 import { buildLanguageDirective } from '../prompts/language-directive.js';
+import { buildPermissionSection } from './prompt-permission-section.js';
 
 interface BuildLoopPromptInput {
   profile: AgentProfile;
@@ -32,17 +34,55 @@ interface BuildLoopPromptInput {
   projectMemoriesSection?: string | null;
   /** SYNAX.md / CLAUDE.md / AGENTS.md merged for the rules section. */
   projectRulesSection?: string | null;
+  /** Resolved permission tier for this session turn. */
+  permissionTier?: PermissionTier;
   /** If set, a language output directive is prepended to the system prompt. */
   locale?: 'zh' | 'en';
+  /** Include JSON tool-call fallback instructions (legacy / non-native tool paths). */
+  includeToolCallFallback?: boolean;
 }
 
-function buildTaskTrackingSection(profile: AgentProfile): string {
-  if (!profile.allowedCapabilities.includes('task.create')) return '';
-  return [
-    'Session TODO tracking: For work with 2+ steps, call task.create early to build a visible task list for the user.',
-    'Mark progress with task.update (pending → in_progress → completed). Review with task.list.',
-    'task.create/update track session todos — they are not subagent.delegate (child agent sessions).',
-  ].join(' ');
+export function buildCoreLoopSection(profile: AgentProfile): string {
+  const lines = [
+    `You are the ${profile.label}.`,
+    `Profile kind: ${profile.kind}. Runtime mode: ${profile.mode}. Thinking mode: ${profile.defaultThinkingMode}.`,
+    `Allowed capabilities: ${profile.allowedCapabilities.join(', ') || 'none'}.`,
+    '',
+    'You are in a step-based tool loop.',
+    'Produce one response per turn. You may include multiple tool calls in a single response when they are independent of each other.',
+    'If the task is complete, answer in plain text. Plain text ends the run.',
+    'If more information or action is needed, use the provided tool-call interface instead of writing a tool request as prose.',
+    '',
+    'Parallel tool calls in one step run concurrently. Batch independent reads and searches together to minimize round trips.',
+    'Do not parallelize a write with a read whose result the write depends on — call the read in one step, then write in the next step.',
+    'When overwriting an existing file with file.write or edit, you must file.read that file first in this session.',
+    'When proposing file changes, prefer specific file paths and bounded edits.',
+    '',
+    'Tool choice:',
+    '- Prefer dedicated read tools: grep.search, file.glob, file.list, file.read, diff.read (read gate, usually allowed).',
+    '- Use bash only for compound read-only pipelines that dedicated tools cannot express; bash uses the shell gate and may require user approval.',
+    '- For exploration intent or explorer variant on the parent agent: do not search yourself — delegate via subagent.delegate(profileId: "explorer").',
+  ];
+
+  if (profile.allowedCapabilities.includes('task.create')) {
+    lines.push(
+      '',
+      'Session TODO tracking: For work with 2+ steps, call task.create early to build a visible task list for the user.',
+      'Mark progress with task.update (pending → in_progress → completed). Review with task.list.',
+      'task.create/update track session todos — they are not subagent.delegate (child agent sessions).',
+    );
+  }
+
+  return lines.join('\n');
+}
+
+function buildLoopHintsSection(hints: string[] | null | undefined): string {
+  if (!hints?.length) return '';
+  return ['Loop hints:', ...hints].join('\n');
+}
+
+function shouldIncludeContextWarnings(): boolean {
+  return process.env.SYNAX_DEBUG_PROMPT === '1';
 }
 
 export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
@@ -50,34 +90,29 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
   const blocks = input.context?.blocks
     .map((block) => `## ${block.title}\n${block.content}`)
     .join('\n\n') ?? 'No context bundle is attached.';
-  const warnings = input.context?.warnings.length ? `\n\nContext warnings:\n${input.context.warnings.join('\n')}` : '';
-  const loopHints = (input.loopHintsOverride ?? input.profile.loopHints)?.length
-    ? `\nLoop hints:\n${(input.loopHintsOverride ?? input.profile.loopHints)!.join('\n')}`
+  const warnings = shouldIncludeContextWarnings() && input.context?.warnings.length
+    ? `\n\nContext warnings:\n${input.context.warnings.join('\n')}`
     : '';
+  const loopHints = buildLoopHintsSection(input.loopHintsOverride ?? input.profile.loopHints);
+  const permissionSection = buildPermissionSection({
+    permissionTier: input.permissionTier,
+    profileDefaults: input.profile.permissionDefaults,
+  });
+  const fallbackLine = input.includeToolCallFallback
+    ? 'Only if the runtime reports native tool calling is unavailable: start the response with exactly {"tool":"tool.id","args":{...}} followed by optional short status text.'
+    : '';
+
   return [
     directive,
-    `You are the Synax ${input.profile.label} runtime agent.`,
-    `Profile kind: ${input.profile.kind}. Runtime mode: ${input.profile.mode}. Thinking mode: ${input.profile.defaultThinkingMode}.`,
-    `Allowed capabilities: ${input.profile.allowedCapabilities.join(', ') || 'none'}.`,
-    'You are in a step-based tool loop.',
-    'Produce one response per turn. You may include multiple tool calls in a single response when they are independent of each other.',
-    'If the task is complete, answer in plain text. Plain text ends the run.',
-    'If more information or action is needed, use the provided tool-call interface instead of writing a tool request as prose.',
-    'You may call multiple tools in a single step. All tool calls within a step execute in parallel. ' +
-    'Batch independent reads, writes, and searches together to minimize round trips. ' +
-    'If a write depends on a read result, call the read tool first, receive the result, then call the write tool in the next step.',
-    'Compatibility fallback only when native tool calling is unavailable: start the response with exactly {"tool":"tool.id","args":{...}} followed by optional short status text.',
-    'Prefer the bash tool for file search, listing, and text inspection. It accepts read-only Unix commands (rg, grep, find, ls, cat, head, tail, wc, sort, uniq, sed, awk, git diff/log/show, etc.) and supports pipes and command chaining. Combine multiple operations into a single bash call to reduce round trips.',
-    'When overwriting an existing file with file.write or edit, you must file.read that file first in this session.',
-    'When proposing file changes, prefer specific file paths and bounded edits.',
-    buildTaskTrackingSection(input.profile),
-    loopHints,
+    buildCoreLoopSection(input.profile),
+    fallbackLine,
+    permissionSection,
     input.modePromptSection ? `\n${input.modePromptSection}` : '',
-    input.variantPromptSection ? `\n${input.variantPromptSection}` : '',
     input.intentPromptSection ? `\n${input.intentPromptSection}` : '',
+    input.variantPromptSection ? `\n${input.variantPromptSection}` : '',
+    loopHints,
     input.projectMemoriesSection ? `\n${input.projectMemoriesSection}` : '',
     input.skillsSection ? `\n${input.skillsSection}` : '',
-    '',
     input.projectRulesSection
       ? `[Project Rules]\nFollow these repository instruction files:\n\n${input.projectRulesSection}`
       : '',

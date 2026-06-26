@@ -45,11 +45,9 @@ export const synaxAgentProfile: AgentProfile = {
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   loopHints: [
     'Understand user intent before acting.',
-    'For exploration, discovery, architecture, or "how does X work" questions: delegate immediately via subagent.delegate(profileId: "explorer") — do not search yourself.',
-    'For multi-step work, create a session TODO early with task.create and keep it current via task.update.',
+    'For exploration, discovery, architecture, or "how does X work" questions: delegate via subagent.delegate(profileId: "explorer") — do not search on the parent.',
     'Delegate structured review to subagent.delegate(profileId: "reviewer").',
     'For sustained planning or review work, call agent.adapt with the matching variant.',
-    'Prefer minimal, verifiable steps and concrete evidence.',
   ],
   allowsSubsessions: true,
 };

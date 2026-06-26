@@ -1,7 +1,5 @@
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import type { AgentSession } from '../../../lib/api/agentRuntime'
-import { subscribe } from '../../../lib/api/runtimeEventBus'
-import { useAgentSessionStore } from './agentSessionStore'
 
 export const SESSION_DISPLAY_TITLE_MAX = 80
 
@@ -53,34 +51,4 @@ export function useSessionDisplayTitle(
     () => (session ? getSessionDisplayTitle(session, fallback) : fallback),
     [session, fallback, session?.title, session?.prompt, session?.sessionMetadata?.goalContent, session?.sessionMetadata?.planNodeTitle],
   )
-}
-
-/** Apply session title patches from SSE without waiting for a full list refresh. */
-export function useSessionTitleSync(): void {
-  useEffect(() => {
-    return subscribe({
-      events: {
-        session_changed: (event) => {
-          const data = JSON.parse(event.data) as {
-            sessionId: string
-            patch?: Record<string, unknown>
-          }
-          const nextTitle = data.patch?.title
-          if (typeof nextTitle !== 'string') return
-
-          useAgentSessionStore.setState((state) => ({
-            sessions: state.sessions.map((session) =>
-              session.id === data.sessionId
-                ? { ...session, title: nextTitle.trim() || null }
-                : session,
-            ),
-            sessionDetail:
-              state.selectedSessionId === data.sessionId && state.sessionDetail
-                ? { ...state.sessionDetail, title: nextTitle.trim() || null }
-                : state.sessionDetail,
-          }))
-        },
-      },
-    })
-  }, [])
 }

@@ -2,6 +2,7 @@ import type { AgentRunStreamChunk, StreamTurnRequest } from './contracts.js';
 import { agentEventService } from './event-service.js';
 import { agentLoopRuntime } from './loop-runtime.js';
 import { sessionProcessManager } from './session-process-manager.js';
+import { maybeScheduleSessionTitleFromStreamChunk, ensureSessionTitleGenerated } from './session-title-service.js';
 import type { AgentSessionStreamMode } from '../../lib/ipc/agent-session-protocol.js';
 
 function useInProcessAgentSessions(): boolean {
@@ -41,6 +42,20 @@ async function* inProcessStream(
   }
 }
 
+async function* withSessionTitleScheduling(
+  sessionId: string,
+  source: AsyncGenerator<AgentRunStreamChunk>,
+): AsyncGenerator<AgentRunStreamChunk> {
+  try {
+    for await (const chunk of source) {
+      maybeScheduleSessionTitleFromStreamChunk(sessionId, chunk);
+      yield chunk;
+    }
+  } finally {
+    ensureSessionTitleGenerated(sessionId);
+  }
+}
+
 export async function* streamAgentSession(
   sessionId: string,
   mode: AgentSessionStreamMode,
@@ -48,10 +63,10 @@ export async function* streamAgentSession(
   abortSignal?: AbortSignal,
 ): AsyncGenerator<AgentRunStreamChunk> {
   if (useInProcessAgentSessions()) {
-    yield* inProcessStream(sessionId, mode, input, abortSignal);
+    yield* withSessionTitleScheduling(sessionId, inProcessStream(sessionId, mode, input, abortSignal));
     return;
   }
-  yield* sessionProcessManager.streamSession(sessionId, mode, input, abortSignal);
+  yield* withSessionTitleScheduling(sessionId, sessionProcessManager.streamSession(sessionId, mode, input, abortSignal));
 }
 
 export function resumeAgentSessionInBackground(sessionId: string, input: StreamTurnRequest = {}): void {

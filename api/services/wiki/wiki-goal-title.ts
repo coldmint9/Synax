@@ -2,15 +2,6 @@ import { agentRuntimeStore } from '../agent-runtime/session-store.js'
 import type { TitleGenerator, TitleGeneratorContext } from '../agent-runtime/session-title-service.js'
 import { generateGatewayTextResult } from '../llm-runtime/gateway.js'
 
-export const SHORT_GOAL_TITLE_MAX_CHARS = 7
-
-export function resolveShortGoalTitle(source: string): string | null {
-  const trimmed = source.trim()
-  if (!trimmed) return null
-  if ([...trimmed].length > SHORT_GOAL_TITLE_MAX_CHARS) return null
-  return trimmed.slice(0, 50)
-}
-
 export function extractUserGoalFromPrompt(prompt: string): string | null {
   const marker = '## User Goal'
   const idx = prompt.indexOf(marker)
@@ -46,37 +37,21 @@ export function resolveGoalTitleSource(input: {
     ?? extractPlanNodeTitleFromPrompt(input.prompt)
 }
 
-function firstAssistantSnippet(sessionId: string): string | null {
-  for (const msg of agentRuntimeStore.listMessages(sessionId)) {
-    if (msg.role !== 'assistant') continue
-    if (msg.metadata?.type === 'thinking') continue
-    const text = msg.content.trim()
-    if (text) return text.slice(0, 400)
-  }
-  return null
-}
-
-function buildGoalTitleContext(sessionId: string, source: string): string {
-  const assistant = firstAssistantSnippet(sessionId)
-  if (!assistant) return source
-  return [`User: ${source}`, `Assistant: ${assistant}`].join('\n\n')
-}
-
-async function generateGoalTitleWithLlm(projectId: string, context: string): Promise<string | null> {
-  const truncated = context.slice(0, 600)
+async function generateGoalTitleWithLlm(projectId: string, userInput: string): Promise<string | null> {
+  const truncated = userInput.slice(0, 600)
   const result = await generateGatewayTextResult({
     projectId,
     purpose: 'session-title',
     messages: [{
       role: 'user',
       content: [
-        'Summarize this coding session into a short title (max 10 Chinese characters or 6 English words).',
+        'Generate a short title (max 10 Chinese characters or 6 English words) from the user input below.',
         'Return ONLY the title, no quotes or punctuation.',
         '',
         truncated,
       ].join('\n'),
     }],
-    maxTokens: 30,
+    maxTokens: 128,
     temperature: 0.3,
   })
 
@@ -87,14 +62,11 @@ async function generateGoalTitleWithLlm(projectId: string, context: string): Pro
 export const goalTitleGenerator: TitleGenerator = {
   generate(ctx: TitleGeneratorContext) {
     const session = agentRuntimeStore.tryGetSession(ctx.sessionId)
-    const source = resolveGoalTitleSource({
+    const userInput = resolveGoalTitleSource({
       sessionMetadata: session?.sessionMetadata ?? null,
       prompt: ctx.prompt,
     })
-    if (!source) return null
-    const shortTitle = resolveShortGoalTitle(source)
-    if (shortTitle) return shortTitle
-    const context = buildGoalTitleContext(ctx.sessionId, source)
-    return generateGoalTitleWithLlm(ctx.projectId, context)
+    if (!userInput) return null
+    return generateGoalTitleWithLlm(ctx.projectId, userInput)
   },
 }

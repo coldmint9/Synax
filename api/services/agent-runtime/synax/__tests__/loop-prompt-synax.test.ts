@@ -1,8 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { buildLoopSystemPrompt } from '../../loop-prompt.js';
+import { buildLoopSystemPrompt, buildCoreLoopSection } from '../../loop-prompt.js';
 import { synaxAgentProfile } from '../synax-agent-profile.js';
 
 describe('buildLoopSystemPrompt synax mode section', () => {
+  it('uses profile label without Synax duplication', () => {
+    const prompt = buildLoopSystemPrompt({
+      profile: synaxAgentProfile,
+      context: null,
+      history: [],
+      previousParts: [],
+      previousToolCalls: [],
+      currentPrompt: 'Fix auth',
+      maxSteps: 10,
+      stepIndex: 1,
+    });
+    expect(prompt).toContain('You are the Synax Agent.');
+    expect(prompt).not.toContain('Synax Synax Agent');
+  });
+
   it('includes mode prompt section when provided', () => {
     const prompt = buildLoopSystemPrompt({
       profile: synaxAgentProfile,
@@ -31,7 +46,8 @@ describe('buildLoopSystemPrompt synax mode section', () => {
       stepIndex: 1,
     });
     expect(prompt).toContain('task.create');
-    expect(prompt).toContain('subagent.delegate');
+    expect(prompt).toContain('grep.search');
+    expect(prompt).not.toContain('Prefer the bash tool');
   });
 
   it('includes project rules section when provided', () => {
@@ -65,5 +81,73 @@ describe('buildLoopSystemPrompt synax mode section', () => {
     });
     expect(prompt).toContain('## Exploration Intent');
     expect(prompt).toContain('Delegate to explorer.');
+  });
+
+  it('includes permission section and language directive', () => {
+    const prompt = buildLoopSystemPrompt({
+      profile: synaxAgentProfile,
+      context: null,
+      history: [],
+      previousParts: [],
+      previousToolCalls: [],
+      currentPrompt: '你好',
+      maxSteps: 10,
+      stepIndex: 1,
+      locale: 'zh',
+      permissionTier: 'readonly',
+    });
+    expect(prompt.indexOf('## Language Output Directive')).toBeLessThan(prompt.indexOf('## Permission gates'));
+    expect(prompt).toContain('## Permission gates');
+    expect(prompt).toContain('Chinese (Simplified)');
+  });
+
+  it('does not include context warnings by default', () => {
+    const prompt = buildLoopSystemPrompt({
+      profile: synaxAgentProfile,
+      context: {
+        id: 'ctx',
+        projectId: 'p1',
+        sessionId: null,
+        nodeId: null,
+        profileId: null,
+        blocks: [],
+        citations: [],
+        warnings: ['No CoordForest node id supplied; bundle is project-level.'],
+        createdAt: new Date().toISOString(),
+      },
+      history: [],
+      previousParts: [],
+      previousToolCalls: [],
+      currentPrompt: 'Hi',
+      maxSteps: 10,
+      stepIndex: 1,
+    });
+    expect(prompt).not.toContain('Context warnings');
+  });
+
+  it('orders mode before intent and variant overlays', () => {
+    const prompt = buildLoopSystemPrompt({
+      profile: synaxAgentProfile,
+      context: null,
+      history: [],
+      previousParts: [],
+      previousToolCalls: [],
+      currentPrompt: 'Fix auth',
+      maxSteps: 10,
+      stepIndex: 1,
+      modePromptSection: 'Session mode: goal.',
+      intentPromptSection: '## Coding Task Role',
+      variantPromptSection: 'Active variant: planner',
+    });
+    expect(prompt.indexOf('Session mode: goal.')).toBeLessThan(prompt.indexOf('## Coding Task Role'));
+    expect(prompt.indexOf('## Coding Task Role')).toBeLessThan(prompt.indexOf('Active variant: planner'));
+  });
+});
+
+describe('buildCoreLoopSection', () => {
+  it('prefers dedicated read tools over bash', () => {
+    const section = buildCoreLoopSection(synaxAgentProfile);
+    expect(section).toContain('grep.search');
+    expect(section).toContain('shell gate');
   });
 });

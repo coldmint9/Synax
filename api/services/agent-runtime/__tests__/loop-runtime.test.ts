@@ -258,6 +258,7 @@ describe('agentLoopRuntime', () => {
     expect(chunks.some((chunk) => (chunk as { type?: string }).type === 'tool_result')).toBe(true);
     expect(agentLoopRuntime.listMessages(session.id).map((message) => `${message.role}:${message.content}`)).toEqual([
       'user:Inspect the temp file.',
+      'assistant:I need to inspect the file first.',
       'assistant:The file contents were read successfully.',
     ]);
 

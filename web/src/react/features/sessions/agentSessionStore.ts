@@ -18,6 +18,7 @@ import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '.
 import { AppError } from '../../../lib/errors'
 import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, type SynaxPermissionTier } from './synaxSessionTypes'
 import { useNotificationStore } from '../../state/notificationStore'
+import { useShellStore } from '../../state/shellStore'
 import { patchAgentSession, canEnqueueSessionInput } from './sessionComposerState'
 import type { TurnContentBlock } from './buildInterleavedTurns'
 import {
@@ -351,7 +352,7 @@ export interface AgentSessionStoreState {
   setInputQueue: (sessionId: string, items: QueuedInput[]) => void
   cancelSessionRun: (sessionId: string) => Promise<void>
   applyLiveEvent: (event: SessionLiveEvent) => void
-  patchSession: (sessionId: string, patch: Partial<AgentSession>) => void
+  patchSession: (sessionId: string, patch: Partial<AgentSession>) => boolean
   markSessionRead: (sessionId: string) => void
 }
 
@@ -661,7 +662,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
         s.id === sessionId ? { ...s, status: 'running' as const } : s,
       ),
     })
-    agentRuntimeApi.resumeStream(sessionId, message ? { message } : {}, (chunk) => {
+    agentRuntimeApi.resumeStream(sessionId, message ? { message, locale: useShellStore.getState().locale } : { locale: useShellStore.getState().locale }, (chunk) => {
       onSessionStreamChunk(sessionId, chunk)
       const c = chunk as { type?: string; error?: string }
       if (c.type === 'error') {
@@ -759,6 +760,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
           message: body.message,
           model: body.model ?? undefined,
           permissionTier: body.permissionTier,
+          locale: useShellStore.getState().locale,
         }, (chunk) => {
           onSessionStreamChunk(sessionId, chunk)
         })
@@ -767,6 +769,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
           message: body.message,
           model: body.model ?? undefined,
           permissionTier: body.permissionTier,
+          locale: useShellStore.getState().locale,
         }, (chunk) => {
           onSessionStreamChunk(sessionId, chunk)
         })
@@ -878,9 +881,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   },
 
   patchSession: (sessionId, patch) => {
+    let patched = false
     set(s => {
       const index = s.sessions.findIndex(sess => sess.id === sessionId)
       if (index === -1) return s
+      patched = true
       const sessions = [...s.sessions]
       sessions[index] = patchAgentSession(sessions[index], patch)
       return { sessions }
@@ -893,5 +898,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     if (terminal && get().selectedSessionId === sessionId && get().panelOpen) {
       get().markSessionRead(sessionId)
     }
+    if (!patched && typeof patch.title === 'string') {
+      void get().refreshSessions()
+    }
+    return patched
   },
 }))
