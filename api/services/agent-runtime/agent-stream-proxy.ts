@@ -4,6 +4,8 @@ import { agentLoopRuntime } from './loop-runtime.js';
 import { sessionProcessManager } from './session-process-manager.js';
 import { maybeScheduleSessionTitleFromStreamChunk, ensureSessionTitleGenerated } from './session-title-service.js';
 import type { AgentSessionStreamMode } from '../../lib/ipc/agent-session-protocol.js';
+import { acpSessionEngine, shouldUseAcpEngine } from './acp-engine/index.js';
+import { agentRuntimeStore } from './session-store.js';
 
 function useInProcessAgentSessions(): boolean {
   return process.env.SYNAX_AGENT_SESSION_IN_PROCESS === '1';
@@ -14,11 +16,23 @@ export function usesForkedAgentSessions(): boolean {
 }
 
 export function canStartAgentSessionProcess(sessionId?: string): boolean {
+  if (sessionId) {
+    const session = agentRuntimeStore.tryGetSession(sessionId);
+    if (session && shouldUseAcpEngine(sessionId, {})) {
+      return true;
+    }
+  }
   if (!usesForkedAgentSessions()) return true;
   return sessionProcessManager.canSpawnChild(sessionId);
 }
 
 export function assertCanStartAgentSessionProcess(sessionId?: string): void {
+  if (sessionId) {
+    const session = agentRuntimeStore.tryGetSession(sessionId);
+    if (session && shouldUseAcpEngine(sessionId, {})) {
+      return;
+    }
+  }
   if (!usesForkedAgentSessions()) return;
   sessionProcessManager.assertCanSpawnChild(sessionId);
 }
@@ -56,12 +70,25 @@ async function* withSessionTitleScheduling(
   }
 }
 
+async function* acpEngineStream(
+  sessionId: string,
+  mode: AgentSessionStreamMode,
+  input: StreamTurnRequest,
+  abortSignal?: AbortSignal,
+): AsyncGenerator<AgentRunStreamChunk> {
+  yield* acpSessionEngine.stream(sessionId, mode, input, abortSignal);
+}
+
 export async function* streamAgentSession(
   sessionId: string,
   mode: AgentSessionStreamMode,
   input: StreamTurnRequest,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<AgentRunStreamChunk> {
+  if (shouldUseAcpEngine(sessionId, input)) {
+    yield* withSessionTitleScheduling(sessionId, acpEngineStream(sessionId, mode, input, abortSignal));
+    return;
+  }
   if (useInProcessAgentSessions()) {
     yield* withSessionTitleScheduling(sessionId, inProcessStream(sessionId, mode, input, abortSignal));
     return;
@@ -91,8 +118,22 @@ export async function interruptAgentSessionsAndWait(
   sessionIds: Iterable<string>,
   reason = 'Agent runtime session deleted by user.',
 ): Promise<void> {
-  if (!useInProcessAgentSessions()) {
-    await sessionProcessManager.interruptAndWaitForSessions(sessionIds, reason);
+  const ids = [...sessionIds];
+  for (const sessionId of ids) {
+    if (acpSessionEngine.usesAcpSession(sessionId)) {
+      await acpSessionEngine.interruptSession(sessionId, reason);
+    }
   }
-  await agentLoopRuntime.interruptAndWaitForSessions(sessionIds, reason);
+  if (!useInProcessAgentSessions()) {
+    await sessionProcessManager.interruptAndWaitForSessions(ids, reason);
+  }
+  await agentLoopRuntime.interruptAndWaitForSessions(ids, reason);
+}
+
+export async function closeAcpAgentSessions(sessionIds: Iterable<string>): Promise<void> {
+  for (const sessionId of sessionIds) {
+    if (acpSessionEngine.usesAcpSession(sessionId)) {
+      await acpSessionEngine.closeSession(sessionId);
+    }
+  }
 }

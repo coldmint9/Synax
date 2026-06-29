@@ -28,9 +28,12 @@ import {
 } from '../services/agent-runtime/index.js';
 import {
   interruptAgentSessionsAndWait,
+  closeAcpAgentSessions,
   resumeAgentSessionInBackground,
   streamAgentSession,
 } from '../services/agent-runtime/agent-stream-proxy.js';
+import { acpPermissionBridge } from '../services/agent-runtime/acp-engine/index.js';
+import { sessionUsesAcpEngine } from '../services/agent-runtime/acp-engine/index.js';
 import { ensureSessionTitleGenerated } from '../services/agent-runtime/session-title-service.js';
 import { runtimeBus } from '../services/agent-runtime/runtime-bus.js';
 import { sessionLiveBus } from '../services/agent-runtime/session-live-bus.js';
@@ -152,6 +155,7 @@ agentRuntimeRoutes.delete('/sessions/:sessionId', async (c) => {
   try {
     const sessionIds = agentSessionRuntime.listSessionTree(c.req.param('sessionId')).map((session) => session.id);
     await interruptAgentSessionsAndWait(sessionIds);
+    await closeAcpAgentSessions(sessionIds);
     return c.json({
       ok: true,
       deletedSessionIds: agentSessionRuntime.delete(c.req.param('sessionId')),
@@ -517,12 +521,16 @@ agentRuntimeRoutes.post('/sessions/:sessionId/permissions/:permissionId/reply', 
   if (!parsed.success) return validationError(c, parsed.error);
   const sessionId = c.req.param('sessionId');
   try {
+    const session = agentRuntimeStore.getSession(sessionId);
     const decision = permissionPolicy.reply(
       sessionId,
       c.req.param('permissionId'),
       parsed.data.reply,
       parsed.data.message,
     );
+    if (sessionUsesAcpEngine(sessionId)) {
+      acpPermissionBridge.resolve(sessionId, decision.id, parsed.data.reply);
+    }
     logger.info(
       {
         sessionId,
@@ -546,7 +554,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/permissions/:permissionId/reply', 
       blockedReason: null,
       resultSummary: null,
     });
-    if (decision.resumeToken) {
+    if (decision.resumeToken && !sessionUsesAcpEngine(sessionId)) {
       logger.info(
         {
           sessionId,

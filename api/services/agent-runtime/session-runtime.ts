@@ -6,6 +6,8 @@ import {
 import { agentContextBuilder } from './context-builder.js';
 import { agentEventService, type AgentEventService } from './event-service.js';
 import { agentLoopRuntime } from './loop-runtime.js';
+import { acpSessionEngine } from './acp-engine/index.js';
+import { sessionUsesAcpEngine } from './acp-engine/acp-engine-routing.js';
 import { sessionProcessManager } from './session-process-manager.js';
 import { profileService, type ProfileService } from './profile-service.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
@@ -177,6 +179,9 @@ export class AgentSessionRuntime {
       blockedReason: 'User paused session.',
     });
     agentLoopRuntime.interruptSessions([sessionId], 'User paused session.');
+    if (sessionUsesAcpEngine(sessionId)) {
+      void acpSessionEngine.interruptSession(sessionId, 'User paused session.');
+    }
     this.events.append({
       sessionId,
       type: 'progress_updated',

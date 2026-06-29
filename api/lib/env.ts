@@ -63,6 +63,12 @@ export const PERMISSION_TIMEOUT_MS = Number(env('PERMISSION_TIMEOUT_MS', '600000
 /** Max concurrent root agent session child processes. */
 export const MAX_AGENT_SESSION_PROCESSES = Number(env('MAX_AGENT_SESSION_PROCESSES', '8'));
 
+/** Max concurrent long-lived ACP (cursor-agent) session connections. */
+export const MAX_ACP_SESSIONS = Number(env('MAX_ACP_SESSIONS', '8'));
+
+/** Idle timeout before recycling an ACP session child process (ms). Default 30 min. */
+export const ACP_SESSION_IDLE_TIMEOUT_MS = Number(env('ACP_SESSION_IDLE_TIMEOUT_MS', '1800000'));
+
 /** Agent session child ready handshake timeout (ms). */
 export const AGENT_SESSION_CHILD_READY_TIMEOUT_MS = Number(env('AGENT_SESSION_CHILD_READY_TIMEOUT_MS', '30000'));
 
