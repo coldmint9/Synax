@@ -165,11 +165,57 @@ describe.sequential('wikiWriteQueue', () => {
       startedAt: now,
     });
 
-    const { items: recovered } = await wikiWriteQueue.recoverOrphaned();
+    const { items: recovered, interruptedSnapshotIds } = await wikiWriteQueue.recoverOrphaned();
     expect(recovered).toBeGreaterThanOrEqual(1);
+    expect(interruptedSnapshotIds).toContain('snap-test-3');
 
     const after = await db.select().from(wikiWriteQueueItems).where(eq(wikiWriteQueueItems.id, itemId));
     expect(after[0].status).toBe('queued');
+  });
+
+  it('suspendAfterServerRestart cancels running batch and marks snapshot partial', async () => {
+    wikiWriteQueue.stop();
+    const db = getDb();
+    const batchId = 'batch-suspend-restart';
+    const itemId = 'item-suspend-restart';
+    const now = new Date().toISOString();
+
+    await db.insert(wikiWriteBatches).values({
+      id: batchId,
+      snapshotId: 'snap-suspend',
+      projectId: 'proj-1',
+      workDir: '/tmp/repo',
+      locale: 'zh',
+      status: 'running',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(wikiWriteQueueItems).values({
+      id: itemId,
+      batchId,
+      snapshotId: 'snap-suspend',
+      projectId: 'proj-1',
+      documentId: 'doc-1',
+      documentTitle: 'Doc',
+      sortOrder: 0,
+      status: 'queued',
+      error: 'Recovered after server restart',
+      createdAt: now,
+    });
+
+    const suspended = await wikiWriteQueue.suspendAfterServerRestart(['snap-suspend']);
+    expect(suspended).toBe(1);
+
+    const batch = await db.select().from(wikiWriteBatches).where(eq(wikiWriteBatches.id, batchId));
+    expect(batch[0].status).toBe('cancelled');
+    expect(batch[0].error).toBe('Interrupted by server restart');
+
+    const item = await db.select().from(wikiWriteQueueItems).where(eq(wikiWriteQueueItems.id, itemId));
+    expect(item[0].error).toBeNull();
+
+    expect(wikiStore.updateSnapshotStatus).toHaveBeenCalledWith('snap-suspend', 'partial', ['doc-1']);
+    expect(publishLatestWikiSnapshot).toHaveBeenCalledWith('proj-1', WikiSnapshotEventReason.WritingPaused);
   });
 
   it('persists writer sessionId while processing queue items', async () => {

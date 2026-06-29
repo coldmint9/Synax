@@ -107,4 +107,18 @@ describe('buildWikiDocumentTree', () => {
     expect(tree[1].document.id).toBe('sec-b')
     expect(tree[1].children.map(n => n.document.id)).toEqual(['page-b1', 'page-b2'])
   })
+
+  it('groups pages under sections when only sections have parentId links', () => {
+    const documents = [
+      makeDoc({ id: 'root', title: 'Overview', isSection: true, sortOrder: 0 }),
+      makeDoc({ id: 'folder', title: 'Core Modules', isSection: true, parentId: 'root', sortOrder: 1 }),
+      makeDoc({ id: 'page-a', title: 'Module A', sortOrder: 1, createdAt: '2026-01-01T00:00:02Z' }),
+      makeDoc({ id: 'page-b', title: 'Module B', sortOrder: 2, createdAt: '2026-01-01T00:00:03Z' }),
+    ]
+
+    const tree = buildWikiDocumentTree(documents)
+    expect(tree.map(n => n.document.id)).toEqual(['root', 'folder'])
+    expect(tree[0].children.map(n => n.document.id)).toEqual(['page-a', 'page-b'])
+    expect(tree[1].children).toEqual([])
+  })
 })

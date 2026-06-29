@@ -230,9 +230,10 @@ class WikiWriteQueueService {
     };
   }
 
-  async recoverOrphaned(): Promise<{ batches: number; items: number }> {
+  async recoverOrphaned(): Promise<{ batches: number; items: number; interruptedSnapshotIds: string[] }> {
     const db = getDb();
     const now = new Date().toISOString();
+    const interruptedSnapshotIds: string[] = [];
 
     const runningItems = await db
       .select()
@@ -256,6 +257,7 @@ class WikiWriteQueueService {
           error: 'Recovered after server restart',
         }).where(eq(wikiWriteQueueItems.id, item.id));
         itemsRecovered++;
+        interruptedSnapshotIds.push(item.snapshotId);
       }
     }
 
@@ -287,7 +289,77 @@ class WikiWriteQueueService {
       );
     }
 
-    return { batches: batchesRecovered, items: itemsRecovered };
+    return {
+      batches: batchesRecovered,
+      items: itemsRecovered,
+      interruptedSnapshotIds: [...new Set(interruptedSnapshotIds)],
+    };
+  }
+
+  /** Cancel interrupted batches after restart; user must continue from Wiki UI. */
+  async suspendAfterServerRestart(snapshotIds: string[]): Promise<number> {
+    const uniqueSnapshotIds = [...new Set(snapshotIds)];
+    if (uniqueSnapshotIds.length === 0) return 0;
+
+    const db = getDb();
+    const now = new Date().toISOString();
+    let suspended = 0;
+
+    for (const snapshotId of uniqueSnapshotIds) {
+      const batchRows = await db
+        .select()
+        .from(wikiWriteBatches)
+        .where(and(
+          eq(wikiWriteBatches.snapshotId, snapshotId),
+          eq(wikiWriteBatches.status, 'running'),
+        ))
+        .orderBy(wikiWriteBatches.createdAt);
+
+      const batchRow = batchRows[batchRows.length - 1];
+      if (!batchRow) continue;
+
+      await db.update(wikiWriteBatches).set({
+        status: 'cancelled',
+        updatedAt: now,
+        completedAt: now,
+        error: 'Interrupted by server restart',
+      }).where(eq(wikiWriteBatches.id, batchRow.id));
+
+      await db.update(wikiWriteQueueItems).set({
+        error: null,
+      }).where(and(
+        eq(wikiWriteQueueItems.batchId, batchRow.id),
+        eq(wikiWriteQueueItems.status, 'queued'),
+      ));
+
+      this.releaseBatchContext(batchRow.id);
+
+      const documents = await wikiStore.getDocumentsBySnapshot(snapshotId);
+      await wikiStore.updateSnapshotStatus(snapshotId, 'partial', documents.map(d => d.id));
+      await publishLatestWikiSnapshot(batchRow.projectId, WikiSnapshotEventReason.WritingPaused);
+
+      const locale = (batchRow.locale ?? 'zh') as 'zh' | 'en';
+      notify({
+        type: TaskNotificationEventType.TaskProgress,
+        taskKind: 'wiki_generate',
+        projectId: batchRow.projectId,
+        taskId: snapshotId,
+        title: wikiMsg(locale).genTitle,
+        message: locale === 'en'
+          ? 'Wiki generation interrupted by restart — continue from Wiki'
+          : '服务器重启中断了 Wiki 生成 — 请在 Wiki 页面继续',
+        severity: 'info',
+        meta: { snapshotId, snapshotStatus: 'partial', interrupted: true },
+      });
+
+      logger.warn(
+        { snapshotId, batchId: batchRow.id },
+        '[wiki-write-queue] suspended after server restart',
+      );
+      suspended++;
+    }
+
+    return suspended;
   }
 
   resume(): void {
