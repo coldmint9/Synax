@@ -9,7 +9,9 @@
 import {
   ClientSideConnection,
   ndJsonStream,
+  type AgentCapabilities,
   type Client,
+  type InitializeResponse,
   type SessionNotification,
 } from '@agentclientprotocol/sdk'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -131,6 +133,126 @@ export function spawnAcpConnection(
   return { conn, child, stderrChunks, spawn: spawnSpec, cleanup }
 }
 
+export interface AcpInitResult {
+  init: InitializeResponse;
+  capabilities: AgentCapabilities;
+}
+
+export interface AcpSessionOpenResult {
+  acpSessionId: string;
+  capabilities: AgentCapabilities;
+}
+
+const DEFAULT_CLIENT_CAPABILITIES = {
+  fs: { readTextFile: true, writeTextFile: false },
+  terminal: false,
+} as const;
+
+/**
+ * Run the ACP initialize handshake and return negotiated capabilities.
+ */
+export async function initializeProtocol(conn: ClientSideConnection): Promise<AcpInitResult> {
+  const init = await conn.initialize({
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: DEFAULT_CLIENT_CAPABILITIES,
+  })
+  return {
+    init,
+    capabilities: init.agentCapabilities ?? {},
+  }
+}
+
+function resolveCwd(cwd?: string): string {
+  const resolvedCwd = cwd && cwd.trim().length > 0 ? cwd : process.cwd()
+  if (!cwd) {
+    logger.warn(
+      { fallbackCwd: resolvedCwd },
+      '[AcpConnection] session open called without cwd; falling back to process.cwd(). '
+        + 'This leaks the host project into the agent context - pass the target workDir.',
+    )
+  }
+  return resolvedCwd
+}
+
+export async function createAcpSession(
+  conn: ClientSideConnection,
+  cwd: string,
+): Promise<string> {
+  const { sessionId } = await conn.newSession({
+    cwd: resolveCwd(cwd),
+    mcpServers: [],
+  })
+  return sessionId
+}
+
+export async function loadAcpSession(
+  conn: ClientSideConnection,
+  acpSessionId: string,
+  cwd: string,
+): Promise<void> {
+  await conn.loadSession({
+    sessionId: acpSessionId,
+    cwd: resolveCwd(cwd),
+    mcpServers: [],
+  })
+}
+
+export async function resumeAcpSession(
+  conn: ClientSideConnection,
+  acpSessionId: string,
+  cwd: string,
+): Promise<void> {
+  await conn.resumeSession({
+    sessionId: acpSessionId,
+    cwd: resolveCwd(cwd),
+    mcpServers: [],
+  })
+}
+
+export async function cancelAcpPrompt(
+  conn: ClientSideConnection,
+  acpSessionId: string,
+): Promise<void> {
+  await conn.cancel({ sessionId: acpSessionId })
+}
+
+export async function closeAcpSession(
+  conn: ClientSideConnection,
+  acpSessionId: string,
+): Promise<void> {
+  if (typeof conn.closeSession === 'function') {
+    await conn.closeSession({ sessionId: acpSessionId })
+  }
+}
+
+/**
+ * Open or restore an ACP session on an initialized connection.
+ */
+export async function openAcpSession(
+  conn: ClientSideConnection,
+  input: {
+    cwd: string;
+    acpSessionId?: string | null;
+    capabilities: AgentCapabilities;
+  },
+): Promise<string> {
+  if (input.acpSessionId) {
+    if (input.capabilities.loadSession) {
+      await loadAcpSession(conn, input.acpSessionId, input.cwd)
+      return input.acpSessionId
+    }
+    if (input.capabilities.sessionCapabilities?.resume) {
+      await resumeAcpSession(conn, input.acpSessionId, input.cwd)
+      return input.acpSessionId
+    }
+    logger.warn(
+      { acpSessionId: input.acpSessionId },
+      '[AcpConnection] agent lacks loadSession/resume; creating new ACP session instead',
+    )
+  }
+  return createAcpSession(conn, input.cwd)
+}
+
 /**
  * Run the standard ACP initialization handshake.
  * Returns the sessionId for subsequent prompts.
@@ -147,27 +269,6 @@ export async function initializeSession(
   conn: ClientSideConnection,
   cwd?: string,
 ): Promise<string> {
-  await conn.initialize({
-    protocolVersion: PROTOCOL_VERSION,
-    clientCapabilities: {
-      fs: { readTextFile: true, writeTextFile: false },
-      terminal: false,
-    },
-  })
-
-  const resolvedCwd = cwd && cwd.trim().length > 0 ? cwd : process.cwd()
-  if (!cwd) {
-    logger.warn(
-      { fallbackCwd: resolvedCwd },
-      '[AcpConnection] initializeSession called without cwd; falling back to process.cwd(). '
-        + 'This leaks the host project into the agent context - pass the target workDir.',
-    )
-  }
-
-  const { sessionId } = await conn.newSession({
-    cwd: resolvedCwd,
-    mcpServers: [],
-  })
-
-  return sessionId
+  const { capabilities } = await initializeProtocol(conn)
+  return openAcpSession(conn, { cwd: cwd ?? process.cwd(), capabilities })
 }
