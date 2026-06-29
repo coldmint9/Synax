@@ -242,11 +242,22 @@ const initialState = {
 
 function documentChanged(prev: WikiDocument | undefined, next: WikiDocument): boolean {
   if (!prev) return true;
-  return prev.updatedAt !== next.updatedAt
+  return prev.title !== next.title
+    || prev.parentId !== next.parentId
+    || prev.sortOrder !== next.sortOrder
+    || prev.isSection !== next.isSection
+    || prev.updatedAt !== next.updatedAt
     || prev.contentMd !== next.contentMd
     || prev.pipelineStage !== next.pipelineStage
     || prev.references.length !== next.references.length
     || JSON.stringify(prev.references) !== JSON.stringify(next.references);
+}
+
+function documentsTreeMetadataChanged(prev: WikiDocument[], next: WikiDocument[]): boolean {
+  if (prev.length !== next.length) return true;
+  const prevById = new Map(prev.map(d => [d.id, d]));
+  if (prevById.size !== next.length) return true;
+  return next.some(d => documentChanged(prevById.get(d.id), d));
 }
 
 export const useWikiStore = create<WikiState>((set, get) => ({
@@ -275,8 +286,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   applySnapshotTree: (tree: WikiSnapshotTree) => {
     const prev = get();
 
-    const docsChanged = prev.documents.length !== tree.documents.length
-      || tree.documents.some((d, i) => documentChanged(prev.documents[i], d));
+    const docsChanged = documentsTreeMetadataChanged(prev.documents, tree.documents);
 
     const snapshotChanged = !prev.snapshot
       || prev.snapshot.status !== tree.snapshot?.status

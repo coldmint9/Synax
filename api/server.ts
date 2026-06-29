@@ -83,7 +83,15 @@ try {
 }
 
 // --- 启动时恢复 wiki 文档写入队列（先于 snapshot 恢复，避免误标记 writing 为 failed）---
-wikiWriteQueue.recoverOrphaned().then(({ batches, items }) => {
+wikiWriteQueue.recoverOrphaned().then(async ({ batches, items, interruptedSnapshotIds }) => {
+  if (items > 0) {
+    const suspended = await wikiWriteQueue.suspendAfterServerRestart(interruptedSnapshotIds);
+    pinoLogger.warn(
+      { batches, items, suspended, snapshots: interruptedSnapshotIds },
+      "suspended interrupted wiki write queue on startup — continue from Wiki UI",
+    );
+    return;
+  }
   if (batches > 0 || items > 0) {
     pinoLogger.warn({ batches, items }, "recovered orphaned wiki write queue on startup");
   }

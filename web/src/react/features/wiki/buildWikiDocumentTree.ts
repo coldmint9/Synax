@@ -21,9 +21,12 @@ function sortSiblings(a: WikiDocument, b: WikiDocument): number {
   return sortByOrder(a, b)
 }
 
-function hasParentLinks(documents: WikiDocument[]): boolean {
+/** True when writable pages (not sections) link to a parent in the snapshot. */
+function hasPageParentLinks(documents: WikiDocument[]): boolean {
   const byId = new Set(documents.map(d => d.id))
-  return documents.some(d => d.parentId != null && d.parentId !== '' && byId.has(d.parentId))
+  return documents.some(
+    d => !d.isSection && d.parentId != null && d.parentId !== '' && byId.has(d.parentId),
+  )
 }
 
 function buildSubtree(
@@ -83,8 +86,10 @@ function buildFlatSectionTree(documents: WikiDocument[]): WikiDocTreeNode[] {
 export function buildWikiDocumentTree(documents: WikiDocument[]): WikiDocTreeNode[] {
   if (documents.length === 0) return []
 
-  if (!hasParentLinks(documents)) {
-    const hasSections = documents.some(d => d.isSection)
+  const pageLinked = hasPageParentLinks(documents)
+  const hasSections = documents.some(d => d.isSection)
+
+  if (!pageLinked) {
     if (hasSections) {
       return buildFlatSectionTree(documents)
     }
