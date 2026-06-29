@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Button, Checkbox } from '@heroui/react'
 import { Server, RefreshCw } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
@@ -28,6 +28,7 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
   const [enabledIds, setEnabledIds] = useState<string[]>(config.enabledAcpProviderIds ?? [config.defaultProviderId])
   const [discovery, setDiscovery] = useState<AcpDiscoveryItem[]>([])
   const [discovering, setDiscovering] = useState(false)
+  const didAutoEnableRef = useRef(false)
 
   const saveFn = useCallback(async (ids: string[]) => {
     await configApi.updateGlobal({ enabledAcpProviderIds: ids, defaultProviderId: ids[0] || config.defaultProviderId })
@@ -47,6 +48,18 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
         })
       })
       if (result.enabledIds) setEnabledIds(result.enabledIds)
+
+      const availableIds = result.supported
+        .filter(item => item.status === 'available' && item.handshakeOk)
+        .map(item => item.id)
+      const currentEnabled = result.enabledIds ?? enabledIds
+      const missingEnabled = availableIds.filter(id => !currentEnabled.includes(id))
+      if (!didAutoEnableRef.current && missingEnabled.length > 0) {
+        didAutoEnableRef.current = true
+        const nextIds = [...currentEnabled, ...missingEnabled]
+        setEnabledIds(nextIds)
+        saveImmediate(nextIds)
+      }
     } catch {
       // silently fail
     } finally {

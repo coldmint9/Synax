@@ -12,6 +12,17 @@ export function selectionKey(sel: Pick<GoalModelSelection, 'kind' | 'providerId'
   return `${sel.kind}:${sel.providerId}:${sel.modelId}`
 }
 
+const ACP_PROVIDER_IDS = new Set(['cursor-acp', 'opencode-acp'])
+
+/** Turn API expects `providerId/modelId` for ACP engines; API models keep bare modelId. */
+export function formatTurnModel(providerId: string | null, modelId: string | null): string | undefined {
+  if (!modelId?.trim()) return undefined
+  if (providerId && ACP_PROVIDER_IDS.has(providerId)) {
+    return `${providerId}/${modelId.trim()}`
+  }
+  return modelId.trim()
+}
+
 function isAcpEndpointAvailable(
   provider: ProviderDef,
   discovery: AcpDiscoveryItem | undefined,
@@ -49,7 +60,10 @@ export function buildGoalModelOptions(
 
   for (const provider of providers) {
     if (provider.kind !== 'acp' || !enabledAcp.has(provider.id)) continue
-    if (!isAcpEndpointAvailable(provider, discoveryById.get(provider.id))) continue
+    const discoveryItem = discoveryById.get(provider.id)
+    if (!isAcpEndpointAvailable(provider, discoveryItem)) {
+      continue
+    }
     const modelId = provider.models.find(m => m.isDefault)?.id
       ?? provider.models[0]?.id
       ?? provider.id

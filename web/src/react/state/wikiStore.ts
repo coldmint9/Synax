@@ -23,6 +23,7 @@ import {
   streamGoalAgentTurn,
   type GoalSessionState,
 } from '../features/wiki/goal/goalSessionStream';
+import { formatTurnModel } from '../features/wiki/goal/goalModelOptions';
 
 function settleGoalDockAfterRun(dock: GoalDockState): GoalDockState {
   return dock === 'expanded' ? 'expanded' : 'idle'
@@ -749,7 +750,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         || s.goalSession.status === 'waiting_permission'
       )
 
-    const modelId = s.goalComposerModelId
+    const model = formatTurnModel(s.goalComposerProviderId, s.goalComposerModelId)
 
     try {
       if (isFollowUp && s.goalSession.sessionId) {
@@ -760,7 +761,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           set({ goalComposerContent: '' })
           await useAgentSessionStore.getState().enqueueSessionInput(
             s.goalSession.sessionId,
-            { message: content, model: modelId, permissionTier: s.goalComposerPermissionTier },
+            { message: content, model, permissionTier: s.goalComposerPermissionTier },
           )
           return
         }
@@ -779,7 +780,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         })
         await streamGoalAgentTurn(
           s.goalSession.sessionId,
-          { message: content, model: modelId, permissionTier: s.goalComposerPermissionTier },
+          { message: content, model, permissionTier: s.goalComposerPermissionTier },
           (chunk) => {
             set(state => ({
               goalSession: applyGoalStreamChunk(state.goalSession, chunk),
@@ -854,7 +855,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
       await streamGoalAgentTurn(
         payload.session.id,
-        { model: modelId, permissionTier: s.goalComposerPermissionTier },
+        { model, permissionTier: s.goalComposerPermissionTier },
         (chunk) => {
           set(state => ({
             goalSession: applyGoalStreamChunk(state.goalSession, chunk),
