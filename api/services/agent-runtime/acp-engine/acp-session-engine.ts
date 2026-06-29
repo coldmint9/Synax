@@ -286,6 +286,8 @@ class AcpSessionEngine {
         throw new AgentRuntimeError('Run interrupted by client.', 'ABORTED', 499);
       }
 
+      await acpConnectionPool.applySessionModel(sessionId, parsed.modelId);
+
       const promptResult = await pooled.connection.conn.prompt({
         sessionId: pooled.acpSessionId,
         prompt: [{ type: 'text', text: prompt }],

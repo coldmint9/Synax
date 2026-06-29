@@ -108,6 +108,12 @@ export interface ProviderListResponse {
   providers: ProviderDef[]
 }
 
+export interface AcpCatalogModel {
+  id: string
+  label: string
+  description?: string | null
+}
+
 export interface AcpDiscoveryItem {
   id: string
   label: string
@@ -119,6 +125,7 @@ export interface AcpDiscoveryItem {
   selected: boolean
   compatibility: string
   error?: string
+  models?: AcpCatalogModel[]
 }
 
 export interface AcpDiscoveryResponse {

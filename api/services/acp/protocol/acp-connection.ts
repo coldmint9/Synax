@@ -12,6 +12,8 @@ import {
   type AgentCapabilities,
   type Client,
   type InitializeResponse,
+  type SessionModeState,
+  type SessionModelState,
   type SessionNotification,
 } from '@agentclientprotocol/sdk'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -181,6 +183,12 @@ export interface AcpSessionOpenResult {
   capabilities: AgentCapabilities;
 }
 
+export interface AcpSessionHandle {
+  sessionId: string;
+  models?: SessionModelState | null;
+  modes?: SessionModeState | null;
+}
+
 const DEFAULT_CLIENT_CAPABILITIES = {
   fs: { readTextFile: true, writeTextFile: false },
   terminal: false,
@@ -215,36 +223,60 @@ function resolveCwd(cwd?: string): string {
 export async function createAcpSession(
   conn: ClientSideConnection,
   cwd: string,
-): Promise<string> {
-  const { sessionId } = await conn.newSession({
+): Promise<AcpSessionHandle> {
+  const response = await conn.newSession({
     cwd: resolveCwd(cwd),
     mcpServers: [],
   })
-  return sessionId
+  return {
+    sessionId: response.sessionId,
+    models: response.models ?? null,
+    modes: response.modes ?? null,
+  }
 }
 
 export async function loadAcpSession(
   conn: ClientSideConnection,
   acpSessionId: string,
   cwd: string,
-): Promise<void> {
-  await conn.loadSession({
+): Promise<AcpSessionHandle> {
+  const response = await conn.loadSession({
     sessionId: acpSessionId,
     cwd: resolveCwd(cwd),
     mcpServers: [],
   })
+  return {
+    sessionId: acpSessionId,
+    models: response.models ?? null,
+    modes: response.modes ?? null,
+  }
 }
 
 export async function resumeAcpSession(
   conn: ClientSideConnection,
   acpSessionId: string,
   cwd: string,
-): Promise<void> {
-  await conn.resumeSession({
+): Promise<AcpSessionHandle> {
+  const response = await conn.resumeSession({
     sessionId: acpSessionId,
     cwd: resolveCwd(cwd),
     mcpServers: [],
   })
+  return {
+    sessionId: acpSessionId,
+    models: response.models ?? null,
+    modes: response.modes ?? null,
+  }
+}
+
+export async function setAcpSessionModel(
+  conn: ClientSideConnection,
+  acpSessionId: string,
+  modelId: string,
+): Promise<boolean> {
+  if (typeof conn.unstable_setSessionModel !== 'function') return false
+  await conn.unstable_setSessionModel({ sessionId: acpSessionId, modelId })
+  return true
 }
 
 export async function cancelAcpPrompt(
@@ -273,15 +305,13 @@ export async function openAcpSession(
     acpSessionId?: string | null;
     capabilities: AgentCapabilities;
   },
-): Promise<string> {
+): Promise<AcpSessionHandle> {
   if (input.acpSessionId) {
     if (input.capabilities.loadSession) {
-      await loadAcpSession(conn, input.acpSessionId, input.cwd)
-      return input.acpSessionId
+      return loadAcpSession(conn, input.acpSessionId, input.cwd)
     }
     if (input.capabilities.sessionCapabilities?.resume) {
-      await resumeAcpSession(conn, input.acpSessionId, input.cwd)
-      return input.acpSessionId
+      return resumeAcpSession(conn, input.acpSessionId, input.cwd)
     }
     logger.warn(
       { acpSessionId: input.acpSessionId },
@@ -306,7 +336,7 @@ export async function openAcpSession(
 export async function initializeSession(
   conn: ClientSideConnection,
   cwd?: string,
-): Promise<string> {
+): Promise<AcpSessionHandle> {
   const { capabilities } = await initializeProtocol(conn)
   return openAcpSession(conn, { cwd: cwd ?? process.cwd(), capabilities })
 }

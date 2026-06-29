@@ -1,4 +1,4 @@
-import type { AgentCapabilities } from '@agentclientprotocol/sdk';
+import type { AgentCapabilities, SessionModelState } from '@agentclientprotocol/sdk';
 import {
   cancelAcpPrompt,
   closeAcpSession,
@@ -6,6 +6,7 @@ import {
   openAcpSession,
   resolveSpawnForProvider,
   resolveSpawnForProviderAsync,
+  setAcpSessionModel,
   spawnAcpConnection,
   type AcpConnection,
 } from '../../acp/protocol/acp-connection.js';
@@ -30,6 +31,8 @@ export interface PooledAcpConnection {
   workDir: string;
   lastUsedAt: number;
   isReplay: boolean;
+  sessionModels?: SessionModelState | null;
+  currentModelId?: string | null;
 }
 
 type AcquireInput = {
@@ -99,18 +102,26 @@ class AcpConnectionPool {
 
     let isReplay = false;
     let acpSessionId: string;
+    let sessionModels: SessionModelState | null | undefined;
+    let currentModelId: string | null | undefined;
     if (stored?.acpSessionId) {
       isReplay = Boolean(capabilities.loadSession);
-      acpSessionId = await openAcpSession(connection.conn, {
+      const opened = await openAcpSession(connection.conn, {
         cwd: workDir,
         acpSessionId: stored.acpSessionId,
         capabilities,
       });
+      acpSessionId = opened.sessionId;
+      sessionModels = opened.models;
+      currentModelId = opened.models?.currentModelId ?? null;
     } else {
-      acpSessionId = await openAcpSession(connection.conn, {
+      const opened = await openAcpSession(connection.conn, {
         cwd: workDir,
         capabilities,
       });
+      acpSessionId = opened.sessionId;
+      sessionModels = opened.models;
+      currentModelId = opened.models?.currentModelId ?? null;
     }
 
     agentRuntimeStore.updateSession(input.synaxSessionId, {
@@ -132,6 +143,8 @@ class AcpConnectionPool {
       workDir,
       lastUsedAt: Date.now(),
       isReplay,
+      sessionModels,
+      currentModelId,
     };
     this.pool.set(input.synaxSessionId, pooled);
     logger.info(
@@ -149,6 +162,23 @@ class AcpConnectionPool {
   touch(synaxSessionId: string): void {
     const entry = this.pool.get(synaxSessionId);
     if (entry) entry.lastUsedAt = Date.now();
+  }
+
+  async applySessionModel(synaxSessionId: string, modelId: string): Promise<void> {
+    const entry = this.pool.get(synaxSessionId);
+    if (!entry || !modelId.trim()) return;
+    if (entry.currentModelId === modelId) return;
+    try {
+      const applied = await setAcpSessionModel(entry.connection.conn, entry.acpSessionId, modelId);
+      if (applied) {
+        entry.currentModelId = modelId;
+        if (entry.sessionModels) {
+          entry.sessionModels = { ...entry.sessionModels, currentModelId: modelId };
+        }
+      }
+    } catch (error) {
+      logger.warn({ synaxSessionId, modelId, error }, '[AcpConnectionPool] setSessionModel failed');
+    }
   }
 
   clearReplay(synaxSessionId: string): void {

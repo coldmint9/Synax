@@ -112,7 +112,8 @@ class OpenCodeAcpClient implements AcpClient {
       })
 
       const protocolFlow = async (): Promise<void> => {
-        const sessionId = await initializeSession(acpConn!.conn, input.context?.workDir ?? undefined)
+        const session = await initializeSession(acpConn!.conn, input.context?.workDir ?? undefined)
+        const sessionId = session.sessionId
         const contextPrompt = input.context?.contextPrompt
           ? `\n\n[Coordinates Context Snapshot]\n${input.context.contextPrompt}`
           : ''
