@@ -109,7 +109,8 @@ acpRoutes.post('/_internal/acp-generate', async (c) => {
       });
 
       const protocolFlow = async (): Promise<void> => {
-        const sessionId = await initializeSession(acpConn!.conn, workDir);
+        const session = await initializeSession(acpConn!.conn, workDir);
+        const sessionId = session.sessionId;
         await acpConn!.conn.prompt({
           sessionId,
           prompt: [{ type: 'text', text: promptText }],

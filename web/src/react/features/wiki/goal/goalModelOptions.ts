@@ -64,15 +64,28 @@ export function buildGoalModelOptions(
     if (!isAcpEndpointAvailable(provider, discoveryItem)) {
       continue
     }
-    const modelId = provider.models.find(m => m.isDefault)?.id
-      ?? provider.models[0]?.id
-      ?? provider.id
-    acpEndpoints.push({
-      kind: 'acp',
-      providerId: provider.id,
-      modelId,
-      label: provider.label,
-    })
+
+    const catalogModels = discoveryItem?.models ?? []
+    if (catalogModels.length > 0) {
+      for (const model of catalogModels) {
+        acpEndpoints.push({
+          kind: 'acp',
+          providerId: provider.id,
+          modelId: model.id,
+          label: model.label,
+        })
+      }
+      continue
+    }
+
+    for (const model of provider.models) {
+      acpEndpoints.push({
+        kind: 'acp',
+        providerId: provider.id,
+        modelId: model.id,
+        label: model.label || provider.label,
+      })
+    }
   }
 
   return { apiModels, acpEndpoints }

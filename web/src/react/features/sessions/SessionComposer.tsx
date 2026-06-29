@@ -6,6 +6,7 @@ import { useWikiStore } from '../../state/wikiStore'
 import { useLocale } from '../../../hooks/useLocale'
 import { GoalComposerPill } from '../wiki/goal/GoalComposerPill'
 import { buildGoalModelOptions, formatTurnModel, pickDefaultSelection } from '../wiki/goal/goalModelOptions'
+import { useAcpDiscovery } from '../wiki/goal/useAcpDiscovery'
 import { sessionPath } from './sessionRoutes'
 import {
   isSessionComposerLocked,
@@ -61,6 +62,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
   }, [hasPendingPermissions, isDraft, refreshSessions, session?.status, sessionId])
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId)
+  const acpDiscovery = useAcpDiscovery()
   const providerId = useWikiStore(s => s.goalComposerProviderId)
   const modelId = useWikiStore(s => s.goalComposerModelId)
   const setProviderId = useWikiStore(s => s.setGoalComposerProviderId)
@@ -84,7 +86,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
   useEffect(() => {
     if (!globalConfig) return
     if (providerId && modelId) return
-    const { apiModels, acpEndpoints } = buildGoalModelOptions(globalConfig, providers)
+    const { apiModels, acpEndpoints } = buildGoalModelOptions(globalConfig, providers, acpDiscovery)
     const preferred = effectiveConfig
       ? { providerId: effectiveConfig.providerId, modelId: effectiveConfig.modelId }
       : null
@@ -93,7 +95,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
       setProviderId(picked.providerId)
       setModelId(picked.modelId)
     }
-  }, [globalConfig, providers, effectiveConfig, providerId, modelId, setProviderId, setModelId])
+  }, [globalConfig, providers, acpDiscovery, effectiveConfig, providerId, modelId, setProviderId, setModelId])
 
   useEffect(() => {
     if (!sessionId) return

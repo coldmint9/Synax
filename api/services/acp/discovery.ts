@@ -1,9 +1,16 @@
 import { spawn } from 'node:child_process'
 import type { AcpProvider } from './registry/provider-registry.js'
+import { mapSessionModels, type AcpCatalogModel } from './acp-model-catalog.js'
 import { CURSOR_CLI_INSTALL_HINT, resolveCursorCliBinary } from './cursor-cli-resolve.js'
-import { resolveSpawnForProviderAsync, spawnAcpConnection } from './protocol/acp-connection.js'
+import {
+  closeAcpSession,
+  createAcpSession,
+  initializeProtocol,
+  resolveSpawnForProviderAsync,
+  spawnAcpConnection,
+} from './protocol/acp-connection.js'
 
-const ACP_PROTOCOL_VERSION = 1
+const PROBE_TIMEOUT_MS = 12_000
 
 export interface AcpDiscoveryResult {
   id: string
@@ -16,6 +23,7 @@ export interface AcpDiscoveryResult {
   selected: boolean
   compatibility: string
   error?: string
+  models?: AcpCatalogModel[]
 }
 
 const COMMANDS: Record<string, { commandName: string; windowsName: string; compatibility: string }> = {
@@ -67,18 +75,19 @@ export async function discoverAcpProviders(
         }
       }
 
-      const handshake = await probeHandshake(provider.id)
+      const probe = await probeProvider(provider.id)
       return {
         id: provider.id,
         label: provider.label,
         description: provider.description,
         command: resolvedCommand,
-        status: handshake.ok ? 'available' : 'failed',
+        status: probe.ok ? 'available' : 'failed',
         installed: true,
-        handshakeOk: handshake.ok,
+        handshakeOk: probe.ok,
         selected: provider.id === selectedProviderId,
         compatibility: meta?.compatibility ?? 'ACP-compatible provider.',
-        ...(handshake.error ? { error: handshake.error } : {}),
+        ...(probe.models?.length ? { models: probe.models } : {}),
+        ...(probe.error ? { error: probe.error } : {}),
       }
     }),
   )
@@ -96,20 +105,19 @@ function commandExists(meta: { commandName: string; windowsName: string }): Prom
   })
 }
 
-async function probeHandshake(providerId: string): Promise<{ ok: boolean; error?: string }> {
+async function probeProvider(providerId: string): Promise<{
+  ok: boolean
+  error?: string
+  models?: AcpCatalogModel[]
+}> {
   let conn: ReturnType<typeof spawnAcpConnection> | undefined
+  let probeSessionId: string | undefined
   try {
     const spawnSpec = await resolveSpawnForProviderAsync(providerId)
     conn = spawnAcpConnection({ async sessionUpdate() {} }, spawnSpec)
     await Promise.race([
-      conn.conn.initialize({
-        protocolVersion: ACP_PROTOCOL_VERSION,
-        clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: false },
-          terminal: false,
-        },
-      }),
-      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('ACP initialize timed out')), 3500)),
+      initializeProtocol(conn.conn),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('ACP initialize timed out')), PROBE_TIMEOUT_MS)),
       new Promise<never>((_resolve, reject) => {
         conn!.child.once('error', reject)
         conn!.child.once('exit', (code, signal) => {
@@ -117,10 +125,26 @@ async function probeHandshake(providerId: string): Promise<{ ok: boolean; error?
         })
       }),
     ])
-    return { ok: true }
+    const session = await Promise.race([
+      createAcpSession(conn.conn, process.cwd()),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('ACP newSession timed out')), PROBE_TIMEOUT_MS)),
+    ])
+    probeSessionId = session.sessionId
+    const models = mapSessionModels(session.models)
+    return {
+      ok: true,
+      ...(models.length > 0 ? { models } : {}),
+    }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   } finally {
+    if (conn && probeSessionId) {
+      try {
+        await closeAcpSession(conn.conn, probeSessionId)
+      } catch {
+        // ignore probe cleanup errors
+      }
+    }
     conn?.cleanup()
   }
 }

@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { Popover, useOverlayState } from '@heroui/react'
-import { configApi } from '../../../../lib/api/config'
-import type { AcpDiscoveryItem, GlobalConfig, ProviderDef } from '../../../../lib/contracts/config'
+import type { GlobalConfig, ProviderDef } from '../../../../lib/contracts/config'
 import { useLocale } from '../../../../hooks/useLocale'
 import {
   buildGoalModelOptions,
@@ -9,6 +8,7 @@ import {
   selectionKey,
   type GoalModelSelection,
 } from './goalModelOptions'
+import { useAcpDiscovery } from './useAcpDiscovery'
 
 interface Props {
   globalConfig: GlobalConfig | null
@@ -40,7 +40,7 @@ function OptionButton({
       }`}
     >
       <span className="w-full truncate text-[11px] font-medium">{option.label}</span>
-      {option.kind === 'api' && (
+      {(option.kind === 'api' || option.kind === 'acp') && (
         <span className="w-full truncate text-[9px] text-muted-foreground/60">{option.providerId}</span>
       )}
     </button>
@@ -82,16 +82,10 @@ export function GoalModelPicker({
   onOverlayOpenChange,
 }: Props) {
   const { t } = useLocale()
-  const [acpDiscovery, setAcpDiscovery] = useState<AcpDiscoveryItem[]>([])
+  const acpDiscovery = useAcpDiscovery()
   const state = useOverlayState({
     onOpenChange: onOverlayOpenChange,
   })
-
-  useEffect(() => {
-    void configApi.discoverAcp()
-      .then(result => setAcpDiscovery(result.supported))
-      .catch(() => {})
-  }, [])
 
   const { apiModels, acpEndpoints } = useMemo(
     () => buildGoalModelOptions(globalConfig, providers, acpDiscovery),
