@@ -5,7 +5,7 @@ import { useConfig } from '../settings/useConfig'
 import { useWikiStore } from '../../state/wikiStore'
 import { useLocale } from '../../../hooks/useLocale'
 import { GoalComposerPill } from '../wiki/goal/GoalComposerPill'
-import { buildGoalModelOptions, pickDefaultSelection } from '../wiki/goal/goalModelOptions'
+import { buildGoalModelOptions, formatTurnModel, pickDefaultSelection } from '../wiki/goal/goalModelOptions'
 import { sessionPath } from './sessionRoutes'
 import {
   isSessionComposerLocked,
@@ -105,18 +105,19 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     if (!message || (isGenerating && !queueWhileGenerating)) return
     setContent('')
     setSubmitting(true)
+    const model = formatTurnModel(providerId, modelId)
     try {
       if (isDraft) {
-        const created = await submitSessionDraft(projectId, { message, model: modelId, permissionTier })
+        const created = await submitSessionDraft(projectId, { message, model, permissionTier })
         navigate(sessionPath(projectId, created.id))
-        await sendSessionMessage(created.id, { message, model: modelId, permissionTier })
+        await sendSessionMessage(created.id, { message, model, permissionTier })
       } else {
-        await submitOrEnqueueSessionInput(session.id, { message, model: modelId, permissionTier })
+        await submitOrEnqueueSessionInput(session.id, { message, model, permissionTier })
       }
     } finally {
       setSubmitting(false)
     }
-  }, [content, isDraft, isGenerating, modelId, navigate, permissionTier, projectId, queueWhileGenerating, sendSessionMessage, session, submitSessionDraft, submitOrEnqueueSessionInput])
+  }, [content, isDraft, isGenerating, modelId, navigate, permissionTier, projectId, providerId, queueWhileGenerating, sendSessionMessage, session, submitSessionDraft, submitOrEnqueueSessionInput])
 
   const handleStop = useCallback(() => {
     if (session) void cancelSessionRun(session.id)

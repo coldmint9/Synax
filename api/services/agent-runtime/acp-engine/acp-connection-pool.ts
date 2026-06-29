@@ -5,6 +5,7 @@ import {
   initializeProtocol,
   openAcpSession,
   resolveSpawnForProvider,
+  resolveSpawnForProviderAsync,
   spawnAcpConnection,
   type AcpConnection,
 } from '../../acp/protocol/acp-connection.js';
@@ -82,7 +83,9 @@ class AcpConnectionPool {
     const session = agentRuntimeStore.getSession(input.synaxSessionId);
     const workDir = resolveSessionWorkDir(input.synaxSessionId, input.projectId);
     const stored = getAcpSessionMetadata(session);
-    const spawnSpec = resolveSpawnForProvider(input.providerId);
+    const spawnSpec = input.providerId === 'cursor-acp'
+      ? await resolveSpawnForProviderAsync(input.providerId)
+      : resolveSpawnForProvider(input.providerId);
     const synaxSessionId = input.synaxSessionId;
     const connection = spawnAcpConnection(createClientHandler({
       async sessionUpdate(params) {

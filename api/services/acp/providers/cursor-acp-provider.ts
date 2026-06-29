@@ -36,7 +36,7 @@ import { AsyncQueue } from '../protocol/async-queue.js'
 import {
   spawnAcpConnection,
   initializeSession,
-  resolveCursorSpawn,
+  resolveCursorSpawnAsync,
   type AcpConnection,
 } from '../protocol/acp-connection.js'
 import type { AcpProvider } from '../registry/provider-registry.js'
@@ -101,6 +101,10 @@ class CursorAcpClient implements AcpClient {
     })
 
     try {
+      const spawnSpec = await resolveCursorSpawnAsync()
+      if (!spawnSpec) {
+        throw new Error('Cursor CLI not found. Install: curl https://cursor.com/install -fsS | bash')
+      }
       acpConn = spawnAcpConnection({
         async sessionUpdate(params: SessionNotification) {
           ts += 1
@@ -116,7 +120,7 @@ class CursorAcpClient implements AcpClient {
             )
           }
         },
-      }, resolveCursorSpawn())
+      }, spawnSpec)
 
       // Spawn error watchdog (EINVAL, ENOENT, etc.)
       const spawnErrorPromise = new Promise<never>((_resolve, reject) => {

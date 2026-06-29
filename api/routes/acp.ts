@@ -7,6 +7,7 @@ import {
   spawnAcpConnection,
   initializeSession,
   resolveSpawnForProvider,
+  resolveSpawnForProviderAsync,
 } from '../services/acp/protocol/acp-connection.js';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import { getEffectiveConfig } from '../lib/config/config-store.js';
@@ -68,6 +69,7 @@ acpRoutes.post('/_internal/acp-generate', async (c) => {
     });
 
     try {
+      const spawnSpec = await resolveSpawnForProviderAsync(providerId);
       acpConn = spawnAcpConnection({
         async sessionUpdate(params: SessionNotification) {
           const update = params.update;
@@ -84,7 +86,7 @@ acpRoutes.post('/_internal/acp-generate', async (c) => {
             }
           }
         },
-      }, resolveSpawnForProvider(providerId));
+      }, spawnSpec);
 
       const spawnErrorPromise = new Promise<never>((_resolve, reject) => {
         acpConn!.child.once('error', (err) => reject(err));

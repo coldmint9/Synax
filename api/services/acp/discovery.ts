@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import type { AcpProvider } from './registry/provider-registry.js'
-import { resolveSpawnForProvider, spawnAcpConnection } from './protocol/acp-connection.js'
+import { CURSOR_CLI_INSTALL_HINT, resolveCursorCliBinary } from './cursor-cli-resolve.js'
+import { resolveSpawnForProviderAsync, spawnAcpConnection } from './protocol/acp-connection.js'
 
 const ACP_PROTOCOL_VERSION = 1
 
@@ -26,7 +27,7 @@ const COMMANDS: Record<string, { commandName: string; windowsName: string; compa
   'cursor-acp': {
     commandName: 'cursor-agent',
     windowsName: 'cursor-agent.cmd',
-    compatibility: '',
+    compatibility: 'Requires Cursor CLI (`agent` or `cursor-agent`). Install: curl https://cursor.com/install -fsS | bash',
   },
 }
 
@@ -38,19 +39,31 @@ export async function discoverAcpProviders(
     providers.map(async (provider) => {
       const meta = COMMANDS[provider.id]
       const command = meta?.commandName ?? provider.id
-      const installed = meta ? await commandExists(meta) : false
+      let installed = false
+      let resolvedCommand = command
+
+      if (provider.id === 'cursor-acp') {
+        const cli = await resolveCursorCliBinary()
+        installed = Boolean(cli)
+        resolvedCommand = cli ?? 'agent | cursor-agent'
+      } else if (meta) {
+        installed = await commandExists(meta)
+      }
+
       if (!installed) {
         return {
           id: provider.id,
           label: provider.label,
           description: provider.description,
-          command,
+          command: resolvedCommand,
           status: 'missing',
           installed: false,
           handshakeOk: false,
           selected: provider.id === selectedProviderId,
           compatibility: meta?.compatibility ?? '未配置检测命令。',
-          error: `${command} CLI not found in PATH`,
+          error: provider.id === 'cursor-acp'
+            ? CURSOR_CLI_INSTALL_HINT
+            : `${command} CLI not found in PATH`,
         }
       }
 
@@ -59,7 +72,7 @@ export async function discoverAcpProviders(
         id: provider.id,
         label: provider.label,
         description: provider.description,
-        command,
+        command: resolvedCommand,
         status: handshake.ok ? 'available' : 'failed',
         installed: true,
         handshakeOk: handshake.ok,
@@ -86,7 +99,8 @@ function commandExists(meta: { commandName: string; windowsName: string }): Prom
 async function probeHandshake(providerId: string): Promise<{ ok: boolean; error?: string }> {
   let conn: ReturnType<typeof spawnAcpConnection> | undefined
   try {
-    conn = spawnAcpConnection({ async sessionUpdate() {} }, resolveSpawnForProvider(providerId))
+    const spawnSpec = await resolveSpawnForProviderAsync(providerId)
+    conn = spawnAcpConnection({ async sessionUpdate() {} }, spawnSpec)
     await Promise.race([
       conn.conn.initialize({
         protocolVersion: ACP_PROTOCOL_VERSION,

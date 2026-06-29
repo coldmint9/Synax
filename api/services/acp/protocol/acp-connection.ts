@@ -18,6 +18,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 import { logger } from '../../../lib/logger.js'
 import { createClientHandler, type ClientOverrides } from './reverse-handlers.js'
+import { CURSOR_CLI_INSTALL_HINT, resolveCursorCliBinary } from '../cursor-cli-resolve.js'
 
 /** Protocol version negotiated with the agent; ACP currently uses integer 1. */
 const PROTOCOL_VERSION = 1
@@ -32,11 +33,37 @@ export interface AcpSpawnSpec {
   args: string[]
 }
 
+function buildCursorSpawnSpec(cli: string): AcpSpawnSpec {
+  const isAbsolute = cli.includes('/') || cli.includes('\\')
+  if (process.platform === 'win32') {
+    const bin = isAbsolute ? cli : `${cli}.cmd`
+    return {
+      providerId: 'cursor-acp',
+      commandLabel: cli,
+      command: 'cmd.exe',
+      args: ['/c', bin, 'acp'],
+    }
+  }
+  return {
+    providerId: 'cursor-acp',
+    commandLabel: cli,
+    command: cli,
+    args: ['acp'],
+  }
+}
+
 /**
  * Resolve the spawn command for the local Cursor ACP CLI.
- *
- * Windows note: `.cmd` files cannot be invoked directly via `child_process.spawn()`
- * (Node throws EINVAL). We route through `cmd.exe /c` to work around this.
+ * Probes `cursor-agent`, `agent`, and ~/.local/bin/agent.
+ */
+export async function resolveCursorSpawnAsync(): Promise<AcpSpawnSpec | null> {
+  const cli = await resolveCursorCliBinary()
+  if (!cli) return null
+  return buildCursorSpawnSpec(cli)
+}
+
+/**
+ * @deprecated Prefer resolveCursorSpawnAsync(); kept for callers that cannot await.
  */
 export function resolveCursorSpawn(): AcpSpawnSpec {
   if (process.platform === 'win32') {
@@ -82,6 +109,17 @@ export function resolveSpawnForProvider(providerId: string): AcpSpawnSpec {
   if (providerId === 'cursor-acp') return resolveCursorSpawn()
   if (providerId === 'opencode-acp') return resolveOpenCodeSpawn()
   throw new Error(`No ACP subprocess command registered for provider: ${providerId}`)
+}
+
+export async function resolveSpawnForProviderAsync(providerId: string): Promise<AcpSpawnSpec> {
+  if (providerId === 'cursor-acp') {
+    const spec = await resolveCursorSpawnAsync()
+    if (!spec) {
+      throw new Error(CURSOR_CLI_INSTALL_HINT)
+    }
+    return spec
+  }
+  return resolveSpawnForProvider(providerId)
 }
 
 export interface AcpConnection {
