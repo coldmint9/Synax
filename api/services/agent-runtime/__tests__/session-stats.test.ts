@@ -49,4 +49,46 @@ describe('getSessionStats runningDuration', () => {
     const stats = agentRuntimeStore.getSessionStats(session.id)
     expect(stats.runningDuration).toBe(90_000 + 105_000)
   })
+
+  it('aggregates ACP usage and context window size from step metadata', () => {
+    const session = agentSessionRuntime.create(explorerSessionInput)
+    const run = agentRuntimeStore.appendRun({
+      id: 'run-acp-usage',
+      sessionId: session.id,
+      status: 'completed',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:02:00.000Z',
+      triggerMessageId: null,
+      currentStep: 1,
+      stopReason: 'end_turn',
+      model: 'cursor-acp/default',
+      metadata: { engine: 'acp' },
+    })
+
+    agentRuntimeStore.appendRunStep({
+      id: 'step-acp-usage',
+      runId: run.id,
+      sessionId: session.id,
+      index: 1,
+      status: 'completed',
+      model: 'cursor-acp/default',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:02:00.000Z',
+      finishReason: 'end_turn',
+      metadata: {
+        engine: 'acp',
+        usage: {
+          inputTokens: 50_000,
+          outputTokens: 1_200,
+          contextWindowSize: 200_000,
+          source: 'acp',
+        },
+      },
+    })
+
+    const stats = agentRuntimeStore.getSessionStats(session.id)
+    expect(stats.tokenUsage).toEqual({ input: 50_000, output: 1_200, total: 50_000 })
+    expect(stats.contextLimit).toBe(200_000)
+    expect(stats.contextUsedPercent).toBe(25)
+  })
 })

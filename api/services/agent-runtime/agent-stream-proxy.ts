@@ -4,6 +4,7 @@ import { agentLoopRuntime } from './loop-runtime.js';
 import { sessionProcessManager } from './session-process-manager.js';
 import { maybeScheduleSessionTitleFromStreamChunk, ensureSessionTitleGenerated } from './session-title-service.js';
 import type { AgentSessionStreamMode } from '../../lib/ipc/agent-session-protocol.js';
+import { forwardChunkToLiveBus } from '../../lib/ipc/agent-session-protocol.js';
 import { acpSessionEngine, shouldUseAcpEngine } from './acp-engine/index.js';
 import { agentRuntimeStore } from './session-store.js';
 
@@ -76,7 +77,10 @@ async function* acpEngineStream(
   input: StreamTurnRequest,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<AgentRunStreamChunk> {
-  yield* acpSessionEngine.stream(sessionId, mode, input, abortSignal);
+  for await (const chunk of acpSessionEngine.stream(sessionId, mode, input, abortSignal)) {
+    forwardChunkToLiveBus(sessionId, chunk);
+    yield chunk;
+  }
 }
 
 export async function* streamAgentSession(

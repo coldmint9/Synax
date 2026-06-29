@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 import { getRawSqlite } from '../../db/index.js';
+import {
+  readUsageContextWindowSize,
+  readUsageInputTokens,
+  readUsageOutputTokens,
+} from './acp-engine/acp-usage.js';
 import { nowIso } from './runtime-ids.js';
 import { emitRuntimeBusEvent } from './runtime-bus-bridge.js';
 import { sessionHooks } from './session-hooks.js';
@@ -1033,6 +1038,7 @@ export class AgentRuntimeStore {
 
     let cumulativeOutput = 0
     let latestInputTokens = 0
+    let latestContextWindowSize = 200_000
     let totalTurnDurationMs = 0
     const now = Date.now()
     for (const row of stepRows) {
@@ -1047,19 +1053,23 @@ export class AgentRuntimeStore {
       }
       try {
         const meta = JSON.parse(row.metadata_json || '{}')
-        const u = meta.usage ?? {}
-        const stepInput = u.inputTokens ?? u.promptTokens ?? u.input_tokens ?? 0
-        const stepOutput = u.outputTokens ?? u.completionTokens ?? u.output_tokens ?? 0
+        const u = (meta.usage ?? {}) as Record<string, unknown>
+        const stepInput = readUsageInputTokens(u)
+        const stepOutput = readUsageOutputTokens(u)
         cumulativeOutput += stepOutput
         if (stepInput > 0) latestInputTokens = stepInput
+        const contextSize = readUsageContextWindowSize(u)
+        if (contextSize) latestContextWindowSize = contextSize
       } catch { /* skip */ }
     }
     const input = latestInputTokens;
     const output = cumulativeOutput;
     const total = input; // current context window size (excludes historical output)
 
-    const contextLimit = 200_000;
-    const contextUsedPercent = Math.min(Math.round((input / contextLimit) * 100), 100);
+    const contextLimit = latestContextWindowSize;
+    const contextUsedPercent = contextLimit > 0
+      ? Math.min(Math.round((input / contextLimit) * 100), 100)
+      : 0;
 
     const toolCountRow = db
       .prepare('SELECT COUNT(*) as cnt FROM agent_runtime_tool_calls WHERE session_id = ?')
