@@ -117,6 +117,54 @@ describe('acp update mapper', () => {
     expect(agentRuntimeStore.listMessages(session.id)).toHaveLength(1);
   });
 
+  it('persists usage_update into run step metadata', () => {
+    const session = agentSessionRuntime.create(plannerSessionInput);
+    const run = agentRuntimeStore.appendRun({
+      id: makeRuntimeId('run'),
+      sessionId: session.id,
+      status: 'running',
+      startedAt: nowIso(),
+      completedAt: null,
+      triggerMessageId: null,
+      currentStep: 1,
+      stopReason: null,
+      model: 'cursor-acp/default',
+      metadata: {},
+    });
+    const step = agentRuntimeStore.appendRunStep({
+      id: makeRuntimeId('step'),
+      runId: run.id,
+      sessionId: session.id,
+      index: 1,
+      status: 'running',
+      model: 'cursor-acp/default',
+      startedAt: nowIso(),
+      completedAt: null,
+      finishReason: null,
+      metadata: { engine: 'acp' },
+    });
+    const mapper = new AcpUpdateMapper({
+      sessionId: session.id,
+      run,
+      step,
+      isReplay: false,
+    });
+
+    expect(mapper.mapUpdate({
+      sessionUpdate: 'usage_update',
+      used: 48_000,
+      size: 200_000,
+    })).toEqual([]);
+
+    const updated = agentRuntimeStore.getRunStep(step.id);
+    expect(updated.metadata.usage).toEqual({
+      inputTokens: 48_000,
+      contextWindowSize: 200_000,
+      source: 'acp',
+    });
+    expect(mapper.getAccumulatedUsage()).toEqual(updated.metadata.usage);
+  });
+
   it('skips persistence during replay', () => {
     const session = agentSessionRuntime.create(plannerSessionInput);
     const run = agentRuntimeStore.appendRun({

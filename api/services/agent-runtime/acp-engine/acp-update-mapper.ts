@@ -9,6 +9,12 @@ import type {
 import { agentEventService } from '../event-service.js';
 import { makeRuntimeId, nowIso } from '../runtime-ids.js';
 import { agentRuntimeStore } from '../session-store.js';
+import {
+  asStepUsageRecord,
+  mergeStepUsage,
+  type StepUsageRecord,
+  usageFromAcpUpdate,
+} from './acp-usage.js';
 
 function extractText(content: { type: string; text?: string } | undefined): string {
   if (!content) return '';
@@ -36,8 +42,13 @@ export class AcpUpdateMapper {
   private thoughtBuffer = '';
   private partSequence = 0;
   private readonly toolCalls = new Map<string, ToolCallRecord>();
+  private usageRecord: StepUsageRecord = {};
 
   constructor(private readonly ctx: AcpUpdateMapperContext) {}
+
+  getAccumulatedUsage(): StepUsageRecord {
+    return { ...this.usageRecord };
+  }
 
   mapUpdate(update: SessionUpdate): AgentRunStreamChunk[] {
     if (this.ctx.isReplay) return [];
@@ -178,6 +189,11 @@ export class AcpUpdateMapper {
         });
         return [{ type: 'event', event }];
       }
+      case 'usage_update': {
+        if (this.ctx.isReplay) return [];
+        this.persistUsage(usageFromAcpUpdate(update));
+        return [];
+      }
       default:
         return [];
     }
@@ -187,6 +203,7 @@ export class AcpUpdateMapper {
     const content = this.textBuffer.trim();
     if (!content) return null;
     this.appendPart('text', content, null, {});
+    const usage = Object.keys(this.usageRecord).length > 0 ? this.usageRecord : undefined;
     return agentRuntimeStore.appendMessage({
       id: makeRuntimeId('msg'),
       sessionId: this.ctx.sessionId,
@@ -197,8 +214,21 @@ export class AcpUpdateMapper {
       metadata: {
         source: 'acp',
         thought: this.thoughtBuffer.trim() || undefined,
+        ...(usage ? { usage } : {}),
       },
       createdAt: nowIso(),
+    });
+  }
+
+  private persistUsage(patch: StepUsageRecord): void {
+    this.usageRecord = mergeStepUsage(this.usageRecord, patch);
+    const step = agentRuntimeStore.getRunStep(this.ctx.step.id);
+    const existing = asStepUsageRecord(step.metadata.usage);
+    agentRuntimeStore.updateRunStep(this.ctx.step.id, {
+      metadata: {
+        ...step.metadata,
+        usage: mergeStepUsage(existing, this.usageRecord),
+      },
     });
   }
 

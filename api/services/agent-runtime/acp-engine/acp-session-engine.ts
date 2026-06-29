@@ -25,7 +25,11 @@ import {
   createRunStartedChunk,
   createStepStartedChunk,
 } from './acp-update-mapper.js';
-import { acpSessionUpdateRouter } from './acp-session-update-router.js';
+import {
+  mergeStepUsage,
+  usageFromAcpPrompt,
+  asStepUsageRecord,
+} from './acp-usage.js';
 
 type StreamQueueItem =
   | { kind: 'chunk'; chunk: AgentRunStreamChunk }
@@ -299,6 +303,18 @@ class AcpSessionEngine {
       const stopReason = promptResult.stopReason ?? 'end_turn';
       const failed = stopReason !== 'end_turn' && stopReason !== 'max_tokens';
 
+      const currentStep = agentRuntimeStore.getRunStep(step.id);
+      const usage = mergeStepUsage(
+        mergeStepUsage(
+          asStepUsageRecord(currentStep.metadata.usage),
+          mapper.getAccumulatedUsage(),
+        ),
+        promptResult.usage ? usageFromAcpPrompt(promptResult.usage) : {},
+      );
+      const stepMetadata = Object.keys(usage).length > 0
+        ? { ...currentStep.metadata, usage }
+        : currentStep.metadata;
+
       const completedRun = agentRuntimeStore.updateRun(run.id, {
         status: failed ? 'failed' : 'completed',
         completedAt: nowIso(),
@@ -313,6 +329,7 @@ class AcpSessionEngine {
         status: failed ? 'failed' : 'completed',
         completedAt: nowIso(),
         finishReason: stopReason,
+        metadata: stepMetadata,
       });
       agentRuntimeStore.updateSession(sessionId, {
         status: failed ? 'failed' : 'completed',
