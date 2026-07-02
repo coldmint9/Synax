@@ -4,6 +4,7 @@ import { skillRegistry } from '../services/skills/skill-registry.js';
 import { skillInstallService } from '../services/skills/skill-install-service.js';
 import { skillIndexService } from '../services/skills/skill-index-service.js';
 import { fetchSkillText } from '../services/skills/skill-http.js';
+import { fetchSkillsShSkillContent } from '../services/skills/skills-sh-client.js';
 import { skillSourceService } from '../services/skills/skill-source-service.js';
 
 export const skillsRoutes = new Hono();
@@ -22,19 +23,20 @@ const installSchema = z.object({
   sourceId: z.string().min(1).max(128),
   name: z.string().min(1).max(128),
   version: z.string().max(64).optional(),
+  remoteUrl: z.string().url().optional(),
 });
 
 const syncSchema = z.object({
   sourceId: z.string().min(1).max(128).optional(),
 });
 
-skillsRoutes.get('/', (c) => {
+skillsRoutes.get('/', async (c) => {
   const parsed = listSkillsQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
   if (!parsed.success) {
     return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
   }
 
-  const items = skillRegistry.listSummaries({
+  const result = await skillRegistry.listWithTotal({
     profileId: parsed.data.profileId,
     projectId: parsed.data.projectId,
     q: parsed.data.q,
@@ -44,7 +46,7 @@ skillsRoutes.get('/', (c) => {
     offset: parsed.data.offset,
   });
 
-  return c.json({ items, total: items.length });
+  return c.json(result);
 });
 
 skillsRoutes.post('/install', async (c) => {
@@ -135,7 +137,7 @@ skillsRoutes.get('/:skillId/content', async (c) => {
   }
 });
 
-skillsRoutes.get('/:skillId', (c) => {
+skillsRoutes.get('/:skillId', async (c) => {
   const skillId = decodeURIComponent(c.req.param('skillId'));
   const projectId = c.req.query('projectId') ?? undefined;
   try {
@@ -145,7 +147,11 @@ skillsRoutes.get('/:skillId', (c) => {
       const detail = skillRegistry.loadDetail({ skillId, projectId });
       contentPreview = detail.content.slice(0, 2048);
     } catch {
-      // Remote-only catalog entries may not have local content yet.
+      if (summary.remoteUrl?.includes('skills.sh/api/v1/skills/')
+        || summary.remoteUrl?.includes('skills.sh/api/download')) {
+        const content = await fetchSkillsShSkillContent(summary.remoteUrl);
+        contentPreview = content.slice(0, 2048);
+      }
     }
     return c.json({
       ...summary,

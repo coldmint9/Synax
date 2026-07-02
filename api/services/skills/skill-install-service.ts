@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getRawSqlite } from '../../db/index.js';
 import { fetchSkillText, sha256Digest, verifyContentDigest } from './skill-http.js';
+import { fetchSkillsShSkillContent } from './skills-sh-client.js';
 import { parseSkillFile } from './skill-parser.js';
 import { skillIndexService } from './skill-index-service.js';
 import { resolveGlobalSkillsRoot } from './paths.js';
@@ -83,16 +84,21 @@ export class SkillInstallService {
     return Boolean(getRawSqlite().prepare('SELECT 1 FROM skill_installs WHERE name = ? LIMIT 1').get(name));
   }
 
-  async install(input: { sourceId: string; name: string; version?: string }): Promise<SkillSummary> {
+  async install(input: { sourceId: string; name: string; version?: string; remoteUrl?: string }): Promise<SkillSummary> {
     assertSafeSkillName(input.name);
     const catalogId = `${input.sourceId}/${input.name}`;
     const entry = skillIndexService.getCatalogEntry(catalogId);
-    if (!entry) {
+    const remoteUrl = input.remoteUrl ?? entry?.remoteUrl;
+
+    if (!remoteUrl) {
       throw new Error(`Catalog entry not found: ${catalogId}`);
     }
 
-    const rawContent = await fetchSkillText(entry.remoteUrl);
-    if (!verifyContentDigest(rawContent, entry.contentDigest)) {
+    const rawContent = remoteUrl.includes('skills.sh/api/v1/skills/')
+      || remoteUrl.includes('skills.sh/api/download')
+      ? await fetchSkillsShSkillContent(remoteUrl)
+      : await fetchSkillText(remoteUrl);
+    if (!verifyContentDigest(rawContent, entry?.contentDigest)) {
       throw new Error('Skill content digest mismatch');
     }
 
@@ -104,7 +110,7 @@ export class SkillInstallService {
     const parsed = parseSkillFile(installPath);
     const skillId = `local/${input.name}`;
     const now = nowIso();
-    const digest = entry.contentDigest ?? `sha256:${sha256Digest(rawContent)}`;
+    const digest = entry?.contentDigest ?? `sha256:${sha256Digest(rawContent)}`;
 
     getRawSqlite().prepare(`
       INSERT INTO skill_installs (

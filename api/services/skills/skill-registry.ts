@@ -9,8 +9,9 @@ import { parseSkillFile } from './skill-parser.js';
 import { skillIndexService } from './skill-index-service.js';
 import { skillInstallService } from './skill-install-service.js';
 import { skillSourceService } from './skill-source-service.js';
+import { listSkillsSh, skillsShDetailUrl } from './skills-sh-client.js';
 import { expandHome, resolveBuiltinSkillsRoot, resolveGlobalSkillsRoot } from './paths.js';
-import type { ParsedSkillFile, SkillDetail, SkillListQuery, SkillSourceRecord, SkillSummary } from './types.js';
+import type { ParsedSkillFile, SkillDetail, SkillListQuery, SkillListResult, SkillSourceRecord, SkillSummary } from './types.js';
 
 interface CollectedSkill {
   priority: number;
@@ -84,14 +85,14 @@ function matchesQuery(skill: SkillSummary, query?: string): boolean {
   );
 }
 
-function collectSummaries(input: SkillListQuery = {}): SkillSummary[] {
+function collectLocalSummaries(input: SkillListQuery = {}): SkillSummary[] {
   skillSourceService.ensureDefaultSources();
   const sources = skillSourceService.listSources().filter((source) => source.enabled);
   const collected: CollectedSkill[] = [];
   const installedNames = new Set(skillInstallService.listInstalls().map((item) => item.name));
 
   for (const source of sources) {
-    if (source.type === 'well-known' || source.type === 'git-index' || source.type === 'skills-sh') {
+    if (source.type === 'well-known' || source.type === 'git-index') {
       for (const entry of skillIndexService.listCatalogEntries(source.id)) {
         collected.push({
           priority: source.priority,
@@ -116,6 +117,10 @@ function collectSummaries(input: SkillListQuery = {}): SkillSummary[] {
           },
         });
       }
+      continue;
+    }
+
+    if (source.type === 'skills-sh') {
       continue;
     }
 
@@ -178,13 +183,157 @@ function collectSummaries(input: SkillListQuery = {}): SkillSummary[] {
   items = items.filter((skill) => matchesQuery(skill, input.q));
 
   items.sort((a, b) => a.label.localeCompare(b.label));
+  return items;
+}
 
+function paginateItems(items: SkillSummary[], input: SkillListQuery): SkillListResult {
   const offset = input.offset ?? 0;
   const limit = input.limit ?? items.length;
-  return items.slice(offset, offset + limit);
+  const page = items.slice(offset, offset + limit);
+  return {
+    items: page,
+    total: items.length,
+    hasMore: offset + page.length < items.length,
+  };
+}
+
+async function listSkillsShSummaries(input: SkillListQuery, source: SkillSourceRecord): Promise<SkillListResult> {
+  const installedNames = new Set(skillInstallService.listInstalls().map((item) => item.name));
+  const limit = input.limit ?? 24;
+  const offset = input.offset ?? 0;
+  const result = await listSkillsSh({
+    sourceId: source.id,
+    view: source.config.view,
+    defaultQuery: source.config.defaultQuery,
+    q: input.q,
+    limit,
+    offset,
+    installedNames,
+  });
+
+  let items = result.items;
+  if (input.installedOnly) {
+    items = items.filter((skill) => skill.installed);
+  }
+  items = items.filter((skill) => matchesProfile(skill, input.profileId));
+
+  return {
+    items,
+    total: result.total,
+    hasMore: result.hasMore,
+    totalExact: result.totalExact,
+  };
+}
+
+async function listWithTotal(input: SkillListQuery = {}): Promise<SkillListResult> {
+  skillSourceService.ensureDefaultSources();
+  const sources = skillSourceService.listSources().filter((source) => source.enabled);
+  const skillsShSources = sources.filter((source) => source.type === 'skills-sh');
+
+  if (input.sourceId) {
+    const selected = sources.find((source) => source.id === input.sourceId);
+    if (selected?.type === 'skills-sh') {
+      return listSkillsShSummaries(input, selected);
+    }
+  }
+
+  const localItems = collectLocalSummaries(input);
+  const includeSkillsSh = !input.installedOnly
+    && skillsShSources.length > 0
+    && (!input.sourceId || skillsShSources.some((source) => source.id === input.sourceId));
+
+  if (!includeSkillsSh) {
+    return paginateItems(localItems, input);
+  }
+
+  const skillsShSource = skillsShSources.find((source) => source.id === input.sourceId)
+    ?? skillsShSources[0]!;
+  const limit = input.limit ?? 24;
+  const offset = input.offset ?? 0;
+
+  if (offset < localItems.length) {
+    const localPage = localItems.slice(offset, Math.min(offset + limit, localItems.length));
+    const remaining = limit - localPage.length;
+    if (remaining <= 0) {
+      return {
+        items: localPage,
+        total: localItems.length,
+        hasMore: true,
+      };
+    }
+
+    const remote = await listSkillsSh({
+      sourceId: skillsShSource.id,
+      view: skillsShSource.config.view,
+      defaultQuery: skillsShSource.config.defaultQuery,
+      q: input.q,
+      limit: remaining,
+      offset: 0,
+      installedNames: new Set(skillInstallService.listInstalls().map((item) => item.name)),
+    });
+
+    return {
+      items: [...localPage, ...remote.items],
+      total: localItems.length + remote.total,
+      hasMore: remote.hasMore || offset + localPage.length < localItems.length,
+      totalExact: remote.totalExact,
+    };
+  }
+
+  const remoteOffset = offset - localItems.length;
+  const remote = await listSkillsShSummaries({
+    ...input,
+    sourceId: skillsShSource.id,
+    offset: remoteOffset,
+    limit,
+  }, skillsShSource);
+
+  return {
+    items: remote.items,
+    total: localItems.length + remote.total,
+    hasMore: remote.hasMore,
+    totalExact: remote.totalExact,
+  };
+}
+
+function collectSummaries(input: SkillListQuery = {}): SkillSummary[] {
+  return collectLocalSummaries(input).slice(
+    input.offset ?? 0,
+    (input.offset ?? 0) + (input.limit ?? Number.MAX_SAFE_INTEGER),
+  );
+}
+
+function findSkillsShSummary(skillId: string): SkillSummary | null {
+  const slash = skillId.indexOf('/');
+  if (slash <= 0) return null;
+  const sourceId = skillId.slice(0, slash);
+  const skillsShPath = skillId.slice(slash + 1);
+  const source = skillSourceService.getSource(sourceId);
+  if (source?.type !== 'skills-sh' || !skillsShPath.includes('/')) return null;
+
+  const name = skillsShPath.split('/').pop() ?? skillsShPath;
+  const detailUrl = skillsShDetailUrl(skillsShPath);
+  return {
+    id: skillId,
+    name,
+    label: name,
+    description: skillsShPath,
+    sourceId,
+    sourceKind: 'remote',
+    version: '0.0.0',
+    appliesTo: [],
+    requiredCapabilities: [],
+    permissionHints: [],
+    status: 'available',
+    remoteUrl: detailUrl,
+    installed: skillInstallService.isInstalledName(name),
+  };
 }
 
 function findSummary(skillId: string, projectId?: string): SkillSummary {
+  const skillsSh = findSkillsShSummary(skillId);
+  if (skillsSh) return skillsSh;
+
   const match = collectSummaries({ projectId }).find((skill) => skill.id === skillId);
   if (!match) throw new AgentNotFoundError(skillId);
   return match;
@@ -193,6 +342,10 @@ function findSummary(skillId: string, projectId?: string): SkillSummary {
 export class SkillRegistry {
   listSummaries(input: SkillListQuery = {}): SkillSummary[] {
     return collectSummaries(input);
+  }
+
+  async listWithTotal(input: SkillListQuery = {}): Promise<SkillListResult> {
+    return listWithTotal(input);
   }
 
   getSummary(skillId: string, projectId?: string): SkillSummary {

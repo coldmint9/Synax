@@ -16,13 +16,14 @@ const CORE_SOURCES: Array<Omit<SkillSourceRecord, 'lastSyncAt' | 'lastSyncError'
 /** Default remote catalog seeded on first run. */
 export const DEFAULT_REMOTE_SOURCE: Omit<SkillSourceRecord, 'lastSyncAt' | 'lastSyncError' | 'createdAt' | 'updatedAt'> = {
   id: 'default-remote',
-  label: 'Agent Skills Index',
-  type: 'well-known',
+  label: 'skills.sh',
+  type: 'skills-sh',
   enabled: true,
   priority: 60,
   readOnly: true,
   config: {
-    url: 'https://agentskills.ac.cn/.well-known/agent-skills/index.json',
+    baseUrl: 'https://skills.sh',
+    view: 'all-time',
   },
 };
 
@@ -130,6 +131,18 @@ export class SkillSourceService {
       deleteCatalog.run(sourceId);
       deleteSource.run(sourceId);
     }
+
+    db.prepare(`
+      UPDATE skill_sources
+      SET label = ?, type = ?, config_json = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      DEFAULT_REMOTE_SOURCE.label,
+      DEFAULT_REMOTE_SOURCE.type,
+      JSON.stringify(DEFAULT_REMOTE_SOURCE.config),
+      now,
+      DEFAULT_REMOTE_SOURCE.id,
+    );
 
     this.seeded = true;
   }

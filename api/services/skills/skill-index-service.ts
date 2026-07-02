@@ -142,7 +142,7 @@ export class SkillIndexService {
     const source = skillSourceService.getSource(sourceId);
     if (!source) throw new Error(`Skill source not found: ${sourceId}`);
     if (!source.enabled) throw new Error(`Skill source is disabled: ${sourceId}`);
-    if (source.type === 'builtin' || source.type === 'local' || source.type === 'project') {
+    if (source.type === 'builtin' || source.type === 'local' || source.type === 'project' || source.type === 'skills-sh') {
       skillSourceService.markSyncResult(sourceId, { ok: true });
       return 0;
     }

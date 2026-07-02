@@ -78,11 +78,13 @@ describe('skillIndexService', () => {
     skillSourceService.deleteSource(source.id);
   });
 
-  it('seeds builtin local and one default remote source', () => {
+  it('seeds builtin local and skills.sh default remote source', () => {
     const ids = skillSourceService.listSources().map((source) => source.id);
     expect(ids).toContain('synax-builtin');
     for (const preset of PRESET_REMOTE_SOURCES) {
       expect(ids).toContain(preset.id);
+      expect(preset.type).toBe('skills-sh');
+      expect(preset.label).toBe('skills.sh');
     }
     expect(ids).not.toContain('local');
     expect(ids).not.toContain('project');
