@@ -67,7 +67,7 @@ export class AgentSessionRuntime {
       completedAt: null,
       resultSummary: null,
       blockedReason: null,
-      skillIds: input.skillIds ?? profile.defaultSkills,
+      skillIds: input.skillIds ?? [],
       activeRunId: null,
       pendingResumeToken: null,
       sessionMetadata,

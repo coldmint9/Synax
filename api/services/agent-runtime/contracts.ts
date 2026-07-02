@@ -171,7 +171,6 @@ export interface AgentProfile {
   defaultThinkingMode: ThinkingMode;
   allowedCapabilities: string[];
   permissionDefaults: PermissionRule[];
-  defaultSkills: string[];
   maxSteps: number;
   status: 'active' | 'disabled';
   toolPolicy?: ToolPolicy;
@@ -314,20 +313,6 @@ export interface PermissionDecision {
   metadata: Record<string, unknown>;
 }
 
-export interface AgentSkill {
-  id: string;
-  label: string;
-  description: string;
-  source: 'system' | 'project' | 'plugin' | 'user';
-  version: string;
-  appliesTo: AgentProfileKind[];
-  requiredCapabilities: string[];
-  permissionHints: InternalGate[];
-  contentRef: string;
-  content?: string;
-  status: 'available' | 'unavailable' | 'invalid' | 'disabled';
-}
-
 export interface AgentContextBlock {
   id: string;
   kind: 'goal' | 'action' | 'memory' | 'code' | 'diff' | 'review' | 'wiki' | 'system';
@@ -421,12 +406,6 @@ export const listEventsQuerySchema = z.object({
   after: z.string().min(1).max(128).optional(),
 });
 export type ListEventsQuery = z.infer<typeof listEventsQuerySchema>;
-
-export const listSkillsQuerySchema = z.object({
-  profileId: z.string().min(1).max(64).optional(),
-  includeContent: z.coerce.boolean().default(false),
-});
-export type ListSkillsQuery = z.infer<typeof listSkillsQuerySchema>;
 
 export const executeToolRequestSchema = z.object({
   toolId: z.string().min(1).max(128),

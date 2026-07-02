@@ -12,7 +12,7 @@ import { agentSessionRuntime } from './session-runtime.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
 import { sessionHooks } from './session-hooks.js';
 import { logger } from '../../lib/logger.js';
-import { skillRegistry } from './skill-registry.js';
+import { skillAgentBridge } from '../skills/agent-bridge.js';
 import { INVALID_TOOL, INVALID_TOOL_ID } from './tool-invalid.js';
 import { diffReadTool } from './tools/diff-read.js';
 import { fileGlobTool } from './tools/file-glob.js';
@@ -159,7 +159,7 @@ export class ToolRegistry {
         const profile = this.profiles.get(session.profileId);
         const args = input.args as { skillId?: string };
         if (!args?.skillId) throw new Error('skillId is required.');
-        const skill = skillRegistry.loadFull({
+        const skill = skillAgentBridge.loadForTool({
           sessionId: input.sessionId,
           skillId: args.skillId,
           profileKind: profile.kind,

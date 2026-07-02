@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Lock, Sparkles, Wrench } from 'lucide-react'
-import type { AgentSkillSummary, AgentToolSummary, SessionCapabilities } from '../../../lib/api/agentRuntime'
+import type { AgentToolSummary, SessionCapabilities } from '../../../lib/api/agentRuntime'
+import type { SkillSummary } from '../../../lib/api/skills'
 
 const CATEGORY_ORDER = ['read', 'shell', 'task', 'write', 'skill', 'context', 'subagent'] as const
 
@@ -130,7 +131,7 @@ function SkillsCard({ skills }: { skills: SessionCapabilities['skills'] }) {
   )
 }
 
-function SkillRow({ skill, active = false }: { skill: AgentSkillSummary; active?: boolean }) {
+function SkillRow({ skill, active = false }: { skill: SkillSummary; active?: boolean }) {
   return (
     <li className={active ? '' : 'opacity-55'} title={skill.description || skill.id}>
       <div className="flex items-center gap-1.5">

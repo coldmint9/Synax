@@ -15,12 +15,10 @@ import {
   inputQueueService,
   listEventsQuerySchema,
   listSessionsQuerySchema,
-  listSkillsQuerySchema,
   permissionPolicy,
   permissionReplyRequestSchema,
   profileService,
   resolveSessionCapabilities,
-  skillRegistry,
   streamTurnRequestSchema,
   toHttpError,
   applySessionPermissionUpdate,
@@ -75,17 +73,10 @@ function withSessionPayload(sessionId: string) {
     session,
     profile,
     context: session.contextSnapshotId ? agentRuntimeStore.getContextBundle(session.contextSnapshotId) : null,
-    candidateSkills: skillRegistry.listSummaries({ profileId: profile.id }),
   };
 }
 
 agentRuntimeRoutes.get('/profiles', (c) => c.json({ items: profileService.list() }));
-
-agentRuntimeRoutes.get('/skills', (c) => {
-  const parsed = listSkillsQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
-  if (!parsed.success) return validationError(c, parsed.error);
-  return c.json({ items: skillRegistry.listSummaries({ profileId: parsed.data.profileId }) });
-});
 
 agentRuntimeRoutes.post('/contexts/:projectId', async (c) => {
   const body = await readJson(c);

@@ -18,7 +18,6 @@ export const refreshAgentProfile: AgentProfile = {
     { gate: 'task', pattern: '*', action: 'deny', reason: 'Refresh agent does not delegate.' },
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Refresh agent does not need shell.' },
   ],
-  defaultSkills: [],
   maxSteps: 15,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },

@@ -2,7 +2,7 @@ import { agentSessionRuntime } from '../services/agent-runtime/session-runtime.j
 import { agentRuntimeStore } from '../services/agent-runtime/session-store.js';
 import { permissionPolicy } from '../services/agent-runtime/permission-policy.js';
 import { toolRegistry } from '../services/agent-runtime/tool-registry.js';
-import { skillRegistry } from '../services/agent-runtime/skill-registry.js';
+import { skillRegistry } from '../services/skills/skill-registry.js';
 
 async function main() {
   agentRuntimeStore.reset();
@@ -20,7 +20,7 @@ async function main() {
     prompt: 'Explore read-only evidence.',
   });
 
-  const skills = skillRegistry.listSummaries({ profileId: 'explorer' });
+  const skills = skillRegistry.listSummaries({ profileId: 'explorer', projectId: planner.projectId });
   const read = await toolRegistry.execute(explorer.id, 'file.glob', { pattern: 'api/services/agent-runtime/**/*.ts', limit: 10 });
   const denied = permissionPolicy.evaluate({
     sessionId: explorer.id,

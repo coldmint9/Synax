@@ -1,13 +1,20 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
 import { BookOpen, Bot, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw } from 'lucide-react'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
+import { useSkillStore } from '../state/skillStore'
 import { useLocale } from '../../hooks/useLocale'
 import { wikiApi } from '../../lib/api/wiki'
 import { NotificationBell } from '../components/notifications/NotificationBell'
 import WikiSearchPanel from '../features/wiki/WikiSearchPanel'
 import { useWikiSearch, type SearchResult } from '../features/wiki/WikiSearchPanel'
+import {
+  resolveAgentViewMode,
+  sessionsPath,
+  skillMarketplacePath,
+} from '../features/sessions/sessionRoutes'
 import type { ActivityPanel } from './ActivityBar'
 
 interface WorkbenchHeaderProps {
@@ -207,7 +214,58 @@ function WikiToolbar() {
   )
 }
 
+function AgentToolbarPill({ visible }: { visible: boolean }) {
+  const { t } = useLocale()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { projectId = '' } = useParams()
+  const agentViewMode = useSkillStore(s => s.agentViewMode)
+  const setAgentViewMode = useSkillStore(s => s.setAgentViewMode)
+
+  useEffect(() => {
+    setAgentViewMode(resolveAgentViewMode(location.pathname))
+  }, [location.pathname, setAgentViewMode])
+
+  const navigateMode = (mode: 'sessions' | 'skills') => {
+    if (!projectId) return
+    setAgentViewMode(mode)
+    if (mode === 'skills') navigate(skillMarketplacePath(projectId))
+    else navigate(sessionsPath(projectId))
+  }
+
+  return (
+    <ToolbarPill visible={visible}>
+      <Tabs
+        selectedKey={agentViewMode}
+        onSelectionChange={(key) => navigateMode(key as 'sessions' | 'skills')}
+        className="wiki-view-tabs"
+      >
+        <Tabs.ListContainer>
+          <Tabs.List aria-label={t('agentToolbarLabel')} className="wiki-view-tabs-list">
+            <Tabs.Tab id="sessions" className="wiki-view-tab">
+              <span>{t('agentTabSessions')}</span>
+              <Tabs.Indicator />
+            </Tabs.Tab>
+            <Tabs.Tab id="skills" className="wiki-view-tab">
+              <span>{t('agentTabSkills')}</span>
+              <Tabs.Indicator />
+            </Tabs.Tab>
+          </Tabs.List>
+        </Tabs.ListContainer>
+      </Tabs>
+    </ToolbarPill>
+  )
+}
+
 function WikiToolbarPill({ visible }: { visible: boolean }) {
+  return (
+    <ToolbarPill visible={visible}>
+      <WikiToolbar />
+    </ToolbarPill>
+  )
+}
+
+function ToolbarPill({ visible, children }: { visible: boolean; children: ReactNode }) {
   const [mounted, setMounted] = useState(false)
   const [phase, setPhase] = useState<'enter' | 'exit' | ''>('')
   const ref = useRef<HTMLDivElement>(null)
@@ -236,7 +294,7 @@ function WikiToolbarPill({ visible }: { visible: boolean }) {
   return (
     <div ref={ref} className={slotClass}>
       <div className={pillClass}>
-        <WikiToolbar />
+        {children}
       </div>
     </div>
   )
@@ -372,6 +430,7 @@ export function WorkbenchHeader({
       </div>
 
       <WikiToolbarPill visible={activePanel === 'wiki'} />
+      <AgentToolbarPill visible={activePanel === 'sessions'} />
 
       {/* Remove project confirmation modal */}
       <Modal state={confirmState}>

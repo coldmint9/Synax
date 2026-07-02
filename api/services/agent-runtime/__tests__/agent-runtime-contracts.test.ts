@@ -24,7 +24,6 @@ describe('agent runtime route contracts', () => {
     const body = await created.json();
     expect(body.session.profileId).toBe('planner');
     expect(body.context.id).toMatch(/^acb_/);
-    expect(body.candidateSkills[0]).not.toHaveProperty('content');
   });
 
   it('builds project context and exposes events/runs/artifacts routes', async () => {

@@ -37,7 +37,7 @@ import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
 import { rebuildSessionFileReads } from "./read-tracker.js";
-import { skillRegistry } from "./skill-registry.js";
+import { skillAgentBridge } from "../skills/agent-bridge.js";
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
 import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
 import { buildTaskDriftReminder } from "./tools/task-tools.js";
@@ -1340,12 +1340,20 @@ export class AgentLoopRuntime {
       projectRulesSection = null;
     }
 
-    const skillCandidates = skillRegistry.listSummaries({ profileId: input.profile.id });
+    const skillCandidates = skillAgentBridge.listForPrompt({
+      profileId: input.profile.id,
+      projectId: session.projectId,
+      activeSkillIds: session.skillIds,
+    });
+    const activeSkillIds = new Set(session.skillIds);
     const skillsSection = skillCandidates.length > 0
       ? [
         '## Available skills',
         'Call skill.load with skillId when a skill description matches the task. Full instructions load on demand.',
-        ...skillCandidates.map((skill) => `- ${skill.id}: ${skill.label} — ${skill.description}`),
+        ...skillCandidates.map((skill) => {
+          const active = activeSkillIds.has(skill.id) ? ' [active]' : '';
+          return `- ${skill.id}: ${skill.label} — ${skill.description}${active}`;
+        }),
       ].join('\n')
       : null;
 

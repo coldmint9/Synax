@@ -19,7 +19,7 @@ function mockJson(body: unknown, ok = true, status = 200) {
 
 describe('agentRuntimeApi', () => {
   it('creates sessions through the agent runtime base path', async () => {
-    mockJson({ session: { id: 'ars_1' }, profile: { id: 'planner' }, context: null, candidateSkills: [] })
+    mockJson({ session: { id: 'ars_1' }, profile: { id: 'planner' }, context: null })
 
     const result = await agentRuntimeApi.createSession({
       projectId: 'p1',
