@@ -39,7 +39,6 @@ export const synaxAgentProfile: AgentProfile = {
     { gate: 'delete', pattern: '*', action: 'ask', reason: 'Deletes require approval.' },
     { gate: 'shell', pattern: '*', action: 'ask', reason: 'Shell execution requires approval.' },
   ],
-  defaultSkills: ['action-executor'],
   maxSteps: 64,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },

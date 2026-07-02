@@ -158,12 +158,6 @@ export class SynaxAgent {
     };
 
     agentRuntimeStore.updateSessionMetadata(sessionId, patch);
-    if (variant.defaultSkills.length > 0) {
-      agentRuntimeStore.updateSession(sessionId, {
-        skillIds: variant.defaultSkills,
-        updatedAt: routedAt,
-      });
-    }
 
     return {
       activeVariant: variant.id,

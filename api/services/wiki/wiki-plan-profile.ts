@@ -23,7 +23,6 @@ const planPlannerBase: Omit<AgentProfile, 'id' | 'label'> = {
     { gate: 'task', pattern: '*', action: 'deny', reason: 'Planner does not delegate.' },
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Planner does not need shell.' },
   ],
-  defaultSkills: [],
   maxSteps: 60,
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },

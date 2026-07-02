@@ -14,6 +14,15 @@ export function workflowSessionsPath(projectId: string): string {
   return `/projects/${projectId}/sessions/workflows`
 }
 
+export function skillMarketplacePath(projectId: string): string {
+  return `/projects/${projectId}/sessions/skills`
+}
+
+export function resolveAgentViewMode(pathname: string): 'sessions' | 'skills' {
+  if (pathname.includes('/sessions/skills') || pathname.includes('/sessions/sources')) return 'skills'
+  return 'sessions'
+}
+
 export function isNewSessionPath(pathname: string): boolean {
   return pathname.endsWith('/sessions/new')
 }

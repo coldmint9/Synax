@@ -35,8 +35,8 @@ describe('resolveSessionCapabilities', () => {
     );
     expect(caps.tools.available.some((tool) => tool.id === 'file.write')).toBe(false);
     expect(caps.tools.visible).toEqual(caps.tools.available);
-    expect(caps.skills.active.map((skill) => skill.id)).toEqual(['code-explorer']);
-    expect(caps.skills.candidates.map((skill) => skill.id)).toEqual(['code-explorer']);
+    expect(caps.skills.active).toEqual([]);
+    expect(caps.skills.candidates.map((skill) => skill.id)).toEqual(['synax-builtin/synax-explore']);
   });
 
   it('exposes write tools for executor from the start', () => {

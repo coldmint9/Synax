@@ -27,6 +27,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
   const { t } = useLocale()
   const navigate = useNavigate()
   const [content, setContent] = useState('')
+  const [skillIds, setSkillIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const sendSessionMessage = useAgentSessionStore(s => s.sendSessionMessage)
   const submitOrEnqueueSessionInput = useAgentSessionStore(s => s.submitOrEnqueueSessionInput)
@@ -110,8 +111,9 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     const model = formatTurnModel(providerId, modelId)
     try {
       if (isDraft) {
-        const created = await submitSessionDraft(projectId, { message, model, permissionTier })
+        const created = await submitSessionDraft(projectId, { message, model, permissionTier, skillIds })
         navigate(sessionPath(projectId, created.id))
+        setSkillIds([])
         await sendSessionMessage(created.id, { message, model, permissionTier })
       } else {
         await submitOrEnqueueSessionInput(session.id, { message, model, permissionTier })
@@ -119,7 +121,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     } finally {
       setSubmitting(false)
     }
-  }, [content, isDraft, isGenerating, modelId, navigate, permissionTier, projectId, providerId, queueWhileGenerating, sendSessionMessage, session, submitSessionDraft, submitOrEnqueueSessionInput])
+  }, [content, isDraft, isGenerating, modelId, navigate, permissionTier, projectId, providerId, queueWhileGenerating, sendSessionMessage, session, skillIds, submitSessionDraft, submitOrEnqueueSessionInput])
 
   const handleStop = useCallback(() => {
     if (session) void cancelSessionRun(session.id)
@@ -130,6 +132,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
 
   const composer = (
     <GoalComposerPill
+      projectId={projectId}
       content={content}
       onContentChange={setContent}
       onSubmit={() => void handleSubmit()}
@@ -149,8 +152,8 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
       wikiAttachMode="auto"
       onWikiAttachModeChange={() => {}}
       documents={[]}
-      skillIds={[]}
-      onSkillIdsChange={() => {}}
+      skillIds={skillIds}
+      onSkillIdsChange={setSkillIds}
       permissionTier={permissionTier}
       onPermissionTierChange={handlePermissionTierChange}
       disabled={isGenerating && !queueWhileGenerating}

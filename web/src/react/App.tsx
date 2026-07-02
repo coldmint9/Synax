@@ -34,6 +34,8 @@ export default function App() {
             <Route path="/projects/:projectId/sessions" element={null} />
             <Route path="/projects/:projectId/sessions/new" element={null} />
             <Route path="/projects/:projectId/sessions/workflows" element={null} />
+            <Route path="/projects/:projectId/sessions/skills" element={null} />
+            <Route path="/projects/:projectId/sessions/sources" element={null} />
             <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />
           </Route>
           <Route path="/agent-loop-test" element={<AgentLoopTestPage />} />

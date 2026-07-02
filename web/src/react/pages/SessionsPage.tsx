@@ -12,8 +12,9 @@ import { SessionWorkspace } from '../features/sessions/SessionWorkspace'
 import { SessionListPanel } from '../features/sessions/SessionListPanel'
 import { SessionComposer } from '../features/sessions/SessionComposer'
 import { useSessionRouteSync } from '../features/sessions/useSessionRouteSync'
-import { isNewSessionPath, newSessionPath } from '../features/sessions/sessionRoutes'
+import { isNewSessionPath, newSessionPath, resolveAgentViewMode } from '../features/sessions/sessionRoutes'
 import type { SessionListView } from '../features/sessions/sessionBuckets'
+import { SkillMarketplacePanel } from '../features/skills/SkillMarketplacePanel'
 
 const SessionDetailSidebar = memo(function SessionDetailSidebar() {
   return (
@@ -31,6 +32,7 @@ export default memo(function SessionsPage() {
   const { projectId = '' } = useParams()
   const location = useLocation()
   const listView: SessionListView = location.pathname.includes('/sessions/workflows') ? 'workflow' : 'sessions'
+  const agentViewMode = resolveAgentViewMode(location.pathname)
 
   useSessionRouteSync(listView, projectId)
 
@@ -45,37 +47,45 @@ export default memo(function SessionsPage() {
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="w-[260px] shrink-0 border-r border-border/40 overflow-hidden">
-        <SessionListPanel listView={listView} projectId={projectId} />
-      </aside>
-
-      {showTranscript ? (
+      {agentViewMode === 'sessions' ? (
         <>
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <SessionTranscript />
-          </div>
-          <SessionDetailSidebar />
+          <aside className="w-[260px] shrink-0 border-r border-border/40 overflow-hidden">
+            <SessionListPanel listView={listView} projectId={projectId} />
+          </aside>
+
+          {showTranscript ? (
+            <>
+              <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                <SessionTranscript />
+              </div>
+              <SessionDetailSidebar />
+            </>
+          ) : isNewDraft ? (
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <SessionComposer projectId={projectId} layout="centered" />
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                {canCreateSession ? t('sessionSelectOrCreate') : t('sessionSelectHint')}
+              </p>
+              {canCreateSession ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="gap-1.5"
+                  onPress={() => navigate(newSessionPath(projectId))}
+                >
+                  <Plus size={14} />
+                  {t('sessionNew')}
+                </Button>
+              ) : null}
+            </div>
+          )}
         </>
-      ) : isNewDraft ? (
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <SessionComposer projectId={projectId} layout="centered" />
-        </div>
       ) : (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-          <p className="text-sm text-muted-foreground">
-            {canCreateSession ? t('sessionSelectOrCreate') : t('sessionSelectHint')}
-          </p>
-          {canCreateSession ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              className="gap-1.5"
-              onPress={() => navigate(newSessionPath(projectId))}
-            >
-              <Plus size={14} />
-              {t('sessionNew')}
-            </Button>
-          ) : null}
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          <SkillMarketplacePanel />
         </div>
       )}
     </div>

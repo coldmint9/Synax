@@ -10,6 +10,7 @@ import type { GoalModelSelection } from './goalModelOptions'
 import type { GoalPermissionTier, GoalWikiAttachMode } from './goalAttachTypes'
 
 interface Props {
+  projectId: string
   content: string
   onContentChange: (value: string) => void
   onSubmit: () => void
@@ -38,6 +39,7 @@ interface Props {
 }
 
 export function GoalComposerPill({
+  projectId,
   content,
   onContentChange,
   onSubmit,
@@ -127,6 +129,7 @@ export function GoalComposerPill({
   const toolbar = (
     <>
       <GoalAttachMenu
+        projectId={projectId}
         documentId={documentId}
         onDocumentChange={onDocumentChange}
         wikiAttachMode={wikiAttachMode}
@@ -226,6 +229,7 @@ export function GoalComposerPill({
       ) : (
         <div className="goal-dock-composer-inline flex h-11 items-center gap-1.5 px-1.5 pl-2.5">
           <GoalAttachMenu
+            projectId={projectId}
             documentId={documentId}
             onDocumentChange={onDocumentChange}
             wikiAttachMode={wikiAttachMode}

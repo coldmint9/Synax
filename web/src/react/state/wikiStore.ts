@@ -861,6 +861,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         goalDockState: 'working',
         goalComposerContent: '',
         goalComposerAnchorJson: null,
+        goalComposerSkillIds: [],
       })
 
       await streamGoalAgentTurn(

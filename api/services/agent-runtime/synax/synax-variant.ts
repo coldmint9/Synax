@@ -9,7 +9,6 @@ export interface SynaxVariant {
   label: string;
   description: string;
   loopHints: string[];
-  defaultSkills: string[];
   delegateProfileId?: string;
 }
 
@@ -23,7 +22,6 @@ function variantFromProfile(
     label: profile.label,
     description: profile.description,
     loopHints: extras.loopHints ?? profile.loopHints ?? [],
-    defaultSkills: [...profile.defaultSkills],
     delegateProfileId: extras.delegateProfileId ?? id,
   };
 }

@@ -1,5 +1,6 @@
 import { apiFetch, apiRequest } from './origin'
 import { createAppError, handleError } from '../errors'
+import type { SkillSummary } from './skills'
 
 const BASE = '/api/agent-runtime'
 
@@ -34,7 +35,6 @@ export interface AgentProfile {
   description: string
   defaultThinkingMode: ThinkingMode
   allowedCapabilities: string[]
-  defaultSkills: string[]
   maxSteps: number
   status: 'active' | 'disabled'
   allowsSubsessions?: boolean
@@ -129,17 +129,10 @@ export interface AgentRuntimeMessage {
   createdAt: string
 }
 
-export interface AgentSkillSummary {
-  id: string
-  label: string
-  description: string
-  source: 'system' | 'project' | 'plugin' | 'user'
-  version: string
-  appliesTo: AgentProfileKind[]
-  requiredCapabilities: string[]
-  permissionHints: string[]
-  contentRef: string
-  status: 'available' | 'unavailable' | 'invalid' | 'disabled'
+export interface SessionPayload {
+  session: AgentSession
+  profile: AgentProfile
+  context: AgentContextBundle | null
 }
 
 export interface AgentContextBundle {
@@ -203,13 +196,6 @@ export interface CreateSessionRequest {
   permissionOverrides?: Partial<Record<'read' | 'write' | 'delete' | 'shell' | 'task', 'allow' | 'ask' | 'deny'>>
 }
 
-export interface SessionPayload {
-  session: AgentSession
-  profile: AgentProfile
-  context: AgentContextBundle | null
-  candidateSkills: AgentSkillSummary[]
-}
-
 export interface SessionListResponse {
   items: AgentSession[]
   totalCount: number
@@ -252,8 +238,8 @@ export interface SessionCapabilities {
     visible: AgentToolSummary[]
   }
   skills: {
-    active: AgentSkillSummary[]
-    candidates: AgentSkillSummary[]
+    active: SkillSummary[]
+    candidates: SkillSummary[]
   }
 }
 
@@ -275,8 +261,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const agentRuntimeApi = {
   listProfiles: () => request<{ items: AgentProfile[] }>('/profiles'),
-  listSkills: (profileId?: string) =>
-    request<{ items: AgentSkillSummary[] }>(`/skills${profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''}`),
   buildContext: (projectId: string, body: { nodeId?: string | null; profileId?: string; include?: string[] }) =>
     request<AgentContextBundle>(`/contexts/${encodeURIComponent(projectId)}`, {
       method: 'POST',

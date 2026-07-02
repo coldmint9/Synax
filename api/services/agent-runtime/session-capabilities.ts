@@ -1,11 +1,11 @@
-import type { AgentProfile, AgentSkill, RegisteredTool } from './contracts.js';
+import type { AgentProfile, RegisteredTool } from './contracts.js';
 import { profileService } from './profile-service.js';
 import { agentSessionRuntime } from './session-runtime.js';
-import { skillRegistry } from './skill-registry.js';
+import { skillAgentBridge, resolveActiveSkillSummaries } from '../skills/index.js';
 import { toolRegistry } from './tool-registry.js';
+import type { SkillSummary } from '../skills/types.js';
 
 export type ToolSummary = Omit<RegisteredTool, 'execute'>;
-type SkillSummary = Omit<AgentSkill, 'content'>;
 
 export interface SessionCapabilities {
   profile: { id: string; label: string; kind: string };
@@ -28,27 +28,6 @@ function filterAvailableTools(tools: ToolSummary[], profile: AgentProfile): Tool
   );
 }
 
-function resolveActiveSkills(skillIds: string[]): SkillSummary[] {
-  return skillIds.map((skillId) => {
-    try {
-      return skillRegistry.getSummary(skillId);
-    } catch {
-      return {
-        id: skillId,
-        label: skillId,
-        description: '',
-        source: 'system',
-        version: '',
-        appliesTo: [],
-        requiredCapabilities: [],
-        permissionHints: [],
-        contentRef: '',
-        status: 'unavailable',
-      };
-    }
-  });
-}
-
 export function resolveSessionCapabilities(sessionId: string): SessionCapabilities {
   const session = agentSessionRuntime.get(sessionId);
   const profile = profileService.get(session.profileId);
@@ -58,8 +37,12 @@ export function resolveSessionCapabilities(sessionId: string): SessionCapabiliti
     profile: { id: profile.id, label: profile.label, kind: profile.kind },
     tools: { available, visible: available },
     skills: {
-      active: resolveActiveSkills(session.skillIds),
-      candidates: skillRegistry.listSummaries({ profileId: profile.id }),
+      active: resolveActiveSkillSummaries(session.skillIds, session.projectId),
+      candidates: skillAgentBridge.listForPrompt({
+        profileId: profile.id,
+        projectId: session.projectId,
+        activeSkillIds: session.skillIds,
+      }),
     },
   };
 }

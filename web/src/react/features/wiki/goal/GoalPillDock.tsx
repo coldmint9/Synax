@@ -202,6 +202,7 @@ export function GoalPillDock({ projectId }: Props) {
 
   const composer = (
     <GoalComposerPill
+      projectId={projectId}
       content={content}
       onContentChange={setContent}
       onSubmit={() => void submitGoal(projectId)}

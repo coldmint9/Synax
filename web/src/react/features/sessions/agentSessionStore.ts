@@ -38,6 +38,7 @@ export type SessionInputBody = {
   message: string
   model?: string | null
   permissionTier?: SynaxPermissionTier
+  skillIds?: string[]
 }
 
 /** Stable fallback — never use inline `?? []` in Zustand selectors (breaks getSnapshot caching). */
@@ -475,6 +476,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       projectId,
       profileId: SYNAX_PROFILE_ID,
       prompt: message,
+      skillIds: body.skillIds?.length ? body.skillIds : undefined,
       permissionTier: body.permissionTier,
       sessionMetadata: createSynaxSessionMetadata('goal', {
         source: 'session-page',

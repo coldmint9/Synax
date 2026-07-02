@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { BookOpen, Check, Plug, Plus, Shield, Sparkles } from 'lucide-react'
 import { Dropdown, Header, Label, Switch } from '@heroui/react'
 import type { WikiDocument } from '../../../../lib/contracts/wiki'
-import { agentRuntimeApi, type AgentSkillSummary } from '../../../../lib/api/agentRuntime'
+import { skillsApi, type SkillSummary } from '../../../../lib/api/skills'
 import { useLocale } from '../../../../hooks/useLocale'
 import {
   GOAL_PERMISSION_TIER_LABELS,
@@ -13,6 +13,7 @@ import {
 } from './goalAttachTypes'
 
 interface Props {
+  projectId: string
   documentId: string | null
   onDocumentChange: (id: string | null) => void
   wikiAttachMode: GoalWikiAttachMode
@@ -164,6 +165,7 @@ function WikiAttachPanel({
 }
 
 export function GoalAttachMenu({
+  projectId,
   documentId,
   onDocumentChange,
   wikiAttachMode,
@@ -177,7 +179,7 @@ export function GoalAttachMenu({
   onOverlayOpenChange,
 }: Props) {
   const { t } = useLocale()
-  const [skills, setSkills] = useState<AgentSkillSummary[]>([])
+  const [skills, setSkills] = useState<SkillSummary[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
   const skillsLoadedRef = useRef(false)
   const skillsLoadingRef = useRef(false)
@@ -186,11 +188,13 @@ export function GoalAttachMenu({
     if (skillsLoadedRef.current || skillsLoadingRef.current) return
     skillsLoadingRef.current = true
     setSkillsLoading(true)
-    void agentRuntimeApi
-      .listSkills(SYNAX_PROFILE_ID)
-      .then(res => {
+    void skillsApi
+      .list({ projectId, profileId: SYNAX_PROFILE_ID })
+      .then((res) => {
         skillsLoadedRef.current = true
-        setSkills(res.items.filter(s => s.status === 'available'))
+        setSkills(res.items.filter((skill) =>
+          skill.status === 'available' && Boolean(skill.installPath),
+        ))
       })
       .catch(() => {
         skillsLoadedRef.current = true
@@ -200,7 +204,7 @@ export function GoalAttachMenu({
         skillsLoadingRef.current = false
         setSkillsLoading(false)
       })
-  }, [])
+  }, [projectId])
 
   const handleOpenChange = useCallback((open: boolean) => {
     onOverlayOpenChange?.(open)
@@ -292,7 +296,12 @@ export function GoalAttachMenu({
                     <Header>{t('goalAttachSkills')}</Header>
                     {skills.map(skill => (
                       <Dropdown.Item key={skill.id} id={skill.id} textValue={skill.label}>
-                        <Label className="truncate">{skill.label}</Label>
+                        {skillIds.includes(skill.id)
+                          ? <Check size={14} className="shrink-0 text-primary" />
+                          : <span className="size-3.5 shrink-0" aria-hidden />}
+                        <Label className={`truncate ${skillIds.includes(skill.id) ? 'font-medium text-primary' : ''}`}>
+                          {skill.label}
+                        </Label>
                       </Dropdown.Item>
                     ))}
                   </Dropdown.Section>

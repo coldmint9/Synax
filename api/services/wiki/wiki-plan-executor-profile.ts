@@ -24,7 +24,6 @@ export const planExecutorProfile: AgentProfile = {
     { gate: 'task', pattern: '*', action: 'deny', reason: 'Executor does not delegate.' },
     { gate: 'shell', pattern: '*', action: 'deny', reason: 'Executor uses file tools only.' },
   ],
-  defaultSkills: [],
   maxSteps: 40,
   status: 'disabled',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
