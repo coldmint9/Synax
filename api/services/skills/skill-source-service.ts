@@ -4,119 +4,48 @@ import type { SkillSourceConfig, SkillSourceRecord, SkillSourceType } from './ty
 const CORE_SOURCES: Array<Omit<SkillSourceRecord, 'lastSyncAt' | 'lastSyncError' | 'createdAt' | 'updatedAt'>> = [
   {
     id: 'synax-builtin',
-    label: 'Synax Built-in',
+    label: 'Local Skills',
     type: 'builtin',
     enabled: true,
     priority: 100,
     readOnly: true,
     config: {},
   },
-  {
-    id: 'project',
-    label: 'Project Skills',
-    type: 'project',
-    enabled: true,
-    priority: 90,
-    readOnly: false,
-    config: {},
-  },
-  {
-    id: 'local',
-    label: 'Local Skills',
-    type: 'local',
-    enabled: true,
-    priority: 80,
-    readOnly: false,
-    config: { scanPaths: ['~/.synax/skills/'] },
-  },
-  {
-    id: 'cursor',
-    label: 'Cursor Skills',
-    type: 'local',
-    enabled: true,
-    priority: 50,
-    readOnly: true,
-    config: { scanPaths: ['~/.cursor/skills/'] },
-  },
 ];
 
-/** Pre-installed remote catalogs popular in the Chinese agent-skills community. */
-export const PRESET_REMOTE_SOURCES: Array<Omit<SkillSourceRecord, 'lastSyncAt' | 'lastSyncError' | 'createdAt' | 'updatedAt'>> = [
-  {
-    id: 'cn-agentskills-portal',
-    label: 'Agent Skills 中文规范',
-    type: 'well-known',
-    enabled: true,
-    priority: 62,
-    readOnly: true,
-    config: {
-      url: 'https://agentskills.ac.cn/.well-known/agent-skills/index.json',
-    },
+/** Default remote catalog seeded on first run. */
+export const DEFAULT_REMOTE_SOURCE: Omit<SkillSourceRecord, 'lastSyncAt' | 'lastSyncError' | 'createdAt' | 'updatedAt'> = {
+  id: 'default-remote',
+  label: 'Agent Skills Index',
+  type: 'well-known',
+  enabled: true,
+  priority: 60,
+  readOnly: true,
+  config: {
+    url: 'https://agentskills.ac.cn/.well-known/agent-skills/index.json',
   },
-  {
-    id: 'cn-everything-skills',
-    label: '万物 Skills（中文全集）',
-    type: 'git-index',
-    enabled: true,
-    priority: 61,
-    readOnly: true,
-    config: {
-      repo: 'findscripter/everything-skills',
-      ref: 'main',
-      indexPath: 'INDEX/search.json',
-      contentBase: 'repo-root',
-    },
-  },
-  {
-    id: 'cn-skills-zh',
-    label: 'Anthropic Skills 中文版',
-    type: 'git-index',
-    enabled: true,
-    priority: 60,
-    readOnly: true,
-    config: {
-      repo: 'MarcelLeon/skills-zh',
-      ref: 'main',
-      scanRoot: 'skills',
-    },
-  },
-  {
-    id: 'cn-ecc-zh',
-    label: 'Everything Claude Code 中文版',
-    type: 'git-index',
-    enabled: true,
-    priority: 59,
-    readOnly: true,
-    config: {
-      repo: 'aaione/everything-claude-code-zh',
-      ref: 'main',
-      scanRoot: 'skills',
-    },
-  },
-  {
-    id: 'cn-kunhai-skills',
-    label: 'Kunhai Skills 中文合集',
-    type: 'git-index',
-    enabled: true,
-    priority: 58,
-    readOnly: true,
-    config: {
-      repo: 'kunhai-88/skills',
-      ref: 'main',
-      scanRoot: '.',
-    },
-  },
+};
+
+/** @deprecated Use DEFAULT_REMOTE_SOURCE. Kept for tests that import the array shape. */
+export const PRESET_REMOTE_SOURCES = [DEFAULT_REMOTE_SOURCE];
+
+const REMOVED_SOURCE_IDS = [
+  'local',
+  'project',
+  'cursor',
+  'cn-agentskills-portal',
+  'cn-everything-skills',
+  'cn-skills-zh',
+  'cn-ecc-zh',
+  'cn-kunhai-skills',
 ];
 
 export const PROTECTED_SOURCE_IDS = new Set([
   'synax-builtin',
-  'local',
-  'project',
-  'cursor',
-  ...PRESET_REMOTE_SOURCES.map((source) => source.id),
+  'default-remote',
 ]);
 
-const DEFAULT_SOURCES = [...CORE_SOURCES, ...PRESET_REMOTE_SOURCES];
+const DEFAULT_SOURCES = [...CORE_SOURCES, DEFAULT_REMOTE_SOURCE];
 
 interface SkillSourceRow {
   id: string;
@@ -189,13 +118,19 @@ export class SkillSourceService {
         insertSourceRow(insert, source, now);
       }
     } else {
-      for (const source of PRESET_REMOTE_SOURCES) {
-        const exists = db.prepare('SELECT 1 FROM skill_sources WHERE id = ?').get(source.id);
-        if (!exists) {
-          insertSourceRow(insert, source, now);
-        }
+      const exists = db.prepare('SELECT 1 FROM skill_sources WHERE id = ?').get(DEFAULT_REMOTE_SOURCE.id);
+      if (!exists) {
+        insertSourceRow(insert, DEFAULT_REMOTE_SOURCE, now);
       }
     }
+
+    const deleteCatalog = db.prepare('DELETE FROM skill_catalog_entries WHERE source_id = ?');
+    const deleteSource = db.prepare('DELETE FROM skill_sources WHERE id = ?');
+    for (const sourceId of REMOVED_SOURCE_IDS) {
+      deleteCatalog.run(sourceId);
+      deleteSource.run(sourceId);
+    }
+
     this.seeded = true;
   }
 
