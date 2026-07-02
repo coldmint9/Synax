@@ -159,8 +159,19 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
             if (meta?.snapshotId) snapshotIdRef.current = meta.snapshotId as string
             if (status) {
               phaseRef.current = status
-              setState(s => ({ ...s, phase: status, snapshotId: (meta?.snapshotId as string) ?? s.snapshotId }))
-              resetTimer(status)
+              if (status === 'outline_ready') {
+                clearTimer()
+                setState(s => ({
+                  ...s,
+                  active: false,
+                  stale: false,
+                  phase: status,
+                  snapshotId: (meta?.snapshotId as string) ?? s.snapshotId,
+                }))
+              } else {
+                setState(s => ({ ...s, phase: status, snapshotId: (meta?.snapshotId as string) ?? s.snapshotId }))
+                resetTimer(status)
+              }
             } else {
               resetTimer()
             }
@@ -250,7 +261,17 @@ export function useWikiGenerationEvents(opts: UseWikiGenerationEventsOptions) {
                 progress: null,
                 snapshotId: data.tree.snapshot?.id ?? s.snapshotId,
               }))
-            } else if (snapStatus === 'refreshing' || snapStatus === 'writing' || snapStatus === 'outline_ready') {
+            } else if (snapStatus === 'outline_ready') {
+              clearTimer()
+              phaseRef.current = snapStatus
+              setState(s => ({
+                ...s,
+                active: false,
+                stale: false,
+                phase: snapStatus,
+                snapshotId: data.tree.snapshot?.id ?? s.snapshotId,
+              }))
+            } else if (snapStatus === 'refreshing' || snapStatus === 'writing') {
               phaseRef.current = snapStatus
               setState(s => ({ ...s, phase: snapStatus, snapshotId: data.tree.snapshot?.id ?? s.snapshotId }))
               resetTimer(snapStatus)
