@@ -50,7 +50,11 @@ export interface SkillSourceRecord {
 export interface SkillListResponse {
   items: SkillSummary[]
   total: number
+  hasMore: boolean
+  totalExact?: boolean
 }
+
+export const MARKET_PAGE_SIZE = 24
 
 export const skillsApi = {
   list: (query: {
@@ -59,6 +63,8 @@ export const skillsApi = {
     q?: string
     sourceId?: string
     installedOnly?: boolean
+    limit?: number
+    offset?: number
   } = {}) => {
     const qs = new URLSearchParams()
     Object.entries(query).forEach(([key, value]) => {
@@ -72,7 +78,7 @@ export const skillsApi = {
     const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
     return apiRequest<SkillSummary & { contentPreview?: string }>(`${SKILLS_BASE}/${encodeURIComponent(skillId)}${qs}`)
   },
-  install: (input: { sourceId: string; name: string; version?: string }) =>
+  install: (input: { sourceId: string; name: string; version?: string; remoteUrl?: string }) =>
     apiRequest<{ skill: SkillSummary }>(`${SKILLS_BASE}/install`, {
       method: 'POST',
       body: JSON.stringify(input),

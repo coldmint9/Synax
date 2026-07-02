@@ -15,6 +15,11 @@ export interface SkillSourceConfig {
   /** Scan a GitHub repo directory for SKILL.md files instead of fetching an index file. */
   scanRoot?: string;
   scanPaths?: string[];
+  /** Default search query when browsing skills.sh without a user query (legacy fallback only). */
+  defaultQuery?: string;
+  /** Leaderboard view for skills.sh v1 list API. */
+  view?: 'all-time' | 'trending' | 'hot';
+  baseUrl?: string;
   authTokenRef?: string;
 }
 
@@ -106,4 +111,11 @@ export interface SkillListQuery {
   installedOnly?: boolean;
   limit?: number;
   offset?: number;
+}
+
+export interface SkillListResult {
+  items: SkillSummary[];
+  total: number;
+  hasMore: boolean;
+  totalExact?: boolean;
 }

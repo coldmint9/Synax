@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Button, useOverlayState } from '@heroui/react'
+import { Button, Pagination, useOverlayState } from '@heroui/react'
 import { RefreshCw, Search, Sparkles } from 'lucide-react'
-import { skillsApi, skillSourcesApi, type SkillSummary } from '../../../lib/api/skills'
+import { skillsApi, skillSourcesApi, MARKET_PAGE_SIZE, type SkillSummary } from '../../../lib/api/skills'
 import { useLocale } from '../../../hooks/useLocale'
 import { SkillAddSourceModal, EMPTY_SOURCE_FORM } from './SkillAddSourceModal'
 import { SkillCard } from './SkillCard'
@@ -13,6 +13,10 @@ export function SkillMarketplacePanel() {
   const { projectId = '' } = useParams()
   const addSourceModal = useOverlayState()
   const [skills, setSkills] = useState<SkillSummary[]>([])
+  const [totalSkills, setTotalSkills] = useState(0)
+  const [totalExact, setTotalExact] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
+  const [page, setPage] = useState(1)
   const [sources, setSources] = useState<Awaited<ReturnType<typeof skillSourcesApi.list>>['items']>([])
   const [selectedSource, setSelectedSource] = useState<SourceFilter>('all')
   const [query, setQuery] = useState('')
@@ -28,28 +32,41 @@ export function SkillMarketplacePanel() {
     return () => window.clearTimeout(timer)
   }, [query])
 
+  useEffect(() => {
+    setPage(1)
+  }, [debouncedQuery, selectedSource])
+
   const reload = useCallback(async () => {
     setLoading(true)
     try {
+      const offset = (page - 1) * MARKET_PAGE_SIZE
       const [skillsRes, sourcesRes] = await Promise.all([
         skillsApi.list({
           projectId,
           q: debouncedQuery.trim() || undefined,
           sourceId: selectedSource !== 'all' && selectedSource !== 'installed' ? selectedSource : undefined,
           installedOnly: selectedSource === 'installed',
+          limit: MARKET_PAGE_SIZE,
+          offset,
         }),
         skillSourcesApi.list(),
       ])
       setSkills(skillsRes.items)
+      setTotalSkills(skillsRes.total)
+      setTotalExact(Boolean(skillsRes.totalExact))
+      setHasMore(skillsRes.hasMore)
       setSources(sourcesRes.items)
       setError(null)
     } catch (err) {
       setSkills([])
+      setTotalSkills(0)
+      setTotalExact(false)
+      setHasMore(false)
       setError(err instanceof Error ? err.message : 'Failed to load skills')
     } finally {
       setLoading(false)
     }
-  }, [projectId, debouncedQuery, selectedSource])
+  }, [projectId, debouncedQuery, selectedSource, page])
 
   useEffect(() => {
     void reload()
@@ -58,7 +75,11 @@ export function SkillMarketplacePanel() {
   async function handleInstall(skill: SkillSummary) {
     setBusy(skill.id)
     try {
-      await skillsApi.install({ sourceId: skill.sourceId, name: skill.name })
+      await skillsApi.install({
+        sourceId: skill.sourceId,
+        name: skill.name,
+        remoteUrl: skill.remoteUrl,
+      })
       await reload()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Install failed')
@@ -145,6 +166,14 @@ export function SkillMarketplacePanel() {
     available: t('skillMarketAvailable'),
   }
 
+  const totalLabel = totalExact
+    ? String(totalSkills)
+    : hasMore
+      ? `${totalSkills}+`
+      : String(totalSkills)
+  const totalPages = Math.max(1, Math.ceil(totalSkills / MARKET_PAGE_SIZE))
+  const showPagination = !loading && skills.length > 0 && (page > 1 || hasMore || totalSkills > MARKET_PAGE_SIZE)
+
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden">
       <SkillMarketSidebar
@@ -210,7 +239,13 @@ export function SkillMarketplacePanel() {
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <p className="text-[11px] text-muted-foreground">
-              {loading ? t('skillMarketLoading') : t('skillMarketSkillCount', { count: skills.length })}
+              {loading
+                ? t('skillMarketLoading')
+                : t('skillMarketSkillCountPaged', {
+                    from: skills.length === 0 ? 0 : (page - 1) * MARKET_PAGE_SIZE + 1,
+                    to: (page - 1) * MARKET_PAGE_SIZE + skills.length,
+                    total: totalLabel,
+                  })}
             </p>
           </div>
 
@@ -248,6 +283,38 @@ export function SkillMarketplacePanel() {
               ))}
             </ul>
           )}
+
+          {showPagination ? (
+            <div className="mt-4 flex justify-center border-t border-border/20 pt-4">
+              <Pagination>
+                <Pagination.Content>
+                  <Pagination.Item>
+                    <Pagination.Previous
+                      isDisabled={page <= 1 || busy !== null}
+                      onPress={() => setPage((current) => Math.max(1, current - 1))}
+                    >
+                      <Pagination.PreviousIcon />
+                      <span>{t('skillMarketPrevPage')}</span>
+                    </Pagination.Previous>
+                  </Pagination.Item>
+                  <Pagination.Item>
+                    <span className="px-2 text-[11px] text-muted-foreground">
+                      {t('skillMarketPageIndicator', { page, total: hasMore ? `${totalPages}+` : String(totalPages) })}
+                    </span>
+                  </Pagination.Item>
+                  <Pagination.Item>
+                    <Pagination.Next
+                      isDisabled={!hasMore || busy !== null}
+                      onPress={() => setPage((current) => current + 1)}
+                    >
+                      <span>{t('skillMarketNextPage')}</span>
+                      <Pagination.NextIcon />
+                    </Pagination.Next>
+                  </Pagination.Item>
+                </Pagination.Content>
+              </Pagination>
+            </div>
+          ) : null}
         </div>
       </section>
 
