@@ -246,6 +246,9 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     if (snapshot?.status === 'writing' && !gen.active) {
       gen.start(snapshot.id, 'writing')
     }
+    if (snapshot?.status === 'outline_ready' && gen.active) {
+      gen.reset()
+    }
     if (
       (snapshot?.status === 'partial' || snapshot?.status === 'failed')
       && gen.active
@@ -419,10 +422,15 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
       return
     }
     setApprovingOutline(true)
+    gen.start(snapshot.id, 'writing')
+    patchSnapshotStatus('writing')
     try {
       await wikiApi.approveSnapshot(snapshot.id, { workDir, locale })
+      await loadProjectSnapshot(projectId)
     } catch (err) {
+      gen.reset()
       handleError(err)
+      await loadProjectSnapshot(projectId)
     } finally {
       setApprovingOutline(false)
     }

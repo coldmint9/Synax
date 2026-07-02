@@ -99,4 +99,24 @@ describe('useWikiGenerationEvents', () => {
     const { wikiGenTimeoutForPhase } = await import('../../lib/constants/wikiGeneration')
     expect(wikiGenTimeoutForPhase('writing')).toBeGreaterThan(wikiGenTimeoutForPhase('refreshing'))
   })
+
+  it('deactivates tracking when outline_ready is reached', () => {
+    const { result } = renderHook(() =>
+      useWikiGenerationEvents({ projectId: 'p1', timeoutMs: 5_000 }),
+    )
+
+    act(() => {
+      result.current.start('snap-1', 'refreshing')
+    })
+
+    act(() => {
+      emit(TaskNotificationEventType.TaskProgress, {
+        taskKind: 'wiki_generate',
+        meta: { snapshotId: 'snap-1', snapshotStatus: 'outline_ready' },
+      })
+    })
+
+    expect(result.current.active).toBe(false)
+    expect(result.current.phase).toBe('outline_ready')
+  })
 })
