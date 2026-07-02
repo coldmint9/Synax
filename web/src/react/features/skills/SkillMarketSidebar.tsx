@@ -7,14 +7,7 @@ export type SourceFilter = 'all' | 'installed' | string
 
 const PROTECTED_SOURCE_IDS = new Set([
   'synax-builtin',
-  'local',
-  'project',
-  'cursor',
-  'cn-agentskills-portal',
-  'cn-everything-skills',
-  'cn-skills-zh',
-  'cn-ecc-zh',
-  'cn-kunhai-skills',
+  'default-remote',
 ])
 
 interface Props {

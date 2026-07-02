@@ -4,7 +4,7 @@ import { Button, useOverlayState } from '@heroui/react'
 import { RefreshCw, Search, Sparkles } from 'lucide-react'
 import { skillsApi, skillSourcesApi, type SkillSummary } from '../../../lib/api/skills'
 import { useLocale } from '../../../hooks/useLocale'
-import { SkillAddSourceModal } from './SkillAddSourceModal'
+import { SkillAddSourceModal, EMPTY_SOURCE_FORM } from './SkillAddSourceModal'
 import { SkillCard } from './SkillCard'
 import { SkillMarketSidebar, type SourceFilter } from './SkillMarketSidebar'
 
@@ -20,13 +20,8 @@ export function SkillMarketplacePanel() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [newSource, setNewSource] = useState({
-    id: '',
-    label: '',
-    type: 'git-index' as 'git-index' | 'well-known',
-    repo: '',
-    url: '',
-  })
+  const [newSource, setNewSource] = useState(EMPTY_SOURCE_FORM)
+  const [createSourceError, setCreateSourceError] = useState<string | null>(null)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300)
@@ -103,6 +98,7 @@ export function SkillMarketplacePanel() {
 
   async function handleCreateSource() {
     setBusy('create-source')
+    setCreateSourceError(null)
     try {
       await skillSourcesApi.create({
         id: newSource.id.trim(),
@@ -113,13 +109,20 @@ export function SkillMarketplacePanel() {
           : { url: newSource.url.trim() },
       })
       addSourceModal.close()
-      setNewSource({ id: '', label: '', type: 'git-index', repo: '', url: '' })
+      setNewSource(EMPTY_SOURCE_FORM)
+      setCreateSourceError(null)
       await reload()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add source')
+      setCreateSourceError(err instanceof Error ? err.message : 'Failed to add source')
     } finally {
       setBusy(null)
     }
+  }
+
+  function handleOpenAddSource() {
+    setNewSource(EMPTY_SOURCE_FORM)
+    setCreateSourceError(null)
+    addSourceModal.open()
   }
 
   async function handleRemoveSource(sourceId: string) {
@@ -160,7 +163,7 @@ export function SkillMarketplacePanel() {
           removeSource: t('skillMarketRemoveSource'),
         }}
         onSelectSource={setSelectedSource}
-        onAddSource={addSourceModal.open}
+        onAddSource={handleOpenAddSource}
         onSyncSource={(sourceId) => void handleSyncSource(sourceId)}
         onRemoveSource={(sourceId) => void handleRemoveSource(sourceId)}
       />
@@ -252,15 +255,27 @@ export function SkillMarketplacePanel() {
         state={addSourceModal}
         form={newSource}
         busy={busy === 'create-source'}
+        error={createSourceError}
         labels={{
           title: t('skillSourceAddTitle'),
+          type: t('skillSourceType'),
+          typeGit: t('skillSourceTypeGit'),
+          typeWellKnown: t('skillSourceTypeWellKnown'),
           id: t('skillSourceId'),
+          idHint: t('skillSourceIdHint'),
           label: t('skillSourceLabel'),
-          wellKnown: t('skillSourceTypeWellKnown'),
           repo: t('skillSourceRepo'),
+          repoHint: t('skillSourceRepoHint'),
           url: t('skillSourceUrl'),
+          urlHint: t('skillSourceUrlHint'),
           cancel: t('commonCancel'),
           add: t('skillSourceAdd'),
+          idRequired: t('skillSourceIdRequired'),
+          idInvalid: t('skillSourceIdInvalid'),
+          labelRequired: t('skillSourceLabelRequired'),
+          repoRequired: t('skillSourceRepoRequired'),
+          urlRequired: t('skillSourceUrlRequired'),
+          urlInvalid: t('skillSourceUrlInvalid'),
         }}
         onChange={(patch) => setNewSource((prev) => ({ ...prev, ...patch }))}
         onSubmit={() => void handleCreateSource()}
