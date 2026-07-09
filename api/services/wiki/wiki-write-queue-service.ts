@@ -608,6 +608,10 @@ class WikiWriteQueueService {
       if (now - last < RATE_LIMIT_NOTIFY_INTERVAL_MS) continue;
 
       this.lastSessionLimitNotifyAt.set(batchRow.snapshotId, now);
+      logger.warn(
+        { snapshotId: batchRow.snapshotId, batchId: batchRow.id },
+        '[wiki-write-queue] waiting for agent session capacity',
+      );
       const locale = (batchRow.locale ?? 'zh') as 'zh' | 'en';
       notify({
         type: TaskNotificationEventType.TaskProgress,

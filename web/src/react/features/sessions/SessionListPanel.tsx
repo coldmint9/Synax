@@ -88,7 +88,7 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
               clearSessionLastVisit(projectId)
             }
             if (searchParams.get('session') === id) {
-              navigate(sessionsPath(projectId))
+              navigate(listView === 'workflow' ? workflowSessionsPath(projectId) : sessionsPath(projectId))
             }
             setDeleteId(null)
             void list.refresh()

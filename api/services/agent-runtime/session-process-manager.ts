@@ -84,6 +84,8 @@ function resolveAgentSessionRunnerPath(): string {
 class SessionProcessManager {
   private readonly children = new Map<string, SessionChildState>();
   private readonly activeMainStreams = new Set<string>();
+  /** Sessions whose children we are intentionally tearing down (idle release / interrupt). */
+  private readonly releasingChildren = new Set<string>();
 
   isSessionStreaming(sessionId: string): boolean {
     return this.activeMainStreams.has(sessionId);
@@ -172,6 +174,11 @@ class SessionProcessManager {
       const state = this.children.get(sessionId);
       state?.streams.delete(streamId);
       this.activeMainStreams.delete(sessionId);
+      // One-shot wiki/agent runs must free the process slot; otherwise idle
+      // children accumulate up to MAX_AGENT_SESSION_PROCESSES and block dispatch.
+      if (state && state.streams.size === 0) {
+        this.releaseChild(sessionId, 'Agent session stream finished.');
+      }
     }
   }
 
@@ -180,19 +187,38 @@ class SessionProcessManager {
     reason = 'Agent runtime session deleted by user.',
   ): void {
     for (const sessionId of sessionIds) {
-      const state = this.children.get(sessionId);
-      if (!state) continue;
-      state.child.send?.({ type: 'session:interrupt', reason });
+      this.releaseChild(sessionId, reason, { pushStreamError: true });
+    }
+  }
+
+  private releaseChild(
+    sessionId: string,
+    reason: string,
+    options?: { pushStreamError?: boolean },
+  ): void {
+    const state = this.children.get(sessionId);
+    if (!state) return;
+
+    this.releasingChildren.add(sessionId);
+
+    if (options?.pushStreamError) {
       for (const stream of state.streams.values()) {
         stream.queue.push({ kind: 'error', error: reason });
         stream.queue.close();
       }
       state.streams.clear();
-      if (!state.child.killed) {
-        state.child.kill('SIGTERM');
-      }
-      this.children.delete(sessionId);
-      this.activeMainStreams.delete(sessionId);
+    }
+
+    if (state.child.connected) {
+      state.child.send?.({ type: 'session:interrupt', reason });
+    }
+
+    // Free the slot immediately so wiki write-queue can dispatch the next doc.
+    this.children.delete(sessionId);
+    this.activeMainStreams.delete(sessionId);
+
+    if (!state.child.killed) {
+      state.child.kill('SIGTERM');
     }
   }
 
@@ -276,8 +302,11 @@ class SessionProcessManager {
     });
 
     child.on('exit', (code, signal) => {
-      if (code !== 0) {
+      const intentional = this.releasingChildren.delete(sessionId);
+      if (!intentional && code !== 0 && code !== null) {
         logger.error({ sessionId, code, signal }, '[agent-session] child exited abnormally');
+      } else if (!intentional && signal) {
+        logger.warn({ sessionId, code, signal }, '[agent-session] child exited by signal');
       }
       const current = this.children.get(sessionId);
       if (current?.child === child) {

@@ -140,7 +140,60 @@ function configureSqlite(sqlite: NativeDatabase.Database): void {
   `);
 }
 
+function ensureMigrationsTable(sqlite: NativeDatabase.Database): void {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS _schema_migrations (
+      file TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+  `);
+}
+
+function isMigrationApplied(sqlite: NativeDatabase.Database, file: string): boolean {
+  const row = sqlite
+    .prepare('SELECT file FROM _schema_migrations WHERE file = ?')
+    .get(file) as { file: string } | undefined;
+  return row != null;
+}
+
+function markMigrationApplied(sqlite: NativeDatabase.Database, file: string): void {
+  sqlite
+    .prepare('INSERT OR IGNORE INTO _schema_migrations (file, applied_at) VALUES (?, ?)')
+    .run(file, new Date().toISOString());
+}
+
+/** Pre-ledger databases: mark all migration files applied without re-executing DDL. */
+function bootstrapMigrationLedger(sqlite: NativeDatabase.Database, files: string[]): void {
+  const row = sqlite.prepare('SELECT COUNT(*) as c FROM _schema_migrations').get() as { c: number };
+  if (row.c > 0) return;
+
+  const legacy = sqlite
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('wiki_snapshots', '_meta')")
+    .all() as Array<{ name: string }>;
+  if (legacy.length === 0) return;
+
+  const now = new Date().toISOString();
+  const insert = sqlite.prepare(
+    'INSERT OR IGNORE INTO _schema_migrations (file, applied_at) VALUES (?, ?)',
+  );
+  for (const file of files) {
+    insert.run(file, now);
+  }
+  pinoLogger.info({ count: files.length }, 'context db: bootstrapped migration ledger for existing database');
+}
+
+function shouldRunMigrationsInThisProcess(): boolean {
+  return process.env.SYNAX_AGENT_SESSION_CHILD !== '1'
+    && process.env.SYNAX_WIKI_JOB_CHILD !== '1';
+}
+
 function runMigrations(sqlite: NativeDatabase.Database): void {
+  ensureMigrationsTable(sqlite);
+
+  if (!shouldRunMigrationsInThisProcess()) {
+    return;
+  }
+
   const dir = resolveMigrationsDir();
   if (!fs.existsSync(dir)) {
     pinoLogger.warn({ dir }, 'context db: migrations directory missing');
@@ -150,14 +203,23 @@ function runMigrations(sqlite: NativeDatabase.Database): void {
     .readdirSync(dir)
     .filter((f) => f.endsWith('.sql'))
     .sort();
+
+  bootstrapMigrationLedger(sqlite, files);
+
   for (const f of files) {
+    if (isMigrationApplied(sqlite, f)) {
+      pinoLogger.info({ file: f }, 'context db: migration skipped (already applied)');
+      continue;
+    }
     const sql = fs.readFileSync(path.join(dir, f), 'utf8');
     if (!hasExecutableSql(sql)) {
+      markMigrationApplied(sqlite, f);
       pinoLogger.info({ file: f }, 'context db: migration skipped (no-op)');
       continue;
     }
     try {
       sqlite.exec(sql);
+      markMigrationApplied(sqlite, f);
       pinoLogger.info({ file: f }, 'context db: migration applied');
     } catch (err) {
       pinoLogger.error({ file: f, err }, 'context db: migration failed');

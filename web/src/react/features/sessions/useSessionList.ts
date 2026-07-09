@@ -8,7 +8,7 @@ import {
   isWorkflowSession,
   type SessionListView,
 } from './sessionBuckets'
-import { sessionPath, isNewSessionPath, newSessionPath } from './sessionRoutes'
+import { sessionPath, workflowSessionPath, isNewSessionPath, newSessionPath } from './sessionRoutes'
 
 // ---- Types ----
 
@@ -168,8 +168,12 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
   const select = useCallback((id: string) => {
     if (!routeProjectId) return
     useAgentSessionStore.getState().markSessionRead(id)
-    navigate(sessionPath(routeProjectId, id))
-  }, [navigate, routeProjectId])
+    navigate(
+      listView === 'workflow'
+        ? workflowSessionPath(routeProjectId, id)
+        : sessionPath(routeProjectId, id),
+    )
+  }, [listView, navigate, routeProjectId])
 
   const openNewDraft = useCallback(() => {
     if (!routeProjectId || listView !== 'sessions') return
