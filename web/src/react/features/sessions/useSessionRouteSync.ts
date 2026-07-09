@@ -60,6 +60,15 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
   ])
 
   useEffect(() => {
+    if (listView === 'workflow') {
+      if (sessionIdFromUrl) {
+        openPanel(sessionIdFromUrl)
+        return
+      }
+      closePanel()
+      return
+    }
+
     if (listView !== 'sessions') {
       closePanel()
       return

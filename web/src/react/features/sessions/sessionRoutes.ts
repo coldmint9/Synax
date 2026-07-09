@@ -14,6 +14,10 @@ export function workflowSessionsPath(projectId: string): string {
   return `/projects/${projectId}/sessions/workflows`
 }
 
+export function workflowSessionPath(projectId: string, sessionId: string): string {
+  return `${workflowSessionsPath(projectId)}?session=${encodeURIComponent(sessionId)}`
+}
+
 export function skillMarketplacePath(projectId: string): string {
   return `/projects/${projectId}/sessions/skills`
 }

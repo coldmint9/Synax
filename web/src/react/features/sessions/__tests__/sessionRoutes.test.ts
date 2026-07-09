@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   sessionPath,
   sessionsPath,
+  workflowSessionPath,
+  workflowSessionsPath,
   isBareSessionsPath,
   isNewSessionPath,
   newSessionPath,
@@ -12,6 +14,8 @@ describe('sessionRoutes', () => {
     expect(sessionsPath('p1')).toBe('/projects/p1/sessions')
     expect(newSessionPath('p1')).toBe('/projects/p1/sessions/new')
     expect(sessionPath('p1', 'ars_1')).toBe('/projects/p1/sessions?session=ars_1')
+    expect(workflowSessionsPath('p1')).toBe('/projects/p1/sessions/workflows')
+    expect(workflowSessionPath('p1', 'ars_wf')).toBe('/projects/p1/sessions/workflows?session=ars_wf')
   })
 
   it('detects new session draft path', () => {
