@@ -82,10 +82,11 @@ export function GoalModelPicker({
   onOverlayOpenChange,
 }: Props) {
   const { t } = useLocale()
-  const acpDiscovery = useAcpDiscovery()
   const state = useOverlayState({
     onOpenChange: onOverlayOpenChange,
   })
+  // Only probe ACP when the picker opens — keep session select off the critical path.
+  const acpDiscovery = useAcpDiscovery({ enabled: state.isOpen })
 
   const { apiModels, acpEndpoints } = useMemo(
     () => buildGoalModelOptions(globalConfig, providers, acpDiscovery),
@@ -97,15 +98,15 @@ export function GoalModelPicker({
     [apiModels, acpEndpoints, providerId, modelId],
   )
 
-  const isEmpty = apiModels.length === 0 && acpEndpoints.length === 0
   const currentKey = selected ? selectionKey(selected) : null
+  const triggerLabel = selected?.label ?? modelId ?? t('goalModelSelect')
 
   function handlePick(option: GoalModelSelection) {
     onSelect(option)
     state.close()
   }
 
-  const triggerDisabled = Boolean(disabled || isEmpty)
+  const triggerDisabled = Boolean(disabled)
 
   return (
     <Popover
@@ -120,7 +121,7 @@ export function GoalModelPicker({
         aria-disabled={triggerDisabled}
         className={`button button--sm button--tertiary goal-dock-composer-chip inline-flex h-7 max-w-[9.5rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${triggerDisabled ? ' pointer-events-none opacity-50' : ''}`}
       >
-        <span className="truncate">{selected?.label ?? t('goalModelSelect')}</span>
+        <span className="truncate">{triggerLabel}</span>
         <span className="ml-0.5 text-[8px] opacity-60">▾</span>
       </Popover.Trigger>
       <Popover.Content placement="top end" offset={8} className="z-50 w-[22rem] p-0 overflow-hidden">

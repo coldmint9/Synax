@@ -16,7 +16,7 @@ import {
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
 import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { AppError } from '../../../lib/errors'
-import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, type SynaxPermissionTier } from './synaxSessionTypes'
+import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, readSynaxPermissionTier, type SynaxPermissionTier } from './synaxSessionTypes'
 import { useNotificationStore } from '../../state/notificationStore'
 import { useShellStore } from '../../state/shellStore'
 import { patchAgentSession, canEnqueueSessionInput } from './sessionComposerState'
@@ -36,9 +36,13 @@ const READ_MARKERS_KEY = 'synax-session-read-markers'
 
 export type SessionInputBody = {
   message: string
+  /** Enriched create/turn prompt; defaults to `message` when omitted. */
+  prompt?: string
   model?: string | null
   permissionTier?: SynaxPermissionTier
   skillIds?: string[]
+  wikiAttachMode?: 'auto' | 'manual'
+  documentId?: string | null
 }
 
 /** Stable fallback — never use inline `?? []` in Zustand selectors (breaks getSnapshot caching). */
@@ -472,15 +476,21 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     if (!message) {
       throw new AppError('Session message is required.', { level: 'business', code: 'VALIDATION' })
     }
+    const prompt = body.prompt?.trim() || message
+    const wikiAttachMode = body.wikiAttachMode
+    const documentId = body.documentId ?? null
     const payload = await agentRuntimeApi.createSession({
       projectId,
       profileId: SYNAX_PROFILE_ID,
-      prompt: message,
+      prompt,
       skillIds: body.skillIds?.length ? body.skillIds : undefined,
       permissionTier: body.permissionTier,
       sessionMetadata: createSynaxSessionMetadata('goal', {
         source: 'session-page',
         goalContent: message,
+        ...(wikiAttachMode
+          ? { wikiAttachMode, documentId }
+          : {}),
       }),
     })
     set(s => ({
@@ -738,6 +748,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   },
 
   updateSessionPermissions: async (sessionId, body) => {
+    if (body.permissionTier) {
+      const current = get().sessions.find(s => s.id === sessionId)
+      if (current && readSynaxPermissionTier(current.sessionMetadata) === body.permissionTier) {
+        return
+      }
+    }
     const payload = await agentRuntimeApi.updateSessionPermissions(sessionId, body)
     get().patchSession(sessionId, {
       sessionMetadata: payload.session.sessionMetadata,

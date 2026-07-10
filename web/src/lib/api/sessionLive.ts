@@ -1,3 +1,4 @@
+import { useApiConnectivityStore } from '../apiConnectivity'
 import type { ToolCallRecord } from './agentRuntime'
 
 export type SessionLiveEvent =
@@ -14,6 +15,10 @@ export function sessionLiveStream(
   onEvent: (event: SessionLiveEvent) => void,
   onError?: (err: Event) => void,
 ): () => void {
+  if (useApiConnectivityStore.getState().shouldSkipRequest()) {
+    return () => {}
+  }
+
   const es = new EventSource(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/live`)
 
   for (const eventType of LIVE_EVENT_TYPES) {
@@ -24,8 +29,11 @@ export function sessionLiveStream(
     })
   }
 
-  if (onError) {
-    es.onerror = onError
+  es.onerror = (event) => {
+    // Close to stop browser EventSource auto-reconnect spam while API is down.
+    es.close()
+    useApiConnectivityStore.getState().markFailure()
+    onError?.(event)
   }
 
   return () => es.close()

@@ -43,6 +43,7 @@ function connect() {
   es.onerror = () => {
     es?.close()
     es = null
+    useApiConnectivityStore.getState().markFailure()
     scheduleReconnect()
   }
 }

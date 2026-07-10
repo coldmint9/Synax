@@ -1,5 +1,6 @@
 import {
   createOfflineError,
+  probeApiHealth,
   useApiConnectivityStore,
 } from '../apiConnectivity'
 import { createAppError, handleError } from '../errors'
@@ -9,6 +10,24 @@ import { getApiOrigin } from './originConfig'
 export { getApiOrigin, initApiOrigin } from './originConfig'
 export { isOfflineError }
 
+/** Update reachability from an HTTP response.
+ *  Vite proxy ECONNREFUSED often returns 500/502 — must not markSuccess or polling never stops. */
+export function applyConnectivityFromResponse(resp: Response): void {
+  if (resp.ok || (resp.status >= 400 && resp.status < 500)) {
+    useApiConnectivityStore.getState().markSuccess()
+    return
+  }
+  if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
+    useApiConnectivityStore.getState().markFailure()
+    return
+  }
+  if (resp.status >= 500) {
+    // Ambiguous API 500 vs vite proxy 500 — fail closed, health probe recovers if API is up.
+    useApiConnectivityStore.getState().markFailure()
+    void probeApiHealth()
+  }
+}
+
 export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   if (useApiConnectivityStore.getState().shouldSkipRequest()) {
     return Promise.reject(createOfflineError())
@@ -16,7 +35,7 @@ export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
 
   return fetch(`${getApiOrigin()}${input}`, init).then(
     (resp) => {
-      useApiConnectivityStore.getState().markSuccess()
+      applyConnectivityFromResponse(resp)
       return resp
     },
     (err) => {

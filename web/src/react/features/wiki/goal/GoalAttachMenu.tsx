@@ -24,6 +24,8 @@ interface Props {
   permissionTier: GoalPermissionTier
   onPermissionTierChange: (tier: GoalPermissionTier) => void
   disabled?: boolean
+  /** Disable wiki attach controls only (skills/permissions stay editable). */
+  wikiAttachDisabled?: boolean
   onOverlayOpenChange?: (open: boolean) => void
 }
 
@@ -90,12 +92,14 @@ function WikiAttachPanel({
   wikiAttachMode,
   onWikiAttachModeChange,
   documents,
+  disabled,
 }: {
   documentId: string | null
   onDocumentChange: (id: string | null) => void
   wikiAttachMode: GoalWikiAttachMode
   onWikiAttachModeChange: (mode: GoalWikiAttachMode) => void
   documents: WikiDocument[]
+  disabled?: boolean
 }) {
   const { t } = useLocale()
   const isAuto = wikiAttachMode === 'auto'
@@ -105,7 +109,7 @@ function WikiAttachPanel({
   )
 
   return (
-    <div className="w-56 py-1">
+    <div className={`w-56 py-1${disabled ? ' pointer-events-none opacity-60' : ''}`}>
       <div className="flex items-center justify-between gap-3 px-2.5 py-2">
         <div className="min-w-0">
           <p className="text-[11px] font-medium text-foreground">{t('goalWikiAuto')}</p>
@@ -116,6 +120,7 @@ function WikiAttachPanel({
         <Switch
           size="sm"
           isSelected={isAuto}
+          isDisabled={disabled}
           onChange={(selected) => onWikiAttachModeChange(selected ? 'auto' : 'manual')}
           aria-label={t('goalWikiAuto')}
         >
@@ -129,6 +134,7 @@ function WikiAttachPanel({
           selectedKeys={new Set([documentId ?? '__none__'])}
           selectionMode="single"
           onSelectionChange={(keys) => {
+            if (disabled) return
             const key = [...keys][0]
             if (key) onDocumentChange(String(key) === '__none__' ? null : String(key))
           }}
@@ -176,6 +182,7 @@ export function GoalAttachMenu({
   permissionTier,
   onPermissionTierChange,
   disabled,
+  wikiAttachDisabled,
   onOverlayOpenChange,
 }: Props) {
   const { t } = useLocale()
@@ -250,6 +257,7 @@ export function GoalAttachMenu({
                 wikiAttachMode={wikiAttachMode}
                 onWikiAttachModeChange={onWikiAttachModeChange}
                 documents={documents}
+                disabled={wikiAttachDisabled}
               />
             </Dropdown.Popover>
           </Dropdown.SubmenuTrigger>

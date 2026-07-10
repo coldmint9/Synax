@@ -4,9 +4,10 @@ import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from './agentSessionStore'
 import { useConfig } from '../settings/useConfig'
 import { useWikiStore } from '../../state/wikiStore'
 import { useLocale } from '../../../hooks/useLocale'
+import { goalApi } from '../../../lib/api/goal'
 import { GoalComposerPill } from '../wiki/goal/GoalComposerPill'
 import { buildGoalModelOptions, formatTurnModel, pickDefaultSelection } from '../wiki/goal/goalModelOptions'
-import { useAcpDiscovery } from '../wiki/goal/useAcpDiscovery'
+import { prefetchAcpDiscoveryIdle } from '../wiki/goal/useAcpDiscovery'
 import { sessionPath } from './sessionRoutes'
 import {
   isSessionComposerLocked,
@@ -15,7 +16,12 @@ import {
 } from './sessionComposerState'
 import { InputQueueStrip } from './InputQueueStrip'
 import type { AgentSession } from '../../../lib/api/agentRuntime'
-import { readSynaxPermissionTier, type GoalPermissionTier } from './synaxSessionTypes'
+import {
+  readSynaxDocumentId,
+  readSynaxPermissionTier,
+  readSynaxWikiAttachMode,
+  type SynaxPermissionTier,
+} from './synaxSessionTypes'
 
 interface Props {
   projectId: string
@@ -63,31 +69,50 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
   }, [hasPendingPermissions, isDraft, refreshSessions, session?.status, sessionId])
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId)
-  const acpDiscovery = useAcpDiscovery()
   const providerId = useWikiStore(s => s.goalComposerProviderId)
   const modelId = useWikiStore(s => s.goalComposerModelId)
   const setProviderId = useWikiStore(s => s.setGoalComposerProviderId)
   const setModelId = useWikiStore(s => s.setGoalComposerModelId)
   const permissionTier = useWikiStore(s => s.goalComposerPermissionTier)
-  const setPermissionTier = useWikiStore(s => s.setGoalPermissionTier)
+  const wikiAttachMode = useWikiStore(s => s.goalComposerWikiAttachMode)
+  const setWikiAttachMode = useWikiStore(s => s.setGoalComposerWikiAttachMode)
+  const documentId = useWikiStore(s => s.goalComposerDocumentId)
+  const setDocumentId = useWikiStore(s => s.setGoalComposerDocumentId)
+  const documents = useWikiStore(s => s.documents)
+  const loadProjectSnapshot = useWikiStore(s => s.loadProjectSnapshot)
   const updateSessionPermissions = useAgentSessionStore(s => s.updateSessionPermissions)
 
   useEffect(() => {
-    if (!session) return
-    setPermissionTier(readSynaxPermissionTier(session.sessionMetadata))
-  }, [session?.id, session?.sessionMetadata, setPermissionTier])
+    if (!projectId) return
+    void loadProjectSnapshot(projectId)
+  }, [loadProjectSnapshot, projectId])
 
-  const handlePermissionTierChange = useCallback((tier: GoalPermissionTier) => {
-    setPermissionTier(tier)
+  useEffect(() => {
+    if (!session) return
+    const tier = readSynaxPermissionTier(session.sessionMetadata)
+    // Local-only sync — do not call setGoalPermissionTier (it PATCHes goalSession and loops).
+    if (useWikiStore.getState().goalComposerPermissionTier === tier) return
+    useWikiStore.setState({ goalComposerPermissionTier: tier })
+  }, [session?.id, session?.sessionMetadata])
+
+  const handlePermissionTierChange = useCallback((tier: SynaxPermissionTier) => {
+    if (useWikiStore.getState().goalComposerPermissionTier !== tier) {
+      useWikiStore.setState({ goalComposerPermissionTier: tier })
+    }
     if (sessionId) {
       void updateSessionPermissions(sessionId, { permissionTier: tier })
     }
-  }, [sessionId, setPermissionTier, updateSessionPermissions])
+  }, [sessionId, updateSessionPermissions])
+
+  useEffect(() => {
+    prefetchAcpDiscoveryIdle()
+  }, [])
 
   useEffect(() => {
     if (!globalConfig) return
     if (providerId && modelId) return
-    const { apiModels, acpEndpoints } = buildGoalModelOptions(globalConfig, providers, acpDiscovery)
+    // Default pick from API providers only — do not wait on ACP discovery.
+    const { apiModels, acpEndpoints } = buildGoalModelOptions(globalConfig, providers, [])
     const preferred = effectiveConfig
       ? { providerId: effectiveConfig.providerId, modelId: effectiveConfig.modelId }
       : null
@@ -96,12 +121,19 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
       setProviderId(picked.providerId)
       setModelId(picked.modelId)
     }
-  }, [globalConfig, providers, acpDiscovery, effectiveConfig, providerId, modelId, setProviderId, setModelId])
+  }, [globalConfig, providers, effectiveConfig, providerId, modelId, setProviderId, setModelId])
 
   useEffect(() => {
     if (!sessionId) return
     void loadInputQueue(sessionId)
   }, [loadInputQueue, sessionId])
+
+  const displayWikiAttachMode = isDraft
+    ? wikiAttachMode
+    : readSynaxWikiAttachMode(session?.sessionMetadata)
+  const displayDocumentId = isDraft
+    ? documentId
+    : readSynaxDocumentId(session?.sessionMetadata)
 
   const handleSubmit = useCallback(async () => {
     const message = content.trim()
@@ -111,17 +143,52 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     const model = formatTurnModel(providerId, modelId)
     try {
       if (isDraft) {
-        const created = await submitSessionDraft(projectId, { message, model, permissionTier, skillIds })
+        const { prompt, wikiContext } = await goalApi.buildSessionPrompt(projectId, {
+          mode: 'direct',
+          content: message,
+          wikiAttachMode,
+          documentId: wikiAttachMode === 'manual' ? documentId : null,
+          documentTitle: wikiAttachMode === 'manual' && documentId
+            ? documents.find(d => d.id === documentId)?.title ?? null
+            : null,
+        })
+        const created = await submitSessionDraft(projectId, {
+          message,
+          prompt,
+          model,
+          permissionTier,
+          skillIds,
+          wikiAttachMode: wikiContext.mode,
+          documentId: wikiContext.documentId,
+        })
         navigate(sessionPath(projectId, created.id))
         setSkillIds([])
-        await sendSessionMessage(created.id, { message, model, permissionTier })
+        await sendSessionMessage(created.id, { message: prompt, model, permissionTier })
       } else {
         await submitOrEnqueueSessionInput(session.id, { message, model, permissionTier })
       }
     } finally {
       setSubmitting(false)
     }
-  }, [content, isDraft, isGenerating, modelId, navigate, permissionTier, projectId, providerId, queueWhileGenerating, sendSessionMessage, session, skillIds, submitSessionDraft, submitOrEnqueueSessionInput])
+  }, [
+    content,
+    documentId,
+    documents,
+    isDraft,
+    isGenerating,
+    modelId,
+    navigate,
+    permissionTier,
+    projectId,
+    providerId,
+    queueWhileGenerating,
+    sendSessionMessage,
+    session,
+    skillIds,
+    submitSessionDraft,
+    submitOrEnqueueSessionInput,
+    wikiAttachMode,
+  ])
 
   const handleStop = useCallback(() => {
     if (session) void cancelSessionRun(session.id)
@@ -147,16 +214,17 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
       }}
       providers={providers}
       globalConfig={globalConfig}
-      documentId={null}
-      onDocumentChange={() => {}}
-      wikiAttachMode="auto"
-      onWikiAttachModeChange={() => {}}
-      documents={[]}
+      documentId={displayDocumentId}
+      onDocumentChange={isDraft ? setDocumentId : () => {}}
+      wikiAttachMode={displayWikiAttachMode}
+      onWikiAttachModeChange={isDraft ? setWikiAttachMode : () => {}}
+      documents={documents}
       skillIds={skillIds}
       onSkillIdsChange={setSkillIds}
       permissionTier={permissionTier}
       onPermissionTierChange={handlePermissionTierChange}
       disabled={isGenerating && !queueWhileGenerating}
+      wikiAttachDisabled={!isDraft}
       queueWhileGenerating={queueWhileGenerating}
     />
   )

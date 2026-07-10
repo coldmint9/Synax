@@ -11,6 +11,8 @@ import {
 } from './protocol/acp-connection.js'
 
 const PROBE_TIMEOUT_MS = 12_000
+/** Discovery spawns real CLIs — cache aggressively so session UI does not wait ~9s per mount. */
+const DISCOVERY_CACHE_TTL_MS = 60_000
 
 export interface AcpDiscoveryResult {
   id: string
@@ -39,7 +41,69 @@ const COMMANDS: Record<string, { commandName: string; windowsName: string; compa
   },
 }
 
+type DiscoveryCacheEntry = {
+  expiresAt: number
+  selectedProviderId: string
+  providerKey: string
+  result: AcpDiscoveryResult[]
+}
+
+let discoveryCache: DiscoveryCacheEntry | null = null
+let discoveryInFlight: Promise<AcpDiscoveryResult[]> | null = null
+let discoveryInFlightKey = ''
+
+function providerCacheKey(providers: AcpProvider[], selectedProviderId: string): string {
+  return `${selectedProviderId}|${providers.map((p) => p.id).sort().join(',')}`
+}
+
+/** Test helper — clear discovery memoization. */
+export function resetAcpDiscoveryCacheForTests(): void {
+  discoveryCache = null
+  discoveryInFlight = null
+  discoveryInFlightKey = ''
+}
+
 export async function discoverAcpProviders(
+  providers: AcpProvider[],
+  selectedProviderId: string,
+): Promise<AcpDiscoveryResult[]> {
+  const key = providerCacheKey(providers, selectedProviderId)
+  const now = Date.now()
+  if (
+    discoveryCache
+    && discoveryCache.providerKey === key
+    && discoveryCache.expiresAt > now
+  ) {
+    return discoveryCache.result.map((item) => ({
+      ...item,
+      selected: item.id === selectedProviderId,
+    }))
+  }
+
+  if (discoveryInFlight && discoveryInFlightKey === key) {
+    return discoveryInFlight
+  }
+
+  discoveryInFlightKey = key
+  discoveryInFlight = runDiscovery(providers, selectedProviderId)
+    .then((result) => {
+      discoveryCache = {
+        expiresAt: Date.now() + DISCOVERY_CACHE_TTL_MS,
+        selectedProviderId,
+        providerKey: key,
+        result,
+      }
+      return result
+    })
+    .finally(() => {
+      discoveryInFlight = null
+      discoveryInFlightKey = ''
+    })
+
+  return discoveryInFlight
+}
+
+async function runDiscovery(
   providers: AcpProvider[],
   selectedProviderId: string,
 ): Promise<AcpDiscoveryResult[]> {
@@ -64,7 +128,7 @@ export async function discoverAcpProviders(
           label: provider.label,
           description: provider.description,
           command: resolvedCommand,
-          status: 'missing',
+          status: 'missing' as const,
           installed: false,
           handshakeOk: false,
           selected: provider.id === selectedProviderId,
@@ -81,7 +145,7 @@ export async function discoverAcpProviders(
         label: provider.label,
         description: provider.description,
         command: resolvedCommand,
-        status: probe.ok ? 'available' : 'failed',
+        status: (probe.ok ? 'available' : 'failed') as 'available' | 'failed',
         installed: true,
         handshakeOk: probe.ok,
         selected: provider.id === selectedProviderId,

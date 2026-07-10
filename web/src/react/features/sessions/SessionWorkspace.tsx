@@ -1,7 +1,6 @@
 import { memo, useEffect, useMemo, useState } from 'react'
-import { useShallow } from 'zustand/react/shallow'
 import { CheckCircle2, Circle, Clock, Cpu, FileEdit, FilePlus, FileX, File, Loader2, Users } from 'lucide-react'
-import { useLocale } from '../../../hooks/useLocale'
+import { useShallow } from 'zustand/react/shallow'
 import { useAgentSessionStore } from './agentSessionStore'
 import type { SessionStats, TodoItem, AgentRunStep } from '../../../lib/api/agentRuntime'
 import { SessionCapabilitiesPanel } from './SessionCapabilitiesPanel'
@@ -46,7 +45,15 @@ const CHANGE_COLOR = {
   unknown: 'text-muted-foreground',
 }
 
-function SessionStatusCard({ stats, steps }: { stats: SessionStats; steps: AgentRunStep[] }) {
+function SessionStatusCard({
+  stats,
+  steps,
+  todos,
+}: {
+  stats: SessionStats
+  steps: AgentRunStep[]
+  todos: TodoItem[]
+}) {
   const [tick, setTick] = useState(0)
   const isLive = stats.status === 'running' || steps.some(step => step.status === 'running')
 
@@ -85,6 +92,7 @@ function SessionStatusCard({ stats, steps }: { stats: SessionStats; steps: Agent
           {(stats.tokenUsage.total / 1000).toFixed(1)}K / {(stats.contextLimit / 1000).toFixed(0)}K context
         </div>
       </div>
+      <TodoCard items={todos} />
       <div className="flex items-center gap-3 text-[9px] text-muted-foreground">
         <span className="flex items-center gap-1"><Cpu size={9} />{stats.toolCallCount} calls</span>
         {stats.activeSubAgentCount > 0 && (
@@ -96,34 +104,51 @@ function SessionStatusCard({ stats, steps }: { stats: SessionStats; steps: Agent
 }
 
 function TodoCard({ items }: { items: TodoItem[] }) {
-  const { t } = useLocale()
-  if (items.length === 0) {
-    return (
-      <div className="border-b border-border/40 px-2 py-2">
-        <div className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">TODO</div>
-        <div className="mt-1 text-[10px] text-muted-foreground/50">{t('sessionNoPlans')}</div>
-      </div>
-    )
-  }
+  const hasItems = items.length > 0
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!hasItems) {
+      setOpen(false)
+      return
+    }
+    const id = requestAnimationFrame(() => setOpen(true))
+    return () => cancelAnimationFrame(id)
+  }, [hasItems])
+
+  if (!hasItems) return null
+
   const done = items.filter(i => i.status === 'done').length
+
   return (
-    <div className="border-b border-border/40 px-2 py-2">
-      <div className="flex items-center justify-between">
-        <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">TODO</span>
-        <span className="text-[9px] text-muted-foreground/60">{done}/{items.length}</span>
+    <div
+      className="grid transition-[grid-template-rows] duration-300 ease-out"
+      style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
+    >
+      <div className="overflow-hidden">
+        <div
+          className={`rounded-md border border-border/40 bg-muted/20 px-1.5 py-1.5 transition-opacity duration-300 ${
+            open ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">TODO</span>
+            <span className="text-[9px] text-muted-foreground/60">{done}/{items.length}</span>
+          </div>
+          <ul className="mt-1 space-y-0.5">
+            {items.map(item => (
+              <li key={item.id} className="flex items-center gap-1.5 text-[10px]">
+                {item.status === 'done' && <CheckCircle2 size={10} className="shrink-0 text-success" />}
+                {item.status === 'in_progress' && <Loader2 size={10} className="shrink-0 animate-spin text-warning" />}
+                {item.status === 'pending' && <Circle size={10} className="shrink-0 text-muted-foreground/40" />}
+                <span className={item.status === 'done' ? 'line-through text-muted-foreground/60' : 'text-foreground/80'}>
+                  {item.label}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
-      <ul className="mt-1 space-y-0.5">
-        {items.map(item => (
-          <li key={item.id} className="flex items-center gap-1.5 text-[10px]">
-            {item.status === 'done' && <CheckCircle2 size={10} className="shrink-0 text-success" />}
-            {item.status === 'in_progress' && <Loader2 size={10} className="shrink-0 animate-spin text-warning" />}
-            {item.status === 'pending' && <Circle size={10} className="shrink-0 text-muted-foreground/40" />}
-            <span className={item.status === 'done' ? 'line-through text-muted-foreground/60' : 'text-foreground/80'}>
-              {item.label}
-            </span>
-          </li>
-        ))}
-      </ul>
     </div>
   )
 }
@@ -175,9 +200,14 @@ export const SessionWorkspace = memo(function SessionWorkspace() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto text-[10px]">
-      {sessionStats && <SessionStatusCard stats={sessionStats} steps={steps} />}
+      {sessionStats ? (
+        <SessionStatusCard stats={sessionStats} steps={steps} todos={sessionTodos} />
+      ) : sessionTodos.length > 0 ? (
+        <div className="border-b border-border/40 px-2 py-2">
+          <TodoCard items={sessionTodos} />
+        </div>
+      ) : null}
       {sessionCapabilities && <SessionCapabilitiesPanel capabilities={sessionCapabilities} />}
-      <TodoCard items={sessionTodos} />
       <FilesCard files={fileChanges} />
     </div>
   )
