@@ -714,6 +714,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   })),
   setGoalComposerSkillIds: (ids) => set({ goalComposerSkillIds: ids }),
   setGoalPermissionTier: (tier) => {
+    if (get().goalComposerPermissionTier === tier) return
     set({ goalComposerPermissionTier: tier })
     const sessionId = get().goalSession.sessionId
     if (sessionId) {

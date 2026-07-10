@@ -43,3 +43,16 @@ export function readSynaxPermissionTier(
   }
   return DEFAULT_SYNAX_PERMISSION_TIER
 }
+
+export function readSynaxWikiAttachMode(
+  metadata: Record<string, unknown> | null | undefined,
+): SynaxWikiAttachMode {
+  return metadata?.wikiAttachMode === 'manual' ? 'manual' : 'auto'
+}
+
+export function readSynaxDocumentId(
+  metadata: Record<string, unknown> | null | undefined,
+): string | null {
+  const id = metadata?.documentId
+  return typeof id === 'string' && id.length > 0 ? id : null
+}

@@ -6,6 +6,8 @@ import {
   ensureLegacyGoalProfileRegistered,
   isSynaxProfile,
 } from './synax/index.js';
+import { profileService } from './profile-service.js';
+import { profileHasWikiAgentReadTools } from '../wiki/wiki-agent-tool-provider.js';
 
 const WIKI_PROFILE_PREFIX = 'wiki-';
 
@@ -26,5 +28,13 @@ export function bootstrapAgentChildForSession(sessionId: string): void {
   }
   if (profileId === 'wiki-refresh') {
     ensureRefreshProfileRegistered();
+  }
+
+  // Synax / explorer / executor (and any wiki-capable profile) need wiki read tools
+  // from wikiAgentToolProvider. Main API process registers this at startup; forked
+  // agent-session-runner children must register it too or wiki.* tools are missing.
+  const profile = profileService.maybeGet(profileId);
+  if (profile && profileHasWikiAgentReadTools(profile)) {
+    ensureWikiProfileRegistered();
   }
 }

@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { Accordion } from '@heroui/react'
 import { Lock, Sparkles, Wrench } from 'lucide-react'
 import type { AgentToolSummary, SessionCapabilities } from '../../../lib/api/agentRuntime'
 import type { SkillSummary } from '../../../lib/api/skills'
@@ -57,38 +58,45 @@ function ToolsCard({ tools }: { tools: SessionCapabilities['tools'] }) {
   if (sorted.length === 0) return null
 
   return (
-    <div className="border-b border-border/40 px-2 py-2">
-      <div className="flex items-center justify-between">
-        <span className="flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
-          <Wrench size={9} />
-          Tools
-        </span>
-        <span className="text-[9px] text-muted-foreground/60">
-          {tools.visible.length}/{tools.available.length}
-        </span>
-      </div>
-      <ul className="mt-1 space-y-0.5">
-        {sorted.map(tool => {
-          const visible = visibleIds.has(tool.id)
-          return (
-            <li
-              key={tool.id}
-              className={`flex items-start gap-1.5 ${visible ? '' : 'opacity-45'}`}
-              title={tool.description || tool.id}
-            >
-              {visible ? (
-                <span className={`mt-0.5 shrink-0 font-mono text-[8px] uppercase ${CATEGORY_COLOR[tool.category] ?? 'text-muted-foreground/60'}`}>
-                  {CATEGORY_LABEL[tool.category] ?? tool.category.slice(0, 4)}
-                </span>
-              ) : (
-                <Lock size={9} className="mt-0.5 shrink-0 text-muted-foreground/50" />
-              )}
-              <span className="min-w-0 truncate text-[10px] text-foreground/80">{tool.label}</span>
-            </li>
-          )
-        })}
-      </ul>
-    </div>
+    <Accordion className="gap-0 border-b border-border/40 px-0" defaultExpandedKeys={[]}>
+      <Accordion.Item id="tools" aria-label="Tools" className="rounded-none border-0 bg-transparent shadow-none">
+        <Accordion.Trigger className="flex w-full items-center gap-1 px-2 py-2 text-left">
+          <span className="flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+            <Wrench size={9} />
+            Tools
+          </span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60">
+            {tools.visible.length}/{tools.available.length}
+          </span>
+          <Accordion.Indicator className="text-muted-foreground/50 [&>svg]:size-3" />
+        </Accordion.Trigger>
+        <Accordion.Panel>
+          <Accordion.Body className="px-2 pb-2 pt-0">
+            <ul className="space-y-0.5">
+              {sorted.map(tool => {
+                const visible = visibleIds.has(tool.id)
+                return (
+                  <li
+                    key={tool.id}
+                    className={`flex items-start gap-1.5 ${visible ? '' : 'opacity-45'}`}
+                    title={tool.description || tool.id}
+                  >
+                    {visible ? (
+                      <span className={`mt-0.5 shrink-0 font-mono text-[8px] uppercase ${CATEGORY_COLOR[tool.category] ?? 'text-muted-foreground/60'}`}>
+                        {CATEGORY_LABEL[tool.category] ?? tool.category.slice(0, 4)}
+                      </span>
+                    ) : (
+                      <Lock size={9} className="mt-0.5 shrink-0 text-muted-foreground/50" />
+                    )}
+                    <span className="min-w-0 truncate text-[10px] text-foreground/80">{tool.label}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </Accordion.Body>
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
   )
 }
 
@@ -100,34 +108,41 @@ function SkillsCard({ skills }: { skills: SessionCapabilities['skills'] }) {
   const inactiveCandidates = skills.candidates.filter(skill => !activeIds.has(skill.id))
 
   return (
-    <div className="border-b border-border/40 px-2 py-2">
-      <div className="flex items-center justify-between">
-        <span className="flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
-          <Sparkles size={9} />
-          Skills
-        </span>
-        <span className="text-[9px] text-muted-foreground/60">{skills.active.length} active</span>
-      </div>
-      {skills.active.length > 0 ? (
-        <ul className="mt-1 space-y-1">
-          {skills.active.map(skill => (
-            <SkillRow key={skill.id} skill={skill} active />
-          ))}
-        </ul>
-      ) : (
-        <div className="mt-1 text-[10px] text-muted-foreground/50">No active skills</div>
-      )}
-      {inactiveCandidates.length > 0 && (
-        <div className="mt-2">
-          <div className="text-[8px] uppercase tracking-wider text-muted-foreground/50">Available</div>
-          <ul className="mt-0.5 space-y-1">
-            {inactiveCandidates.map(skill => (
-              <SkillRow key={skill.id} skill={skill} />
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+    <Accordion className="gap-0 border-b border-border/40 px-0" defaultExpandedKeys={[]}>
+      <Accordion.Item id="skills" aria-label="Skills" className="rounded-none border-0 bg-transparent shadow-none">
+        <Accordion.Trigger className="flex w-full items-center gap-1 px-2 py-2 text-left">
+          <span className="flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+            <Sparkles size={9} />
+            Skills
+          </span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60">{skills.active.length} active</span>
+          <Accordion.Indicator className="text-muted-foreground/50 [&>svg]:size-3" />
+        </Accordion.Trigger>
+        <Accordion.Panel>
+          <Accordion.Body className="px-2 pb-2 pt-0">
+            {skills.active.length > 0 ? (
+              <ul className="space-y-1">
+                {skills.active.map(skill => (
+                  <SkillRow key={skill.id} skill={skill} active />
+                ))}
+              </ul>
+            ) : (
+              <div className="text-[10px] text-muted-foreground/50">No active skills</div>
+            )}
+            {inactiveCandidates.length > 0 && (
+              <div className="mt-2">
+                <div className="text-[8px] uppercase tracking-wider text-muted-foreground/50">Available</div>
+                <ul className="mt-0.5 space-y-1">
+                  {inactiveCandidates.map(skill => (
+                    <SkillRow key={skill.id} skill={skill} />
+                  ))}
+                </ul>
+              </div>
+            )}
+          </Accordion.Body>
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
   )
 }
 

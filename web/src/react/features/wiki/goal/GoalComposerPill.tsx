@@ -31,6 +31,7 @@ interface Props {
   permissionTier: GoalPermissionTier
   onPermissionTierChange: (tier: GoalPermissionTier) => void
   disabled?: boolean
+  wikiAttachDisabled?: boolean
   onOverlayOpenChange?: (open: boolean) => void
   /** Allow enqueue submit while the session is actively running. */
   queueWhileGenerating?: boolean
@@ -60,6 +61,7 @@ export function GoalComposerPill({
   permissionTier,
   onPermissionTierChange,
   disabled,
+  wikiAttachDisabled,
   onOverlayOpenChange,
   queueWhileGenerating = false,
   defaultExpanded = false,
@@ -140,6 +142,7 @@ export function GoalComposerPill({
         permissionTier={permissionTier}
         onPermissionTierChange={onPermissionTierChange}
         disabled={disabled}
+        wikiAttachDisabled={wikiAttachDisabled}
         onOverlayOpenChange={onOverlayOpenChange}
       />
 
