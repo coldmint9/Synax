@@ -5,6 +5,7 @@ import { FILE_SPLIT, SYM_SPLIT } from './tools/contracts.js';
 import { buildTreeString } from './tools/helpers.js';
 import { buildLanguageDirective, buildOutlineLanguageRequirement, type Locale } from '../prompts/language-directive.js';
 import { buildOutlineContext } from './wiki-outline-context.js';
+import { resolveWikiAuthoringGuide } from './wiki-authoring-skill.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,7 @@ export interface WikiPromptInput {
   locale: 'zh' | 'en';
   scan?: CodeMapScanResult;
   workDir?: string;
+  projectId?: string;
   outline?: WikiOutlineEntry[];
   continuation?: { completedTitles: string[]; remainingCount: number };
   preloadedContext?: string;
@@ -41,27 +43,7 @@ function buildIdentitySegment(role: Role): string {
   if (role === 'planner') {
     return 'You are a senior software architect. Your sole task is: analyze the codebase structure and output a hierarchical document outline (TOC) using parentId to express professional documentation structure.\n\nYou do not write document content — only plan the document structure. Titles express the hierarchy; docType is internal metadata for content rules, not UI grouping.';
   }
-  if (role === 'document-writer') {
-    return `You are a senior software architect writing internal design specifications (RFC / ADR / architecture review quality).
-
-Your reader is an engineer who must understand system design, trade-offs, invariants, and extension points **without reading source code first**.
-
-Depth bar (non-negotiable):
-- Every ## section needs at least one substantive prose paragraph (3+ sentences, concrete mechanisms — not a single line or bullet dump).
-- Answer every keyQuestion from the outline explicitly; if a question has no answer in code, say what is missing and cite what you checked.
-- Prefer **showing** interfaces (fenced code), state machines (tables + mermaid), and runtime behavior over naming files.
-- Each major claim must be traceable: inline backticks, a Source line after code fences, and entries in references[].
-
-Writing style:
-- Lead with the conclusion, then mechanism, then constraints / rejected alternatives.
-- Explain WHY the design exists, HOW it behaves at runtime, WHAT breaks if misused.
-- Use inline \`code\` for types, functions, config keys, enum values, and state names.
-- Design decisions, invariants, and caveats belong in GitHub-style callouts (\`> [!IMPORTANT]\` / \`> [!WARNING]\`) — never one throwaway sentence.
-- Tables compare structured data (states, API surface, config keys). Lists inventory dependencies or ordered steps — not substitutes for prose.
-- Mermaid diagrams use **real module/type names** from Code Context; validate with wiki.check_mermaid before submit.
-
-Output: a single markdown string via wiki.commit_document (markdown + references[] + claims[]).`;
-  }
+  if (role === 'document-writer') return '';
   return `You are a technical documentation engineer. Generate document content as markdown for the specified documents in the outline.
 
 Writing constraints: be precise, no filler, no AI-speak, no repeating titles. Lead with conclusions. Use ## headings, tables, mermaid diagrams, and code fences as appropriate.`;
@@ -69,90 +51,7 @@ Writing constraints: be precise, no filler, no AI-speak, no repeating titles. Le
 
 function buildMarkdownGuide(role: Role): string {
   if (role === 'planner') return '';
-  if (role === 'document-writer') {
-    return `## Markdown Syntax (use exactly these patterns)
-
-### Document opening
-\`\`\`markdown
-# ModuleName — One-Phrase Role
-
-*One-line subtitle: what this subsystem does and its primary integration points.*
-
-## Overview
-First paragraph states the architectural role in one sentence, then expands mechanism...
-\`\`\`
-Do **not** repeat the # title as the first sentence of Overview.
-
-### Callouts (design decisions, caveats, concurrency model)
-\`\`\`markdown
-> [!NOTE]
-> **并发模型** — sub-agent 通过 \`fork()\` 创建，共享父级 tool registry 但维护独立上下文。
-
-> [!IMPORTANT]
-> **关键不变量** — 单会话内 streamRun 串行化；跨会话完全隔离。
-
-> [!WARNING]
-> **已知限制** — 当 sub-agent tree 深度 > 3 时 context 合并可能溢出 token 预算。
-\`\`\`
-Use at least one callout per module / topology / flow document. Labels: NOTE (context), IMPORTANT (invariants/decisions), WARNING (limits/footguns).
-
-### Interface / signature blocks
-Show real types from code — never invent APIs. After each primary interface fence, add a Source line:
-\`\`\`markdown
-\`\`\`typescript
-interface AgentLoopRuntime {
-  streamRun(input: RunInput): AsyncGenerator<StreamEvent>;
-  pause(): Promise<PauseSnapshot>;
-}
-\`\`\`
-*Source: \`api/services/agent-runtime/contracts.ts:42-71\`*
-
-### Tables (state machines, API surface, config)
-\`\`\`markdown
-| State | Description | Transitions |
-| --- | --- | --- |
-| \`idle\` | 等待输入 | \`→ streaming\` on \`streamRun()\` |
-\`\`\`
-
-### Mermaid diagrams
-\`\`\`markdown
-## State Machine
-
-\`\`\`mermaid
-stateDiagram-v2
-  idle --> streaming: streamRun()
-  streaming --> tool_executing: tool_call
-\`\`\`
-\`\`\`
-Put a ## heading before each diagram. Use sequenceDiagram for flows, flowchart for topology, erDiagram for data.
-
-### Expandable detail sections (optional but encouraged for module)
-\`\`\`markdown
-<details>
-<summary>Gate 决策矩阵</summary>
-
-| mutability | internalGate | 行为 |
-| --- | --- | --- |
-| \`read\` | \`none\` | 直接执行 |
-
-</details>
-\`\`\`
-
-### Dependency inventory
-\`\`\`markdown
-## Dependencies
-
-- **[internal]** \`llm-runtime/stream\` — 底层 LLM provider 流式调用
-- **[external]** \`ai (vercel)\` — streamText / generateObject 封装
-\`\`\`
-
-### Cross-references
-Link other wiki concepts with markdown anchors: \`see [Context Compression](#context-compression)\` and matching \`## Context Compression\` heading.
-
-### references[] (commit payload, not in markdown body)
-Mirror every Source line and major section in references[]:
-\`{ "filePath": "api/.../contracts.ts", "startLine": 42, "endLine": 71, "symbol": "AgentLoopRuntime" }\``;
-  }
+  if (role === 'document-writer') return '';
   return `## Markdown Output Guide
 
 Submit the full document body as markdown via wiki.commit_document:
@@ -193,20 +92,7 @@ Available tools:
 - subagent.delegate — optional deep exploration`;
   }
 
-  if (role === 'document-writer') {
-    return `## Workflow
-
-1. Read **Key Questions** and **Target Files** for this document — they define what "done" means
-2. Study Code Context (excerpts, symbols, imports) as primary evidence; use file.read on targetFiles for gaps
-3. Draft an outline: # title + italic subtitle → ## sections mapped 1:1 to keyQuestions
-4. Write each section: opening prose (3+ sentences) → evidence (code/table/diagram) → callout if there's a decision or caveat
-5. Add Dependencies section with [internal]/[external] tags where applicable
-6. Self-check against Quality Requirements below (length, ## count, callouts, prose depth, tables/diagrams)
-7. wiki.check_mermaid on every diagram; fix syntax before submit
-8. wiki.commit_document with markdown, references[] (with line numbers where possible), claims[] (load-bearing facts)
-
-If you cannot verify a fact from code, do not assert it — mark as unknown or omit from claims.`;
-  }
+  if (role === 'document-writer') return '';
 
   return `## Writing Strategy
 
@@ -257,6 +143,8 @@ Constraints:
 - Writable documents need targetFiles (real file paths) and keyQuestions
 - title must be concise — no parenthetical elaborations`;
   }
+
+  if (role === 'document-writer') return '';
 
   return `## Quality Requirements
 
@@ -373,17 +261,7 @@ function buildToolsGuideSegment(role: Role): string {
 5. The outline must cover all core packages with module documents; use nodeKind=section for folder headers and nodeKind=document for pages
 6. Flow: create_outline_draft → edit_outline_draft (if needed) → submit_outline`;
   }
-  if (role === 'document-writer') {
-    return `## Pre-submit Checklist
-1. Every keyQuestion has a dedicated answer in prose (cite section name in your head — no orphan questions)
-2. # title + *subtitle* present; Overview does not repeat the title verbatim
-3. At least one \`> [!IMPORTANT]\` or \`> [!WARNING]\` with a **bold label** and concrete mechanism
-4. Primary interface shown in a fenced code block + \`*Source: path:lines*\`
-5. Each ## section has ≥1 prose paragraph before any table/diagram (except pure diagram sections)
-6. Mermaid validated; node labels quoted if they contain parentheses
-7. references[] mirrors Source lines; claims[] has ≥2 load-bearing items for module docs
-8. On rejection: read error list, expand the thinnest sections first, add missing callout/table/diagram`;
-  }
+  if (role === 'document-writer') return '';
   return `## Rules
 1. Every step must include a tool call
 2. Submit in topological order: parent documents before children
@@ -465,6 +343,13 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
     segments.push(buildOutlineLanguageRequirement(locale));
   }
 
+  if (role === 'document-writer') {
+    segments.push(resolveWikiAuthoringGuide({
+      projectId: input.projectId,
+      workDir: input.workDir,
+    }).body);
+  }
+
   segments.push(buildIdentitySegment(role));
   segments.push(buildWorkflowSegment(role));
 
@@ -516,5 +401,5 @@ export function buildWikiPrompt(input: WikiPromptInput): string {
     segments.push(buildContinuationSegment(input.continuation));
   }
 
-  return segments.join('\n\n');
+  return segments.filter(segment => segment.trim().length > 0).join('\n\n');
 }
