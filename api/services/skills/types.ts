@@ -5,6 +5,8 @@ export type SkillSourceType = 'builtin' | 'local' | 'project' | 'well-known' | '
 export type SkillStatus = 'available' | 'disabled' | 'invalid' | 'update_available';
 export type SkillInstallStatus = 'installed' | 'disabled' | 'update_available';
 
+export type SkillInjectionMode = 'on-demand' | 'deterministic';
+
 export interface SkillSourceConfig {
   url?: string;
   repo?: string;
@@ -75,6 +77,10 @@ export interface SkillSummary {
   sourceKind: SkillSourceKind;
   version: string;
   appliesTo: AgentProfileKind[];
+  /** Exact profile ids this skill applies to. Takes precedence over appliesTo when non-empty. */
+  profileIds?: string[];
+  /** 'deterministic' skills are expanded into the prompt by their owner, not offered for skill.load. */
+  injection?: SkillInjectionMode;
   requiredCapabilities: string[];
   permissionHints: InternalGate[];
   status: SkillStatus;
@@ -97,6 +103,8 @@ export interface ParsedSkillFile {
   description: string;
   version: string;
   appliesTo: AgentProfileKind[];
+  profileIds: string[];
+  injection: SkillInjectionMode;
   requiredCapabilities: string[];
   permissionHints: InternalGate[];
   content: string;
