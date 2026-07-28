@@ -36,6 +36,8 @@ function toSummaryFromParsed(source: SkillSourceRecord, parsed: ParsedSkillFile,
     sourceKind,
     version: parsed.version,
     appliesTo: parsed.appliesTo,
+    profileIds: parsed.profileIds,
+    injection: parsed.injection,
     requiredCapabilities: parsed.requiredCapabilities,
     permissionHints: parsed.permissionHints,
     status: 'available',
@@ -66,10 +68,13 @@ function scanSource(source: SkillSourceRecord, projectId?: string): ParsedSkillF
   return [];
 }
 
-function matchesProfile(skill: SkillSummary, profileId?: string): boolean {
+export function matchesProfile(skill: SkillSummary, profileId?: string): boolean {
   if (!profileId) return true;
   const profile = profileService.maybeGet(profileId);
   if (!profile) return false;
+  if (skill.profileIds && skill.profileIds.length > 0) {
+    return skill.profileIds.includes(profileId);
+  }
   return skill.appliesTo.length === 0 || skill.appliesTo.includes(profile.kind);
 }
 
@@ -150,6 +155,8 @@ function collectLocalSummaries(input: SkillListQuery = {}): SkillSummary[] {
           sourceKind: 'local',
           version: parsed.version,
           appliesTo: parsed.appliesTo,
+          profileIds: parsed.profileIds,
+          injection: parsed.injection,
           requiredCapabilities: parsed.requiredCapabilities,
           permissionHints: parsed.permissionHints,
           status: install.status === 'update_available' ? 'update_available' : 'available',

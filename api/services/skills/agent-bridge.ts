@@ -11,10 +11,12 @@ export const skillAgentBridge = {
     projectId: string;
     activeSkillIds: string[];
   }): SkillSummary[] {
-    return skillRegistry.listSummaries({
-      profileId: input.profileId,
-      projectId: input.projectId,
-    });
+    return skillRegistry
+      .listSummaries({
+        profileId: input.profileId,
+        projectId: input.projectId,
+      })
+      .filter((skill) => skill.injection !== 'deterministic');
   },
 
   loadForTool(input: {
