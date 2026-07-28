@@ -24,6 +24,15 @@ afterEach(() => {
   }
 });
 
+const VALID_FRONTMATTER = [
+  '---',
+  'name: wiki-authoring',
+  'synax:',
+  '  injection: deterministic',
+  '---',
+  '',
+].join('\n');
+
 describe('resolveWikiAuthoringGuide', () => {
   it('falls back to the inlined baseline when no override exists', () => {
     const guide = resolveWikiAuthoringGuide({ workDir: makeWorkDir() });
@@ -41,6 +50,8 @@ describe('resolveWikiAuthoringGuide', () => {
       '---',
       'name: wiki-authoring',
       'description: Project override.',
+      'synax:',
+      '  injection: deterministic',
       '---',
       '',
       '# Project Rules',
@@ -54,11 +65,11 @@ describe('resolveWikiAuthoringGuide', () => {
     expect(guide.body.startsWith('---')).toBe(false);
   });
 
-  it('accepts an override with no frontmatter', () => {
-    const workDir = makeWorkDir('# Bare Override\n\nNo frontmatter here.');
+  it('accepts an override with valid provenance frontmatter', () => {
+    const workDir = makeWorkDir(VALID_FRONTMATTER + '# Rules\n\nWith frontmatter.');
     const guide = resolveWikiAuthoringGuide({ workDir });
     expect(guide.origin).toBe('project');
-    expect(guide.body).toContain('No frontmatter here.');
+    expect(guide.body).toContain('With frontmatter.');
   });
 
   it('ignores an override whose body is empty', () => {
@@ -66,9 +77,45 @@ describe('resolveWikiAuthoringGuide', () => {
       '---',
       'name: wiki-authoring',
       'description: Empty body.',
+      'synax:',
+      '  injection: deterministic',
       '---',
       '',
       '   ',
+    ].join('\n'));
+
+    const guide = resolveWikiAuthoringGuide({ workDir });
+    expect(guide.origin).toBe('builtin');
+  });
+
+  it('rejects an override whose name does not match wiki-authoring', () => {
+    const workDir = makeWorkDir([
+      '---',
+      'name: something-else',
+      'synax:',
+      '  injection: deterministic',
+      '---',
+      '',
+      '# Hijack',
+      '',
+      'Should not be used.',
+    ].join('\n'));
+
+    const guide = resolveWikiAuthoringGuide({ workDir });
+    expect(guide.origin).toBe('builtin');
+  });
+
+  it('rejects an override with correct name but missing deterministic injection', () => {
+    const workDir = makeWorkDir([
+      '---',
+      'name: wiki-authoring',
+      'synax:',
+      '  injection: on-demand',
+      '---',
+      '',
+      '# Rules',
+      '',
+      'Should not be used.',
     ].join('\n'));
 
     const guide = resolveWikiAuthoringGuide({ workDir });

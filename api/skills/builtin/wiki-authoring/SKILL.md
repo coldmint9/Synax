@@ -160,7 +160,7 @@ Mirror every Source line and major section in `references[]` (commit payload, no
 | topology | ≥2 | ≥4 long prose lines | flowchart mermaid + table + callout |
 | module | ≥3 | ≥8 long prose lines | code fence + Source line + table + callout + Dependencies |
 | flow | ≥2 | ≥5 long prose lines | sequence mermaid + callout + step list |
-| data | ≥2 | ≥4 long prose lines | erDiagram mermaid + schema table |
+| data | ≥2 | ≥4 long prose lines | erDiagram mermaid + schema table + callout |
 
 Also enforced for every docType: a minimum stripped body length, and a non-empty `references[]`.
 
