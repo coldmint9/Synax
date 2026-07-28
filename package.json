@@ -18,6 +18,7 @@
     "dev:api": "tsx scripts/dev-api.ts",
     "dev:web": "tsx scripts/dev-web.ts",
     "dev:all": "tsx scripts/dev-all.ts",
+    "prebuild": "tsx scripts/generate-wiki-skill-bundle.ts",
     "build": "tsup --config tsup.config.ts",
     "postbuild": "tsx scripts/copy-native-modules.ts",
     "start": "node ./server-dist/server.cjs",
