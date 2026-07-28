@@ -26,7 +26,13 @@ function readOverride(root: string | null): string | null {
   const file = path.join(root, SKILL_DIR_NAME, 'SKILL.md');
   try {
     if (!fs.existsSync(file)) return null;
-    const body = parseSkillMarkdown(fs.readFileSync(file, 'utf8')).body.trim();
+    const { frontmatter, body: rawBody } = parseSkillMarkdown(fs.readFileSync(file, 'utf8'));
+    const synax = (frontmatter.synax ?? {}) as Record<string, unknown>;
+    if (frontmatter.name !== SKILL_DIR_NAME || synax.injection !== 'deterministic') {
+      logger.warn({ file }, 'wiki-authoring: override is not a wiki-authoring deterministic skill, ignoring');
+      return null;
+    }
+    const body = rawBody.trim();
     if (!body) {
       logger.warn({ file }, 'wiki-authoring: override has an empty body, falling back');
       return null;
