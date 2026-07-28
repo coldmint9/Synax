@@ -170,10 +170,9 @@ export const wikiDocumentWriterProfile: AgentProfile = {
   toolProviderId: 'wiki-session-tools',
   loopHints: [
     'Study Source Excerpts in the prompt before writing; use file.read when behavior is still unclear.',
-    'Structure documents with level-2 headings and mixed block types — not prose-only walls of text.',
     'Use wiki.check_mermaid before committing any diagram block.',
-    'If wiki.commit_document rejects the draft, expand thin prose and add missing tables/diagrams/callouts before resubmitting.',
-    'Call wiki.commit_document once all blocks are ready. Include claims for every factual assertion.',
+    'If wiki.commit_document rejects the draft, fix the reported gate errors and resubmit.',
+    'Call wiki.commit_document once the document is ready. Include claims for every factual assertion.',
   ],
 };
 

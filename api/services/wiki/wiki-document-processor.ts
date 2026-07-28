@@ -114,6 +114,8 @@ export async function processQueueDocument(input: ProcessQueueDocumentInput): Pr
       role: 'document-writer',
       languages,
       locale,
+      projectId,
+      workDir,
       documentEntry: entry,
       documentContext,
     });
