@@ -32,3 +32,54 @@ Do the thing.
     expect(parsed.content).toContain('Do the thing');
   });
 });
+
+describe('parseSkillFile — profile-ids and injection', () => {
+  const fixture = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    'fixtures',
+    'deterministic-skill',
+    'SKILL.md',
+  );
+
+  it('parses profile-ids into profileIds', () => {
+    const parsed = parseSkillFile(fixture);
+    expect(parsed.profileIds).toEqual(['wiki-document-writer']);
+  });
+
+  it('parses injection mode', () => {
+    const parsed = parseSkillFile(fixture);
+    expect(parsed.injection).toBe('deterministic');
+  });
+
+  it('keeps applies-to alongside profile-ids', () => {
+    const parsed = parseSkillFile(fixture);
+    expect(parsed.appliesTo).toEqual(['executor']);
+  });
+
+  it('defaults profileIds to [] and injection to on-demand', () => {
+    const raw = [
+      '---',
+      'name: plain-skill',
+      'description: No synax block at all.',
+      '---',
+      '',
+      '# Plain',
+    ].join('\n');
+    const { frontmatter } = parseSkillMarkdown(raw);
+    expect(frontmatter.synax).toBeUndefined();
+
+    const builtin = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+      '..',
+      '..',
+      'skills',
+      'builtin',
+      'synax-explore',
+      'SKILL.md',
+    );
+    const parsed = parseSkillFile(builtin);
+    expect(parsed.profileIds).toEqual([]);
+    expect(parsed.injection).toBe('on-demand');
+  });
+});
