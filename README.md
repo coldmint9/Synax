@@ -1,8 +1,9 @@
+
+
 <div align="center">
 
 # Synax
 <img width="898" height="80" alt="image" src="https://github.com/user-attachments/assets/ba60d60b-ee63-4409-b158-33754f4efe80" />
-
 
 
 
@@ -146,7 +147,7 @@ Synax reads `.env` automatically through `dotenv/config`, but no template file i
 | `PORT` | `3210` | API server port. |
 | `WEB_PORT` | `5173` | Vite development server port. |
 | `WEB_HOST` | `0.0.0.0` | Vite development server host used by dev scripts. |
-| `DATA_ROOT` | `.data` | Local data directory for libSQL, project metadata, config, logs, and model catalog cache. |
+| `DATA_ROOT` | `~/.synax` | Local data directory for libSQL, project metadata, config, logs, and model catalog cache. |
 | `LOG_LEVEL` | `info` | API log level. |
 | `CONFIG_ENCRYPTION_KEY` | unset | Secret used to encrypt stored provider keys. |
 | `Synax_CONFIG_SECRET` | unset | Alternative secret used for config encryption. |
