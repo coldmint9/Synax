@@ -13,14 +13,28 @@ vi.mock('../protocol/acp-connection.js', () => ({
   spawnAcpConnection: vi.fn(),
 }))
 
+const spawnMock = vi.hoisted(() => vi.fn())
+vi.mock('node:child_process', () => ({ spawn: spawnMock }))
+
 import {
   discoverAcpProviders,
   resetAcpDiscoveryCacheForTests,
 } from '../discovery.js'
 
+/** Fake child that reports an immediate spawn error (binary not found). */
+function spawnErrorChild(): unknown {
+  return {
+    once(event: string, callback: (...args: unknown[]) => void) {
+      if (event === 'error') queueMicrotask(() => callback(new Error('ENOENT')))
+    },
+    kill() {},
+  }
+}
+
 describe('discoverAcpProviders cache', () => {
   beforeEach(() => {
     resetAcpDiscoveryCacheForTests()
+    spawnMock.mockImplementation(spawnErrorChild)
   })
 
   it('reuses cached results for concurrent and subsequent calls', async () => {
@@ -38,5 +52,39 @@ describe('discoverAcpProviders cache', () => {
 
     const third = await discoverAcpProviders(providers, 'opencode-acp')
     expect(third).toEqual(a)
+  })
+})
+
+describe('discoverAcpProviders codex/pi adapters', () => {
+  beforeEach(() => {
+    resetAcpDiscoveryCacheForTests()
+    spawnMock.mockImplementation(spawnErrorChild)
+  })
+
+  it('reports codex-acp and pi-acp as missing with adapter install hints when binaries are absent', async () => {
+    const providers = [
+      { id: 'codex-acp', label: 'Codex ACP', description: 'Codex ACP' },
+      { id: 'pi-acp', label: 'Pi ACP', description: 'Pi ACP' },
+    ] as never[]
+
+    const result = await discoverAcpProviders(providers, 'codex-acp')
+    const byId = new Map(result.map((item) => [item.id, item]))
+
+    expect(byId.get('codex-acp')).toMatchObject({
+      id: 'codex-acp',
+      command: 'codex-acp',
+      installed: false,
+      handshakeOk: false,
+      status: 'missing',
+    })
+    expect(byId.get('codex-acp')?.compatibility).toContain('@agentclientprotocol/codex-acp')
+    expect(byId.get('pi-acp')).toMatchObject({
+      id: 'pi-acp',
+      command: 'pi-acp',
+      installed: false,
+      handshakeOk: false,
+      status: 'missing',
+    })
+    expect(byId.get('pi-acp')?.compatibility).toContain('pi-acp')
   })
 })

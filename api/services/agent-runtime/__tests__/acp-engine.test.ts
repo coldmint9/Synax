@@ -20,9 +20,19 @@ describe('acp engine routing', () => {
   it('detects ACP model ids', () => {
     expect(isAcpModel('cursor-acp/default')).toBe(true);
     expect(isAcpModel('opencode-acp/default')).toBe(true);
+    expect(isAcpModel('codex-acp/default')).toBe(true);
+    expect(isAcpModel('pi-acp/default')).toBe(true);
     expect(isAcpModel('anthropic/claude-3')).toBe(false);
     expect(parseAcpModel('cursor-acp/default')).toEqual({
       providerId: 'cursor-acp',
+      modelId: 'default',
+    });
+    expect(parseAcpModel('codex-acp/gpt-5.4')).toEqual({
+      providerId: 'codex-acp',
+      modelId: 'gpt-5.4',
+    });
+    expect(parseAcpModel('pi-acp/default')).toEqual({
+      providerId: 'pi-acp',
       modelId: 'default',
     });
   });

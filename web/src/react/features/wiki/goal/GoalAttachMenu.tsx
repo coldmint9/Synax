@@ -36,14 +36,14 @@ interface Props {
 function AttachBadge({ count, label }: { count?: number; label?: string }) {
   if (label) {
     return (
-      <span className="ms-auto rounded-full bg-amber-500/15 px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+      <span className="goal-attach-badge ms-auto rounded-full px-1.5 py-px text-[9px] font-medium uppercase tracking-wide">
         {label}
       </span>
     )
   }
   if (!count || count <= 0) return null
   return (
-    <span className="ms-auto rounded-full bg-amber-500/15 px-1.5 py-px text-[9px] font-medium text-amber-700 dark:text-amber-300">
+    <span className="goal-attach-badge ms-auto rounded-full px-1.5 py-px text-[9px] font-medium">
       {count}
     </span>
   )

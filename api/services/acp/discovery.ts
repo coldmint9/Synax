@@ -39,6 +39,16 @@ const COMMANDS: Record<string, { commandName: string; windowsName: string; compa
     windowsName: 'cursor-agent.cmd',
     compatibility: 'Requires Cursor CLI (`agent` or `cursor-agent`). Install: curl https://cursor.com/install -fsS | bash',
   },
+  'codex-acp': {
+    commandName: 'codex-acp',
+    windowsName: 'codex-acp.cmd',
+    compatibility: 'Codex ACP adapter (bundles OpenAI Codex). Install: npm install -g @agentclientprotocol/codex-acp',
+  },
+  'pi-acp': {
+    commandName: 'pi-acp',
+    windowsName: 'pi-acp.cmd',
+    compatibility: 'pi ACP adapter for the pi coding agent. Install: npm install -g @curxor/pi-acp @earendil-works/pi-coding-agent',
+  },
 }
 
 type DiscoveryCacheEntry = {

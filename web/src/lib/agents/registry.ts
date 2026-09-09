@@ -27,11 +27,25 @@ const STATIC_FALLBACK: AgentProvider[] = [
     status: 'live',
     caps: { canFollowUp: true, canCancel: true },
   },
+  {
+    id: 'codex-acp',
+    label: 'Codex ACP',
+    status: 'live',
+    caps: { canFollowUp: true, canCancel: true },
+  },
+  {
+    id: 'pi-acp',
+    label: 'Pi ACP',
+    status: 'live',
+    caps: { canFollowUp: true, canCancel: true },
+  },
 ]
 
 const adapters: Record<string, CursorAgentAdapter> = {
   'opencode-acp': new CursorAcpApiAdapter('opencode-acp'),
   'cursor-acp': new CursorAcpApiAdapter('cursor-acp'),
+  'codex-acp': new CursorAcpApiAdapter('codex-acp'),
+  'pi-acp': new CursorAcpApiAdapter('pi-acp'),
 }
 
 // ── 缓存 ──────────────────────────────────────────────────────────────────

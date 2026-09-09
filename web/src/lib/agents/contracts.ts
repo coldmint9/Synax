@@ -1,6 +1,6 @@
 import type { PmVerdict } from '../pm-taxonomy'
 
-export type ProviderId = 'opencode-acp' | 'cursor-acp'
+export type ProviderId = 'opencode-acp' | 'cursor-acp' | 'codex-acp' | 'pi-acp'
 
 export type AgentRunFileChangeType = 'added' | 'modified' | 'deleted' | 'renamed' | 'unknown'
 export type AgentRunFileChangeSource = 'git' | 'acp_hint'
@@ -126,6 +126,6 @@ export interface CursorAgentAdapter {
 
 export function resolveProviderId(raw?: string | null, explicit?: ProviderId): ProviderId {
   if (explicit) return explicit
-  if (raw === 'cursor-acp' || raw === 'opencode-acp') return raw
+  if (raw === 'cursor-acp' || raw === 'opencode-acp' || raw === 'codex-acp' || raw === 'pi-acp') return raw
   return 'opencode-acp'
 }

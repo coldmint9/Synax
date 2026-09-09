@@ -10,8 +10,10 @@
 import { logger } from '../../lib/logger.js'
 import { getEffectiveConfig } from '../../lib/config/config-store.js'
 import type { AcpClient } from './contracts.js'
+import { codexAcpProvider } from './providers/codex-acp-provider.js'
 import { cursorAcpProvider } from './providers/cursor-acp-provider.js'
 import { openCodeAcpProvider } from './providers/opencode-acp-provider.js'
+import { piAcpProvider } from './providers/pi-acp-provider.js'
 import {
   getProvider,
   hasProvider,
@@ -48,6 +50,8 @@ export type {
 
 if (!hasProvider(openCodeAcpProvider.id)) registerProvider(openCodeAcpProvider)
 if (!hasProvider(cursorAcpProvider.id)) registerProvider(cursorAcpProvider)
+if (!hasProvider(codexAcpProvider.id)) registerProvider(codexAcpProvider)
+if (!hasProvider(piAcpProvider.id)) registerProvider(piAcpProvider)
 
 // ---------------------------------------------------------------------------
 // Factories

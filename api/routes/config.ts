@@ -23,7 +23,7 @@ import { listProviders as listAcpProviders } from '../services/acp/index.js'
 
 export const configRoutes = new Hono()
 
-const ACP_PROVIDER_IDS = ['opencode-acp', 'cursor-acp'] as const
+const ACP_PROVIDER_IDS = ['opencode-acp', 'cursor-acp', 'codex-acp', 'pi-acp'] as const
 const BUILTIN_API_PROVIDER_IDS = ['openai', 'anthropic'] as const
 const CUSTOM_API_PROVIDER_PREFIX = 'custom-api:'
 const REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
@@ -378,7 +378,7 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
 
   const defaultAcpProviderId = patch.defaultProviderId ?? current.defaultProviderId
   if (!isAcpProviderId(defaultAcpProviderId)) {
-    throw new Error('默认 ACP provider 只能是 opencode-acp 或 cursor-acp')
+    throw new Error('默认 ACP provider 必须是已注册的 ACP provider')
   }
 
   const defaultApiProviderId = patch.defaultApiProviderId ?? current.defaultApiProviderId

@@ -184,3 +184,41 @@ describe('config-store provider model metadata persistence', () => {
     expect(config.providerConnections['custom-api:deepseek']?.extra?.reasoningEfforts).toEqual(['high', 'max'])
   })
 })
+
+describe('config-store ACP providers (codex & pi)', () => {
+  it('ships codex-acp and pi-acp as official built-in ACP providers', async () => {
+    const { getGlobalConfig } = await import('../config-store.js')
+    const config = getGlobalConfig()
+    const ids = new Set(config.providers.map((p) => p.id))
+    expect(ids).toContain('codex-acp')
+    expect(ids).toContain('pi-acp')
+    const codex = config.providers.find((p) => p.id === 'codex-acp')
+    expect(codex?.kind).toBe('acp')
+    expect(config.providerConnections['codex-acp']?.extra?.kind).toBe('acp')
+    expect(config.providerConnections['pi-acp']?.extra?.kind).toBe('acp')
+  })
+
+  it('keeps codex-acp as defaultProviderId through save/load normalization', async () => {
+    const { getGlobalConfig, updateGlobalConfig } = await import('../config-store.js')
+    updateGlobalConfig({ defaultProviderId: 'codex-acp' }, 'tester')
+    expect(getGlobalConfig().defaultProviderId).toBe('codex-acp')
+  })
+
+  it('injects newly added built-in ACP providers into older persisted templates', async () => {
+    const { getGlobalConfig } = await import('../config-store.js')
+    // First access initializes the store files, then we simulate an older
+    // template that predates codex-acp / pi-acp.
+    getGlobalConfig()
+    const templatePath = path.join(tempDir, 'config', 'template-config.json')
+    const raw = JSON.parse(fs.readFileSync(templatePath, 'utf8'))
+    raw.providers = raw.providers.filter(
+      (p: { id: string }) => p.id !== 'codex-acp' && p.id !== 'pi-acp',
+    )
+    fs.writeFileSync(templatePath, JSON.stringify(raw))
+
+    const config = getGlobalConfig()
+    const ids = new Set(config.providers.map((p) => p.id))
+    expect(ids).toContain('codex-acp')
+    expect(ids).toContain('pi-acp')
+  })
+})

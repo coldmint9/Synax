@@ -1,4 +1,6 @@
-const ACP_PROVIDER_PREFIXES = ['cursor-acp', 'opencode-acp'] as const;
+import { ACP_PROVIDER_IDS } from '../../../lib/config/acp-provider-ids.js';
+
+const ACP_PROVIDER_PREFIXES = ACP_PROVIDER_IDS;
 
 export type AcpProviderId = (typeof ACP_PROVIDER_PREFIXES)[number];
 
