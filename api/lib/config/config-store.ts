@@ -4,6 +4,7 @@ import { getRawSqlite } from '../../db/index.js'
 import { DATA_ROOT } from '../env.js'
 import { logger } from '../logger.js'
 import { BUILTIN_PROVIDERS, createDefaultGlobalConfig, createDefaultUserGlobalConfig } from './config-defaults.js'
+import { isAcpProviderId } from './acp-provider-ids.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret, maskSecret } from './config-secret.js'
 import type {
   AnalyzerLlmConfig,
@@ -683,7 +684,7 @@ function prepareProviderConnectionForStorage(
 }
 
 function normalizeAcpProviderId(providerId?: string | null): string {
-  return providerId === 'cursor-acp' || providerId === 'opencode-acp' ? providerId : 'opencode-acp'
+  return providerId && isAcpProviderId(providerId) ? providerId : 'opencode-acp'
 }
 
 function autoSelectDefaultApiProvider(
@@ -701,10 +702,6 @@ function normalizeApiProviderId(providerId?: string | null, providers: ProviderD
   if (resolved) return resolved.id
   const fallback = providers.find((provider) => provider.kind === 'api')
   return fallback?.id ?? 'openai'
-}
-
-function isAcpProviderId(providerId: string): providerId is 'opencode-acp' | 'cursor-acp' {
-  return providerId === 'opencode-acp' || providerId === 'cursor-acp'
 }
 
 function isBuiltinApiProviderId(providerId: string): providerId is 'openai' | 'anthropic' {

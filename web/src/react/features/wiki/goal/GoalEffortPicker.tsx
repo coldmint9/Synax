@@ -7,11 +7,11 @@ export type GoalReasoningEffort = ReasoningEffort
 
 const FALLBACK = 'high'
 
-/** Light Morandi green accent (浅莫兰迪绿). */
-const ACCENT_TOP = '#b9cdbf'
-const ACCENT_BOTTOM = '#a1bba8'
-const ACCENT_TEXT = '#2f3d34'
-const TEXT_DEFAULT = '#52605a'
+/* Light Morandi green accent — sourced from the global CSS vars in index.css. */
+const ACCENT_TOP = 'var(--radio-accent-top, #b9cdbf)'
+const ACCENT_BOTTOM = 'var(--radio-accent-bottom, #a1bba8)'
+const ACCENT_TEXT = 'var(--radio-accent-text, #2f3d34)'
+const TEXT_DEFAULT = 'var(--radio-idle-text, #52605a)'
 
 interface Props {
   effort: ReasoningEffort

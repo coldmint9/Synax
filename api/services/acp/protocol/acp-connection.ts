@@ -35,7 +35,7 @@ export interface AcpSpawnSpec {
   args: string[]
 }
 
-function buildCursorSpawnSpec(cli: string): AcpSpawnSpec {
+export function buildCursorSpawnSpec(cli: string): AcpSpawnSpec {
   const isAbsolute = cli.includes('/') || cli.includes('\\')
   if (process.platform === 'win32') {
     const bin = isAbsolute ? cli : `${cli}.cmd`
@@ -107,9 +107,60 @@ export function resolveOpenCodeSpawn(): AcpSpawnSpec {
   }
 }
 
+
+/**
+ * Resolve the spawn command for the Codex ACP adapter (`codex-acp`).
+ *
+ * Codex itself does not expose ACP natively; `codex-acp`
+ * (@agentclientprotocol/codex-acp) is a stdio ACP agent server that starts the
+ * Codex App Server and translates ACP requests into Codex operations.
+ */
+export function resolveCodexSpawn(): AcpSpawnSpec {
+  if (process.platform === 'win32') {
+    return {
+      providerId: 'codex-acp',
+      commandLabel: 'codex-acp',
+      command: 'cmd.exe',
+      args: ['/c', 'codex-acp.cmd'],
+    }
+  }
+  return {
+    providerId: 'codex-acp',
+    commandLabel: 'codex-acp',
+    command: 'codex-acp',
+    args: [],
+  }
+}
+
+/**
+ * Resolve the spawn command for the pi ACP adapter (`pi-acp`).
+ *
+ * `pi-acp` (e.g. @curxor/pi-acp) is a stdio ACP agent server that launches the
+ * pi coding agent as a subprocess and translates between ACP and pi's RPC
+ * interface.
+ */
+export function resolvePiSpawn(): AcpSpawnSpec {
+  if (process.platform === 'win32') {
+    return {
+      providerId: 'pi-acp',
+      commandLabel: 'pi-acp',
+      command: 'cmd.exe',
+      args: ['/c', 'pi-acp.cmd'],
+    }
+  }
+  return {
+    providerId: 'pi-acp',
+    commandLabel: 'pi-acp',
+    command: 'pi-acp',
+    args: [],
+  }
+}
+
 export function resolveSpawnForProvider(providerId: string): AcpSpawnSpec {
   if (providerId === 'cursor-acp') return resolveCursorSpawn()
   if (providerId === 'opencode-acp') return resolveOpenCodeSpawn()
+  if (providerId === 'codex-acp') return resolveCodexSpawn()
+  if (providerId === 'pi-acp') return resolvePiSpawn()
   throw new Error(`No ACP subprocess command registered for provider: ${providerId}`)
 }
 

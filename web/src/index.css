@@ -2621,3 +2621,270 @@
   line-height: 1.35;
   color: hsl(var(--foreground) / 0.88);
 }
+
+/* ---------------------------------------------------------------------------
+   Light-mode radio palette — 浅莫兰迪绿 (applies to all radio controls)
+   Accent  : #b9cdbf -> #a1bba8 gradient
+   Selected: #2f3d34 (deep gray-green, white inner highlight)
+   Idle    : #52605a (neutral gray-green)
+   ------------------------------------------------------------------------- */
+:root:not(.dark) {
+  --radio-accent-top: #b9cdbf;
+  --radio-accent-bottom: #a1bba8;
+  --radio-accent-text: #2f3d34;
+  --radio-idle-text: #52605a;
+  --radio-track: #ffffff;
+  --radio-track-shadow:
+    0 1px 2px rgba(20, 32, 24, 0.06),
+    0 4px 12px rgba(20, 32, 24, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --radio-thumb-shadow:
+    0 2px 4px rgba(60, 84, 68, 0.28),
+    0 1px 2px rgba(60, 84, 68, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+/* Native radios */
+:root:not(.dark) input[type="radio"] {
+  accent-color: var(--radio-accent-top);
+}
+
+/* Semantic radio segments (buttons with role="radio") */
+:root:not(.dark) [role="radio"]:not(:disabled) {
+  color: var(--radio-idle-text);
+}
+:root:not(.dark) [role="radio"][aria-checked="true"]:not(:disabled) {
+  color: var(--radio-accent-text);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+/* HeroUI radio primitives (light mode only) */
+:root:not(.dark) .radio__control {
+  border-color: #dfe5df;
+  background: var(--radio-track);
+  box-shadow: 0 1px 2px rgba(20, 32, 24, 0.06);
+}
+:root:not(.dark) .radio[aria-checked="true"] .radio__control,
+:root:not(.dark) .radio[data-selected="true"] .radio__control {
+  border-color: transparent;
+  background: linear-gradient(180deg, var(--radio-accent-top), var(--radio-accent-bottom));
+  box-shadow: var(--radio-thumb-shadow);
+}
+:root:not(.dark) .radio__indicator {
+  color: var(--radio-accent-text);
+  background: var(--radio-accent-text);
+}
+:root:not(.dark) .radio [data-slot="label"] {
+  color: var(--radio-idle-text);
+}
+:root:not(.dark) .radio[aria-checked="true"] [data-slot="label"] {
+  color: var(--radio-accent-text);
+}
+
+/* ---------------------------------------------------------------------------
+   Global light-mode palette
+   Keep the light UI neutral/cool and use the shared Morandi-green accent for
+   all selection controls. This intentionally overrides the legacy warm/amber
+   tokens above without changing the dark theme.
+   ------------------------------------------------------------------------- */
+:root:not(.dark) {
+  --background-hsl: 150 18% 97%;
+  --foreground-hsl: 160 14% 12%;
+  --border-hsl: 150 14% 86%;
+  --accent-hsl: 150 19% 91%;
+  --accent-foreground-hsl: 160 14% 12%;
+  --muted-hsl: 150 10% 90%;
+
+  --background: hsl(150 18% 97%);
+  --foreground: hsl(160 14% 12%);
+  --border: hsl(150 14% 86%);
+  --accent: #a1bba8;
+  --accent-foreground: #2f3d34;
+  --muted: hsl(150 9% 42%);
+  --surface: hsl(150 22% 99%);
+  --surface-foreground: hsl(160 14% 12%);
+  --surface-secondary: hsl(150 17% 94%);
+  --overlay: hsl(150 22% 99%);
+  --overlay-foreground: hsl(160 14% 12%);
+  --default: hsl(150 17% 93%);
+  --default-hover: hsl(150 20% 89%);
+  --default-foreground: #52605a;
+  --focus: #a1bba8;
+  --field-background: hsl(150 22% 99%);
+  --field-foreground: hsl(160 14% 12%);
+  --field-placeholder: hsl(150 9% 48%);
+  --field-border: hsl(150 14% 84%);
+  --field-border-hover: hsl(150 18% 72%);
+  --field-border-focus: #a1bba8;
+  --field-hover: hsl(150 21% 94%);
+  --field-focus: hsl(150 24% 96%);
+  --separator: hsl(150 14% 86%);
+  --segment: hsl(150 22% 99%);
+  --segment-foreground: hsl(160 14% 12%);
+  --scrollbar: hsl(150 14% 82%);
+
+  --card: 150 22% 99%;
+  --card-foreground: 160 14% 12%;
+  --popover: 150 22% 99%;
+  --popover-foreground: 160 14% 12%;
+  --primary: 150 27% 68%;
+  --primary-foreground: 160 20% 16%;
+  --secondary: 150 17% 93%;
+  --secondary-foreground: 160 14% 12%;
+  --muted-foreground: 150 9% 42%;
+  --input: 150 14% 84%;
+  --ring: 150 27% 68%;
+  --wiki-surface: 150 17% 95%;
+  --wiki-surface-strong: 150 17% 92%;
+  --wiki-panel: 150 22% 98%;
+  --wiki-panel-foreground: 160 14% 12%;
+  --wiki-panel-muted: 150 16% 91%;
+  --wiki-accent: 150 28% 84%;
+  --wiki-accent-foreground: 160 18% 18%;
+  --wiki-warm: 150 20% 90%;
+}
+
+/* All HeroUI selection controls in light mode use the same Morandi-green
+   language: pale green selected state, white thumb/check surface, and a
+   visible cool-neutral hover state. */
+:root:not(.dark) .switch {
+  --switch-control-bg: #e7eee9;
+  --switch-control-bg-hover: #dce8df;
+  --switch-control-bg-pressed: #d4e2d8;
+  --switch-control-bg-checked: linear-gradient(180deg, #b9cdbf, #a1bba8);
+  --switch-control-bg-checked-hover: linear-gradient(180deg, #afc6b7, #98b2a0);
+}
+:root:not(.dark) .switch__control {
+  border: 1px solid #d4e1d7;
+  box-shadow: 0 1px 2px rgba(47, 61, 52, 0.08), inset 0 1px 0 rgba(255,255,255,0.75);
+}
+:root:not(.dark) .switch__thumb {
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(47, 61, 52, 0.18), inset 0 1px 0 rgba(255,255,255,0.9);
+}
+:root:not(.dark) .switch__thumb[aria-checked="true"] {
+  color: #2f3d34;
+}
+
+:root:not(.dark) .checkbox__control {
+  border-color: #d4e1d7;
+  background: #fff;
+}
+:root:not(.dark) .checkbox[data-selected="true"] .checkbox__control,
+:root:not(.dark) .checkbox[aria-checked="true"] .checkbox__control,
+:root:not(.dark) .checkbox[data-indeterminate="true"] .checkbox__control {
+  border-color: #a1bba8;
+  background: linear-gradient(180deg, #b9cdbf, #a1bba8);
+  box-shadow: 0 2px 4px rgba(47, 61, 52, 0.16), inset 0 1px 0 rgba(255,255,255,0.55);
+}
+:root:not(.dark) .checkbox[data-selected="true"] .checkbox__control::before,
+:root:not(.dark) .checkbox[aria-checked="true"] .checkbox__control::before {
+  background: transparent;
+}
+
+/* List-box and select menus: pill hover/selected highlight stays inside the
+   menu border instead of painting a full rectangular row. */
+:root:not(.dark) .list-box-item,
+:root:not(.dark) [data-slot="list-box-item"] {
+  border-radius: 999px;
+  margin-inline: 4px;
+  width: calc(100% - 8px);
+}
+:root:not(.dark) .list-box-item:hover,
+:root:not(.dark) .list-box-item[data-hovered="true"],
+:root:not(.dark) [data-slot="list-box-item"]:hover,
+:root:not(.dark) [data-slot="list-box-item"][data-hovered="true"] {
+  background: #edf4ef;
+  color: #52605a;
+}
+:root:not(.dark) .list-box-item[aria-selected="true"],
+:root:not(.dark) .list-box-item[data-selected="true"],
+:root:not(.dark) [data-slot="list-box-item"][aria-selected="true"],
+:root:not(.dark) [data-slot="list-box-item"][data-selected="true"] {
+  background: linear-gradient(180deg, #b9cdbf, #a1bba8);
+  color: #2f3d34;
+  box-shadow: 0 1px 3px rgba(47, 61, 52, 0.12), inset 0 1px 0 rgba(255,255,255,0.5);
+}
+:root:not(.dark) .select__trigger:hover,
+:root:not(.dark) .select__trigger[data-hovered="true"] {
+  background: #edf4ef;
+  border-color: #c8d9cd;
+}
+
+/* Gradients cannot be used as background-color custom-property values; apply
+   the light-mode switch gradient explicitly to the track state. */
+:root:not(.dark) .switch[aria-checked="true"] .switch__control,
+:root:not(.dark) .switch[data-selected="true"] .switch__control {
+  background-color: #a1bba8;
+  background-image: linear-gradient(180deg, #b9cdbf, #a1bba8);
+}
+:root:not(.dark) .switch[aria-checked="true"]:hover .switch__control,
+:root:not(.dark) .switch[data-selected="true"]:hover .switch__control,
+:root:not(.dark) .switch[aria-checked="true"][data-hovered="true"] .switch__control,
+:root:not(.dark) .switch[data-selected="true"][data-hovered="true"] .switch__control {
+  background-color: #98b2a0;
+  background-image: linear-gradient(180deg, #afc6b7, #98b2a0);
+}
+:root:not(.dark) .switch[aria-checked="true"] .switch__thumb,
+:root:not(.dark) .switch[data-selected="true"] .switch__thumb {
+  background: #fff;
+  color: #2f3d34;
+}
+
+/* Goal attachment badges and menu states use the same light Morandi-green
+   accent; remove the old amber/brown highlight from Wiki/MCP/Skill menus. */
+:root:not(.dark) .goal-attach-badge {
+  background: linear-gradient(180deg, #b9cdbf, #a1bba8);
+  color: #2f3d34;
+  box-shadow: 0 1px 3px rgba(47, 61, 52, 0.12), inset 0 1px 0 rgba(255,255,255,0.55);
+}
+:root:not(.dark) .menu-item,
+:root:not(.dark) .menu-item:hover,
+:root:not(.dark) .menu-item[data-hovered="true"] {
+  border-radius: 999px;
+  margin-inline: 4px;
+  width: calc(100% - 8px);
+}
+:root:not(.dark) .menu-item:hover,
+:root:not(.dark) .menu-item[data-hovered="true"] {
+  background: #edf4ef;
+  color: #52605a;
+}
+:root:not(.dark) .menu-item[aria-selected="true"],
+:root:not(.dark) .menu-item[aria-checked="true"],
+:root:not(.dark) .menu-item[data-selected="true"] {
+  background: linear-gradient(180deg, #b9cdbf, #a1bba8);
+  color: #2f3d34;
+  box-shadow: 0 1px 3px rgba(47, 61, 52, 0.12), inset 0 1px 0 rgba(255,255,255,0.5);
+}
+
+/* Compact menu/list geometry: keep soft corners, but avoid oversized pill/32px
+   rounding on dropdown panels and rows. Applies in both light and dark modes. */
+.dropdown__popover {
+  border-radius: 14px;
+}
+.dropdown__menu,
+.menu {
+  border-radius: 12px;
+}
+.menu-item,
+.menu-item:hover,
+.menu-item[data-hovered="true"],
+.list-box-item,
+.list-box-item:hover,
+.list-box-item[data-hovered="true"],
+[data-slot="menu-item"],
+[data-slot="list-box-item"] {
+  border-radius: 10px;
+}
+
+/* Override the earlier light-mode pill geometry while retaining inset spacing
+   so hover/selected backgrounds stay inside the popover border. */
+:root:not(.dark) .menu-item,
+:root:not(.dark) .menu-item:hover,
+:root:not(.dark) .menu-item[data-hovered="true"],
+:root:not(.dark) .list-box-item,
+:root:not(.dark) [data-slot="menu-item"],
+:root:not(.dark) [data-slot="list-box-item"] {
+  border-radius: 10px;
+}

@@ -6,12 +6,48 @@ import { SaveIndicator } from './SaveIndicator'
 import { useAutoSave } from '../useAutoSave'
 import { configApi } from '../../../../lib/api/config'
 import type { AcpDiscoveryItem, GlobalConfig } from '../../../../lib/contracts/config'
+import { detectedAcpItems } from '../lib/acpItems'
 import { useLocale } from '../../../../hooks/useLocale'
 
 interface AcpSectionProps {
   config: GlobalConfig
   onUpdate: (patch: Record<string, unknown>) => Promise<void>
   onReload: () => Promise<void>
+}
+
+const ACP_DISCOVERY_CACHE_KEY = 'synax-acp-discovery-cache'
+const ACP_DISCOVERY_CACHE_TTL_MS = 5 * 60 * 1000
+
+let memoryDiscoveryCache: { supported: AcpDiscoveryItem[]; fetchedAt: number } | null = null
+
+function readDiscoveryCache(): AcpDiscoveryItem[] | null {
+  const now = Date.now()
+  if (memoryDiscoveryCache && now - memoryDiscoveryCache.fetchedAt < ACP_DISCOVERY_CACHE_TTL_MS) {
+    return memoryDiscoveryCache.supported
+  }
+  if (typeof sessionStorage === 'undefined') return null
+  try {
+    const raw = sessionStorage.getItem(ACP_DISCOVERY_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { supported?: AcpDiscoveryItem[]; fetchedAt?: number }
+    if (!Array.isArray(parsed.supported) || typeof parsed.fetchedAt !== 'number') return null
+    if (now - parsed.fetchedAt >= ACP_DISCOVERY_CACHE_TTL_MS) return null
+    memoryDiscoveryCache = { supported: parsed.supported, fetchedAt: parsed.fetchedAt }
+    return parsed.supported
+  } catch {
+    return null
+  }
+}
+
+function writeDiscoveryCache(supported: AcpDiscoveryItem[]): void {
+  const entry = { supported, fetchedAt: Date.now() }
+  memoryDiscoveryCache = entry
+  if (typeof sessionStorage === 'undefined') return
+  try {
+    sessionStorage.setItem(ACP_DISCOVERY_CACHE_KEY, JSON.stringify(entry))
+  } catch {
+    // Cache is an optimization; ignore storage quota/privacy failures.
+  }
 }
 
 const statusChipClass = (s: AcpDiscoveryItem['status']): string => {
@@ -29,6 +65,7 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
   const [discovery, setDiscovery] = useState<AcpDiscoveryItem[]>([])
   const [discovering, setDiscovering] = useState(false)
   const didAutoEnableRef = useRef(false)
+  const visibleDiscovery = detectedAcpItems(discovery)
 
   const saveFn = useCallback(async (ids: string[]) => {
     await configApi.updateGlobal({ enabledAcpProviderIds: ids, defaultProviderId: ids[0] || config.defaultProviderId })
@@ -36,10 +73,21 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
 
   const { saveImmediate, saving, saved, error } = useAutoSave(saveFn)
 
-  const loadDiscovery = async () => {
+  const loadDiscovery = async (force = false) => {
+    if (!force) {
+      const cached = readDiscoveryCache()
+      if (cached) {
+        setDiscovery(cached)
+        // Enabled state is configuration, not discovery output; keep it from the current config.
+        setEnabledIds(config.enabledAcpProviderIds ?? [config.defaultProviderId])
+        return
+      }
+    }
+
     setDiscovering(true)
     try {
       const result = await configApi.discoverAcp()
+      writeDiscoveryCache(result.supported)
       setDiscovery(prev => {
         if (prev.length === 0) return result.supported
         return result.supported.map(item => {
@@ -67,7 +115,7 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
     }
   }
 
-  useEffect(() => { loadDiscovery() }, [])
+  useEffect(() => { void loadDiscovery() }, [])
 
   const handleToggle = (id: string, checked: boolean) => {
     const next = checked
@@ -98,7 +146,7 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
             variant="secondary"
             className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm"
             isPending={discovering}
-            onPress={loadDiscovery}
+            onPress={() => void loadDiscovery(true)}
           >
             {({ isPending }) => (
               <>
@@ -111,23 +159,21 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
       }
     >
       <div className="space-y-2">
-        {discovery.length === 0 && !discovering && (
+        {visibleDiscovery.length === 0 && !discovering && (
           <p className="text-xs text-muted-foreground">{t('settingsAcpEmpty')}</p>
         )}
-        {discovering && discovery.length === 0 && (
+        {discovering && visibleDiscovery.length === 0 && (
           <p className="text-xs text-muted-foreground">{t('settingsAcpRefreshing')}...</p>
         )}
-        {discovery.map(item => {
+        {visibleDiscovery.map(item => {
           const checked = enabledIds.includes(item.id)
-          const disabled = item.status === 'missing'
           return (
             <div
               key={item.id}
-              className={`settings-item flex items-start gap-3 p-3 ${disabled ? 'settings-item--disabled' : ''} ${checked && !disabled ? 'settings-item--active' : ''}`}
+              className={`settings-item flex items-start gap-3 p-3 ${checked ? 'settings-item--active' : ''}`}
             >
               <Checkbox
                 isSelected={checked}
-                isDisabled={disabled}
                 onChange={(isChecked) => handleToggle(item.id, isChecked)}
                 aria-label={item.label}
               >

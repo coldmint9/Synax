@@ -15,7 +15,7 @@ export type PmVerdict =
   | 'forecast_query'
   | 'decision_request'
 
-export type ProviderId = 'opencode-acp' | 'cursor-acp'
+export type ProviderId = 'opencode-acp' | 'cursor-acp' | 'codex-acp' | 'pi-acp'
 
 export type AgentRunFileChangeType = 'added' | 'modified' | 'deleted' | 'renamed' | 'unknown'
 export type AgentRunFileChangeSource = 'git' | 'acp_hint'

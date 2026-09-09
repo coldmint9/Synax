@@ -38,6 +38,24 @@ export const BUILTIN_PROVIDERS: ProviderDef[] = [
     caps: { canFollowUp: true, canCancel: true },
     models: [{ id: 'cursor-default', label: 'Cursor Default', isDefault: true }],
   },
+  {
+    id: 'codex-acp',
+    label: 'Codex ACP',
+    description: 'Codex Agent Client Protocol via the codex-acp adapter for local OpenAI Codex runtime',
+    status: 'live',
+    kind: 'acp',
+    caps: { canFollowUp: true, canCancel: true },
+    models: [{ id: 'codex-default', label: 'Codex Default', isDefault: true }],
+  },
+  {
+    id: 'pi-acp',
+    label: 'Pi ACP',
+    description: 'Pi Agent Client Protocol via the pi-acp adapter for local pi coding-agent runtime',
+    status: 'live',
+    kind: 'acp',
+    caps: { canFollowUp: true, canCancel: true },
+    models: [{ id: 'pi-default', label: 'Pi Default', isDefault: true }],
+  },
   createBuiltinApiProvider('openai', 'OpenAI', 'OpenAI-compatible API', 'gpt-4o-mini'),
   createBuiltinApiProvider('anthropic', 'Anthropic', 'Anthropic Messages API', 'claude-3-5-sonnet-latest'),
 ]
@@ -62,6 +80,22 @@ export function createDefaultGlobalConfig(updatedBy = 'system'): GlobalConfig {
       },
       'cursor-acp': {
         providerId: 'cursor-acp',
+        baseUrl: ACP_BASE_URL,
+        extra: {
+          kind: 'acp',
+          connectionMode: 'local',
+        },
+      },
+      'codex-acp': {
+        providerId: 'codex-acp',
+        baseUrl: ACP_BASE_URL,
+        extra: {
+          kind: 'acp',
+          connectionMode: 'local',
+        },
+      },
+      'pi-acp': {
+        providerId: 'pi-acp',
         baseUrl: ACP_BASE_URL,
         extra: {
           kind: 'acp',

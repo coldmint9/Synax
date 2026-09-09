@@ -10,6 +10,7 @@ import {
   resolveSpawnForProviderAsync,
 } from '../services/acp/protocol/acp-connection.js';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
+import { isAcpProviderId } from '../lib/config/acp-provider-ids.js';
 import { getEffectiveConfig } from '../lib/config/config-store.js';
 import { logger } from '../lib/logger.js';
 
@@ -19,7 +20,7 @@ export const acpRoutes = new Hono();
 
 const acpGenerateSchema = z.object({
   projectId: z.string().optional(),
-  providerId: z.enum(['opencode-acp', 'cursor-acp']).optional(),
+  providerId: z.enum(['opencode-acp', 'cursor-acp', 'codex-acp', 'pi-acp']).optional(),
   messages: z.array(z.object({
     role: z.enum(['system', 'user', 'assistant']),
     content: z.string(),
@@ -46,7 +47,7 @@ acpRoutes.post('/_internal/acp-generate', async (c) => {
   const { messages, projectId, workDir } = parsed.data;
   const configuredProviderId = projectId ? getEffectiveConfig(projectId).providerId : null;
   const providerId = parsed.data.providerId
-    ?? (configuredProviderId === 'cursor-acp' || configuredProviderId === 'opencode-acp'
+    ?? (configuredProviderId && isAcpProviderId(configuredProviderId)
       ? configuredProviderId
       : 'opencode-acp');
 
@@ -142,7 +143,7 @@ const dispatchSchema = z.object({
   userId: z.string(),
   userName: z.string(),
   intent: z.string().min(1),
-  providerId: z.enum(['opencode-acp', 'cursor-acp']),
+  providerId: z.enum(['opencode-acp', 'cursor-acp', 'codex-acp', 'pi-acp']),
   context: z.object({
     selectedNodeId: z.string().nullable().optional(),
     selectedClusterId: z.string().nullable().optional(),

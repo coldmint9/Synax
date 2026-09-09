@@ -12,7 +12,7 @@ export function selectionKey(sel: Pick<GoalModelSelection, 'kind' | 'providerId'
   return `${sel.kind}:${sel.providerId}:${sel.modelId}`
 }
 
-const ACP_PROVIDER_IDS = new Set(['cursor-acp', 'opencode-acp'])
+const ACP_PROVIDER_IDS = new Set(['cursor-acp', 'opencode-acp', 'codex-acp', 'pi-acp'])
 
 /** Turn API expects `providerId/modelId` for ACP engines; API models keep bare modelId. */
 export function formatTurnModel(providerId: string | null, modelId: string | null): string | undefined {
