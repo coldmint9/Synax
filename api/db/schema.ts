@@ -351,6 +351,7 @@ export const agentRuntimeSessions = sqliteTable('agent_runtime_sessions', {
   prompt: text('prompt').notNull(),
   contextSnapshotId: text('context_snapshot_id'),
   thinkingMode: text('thinking_mode').notNull(),
+  reasoningEffort: text('reasoning_effort'),
   permissionRulesJson: text('permission_rules_json').notNull().default('[]'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -358,6 +359,7 @@ export const agentRuntimeSessions = sqliteTable('agent_runtime_sessions', {
   resultSummary: text('result_summary'),
   blockedReason: text('blocked_reason'),
   skillIdsJson: text('skill_ids_json').notNull().default('[]'),
+  mcpServerIdsJson: text('mcp_server_ids_json').notNull().default('[]'),
   activeRunId: text('active_run_id'),
   pendingResumeToken: text('pending_resume_token'),
 });

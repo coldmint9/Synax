@@ -4,6 +4,7 @@ import { useLocale } from '../../../../hooks/useLocale'
 import { useConfig } from '../../settings/useConfig'
 import { useWikiStore } from '../../../state/wikiStore'
 import { GoalComposerPill } from './GoalComposerPill'
+import { effectiveReasoningEfforts } from '../../settings/lib/providerPresets'
 import { GoalDialogPanel } from './GoalDialogPanel'
 import { GoalMiniPill } from './GoalMiniPill'
 import { GoalPromptPill } from './GoalPromptPill'
@@ -42,6 +43,11 @@ export function GoalPillDock({ projectId }: Props) {
   const setWikiAttachMode = useWikiStore(s => s.setGoalComposerWikiAttachMode)
   const skillIds = useWikiStore(s => s.goalComposerSkillIds)
   const setSkillIds = useWikiStore(s => s.setGoalComposerSkillIds)
+  const mcpServerIds = useWikiStore(s => s.goalComposerMcpServerIds)
+  const setMcpServerIds = useWikiStore(s => s.setGoalComposerMcpServerIds)
+  const reasoningEffort = useWikiStore(s => s.goalComposerReasoningEffort)
+  const setReasoningEffort = useWikiStore(s => s.setGoalComposerReasoningEffort)
+  const allowedReasoningEfforts = providerId ? effectiveReasoningEfforts(globalConfig, providerId) : undefined
   const permissionTier = useWikiStore(s => s.goalComposerPermissionTier)
   const setPermissionTier = useWikiStore(s => s.setGoalPermissionTier)
   const documents = useWikiStore(s => s.documents)
@@ -226,6 +232,12 @@ export function GoalPillDock({ projectId }: Props) {
       documents={documents}
       skillIds={skillIds}
       onSkillIdsChange={setSkillIds}
+      mcpServers={globalConfig?.mcpServers ?? []}
+      mcpServerIds={mcpServerIds}
+      onMcpServerIdsChange={setMcpServerIds}
+      reasoningEffort={reasoningEffort}
+      onReasoningEffortChange={setReasoningEffort}
+      allowedReasoningEfforts={allowedReasoningEfforts}
       permissionTier={permissionTier}
       onPermissionTierChange={setPermissionTier}
       disabled={isGenerating && !queueWhileGenerating}

@@ -36,7 +36,7 @@ export interface PermissionRequestInput {
 function coarseCategory(category: CapabilityCategory): PermissionDecision['coarseCategory'] {
   if (category === 'read' || category === 'context' || category === 'review' || category === 'skill') return 'read';
   if (category === 'write') return 'write';
-  if (category === 'external_execution' || category === 'task') return 'external_execution';
+  if (category === 'external_execution' || category === 'task' || category === 'mcp') return 'external_execution';
   return 'high_risk';
 }
 
@@ -74,6 +74,9 @@ function defaultDecision(input: PermissionRequestInput): { action: PermissionAct
   }
   if (input.internalGate === 'external_path') {
     return { action: 'ask', reason: 'Project-external path access requires approval.' };
+  }
+  if (input.category === 'mcp') {
+    return { action: 'ask', reason: 'MCP tools require explicit approval by default.' };
   }
   if (input.category === 'external_execution') {
     return { action: 'deny', reason: 'External execution is not part of the v1 runtime path.' };

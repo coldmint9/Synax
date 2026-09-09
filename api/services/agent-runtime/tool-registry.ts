@@ -13,6 +13,7 @@ import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
 import { sessionHooks } from './session-hooks.js';
 import { logger } from '../../lib/logger.js';
 import { skillAgentBridge } from '../skills/agent-bridge.js';
+import { mcpSessionToolProvider } from '../mcp/mcp-session-tool-provider.js';
 import { INVALID_TOOL, INVALID_TOOL_ID } from './tool-invalid.js';
 import { diffReadTool } from './tools/diff-read.js';
 import { fileGlobTool } from './tools/file-glob.js';
@@ -68,6 +69,7 @@ export class ToolRegistry {
     [bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, editTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, INVALID_TOOL].forEach((tool) =>
       this.register(tool),
     );
+    this.registerProvider(mcpSessionToolProvider);
     this.register({
       id: 'subagent.delegate',
       label: 'Run Subtask',
@@ -261,7 +263,7 @@ export class ToolRegistry {
     const profile = this.profiles.get(session.profileId);
     const tool = this.getForSession(sessionId, toolId);
 
-    if (!profile.allowedCapabilities.includes(tool.id) && tool.category !== 'skill' && tool.id !== INVALID_TOOL_ID) {
+    if (!profile.allowedCapabilities.includes(tool.id) && tool.category !== 'skill' && tool.category !== 'mcp' && tool.id !== INVALID_TOOL_ID) {
       const errorMsg = `Tool ${tool.id} is not available to profile ${profile.id}. Use only the tools listed in your capabilities.`;
       const now = nowIso();
       const record = this.store.appendToolCall({

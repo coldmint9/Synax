@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { Button, Switch } from '@heroui/react'
-import { Wrench, FileCode, Plug } from 'lucide-react'
+import { Wrench, FileCode } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { FormRow } from './FormRow'
 import { SaveIndicator } from './SaveIndicator'
@@ -65,13 +65,6 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
         </div>
       </SettingsCard>
 
-      <SettingsCard
-        title={t('settingsMcpTitle')}
-        icon={Plug}
-        badge={<span className="settings-chip settings-chip--muted">{t('settingsMcpComingSoon')}</span>}
-      >
-        <p className="text-xs text-muted-foreground">{t('settingsMcpDesc')}</p>
-      </SettingsCard>
     </div>
   )
 }

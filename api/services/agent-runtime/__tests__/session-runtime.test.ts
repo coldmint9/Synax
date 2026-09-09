@@ -16,6 +16,18 @@ describe('agentSessionRuntime', () => {
     expect(events.map((event) => event.type)).toContain('session_started');
   });
 
+  it('persists explicit reasoning effort and attached mcp server ids', () => {
+    const session = agentSessionRuntime.create({
+      ...plannerSessionInput,
+      reasoningEffort: 'xhigh',
+      mcpServerIds: ['mcp-files', 'mcp-git'],
+    });
+
+    const stored = agentRuntimeStore.getSession(session.id);
+    expect(stored.reasoningEffort).toBe('xhigh');
+    expect(stored.mcpServerIds).toEqual(['mcp-files', 'mcp-git']);
+  });
+
   it('links read-only sub-sessions to their parent and inherits rules', () => {
     const parent = agentSessionRuntime.create(plannerSessionInput);
     const child = agentSessionRuntime.create({

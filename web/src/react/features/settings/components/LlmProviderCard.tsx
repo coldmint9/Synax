@@ -1,6 +1,6 @@
 import { Button } from '@heroui/react'
 import { ChevronDown, ChevronRight, Loader2, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
-import { type ApiProviderDraft, PROVIDER_LOGO_ASSETS } from '../lib/providerPresets'
+import { PROVIDER_LOGO_ASSETS, REASONING_EFFORT_LABELS, type ApiProviderDraft } from '../lib/providerPresets'
 import { ProviderLogo } from '../../../components/ProviderLogo'
 import { IconSurface } from '../../../components/IconSurface'
 import { useLocale } from '../../../../hooks/useLocale'
@@ -52,7 +52,14 @@ export function LlmProviderCard({
               <span className="settings-chip">{t('llmCardDefault')}</span>
             )}
           </div>
-          <div className="text-[11px] text-muted-foreground truncate">{draft.model}</div>
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground truncate">
+            <span className="truncate font-mono">{draft.model}</span>
+            {draft.modelMeta?.[draft.model]?.contextLimit && (
+              <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] font-medium text-primary">
+                上下文 {formatContextLimit(draft.modelMeta[draft.model].contextLimit!)}
+              </span>
+            )}
+          </div>
         </div>
         <StatusDot validating={draft.validating || saving} hasKey={isSaved} />
         {expanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
@@ -75,6 +82,18 @@ export function LlmProviderCard({
             )}
             <span className="text-muted-foreground">{t('llmCardModel')}</span>
             <span className="text-foreground font-mono truncate">{draft.model || '—'}</span>
+            {draft.modelMeta?.[draft.model]?.contextLimit && (
+              <>
+                <span className="text-muted-foreground">上下文窗口</span>
+                <span className="text-foreground font-mono truncate">{formatContextLimit(draft.modelMeta[draft.model].contextLimit!)}</span>
+              </>
+            )}
+            <span className="text-muted-foreground">思考强度</span>
+            <span className="text-foreground">
+              {(draft.reasoningEfforts?.length ?? 0) > 0
+                ? draft.reasoningEfforts!.map(e => REASONING_EFFORT_LABELS[e]).join(' / ')
+                : '不限制'}
+            </span>
           </div>
           <div className="flex items-center gap-2 pt-1">
             <Button size="sm" variant="secondary" onPress={onEdit}>
@@ -103,6 +122,13 @@ function StatusDot({ validating, hasKey }: { validating: boolean; hasKey: boolea
   return (
     <div className={`h-2 w-2 rounded-full ${hasKey ? 'bg-success' : 'bg-muted-foreground/30'}`} />
   )
+}
+
+function formatContextLimit(tokens: number): string {
+  if (!tokens || tokens <= 0) return '—'
+  if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`
+  if (tokens % 1000 === 0) return `${tokens / 1000}K`
+  return String(tokens)
 }
 
 function formatLabel(format: string): string {

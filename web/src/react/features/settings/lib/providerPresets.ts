@@ -1,7 +1,56 @@
-import type { ApiFormat, GlobalConfig, ProviderConnection, ProviderDef } from '../../../../lib/contracts/config'
+import type { ApiFormat, GlobalConfig, ProviderConnection, ProviderDef, ReasoningEffort } from '../../../../lib/contracts/config'
 
 export const BUILTIN_API_PROVIDER_IDS = ['openai', 'anthropic'] as const
 export const CUSTOM_API_PREFIX = 'custom-api:'
+
+export const ALL_REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
+
+export const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
+  low: '低',
+  medium: '中',
+  high: '高',
+  xhigh: '超高',
+  max: '最大',
+}
+
+export function parseReasoningEfforts(value: unknown): ReasoningEffort[] {
+  if (!Array.isArray(value)) return []
+  const allowed = new Set<ReasoningEffort>(ALL_REASONING_EFFORTS)
+  const out: ReasoningEffort[] = []
+  for (const item of value) {
+    if (allowed.has(item as ReasoningEffort)) out.push(item as ReasoningEffort)
+  }
+  return out
+}
+
+/**
+ * Reasoning-effort levels explicitly configured for a provider connection.
+ * Returns [] when the provider has no restriction (all levels allowed).
+ */
+export function providerReasoningEfforts(
+  globalConfig: GlobalConfig | null | undefined,
+  providerId: string | null | undefined,
+): ReasoningEffort[] {
+  if (!globalConfig || !providerId) return []
+  const connection = globalConfig.providerConnections?.[providerId]
+  if (!connection) return []
+  const listed = parseReasoningEfforts(connection.extra?.reasoningEfforts)
+  if (listed.length > 0) return listed
+  const legacy = connection.extra?.defaultReasoningEffort
+  if (legacy === 'low' || legacy === 'medium' || legacy === 'high' || legacy === 'xhigh' || legacy === 'max') {
+    return [legacy]
+  }
+  return []
+}
+
+/** Configured levels, falling back to every level when unrestricted. */
+export function effectiveReasoningEfforts(
+  globalConfig: GlobalConfig | null | undefined,
+  providerId: string | null | undefined,
+): ReasoningEffort[] {
+  const configured = providerReasoningEfforts(globalConfig, providerId)
+  return configured.length > 0 ? configured : ALL_REASONING_EFFORTS
+}
 
 export type ProviderPreset = {
   providerId: string
@@ -23,6 +72,10 @@ export type ApiProviderDraft = {
   apiKeyMasked: string
   model: string
   models: string[]
+  /** Per-model input context window metadata keyed by model id. */
+  modelMeta: Record<string, { contextLimit?: number }>
+  /** Reasoning effort levels allowed for this provider (multi-select). Empty = unrestricted. */
+  reasoningEfforts: ReasoningEffort[]
   custom: boolean
   status: 'live' | 'experimental' | 'inactive'
   showApiKey: boolean
@@ -174,6 +227,12 @@ export function buildApiDrafts(globalConfig: GlobalConfig, providers: ProviderDe
       apiKeyMasked: connection?.apiKeyMasked ?? '',
       model,
       models: normalizeModelList(provider.models.map(m => m.id), model),
+      modelMeta: Object.fromEntries(
+        provider.models
+          .filter(m => typeof m.contextLimit === 'number')
+          .map(m => [m.id, { contextLimit: m.contextLimit as number }]),
+      ),
+      reasoningEfforts: providerReasoningEfforts(globalConfig, provider.id),
       custom: !preset,
       status: provider.status,
       showApiKey: false,
@@ -196,6 +255,8 @@ export function createDraftFromPreset(preset: ProviderPreset): ApiProviderDraft 
     apiKeyMasked: '',
     model: preset.defaultModel,
     models: [preset.defaultModel],
+    modelMeta: {},
+    reasoningEfforts: [],
     custom: false,
     status: 'live',
     showApiKey: false,
@@ -218,6 +279,8 @@ export function createCustomDraft(existing: ApiProviderDraft[]): ApiProviderDraf
     apiKeyMasked: '',
     model: defaultModel('openai'),
     models: [defaultModel('openai')],
+    modelMeta: {},
+    reasoningEfforts: [],
     custom: true,
     status: 'live',
     showApiKey: false,
@@ -240,6 +303,7 @@ export function draftToProviderDef(draft: ApiProviderDraft): ProviderDef {
       id,
       label: id,
       isDefault: id === draft.model,
+      ...(draft.modelMeta?.[id]?.contextLimit ? { contextLimit: draft.modelMeta[id].contextLimit } : {}),
     })),
   }
 }
@@ -254,16 +318,24 @@ export function draftToConnection(draft: ApiProviderDraft): ProviderConnection {
       kind: 'api',
       apiFormat: draft.format,
       model: draft.model || undefined,
+      ...(draft.reasoningEfforts?.length ? { reasoningEfforts: draft.reasoningEfforts } : {}),
     },
   }
 }
 
 export function upsertDraft(drafts: ApiProviderDraft[], draft: ApiProviderDraft): ApiProviderDraft[] {
+  const existing = drafts.find(d => d.id === draft.id)
+  const mergedMeta: Record<string, { contextLimit?: number }> = {
+    ...(existing?.modelMeta ?? {}),
+    ...(draft.modelMeta ?? {}),
+  }
   const normalized = {
     ...draft,
     label: draft.label.trim() || draft.id,
     model: draft.model.trim(),
     models: normalizeModelList(draft.models, draft.model.trim()),
+    modelMeta: mergedMeta,
+    reasoningEfforts: draft.reasoningEfforts ?? existing?.reasoningEfforts ?? [],
   }
   if (drafts.some(d => d.id === normalized.id)) {
     return drafts.map(d => (d.id === normalized.id ? normalized : d))

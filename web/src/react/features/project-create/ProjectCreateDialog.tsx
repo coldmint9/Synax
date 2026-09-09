@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FolderOpen, Loader2, X } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../../state/shellStore'
@@ -72,22 +72,6 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
     }
   }, [addProject, navigate, onClose])
 
-  useEffect(() => {
-    if (!open) return
-    if (!isElectron) return
-    let cancelled = false
-    void (async () => {
-      const result = await openDirectoryPicker()
-      if (cancelled) return
-      if (!result) {
-        onClose()
-        return
-      }
-      await createProject(result.path, result.name)
-    })()
-    return () => { cancelled = true }
-  }, [open, createProject, onClose])
-
   const handleWebSubmit = () => {
     const p = pathInput.trim()
     if (!p) return
@@ -96,27 +80,14 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
     void createProject(p, name)
   }
 
+
   if (!open) return null
-  if (isElectron) {
-    if (!submitting && !error) return null
-    return (
-      <div className="dialog-overlay" onClick={handleClose}>
-        <div className="dialog-content w-full max-w-sm" onClick={e => e.stopPropagation()}>
-          {submitting && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 size={14} className="animate-spin" />
-              正在创建项目…
-            </div>
-          )}
-          {error && (
-            <div className="space-y-3">
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>
-              <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={handleClose}>关闭</button>
-            </div>
-          )}
-        </div>
-      </div>
-    )
+
+  const handleBrowse = async () => {
+    const result = await openDirectoryPicker()
+    if (!result) return
+    setPathInput(result.path)
+    setError(null)
   }
 
   return (
@@ -143,13 +114,29 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
                 onKeyDown={e => { if (e.key === 'Enter') handleWebSubmit() }}
                 autoFocus
               />
+              {isElectron && (
+                <button
+                  type="button"
+                  onClick={handleBrowse}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/50 px-3 py-2 text-xs font-medium text-foreground transition hover:bg-muted/40"
+                >
+                  <FolderOpen size={12} />
+                  选择文件夹
+                </button>
+              )}
             </div>
             <span className="mt-1 block text-[11px] text-muted-foreground/60">
-              输入本地代码目录的绝对路径，项目名将使用文件夹名称
+              {isElectron ? '点击“选择文件夹”打开系统资源管理器，或直接输入本地代码目录的绝对路径' : '输入本地代码目录的绝对路径，项目名将使用文件夹名称'}
             </span>
           </label>
           {error && (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>
+          )}
+          {submitting && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 size={14} className="animate-spin" />
+              正在创建项目…
+            </div>
           )}
         </div>
         <div className="mt-4 flex justify-end">

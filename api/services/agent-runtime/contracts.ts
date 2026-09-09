@@ -9,6 +9,9 @@ export type AgentMode = z.infer<typeof agentModeSchema>;
 export const thinkingModeSchema = z.enum(['fast', 'standard', 'deep']);
 export type ThinkingMode = z.infer<typeof thinkingModeSchema>;
 
+export const reasoningEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
+export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
+
 export const sessionStatusSchema = z.enum([
   'queued',
   'running',
@@ -73,6 +76,7 @@ export const capabilityCategorySchema = z.enum([
   'context',
   'review',
   'high_risk',
+  'mcp',
 ]);
 export type CapabilityCategory = z.infer<typeof capabilityCategorySchema>;
 
@@ -200,6 +204,8 @@ export interface AgentSession {
   prompt: string;
   contextSnapshotId: string | null;
   thinkingMode: ThinkingMode;
+  /** Explicit 5-level reasoning effort override (null = not set, use defaults). */
+  reasoningEffort?: ReasoningEffort | null;
   permissionRules: PermissionRule[];
   createdAt: string;
   updatedAt: string;
@@ -207,6 +213,7 @@ export interface AgentSession {
   resultSummary: string | null;
   blockedReason: string | null;
   skillIds: string[];
+  mcpServerIds: string[];
   activeRunId: string | null;
   pendingResumeToken: string | null;
   /** Arbitrary JSON payload for session-specific orchestrator state (wiki snapshot, pipeline phase, etc.).
@@ -373,7 +380,9 @@ export const createSessionRequestSchema = z.object({
   parentSessionId: z.string().min(1).max(64).nullable().optional(),
   prompt: z.string().min(1).max(100_000),
   thinkingMode: thinkingModeSchema.optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
   skillIds: z.array(z.string().min(1).max(128)).max(20).optional(),
+  mcpServerIds: z.array(z.string().min(1).max(128)).max(32).optional(),
   sessionMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
   permissionTier: permissionTierSchema.optional(),
   permissionOverrides: permissionOverridesSchema.optional(),
@@ -426,6 +435,7 @@ export const streamTurnRequestSchema = z.object({
   maxTokens: z.number().int().positive().max(200_000).optional(),
   maxSteps: z.number().int().positive().max(500).optional(),
   locale: z.enum(['zh', 'en']).optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
   permissionTier: permissionTierSchema.optional(),
   permissionOverrides: permissionOverridesSchema.optional(),
 });

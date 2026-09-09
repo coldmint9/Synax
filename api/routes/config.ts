@@ -26,6 +26,7 @@ export const configRoutes = new Hono()
 const ACP_PROVIDER_IDS = ['opencode-acp', 'cursor-acp'] as const
 const BUILTIN_API_PROVIDER_IDS = ['openai', 'anthropic'] as const
 const CUSTOM_API_PROVIDER_PREFIX = 'custom-api:'
+const REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 const providerConnectionSchema = z
   .object({
@@ -53,6 +54,7 @@ const providerDefSchema = z.object({
       label: z.string().min(1),
       isDefault: z.boolean().optional(),
       maxTokens: z.number().optional(),
+      contextLimit: z.number().int().positive().max(10_000_000).optional(),
     }),
   ),
   connectionSchema: z.record(z.string(), z.unknown()).optional(),
@@ -65,6 +67,21 @@ const globalConfigPatchSchema = z
     defaultApiProviderId: z.string().min(1).optional(),
     enabledAcpProviderIds: z.array(z.string().min(1)).optional(),
     providerConnections: z.record(z.string(), providerConnectionSchema).optional(),
+    mcpServers: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(128),
+            name: z.string().min(1).max(256),
+            command: z.string().min(1).max(1024),
+            args: z.array(z.string().min(1).max(1024)).max(64).optional(),
+            env: z.record(z.string(), z.string()).optional(),
+            enabled: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .max(64)
+      .optional(),
     limits: z
       .object({
         maxAgentsPerProject: z.number().int().positive(),
@@ -431,6 +448,23 @@ function validateProviderConnection(
   const model = typeof extra.model === 'string' ? extra.model.trim() : ''
   if (!model) {
     throw new Error(`${providerId} 必须配置 model`)
+  }
+
+  if (extra.defaultReasoningEffort !== undefined) {
+    const effort = extra.defaultReasoningEffort
+    if (!REASONING_EFFORTS.includes(effort as (typeof REASONING_EFFORTS)[number])) {
+      throw new Error(`${providerId} 的 defaultReasoningEffort 只能是 low/medium/high/xhigh/max`)
+    }
+  }
+  if (extra.reasoningEfforts !== undefined) {
+    if (!Array.isArray(extra.reasoningEfforts)) {
+      throw new Error(`${providerId} 的 reasoningEfforts 必须是数组`)
+    }
+    for (const item of extra.reasoningEfforts) {
+      if (!REASONING_EFFORTS.includes(item as (typeof REASONING_EFFORTS)[number])) {
+        throw new Error(`${providerId} 的 reasoningEfforts 只能包含 low/medium/high/xhigh/max`)
+      }
+    }
   }
 
   const hasApiKey =

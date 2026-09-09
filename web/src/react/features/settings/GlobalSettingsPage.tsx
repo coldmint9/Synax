@@ -7,6 +7,7 @@ import { LlmProviderSection } from './components/LlmProviderSection'
 import { AcpSection } from './components/AcpSection'
 import { LimitsSection } from './components/LimitsSection'
 import { AdvancedSection } from './components/AdvancedSection'
+import { McpServersSection } from './components/McpServersSection'
 
 export default function GlobalSettingsPage() {
   const { globalConfig, providers, loading, reload, updateGlobalConfig } = useConfig()
@@ -49,6 +50,7 @@ export default function GlobalSettingsPage() {
             />
             <AcpSection config={globalConfig} onUpdate={updateGlobalConfig} onReload={reload} />
             <LimitsSection config={globalConfig} onUpdate={updateGlobalConfig} />
+            <McpServersSection config={globalConfig} onUpdate={updateGlobalConfig} />
             <AdvancedSection config={globalConfig} onUpdate={updateGlobalConfig} />
           </div>
         </div>

@@ -326,6 +326,7 @@ function toRuntimeModels(provider: ProviderDef, connection?: ProviderConnection)
     label: model.label,
     isDefault: model.isDefault,
     maxTokens: model.maxTokens,
+    ...(typeof model.contextLimit === 'number' ? { contextLimit: model.contextLimit } : {}),
     ...(reasoningCapable ? { reasoning: true, toolCall: true } : {}),
   }))
 

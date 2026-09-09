@@ -9,6 +9,7 @@ import type {
   AnalyzerLlmConfig,
   EffectiveConfig,
   GlobalConfig,
+  McpServerConfig,
   ProjectConfig,
   ProviderConnection,
   ProviderDef,
@@ -383,6 +384,7 @@ function normalizeTemplateConfig(config: GlobalConfig, includeSecrets: boolean):
     defaultProviderId: normalizeAcpProviderId(config.defaultProviderId),
     defaultApiProviderId: normalizeApiProviderId(config.defaultApiProviderId, providers),
     enabledAcpProviderIds: config.enabledAcpProviderIds ?? defaults.enabledAcpProviderIds,
+    mcpServers: normalizeMcpServers(config.mcpServers ?? defaults.mcpServers ?? [], includeSecrets),
   }
 }
 
@@ -400,6 +402,7 @@ function normalizeUserGlobalConfig(config: GlobalConfig, includeSecrets: boolean
     defaultProviderId: normalizeAcpProviderId(config.defaultProviderId),
     defaultApiProviderId: config.defaultApiProviderId || defaults.defaultApiProviderId,
     enabledAcpProviderIds: config.enabledAcpProviderIds ?? defaults.enabledAcpProviderIds,
+    mcpServers: normalizeMcpServers(config.mcpServers ?? defaults.mcpServers ?? [], includeSecrets),
   }
 }
 
@@ -414,6 +417,7 @@ function mergeGlobalConfigLayers(template: GlobalConfig, global: GlobalConfig, i
     defaultApiProviderId: normalizeApiProviderId(global.defaultApiProviderId ?? template.defaultApiProviderId, providers),
     enabledAcpProviderIds: global.enabledAcpProviderIds ?? template.enabledAcpProviderIds,
     providerConnections,
+    mcpServers: normalizeMcpServers(global.mcpServers ?? template.mcpServers ?? [], includeSecrets),
     limits: global.limits ?? template.limits,
     features: global.features ?? template.features,
     updatedAt: latest.updatedAt,
@@ -456,6 +460,7 @@ function applyGlobalConfigPatch(
     Boolean(patch.enabledAcpProviderIds) ||
     Boolean(patch.limits) ||
     Boolean(patch.features) ||
+    Boolean(patch.mcpServers) ||
     Boolean(userPatchProviders?.length) ||
     Object.keys(userPatchConnections).length > 0
   const templateTouched = Boolean(templatePatchProviders?.length) || Object.keys(templatePatchConnections).length > 0
@@ -482,6 +487,7 @@ function applyGlobalConfigPatch(
     defaultProviderId: normalizeAcpProviderId(patch.defaultProviderId ?? current.defaultProviderId),
     defaultApiProviderId: resolvedDefaultApiProviderId,
     enabledAcpProviderIds: patch.enabledAcpProviderIds ?? current.enabledAcpProviderIds,
+    mcpServers: patch.mcpServers ?? layers.global.mcpServers ?? [],
     limits: patch.limits ? { ...current.limits, ...patch.limits } : current.limits,
     features: patch.features ? { ...current.features, ...patch.features } : current.features,
     updatedAt: globalTouched ? updatedAt : layers.global.updatedAt,
@@ -611,9 +617,14 @@ function normalizeProviderConnection(connection: ProviderConnection, includeSecr
   }
 }
 
+function normalizeMcpServers(servers: McpServerConfig[] | undefined, _includeSecrets: boolean): McpServerConfig[] {
+  return servers ?? []
+}
+
 function prepareGlobalConfigForStorage(config: GlobalConfig): GlobalConfig {
   return {
     ...config,
+    mcpServers: config.mcpServers ?? [],
     providerConnections: prepareProviderConnectionsForStorage(config.providerConnections),
   }
 }

@@ -7,6 +7,7 @@ import {
   type AgentSession,
   type PermissionDecision,
   type QueuedInput,
+  type ReasoningEffort,
   type RuntimeEvent,
   type SessionStats,
   type SessionCapabilities,
@@ -39,8 +40,10 @@ export type SessionInputBody = {
   /** Enriched create/turn prompt; defaults to `message` when omitted. */
   prompt?: string
   model?: string | null
+  reasoningEffort?: ReasoningEffort | null
   permissionTier?: SynaxPermissionTier
   skillIds?: string[]
+  mcpServerIds?: string[]
   wikiAttachMode?: 'auto' | 'manual'
   documentId?: string | null
 }
@@ -483,7 +486,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       projectId,
       profileId: SYNAX_PROFILE_ID,
       prompt,
+      reasoningEffort: body.reasoningEffort ?? undefined,
       skillIds: body.skillIds?.length ? body.skillIds : undefined,
+      mcpServerIds: body.mcpServerIds?.length ? body.mcpServerIds : undefined,
       permissionTier: body.permissionTier,
       sessionMetadata: createSynaxSessionMetadata('goal', {
         source: 'session-page',
@@ -777,6 +782,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
         await agentRuntimeApi.resumeStream(sessionId, {
           message: body.message,
           model: body.model ?? undefined,
+          reasoningEffort: body.reasoningEffort ?? undefined,
           permissionTier: body.permissionTier,
           locale: useShellStore.getState().locale,
         }, (chunk) => {
@@ -786,6 +792,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
         await agentRuntimeApi.streamTurn(sessionId, {
           message: body.message,
           model: body.model ?? undefined,
+          reasoningEffort: body.reasoningEffort ?? undefined,
           permissionTier: body.permissionTier,
           locale: useShellStore.getState().locale,
         }, (chunk) => {

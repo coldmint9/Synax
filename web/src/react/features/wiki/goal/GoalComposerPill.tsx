@@ -1,11 +1,13 @@
-import { useLayoutEffect, useRef, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { Square, ArrowUp } from 'lucide-react'
 import type { ProviderDef } from '../../../../lib/contracts/config'
 import type { GlobalConfig } from '../../../../lib/contracts/config'
+import type { McpServerConfig, ReasoningEffort } from '../../../../lib/contracts/config'
 import type { WikiDocument } from '../../../../lib/contracts/wiki'
 import { useLocale } from '../../../../hooks/useLocale'
 import { GoalAttachMenu } from './GoalAttachMenu'
 import { GoalModelPicker } from './GoalModelPicker'
+import { GoalEffortPicker, type GoalReasoningEffort } from './GoalEffortPicker'
 import type { GoalModelSelection } from './goalModelOptions'
 import type { GoalPermissionTier, GoalWikiAttachMode } from './goalAttachTypes'
 
@@ -28,6 +30,13 @@ interface Props {
   documents: WikiDocument[]
   skillIds: string[]
   onSkillIdsChange: (ids: string[]) => void
+  mcpServers?: McpServerConfig[]
+  mcpServerIds: string[]
+  onMcpServerIdsChange: (ids: string[]) => void
+  reasoningEffort: GoalReasoningEffort
+  onReasoningEffortChange: (effort: GoalReasoningEffort) => void
+  /** Effort levels the currently selected provider allows. */
+  allowedReasoningEfforts?: ReasoningEffort[]
   permissionTier: GoalPermissionTier
   onPermissionTierChange: (tier: GoalPermissionTier) => void
   disabled?: boolean
@@ -58,6 +67,12 @@ export function GoalComposerPill({
   documents,
   skillIds,
   onSkillIdsChange,
+  mcpServers = [],
+  mcpServerIds,
+  onMcpServerIdsChange,
+  reasoningEffort,
+  onReasoningEffortChange,
+  allowedReasoningEfforts,
   permissionTier,
   onPermissionTierChange,
   disabled,
@@ -123,6 +138,15 @@ export function GoalComposerPill({
     textareaRef.current?.focus()
   }, [defaultExpanded])
 
+  useEffect(() => {
+    const levels = allowedReasoningEfforts && allowedReasoningEfforts.length > 0
+      ? allowedReasoningEfforts
+      : ['low', 'medium', 'high', 'xhigh', 'max'] as ReasoningEffort[]
+    if (levels.includes(reasoningEffort)) return
+    const fallback: ReasoningEffort = levels.includes('high') ? 'high' : (levels[0] ?? 'high')
+    if (fallback !== reasoningEffort) onReasoningEffortChange(fallback)
+  }, [allowedReasoningEfforts, onReasoningEffortChange, reasoningEffort])
+
   const compositionProps = {
     onCompositionStart: handleCompositionStart,
     onCompositionEnd: handleCompositionEnd,
@@ -139,6 +163,9 @@ export function GoalComposerPill({
         documents={documents}
         skillIds={skillIds}
         onSkillIdsChange={onSkillIdsChange}
+        mcpServers={mcpServers}
+        mcpServerIds={mcpServerIds}
+        onMcpServerIdsChange={onMcpServerIdsChange}
         permissionTier={permissionTier}
         onPermissionTierChange={onPermissionTierChange}
         disabled={disabled}
@@ -152,6 +179,14 @@ export function GoalComposerPill({
         providerId={providerId}
         modelId={modelId}
         onSelect={onModelSelect}
+        disabled={disabled}
+        onOverlayOpenChange={onOverlayOpenChange}
+      />
+
+      <GoalEffortPicker
+        effort={reasoningEffort}
+        allowed={allowedReasoningEfforts}
+        onChange={onReasoningEffortChange}
         disabled={disabled}
         onOverlayOpenChange={onOverlayOpenChange}
       />
@@ -240,6 +275,9 @@ export function GoalComposerPill({
             documents={documents}
             skillIds={skillIds}
             onSkillIdsChange={onSkillIdsChange}
+            mcpServers={mcpServers}
+            mcpServerIds={mcpServerIds}
+            onMcpServerIdsChange={onMcpServerIdsChange}
             permissionTier={permissionTier}
             onPermissionTierChange={onPermissionTierChange}
             disabled={disabled && !queueWhileGenerating}
@@ -263,6 +301,13 @@ export function GoalComposerPill({
             providerId={providerId}
             modelId={modelId}
             onSelect={onModelSelect}
+            disabled={disabled && !queueWhileGenerating}
+            onOverlayOpenChange={onOverlayOpenChange}
+          />
+          <GoalEffortPicker
+            effort={reasoningEffort}
+            allowed={allowedReasoningEfforts}
+            onChange={onReasoningEffortChange}
             disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}
           />
