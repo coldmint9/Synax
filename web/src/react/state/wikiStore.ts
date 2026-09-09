@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { wikiApi } from '../../lib/api/wiki';
 import { goalApi, type WikiGoal, type WikiPlan, type WikiPlanNode, type WikiPlanWithSummary, type PlanNodeDraft, type PlanStreamEvent, type PlanExecuteEvent, type WikiPlanNodeArtifact, type GoalAnchor } from '../../lib/api/goal';
-import { agentRuntimeApi } from '../../lib/api/agentRuntime';
+import { agentRuntimeApi, type ReasoningEffort } from '../../lib/api/agentRuntime';
 import { TaskNotificationEventType } from '../../lib/api/eventTypes';
 import { useNotificationStore } from './notificationStore';
 import { useShellStore } from './shellStore';
@@ -165,6 +165,8 @@ export interface WikiState {
   goalComposerWikiAttachMode: GoalWikiAttachMode;
   goalComposerAnchorJson: GoalAnchor | null;
   goalComposerSkillIds: string[];
+  goalComposerMcpServerIds: string[];
+  goalComposerReasoningEffort: ReasoningEffort;
   goalComposerPermissionTier: GoalPermissionTier;
   goalSession: GoalSessionState;
   setGoalDockState: (state: GoalDockState) => void;
@@ -174,6 +176,8 @@ export interface WikiState {
   setGoalComposerDocumentId: (id: string | null) => void;
   setGoalComposerWikiAttachMode: (mode: GoalWikiAttachMode) => void;
   setGoalComposerSkillIds: (ids: string[]) => void;
+  setGoalComposerMcpServerIds: (ids: string[]) => void;
+  setGoalComposerReasoningEffort: (effort: ReasoningEffort) => void;
   setGoalPermissionTier: (tier: GoalPermissionTier) => void;
   openGoalInput: (prefill?: {
     content?: string;
@@ -235,6 +239,8 @@ const initialState = {
   goalComposerWikiAttachMode: 'auto' as GoalWikiAttachMode,
   goalComposerAnchorJson: null as GoalAnchor | null,
   goalComposerSkillIds: [] as string[],
+  goalComposerMcpServerIds: [] as string[],
+  goalComposerReasoningEffort: 'high' as ReasoningEffort,
   goalComposerPermissionTier: DEFAULT_GOAL_PERMISSION_TIER,
   goalSession: initialGoalSessionState,
   planExecutionAbort: null as (() => void) | null,
@@ -713,6 +719,8 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     goalComposerAnchorJson: mode === 'auto' ? null : s.goalComposerAnchorJson,
   })),
   setGoalComposerSkillIds: (ids) => set({ goalComposerSkillIds: ids }),
+  setGoalComposerMcpServerIds: (ids) => set({ goalComposerMcpServerIds: ids }),
+  setGoalComposerReasoningEffort: (effort: ReasoningEffort) => set({ goalComposerReasoningEffort: effort }),
   setGoalPermissionTier: (tier) => {
     if (get().goalComposerPermissionTier === tier) return
     set({ goalComposerPermissionTier: tier })
@@ -835,6 +843,8 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         profileId: SYNAX_PROFILE_ID,
         prompt,
         skillIds: s.goalComposerSkillIds.length > 0 ? s.goalComposerSkillIds : undefined,
+        mcpServerIds: s.goalComposerMcpServerIds.length > 0 ? s.goalComposerMcpServerIds : undefined,
+        reasoningEffort: s.goalComposerReasoningEffort,
         permissionTier: s.goalComposerPermissionTier,
         sessionMetadata: createSynaxSessionMetadata('goal', {
           source: 'goal-dock',
@@ -863,11 +873,17 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         goalComposerContent: '',
         goalComposerAnchorJson: null,
         goalComposerSkillIds: [],
+        goalComposerMcpServerIds: [],
+        goalComposerReasoningEffort: 'high',
       })
 
       await streamGoalAgentTurn(
         payload.session.id,
-        { model, permissionTier: s.goalComposerPermissionTier },
+        {
+          model,
+          permissionTier: s.goalComposerPermissionTier,
+          reasoningEffort: s.goalComposerReasoningEffort,
+        },
         (chunk) => {
           set(state => ({
             goalSession: applyGoalStreamChunk(state.goalSession, chunk),

@@ -7,6 +7,7 @@ const BASE = '/api/agent-runtime'
 export type AgentProfileKind = 'planner' | 'executor' | 'reviewer' | 'explorer'
 export type AgentMode = 'primary' | 'subagent'
 export type ThinkingMode = 'fast' | 'standard' | 'deep'
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type AgentSessionStatus =
   | 'queued'
   | 'running'
@@ -52,12 +53,14 @@ export interface AgentSession {
   prompt: string
   contextSnapshotId: string | null
   thinkingMode: ThinkingMode
+  reasoningEffort?: ReasoningEffort | null
   createdAt: string
   updatedAt: string
   completedAt: string | null
   resultSummary: string | null
   blockedReason: string | null
   skillIds: string[]
+  mcpServerIds?: string[]
   activeRunId: string | null
   pendingResumeToken: string | null
   model: string | null
@@ -151,6 +154,7 @@ export interface QueuedInput {
   id: string
   message: string
   model: string | null
+  reasoningEffort?: ReasoningEffort | null
   enqueuedAt: string
 }
 
@@ -190,7 +194,9 @@ export interface CreateSessionRequest {
   parentSessionId?: string | null
   prompt: string
   thinkingMode?: ThinkingMode
+  reasoningEffort?: ReasoningEffort
   skillIds?: string[]
+  mcpServerIds?: string[]
   sessionMetadata?: Record<string, unknown> | null
   permissionTier?: 'readonly' | 'readwrite' | 'unrestricted'
   permissionOverrides?: Partial<Record<'read' | 'write' | 'delete' | 'shell' | 'task', 'allow' | 'ask' | 'deny'>>
@@ -251,6 +257,7 @@ export interface StreamTurnRequest {
   maxTokens?: number
   maxSteps?: number
   locale?: 'zh' | 'en'
+  reasoningEffort?: ReasoningEffort
   permissionTier?: 'readonly' | 'readwrite' | 'unrestricted'
   permissionOverrides?: Partial<Record<'read' | 'write' | 'delete' | 'shell' | 'task', 'allow' | 'ask' | 'deny'>>
 }
@@ -438,7 +445,7 @@ export const agentRuntimeApi = {
   listInputQueue: (sessionId: string) =>
     apiRequest<{ items: QueuedInput[] }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue`),
 
-  enqueueInput: (sessionId: string, body: { message: string; model?: string | null }) =>
+  enqueueInput: (sessionId: string, body: { message: string; model?: string | null; reasoningEffort?: ReasoningEffort | null }) =>
     apiRequest<{ items: QueuedInput[] }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

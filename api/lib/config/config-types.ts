@@ -18,11 +18,15 @@ export interface ProviderDef {
   connectionSchema?: Record<string, unknown>
 }
 
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 export interface ProviderModelDef {
   id: string
   label: string
   isDefault?: boolean
   maxTokens?: number
+  /** Input context window in tokens (1_000_000 when the 1M input-context checkbox is set). */
+  contextLimit?: number
 }
 
 export interface ProviderConnection {
@@ -33,6 +37,15 @@ export interface ProviderConnection {
   extra?: Record<string, unknown>
 }
 
+export interface McpServerConfig {
+  id: string
+  name: string
+  command: string
+  args?: string[]
+  env?: Record<string, string>
+  enabled?: boolean
+}
+
 export interface GlobalConfig {
   version: number
   providers: ProviderDef[]
@@ -40,6 +53,7 @@ export interface GlobalConfig {
   defaultApiProviderId: string
   enabledAcpProviderIds: string[]
   providerConnections: Record<string, ProviderConnection>
+  mcpServers: McpServerConfig[]
   limits: {
     maxAgentsPerProject: number
     agentTimeoutMs: number
@@ -90,6 +104,7 @@ export interface UpdateGlobalConfigRequest {
   defaultApiProviderId?: string
   enabledAcpProviderIds?: string[]
   providerConnections?: Record<string, ProviderConnection>
+  mcpServers?: McpServerConfig[]
   limits?: GlobalConfig['limits']
   features?: GlobalConfig['features']
 }

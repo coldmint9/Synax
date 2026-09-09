@@ -110,6 +110,7 @@ function createGlobalConfig(overrides?: Partial<GlobalConfig>): GlobalConfig {
       maxAgentsPerProject: 10,
       agentTimeoutMs: 300_000,
     },
+    mcpServers: [],
     features: {
       allowProjectConnectionOverride: true,
     },

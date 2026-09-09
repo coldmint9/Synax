@@ -10,6 +10,7 @@ export const queuedInputSchema = z.object({
   id: z.string().min(1),
   message: z.string().min(1).max(100_000),
   model: z.string().min(1).max(256).nullable().optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   enqueuedAt: z.string().min(1),
 });
 
@@ -18,6 +19,7 @@ export type QueuedInput = z.infer<typeof queuedInputSchema>;
 export const enqueueInputRequestSchema = z.object({
   message: z.string().min(1).max(100_000),
   model: z.string().min(1).max(256).optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
 });
 
 export type EnqueueInputRequest = z.infer<typeof enqueueInputRequestSchema>;
@@ -72,6 +74,7 @@ export const inputQueueService = {
       id: makeRuntimeId('inq'),
       message: input.message.trim(),
       model: input.model ?? null,
+      reasoningEffort: input.reasoningEffort,
       enqueuedAt: nowIso(),
     };
     return writeQueue(sessionId, [...queue, item]);

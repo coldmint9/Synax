@@ -15,7 +15,8 @@ import {
   canEnqueueSessionInput,
 } from './sessionComposerState'
 import { InputQueueStrip } from './InputQueueStrip'
-import type { AgentSession } from '../../../lib/api/agentRuntime'
+import type { AgentSession, ReasoningEffort } from '../../../lib/api/agentRuntime'
+import { effectiveReasoningEfforts } from '../settings/lib/providerPresets'
 import {
   readSynaxDocumentId,
   readSynaxPermissionTier,
@@ -34,6 +35,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
   const navigate = useNavigate()
   const [content, setContent] = useState('')
   const [skillIds, setSkillIds] = useState<string[]>([])
+  const [mcpServerIds, setMcpServerIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const sendSessionMessage = useAgentSessionStore(s => s.sendSessionMessage)
   const submitOrEnqueueSessionInput = useAgentSessionStore(s => s.submitOrEnqueueSessionInput)
@@ -73,6 +75,8 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
   const modelId = useWikiStore(s => s.goalComposerModelId)
   const setProviderId = useWikiStore(s => s.setGoalComposerProviderId)
   const setModelId = useWikiStore(s => s.setGoalComposerModelId)
+  const reasoningEffort = useWikiStore(s => s.goalComposerReasoningEffort)
+  const setReasoningEffort = useWikiStore(s => s.setGoalComposerReasoningEffort)
   const permissionTier = useWikiStore(s => s.goalComposerPermissionTier)
   const wikiAttachMode = useWikiStore(s => s.goalComposerWikiAttachMode)
   const setWikiAttachMode = useWikiStore(s => s.setGoalComposerWikiAttachMode)
@@ -109,6 +113,16 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
   }, [])
 
   useEffect(() => {
+    if (!session) return
+    const stored = session.reasoningEffort ?? null
+    const current = useWikiStore.getState().goalComposerReasoningEffort
+    const next: ReasoningEffort = stored ?? 'high'
+    if (current !== next) {
+      useWikiStore.setState({ goalComposerReasoningEffort: next })
+    }
+  }, [session?.id, session?.reasoningEffort])
+
+  useEffect(() => {
     if (!globalConfig) return
     if (providerId && modelId) return
     // Default pick from API providers only — do not wait on ACP discovery.
@@ -141,6 +155,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     setContent('')
     setSubmitting(true)
     const model = formatTurnModel(providerId, modelId)
+    const effortPayload = reasoningEffort
     try {
       if (isDraft) {
         const { prompt, wikiContext } = await goalApi.buildSessionPrompt(projectId, {
@@ -156,16 +171,19 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
           message,
           prompt,
           model,
+          reasoningEffort: effortPayload,
           permissionTier,
           skillIds,
+          mcpServerIds: mcpServerIds.length > 0 ? mcpServerIds : undefined,
           wikiAttachMode: wikiContext.mode,
           documentId: wikiContext.documentId,
         })
         navigate(sessionPath(projectId, created.id))
         setSkillIds([])
-        await sendSessionMessage(created.id, { message: prompt, model, permissionTier })
+        setMcpServerIds([])
+        await sendSessionMessage(created.id, { message: prompt, model, reasoningEffort: effortPayload, permissionTier })
       } else {
-        await submitOrEnqueueSessionInput(session.id, { message, model, permissionTier })
+        await submitOrEnqueueSessionInput(session.id, { message, model, reasoningEffort: effortPayload, permissionTier })
       }
     } finally {
       setSubmitting(false)
@@ -176,12 +194,14 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     documents,
     isDraft,
     isGenerating,
+    mcpServerIds,
     modelId,
     navigate,
     permissionTier,
     projectId,
     providerId,
     queueWhileGenerating,
+    reasoningEffort,
     sendSessionMessage,
     session,
     skillIds,
@@ -194,6 +214,7 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     if (session) void cancelSessionRun(session.id)
   }, [cancelSessionRun, session])
 
+  const allowedReasoningEfforts = providerId ? effectiveReasoningEfforts(globalConfig, providerId) : undefined
   const isCentered = layout === 'centered'
   const expandedShell = isCentered || content.includes('\n')
 
@@ -221,6 +242,12 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
       documents={documents}
       skillIds={skillIds}
       onSkillIdsChange={setSkillIds}
+      mcpServers={globalConfig?.mcpServers ?? []}
+      mcpServerIds={mcpServerIds}
+      onMcpServerIdsChange={setMcpServerIds}
+      reasoningEffort={reasoningEffort}
+      onReasoningEffortChange={setReasoningEffort}
+      allowedReasoningEfforts={allowedReasoningEfforts}
       permissionTier={permissionTier}
       onPermissionTierChange={handlePermissionTierChange}
       disabled={isGenerating && !queueWhileGenerating}

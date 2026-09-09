@@ -50,6 +50,7 @@ export function createDefaultGlobalConfig(updatedBy = 'system'): GlobalConfig {
     defaultProviderId: 'opencode-acp',
     defaultApiProviderId: 'openai',
     enabledAcpProviderIds: ['opencode-acp'],
+    mcpServers: [],
     providerConnections: {
       'opencode-acp': {
         providerId: 'opencode-acp',
@@ -106,6 +107,7 @@ export function createDefaultUserGlobalConfig(updatedBy = 'system'): GlobalConfi
     defaultProviderId: 'opencode-acp',
     defaultApiProviderId: 'openai',
     enabledAcpProviderIds: ['opencode-acp'],
+    mcpServers: [],
     providerConnections: {},
     limits: {
       maxAgentsPerProject: 10,

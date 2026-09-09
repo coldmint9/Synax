@@ -55,6 +55,7 @@
     "@ai-sdk/xai": "^3.0.89",
     "@hono/node-server": "^1.13.0",
     "@libsql/client": "^0.17.3",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@openrouter/ai-sdk-provider": "^2.9.0",
     "ai": "^6.0.180",
     "beautiful-mermaid": "^1.1.3",

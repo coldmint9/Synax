@@ -38,6 +38,7 @@ interface SessionRow {
   prompt: string;
   context_snapshot_id: string | null;
   thinking_mode: AgentSession['thinkingMode'];
+  reasoning_effort: string | null;
   permission_rules_json: string;
   created_at: string;
   updated_at: string;
@@ -45,6 +46,7 @@ interface SessionRow {
   result_summary: string | null;
   blocked_reason: string | null;
   skill_ids_json: string;
+  mcp_server_ids_json: string;
   active_run_id: string | null;
   pending_resume_token: string | null;
   session_metadata_json: string | null;
@@ -225,6 +227,10 @@ function parseArray<T>(raw: string | null | undefined): T[] {
   return Array.isArray(parsed) ? (parsed as T[]) : [];
 }
 
+function isReasoningEffort(value: string | null | undefined): value is AgentSession['reasoningEffort'] {
+  return value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh' || value === 'max';
+}
+
 function parseObject(raw: string | null | undefined): JsonObject {
   const parsed = parseJson<unknown>(raw, {});
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as JsonObject) : {};
@@ -243,6 +249,7 @@ function mapSession(row: SessionRow): AgentSession {
     prompt: row.prompt,
     contextSnapshotId: row.context_snapshot_id,
     thinkingMode: row.thinking_mode,
+    reasoningEffort: isReasoningEffort(row.reasoning_effort) ? row.reasoning_effort : null,
     permissionRules: parseArray(row.permission_rules_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -250,6 +257,7 @@ function mapSession(row: SessionRow): AgentSession {
     resultSummary: row.result_summary,
     blockedReason: row.blocked_reason,
     skillIds: parseArray<string>(row.skill_ids_json),
+    mcpServerIds: parseArray<string>(row.mcp_server_ids_json),
     activeRunId: row.active_run_id,
     pendingResumeToken: row.pending_resume_token,
     sessionMetadata: parseObject(row.session_metadata_json),
@@ -1142,9 +1150,9 @@ export class AgentRuntimeStore {
       .prepare(
         `INSERT OR REPLACE INTO agent_runtime_sessions
          (id, project_id, parent_session_id, child_session_ids_json, node_id, profile_id, status,
-          title, prompt, context_snapshot_id, thinking_mode, permission_rules_json, created_at, updated_at,
-          completed_at, result_summary, blocked_reason, skill_ids_json, active_run_id, pending_resume_token, session_metadata_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          title, prompt, context_snapshot_id, thinking_mode, reasoning_effort, permission_rules_json, created_at, updated_at,
+          completed_at, result_summary, blocked_reason, skill_ids_json, mcp_server_ids_json, active_run_id, pending_resume_token, session_metadata_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         session.id,
@@ -1158,6 +1166,7 @@ export class AgentRuntimeStore {
         session.prompt,
         session.contextSnapshotId,
         session.thinkingMode,
+        session.reasoningEffort ?? null,
         stringify(session.permissionRules),
         session.createdAt,
         session.updatedAt,
@@ -1165,6 +1174,7 @@ export class AgentRuntimeStore {
         session.resultSummary,
         session.blockedReason,
         stringify(session.skillIds),
+        stringify(session.mcpServerIds ?? []),
         session.activeRunId,
         session.pendingResumeToken,
         stringify(session.sessionMetadata),

@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { BookOpen, Check, Plug, Plus, Shield, Sparkles } from 'lucide-react'
 import { Dropdown, Header, Label, Switch } from '@heroui/react'
+import type { McpServerConfig } from '../../../../lib/contracts/config'
 import type { WikiDocument } from '../../../../lib/contracts/wiki'
 import { skillsApi, type SkillSummary } from '../../../../lib/api/skills'
 import { useLocale } from '../../../../hooks/useLocale'
@@ -21,6 +22,9 @@ interface Props {
   documents: WikiDocument[]
   skillIds: string[]
   onSkillIdsChange: (ids: string[]) => void
+  mcpServers?: McpServerConfig[]
+  mcpServerIds: string[]
+  onMcpServerIdsChange: (ids: string[]) => void
   permissionTier: GoalPermissionTier
   onPermissionTierChange: (tier: GoalPermissionTier) => void
   disabled?: boolean
@@ -179,6 +183,9 @@ export function GoalAttachMenu({
   documents,
   skillIds,
   onSkillIdsChange,
+  mcpServers = [],
+  mcpServerIds,
+  onMcpServerIdsChange,
   permissionTier,
   onPermissionTierChange,
   disabled,
@@ -221,8 +228,8 @@ export function GoalAttachMenu({
   const hasWikiAttachment = wikiAttachMode === 'auto' || Boolean(documentId)
 
   const hasAttachments = useMemo(
-    () => hasWikiAttachment || skillIds.length > 0 || hasNonDefaultGoalPermissionTier(permissionTier),
-    [hasWikiAttachment, skillIds.length, permissionTier],
+    () => hasWikiAttachment || skillIds.length > 0 || mcpServerIds.length > 0 || hasNonDefaultGoalPermissionTier(permissionTier),
+    [hasWikiAttachment, skillIds.length, mcpServerIds.length, permissionTier],
   )
 
   return (
@@ -266,18 +273,42 @@ export function GoalAttachMenu({
             <Dropdown.Item id="mcp" textValue={t('goalAttachMcp')}>
               <Plug size={14} className="shrink-0 text-muted-foreground/70" />
               <Label>{t('goalAttachMcp')}</Label>
+              <AttachBadge count={mcpServerIds.length} />
               <Dropdown.SubmenuIndicator />
             </Dropdown.Item>
             <Dropdown.Popover>
-              <div className="max-w-52 p-3">
-                <p className="text-[11px] font-medium text-foreground">{t('settingsMcpTitle')}</p>
-                <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
-                  {t('settingsMcpDesc')}
-                </p>
-                <span className="mt-2 inline-block rounded-full bg-muted px-2 py-0.5 text-[9px] text-muted-foreground">
-                  {t('settingsMcpComingSoon')}
-                </span>
-              </div>
+              {mcpServers.length === 0 ? (
+                <div className="max-w-52 p-3">
+                  <p className="text-[11px] font-medium text-foreground">{t('settingsMcpTitle')}</p>
+                  <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+                    {t('settingsMcpDesc')}
+                  </p>
+                  <span className="mt-2 inline-block rounded-full bg-muted px-2 py-0.5 text-[9px] text-muted-foreground">
+                    请先在设置中配置 MCP 服务器
+                  </span>
+                </div>
+              ) : (
+                <Dropdown.Menu
+                  aria-label={t('goalAttachMcp')}
+                  selectedKeys={new Set(mcpServerIds)}
+                  selectionMode="multiple"
+                  onSelectionChange={(keys) => onMcpServerIdsChange([...keys].map(String))}
+                >
+                  <Dropdown.Section>
+                    <Header>{t('goalAttachMcp')}</Header>
+                    {mcpServers.map(server => (
+                      <Dropdown.Item key={server.id} id={server.id} textValue={server.name}>
+                        {mcpServerIds.includes(server.id)
+                          ? <Check size={14} className="shrink-0 text-primary" />
+                          : <span className="size-3.5 shrink-0" aria-hidden />}
+                        <Label className={`truncate ${mcpServerIds.includes(server.id) ? 'font-medium text-primary' : ''}`}>
+                          {server.name}
+                        </Label>
+                      </Dropdown.Item>
+                    ))}
+                  </Dropdown.Section>
+                </Dropdown.Menu>
+              )}
             </Dropdown.Popover>
           </Dropdown.SubmenuTrigger>
 

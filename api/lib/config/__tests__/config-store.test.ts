@@ -141,3 +141,46 @@ describe('config-store migration and overrides', () => {
     expect(rawTemplate).toContain('enc:v1:')
   })
 })
+
+describe('config-store provider model metadata persistence', () => {
+  it('keeps per-model contextLimit and allowed reasoning efforts across save/load', async () => {
+    const { getGlobalConfig, updateGlobalConfig } = await import('../config-store.js')
+
+    const provider = {
+      id: 'custom-api:deepseek',
+      label: 'DeepSeek',
+      status: 'live',
+      kind: 'api',
+      caps: { canFollowUp: true, canCancel: true },
+      models: [
+        { id: 'deepseek-chat', label: 'deepseek-chat', isDefault: true, contextLimit: 1_000_000 },
+        { id: 'deepseek-reasoner', label: 'deepseek-reasoner' },
+      ],
+    }
+    updateGlobalConfig(
+      {
+        providers: [provider],
+        providerConnections: {
+          'custom-api:deepseek': {
+            providerId: 'custom-api:deepseek',
+            baseUrl: 'https://api.deepseek.com',
+            apiKey: 'sk-1234567890abcdef',
+            extra: {
+              kind: 'api',
+              apiFormat: 'openai',
+              model: 'deepseek-chat',
+              reasoningEfforts: ['high', 'max'],
+            },
+          },
+        },
+      },
+      'tester',
+    )
+
+    const config = getGlobalConfig()
+    const saved = config.providers.find((p) => p.id === 'custom-api:deepseek')
+    expect(saved?.models.find((m) => m.id === 'deepseek-chat')?.contextLimit).toBe(1_000_000)
+    expect(saved?.models.find((m) => m.id === 'deepseek-reasoner')?.contextLimit).toBeUndefined()
+    expect(config.providerConnections['custom-api:deepseek']?.extra?.reasoningEfforts).toEqual(['high', 'max'])
+  })
+})

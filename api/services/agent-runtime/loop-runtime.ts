@@ -46,10 +46,12 @@ import { runChildToCompletion, DEFAULT_PER_CHILD_TIMEOUT_MS } from "./subagent-o
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../lib/ipc/agent-session-protocol.js";
 import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
-import { mapThinkingModeToReasoningEffort } from "../llm-runtime/thinking-mode-strategy.js";
+import { mapThinkingModeToReasoningEffort, type ReasoningEffort } from "../llm-runtime/thinking-mode-strategy.js";
+import { getGlobalConfigForRuntime } from "../../lib/config/config-store.js";
 import { logger } from "../../lib/logger.js";
 import { CONTEXT_TOOL_CLEAR_THRESHOLD, CONTEXT_TOOL_CLEAR_KEEP_RECENT, CONTEXT_TOOL_CLEAR_EXCLUDE } from "../../lib/env.js";
 import { inputQueueService } from "./input-queue-service.js";
+import { warmupMcpForSession } from "../mcp/mcp-session-tool-provider.js";
 
 const LOG_TEXT_LIMIT = 2000;
 const ACTIVE_SESSION_WAIT_MS = 25;
@@ -169,6 +171,9 @@ export class AgentLoopRuntime {
       });
     }
     let session = this.store.getSession(sessionId);
+    if (input.reasoningEffort) {
+      session = this.store.updateSession(sessionId, { reasoningEffort: input.reasoningEffort, updatedAt: nowIso() });
+    }
     const activeExecution = this.beginSessionExecution(sessionId, abortSignal);
     const runAbortSignal = activeExecution.signal;
     const profile = this.profiles.tryGet(session.profileId);
@@ -289,8 +294,10 @@ export class AgentLoopRuntime {
         ? this.tryGetContext(session.contextSnapshotId)
         : null;
 
-      // Resolve model capabilities once for the run
+      // Resolve model capabilities/context window/reasoning effort once for the run
       let modelCapabilities: { reasoning: boolean } | undefined
+      let runContextLimit = DEFAULT_CONTEXT_LIMIT
+      let runReasoningEffort: ReasoningEffort = mapThinkingModeToReasoningEffort(session.thinkingMode)
       try {
         const selection = await resolveGatewaySelection({
           projectId: session.projectId,
@@ -298,7 +305,18 @@ export class AgentLoopRuntime {
           model: input.model ?? undefined,
         })
         modelCapabilities = { reasoning: selection.modelDef.reasoning ?? false }
+        if (typeof selection.modelDef.contextLimit === 'number' && selection.modelDef.contextLimit > 0) {
+          runContextLimit = selection.modelDef.contextLimit
+        }
+        runReasoningEffort =
+          input.reasoningEffort
+          ?? session.reasoningEffort
+          ?? readProviderDefaultReasoningEffort(selection.providerId)
+          ?? mapThinkingModeToReasoningEffort(session.thinkingMode)
       } catch { /* non-critical, proceed without capabilities */ }
+      input = { ...input, reasoningEffort: runReasoningEffort }
+
+      await warmupMcpForSession(sessionId)
 
       let currentPrompt = prompt;
       if (pendingResume?.permission.userReply) {
@@ -427,6 +445,7 @@ export class AgentLoopRuntime {
           previousStepUsage: previousStep?.metadata?.usage as Record<string, unknown> | undefined,
           abortSignal: runAbortSignal,
           clearingActivated,
+          contextLimit: runContextLimit,
         })) {
           if (inputQueueService.getForceInjectId(sessionId)) {
             stepForceInjectRequested = true;
@@ -513,7 +532,7 @@ export class AgentLoopRuntime {
 
         const stepUsage = modelResult.step.usage as Record<string, unknown> | undefined;
         if (!clearingActivated && typeof stepUsage?.inputTokens === 'number') {
-          const stepContextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
+          const stepContextLimit = runContextLimit;
           if ((stepUsage.inputTokens as number) > stepContextLimit * CONTEXT_TOOL_CLEAR_THRESHOLD) {
             clearingActivated = true;
           }
@@ -717,7 +736,7 @@ export class AgentLoopRuntime {
               priorInputTokens: typeof (modelResult.step.usage as Record<string, unknown>)?.inputTokens === 'number'
                 ? (modelResult.step.usage as Record<string, unknown>).inputTokens as number
                 : null,
-              contextLimit: DEFAULT_CONTEXT_LIMIT,
+              contextLimit: runContextLimit,
               threshold: CONTEXT_TOOL_CLEAR_THRESHOLD,
               keepRecent: CONTEXT_TOOL_CLEAR_KEEP_RECENT,
               excludeTools: CONTEXT_TOOL_CLEAR_EXCLUDE,
@@ -1201,6 +1220,9 @@ export class AgentLoopRuntime {
       payload: { queueItemId: item.id, messageId: userMessage.id, runId: run.id },
       visibility: "user_visible",
     });
+    if (item.reasoningEffort) {
+      this.store.updateSession(sessionId, { reasoningEffort: item.reasoningEffort, updatedAt: nowIso() });
+    }
     logger.info(
       { sessionId, runId: run.id, queueItemId: item.id, messageId: userMessage.id },
       "[agent-runtime] queued user input injected at step boundary",
@@ -1248,6 +1270,7 @@ export class AgentLoopRuntime {
     previousStepUsage?: Record<string, unknown> | null;
     abortSignal?: AbortSignal;
     clearingActivated?: boolean;
+    contextLimit?: number;
   }): AsyncGenerator<LoopModelStreamEvent> {
     if (input.blockedByPermission) {
       logger.info(
@@ -1292,6 +1315,7 @@ export class AgentLoopRuntime {
         (tool) =>
           input.profile.allowedCapabilities.includes(tool.id) ||
           tool.category === "skill" ||
+          tool.category === "mcp" ||
           tool.id === "tools.invalid",
       );
     const toolSet = buildLoopToolSet(availableTools);
@@ -1502,7 +1526,7 @@ export class AgentLoopRuntime {
       purpose: input.input.purpose ?? input.profile.kind,
       model: input.input.model,
       cacheControl: true,
-      reasoningEffort: mapThinkingModeToReasoningEffort(session.thinkingMode),
+      reasoningEffort: input.input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode),
       messages: [
         {
           role: "system" as const,
@@ -1963,6 +1987,27 @@ export class AgentLoopRuntime {
         }
       },
     };
+  }
+}
+
+function readProviderDefaultReasoningEffort(providerId: string): ReasoningEffort | null {
+  try {
+    const global = getGlobalConfigForRuntime()
+    const connection = global?.providerConnections?.[providerId]
+    const raw = connection?.extra
+    const listed = Array.isArray(raw?.reasoningEfforts)
+      ? (raw.reasoningEfforts as unknown[]).filter(
+          (e): e is ReasoningEffort => e === 'low' || e === 'medium' || e === 'high' || e === 'xhigh' || e === 'max',
+        )
+      : []
+    const legacy = raw?.defaultReasoningEffort
+    if (legacy === 'low' || legacy === 'medium' || legacy === 'high' || legacy === 'xhigh' || legacy === 'max') {
+      listed.push(legacy)
+    }
+    if (listed.length === 0) return null
+    return listed.includes('high') ? 'high' : listed[0]
+  } catch {
+    return null
   }
 }
 

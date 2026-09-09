@@ -6,6 +6,7 @@ import type {
   AiApiValidateResponse,
   EffectiveConfigResponse,
   GlobalConfigResponse,
+  McpServerConfig,
   ProjectConfigResponse,
   ProviderListResponse,
   UpdateGlobalConfigRequest,
@@ -98,6 +99,16 @@ export const configApi = {
 
   async getEffective(projectId: string): Promise<EffectiveConfigResponse> {
     return request<EffectiveConfigResponse>(`${BASE}/projects/${projectId}/config/effective`)
+  },
+
+  async testMcpServer(config: McpServerConfig): Promise<{ ok: boolean; tools: Array<{ name: string; description?: string }>; error?: string }> {
+    const resp = await apiFetch('/api/mcp/test', {
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      body: JSON.stringify(config),
+    })
+    const body = await resp.json().catch(() => ({ ok: false, tools: [], error: `test failed (${resp.status})` }))
+    return body as { ok: boolean; tools: Array<{ name: string; description?: string }>; error?: string }
   },
 
   async openFile(filePath: string, line?: number): Promise<void> {

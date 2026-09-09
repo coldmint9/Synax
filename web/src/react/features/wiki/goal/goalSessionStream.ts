@@ -1,6 +1,7 @@
 import {
   agentRuntimeApi,
   type PermissionDecision,
+  type ReasoningEffort,
   type ToolCallRecord,
   type ToolCallStatus,
 } from '../../../../lib/api/agentRuntime'
@@ -230,7 +231,12 @@ export function isGoalSessionActive(status: GoalSessionStatus): boolean {
 
 export async function streamGoalAgentTurn(
   sessionId: string,
-  input: { message?: string; model?: string | null; permissionTier?: 'readonly' | 'readwrite' | 'unrestricted' },
+  input: {
+    message?: string
+    model?: string | null
+    permissionTier?: 'readonly' | 'readwrite' | 'unrestricted'
+    reasoningEffort?: ReasoningEffort
+  },
   onChunk: (chunk: unknown) => void,
   options?: { continue?: boolean },
 ): Promise<void> {
@@ -239,6 +245,7 @@ export async function streamGoalAgentTurn(
     ...(input.message ? { message: input.message } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.permissionTier ? { permissionTier: input.permissionTier } : {}),
+    ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
     locale,
   }
   if (options?.continue) {

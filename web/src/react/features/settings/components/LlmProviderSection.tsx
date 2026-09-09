@@ -211,6 +211,8 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       await saveProviderPatch({ drafts: next, defaultId, providerIdsToPersist })
       setDrafts(next)
       setEditingDraft(null)
+      // Re-read authoritative config so cards and the next edit dialog show saved model metadata.
+      await onReload()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : t('llmProviderSaveFailed'))
       throw err
