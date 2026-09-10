@@ -15,8 +15,11 @@ function ActiveTabContent({ tab, sessionId }: { tab: WorkspaceTab; sessionId: st
 
 export const SessionWorkspacePanel = memo(function SessionWorkspacePanel({
   sessionId,
+  mode = 'auto',
 }: {
   sessionId: string | null
+  /** `dashboard` keeps the sidecar cards visible; `content` renders only the active tab. */
+  mode?: 'auto' | 'dashboard' | 'content'
 }) {
   const { tabs, activeTabId, presentation } = useSessionWorkspace(sessionId)
   const { environment, loading, reload } = useSessionWorkspaceEnvironment(sessionId)
@@ -30,20 +33,22 @@ export const SessionWorkspacePanel = memo(function SessionWorkspacePanel({
     )
   }
 
+  if (mode === 'content' && !activeTab) return null
+
   return (
     <div
-      className={`session-workspace-panel session-workspace-panel--${presentation}`}
+      className={`session-workspace-panel session-workspace-panel--${mode === 'auto' ? presentation : mode}`}
       data-workspace-presentation={presentation}
     >
-      {activeTab ? (
-        <ActiveTabContent tab={activeTab} sessionId={sessionId} />
-      ) : (
+      {mode === 'dashboard' || !activeTab ? (
         <WorkspaceDashboard
           sessionId={sessionId}
           environment={environment}
           loading={loading}
           reload={reload}
         />
+      ) : (
+        <ActiveTabContent tab={activeTab} sessionId={sessionId} />
       )}
     </div>
   )

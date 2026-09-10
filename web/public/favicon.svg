@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Synax">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16263d"/>
+      <stop offset="1" stop-color="#080f1b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7fe0a6" stop-opacity="0.28"/>
+      <stop offset="0.6" stop-color="#7fe0a6" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#7fe0a6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#tile)"/>
+  <rect width="64" height="64" rx="14" fill="url(#glow)"/>
+  <path d="M43.25 23.4 C43.25 18.4 38.9 15.9 32.6 15.9 C26.4 15.9 22 19 22 24 C22 29 27 30.9 32 31.5 C37 32.1 42 34 42 39 C42 44 37.6 47.1 32 47.1 C26.4 47.1 22.6 44.6 22 40.25" fill="none" stroke="#7fe0a6" stroke-width="8.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="43.25" cy="23.4" r="5.4" fill="#cfe0ff"/>
+  <circle cx="22" cy="40.25" r="5.4" fill="#cfe0ff"/>
+</svg>

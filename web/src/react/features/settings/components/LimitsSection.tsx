@@ -49,7 +49,7 @@ export function LimitsSection({ config, onUpdate }: LimitsSectionProps) {
 
   return (
     <SettingsCard title={t('settingsLimitsTitle')} icon={Gauge} trailing={<SaveIndicator saving={saving} saved={saved} error={error} />}>
-      <div className="space-y-3">
+      <div className="settings-rows">
         <FormRow label={t('settingsMaxAgents')} description={t('settingsMaxAgentsDesc')}>
           <input
             type="number"

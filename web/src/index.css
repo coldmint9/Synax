@@ -684,6 +684,16 @@
     max-width: calc(100% - 16px);
   }
 
+  .workbench-header--agent-dock {
+    left: calc(50% + var(--agent-header-shift, 0px));
+    max-width: calc(100% - var(--agent-header-left-inset, 0px) - var(--agent-header-right-inset, 0px) - 16px);
+  }
+
+  .workbench-header--agent-dock > .wh-pill {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .wh-pill {
     display: flex;
     align-items: center;
@@ -800,6 +810,14 @@
     font-size: 12px;
   }
   .wh-project-trigger:hover { background: hsl(var(--secondary)); }
+
+  .wh-project-label {
+    display: block;
+    min-width: 0;
+    max-width: 120px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
 
   .wh-btn {
     width: 26px;
@@ -1074,21 +1092,104 @@
   .wiki-soft-rule { border-color: hsl(var(--border-hsl) / 0.55); }
   .wiki-fade-in { animation: float-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
-  /* ── Settings surfaces (wiki token palette) ── */
+  /* ── Settings surfaces ─────────────────────────────────────────────────────
+     Section headings sit outside one shared card, and rows are separated by
+     hairlines. Controls stay on the existing Morandi accent instead of
+     importing the blue palette from the reference. */
+  .settings-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .settings-section__header {
+    display: flex;
+    min-height: 26px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 2px;
+  }
+  .settings-section__heading {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
+  }
+  .settings-section__icon { flex-shrink: 0; color: hsl(var(--muted-foreground)); }
+  .settings-section__title {
+    overflow: hidden;
+    color: hsl(var(--foreground-hsl));
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .settings-section__meta {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 12px;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.6875rem;
+  }
+  .settings-section__body {
+    overflow: hidden;
+    border: 1px solid hsl(var(--border-hsl) / 0.65);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.04);
+  }
+  .dark .settings-section__body {
+    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.22);
+  }
+  .settings-rows { display: flex; flex-direction: column; }
+  .settings-row {
+    display: flex;
+    min-height: 68px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 15px 16px;
+  }
+  .settings-row + .settings-row,
+  .settings-action-row { border-top: 1px solid hsl(var(--border-hsl) / 0.55); }
+  .settings-row__label {
+    color: hsl(var(--foreground-hsl));
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.25;
+  }
+  .settings-row__description {
+    margin-top: 2px;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+  .settings-row__control { flex-shrink: 0; }
+  .settings-action-row { padding: 14px 16px; }
+  .settings-note {
+    padding: 12px 16px;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.75rem;
+    line-height: 1.45;
+  }
+  .settings-inset { margin: 16px; }
+  .settings-list { display: flex; flex-direction: column; }
+  .settings-list > .settings-item + .settings-item {
+    border-top: 1px solid hsl(var(--border-hsl) / 0.55);
+  }
   .settings-item {
-    border: 1px solid hsl(var(--border-hsl) / 0.55);
-    border-radius: 12px;
-    background: hsl(var(--wiki-panel) / 0.55);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    transition: background 120ms ease, border-color 120ms ease;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    transition: background 120ms ease;
   }
   .settings-item:hover:not(.settings-item--disabled) {
-    background: hsl(var(--wiki-accent) / 0.35);
+    background: hsl(var(--secondary) / 0.45);
   }
   .settings-item--active {
-    border-color: hsl(var(--primary) / 0.22);
-    background: hsl(var(--primary) / 0.08);
+    background: hsl(var(--primary) / 0.06);
   }
   .settings-item--disabled { opacity: 0.5; }
 
@@ -2654,10 +2755,11 @@
 
 /* ───────────────────────────────────────────────────────────────────────────
    Conversation turn rail (session minimap)
-   Resting state is a quiet column of 12x4 ticks on a fixed 20px pitch; moving
-   the pointer over the rail ripples the nearby ticks wider (42 / 40 / 28 / 20)
-   and slides out a preview of the turn under the cursor. Geometry mirrors the
-   design reference, flipped to the left because this rail hugs the right edge.
+   Resting state is a tight column of 10x2 hairlines on a 17px pitch; moving the
+   pointer over the rail thickens the hovered tick (6px) and ripples the nearby
+   ticks wider (42 / 40 / 28 / 20), then slides out a preview of the turn under
+   the cursor. Geometry mirrors the design reference, flipped to the left
+   because this rail hugs the right edge.
    ─────────────────────────────────────────────────────────────────────────── */
 .session-nav-float {
   position: absolute;
@@ -2684,9 +2786,9 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  /* Mark boxes are 12px tall and ticks sit on a 20px pitch, matching the
-     reference ruler (4px tick + 16px air). */
-  gap: 8px;
+  /* Mark boxes are 12px tall and the ticks sit on a tight 17px pitch so a long
+     session still reads as one ruler. */
+  gap: 5px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2716,16 +2818,19 @@
 
 .session-nav-float-tick {
   display: block;
-  height: 4px;
-  border-radius: 2px;
+  height: 2px;
+  border-radius: 999px;
   background: hsl(var(--muted-foreground) / 0.42);
   transition:
     width 260ms cubic-bezier(0.22, 0.9, 0.28, 1),
+    height 180ms cubic-bezier(0.22, 0.9, 0.28, 1),
     background-color 260ms cubic-bezier(0.22, 0.9, 0.28, 1);
 }
+/* Hovering a turn thickens and enlarges its line instead of only recolouring it. */
 .session-nav-float-mark:hover .session-nav-float-tick,
 .session-nav-float-mark[data-hovered="true"] .session-nav-float-tick,
 .session-nav-float-mark:focus-visible .session-nav-float-tick {
+  height: 6px;
   background: hsl(var(--foreground-hsl) / 0.92);
 }
 .session-nav-float-mark[data-active="true"] .session-nav-float-tick {
@@ -3115,7 +3220,10 @@
 /* Fully collapsed left session panel: consume zero layout width; the reopen
    button overlays the content edge and points right. */
 .session-panel-host--left[data-collapsed="true"] .session-panel-collapse--left {
+  /* Only shown while collapsed: it sits on the title row and points right. */
+  top: 40px;
   right: -18px;
+  transform: none;
   border-radius: 0 8px 8px 0;
 }
 
@@ -3632,7 +3740,9 @@
   top: 50%;
   z-index: 1;
   pointer-events: none;
-  transform: translateY(-50%);
+  /* Use `translate` for vertical centering so it does not fight the
+     transform-based spin animation and make the loader jump. */
+  translate: 0 -50%;
 }
 /* Child rows have no expand caret, so the indicator pins to the row's own
    padding box (2px border + 10px padding = the same 10px gutter). */
@@ -3645,14 +3755,14 @@
   top: 50%;
   z-index: 2;
   transform: translateY(-50%);
-  pointer-events: none;
+  pointer-events: auto;
   background: linear-gradient(90deg, transparent 0%, hsl(var(--card) / 0.72) 26%, hsl(var(--card) / 0.96) 58%, hsl(var(--card) / 1) 100%);
   backdrop-filter: blur(7px);
   -webkit-backdrop-filter: blur(7px);
   box-shadow: -7px 0 10px hsl(var(--card) / 0.34);
 }
-.session-list-panel .list-card:hover .session-list-hover-actions,
-.session-list-panel .list-row:hover .session-list-hover-actions {
+.session-list-panel .session-list-hover-actions:hover,
+.session-list-panel .session-list-hover-actions:focus-within {
   opacity: 1;
 }
 .session-list-panel .session-list-hover-actions .session-list-delete {
@@ -4064,7 +4174,6 @@
 }
 
 .workspace-focus-origin,
-.workspace-focus-home,
 .workspace-focus-tab-main,
 .workspace-focus-tab-close,
 .workspace-focus-overflow,
@@ -4088,7 +4197,6 @@
 
 .workspace-chrome-icon:hover:not(:disabled),
 .workspace-focus-origin:hover,
-.workspace-focus-home:hover,
 .workspace-focus-tab-close:hover,
 .workspace-focus-overflow:hover {
   background: hsl(var(--secondary) / 0.72);
@@ -4147,32 +4255,38 @@
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   margin-left: 5px;
   padding-left: 7px;
   border-left: 1px solid hsl(var(--border-hsl) / 0.6);
 }
 
-.workspace-focus-home,
+.workspace-tabs-pill {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid hsl(var(--border-hsl) / 0.7);
+  border-radius: 999px;
+  background: hsl(var(--secondary) / 0.45);
+}
+
 .workspace-focus-tab-main {
   min-width: 0;
-  height: 28px;
+  height: 24px;
   gap: 5px;
   padding: 0 8px;
-  border-radius: 9px;
+  border-radius: 999px;
   font-size: 10px;
   font-weight: 500;
 }
 
-.workspace-focus-home {
-  flex: 0 0 auto;
-}
-
-.workspace-focus-home--active,
 .workspace-focus-tab--active {
   border-color: hsl(var(--border-hsl) / 0.8);
-  background: hsl(var(--card) / 0.88);
+  background: hsl(var(--card) / 0.96);
   color: hsl(var(--foreground-hsl));
+  box-shadow: 0 1px 3px hsl(var(--foreground-hsl) / 0.08);
 }
 
 .workspace-focus-tab {
@@ -4181,9 +4295,9 @@
   max-width: 140px;
   flex: 0 1 auto;
   align-items: center;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: transparent;
+  border: 1px solid hsl(var(--border-hsl) / 0.5);
+  border-radius: 999px;
+  background: hsl(var(--card) / 0.58);
 }
 
 .workspace-focus-tab-main {
@@ -4242,23 +4356,21 @@
   min-width: 0;
   flex: 0 1 auto;
   align-items: center;
-  gap: 1px;
-  margin-left: 2px;
-  padding-left: 5px;
-  border-left: 1px solid hsl(var(--border-hsl) / 0.55);
+  gap: 2px;
+  margin-left: 4px;
 }
 
 .workspace-wing-current {
   display: inline-flex;
   min-width: 0;
   max-width: 178px;
-  height: 26px;
+  height: 24px;
   align-items: center;
   gap: 5px;
-  padding: 0 6px;
-  border: 1px solid transparent;
+  padding: 0 8px;
+  border: 1px solid hsl(var(--border-hsl) / 0.45);
   border-radius: 999px;
-  background: transparent;
+  background: hsl(var(--card) / 0.7);
   color: hsl(var(--foreground-hsl) / 0.82);
   cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease;
@@ -4280,19 +4392,11 @@
 }
 
 .workspace-wing-count {
-  display: inline-flex;
-  min-width: 14px;
-  height: 14px;
   flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  padding: 0 4px;
-  background: hsl(var(--primary) / 0.14);
-  color: hsl(var(--primary));
+  color: hsl(var(--muted-foreground) / 0.72);
   font-family: var(--font-mono);
-  font-size: 8px;
-  font-weight: 700;
+  font-size: 9px;
+  font-weight: 600;
 }
 
 .workspace-new-tab-menu--chrome {
@@ -4309,24 +4413,9 @@
 /* The workspace panel is now content-only; controls live in the island. */
 .session-workspace-sidebar--dock {
   align-self: flex-start;
-  height: calc(100% - 68px);
-  margin: 58px 10px 10px 0;
-  border: 1px solid hsl(var(--border-hsl) / 0.75);
-  border-radius: 16px;
-  background: hsl(var(--card) / 0.76);
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.7) inset,
-    0 10px 30px -18px hsl(var(--foreground-hsl) / 0.35),
-    0 2px 8px hsl(var(--foreground-hsl) / 0.06);
-  backdrop-filter: blur(18px) saturate(1.25);
-  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  height: calc(100% - 4px);
+  margin: -6px 10px 10px 0;
   overflow: visible;
-}
-
-
-.electron .session-workspace-sidebar--dock {
-  height: calc(100% - 20px);
-  margin-top: 8px;
 }
 
 .session-workspace-sidebar--focus {
@@ -4346,6 +4435,366 @@
 .session-workspace-panel--focus .session-workspace-scroll {
   padding-bottom: 7.25rem;
   scroll-padding-bottom: 7.25rem;
+}
+
+.session-workspace-panel--content {
+  height: auto;
+  min-height: 0;
+  margin: 56px 10px 10px;
+  border: 1px solid hsl(var(--border-hsl) / 0.55);
+  border-radius: 14px;
+  background: hsl(var(--card) / 0.8);
+  box-shadow:
+    0 10px 24px -20px hsl(var(--foreground-hsl) / 0.38),
+    0 2px 8px hsl(var(--foreground-hsl) / 0.06);
+}
+
+.electron .session-workspace-panel--content {
+  margin-top: 8px;
+}
+
+/* Workspace dashboard ------------------------------------------------------
+   The dock/focus sidecar splits its snapshot into one card per component
+   group: repository state, subagents, git changes, input files. Card headers
+   carry the counts, bodies scroll inside a capped height so every group stays
+   reachable without turning the panel into one endless list. */
+.workspace-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.ws-card {
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border-hsl) / 0.55);
+  border-radius: 12px;
+  background: hsl(var(--card) / 0.62);
+  box-shadow:
+    0 10px 24px -20px hsl(var(--foreground-hsl) / 0.38),
+    0 2px 8px hsl(var(--foreground-hsl) / 0.06);
+}
+
+.dark .ws-card {
+  background: hsl(var(--card) / 0.68);
+  box-shadow:
+    0 12px 26px -20px hsl(0 0% 0% / 0.8),
+    0 2px 8px hsl(0 0% 0% / 0.2);
+}
+
+.ws-card-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  text-align: left;
+}
+
+.ws-card-head:hover {
+  background: hsl(var(--secondary) / 0.45);
+}
+
+.ws-card-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: hsl(var(--primary));
+}
+
+.ws-card-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.ws-card-count {
+  display: inline-flex;
+  min-width: 16px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: hsl(var(--foreground-hsl) / 0.08);
+  color: hsl(var(--foreground-hsl) / 0.72);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.ws-card-tail {
+  display: inline-flex;
+  margin-left: auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.ws-card-summary {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: hsl(var(--muted-foreground) / 0.85);
+}
+
+.ws-card-chevron {
+  flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.ws-card[data-open='false'] .ws-card-chevron {
+  transform: rotate(-90deg);
+}
+
+.ws-card-body {
+  /* Capped so all four cards stay on screen in a ~900px sidecar; each list
+     scrolls inside its own card instead of pushing the others out of view. */
+  max-height: 11.25rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid hsl(var(--border-hsl) / 0.4);
+  padding: 4px;
+  /* Fixed inset hint that the list continues below the clipped row. */
+  box-shadow: inset 0 -12px 12px -12px hsl(var(--foreground-hsl) / 0.55);
+}
+
+.ws-card--repo {
+  padding: 9px 10px;
+}
+
+.ws-repo-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.ws-repo-icon {
+  flex: 0 0 auto;
+  color: hsl(var(--primary));
+}
+
+.ws-repo-branch {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: hsl(var(--foreground-hsl) / 0.9);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-repo-state {
+  display: inline-flex;
+  height: 15px;
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 9px;
+}
+
+.ws-repo-meta {
+  display: flex;
+  margin-top: 7px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9px;
+  color: hsl(var(--muted-foreground));
+}
+
+.ws-repo-meta-item {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.ws-repo-sep {
+  margin: 0 3px;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+
+.ws-repo-path {
+  margin-top: 6px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: hsl(var(--muted-foreground) / 0.55);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-icon-button {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.ws-icon-button:hover:not(:disabled) {
+  background: hsl(var(--secondary) / 0.6);
+  color: hsl(var(--foreground-hsl) / 0.9);
+}
+
+.ws-icon-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ws-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ws-row:hover {
+  background: hsl(var(--secondary) / 0.5);
+}
+
+.ws-row--subagent {
+  align-items: flex-start;
+}
+
+.ws-row--subagent .ws-row-icon {
+  margin-top: 2px;
+}
+
+.ws-row-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: hsl(var(--primary));
+}
+
+.ws-row-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ws-row-main--file {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.ws-row-file {
+  max-width: 100%;
+  flex: 0 0 auto;
+  overflow: hidden;
+  font-size: 10px;
+  color: hsl(var(--foreground-hsl) / 0.88);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-row-dir {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: hsl(var(--muted-foreground) / 0.6);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-row-sub {
+  overflow: hidden;
+  font-size: 9px;
+  color: hsl(var(--muted-foreground) / 0.66);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-row-diff {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  font-size: 9px;
+}
+
+.ws-badge {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ws-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.ws-mono {
+  font-family: var(--font-mono);
+}
+
+.ws-empty {
+  padding: 12px 8px;
+  text-align: center;
+  font-size: 9px;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+
+.ws-placeholder {
+  padding: 40px 0;
+  text-align: center;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+
+/* Focus mode gives the dashboard the full width: lay the cards out side by
+   side instead of leaving a single narrow column floating in the middle. */
+@media (min-width: 1100px) {
+  .session-workspace-panel--focus .workspace-dashboard {
+    display: grid;
+    align-content: start;
+    align-items: start;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+
+  .session-workspace-panel--focus .ws-card--repo {
+    grid-column: 1 / -1;
+  }
 }
 
 /* One persistent command rail. Dock mode keeps it over the transcript; focus
@@ -4478,8 +4927,7 @@
 }
 
 @media (max-width: 900px) {
-  .workspace-focus-origin span,
-  .workspace-focus-home span {
+  .workspace-focus-origin span {
     display: none;
   }
 
@@ -4524,6 +4972,10 @@
 @media (max-width: 880px) {
   .session-chat-scroll {
     padding-top: 104px;
+  }
+
+  .session-workspace-panel--content {
+    margin-top: 104px;
   }
 
   .electron .session-chat-scroll {

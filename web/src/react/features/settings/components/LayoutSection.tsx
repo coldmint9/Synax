@@ -23,7 +23,7 @@ export function LayoutSection() {
 
   return (
     <SettingsCard title={t('settingsLayoutTitle')} icon={Palette}>
-      <div className="space-y-3">
+      <div className="settings-rows">
         <FormRow label={t('settingsLanguage')} description={t('settingsLanguageHint')}>
           <SettingsSelect
             className="w-36"

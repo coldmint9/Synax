@@ -11,7 +11,6 @@ import { useRuntimeSSE } from '../features/sessions/useRuntimeSSE'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
 import { sessionPath } from '../features/sessions/sessionRoutes'
 import { resolveSessionsEntryPath } from '../features/sessions/sessionLastVisit'
-import { resolveAgentViewMode } from '../features/sessions/sessionRoutes'
 import type { ActivityPanel } from './ActivityBar'
 import { WorkbenchHeader, type ChromeMode } from './WorkbenchHeader'
 import { ProjectCreateDialog } from '../features/project-create/ProjectCreateDialog'
@@ -19,7 +18,6 @@ import { ToastContainer } from '../components/ToastContainer'
 import WikiPage from '../pages/WikiPage'
 import SessionsPage from '../pages/SessionsPage'
 import { SessionEnvironmentProvider } from '../features/sessions/SessionEnvironmentContext'
-import { useSessionWorkspace } from '../features/sessions/sessionWorkspaceStore'
 
 export default function WorkbenchLayout() {
   const { projectId: routeProjectId = '' } = useParams()
@@ -98,10 +96,8 @@ export default function WorkbenchLayout() {
 
   const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
   const agentPanelOpen = useAgentSessionStore(s => s.panelOpen)
-  const workspaceState = useSessionWorkspace(selectedSessionId)
-  const sessionsViewMode = activePanel === 'sessions' ? resolveAgentViewMode(location.pathname) : null
-  const chromeMode: ChromeMode = sessionsViewMode === 'sessions' && agentPanelOpen && selectedSessionId
-    ? (workspaceState.presentation === 'focus' ? 'workspaceFocus' : 'agentDock')
+  const chromeMode: ChromeMode = activePanel === 'sessions' && agentPanelOpen && selectedSessionId
+    ? 'agentDock'
     : 'global'
 
   const panelRoutes: Record<ActivityPanel, string> = {

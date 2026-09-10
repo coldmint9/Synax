@@ -15,6 +15,7 @@ import { SessionProfilePanel } from './SessionProfilePanel'
 interface Props {
   listView?: SessionListView
   projectId: string
+  onCollapsePanel?: () => void
 }
 
 const SESSION_LIST_SPLIT_KEY = 'synax-sessions-list-split'
@@ -29,7 +30,7 @@ function readStoredListSplit(): number | null {
   return Math.min(SESSION_LIST_SPLIT_MAX, Math.max(SESSION_LIST_SPLIT_MIN, value))
 }
 
-export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
+export function SessionListPanel({ listView = 'sessions', projectId, onCollapsePanel }: Props) {
   const { locale, t } = useLocale()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -104,6 +105,7 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
           onNewSession={handleNewSession}
           onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
           onBackToSessions={() => navigate(sessionsPath(projectId))}
+          onCollapsePanel={onCollapsePanel}
         />
         <div className="session-list-session-area min-h-0">
           <SessionTimeGroups

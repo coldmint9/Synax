@@ -3,6 +3,7 @@ import { ChevronRight, RotateCcw } from 'lucide-react'
 import { Popover, useOverlayState } from '@heroui/react'
 import type { ReasoningEffort } from '../../../../lib/api/agentRuntime'
 import { REASONING_EFFORT_LABELS } from '../../settings/lib/providerPresets'
+import { useLocale } from '../../../../hooks/useLocale'
 
 export type GoalReasoningEffort = ReasoningEffort
 
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabled, onOverlayOpenChange }: Props) {
+  const { t } = useLocale()
   const state = useOverlayState({ onOpenChange: onOverlayOpenChange })
   const lastEffortRef = useRef(effort)
 
@@ -52,12 +54,14 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
       : (levels[0] ?? FALLBACK)
   const idx = Math.max(0, levels.indexOf(activeEffort))
   const count = Math.max(1, levels.length)
-  // Stations split the track content evenly: dots and thumb share one coordinate
-  // system, with a 4px inset at both ends (track padding: p-1).
-  const stationFraction = (index: number) => (index + 0.5) / count
-  const thumbLeft = `calc(0.25rem + (100% - 0.5rem) * ${stationFraction(idx)})`
-  const fillWidth = `calc((100% - 0.5rem) * ${stationFraction(idx)})`
-  const modelText = modelLabel?.trim() || '当前模型'
+  // The thumb is 1.75rem wide inside the rail's 0.25rem padding, so its travel
+  // range is inset by half the thumb at both ends. Station dots share the exact
+  // same centre, keeping the thumb and groove visually nested at either end.
+  const stationFraction = (index: number) => (count <= 1 ? 0.5 : index / (count - 1))
+  const stationLeft = (index: number) => `calc(1.125rem + (100% - 2.25rem) * ${stationFraction(index)})`
+  const thumbLeft = stationLeft(idx)
+  const fillWidth = `calc(0.875rem + (100% - 2.25rem) * ${stationFraction(idx)})`
+  const modelText = modelLabel?.trim() || t('effortCurrentModel')
 
   function resetEffort() {
     const next = levels.includes(FALLBACK) ? FALLBACK : (levels[0] ?? FALLBACK)
@@ -73,7 +77,7 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
       }}
     >
       <Popover.Trigger
-        aria-label="思考强度"
+        aria-label={t('effortLabel')}
         aria-disabled={Boolean(disabled)}
         className={`goal-dock-composer-chip inline-flex h-7 max-w-[4.75rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${
           disabled ? ' pointer-events-none opacity-50' : ''
@@ -95,8 +99,8 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
             </div>
             <button
               type="button"
-              aria-label="恢复默认思考强度"
-              title="恢复默认"
+              aria-label={t('effortResetAria')}
+              title={t('effortReset')}
               onClick={resetEffort}
               className="absolute right-0 inline-flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
             >
@@ -110,7 +114,7 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
           {/* Compact slider: green progress, white 3D thumb, and station dots. */}
           <div
             role="radiogroup"
-            aria-label="思考强度"
+            aria-label={t('effortLabel')}
             className="relative mt-2.5 flex h-8 items-center rounded-full p-1"
             style={{
               background: '#e3e4e4',
@@ -137,7 +141,7 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
                 transitionTimingFunction: 'cubic-bezier(0.34, 0.9, 0.4, 1)',
               }}
             />
-            {levels.map(level => {
+            {levels.map((level, index) => {
               const selected = level === activeEffort
               return (
                 <button
@@ -150,11 +154,12 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
                     // Keep the card open after changing intensity, like Codex.
                     if (!selected) onChange(level)
                   }}
-                  className="relative z-30 flex h-full flex-1 items-center justify-center rounded-full outline-none select-none"
+                  style={{ left: stationLeft(index) }}
+                  className="group/effort-station absolute top-1/2 z-30 grid size-6 -translate-x-1/2 -translate-y-1/2 cursor-pointer place-items-center rounded-full outline-none transition-colors duration-200 hover:bg-white/55 focus-visible:ring-2 focus-visible:ring-white/80"
                 >
                   <span
                     aria-hidden
-                    className="size-1.5 rounded-full transition-colors duration-200"
+                    className="size-1.5 rounded-full transition-[background-color,transform] duration-200 group-hover/effort-station:scale-150"
                     style={{
                       background: selected ? ACCENT_TOP : '#aeb1b0',
                       opacity: selected ? 0.95 : 0.9,
@@ -167,8 +172,8 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
 
           <p className="mt-1.5 text-center text-[10px] text-muted-foreground/70">
             {allowed && allowed.length > 0
-              ? '仅可在此供应商允许的档位中选择'
-              : '未限制思考档位，可选择全部强度'}
+              ? t('effortAllowedHint')
+              : t('effortUnrestrictedHint')}
           </p>
         </div>
       </Popover.Content>

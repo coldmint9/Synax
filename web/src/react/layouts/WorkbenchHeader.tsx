@@ -1,25 +1,17 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
-import { ArrowLeft, BookOpen, Bot, Search, Settings2, Sun, Moon, Zap, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw, Plug, ExternalLink, Minimize2 } from 'lucide-react'
-import { useNavigate, useParams, useLocation } from 'react-router-dom'
+import { ArrowLeft, BookOpen, Bot, Search, Settings2, Sun, Moon, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw, Minimize2 } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
-import { useSkillStore } from '../state/skillStore'
-import { useProjectSettings } from '../features/settings/useProjectSettings'
 import { useLocale } from '../../hooks/useLocale'
 import { wikiApi } from '../../lib/api/wiki'
 import { NotificationBell } from '../components/notifications/NotificationBell'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
 import { getSessionDisplayTitle } from '../features/sessions/useSessionDisplayTitle'
-import { useSessionWorkspaceStore } from '../features/sessions/sessionWorkspaceStore'
+import { useSessionWorkspace, useSessionWorkspaceStore } from '../features/sessions/sessionWorkspaceStore'
 import { WorkspaceFocusControls, WorkspaceWing } from '../features/sessions/WorkspaceChromeControls'
 import WikiSearchPanel from '../features/wiki/WikiSearchPanel'
 import { useWikiSearch, type SearchResult } from '../features/wiki/WikiSearchPanel'
-import {
-  resolveAgentViewMode,
-  sessionsPath,
-  skillMarketplacePath,
-} from '../features/sessions/sessionRoutes'
 import type { ActivityPanel } from './ActivityBar'
 
 export type ChromeMode = 'global' | 'agentDock' | 'workspaceFocus'
@@ -62,13 +54,25 @@ function ProjectSwitcher({
   compact?: boolean
 }) {
   const { t } = useLocale()
+  const labelRef = useRef<HTMLSpanElement>(null)
+  const displayName = hasProject ? projectName : 'Synax'
 
   return (
     <Dropdown>
       <Dropdown.Trigger>
-        <div role="button" tabIndex={0} className={`wh-project-trigger ${compact ? 'wh-project-trigger--compact' : ''}`}>
-          <span className="truncate max-w-[120px] text-xs font-medium">
-            {hasProject ? projectName : 'Synax'}
+        <div
+          role="button"
+          tabIndex={0}
+          className={`wh-project-trigger ${compact ? 'wh-project-trigger--compact' : ''}`}
+          title={displayName}
+        >
+          <span
+            ref={labelRef}
+            className="wh-project-label text-xs font-medium"
+            onMouseEnter={() => labelRef.current?.scrollTo({ left: labelRef.current.scrollWidth, behavior: 'smooth' })}
+            onMouseLeave={() => labelRef.current?.scrollTo({ left: 0, behavior: 'smooth' })}
+          >
+            {displayName}
           </span>
         </div>
       </Dropdown.Trigger>
@@ -259,7 +263,7 @@ function WikiToolbar() {
         </Dropdown.Trigger>
         <Dropdown.Popover placement="bottom end">
           <Dropdown.Menu
-            aria-label="Document tools"
+            aria-label={t('wikiTools')}
             onAction={(key) => {
               if (key === 'export' && snapshot) {
                 window.open(wikiApi.exportSnapshotUrl(snapshot.id), '_blank')
@@ -268,16 +272,16 @@ function WikiToolbar() {
               }
             }}
           >
-            <Dropdown.Item key="export" id="export" textValue="Export all">
+            <Dropdown.Item key="export" id="export" textValue={t('wikiExportAll')}>
               <span className="flex items-center gap-2 text-xs">
                 <Download size={12} />
-                导出全部
+                {t('wikiExportAll')}
               </span>
             </Dropdown.Item>
-            <Dropdown.Item key="reinit" id="reinit" textValue="Reinitialize">
+            <Dropdown.Item key="reinit" id="reinit" textValue={t('wikiReinitialize')}>
               <span className="flex items-center gap-2 text-xs text-destructive">
                 <RotateCcw size={12} />
-                重新初始化
+                {t('wikiReinitialize')}
               </span>
             </Dropdown.Item>
           </Dropdown.Menu>
@@ -287,102 +291,13 @@ function WikiToolbar() {
   )
 }
 
-function ProjectMcpToolbarMenu({ projectId }: { projectId: string }) {
-  const navigate = useNavigate()
-  const { settings, loading } = useProjectSettings(projectId)
-  const servers = settings?.mcpServers ?? []
-  const enabledCount = servers.filter(server => server.enabled !== false).length
-
-  return (
-    <Dropdown>
-      {/* Dropdown.Trigger already renders the <button>; the inner element must
-          therefore be non-interactive, otherwise we nest a <button> in a
-          <button>. Geometry comes from the shared wh-pill-btn so this reads as
-          one more tab next to Worker / Skills. */}
-      <Dropdown.Trigger>
-        <span className="wh-pill-btn agent-toolbar-mcp-trigger">
-          <Plug size={12} />
-          <span>MCP</span>
-          {enabledCount > 0 && <span className="agent-toolbar-mcp-count">{enabledCount}</span>}
-        </span>
-      </Dropdown.Trigger>
-      <Dropdown.Popover placement="bottom end" className="z-50">
-        <Dropdown.Menu aria-label="项目 MCP 配置">
-          <Dropdown.Section>
-            <Dropdown.Item id="mcp-heading" textValue="项目 MCP 配置" isDisabled>
-              <Plug size={13} className="shrink-0 text-muted-foreground" />
-              <span className="text-[11px] font-semibold">项目 MCP 配置</span>
-            </Dropdown.Item>
-            {loading ? (
-              <Dropdown.Item id="mcp-loading" textValue="加载中" isDisabled>
-                <span className="text-[10px] text-muted-foreground">正在加载项目配置…</span>
-              </Dropdown.Item>
-            ) : servers.length === 0 ? (
-              <Dropdown.Item id="mcp-empty" textValue="尚未配置 MCP" isDisabled>
-                <span className="text-[10px] text-muted-foreground">尚未配置 MCP 服务器</span>
-              </Dropdown.Item>
-            ) : (
-              servers.map(server => (
-                <Dropdown.Item key={server.id} id={`mcp-server-${server.id}`} textValue={server.name} isDisabled>
-                  <span className={`size-1.5 shrink-0 rounded-full ${server.enabled === false ? 'bg-muted-foreground/30' : 'bg-success'}`} />
-                  <span className="max-w-48 truncate text-[11px]">{server.name}</span>
-                  <span className="ms-auto text-[9px] text-muted-foreground">{server.enabled === false ? '已停用' : '已启用'}</span>
-                </Dropdown.Item>
-              ))
-            )}
-          </Dropdown.Section>
-          <Dropdown.Item id="mcp-settings" textValue="打开项目 MCP 设置" onAction={() => navigate(`/projects/${projectId}/settings`)}>
-            <ExternalLink size={12} className="shrink-0 text-muted-foreground" />
-            <span className="text-[11px]">打开项目 MCP 设置</span>
-          </Dropdown.Item>
-        </Dropdown.Menu>
-      </Dropdown.Popover>
-    </Dropdown>
-  )
-}
-
 function AgentToolbarPill({ visible }: { visible: boolean }) {
-  const { t } = useLocale()
-  const navigate = useNavigate()
-  const location = useLocation()
-  const { projectId = '' } = useParams()
-  const agentViewMode = useSkillStore(s => s.agentViewMode)
-  const setAgentViewMode = useSkillStore(s => s.setAgentViewMode)
   const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
-
-  useEffect(() => {
-    setAgentViewMode(resolveAgentViewMode(location.pathname))
-  }, [location.pathname, setAgentViewMode])
-
-  const navigateMode = (mode: 'sessions' | 'skills') => {
-    if (!projectId) return
-    setAgentViewMode(mode)
-    if (mode === 'skills') navigate(skillMarketplacePath(projectId))
-    else navigate(sessionsPath(projectId))
-  }
+  const { tabs } = useSessionWorkspace(selectedSessionId)
 
   return (
-    <ToolbarPill visible={visible} allowOverflow>
-      <Tabs
-        selectedKey={agentViewMode}
-        onSelectionChange={(key) => navigateMode(key as 'sessions' | 'skills')}
-        className="wiki-view-tabs agent-toolbar-tabs"
-      >
-        <Tabs.ListContainer>
-          <Tabs.List aria-label={t('agentToolbarLabel')} className="wiki-view-tabs-list">
-            <Tabs.Tab id="sessions" className="wiki-view-tab">
-              <span>{t('agentTabSessions')}</span>
-              <Tabs.Indicator />
-            </Tabs.Tab>
-            <Tabs.Tab id="skills" className="wiki-view-tab">
-              <span>{t('agentTabSkills')}</span>
-              <Tabs.Indicator />
-            </Tabs.Tab>
-          </Tabs.List>
-        </Tabs.ListContainer>
-      </Tabs>
-      {projectId && <ProjectMcpToolbarMenu projectId={projectId} />}
-      {agentViewMode === 'sessions' ? <WorkspaceWing sessionId={selectedSessionId} /> : null}
+    <ToolbarPill visible={visible && tabs.length > 0} allowOverflow>
+      <WorkspaceWing sessionId={selectedSessionId} />
     </ToolbarPill>
   )
 }
@@ -439,32 +354,27 @@ function ToolbarPill({
 }
 
 function FocusGlobalMenu({
-  currentProjectId,
   onPanelToggle,
 }: {
-  currentProjectId: string
   onPanelToggle: (panel: ActivityPanel) => void
 }) {
   const { t } = useLocale()
-  const navigate = useNavigate()
   const theme = useShellStore(s => s.preferences.theme)
   const setTheme = useShellStore(s => s.setTheme)
 
   return (
     <Dropdown>
       <Dropdown.Trigger>
-        <span role="button" tabIndex={0} className="workspace-chrome-icon" aria-label="更多功能" title="更多功能">
+        <span role="button" tabIndex={0} className="workspace-chrome-icon" aria-label={t('projectMoreActions')} title={t('projectMoreActions')}>
           <Ellipsis size={13} />
         </span>
       </Dropdown.Trigger>
       <Dropdown.Popover placement="bottom end">
         <Dropdown.Menu
-          aria-label="更多功能"
+          aria-label={t('projectMoreActions')}
           onAction={(key) => {
             if (key === 'agent') onPanelToggle('sessions')
             if (key === 'wiki') onPanelToggle('wiki')
-            if (key === 'skills' && currentProjectId) navigate(skillMarketplacePath(currentProjectId))
-            if (key === 'mcp' && currentProjectId) navigate(`/projects/${currentProjectId}/settings`)
             if (key === 'settings') onPanelToggle('settings')
             if (key === 'theme') setTheme(theme === 'dark' ? 'light' : 'dark')
           }}
@@ -474,12 +384,6 @@ function FocusGlobalMenu({
           </Dropdown.Item>
           <Dropdown.Item id="wiki" textValue="Wiki">
             <span className="flex items-center gap-2 text-xs"><BookOpen size={12} />Wiki</span>
-          </Dropdown.Item>
-          <Dropdown.Item id="skills" textValue="Skills" isDisabled={!currentProjectId}>
-            <span className="flex items-center gap-2 text-xs"><Zap size={12} />Skills</span>
-          </Dropdown.Item>
-          <Dropdown.Item id="mcp" textValue="MCP" isDisabled={!currentProjectId}>
-            <span className="flex items-center gap-2 text-xs"><Plug size={12} />MCP</span>
           </Dropdown.Item>
           <Dropdown.Item id="settings" textValue={t('appSettings')}>
             <span className="flex items-center gap-2 text-xs"><Settings2 size={12} />{t('appSettings')}</span>
@@ -516,11 +420,12 @@ function WorkspaceFocusRail({
   onPanelToggle: (panel: ActivityPanel) => void
 }) {
   const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
+  const { t } = useLocale()
   const selectedSession = useAgentSessionStore(s => (
     selectedSessionId ? s.sessions.find(session => session.id === selectedSessionId) : undefined
   ))
   const exitFocus = useSessionWorkspaceStore(s => s.exitFocus)
-  const sessionTitle = selectedSession ? getSessionDisplayTitle(selectedSession, '会话') : '会话'
+  const sessionTitle = selectedSession ? getSessionDisplayTitle(selectedSession, t('sessionFallbackTitle')) : t('sessionFallbackTitle')
 
   if (!selectedSessionId) return null
 
@@ -529,12 +434,12 @@ function WorkspaceFocusRail({
       <button
         type="button"
         className="workspace-focus-origin"
-        aria-label="返回对话"
-        title="返回对话（Esc）"
+        aria-label={t('workspaceBackToChat')}
+        title={t('workspaceBackToChatTitle')}
         onClick={() => exitFocus(selectedSessionId)}
       >
         <ArrowLeft size={12} />
-        <span>对话</span>
+        <span>{t('workspaceChat')}</span>
       </button>
 
       <div className="workspace-focus-session" title={`${projectName} / ${sessionTitle}`}>
@@ -556,12 +461,12 @@ function WorkspaceFocusRail({
           onCreateProject={onCreateProject}
           onRemoveRequest={onRemoveRequest}
         />
-        <FocusGlobalMenu currentProjectId={currentProjectId} onPanelToggle={onPanelToggle} />
+        <FocusGlobalMenu onPanelToggle={onPanelToggle} />
         <button
           type="button"
           className="workspace-chrome-icon"
-          aria-label="还原工作区"
-          title="还原工作区"
+          aria-label={t('workspaceRestore')}
+          title={t('workspaceRestore')}
           onClick={() => exitFocus(selectedSessionId)}
         >
           <Minimize2 size={12} />
@@ -664,7 +569,7 @@ export function WorkbenchHeader({
               className="wh-tabs"
             >
               <Tabs.ListContainer>
-                <Tabs.List aria-label="主导航" className="wh-tabs-list">
+                <Tabs.List aria-label={t('workspaceMainNav')} className="wh-tabs-list">
                   {navTabs.map((tab, i) => {
                     const Icon = tab.icon
                     const label = tab.label

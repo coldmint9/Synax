@@ -4,22 +4,18 @@ import {
   ChevronDown,
   FileCode2,
   FileDiff,
-  LayoutDashboard,
-  Plus,
   RefreshCw,
   X,
 } from 'lucide-react'
+import { useLocale } from '../../../hooks/useLocale'
 import { useSessionWorkspaceEnvironment } from './SessionEnvironmentContext'
 import {
   activateWorkspaceTab,
-  openWorkspaceTab,
-  showWorkspaceDashboard,
   useSessionWorkspace,
   useSessionWorkspaceStore,
   type WorkspaceTab,
 } from './sessionWorkspaceStore'
 
-const MENU_GROUP_LIMIT = 12
 const FOCUS_VISIBLE_TABS = 3
 
 function tabIcon(kind: WorkspaceTab['kind']) {
@@ -28,11 +24,6 @@ function tabIcon(kind: WorkspaceTab['kind']) {
     case 'diff': return <FileDiff size={11} className="shrink-0 text-success/80" />
     case 'subagent': return <Bot size={11} className="shrink-0 text-[var(--color-run)]/80" />
   }
-}
-
-function baseName(filePath: string): string {
-  const parts = filePath.split(/[\\/]/)
-  return parts[parts.length - 1] || filePath
 }
 
 function useDismissableMenu(open: boolean, setOpen: (value: boolean) => void) {
@@ -80,122 +71,12 @@ function MenuItem({
   )
 }
 
-function NewTabMenu({ sessionId }: { sessionId: string }) {
-  const [open, setOpen] = useState(false)
-  const rootRef = useDismissableMenu(open, setOpen)
-  const { environment, loading } = useSessionWorkspaceEnvironment(sessionId)
-
-  const changed = (environment?.changedFiles ?? []).slice(0, MENU_GROUP_LIMIT)
-  const inputs = (environment?.inputFiles ?? []).slice(-MENU_GROUP_LIMIT).reverse()
-  const subagents = (environment?.subagents ?? []).slice(0, MENU_GROUP_LIMIT)
-  const empty = changed.length === 0 && inputs.length === 0 && subagents.length === 0
-
-  const openAndClose = (tab: Omit<WorkspaceTab, 'id'>) => {
-    openWorkspaceTab(sessionId, tab)
-    setOpen(false)
-  }
-
-  return (
-    <div ref={rootRef} className="relative shrink-0">
-      <button
-        type="button"
-        className="workspace-chrome-icon"
-        aria-label="新建标签页"
-        title="新建标签页"
-        aria-expanded={open}
-        onClick={() => setOpen(value => !value)}
-      >
-        <Plus size={12} />
-      </button>
-
-      {open ? (
-        <div className="workspace-new-tab-menu workspace-new-tab-menu--chrome" role="menu">
-          <MenuItem
-            icon={<LayoutDashboard size={11} className="shrink-0 text-primary" />}
-            onClick={() => {
-              showWorkspaceDashboard(sessionId)
-              setOpen(false)
-            }}
-          >
-            工作区面板
-          </MenuItem>
-
-          {loading && empty ? (
-            <div className="workspace-new-tab-empty">加载中…</div>
-          ) : empty ? (
-            <div className="workspace-new-tab-empty">该会话暂无可打开的条目</div>
-          ) : null}
-
-          {subagents.length > 0 ? (
-            <>
-              <div className="workspace-new-tab-group">Subagents</div>
-              {subagents.map(sub => (
-                <MenuItem
-                  key={`subagent:${sub.id}`}
-                  icon={<Bot size={11} className="shrink-0 text-primary" />}
-                  title={sub.prompt}
-                  onClick={() => openAndClose({
-                    kind: 'subagent',
-                    title: sub.title ?? sub.id.slice(0, 8),
-                    sessionId: sub.id,
-                  })}
-                >
-                  {sub.title ?? sub.id.slice(0, 8)}
-                </MenuItem>
-              ))}
-            </>
-          ) : null}
-
-          {changed.length > 0 ? (
-            <>
-              <div className="workspace-new-tab-group">Git 变更</div>
-              {changed.map(file => (
-                <MenuItem
-                  key={`diff:${file.path}`}
-                  icon={<FileDiff size={11} className="shrink-0 text-success/80" />}
-                  title={file.path}
-                  onClick={() => openAndClose({
-                    kind: 'diff',
-                    title: baseName(file.path),
-                    path: file.path,
-                  })}
-                >
-                  {file.path}
-                </MenuItem>
-              ))}
-            </>
-          ) : null}
-
-          {inputs.length > 0 ? (
-            <>
-              <div className="workspace-new-tab-group">输入文件</div>
-              {inputs.map(path => (
-                <MenuItem
-                  key={`file:${path}`}
-                  icon={<FileCode2 size={11} className="shrink-0 text-run/80" />}
-                  title={path}
-                  onClick={() => openAndClose({
-                    kind: 'file',
-                    title: baseName(path),
-                    path,
-                  })}
-                >
-                  {path}
-                </MenuItem>
-              ))}
-            </>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 function TabSwitcher({
   sessionId,
 }: {
   sessionId: string
 }) {
+  const { t } = useLocale()
   const [open, setOpen] = useState(false)
   const rootRef = useDismissableMenu(open, setOpen)
   const { tabs, activeTabId } = useSessionWorkspace(sessionId)
@@ -205,8 +86,8 @@ function TabSwitcher({
       <button
         type="button"
         className="workspace-chrome-icon"
-        aria-label="切换工作区标签"
-        title="切换工作区标签"
+        aria-label={t('workspaceSwitchTab')}
+        title={t('workspaceSwitchTab')}
         aria-expanded={open}
         onClick={() => setOpen(value => !value)}
       >
@@ -214,15 +95,6 @@ function TabSwitcher({
       </button>
       {open ? (
         <div className="workspace-new-tab-menu workspace-new-tab-menu--chrome" role="menu">
-          <MenuItem
-            icon={<LayoutDashboard size={11} className="shrink-0 text-primary" />}
-            onClick={() => {
-              showWorkspaceDashboard(sessionId)
-              setOpen(false)
-            }}
-          >
-            工作区面板
-          </MenuItem>
           {tabs.map(tab => (
             <MenuItem
               key={tab.id}
@@ -243,44 +115,37 @@ function TabSwitcher({
 }
 
 export function WorkspaceWing({ sessionId }: { sessionId: string | null }) {
+  const { t } = useLocale()
   const { tabs, activeTabId } = useSessionWorkspace(sessionId)
-  const activeTab = tabs.find(tab => tab.id === activeTabId) ?? null
-  const enterFocus = useSessionWorkspaceStore(state => state.enterFocus)
+  const activeTab = tabs.find(tab => tab.id === activeTabId) ?? tabs[0] ?? null
   const activateTab = useSessionWorkspaceStore(state => state.activateTab)
-  const showDashboard = useSessionWorkspaceStore(state => state.showDashboard)
 
-  if (!sessionId) return null
+  if (!sessionId || !activeTab) return null
 
   return (
     <div className="workspace-wing" data-active={activeTab ? 'true' : 'false'}>
       <button
         type="button"
         className="workspace-wing-current"
-        aria-label={activeTab ? `聚焦 ${activeTab.title}` : '打开工作区面板'}
-        title={activeTab?.title ?? '工作区'}
-        onClick={() => {
-          if (activeTab) activateTab(sessionId, activeTab.id)
-          else showDashboard(sessionId)
-          enterFocus(sessionId)
-        }}
+        aria-label={t('workspaceActivateTab', { title: activeTab.title })}
+        title={activeTab.title}
+        onClick={() => activateTab(sessionId, activeTab.id)}
       >
-        {activeTab ? tabIcon(activeTab.kind) : <LayoutDashboard size={11} className="shrink-0 text-primary" />}
-        <span className="workspace-wing-label">{activeTab?.title ?? '工作区'}</span>
-        {tabs.length > 0 ? <span className="workspace-wing-count">{tabs.length}</span> : null}
+        {tabIcon(activeTab.kind)}
+        <span className="workspace-wing-label">{activeTab.title}</span>
+        <span className="workspace-wing-count">{tabs.length}</span>
       </button>
-      {tabs.length > 0 ? <TabSwitcher sessionId={sessionId} /> : null}
-      <NewTabMenu sessionId={sessionId} />
+      {tabs.length > 1 ? <TabSwitcher sessionId={sessionId} /> : null}
     </div>
   )
 }
 
 export function WorkspaceFocusControls({ sessionId }: { sessionId: string | null }) {
+  const { t } = useLocale()
   const { tabs, activeTabId } = useSessionWorkspace(sessionId)
   const { loading, reload } = useSessionWorkspaceEnvironment(sessionId)
   const activateTab = useSessionWorkspaceStore(state => state.activateTab)
   const closeTab = useSessionWorkspaceStore(state => state.closeTab)
-  const closeAll = useSessionWorkspaceStore(state => state.closeAll)
-  const showDashboard = useSessionWorkspaceStore(state => state.showDashboard)
   const [overflowOpen, setOverflowOpen] = useState(false)
   const overflowRef = useDismissableMenu(overflowOpen, setOverflowOpen)
 
@@ -295,100 +160,79 @@ export function WorkspaceFocusControls({ sessionId }: { sessionId: string | null
   const hiddenTabs = tabs.filter(tab => !visibleTabs.some(visible => visible.id === tab.id))
 
   return (
-    <div className="workspace-focus-controls" role="tablist" aria-label="工作区标签">
-      <button
-        type="button"
-        role="tab"
-        className={`workspace-focus-home ${activeTab ? '' : 'workspace-focus-home--active'}`}
-        aria-selected={!activeTab}
-        onClick={() => showDashboard(sessionId)}
-      >
-        <LayoutDashboard size={11} />
-        <span>工作区</span>
-      </button>
-
-      {visibleTabs.map((tab) => {
-        const active = tab.id === activeTabId
-        return (
-          <div key={tab.id} className={`workspace-focus-tab ${active ? 'workspace-focus-tab--active' : ''}`}>
-            <button
-              type="button"
-              role="tab"
-              className="workspace-focus-tab-main"
-              aria-selected={active}
-              title={tab.title}
-              onClick={() => activateTab(sessionId, tab.id)}
-            >
-              {tabIcon(tab.kind)}
-              <span>{tab.title}</span>
-            </button>
-            <button
-              type="button"
-              className="workspace-focus-tab-close"
-              aria-label={`关闭 ${tab.title}`}
-              title={`关闭 ${tab.title}`}
-              onClick={() => closeTab(sessionId, tab.id)}
-            >
-              <X size={9} />
-            </button>
-          </div>
-        )
-      })}
-
-      {hiddenTabs.length > 0 ? (
-        <div ref={overflowRef} className="relative shrink-0">
-          <button
-            type="button"
-            className="workspace-focus-overflow"
-            aria-label={`还有 ${hiddenTabs.length} 个标签`}
-            title={`还有 ${hiddenTabs.length} 个标签`}
-            aria-expanded={overflowOpen}
-            onClick={() => setOverflowOpen(value => !value)}
-          >
-            +{hiddenTabs.length}
-          </button>
-          {overflowOpen ? (
-            <div className="workspace-new-tab-menu workspace-new-tab-menu--chrome" role="menu">
-              {hiddenTabs.map(tab => (
-                <MenuItem
-                  key={tab.id}
-                  icon={tabIcon(tab.kind)}
-                  title={tab.title}
-                  onClick={() => {
-                    activateTab(sessionId, tab.id)
-                    setOverflowOpen(false)
-                  }}
-                >
-                  {tab.title}
-                </MenuItem>
-              ))}
+    <div className="workspace-focus-controls" role="tablist" aria-label={t('workspaceTabsLabel')}>
+      <div className="workspace-tabs-pill">
+        {visibleTabs.map((tab) => {
+          const active = tab.id === activeTabId
+          return (
+            <div key={tab.id} className={`workspace-focus-tab ${active ? 'workspace-focus-tab--active' : ''}`}>
+              <button
+                type="button"
+                role="tab"
+                className="workspace-focus-tab-main"
+                aria-selected={active}
+                title={tab.title}
+                onClick={() => activateTab(sessionId, tab.id)}
+              >
+                {tabIcon(tab.kind)}
+                <span>{tab.title}</span>
+              </button>
+              <button
+                type="button"
+                className="workspace-focus-tab-close"
+                aria-label={t('workspaceCloseTab', { title: tab.title })}
+                title={t('workspaceCloseTab', { title: tab.title })}
+                onClick={() => closeTab(sessionId, tab.id)}
+              >
+                <X size={9} />
+              </button>
             </div>
-          ) : null}
-        </div>
-      ) : null}
+          )
+        })}
 
-      <NewTabMenu sessionId={sessionId} />
+        {hiddenTabs.length > 0 ? (
+          <div ref={overflowRef} className="relative shrink-0">
+            <button
+              type="button"
+              className="workspace-focus-overflow"
+              aria-label={t('workspaceMoreTabs', { count: hiddenTabs.length })}
+              title={t('workspaceMoreTabs', { count: hiddenTabs.length })}
+              aria-expanded={overflowOpen}
+              onClick={() => setOverflowOpen(value => !value)}
+            >
+              +{hiddenTabs.length}
+            </button>
+            {overflowOpen ? (
+              <div className="workspace-new-tab-menu workspace-new-tab-menu--chrome" role="menu">
+                {hiddenTabs.map(tab => (
+                  <MenuItem
+                    key={tab.id}
+                    icon={tabIcon(tab.kind)}
+                    title={tab.title}
+                    onClick={() => {
+                      activateTab(sessionId, tab.id)
+                      setOverflowOpen(false)
+                    }}
+                  >
+                    {tab.title}
+                  </MenuItem>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
       <button
         type="button"
         className="workspace-chrome-icon"
-        aria-label="刷新工作区"
-        title="刷新工作区"
+        aria-label={t('workspaceRefresh')}
+        title={t('workspaceRefresh')}
         disabled={loading}
         onClick={() => void reload()}
       >
         <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
       </button>
-      {tabs.length > 0 ? (
-        <button
-          type="button"
-          className="workspace-chrome-icon"
-          aria-label="关闭全部标签"
-          title="关闭全部标签"
-          onClick={() => closeAll(sessionId)}
-        >
-          <X size={12} />
-        </button>
-      ) : null}
     </div>
   )
 }

@@ -18,7 +18,7 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({ sessionId
       <div className="session-profile-card-header">
         <span className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           <User size={10} />
-          Profile
+          Status
         </span>
         {sessionId ? <span className="text-[8px] text-muted-foreground/50">当前会话</span> : null}
       </div>

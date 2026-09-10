@@ -5,21 +5,22 @@ import { useProjectSettings } from './useProjectSettings'
 import { useConfig } from './useConfig'
 import { useLocale } from '../../../hooks/useLocale'
 import { McpServersSection } from './components/McpServersSection'
+import { SettingsCard } from './components/SettingsCard'
 
 function ProviderTab(_props: { settings: any; globalConfig: any; providers: any; onSave: (data: any) => void }) {
-  return <div className="text-sm text-muted-foreground">Provider settings (coming soon)</div>
+  return <SettingsCard title="Provider settings"><p className="settings-note">Coming soon</p></SettingsCard>
 }
 function BasicsTab(_props: { settings: any; onSave: (data: any) => void }) {
-  return <div className="text-sm text-muted-foreground">Basic settings (coming soon)</div>
+  return <SettingsCard title="Basic settings"><p className="settings-note">Coming soon</p></SettingsCard>
 }
 function CollaborationTab(_props: { settings: any; onSave: (data: any) => void }) {
-  return <div className="text-sm text-muted-foreground">Collaboration settings (coming soon)</div>
+  return <SettingsCard title="Collaboration settings"><p className="settings-note">Coming soon</p></SettingsCard>
 }
 function NotificationsTab(_props: { settings: any; onSave: (data: any) => void }) {
-  return <div className="text-sm text-muted-foreground">Notification settings (coming soon)</div>
+  return <SettingsCard title="Notification settings"><p className="settings-note">Coming soon</p></SettingsCard>
 }
 function ComplianceTab(_props: { settings: any; onSave: (data: any) => void }) {
-  return <div className="text-sm text-muted-foreground">Compliance settings (coming soon)</div>
+  return <SettingsCard title="Compliance settings"><p className="settings-note">Coming soon</p></SettingsCard>
 }
 
 export default function ProjectSettingsPage() {
@@ -45,7 +46,7 @@ export default function ProjectSettingsPage() {
   return (
     <ScrollShadow className="h-full overflow-y-auto">
       <div className="min-h-full bg-background">
-        <div className="mx-auto max-w-2xl px-6 pt-20 pb-12">
+        <div className="mx-auto max-w-5xl px-6 pt-16 pb-16">
           <div className="flex items-start justify-between gap-3 mb-8">
             <div>
               <Typography type="h5">{t('settingsProjectTitle')}</Typography>
@@ -58,7 +59,7 @@ export default function ProjectSettingsPage() {
             </Button>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-8">
             <ProviderTab settings={settings} globalConfig={globalConfig} providers={providers} onSave={(data) => patchSection('provider', data)} />
             <McpServersSection
               servers={settings.mcpServers}

@@ -158,12 +158,12 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
         </div>
       }
     >
-      <div className="space-y-2">
+      <div className="settings-list">
         {visibleDiscovery.length === 0 && !discovering && (
-          <p className="text-xs text-muted-foreground">{t('settingsAcpEmpty')}</p>
+          <p className="settings-note">{t('settingsAcpEmpty')}</p>
         )}
         {discovering && visibleDiscovery.length === 0 && (
-          <p className="text-xs text-muted-foreground">{t('settingsAcpRefreshing')}...</p>
+          <p className="settings-note">{t('settingsAcpRefreshing')}...</p>
         )}
         {visibleDiscovery.map(item => {
           const checked = enabledIds.includes(item.id)

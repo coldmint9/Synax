@@ -43,8 +43,6 @@ export const EMPTY_SESSION_WORKSPACE: WorkspaceSessionState = Object.freeze({
   presentation: 'dock',
 })
 
-const WIDE_WORKSPACE_QUERY = '(min-width: 1280px)'
-
 function tabIdentity(tab: Omit<WorkspaceTab, 'id'>): string {
   return tab.kind === 'subagent'
     ? `subagent:${tab.sessionId ?? ''}`
@@ -163,28 +161,20 @@ export function useSessionWorkspace(sessionId: string | null | undefined): Works
   ))
 }
 
-export function isWideWorkspaceViewport(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true
-  return window.matchMedia(WIDE_WORKSPACE_QUERY).matches
-}
-
 /** Open a tab, entering focus automatically when the sidecar cannot fit. */
 export function openWorkspaceTab(sessionId: string, tab: Omit<WorkspaceTab, 'id'>): void {
   const store = useSessionWorkspaceStore.getState()
   store.openTab(sessionId, tab)
-  if (!isWideWorkspaceViewport()) store.enterFocus(sessionId)
 }
 
 export function showWorkspaceDashboard(sessionId: string): void {
   const store = useSessionWorkspaceStore.getState()
   store.showDashboard(sessionId)
-  if (!isWideWorkspaceViewport()) store.enterFocus(sessionId)
 }
 
 export function activateWorkspaceTab(sessionId: string, tabId: string): void {
   const store = useSessionWorkspaceStore.getState()
   store.activateTab(sessionId, tabId)
-  if (!isWideWorkspaceViewport()) store.enterFocus(sessionId)
 }
 
 export function openWorkspaceFile(sessionId: string, path: string): void {

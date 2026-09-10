@@ -7,6 +7,7 @@ import { LlmProviderSection } from './components/LlmProviderSection'
 import { AcpSection } from './components/AcpSection'
 import { LimitsSection } from './components/LimitsSection'
 import { AdvancedSection } from './components/AdvancedSection'
+import { ProjectIntegrationsSection } from './components/ProjectIntegrationsSection'
 
 export default function GlobalSettingsPage() {
   const { globalConfig, providers, loading, reload, updateGlobalConfig } = useConfig()
@@ -31,7 +32,7 @@ export default function GlobalSettingsPage() {
   return (
     <ScrollShadow className="h-full overflow-y-auto">
       <div className="min-h-full bg-background">
-        <div className="mx-auto max-w-2xl px-6 pt-20 pb-12">
+        <div className="mx-auto max-w-5xl px-6 pt-16 pb-16">
           <div className="mb-8">
             <Typography type="h5">{t('settingsSystemConfig')}</Typography>
             <Typography type="body-sm" color="muted" className="mt-1">
@@ -39,7 +40,7 @@ export default function GlobalSettingsPage() {
             </Typography>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-8">
             <LayoutSection />
             <LlmProviderSection
               config={globalConfig}
@@ -51,6 +52,7 @@ export default function GlobalSettingsPage() {
             <LimitsSection config={globalConfig} onUpdate={updateGlobalConfig} />
             <AdvancedSection config={globalConfig} onUpdate={updateGlobalConfig} />
           </div>
+          <ProjectIntegrationsSection />
         </div>
       </div>
     </ScrollShadow>
