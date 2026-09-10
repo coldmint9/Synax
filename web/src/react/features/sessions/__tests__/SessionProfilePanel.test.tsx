@@ -15,17 +15,17 @@ describe('SessionProfilePanel', () => {
 
   afterEach(() => cleanup())
 
-  it('renders a card-level Profile heading for the selected session', () => {
+  it('renders a card-level Status heading for the selected session', () => {
     render(<SessionProfilePanel sessionId="session-1" />)
 
-    expect(screen.getByText('Profile')).toBeTruthy()
+    expect(screen.getByText('Status')).toBeTruthy()
     expect(screen.getByText('当前会话')).toBeTruthy()
   })
 
   it('keeps the empty state inside the Profile card', () => {
     render(<SessionProfilePanel sessionId={null} />)
 
-    expect(screen.getByText('Profile')).toBeTruthy()
+    expect(screen.getByText('Status')).toBeTruthy()
     expect(screen.getByText('选择会话后查看 Profile')).toBeTruthy()
   })
 })

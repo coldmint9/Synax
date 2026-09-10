@@ -8,9 +8,10 @@ import { SkillAddSourceModal, EMPTY_SOURCE_FORM } from './SkillAddSourceModal'
 import { SkillCard } from './SkillCard'
 import { SkillMarketSidebar, type SourceFilter } from './SkillMarketSidebar'
 
-export function SkillMarketplacePanel() {
+export function SkillMarketplacePanel({ projectId: projectIdProp }: { projectId?: string } = {}) {
   const { t } = useLocale()
-  const { projectId = '' } = useParams()
+  const { projectId: routeProjectId = '' } = useParams()
+  const projectId = projectIdProp ?? routeProjectId
   const addSourceModal = useOverlayState()
   const [skills, setSkills] = useState<SkillSummary[]>([])
   const [totalSkills, setTotalSkills] = useState(0)

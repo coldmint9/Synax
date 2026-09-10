@@ -13,9 +13,8 @@ import { SessionWorkspacePanel } from '../features/sessions/SessionWorkspacePane
 import { SessionListPanel } from '../features/sessions/SessionListPanel'
 import { SessionComposer } from '../features/sessions/SessionComposer'
 import { useSessionRouteSync } from '../features/sessions/useSessionRouteSync'
-import { isNewSessionPath, newSessionPath, resolveAgentViewMode } from '../features/sessions/sessionRoutes'
+import { isNewSessionPath, newSessionPath } from '../features/sessions/sessionRoutes'
 import type { SessionListView } from '../features/sessions/sessionBuckets'
-import { SkillMarketplacePanel } from '../features/skills/SkillMarketplacePanel'
 import { useSessionWorkspace } from '../features/sessions/sessionWorkspaceStore'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 
@@ -90,24 +89,17 @@ function LeftPanelCollapseButton({ collapsed, onToggle }: { collapsed: boolean; 
 
 const SessionDetailSidebar = memo(function SessionDetailSidebar({
   width,
-  focus,
   onResize,
 }: {
   width: number
-  focus: boolean
   onResize: (event: React.PointerEvent<HTMLDivElement>) => void
 }) {
   const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
 
   return (
-    <aside
-      className={`session-workspace-sidebar relative shrink-0 ${focus ? 'session-workspace-sidebar--focus min-w-0 flex-1' : 'session-workspace-sidebar--dock'}`}
-      style={focus ? undefined : { width }}
-    >
-      <SessionWorkspacePanel sessionId={selectedSessionId} />
-      {!focus && (
-        <div className="session-panel-resizer session-panel-resizer--right" onPointerDown={onResize} role="separator" aria-orientation="vertical" />
-      )}
+    <aside className="session-workspace-sidebar session-workspace-sidebar--dock relative shrink-0" style={{ width }}>
+      <SessionWorkspacePanel sessionId={selectedSessionId} mode="dashboard" />
+      <div className="session-panel-resizer session-panel-resizer--right" onPointerDown={onResize} role="separator" aria-orientation="vertical" />
     </aside>
   )
 })
@@ -121,53 +113,59 @@ export default memo(function SessionsPage() {
   const rightPanel = useResizablePanel('right', RIGHT_PANEL_DEFAULT, RIGHT_PANEL_MIN, RIGHT_PANEL_MAX)
   const location = useLocation()
   const listView: SessionListView = location.pathname.includes('/sessions/workflows') ? 'workflow' : 'sessions'
-  const agentViewMode = resolveAgentViewMode(location.pathname)
 
   useSessionRouteSync(listView, projectId)
 
   const agentSessionId = useAgentSessionStore(s => s.selectedSessionId)
   const agentPanelOpen = useAgentSessionStore(s => s.panelOpen)
   const workspaceState = useSessionWorkspace(agentSessionId)
+  const hasWorkspaceContent = Boolean(workspaceState.activeTabId)
   const wideWorkspace = useMediaQuery('(min-width: 1280px)')
 
   useSessionLiveStream(agentPanelOpen ? agentSessionId : null)
 
   const isNewDraft = listView === 'sessions' && isNewSessionPath(location.pathname)
-  const showTranscript = Boolean(agentViewMode === 'sessions' && agentPanelOpen && agentSessionId)
-  const workspaceFocus = showTranscript && workspaceState.presentation === 'focus'
+  const showTranscript = Boolean(agentPanelOpen && agentSessionId)
   const canCreateSession = listView === 'sessions' && Boolean(projectId)
-  const previousFocusCollapsed = useRef(false)
-  const focusOwner = useRef<string | null>(null)
-
-  useEffect(() => {
-    if (workspaceFocus && agentSessionId && focusOwner.current !== agentSessionId) {
-      if (focusOwner.current === null) previousFocusCollapsed.current = leftPanel.collapsed
-      leftPanel.setCollapsed(true)
-      focusOwner.current = agentSessionId
-      return
-    }
-    if (!workspaceFocus && focusOwner.current !== null) {
-      leftPanel.setCollapsed(previousFocusCollapsed.current)
-      focusOwner.current = null
-    }
-  }, [agentSessionId, leftPanel.collapsed, leftPanel.setCollapsed, workspaceFocus])
 
   const commandRailLeft = leftPanel.collapsed ? 0 : leftPanel.width
-  const commandRailRight = showTranscript && !workspaceFocus && wideWorkspace ? rightPanel.width : 0
+  const commandRailRight = showTranscript && wideWorkspace ? rightPanel.width : 0
+
+  // Keep the island centered in the space between the two side panels instead
+  // of centering it against the viewport and letting it overlap the right rail.
+  useEffect(() => {
+    const root = document.documentElement
+    const leftInset = leftPanel.collapsed ? 0 : leftPanel.width + 8
+    const rightInset = showTranscript && wideWorkspace ? rightPanel.width + 18 : 0
+    root.style.setProperty('--agent-header-shift', `${(leftInset - rightInset) / 2}px`)
+    root.style.setProperty('--agent-header-left-inset', `${leftInset}px`)
+    root.style.setProperty('--agent-header-right-inset', `${rightInset}px`)
+    return () => {
+      root.style.removeProperty('--agent-header-shift')
+      root.style.removeProperty('--agent-header-left-inset')
+      root.style.removeProperty('--agent-header-right-inset')
+    }
+  }, [leftPanel.collapsed, leftPanel.width, rightPanel.width, showTranscript, wideWorkspace])
 
   return (
     <div className="agent-page-shell relative flex h-full min-h-0">
-      {agentViewMode === 'sessions' ? (
-        <>
+      <>
           <aside
-            className={`session-panel-host session-panel-host--left relative shrink-0 transition-[width] duration-200 ${leftPanel.collapsed ? 'overflow-visible' : 'overflow-hidden border-r border-border/40'}`}
+            className={`session-panel-host session-panel-host--left relative shrink-0 transition-[width] duration-200 ${leftPanel.collapsed ? 'overflow-visible' : 'overflow-hidden'}`}
             data-collapsed={leftPanel.collapsed ? 'true' : undefined}
             style={{ width: leftPanel.collapsed ? 0 : leftPanel.width }}
           >
-            <LeftPanelCollapseButton collapsed={leftPanel.collapsed} onToggle={() => leftPanel.setCollapsed(value => !value)} />
-            {!leftPanel.collapsed && (
+            {/* While the panel is open the control lives next to the SynaxCode
+                title; the edge tab only exists to bring a collapsed panel back. */}
+            {leftPanel.collapsed ? (
+              <LeftPanelCollapseButton collapsed onToggle={() => leftPanel.setCollapsed(value => !value)} />
+            ) : (
               <>
-                <SessionListPanel listView={listView} projectId={projectId} />
+                <SessionListPanel
+                  listView={listView}
+                  projectId={projectId}
+                  onCollapsePanel={() => leftPanel.setCollapsed(true)}
+                />
                 <div className="session-panel-resizer session-panel-resizer--left" onPointerDown={leftPanel.startResize} role="separator" aria-orientation="vertical" />
               </>
             )}
@@ -175,15 +173,16 @@ export default memo(function SessionsPage() {
 
           {showTranscript ? (
             <>
-              {!workspaceFocus && (
-                <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                {hasWorkspaceContent ? (
+                  <SessionWorkspacePanel sessionId={agentSessionId} mode="content" />
+                ) : (
                   <SessionTranscript />
-                </div>
-              )}
-              {(workspaceFocus || wideWorkspace) ? (
+                )}
+              </div>
+              {wideWorkspace ? (
                 <SessionDetailSidebar
                   width={rightPanel.width}
-                  focus={workspaceFocus}
                   onResize={rightPanel.startResize}
                 />
               ) : null}
@@ -210,17 +209,12 @@ export default memo(function SessionsPage() {
               ) : null}
             </div>
           )}
-        </>
-      ) : (
-        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          <SkillMarketplacePanel />
-        </div>
-      )}
-      {showTranscript && agentSessionId ? (
+      </>
+      {showTranscript && agentSessionId && !hasWorkspaceContent ? (
         <AgentCommandRail
           sessionId={agentSessionId}
           projectId={projectId}
-          focus={workspaceFocus}
+          focus={false}
           insetLeft={commandRailLeft}
           insetRight={commandRailRight}
         />

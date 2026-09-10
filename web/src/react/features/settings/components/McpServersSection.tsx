@@ -165,11 +165,11 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
         </div>
       }
     >
-      <p className="text-xs text-muted-foreground pb-2">{description ?? t('settingsMcpDesc')}</p>
+      <p className="settings-note">{description ?? t('settingsMcpDesc')}</p>
       {servers.length === 0 && !editing && (
-        <p className="text-xs text-muted-foreground py-2">尚未配置 MCP 服务器。添加 stdio 服务器后可在 agent 输入框按会话启用。</p>
+        <p className="settings-note">尚未配置 MCP 服务器。添加 stdio 服务器后可在 agent 输入框按会话启用。</p>
       )}
-      <div className="space-y-2">
+      <div className="settings-list">
         {servers.map(server => (
           <div key={server.id} className="settings-item overflow-hidden">
             <div className="flex items-start gap-3 p-3">

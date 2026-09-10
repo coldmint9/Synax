@@ -1,34 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   EMPTY_SESSION_WORKSPACE,
   openWorkspaceTab,
   useSessionWorkspaceStore,
 } from '../sessionWorkspaceStore'
 
-function matchViewport(matches: boolean) {
-  Object.defineProperty(window, 'matchMedia', {
-    configurable: true,
-    writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches,
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
-  })
-}
-
 describe('sessionWorkspaceStore', () => {
   beforeEach(() => {
     useSessionWorkspaceStore.setState({ sessions: {} })
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
   })
 
   it('keeps tabs isolated per session and restores the prior active tab', () => {
@@ -45,14 +24,9 @@ describe('sessionWorkspaceStore', () => {
     expect(state['session-b'].presentation).toBe('focus')
   })
 
-  it('does not enter focus on wide viewports and does on compact viewports', () => {
-    matchViewport(true)
-    openWorkspaceTab('wide', { kind: 'diff', title: 'wide.ts', path: 'wide.ts' })
-    expect(useSessionWorkspaceStore.getState().sessions.wide.presentation).toBe('dock')
-
-    matchViewport(false)
-    openWorkspaceTab('compact', { kind: 'diff', title: 'compact.ts', path: 'compact.ts' })
-    expect(useSessionWorkspaceStore.getState().sessions.compact.presentation).toBe('focus')
+  it('opens tabs without leaving dock presentation', () => {
+    openWorkspaceTab('session-a', { kind: 'diff', title: 'a.ts', path: 'a.ts' })
+    expect(useSessionWorkspaceStore.getState().sessions['session-a'].presentation).toBe('dock')
   })
 
   it('keeps focus after closing the last tab and only exits explicitly', () => {

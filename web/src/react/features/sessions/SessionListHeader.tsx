@@ -1,4 +1,4 @@
-import { ArrowLeft, Search, Trash2, Plus } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, Search, Trash2, Plus } from 'lucide-react'
 import { Button } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { SessionListView } from './sessionBuckets'
@@ -13,6 +13,7 @@ interface Props {
   isCreatingSession?: boolean
   onOpenWorkflows?: () => void
   onBackToSessions?: () => void
+  onCollapsePanel?: () => void
 }
 
 export function SessionListHeader({
@@ -25,6 +26,7 @@ export function SessionListHeader({
   isCreatingSession = false,
   onOpenWorkflows,
   onBackToSessions,
+  onCollapsePanel,
 }: Props) {
   const { t } = useLocale()
   const isWorkflowView = listView === 'workflow'
@@ -43,9 +45,22 @@ export function SessionListHeader({
       ) : null}
 
       <div className="flex items-center justify-between gap-2">
-        <span className="min-w-0 truncate text-sm font-bold tracking-tight text-foreground">
-          {isWorkflowView ? t('sessionWorkflowTitle') : 'SynaxCode'}
-        </span>
+        <div className="flex min-w-0 items-center gap-0.5">
+          <span className="min-w-0 truncate text-sm font-bold tracking-tight text-foreground">
+            {isWorkflowView ? t('sessionWorkflowTitle') : 'SynaxCode'}
+          </span>
+          {onCollapsePanel ? (
+            <button
+              type="button"
+              onClick={onCollapsePanel}
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+              aria-label={t('appCollapseSidebar')}
+              title={t('appCollapseSidebar')}
+            >
+              <ChevronLeft size={14} />
+            </button>
+          ) : null}
+        </div>
         <div className="flex shrink-0 items-center gap-0.5">
           {!isWorkflowView && onNewSession ? (
             <Button

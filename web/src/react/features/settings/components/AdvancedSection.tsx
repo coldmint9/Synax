@@ -37,7 +37,7 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
   return (
     <div className="space-y-3">
       <SettingsCard title={t('settingsAdvancedTitle')} icon={Wrench} trailing={<SaveIndicator saving={saving} saved={saved} error={error} />}>
-        <div className="space-y-3">
+        <div className="settings-rows">
           <FormRow label={t('settingsAllowProjectOverride')} description={t('settingsAllowProjectOverrideDesc')}>
             <Switch
               size="sm"
@@ -49,7 +49,7 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
             </Switch>
           </FormRow>
 
-          <div className="border-t border-border/30 pt-3">
+          <div className="settings-action-row">
             <Button
               size="sm"
               variant="secondary"

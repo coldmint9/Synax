@@ -1,5 +1,6 @@
-import { memo } from 'react'
+import { memo, useRef } from 'react'
 import { Loader2, Trash2 } from 'lucide-react'
+import { useLocale } from '../../../hooks/useLocale'
 import type { SessionTreeNode } from './useSessionList'
 import { isSessionUnread, useAgentSessionStore } from './agentSessionStore'
 import { useSessionDisplayTitle } from './useSessionDisplayTitle'
@@ -26,11 +27,13 @@ const PROFILES: Record<string, string> = {
   reviewer: 'Reviewer',
 }
 
-function relTime(iso: string): string {
+type Translator = ReturnType<typeof useLocale>['t']
+
+function relTime(iso: string, t: Translator): string {
   const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
-  if (m < 60) return `${m}m ago`
-  if (m < 1440) return `${Math.floor(m / 60)}h ago`
-  return `${Math.floor(m / 1440)}d ago`
+  if (m < 60) return t('timeMinutesAgo', { count: m })
+  if (m < 1440) return t('timeHoursAgo', { count: Math.floor(m / 60) })
+  return t('timeDaysAgo', { count: Math.floor(m / 1440) })
 }
 
 interface Props {
@@ -44,12 +47,13 @@ interface Props {
 }
 
 function DeleteButton({ sessionId, onDelete }: { sessionId: string; onDelete?: (id: string) => void }) {
+  const { t } = useLocale()
   return (
     <span
       role="button"
       tabIndex={0}
       className="session-list-delete inline-flex items-center justify-center h-5 w-5 min-w-0 rounded-md opacity-0 group-hover:opacity-100 transition-opacity text-danger/70 hover:text-danger hover:bg-danger/10 cursor-pointer"
-      aria-label="Delete session"
+      aria-label={t('sessionDelete')}
       onClick={(e) => { e.stopPropagation(); onDelete?.(sessionId) }}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onDelete?.(sessionId) } }}
     >
@@ -60,8 +64,15 @@ function DeleteButton({ sessionId, onDelete }: { sessionId: string; onDelete?: (
 
 function SessionTitle({ session }: { session: SessionTreeNode['session'] }) {
   const title = useSessionDisplayTitle(session)
+  const ref = useRef<HTMLSpanElement>(null)
   return (
-    <span className="session-list-title min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+    <span
+      ref={ref}
+      title={title}
+      className="session-list-title min-w-0 flex-1 overflow-hidden whitespace-nowrap text-left text-[13px] font-medium text-foreground"
+      onMouseEnter={() => ref.current?.scrollTo({ left: ref.current.scrollWidth, behavior: 'smooth' })}
+      onMouseLeave={() => ref.current?.scrollTo({ left: 0, behavior: 'smooth' })}
+    >
       {title}
     </span>
   )
@@ -79,6 +90,7 @@ function SessionChildTitle({ session }: { session: SessionTreeNode['session'] })
 export const SessionTreeItem = memo(function SessionTreeItem({
   node, isSelected, onSelect, onToggleExpand, onDelete, onPause, onCancel,
 }: Props) {
+  const { t } = useLocale()
   const { session, depth, children } = node
   const hasKids = children.length > 0
   const isParent = depth === 0
@@ -102,7 +114,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             <button
               className="shrink-0 w-4 h-4 flex items-center justify-center text-[10px] text-muted-foreground hover:text-foreground"
               onClick={e => { e.stopPropagation(); onToggleExpand(session.id) }}
-              aria-label={node.expanded ? 'Collapse' : 'Expand'}
+              aria-label={t(node.expanded ? 'sessionCollapse' : 'sessionExpand')}
             >
               {hasKids ? (node.expanded ? '\u25BE' : '\u25B8') : <span className="w-3" />}
             </button>
@@ -116,8 +128,8 @@ export const SessionTreeItem = memo(function SessionTreeItem({
               <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-muted-foreground/50'}`} />
             ) : null}
             <SessionTitle session={session} />
-            <span className="session-list-hover-actions inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
-              <span>{relTime(session.updatedAt)}</span>
+            <span className="session-list-hover-actions inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] text-muted-foreground/70 opacity-0 transition-opacity">
+              <span>{relTime(session.updatedAt, t)}</span>
               <DeleteButton sessionId={session.id} onDelete={onDelete} />
             </span>
           </div>
@@ -142,7 +154,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             <span className="list-badge">{resolveSynaxAgentLabel(session)}</span>
           ) : null}
           <span className="shrink-0 text-[9px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
-            {relTime(session.updatedAt)}
+            {relTime(session.updatedAt, t)}
           </span>
         </>
       )}

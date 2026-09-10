@@ -8,14 +8,14 @@ interface FormRowProps {
 
 export function FormRow({ label, description, children }: FormRowProps) {
   return (
-    <div className="flex items-center justify-between gap-4">
+    <div className="settings-row">
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-medium text-foreground">{label}</div>
+        <div className="settings-row__label">{label}</div>
         {description && (
-          <div className="text-[11px] text-muted-foreground">{description}</div>
+          <div className="settings-row__description">{description}</div>
         )}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="settings-row__control">{children}</div>
     </div>
   )
 }

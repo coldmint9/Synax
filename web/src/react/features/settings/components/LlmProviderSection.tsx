@@ -287,9 +287,9 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
         </div>
       }
     >
-      <div className="space-y-2">
+      <div className="settings-list">
         {configuredDrafts.length === 0 && !editingDraft && (
-          <p className="text-xs text-muted-foreground py-2">{t('llmProviderEmpty')}</p>
+          <p className="settings-note">{t('llmProviderEmpty')}</p>
         )}
         {configuredDrafts.map(draft => (
           <LlmProviderCard
