@@ -38,6 +38,8 @@ import { sessionLiveBus } from '../services/agent-runtime/session-live-bus.js';
 import { logger } from '../lib/logger.js';
 import { SseEventType } from '../lib/sse-events.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
+import { getSessionEnvironment, getSessionEnvironmentFile, invalidateSessionEnvironment } from '../services/agent-runtime/session-environment.js';
+import { resolveSessionConfiguredContextLimit } from '../services/agent-runtime/session-context-limit.js';
 
 export const agentRuntimeRoutes = new Hono();
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
@@ -147,9 +149,11 @@ agentRuntimeRoutes.delete('/sessions/:sessionId', async (c) => {
     const sessionIds = agentSessionRuntime.listSessionTree(c.req.param('sessionId')).map((session) => session.id);
     await interruptAgentSessionsAndWait(sessionIds);
     await closeAcpAgentSessions(sessionIds);
+    const deletedSessionIds = agentSessionRuntime.delete(c.req.param('sessionId'));
+    for (const deletedId of deletedSessionIds) invalidateSessionEnvironment(deletedId);
     return c.json({
       ok: true,
-      deletedSessionIds: agentSessionRuntime.delete(c.req.param('sessionId')),
+      deletedSessionIds,
     });
   } catch (error) {
     return runtimeError(c, error);
@@ -437,9 +441,32 @@ agentRuntimeRoutes.get('/sessions/:sessionId/tool-calls', (c) => {
   }
 });
 
-agentRuntimeRoutes.get('/sessions/:sessionId/stats', (c) => {
+agentRuntimeRoutes.get('/sessions/:sessionId/environment', async (c) => {
   try {
-    const stats = agentRuntimeStore.getSessionStats(c.req.param('sessionId'));
+    return c.json(await getSessionEnvironment(c.req.param('sessionId')))
+  } catch (error) {
+    return runtimeError(c, error)
+  }
+})
+
+agentRuntimeRoutes.get('/sessions/:sessionId/environment/file', async (c) => {
+  const filePath = c.req.query('path')
+  const kind = c.req.query('kind') === 'input' ? 'input' : 'diff'
+  if (!filePath) return c.json({ error: 'Missing path' }, 400)
+  try {
+    return c.json(await getSessionEnvironmentFile(c.req.param('sessionId'), filePath, kind))
+  } catch (error) {
+    return runtimeError(c, error)
+  }
+})
+
+agentRuntimeRoutes.get('/sessions/:sessionId/stats', async (c) => {
+  try {
+    const sessionId = c.req.param('sessionId');
+    const session = agentSessionRuntime.get(sessionId);
+    // Render the usage bar against the provider-configured context window.
+    const configuredContextLimit = await resolveSessionConfiguredContextLimit(session);
+    const stats = agentRuntimeStore.getSessionStats(sessionId, { configuredContextLimit });
     return c.json(stats);
   } catch (error) {
     return runtimeError(c, error);
@@ -460,21 +487,17 @@ agentRuntimeRoutes.get('/sessions/:sessionId/todos', (c) => {
   try {
     const sessionId = c.req.param('sessionId');
     agentSessionRuntime.get(sessionId);
-    const events = agentRuntimeStore.listEvents(sessionId);
-    let items: Array<{ id: string; label: string; status: string }> = [];
-    for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].type === 'task_state_updated') {
-        const tasks = (events[i].payload.tasks as Array<{ id: string; subject: string; status: string }>) ?? [];
-        items = tasks
-          .filter(t => t.status !== 'deleted')
-          .map(t => ({
-            id: t.id,
-            label: t.subject,
-            status: t.status === 'completed' ? 'done' : t.status,
-          }));
-        break;
-      }
-    }
+    // Read only the newest task snapshot: scanning the full event log here
+    // blocked the profile panel's polling during long runs.
+    const latestTaskEvent = agentRuntimeStore.getLatestEventByType(sessionId, 'task_state_updated');
+    const tasks = (latestTaskEvent?.payload.tasks as Array<{ id: string; subject: string; status: string }>) ?? [];
+    const items = tasks
+      .filter(t => t.status !== 'deleted')
+      .map(t => ({
+        id: t.id,
+        label: t.subject,
+        status: t.status === 'completed' ? 'done' : t.status,
+      }));
     return c.json({ items });
   } catch (error) {
     return runtimeError(c, error);

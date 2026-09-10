@@ -31,16 +31,12 @@ export class TaskStore {
 
   static fromEvents(sessionId: string): TaskStore {
     const store = new TaskStore()
-    const events = agentRuntimeStore.listEvents(sessionId)
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i]
-      if (ev.type === TaskToolEventType.TaskStateUpdated) {
-        const items = ev.payload.tasks as Task[]
-        for (const t of items) store.tasks.set(t.id, t)
-        store.nextId = (ev.payload.nextId as number) ?? items.length + 1
-        return store
-      }
-    }
+    // Read only the newest task snapshot instead of scanning the whole log.
+    const latest = agentRuntimeStore.getLatestEventByType(sessionId, TaskToolEventType.TaskStateUpdated)
+    if (!latest) return store
+    const items = latest.payload.tasks as Task[]
+    for (const t of items) store.tasks.set(t.id, t)
+    store.nextId = (latest.payload.nextId as number) ?? items.length + 1
     return store
   }
 
@@ -129,17 +125,15 @@ export class TaskStore {
 const DRIFT_THRESHOLD = 3;
 
 export function buildTaskDriftReminder(sessionId: string): string | null {
-  const events = agentRuntimeStore.listEvents(sessionId)
-  let lastIdx = -1
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].type === 'task_state_updated' || events[i].type === 'todo_updated') {
-      lastIdx = i
-      break
-    }
-  }
-  if (lastIdx < 0) return null
+  // Targeted queries only: this runs on every step, and loading the full event
+  // log here made long sessions progressively slower.
+  const latestTaskEvent = agentRuntimeStore.getLatestEventOfTypes(sessionId, [
+    'task_state_updated',
+    'todo_updated',
+  ])
+  if (!latestTaskEvent) return null
 
-  const stepsSince = events.slice(lastIdx + 1).filter(e => e.type === 'tool_result').length
+  const stepsSince = agentRuntimeStore.countEventsAfter(sessionId, latestTaskEvent.id, 'tool_result')
   if (stepsSince < DRIFT_THRESHOLD) return null
 
   const store = TaskStore.fromEvents(sessionId)

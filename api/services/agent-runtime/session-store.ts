@@ -277,6 +277,34 @@ function mapMessage(row: MessageRow): AgentRuntimeMessage {
   };
 }
 
+const DEFAULT_CONTEXT_WINDOW_SIZE = 200_000;
+
+function normalizeContextLimit(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** Provider-configured window recorded on the session's most recent run. */
+function readLatestRunContextLimit(
+  db: ReturnType<typeof getRawSqlite>,
+  sessionId: string,
+): number | null {
+  const row = db
+    .prepare(
+      `SELECT metadata_json FROM agent_runtime_runs
+       WHERE session_id = ?
+       ORDER BY started_at DESC, rowid DESC
+       LIMIT 1`,
+    )
+    .get(sessionId) as { metadata_json: string | null } | undefined;
+  if (!row?.metadata_json) return null;
+  try {
+    const metadata = JSON.parse(row.metadata_json) as { contextLimit?: unknown };
+    return normalizeContextLimit(metadata.contextLimit);
+  } catch {
+    return null;
+  }
+}
+
 function mapEvent(row: EventRow): RuntimeEvent {
   return {
     id: row.id,
@@ -640,13 +668,56 @@ export class AgentRuntimeStore {
   }
 
   listEvents(sessionId: string, after?: string): RuntimeEvent[] {
-    const rows = getRawSqlite()
+    const db = getRawSqlite();
+    if (after) {
+      // Incremental fetch: only read rows after the caller's cursor instead of
+      // materializing (and JSON-parsing) the whole event log on every poll.
+      const rows = db
+        .prepare(
+          `SELECT * FROM agent_runtime_events
+           WHERE session_id = ?
+             AND rowid > COALESCE((SELECT rowid FROM agent_runtime_events WHERE id = ?), 0)
+           ORDER BY rowid`,
+        )
+        .all(sessionId, after) as EventRow[];
+      return rows.map(mapEvent);
+    }
+    const rows = db
       .prepare('SELECT * FROM agent_runtime_events WHERE session_id = ? ORDER BY rowid')
       .all(sessionId) as EventRow[];
-    const events = rows.map(mapEvent);
-    if (!after) return events;
-    const index = events.findIndex((event) => event.id === after);
-    return index >= 0 ? events.slice(index + 1) : events;
+    return rows.map(mapEvent);
+  }
+
+  /** Latest event of a given type, without loading the whole event log. */
+  getLatestEventByType(sessionId: string, type: RuntimeEvent['type']): RuntimeEvent | null {
+    return this.getLatestEventOfTypes(sessionId, [type]);
+  }
+
+  /** Latest event matching any of the given types. */
+  getLatestEventOfTypes(sessionId: string, types: RuntimeEvent['type'][]): RuntimeEvent | null {
+    if (types.length === 0) return null;
+    const placeholders = types.map(() => '?').join(', ');
+    const row = getRawSqlite()
+      .prepare(
+        `SELECT * FROM agent_runtime_events
+         WHERE session_id = ? AND type IN (${placeholders})
+         ORDER BY rowid DESC
+         LIMIT 1`,
+      )
+      .get(sessionId, ...types) as EventRow | undefined;
+    return row ? mapEvent(row) : null;
+  }
+
+  /** Count events of `type` recorded after `eventId` (rowid ordered). */
+  countEventsAfter(sessionId: string, eventId: string, type: RuntimeEvent['type']): number {
+    const row = getRawSqlite()
+      .prepare(
+        `SELECT COUNT(*) AS count FROM agent_runtime_events
+         WHERE session_id = ? AND type = ?
+           AND rowid > COALESCE((SELECT rowid FROM agent_runtime_events WHERE id = ?), 0)`,
+      )
+      .get(sessionId, type, eventId) as { count: number } | undefined;
+    return row?.count ?? 0;
   }
 
   appendRun(run: AgentRun): AgentRun {
@@ -1018,7 +1089,10 @@ export class AgentRuntimeStore {
     };
   }
 
-  getSessionStats(sessionId: string): {
+  getSessionStats(
+    sessionId: string,
+    options: { configuredContextLimit?: number | null } = {},
+  ): {
     tokenUsage: { input: number; output: number; total: number };
     contextLimit: number;
     contextUsedPercent: number;
@@ -1046,7 +1120,7 @@ export class AgentRuntimeStore {
 
     let cumulativeOutput = 0
     let latestInputTokens = 0
-    let latestContextWindowSize = 200_000
+    let latestContextWindowSize: number | null = null
     let totalTurnDurationMs = 0
     const now = Date.now()
     for (const row of stepRows) {
@@ -1074,7 +1148,13 @@ export class AgentRuntimeStore {
     const output = cumulativeOutput;
     const total = input; // current context window size (excludes historical output)
 
-    const contextLimit = latestContextWindowSize;
+    // The progress bar must follow the provider configuration: an explicitly
+    // configured window (Settings → provider model → contextLimit, e.g. the 1M
+    // toggle) wins over the window the provider reports in its usage payload.
+    const contextLimit = normalizeContextLimit(options.configuredContextLimit)
+      ?? readLatestRunContextLimit(db, sessionId)
+      ?? latestContextWindowSize
+      ?? DEFAULT_CONTEXT_WINDOW_SIZE;
     const contextUsedPercent = contextLimit > 0
       ? Math.min(Math.round((input / contextLimit) * 100), 100)
       : 0;

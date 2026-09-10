@@ -58,8 +58,8 @@ describe('bashTool', () => {
       expect(parseBashInvocations('cat file.txt | rm -rf /')[1]?.risk).toBe('write');
     });
 
-    it('blocks file redirect to unsafe target', () => {
-      const result = bashTool.execute({
+    it('blocks file redirect to unsafe target', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -74,8 +74,8 @@ describe('bashTool', () => {
       expect(r.stderr).toContain('redirection');
     });
 
-    it('allows redirect to /dev/null', () => {
-      const result = bashTool.execute({
+    it('allows redirect to /dev/null', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -92,8 +92,8 @@ describe('bashTool', () => {
   });
 
   describe('execute - basic commands', () => {
-    it('executes echo', () => {
-      const result = bashTool.execute({
+    it('executes echo', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -108,8 +108,8 @@ describe('bashTool', () => {
       expect(r.stdout).toContain('hello world');
     });
 
-    it('executes ls', () => {
-      const result = bashTool.execute({
+    it('executes ls', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -123,8 +123,8 @@ describe('bashTool', () => {
       expect(r.exitCode).toBe(0);
     });
 
-    it('executes pipeline', () => {
-      const result = bashTool.execute({
+    it('executes pipeline', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -138,8 +138,8 @@ describe('bashTool', () => {
       expect(r.exitCode).toBe(0);
     });
 
-    it('executes chain with &&', () => {
-      const result = bashTool.execute({
+    it('executes chain with &&', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -155,8 +155,8 @@ describe('bashTool', () => {
       expect(r.stdout).toContain('b');
     });
 
-    it('handles non-zero exit gracefully', () => {
-      const result = bashTool.execute({
+    it('handles non-zero exit gracefully', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -171,9 +171,69 @@ describe('bashTool', () => {
     });
   });
 
+  describe('execute - real async parallelism', () => {
+    it('does not block the event loop while a command is running', async () => {
+      const startedAt = Date.now();
+      let timerFiredAt = 0;
+      const pending = bashTool.execute({
+        sessionId: 's1',
+        runId: null,
+        stepId: null,
+        toolCallId: 'tc-async-1',
+        toolId: 'bash',
+        category: 'shell',
+        mutability: 'read',
+        args: { command: 'sleep 1' },
+      });
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          timerFiredAt = Date.now();
+          resolve();
+        }, 50);
+      });
+      // The timer must fire while the shell command is still running: a
+      // spawnSync implementation would have blocked the loop for ~1s.
+      expect(timerFiredAt - startedAt).toBeLessThan(500);
+      const result = await pending;
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
+      expect((result.result as Record<string, unknown>).exitCode).toBe(0);
+    });
+
+    it('runs independent tool calls concurrently', async () => {
+      const startedAt = Date.now();
+      const runs = await Promise.all([
+        bashTool.execute({
+          sessionId: 's1',
+          runId: null,
+          stepId: null,
+          toolCallId: 'tc-async-2',
+          toolId: 'bash',
+          category: 'shell',
+          mutability: 'read',
+          args: { command: 'sleep 1' },
+        }),
+        bashTool.execute({
+          sessionId: 's1',
+          runId: null,
+          stepId: null,
+          toolCallId: 'tc-async-3',
+          toolId: 'bash',
+          category: 'shell',
+          mutability: 'read',
+          args: { command: 'sleep 1' },
+        }),
+      ]);
+      // Two 1s commands must overlap (~1s total) instead of serializing (~2s).
+      expect(Date.now() - startedAt).toBeLessThan(1900);
+      for (const run of runs) {
+        expect((run.result as Record<string, unknown>).exitCode).toBe(0);
+      }
+    });
+  });
+
   describe('execute - git commands', () => {
-    it('allows git status', () => {
-      const result = bashTool.execute({
+    it('allows git status', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -188,8 +248,8 @@ describe('bashTool', () => {
       expect(r.exitCode).not.toBeNull();
     });
 
-    it('allows git diff --stat', () => {
-      const result = bashTool.execute({
+    it('allows git diff --stat', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -210,10 +270,10 @@ describe('bashTool', () => {
   });
 
   describe('execute - fallback hints', () => {
-    it('detects command-not-found for whitelisted commands that are not installed', () => {
+    it('detects command-not-found for whitelisted commands that are not installed', async () => {
       // Use a whitelisted command name that won't exist as a binary.
       // We just verify the tool doesn't crash — actual binary existence is env-dependent.
-      const result = bashTool.execute({
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -236,9 +296,9 @@ describe('bashTool', () => {
   describe('execute - timeout handling', () => {
     // Timeout protection is configured at 30s (EXEC_TIMEOUT_MS).
     // Full timeout test is skipped because it takes 30s to trigger.
-    it('has timeout configured', () => {
+    it('has timeout configured', async () => {
       // Verify the tool can execute normally; timeout is a safety net
-      const result = bashTool.execute({
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,
@@ -254,8 +314,8 @@ describe('bashTool', () => {
   });
 
   describe('execute - stdin', () => {
-    it('pipes stdin to command', () => {
-      const result = bashTool.execute({
+    it('pipes stdin to command', async () => {
+      const result = await bashTool.execute({
         sessionId: 's1',
         runId: null,
         stepId: null,

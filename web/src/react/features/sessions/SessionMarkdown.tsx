@@ -11,7 +11,7 @@ interface Props {
 
 export const SessionMarkdown = memo(function SessionMarkdown({ content, className = 'feed-prose' }: Props) {
   return (
-    <div className={className}>
+    <div className={`agent-conversation-copy ${className}`}>
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>
         {content}
       </ReactMarkdown>

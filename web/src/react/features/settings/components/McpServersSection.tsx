@@ -8,8 +8,14 @@ import type { GlobalConfig, McpServerConfig } from '../../../../lib/contracts/co
 import { useLocale } from '../../../../hooks/useLocale'
 
 interface Props {
-  config: GlobalConfig
-  onUpdate: (patch: Record<string, unknown>) => Promise<void>
+  /** Global settings mode (legacy/administrative use). */
+  config?: GlobalConfig
+  /** Project settings mode. */
+  servers?: McpServerConfig[]
+  onUpdate?: (patch: Record<string, unknown>) => Promise<void>
+  onSave?: (servers: McpServerConfig[]) => Promise<void>
+  title?: string
+  description?: string
 }
 
 type Draft = {
@@ -66,17 +72,17 @@ function randomId(): string {
   return `mcp-${Date.now().toString(36)}`
 }
 
-export function McpServersSection({ config, onUpdate }: Props) {
+export function McpServersSection({ config, servers: initialServers, onUpdate, onSave, title, description }: Props) {
   const { t } = useLocale()
-  const [servers, setServers] = useState<McpServerConfig[]>(config.mcpServers ?? [])
+  const [servers, setServers] = useState<McpServerConfig[]>(initialServers ?? config?.mcpServers ?? [])
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [editing, setEditing] = useState<Draft | null>(null)
 
   useEffect(() => {
-    setServers(config.mcpServers ?? [])
-  }, [config.mcpServers])
+    setServers(initialServers ?? config?.mcpServers ?? [])
+  }, [config?.mcpServers, initialServers])
   const [testingId, setTestingId] = useState<string | null>(null)
   const [testMessages, setTestMessages] = useState<Record<string, string>>({})
 
@@ -84,7 +90,8 @@ export function McpServersSection({ config, onUpdate }: Props) {
     setSaving(true)
     setSaveError(null)
     try {
-      await onUpdate({ mcpServers: next })
+      if (onSave) await onSave(next)
+      else if (onUpdate) await onUpdate({ mcpServers: next })
       setServers(next)
       setSaved(true)
       setTimeout(() => setSaved(false), 1200)
@@ -141,7 +148,7 @@ export function McpServersSection({ config, onUpdate }: Props) {
 
   return (
     <SettingsCard
-      title={t('settingsMcpTitle')}
+      title={title ?? t('settingsMcpTitle')}
       icon={Plug}
       trailing={
         <div className="flex items-center gap-2">
@@ -158,7 +165,7 @@ export function McpServersSection({ config, onUpdate }: Props) {
         </div>
       }
     >
-      <p className="text-xs text-muted-foreground pb-2">{t('settingsMcpDesc')}</p>
+      <p className="text-xs text-muted-foreground pb-2">{description ?? t('settingsMcpDesc')}</p>
       {servers.length === 0 && !editing && (
         <p className="text-xs text-muted-foreground py-2">尚未配置 MCP 服务器。添加 stdio 服务器后可在 agent 输入框按会话启用。</p>
       )}

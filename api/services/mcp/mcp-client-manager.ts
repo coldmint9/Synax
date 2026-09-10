@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { McpServerConfig } from '../../lib/config/config-types.js'
 import { getGlobalConfigForRuntime } from '../../lib/config/config-store.js'
+import { getProjectSettings } from '../../lib/config/project-settings-store.js'
 import { logger } from '../../lib/logger.js'
 
 function baseEnv(): Record<string, string> {
@@ -63,7 +64,13 @@ export class McpClientManager {
   private readonly servers = new Map<string, ServerState>()
   private readonly inflight = new Map<string, Promise<ServerState>>()
 
-  private configById(): Map<string, McpServerConfig> {
+  private configById(projectId?: string): Map<string, McpServerConfig> {
+    // MCP is project-scoped. Keep the global list only for backward-compatible
+    // probe/config reads; never make global servers available to Agent runs.
+    if (projectId) {
+      const project = getProjectSettings(projectId, true)
+      return new Map((project.mcpServers ?? []).map((server) => [server.id, server]))
+    }
     const config = getGlobalConfigForRuntime()
     return new Map((config?.mcpServers ?? []).map((server) => [server.id, server]))
   }
@@ -118,8 +125,8 @@ export class McpClientManager {
   }
 
   /** Warm up (start + list tools) for the given server ids. Missing/unconfigured servers are skipped. */
-  async warmup(serverIds: string[]): Promise<void> {
-    const byId = this.configById()
+  async warmup(serverIds: string[], projectId?: string): Promise<void> {
+    const byId = this.configById(projectId)
     for (const id of serverIds) {
       const config = byId.get(id)
       if (!config) continue
@@ -134,8 +141,8 @@ export class McpClientManager {
     return state?.status === 'ready' ? state.tools : []
   }
 
-  async callTool(serverId: string, toolName: string, args: unknown): Promise<{ ok: boolean; text: string; error?: string }> {
-    const byId = this.configById()
+  async callTool(serverId: string, toolName: string, args: unknown, projectId?: string): Promise<{ ok: boolean; text: string; error?: string }> {
+    const byId = this.configById(projectId)
     const config = byId.get(serverId)
     if (!config) return { ok: false, text: '', error: `MCP server ${serverId} 未配置` }
 

@@ -4,6 +4,7 @@ import { RefreshCw } from 'lucide-react'
 import { useProjectSettings } from './useProjectSettings'
 import { useConfig } from './useConfig'
 import { useLocale } from '../../../hooks/useLocale'
+import { McpServersSection } from './components/McpServersSection'
 
 function ProviderTab(_props: { settings: any; globalConfig: any; providers: any; onSave: (data: any) => void }) {
   return <div className="text-sm text-muted-foreground">Provider settings (coming soon)</div>
@@ -59,6 +60,12 @@ export default function ProjectSettingsPage() {
 
           <div className="space-y-6">
             <ProviderTab settings={settings} globalConfig={globalConfig} providers={providers} onSave={(data) => patchSection('provider', data)} />
+            <McpServersSection
+              servers={settings.mcpServers}
+              onSave={async (servers) => { await patchSection('mcp', { mcpServers: servers }) }}
+              title="项目 MCP 配置"
+              description="MCP 服务器仅属于当前项目，并会自动提供给该项目的 Agent。"
+            />
             <BasicsTab settings={settings} onSave={(data) => patchSection('basics', data)} />
             <CollaborationTab settings={settings} onSave={(data) => patchSection('collaboration', data)} />
             <NotificationsTab settings={settings} onSave={(data) => patchSection('notifications', data)} />

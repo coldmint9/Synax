@@ -165,7 +165,6 @@ export interface WikiState {
   goalComposerWikiAttachMode: GoalWikiAttachMode;
   goalComposerAnchorJson: GoalAnchor | null;
   goalComposerSkillIds: string[];
-  goalComposerMcpServerIds: string[];
   goalComposerReasoningEffort: ReasoningEffort;
   goalComposerPermissionTier: GoalPermissionTier;
   goalSession: GoalSessionState;
@@ -176,7 +175,6 @@ export interface WikiState {
   setGoalComposerDocumentId: (id: string | null) => void;
   setGoalComposerWikiAttachMode: (mode: GoalWikiAttachMode) => void;
   setGoalComposerSkillIds: (ids: string[]) => void;
-  setGoalComposerMcpServerIds: (ids: string[]) => void;
   setGoalComposerReasoningEffort: (effort: ReasoningEffort) => void;
   setGoalPermissionTier: (tier: GoalPermissionTier) => void;
   openGoalInput: (prefill?: {
@@ -239,7 +237,6 @@ const initialState = {
   goalComposerWikiAttachMode: 'auto' as GoalWikiAttachMode,
   goalComposerAnchorJson: null as GoalAnchor | null,
   goalComposerSkillIds: [] as string[],
-  goalComposerMcpServerIds: [] as string[],
   goalComposerReasoningEffort: 'high' as ReasoningEffort,
   goalComposerPermissionTier: DEFAULT_GOAL_PERMISSION_TIER,
   goalSession: initialGoalSessionState,
@@ -719,7 +716,6 @@ export const useWikiStore = create<WikiState>((set, get) => ({
     goalComposerAnchorJson: mode === 'auto' ? null : s.goalComposerAnchorJson,
   })),
   setGoalComposerSkillIds: (ids) => set({ goalComposerSkillIds: ids }),
-  setGoalComposerMcpServerIds: (ids) => set({ goalComposerMcpServerIds: ids }),
   setGoalComposerReasoningEffort: (effort: ReasoningEffort) => set({ goalComposerReasoningEffort: effort }),
   setGoalPermissionTier: (tier) => {
     if (get().goalComposerPermissionTier === tier) return
@@ -843,7 +839,6 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         profileId: SYNAX_PROFILE_ID,
         prompt,
         skillIds: s.goalComposerSkillIds.length > 0 ? s.goalComposerSkillIds : undefined,
-        mcpServerIds: s.goalComposerMcpServerIds.length > 0 ? s.goalComposerMcpServerIds : undefined,
         reasoningEffort: s.goalComposerReasoningEffort,
         permissionTier: s.goalComposerPermissionTier,
         sessionMetadata: createSynaxSessionMetadata('goal', {
@@ -873,7 +868,6 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         goalComposerContent: '',
         goalComposerAnchorJson: null,
         goalComposerSkillIds: [],
-        goalComposerMcpServerIds: [],
         goalComposerReasoningEffort: 'high',
       })
 

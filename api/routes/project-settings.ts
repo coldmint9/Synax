@@ -15,7 +15,7 @@ import { logger } from '../lib/logger.js'
 
 export const projectSettingsRoutes = new Hono()
 
-const sectionSchema = z.enum(['basics', 'provider', 'collaboration', 'notifications', 'compliance'])
+const sectionSchema = z.enum(['basics', 'provider', 'mcp', 'collaboration', 'notifications', 'compliance'])
 
 const highRiskAuthSchema = z.object({
   confirmPhrase: z.string().min(1),

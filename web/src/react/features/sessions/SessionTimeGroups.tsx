@@ -42,7 +42,7 @@ export function SessionTimeGroups({
   const totalItems = nonEmptyGroups.reduce((sum, g) => sum + g.sessions.length, 0)
 
   return (
-    <div className="flex-1 overflow-y-auto px-1 py-1" onScroll={onScroll}>
+    <div className="session-list-groups flex-1 overflow-y-auto pl-2 pr-0.5 py-1" onScroll={onScroll}>
       {nonEmptyGroups.map(g => (
         <div key={g.key}>
           {!hideGroupHeaders ? (

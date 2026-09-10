@@ -1,3 +1,5 @@
+import type { McpServerConfig } from './config'
+
 export type ProjectVisibility = 'private' | 'internal' | 'public'
 export type ProjectLifecycleState = 'active' | 'archived'
 export type NotificationChannel = 'email' | 'im' | 'webhook' | 'none'
@@ -54,6 +56,7 @@ export interface ProjectSettings {
   version: number
   basics: ProjectBasics
   provider: ProjectProviderOverride
+  mcpServers: McpServerConfig[]
   collaboration: CollaborationSettings
   notifications: NotificationSettings
   compliance: ComplianceSettings
@@ -65,6 +68,7 @@ export interface ProjectSettings {
 export interface UpdateProjectSettingsRequest {
   basics?: Partial<ProjectBasics>
   provider?: Partial<ProjectProviderOverride>
+  mcpServers?: McpServerConfig[]
   collaboration?: Partial<CollaborationSettings>
   notifications?: Partial<NotificationSettings>
   compliance?: Partial<ComplianceSettings>

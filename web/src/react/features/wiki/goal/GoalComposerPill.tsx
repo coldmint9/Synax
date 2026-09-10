@@ -1,15 +1,51 @@
 import { useEffect, useLayoutEffect, useRef, useCallback } from 'react'
-import { Square, ArrowUp } from 'lucide-react'
+import { BookOpen, Sparkles, Square, ArrowUp } from 'lucide-react'
 import type { ProviderDef } from '../../../../lib/contracts/config'
 import type { GlobalConfig } from '../../../../lib/contracts/config'
-import type { McpServerConfig, ReasoningEffort } from '../../../../lib/contracts/config'
+import type { ReasoningEffort } from '../../../../lib/contracts/config'
 import type { WikiDocument } from '../../../../lib/contracts/wiki'
 import { useLocale } from '../../../../hooks/useLocale'
 import { GoalAttachMenu } from './GoalAttachMenu'
 import { GoalModelPicker } from './GoalModelPicker'
 import { GoalEffortPicker, type GoalReasoningEffort } from './GoalEffortPicker'
+import { GoalPermissionCycle } from './GoalPermissionCycle'
 import type { GoalModelSelection } from './goalModelOptions'
 import type { GoalPermissionTier, GoalWikiAttachMode } from './goalAttachTypes'
+
+function GoalContextSummary({
+  wikiAttachMode,
+  documentId,
+  documents,
+  skillCount,
+}: {
+  wikiAttachMode: GoalWikiAttachMode
+  documentId: string | null
+  documents: WikiDocument[]
+  skillCount: number
+}) {
+  const document = documentId ? documents.find(item => item.id === documentId) : null
+  const hasWiki = wikiAttachMode === 'auto' || Boolean(document)
+  if (!hasWiki && skillCount === 0) return null
+
+  return (
+    <div
+      className="goal-context-summary inline-flex min-w-0 max-w-[15rem] shrink items-center gap-1.5 rounded-full px-2 py-1 text-[10px]"
+      title={document?.title ?? (hasWiki ? '自动 Wiki 上下文' : undefined)}
+    >
+      {hasWiki && <BookOpen size={11} className="shrink-0" />}
+      <span className="min-w-0 truncate">
+        {document?.title ?? (hasWiki ? 'Wiki 上下文' : '')}
+      </span>
+      {wikiAttachMode === 'auto' && <span className="goal-context-summary-mode shrink-0">自动</span>}
+      {skillCount > 0 && (
+        <span className="inline-flex shrink-0 items-center gap-0.5">
+          <Sparkles size={10} />
+          {skillCount}
+        </span>
+      )}
+    </div>
+  )
+}
 
 interface Props {
   projectId: string
@@ -30,9 +66,6 @@ interface Props {
   documents: WikiDocument[]
   skillIds: string[]
   onSkillIdsChange: (ids: string[]) => void
-  mcpServers?: McpServerConfig[]
-  mcpServerIds: string[]
-  onMcpServerIdsChange: (ids: string[]) => void
   reasoningEffort: GoalReasoningEffort
   onReasoningEffortChange: (effort: GoalReasoningEffort) => void
   /** Effort levels the currently selected provider allows. */
@@ -67,9 +100,6 @@ export function GoalComposerPill({
   documents,
   skillIds,
   onSkillIdsChange,
-  mcpServers = [],
-  mcpServerIds,
-  onMcpServerIdsChange,
   reasoningEffort,
   onReasoningEffortChange,
   allowedReasoningEfforts,
@@ -106,7 +136,6 @@ export function GoalComposerPill({
     if (
       isComposingRef.current
       || suppressEnterRef.current
-      || e.isComposing
       || e.nativeEvent.isComposing
       || e.keyCode === 229
     ) return
@@ -163,14 +192,21 @@ export function GoalComposerPill({
         documents={documents}
         skillIds={skillIds}
         onSkillIdsChange={onSkillIdsChange}
-        mcpServers={mcpServers}
-        mcpServerIds={mcpServerIds}
-        onMcpServerIdsChange={onMcpServerIdsChange}
-        permissionTier={permissionTier}
-        onPermissionTierChange={onPermissionTierChange}
         disabled={disabled}
         wikiAttachDisabled={wikiAttachDisabled}
         onOverlayOpenChange={onOverlayOpenChange}
+      />
+      <GoalContextSummary
+        wikiAttachMode={wikiAttachMode}
+        documentId={documentId}
+        documents={documents}
+        skillCount={skillIds.length}
+      />
+
+      <GoalPermissionCycle
+        value={permissionTier}
+        onChange={onPermissionTierChange}
+        disabled={disabled}
       />
 
       <GoalModelPicker
@@ -186,6 +222,7 @@ export function GoalComposerPill({
       <GoalEffortPicker
         effort={reasoningEffort}
         allowed={allowedReasoningEfforts}
+        modelLabel={modelId}
         onChange={onReasoningEffortChange}
         disabled={disabled}
         onOverlayOpenChange={onOverlayOpenChange}
@@ -275,13 +312,19 @@ export function GoalComposerPill({
             documents={documents}
             skillIds={skillIds}
             onSkillIdsChange={onSkillIdsChange}
-            mcpServers={mcpServers}
-            mcpServerIds={mcpServerIds}
-            onMcpServerIdsChange={onMcpServerIdsChange}
-            permissionTier={permissionTier}
-            onPermissionTierChange={onPermissionTierChange}
             disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}
+          />
+          <GoalContextSummary
+            wikiAttachMode={wikiAttachMode}
+            documentId={documentId}
+            documents={documents}
+            skillCount={skillIds.length}
+          />
+          <GoalPermissionCycle
+            value={permissionTier}
+            onChange={onPermissionTierChange}
+            disabled={disabled && !queueWhileGenerating}
           />
           <textarea
             ref={textareaRef}
@@ -307,6 +350,7 @@ export function GoalComposerPill({
           <GoalEffortPicker
             effort={reasoningEffort}
             allowed={allowedReasoningEfforts}
+            modelLabel={modelId}
             onChange={onReasoningEffortChange}
             disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}

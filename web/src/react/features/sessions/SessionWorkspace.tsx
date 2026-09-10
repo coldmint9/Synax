@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
+import { formatContextLimit, formatTokenCount } from '../../../lib/formatTokens'
 import { CheckCircle2, Circle, Clock, Cpu, FileEdit, FilePlus, FileX, File, Loader2, Users } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAgentSessionStore } from './agentSessionStore'
@@ -45,7 +46,7 @@ const CHANGE_COLOR = {
   unknown: 'text-muted-foreground',
 }
 
-function SessionStatusCard({
+export function SessionStatusCard({
   stats,
   steps,
   todos,
@@ -89,7 +90,7 @@ function SessionStatusCard({
           />
         </div>
         <div className="text-[8px] text-muted-foreground/60">
-          {(stats.tokenUsage.total / 1000).toFixed(1)}K / {(stats.contextLimit / 1000).toFixed(0)}K context
+          {formatTokenCount(stats.tokenUsage.total)} / {formatContextLimit(stats.contextLimit)} context
         </div>
       </div>
       <TodoCard items={todos} />
@@ -199,7 +200,7 @@ export const SessionWorkspace = memo(function SessionWorkspace() {
   }, [events])
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto text-[10px]">
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto text-[10px]">
       {sessionStats ? (
         <SessionStatusCard stats={sessionStats} steps={steps} todos={sessionTodos} />
       ) : sessionTodos.length > 0 ? (

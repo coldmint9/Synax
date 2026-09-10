@@ -1,4 +1,5 @@
 import { Button } from '@heroui/react'
+import { formatContextLimit } from '../../../../lib/formatTokens'
 import { ChevronDown, ChevronRight, Loader2, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
 import { PROVIDER_LOGO_ASSETS, REASONING_EFFORT_LABELS, type ApiProviderDraft } from '../lib/providerPresets'
 import { ProviderLogo } from '../../../components/ProviderLogo'
@@ -122,13 +123,6 @@ function StatusDot({ validating, hasKey }: { validating: boolean; hasKey: boolea
   return (
     <div className={`h-2 w-2 rounded-full ${hasKey ? 'bg-success' : 'bg-muted-foreground/30'}`} />
   )
-}
-
-function formatContextLimit(tokens: number): string {
-  if (!tokens || tokens <= 0) return '—'
-  if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`
-  if (tokens % 1000 === 0) return `${tokens / 1000}K`
-  return String(tokens)
 }
 
 function formatLabel(format: string): string {

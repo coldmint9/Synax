@@ -91,4 +91,42 @@ describe('getSessionStats runningDuration', () => {
     expect(stats.contextLimit).toBe(200_000)
     expect(stats.contextUsedPercent).toBe(25)
   })
-})
+  it('prefers the provider-configured window over the reported usage window', () => {
+    const session = agentSessionRuntime.create(explorerSessionInput)
+    const run = agentRuntimeStore.appendRun({
+      id: 'run-configured-limit',
+      sessionId: session.id,
+      status: 'completed',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:02:00.000Z',
+      triggerMessageId: null,
+      currentStep: 1,
+      stopReason: 'stop',
+      model: null,
+      metadata: { contextLimit: 1_000_000 },
+    })
+
+    agentRuntimeStore.appendRunStep({
+      id: 'step-configured-limit',
+      runId: run.id,
+      sessionId: session.id,
+      index: 1,
+      status: 'completed',
+      model: null,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:02:00.000Z',
+      finishReason: 'stop',
+      metadata: { usage: { inputTokens: 50_000, outputTokens: 100, contextWindowSize: 200_000 } },
+    })
+
+    const stats = agentRuntimeStore.getSessionStats(session.id)
+    expect(stats.contextLimit).toBe(1_000_000)
+    expect(stats.contextUsedPercent).toBe(5)
+  })
+
+  it('honours an explicit configured context limit override', () => {
+    const session = agentSessionRuntime.create(explorerSessionInput)
+    const stats = agentRuntimeStore.getSessionStats(session.id, { configuredContextLimit: 1_000_000 })
+    expect(stats.contextLimit).toBe(1_000_000)
+  })
+});

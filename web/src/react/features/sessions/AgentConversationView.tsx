@@ -5,7 +5,7 @@ import { useLocale } from '../../../hooks/useLocale'
 import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import type { CompactionEvent } from '../../state/agentRuntimeStore'
 import { getSessionCategory } from './sessionGrouping'
-import { resolveSynaxAgentLabel, resolveSynaxRouteReason, isSynaxSession } from './synaxDisplay'
+import { resolveSynaxRouteReason, isSynaxSession } from './synaxDisplay'
 import { SessionStaticTimeline } from './SessionStaticTimeline'
 
 interface Props {
@@ -22,18 +22,6 @@ interface Props {
   onExpandChild?: (sessionId: string) => void
   excludeStepId?: string | null
   liveTurn?: React.ReactNode
-}
-
-const STATUS_MAP: Record<string, { text: string; color: 'accent' | 'success' | 'danger' | 'warning' | 'default' }> = {
-  running: { text: 'running', color: 'accent' },
-  completed: { text: 'completed', color: 'success' },
-  failed: { text: 'failed', color: 'danger' },
-  interrupted: { text: 'warning', color: 'warning' },
-  paused: { text: 'paused', color: 'default' },
-  waiting_permission: { text: 'waiting', color: 'warning' },
-  blocked: { text: 'blocked', color: 'warning' },
-  cancelled: { text: 'cancelled', color: 'default' },
-  queued: { text: 'draft', color: 'default' },
 }
 
 export const AgentConversationView = memo(function AgentConversationView({
@@ -59,16 +47,11 @@ export const AgentConversationView = memo(function AgentConversationView({
     || session?.status === 'failed'
     || session?.status === 'blocked'
   const cat = session ? getSessionCategory(session.profileId) : null
-  const agentLabel = session ? resolveSynaxAgentLabel(session) : 'agent'
   const routeReason = session ? resolveSynaxRouteReason(session) : null
-  const statusInfo = session ? STATUS_MAP[session.status] : null
 
   return (
-    <div className="flex flex-col gap-4 p-4">
+    <div className="flex flex-col gap-4 px-[1.2rem] py-4">
       <div className="flex items-center gap-2 border-b border-border/40 pb-3">
-        <Chip size="sm" variant="soft" color="default" className="text-[11px]">
-          {agentLabel}
-        </Chip>
         {session && routeReason && isSynaxSession(session) ? (
           <span className="max-w-[240px] truncate text-[10px] text-muted-foreground" title={routeReason}>
             {routeReason}
@@ -77,11 +60,6 @@ export const AgentConversationView = memo(function AgentConversationView({
         {cat?.isBuiltin ? (
           <Chip size="sm" variant="secondary" color="accent" className="text-[10px]">
             {t('sessionBuiltin')}
-          </Chip>
-        ) : null}
-        {statusInfo ? (
-          <Chip size="sm" variant="soft" color={statusInfo.color} className="text-[11px]">
-            {statusInfo.text}
           </Chip>
         ) : null}
         <div className="ml-auto flex items-center gap-1.5">

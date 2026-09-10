@@ -1,8 +1,8 @@
-import { spawnSync } from 'node:child_process';
+import { runCommand } from './exec-async.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as z from 'zod/v4';
-import type { RegisteredTool } from '../contracts.js';
+import type { RegisteredTool, ToolExecutionResult } from '../contracts.js';
 import { isWorkspaceRelativePathBlocked, resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
 
 // ---------------------------------------------------------------------------
@@ -111,9 +111,19 @@ function globWalk(baseDir: string, pattern: string, limit: number): string[] {
 // Tool definition
 // ---------------------------------------------------------------------------
 
-function rgIsAvailable(): boolean {
-  const check = spawnSync('rg', ['--version'], { encoding: 'utf8', timeout: 3000 });
-  return check.status === 0;
+let rgAvailability: Promise<boolean> | null = null;
+
+/**
+ * Ripgrep availability probe. Cached and asynchronous: the previous
+ * synchronous probe spawned `rg --version` on every single glob call.
+ */
+function rgIsAvailable(): Promise<boolean> {
+  if (!rgAvailability) {
+    rgAvailability = runCommand('rg', ['--version'], { timeoutMs: 3000 })
+      .then((check) => check.status === 0)
+      .catch(() => false);
+  }
+  return rgAvailability;
 }
 
 export const fileGlobTool: RegisteredTool = {
@@ -140,47 +150,59 @@ export const fileGlobTool: RegisteredTool = {
     if (!baseStat.isDirectory()) throw new Error('path must point to a directory.');
     const limit = Math.min(Math.max(args?.limit ?? 100, 1), 300);
 
-    // -- ripgrep path --------------------------------------------------
-    if (rgIsAvailable()) {
-      const result = spawnSync('rg', ['--files', '--glob', pattern], {
-        cwd: base,
-        encoding: 'utf8',
-      });
-      if (result.error) throw result.error;
-      if (result.status !== 0 && result.status !== 1) {
-        throw new Error(result.stderr.trim() || `rg failed with exit code ${result.status ?? 'unknown'}.`);
-      }
-      const files = result.stdout
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map((relativePath) => path.resolve(base, relativePath))
-        .map((absolutePath) => toWorkspaceRelative(absolutePath, input.sessionId))
-        .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath))
-        .map((relativePath) => ({
-          path: relativePath,
-          mtimeMs: fs.statSync(resolveWorkspacePath(relativePath, input.sessionId)).mtimeMs,
-        }))
-        .sort((left, right) => right.mtimeMs - left.mtimeMs)
-        .slice(0, limit)
-        .map((entry) => entry.path);
-      return {
-        result: { pattern, files },
-        displaySummary: `Matched ${files.length} files for ${pattern}.`,
-        artifacts: [],
-      };
-    }
-
-    // -- Node.js fallback ----------------------------------------------
-    const absoluteFiles = globWalk(base, pattern, limit);
-    const files = absoluteFiles
-      .map((absolutePath) => toWorkspaceRelative(absolutePath, input.sessionId))
-      .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath))
-      .slice(0, limit);
-
-    return {
-      result: { pattern, files },
-      displaySummary: `Matched ${files.length} files for ${pattern} (Node.js fallback).`,
-      artifacts: [],
-    };
+    // Matching runs asynchronously so the event loop (and therefore parallel
+    // tool calls plus side-channel work) is never blocked by ripgrep.
+    return runGlobSearch({ sessionId: input.sessionId, pattern, base, limit });
   },
 };
+
+interface GlobSearchInput {
+  sessionId: string;
+  pattern: string;
+  base: string;
+  limit: number;
+}
+
+async function runGlobSearch(input: GlobSearchInput): Promise<ToolExecutionResult> {
+  const { sessionId, pattern, base, limit } = input;
+
+  // -- ripgrep path --------------------------------------------------
+  if (await rgIsAvailable()) {
+    const result = await runCommand('rg', ['--files', '--glob', pattern], { cwd: base });
+    if (result.error) throw result.error;
+    if (result.status !== 0 && result.status !== 1) {
+      throw new Error(result.stderr.trim() || `rg failed with exit code ${result.status ?? 'unknown'}.`);
+    }
+    const files = result.stdout
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((relativePath) => path.resolve(base, relativePath))
+      .map((absolutePath) => toWorkspaceRelative(absolutePath, sessionId))
+      .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath))
+      .map((relativePath) => ({
+        path: relativePath,
+        mtimeMs: fs.statSync(resolveWorkspacePath(relativePath, sessionId)).mtimeMs,
+      }))
+      .sort((left, right) => right.mtimeMs - left.mtimeMs)
+      .slice(0, limit)
+      .map((entry) => entry.path);
+    return {
+      result: { pattern, files },
+      displaySummary: `Matched ${files.length} files for ${pattern}.`,
+      artifacts: [],
+    };
+  }
+
+  // -- Node.js fallback ----------------------------------------------
+  const absoluteFiles = globWalk(base, pattern, limit);
+  const files = absoluteFiles
+    .map((absolutePath) => toWorkspaceRelative(absolutePath, sessionId))
+    .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath))
+    .slice(0, limit);
+
+  return {
+    result: { pattern, files },
+    displaySummary: `Matched ${files.length} files for ${pattern} (Node.js fallback).`,
+    artifacts: [],
+  };
+}

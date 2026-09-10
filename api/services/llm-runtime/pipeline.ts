@@ -10,7 +10,7 @@ import { getStrategy } from './providers/provider-strategy.js'
 import { applyReasoningMiddleware } from './middleware/reasoning.js'
 import { buildHookCallbacks } from './middleware/hook-callbacks.js'
 import { toModelPrompt, ensureJsonObjectResponseFormatInstruction } from './prompt.js'
-import { buildThinkingStreamOptions, type ThinkingStreamOptions } from './thinking-mode-strategy.js'
+import { buildThinkingDisabledOptions, buildThinkingStreamOptions, type ThinkingStreamOptions } from './thinking-mode-strategy.js'
 
 const THINKING_DISABLED_PURPOSES = new Set(['session-title', 'context-signal', 'validate'])
 
@@ -19,7 +19,10 @@ function resolveThinkingOptions(
   selection: ResolvedModelSelection,
 ): ThinkingStreamOptions {
   if (THINKING_DISABLED_PURPOSES.has(request.purpose)) {
-    return { temperature: request.temperature }
+    // Explicitly disable reasoning instead of merely omitting the thinking
+    // options: otherwise a reasoning model burns the small output budget on
+    // hidden tokens and the utility call returns empty text.
+    return buildThinkingDisabledOptions(selection, request.temperature)
   }
   return buildThinkingStreamOptions(selection, request)
 }

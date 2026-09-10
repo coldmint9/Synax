@@ -121,6 +121,7 @@ export function updateProjectSettings(
     ...existing,
     basics: patch.basics ? { ...existing.basics, ...patch.basics } : existing.basics,
     provider: patch.provider ? mergeProvider(existing.provider, patch.provider) : existing.provider,
+    mcpServers: patch.mcpServers ?? existing.mcpServers ?? [],
     collaboration: patch.collaboration
       ? { ...existing.collaboration, ...patch.collaboration, reviewPolicy: patch.collaboration.reviewPolicy ?? existing.collaboration.reviewPolicy }
       : existing.collaboration,
@@ -141,7 +142,9 @@ export function patchProjectSettingsSection(
   data: unknown,
   updatedBy: string,
 ): ProjectSettings {
-  const patch: UpdateProjectSettingsRequest = { [section]: data }
+  const patch: UpdateProjectSettingsRequest = section === 'mcp'
+    ? { mcpServers: (data as { mcpServers?: ProjectSettings['mcpServers'] } | null)?.mcpServers ?? [] }
+    : { [section]: data }
   return updateProjectSettings(projectId, patch, updatedBy)
 }
 
@@ -193,6 +196,7 @@ function mergeProvider(existing: ProjectSettings['provider'], patch: Partial<Pro
 function normalizeSettings(settings: ProjectSettings, includeSecrets: boolean): ProjectSettings {
   return {
     ...settings,
+    mcpServers: settings.mcpServers ?? [],
     provider: {
       ...settings.provider,
       providerConnection: normalizeConnection(settings.provider.providerConnection, includeSecrets) as ProviderConnection | null | undefined,
@@ -203,6 +207,7 @@ function normalizeSettings(settings: ProjectSettings, includeSecrets: boolean): 
 function prepareSettingsForStorage(settings: ProjectSettings): ProjectSettings {
   return {
     ...settings,
+    mcpServers: settings.mcpServers ?? [],
     provider: {
       ...settings.provider,
       providerConnection: prepareConnectionForStorage(settings.provider.providerConnection) as ProviderConnection | null | undefined,

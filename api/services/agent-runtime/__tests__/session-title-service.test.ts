@@ -6,10 +6,12 @@ import {
   maybeScheduleSessionTitleFromStreamChunk,
   ensureSessionTitleGenerated,
   isValidGeneratedSessionTitle,
+  registerSessionTitleHooks,
 } from '../session-title-service.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { ensureSynaxAgentRegistered } from '../synax/index.js';
+import { sessionHooks } from '../session-hooks.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 import { nowIso } from '../runtime-ids.js';
 
@@ -191,6 +193,81 @@ describe('session title after first run', () => {
 
     await vi.waitFor(() => {
       expect(agentRuntimeStore.getSession(session.id).title).toBe('帮我看看认证模块');
+    });
+  });
+  it('coalesces repeated triggers into a single generation call', async () => {
+    const session = agentSessionRuntime.create({
+      projectId: 'project-alpha',
+      profileId: 'synax',
+      prompt: '你好',
+      sessionMetadata: { mode: 'goal', source: 'session-page', goalContent: '你好' },
+    });
+
+    ensureSessionTitleGenerated(session.id);
+    ensureSessionTitleGenerated(session.id);
+    ensureSessionTitleGenerated(session.id);
+
+    await vi.waitFor(() => {
+      expect(agentRuntimeStore.getSession(session.id).title).toBe('问候用户');
+    });
+    // Allow any queued re-check to settle before asserting the call count.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mockGenerateGatewayTextResult).toHaveBeenCalledTimes(1);
+  });
+
+  it('defers generation out of the caller stack instead of blocking it', () => {
+    const session = agentSessionRuntime.create({
+      projectId: 'project-alpha',
+      profileId: 'synax',
+      prompt: '你好',
+      sessionMetadata: { mode: 'goal', source: 'session-page', goalContent: '你好' },
+    });
+
+    const startedAt = Date.now();
+    ensureSessionTitleGenerated(session.id);
+    // The scheduling call must return immediately, before any LLM work starts.
+    expect(Date.now() - startedAt).toBeLessThan(50);
+    expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
+  });
+
+  it('waits for an in-flight run before generating the title', async () => {
+    const session = agentSessionRuntime.create({
+      projectId: 'project-alpha',
+      profileId: 'synax',
+      prompt: '你好',
+      sessionMetadata: { mode: 'goal', source: 'session-page', goalContent: '你好' },
+    });
+    agentRuntimeStore.updateSession(session.id, { activeRunId: 'run_active_title' });
+
+    ensureSessionTitleGenerated(session.id);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
+    expect(agentRuntimeStore.getSession(session.id).title).toBe('new agent');
+
+    agentRuntimeStore.updateSession(session.id, { activeRunId: null });
+    ensureSessionTitleGenerated(session.id);
+    await vi.waitFor(() => {
+      expect(agentRuntimeStore.getSession(session.id).title).toBe('问候用户');
+    });
+  });
+  it('generates the title when a run completes (parent-process hook)', async () => {
+    registerSessionTitleHooks();
+    const session = agentSessionRuntime.create({
+      projectId: 'project-alpha',
+      profileId: 'synax',
+      prompt: '你好',
+      sessionMetadata: { mode: 'goal', source: 'session-page', goalContent: '你好' },
+    });
+    agentRuntimeStore.updateSession(session.id, { activeRunId: 'run_hook_title' });
+
+    await sessionHooks.emit({ type: 'run:completed', sessionId: session.id, runId: 'run_hook_title', status: 'completed' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
+
+    agentRuntimeStore.updateSession(session.id, { activeRunId: null });
+    await sessionHooks.emit({ type: 'run:completed', sessionId: session.id, runId: 'run_hook_title', status: 'completed' });
+    await vi.waitFor(() => {
+      expect(agentRuntimeStore.getSession(session.id).title).toBe('问候用户');
     });
   });
 });

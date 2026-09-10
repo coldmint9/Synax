@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { runCommand } from './exec-async.js';
 import * as z from 'zod/v4';
-import type { RegisteredTool } from '../contracts.js';
+import type { RegisteredTool, ToolExecutionResult } from '../contracts.js';
 import { resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
 
 export const grepSearchTool: RegisteredTool = {
@@ -57,86 +57,108 @@ export const grepSearchTool: RegisteredTool = {
     rgArgs.push(args.query);
     rgArgs.push(stat.isDirectory() ? '.' : path.basename(requested));
 
-    const result = spawnSync('rg', rgArgs, {
+    // ripgrep runs asynchronously so parallel tool calls and side-channel
+    // work (profile panels, title generation) keep running while it searches.
+    return runGrepSearch({
+      sessionId: input.sessionId,
+      query: args.query,
+      rgArgs,
       cwd,
-      encoding: 'utf8',
-      maxBuffer: 8 * 1024 * 1024,
+      limit,
+      contextLines,
     });
-    if (result.error) throw result.error;
-    if (result.status !== 0 && result.status !== 1) {
-      const stderrInfo = result.stderr?.trim() ? ` stderr: ${result.stderr.trim()}` : '';
-      throw new Error(
-        `rg failed with exit code ${result.status ?? 'unknown'}.${stderrInfo} ` +
-          'Verify that ripgrep (rg) is installed and accessible in the PATH.',
-      );
-    }
-
-    const hits: Array<{ path: string; line: number; preview: string; contextBefore?: string[]; contextAfter?: string[] }> = [];
-    let currentMatch: typeof hits[number] | null = null;
-    const contextBefore: string[] = [];
-    const contextAfter: string[] = [];
-    let collectingAfter = false;
-
-    for (const line of result.stdout.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      let event: { type?: string; data?: { path?: { text?: string }; line_number?: number; lines?: { text?: string } } };
-      try { event = JSON.parse(line); } catch { continue; }
-
-      if (event.type === 'context' && contextLines > 0) {
-        const text = (event.data?.lines?.text ?? '').replace(/\r?\n$/, '').slice(0, 240);
-        if (collectingAfter) {
-          contextAfter.push(text);
-        } else {
-          contextBefore.push(text);
-        }
-        continue;
-      }
-
-      if (event.type === 'match') {
-        if (currentMatch && contextLines > 0) {
-          currentMatch.contextAfter = [...contextAfter];
-        }
-        contextAfter.length = 0;
-        collectingAfter = true;
-
-        if (!event.data?.path?.text || typeof event.data.line_number !== 'number') continue;
-        const absolutePath = path.resolve(cwd, event.data.path.text);
-        const fileInfo = fs.statSync(absolutePath);
-        if (fileInfo.size > 256_000) continue;
-
-        currentMatch = {
-          path: toWorkspaceRelative(absolutePath, input.sessionId),
-          line: event.data.line_number,
-          preview: (event.data.lines?.text ?? '').replace(/\r?\n$/, '').slice(0, 240),
-        };
-        if (contextLines > 0) {
-          currentMatch.contextBefore = [...contextBefore];
-        }
-        contextBefore.length = 0;
-        hits.push(currentMatch);
-        if (hits.length >= limit) break;
-        continue;
-      }
-
-      if (event.type === 'end') {
-        if (currentMatch && contextLines > 0) {
-          currentMatch.contextAfter = [...contextAfter];
-        }
-        contextBefore.length = 0;
-        contextAfter.length = 0;
-        currentMatch = null;
-        collectingAfter = false;
-      }
-    }
-
-    if (currentMatch && contextLines > 0 && contextAfter.length > 0) {
-      currentMatch.contextAfter = [...contextAfter];
-    }
-
-    return {
-      result: { query: args.query, hits },
-      displaySummary: `Found ${hits.length} matches for "${args.query}".`,
-      artifacts: [{ kind: 'evidence', title: 'Search results', summary: `Found ${hits.length} matches for "${args.query}".`, risk: 'low' }],
-    };
   },
 };
+
+interface GrepSearchInput {
+  sessionId: string;
+  query: string;
+  rgArgs: string[];
+  cwd: string;
+  limit: number;
+  contextLines: number;
+}
+
+async function runGrepSearch(prepared: GrepSearchInput): Promise<ToolExecutionResult> {
+  const { sessionId, query: queryText, rgArgs, cwd, limit, contextLines } = prepared;
+  const result = await runCommand('rg', rgArgs, {
+    cwd,
+    maxBufferBytes: 8 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0 && result.status !== 1) {
+    const stderrInfo = result.stderr?.trim() ? ` stderr: ${result.stderr.trim()}` : '';
+    throw new Error(
+      `rg failed with exit code ${result.status ?? 'unknown'}.${stderrInfo} ` +
+        'Verify that ripgrep (rg) is installed and accessible in the PATH.',
+    );
+    }
+
+  const hits: Array<{ path: string; line: number; preview: string; contextBefore?: string[]; contextAfter?: string[] }> = [];
+  let currentMatch: typeof hits[number] | null = null;
+  const contextBefore: string[] = [];
+  const contextAfter: string[] = [];
+  let collectingAfter = false;
+
+  for (const line of result.stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event: { type?: string; data?: { path?: { text?: string }; line_number?: number; lines?: { text?: string } } };
+    try { event = JSON.parse(line); } catch { continue; }
+
+    if (event.type === 'context' && contextLines > 0) {
+      const text = (event.data?.lines?.text ?? '').replace(/\r?\n$/, '').slice(0, 240);
+      if (collectingAfter) {
+        contextAfter.push(text);
+      } else {
+        contextBefore.push(text);
+      }
+      continue;
+    }
+
+    if (event.type === 'match') {
+      if (currentMatch && contextLines > 0) {
+        currentMatch.contextAfter = [...contextAfter];
+      }
+      contextAfter.length = 0;
+      collectingAfter = true;
+
+      if (!event.data?.path?.text || typeof event.data.line_number !== 'number') continue;
+      const absolutePath = path.resolve(cwd, event.data.path.text);
+      const fileInfo = fs.statSync(absolutePath);
+      if (fileInfo.size > 256_000) continue;
+
+      currentMatch = {
+        path: toWorkspaceRelative(absolutePath, sessionId),
+        line: event.data.line_number,
+        preview: (event.data.lines?.text ?? '').replace(/\r?\n$/, '').slice(0, 240),
+      };
+      if (contextLines > 0) {
+        currentMatch.contextBefore = [...contextBefore];
+      }
+      contextBefore.length = 0;
+      hits.push(currentMatch);
+      if (hits.length >= limit) break;
+      continue;
+    }
+
+    if (event.type === 'end') {
+      if (currentMatch && contextLines > 0) {
+        currentMatch.contextAfter = [...contextAfter];
+      }
+      contextBefore.length = 0;
+      contextAfter.length = 0;
+      currentMatch = null;
+      collectingAfter = false;
+    }
+    }
+
+  if (currentMatch && contextLines > 0 && contextAfter.length > 0) {
+    currentMatch.contextAfter = [...contextAfter];
+    }
+
+  return {
+    result: { query: queryText, hits },
+    displaySummary: `Found ${hits.length} matches for "${queryText}".`,
+    artifacts: [{ kind: 'evidence', title: 'Search results', summary: `Found ${hits.length} matches for "${queryText}".`, risk: 'low' }],
+    };
+}

@@ -2888,3 +2888,518 @@
 :root:not(.dark) [data-slot="list-box-item"] {
   border-radius: 10px;
 }
+
+/* Resizable/collapsible session side panels */
+.session-panel-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 20;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.session-panel-resizer--left { right: -4px; }
+.session-panel-resizer--right { left: -4px; }
+.session-panel-resizer:hover,
+.session-panel-resizer:active {
+  background: hsl(var(--primary) / 0.18);
+}
+.session-panel-collapse {
+  position: absolute;
+  top: 50%;
+  z-index: 30;
+  display: inline-flex;
+  height: 28px;
+  width: 18px;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  border: 1px solid hsl(var(--border-hsl) / 0.75);
+  background: var(--background);
+  color: hsl(var(--muted-foreground));
+  box-shadow: 0 2px 8px hsl(var(--wiki-shadow) / 0.12);
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+.session-panel-collapse:hover {
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+  box-shadow: 0 3px 12px hsl(var(--wiki-shadow) / 0.18);
+}
+.session-panel-collapse--left {
+  right: -1px;
+  border-radius: 8px 0 0 8px;
+}
+.session-panel-collapse--right {
+  left: -1px;
+  border-radius: 0 8px 8px 0;
+}
+
+@media (max-width: 1279px) {
+  .session-panel-collapse--right,
+  .session-panel-resizer--right {
+    display: none;
+  }
+}
+
+/* Agent conversation typography. It follows the global interface font
+   setting (default 14px); the global #app scale keeps all UI text in sync. */
+:root {
+  --agent-chat-font-size: 14px;
+}
+.agent-conversation-copy {
+  font-size: var(--agent-chat-font-size, 14px) !important;
+}
+.agent-conversation-copy.feed-prose h1 {
+  font-size: calc(var(--agent-chat-font-size, 14px) * 1.35) !important;
+}
+.agent-conversation-copy.feed-prose h2 {
+  font-size: calc(var(--agent-chat-font-size, 14px) * 1.2) !important;
+}
+.agent-conversation-copy.feed-prose h3,
+.agent-conversation-copy.feed-prose h4,
+.agent-conversation-copy.feed-prose h5,
+.agent-conversation-copy.feed-prose h6 {
+  font-size: var(--agent-chat-font-size, 14px) !important;
+}
+
+/* Restore the original warm-neutral conversation canvas only. The global
+   settings/control palette remains cool Morandi green, while transcript
+   reading area returns to its previous background tone. */
+:root:not(.dark) .session-chat {
+  background: hsl(40 28% 97%);
+}
+
+/* Increase light-mode navigation legibility: icons inherit the same darker
+   gray-green as their labels instead of the low-contrast pale accent. */
+:root:not(.dark) .wh-tabs .tabs__tab {
+  color: #52605a !important;
+}
+:root:not(.dark) .wh-tabs .tabs__tab svg {
+  color: currentColor !important;
+  stroke: currentColor;
+}
+:root:not(.dark) .wh-tabs .tabs__tab[aria-selected="true"] {
+  color: #2f3d34 !important;
+  font-weight: 600;
+}
+:root:not(.dark) .wh-tabs .tabs__tab[aria-selected="true"] svg {
+  color: #2f3d34 !important;
+  stroke: #2f3d34;
+}
+
+/* The session list keeps its original light visual language. The newer cool
+   Morandi palette is used by settings/selection controls, not this reading
+   navigation surface. */
+:root:not(.dark) .session-list-panel {
+  --background-hsl: 40 28% 97%;
+  --border-hsl: 38 16% 88%;
+  --accent-hsl: 38 20% 92%;
+  --muted-hsl: 38 14% 90%;
+  --primary: 158 44% 32%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 40 20% 94%;
+  --wiki-surface: 40 26% 96%;
+  --wiki-surface-strong: 38 22% 93%;
+  --wiki-panel: 42 30% 98%;
+  --wiki-panel-muted: 38 18% 91%;
+  --wiki-accent: 158 34% 89%;
+  --wiki-shadow: 36 24% 26%;
+  background: hsl(40 28% 97%);
+}
+:root:not(.dark) .session-list-panel .list-card,
+:root:not(.dark) .session-list-panel .list-row {
+  color: hsl(38 8% 42%);
+}
+:root:not(.dark) .session-list-panel .list-card--active,
+:root:not(.dark) .session-list-panel .list-row--active {
+  color: hsl(160 14% 12%);
+  background: hsl(42 32% 99%);
+  border-color: hsl(38 16% 88% / 0.7);
+}
+:root:not(.dark) .session-list-panel .list-row:hover:not(.list-row--active),
+:root:not(.dark) .session-list-panel .list-card:hover:not(.list-card--active) {
+  background: hsl(38 18% 91% / 0.45);
+  color: hsl(160 14% 12%);
+}
+
+/* Fully collapsed left session panel: consume zero layout width; the reopen
+   button overlays the content edge and points right. */
+.session-panel-host--left[data-collapsed="true"] .session-panel-collapse--left {
+  right: -18px;
+  border-radius: 0 8px 8px 0;
+}
+
+/* Global interface typography scale. The preference is expressed as a scale
+   from the 14px default so existing component hierarchy, icon geometry, and
+   spacing remain consistent while every UI text/control is enlarged together.
+   Chromium's zoom is intentionally scoped to #app and does not affect the
+   browser chrome. */
+:root {
+  --ui-font-size: 14px;
+  --ui-font-scale: 1;
+}
+#app {
+  font-size: var(--ui-font-size, 14px);
+  zoom: var(--ui-font-scale, 1);
+}
+
+/* Agent page light palette: comfortable deep green instead of pale/amber
+   accents. Scoped to the Agent view so Wiki keeps its established palette. */
+:root:not(.dark) .agent-page-shell {
+  --primary: 154 31% 31%;
+  --primary-foreground: 0 0% 100%;
+  --accent: #3f6956;
+  --accent-foreground: #ffffff;
+  --agent: 154 31% 31%;
+  --agent-foreground: #ffffff;
+  --run: 154 31% 31%;
+  --run-foreground: #ffffff;
+  --wiki-accent: 150 17% 91%;
+  --wiki-accent-foreground: 154 28% 24%;
+  color: #2f3d34;
+}
+:root:not(.dark) .wh-tab--sessions,
+:root:not(.dark) .wh-tab--sessions svg,
+:root:not(.dark) .agent-toolbar-tabs .tabs__tab,
+:root:not(.dark) .agent-toolbar-tabs .tabs__tab svg {
+  color: #52605a !important;
+  stroke: currentColor;
+}
+:root:not(.dark) .wh-tab--sessions[aria-selected="true"],
+:root:not(.dark) .wh-tab--sessions[aria-selected="true"] svg,
+:root:not(.dark) .agent-toolbar-tabs .tabs__tab[aria-selected="true"],
+:root:not(.dark) .agent-toolbar-tabs .tabs__tab[aria-selected="true"] svg {
+  color: #2f3d34 !important;
+  stroke: #2f3d34;
+  font-weight: 600;
+}
+:root:not(.dark) .agent-toolbar-tabs .tabs__indicator {
+  background: rgba(185, 205, 191, 0.62) !important;
+}
+
+/* The composer footer is an overlay, not an opaque panel. The transcript
+   remains visible underneath while the actual input pill stays interactive. */
+.goal-session-composer--footer {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 25;
+  pointer-events: none;
+  background: transparent !important;
+}
+.goal-session-composer--footer .goal-session-composer-shell {
+  pointer-events: auto;
+  border-color: var(--goal-glass-border) !important;
+  background: var(--goal-glass-bg) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.75) brightness(1.02) !important;
+  backdrop-filter: blur(22px) saturate(1.75) brightness(1.02) !important;
+  /* Layered downward shadow: a tight contact edge plus two progressively
+     softer blurs lift the pill off the transcript so it reads as floating. */
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.92) inset,
+    0 2px 4px hsl(150 12% 16% / 0.12),
+    0 6px 12px -2px hsl(150 12% 16% / 0.18),
+    0 14px 24px -8px hsl(150 12% 16% / 0.22) !important;
+  overflow: hidden;
+}
+.goal-session-composer--footer .goal-session-composer-shell:not([data-multiline="true"]),
+.goal-session-composer--footer .goal-session-composer-shell.goal-dock-shell:not([data-multiline="true"]) {
+  border-radius: 9999px;
+}
+.goal-session-composer--footer .goal-session-composer-shell .goal-dock-shell-content {
+  padding-bottom: 0.25rem;
+}
+.dark .goal-session-composer--footer .goal-session-composer-shell {
+  border-color: hsl(0 0% 100% / 0.14) !important;
+  background:
+    linear-gradient(180deg, hsl(0 0% 100% / 0.07), hsl(0 0% 100% / 0.015) 42%, transparent),
+    hsl(var(--card) / 0.55) !important;
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.18) inset,
+    0 2px 5px hsl(0 0% 0% / 0.45),
+    0 8px 16px -4px hsl(0 0% 0% / 0.5),
+    0 18px 30px -12px hsl(0 0% 0% / 0.55) !important;
+}
+.session-chat-scroll {
+  padding-bottom: 4.5rem;
+}
+
+/* Session titles occupy the full row. On hover, time/delete actions float
+   above the title with a soft left-to-right Gaussian-like fade surface. */
+.session-list-panel .list-card > .flex.items-center,
+.session-list-panel .list-row {
+  position: relative;
+}
+.session-list-panel .session-list-title {
+  min-width: 0;
+  padding-right: 0.25rem;
+}
+/* Running rows render the loading spinner out of flow in the leading gutter:
+   it stays in front of the row content and never takes width away from the
+   session title. */
+.session-list-panel .session-list-running-indicator {
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  z-index: 1;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+/* Child rows have no expand caret, so the indicator pins to the row's own
+   padding box (2px border + 10px padding = the same 10px gutter). */
+.session-list-panel .list-row .session-list-running-indicator {
+  left: 0;
+}
+.session-list-panel .list-card .session-list-hover-actions {
+  position: absolute;
+  right: 0.25rem;
+  top: 50%;
+  z-index: 2;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, hsl(42 32% 99% / 0.72) 26%, hsl(42 32% 99% / 0.96) 58%, hsl(42 32% 99% / 1) 100%);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  box-shadow: -7px 0 10px hsl(42 32% 99% / 0.34);
+}
+.session-list-panel .list-card:hover .session-list-hover-actions,
+.session-list-panel .list-row:hover .session-list-hover-actions {
+  opacity: 1;
+}
+.session-list-panel .session-list-hover-actions .session-list-delete {
+  pointer-events: auto;
+}
+.session-list-panel .list-card--active .session-list-hover-actions {
+  background: linear-gradient(90deg, transparent 0%, hsl(42 32% 99% / 0.78) 26%, hsl(42 32% 99% / 0.97) 58%, hsl(42 32% 99% / 1) 100%);
+}
+.dark .session-list-panel .list-card .session-list-hover-actions {
+  background: linear-gradient(90deg, transparent 0%, hsl(160 12% 11% / 0.72) 26%, hsl(160 12% 11% / 0.96) 58%, hsl(160 12% 11% / 1) 100%);
+  box-shadow: -7px 0 10px hsl(160 12% 11% / 0.34);
+}
+.dark .session-list-panel .list-card--active .session-list-hover-actions {
+  background: linear-gradient(90deg, transparent 0%, hsl(160 12% 11% / 0.78) 26%, hsl(160 12% 11% / 0.97) 58%, hsl(160 12% 11% / 1) 100%);
+}
+
+/* Session titles occupy the full row. On hover, time/delete actions float
+   above the title with a soft left-to-right Gaussian-like fade surface. */
+.session-list-panel .list-card > .flex.items-center,
+.session-list-panel .list-row {
+  position: relative;
+}
+.session-list-panel .session-list-title {
+  min-width: 0;
+  padding-right: 0.25rem;
+}
+.session-list-panel .list-card .session-list-hover-actions {
+  position: absolute;
+  right: 0.25rem;
+  top: 50%;
+  z-index: 2;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, hsl(42 32% 99% / 0.72) 26%, hsl(42 32% 99% / 0.96) 58%, hsl(42 32% 99% / 1) 100%);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  box-shadow: -7px 0 10px hsl(42 32% 99% / 0.34);
+}
+.session-list-panel .list-card:hover .session-list-hover-actions,
+.session-list-panel .list-row:hover .session-list-hover-actions {
+  opacity: 1;
+}
+.session-list-panel .session-list-hover-actions .session-list-delete {
+  pointer-events: auto;
+}
+.session-list-panel .list-card--active .session-list-hover-actions {
+  background: linear-gradient(90deg, transparent 0%, hsl(42 32% 99% / 0.78) 26%, hsl(42 32% 99% / 0.97) 58%, hsl(42 32% 99% / 1) 100%);
+}
+.dark .session-list-panel .list-card .session-list-hover-actions {
+  background: linear-gradient(90deg, transparent 0%, hsl(160 12% 11% / 0.72) 26%, hsl(160 12% 11% / 0.96) 58%, hsl(160 12% 11% / 1) 100%);
+  box-shadow: -7px 0 10px hsl(160 12% 11% / 0.34);
+}
+.dark .session-list-panel .list-card--active .session-list-hover-actions {
+  background: linear-gradient(90deg, transparent 0%, hsl(160 12% 11% / 0.78) 26%, hsl(160 12% 11% / 0.97) 58%, hsl(160 12% 11% / 1) 100%);
+}
+
+/* Project-level MCP entry in the Agent toolbar */
+.agent-toolbar-mcp-trigger {
+  color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border-hsl) / 0.45);
+  background: hsl(var(--card) / 0.58);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.agent-toolbar-mcp-trigger:hover {
+  color: var(--foreground);
+  border-color: hsl(var(--primary) / 0.35);
+  background: hsl(var(--primary) / 0.10);
+}
+.agent-toolbar-mcp-count {
+  display: inline-flex;
+  min-width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 4px;
+  background: linear-gradient(180deg, #b9cdbf, #a1bba8);
+  color: #2f3d34;
+  font-size: 9px;
+  line-height: 1;
+  box-shadow: 0 1px 2px rgba(47, 61, 52, 0.16), inset 0 1px 0 rgba(255,255,255,0.55);
+}
+
+/* Session list scroll surface: align the left edge with the header and keep a
+   small breathing room on the right without changing global list cards. */
+.session-list-panel .session-list-groups {
+  border-radius: 10px;
+}
+
+/* Inline attachment summary: replaces the old pin dot with a compact,
+   readable context capsule. */
+.goal-context-summary {
+  min-height: 1.75rem;
+  border: 1px solid hsl(var(--primary) / 0.18);
+  background: hsl(var(--primary) / 0.08);
+  color: hsl(var(--foreground) / 0.72);
+}
+.goal-context-summary-mode {
+  border-radius: 999px;
+  padding: 1px 5px;
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+  font-size: 9px;
+}
+.dark .goal-context-summary {
+  border-color: hsl(var(--primary) / 0.22);
+  background: hsl(var(--primary) / 0.10);
+}
+
+/* Narrow-window header layout. Keep the project switcher, Wiki/Agent tabs,
+   and primary actions usable without letting the centered pill overflow the
+   viewport. */
+@media (max-width: 760px) {
+  .workbench-header {
+    left: 6px;
+    right: 6px;
+    width: auto;
+    max-width: none;
+    transform: none;
+    gap: 3px;
+  }
+
+  .workbench-header > .wh-pill {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    gap: 2px;
+    padding-inline: 5px;
+    overflow: hidden;
+  }
+
+  .workbench-header .wh-project-trigger {
+    min-width: 0;
+    max-width: 150px;
+    flex: 1 1 120px;
+    gap: 3px;
+    padding-inline: 6px;
+  }
+  .workbench-header .wh-project-trigger > span {
+    min-width: 0;
+    max-width: 112px;
+  }
+
+  .workbench-header .wh-divider {
+    margin-inline: 1px;
+  }
+
+  .workbench-header .wh-tabs {
+    min-width: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+  }
+  .workbench-header .wh-tabs .tabs__list {
+    min-width: 0;
+  }
+  .workbench-header .wh-tabs .tabs__tab {
+    min-width: 0;
+    gap: 3px;
+    padding-inline: 6px !important;
+    font-size: 11px !important;
+  }
+  .workbench-header .wh-tabs .tabs__tab svg {
+    flex-shrink: 0;
+  }
+
+  .workbench-header .wh-actions {
+    flex: 0 0 auto;
+    gap: 0;
+  }
+  .workbench-header .wh-actions .wh-btn {
+    width: 24px;
+    height: 24px;
+  }
+
+  .workbench-header .wh-pill-slot {
+    min-width: 0;
+    max-width: calc(100vw - 12px);
+  }
+  .workbench-header .wh-pill-slot > .wh-pill {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .workbench-header .wh-project-trigger {
+    max-width: 120px;
+    flex-basis: 92px;
+  }
+  .workbench-header .wh-project-trigger > span {
+    max-width: 82px;
+  }
+  .workbench-header .wh-tabs .tabs__tab {
+    padding-inline: 4px !important;
+  }
+  .workbench-header .wh-tabs .tabs__tab svg {
+    display: none;
+  }
+  .workbench-header .wh-actions .wh-btn {
+    width: 22px;
+  }
+}
+
+/* Left Agent sidebar profile area. The session list gets the upper 60%
+   and the current-session profile inspector gets the lower 40%. */
+.session-list-panel .session-list-session-area {
+  display: flex;
+  min-height: 0;
+  flex: 0 1 60%;
+  overflow: hidden;
+}
+.session-list-panel .session-list-session-area > .session-list-groups {
+  min-height: 0;
+  width: 100%;
+}
+.session-list-panel .session-list-profile-area {
+  display: flex;
+  min-height: 0;
+  flex: 0 1 40%;
+  overflow: hidden;
+}
+.session-list-panel .session-profile-panel {
+  min-height: 0;
+  width: 100%;
+}
+.session-profile-header {
+  background: hsl(var(--background-hsl) / 0.72);
+}
+.session-profile-panel button {
+  min-width: 0;
+}
+@media (max-height: 680px) {
+  .session-list-panel .session-list-profile-area {
+    flex-basis: 36%;
+  }
+  .session-list-panel .session-list-session-area {
+    flex-basis: 64%;
+  }
+}

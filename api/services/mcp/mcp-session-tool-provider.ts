@@ -5,7 +5,7 @@ import type {
   ToolExecutionInput,
   ToolExecutionResult,
 } from '../agent-runtime/contracts.js'
-import { getGlobalConfigForRuntime } from '../../lib/config/config-store.js'
+import { getProjectSettings } from '../../lib/config/project-settings-store.js'
 import { agentRuntimeStore } from '../agent-runtime/session-store.js'
 import { logger } from '../../lib/logger.js'
 import { mcpClientManager, sanitizeName, type McpRuntimeToolDef } from './mcp-client-manager.js'
@@ -42,7 +42,8 @@ function buildTool(serverId: string, tool: McpRuntimeToolDef): RegisteredTool {
       if (!parsed) {
         throw new Error(`Invalid MCP tool id: ${input.toolId}`)
       }
-      const result = await mcpClientManager.callTool(parsed.serverId, parsed.toolName, input.args)
+      const session = agentRuntimeStore.getSession(input.sessionId)
+      const result = await mcpClientManager.callTool(parsed.serverId, parsed.toolName, input.args, session.projectId)
       if (!result.ok) {
         return {
           result: { ok: false, error: result.error ?? 'MCP tool failed' },
@@ -72,7 +73,12 @@ class McpSessionToolProvider implements SessionToolProvider {
     }
     if (serverIds.length === 0) return []
 
-    const byId = new Map((getGlobalConfigForRuntime()?.mcpServers ?? []).map(s => [s.id, s]))
+    const session = agentRuntimeStore.getSession(sessionId)
+    const byId = new Map<string, import('../../lib/config/config-types.js').McpServerConfig>()
+    try {
+      const project = getProjectSettings(session.projectId, true)
+      for (const server of project.mcpServers ?? []) byId.set(server.id, server)
+    } catch { /* project settings may not exist yet */ }
     const tools: RegisteredTool[] = []
     for (const serverId of serverIds) {
       const config = byId.get(serverId)
@@ -102,7 +108,8 @@ export async function warmupMcpForSession(sessionId: string): Promise<void> {
   }
   if (serverIds.length === 0) return
   try {
-    await mcpClientManager.warmup(serverIds)
+    const session = agentRuntimeStore.getSession(sessionId)
+    await mcpClientManager.warmup(serverIds, session.projectId)
   } catch (err) {
     logger.warn({ sessionId, err: err instanceof Error ? err.message : String(err) }, '[mcp] session warm-up failed')
   }

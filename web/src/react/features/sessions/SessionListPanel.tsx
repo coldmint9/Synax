@@ -11,6 +11,7 @@ import type { SessionListView } from './sessionBuckets'
 import { getSessionDisplayTitle } from './useSessionDisplayTitle'
 import { sessionsPath, workflowSessionsPath } from './sessionRoutes'
 import { clearSessionLastVisit, loadSessionLastVisit } from './sessionLastVisit'
+import { SessionProfilePanel } from './SessionProfilePanel'
 
 interface Props {
   listView?: SessionListView
@@ -45,7 +46,7 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
   }
 
   return (
-    <Surface className="flex h-full flex-col bg-background" variant="default">
+    <Surface className="session-list-panel flex h-full flex-col bg-background" variant="default">
       <SessionListHeader
         listView={listView}
         visibleCount={visibleCount}
@@ -59,8 +60,9 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
         onBackToSessions={() => navigate(sessionsPath(projectId))}
         isRefreshing={list.isRefreshing}
       />
-      <SessionTimeGroups
-        groups={list.groups}
+      <div className="session-list-session-area min-h-0">
+        <SessionTimeGroups
+          groups={list.groups}
         selectedId={list.selectedId}
         isLoadingMore={list.isLoadingMore}
         hasMore={list.hasMore}
@@ -69,9 +71,13 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
         onSelect={list.select}
         onToggleGroup={list.toggleGroup}
         onToggleExpand={list.toggleExpand}
-        onLoadMore={() => { void list.loadMore() }}
-        onDelete={id => setDeleteId(id)}
-      />
+          onLoadMore={() => { void list.loadMore() }}
+          onDelete={id => setDeleteId(id)}
+        />
+      </div>
+      <div className="session-list-profile-area min-h-0">
+        <SessionProfilePanel sessionId={list.selectedId} />
+      </div>
 
       <SessionDeleteDialog
         isOpen={deleteId !== null}
@@ -106,10 +112,6 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
         onCleared={() => { void list.refresh() }}
       />
 
-      <div className="flex items-center gap-1.5 px-3 py-1.5 border-t border-border/20 text-[9px] text-muted-foreground">
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
-        Connected
-      </div>
     </Surface>
   )
 }

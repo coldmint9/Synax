@@ -237,6 +237,52 @@ export interface AgentToolSummary {
   mutability: 'read' | 'write' | 'task'
 }
 
+export type EnvironmentChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'unknown'
+
+export interface SessionEnvironmentFile {
+  path: string
+  status: EnvironmentChangeStatus
+  additions: number
+  deletions: number
+  staged: boolean
+  untracked: boolean
+}
+
+export interface SessionEnvironmentSubagent {
+  id: string
+  parentSessionId: string | null
+  profileId: string
+  status: string
+  title: string | null
+  prompt: string
+  updatedAt: string
+  completedAt: string | null
+  resultSummary: string | null
+}
+
+export interface SessionEnvironment {
+  sessionId: string
+  projectId: string
+  workspacePath: string
+  branch: string
+  headCommitSha: string
+  dirty: boolean
+  additions: number
+  deletions: number
+  changedFiles: SessionEnvironmentFile[]
+  inputFiles: string[]
+  subagents: SessionEnvironmentSubagent[]
+  refreshedAt: string
+}
+
+export interface SessionEnvironmentFileView {
+  sessionId: string
+  path: string
+  kind: 'diff' | 'input'
+  content: string
+  truncated: boolean
+}
+
 export interface SessionCapabilities {
   profile: { id: string; label: string; kind: string }
   tools: {
@@ -338,6 +384,12 @@ export const agentRuntimeApi = {
     request<{ items: EvidenceArtifact[] }>(`/sessions/${encodeURIComponent(sessionId)}/artifacts`),
   listToolCalls: (sessionId: string) =>
     request<{ items: ToolCallRecord[] }>(`/sessions/${encodeURIComponent(sessionId)}/tool-calls`),
+  getSessionEnvironment: (sessionId: string) =>
+    request<SessionEnvironment>(`/sessions/${encodeURIComponent(sessionId)}/environment`),
+  getSessionEnvironmentFile: (sessionId: string, path: string, kind: 'diff' | 'input') =>
+    request<SessionEnvironmentFileView>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}`,
+    ),
   getSessionStats: (sessionId: string) =>
     request<SessionStats>(`/sessions/${encodeURIComponent(sessionId)}/stats`),
   getSessionTodos: (sessionId: string) =>

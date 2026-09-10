@@ -52,7 +52,15 @@ describe('SessionTreeItem', () => {
       />,
     )
 
-    expect(container.querySelector('.animate-spin')).toBeTruthy()
+    const indicator = container.querySelector('.session-list-running-indicator')
+    const title = container.querySelector('.session-list-title')
+
+    expect(indicator?.classList.contains('animate-spin')).toBe(true)
+    expect(title).toBeTruthy()
+    // The indicator must sit ahead of the title in document order …
+    expect(indicator!.compareDocumentPosition(title!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // … and stay out of the flex flow so it never takes width from the title.
+    expect(indicator?.classList.contains('shrink-0')).toBe(false)
   })
 
   it('does not show a spinner for completed sessions', () => {
@@ -78,6 +86,10 @@ describe('SessionTreeItem', () => {
       />,
     )
 
-    expect(container.querySelector('.animate-spin')).toBeTruthy()
+    const indicator = container.querySelector('.session-list-running-indicator')
+
+    expect(indicator?.classList.contains('animate-spin')).toBe(true)
+    // Child rows use their own narrower gutter offset.
+    expect(indicator?.classList.contains('session-list-running-indicator--child')).toBe(true)
   })
 })

@@ -16,6 +16,7 @@ import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
 import { sessionHooks } from './session-hooks.js';
 import { resolveInitialSessionTitle } from './session-title-service.js';
 import { logger } from '../../lib/logger.js';
+import { getProjectSettings } from '../../lib/config/project-settings-store.js';
 
 export class AgentSessionRuntime {
   constructor(
@@ -42,6 +43,15 @@ export class AgentSessionRuntime {
       throw new AgentValidationError('Sub-session projectId must match parent session projectId.');
     }
     const createdAt = nowIso();
+    const projectMcpServerIds = input.mcpServerIds ?? (() => {
+      try {
+        return getProjectSettings(input.projectId).mcpServers
+          .filter((server) => server.enabled !== false)
+          .map((server) => server.id)
+      } catch {
+        return []
+      }
+    })();
     const sessionMetadata = seedSessionPermissionMetadata(input.sessionMetadata ?? null, {
       permissionTier: input.permissionTier,
       permissionOverrides: input.permissionOverrides,
@@ -69,7 +79,7 @@ export class AgentSessionRuntime {
       resultSummary: null,
       blockedReason: null,
       skillIds: input.skillIds ?? [],
-      mcpServerIds: input.mcpServerIds ?? [],
+      mcpServerIds: projectMcpServerIds,
       activeRunId: null,
       pendingResumeToken: null,
       sessionMetadata,
