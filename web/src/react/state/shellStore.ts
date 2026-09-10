@@ -30,6 +30,8 @@ export interface ShellPreferences {
   locale: 'zh' | 'en'
   editor: 'system' | 'vscode' | 'cursor' | 'windsurf' | 'webstorm'
   agentFontSize: number
+  /** Fold runs of activity-only agent turns into one work-log row. */
+  sessionFoldWorkRuns: boolean
 }
 
 export interface ProjectSearchFilter {
@@ -58,6 +60,7 @@ interface ShellState {
   setNotifications: (notifications: boolean) => void
   setEditor: (editor: ShellPreferences['editor']) => void
   setAgentFontSize: (fontSize: number) => void
+  setSessionFoldWorkRuns: (value: boolean) => void
   addProject: (project: ProjectSummary) => void
   setProjects: (projects: ProjectSummary[]) => void
   removeProject: (projectId: string) => void
@@ -88,6 +91,7 @@ export const useShellStore = create<ShellState>((set) => ({
     locale: 'zh',
     editor: 'system',
     agentFontSize: 14,
+    sessionFoldWorkRuns: true,
   },
   currentProjectId: null,
   currentUser: {
@@ -129,6 +133,10 @@ export const useShellStore = create<ShellState>((set) => ({
     set((state) => ({ preferences: { ...state.preferences, agentFontSize: normalized } }))
     localStorage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences))
     applyUiFontSize(normalized)
+  },
+  setSessionFoldWorkRuns: (value) => {
+    set((state) => ({ preferences: { ...state.preferences, sessionFoldWorkRuns: value } }))
+    localStorage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences))
   },
   addProject: (project) => {
     set((state) => ({
@@ -183,6 +191,7 @@ export function hydrateShellPreferences() {
     if (typeof parsed.agentFontSize === 'number' && parsed.agentFontSize >= MIN_UI_FONT_SIZE && parsed.agentFontSize <= MAX_UI_FONT_SIZE) {
       patch.agentFontSize = Math.round(parsed.agentFontSize)
     }
+    if (typeof parsed.sessionFoldWorkRuns === 'boolean') patch.sessionFoldWorkRuns = parsed.sessionFoldWorkRuns
     if (Object.keys(patch).length > 0) {
       useShellStore.setState((state) => ({
         preferences: { ...state.preferences, ...patch },

@@ -1,36 +1,30 @@
-import { ArrowLeft, Search, RefreshCw, Trash2, Plus } from 'lucide-react'
+import { ArrowLeft, Search, Trash2, Plus } from 'lucide-react'
 import { Button } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { SessionListView } from './sessionBuckets'
 
 interface Props {
   listView: SessionListView
-  visibleCount: number
   workflowCount: number
   searchQuery: string
   onSearchChange: (q: string) => void
-  onRefresh: () => void
   onClearInactive: () => void
   onNewSession?: () => void
   isCreatingSession?: boolean
   onOpenWorkflows?: () => void
   onBackToSessions?: () => void
-  isRefreshing: boolean
 }
 
 export function SessionListHeader({
   listView,
-  visibleCount,
   workflowCount,
   searchQuery,
   onSearchChange,
-  onRefresh,
   onClearInactive,
   onNewSession,
   isCreatingSession = false,
   onOpenWorkflows,
   onBackToSessions,
-  isRefreshing,
 }: Props) {
   const { t } = useLocale()
   const isWorkflowView = listView === 'workflow'
@@ -48,29 +42,31 @@ export function SessionListHeader({
         </button>
       ) : null}
 
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-foreground">
-          {isWorkflowView ? t('sessionWorkflowTitle') : t('sessionListTitle')}
-          <span className="ml-1 font-normal text-muted-foreground">({visibleCount})</span>
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-sm font-bold tracking-tight text-foreground">
+          {isWorkflowView ? t('sessionWorkflowTitle') : 'SynaxCode'}
         </span>
-        <div className="flex items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5">
           {!isWorkflowView && onNewSession ? (
             <Button
-              isIconOnly
-              variant="ghost"
               size="sm"
-              className="h-7 w-7 min-w-0 text-primary"
+              variant="ghost"
+              className="h-7 min-w-0 gap-1 px-2 text-[11px] font-semibold text-primary"
               onPress={onNewSession}
               isDisabled={isCreatingSession}
-              aria-label={t('sessionNew')}
             >
-              <Plus size={14} className={isCreatingSession ? 'animate-pulse' : ''} />
+              <Plus size={13} className={isCreatingSession ? 'animate-pulse' : ''} />
+              {t('sessionNewChat')}
             </Button>
           ) : null}
-          <Button isIconOnly variant="ghost" size="sm" className="h-7 w-7 min-w-0 text-muted-foreground" onPress={onRefresh} aria-label="Refresh">
-            <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
-          </Button>
-          <Button isIconOnly variant="ghost" size="sm" className="h-7 w-7 min-w-0 text-muted-foreground hover:text-danger" onPress={onClearInactive} aria-label="Clear inactive sessions">
+          <Button
+            isIconOnly
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 min-w-0 text-muted-foreground hover:text-danger"
+            onPress={onClearInactive}
+            aria-label={t('sessionClearInactive')}
+          >
             <Trash2 size={14} />
           </Button>
         </div>

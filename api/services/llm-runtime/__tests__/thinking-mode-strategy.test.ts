@@ -16,6 +16,7 @@ function deepSeekNativeSelection(): ResolvedModelSelection {
     providerId: 'custom-api:deepseek',
     modelId: 'deepseek-v4-flash',
     model: 'custom-api:deepseek/deepseek-v4-flash',
+    apiFormat: 'openai',
     provider: {
       id: 'custom-api:deepseek',
       label: 'DeepSeek',

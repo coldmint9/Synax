@@ -28,9 +28,11 @@ interface Props {
   projectId: string
   session?: AgentSession
   layout?: 'footer' | 'centered'
+  /** Rendered directly above the input pill (e.g. the file-change island). */
+  statusSlot?: React.ReactNode
 }
 
-export function SessionComposer({ session, projectId, layout = 'footer' }: Props) {
+export function SessionComposer({ session, projectId, layout = 'footer', statusSlot }: Props) {
   const { t } = useLocale()
   const navigate = useNavigate()
   const [content, setContent] = useState('')
@@ -282,7 +284,10 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
           <div className="w-full min-w-0">{composerShell}</div>
         </div>
       ) : (
-        <div className="mx-auto w-full min-w-0 max-w-3xl">{composerShell}</div>
+        <div className="mx-auto w-full min-w-0 max-w-3xl">
+          {statusSlot}
+          {composerShell}
+        </div>
       )}
     </div>
   )

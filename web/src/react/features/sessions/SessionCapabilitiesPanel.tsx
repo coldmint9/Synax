@@ -17,13 +17,13 @@ const CATEGORY_LABEL: Record<string, string> = {
 }
 
 const CATEGORY_COLOR: Record<string, string> = {
-  read: 'text-sky-400/80',
-  shell: 'text-sky-400/80',
-  task: 'text-[var(--color-run)]/80',
+  read: 'text-run/80',
+  shell: 'text-run/80',
+  task: 'text-run/80',
   write: 'text-warning/80',
-  skill: 'text-violet-400/80',
+  skill: 'text-electric/80',
   context: 'text-muted-foreground/70',
-  subagent: 'text-emerald-400/80',
+  subagent: 'text-success/80',
 }
 
 function sortTools(tools: AgentToolSummary[]): AgentToolSummary[] {
@@ -152,7 +152,7 @@ function SkillRow({ skill, active = false }: { skill: SkillSummary; active?: boo
       <div className="flex items-center gap-1.5">
         <Sparkles
           size={10}
-          className={active ? 'shrink-0 text-violet-400' : 'shrink-0 text-muted-foreground/40'}
+          className={active ? 'shrink-0 text-electric' : 'shrink-0 text-muted-foreground/40'}
         />
         <span className={`truncate text-[10px] ${active ? 'font-medium text-foreground/90' : 'text-foreground/70'}`}>
           {skill.label}

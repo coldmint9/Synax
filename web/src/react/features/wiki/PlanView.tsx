@@ -97,7 +97,7 @@ function PlanExecutingView({ projectId, nodes }: { projectId: string; nodes: Wik
     <div className="flex h-full flex-col overflow-hidden flex-1">
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/15 px-5">
         <div className="flex items-center gap-2.5">
-          <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+          <div className="h-2 w-2 rounded-full bg-run animate-pulse" />
           <span className="text-[13px] font-semibold text-foreground/80">{t('planExecutingTitle')}</span>
           <span className="text-[11px] text-muted-foreground/50">{t('planDoneCount', { done: acceptedCount, total: nodes.length })}</span>
         </div>
@@ -154,7 +154,7 @@ function PlanNodeReviewPanel({ planId, nodeId, projectId }: { planId: string; no
   }
 
   return (
-    <div className="ml-7 rounded-xl border border-amber-400/30 bg-amber-400/[0.04] p-3 space-y-3">
+    <div className="ml-7 rounded-xl border border-warning/30 bg-warning/[0.04] p-3 space-y-3">
       {artifact?.patches && artifact.patches.length > 0 && (
         <div className="space-y-1.5">
           {artifact.patches.map((patch, i) => (

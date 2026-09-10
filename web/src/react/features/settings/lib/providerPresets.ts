@@ -3,6 +3,17 @@ import type { ApiFormat, GlobalConfig, ProviderConnection, ProviderDef, Reasonin
 export const BUILTIN_API_PROVIDER_IDS = ['openai', 'anthropic'] as const
 export const CUSTOM_API_PREFIX = 'custom-api:'
 
+/** The three wire protocols a provider connection can speak. */
+export const API_FORMAT_OPTIONS: { key: ApiFormat; label: string }[] = [
+  { key: 'openai', label: 'OpenAI Chat Completions' },
+  { key: 'openai-responses', label: 'OpenAI Responses' },
+  { key: 'anthropic', label: 'Anthropic Messages' },
+]
+
+export function apiFormatLabel(format: ApiFormat | string): string {
+  return API_FORMAT_OPTIONS.find(option => option.key === format)?.label ?? format
+}
+
 export const ALL_REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
 export const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
@@ -149,6 +160,21 @@ export function defaultBaseUrl(format: ApiFormat) {
 
 export function defaultModel(format: ApiFormat) {
   return format === 'anthropic' ? 'claude-3-5-sonnet-latest' : 'gpt-4o-mini'
+}
+
+/**
+ * Switch protocol while keeping user input: only untouched defaults
+ * (empty values or the previous protocol's default) follow the new protocol.
+ */
+export function applyProtocolDefaults(draft: ApiProviderDraft, next: ApiFormat): ApiProviderDraft {
+  if (draft.format === next) return draft
+  const baseUrl = !draft.baseUrl.trim() || draft.baseUrl.trim() === defaultBaseUrl(draft.format)
+    ? defaultBaseUrl(next)
+    : draft.baseUrl
+  const model = !draft.model.trim() || draft.model.trim() === defaultModel(draft.format)
+    ? defaultModel(next)
+    : draft.model
+  return { ...draft, format: next, baseUrl, model }
 }
 
 export function isBuiltinApiProviderId(id: string): boolean {

@@ -29,7 +29,7 @@ const theme = createCssVariablesTheme({
   variablePrefix: '--synax-code-',
   variableDefaults: {
     '--synax-code-fg': '#d4d4d4',
-    '--synax-code-bg': '#1e1e1e',
+    '--synax-code-bg': 'var(--cx-gray-800)',
   },
   fontStyle: true,
 })

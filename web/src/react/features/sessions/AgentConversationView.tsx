@@ -1,7 +1,9 @@
 import { memo } from 'react'
-import { Chip, Card } from '@heroui/react'
+import { Chip, Card, Switch } from '@heroui/react'
 import { Pause, Play, XCircle, Zap } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { useLocale } from '../../../hooks/useLocale'
+import { useShellStore } from '../../state/shellStore'
 import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import type { CompactionEvent } from '../../state/agentRuntimeStore'
 import { getSessionCategory } from './sessionGrouping'
@@ -22,6 +24,8 @@ interface Props {
   onExpandChild?: (sessionId: string) => void
   excludeStepId?: string | null
   liveTurn?: React.ReactNode
+  /** Scroll container, forwarded so transcript entries can lazy-mount by viewport. */
+  scrollRootRef?: React.RefObject<HTMLElement | null>
 }
 
 export const AgentConversationView = memo(function AgentConversationView({
@@ -38,8 +42,13 @@ export const AgentConversationView = memo(function AgentConversationView({
   onExpandChild,
   excludeStepId = null,
   liveTurn,
+  scrollRootRef,
 }: Props) {
   const { t } = useLocale()
+  const { foldWorkRuns, setFoldWorkRuns } = useShellStore(useShallow(s => ({
+    foldWorkRuns: s.preferences.sessionFoldWorkRuns,
+    setFoldWorkRuns: s.setSessionFoldWorkRuns,
+  })))
 
   const isRunning = session?.status === 'running' && Boolean(session.activeRunId)
   const isResumable = session?.status === 'interrupted'
@@ -50,7 +59,7 @@ export const AgentConversationView = memo(function AgentConversationView({
   const routeReason = session ? resolveSynaxRouteReason(session) : null
 
   return (
-    <div className="flex flex-col gap-4 px-[1.2rem] py-4">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-[1.2rem] py-4">
       <div className="flex items-center gap-2 border-b border-border/40 pb-3">
         {session && routeReason && isSynaxSession(session) ? (
           <span className="max-w-[240px] truncate text-[10px] text-muted-foreground" title={routeReason}>
@@ -62,34 +71,47 @@ export const AgentConversationView = memo(function AgentConversationView({
             {t('sessionBuiltin')}
           </Chip>
         ) : null}
-        <div className="ml-auto flex items-center gap-1.5">
-          {isRunning && onPause && session ? (
-            <button
-              type="button"
-              onClick={() => onPause(session.id)}
-              className="wh-pill-btn wh-pill-btn--neutral"
-            >
-              <Pause size={10} /> {t('sessionPause')}
-            </button>
-          ) : null}
-          {isResumable && onResume && session ? (
-            <button
-              type="button"
-              onClick={() => onResume(session.id)}
-              className="wh-pill-btn wh-pill-btn--soft"
-            >
-              <Play size={10} /> {t('sessionResume')}
-            </button>
-          ) : null}
-          {isRunning && onCancel && session ? (
-            <button
-              type="button"
-              onClick={() => onCancel(session.id)}
-              className="wh-pill-btn wh-pill-btn--danger-soft"
-            >
-              <XCircle size={10} /> {t('sessionCancel')}
-            </button>
-          ) : null}
+        <div className="ml-auto flex items-center gap-2">
+          <Switch
+            size="sm"
+            isSelected={foldWorkRuns}
+            onChange={setFoldWorkRuns}
+            aria-label={t('sessionWorkLogToggle')}
+          >
+            <Switch.Control><Switch.Thumb /></Switch.Control>
+            <span className="whitespace-nowrap text-[10px] text-muted-foreground">
+              {t('sessionWorkLogToggle')}
+            </span>
+          </Switch>
+          <div className="flex items-center gap-1.5">
+            {isRunning && onPause && session ? (
+              <button
+                type="button"
+                onClick={() => onPause(session.id)}
+                className="wh-pill-btn wh-pill-btn--neutral"
+              >
+                <Pause size={10} /> {t('sessionPause')}
+              </button>
+            ) : null}
+            {isResumable && onResume && session ? (
+              <button
+                type="button"
+                onClick={() => onResume(session.id)}
+                className="wh-pill-btn wh-pill-btn--soft"
+              >
+                <Play size={10} /> {t('sessionResume')}
+              </button>
+            ) : null}
+            {isRunning && onCancel && session ? (
+              <button
+                type="button"
+                onClick={() => onCancel(session.id)}
+                className="wh-pill-btn wh-pill-btn--danger-soft"
+              >
+                <XCircle size={10} /> {t('sessionCancel')}
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -112,6 +134,7 @@ export const AgentConversationView = memo(function AgentConversationView({
         excludeStepId={excludeStepId}
         isRunning={isRunning}
         onExpandChild={onExpandChild}
+        scrollRootRef={scrollRootRef}
       />
       {liveTurn}
 
@@ -127,7 +150,7 @@ export const AgentConversationView = memo(function AgentConversationView({
       ) : null}
 
       {isResumable ? (
-        <Card className="border-sky-500/15 bg-sky-500/[0.03] shadow-none">
+        <Card className="border-run/15 bg-run/[0.03] shadow-none">
           <div className="px-3.5 py-2.5">
             <Chip size="sm" color="default" variant="soft" className="mb-1 text-[10px]">
               {session?.status === 'paused' ? 'Paused' : 'Interrupted'}

@@ -231,6 +231,77 @@ describe('config routes ai api provider auth', () => {
     )
   })
 
+  it('validates an OpenAI Responses connection against the responses endpoint', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: 'resp_test' }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { configRoutes } = await import('../config.js')
+    const res = await configRoutes.request('http://localhost/ai-api/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        format: 'openai-responses',
+        baseUrl: 'https://gateway.example.com/v1',
+        apiKey: 'sk-gateway',
+        model: 'gpt-5.4-codex',
+      }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://gateway.example.com/v1/responses',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer sk-gateway' }),
+        body: JSON.stringify({ model: 'gpt-5.4-codex', input: 'ping', max_output_tokens: 1 }),
+      }),
+    )
+  })
+
+  it('accepts the Responses protocol on builtin providers and rejects unknown protocols', async () => {
+    const { configRoutes } = await import('../config.js')
+    const { getGlobalConfig } = await import('../../lib/config/config-store.js')
+
+    const accepted = await configRoutes.request('http://localhost/global', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerConnections: {
+          openai: {
+            providerId: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'sk-openai-responses',
+            extra: { kind: 'api', apiFormat: 'openai-responses', model: 'gpt-5.4-codex' },
+          },
+        },
+      }),
+    })
+
+    expect(accepted.status).toBe(200)
+    expect(getGlobalConfig().providerConnections.openai?.extra?.apiFormat).toBe('openai-responses')
+
+    const rejected = await configRoutes.request('http://localhost/global', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerConnections: {
+          openai: {
+            providerId: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'sk-openai-responses',
+            extra: { kind: 'api', apiFormat: 'openai-legacy', model: 'gpt-4o-mini' },
+          },
+        },
+      }),
+    })
+    const rejectedBody = await rejected.json()
+
+    expect(rejected.status).toBe(400)
+    expect(rejectedBody.error).toContain('API 协议')
+  })
+
   it('saves and removes compatible preset providers through the global config route', async () => {
     const { getGlobalConfig } = await import('../../lib/config/config-store.js')
     const { configRoutes } = await import('../config.js')

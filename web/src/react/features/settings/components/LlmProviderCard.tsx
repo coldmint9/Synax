@@ -1,7 +1,12 @@
 import { Button } from '@heroui/react'
 import { formatContextLimit } from '../../../../lib/formatTokens'
 import { ChevronDown, ChevronRight, Loader2, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
-import { PROVIDER_LOGO_ASSETS, REASONING_EFFORT_LABELS, type ApiProviderDraft } from '../lib/providerPresets'
+import {
+  PROVIDER_LOGO_ASSETS,
+  REASONING_EFFORT_LABELS,
+  apiFormatLabel,
+  type ApiProviderDraft,
+} from '../lib/providerPresets'
 import { ProviderLogo } from '../../../components/ProviderLogo'
 import { IconSurface } from '../../../components/IconSurface'
 import { useLocale } from '../../../../hooks/useLocale'
@@ -75,12 +80,8 @@ export function LlmProviderCard({
             </span>
             <span className="text-muted-foreground">Base URL</span>
             <span className="text-foreground font-mono truncate">{draft.baseUrl || '—'}</span>
-            {draft.custom && (
-              <>
-                <span className="text-muted-foreground">Format</span>
-                <span className="text-foreground">{formatLabel(draft.format)}</span>
-              </>
-            )}
+            <span className="text-muted-foreground">协议</span>
+            <span className="text-foreground">{apiFormatLabel(draft.format)}</span>
             <span className="text-muted-foreground">{t('llmCardModel')}</span>
             <span className="text-foreground font-mono truncate">{draft.model || '—'}</span>
             {draft.modelMeta?.[draft.model]?.contextLimit && (
@@ -123,13 +124,4 @@ function StatusDot({ validating, hasKey }: { validating: boolean; hasKey: boolea
   return (
     <div className={`h-2 w-2 rounded-full ${hasKey ? 'bg-success' : 'bg-muted-foreground/30'}`} />
   )
-}
-
-function formatLabel(format: string): string {
-  switch (format) {
-    case 'openai': return 'OpenAI Chat Completions'
-    case 'openai-responses': return 'OpenAI Responses'
-    case 'anthropic': return 'Anthropic Messages'
-    default: return format
-  }
 }

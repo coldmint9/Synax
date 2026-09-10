@@ -8,6 +8,7 @@ import { isAcpProviderId } from './acp-provider-ids.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret, maskSecret } from './config-secret.js'
 import type {
   AnalyzerLlmConfig,
+  ApiFormat,
   EffectiveConfig,
   GlobalConfig,
   McpServerConfig,
@@ -720,14 +721,13 @@ function isKnownProviderId(providerId: string): boolean {
   return isAcpProviderId(providerId) || isApiProviderId(providerId)
 }
 
-function resolveApiFormat(providerId: string, connection: ProviderConnection): 'openai' | 'anthropic' {
+function resolveApiFormat(providerId: string, connection: ProviderConnection): ApiFormat {
   const format = connection.extra?.apiFormat
-  if (format === 'anthropic') return 'anthropic'
-  if (format === 'openai') return 'openai'
+  if (format === 'anthropic' || format === 'openai-responses' || format === 'openai') return format
   return providerId === 'anthropic' ? 'anthropic' : 'openai'
 }
 
-function defaultBaseUrl(format: 'openai' | 'anthropic'): string {
+function defaultBaseUrl(format: ApiFormat): string {
   return format === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1'
 }
 

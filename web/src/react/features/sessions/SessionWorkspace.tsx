@@ -28,8 +28,8 @@ const STATUS_BADGE: Record<string, string> = {
   blocked: 'bg-warning/15 text-warning',
   completed: 'bg-success/15 text-success',
   failed: 'bg-danger/15 text-danger',
-  paused: 'bg-sky-400/15 text-sky-400',
-  interrupted: 'bg-amber-400/15 text-amber-400',
+  paused: 'bg-run/15 text-run',
+  interrupted: 'bg-warning/15 text-warning',
   cancelled: 'bg-foreground/10 text-foreground/70',
 }
 

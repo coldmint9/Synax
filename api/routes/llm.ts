@@ -26,6 +26,7 @@ const llmStreamSchema = z.object({
 const llmValidateSchema = z.object({
   providerId: z.string().optional(),
   model: z.string().min(1),
+  apiFormat: z.enum(['openai', 'openai-responses', 'anthropic']).optional(),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
   options: z.record(z.unknown()).optional(),

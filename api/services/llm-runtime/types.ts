@@ -1,6 +1,6 @@
 import type { ModelMessage } from '@ai-sdk/provider-utils'
 import type { ToolCallRepairFunction, ToolChoice, ToolSet } from 'ai'
-import type { GlobalConfig, ProjectConfig } from '../../lib/config/config-types.js'
+import type { ApiFormat, GlobalConfig, ProjectConfig } from '../../lib/config/config-types.js'
 import type { LlmHookContext } from './llm-hooks.js'
 
 export type LlmPurpose =
@@ -100,6 +100,8 @@ export interface ModelOverrideConfig {
 
 export interface ResolvedProviderConfig {
   providerId: string
+  /** Wire protocol selected for this provider connection. */
+  apiFormat?: ApiFormat
   baseUrl?: string
   apiKey?: string
   apiKeyMasked?: string
@@ -113,6 +115,8 @@ export interface ResolvedModelSelection {
   model: string
   providerId: string
   modelId: string
+  /** Resolved wire protocol: openai (chat completions) / openai-responses / anthropic. */
+  apiFormat: ApiFormat
   provider: RuntimeProvider
   modelDef: RuntimeModel
   config: ResolvedProviderConfig
@@ -130,6 +134,7 @@ export interface ResolveLlmSelectionInput {
 export interface ValidateLlmRequest {
   providerId?: string
   model: string
+  apiFormat?: ApiFormat
   baseUrl?: string
   apiKey?: string
   options?: Record<string, unknown>

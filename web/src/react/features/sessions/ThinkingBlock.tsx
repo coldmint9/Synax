@@ -1,48 +1,37 @@
-import { Accordion, Chip } from '@heroui/react'
-import { Brain } from 'lucide-react'
+import { useLocale } from '../../../hooks/useLocale'
+import { ActivityRow } from './ActivityRow'
+import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay } from './activityText'
 
 interface Props {
   content: string
   isStreaming?: boolean
+  /** Stable per-row identity so expand state survives lazy unmounts. */
+  rememberKey?: string
 }
 
-export function ThinkingBlock({ content, isStreaming }: Props) {
-  const label = isStreaming ? 'Thinking' : 'Thought'
-  const displayContent = content.length > 2000 && !isStreaming
-    ? '...' + content.slice(-2000)
-    : content
+/**
+ * Reasoning rendered as a single collapsed activity line, the way Codex shows
+ * `Thought`. The body is mounted only while expanded, so a transcript holding
+ * dozens of reasoning blocks no longer keeps their text in the DOM.
+ */
+export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
+  const { t } = useLocale()
+  const { text, hidden } = tailForDisplay(content)
 
   return (
-    <Accordion
-      className="px-0 gap-0"
-      defaultExpandedKeys={isStreaming ? ['thinking'] : undefined}
-    >
-      <Accordion.Item
-        id="thinking"
-        aria-label={isStreaming ? 'Agent thinking' : 'Agent thought'}
-        className={`border-border/30 bg-muted/20 rounded-md animate-[fade-up_0.3s_ease-out] ${isStreaming ? 'ring-1 ring-accent/20' : ''}`}
-      >
-        <Accordion.Trigger className="flex items-center gap-2 px-3 py-2 text-left w-full">
-          <Brain size={12} className="shrink-0 text-muted-foreground/60" />
-          <span className="text-[11px] font-medium text-muted-foreground/70">{label}</span>
-          {isStreaming && (
-            <Chip size="sm" color="accent" variant="secondary" className="h-4 text-[9px]">
-              live
-            </Chip>
-          )}
-          <Accordion.Indicator className="ml-auto text-muted-foreground/50 [&>svg]:size-3" />
-        </Accordion.Trigger>
-        <Accordion.Panel>
-          <Accordion.Body className="px-3 pb-2 pt-0">
-            <div className="text-[12px] italic leading-relaxed text-muted-foreground/70 whitespace-pre-wrap">
-              {displayContent}
-              {isStreaming && (
-                <span className="inline-block w-0.5 h-[1em] bg-foreground/60 animate-pulse ml-0.5 align-text-bottom" />
-              )}
-            </div>
-          </Accordion.Body>
-        </Accordion.Panel>
-      </Accordion.Item>
-    </Accordion>
+    <ActivityRow
+      label={isStreaming ? t('sessionActivityThinking') : t('sessionActivityThought')}
+      meta={isStreaming ? null : t('sessionActivityChars', { count: formatCharCount(content.length) })}
+      preview={isStreaming ? null : activityPreview(content)}
+      body={text}
+      footnote={hidden > 0
+        ? t('sessionActivityTruncated', {
+            hidden: formatCharCount(hidden),
+            shown: formatCharCount(ACTIVITY_BODY_LIMIT),
+          })
+        : null}
+      live={isStreaming}
+      rememberKey={rememberKey}
+    />
   )
 }

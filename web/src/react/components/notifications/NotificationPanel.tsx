@@ -10,9 +10,9 @@ const ICONS: Record<NotificationType, typeof Info> = {
 
 const ICON_STYLES: Record<NotificationType, string> = {
   info: 'text-primary',
-  success: 'text-emerald-500',
+  success: 'text-success',
   error: 'text-destructive',
-  warning: 'text-amber-500',
+  warning: 'text-warning',
 }
 
 function relativeTime(ts: number): string {

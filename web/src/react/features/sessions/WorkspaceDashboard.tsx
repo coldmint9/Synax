@@ -95,11 +95,11 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({ sessionId }
             </div>
           </div>
 
-          <DashboardSection title="Subagents" count={environment.subagents.length}>
-            {environment.subagents.length === 0 ? (
-              <div className="px-1 py-3 text-center text-[9px] text-muted-foreground/55">暂无 Subagent</div>
-            ) : (
-              environment.subagents.map(sub => (
+          {/* Only meaningful once the session actually spawned subagents — an
+              empty placeholder here is pure noise. */}
+          {environment.subagents.length > 0 ? (
+            <DashboardSection title="Subagents" count={environment.subagents.length}>
+              {environment.subagents.map(sub => (
                 <button
                   key={sub.id}
                   type="button"
@@ -113,9 +113,9 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({ sessionId }
                   </span>
                   <span className={`shrink-0 text-[9px] ${statusTone(sub.status)}`}>{statusText(sub.status)}</span>
                 </button>
-              ))
-            )}
-          </DashboardSection>
+              ))}
+            </DashboardSection>
+          ) : null}
 
           <DashboardSection title="Git 变更" count={changedFiles.length}>
             {changedFiles.length === 0 ? (

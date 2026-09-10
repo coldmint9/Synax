@@ -97,10 +97,31 @@ function tryResolveCandidate(
     model: `${parsed.providerId}/${parsed.modelId}`,
     providerId: parsed.providerId,
     modelId: parsed.modelId,
+    apiFormat: resolveProviderApiFormat({
+      providerId: parsed.providerId,
+      apiFormat: config.apiFormat,
+    }),
     provider,
     modelDef,
     config,
   }
+}
+
+/**
+ * Resolve the wire protocol for a provider connection.
+ * Explicit `extra.apiFormat` wins; otherwise the provider id decides the default:
+ * `anthropic` speaks Messages, everything else speaks OpenAI Chat Completions.
+ */
+export function resolveProviderApiFormat(input: {
+  providerId?: string
+  connection?: ProviderConnection | null
+  apiFormat?: unknown
+}): ApiFormat {
+  const format = input.apiFormat ?? toRecord(input.connection?.extra)?.apiFormat
+  if (format === 'anthropic' || format === 'openai-responses' || format === 'openai') {
+    return format
+  }
+  return input.providerId === 'anthropic' ? 'anthropic' : 'openai'
 }
 
 function findModel(provider: RuntimeProvider, modelId: string, config: ResolvedProviderConfig): RuntimeModel | null {
@@ -264,28 +285,24 @@ function resolveConfiguredProviderAdapter(
   providerId: string,
   connection?: ProviderConnection,
 ): Pick<RuntimeProvider, 'npm' | 'api' | 'env'> {
-  if (providerId === 'openai') {
-    return {
-      npm: '@ai-sdk/openai',
-      api: connection?.baseUrl ?? 'https://api.openai.com/v1',
-      env: ['OPENAI_API_KEY'],
-    }
-  }
+  const apiFormat = resolveProviderApiFormat({ providerId, connection })
 
-  if (providerId === 'anthropic') {
-    return {
-      npm: '@ai-sdk/anthropic',
-      api: connection?.baseUrl ?? 'https://api.anthropic.com/v1',
-      env: ['ANTHROPIC_API_KEY'],
-    }
-  }
-
-  const apiFormat = resolveApiFormat(connection)
   if (apiFormat === 'anthropic') {
     return {
       npm: '@ai-sdk/anthropic',
-      api: connection?.baseUrl,
-      env: [],
+      api: connection?.baseUrl ?? (providerId === 'anthropic' ? 'https://api.anthropic.com/v1' : undefined),
+      env: providerId === 'anthropic' ? ['ANTHROPIC_API_KEY'] : [],
+    }
+  }
+
+  // The Responses protocol needs the native OpenAI provider: `@ai-sdk/openai-compatible`
+  // only speaks Chat Completions, while `@ai-sdk/openai` exposes `.responses()` and
+  // still honours baseURL/apiKey/header overrides for proxies and gateways.
+  if (apiFormat === 'openai-responses' || providerId === 'openai') {
+    return {
+      npm: '@ai-sdk/openai',
+      api: connection?.baseUrl ?? 'https://api.openai.com/v1',
+      env: providerId === 'openai' ? ['OPENAI_API_KEY'] : [],
     }
   }
 
@@ -370,14 +387,6 @@ function mergeConnectionMetadata(
   }
 }
 
-function resolveApiFormat(connection?: ProviderConnection): ApiFormat {
-  const extra = toRecord(connection?.extra)
-  const format = extra?.apiFormat
-  if (format === 'anthropic') return 'anthropic'
-  if (format === 'openai-responses') return 'openai-responses'
-  return 'openai'
-}
-
 function resolveModelIdFromConnection(connection?: ProviderConnection | null): string | undefined {
   const extra = toRecord(connection?.extra)
   const model = extra?.model
@@ -412,8 +421,15 @@ function normalizeConnection(connection?: ProviderConnection): Omit<ResolvedProv
   const whitelist = toStringArray(extra?.whitelist)
   const blacklist = toStringArray(extra?.blacklist)
   const models = toModelOverrideMap(extra?.models)
+  // Only an explicitly stored protocol is carried here: the provider-id default is applied later.
+  const storedApiFormat = extra?.apiFormat
+  const apiFormat: ApiFormat | undefined =
+    storedApiFormat === 'openai' || storedApiFormat === 'openai-responses' || storedApiFormat === 'anthropic'
+      ? storedApiFormat
+      : undefined
 
   return {
+    ...(apiFormat ? { apiFormat } : {}),
     ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
     ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
     ...(connection.apiKeyMasked ? { apiKeyMasked: connection.apiKeyMasked } : {}),

@@ -7,6 +7,7 @@ import { profileService, type ProfileService } from './profile-service.js';
 import { AgentNotFoundError, AgentPermissionError, AgentValidationError } from './runtime-errors.js';
 import { sandboxPolicy } from './sandbox/index.js';
 import { workspaceRoot } from './tools/workspace.js';
+import { invalidateSessionEnvironment } from './session-environment.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { agentSessionRuntime } from './session-runtime.js';
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
@@ -466,6 +467,11 @@ export class ToolRegistry {
         outputRef: result.result ?? null,
         endedAt: nowIso(),
       });
+
+      // A write tool just touched the working tree; drop the cached
+      // environment snapshot so the UI's next poll reflects the new diff
+      // instead of waiting out the cache TTL.
+      if (tool.mutability === 'write') invalidateSessionEnvironment(sessionId);
 
       await this.fireHooks({
         sessionId,

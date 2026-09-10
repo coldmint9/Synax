@@ -168,7 +168,91 @@ describe('resolveLlmSelection', () => {
 
     expect(result.providerId).toBe(providerId)
     expect(result.modelId).toBe('gpt-5.4-mini')
+    expect(result.apiFormat).toBe('openai')
     expect(result.provider.npm).toBe('@ai-sdk/openai-compatible')
+  })
+
+  it('routes OpenAI Responses connections to the native OpenAI SDK', () => {
+    const providerId = 'custom-api:codex-gateway'
+    const result = resolveLlmSelection({
+      catalog,
+      globalConfig: {
+        ...createGlobalConfig(),
+        providers: [
+          {
+            id: providerId,
+            label: 'Codex Gateway',
+            status: 'live',
+            kind: 'api',
+            caps: { canFollowUp: true, canCancel: true },
+            models: [{ id: 'gpt-5.4-codex', label: 'gpt-5.4-codex', isDefault: true }],
+          },
+        ],
+        defaultApiProviderId: providerId,
+        providerConnections: {
+          [providerId]: {
+            providerId,
+            baseUrl: 'https://gateway.example.com/v1',
+            extra: {
+              kind: 'api',
+              apiFormat: 'openai-responses',
+              model: 'gpt-5.4-codex',
+            },
+          },
+        },
+      },
+      purpose: 'wiki',
+    })
+
+    expect(result.apiFormat).toBe('openai-responses')
+    expect(result.provider.npm).toBe('@ai-sdk/openai')
+    expect(result.provider.api).toBe('https://gateway.example.com/v1')
+    expect(result.config.apiFormat).toBe('openai-responses')
+  })
+
+  it('defaults to Chat Completions and switches to Messages for the anthropic protocol', () => {
+    const openai = resolveLlmSelection({
+      catalog,
+      globalConfig: createGlobalConfig(),
+      purpose: 'wiki',
+    })
+    expect(openai.providerId).toBe('openai')
+    expect(openai.apiFormat).toBe('openai')
+
+    const providerId = 'custom-api:claude-gateway'
+    const custom = resolveLlmSelection({
+      catalog,
+      globalConfig: {
+        ...createGlobalConfig(),
+        providers: [
+          {
+            id: providerId,
+            label: 'Claude Gateway',
+            status: 'live',
+            kind: 'api',
+            caps: { canFollowUp: true, canCancel: true },
+            models: [{ id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6', isDefault: true }],
+          },
+        ],
+        defaultApiProviderId: providerId,
+        providerConnections: {
+          [providerId]: {
+            providerId,
+            baseUrl: 'https://claude-gateway.example.com/v1',
+            extra: {
+              kind: 'api',
+              apiFormat: 'anthropic',
+              model: 'claude-sonnet-4-6',
+            },
+          },
+        },
+      },
+      purpose: 'wiki',
+    })
+
+    expect(custom.apiFormat).toBe('anthropic')
+    expect(custom.provider.npm).toBe('@ai-sdk/anthropic')
+    expect(custom.provider.api).toBe('https://claude-gateway.example.com/v1')
   })
 
   it('prefers project API provider/model override over global default', () => {

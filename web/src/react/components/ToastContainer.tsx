@@ -11,16 +11,16 @@ const ICONS: Record<NotificationType, typeof Info> = {
 
 const TYPE_STYLES: Record<NotificationType, string> = {
   info: 'border-primary/30 bg-primary/[0.06]',
-  success: 'border-emerald-500/30 bg-emerald-500/[0.06]',
+  success: 'border-success/30 bg-success/[0.06]',
   error: 'border-destructive/30 bg-destructive/[0.06]',
-  warning: 'border-amber-500/30 bg-amber-500/[0.06]',
+  warning: 'border-warning/30 bg-warning/[0.06]',
 }
 
 const ICON_STYLES: Record<NotificationType, string> = {
   info: 'text-primary',
-  success: 'text-emerald-500',
+  success: 'text-success',
   error: 'text-destructive',
-  warning: 'text-amber-500',
+  warning: 'text-warning',
 }
 
 const MAX_VISIBLE_STACK = 3
@@ -68,7 +68,7 @@ function ToastItem({ notification, index, total, expanded }: {
 
   const VARIANT_STYLES: Record<string, string> = {
     default: 'text-primary hover:text-primary/80',
-    primary: 'text-emerald-600 hover:text-emerald-500',
+    primary: 'text-success hover:text-success',
     danger: 'text-destructive hover:text-destructive/80',
   }
 

@@ -1,4 +1,5 @@
 import { logger } from '../../../lib/logger.js'
+import type { ApiFormat } from '../../../lib/config/config-types.js'
 import type { ResolvedProviderConfig, RuntimeProvider } from '../types.js'
 import { buildOpenAICompatibleClientSettings } from '../custom-api-compat.js'
 
@@ -62,9 +63,36 @@ export async function instantiateProvider(
   })
 }
 
-export function selectLanguageModel(client: unknown, modelId: string, modelOptions?: Record<string, unknown>): unknown {
+/**
+ * Select the language model for a provider client.
+ *
+ * `apiFormat` pins the wire protocol of the connection:
+ * - `openai` → Chat Completions (`.chat()` on the native OpenAI client, callable otherwise)
+ * - `openai-responses` → Responses API (`.responses()`)
+ * - `anthropic` → Messages API (`.messages()`)
+ *
+ * Without an explicit format the historical selector order applies.
+ */
+export function selectLanguageModel(
+  client: unknown,
+  modelId: string,
+  modelOptions?: Record<string, unknown>,
+  apiFormat?: ApiFormat,
+): unknown {
   if (!client) throw new Error('Provider client was not created')
   const c = client as Record<string, unknown>
+
+  if (apiFormat === 'openai-responses') {
+    if (typeof c.responses === 'function') return (c.responses as Function)(modelId, modelOptions)
+    logger.warn({ modelId }, '[llm-runtime] client has no responses API; falling back to default selector')
+  }
+  if (apiFormat === 'openai' && typeof c.chat === 'function') {
+    return (c.chat as Function)(modelId, modelOptions)
+  }
+  if (apiFormat === 'anthropic' && typeof c.messages === 'function') {
+    return (c.messages as Function)(modelId, modelOptions)
+  }
+
   if (typeof client === 'function') return (client as Function)(modelId, modelOptions)
   if (typeof c.responses === 'function') return (c.responses as Function)(modelId, modelOptions)
   if (typeof c.messages === 'function') return (c.messages as Function)(modelId, modelOptions)

@@ -64,7 +64,7 @@ export default function WikiDraftDocumentChange({
                 </div>
               ) : null}
               {change.newContentMd ? (
-                <div className="text-emerald-600 whitespace-pre-wrap">
+                <div className="text-success whitespace-pre-wrap">
                   {change.newContentMd.slice(0, 800)}
                   {change.newContentMd.length > 800 ? '…' : ''}
                 </div>
@@ -86,7 +86,7 @@ export default function WikiDraftDocumentChange({
                 <button
                   type="button"
                   onClick={handleSaveEdit}
-                  className="rounded bg-primary px-2 py-0.5 text-[9px] text-white hover:bg-primary/90"
+                  className="rounded bg-primary px-2 py-0.5 text-[9px] text-primary-foreground hover:bg-primary/90"
                 >
                   Save
                 </button>

@@ -65,7 +65,7 @@ function GoalSelectionToolbar({
   return (
     <button
       type="button"
-      className="fixed z-50 flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded-full border border-amber-400/40 bg-background/95 px-2.5 py-1 text-[10px] font-medium text-amber-600 shadow-md backdrop-blur-sm hover:bg-amber-400/10"
+      className="fixed z-50 flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded-full border border-warning/40 bg-background/95 px-2.5 py-1 text-[10px] font-medium text-warning shadow-md backdrop-blur-sm hover:bg-warning/10"
       style={{ left: toolbar.x, top: toolbar.y }}
       onMouseDown={e => e.preventDefault()}
       onClick={() => {
@@ -90,7 +90,7 @@ function StaleBadge({ state }: { state: WikiStaleState }) {
   const map = {
     possibly_stale: { label: 'possibly stale', cls: 'bg-warning/15 text-warning' },
     stale: { label: 'stale', cls: 'bg-destructive/15 text-destructive' },
-    semantic_review_needed: { label: 'review needed', cls: 'bg-orange-500/15 text-orange-400' },
+    semantic_review_needed: { label: 'review needed', cls: 'bg-warning/15 text-warning' },
     conflict: { label: 'conflict', cls: 'bg-destructive/20 text-destructive' },
   } as const
   const { label, cls } = map[state] ?? { label: state, cls: 'bg-secondary text-muted-foreground' }
@@ -263,7 +263,7 @@ export default function WikiDocumentView({
         </div>
         <h1 className="wiki-doc-title">{document.title}</h1>
         {previewChange && (
-          <p className="mt-2 text-[11px] text-amber-600">Draft preview — showing proposed changes</p>
+          <p className="mt-2 text-[11px] text-warning">Draft preview — showing proposed changes</p>
         )}
       </header>
 

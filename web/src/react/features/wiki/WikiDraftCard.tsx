@@ -35,7 +35,7 @@ export default function WikiDraftCard({
             </span>
             <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium ${
               isGenerating ? 'animate-pulse bg-primary/15 text-primary' :
-              isPartial ? 'bg-amber-400/15 text-amber-600' :
+              isPartial ? 'bg-warning/15 text-warning' :
               'bg-primary/15 text-primary'
             }`}>
               {isGenerating ? 'generating' : isPartial ? 'partial' : 'ready'}
