@@ -189,7 +189,6 @@ export default function AgentLoopTestPage() {
                       streamingStepId={streamingStepId}
                       streamingLive={streamingLive}
                       streamingCompletedSteps={streamingCompletedSteps}
-                      permissions={[]}
                     />
                   )}
                 />

@@ -54,7 +54,7 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({ session
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
+    <div className="session-workspace-scroll min-h-0 flex-1 overflow-auto">
       <div className="flex items-center gap-1.5 border-b border-border/30 bg-secondary/20 px-2.5 py-1.5">
         <Bot size={12} className="text-primary" />
         <span className="text-[10px] font-medium text-foreground">Subagent</span>

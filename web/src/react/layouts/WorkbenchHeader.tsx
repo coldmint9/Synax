@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
-import { BookOpen, Bot, Search, Settings2, Sun, Moon, Zap, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw, Plug, ExternalLink } from 'lucide-react'
+import { ArrowLeft, BookOpen, Bot, Search, Settings2, Sun, Moon, Zap, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw, Plug, ExternalLink, Minimize2 } from 'lucide-react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
@@ -9,6 +9,10 @@ import { useProjectSettings } from '../features/settings/useProjectSettings'
 import { useLocale } from '../../hooks/useLocale'
 import { wikiApi } from '../../lib/api/wiki'
 import { NotificationBell } from '../components/notifications/NotificationBell'
+import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
+import { getSessionDisplayTitle } from '../features/sessions/useSessionDisplayTitle'
+import { useSessionWorkspaceStore } from '../features/sessions/sessionWorkspaceStore'
+import { WorkspaceFocusControls, WorkspaceWing } from '../features/sessions/WorkspaceChromeControls'
 import WikiSearchPanel from '../features/wiki/WikiSearchPanel'
 import { useWikiSearch, type SearchResult } from '../features/wiki/WikiSearchPanel'
 import {
@@ -18,7 +22,10 @@ import {
 } from '../features/sessions/sessionRoutes'
 import type { ActivityPanel } from './ActivityBar'
 
+export type ChromeMode = 'global' | 'agentDock' | 'workspaceFocus'
+
 interface WorkbenchHeaderProps {
+  chromeMode: ChromeMode
   activePanel: ActivityPanel | null
   onPanelToggle: (panel: ActivityPanel) => void
   hasProject: boolean
@@ -30,10 +37,75 @@ interface WorkbenchHeaderProps {
   onRemoveProject: (projectId: string) => Promise<void>
 }
 
-const navTabs: { id: ActivityPanel; icon: typeof BookOpen; labelKey?: 'titlebarAgent'; label?: string }[] = [
-  { id: 'sessions', icon: Bot, labelKey: 'titlebarAgent' },
+const navTabs: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
+  { id: 'sessions', icon: Bot, label: 'Work' },
   { id: 'wiki', icon: BookOpen, label: 'Wiki' },
 ]
+
+function ProjectSwitcher({
+  hasProject,
+  projectName,
+  currentProjectId,
+  projects,
+  onProjectSwitch,
+  onCreateProject,
+  onRemoveRequest,
+  compact = false,
+}: {
+  hasProject: boolean
+  projectName: string
+  currentProjectId: string
+  projects: ProjectSummary[]
+  onProjectSwitch: (projectId: string) => void
+  onCreateProject: () => void
+  onRemoveRequest: (event: React.MouseEvent, project: ProjectSummary) => void
+  compact?: boolean
+}) {
+  const { t } = useLocale()
+
+  return (
+    <Dropdown>
+      <Dropdown.Trigger>
+        <div role="button" tabIndex={0} className={`wh-project-trigger ${compact ? 'wh-project-trigger--compact' : ''}`}>
+          <span className="truncate max-w-[120px] text-xs font-medium">
+            {hasProject ? projectName : 'Synax'}
+          </span>
+        </div>
+      </Dropdown.Trigger>
+      <Dropdown.Popover placement={compact ? 'bottom start' : 'top start'}>
+        <Dropdown.Menu
+          aria-label={t('appSwitchProject')}
+          onAction={(key) => {
+            if (key === '__create__') onCreateProject()
+            else onProjectSwitch(key as string)
+          }}
+        >
+          {projects.map(project => (
+            <Dropdown.Item key={project.id} id={project.id} textValue={project.name}>
+              <div className="flex items-center justify-between w-full gap-2">
+                <span className="text-xs truncate">{project.name}</span>
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  className="shrink-0 p-0.5 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition cursor-pointer"
+                  onClick={(event) => onRemoveRequest(event, project)}
+                >
+                  <Trash2 size={11} />
+                </span>
+              </div>
+            </Dropdown.Item>
+          ))}
+          <Dropdown.Item key="__create__" id="__create__" textValue={t('appImportProject')}>
+            <span className="flex items-center gap-1.5 text-xs text-primary">
+              <Plus size={12} />
+              {t('appImportProject')}
+            </span>
+          </Dropdown.Item>
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
+  )
+}
 
 function WikiToolbar() {
   const { t } = useLocale()
@@ -276,6 +348,7 @@ function AgentToolbarPill({ visible }: { visible: boolean }) {
   const { projectId = '' } = useParams()
   const agentViewMode = useSkillStore(s => s.agentViewMode)
   const setAgentViewMode = useSkillStore(s => s.setAgentViewMode)
+  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
 
   useEffect(() => {
     setAgentViewMode(resolveAgentViewMode(location.pathname))
@@ -289,7 +362,7 @@ function AgentToolbarPill({ visible }: { visible: boolean }) {
   }
 
   return (
-    <ToolbarPill visible={visible}>
+    <ToolbarPill visible={visible} allowOverflow>
       <Tabs
         selectedKey={agentViewMode}
         onSelectionChange={(key) => navigateMode(key as 'sessions' | 'skills')}
@@ -309,6 +382,7 @@ function AgentToolbarPill({ visible }: { visible: boolean }) {
         </Tabs.ListContainer>
       </Tabs>
       {projectId && <ProjectMcpToolbarMenu projectId={projectId} />}
+      {agentViewMode === 'sessions' ? <WorkspaceWing sessionId={selectedSessionId} /> : null}
     </ToolbarPill>
   )
 }
@@ -321,7 +395,15 @@ function WikiToolbarPill({ visible }: { visible: boolean }) {
   )
 }
 
-function ToolbarPill({ visible, children }: { visible: boolean; children: ReactNode }) {
+function ToolbarPill({
+  visible,
+  children,
+  allowOverflow = false,
+}: {
+  visible: boolean
+  children: ReactNode
+  allowOverflow?: boolean
+}) {
   const [mounted, setMounted] = useState(false)
   const [phase, setPhase] = useState<'enter' | 'exit' | ''>('')
   const ref = useRef<HTMLDivElement>(null)
@@ -345,7 +427,7 @@ function ToolbarPill({ visible, children }: { visible: boolean; children: ReactN
   if (!mounted) return null
 
   const slotClass = `wh-pill-slot ${phase === 'enter' ? 'open' : phase === 'exit' ? 'closing' : ''}`
-  const pillClass = `wh-pill ${phase === 'enter' ? 'wh-pill-enter' : phase === 'exit' ? 'wh-pill-exit' : ''}`
+  const pillClass = `wh-pill ${allowOverflow ? 'wh-pill--overflow-visible' : ''} ${phase === 'enter' ? 'wh-pill-enter' : phase === 'exit' ? 'wh-pill-exit' : ''}`
 
   return (
     <div ref={ref} className={slotClass}>
@@ -356,7 +438,141 @@ function ToolbarPill({ visible, children }: { visible: boolean; children: ReactN
   )
 }
 
+function FocusGlobalMenu({
+  currentProjectId,
+  onPanelToggle,
+}: {
+  currentProjectId: string
+  onPanelToggle: (panel: ActivityPanel) => void
+}) {
+  const { t } = useLocale()
+  const navigate = useNavigate()
+  const theme = useShellStore(s => s.preferences.theme)
+  const setTheme = useShellStore(s => s.setTheme)
+
+  return (
+    <Dropdown>
+      <Dropdown.Trigger>
+        <span role="button" tabIndex={0} className="workspace-chrome-icon" aria-label="更多功能" title="更多功能">
+          <Ellipsis size={13} />
+        </span>
+      </Dropdown.Trigger>
+      <Dropdown.Popover placement="bottom end">
+        <Dropdown.Menu
+          aria-label="更多功能"
+          onAction={(key) => {
+            if (key === 'agent') onPanelToggle('sessions')
+            if (key === 'wiki') onPanelToggle('wiki')
+            if (key === 'skills' && currentProjectId) navigate(skillMarketplacePath(currentProjectId))
+            if (key === 'mcp' && currentProjectId) navigate(`/projects/${currentProjectId}/settings`)
+            if (key === 'settings') onPanelToggle('settings')
+            if (key === 'theme') setTheme(theme === 'dark' ? 'light' : 'dark')
+          }}
+        >
+          <Dropdown.Item id="agent" textValue={t('titlebarAgent')}>
+            <span className="flex items-center gap-2 text-xs"><Bot size={12} />{t('titlebarAgent')}</span>
+          </Dropdown.Item>
+          <Dropdown.Item id="wiki" textValue="Wiki">
+            <span className="flex items-center gap-2 text-xs"><BookOpen size={12} />Wiki</span>
+          </Dropdown.Item>
+          <Dropdown.Item id="skills" textValue="Skills" isDisabled={!currentProjectId}>
+            <span className="flex items-center gap-2 text-xs"><Zap size={12} />Skills</span>
+          </Dropdown.Item>
+          <Dropdown.Item id="mcp" textValue="MCP" isDisabled={!currentProjectId}>
+            <span className="flex items-center gap-2 text-xs"><Plug size={12} />MCP</span>
+          </Dropdown.Item>
+          <Dropdown.Item id="settings" textValue={t('appSettings')}>
+            <span className="flex items-center gap-2 text-xs"><Settings2 size={12} />{t('appSettings')}</span>
+          </Dropdown.Item>
+          <Dropdown.Item id="theme" textValue={theme === 'dark' ? t('appLightMode') : t('appDarkMode')}>
+            <span className="flex items-center gap-2 text-xs">
+              {theme === 'dark' ? <Sun size={12} /> : <Moon size={12} />}
+              {theme === 'dark' ? t('appLightMode') : t('appDarkMode')}
+            </span>
+          </Dropdown.Item>
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
+  )
+}
+
+function WorkspaceFocusRail({
+  projectName,
+  hasProject,
+  currentProjectId,
+  projects,
+  onProjectSwitch,
+  onCreateProject,
+  onRemoveRequest,
+  onPanelToggle,
+}: {
+  projectName: string
+  hasProject: boolean
+  currentProjectId: string
+  projects: ProjectSummary[]
+  onProjectSwitch: (projectId: string) => void
+  onCreateProject: () => void
+  onRemoveRequest: (event: React.MouseEvent, project: ProjectSummary) => void
+  onPanelToggle: (panel: ActivityPanel) => void
+}) {
+  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
+  const selectedSession = useAgentSessionStore(s => (
+    selectedSessionId ? s.sessions.find(session => session.id === selectedSessionId) : undefined
+  ))
+  const exitFocus = useSessionWorkspaceStore(s => s.exitFocus)
+  const sessionTitle = selectedSession ? getSessionDisplayTitle(selectedSession, '会话') : '会话'
+
+  if (!selectedSessionId) return null
+
+  return (
+    <div className="wh-pill wh-pill--focus">
+      <button
+        type="button"
+        className="workspace-focus-origin"
+        aria-label="返回对话"
+        title="返回对话（Esc）"
+        onClick={() => exitFocus(selectedSessionId)}
+      >
+        <ArrowLeft size={12} />
+        <span>对话</span>
+      </button>
+
+      <div className="workspace-focus-session" title={`${projectName} / ${sessionTitle}`}>
+        <span className="workspace-focus-project">{projectName}</span>
+        <span className="workspace-focus-separator">/</span>
+        <span className="workspace-focus-title">{sessionTitle}</span>
+      </div>
+
+      <WorkspaceFocusControls sessionId={selectedSessionId} />
+
+      <div className="workspace-focus-globals">
+        <ProjectSwitcher
+          compact
+          hasProject={hasProject}
+          projectName={projectName}
+          currentProjectId={currentProjectId}
+          projects={projects}
+          onProjectSwitch={onProjectSwitch}
+          onCreateProject={onCreateProject}
+          onRemoveRequest={onRemoveRequest}
+        />
+        <FocusGlobalMenu currentProjectId={currentProjectId} onPanelToggle={onPanelToggle} />
+        <button
+          type="button"
+          className="workspace-chrome-icon"
+          aria-label="还原工作区"
+          title="还原工作区"
+          onClick={() => exitFocus(selectedSessionId)}
+        >
+          <Minimize2 size={12} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function WorkbenchHeader({
+  chromeMode,
   activePanel,
   onPanelToggle,
   hasProject,
@@ -392,100 +608,106 @@ export function WorkbenchHeader({
     }
   }, [deleteTarget, deleting, onRemoveProject, confirmState])
 
+  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
+  useEffect(() => {
+    if (chromeMode !== 'workspaceFocus' || !selectedSessionId) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"]')) return
+      if (document.querySelector('[role="dialog"]')) return
+      useSessionWorkspaceStore.getState().exitFocus(selectedSessionId)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [chromeMode, selectedSessionId])
+
+  const headerClass = `workbench-header ${
+    chromeMode === 'workspaceFocus'
+      ? 'workbench-header--workspace-focus'
+      : chromeMode === 'agentDock'
+        ? 'workbench-header--agent-dock'
+        : 'workbench-header--global'
+  }`
+
   return (
-    <div className="workbench-header">
-      <div className="wh-pill">
-        <Dropdown>
-          <Dropdown.Trigger>
-            <div role="button" tabIndex={0} className="wh-project-trigger">
-              <span className="truncate max-w-[120px] text-xs font-medium">
-                {hasProject ? projectName : 'Synax'}
-              </span>
-            </div>
-          </Dropdown.Trigger>
-          <Dropdown.Popover placement="top start">
-            <Dropdown.Menu
-              aria-label={t('appSwitchProject')}
-              onAction={(key) => {
-                if (key === '__create__') onCreateProject()
-                else onProjectSwitch(key as string)
-              }}
+    <div className={headerClass}>
+      {chromeMode === 'workspaceFocus' ? (
+        <WorkspaceFocusRail
+          projectName={projectName}
+          hasProject={hasProject}
+          currentProjectId={currentProjectId}
+          projects={projects}
+          onProjectSwitch={onProjectSwitch}
+          onCreateProject={onCreateProject}
+          onRemoveRequest={handleRemoveClick}
+          onPanelToggle={onPanelToggle}
+        />
+      ) : (
+        <>
+          <div className="wh-pill">
+            <ProjectSwitcher
+              hasProject={hasProject}
+              projectName={projectName}
+              currentProjectId={currentProjectId}
+              projects={projects}
+              onProjectSwitch={onProjectSwitch}
+              onCreateProject={onCreateProject}
+              onRemoveRequest={handleRemoveClick}
+            />
+
+            <div className="wh-divider" />
+
+            <Tabs
+              selectedKey={activePanel ?? ''}
+              onSelectionChange={(key) => onPanelToggle(key as ActivityPanel)}
+              className="wh-tabs"
             >
-              {projects.map(p => (
-                <Dropdown.Item key={p.id} id={p.id} textValue={p.name}>
-                  <div className="flex items-center justify-between w-full gap-2">
-                    <span className="text-xs truncate">{p.name}</span>
-                    <span
-                      role="button"
-                      tabIndex={-1}
-                      className="shrink-0 p-0.5 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition cursor-pointer"
-                      onClick={(e) => handleRemoveClick(e, p)}
-                    >
-                      <Trash2 size={11} />
-                    </span>
-                  </div>
-                </Dropdown.Item>
-              ))}
-              <Dropdown.Item key="__create__" id="__create__" textValue={t('appImportProject')}>
-                <span className="flex items-center gap-1.5 text-xs text-primary">
-                  <Plus size={12} />
-                  {t('appImportProject')}
-                </span>
-              </Dropdown.Item>
-            </Dropdown.Menu>
-          </Dropdown.Popover>
-        </Dropdown>
+              <Tabs.ListContainer>
+                <Tabs.List aria-label="主导航" className="wh-tabs-list">
+                  {navTabs.map((tab, i) => {
+                    const Icon = tab.icon
+                    const label = tab.label
+                    return (
+                      <Tabs.Tab
+                        key={tab.id}
+                        id={tab.id}
+                        isDisabled={!hasProject}
+                        className={`wh-tab wh-tab--${tab.id}`}
+                      >
+                        {i > 0 && <Tabs.Separator />}
+                        <Icon size={13} />
+                        <span>{label}</span>
+                        <Tabs.Indicator />
+                      </Tabs.Tab>
+                    )
+                  })}
+                </Tabs.List>
+              </Tabs.ListContainer>
+            </Tabs>
 
-        <div className="wh-divider" />
+            <div className="wh-divider" />
 
-        <Tabs
-          selectedKey={activePanel ?? ''}
-          onSelectionChange={(key) => onPanelToggle(key as ActivityPanel)}
-          className="wh-tabs"
-        >
-          <Tabs.ListContainer>
-            <Tabs.List aria-label="主导航" className="wh-tabs-list">
-              {navTabs.map((tab, i) => {
-                const Icon = tab.icon
-                const label = tab.labelKey ? t(tab.labelKey) : tab.label!
-                return (
-                  <Tabs.Tab
-                    key={tab.id}
-                    id={tab.id}
-                    isDisabled={!hasProject}
-                    className={`wh-tab wh-tab--${tab.id}`}
-                  >
-                    {i > 0 && <Tabs.Separator />}
-                    <Icon size={13} />
-                    <span>{label}</span>
-                    <Tabs.Indicator />
-                  </Tabs.Tab>
-                )
-              })}
-            </Tabs.List>
-          </Tabs.ListContainer>
-        </Tabs>
+            <div className="wh-actions">
+              <NotificationBell />
+              <button type="button" className="wh-btn" title={t('appSettings')} onClick={() => onPanelToggle('settings')}>
+                <Settings2 size={15} />
+              </button>
+              <button
+                type="button"
+                className="wh-btn"
+                title={theme === 'dark' ? t('appLightMode') : t('appDarkMode')}
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              >
+                {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+              </button>
+            </div>
+          </div>
 
-        <div className="wh-divider" />
-
-        <div className="wh-actions">
-          <NotificationBell />
-          <button type="button" className="wh-btn" title={t('appSettings')} onClick={() => onPanelToggle('settings')}>
-            <Settings2 size={15} />
-          </button>
-          <button
-            type="button"
-            className="wh-btn"
-            title={theme === 'dark' ? t('appLightMode') : t('appDarkMode')}
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          >
-            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
-        </div>
-      </div>
-
-      <WikiToolbarPill visible={activePanel === 'wiki'} />
-      <AgentToolbarPill visible={activePanel === 'sessions'} />
+          <WikiToolbarPill visible={activePanel === 'wiki'} />
+          <AgentToolbarPill visible={activePanel === 'sessions'} />
+        </>
+      )}
 
       {/* Remove project confirmation modal */}
       <Modal state={confirmState}>

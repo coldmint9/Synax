@@ -1,10 +1,16 @@
-import { memo, useEffect, useState } from 'react'
-import { Bot, FileCode2, FileDiff, GitBranch, GitCommit, LayoutDashboard, RefreshCw } from 'lucide-react'
-import { agentRuntimeApi, type SessionEnvironment } from '../../../lib/api/agentRuntime'
-import { useAgentSessionStore } from './agentSessionStore'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { Bot, Check, FileCode2, FileDiff, GitBranch, GitCommit, RefreshCw } from 'lucide-react'
+import type { SessionEnvironment } from '../../../lib/api/agentRuntime'
+import { copyTextToClipboard } from '../../../lib/clipboard'
 import { openWorkspaceDiff, openWorkspaceFile, openWorkspaceSubagent } from './sessionWorkspaceStore'
+import { useSessionEnvironment } from './useSessionEnvironment'
 
-const REFRESH_MS = 8000
+/** Input files are listed by basename; the full path stays available on hover
+ *  and via right-click, which copies it. */
+function baseName(filePath: string): string {
+  const parts = filePath.split(/[\\/]/)
+  return parts[parts.length - 1] || filePath
+}
 
 function statusText(status: string): string {
   switch (status) {
@@ -31,58 +37,62 @@ function statusTone(status: string): string {
   }
 }
 
-export const WorkspaceDashboard = memo(function WorkspaceDashboard({ sessionId }: { sessionId: string | null }) {
-  const [environment, setEnvironment] = useState<SessionEnvironment | null>(null)
-  const [loading, setLoading] = useState(false)
+export const WorkspaceDashboard = memo(function WorkspaceDashboard({
+  sessionId,
+  environment: providedEnvironment,
+  loading: providedLoading,
+  reload: providedReload,
+}: {
+  sessionId: string | null
+  environment?: SessionEnvironment | null
+  loading?: boolean
+  reload?: () => void | Promise<void>
+}) {
+  // The workspace panel already polls this snapshot; only fall back to owning
+  // the request when rendered standalone.
+  const owned = useSessionEnvironment(providedEnvironment === undefined ? sessionId : null)
+  const environment = providedEnvironment === undefined ? owned.environment : providedEnvironment
+  const loading = providedLoading ?? owned.loading
+  const reload = providedReload ?? owned.reload
+  const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  const copiedTimer = useRef<number | null>(null)
 
-  const load = async () => {
-    if (!sessionId) return
-    setLoading(true)
-    try {
-      setEnvironment(await agentRuntimeApi.getSessionEnvironment(sessionId))
-    } catch {
-      setEnvironment(null)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const copyPath = useCallback(async (filePath: string) => {
+    // Only claim success when the write actually landed.
+    if (!await copyTextToClipboard(filePath)) return
+    setCopiedPath(filePath)
+    if (copiedTimer.current) window.clearTimeout(copiedTimer.current)
+    copiedTimer.current = window.setTimeout(() => setCopiedPath(null), 1200)
+  }, [])
 
-  useEffect(() => {
-    void load()
-    if (!sessionId) return
-    const timer = window.setInterval(() => void load(), REFRESH_MS)
-    return () => window.clearInterval(timer)
-  }, [sessionId])
+  useEffect(() => () => {
+    if (copiedTimer.current) window.clearTimeout(copiedTimer.current)
+  }, [])
 
   const recentFiles = (environment?.inputFiles ?? []).slice(-8).reverse()
   const changedFiles = environment?.changedFiles ?? []
 
   return (
-    <div className="workspace-dashboard min-h-0 flex-1 overflow-y-auto p-3">
-      <div className="flex items-center gap-1.5">
-        <LayoutDashboard size={12} className="text-primary" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground">工作区</span>
-        <button
-          type="button"
-          className="ml-auto inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-          onClick={() => void load()}
-          disabled={loading || !sessionId}
-          aria-label="刷新工作区"
-          title="刷新工作区"
-        >
-          <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
-        </button>
-      </div>
-
+    <div className="workspace-dashboard session-workspace-scroll min-h-0 flex-1 overflow-y-auto p-3">
       {!sessionId ? (
         <div className="py-10 text-center text-[10px] text-muted-foreground/60">选择会话后查看工作区</div>
       ) : environment ? (
         <>
-          <div className="mt-2 rounded-md border border-border/30 bg-secondary/15 px-2.5 py-2 text-[10px]">
+          <div className="rounded-md border border-border/30 bg-secondary/15 px-2.5 py-2 text-[10px]">
             <div className="flex items-center gap-1.5">
               <GitBranch size={10} className="shrink-0 text-primary" />
               <span className="min-w-0 flex-1 truncate font-mono text-foreground">{environment.branch}</span>
               <span className="shrink-0 text-muted-foreground">{environment.dirty ? 'dirty' : 'clean'}</span>
+              <button
+                type="button"
+                className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                onClick={() => void reload()}
+                disabled={loading}
+                aria-label="刷新工作区"
+                title="刷新工作区"
+              >
+                <RefreshCw size={10} className={loading ? 'animate-spin' : ''} />
+              </button>
             </div>
             <div className="mt-1 flex items-center gap-1.5 text-muted-foreground">
               <GitCommit size={10} className="shrink-0" />
@@ -104,7 +114,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({ sessionId }
                   key={sub.id}
                   type="button"
                   className="flex w-full min-w-0 items-start gap-1.5 rounded px-1.5 py-1.5 text-left transition hover:bg-secondary/50"
-                  onClick={() => openWorkspaceSubagent(sub.id, sub.title ?? sub.id.slice(0, 8))}
+                  onClick={() => openWorkspaceSubagent(sessionId, sub.id, sub.title ?? sub.id.slice(0, 8))}
                 >
                   <Bot size={11} className="mt-0.5 shrink-0 text-primary" />
                   <span className="min-w-0 flex-1">
@@ -126,7 +136,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({ sessionId }
                   key={`${file.status}:${file.path}`}
                   type="button"
                   className="flex w-full min-w-0 items-center gap-1 rounded px-1.5 py-1 text-left transition hover:bg-secondary/50"
-                  onClick={() => openWorkspaceDiff(file.path)}
+                  onClick={() => openWorkspaceDiff(sessionId, file.path)}
                 >
                   <FileDiff size={10} className="shrink-0 text-primary" />
                   <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-foreground/75">{file.path}</span>
@@ -143,11 +153,20 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({ sessionId }
                 <button
                   key={path}
                   type="button"
+                  title={path}
                   className="flex w-full min-w-0 items-center gap-1 rounded px-1.5 py-1 text-left transition hover:bg-secondary/50"
-                  onClick={() => openWorkspaceFile(path)}
+                  onClick={() => openWorkspaceFile(sessionId, path)}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    void copyPath(path)
+                  }}
                 >
-                  <FileCode2 size={10} className="shrink-0 text-primary" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-foreground/75">{path}</span>
+                  {copiedPath === path ? (
+                    <Check size={10} className="shrink-0 text-success" />
+                  ) : (
+                    <FileCode2 size={10} className="shrink-0 text-primary" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-[10px] text-foreground/75">{baseName(path)}</span>
                 </button>
               ))
             )}

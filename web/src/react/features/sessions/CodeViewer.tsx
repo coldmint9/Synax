@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FileCode2, RefreshCw } from 'lucide-react'
 import { agentRuntimeApi } from '../../../lib/api/agentRuntime'
 import { highlightCode, languageForPath } from './codeHighlight'
@@ -6,7 +6,7 @@ import { highlightCode, languageForPath } from './codeHighlight'
 function LineNumbers({ count }: { count: number }) {
   const lines = useMemo(() => Array.from({ length: count }, (_, i) => i + 1), [count])
   return (
-    <div aria-hidden className="code-viewer-line-numbers select-none text-right font-mono text-[11px] leading-[1.5] text-muted-foreground/50">
+    <div aria-hidden className="code-viewer-line-numbers select-none text-right font-mono text-[11px] leading-[1.5]">
       {lines.map(line => <div key={line}>{line}</div>)}
     </div>
   )
@@ -17,33 +17,33 @@ export const CodeViewer = memo(function CodeViewer({ sessionId, path }: { sessio
   const [html, setHtml] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Guards against a slow read for a previous file overwriting the current one.
+  const requestRef = useRef(0)
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    const requestId = requestRef.current + 1
+    requestRef.current = requestId
     setLoading(true)
     setError(null)
     try {
       const result = await agentRuntimeApi.getSessionEnvironmentFile(sessionId, path, 'input')
       const text = result.content ?? ''
+      const nextHtml = await highlightCode(text, path)
+      if (requestRef.current !== requestId) return
       setContent(text)
-      setHtml(await highlightCode(text, path))
+      setHtml(nextHtml)
     } catch (err) {
+      if (requestRef.current !== requestId) return
       setError(err instanceof Error ? err.message : '读取文件失败')
     } finally {
-      setLoading(false)
+      if (requestRef.current === requestId) setLoading(false)
     }
-  }
+  }, [path, sessionId])
 
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const result = await agentRuntimeApi.getSessionEnvironmentFile(sessionId, path, 'input').catch(() => null)
-      if (cancelled || !result) return
-      setContent(result.content ?? '')
-      setHtml(await highlightCode(result.content ?? '', path))
-      setLoading(false)
-    })()
-    return () => { cancelled = true }
-  }, [path, sessionId])
+    void load()
+    return () => { requestRef.current += 1 }
+  }, [load])
 
   const lineCount = useMemo(() => (content ? content.split('\n').length : 0), [content])
   const language = languageForPath(path)
@@ -64,18 +64,18 @@ export const CodeViewer = memo(function CodeViewer({ sessionId, path }: { sessio
           <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto bg-[var(--cx-gray-800)]">
+      <div className="code-viewer-body session-workspace-scroll min-h-0 flex-1 overflow-auto">
         {loading ? (
-          <div className="p-3 text-[10px] text-muted-foreground">读取中…</div>
+          <div className="file-viewer-status">读取中…</div>
         ) : error ? (
-          <div className="p-3 text-[10px] text-destructive">{error}</div>
+          <div className="file-viewer-status file-viewer-status--error">{error}</div>
         ) : (
-          <div className="flex min-w-max">
-            <div className="sticky left-0 z-10 border-r border-white/10 bg-[var(--cx-gray-800)] px-2 py-2">
+          <div className="flex min-w-max items-stretch">
+            <div className="code-viewer-gutter sticky left-0 z-10 px-2 py-2">
               <LineNumbers count={lineCount} />
             </div>
             <div
-              className="code-viewer-content min-w-max px-2 py-2 font-mono text-[11px] leading-[1.5]"
+              className="code-viewer-content min-w-max px-3 py-2 font-mono text-[11px] leading-[1.5]"
               dangerouslySetInnerHTML={{ __html: html }}
             />
           </div>

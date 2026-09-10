@@ -114,7 +114,7 @@ export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
               className="session-file-island-row"
               title={file.path}
               onClick={() => {
-                openWorkspaceDiff(file.path)
+                openWorkspaceDiff(sessionId, file.path)
                 setOpen(false)
               }}
             >

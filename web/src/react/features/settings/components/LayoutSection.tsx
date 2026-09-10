@@ -11,11 +11,13 @@ export function LayoutSection() {
   const locale = useShellStore(s => s.preferences.locale)
   const defaultHome = useShellStore(s => s.preferences.defaultHome)
   const notifications = useShellStore(s => s.preferences.notifications)
+  const foldWorkRuns = useShellStore(s => s.preferences.sessionFoldWorkRuns)
   const editor = useShellStore(s => s.preferences.editor)
   const agentFontSize = useShellStore(s => s.preferences.agentFontSize)
   const setLocale = useShellStore(s => s.setLocale)
   const setDefaultHome = useShellStore(s => s.setDefaultHome)
   const setNotifications = useShellStore(s => s.setNotifications)
+  const setFoldWorkRuns = useShellStore(s => s.setSessionFoldWorkRuns)
   const setEditor = useShellStore(s => s.setEditor)
   const setAgentFontSize = useShellStore(s => s.setAgentFontSize)
 
@@ -58,6 +60,17 @@ export function LayoutSection() {
 
         <FormRow label={t('settingsNotifications')} description={t('settingsNotificationsHint')}>
           <Switch size="sm" isSelected={notifications} onChange={setNotifications} aria-label={t('settingsNotifications')}>
+            <Switch.Control><Switch.Thumb /></Switch.Control>
+          </Switch>
+        </FormRow>
+
+        <FormRow label={t('sessionWorkLogToggle')} description={t('settingsFoldWorkLogHint')}>
+          <Switch
+            size="sm"
+            isSelected={foldWorkRuns}
+            onChange={setFoldWorkRuns}
+            aria-label={t('sessionWorkLogToggle')}
+          >
             <Switch.Control><Switch.Thumb /></Switch.Control>
           </Switch>
         </FormRow>

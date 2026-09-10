@@ -21,6 +21,43 @@ interface Props {
 const RIPPLE_WIDTHS = [42, 40, 28, 20]
 const RESTING_WIDTH = 12
 
+/** Where in the scrollport the "you are here" probe line sits. */
+const PROBE_RATIO = 0.35
+
+/**
+ * Picks the turn that owns the probe line.
+ *
+ * `offsets` are each entry's top measured against the scroll content. The first
+ * and last turns sit at the ends of the document, so a mid-viewport probe can
+ * never reach them — they are pinned to the scroll extremes instead. Without
+ * that, the top and bottom ticks could never become active.
+ */
+export function resolveActiveEntryIndex(
+  offsets: number[],
+  scrollTop: number,
+  clientHeight: number,
+  maxScroll: number,
+): number {
+  if (offsets.length === 0) return -1
+  if (scrollTop <= 2) return 0
+  if (maxScroll - scrollTop <= 2) return offsets.length - 1
+
+  const probe = scrollTop + clientHeight * PROBE_RATIO
+  let lo = 0
+  let hi = offsets.length - 1
+  let chosen = 0
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (offsets[mid] <= probe) {
+      chosen = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return chosen
+}
+
 function scrollToEntry(scrollRoot: HTMLElement | null, entryId: string) {
   // The anchor element is always in the DOM, but its body may still be a height
   // reservation that only mounts once it approaches the viewport. Re-centre
@@ -54,6 +91,11 @@ function firstTurnText(turn: InterleavedTurn): string {
 }
 
 function entryPreview(entry: ConversationTimelineEntry): { title: string; body: string } {
+  // Injected scaffolding is summarised everywhere — never echo the payload.
+  if (entry.kind === 'user' && entry.injected) {
+    return { title: entry.label, body: '' }
+  }
+
   const title = entry.label
   const turns = entry.kind === 'agent'
     ? [entry.turn]
@@ -106,28 +148,56 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({ scr
       return
     }
 
-    // Every entry keeps a wrapper in the DOM (lazy entries render a height
-    // reservation), so the anchors always resolve.
-    const targets = entries
-      .map(entry => root.querySelector(`#${sessionEntryDomId(entry.id)}`))
-      .filter((node): node is HTMLElement => node instanceof HTMLElement)
+    // Anchor offsets are memoised: scrolling only binary-searches them, and a
+    // resize re-measures (lazy transcript entries change height as they mount).
+    let offsets: Array<{ id: string; top: number }> = []
+    let frame = 0
 
-    if (targets.length === 0) return
+    const measureOffsets = () => {
+      const rootTop = root.getBoundingClientRect().top
+      const next: Array<{ id: string; top: number }> = []
+      for (const entry of entries) {
+        const element = root.querySelector(`#${sessionEntryDomId(entry.id)}`)
+        if (!(element instanceof HTMLElement)) continue
+        next.push({ id: entry.id, top: element.getBoundingClientRect().top - rootTop + root.scrollTop })
+      }
+      offsets = next
+    }
 
-    const observer = new IntersectionObserver(
-      records => {
-        const visible = records
-          .filter(record => record.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)
-        if (visible[0]?.target.id) {
-          setActiveId(visible[0].target.id.replace(/^session-entry-/, ''))
-        }
-      },
-      { root, rootMargin: '-28% 0px -52% 0px', threshold: [0, 0.2, 0.5, 1] },
-    )
+    const update = () => {
+      frame = 0
+      if (offsets.length === 0) return
 
-    for (const target of targets) observer.observe(target)
-    return () => observer.disconnect()
+      const chosen = resolveActiveEntryIndex(
+        offsets.map(offset => offset.top),
+        root.scrollTop,
+        root.clientHeight,
+        root.scrollHeight - root.clientHeight,
+      )
+      if (chosen >= 0) setActiveId(offsets[chosen].id)
+    }
+
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update)
+    }
+    const onLayoutChange = () => {
+      measureOffsets()
+      update()
+    }
+
+    measureOffsets()
+    update()
+    root.addEventListener('scroll', onScroll, { passive: true })
+
+    const content = root.firstElementChild
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onLayoutChange)
+    if (observer && content) observer.observe(content)
+
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+      root.removeEventListener('scroll', onScroll)
+      observer?.disconnect()
+    }
   }, [entries, scrollRootRef, selectedSessionId])
 
   const jump = useCallback((entryId: string) => {

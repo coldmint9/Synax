@@ -75,12 +75,13 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
       <Popover.Trigger
         aria-label="思考强度"
         aria-disabled={Boolean(disabled)}
-        className={`goal-dock-composer-chip inline-flex h-7 max-w-[5.75rem] shrink-0 items-center gap-1 rounded-full px-2 text-[10px] font-normal text-muted-foreground${
+        className={`goal-dock-composer-chip inline-flex h-7 max-w-[4.75rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${
           disabled ? ' pointer-events-none opacity-50' : ''
         }`}
       >
-        <span className="shrink-0 opacity-70">思考</span>
-        <span className="truncate font-medium text-foreground/80">{REASONING_EFFORT_LABELS[activeEffort]}</span>
+        {/* Raw level id (`low` … `max`) — the translated label is kept for
+            assistive tech only. */}
+        <span className="truncate font-medium tracking-tight text-foreground/85">{activeEffort}</span>
       </Popover.Trigger>
       <Popover.Content placement="top end" offset={8} className="z-50 w-[16rem] overflow-hidden rounded-xl p-0">
         <div className="px-3 pb-3 pt-2.5">
@@ -88,7 +89,7 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
           <div className="relative flex min-h-6 items-center justify-center">
             <div className="flex items-center gap-0.5">
               <span className="text-sm font-medium leading-none" style={{ color: ACCENT_TEXT }}>
-                {REASONING_EFFORT_LABELS[activeEffort]}
+                {activeEffort}
               </span>
               <ChevronRight size={12} className="text-muted-foreground/75" />
             </div>

@@ -8,6 +8,8 @@ export type ConversationTimelineEntry =
       createdAt: string
       label: string
       content: string
+      /** App-composed prompt scaffolding rather than something the user typed. */
+      injected?: boolean
     }
   | {
       id: string
@@ -74,14 +76,32 @@ export type UserMessageTimelineEntry = {
   createdAt: string
   label: string
   content: string
+  /** True when the app composed this prompt for the model rather than the user
+   *  typing it — the transcript shows those as a compact injection chip. */
+  injected?: boolean
+}
+
+/**
+ * The goal prompt scaffolding always opens with the language directive, which
+ * makes it recognisable even for messages stored before `messageSource`
+ * existed. A hand-typed prompt would have to start with that exact heading.
+ */
+const INJECTED_PROMPT_MARKER = '## Language Output Directive'
+
+export function isSystemInjectedMessage(message: AgentRuntimeMessage): boolean {
+  if (message.role !== 'user') return false
+  if (message.metadata?.source === 'system_injection') return true
+  return message.content.trimStart().startsWith(INJECTED_PROMPT_MARKER)
 }
 
 function userTimelineEntry(message: AgentRuntimeMessage): UserMessageTimelineEntry {
+  const injected = isSystemInjectedMessage(message)
   return {
     id: message.id,
     createdAt: message.createdAt,
-    label: truncate(message.content),
+    label: injected ? '已注入系统提示' : truncate(message.content),
     content: message.content,
+    ...(injected ? { injected: true } : {}),
   }
 }
 

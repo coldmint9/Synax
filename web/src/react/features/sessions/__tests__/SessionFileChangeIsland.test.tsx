@@ -93,6 +93,6 @@ describe('SessionFileChangeIsland', () => {
     expect(row.textContent).toContain('+6')
 
     fireEvent.click(row)
-    expect(openWorkspaceDiff).toHaveBeenCalledWith('src/app.ts')
+    expect(openWorkspaceDiff).toHaveBeenCalledWith('sess-1', 'src/app.ts')
   })
 })

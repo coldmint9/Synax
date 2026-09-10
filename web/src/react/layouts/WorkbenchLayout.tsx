@@ -11,12 +11,15 @@ import { useRuntimeSSE } from '../features/sessions/useRuntimeSSE'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
 import { sessionPath } from '../features/sessions/sessionRoutes'
 import { resolveSessionsEntryPath } from '../features/sessions/sessionLastVisit'
+import { resolveAgentViewMode } from '../features/sessions/sessionRoutes'
 import type { ActivityPanel } from './ActivityBar'
-import { WorkbenchHeader } from './WorkbenchHeader'
+import { WorkbenchHeader, type ChromeMode } from './WorkbenchHeader'
 import { ProjectCreateDialog } from '../features/project-create/ProjectCreateDialog'
 import { ToastContainer } from '../components/ToastContainer'
 import WikiPage from '../pages/WikiPage'
 import SessionsPage from '../pages/SessionsPage'
+import { SessionEnvironmentProvider } from '../features/sessions/SessionEnvironmentContext'
+import { useSessionWorkspace } from '../features/sessions/sessionWorkspaceStore'
 
 export default function WorkbenchLayout() {
   const { projectId: routeProjectId = '' } = useParams()
@@ -93,6 +96,14 @@ export default function WorkbenchLayout() {
     return null
   })()
 
+  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
+  const agentPanelOpen = useAgentSessionStore(s => s.panelOpen)
+  const workspaceState = useSessionWorkspace(selectedSessionId)
+  const sessionsViewMode = activePanel === 'sessions' ? resolveAgentViewMode(location.pathname) : null
+  const chromeMode: ChromeMode = sessionsViewMode === 'sessions' && agentPanelOpen && selectedSessionId
+    ? (workspaceState.presentation === 'focus' ? 'workspaceFocus' : 'agentDock')
+    : 'global'
+
   const panelRoutes: Record<ActivityPanel, string> = {
     wiki: `/projects/${effectiveProjectId}/wiki`,
     sessions: resolveSessionsEntryPath(effectiveProjectId),
@@ -135,45 +146,50 @@ export default function WorkbenchLayout() {
   }, [effectiveProjectId, unbindContext, setCurrentProjectId, removeFromStore, navigate])
 
   return (
-    <div className="workbench-shell">
-      <WorkbenchHeader
-        activePanel={activePanel}
-        onPanelToggle={handlePanelToggle}
-        hasProject={!!effectiveProjectId}
-        projectName={projectName}
-        currentProjectId={effectiveProjectId}
-        projects={projects}
-        onProjectSwitch={(id) => navigate(`/projects/${id}/wiki`)}
-        onCreateProject={() => setCreateDialogOpen(true)}
-        onRemoveProject={handleRemoveProject}
-      />
-      <div className="workbench-island">
-        <div className="island-body">
-          {/* Cached project pages — always mounted once project exists */}
-          {effectiveProjectId && (
-            <>
-              <div
-                className="absolute inset-0 flex flex-col"
-                style={{ visibility: activePanel === 'wiki' ? 'visible' : 'hidden', zIndex: activePanel === 'wiki' ? 1 : 0 }}
-              >
-                <WikiPage projectId={effectiveProjectId} />
-              </div>
-              <div
-                className="absolute inset-0 flex flex-col"
-                style={{ visibility: activePanel === 'sessions' ? 'visible' : 'hidden', zIndex: activePanel === 'sessions' ? 1 : 0 }}
-              >
-                <SessionsPage />
-              </div>
-            </>
-          )}
-          {/* Outlet for non-cached routes (welcome, settings) */}
-          <div className={isCachedPanel ? 'hidden' : 'flex-1 min-h-0 flex flex-col'}>
-            <Outlet context={{ onCreateProject: () => setCreateDialogOpen(true) }} />
+    <SessionEnvironmentProvider
+      sessionId={chromeMode === 'global' ? null : selectedSessionId}
+    >
+      <div className="workbench-shell" data-chrome-mode={chromeMode}>
+        <WorkbenchHeader
+          chromeMode={chromeMode}
+          activePanel={activePanel}
+          onPanelToggle={handlePanelToggle}
+          hasProject={!!effectiveProjectId}
+          projectName={projectName}
+          currentProjectId={effectiveProjectId}
+          projects={projects}
+          onProjectSwitch={(id) => navigate(`/projects/${id}/wiki`)}
+          onCreateProject={() => setCreateDialogOpen(true)}
+          onRemoveProject={handleRemoveProject}
+        />
+        <div className="workbench-island">
+          <div className="island-body">
+            {/* Cached project pages — always mounted once project exists */}
+            {effectiveProjectId && (
+              <>
+                <div
+                  className="absolute inset-0 flex flex-col"
+                  style={{ visibility: activePanel === 'wiki' ? 'visible' : 'hidden', zIndex: activePanel === 'wiki' ? 1 : 0 }}
+                >
+                  <WikiPage projectId={effectiveProjectId} />
+                </div>
+                <div
+                  className="absolute inset-0 flex flex-col"
+                  style={{ visibility: activePanel === 'sessions' ? 'visible' : 'hidden', zIndex: activePanel === 'sessions' ? 1 : 0 }}
+                >
+                  <SessionsPage />
+                </div>
+              </>
+            )}
+            {/* Outlet for non-cached routes (welcome, settings) */}
+            <div className={isCachedPanel ? 'hidden' : 'flex-1 min-h-0 flex flex-col'}>
+              <Outlet context={{ onCreateProject: () => setCreateDialogOpen(true) }} />
+            </div>
           </div>
         </div>
+        <ProjectCreateDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} />
+        <ToastContainer />
       </div>
-      <ProjectCreateDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} />
-      <ToastContainer />
-    </div>
+    </SessionEnvironmentProvider>
   )
 }

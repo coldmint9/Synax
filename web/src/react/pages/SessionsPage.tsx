@@ -7,6 +7,7 @@ import { useSessionDetailPolling } from '../features/sessions/useSessionDetailPo
 import { useSessionLiveStream } from '../features/sessions/useSessionLiveStream'
 import { useLocale } from '../../hooks/useLocale'
 import { SessionTranscript } from '../features/sessions/SessionTranscript'
+import { AgentCommandRail } from '../features/sessions/AgentCommandRail'
 
 import { SessionWorkspacePanel } from '../features/sessions/SessionWorkspacePanel'
 import { SessionListPanel } from '../features/sessions/SessionListPanel'
@@ -15,13 +16,14 @@ import { useSessionRouteSync } from '../features/sessions/useSessionRouteSync'
 import { isNewSessionPath, newSessionPath, resolveAgentViewMode } from '../features/sessions/sessionRoutes'
 import type { SessionListView } from '../features/sessions/sessionBuckets'
 import { SkillMarketplacePanel } from '../features/skills/SkillMarketplacePanel'
-import { useSessionWorkspaceStore } from '../features/sessions/sessionWorkspaceStore'
+import { useSessionWorkspace } from '../features/sessions/sessionWorkspaceStore'
+import { useMediaQuery } from '../../hooks/useMediaQuery'
 
 const LEFT_PANEL_DEFAULT = 260
 const LEFT_PANEL_MIN = 210
 const LEFT_PANEL_MAX = 420
-const RIGHT_PANEL_DEFAULT = 220
-const RIGHT_PANEL_MIN = 190
+const RIGHT_PANEL_DEFAULT = 320
+const RIGHT_PANEL_MIN = 280
 const RIGHT_PANEL_MAX = 420
 const LEFT_PANEL_STORAGE_KEY = 'synax-sessions-left-panel'
 const RIGHT_PANEL_STORAGE_KEY = 'synax-sessions-right-panel'
@@ -88,28 +90,22 @@ function LeftPanelCollapseButton({ collapsed, onToggle }: { collapsed: boolean; 
 
 const SessionDetailSidebar = memo(function SessionDetailSidebar({
   width,
-  maximized,
+  focus,
   onResize,
-  onToggleMaximize,
 }: {
   width: number
-  maximized: boolean
+  focus: boolean
   onResize: (event: React.PointerEvent<HTMLDivElement>) => void
-  onToggleMaximize: () => void
 }) {
   const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
 
   return (
     <aside
-      className={`relative shrink-0 border-l border-border/40 bg-background/50 ${maximized ? 'min-w-0 flex-1' : 'hidden xl:block'}`}
-      style={maximized ? undefined : { width }}
+      className={`session-workspace-sidebar relative shrink-0 ${focus ? 'session-workspace-sidebar--focus min-w-0 flex-1' : 'session-workspace-sidebar--dock'}`}
+      style={focus ? undefined : { width }}
     >
-      <SessionWorkspacePanel
-        sessionId={selectedSessionId}
-        maximized={maximized}
-        onToggleMaximize={onToggleMaximize}
-      />
-      {!maximized && (
+      <SessionWorkspacePanel sessionId={selectedSessionId} />
+      {!focus && (
         <div className="session-panel-resizer session-panel-resizer--right" onPointerDown={onResize} role="separator" aria-orientation="vertical" />
       )}
     </aside>
@@ -131,17 +127,36 @@ export default memo(function SessionsPage() {
 
   const agentSessionId = useAgentSessionStore(s => s.selectedSessionId)
   const agentPanelOpen = useAgentSessionStore(s => s.panelOpen)
-  const workspaceMaximized = useSessionWorkspaceStore(s => s.maximized)
-  const setWorkspaceMaximized = useSessionWorkspaceStore(s => s.setMaximized)
+  const workspaceState = useSessionWorkspace(agentSessionId)
+  const wideWorkspace = useMediaQuery('(min-width: 1280px)')
 
   useSessionLiveStream(agentPanelOpen ? agentSessionId : null)
 
   const isNewDraft = listView === 'sessions' && isNewSessionPath(location.pathname)
-  const showTranscript = agentPanelOpen && agentSessionId
+  const showTranscript = Boolean(agentViewMode === 'sessions' && agentPanelOpen && agentSessionId)
+  const workspaceFocus = showTranscript && workspaceState.presentation === 'focus'
   const canCreateSession = listView === 'sessions' && Boolean(projectId)
+  const previousFocusCollapsed = useRef(false)
+  const focusOwner = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (workspaceFocus && agentSessionId && focusOwner.current !== agentSessionId) {
+      if (focusOwner.current === null) previousFocusCollapsed.current = leftPanel.collapsed
+      leftPanel.setCollapsed(true)
+      focusOwner.current = agentSessionId
+      return
+    }
+    if (!workspaceFocus && focusOwner.current !== null) {
+      leftPanel.setCollapsed(previousFocusCollapsed.current)
+      focusOwner.current = null
+    }
+  }, [agentSessionId, leftPanel.collapsed, leftPanel.setCollapsed, workspaceFocus])
+
+  const commandRailLeft = leftPanel.collapsed ? 0 : leftPanel.width
+  const commandRailRight = showTranscript && !workspaceFocus && wideWorkspace ? rightPanel.width : 0
 
   return (
-    <div className="agent-page-shell flex h-full min-h-0">
+    <div className="agent-page-shell relative flex h-full min-h-0">
       {agentViewMode === 'sessions' ? (
         <>
           <aside
@@ -160,17 +175,18 @@ export default memo(function SessionsPage() {
 
           {showTranscript ? (
             <>
-              {!workspaceMaximized && (
+              {!workspaceFocus && (
                 <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
                   <SessionTranscript />
                 </div>
               )}
-              <SessionDetailSidebar
-                width={rightPanel.width}
-                maximized={workspaceMaximized}
-                onResize={rightPanel.startResize}
-                onToggleMaximize={() => setWorkspaceMaximized(!workspaceMaximized)}
-              />
+              {(workspaceFocus || wideWorkspace) ? (
+                <SessionDetailSidebar
+                  width={rightPanel.width}
+                  focus={workspaceFocus}
+                  onResize={rightPanel.startResize}
+                />
+              ) : null}
             </>
           ) : isNewDraft ? (
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -200,6 +216,15 @@ export default memo(function SessionsPage() {
           <SkillMarketplacePanel />
         </div>
       )}
+      {showTranscript && agentSessionId ? (
+        <AgentCommandRail
+          sessionId={agentSessionId}
+          projectId={projectId}
+          focus={workspaceFocus}
+          insetLeft={commandRailLeft}
+          insetRight={commandRailRight}
+        />
+      ) : null}
     </div>
   )
 })

@@ -27,7 +27,7 @@ import {
 interface Props {
   projectId: string
   session?: AgentSession
-  layout?: 'footer' | 'centered'
+  layout?: 'footer' | 'centered' | 'focusRail'
   /** Rendered directly above the input pill (e.g. the file-change island). */
   statusSlot?: React.ReactNode
 }
@@ -180,7 +180,16 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
         })
         navigate(sessionPath(projectId, created.id))
         setSkillIds([])
-        await sendSessionMessage(created.id, { message: prompt, model, reasoningEffort: effortPayload, permissionTier })
+        await sendSessionMessage(created.id, {
+          // `prompt` is the scaffolding the app composed (language directive,
+          // wiki context, instructions); flag it so the transcript collapses it
+          // into an injection chip instead of echoing the whole block back.
+          message: prompt,
+          messageSource: 'system_injection',
+          model,
+          reasoningEffort: effortPayload,
+          permissionTier,
+        })
       } else {
         await submitOrEnqueueSessionInput(session.id, { message, model, reasoningEffort: effortPayload, permissionTier })
       }
@@ -214,6 +223,7 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
 
   const allowedReasoningEfforts = providerId ? effectiveReasoningEfforts(globalConfig, providerId) : undefined
   const isCentered = layout === 'centered'
+  const isFocusRail = layout === 'focusRail'
   const expandedShell = isCentered || content.includes('\n')
 
   const composer = (
@@ -272,7 +282,9 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       className={
         isCentered
           ? 'goal-session-composer--centered flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-10'
-          : 'goal-session-composer goal-session-composer--footer shrink-0 px-4 pb-4 pt-2'
+          : isFocusRail
+            ? 'goal-session-composer goal-session-composer--focus-rail w-full shrink-0'
+            : 'goal-session-composer goal-session-composer--footer shrink-0 px-4 pb-4 pt-2'
       }
     >
       {isCentered ? (

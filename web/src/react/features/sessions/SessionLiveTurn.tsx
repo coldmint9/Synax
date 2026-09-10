@@ -1,6 +1,5 @@
 import { memo, useDeferredValue, useEffect, useRef } from 'react'
-import type { AgentRunStep, PermissionDecision } from '../../../lib/api/agentRuntime'
-import { GoalQuickApproval, listPendingGoalPermissions } from '../wiki/goal/GoalQuickApproval'
+import type { AgentRunStep } from '../../../lib/api/agentRuntime'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { ThinkingIndicator } from './ThinkingIndicator'
@@ -87,8 +86,6 @@ interface Props {
     stepIndex: number
     blocks: TurnContentBlock[]
   }>
-  permissions: PermissionDecision[]
-  onReplyPermission?: (permissionId: string, reply: 'once' | 'always' | 'reject') => void
   scrollContainerRef?: React.RefObject<HTMLElement | null>
 }
 
@@ -97,15 +94,12 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
   streamingStepId,
   streamingLive,
   streamingCompletedSteps,
-  permissions,
-  onReplyPermission,
   scrollContainerRef,
 }: Props) {
   const isNearBottom = useRef(true)
 
   const streamingStep = streamingStepId ? steps.find(step => step.id === streamingStepId) : undefined
   const showLiveBlock = Boolean(streamingStepId) && (!streamingStep || streamingStep.status === 'running')
-  const hasPendingApproval = listPendingGoalPermissions(permissions).length > 0
 
   useEffect(() => {
     const el = scrollContainerRef?.current
@@ -124,7 +118,7 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
     }
   }, [scrollContainerRef, streamingLive, streamingCompletedSteps.length])
 
-  if (!showLiveBlock && streamingCompletedSteps.length === 0 && !(onReplyPermission && hasPendingApproval)) {
+  if (!showLiveBlock && streamingCompletedSteps.length === 0) {
     return null
   }
 
@@ -139,16 +133,6 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
       ))}
       {showLiveBlock ? (
         <LiveStepView streamingLive={streamingLive} />
-      ) : null}
-      {onReplyPermission && hasPendingApproval ? (
-        <div className="session-context-approval mx-auto w-full max-w-3xl rounded-2xl border border-border/50 bg-card/80 p-3 shadow-sm backdrop-blur-sm">
-          <GoalQuickApproval
-            permissions={permissions}
-            onReply={onReplyPermission}
-            variant="strip"
-            showIndicator
-          />
-        </div>
       ) : null}
     </>
   )
