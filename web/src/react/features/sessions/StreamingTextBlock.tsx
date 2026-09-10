@@ -18,7 +18,10 @@ export const StreamingTextBlock = memo(function StreamingTextBlock({
   if (!text && !isStreaming) return null
 
   return (
-    <ScrollShadow className="w-full" style={{ maxHeight }}>
+    // The transcript clamps long blocks with an internal scroller. HeroUI's
+    // default ScrollShadow masks the bottom 40px, which fades the last readable
+    // line, so the fade is switched off here while scrolling stays.
+    <ScrollShadow className="w-full" style={{ maxHeight }} visibility="none">
       {markdown && !isStreaming ? (
         <SessionMarkdown content={text} className="agent-conversation-copy feed-prose" />
       ) : (

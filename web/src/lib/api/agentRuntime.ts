@@ -270,6 +270,8 @@ export interface SessionEnvironment {
   additions: number
   deletions: number
   changedFiles: SessionEnvironmentFile[]
+  /** Files this session's agent wrote/edited/deleted (still uncommitted). */
+  agentChangedFiles: SessionEnvironmentFile[]
   inputFiles: string[]
   subagents: SessionEnvironmentSubagent[]
   refreshedAt: string

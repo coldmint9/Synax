@@ -81,7 +81,6 @@ export function GoalEffortPicker({ effort, allowed, modelLabel, onChange, disabl
       >
         <span className="shrink-0 opacity-70">思考</span>
         <span className="truncate font-medium text-foreground/80">{REASONING_EFFORT_LABELS[activeEffort]}</span>
-        <span className="text-[8px] opacity-60">▾</span>
       </Popover.Trigger>
       <Popover.Content placement="top end" offset={8} className="z-50 w-[16rem] overflow-hidden rounded-xl p-0">
         <div className="px-3 pb-3 pt-2.5">

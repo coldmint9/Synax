@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { GlobalConfig, ProviderDef } from '../../../../../lib/contracts/config'
 import {
+  API_FORMAT_OPTIONS,
+  API_PROVIDER_PRESETS,
+  apiFormatLabel,
+  applyProtocolDefaults,
   buildApiDrafts,
+  createDraftFromPreset,
   draftToConnection,
   draftToProviderDef,
   effectiveReasoningEfforts,
@@ -91,5 +96,51 @@ describe('providerPresets model metadata', () => {
     expect(saved.model).toBe('deepseek-reasoner')
     expect(saved.modelMeta['deepseek-chat']?.contextLimit).toBe(1_000_000)
     expect(saved.reasoningEfforts).toEqual(['medium', 'high'])
+  })
+})
+
+describe('provider protocol selection', () => {
+  it('offers exactly the three supported protocols', () => {
+    expect(API_FORMAT_OPTIONS.map(option => option.key)).toEqual([
+      'openai',
+      'openai-responses',
+      'anthropic',
+    ])
+    expect(apiFormatLabel('openai-responses')).toBe('OpenAI Responses')
+    expect(apiFormatLabel('anthropic')).toBe('Anthropic Messages')
+  })
+
+  it('switches untouched defaults to the new protocol and keeps edited values', () => {
+    const preset = API_PROVIDER_PRESETS.find(p => p.providerId === 'openai')!
+    const draft = createDraftFromPreset(preset)
+
+    const untouched = applyProtocolDefaults(draft, 'anthropic')
+    expect(untouched.format).toBe('anthropic')
+    expect(untouched.baseUrl).toBe('https://api.anthropic.com/v1')
+    expect(untouched.model).toBe('claude-3-5-sonnet-latest')
+
+    const responses = applyProtocolDefaults(draft, 'openai-responses')
+    expect(responses.format).toBe('openai-responses')
+    expect(responses.baseUrl).toBe('https://api.openai.com/v1')
+    expect(responses.model).toBe('gpt-4o-mini')
+
+    const edited = applyProtocolDefaults(
+      { ...draft, model: 'gpt-5.4-codex', baseUrl: 'https://xuanji.example.com/v1' },
+      'openai-responses',
+    )
+    expect(edited.format).toBe('openai-responses')
+    expect(edited.baseUrl).toBe('https://xuanji.example.com/v1')
+    expect(edited.model).toBe('gpt-5.4-codex')
+
+    const provider = makeProvider()
+    const customDraft = buildApiDrafts(makeConfig(provider, {}), [provider]).find(d => d.id === provider.id)!
+    expect(applyProtocolDefaults(customDraft, 'anthropic').model).toBe('deepseek-chat')
+  })
+
+  it('persists the selected protocol in the connection extra', () => {
+    const provider = makeProvider()
+    const draft = buildApiDrafts(makeConfig(provider, {}), [provider]).find(d => d.id === provider.id)!
+    const connection = draftToConnection({ ...draft, format: 'openai-responses' })
+    expect(connection.extra?.apiFormat).toBe('openai-responses')
   })
 })

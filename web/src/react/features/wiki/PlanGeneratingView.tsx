@@ -90,13 +90,13 @@ function PhaseSteps({ current, elapsed }: { current: string | null; elapsed: num
           return (
             <div key={phase.key} className="flex items-center gap-1 flex-1">
               <div className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-all ${
-                active ? 'bg-primary/10 text-primary' : done ? 'text-emerald-500' : 'text-muted-foreground/30'
+                active ? 'bg-primary/10 text-primary' : done ? 'text-success' : 'text-muted-foreground/30'
               }`}>
                 {done ? <CheckCircle2 size={10} /> : <Icon size={10} className={active ? 'animate-pulse' : ''} />}
                 <span className="hidden sm:inline">{t(phase.labelKey)}</span>
               </div>
               {i < PHASES.length - 1 && (
-                <div className={`h-px flex-1 ${done ? 'bg-emerald-500/40' : 'bg-border/20'}`} />
+                <div className={`h-px flex-1 ${done ? 'bg-success/40' : 'bg-border/20'}`} />
               )}
             </div>
           )
@@ -117,7 +117,7 @@ function GoalContext({ goals }: { goals: WikiGoal[] }) {
       <div className="mt-2 space-y-1.5">
         {active.slice(0, 5).map(goal => (
           <div key={goal.id} className="flex items-start gap-2">
-            <div className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400/80" />
+            <div className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-warning/80" />
             <span className="text-[11px] text-foreground/70 leading-relaxed line-clamp-1">{goal.content}</span>
           </div>
         ))}

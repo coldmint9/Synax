@@ -54,7 +54,7 @@ function DocItem({
         {hasNewVersion && (
           <span
             className={`list-badge ${
-              draftInfo?.status === 'partially_applied' ? '!bg-amber-400/20 !text-amber-600' : ''
+              draftInfo?.status === 'partially_applied' ? '!bg-warning/20 !text-warning' : ''
             }`}
             title={t('wikiNewVersionTitle')}
           >

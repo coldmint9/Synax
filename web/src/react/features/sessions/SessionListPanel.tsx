@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Surface } from '@heroui/react'
 import { useSessionList } from './useSessionList'
@@ -18,6 +18,18 @@ interface Props {
   projectId: string
 }
 
+const SESSION_LIST_SPLIT_KEY = 'synax-sessions-list-split'
+const SESSION_LIST_SPLIT_MIN = 0.25
+const SESSION_LIST_SPLIT_MAX = 0.85
+
+/** Ratio of the panel height given to the session list; null = built-in ratio. */
+function readStoredListSplit(): number | null {
+  if (typeof window === 'undefined') return null
+  const value = Number(window.localStorage.getItem(SESSION_LIST_SPLIT_KEY))
+  if (!Number.isFinite(value) || value <= 0) return null
+  return Math.min(SESSION_LIST_SPLIT_MAX, Math.max(SESSION_LIST_SPLIT_MIN, value))
+}
+
 export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
   const { locale, t } = useLocale()
   const navigate = useNavigate()
@@ -28,6 +40,39 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [showClear, setShowClear] = useState(false)
+  const [listSplit, setListSplit] = useState<number | null>(readStoredListSplit)
+  const sessionAreaRef = useRef<HTMLDivElement>(null)
+  const splitDragRef = useRef<{ startY: number; startSplit: number; height: number } | null>(null)
+
+  const startListSplitDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const sessionArea = sessionAreaRef.current
+    const panel = sessionArea?.parentElement
+    if (!sessionArea || !panel) return
+    const height = panel.getBoundingClientRect().height
+    if (height <= 0) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    splitDragRef.current = {
+      startY: event.clientY,
+      startSplit: sessionArea.getBoundingClientRect().height / height,
+      height,
+    }
+    const handleMove = (move: PointerEvent) => {
+      const drag = splitDragRef.current
+      if (!drag) return
+      const next = drag.startSplit + (move.clientY - drag.startY) / drag.height
+      const clamped = Math.min(SESSION_LIST_SPLIT_MAX, Math.max(SESSION_LIST_SPLIT_MIN, next))
+      setListSplit(clamped)
+      window.localStorage.setItem(SESSION_LIST_SPLIT_KEY, String(clamped))
+    }
+    const handleUp = () => {
+      splitDragRef.current = null
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', handleUp)
+    }
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', handleUp)
+  }, [])
 
   useEffect(() => {
     if (!projectId || !list.isProjectReady) return
@@ -39,8 +84,6 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
     : undefined
   const deleteTitle = deleteSession ? getSessionDisplayTitle(deleteSession) : ''
 
-  const visibleCount = list.groups.reduce((sum, g) => sum + g.sessions.length, 0)
-
   const handleNewSession = () => {
     list.openNewDraft()
   }
@@ -49,18 +92,19 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
     <Surface className="session-list-panel flex h-full flex-col bg-background" variant="default">
       <SessionListHeader
         listView={listView}
-        visibleCount={visibleCount}
         workflowCount={list.viewCounts.workflow}
         searchQuery={list.searchQuery}
         onSearchChange={list.setSearchQuery}
-        onRefresh={() => { void list.refresh() }}
         onClearInactive={() => setShowClear(true)}
         onNewSession={handleNewSession}
         onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
         onBackToSessions={() => navigate(sessionsPath(projectId))}
-        isRefreshing={list.isRefreshing}
       />
-      <div className="session-list-session-area min-h-0">
+      <div
+        ref={sessionAreaRef}
+        className="session-list-session-area min-h-0"
+        style={listSplit === null ? undefined : { flexBasis: `${(listSplit * 100).toFixed(2)}%` }}
+      >
         <SessionTimeGroups
           groups={list.groups}
         selectedId={list.selectedId}
@@ -75,6 +119,13 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
           onDelete={id => setDeleteId(id)}
         />
       </div>
+      <div
+        className="session-list-resizer-h"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label={t('sessionListSplitResize')}
+        onPointerDown={startListSplitDrag}
+      />
       <div className="session-list-profile-area min-h-0">
         <SessionProfilePanel sessionId={list.selectedId} />
       </div>

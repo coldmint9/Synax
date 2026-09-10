@@ -431,14 +431,13 @@ function validateProviderConnection(
   }
 
   const format = extra.apiFormat
-  if (providerId === 'openai' && format && format !== 'openai') {
-    throw new Error('openai provider 的 API 格式必须是 openai')
+  // The protocol is independent of the provider brand: any API provider may be pointed at an
+  // OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages endpoint (proxy/gateway setups).
+  if (format !== undefined && !isApiFormat(format)) {
+    throw new Error(`${providerId} 的 API 协议必须是 openai、openai-responses 或 anthropic`)
   }
-  if (providerId === 'anthropic' && format && format !== 'anthropic') {
-    throw new Error('anthropic provider 的 API 格式必须是 anthropic')
-  }
-  if (isCustomApiProviderId(providerId) && format !== 'openai' && format !== 'openai-responses' && format !== 'anthropic') {
-    throw new Error(`${providerId} 的 API 格式必须是 openai、openai-responses 或 anthropic`)
+  if (isCustomApiProviderId(providerId) && format === undefined) {
+    throw new Error(`${providerId} 的 API 协议必须是 openai、openai-responses 或 anthropic`)
   }
 
   if (!connection.baseUrl) {
@@ -494,6 +493,10 @@ function isBuiltinApiProviderId(providerId: string): providerId is (typeof BUILT
 
 function isCustomApiProviderId(providerId: string): boolean {
   return providerId.startsWith(CUSTOM_API_PROVIDER_PREFIX) && providerId.length > CUSTOM_API_PROVIDER_PREFIX.length
+}
+
+function isApiFormat(value: unknown): value is ApiFormat {
+  return value === 'openai' || value === 'openai-responses' || value === 'anthropic'
 }
 
 function isApiProviderId(providerId: string): boolean {

@@ -47,7 +47,7 @@ export default function App() {
         className={`pointer-events-none fixed inset-0 z-[9999] will-change-[opacity] transition-opacity duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${
           draftPreviewActive ? 'opacity-100' : 'opacity-0'
         }`}
-        style={{ boxShadow: 'inset 0 0 40px 8px rgba(251,191,36,0.25), inset 0 0 12px 2px rgba(251,191,36,0.4)' }}
+        style={{ boxShadow: 'inset 0 0 40px 8px color-mix(in srgb, var(--warning) 25%, transparent), inset 0 0 12px 2px color-mix(in srgb, var(--warning) 40%, transparent)' }}
         aria-hidden="true"
       />
     </div>

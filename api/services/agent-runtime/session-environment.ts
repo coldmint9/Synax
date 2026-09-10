@@ -43,6 +43,12 @@ export interface SessionEnvironment {
   additions: number
   deletions: number
   changedFiles: SessionEnvironmentFile[]
+  /**
+   * Subset of `changedFiles` that this session's agent actually wrote, edited
+   * or deleted. Attribution comes from the session's own write tool calls, so
+   * uncommitted work the user did by hand is not counted here.
+   */
+  agentChangedFiles: SessionEnvironmentFile[]
   inputFiles: string[]
   subagents: SessionEnvironmentSubagent[]
   refreshedAt: string
@@ -137,6 +143,43 @@ function readInputFiles(sessionId: string): string[] {
   return [...paths]
 }
 
+/** Tools whose execution means "this session wrote to that path". */
+const AGENT_WRITE_TOOL_IDS = new Set(['edit', 'file.write', 'file.delete'])
+
+function readAgentEditedPaths(sessionId: string): Set<string> {
+  const paths = new Set<string>()
+  for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
+    if (!AGENT_WRITE_TOOL_IDS.has(call.toolId)) continue
+    const input = call.inputRef
+    if (!input || typeof input !== 'object') continue
+    const candidate = (input as { path?: unknown }).path
+    if (typeof candidate !== 'string' || !candidate.trim()) continue
+    try {
+      paths.add(assertRelativePath(candidate))
+    } catch {
+      // Ignore malformed/blocked historical paths.
+    }
+  }
+  return paths
+}
+
+/**
+ * `git diff HEAD --numstat` reports nothing for untracked files, so a file the
+ * agent just created would otherwise show as "+0". Count its lines instead.
+ */
+function countUntrackedAdditions(workspacePath: string, relativePath: string): number {
+  try {
+    const absolute = resolveSafeFile(workspacePath, relativePath)
+    const stat = fs.statSync(absolute)
+    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return 0
+    const content = fs.readFileSync(absolute, 'utf8')
+    if (!content) return 0
+    return content.split('\n').length - (content.endsWith('\n') ? 1 : 0)
+  } catch {
+    return 0
+  }
+}
+
 function getSession(sessionId: string) {
   try {
     return agentRuntimeStore.getSession(sessionId)
@@ -206,7 +249,10 @@ async function computeSessionEnvironment(sessionId: string): Promise<SessionEnvi
             : parsed.xy.includes('M')
               ? 'modified'
               : 'unknown'
-    const stats = numstat.get(parsed.path) ?? { additions: 0, deletions: 0 }
+    const stats = numstat.get(parsed.path)
+      ?? (parsed.xy === '??'
+        ? { additions: countUntrackedAdditions(workspacePath, parsed.path), deletions: 0 }
+        : { additions: 0, deletions: 0 })
     changedFiles.push({
       path: parsed.path,
       status,
@@ -247,6 +293,10 @@ async function computeSessionEnvironment(sessionId: string): Promise<SessionEnvi
     additions: changedFiles.reduce((sum, file) => sum + file.additions, 0),
     deletions: changedFiles.reduce((sum, file) => sum + file.deletions, 0),
     changedFiles,
+    agentChangedFiles: (() => {
+      const edited = readAgentEditedPaths(sessionId)
+      return changedFiles.filter(file => edited.has(file.path))
+    })(),
     inputFiles: readInputFiles(sessionId),
     subagents,
     refreshedAt: new Date().toISOString(),

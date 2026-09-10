@@ -6,15 +6,15 @@ import { useSessionDisplayTitle } from './useSessionDisplayTitle'
 import { isSynaxSession, resolveSynaxAgentLabel } from './synaxDisplay'
 
 const DOT: Record<string, string> = {
-  running: 'bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)]',
-  completed: 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]',
-  failed: 'bg-red-500',
-  waiting_permission: 'bg-amber-500',
-  blocked: 'bg-amber-500',
-  interrupted: 'bg-amber-400',
-  paused: 'bg-sky-400',
-  queued: 'bg-slate-500',
-  cancelled: 'bg-slate-600',
+  running: 'bg-run shadow-[0_0_6px_color-mix(in_srgb,var(--run)_50%,transparent)]',
+  completed: 'bg-success shadow-[0_0_6px_color-mix(in_srgb,var(--success)_40%,transparent)]',
+  failed: 'bg-destructive',
+  waiting_permission: 'bg-warning',
+  blocked: 'bg-warning',
+  interrupted: 'bg-warning/60',
+  paused: 'bg-muted-foreground',
+  queued: 'bg-muted-foreground/60',
+  cancelled: 'bg-muted-foreground/40',
 }
 
 const PROFILES: Record<string, string> = {
@@ -113,7 +113,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
                 aria-hidden
               />
             ) : showStatusDot ? (
-              <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
+              <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-muted-foreground/50'}`} />
             ) : null}
             <SessionTitle session={session} />
             <span className="session-list-hover-actions inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
@@ -132,7 +132,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
               aria-hidden
             />
           ) : isSelected ? (
-            <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
+            <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-muted-foreground/50'}`} />
           ) : null}
           <SessionChildTitle session={session} />
           {isSelected && session.profileId && !isSynaxSession(session) && PROFILES[session.profileId] && (

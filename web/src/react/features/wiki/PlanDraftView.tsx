@@ -44,7 +44,7 @@ export default function PlanDraftView({ projectId }: Props) {
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/15 px-5">
         <div className="flex items-center gap-2.5">
-          <Zap size={14} className="text-amber-500" />
+          <Zap size={14} className="text-warning" />
           <span className="text-[13px] font-semibold text-foreground/80">{t('planDraftTitle')}</span>
           <span className="text-[11px] text-muted-foreground/50">
             {t('planBasedOnGoals', { goals: activePlan.goalIds.length, nodes: nodes.length })}

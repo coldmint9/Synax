@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useAgentSessionStore } from './agentSessionStore'
 import { AgentConversationView } from './AgentConversationView'
 import { SessionComposer } from './SessionComposer'
+import { SessionFileChangeIsland } from './SessionFileChangeIsland'
 import { SessionLiveTurn } from './SessionLiveTurn'
 import { SessionNavigationPanel } from './SessionNavigationPanel'
 import { isGoalModeSession } from './sessionBuckets'
@@ -75,9 +76,32 @@ export function SessionTranscript() {
   const streamingStep = streamingStepId ? steps.find(s => s.id === streamingStepId) : undefined
   const showLiveBlock = Boolean(streamingStepId) && (!streamingStep || streamingStep.status === 'running')
 
+  // Transcript entries reserve an estimated height until the viewport reaches
+  // them, so the scroll height keeps growing after the first paint. While the
+  // reader is sitting at the bottom we follow that growth; as soon as they
+  // scroll away we stop moving the viewport for them.
   useEffect(() => {
-    if (!scrollRef.current) return
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    const element = scrollRef.current
+    if (!element) return
+    const content = element.firstElementChild
+
+    const distanceFromBottom = () => element.scrollHeight - element.scrollTop - element.clientHeight
+    let pinned = true
+    const handleScroll = () => { pinned = distanceFromBottom() <= 48 }
+    element.addEventListener('scroll', handleScroll, { passive: true })
+    element.scrollTop = element.scrollHeight
+
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => {
+          if (pinned) element.scrollTop = element.scrollHeight
+        })
+    if (observer && content) observer.observe(content)
+
+    return () => {
+      element.removeEventListener('scroll', handleScroll)
+      observer?.disconnect()
+    }
   }, [session?.id])
 
   return (
@@ -95,12 +119,22 @@ export function SessionTranscript() {
             onResume={(id) => resumeSession(id)}
             excludeStepId={showLiveBlock ? streamingStepId : null}
             liveTurn={<SessionLiveTurnLayer scrollContainerRef={scrollRef} />}
+            scrollRootRef={scrollRef}
           />
         </div>
         <SessionNavigationPanel scrollRootRef={scrollRef} />
       </div>
       {showSessionComposer && session ? (
-        <SessionComposer session={session} projectId={projectId} />
+        <SessionComposer
+          session={session}
+          projectId={projectId}
+          statusSlot={
+            <SessionFileChangeIsland
+              sessionId={session.id}
+              isRunning={session.status === 'running'}
+            />
+          }
+        />
       ) : null}
     </div>
   )

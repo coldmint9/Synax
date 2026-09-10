@@ -46,7 +46,7 @@ export default function WikiOutlineProgress({ activities, currentActivity, phase
           {isActive ? (
             <Loader2 size={11} className="animate-spin text-primary shrink-0" />
           ) : (
-            <Send size={11} className="text-emerald-500 shrink-0" />
+            <Send size={11} className="text-success shrink-0" />
           )}
           <span className="text-[11px] text-primary/80 truncate">
             {currentActivity ?? t('wikiPhaseAgentAnalyzing')}

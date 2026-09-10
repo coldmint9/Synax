@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { Button } from '@heroui/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
@@ -30,7 +30,11 @@ type PanelSide = 'left' | 'right'
 
 function readPanelWidth(key: string, fallback: number, min: number, max: number): number {
   if (typeof window === 'undefined') return fallback
-  const value = Number(window.localStorage.getItem(key))
+  const raw = window.localStorage.getItem(key)
+  // `Number(null)` is 0, which used to pin first-load panels to their minimum
+  // width instead of the default. Only a real, non-empty value wins.
+  if (raw === null || raw.trim() === '') return fallback
+  const value = Number(raw)
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback
 }
 
@@ -77,7 +81,7 @@ function LeftPanelCollapseButton({ collapsed, onToggle }: { collapsed: boolean; 
       onClick={onToggle}
       className="session-panel-collapse session-panel-collapse--left"
     >
-      <ChevronRight size={12} />
+      {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
     </button>
   )
 }

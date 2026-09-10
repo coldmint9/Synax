@@ -79,7 +79,12 @@ export async function executePipeline(
   const client = await getOrCreateClient(selection)
   const strategy = getStrategy(selection.provider.npm)
   const modelOptions = strategy.modelOptions(mode)
-  let model = selectLanguageModel(client, selection.modelId, modelOptions) as LanguageModelV3
+  let model = selectLanguageModel(
+    client,
+    selection.modelId,
+    modelOptions,
+    selection.apiFormat,
+  ) as LanguageModelV3
 
   if (strategy.needsReasoningMiddleware(selection.modelDef)) {
     model = applyReasoningMiddleware(model)

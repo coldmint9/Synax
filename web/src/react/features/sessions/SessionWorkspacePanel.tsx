@@ -9,7 +9,7 @@ import { SubagentReadonlyView } from './SubagentReadonlyView'
 
 function tabIcon(kind: WorkspaceTab['kind']) {
   switch (kind) {
-    case 'file': return <FileCode2 size={11} className="shrink-0 text-sky-400/80" />
+    case 'file': return <FileCode2 size={11} className="shrink-0 text-run/80" />
     case 'diff': return <FileDiff size={11} className="shrink-0 text-success/80" />
     case 'subagent': return <Bot size={11} className="shrink-0 text-[var(--color-run)]/80" />
   }

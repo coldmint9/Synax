@@ -4,7 +4,12 @@ import type { ModelMessage } from '@ai-sdk/provider-utils'
 import type { ZodType } from 'zod'
 import { getGlobalConfigForRuntime, getProjectConfigForRuntime } from '../../lib/config/config-store.js'
 import { getRuntimeCatalog } from './catalog.js'
-import { resolveLlmSelection, resolveProviderModelRef, resolveRuntimeProvider } from './resolver.js'
+import {
+  resolveLlmSelection,
+  resolveProviderApiFormat,
+  resolveProviderModelRef,
+  resolveRuntimeProvider,
+} from './resolver.js'
 import type { LlmGatewayRequest, ResolvedModelSelection, ValidateLlmRequest } from './types.js'
 import { executePipeline, hasConfiguredApiKey, missingApiKeyMessage } from './pipeline.js'
 import type { ExecutionMode } from './pipeline.js'
@@ -108,8 +113,12 @@ export async function validateGatewayModel(input: ValidateLlmRequest): Promise<{
     if (!hasConfiguredApiKey(config, provider.env)) {
       return { ok: false, error: missingApiKeyMessage(parsed.providerId, provider.env) }
     }
+    const apiFormat = input.apiFormat ?? resolveProviderApiFormat({
+      providerId: parsed.providerId,
+      connection: globalConfig.providerConnections[parsed.providerId],
+    })
     const client = await instantiateProvider(provider, config)
-    const model = selectLanguageModel(client, parsed.modelId)
+    const model = selectLanguageModel(client, parsed.modelId, undefined, apiFormat)
     await withRetry(() => generateText({
       model: model as Parameters<typeof generateText>[0]['model'],
       messages: [{ role: 'user', content: 'ping' }] satisfies ModelMessage[],

@@ -1,7 +1,13 @@
 import { useState } from 'react'
 import { Button, Checkbox, Description, FieldError, InputGroup, Label, Modal, TextField } from '@heroui/react'
-import { ChevronDown, Eye, EyeOff, RefreshCw, Save, Search, Wifi } from 'lucide-react'
-import { ALL_REASONING_EFFORTS, REASONING_EFFORT_LABELS, type ApiProviderDraft } from '../lib/providerPresets'
+import { Eye, EyeOff, RefreshCw, Save, Search, Wifi } from 'lucide-react'
+import {
+  ALL_REASONING_EFFORTS,
+  API_FORMAT_OPTIONS,
+  REASONING_EFFORT_LABELS,
+  applyProtocolDefaults,
+  type ApiProviderDraft,
+} from '../lib/providerPresets'
 import { validateProviderDraft } from '../lib/validation'
 import { useLocale } from '../../../../hooks/useLocale'
 import { SettingsSelect } from './SettingsSelect'
@@ -163,21 +169,15 @@ export function LlmProviderModal({
                 {fieldError('apiKey') && <FieldError>{fieldError('apiKey')}</FieldError>}
               </TextField>
 
-              {draft.custom && (
-                <SettingsSelect
-                  label="API Format"
-                  selectedKey={draft.format}
-                  onSelectionChange={(key) => {
-                    if (key) setDraft(d => ({ ...d, format: key as ApiFormat }))
-                  }}
-                  disallowEmptySelection
-                  options={[
-                    { key: 'openai', label: 'OpenAI Chat Completions' },
-                    { key: 'openai-responses', label: 'OpenAI Responses' },
-                    { key: 'anthropic', label: 'Anthropic Messages' },
-                  ]}
-                />
-              )}
+              <SettingsSelect
+                label="协议"
+                selectedKey={draft.format}
+                onSelectionChange={(key) => {
+                  if (key) setDraft(d => applyProtocolDefaults(d, key as ApiFormat))
+                }}
+                disallowEmptySelection
+                options={API_FORMAT_OPTIONS.map(option => ({ key: option.key, label: option.label }))}
+              />
 
               <TextField
                 isInvalid={!!fieldError('baseUrl')}
@@ -205,7 +205,6 @@ export function LlmProviderModal({
                         className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-default bg-transparent px-2.5 text-xs text-foreground transition-colors hover:bg-muted/40"
                       >
                         <span className="truncate font-mono">{draft.model || '选择模型…'}</span>
-                        <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
                       </button>
                       {modelMenuOpen && (
                         <div className="mt-1 w-full overflow-hidden rounded-lg border border-default bg-background shadow-lg">

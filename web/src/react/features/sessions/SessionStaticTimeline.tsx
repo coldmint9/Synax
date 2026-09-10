@@ -1,12 +1,11 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useMemo, type RefObject } from 'react'
 import { Skeleton } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import { buildConversationTimeline } from './buildConversationTimeline'
 import { TimelineEntryView } from './TimelineEntryView'
-
-const INITIAL_BATCH = 24
-const BATCH_SIZE = 20
+import { TimelineLazyEntry, estimateEntryHeight } from './TimelineLazyEntry'
+import { useShellStore } from '../../state/shellStore'
 
 interface Props {
   session?: AgentSession
@@ -18,6 +17,8 @@ interface Props {
   excludeStepId?: string | null
   isRunning?: boolean
   onExpandChild?: (sessionId: string) => void
+  /** Scroll container used as the IntersectionObserver root for lazy entries. */
+  scrollRootRef?: RefObject<HTMLElement | null>
 }
 
 export const SessionStaticTimeline = memo(function SessionStaticTimeline({
@@ -30,10 +31,10 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   excludeStepId = null,
   isRunning = false,
   onExpandChild,
+  scrollRootRef,
 }: Props) {
   const { t } = useLocale()
-  const sessionId = session?.id ?? null
-  const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH)
+  const foldWorkRuns = useShellStore(s => s.preferences.sessionFoldWorkRuns)
 
   const timeline = useMemo(
     () => buildConversationTimeline(
@@ -42,17 +43,21 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
       messages,
       toolCalls,
       childSessions,
-      { excludeStepId, session },
+      { excludeStepId, session, foldWorkRuns },
     ),
-    [runs, steps, messages, toolCalls, childSessions, excludeStepId, session],
+    [runs, steps, messages, toolCalls, childSessions, excludeStepId, session, foldWorkRuns],
   )
 
-  useEffect(() => {
-    setVisibleCount(INITIAL_BATCH)
-  }, [sessionId])
-
-  const hiddenCount = Math.max(0, timeline.length - visibleCount)
-  const visibleTimeline = hiddenCount > 0 ? timeline.slice(-visibleCount) : timeline
+  // Pair every entry with its height estimate once per timeline, instead of
+  // re-deriving it on each render of the list.
+  const rows = useMemo(
+    () => timeline.map(entry => ({
+      entry,
+      key: `${entry.kind}-${entry.id}`,
+      estimate: estimateEntryHeight(entry),
+    })),
+    [timeline],
+  )
 
   if (timeline.length === 0) {
     return (
@@ -72,21 +77,16 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
 
   return (
     <div className="flex flex-col gap-5">
-      {hiddenCount > 0 ? (
-        <button
-          type="button"
-          className="self-center rounded-full border border-border/40 px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted/30"
-          onClick={() => setVisibleCount(count => Math.min(timeline.length, count + BATCH_SIZE))}
+      {rows.map(({ entry, key, estimate }) => (
+        <TimelineLazyEntry
+          key={key}
+          entryId={entry.id}
+          cacheKey={key}
+          estimate={estimate}
+          scrollRootRef={scrollRootRef}
         >
-          显示更早的 {Math.min(hiddenCount, BATCH_SIZE)} 条消息
-        </button>
-      ) : null}
-      {visibleTimeline.map(entry => (
-        <TimelineEntryView
-          key={`${entry.kind}-${entry.id}`}
-          entry={entry}
-          onExpandChild={onExpandChild}
-        />
+          <TimelineEntryView entry={entry} onExpandChild={onExpandChild} />
+        </TimelineLazyEntry>
       ))}
     </div>
   )

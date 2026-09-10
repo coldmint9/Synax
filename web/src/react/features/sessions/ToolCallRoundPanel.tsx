@@ -21,6 +21,7 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
     <ScrollShadow
       className="rounded-lg border border-border/35 bg-muted/10"
       style={{ maxHeight }}
+      visibility="none"
     >
       <div className="flex flex-col gap-1 p-1.5">
         {batches.map(batch => (

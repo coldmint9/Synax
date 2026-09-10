@@ -15,8 +15,8 @@ const STATUS_DOT: Record<string, string> = {
   blocked: 'bg-warning',
   completed: 'bg-success',
   failed: 'bg-danger',
-  interrupted: 'bg-amber-400',
-  paused: 'bg-sky-400',
+  interrupted: 'bg-warning/60',
+  paused: 'bg-run',
   queued: 'bg-muted-foreground/50',
   cancelled: 'bg-muted-foreground/30',
 }

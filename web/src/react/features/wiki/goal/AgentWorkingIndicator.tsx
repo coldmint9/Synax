@@ -11,8 +11,8 @@ const STATIC_GLYPH: Partial<Record<GoalSessionStatus, string>> = {
 
 const STATUS_CLASS: Record<GoalSessionStatus, string> = {
   running: 'text-primary',
-  waiting_permission: 'text-amber-500',
-  completed: 'text-emerald-500',
+  waiting_permission: 'text-warning',
+  completed: 'text-success',
   failed: 'text-destructive',
   idle: 'text-muted-foreground/35',
 }

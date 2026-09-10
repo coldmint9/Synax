@@ -47,7 +47,6 @@ export function SettingsSelect({
       >
         <Select.Trigger>
           <Select.Value />
-          <Select.Indicator />
         </Select.Trigger>
         <Select.Popover>
           <ListBox aria-label={ariaLabel ?? label ?? 'Options'}>

@@ -100,7 +100,7 @@ export const DiffViewer = memo(function DiffViewer({ sessionId, path }: { sessio
           <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto bg-[#1e1e1e]">
+      <div className="min-h-0 flex-1 overflow-auto bg-[var(--cx-gray-800)]">
         {loading ? (
           <div className="p-3 text-[10px] text-muted-foreground">读取中…</div>
         ) : error ? (

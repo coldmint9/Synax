@@ -532,15 +532,15 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
           {showIncompleteBanner && (
             <div className={`flex flex-col gap-2 px-3 py-2 border-b ${
               snapshot.status === 'partial'
-                ? 'bg-amber-500/5 border-amber-500/10'
+                ? 'bg-warning/5 border-warning/10'
                 : 'bg-destructive/5 border-destructive/20'
             }`}>
               <div className="flex items-center gap-1.5">
                 <AlertCircle size={11} className={`shrink-0 ${
-                  snapshot.status === 'partial' ? 'text-amber-600' : 'text-destructive'
+                  snapshot.status === 'partial' ? 'text-warning' : 'text-destructive'
                 }`} />
                 <span className={`text-[11px] ${
-                  snapshot.status === 'partial' ? 'text-amber-700' : 'text-destructive'
+                  snapshot.status === 'partial' ? 'text-warning' : 'text-destructive'
                 }`}>
                   {snapshot.status === 'partial'
                     ? t('wikiGenerationPaused', { done: writtenDocCount, total: writableDocTotal })

@@ -200,7 +200,6 @@ export function GoalModelPicker({
         className={`button button--sm button--tertiary goal-dock-composer-chip inline-flex h-7 max-w-[9.5rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${triggerDisabled ? ' pointer-events-none opacity-50' : ''}`}
       >
         <span className="truncate">{triggerLabel}</span>
-        <span className="ml-0.5 text-[8px] opacity-60">▾</span>
       </Popover.Trigger>
       <Popover.Content placement="top end" offset={8} className="z-50 w-[22rem] p-0 overflow-hidden">
         {largeList ? (

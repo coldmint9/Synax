@@ -45,7 +45,7 @@ export default function WikiDraftActions({
         onClick={handlePreviewToggle}
         className={`flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
           isPreviewing
-            ? 'bg-amber-500/15 text-amber-600 hover:bg-amber-500/25'
+            ? 'bg-warning/15 text-warning hover:bg-warning/25'
             : 'bg-secondary text-muted-foreground hover:bg-secondary/80'
         }`}
       >
@@ -56,7 +56,7 @@ export default function WikiDraftActions({
         type="button"
         onClick={handleApply}
         disabled={checkedCount === 0}
-        className="flex-1 rounded-md bg-primary px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="flex-1 rounded-md bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         Apply{!isAllSelected && checkedCount > 0 ? ` (${checkedCount})` : ' All'}
       </button>

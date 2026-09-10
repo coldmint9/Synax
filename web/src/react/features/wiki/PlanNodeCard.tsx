@@ -20,11 +20,11 @@ function NodeStatusIcon({ status }: { status: string }) {
   switch (status) {
     case 'committed':
     case 'accepted':
-      return <CheckCircle2 size={16} className="text-emerald-500" />
+      return <CheckCircle2 size={16} className="text-success" />
     case 'executing':
-      return <Loader2 size={16} className="animate-spin text-blue-500" />
+      return <Loader2 size={16} className="animate-spin text-run" />
     case 'review':
-      return <Eye size={16} className="text-amber-500" />
+      return <Eye size={16} className="text-warning" />
     default:
       return <Circle size={16} className="text-muted-foreground/40" />
   }
@@ -93,7 +93,7 @@ export default function PlanNodeCard({ node, index, isLast, mode = 'expanded', e
           <div className="mt-2 text-[10px] text-muted-foreground/50">⬆️ 依赖: {node.dependsOn.join(', ')}</div>
         )}
         {node.completedAt && (
-          <div className="mt-2 text-[10px] text-emerald-500/70">完成于 {relativeTime(node.completedAt)}</div>
+          <div className="mt-2 text-[10px] text-success/70">完成于 {relativeTime(node.completedAt)}</div>
         )}
       </div>
     </div>

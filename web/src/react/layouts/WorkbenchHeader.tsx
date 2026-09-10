@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
-import { BookOpen, Bot, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw, Plug, ExternalLink } from 'lucide-react'
+import { BookOpen, Bot, Search, Settings2, Sun, Moon, Zap, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw, Plug, ExternalLink } from 'lucide-react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
@@ -168,7 +168,7 @@ function WikiToolbar() {
       <button type="button" className={`wh-btn relative ${draftPanelOpen ? 'active' : ''}`} title="Drafts" onClick={toggleDraftPanel}>
         <BookDashed size={13} />
         {draftsReady > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[8px] font-bold text-white">
+          <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[8px] font-bold text-primary-foreground">
             {draftsReady}
           </span>
         )}
@@ -223,17 +223,16 @@ function ProjectMcpToolbarMenu({ projectId }: { projectId: string }) {
 
   return (
     <Dropdown>
+      {/* Dropdown.Trigger already renders the <button>; the inner element must
+          therefore be non-interactive, otherwise we nest a <button> in a
+          <button>. Geometry comes from the shared wh-pill-btn so this reads as
+          one more tab next to Worker / Skills. */}
       <Dropdown.Trigger>
-        <button
-          type="button"
-          className="agent-toolbar-mcp-trigger inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
-          aria-label="项目 MCP 配置"
-        >
+        <span className="wh-pill-btn agent-toolbar-mcp-trigger">
           <Plug size={12} />
           <span>MCP</span>
           {enabledCount > 0 && <span className="agent-toolbar-mcp-count">{enabledCount}</span>}
-          <span className="text-[8px] opacity-60">▾</span>
-        </button>
+        </span>
       </Dropdown.Trigger>
       <Dropdown.Popover placement="bottom end" className="z-50">
         <Dropdown.Menu aria-label="项目 MCP 配置">
@@ -402,7 +401,6 @@ export function WorkbenchHeader({
               <span className="truncate max-w-[120px] text-xs font-medium">
                 {hasProject ? projectName : 'Synax'}
               </span>
-              <ChevronsUpDown size={12} className="text-muted-foreground shrink-0" />
             </div>
           </Dropdown.Trigger>
           <Dropdown.Popover placement="top start">

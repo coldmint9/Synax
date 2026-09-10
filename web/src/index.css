@@ -20,6 +20,10 @@
   --color-card-foreground: hsl(var(--card-foreground));
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
+  /* `danger` is the HeroUI-facing name for the same token; without this
+     mapping every bg-danger/text-danger utility silently compiled away. */
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
   --color-agent: hsl(var(--agent));
   --color-agent-foreground: hsl(var(--agent-foreground));
   --color-human: hsl(var(--human));
@@ -109,214 +113,325 @@
 @keyframes bot-glow { 0%, 100% { box-shadow: 0 0 0 0 hsl(var(--agent) / 0.08); border-color: hsl(var(--agent) / 0.15); } 50% { box-shadow: 0 0 6px 2px hsl(var(--agent) / 0.12); border-color: hsl(var(--agent) / 0.35); } }
 
 /* ── CSS Variables ── */
+/* ───────────────────────────────────────────────────────────────────────────
+   Codex palette foundation
+   One neutral ramp + one semantic accent set, extracted from the Codex desktop
+   theme tokens. Everything below resolves back to these values so components
+   never have to hard-code a hue.
+   ─────────────────────────────────────────────────────────────────────────── */
 :root {
+  /* Neutral ramp */
+  --cx-gray-0: #ffffff;
+  --cx-gray-50: #f9f9f9;
+  --cx-gray-75: #f3f3f3;
+  --cx-gray-100: #ededed;
+  --cx-gray-150: #dfdfdf;
+  --cx-gray-200: #cdcdcd;
+  --cx-gray-250: #b9b9b9;
+  --cx-gray-300: #afafaf;
+  --cx-gray-400: #8f8f8f;
+  --cx-gray-500: #5d5d5d;
+  --cx-gray-550: #4f4f4f;
+  --cx-gray-600: #414141;
+  --cx-gray-650: #393939;
+  --cx-gray-700: #303030;
+  --cx-gray-750: #282828;
+  --cx-gray-800: #212121;
+  --cx-gray-900: #181818;
+  --cx-gray-950: #131313;
+  --cx-gray-1000: #0d0d0d;
+
+  /* Same ramp as HSL triplets for hsl(var(--x) / alpha) composition */
+  --cx-gray-0-hsl: 0 0% 100%;
+  --cx-gray-50-hsl: 0 0% 97.6%;
+  --cx-gray-75-hsl: 0 0% 95.3%;
+  --cx-gray-100-hsl: 0 0% 92.9%;
+  --cx-gray-150-hsl: 0 0% 87.5%;
+  --cx-gray-200-hsl: 0 0% 80.4%;
+  --cx-gray-250-hsl: 0 0% 72.5%;
+  --cx-gray-300-hsl: 0 0% 68.6%;
+  --cx-gray-400-hsl: 0 0% 56.1%;
+  --cx-gray-500-hsl: 0 0% 36.5%;
+  --cx-gray-550-hsl: 0 0% 31%;
+  --cx-gray-600-hsl: 0 0% 25.5%;
+  --cx-gray-650-hsl: 0 0% 22.4%;
+  --cx-gray-700-hsl: 0 0% 18.8%;
+  --cx-gray-750-hsl: 0 0% 15.7%;
+  --cx-gray-800-hsl: 0 0% 12.9%;
+  --cx-gray-900-hsl: 0 0% 9.4%;
+  --cx-gray-950-hsl: 0 0% 7.5%;
+  --cx-gray-1000-hsl: 0 0% 5.1%;
+
+  /* App text (Codex foreground) */
+  --cx-text: #1a1c1f;
+  --cx-text-hsl: 216 9% 11%;
+
+  /* App accent — light Morandi green, used by every selection control */
+  --cx-accent-top: #b9cdbf;
+  --cx-accent-bottom: #a1bba8;
+  --cx-accent-strong: #3f6956;
+  --cx-accent-ink: #2f3d34;
+  --cx-accent-muted: #52605a;
+  --cx-accent-top-hsl: 138 17% 76%;
+  --cx-accent-bottom-hsl: 136 16% 68%;
+  --cx-accent-strong-hsl: 154 26% 33%;
+  --cx-accent-ink-hsl: 141 13% 21%;
+  --cx-accent-muted-hsl: 154 8% 35%;
+
+  /* Semantic accents */
+  --cx-green-50: #d9f4e4;
+  --cx-green-300: #40c977;
+  --cx-green-400: #04b84c;
+  --cx-green-500: #00a240;
+  --cx-orange-50: #fff5f0;
+  --cx-orange-300: #ff8549;
+  --cx-orange-400: #fb6a22;
+  --cx-orange-500: #e25507;
+  --cx-red-25: #fff0f0;
+  --cx-red-300: #ff6764;
+  --cx-red-400: #fa423e;
+  --cx-red-500: #e02e2a;
+  --cx-blue-50: #e5f3ff;
+  --cx-blue-300: #339cff;
+  --cx-blue-400: #0285ff;
+  --cx-blue-500: #0169cc;
+  --cx-purple-300: #ad7bf9;
+  --cx-purple-400: #924ff7;
+  --cx-yellow-300: #ffd240;
+  --cx-yellow-400: #ffc300;
+
+  /* Status hues in HSL triplet form */
+  --cx-success-hsl: 144 100% 32%;
+  --cx-warning-hsl: 21 94% 46%;
+  --cx-danger-hsl: 1 75% 52%;
+  --cx-info-hsl: 209 100% 50%;
+}
+
+/* ── Light theme (Codex light neutrals) ── */
+:root {
+  color-scheme: light;
+
   /* Raw HSL aliases (for opacity patterns: hsl(var(--x-hsl) / alpha)) */
-  --background-hsl: 40 28% 97%;
-  --foreground-hsl: 160 14% 12%;
-  --border-hsl: 38 16% 88%;
-  --accent-hsl: 38 20% 92%;
-  --accent-foreground-hsl: 160 14% 12%;
-  --success-hsl: 146 52% 38%;
-  --warning-hsl: 38 88% 52%;
-  --muted-hsl: 38 14% 90%;
+  --background-hsl: var(--cx-gray-50-hsl);
+  --foreground-hsl: var(--cx-text-hsl);
+  --border-hsl: var(--cx-gray-150-hsl);
+  --accent-hsl: var(--cx-accent-bottom-hsl);
+  --accent-foreground-hsl: var(--cx-accent-ink-hsl);
+  --success-hsl: var(--cx-success-hsl);
+  --warning-hsl: var(--cx-warning-hsl);
+  --muted-hsl: var(--cx-gray-100-hsl);
 
   /* Full colors (HeroUI components use var(--x) directly) */
-  --background: hsl(40 28% 97%);
-  --foreground: hsl(160 14% 12%);
-  --border: hsl(38 16% 88%);
-  --accent: hsl(158 44% 32%);
-  --accent-foreground: hsl(0 0% 100%);
-  --muted: hsl(38 8% 42%);
-  --success: hsl(146 52% 38%);
-  --success-foreground: hsl(0 0% 100%);
-  --warning: hsl(38 88% 52%);
-  --warning-foreground: hsl(0 0% 0%);
+  --background: var(--cx-gray-50);
+  --foreground: var(--cx-text);
+  --border: var(--cx-gray-150);
+  --accent: var(--cx-accent-bottom);
+  --accent-foreground: var(--cx-accent-ink);
+  --muted: var(--cx-gray-400);
+  --success: hsl(var(--cx-success-hsl));
+  --success-foreground: #ffffff;
+  --warning: hsl(var(--cx-warning-hsl));
+  --warning-foreground: #ffffff;
 
   /* HeroUI-specific tokens */
-  --surface: hsl(42 32% 99%);
-  --surface-foreground: hsl(160 14% 12%);
-  --surface-secondary: hsl(40 20% 94%);
-  --overlay: hsl(42 32% 99%);
-  --overlay-foreground: hsl(160 14% 12%);
-  --default: hsl(40 20% 94%);
-  --default-foreground: hsl(160 14% 12%);
-  --danger: hsl(0 84% 60%);
-  --danger-foreground: hsl(0 0% 100%);
-  --focus: hsl(158 44% 32%);
-  --field-background: hsl(42 32% 99%);
-  --field-foreground: hsl(160 14% 12%);
-  --field-placeholder: hsl(38 8% 52%);
-  --field-border: hsl(38 16% 88%);
-  --separator: hsl(38 16% 88%);
-  --segment: hsl(42 32% 99%);
-  --segment-foreground: hsl(160 14% 12%);
-  --scrollbar: hsl(38 16% 88%);
+  --surface: var(--cx-gray-0);
+  --surface-foreground: var(--cx-text);
+  --surface-secondary: var(--cx-gray-75);
+  --overlay: var(--cx-gray-0);
+  --overlay-foreground: var(--cx-text);
+  --default: var(--cx-gray-75);
+  --default-hover: var(--cx-gray-100);
+  --default-foreground: var(--cx-gray-500);
+  --danger: hsl(var(--cx-danger-hsl));
+  --danger-foreground: #ffffff;
+  --focus: var(--cx-accent-bottom);
+  --field-background: var(--cx-gray-0);
+  --field-foreground: var(--cx-text);
+  --field-placeholder: var(--cx-gray-400);
+  --field-border: var(--cx-gray-150);
+  --field-border-hover: var(--cx-gray-250);
+  --field-border-focus: var(--cx-accent-bottom);
+  --field-hover: var(--cx-gray-75);
+  --field-focus: var(--cx-gray-0);
+  --separator: var(--cx-gray-100);
+  --segment: var(--cx-gray-0);
+  --segment-foreground: var(--cx-text);
+  --scrollbar: var(--cx-gray-250);
 
   /* Project tokens (not used by HeroUI directly) */
-  --card: 42 32% 99%;
-  --card-foreground: 160 14% 12%;
-  --popover: 42 32% 99%;
-  --popover-foreground: 160 14% 12%;
-  --primary: 158 44% 32%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 40 20% 94%;
-  --secondary-foreground: 160 14% 12%;
-  --muted-foreground: 38 8% 44%;
-  --destructive: 0 84% 60%;
+  --card: var(--cx-gray-0-hsl);
+  --card-foreground: var(--cx-text-hsl);
+  --popover: var(--cx-gray-0-hsl);
+  --popover-foreground: var(--cx-text-hsl);
+  --primary: var(--cx-accent-bottom-hsl);
+  --primary-foreground: var(--cx-accent-ink-hsl);
+  --secondary: var(--cx-gray-75-hsl);
+  --secondary-foreground: var(--cx-text-hsl);
+  --muted-foreground: var(--cx-gray-500-hsl);
+  --destructive: var(--cx-danger-hsl);
   --destructive-foreground: 0 0% 100%;
-  --input: 38 16% 88%;
-  --ring: 158 44% 32%;
+  --input: var(--cx-gray-150-hsl);
+  --ring: var(--cx-accent-bottom-hsl);
   --radius: 0.5rem;
-  --agent: 162 68% 35%;
+
+  --agent: 144 100% 32%;
   --agent-foreground: 0 0% 100%;
-  --human: 24 86% 52%;
-  --human-foreground: 0 0% 0%;
-  --wiki: 24 68% 48%;
+  --human: 21 94% 46%;
+  --human-foreground: 0 0% 100%;
+  --wiki: 21 94% 46%;
   --wiki-foreground: 0 0% 100%;
-  --arch: 14 42% 40%;
+  --arch: 264 91% 64%;
   --arch-foreground: 0 0% 100%;
-  --req: 42 84% 48%;
-  --req-foreground: 0 0% 0%;
-  --neural-blue: 172 58% 38%;
-  --synaptic-green: 146 52% 38%;
-  --electric-purple: 28 72% 52%;
-  --reality: 190 62% 42%;
+  --req: 46 100% 50%;
+  --req-foreground: 216 9% 11%;
+  --neural-blue: 209 100% 50%;
+  --synaptic-green: 144 100% 32%;
+  --electric-purple: 264 91% 64%;
+  --reality: 209 99% 40%;
   --reality-foreground: 0 0% 100%;
-  --run: 206 72% 46%;
+  --run: 209 100% 50%;
   --run-foreground: 0 0% 100%;
-  --role-pm: 34 78% 50%;
-  --role-dev: 170 54% 36%;
-  --role-qa: 146 44% 34%;
-  --role-prod: 18 52% 40%;
-  --role-design: 12 66% 52%;
-  --role-devops: 28 72% 46%;
-  --import-card-hover: 158 44% 32% / 0.08;
-  --import-card-selected: 158 44% 32% / 0.14;
-  --import-step-done: 158 44% 32%;
-  --import-step-active: 158 44% 32%;
+  --role-pm: 46 100% 50%;
+  --role-dev: 209 100% 50%;
+  --role-qa: 144 100% 32%;
+  --role-prod: 21 94% 46%;
+  --role-design: 264 91% 64%;
+  --role-devops: 0 0% 36.5%;
+  --import-card-hover: var(--cx-accent-bottom-hsl) / 0.08;
+  --import-card-selected: var(--cx-accent-bottom-hsl) / 0.14;
+  --import-step-done: var(--cx-accent-bottom-hsl);
+  --import-step-active: var(--cx-accent-bottom-hsl);
   --import-step-pending: 0 0% 60%;
-  --wiki-surface: 40 26% 96%;
-  --wiki-surface-strong: 38 22% 93%;
-  --wiki-panel: 42 30% 98%;
-  --wiki-panel-foreground: 160 14% 12%;
-  --wiki-panel-muted: 38 18% 91%;
-  --wiki-accent: 158 34% 89%;
-  --wiki-accent-foreground: 160 18% 18%;
-  --wiki-warm: 36 50% 90%;
-  --wiki-shadow: 36 24% 26%;
-  --verdict-bug: 0 70% 52%;
-  --verdict-risk: 38 80% 52%;
-  --verdict-new-req: 258 70% 58%;
-  --verdict-scope: 24 80% 52%;
-  --verdict-debt: 215 15% 55%;
-  --verdict-knowledge: 214 80% 58%;
-  --verdict-team: 170 60% 42%;
-  --verdict-forecast: 190 70% 50%;
-  --verdict-decision: 270 60% 58%;
-  --verdict-adjust: 200 70% 52%;
+  --wiki-surface: var(--cx-gray-75-hsl);
+  --wiki-surface-strong: var(--cx-gray-100-hsl);
+  --wiki-panel: var(--cx-gray-0-hsl);
+  --wiki-panel-foreground: var(--cx-text-hsl);
+  --wiki-panel-muted: var(--cx-gray-75-hsl);
+  --wiki-accent: 138 24% 90%;
+  --wiki-accent-foreground: var(--cx-accent-ink-hsl);
+  --wiki-warm: 138 20% 92%;
+  --wiki-shadow: 0 0% 40%;
+  --verdict-bug: 1 75% 52%;
+  --verdict-risk: 21 94% 46%;
+  --verdict-new-req: 264 91% 64%;
+  --verdict-scope: 46 100% 50%;
+  --verdict-debt: 0 0% 56.1%;
+  --verdict-knowledge: 209 100% 50%;
+  --verdict-team: 144 100% 32%;
+  --verdict-forecast: 209 100% 56%;
+  --verdict-decision: 264 82% 73%;
+  --verdict-adjust: 209 99% 40%;
   --icon-bg-alpha: 0.10;
   --icon-border-alpha: 0.18;
 }
 
+/* ── Dark theme (Codex dark neutrals, same accent family) ── */
 .dark {
+  color-scheme: dark;
+
   /* Raw HSL aliases */
-  --background-hsl: 160 14% 8%;
-  --foreground-hsl: 150 16% 92%;
-  --border-hsl: 155 10% 22%;
-  --accent-hsl: 155 12% 20%;
-  --accent-foreground-hsl: 150 16% 92%;
-  --success-hsl: 146 52% 46%;
-  --warning-hsl: 38 88% 56%;
-  --muted-hsl: 155 8% 18%;
+  --background-hsl: var(--cx-gray-900-hsl);
+  --foreground-hsl: var(--cx-gray-150-hsl);
+  --border-hsl: 0 0% 17%;
+  --accent-hsl: var(--cx-accent-bottom-hsl);
+  --accent-foreground-hsl: var(--cx-accent-ink-hsl);
+  --success-hsl: 144 100% 52%;
+  --warning-hsl: 27 100% 64%;
+  --muted-hsl: var(--cx-gray-750-hsl);
 
   /* Full colors */
-  --background: hsl(160 14% 8%);
-  --foreground: hsl(150 16% 92%);
-  --border: hsl(155 10% 22%);
-  --accent: hsl(158 46% 54%);
-  --accent-foreground: hsl(0 0% 100%);
-  --muted: hsl(155 8% 58%);
-  --success: hsl(146 52% 46%);
-  --success-foreground: hsl(0 0% 100%);
-  --warning: hsl(38 88% 56%);
-  --warning-foreground: hsl(0 0% 0%);
+  --background: var(--cx-gray-900);
+  --foreground: var(--cx-gray-150);
+  --border: #2b2b2b;
+  --accent: var(--cx-accent-bottom);
+  --accent-foreground: var(--cx-accent-ink);
+  --muted: var(--cx-gray-400);
+  --success: hsl(var(--success-hsl));
+  --success-foreground: #0d0d0d;
+  --warning: hsl(var(--warning-hsl));
+  --warning-foreground: #0d0d0d;
 
   /* HeroUI-specific tokens */
-  --surface: hsl(160 12% 11%);
-  --surface-foreground: hsl(150 16% 92%);
-  --surface-secondary: hsl(158 10% 17%);
-  --overlay: hsl(160 12% 11%);
-  --overlay-foreground: hsl(150 16% 92%);
-  --default: hsl(158 10% 17%);
-  --default-foreground: hsl(150 16% 92%);
-  --danger: hsl(0 70% 42%);
-  --danger-foreground: hsl(0 0% 98%);
-  --focus: hsl(158 46% 54%);
-  --field-background: hsl(160 12% 11%);
-  --field-foreground: hsl(150 16% 92%);
-  --field-placeholder: hsl(155 8% 58%);
-  --field-border: hsl(155 10% 22%);
-  --separator: hsl(155 10% 19%);
-  --segment: hsl(158 10% 17%);
-  --segment-foreground: hsl(150 16% 92%);
-  --scrollbar: hsl(155 10% 22%);
+  --surface: var(--cx-gray-800);
+  --surface-foreground: var(--cx-gray-150);
+  --surface-secondary: var(--cx-gray-750);
+  --overlay: var(--cx-gray-800);
+  --overlay-foreground: var(--cx-gray-150);
+  --default: var(--cx-gray-750);
+  --default-hover: var(--cx-gray-700);
+  --default-foreground: var(--cx-gray-400);
+  --danger: hsl(1 82% 62%);
+  --danger-foreground: #0d0d0d;
+  --focus: var(--cx-accent-bottom);
+  --field-background: var(--cx-gray-800);
+  --field-foreground: var(--cx-gray-150);
+  --field-placeholder: var(--cx-gray-400);
+  --field-border: #2b2b2b;
+  --field-border-hover: var(--cx-gray-650);
+  --field-border-focus: var(--cx-accent-bottom);
+  --field-hover: var(--cx-gray-750);
+  --field-focus: var(--cx-gray-800);
+  --separator: #232323;
+  --segment: var(--cx-gray-750);
+  --segment-foreground: var(--cx-gray-150);
+  --scrollbar: var(--cx-gray-650);
 
   /* Project tokens */
-  --card: 160 12% 11%;
-  --card-foreground: 150 16% 92%;
-  --popover: 160 12% 11%;
-  --popover-foreground: 150 16% 92%;
-  --primary: 158 46% 54%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 158 10% 17%;
-  --secondary-foreground: 150 16% 92%;
-  --muted-foreground: 155 8% 58%;
-  --destructive: 0 70% 42%;
-  --destructive-foreground: 0 0% 98%;
-  --input: 155 10% 22%;
-  --ring: 158 46% 54%;
-  --agent: 162 64% 44%;
-  --human: 24 82% 56%;
-  --wiki: 24 72% 58%;
-  --arch: 14 52% 54%;
-  --req: 42 88% 54%;
-  --reality: 190 72% 58%;
-  --run: 206 82% 62%;
-  --neural-blue: 172 62% 52%;
-  --synaptic-green: 146 52% 46%;
-  --electric-purple: 28 76% 58%;
-  --role-pm: 34 80% 58%;
-  --role-dev: 170 56% 54%;
-  --role-qa: 146 46% 48%;
-  --role-prod: 18 54% 56%;
-  --role-design: 12 68% 58%;
-  --role-devops: 28 74% 56%;
-  --import-card-hover: 158 46% 54% / 0.10;
-  --import-card-selected: 158 46% 54% / 0.18;
-  --import-step-done: 158 46% 54%;
-  --import-step-active: 158 46% 54%;
+  --card: var(--cx-gray-800-hsl);
+  --card-foreground: var(--cx-gray-150-hsl);
+  --popover: var(--cx-gray-800-hsl);
+  --popover-foreground: var(--cx-gray-150-hsl);
+  --primary: var(--cx-accent-bottom-hsl);
+  --primary-foreground: var(--cx-accent-ink-hsl);
+  --secondary: var(--cx-gray-750-hsl);
+  --secondary-foreground: var(--cx-gray-150-hsl);
+  --muted-foreground: var(--cx-gray-400-hsl);
+  --destructive: 1 82% 62%;
+  --destructive-foreground: 0 0% 5.1%;
+  --input: 0 0% 17%;
+  --ring: var(--cx-accent-bottom-hsl);
+  --agent: 144 100% 52%;
+  --human: 27 100% 64%;
+  --wiki: 27 100% 64%;
+  --arch: 264 82% 73%;
+  --req: 46 100% 60%;
+  --reality: 209 100% 64%;
+  --run: 209 100% 64%;
+  --neural-blue: 209 100% 64%;
+  --synaptic-green: 144 100% 52%;
+  --electric-purple: 264 82% 73%;
+  --role-pm: 46 100% 60%;
+  --role-dev: 209 100% 64%;
+  --role-qa: 144 100% 52%;
+  --role-prod: 27 100% 64%;
+  --role-design: 264 82% 73%;
+  --role-devops: 0 0% 56.1%;
+  --import-card-hover: var(--cx-accent-bottom-hsl) / 0.10;
+  --import-card-selected: var(--cx-accent-bottom-hsl) / 0.18;
+  --import-step-done: var(--cx-accent-bottom-hsl);
+  --import-step-active: var(--cx-accent-bottom-hsl);
   --import-step-pending: 0 0% 48%;
-  --wiki-surface: 158 14% 10%;
-  --wiki-surface-strong: 158 12% 13%;
-  --wiki-panel: 158 12% 12%;
-  --wiki-panel-foreground: 150 16% 92%;
-  --wiki-panel-muted: 155 10% 18%;
-  --wiki-accent: 156 24% 22%;
-  --wiki-accent-foreground: 150 16% 92%;
-  --wiki-warm: 155 14% 18%;
+  --wiki-surface: var(--cx-gray-900-hsl);
+  --wiki-surface-strong: var(--cx-gray-950-hsl);
+  --wiki-panel: var(--cx-gray-900-hsl);
+  --wiki-panel-foreground: var(--cx-gray-150-hsl);
+  --wiki-panel-muted: var(--cx-gray-800-hsl);
+  --wiki-accent: 136 12% 24%;
+  --wiki-accent-foreground: var(--cx-gray-150-hsl);
+  --wiki-warm: var(--cx-gray-750-hsl);
   --wiki-shadow: 0 0% 0%;
   --icon-bg-alpha: 0.14;
   --icon-border-alpha: 0.24;
-  --verdict-bug: 0 72% 62%;
-  --verdict-risk: 38 84% 58%;
-  --verdict-new-req: 258 74% 68%;
-  --verdict-scope: 24 84% 60%;
-  --verdict-debt: 215 18% 62%;
-  --verdict-knowledge: 214 84% 66%;
-  --verdict-team: 170 64% 54%;
-  --verdict-forecast: 190 74% 58%;
-  --verdict-decision: 270 64% 68%;
-  --verdict-adjust: 200 74% 60%;
+  --verdict-bug: 1 82% 62%;
+  --verdict-risk: 27 100% 64%;
+  --verdict-new-req: 264 82% 73%;
+  --verdict-scope: 46 100% 60%;
+  --verdict-debt: 0 0% 56.1%;
+  --verdict-knowledge: 209 100% 64%;
+  --verdict-team: 144 100% 52%;
+  --verdict-forecast: 209 100% 64%;
+  --verdict-decision: 264 82% 73%;
+  --verdict-adjust: 209 100% 60%;
 }
 
 /* ── Base Styles ── */
@@ -513,8 +628,18 @@
     z-index: 30;
     display: flex;
     align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
     gap: 8px;
     white-space: nowrap;
+    /* An absolutely positioned box shrink-to-fits against `containing block
+       width - left offset`, so the header used to be capped at half the
+       window: the panel toolbar island (Worker/Skills/MCP, Wiki tools) got
+       squeezed down to a few pixels whenever the window was narrow. Size to
+       the content instead, clamp to the window, and let the island itself
+       wrap onto a second row instead of being clipped. */
+    width: max-content;
+    max-width: calc(100% - 16px);
   }
 
   .wh-pill {
@@ -939,8 +1064,8 @@
     color: hsl(var(--primary));
   }
   .settings-chip--success {
-    background: hsl(var(--success) / 0.12);
-    color: hsl(var(--success));
+    background: hsl(var(--success-hsl) / 0.12);
+    color: var(--success);
   }
   .settings-chip--muted {
     background: hsl(var(--wiki-panel-muted) / 0.8);
@@ -1159,8 +1284,8 @@
     animation: wiki-highlight-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
   @keyframes wiki-highlight-pop {
-    0% { background-color: hsl(var(--warning) / 0.7); transform: scale(1.05); }
-    100% { background-color: hsl(var(--warning) / 0.4); transform: scale(1); }
+    0% { background-color: hsl(var(--warning-hsl) / 0.7); transform: scale(1.05); }
+    100% { background-color: hsl(var(--warning-hsl) / 0.4); transform: scale(1); }
   }
   @keyframes float-in {
     0% { opacity: 0; transform: translateY(8px); }
@@ -1934,7 +2059,7 @@
 
 .goal-dock-dialog-scroll {
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--foreground) / 0.12) transparent;
+  scrollbar-color: hsl(var(--foreground-hsl) / 0.12) transparent;
 }
 
 .goal-dock-hit[data-hit="mini"] {
@@ -1982,7 +2107,7 @@
 }
 
 .dark .goal-dock-shell {
-  background: hsl(var(--foreground) / 0.62);
+  background: hsl(var(--foreground-hsl) / 0.62);
   border-color: hsl(0 0% 100% / 0.08);
   -webkit-backdrop-filter: blur(14px) saturate(1.5);
   backdrop-filter: blur(14px) saturate(1.5);
@@ -1996,16 +2121,16 @@
   border-color: hsl(0 0% 100% / 0.82);
   box-shadow:
     0 1px 0 hsl(0 0% 100% / 0.95) inset,
-    0 0 12px hsl(142 71% 45% / 0.2),
+    0 0 12px hsl(var(--primary) / 0.2),
     0 4px 12px hsl(0 0% 0% / 0.05);
   animation: goal-dock-bar-pulse 1.8s ease-in-out infinite;
 }
 
 .dark .goal-dock-shell--pending {
-  background: hsl(142 71% 45% / 0.95);
+  background: hsl(var(--primary) / 0.95);
   box-shadow:
     inset 0 0.5px 0 hsl(0 0% 100% / 0.14),
-    0 0 10px hsl(142 71% 45% / 0.34),
+    0 0 10px hsl(var(--primary) / 0.34),
     0 1px 6px hsl(0 0% 0% / 0.32);
 }
 
@@ -2122,7 +2247,7 @@
   flex: 1;
   font-size: 11px;
   line-height: 1.25rem;
-  color: hsl(var(--foreground) / 0.82);
+  color: hsl(var(--foreground-hsl) / 0.82);
 }
 .goal-dock-approval-label-btn {
   cursor: pointer;
@@ -2133,7 +2258,7 @@
   transition: color 150ms ease;
 }
 .goal-dock-approval-label-btn:hover {
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 .goal-dock-approval-actions {
   display: flex;
@@ -2180,7 +2305,7 @@
   color: hsl(var(--muted-foreground) / 0.85);
 }
 .goal-dock-approval-btn--muted:hover {
-  color: hsl(var(--foreground) / 0.8);
+  color: hsl(var(--foreground-hsl) / 0.8);
   background: hsl(0 0% 100% / 0.52);
 }
 .dark .goal-dock-approval-btn--muted:hover {
@@ -2364,13 +2489,13 @@
 
 .goal-dock-tool-list {
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--foreground) / 0.12) transparent;
+  scrollbar-color: hsl(var(--foreground-hsl) / 0.12) transparent;
 }
 .goal-dock-composer .button--tertiary,
 .goal-dock-composer .goal-dock-composer-chip {
   border: 1px solid hsl(0 0% 100% / 0.55);
   background: hsl(0 0% 100% / 0.32);
-  color: hsl(var(--foreground) / 0.78);
+  color: hsl(var(--foreground-hsl) / 0.78);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   box-shadow: 0 1px 0 hsl(0 0% 100% / 0.45) inset;
@@ -2379,7 +2504,7 @@
 .dark .goal-dock-composer .goal-dock-composer-chip {
   border-color: hsl(0 0% 100% / 0.12);
   background: hsl(0 0% 100% / 0.06);
-  color: hsl(var(--foreground) / 0.82);
+  color: hsl(var(--foreground-hsl) / 0.82);
   box-shadow: 0 1px 0 hsl(0 0% 100% / 0.1) inset;
 }
 .goal-dock-composer .button--tertiary:hover,
@@ -2409,7 +2534,7 @@
 .goal-dock-composer .goal-dock-composer-stop {
   border: 1px solid hsl(0 0% 100% / 0.55);
   background: hsl(0 0% 100% / 0.38);
-  color: hsl(var(--foreground) / 0.75);
+  color: hsl(var(--foreground-hsl) / 0.75);
 }
 .dark .goal-dock-composer .goal-dock-composer-stop {
   border-color: hsl(0 0% 100% / 0.12);
@@ -2419,7 +2544,7 @@
 .goal-dock-composer textarea,
 .goal-dock-composer [data-slot="input"] {
   background: transparent !important;
-  color: hsl(var(--foreground) / 0.88);
+  color: hsl(var(--foreground-hsl) / 0.88);
 }
 .goal-dock-composer input::placeholder,
 .goal-dock-composer textarea::placeholder {
@@ -2442,184 +2567,137 @@
 }
 
 /* Session chat — floating message timeline navigator */
+/* ───────────────────────────────────────────────────────────────────────────
+   Conversation turn rail (session minimap)
+   Resting state is a quiet column of 12x4 ticks on a fixed 20px pitch; moving
+   the pointer over the rail ripples the nearby ticks wider (42 / 40 / 28 / 20)
+   and slides out a preview of the turn under the cursor. Geometry mirrors the
+   design reference, flipped to the left because this rail hugs the right edge.
+   ─────────────────────────────────────────────────────────────────────────── */
 .session-nav-float {
   position: absolute;
-  right: 0.75rem;
+  right: 0.5rem;
   top: 50%;
   z-index: 20;
   transform: translateY(-50%);
   pointer-events: none;
-  opacity: 0.42;
-  transition: opacity 220ms ease;
+  opacity: 0.85;
+  transition: opacity 260ms cubic-bezier(0.22, 0.9, 0.28, 1);
 }
-.session-nav-float[data-hovered="true"] {
-  opacity: 0.96;
-}
+.session-nav-float[data-hovered="true"] { opacity: 1; }
+
 .session-nav-float-rail {
   position: relative;
   pointer-events: auto;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  max-height: min(58vh, 26rem);
-  padding: 0.5rem 0.375rem;
-  border-radius: 9999px;
-  border: 1px solid hsl(var(--border) / 0.45);
-  background: hsl(var(--background) / 0.52);
-  backdrop-filter: blur(10px);
-  box-shadow:
-    0 8px 24px hsl(var(--foreground) / 0.06),
-    0 1px 0 hsl(0 0% 100% / 0.35) inset;
-  transition: transform 220ms ease, box-shadow 220ms ease, background-color 220ms ease;
+  padding: 6px 8px;
+  max-height: min(72vh, 34rem);
 }
-.dark .session-nav-float-rail {
-  background: hsl(var(--background) / 0.38);
-  box-shadow:
-    0 10px 28px hsl(0 0% 0% / 0.28),
-    0 1px 0 hsl(0 0% 100% / 0.06) inset;
-}
-.session-nav-float[data-hovered="true"] .session-nav-float-rail {
-  transform: scale(1.03);
-  background: hsl(var(--background) / 0.72);
-  box-shadow:
-    0 12px 32px hsl(var(--foreground) / 0.1),
-    0 1px 0 hsl(0 0% 100% / 0.45) inset;
-}
-.dark .session-nav-float[data-hovered="true"] .session-nav-float-rail {
-  background: hsl(var(--background) / 0.58);
-}
-.session-nav-float-axis {
-  position: absolute;
-  top: 0.875rem;
-  bottom: 0.875rem;
-  left: 50%;
-  width: 1px;
-  transform: translateX(-50%);
-  background: linear-gradient(
-    to bottom,
-    hsl(var(--border) / 0.15),
-    hsl(var(--border) / 0.85) 12%,
-    hsl(var(--border) / 0.85) 88%,
-    hsl(var(--border) / 0.15)
-  );
-  pointer-events: none;
-}
+
 .session-nav-float-list {
-  position: relative;
-  z-index: 1;
   display: flex;
-  flex: 1;
-  min-height: 0;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 0.625rem;
+  align-items: flex-end;
+  /* Mark boxes are 12px tall and ticks sit on a 20px pitch, matching the
+     reference ruler (4px tick + 16px air). */
+  gap: 8px;
   margin: 0;
-  padding: 0.125rem 0;
+  padding: 0;
   list-style: none;
   overflow-y: auto;
   scrollbar-width: none;
 }
-.session-nav-float-list::-webkit-scrollbar {
-  display: none;
-}
-.session-nav-float-item {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
+.session-nav-float-list::-webkit-scrollbar { display: none; }
+
+.session-nav-float-item { display: flex; }
+
 .session-nav-float-mark {
-  position: relative;
-  z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 1.375rem;
-  height: 1.375rem;
+  justify-content: flex-end;
+  min-width: 42px;
+  height: 12px;
+  padding: 0;
   border: none;
-  border-radius: 9999px;
   background: transparent;
   cursor: pointer;
-  transition: transform 180ms ease;
-}
-.session-nav-float-mark:hover,
-.session-nav-float-mark:focus-visible {
-  transform: scale(1.28);
+  border-radius: 999px;
 }
 .session-nav-float-mark:focus-visible {
-  outline: 2px solid hsl(var(--primary) / 0.45);
+  outline: 2px solid hsl(var(--primary) / 0.5);
   outline-offset: 2px;
 }
-.session-nav-float-dot {
+
+.session-nav-float-tick {
   display: block;
-  width: 0.4375rem;
-  height: 0.4375rem;
-  border-radius: 9999px;
-  border: 1.5px solid hsl(var(--muted-foreground) / 0.45);
-  background: hsl(var(--background) / 0.85);
+  height: 4px;
+  border-radius: 2px;
+  background: hsl(var(--muted-foreground) / 0.42);
   transition:
-    transform 180ms ease,
-    border-color 180ms ease,
-    background-color 180ms ease,
-    box-shadow 180ms ease;
+    width 260ms cubic-bezier(0.22, 0.9, 0.28, 1),
+    background-color 260ms cubic-bezier(0.22, 0.9, 0.28, 1);
 }
-.session-nav-float-mark:hover .session-nav-float-dot,
-.session-nav-float-mark:focus-visible .session-nav-float-dot {
-  transform: scale(1.15);
-  border-color: hsl(var(--primary) / 0.75);
+.session-nav-float-mark:hover .session-nav-float-tick,
+.session-nav-float-mark[data-hovered="true"] .session-nav-float-tick,
+.session-nav-float-mark:focus-visible .session-nav-float-tick {
+  background: hsl(var(--foreground-hsl) / 0.92);
 }
-.session-nav-float-mark[data-active="true"] .session-nav-float-dot {
-  border-color: hsl(var(--primary));
-  background: hsl(var(--primary));
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2);
+.session-nav-float-mark[data-active="true"] .session-nav-float-tick {
+  background: hsl(var(--foreground-hsl) / 0.88);
 }
-.session-nav-float-card {
+.session-nav-float-mark[data-active="true"]:hover .session-nav-float-tick,
+.session-nav-float-mark[data-active="true"][data-hovered="true"] .session-nav-float-tick {
+  background: hsl(var(--foreground-hsl));
+}
+
+.session-nav-preview {
   position: absolute;
-  right: calc(100% + 0.625rem);
+  right: calc(100% + 14px);
   top: 50%;
   z-index: 30;
-  display: flex;
-  max-width: 13rem;
-  align-items: flex-start;
-  gap: 0.375rem;
-  padding: 0.4375rem 0.5625rem;
-  border-radius: 0.625rem;
-  border: 1px solid hsl(var(--border) / 0.55);
-  background: hsl(var(--background) / 0.88);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 8px 20px hsl(var(--foreground) / 0.08);
+  width: min(24rem, 40vw);
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid hsl(var(--border-hsl) / 0.75);
+  background: hsl(var(--card));
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.7) inset,
+    0 12px 32px -12px hsl(var(--foreground-hsl) / 0.22),
+    0 2px 6px hsl(var(--foreground-hsl) / 0.06);
   pointer-events: none;
-  opacity: 0;
-  transform: translateY(-50%) translateX(0.375rem) scale(0.92);
-  transition:
-    opacity 160ms ease,
-    transform 180ms ease;
+  animation: session-nav-preview-in 220ms cubic-bezier(0.22, 0.9, 0.28, 1);
 }
-.dark .session-nav-float-card {
-  background: hsl(var(--background) / 0.82);
-  box-shadow: 0 10px 24px hsl(0 0% 0% / 0.32);
+.dark .session-nav-preview {
+  background: hsl(var(--card));
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.06) inset,
+    0 14px 36px -14px hsl(0 0% 0% / 0.6);
 }
-.session-nav-float-item:hover .session-nav-float-card,
-.session-nav-float-mark:focus-visible + .session-nav-float-card {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0) scale(1);
+@keyframes session-nav-preview-in {
+  from { opacity: 0; transform: translateY(-50%) translateX(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(-50%) translateX(0) scale(1); }
 }
-.session-nav-float-card-index {
-  flex-shrink: 0;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: 0.04em;
-  color: hsl(var(--primary));
+.session-nav-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: hsl(var(--foreground-hsl));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.session-nav-float-card-label {
+.session-nav-preview-body {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  font-size: 10px;
-  line-height: 1.35;
-  color: hsl(var(--foreground) / 0.88);
+  -webkit-line-clamp: 6;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: hsl(var(--muted-foreground));
 }
 
 /* ---------------------------------------------------------------------------
@@ -2682,67 +2760,12 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Global light-mode palette
-   Keep the light UI neutral/cool and use the shared Morandi-green accent for
-   all selection controls. This intentionally overrides the legacy warm/amber
-   tokens above without changing the dark theme.
+   Light mode is the base theme.
+   The Codex-neutral tokens in :root above are the single source of truth for
+   light mode; `.dark` overrides them. This block used to restate a second,
+   greener palette that shadowed the base tokens — it is intentionally gone so
+   there is exactly one place to change a colour.
    ------------------------------------------------------------------------- */
-:root:not(.dark) {
-  --background-hsl: 150 18% 97%;
-  --foreground-hsl: 160 14% 12%;
-  --border-hsl: 150 14% 86%;
-  --accent-hsl: 150 19% 91%;
-  --accent-foreground-hsl: 160 14% 12%;
-  --muted-hsl: 150 10% 90%;
-
-  --background: hsl(150 18% 97%);
-  --foreground: hsl(160 14% 12%);
-  --border: hsl(150 14% 86%);
-  --accent: #a1bba8;
-  --accent-foreground: #2f3d34;
-  --muted: hsl(150 9% 42%);
-  --surface: hsl(150 22% 99%);
-  --surface-foreground: hsl(160 14% 12%);
-  --surface-secondary: hsl(150 17% 94%);
-  --overlay: hsl(150 22% 99%);
-  --overlay-foreground: hsl(160 14% 12%);
-  --default: hsl(150 17% 93%);
-  --default-hover: hsl(150 20% 89%);
-  --default-foreground: #52605a;
-  --focus: #a1bba8;
-  --field-background: hsl(150 22% 99%);
-  --field-foreground: hsl(160 14% 12%);
-  --field-placeholder: hsl(150 9% 48%);
-  --field-border: hsl(150 14% 84%);
-  --field-border-hover: hsl(150 18% 72%);
-  --field-border-focus: #a1bba8;
-  --field-hover: hsl(150 21% 94%);
-  --field-focus: hsl(150 24% 96%);
-  --separator: hsl(150 14% 86%);
-  --segment: hsl(150 22% 99%);
-  --segment-foreground: hsl(160 14% 12%);
-  --scrollbar: hsl(150 14% 82%);
-
-  --card: 150 22% 99%;
-  --card-foreground: 160 14% 12%;
-  --popover: 150 22% 99%;
-  --popover-foreground: 160 14% 12%;
-  --primary: 150 27% 68%;
-  --primary-foreground: 160 20% 16%;
-  --secondary: 150 17% 93%;
-  --secondary-foreground: 160 14% 12%;
-  --muted-foreground: 150 9% 42%;
-  --input: 150 14% 84%;
-  --ring: 150 27% 68%;
-  --wiki-surface: 150 17% 95%;
-  --wiki-surface-strong: 150 17% 92%;
-  --wiki-panel: 150 22% 98%;
-  --wiki-panel-foreground: 160 14% 12%;
-  --wiki-panel-muted: 150 16% 91%;
-  --wiki-accent: 150 28% 84%;
-  --wiki-accent-foreground: 160 18% 18%;
-  --wiki-warm: 150 20% 90%;
-}
 
 /* All HeroUI selection controls in light mode use the same Morandi-green
    language: pale green selected state, white thumb/check surface, and a
@@ -2963,11 +2986,11 @@
   font-size: var(--agent-chat-font-size, 14px) !important;
 }
 
-/* Restore the original warm-neutral conversation canvas only. The global
-   settings/control palette remains cool Morandi green, while transcript
-   reading area returns to its previous background tone. */
+/* The transcript canvas follows the same neutral surface as the rest of the
+   app. It used to re-declare a warm cream background here, which was the last
+   amber surface left in light mode. */
 :root:not(.dark) .session-chat {
-  background: hsl(40 28% 97%);
+  background: var(--background);
 }
 
 /* Increase light-mode navigation legibility: icons inherit the same darker
@@ -2988,39 +3011,18 @@
   stroke: #2f3d34;
 }
 
-/* The session list keeps its original light visual language. The newer cool
-   Morandi palette is used by settings/selection controls, not this reading
-   navigation surface. */
-:root:not(.dark) .session-list-panel {
-  --background-hsl: 40 28% 97%;
-  --border-hsl: 38 16% 88%;
-  --accent-hsl: 38 20% 92%;
-  --muted-hsl: 38 14% 90%;
-  --primary: 158 44% 32%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 40 20% 94%;
-  --wiki-surface: 40 26% 96%;
-  --wiki-surface-strong: 38 22% 93%;
-  --wiki-panel: 42 30% 98%;
-  --wiki-panel-muted: 38 18% 91%;
-  --wiki-accent: 158 34% 89%;
-  --wiki-shadow: 36 24% 26%;
-  background: hsl(40 28% 97%);
-}
+/* The session list used to override the global palette with its own warm
+   cream tokens. It now inherits the shared Codex neutrals and only tunes text
+   contrast for the navigation surface. */
 :root:not(.dark) .session-list-panel .list-card,
 :root:not(.dark) .session-list-panel .list-row {
-  color: hsl(38 8% 42%);
+  color: hsl(var(--muted-foreground));
 }
 :root:not(.dark) .session-list-panel .list-card--active,
-:root:not(.dark) .session-list-panel .list-row--active {
-  color: hsl(160 14% 12%);
-  background: hsl(42 32% 99%);
-  border-color: hsl(38 16% 88% / 0.7);
-}
+:root:not(.dark) .session-list-panel .list-row--active,
 :root:not(.dark) .session-list-panel .list-row:hover:not(.list-row--active),
 :root:not(.dark) .session-list-panel .list-card:hover:not(.list-card--active) {
-  background: hsl(38 18% 91% / 0.45);
-  color: hsl(160 14% 12%);
+  color: hsl(var(--foreground-hsl));
 }
 
 /* Fully collapsed left session panel: consume zero layout width; the reopen
@@ -3044,21 +3046,10 @@
   zoom: var(--ui-font-scale, 1);
 }
 
-/* Agent page light palette: comfortable deep green instead of pale/amber
-   accents. Scoped to the Agent view so Wiki keeps its established palette. */
-:root:not(.dark) .agent-page-shell {
-  --primary: 154 31% 31%;
-  --primary-foreground: 0 0% 100%;
-  --accent: #3f6956;
-  --accent-foreground: #ffffff;
-  --agent: 154 31% 31%;
-  --agent-foreground: #ffffff;
-  --run: 154 31% 31%;
-  --run-foreground: #ffffff;
-  --wiki-accent: 150 17% 91%;
-  --wiki-accent-foreground: 154 28% 24%;
-  color: #2f3d34;
-}
+/* The Agent view used to fork the palette with a dark-green primary and a
+   hard-coded ink colour. Those overrides are gone on purpose: Agent, Wiki and
+   Settings now all render the one accent defined in :root. */
+
 :root:not(.dark) .wh-tab--sessions,
 :root:not(.dark) .wh-tab--sessions svg,
 :root:not(.dark) .agent-toolbar-tabs .tabs__tab,
@@ -3098,9 +3089,9 @@
      softer blurs lift the pill off the transcript so it reads as floating. */
   box-shadow:
     0 1px 0 hsl(0 0% 100% / 0.92) inset,
-    0 2px 4px hsl(150 12% 16% / 0.12),
-    0 6px 12px -2px hsl(150 12% 16% / 0.18),
-    0 14px 24px -8px hsl(150 12% 16% / 0.22) !important;
+    0 2px 4px hsl(var(--foreground-hsl) / 0.12),
+    0 6px 12px -2px hsl(var(--foreground-hsl) / 0.18),
+    0 14px 24px -8px hsl(var(--foreground-hsl) / 0.22) !important;
   overflow: hidden;
 }
 .goal-session-composer--footer .goal-session-composer-shell:not([data-multiline="true"]),
@@ -3123,6 +3114,108 @@
 }
 .session-chat-scroll {
   padding-bottom: 4.5rem;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Session file-change island
+   A small floating summary that sits directly above the composer while this
+   session's agent has uncommitted edits. Summary + per-file list share one
+   pill geometry so it reads as a single object.
+   ─────────────────────────────────────────────────────────────────────────── */
+.session-file-island {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding-bottom: 0.5rem;
+  /* The composer footer disables pointer events so the transcript behind it
+     stays scrollable; the island has to opt back in to be clickable. */
+  pointer-events: auto;
+}
+.session-file-island-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border-hsl) / 0.75);
+  background: hsl(var(--card) / 0.94);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.7) inset,
+    0 1px 2px hsl(var(--foreground-hsl) / 0.06),
+    0 8px 20px -8px hsl(var(--foreground-hsl) / 0.22);
+  color: hsl(var(--foreground-hsl));
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.session-file-island-pill:hover {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border-hsl));
+}
+.session-file-island-pill:active { transform: scale(0.98); }
+.session-file-island-icon { flex-shrink: 0; color: hsl(var(--muted-foreground)); }
+.session-file-island-add,
+.session-file-island-del,
+.session-file-island-stats,
+.session-file-island-pill {
+  font-variant-numeric: tabular-nums;
+}
+.session-file-island-add { color: hsl(var(--success-hsl)); }
+.session-file-island-del { color: hsl(var(--destructive)); }
+
+.session-file-island-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  width: min(30rem, calc(100vw - 3rem));
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--border-hsl) / 0.9);
+  background: hsl(var(--card));
+  box-shadow: 0 14px 36px -14px hsl(var(--foreground-hsl) / 0.3);
+}
+.session-file-island-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: hsl(var(--foreground-hsl));
+  text-align: left;
+  cursor: pointer;
+}
+.session-file-island-row:hover { background: hsl(var(--secondary) / 0.7); }
+.session-file-island-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+.session-file-island-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.session-file-island-stats { flex-shrink: 0; display: inline-flex; gap: 6px; }
+
+.dark .session-file-island-pill {
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.08) inset,
+    0 2px 6px hsl(0 0% 0% / 0.45),
+    0 10px 26px -10px hsl(0 0% 0% / 0.6);
 }
 
 /* Session titles occupy the full row. On hover, time/delete actions float
@@ -3158,10 +3251,10 @@
   z-index: 2;
   transform: translateY(-50%);
   pointer-events: none;
-  background: linear-gradient(90deg, transparent 0%, hsl(42 32% 99% / 0.72) 26%, hsl(42 32% 99% / 0.96) 58%, hsl(42 32% 99% / 1) 100%);
+  background: linear-gradient(90deg, transparent 0%, hsl(var(--card) / 0.72) 26%, hsl(var(--card) / 0.96) 58%, hsl(var(--card) / 1) 100%);
   backdrop-filter: blur(7px);
   -webkit-backdrop-filter: blur(7px);
-  box-shadow: -7px 0 10px hsl(42 32% 99% / 0.34);
+  box-shadow: -7px 0 10px hsl(var(--card) / 0.34);
 }
 .session-list-panel .list-card:hover .session-list-hover-actions,
 .session-list-panel .list-row:hover .session-list-hover-actions {
@@ -3171,14 +3264,14 @@
   pointer-events: auto;
 }
 .session-list-panel .list-card--active .session-list-hover-actions {
-  background: linear-gradient(90deg, transparent 0%, hsl(42 32% 99% / 0.78) 26%, hsl(42 32% 99% / 0.97) 58%, hsl(42 32% 99% / 1) 100%);
+  background: linear-gradient(90deg, transparent 0%, hsl(var(--card) / 0.78) 26%, hsl(var(--card) / 0.97) 58%, hsl(var(--card) / 1) 100%);
 }
 .dark .session-list-panel .list-card .session-list-hover-actions {
-  background: linear-gradient(90deg, transparent 0%, hsl(160 12% 11% / 0.72) 26%, hsl(160 12% 11% / 0.96) 58%, hsl(160 12% 11% / 1) 100%);
-  box-shadow: -7px 0 10px hsl(160 12% 11% / 0.34);
+  background: linear-gradient(90deg, transparent 0%, hsl(var(--card) / 0.72) 26%, hsl(var(--card) / 0.96) 58%, hsl(var(--card) / 1) 100%);
+  box-shadow: -7px 0 10px hsl(var(--card) / 0.34);
 }
 .dark .session-list-panel .list-card--active .session-list-hover-actions {
-  background: linear-gradient(90deg, transparent 0%, hsl(160 12% 11% / 0.78) 26%, hsl(160 12% 11% / 0.97) 58%, hsl(160 12% 11% / 1) 100%);
+  background: linear-gradient(90deg, transparent 0%, hsl(var(--card) / 0.78) 26%, hsl(var(--card) / 0.97) 58%, hsl(var(--card) / 1) 100%);
 }
 
 /* Session titles occupy the full row. On hover, time/delete actions float
@@ -3191,61 +3284,46 @@
   min-width: 0;
   padding-right: 0.25rem;
 }
-.session-list-panel .list-card .session-list-hover-actions {
-  position: absolute;
-  right: 0.25rem;
-  top: 50%;
-  z-index: 2;
-  transform: translateY(-50%);
-  pointer-events: none;
-  background: linear-gradient(90deg, transparent 0%, hsl(42 32% 99% / 0.72) 26%, hsl(42 32% 99% / 0.96) 58%, hsl(42 32% 99% / 1) 100%);
-  backdrop-filter: blur(7px);
-  -webkit-backdrop-filter: blur(7px);
-  box-shadow: -7px 0 10px hsl(42 32% 99% / 0.34);
-}
-.session-list-panel .list-card:hover .session-list-hover-actions,
-.session-list-panel .list-row:hover .session-list-hover-actions {
-  opacity: 1;
-}
-.session-list-panel .session-list-hover-actions .session-list-delete {
-  pointer-events: auto;
-}
-.session-list-panel .list-card--active .session-list-hover-actions {
-  background: linear-gradient(90deg, transparent 0%, hsl(42 32% 99% / 0.78) 26%, hsl(42 32% 99% / 0.97) 58%, hsl(42 32% 99% / 1) 100%);
-}
-.dark .session-list-panel .list-card .session-list-hover-actions {
-  background: linear-gradient(90deg, transparent 0%, hsl(160 12% 11% / 0.72) 26%, hsl(160 12% 11% / 0.96) 58%, hsl(160 12% 11% / 1) 100%);
-  box-shadow: -7px 0 10px hsl(160 12% 11% / 0.34);
-}
-.dark .session-list-panel .list-card--active .session-list-hover-actions {
-  background: linear-gradient(90deg, transparent 0%, hsl(160 12% 11% / 0.78) 26%, hsl(160 12% 11% / 0.97) 58%, hsl(160 12% 11% / 1) 100%);
-}
 
-/* Project-level MCP entry in the Agent toolbar */
+
+/* Project-level MCP entry in the Agent toolbar. It deliberately borrows
+   wh-pill-btn (the Worker / Skills tab geometry) instead of drawing its own
+   bordered card, so the whole toolbar reads as one row of tabs. */
 .agent-toolbar-mcp-trigger {
+  gap: 5px;
+  font-size: 12px;
+  padding: 0 10px;
+  background: transparent;
   color: hsl(var(--muted-foreground));
-  border: 1px solid hsl(var(--border-hsl) / 0.45);
-  background: hsl(var(--card) / 0.58);
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
 .agent-toolbar-mcp-trigger:hover {
+  background: hsl(var(--secondary));
   color: var(--foreground);
-  border-color: hsl(var(--primary) / 0.35);
-  background: hsl(var(--primary) / 0.10);
+}
+.agent-toolbar-mcp-trigger svg {
+  color: currentColor;
+  stroke: currentColor;
+}
+/* aria-expanded lives on the Dropdown.Trigger button that wraps this element,
+   so the open state has to be read from the wrapper. */
+.dropdown__trigger[aria-expanded="true"] .agent-toolbar-mcp-trigger {
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
 }
 .agent-toolbar-mcp-count {
   display: inline-flex;
-  min-width: 15px;
-  height: 15px;
+  min-width: 14px;
+  height: 14px;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   padding: 0 4px;
-  background: linear-gradient(180deg, #b9cdbf, #a1bba8);
-  color: #2f3d34;
+  background: hsl(var(--primary) / 0.18);
+  color: hsl(var(--primary-foreground));
   font-size: 9px;
+  font-weight: 600;
   line-height: 1;
-  box-shadow: 0 1px 2px rgba(47, 61, 52, 0.16), inset 0 1px 0 rgba(255,255,255,0.55);
 }
 
 /* Session list scroll surface: align the left edge with the header and keep a
@@ -3260,7 +3338,7 @@
   min-height: 1.75rem;
   border: 1px solid hsl(var(--primary) / 0.18);
   background: hsl(var(--primary) / 0.08);
-  color: hsl(var(--foreground) / 0.72);
+  color: hsl(var(--foreground-hsl) / 0.72);
 }
 .goal-context-summary-mode {
   border-radius: 999px;
@@ -3367,8 +3445,10 @@
   }
 }
 
-/* Left Agent sidebar profile area. The session list gets the upper 60%
-   and the current-session profile inspector gets the lower 40%. */
+/* Left Agent sidebar profile area. The session list gets the upper 60% and
+   the current-session profile inspector gets the lower 40% by default; the
+   split is draggable (SessionListPanel writes an inline flex-basis while the
+   reader adjusts it, otherwise the ratios below stay in charge). */
 .session-list-panel .session-list-session-area {
   display: flex;
   min-height: 0;
@@ -3382,8 +3462,24 @@
 .session-list-panel .session-list-profile-area {
   display: flex;
   min-height: 0;
-  flex: 0 1 40%;
+  flex: 1 1 0%;
   overflow: hidden;
+}
+
+/* Horizontal splitter between the session list and the profile inspector. */
+.session-list-resizer-h {
+  position: relative;
+  z-index: 5;
+  flex: none;
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.session-list-resizer-h:hover,
+.session-list-resizer-h:active {
+  background: hsl(var(--primary) / 0.18);
 }
 .session-list-panel .session-profile-panel {
   min-height: 0;
@@ -3396,10 +3492,7 @@
   min-width: 0;
 }
 @media (max-height: 680px) {
-  .session-list-panel .session-list-profile-area {
-    flex-basis: 36%;
-  }
   .session-list-panel .session-list-session-area {
-    flex-basis: 64%;
+    flex-basis: 36%;
   }
 }

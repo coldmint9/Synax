@@ -12,6 +12,7 @@ import { materializeLiveBlocks, type StreamingLiveBuffers } from './streamingLiv
 function renderLiveSegments(
   blocks: TurnContentBlock[],
   isStreaming: boolean,
+  rowKeyPrefix = '',
 ) {
   const segments = buildTurnRenderSegments(blocks)
 
@@ -23,6 +24,7 @@ function renderLiveSegments(
           key={i}
           content={segment.content}
           isStreaming={segmentIsLive}
+          rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${i}` : undefined}
         />
       )
     }
@@ -45,14 +47,16 @@ function renderLiveSegments(
 
 const CompletedStepView = memo(function CompletedStepView({
   blocks,
+  stepId,
 }: {
   blocks: TurnContentBlock[]
+  stepId: string
 }) {
   if (blocks.length === 0) return null
   return (
     <div className="animate-[fade-up_0.3s_ease-out]">
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        {renderLiveSegments(blocks, false)}
+        {renderLiveSegments(blocks, false, stepId)}
       </div>
     </div>
   )
@@ -130,6 +134,7 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
         <CompletedStepView
           key={step.stepId}
           blocks={step.blocks}
+          stepId={step.stepId}
         />
       ))}
       {showLiveBlock ? (

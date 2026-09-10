@@ -64,14 +64,14 @@ export const CodeViewer = memo(function CodeViewer({ sessionId, path }: { sessio
           <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto bg-[#1e1e1e]">
+      <div className="min-h-0 flex-1 overflow-auto bg-[var(--cx-gray-800)]">
         {loading ? (
           <div className="p-3 text-[10px] text-muted-foreground">读取中…</div>
         ) : error ? (
           <div className="p-3 text-[10px] text-destructive">{error}</div>
         ) : (
           <div className="flex min-w-max">
-            <div className="sticky left-0 z-10 border-r border-white/10 bg-[#1e1e1e] px-2 py-2">
+            <div className="sticky left-0 z-10 border-r border-white/10 bg-[var(--cx-gray-800)] px-2 py-2">
               <LineNumbers count={lineCount} />
             </div>
             <div

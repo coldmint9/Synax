@@ -20,10 +20,10 @@
   --wiki-accent-dim: hsl(var(--primary) / 0.82);
   --wiki-accent-bg: hsl(var(--primary) / 0.06);
   --wiki-accent-border: hsl(var(--primary) / 0.14);
-  --wiki-green: hsl(var(--success));
+  --wiki-green: var(--success);
   --wiki-green-bg: hsl(var(--success-hsl) / 0.08);
   --wiki-green-border: hsl(var(--success-hsl) / 0.18);
-  --wiki-orange: hsl(var(--warning));
+  --wiki-orange: var(--warning);
   --wiki-orange-bg: hsl(var(--warning-hsl) / 0.08);
   --wiki-orange-border: hsl(var(--warning-hsl) / 0.18);
   --wiki-row-hover: hsl(var(--foreground-hsl) / 0.03);

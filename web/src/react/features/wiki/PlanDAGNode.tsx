@@ -13,9 +13,9 @@ export interface PlanDAGNodeData {
 const statusColors: Record<string, string> = {
   pending: 'border-border/30 bg-card/60',
   executing: 'border-primary/40 bg-primary/[0.04] ring-1 ring-primary/20 animate-pulse',
-  review: 'border-amber-400/40 bg-amber-400/[0.04]',
-  accepted: 'border-emerald-500/40 bg-emerald-500/[0.04]',
-  committed: 'border-emerald-600/40 bg-emerald-600/[0.06]',
+  review: 'border-warning/40 bg-warning/[0.04]',
+  accepted: 'border-success/40 bg-success/[0.04]',
+  committed: 'border-success/40 bg-success/[0.06]',
 }
 
 function PlanDAGNodeComponent({ data }: NodeProps & { data: PlanDAGNodeData }) {

@@ -6,7 +6,9 @@ const clientCache = new Map<string, unknown>()
 function cacheKey(selection: ResolvedModelSelection): string {
   const { providerId, config } = selection
   const keyPrefix = (config.apiKey ?? '').slice(0, 8)
-  return `${providerId}:${config.baseUrl ?? ''}:${keyPrefix}`
+  // The protocol decides which SDK client is constructed, so it must be part of the key:
+  // otherwise switching a connection between chat completions and responses reuses a stale client.
+  return `${providerId}:${selection.provider.npm ?? ''}:${selection.apiFormat}:${config.baseUrl ?? ''}:${keyPrefix}`
 }
 
 export async function getOrCreateClient(selection: ResolvedModelSelection): Promise<unknown> {
