@@ -85,7 +85,12 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
 
   const handleBrowse = async () => {
     const result = await openDirectoryPicker()
-    if (!result) return
+    if (!result) {
+      if (!isElectron) {
+        setError('当前浏览器无法读取本地目录绝对路径，请使用桌面版打开目录，或手动输入路径。')
+      }
+      return
+    }
     setPathInput(result.path)
     setError(null)
   }
@@ -114,19 +119,17 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
                 onKeyDown={e => { if (e.key === 'Enter') handleWebSubmit() }}
                 autoFocus
               />
-              {isElectron && (
-                <button
-                  type="button"
-                  onClick={handleBrowse}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/50 px-3 py-2 text-xs font-medium text-foreground transition hover:bg-muted/40"
-                >
-                  <FolderOpen size={12} />
-                  选择文件夹
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleBrowse}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/50 px-3 py-2 text-xs font-medium text-foreground transition hover:bg-muted/40"
+              >
+                <FolderOpen size={12} />
+                打开
+              </button>
             </div>
             <span className="mt-1 block text-[11px] text-muted-foreground/60">
-              {isElectron ? '点击“选择文件夹”打开系统资源管理器，或直接输入本地代码目录的绝对路径' : '输入本地代码目录的绝对路径，项目名将使用文件夹名称'}
+              {isElectron ? '点击“打开”选择本地目录，或直接输入本地代码目录的绝对路径' : '桌面版可点击“打开”选择本地目录；浏览器版请输入本地代码目录的绝对路径'}
             </span>
           </label>
           {error && (

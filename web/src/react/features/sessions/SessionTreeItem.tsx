@@ -48,7 +48,7 @@ function DeleteButton({ sessionId, onDelete }: { sessionId: string; onDelete?: (
     <span
       role="button"
       tabIndex={0}
-      className="inline-flex items-center justify-center h-5 w-5 min-w-0 rounded-md opacity-0 group-hover:opacity-100 transition-opacity text-danger/70 hover:text-danger hover:bg-danger/10 cursor-pointer"
+      className="session-list-delete inline-flex items-center justify-center h-5 w-5 min-w-0 rounded-md opacity-0 group-hover:opacity-100 transition-opacity text-danger/70 hover:text-danger hover:bg-danger/10 cursor-pointer"
       aria-label="Delete session"
       onClick={(e) => { e.stopPropagation(); onDelete?.(sessionId) }}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onDelete?.(sessionId) } }}
@@ -61,7 +61,7 @@ function DeleteButton({ sessionId, onDelete }: { sessionId: string; onDelete?: (
 function SessionTitle({ session }: { session: SessionTreeNode['session'] }) {
   const title = useSessionDisplayTitle(session)
   return (
-    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+    <span className="session-list-title min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
       {title}
     </span>
   )
@@ -107,22 +107,30 @@ export const SessionTreeItem = memo(function SessionTreeItem({
               {hasKids ? (node.expanded ? '\u25BE' : '\u25B8') : <span className="w-3" />}
             </button>
             {isRunning ? (
-              <Loader2 size={12} className="shrink-0 animate-spin text-[var(--color-run)]" aria-hidden />
+              <Loader2
+                size={10}
+                className="session-list-running-indicator animate-spin text-[var(--color-run)]"
+                aria-hidden
+              />
             ) : showStatusDot ? (
               <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
             ) : null}
             <SessionTitle session={session} />
-            <span className="shrink-0 text-[10px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
-              {relTime(session.updatedAt)}
+            <span className="session-list-hover-actions inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
+              <span>{relTime(session.updatedAt)}</span>
+              <DeleteButton sessionId={session.id} onDelete={onDelete} />
             </span>
-            <DeleteButton sessionId={session.id} onDelete={onDelete} />
           </div>
         </>
       ) : (
         <>
-          {/* Spinner while running; dot only when selected */}
+          {/* Spinner while running (out of flow, leading gutter); dot only when selected */}
           {isRunning ? (
-            <Loader2 size={10} className="shrink-0 animate-spin text-[var(--color-run)]" aria-hidden />
+            <Loader2
+              size={10}
+              className="session-list-running-indicator session-list-running-indicator--child animate-spin text-[var(--color-run)]"
+              aria-hidden
+            />
           ) : isSelected ? (
             <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
           ) : null}

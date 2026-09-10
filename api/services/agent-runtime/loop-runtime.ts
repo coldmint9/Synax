@@ -307,6 +307,13 @@ export class AgentLoopRuntime {
         modelCapabilities = { reasoning: selection.modelDef.reasoning ?? false }
         if (typeof selection.modelDef.contextLimit === 'number' && selection.modelDef.contextLimit > 0) {
           runContextLimit = selection.modelDef.contextLimit
+          // Persist the provider-configured window on the run: the usage bar
+          // (`GET /sessions/:id/stats`) must render the configured context size
+          // (e.g. the 1M toggle in provider settings) instead of whatever
+          // window the provider happens to report in its usage payload.
+          run = this.store.updateRun(run.id, {
+            metadata: { ...run.metadata, contextLimit: runContextLimit },
+          })
         }
         runReasoningEffort =
           input.reasoningEffort

@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
-import { BookOpen, Bot, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw } from 'lucide-react'
+import { BookOpen, Bot, Search, Settings2, Sun, Moon, Zap, ChevronsUpDown, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw, Plug, ExternalLink } from 'lucide-react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
 import { useSkillStore } from '../state/skillStore'
+import { useProjectSettings } from '../features/settings/useProjectSettings'
 import { useLocale } from '../../hooks/useLocale'
 import { wikiApi } from '../../lib/api/wiki'
 import { NotificationBell } from '../components/notifications/NotificationBell'
@@ -30,8 +31,8 @@ interface WorkbenchHeaderProps {
 }
 
 const navTabs: { id: ActivityPanel; icon: typeof BookOpen; labelKey?: 'titlebarAgent'; label?: string }[] = [
-  { id: 'wiki', icon: BookOpen, label: 'Wiki' },
   { id: 'sessions', icon: Bot, labelKey: 'titlebarAgent' },
+  { id: 'wiki', icon: BookOpen, label: 'Wiki' },
 ]
 
 function WikiToolbar() {
@@ -214,6 +215,61 @@ function WikiToolbar() {
   )
 }
 
+function ProjectMcpToolbarMenu({ projectId }: { projectId: string }) {
+  const navigate = useNavigate()
+  const { settings, loading } = useProjectSettings(projectId)
+  const servers = settings?.mcpServers ?? []
+  const enabledCount = servers.filter(server => server.enabled !== false).length
+
+  return (
+    <Dropdown>
+      <Dropdown.Trigger>
+        <button
+          type="button"
+          className="agent-toolbar-mcp-trigger inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
+          aria-label="项目 MCP 配置"
+        >
+          <Plug size={12} />
+          <span>MCP</span>
+          {enabledCount > 0 && <span className="agent-toolbar-mcp-count">{enabledCount}</span>}
+          <span className="text-[8px] opacity-60">▾</span>
+        </button>
+      </Dropdown.Trigger>
+      <Dropdown.Popover placement="bottom end" className="z-50">
+        <Dropdown.Menu aria-label="项目 MCP 配置">
+          <Dropdown.Section>
+            <Dropdown.Item id="mcp-heading" textValue="项目 MCP 配置" isDisabled>
+              <Plug size={13} className="shrink-0 text-muted-foreground" />
+              <span className="text-[11px] font-semibold">项目 MCP 配置</span>
+            </Dropdown.Item>
+            {loading ? (
+              <Dropdown.Item id="mcp-loading" textValue="加载中" isDisabled>
+                <span className="text-[10px] text-muted-foreground">正在加载项目配置…</span>
+              </Dropdown.Item>
+            ) : servers.length === 0 ? (
+              <Dropdown.Item id="mcp-empty" textValue="尚未配置 MCP" isDisabled>
+                <span className="text-[10px] text-muted-foreground">尚未配置 MCP 服务器</span>
+              </Dropdown.Item>
+            ) : (
+              servers.map(server => (
+                <Dropdown.Item key={server.id} id={`mcp-server-${server.id}`} textValue={server.name} isDisabled>
+                  <span className={`size-1.5 shrink-0 rounded-full ${server.enabled === false ? 'bg-muted-foreground/30' : 'bg-success'}`} />
+                  <span className="max-w-48 truncate text-[11px]">{server.name}</span>
+                  <span className="ms-auto text-[9px] text-muted-foreground">{server.enabled === false ? '已停用' : '已启用'}</span>
+                </Dropdown.Item>
+              ))
+            )}
+          </Dropdown.Section>
+          <Dropdown.Item id="mcp-settings" textValue="打开项目 MCP 设置" onAction={() => navigate(`/projects/${projectId}/settings`)}>
+            <ExternalLink size={12} className="shrink-0 text-muted-foreground" />
+            <span className="text-[11px]">打开项目 MCP 设置</span>
+          </Dropdown.Item>
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
+  )
+}
+
 function AgentToolbarPill({ visible }: { visible: boolean }) {
   const { t } = useLocale()
   const navigate = useNavigate()
@@ -238,7 +294,7 @@ function AgentToolbarPill({ visible }: { visible: boolean }) {
       <Tabs
         selectedKey={agentViewMode}
         onSelectionChange={(key) => navigateMode(key as 'sessions' | 'skills')}
-        className="wiki-view-tabs"
+        className="wiki-view-tabs agent-toolbar-tabs"
       >
         <Tabs.ListContainer>
           <Tabs.List aria-label={t('agentToolbarLabel')} className="wiki-view-tabs-list">
@@ -253,6 +309,7 @@ function AgentToolbarPill({ visible }: { visible: boolean }) {
           </Tabs.List>
         </Tabs.ListContainer>
       </Tabs>
+      {projectId && <ProjectMcpToolbarMenu projectId={projectId} />}
     </ToolbarPill>
   )
 }
@@ -398,7 +455,7 @@ export function WorkbenchHeader({
                     key={tab.id}
                     id={tab.id}
                     isDisabled={!hasProject}
-                    className="wh-tab"
+                    className={`wh-tab wh-tab--${tab.id}`}
                   >
                     {i > 0 && <Tabs.Separator />}
                     <Icon size={13} />

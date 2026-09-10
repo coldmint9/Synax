@@ -1,6 +1,6 @@
-import { spawnSync } from 'node:child_process';
+import { runCommand, runShellCommand } from './exec-async.js';
 import * as z from 'zod/v4';
-import type { RegisteredTool } from '../contracts.js';
+import type { RegisteredTool, ToolExecutionResult } from '../contracts.js';
 import { recordBashFileReads } from '../read-tracker.js';
 import { isUnrestrictedPermissionRules } from '../permission-tiers.js';
 import { agentRuntimeStore } from '../session-store.js';
@@ -184,87 +184,123 @@ export const bashTool: RegisteredTool = {
     const root = workspaceRoot(input.sessionId);
     const cwd = args.workdir ? resolveWorkspacePath(args.workdir, input.sessionId) : root;
 
-    // 5. Syntax validation (bash -n on non-Windows)
-    const isWindows = process.platform === 'win32';
-    if (!isWindows) {
-      const syntaxCheck = spawnSync('bash', ['-n', '-c', command], {
-        cwd,
-        encoding: 'utf8',
-        timeout: 10_000,
-      });
-      if (syntaxCheck.status !== 0) {
-        const stderr = (syntaxCheck.stderr || '').substring(0, MAX_OUTPUT_BYTES);
-        return {
-          result: { command, exitCode: null, stdout: '', stderr, stdoutTruncated: false, stderrTruncated: syntaxCheck.stderr.length > MAX_OUTPUT_BYTES },
-          displaySummary: `bash syntax error: ${commandPreview}`,
-          artifacts: [{ kind: 'evidence', title: 'Bash syntax error', summary: stderr || 'Syntax validation failed.', risk: 'medium' }],
-        };
-      }
-    }
-
-    // 6. Execute
-    const result = spawnSync(command, {
-      shell: true,
+    // Execution is fully asynchronous: blocking the event loop here would
+    // serialize parallel tool calls, live stream forwarding and side-channel
+    // requests (profile panels, stats) for the whole lifetime of the command.
+    return executeBashCommand({
+      sessionId: input.sessionId,
+      command,
+      commandPreview,
       cwd,
-      encoding: 'utf8',
-      timeout: EXEC_TIMEOUT_MS,
-      maxBuffer: MAX_OUTPUT_BYTES * 2,
-      env: { ...process.env, HOME: cwd },
-      input: args.stdin ?? undefined,
+      stdin: args.stdin,
     });
-
-    // 7. Handle spawn errors (timeout, etc.)
-    if (result.error) {
-      const errorMsg = (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT'
-        ? `Command timed out after ${EXEC_TIMEOUT_MS / 1000}s.`
-        : `Spawn error: ${result.error.message}`;
-      return {
-        result: { command, exitCode: null, stdout: '', stderr: errorMsg, stdoutTruncated: false, stderrTruncated: false },
-        displaySummary: `bash error: ${commandPreview}`,
-        artifacts: [{ kind: 'evidence', title: 'Bash execution error', summary: errorMsg, risk: 'medium' }],
-      };
-    }
-
-    // 8. Truncate output
-    const stdout = result.stdout ?? '';
-    const stderr = result.stderr ?? '';
-    const stdoutTruncated = stdout.length > MAX_OUTPUT_BYTES;
-    const stderrTruncated = stderr.length > MAX_OUTPUT_BYTES;
-
-    const truncatedStdout = stdoutTruncated
-      ? stdout.substring(0, MAX_OUTPUT_BYTES) + `\n\n[STDOUT TRUNCATED: ${stdout.length} bytes total, showing first ${MAX_OUTPUT_BYTES}.]`
-      : stdout;
-    const truncatedStderr = stderrTruncated
-      ? stderr.substring(0, MAX_OUTPUT_BYTES) + `\n\n[STDERR TRUNCATED: ${stderr.length} bytes total, showing first ${MAX_OUTPUT_BYTES}.]`
-      : stderr;
-
-    const exitCode = result.status ?? null;
-    recordBashFileReads(input.sessionId, command, exitCode);
-
-    // 9. Command-not-found detection
-    const { notFound, commandName } = detectCommandNotFound(stderr, command);
-    if (notFound) {
-      const fallbackHint = `Command '${commandName}' not found. Use dedicated tools instead: file.glob, file.list, grep.search, file.read.`;
-      const finalStderr = truncatedStderr
-        ? truncatedStderr + '\n' + fallbackHint
-        : fallbackHint;
-
-      return {
-        result: { command, exitCode, stdout: truncatedStdout, stderr: finalStderr, stdoutTruncated, stderrTruncated: true },
-        displaySummary: `bash (exit ${exitCode}): ${commandPreview}`,
-        artifacts: [{ kind: 'evidence', title: 'Bash execution', summary: fallbackHint, risk: exitCode === 0 ? 'low' : 'medium' }],
-      };
-    }
-
-    // 10. Success / non-zero exit
-    const summary = exitCode === 0
-      ? `Command completed successfully.`
-      : `Command exited with code ${exitCode}.`;
-
-    return {
-      result: { command, exitCode, stdout: truncatedStdout, stderr: truncatedStderr, stdoutTruncated, stderrTruncated },
-      displaySummary: `bash (exit ${exitCode}): ${commandPreview}`,
-      artifacts: [{ kind: 'evidence', title: 'Bash execution', summary, risk: exitCode === 0 ? 'low' : 'medium' }],
-    };
   },
 };
+
+interface BashExecutionInput {
+  sessionId: string;
+  command: string;
+  commandPreview: string;
+  cwd: string;
+  stdin?: string;
+}
+
+async function executeBashCommand(input: BashExecutionInput): Promise<ToolExecutionResult> {
+  const { command, commandPreview, cwd } = input;
+  const stop = (stderr: string, title: string): ToolExecutionResult => ({
+    result: { command, exitCode: null, stdout: '', stderr, stdoutTruncated: false, stderrTruncated: false },
+    displaySummary: `${title}: ${commandPreview}`,
+    artifacts: [{ kind: 'evidence', title, summary: stderr || title, risk: 'medium' }],
+  });
+
+  // 4. Syntax validation (bash -n on non-Windows)
+  const isWindows = process.platform === 'win32';
+  if (!isWindows) {
+    const syntaxCheck = await runCommand('bash', ['-n', '-c', command], {
+      cwd,
+      maxBufferBytes: MAX_OUTPUT_BYTES,
+      timeoutMs: 10_000,
+    });
+    if (syntaxCheck.timedOut) {
+      return stop('Syntax validation timed out.', 'Bash syntax check timed out');
+    }
+    if (syntaxCheck.status !== 0) {
+      const stderr = (syntaxCheck.stderr || '').substring(0, MAX_OUTPUT_BYTES);
+      return {
+        result: {
+          command,
+          exitCode: null,
+          stdout: '',
+          stderr,
+          stdoutTruncated: false,
+          stderrTruncated: syntaxCheck.stderr.length > MAX_OUTPUT_BYTES,
+        },
+        displaySummary: `bash syntax error: ${commandPreview}`,
+        artifacts: [{ kind: 'evidence', title: 'Bash syntax error', summary: stderr || 'Syntax validation failed.', risk: 'medium' }],
+      };
+    }
+  }
+
+  // 5. Execute
+  const result = await runShellCommand(command, {
+    cwd,
+    maxBufferBytes: MAX_OUTPUT_BYTES * 2,
+    timeoutMs: EXEC_TIMEOUT_MS,
+    env: { ...process.env, HOME: cwd },
+    stdin: input.stdin ?? undefined,
+  });
+
+  // 6. Handle spawn/timeout errors
+  if (result.error || result.timedOut) {
+    const errorMsg = result.timedOut
+      ? `Command timed out after ${EXEC_TIMEOUT_MS / 1000}s.`
+      : `Spawn error: ${result.error?.message ?? 'unknown error'}`;
+    return {
+      result: { command, exitCode: null, stdout: '', stderr: errorMsg, stdoutTruncated: false, stderrTruncated: false },
+      displaySummary: `bash error: ${commandPreview}`,
+      artifacts: [{ kind: 'evidence', title: 'Bash execution error', summary: errorMsg, risk: 'medium' }],
+    };
+  }
+
+  // 7. Truncate output
+  const stdout = result.stdout ?? '';
+  const stderr = result.stderr ?? '';
+  const stdoutTruncated = stdout.length > MAX_OUTPUT_BYTES || result.stdoutTruncated;
+  const stderrTruncated = stderr.length > MAX_OUTPUT_BYTES || result.stderrTruncated;
+
+  const truncatedStdout = stdoutTruncated
+    ? stdout.substring(0, MAX_OUTPUT_BYTES) + `\n\n[STDOUT TRUNCATED: ${Math.max(result.stdoutBytes, stdout.length)} bytes total, showing first ${MAX_OUTPUT_BYTES}.]`
+    : stdout;
+  const truncatedStderr = stderrTruncated
+    ? stderr.substring(0, MAX_OUTPUT_BYTES) + `\n\n[STDERR TRUNCATED: ${Math.max(result.stderrBytes, stderr.length)} bytes total, showing first ${MAX_OUTPUT_BYTES}.]`
+    : stderr;
+
+  const exitCode = result.status ?? null;
+  recordBashFileReads(input.sessionId, command, exitCode);
+
+  // 8. Command-not-found detection
+  const { notFound, commandName } = detectCommandNotFound(stderr, command);
+  if (notFound) {
+    const fallbackHint = `Command '${commandName}' not found. Use dedicated tools instead: file.glob, file.list, grep.search, file.read.`;
+    const finalStderr = truncatedStderr
+      ? truncatedStderr + '\n' + fallbackHint
+      : fallbackHint;
+
+    return {
+      result: { command, exitCode, stdout: truncatedStdout, stderr: finalStderr, stdoutTruncated, stderrTruncated: true },
+      displaySummary: `bash (exit ${exitCode}): ${commandPreview}`,
+      artifacts: [{ kind: 'evidence', title: 'Bash execution', summary: fallbackHint, risk: exitCode === 0 ? 'low' : 'medium' }],
+    };
+  }
+
+  // 9. Success / non-zero exit
+  const summary = exitCode === 0
+    ? `Command completed successfully.`
+    : `Command exited with code ${exitCode}.`;
+
+  return {
+    result: { command, exitCode, stdout: truncatedStdout, stderr: truncatedStderr, stdoutTruncated, stderrTruncated },
+    displaySummary: `bash (exit ${exitCode}): ${commandPreview}`,
+    artifacts: [{ kind: 'evidence', title: 'Bash execution', summary, risk: exitCode === 0 ? 'low' : 'medium' }],
+  };
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildThinkingDisabledOptions,
   buildThinkingStreamOptions,
   inferReasoningCapability,
   isDeepSeekHost,
@@ -117,4 +118,31 @@ describe('thinking-mode-strategy', () => {
       reasoning: true,
     })?.id).toBe('native-reasoning-model')
   })
-})
+  it('disables native DeepSeek thinking for utility calls', () => {
+    expect(buildThinkingDisabledOptions(deepSeekNativeSelection(), 0.3)).toEqual({
+      providerOptions: {
+        deepseek: { thinking: { type: 'disabled' } },
+      },
+      temperature: 0.3,
+    })
+  })
+
+  it('disables custom-api DeepSeek thinking via provider id namespace', () => {
+    expect(buildThinkingDisabledOptions(deepSeekCustomApiSelection(), 0.3)).toEqual({
+      providerOptions: {
+        'custom-api:deepseek': { thinking: { type: 'disabled' } },
+      },
+      temperature: 0.3,
+    })
+  })
+
+  it('adds no provider options for non-DeepSeek providers', () => {
+    const selection = deepSeekCustomApiSelection()
+    expect(buildThinkingDisabledOptions({
+      ...selection,
+      providerId: 'custom-api:other',
+      provider: { ...selection.provider, id: 'custom-api:other' },
+      config: { ...selection.config, baseUrl: 'https://api.example.com/v1' },
+    }, 0.1)).toEqual({ temperature: 0.1 })
+  })
+});

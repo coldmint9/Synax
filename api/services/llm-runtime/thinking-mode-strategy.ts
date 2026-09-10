@@ -127,6 +127,45 @@ function buildDeepSeekThinkingOptions(
   }
 }
 
+/**
+ * Thinking-disabled provider options for utility calls (session titles,
+ * context signals, validation probes).
+ *
+ * Reasoning-first models otherwise spend the entire output budget on hidden
+ * reasoning tokens and return empty text: a 128-token title call finished with
+ * `finishReason: "length"`, 128 reasoning tokens and zero text tokens, which
+ * silently degraded every generated session title to the raw-prompt fallback.
+ */
+export function buildThinkingDisabledOptions(
+  selection: ResolvedModelSelection,
+  temperature?: number,
+): ThinkingStreamOptions {
+  // Only DeepSeek-shaped providers expose an explicit `thinking` toggle here;
+  // other providers keep their previous behavior (no thinking options at all)
+  // so unknown request-body fields are never sent to them.
+  const strategy = resolveThinkingModeStrategy(toContext(selection))
+  if (strategy?.id !== 'deepseek') return { temperature }
+
+  if (selection.provider.npm === '@ai-sdk/deepseek') {
+    return {
+      providerOptions: { deepseek: { thinking: { type: 'disabled' } } },
+      temperature,
+    }
+  }
+
+  if (!isOpenAICompatibleProvider(selection.provider.npm)) {
+    return { temperature }
+  }
+
+  const namespace = resolveProviderOptionsNamespace(selection)
+  return {
+    providerOptions: mergeProviderOptions(
+      buildOpenAICompatibleProviderOptions(namespace, { thinking: { type: 'disabled' } }),
+    ),
+    temperature,
+  }
+}
+
 const deepSeekThinkingStrategy: ThinkingModeStrategy = {
   id: 'deepseek',
   preferredAdapter: {

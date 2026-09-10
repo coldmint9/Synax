@@ -1,4 +1,4 @@
-import type { ProviderConnection } from './config-types.js'
+import type { McpServerConfig, ProviderConnection } from './config-types.js'
 
 export type ProjectVisibility = 'private' | 'internal' | 'public'
 export type ProjectLifecycleState = 'active' | 'archived'
@@ -56,6 +56,7 @@ export interface ProjectSettings {
   version: number
   basics: ProjectBasics
   provider: ProjectProviderOverride
+  mcpServers: McpServerConfig[]
   collaboration: CollaborationSettings
   notifications: NotificationSettings
   compliance: ComplianceSettings
@@ -67,12 +68,13 @@ export interface ProjectSettings {
 export interface UpdateProjectSettingsRequest {
   basics?: Partial<ProjectBasics>
   provider?: Partial<ProjectProviderOverride>
+  mcpServers?: McpServerConfig[]
   collaboration?: Partial<CollaborationSettings>
   notifications?: Partial<NotificationSettings>
   compliance?: Partial<ComplianceSettings>
 }
 
-export type ProjectSettingsSection = 'basics' | 'provider' | 'collaboration' | 'notifications' | 'compliance'
+export type ProjectSettingsSection = 'basics' | 'provider' | 'mcp' | 'collaboration' | 'notifications' | 'compliance'
 
 export interface HighRiskAuthEnvelope {
   confirmPhrase: string
@@ -94,6 +96,7 @@ export function createDefaultProjectSettings(projectId: string, updatedBy = 'sys
       ownerMemberId: '',
     },
     provider: {},
+    mcpServers: [],
     collaboration: {
       agentsAllowDirectCommit: false,
       reviewPolicy: {

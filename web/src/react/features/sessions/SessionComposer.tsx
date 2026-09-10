@@ -35,7 +35,6 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
   const navigate = useNavigate()
   const [content, setContent] = useState('')
   const [skillIds, setSkillIds] = useState<string[]>([])
-  const [mcpServerIds, setMcpServerIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const sendSessionMessage = useAgentSessionStore(s => s.sendSessionMessage)
   const submitOrEnqueueSessionInput = useAgentSessionStore(s => s.submitOrEnqueueSessionInput)
@@ -174,13 +173,11 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
           reasoningEffort: effortPayload,
           permissionTier,
           skillIds,
-          mcpServerIds: mcpServerIds.length > 0 ? mcpServerIds : undefined,
           wikiAttachMode: wikiContext.mode,
           documentId: wikiContext.documentId,
         })
         navigate(sessionPath(projectId, created.id))
         setSkillIds([])
-        setMcpServerIds([])
         await sendSessionMessage(created.id, { message: prompt, model, reasoningEffort: effortPayload, permissionTier })
       } else {
         await submitOrEnqueueSessionInput(session.id, { message, model, reasoningEffort: effortPayload, permissionTier })
@@ -194,7 +191,6 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     documents,
     isDraft,
     isGenerating,
-    mcpServerIds,
     modelId,
     navigate,
     permissionTier,
@@ -242,9 +238,6 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
       documents={documents}
       skillIds={skillIds}
       onSkillIdsChange={setSkillIds}
-      mcpServers={globalConfig?.mcpServers ?? []}
-      mcpServerIds={mcpServerIds}
-      onMcpServerIdsChange={setMcpServerIds}
       reasoningEffort={reasoningEffort}
       onReasoningEffortChange={setReasoningEffort}
       allowedReasoningEfforts={allowedReasoningEfforts}
@@ -276,8 +269,8 @@ export function SessionComposer({ session, projectId, layout = 'footer' }: Props
     <div
       className={
         isCentered
-          ? 'flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-10'
-          : 'goal-session-composer shrink-0 px-4 pb-4 pt-2'
+          ? 'goal-session-composer--centered flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-10'
+          : 'goal-session-composer goal-session-composer--footer shrink-0 px-4 pb-4 pt-2'
       }
     >
       {isCentered ? (

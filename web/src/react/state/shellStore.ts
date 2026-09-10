@@ -29,6 +29,7 @@ export interface ShellPreferences {
   notifications: boolean
   locale: 'zh' | 'en'
   editor: 'system' | 'vscode' | 'cursor' | 'windsurf' | 'webstorm'
+  agentFontSize: number
 }
 
 export interface ProjectSearchFilter {
@@ -56,6 +57,7 @@ interface ShellState {
   setDefaultHome: (defaultHome: ShellPreferences['defaultHome']) => void
   setNotifications: (notifications: boolean) => void
   setEditor: (editor: ShellPreferences['editor']) => void
+  setAgentFontSize: (fontSize: number) => void
   addProject: (project: ProjectSummary) => void
   setProjects: (projects: ProjectSummary[]) => void
   removeProject: (projectId: string) => void
@@ -66,6 +68,15 @@ interface ShellState {
 }
 
 const storageKey = 'rumbling-shell-preferences'
+const DEFAULT_UI_FONT_SIZE = 14
+const MIN_UI_FONT_SIZE = 12
+const MAX_UI_FONT_SIZE = 20
+
+function applyUiFontSize(fontSize: number): void {
+  const normalized = Math.min(MAX_UI_FONT_SIZE, Math.max(MIN_UI_FONT_SIZE, Math.round(fontSize)))
+  document.documentElement.style.setProperty('--ui-font-size', `${normalized}px`)
+  document.documentElement.style.setProperty('--ui-font-scale', String(normalized / DEFAULT_UI_FONT_SIZE))
+}
 
 export const useShellStore = create<ShellState>((set) => ({
   projects: [],
@@ -76,6 +87,7 @@ export const useShellStore = create<ShellState>((set) => ({
     notifications: true,
     locale: 'zh',
     editor: 'system',
+    agentFontSize: 14,
   },
   currentProjectId: null,
   currentUser: {
@@ -111,6 +123,12 @@ export const useShellStore = create<ShellState>((set) => ({
   setEditor: (editor) => {
     set((state) => ({ preferences: { ...state.preferences, editor } }))
     localStorage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences))
+  },
+  setAgentFontSize: (fontSize) => {
+    const normalized = Math.min(MAX_UI_FONT_SIZE, Math.max(MIN_UI_FONT_SIZE, Math.round(fontSize)))
+    set((state) => ({ preferences: { ...state.preferences, agentFontSize: normalized } }))
+    localStorage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences))
+    applyUiFontSize(normalized)
   },
   addProject: (project) => {
     set((state) => ({
@@ -162,11 +180,16 @@ export function hydrateShellPreferences() {
     if (parsed.defaultHome === 'global-home' || parsed.defaultHome === 'last-project') patch.defaultHome = parsed.defaultHome
     if (typeof parsed.notifications === 'boolean') patch.notifications = parsed.notifications
     if (parsed.editor && ['system', 'vscode', 'cursor', 'windsurf', 'webstorm'].includes(parsed.editor)) patch.editor = parsed.editor
+    if (typeof parsed.agentFontSize === 'number' && parsed.agentFontSize >= MIN_UI_FONT_SIZE && parsed.agentFontSize <= MAX_UI_FONT_SIZE) {
+      patch.agentFontSize = Math.round(parsed.agentFontSize)
+    }
     if (Object.keys(patch).length > 0) {
       useShellStore.setState((state) => ({
         preferences: { ...state.preferences, ...patch },
       }))
     }
+    const agentFontSize = useShellStore.getState().preferences.agentFontSize
+    applyUiFontSize(agentFontSize)
   } catch {
     // ignore broken preference payload
   }

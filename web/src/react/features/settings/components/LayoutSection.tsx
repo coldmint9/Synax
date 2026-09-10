@@ -12,10 +12,12 @@ export function LayoutSection() {
   const defaultHome = useShellStore(s => s.preferences.defaultHome)
   const notifications = useShellStore(s => s.preferences.notifications)
   const editor = useShellStore(s => s.preferences.editor)
+  const agentFontSize = useShellStore(s => s.preferences.agentFontSize)
   const setLocale = useShellStore(s => s.setLocale)
   const setDefaultHome = useShellStore(s => s.setDefaultHome)
   const setNotifications = useShellStore(s => s.setNotifications)
   const setEditor = useShellStore(s => s.setEditor)
+  const setAgentFontSize = useShellStore(s => s.setAgentFontSize)
 
   return (
     <SettingsCard title={t('settingsLayoutTitle')} icon={Palette}>
@@ -58,6 +60,23 @@ export function LayoutSection() {
           <Switch size="sm" isSelected={notifications} onChange={setNotifications} aria-label={t('settingsNotifications')}>
             <Switch.Control><Switch.Thumb /></Switch.Control>
           </Switch>
+        </FormRow>
+
+        <FormRow label="界面字体大小" description="调整 Synax 所有界面文字大小，默认 14px">
+          <SettingsSelect
+            className="w-36"
+            fullWidth={false}
+            selectedKey={String(agentFontSize)}
+            onSelectionChange={(key) => {
+              if (key) setAgentFontSize(Number(key))
+            }}
+            disallowEmptySelection
+            aria-label="界面字体大小"
+            options={[12, 13, 14, 15, 16, 18, 20].map(size => ({
+              key: String(size),
+              label: `${size}px${size === 14 ? '（默认）' : ''}`,
+            }))}
+          />
         </FormRow>
 
         <FormRow label={t('settingsEditor')} description={t('settingsEditorHint')}>

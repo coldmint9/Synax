@@ -43,8 +43,6 @@ export function GoalPillDock({ projectId }: Props) {
   const setWikiAttachMode = useWikiStore(s => s.setGoalComposerWikiAttachMode)
   const skillIds = useWikiStore(s => s.goalComposerSkillIds)
   const setSkillIds = useWikiStore(s => s.setGoalComposerSkillIds)
-  const mcpServerIds = useWikiStore(s => s.goalComposerMcpServerIds)
-  const setMcpServerIds = useWikiStore(s => s.setGoalComposerMcpServerIds)
   const reasoningEffort = useWikiStore(s => s.goalComposerReasoningEffort)
   const setReasoningEffort = useWikiStore(s => s.setGoalComposerReasoningEffort)
   const allowedReasoningEfforts = providerId ? effectiveReasoningEfforts(globalConfig, providerId) : undefined
@@ -232,9 +230,6 @@ export function GoalPillDock({ projectId }: Props) {
       documents={documents}
       skillIds={skillIds}
       onSkillIdsChange={setSkillIds}
-      mcpServers={globalConfig?.mcpServers ?? []}
-      mcpServerIds={mcpServerIds}
-      onMcpServerIdsChange={setMcpServerIds}
       reasoningEffort={reasoningEffort}
       onReasoningEffortChange={setReasoningEffort}
       allowedReasoningEfforts={allowedReasoningEfforts}

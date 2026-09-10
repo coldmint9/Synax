@@ -206,8 +206,19 @@ function patchSessionDetailCache(
   sessionId: string,
   patch: Partial<SessionDetailCacheEntry>,
 ): void {
-  const existing = useAgentSessionStore.getState().sessionDetailCache[sessionId]
-  if (!existing) return
+  const state = useAgentSessionStore.getState()
+  const existing = state.sessionDetailCache[sessionId] ?? {
+    runs: state.runs,
+    steps: state.steps,
+    events: state.events,
+    messages: state.messages,
+    toolCalls: state.toolCalls,
+    permissions: state.permissions,
+    sessionStats: state.sessionStats,
+    sessionTodos: state.sessionTodos,
+    sessionCapabilities: state.sessionCapabilities,
+    cachedAt: Date.now(),
+  }
   useAgentSessionStore.setState(s => ({
     sessionDetailCache: trimSessionDetailCache({
       ...s.sessionDetailCache,
@@ -570,6 +581,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     set({ panelOpen: false })
   },
 
+  /**
+   * Refresh the selected session's detail.
+   *
+   * Profile-critical data (stats, todos, capabilities, steps) is applied as
+   * soon as each response lands, and the heavier transcript queries (events,
+   * messages, tool calls) are applied in the background. Previously everything
+   * was committed in a single batch, so one slow query (the event log can take
+   * seconds on long runs) froze the whole side panel.
+   */
   refreshDetail: async () => {
     const targetSessionId = get().selectedSessionId
     if (!targetSessionId) return
@@ -580,69 +600,97 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
 
     const promise = (async () => {
       try {
-        const [
-          runsRes,
-          eventsRes,
-          messagesRes,
-          toolCallsRes,
-          permissionsRes,
-          stepsRes,
-          stats,
-          todosRes,
-          capabilities,
-        ] = await Promise.all([
+        const isCurrent = () => get().selectedSessionId === targetSessionId
+        const cachedEntry = get().sessionDetailCache[targetSessionId]
+        const knownEventId = cachedEntry?.events?.length
+          ? cachedEntry.events[cachedEntry.events.length - 1].id
+          : undefined
+
+        const profileUpdates = [
+          agentRuntimeApi.getSessionStats(targetSessionId)
+            .then(stats => {
+              if (!isCurrent()) return
+              set({ sessionStats: stats })
+              patchSessionDetailCache(targetSessionId, { sessionStats: stats })
+            })
+            .catch(() => { /* stats are optional */ }),
+          agentRuntimeApi.getSessionTodos(targetSessionId)
+            .then(todosRes => {
+              if (!isCurrent()) return
+              set({ sessionTodos: todosRes.items })
+              patchSessionDetailCache(targetSessionId, { sessionTodos: todosRes.items })
+            })
+            .catch(() => { /* todos are optional */ }),
+          agentRuntimeApi.getSessionCapabilities(targetSessionId)
+            .then(capabilities => {
+              if (!isCurrent()) return
+              set({ sessionCapabilities: capabilities })
+              patchSessionDetailCache(targetSessionId, { sessionCapabilities: capabilities })
+            })
+            .catch(() => { /* capabilities are optional */ }),
+          agentRuntimeApi.listSessionSteps(targetSessionId)
+            .then(stepsRes => {
+              if (!isCurrent()) return
+              set({ steps: stepsRes.items })
+              patchSessionDetailCache(targetSessionId, { steps: stepsRes.items })
+            })
+            .catch(() => { /* steps are optional */ }),
+        ]
+
+        const transcriptTask = Promise.all([
           agentRuntimeApi.listRuns(targetSessionId),
-          agentRuntimeApi.listEvents(targetSessionId),
+          agentRuntimeApi.listEvents(targetSessionId, knownEventId),
           agentRuntimeApi.listMessages(targetSessionId),
           agentRuntimeApi.listToolCalls(targetSessionId),
           agentRuntimeApi.listPermissions(targetSessionId),
-          agentRuntimeApi.listSessionSteps(targetSessionId),
-          agentRuntimeApi.getSessionStats(targetSessionId).catch(() => null),
-          agentRuntimeApi.getSessionTodos(targetSessionId).catch(() => ({ items: [] as TodoItem[] })),
-          agentRuntimeApi.getSessionCapabilities(targetSessionId).catch(() => null),
         ])
-        if (get().selectedSessionId !== targetSessionId) return
+          .then(([runsRes, eventsRes, messagesRes, toolCallsRes, permissionsRes]) => {
+            if (!isCurrent()) return
+            const events = knownEventId && cachedEntry
+              ? [...cachedEntry.events, ...eventsRes.items]
+              : eventsRes.items
+            const sessionStillRunning =
+              get().sessions.find(s => s.id === targetSessionId)?.status === 'running'
+            const cacheEntry: SessionDetailCacheEntry = {
+              runs: runsRes.items,
+              steps: get().steps,
+              events,
+              messages: messagesRes.items,
+              toolCalls: toolCallsRes.items,
+              permissions: permissionsRes.items,
+              sessionStats: get().sessionStats,
+              sessionTodos: get().sessionTodos,
+              sessionCapabilities: get().sessionCapabilities,
+              cachedAt: Date.now(),
+            }
 
-        const sessionStillRunning =
-          get().sessions.find(s => s.id === targetSessionId)?.status === 'running'
-        const cacheEntry: SessionDetailCacheEntry = {
-          runs: runsRes.items,
-          steps: stepsRes.items,
-          events: eventsRes.items,
-          messages: messagesRes.items,
-          toolCalls: toolCallsRes.items,
-          permissions: permissionsRes.items,
-          sessionStats: stats,
-          sessionTodos: todosRes.items,
-          sessionCapabilities: capabilities,
-          cachedAt: Date.now(),
-        }
+            set(s => ({
+              runs: cacheEntry.runs,
+              events: cacheEntry.events,
+              messages: cacheEntry.messages,
+              toolCalls: cacheEntry.toolCalls,
+              permissions: cacheEntry.permissions,
+              sessionDetailCache: trimSessionDetailCache({
+                ...s.sessionDetailCache,
+                [targetSessionId]: cacheEntry,
+              }),
+              ...(sessionStillRunning ? {} : {
+                streamingStepId: null,
+                streamingLive: EMPTY_STREAMING_BUFFERS,
+                streamingCompletedSteps: [],
+              }),
+            }))
 
-        set(s => ({
-          runs: cacheEntry.runs,
-          events: cacheEntry.events,
-          messages: cacheEntry.messages,
-          toolCalls: cacheEntry.toolCalls,
-          permissions: cacheEntry.permissions,
-          steps: cacheEntry.steps,
-          sessionStats: cacheEntry.sessionStats,
-          sessionTodos: cacheEntry.sessionTodos,
-          sessionCapabilities: cacheEntry.sessionCapabilities,
-          sessionDetailCache: trimSessionDetailCache({
-            ...s.sessionDetailCache,
-            [targetSessionId]: cacheEntry,
-          }),
-          ...(sessionStillRunning ? {} : {
-            streamingStepId: null,
-            streamingLive: EMPTY_STREAMING_BUFFERS,
-            streamingCompletedSteps: [],
-          }),
-        }))
+            const session = get().sessions.find(s => s.id === targetSessionId)
+            if (session && session.childSessionIds.length > 0) {
+              void get().fetchChildSessions(targetSessionId)
+            }
+          })
+          .catch(() => { /* silent */ })
 
-        const session = get().sessions.find(s => s.id === targetSessionId)
-        if (session && session.childSessionIds.length > 0) {
-          void get().fetchChildSessions(targetSessionId)
-        }
+        await Promise.all(profileUpdates)
+        // The transcript refresh keeps running without holding the poll loop.
+        void transcriptTask
       } catch { /* silent */ }
     })()
 

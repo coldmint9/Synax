@@ -16,9 +16,22 @@ function subscribeSessionLive(sessionId: string, handler: LiveHandler): () => vo
   let connection = connections.get(sessionId)
   if (!connection) {
     const handlers = new Set<LiveHandler>()
-    const close = sessionLiveStream(sessionId, (event) => {
-      for (const h of handlers) h(event)
-    })
+    const close = sessionLiveStream(
+      sessionId,
+      (event) => {
+        for (const h of handlers) h(event)
+      },
+      () => {
+        // The underlying EventSource failed and was closed. Drop the cached
+        // connection and the active-subscription marker so the next ensure()
+        // call re-establishes a fresh stream after connectivity recovers.
+        connections.delete(sessionId)
+        if (activeSessionId === sessionId) {
+          activeSessionId = null
+          activeRelease = null
+        }
+      },
+    )
     connection = { handlers, close }
     connections.set(sessionId, connection)
   }

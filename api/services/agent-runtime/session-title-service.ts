@@ -1,4 +1,5 @@
 import { logger } from '../../lib/logger.js';
+import { sessionHooks } from './session-hooks.js';
 import { generateGatewayTextResult } from '../llm-runtime/gateway.js';
 import { resolveGoalTitleSource } from '../wiki/wiki-goal-title.js';
 import type { AgentRunStreamChunk, AgentSession } from './contracts.js';
@@ -29,18 +30,45 @@ export interface TitleGenerator {
 
 const registry = new Map<string, TitleGenerator>();
 const titleGenerationInFlight = new Map<string, Promise<void>>();
+const titleGenerationQueued = new Set<string>();
 
-function startSessionTitleGeneration(
+/**
+ * Schedule session-title generation off the caller's critical path.
+ *
+ * The work is (a) coalesced per session so duplicated triggers during one
+ * turn never fan out into several LLM calls, and (b) deferred to the next
+ * macrotask so it can never run inside stream teardown / IPC message
+ * handling. Title generation must stay truly asynchronous: it must not delay
+ * the turn stream, and the run's own model calls must not wait behind it.
+ */
+function scheduleSessionTitleGeneration(
   sessionId: string,
   runId: string | undefined,
   trigger: 'run_started' | 'stream_done',
 ): void {
-  if (titleGenerationInFlight.has(sessionId)) return;
-  const task = runSessionTitleGeneration(sessionId, runId, trigger);
+  if (titleGenerationInFlight.has(sessionId)) {
+    // A generation is already running; re-check once it settles so a title
+    // is still produced if that attempt failed to persist one.
+    titleGenerationQueued.add(sessionId);
+    return;
+  }
+  const task = runDeferredSessionTitleGeneration(sessionId, runId, trigger);
   titleGenerationInFlight.set(sessionId, task);
   void task.finally(() => {
     titleGenerationInFlight.delete(sessionId);
+    if (titleGenerationQueued.delete(sessionId)) {
+      scheduleSessionTitleGeneration(sessionId, undefined, 'stream_done');
+    }
   });
+}
+
+async function runDeferredSessionTitleGeneration(
+  sessionId: string,
+  runId: string | undefined,
+  trigger: 'run_started' | 'stream_done',
+): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await runSessionTitleGeneration(sessionId, runId, trigger);
 }
 
 export function registerTitleGenerator(profileId: string, generator: TitleGenerator): void {
@@ -186,17 +214,12 @@ export function maybeScheduleSessionTitleFromStreamChunk(
 }
 
 export function scheduleSessionTitleAfterRunStart(sessionId: string, runId: string): void {
-  startSessionTitleGeneration(sessionId, runId, 'run_started');
+  scheduleSessionTitleGeneration(sessionId, runId, 'run_started');
 }
 
 /** Reliable fallback: generate title after a streamed turn completes. */
 export function ensureSessionTitleGenerated(sessionId: string): void {
-  const pending = titleGenerationInFlight.get(sessionId);
-  if (pending) {
-    void pending.finally(() => startSessionTitleGeneration(sessionId, undefined, 'stream_done'));
-    return;
-  }
-  startSessionTitleGeneration(sessionId, undefined, 'stream_done');
+  scheduleSessionTitleGeneration(sessionId, undefined, 'stream_done');
 }
 
 async function runSessionTitleGeneration(
@@ -212,6 +235,13 @@ async function runSessionTitleGeneration(
     }
     if (!needsGeneratedSessionTitle(session)) {
       logger.debug({ sessionId, trigger, title: session.title }, '[session-title] skipped: title already set');
+      return;
+    }
+    if (session.activeRunId) {
+      // A run is still in flight (for example the client stream ended before
+      // the run did). Generating now would put a second model call in front of
+      // the run itself; the run's completion triggers generation instead.
+      logger.debug({ sessionId, trigger, activeRunId: session.activeRunId }, '[session-title] deferred: run still active');
       return;
     }
 
@@ -298,7 +328,20 @@ async function resolveTitleTextWithLlm(ctx: TitleGeneratorContext): Promise<stri
   }
 }
 
-/** @deprecated Title generation is scheduled from stream chunks on the API process. */
+/**
+ * Register the API-process hook that generates a title once a run completes.
+ *
+ * This is deliberately only called by the API process bootstrap: forked
+ * session children emit `run:completed` too, and registering it there would
+ * duplicate the model call.
+ */
 export function registerSessionTitleHooks(): void {
-  // no-op
+  sessionHooks.register({
+    id: 'session-title-after-run',
+    filter: { eventTypes: ['run:completed'] },
+    handler: (event) => {
+      if (event.type !== 'run:completed') return;
+      ensureSessionTitleGenerated(event.sessionId);
+    },
+  });
 }

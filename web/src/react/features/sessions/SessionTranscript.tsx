@@ -83,7 +83,7 @@ export function SessionTranscript() {
   return (
     <div className="session-chat flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1">
-        <div ref={scrollRef} className="h-full overflow-y-auto">
+        <div ref={scrollRef} className="session-chat-scroll h-full overflow-y-auto">
           <AgentConversationView
             session={session}
             runs={runs}
