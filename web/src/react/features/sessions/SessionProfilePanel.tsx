@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { IdCard } from 'lucide-react'
+import { User } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAgentSessionStore } from './agentSessionStore'
 import { SessionCapabilitiesPanel } from './SessionCapabilitiesPanel'
@@ -14,12 +14,14 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({ sessionId
   })))
 
   return (
-    <div className="session-profile-panel flex min-h-0 flex-col border-t border-border/40">
-      <div className="session-profile-header flex shrink-0 items-center gap-1.5 px-2.5 py-2">
-        <IdCard size={12} className="text-primary" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground">Profile</span>
+    <div className="session-profile-panel flex min-h-0 flex-col">
+      <div className="session-profile-card-header">
+        <span className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          <User size={10} />
+          Profile
+        </span>
+        {sessionId ? <span className="text-[8px] text-muted-foreground/50">当前会话</span> : null}
       </div>
-
       {!sessionId ? (
         <div className="flex min-h-0 flex-1 items-center justify-center px-3 text-center text-[10px] text-muted-foreground/60">
           选择会话后查看 Profile

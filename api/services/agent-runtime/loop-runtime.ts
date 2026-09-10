@@ -244,7 +244,13 @@ export class AgentLoopRuntime {
         stepId: null,
         role: "user",
         content: prompt,
-        metadata: { source: input.message ? "turn_request" : "session_prompt" },
+        metadata: {
+          source: input.messageSource === "system_injection"
+            ? "system_injection"
+            : input.message
+              ? "turn_request"
+              : "session_prompt",
+        },
         createdAt: nowIso(),
       });
       yield { type: "message", message: userMessage };

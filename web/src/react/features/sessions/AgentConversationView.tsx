@@ -1,9 +1,7 @@
 import { memo } from 'react'
-import { Chip, Card, Switch } from '@heroui/react'
+import { Chip, Card } from '@heroui/react'
 import { Pause, Play, XCircle, Zap } from 'lucide-react'
-import { useShallow } from 'zustand/react/shallow'
 import { useLocale } from '../../../hooks/useLocale'
-import { useShellStore } from '../../state/shellStore'
 import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import type { CompactionEvent } from '../../state/agentRuntimeStore'
 import { getSessionCategory } from './sessionGrouping'
@@ -45,10 +43,6 @@ export const AgentConversationView = memo(function AgentConversationView({
   scrollRootRef,
 }: Props) {
   const { t } = useLocale()
-  const { foldWorkRuns, setFoldWorkRuns } = useShellStore(useShallow(s => ({
-    foldWorkRuns: s.preferences.sessionFoldWorkRuns,
-    setFoldWorkRuns: s.setSessionFoldWorkRuns,
-  })))
 
   const isRunning = session?.status === 'running' && Boolean(session.activeRunId)
   const isResumable = session?.status === 'interrupted'
@@ -57,10 +51,11 @@ export const AgentConversationView = memo(function AgentConversationView({
     || session?.status === 'blocked'
   const cat = session ? getSessionCategory(session.profileId) : null
   const routeReason = session ? resolveSynaxRouteReason(session) : null
+  const showHeader = Boolean(routeReason || cat?.isBuiltin || isRunning || isResumable)
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-[1.2rem] py-4">
-      <div className="flex items-center gap-2 border-b border-border/40 pb-3">
+      {showHeader ? <div className="flex items-center gap-2 border-b border-border/40 pb-3">
         {session && routeReason && isSynaxSession(session) ? (
           <span className="max-w-[240px] truncate text-[10px] text-muted-foreground" title={routeReason}>
             {routeReason}
@@ -72,17 +67,6 @@ export const AgentConversationView = memo(function AgentConversationView({
           </Chip>
         ) : null}
         <div className="ml-auto flex items-center gap-2">
-          <Switch
-            size="sm"
-            isSelected={foldWorkRuns}
-            onChange={setFoldWorkRuns}
-            aria-label={t('sessionWorkLogToggle')}
-          >
-            <Switch.Control><Switch.Thumb /></Switch.Control>
-            <span className="whitespace-nowrap text-[10px] text-muted-foreground">
-              {t('sessionWorkLogToggle')}
-            </span>
-          </Switch>
           <div className="flex items-center gap-1.5">
             {isRunning && onPause && session ? (
               <button
@@ -113,7 +97,7 @@ export const AgentConversationView = memo(function AgentConversationView({
             ) : null}
           </div>
         </div>
-      </div>
+      </div> : null}
 
       {compactions && compactions.length > 0
         ? compactions.map((c, i) => (

@@ -30,7 +30,7 @@ export function SessionListHeader({
   const isWorkflowView = listView === 'workflow'
 
   return (
-    <div className="px-3 pt-3 pb-2 border-b border-border/20 space-y-2">
+    <div className="session-list-header px-3 pt-3 pb-2 border-b border-border/20 space-y-2">
       {isWorkflowView ? (
         <button
           type="button"

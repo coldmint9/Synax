@@ -429,6 +429,12 @@ export type ClearInactiveSessionsBody = z.infer<typeof clearInactiveSessionsBody
 
 export const streamTurnRequestSchema = z.object({
   message: z.string().min(1).max(100_000).optional(),
+  /**
+   * Marks a message the runtime composed on the user's behalf (goal prompt
+   * scaffolding, wiki context, language directive…). The transcript shows those
+   * as an "injected" chip instead of a user bubble.
+   */
+  messageSource: z.enum(['user', 'system_injection']).optional(),
   model: z.string().min(1).max(256).optional(),
   purpose: z.string().min(1).max(64).optional(),
   temperature: z.number().min(0).max(2).optional(),

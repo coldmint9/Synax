@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import { Popover, useOverlayState } from '@heroui/react'
 import type { GlobalConfig, ProviderDef } from '../../../../lib/contracts/config'
 import { useLocale } from '../../../../hooks/useLocale'
@@ -10,6 +10,7 @@ import {
 } from './goalModelOptions'
 import { useAcpDiscovery } from './useAcpDiscovery'
 
+/** Above this many options the list gets a search field. */
 const LARGE_LIST_THRESHOLD = 40
 
 interface Props {
@@ -22,7 +23,13 @@ interface Props {
   onOverlayOpenChange?: (open: boolean) => void
 }
 
-function OptionButton({
+function matchesQuery(option: GoalModelSelection, query: string): boolean {
+  if (!query) return true
+  return option.label.toLowerCase().includes(query) || option.providerId.toLowerCase().includes(query)
+}
+
+/** One flat row per model — API models and ACP endpoints share the same shape. */
+function ModelOption({
   option,
   selected,
   onPick,
@@ -34,95 +41,20 @@ function OptionButton({
   return (
     <button
       type="button"
+      role="option"
+      aria-selected={selected}
       onClick={onPick}
-      className={`mx-0.5 mb-0.5 flex w-[calc(100%-4px)] flex-col items-start rounded-full px-3 py-1.5 text-left transition-colors ${
+      className={`flex w-full items-center gap-2 rounded-item px-2.5 py-1.5 text-left transition-colors ${
         selected
           ? 'bg-primary/10 text-primary'
           : 'text-foreground/80 hover:bg-secondary/60'
       }`}
     >
-      <span className="w-full truncate text-[11px] font-medium">{option.label}</span>
-      {(option.kind === 'api' || option.kind === 'acp') && (
-        <span className="w-full truncate text-[9px] text-muted-foreground/60">{option.providerId}</span>
-      )}
+      <span className="min-w-0 flex-1 truncate text-[11px] font-medium">{option.label}</span>
+      <span className="max-w-[45%] shrink-0 truncate text-[9px] text-muted-foreground/60">
+        {option.providerId}
+      </span>
     </button>
-  )
-}
-
-function ModelColumn({
-  title,
-  emptyLabel,
-  isEmpty,
-  children,
-}: {
-  title: string
-  emptyLabel: string
-  isEmpty: boolean
-  children: ReactNode
-}) {
-  return (
-    <div className="flex min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border/20 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-        {title}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-1">
-        {isEmpty ? (
-          <p className="px-2 py-3 text-center text-[10px] text-muted-foreground/50">{emptyLabel}</p>
-        ) : children}
-      </div>
-    </div>
-  )
-}
-
-function GroupedModelList({
-  options,
-  selectedKey,
-  providerLabel,
-  onPick,
-}: {
-  options: GoalModelSelection[]
-  selectedKey: string | null
-  providerLabel: (providerId: string) => string
-  onPick: (option: GoalModelSelection) => void
-}) {
-  const groups = useMemo(() => {
-    const byProvider = new Map<string, GoalModelSelection[]>()
-    for (const option of options) {
-      const list = byProvider.get(option.providerId) ?? []
-      list.push(option)
-      byProvider.set(option.providerId, list)
-    }
-    return Array.from(byProvider.entries())
-      .map(([providerId, items]) => ({
-        providerId,
-        label: providerLabel(providerId),
-        items: items.sort((a, b) => a.label.localeCompare(b.label)),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label))
-  }, [options, providerLabel])
-
-  if (options.length === 0) {
-    return <p className="px-2.5 py-3 text-center text-[10px] text-muted-foreground/50">无匹配模型</p>
-  }
-
-  return (
-    <div className="max-h-64 space-y-1 overflow-y-auto p-1.5">
-      {groups.map(group => (
-        <div key={group.providerId}>
-          <div className="sticky top-0 z-10 border-b border-border/20 bg-background px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/60">
-            {group.label}
-          </div>
-          {group.items.map(option => (
-            <OptionButton
-              key={selectionKey(option)}
-              option={option}
-              selected={selectedKey === selectionKey(option)}
-              onPick={() => onPick(option)}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
   )
 }
 
@@ -149,7 +81,7 @@ export function GoalModelPicker({
   )
 
   const allOptions = useMemo(() => [...apiModels, ...acpEndpoints], [apiModels, acpEndpoints])
-  const largeList = allOptions.length > LARGE_LIST_THRESHOLD
+  const showSearch = allOptions.length > LARGE_LIST_THRESHOLD
 
   const selected = useMemo(
     () => findGoalModelSelection(apiModels, acpEndpoints, providerId, modelId),
@@ -159,23 +91,18 @@ export function GoalModelPicker({
   const currentKey = selected ? selectionKey(selected) : null
   const triggerLabel = selected?.label ?? modelId ?? t('goalModelSelect')
 
-  const providerLabel = useMemo(() => {
-    const map = new Map(providers.map(p => [p.id, p.label]))
-    return (providerId: string) => map.get(providerId) ?? providerId
-  }, [providers])
-
-  const filteredOptions = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return allOptions
-    return allOptions.filter(
-      option =>
-        option.label.toLowerCase().includes(q)
-        || option.providerId.toLowerCase().includes(q),
-    )
-  }, [allOptions, searchQuery])
-
-  const filteredApi = useMemo(() => filteredOptions.filter(o => o.kind === 'api'), [filteredOptions])
-  const filteredAcp = useMemo(() => filteredOptions.filter(o => o.kind === 'acp'), [filteredOptions])
+  const query = searchQuery.trim().toLowerCase()
+  const filteredApi = useMemo(
+    () => apiModels.filter(option => matchesQuery(option, query)),
+    [apiModels, query],
+  )
+  const filteredAcp = useMemo(
+    () => acpEndpoints.filter(option => matchesQuery(option, query)),
+    [acpEndpoints, query],
+  )
+  const hasResults = filteredApi.length > 0 || filteredAcp.length > 0
+  // ACP endpoints follow the API models in the same list; a hairline separates them.
+  const showDivider = filteredApi.length > 0 && filteredAcp.length > 0
 
   function handlePick(option: GoalModelSelection) {
     onSelect(option)
@@ -201,49 +128,46 @@ export function GoalModelPicker({
       >
         <span className="truncate">{triggerLabel}</span>
       </Popover.Trigger>
-      <Popover.Content placement="top end" offset={8} className="z-50 w-[22rem] p-0 overflow-hidden">
-        {largeList ? (
-          <div className="flex flex-col">
-            <div className="shrink-0 border-b border-border/20 p-1.5">
-              <input
-                autoFocus
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索模型 / 供应商…"
-                className="h-7 w-full rounded-md bg-muted/40 px-2 text-[11px] outline-none placeholder:text-muted-foreground/50"
-              />
-            </div>
-            <GroupedModelList
-              options={filteredOptions}
-              selectedKey={currentKey}
-              providerLabel={providerLabel}
-              onPick={handlePick}
+      <Popover.Content placement="top end" offset={8} className="z-50 w-[20rem] overflow-hidden p-0">
+        {showSearch && (
+          <div className="border-b border-border/30 p-1.5">
+            <input
+              autoFocus
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('goalModelSearch')}
+              className="h-7 w-full rounded-item bg-muted/40 px-2 text-[11px] outline-none placeholder:text-muted-foreground/50"
             />
           </div>
-        ) : (
-          <div className="grid max-h-56 grid-cols-2 divide-x divide-border/25">
-            <ModelColumn title={t('goalModelApi')} emptyLabel={t('goalModelApiEmpty')} isEmpty={filteredApi.length === 0}>
-              {filteredApi.map(option => (
-                <OptionButton
-                  key={selectionKey(option)}
-                  option={option}
-                  selected={currentKey === selectionKey(option)}
-                  onPick={() => handlePick(option)}
-                />
-              ))}
-            </ModelColumn>
-            <ModelColumn title={t('goalModelAcp')} emptyLabel={t('goalModelAcpEmpty')} isEmpty={filteredAcp.length === 0}>
-              {filteredAcp.map(option => (
-                <OptionButton
-                  key={selectionKey(option)}
-                  option={option}
-                  selected={currentKey === selectionKey(option)}
-                  onPick={() => handlePick(option)}
-                />
-              ))}
-            </ModelColumn>
-          </div>
         )}
+        <div
+          role="listbox"
+          aria-label={t('goalModelSelect')}
+          className="max-h-64 overflow-y-auto p-1.5"
+        >
+          {filteredApi.map(option => (
+            <ModelOption
+              key={selectionKey(option)}
+              option={option}
+              selected={currentKey === selectionKey(option)}
+              onPick={() => handlePick(option)}
+            />
+          ))}
+          {showDivider && <div role="separator" className="my-1 h-px bg-border/40" />}
+          {filteredAcp.map(option => (
+            <ModelOption
+              key={selectionKey(option)}
+              option={option}
+              selected={currentKey === selectionKey(option)}
+              onPick={() => handlePick(option)}
+            />
+          ))}
+          {!hasResults && (
+            <p className="px-2 py-3 text-center text-[10px] text-muted-foreground/50">
+              {query ? t('goalModelNoMatch') : t('goalModelEmpty')}
+            </p>
+          )}
+        </div>
       </Popover.Content>
     </Popover>
   )

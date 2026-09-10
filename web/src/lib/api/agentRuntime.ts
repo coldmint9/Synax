@@ -285,6 +285,13 @@ export interface SessionEnvironmentFileView {
   truncated: boolean
 }
 
+export interface SessionMcpServerSummary {
+  id: string
+  name: string
+  enabled: boolean
+  toolCount: number
+}
+
 export interface SessionCapabilities {
   profile: { id: string; label: string; kind: string }
   tools: {
@@ -295,10 +302,15 @@ export interface SessionCapabilities {
     active: SkillSummary[]
     candidates: SkillSummary[]
   }
+  mcp: {
+    servers: SessionMcpServerSummary[]
+  }
 }
 
 export interface StreamTurnRequest {
   message?: string
+  /** Marks a prompt the app composed on the user's behalf (goal scaffolding). */
+  messageSource?: 'user' | 'system_injection'
   model?: string
   purpose?: string
   temperature?: number

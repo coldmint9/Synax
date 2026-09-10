@@ -49,6 +49,8 @@
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
+  /* List/menu rows keep the compact 10px geometry used by dropdown items. */
+  --radius-item: 10px;
 
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
 
@@ -432,6 +434,46 @@
   --verdict-forecast: 209 100% 64%;
   --verdict-decision: 264 82% 73%;
   --verdict-adjust: 209 100% 60%;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Glass materials
+   Light chrome is a milky frost: a white-tinted fill, a warm-white rim and a
+   soft ambient drop, so panels read like paper under a lamp.
+
+   Dark chrome keeps the material it shipped with — a faint white film over a
+   card fill, a dim rim and a deeper drop — so its values stay with each
+   surface instead of being routed through these tokens.
+
+   `--goal-glass-*` aliases keep the goal dock, the footer composer and the
+   focus-rail composer on one material; the session composer renders outside
+   `.goal-dock-zone`, so the tokens have to live on the root to resolve there
+   at all.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --glass-surface: hsl(0 0% 100% / 0.52);
+  --glass-border: hsl(0 0% 100% / 0.72);
+  --glass-filter: blur(22px) saturate(1.75) brightness(1.02);
+  --glass-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.65) inset,
+    0 10px 30px hsl(0 0% 0% / 0.08);
+  --glass-shadow-sm:
+    0 1px 0 hsl(0 0% 100% / 0.88) inset,
+    0 4px 16px hsl(0 0% 0% / 0.05);
+
+  --goal-glass-bg: var(--glass-surface);
+  --goal-glass-border: var(--glass-border);
+  --goal-glass-shadow: var(--glass-shadow-sm);
+}
+
+.dark {
+  /* Mirrored onto the root scope so the session composer, which renders
+     outside `.goal-dock-zone`, resolves the dock material too. */
+  --goal-glass-bg: hsl(var(--card) / 0.55);
+  --goal-glass-border: hsl(0 0% 100% / 0.14);
+  --goal-glass-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.14) inset,
+    0 4px 16px hsl(0 0% 0% / 0.35);
 }
 
 /* ── Base Styles ── */
@@ -986,7 +1028,6 @@
     flex-direction: column;
     overflow: hidden;
   }
-
   .dark .wiki-issue-popover {
     background: hsl(var(--card) / 0.75);
     box-shadow:
@@ -1923,19 +1964,8 @@
   --goal-pill-max-width: 48rem;
   --goal-bar-width: 5.75rem;
   --goal-bar-height: 0.3125rem;
-  --goal-glass-bg: hsl(0 0% 100% / 0.52);
-  --goal-glass-border: hsl(0 0% 100% / 0.72);
-  --goal-glass-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.88) inset,
-    0 4px 16px hsl(0 0% 0% / 0.05);
-}
-
-.dark .goal-dock-zone {
-  --goal-glass-bg: hsl(var(--card) / 0.55);
-  --goal-glass-border: hsl(0 0% 100% / 0.14);
-  --goal-glass-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.14) inset,
-    0 4px 16px hsl(0 0% 0% / 0.35);
+  /* `--goal-glass-*` is defined in the "Glass materials" token block above so
+     the session composer, which renders outside this zone, resolves it too. */
 }
 
 /* 稳定命中层：展开时立即占满 pill 区域，避免 morph 动画导致 mouseenter/leave 抖动 */
@@ -1977,7 +2007,6 @@
     0 1px 0 hsl(0 0% 100% / 0.9) inset,
     0 8px 20px hsl(0 0% 0% / 0.07);
 }
-
 .dark .goal-dock-morph[data-morph="mini"] .goal-dock-shell:has(.goal-dock-mini-inner--hover) {
   border-color: hsl(0 0% 100% / 0.2);
   box-shadow:
@@ -2022,6 +2051,7 @@
     linear-gradient(180deg, hsl(var(--destructive) / 0.08), transparent),
     hsl(0 0% 100% / 0.38);
 }
+
 .dark .goal-dock-preview-pill--failed {
   border-color: hsl(var(--destructive) / 0.32);
   background:
@@ -2105,7 +2135,6 @@
     box-shadow var(--goal-dur) ease-out,
     backdrop-filter var(--goal-dur) ease-out;
 }
-
 .dark .goal-dock-shell {
   background: hsl(var(--foreground-hsl) / 0.62);
   border-color: hsl(0 0% 100% / 0.08);
@@ -2507,6 +2536,7 @@
   color: hsl(var(--foreground-hsl) / 0.82);
   box-shadow: 0 1px 0 hsl(0 0% 100% / 0.1) inset;
 }
+
 .goal-dock-composer .button--tertiary:hover,
 .goal-dock-composer .goal-dock-composer-chip:hover {
   background: hsl(0 0% 100% / 0.48);
@@ -2515,6 +2545,7 @@
 .dark .goal-dock-composer .goal-dock-composer-chip:hover {
   background: hsl(0 0% 100% / 0.1);
 }
+
 .goal-dock-composer .goal-dock-composer-send {
   border: 1px solid hsl(var(--primary) / 0.35);
   background: hsl(var(--primary) / 0.82);
@@ -2531,6 +2562,7 @@
   border-color: hsl(0 0% 100% / 0.1);
   background: hsl(0 0% 100% / 0.05);
 }
+
 .goal-dock-composer .goal-dock-composer-stop {
   border: 1px solid hsl(0 0% 100% / 0.55);
   background: hsl(0 0% 100% / 0.38);
@@ -2540,6 +2572,7 @@
   border-color: hsl(0 0% 100% / 0.12);
   background: hsl(0 0% 100% / 0.08);
 }
+
 .goal-dock-composer input,
 .goal-dock-composer textarea,
 .goal-dock-composer [data-slot="input"] {
@@ -2567,6 +2600,58 @@
 }
 
 /* Session chat — floating message timeline navigator */
+/* App-composed prompt injection: a single quiet chip instead of echoing the
+   whole scaffolding block back into the transcript. */
+.session-injection {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.session-injection-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px dashed hsl(var(--border-hsl) / 0.9);
+  background: hsl(var(--secondary) / 0.35);
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+  list-style: none;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.session-injection-chip::-webkit-details-marker { display: none; }
+.session-injection-chip:hover {
+  background: hsl(var(--secondary) / 0.6);
+  color: hsl(var(--foreground-hsl));
+}
+.session-injection-size {
+  font-size: 10px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.session-injection-caret {
+  transition: transform 180ms cubic-bezier(0.22, 0.9, 0.28, 1);
+}
+.session-injection[open] .session-injection-caret { transform: rotate(90deg); }
+.session-injection-body {
+  width: 100%;
+  max-height: 22rem;
+  overflow: auto;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--border-hsl) / 0.75);
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ───────────────────────────────────────────────────────────────────────────
    Conversation turn rail (session minimap)
    Resting state is a quiet column of 12x4 ticks on a fixed 20px pitch; moving
@@ -2881,10 +2966,12 @@
   box-shadow: 0 1px 3px rgba(47, 61, 52, 0.12), inset 0 1px 0 rgba(255,255,255,0.5);
 }
 
-/* Compact menu/list geometry: keep soft corners, but avoid oversized pill/32px
-   rounding on dropdown panels and rows. Applies in both light and dark modes. */
-.dropdown__popover {
-  border-radius: 14px;
+/* Compact menu/list geometry: every floating panel shares one radius (12px) and
+   every row one radius (10px), so custom popovers match dropdowns instead of the
+   oversized HeroUI defaults. Applies in both light and dark modes. */
+.dropdown__popover,
+.popover {
+  border-radius: 12px;
 }
 .dropdown__menu,
 .menu {
@@ -3112,6 +3199,7 @@
     0 8px 16px -4px hsl(0 0% 0% / 0.5),
     0 18px 30px -12px hsl(0 0% 0% / 0.55) !important;
 }
+
 .session-chat-scroll {
   padding-bottom: 4.5rem;
 }
@@ -3153,6 +3241,13 @@
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
+.dark .session-file-island-pill {
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.08) inset,
+    0 2px 6px hsl(0 0% 0% / 0.45),
+    0 10px 26px -10px hsl(0 0% 0% / 0.6);
+}
+
 .session-file-island-pill:hover {
   background: hsl(var(--card));
   border-color: hsl(var(--border-hsl));
@@ -3216,6 +3311,306 @@
     0 1px 0 hsl(0 0% 100% / 0.08) inset,
     0 2px 6px hsl(0 0% 0% / 0.45),
     0 10px 26px -10px hsl(0 0% 0% / 0.6);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Workspace tab manager
+   The right-hand workspace keeps a permanent tab strip: a pinned dashboard
+   tab, one chip per open file/diff/subagent view, a "+" menu for opening new
+   ones, and the maximise toggle.
+   ─────────────────────────────────────────────────────────────────────────── */
+.workspace-tab {
+  position: relative;
+  border: 1px solid transparent;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.workspace-tab:hover {
+  background: hsl(var(--secondary) / 0.6);
+  color: hsl(var(--foreground-hsl));
+}
+.workspace-tab--active {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border-hsl) / 0.85);
+  color: hsl(var(--foreground-hsl));
+  box-shadow: 0 1px 2px hsl(var(--foreground-hsl) / 0.06);
+}
+.dark .workspace-tab--active {
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.35);
+}
+
+.workspace-new-tab-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: min(22rem, 62vw);
+  max-height: 18rem;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--border-hsl) / 0.9);
+  background: hsl(var(--card));
+  box-shadow: 0 14px 36px -14px hsl(var(--foreground-hsl) / 0.3);
+}
+.workspace-new-tab-group {
+  padding: 6px 8px 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+.workspace-new-tab-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: hsl(var(--foreground-hsl));
+  text-align: left;
+  cursor: pointer;
+}
+.workspace-new-tab-item:hover {
+  background: hsl(var(--secondary) / 0.7);
+}
+.workspace-new-tab-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-new-tab-empty {
+  padding: 10px 8px;
+  font-size: 10px;
+  text-align: center;
+  color: hsl(var(--muted-foreground));
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Workspace file viewer + diff viewer
+   One editor surface and one syntax palette for both viewers. Shiki renders
+   every token as `var(--synax-code-token-*)`, so the palette below is what
+   actually colors code, in light and dark alike. The diff rows layer their
+   green/red bands on the same surface.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Editor surface */
+  --synax-code-foreground: #1f2328;
+  --synax-code-background: #ffffff;
+  --synax-code-line-number: #8c959f;
+  --synax-code-gutter-border: rgb(31 35 40 / 0.08);
+
+  /* Syntax tokens (GitHub Light-flavoured, tuned to the Codex neutrals) */
+  --synax-code-token-comment: #6e7781;
+  --synax-code-token-keyword: #cf222e;
+  --synax-code-token-string: #0a3069;
+  --synax-code-token-string-expression: #116329;
+  --synax-code-token-constant: #0550ae;
+  --synax-code-token-function: #8250df;
+  --synax-code-token-parameter: #953800;
+  --synax-code-token-punctuation: #57606a;
+  --synax-code-token-link: #0969da;
+  --synax-code-token-inserted: #1a7f37;
+  --synax-code-token-deleted: #cf222e;
+  --synax-code-token-changed: #9a6700;
+
+  /* Diff rows */
+  --diff-add-bg: #e6ffec;
+  --diff-add-num-bg: #ccffd8;
+  --diff-add-fg: #116329;
+  --diff-add-accent: #1a7f37;
+  --diff-del-bg: #ffebe9;
+  --diff-del-num-bg: #ffd7d5;
+  --diff-del-fg: #a40e26;
+  --diff-del-accent: #cf222e;
+  --diff-hunk-bg: #eaf3fe;
+  --diff-hunk-fg: #0969da;
+  --diff-meta-fg: #8c959f;
+  --diff-num-fg: #8c959f;
+}
+
+.dark {
+  --synax-code-foreground: #e6edf3;
+  --synax-code-background: #181818;
+  --synax-code-line-number: #6e7681;
+  --synax-code-gutter-border: rgb(255 255 255 / 0.07);
+
+  --synax-code-token-comment: #8b949e;
+  --synax-code-token-keyword: #ff7b72;
+  --synax-code-token-string: #a5d6ff;
+  --synax-code-token-string-expression: #7ee787;
+  --synax-code-token-constant: #79c0ff;
+  --synax-code-token-function: #d2a8ff;
+  --synax-code-token-parameter: #ffa657;
+  --synax-code-token-punctuation: #c9d1d9;
+  --synax-code-token-link: #58a6ff;
+  --synax-code-token-inserted: #3fb950;
+  --synax-code-token-deleted: #f85149;
+  --synax-code-token-changed: #d29922;
+
+  --diff-add-bg: #12261e;
+  --diff-add-num-bg: #1d3b29;
+  --diff-add-fg: #56d364;
+  --diff-add-accent: #3fb950;
+  --diff-del-bg: #25171c;
+  --diff-del-num-bg: #3f2126;
+  --diff-del-fg: #ff7b72;
+  --diff-del-accent: #f85149;
+  --diff-hunk-bg: #1b2735;
+  --diff-hunk-fg: #79c0ff;
+  --diff-meta-fg: #6e7681;
+  --diff-num-fg: #6e7681;
+}
+
+.code-viewer-body,
+.diff-viewer-body {
+  background: var(--synax-code-background);
+  color: var(--synax-code-foreground);
+}
+
+.file-viewer-status {
+  padding: 12px;
+  font-size: 10px;
+  color: var(--diff-meta-fg);
+}
+.file-viewer-status--error {
+  color: hsl(var(--destructive));
+}
+
+/* File viewer: gutter pins to the left, code keeps the shiki colors. */
+.code-viewer-gutter {
+  border-right: 1px solid var(--synax-code-gutter-border);
+  background: var(--synax-code-background);
+  color: var(--synax-code-line-number);
+}
+.code-viewer-content {
+  min-width: max-content;
+  font-family: var(--font-mono);
+}
+.code-viewer-content pre {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  line-height: inherit;
+  tab-size: 2;
+}
+
+/* Diff viewer */
+.diff-stats {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+.diff-stat--add {
+  color: var(--diff-add-fg);
+}
+.diff-stat--del {
+  color: var(--diff-del-fg);
+}
+
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.diff-table td {
+  vertical-align: top;
+}
+
+.diff-num {
+  width: 3.5rem;
+  min-width: 3.5rem;
+  padding: 0 6px;
+  text-align: right;
+  white-space: nowrap;
+  user-select: none;
+  color: var(--diff-num-fg);
+  border-right: 1px solid var(--synax-code-gutter-border);
+}
+.diff-num--old {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.diff-marker {
+  width: 1.5rem;
+  min-width: 1.5rem;
+  padding: 0 4px 0 8px;
+  text-align: left;
+  user-select: none;
+  color: var(--diff-num-fg);
+}
+
+.diff-text {
+  padding: 0 12px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Unchanged rows stay on the editor surface; +/- rows get a full tinted band
+   plus a colored gutter and a left accent stripe, so the change reads even
+   when a diff is scrolled sideways. */
+.diff-row--ctx > .diff-num {
+  background: var(--synax-code-background);
+}
+.diff-row--add {
+  background: var(--diff-add-bg);
+}
+.diff-row--del {
+  background: var(--diff-del-bg);
+}
+.diff-row--add > .diff-num {
+  background: var(--diff-add-num-bg);
+  color: var(--diff-add-fg);
+}
+.diff-row--del > .diff-num {
+  background: var(--diff-del-num-bg);
+  color: var(--diff-del-fg);
+}
+.diff-row--add > .diff-marker {
+  color: var(--diff-add-fg);
+}
+.diff-row--del > .diff-marker {
+  color: var(--diff-del-fg);
+}
+.diff-row--add > .diff-num--old {
+  box-shadow: inset 2px 0 0 var(--diff-add-accent);
+}
+.diff-row--del > .diff-num--old {
+  box-shadow: inset 2px 0 0 var(--diff-del-accent);
+}
+
+.diff-band {
+  padding: 2px 10px;
+  font-size: 10px;
+}
+.diff-band--file {
+  background: hsl(var(--secondary) / 0.55);
+  color: hsl(var(--muted-foreground));
+  font-weight: 600;
+}
+.diff-band--hunk {
+  background: var(--diff-hunk-bg);
+  color: var(--diff-hunk-fg);
+  font-family: var(--font-mono);
+}
+.diff-band--meta {
+  color: var(--diff-meta-fg);
+  font-style: italic;
+}
+.diff-raw {
+  padding: 2px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Session titles occupy the full row. On hover, time/delete actions float
@@ -3332,24 +3727,61 @@
   border-radius: 10px;
 }
 
-/* Inline attachment summary: replaces the old pin dot with a compact,
-   readable context capsule. */
-.goal-context-summary {
-  min-height: 1.75rem;
-  border: 1px solid hsl(var(--primary) / 0.18);
-  background: hsl(var(--primary) / 0.08);
-  color: hsl(var(--foreground-hsl) / 0.72);
+/* ───────────────────────────────────────────────────────────────────────────
+   Permission tier cycle
+   Three levels of tool access, colour-coded by how much they grant:
+   readonly (safe, green) -> readwrite (blue) -> unrestricted (red). The chip
+   cross-fades between tiers and the label rolls in so the change is legible
+   even when clicked rapidly.
+   ─────────────────────────────────────────────────────────────────────────── */
+.goal-permission-cycle {
+  transition:
+    background-color 240ms cubic-bezier(0.22, 0.9, 0.28, 1),
+    border-color 240ms cubic-bezier(0.22, 0.9, 0.28, 1),
+    color 240ms cubic-bezier(0.22, 0.9, 0.28, 1),
+    box-shadow 240ms cubic-bezier(0.22, 0.9, 0.28, 1);
 }
-.goal-context-summary-mode {
-  border-radius: 999px;
-  padding: 1px 5px;
-  background: hsl(var(--primary) / 0.12);
-  color: hsl(var(--primary));
-  font-size: 9px;
+.goal-permission-cycle-icon {
+  transition: color 240ms cubic-bezier(0.22, 0.9, 0.28, 1);
 }
-.dark .goal-context-summary {
-  border-color: hsl(var(--primary) / 0.22);
-  background: hsl(var(--primary) / 0.10);
+.goal-permission-cycle-label {
+  display: inline-block;
+  animation: goal-permission-label-roll 240ms cubic-bezier(0.22, 0.9, 0.28, 1);
+}
+@keyframes goal-permission-label-roll {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* readonly — the safest tier */
+.goal-dock-composer .goal-permission-cycle[data-tier="readonly"] {
+  border-color: hsl(var(--success-hsl) / 0.35);
+  background: hsl(var(--success-hsl) / 0.12);
+  color: hsl(var(--success-hsl));
+  box-shadow: 0 1px 0 hsl(0 0% 100% / 0.45) inset;
+}
+.goal-dock-composer .goal-permission-cycle[data-tier="readonly"]:hover {
+  background: hsl(var(--success-hsl) / 0.2);
+}
+/* readwrite — mid tier */
+.goal-dock-composer .goal-permission-cycle[data-tier="readwrite"] {
+  border-color: hsl(var(--run) / 0.35);
+  background: hsl(var(--run) / 0.12);
+  color: hsl(var(--run));
+  box-shadow: 0 1px 0 hsl(0 0% 100% / 0.45) inset;
+}
+.goal-dock-composer .goal-permission-cycle[data-tier="readwrite"]:hover {
+  background: hsl(var(--run) / 0.2);
+}
+/* unrestricted — grants everything, so it reads as a warning */
+.goal-dock-composer .goal-permission-cycle[data-tier="unrestricted"] {
+  border-color: hsl(var(--destructive) / 0.35);
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+  box-shadow: 0 1px 0 hsl(0 0% 100% / 0.45) inset;
+}
+.goal-dock-composer .goal-permission-cycle[data-tier="unrestricted"]:hover {
+  background: hsl(var(--destructive) / 0.2);
 }
 
 /* Narrow-window header layout. Keep the project switcher, Wiki/Agent tabs,
@@ -3445,54 +3877,717 @@
   }
 }
 
-/* Left Agent sidebar profile area. The session list gets the upper 60% and
-   the current-session profile inspector gets the lower 40% by default; the
-   split is draggable (SessionListPanel writes an inline flex-basis while the
-   reader adjusts it, otherwise the ratios below stay in charge). */
-.session-list-panel .session-list-session-area {
+/* Left Agent sidebar: the session list and Profile inspector are independent
+   floating cards. The resizer is an invisible gap with a small drag affordance,
+   so the cards keep their own rounded geometry while remaining re-sizable. */
+.session-list-panel {
+  gap: 0;
+  padding: 6px;
+  background: transparent !important;
+}
+
+.session-list-card {
   display: flex;
   min-height: 0;
-  flex: 0 1 60%;
+  flex-direction: column;
   overflow: hidden;
+  border: 1px solid hsl(var(--border-hsl) / 0.68);
+  border-radius: 14px;
+  background: hsl(var(--card) / 0.74);
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.62) inset,
+    0 9px 26px -18px hsl(var(--foreground-hsl) / 0.32),
+    0 2px 7px hsl(var(--foreground-hsl) / 0.05);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
 }
-.session-list-panel .session-list-session-area > .session-list-groups {
-  min-height: 0;
-  width: 100%;
+
+.dark .session-list-card {
+  border-color: hsl(0 0% 100% / 0.1);
+  background: hsl(var(--card) / 0.64);
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.08) inset,
+    0 12px 32px -20px hsl(0 0% 0% / 0.9),
+    0 2px 8px hsl(0 0% 0% / 0.26);
 }
-.session-list-panel .session-list-profile-area {
+
+.session-list-card--sessions {
+  flex: 0 1 60%;
+}
+
+.session-list-card--profile {
+  flex: 1 1 0%;
+}
+
+.session-list-card--sessions .session-list-header {
+  flex: none;
+  padding: 10px 10px 8px;
+  border-bottom-color: hsl(var(--border-hsl) / 0.42);
+  background: linear-gradient(180deg, hsl(var(--card) / 0.5), transparent);
+}
+
+.session-list-card--sessions .session-list-session-area {
   display: flex;
   min-height: 0;
-  flex: 1 1 0%;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
-/* Horizontal splitter between the session list and the profile inspector. */
+.session-list-card--sessions .session-list-session-area > .session-list-groups {
+  min-height: 0;
+  width: 100%;
+  padding: 6px 6px 8px;
+  scrollbar-gutter: stable;
+}
+
+.session-list-card--profile .session-profile-panel {
+  min-height: 0;
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.session-profile-card-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 10px 7px;
+  border-bottom: 1px solid hsl(var(--border-hsl) / 0.42);
+  background: linear-gradient(180deg, hsl(var(--card) / 0.5), transparent);
+}
+
+.session-list-card--profile .session-profile-panel > .overflow-y-auto {
+  padding: 6px;
+}
+
+.session-list-card--profile .session-profile-panel > .overflow-y-auto > * {
+  margin-bottom: 6px;
+  border: 1px solid hsl(var(--border-hsl) / 0.38);
+  border-radius: 10px;
+  background: hsl(var(--secondary) / 0.18);
+}
+
+.session-list-card--profile .session-profile-panel > .overflow-y-auto > *:last-child {
+  margin-bottom: 0;
+}
+
+/* Horizontal splitter between the two cards. */
 .session-list-resizer-h {
   position: relative;
   z-index: 5;
+  height: 8px;
   flex: none;
-  height: 6px;
   cursor: row-resize;
   touch-action: none;
   background: transparent;
-  transition: background 120ms ease;
 }
-.session-list-resizer-h:hover,
-.session-list-resizer-h:active {
-  background: hsl(var(--primary) / 0.18);
+
+.session-list-resizer-h::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 3px;
+  border-radius: 999px;
+  background: hsl(var(--border-hsl) / 0.75);
+  opacity: 0.55;
+  transform: translate(-50%, -50%);
+  transition: width 120ms ease, background-color 120ms ease, opacity 120ms ease;
 }
-.session-list-panel .session-profile-panel {
-  min-height: 0;
-  width: 100%;
+
+.session-list-resizer-h:hover::before,
+.session-list-resizer-h:active::before {
+  width: 52px;
+  background: hsl(var(--primary) / 0.5);
+  opacity: 1;
 }
+
 .session-profile-header {
   background: hsl(var(--background-hsl) / 0.72);
 }
+
 .session-profile-panel button {
   min-width: 0;
 }
+
 @media (max-height: 680px) {
-  .session-list-panel .session-list-session-area {
+  .session-list-card--sessions {
     flex-basis: 36%;
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Single-island Agent workspace chrome
+   The island is the only top-level navigation object. In dock mode it floats
+   above the transcript; in focus mode it becomes a reserved rail and the
+   workspace owns the full canvas below it.
+   ─────────────────────────────────────────────────────────────────────────── */
+.workbench-shell[data-chrome-mode="workspaceFocus"] .workbench-island {
+  padding-top: 56px;
+  transition: padding-top 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.electron .workbench-shell[data-chrome-mode="workspaceFocus"] .workbench-island {
+  padding-top: 0;
+}
+
+.workbench-header.workbench-header--workspace-focus {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: auto;
+  max-width: none;
+  transform: none;
+  padding: 8px 10px 0;
+  justify-content: stretch;
+  flex-wrap: nowrap;
+  gap: 0;
+}
+
+.electron .workbench-header.workbench-header--workspace-focus {
+  position: fixed;
+  top: 2px;
+}
+
+.workbench-header--workspace-focus .wh-pill--focus {
+  width: 100%;
+  max-width: 100%;
+  height: 48px;
+  min-width: 0;
+  padding: 0 8px;
+  gap: 6px;
+  border-radius: 16px;
+  overflow: hidden;
+  animation: workspace-focus-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.workspace-focus-origin,
+.workspace-focus-home,
+.workspace-focus-tab-main,
+.workspace-focus-tab-close,
+.workspace-focus-overflow,
+.workspace-chrome-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.workspace-chrome-icon {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border-radius: 999px;
+}
+
+.workspace-chrome-icon:hover:not(:disabled),
+.workspace-focus-origin:hover,
+.workspace-focus-home:hover,
+.workspace-focus-tab-close:hover,
+.workspace-focus-overflow:hover {
+  background: hsl(var(--secondary) / 0.72);
+  color: hsl(var(--foreground-hsl));
+}
+
+.workspace-chrome-icon:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.workspace-focus-origin {
+  height: 30px;
+  flex: 0 0 auto;
+  gap: 5px;
+  padding: 0 9px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workspace-focus-session {
+  display: flex;
+  min-width: 0;
+  max-width: 230px;
+  align-items: center;
+  gap: 5px;
+  margin-left: 2px;
+  font-size: 11px;
+}
+
+.workspace-focus-project {
+  max-width: 90px;
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-focus-separator {
+  flex: 0 0 auto;
+  color: hsl(var(--muted-foreground) / 0.45);
+}
+
+.workspace-focus-title {
+  min-width: 0;
+  overflow: hidden;
+  color: hsl(var(--foreground-hsl) / 0.88);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-focus-controls {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 2px;
+  margin-left: 5px;
+  padding-left: 7px;
+  border-left: 1px solid hsl(var(--border-hsl) / 0.6);
+}
+
+.workspace-focus-home,
+.workspace-focus-tab-main {
+  min-width: 0;
+  height: 28px;
+  gap: 5px;
+  padding: 0 8px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.workspace-focus-home {
+  flex: 0 0 auto;
+}
+
+.workspace-focus-home--active,
+.workspace-focus-tab--active {
+  border-color: hsl(var(--border-hsl) / 0.8);
+  background: hsl(var(--card) / 0.88);
+  color: hsl(var(--foreground-hsl));
+}
+
+.workspace-focus-tab {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 140px;
+  flex: 0 1 auto;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+}
+
+.workspace-focus-tab-main {
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+.workspace-focus-tab-main > span {
+  min-width: 0;
+  max-width: 94px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-focus-tab-close {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin-right: 2px;
+  border-radius: 6px;
+  opacity: 0;
+}
+
+.workspace-focus-tab:hover .workspace-focus-tab-close,
+.workspace-focus-tab--active .workspace-focus-tab-close {
+  opacity: 1;
+}
+
+.workspace-focus-overflow {
+  height: 26px;
+  flex: 0 0 auto;
+  padding: 0 7px;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.workspace-focus-globals {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.wh-project-trigger--compact {
+  max-width: 88px;
+  padding-inline: 7px;
+}
+
+/* Workspace wing attached to the Agent toolbar in dock mode. */
+.workspace-wing {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 1px;
+  margin-left: 2px;
+  padding-left: 5px;
+  border-left: 1px solid hsl(var(--border-hsl) / 0.55);
+}
+
+.workspace-wing-current {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 178px;
+  height: 26px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: hsl(var(--foreground-hsl) / 0.82);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.workspace-wing-current:hover {
+  border-color: hsl(var(--border-hsl) / 0.6);
+  background: hsl(var(--secondary) / 0.5);
+}
+
+.workspace-wing-label {
+  min-width: 0;
+  max-width: 122px;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-wing-count {
+  display: inline-flex;
+  min-width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 4px;
+  background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.workspace-new-tab-menu--chrome {
+  right: 0;
+  left: auto;
+}
+
+/* The Agent toolbar owns popovers (workspace switcher / new tab). Keep the
+   shared pill clipped for geometry, but let those menus escape its bounds. */
+.workbench-header .wh-pill-slot > .wh-pill.wh-pill--overflow-visible {
+  overflow: visible;
+}
+
+/* The workspace panel is now content-only; controls live in the island. */
+.session-workspace-sidebar--dock {
+  align-self: flex-start;
+  height: calc(100% - 68px);
+  margin: 58px 10px 10px 0;
+  border: 1px solid hsl(var(--border-hsl) / 0.75);
+  border-radius: 16px;
+  background: hsl(var(--card) / 0.76);
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.7) inset,
+    0 10px 30px -18px hsl(var(--foreground-hsl) / 0.35),
+    0 2px 8px hsl(var(--foreground-hsl) / 0.06);
+  backdrop-filter: blur(18px) saturate(1.25);
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  overflow: visible;
+}
+
+
+.electron .session-workspace-sidebar--dock {
+  height: calc(100% - 20px);
+  margin-top: 8px;
+}
+
+.session-workspace-sidebar--focus {
+  background: var(--background);
+}
+
+.session-workspace-panel {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.session-workspace-panel--focus .session-workspace-scroll {
+  padding-bottom: 7.25rem;
+  scroll-padding-bottom: 7.25rem;
+}
+
+/* One persistent command rail. Dock mode keeps it over the transcript; focus
+   mode moves the same instance over the workspace without remounting it. */
+.agent-command-rail {
+  position: absolute;
+  bottom: 0;
+  z-index: 25;
+  padding: 0 12px 12px;
+  pointer-events: none;
+  transition: left 220ms cubic-bezier(0.2, 0.8, 0.2, 1), right 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.agent-command-rail-inner {
+  display: flex;
+  width: min(100%, 48rem);
+  margin: 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.agent-command-rail[data-focus="true"] .agent-command-rail-inner {
+  width: min(100%, 56rem);
+}
+
+.agent-command-status-row {
+  display: flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 5px;
+  pointer-events: auto;
+}
+
+.agent-command-status,
+.agent-command-action {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid hsl(var(--border-hsl) / 0.55);
+  border-radius: 999px;
+  padding: 0 8px;
+  background: hsl(var(--card) / 0.72);
+  color: hsl(var(--muted-foreground));
+  font-size: 9px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.agent-command-status-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+.agent-command-status--running { color: hsl(var(--run)); }
+.agent-command-status--running .agent-command-status-dot {
+  background: hsl(var(--run));
+  box-shadow: 0 0 0 3px hsl(var(--run) / 0.12);
+  animation: agent-command-pulse 1.4s ease-in-out infinite;
+}
+
+.agent-command-status--warning { color: var(--warning); }
+.agent-command-status--warning .agent-command-status-dot { background: var(--warning); }
+.agent-command-status--danger { color: hsl(var(--destructive)); }
+.agent-command-status--danger .agent-command-status-dot { background: hsl(var(--destructive)); }
+
+.agent-command-action {
+  cursor: pointer;
+}
+
+.agent-command-action:hover {
+  border-color: hsl(var(--primary) / 0.35);
+  color: hsl(var(--primary));
+}
+
+.agent-command-rail .goal-dock-approval {
+  pointer-events: auto;
+}
+
+.goal-session-composer--focus-rail {
+  position: relative;
+  pointer-events: none;
+}
+
+.goal-session-composer--focus-rail .goal-session-composer-shell {
+  pointer-events: auto;
+  border-color: var(--goal-glass-border) !important;
+  background: var(--goal-glass-bg) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.75) brightness(1.02) !important;
+  backdrop-filter: blur(22px) saturate(1.75) brightness(1.02) !important;
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.9) inset,
+    0 2px 5px hsl(var(--foreground-hsl) / 0.12),
+    0 10px 28px -8px hsl(var(--foreground-hsl) / 0.22) !important;
+}
+
+.goal-session-composer--focus-rail .goal-session-composer-shell:not([data-multiline="true"]) {
+  border-radius: 9999px;
+}
+
+
+.session-chat-scroll {
+  padding-top: 56px;
+  padding-bottom: 7.25rem;
+  scroll-padding-bottom: 7.25rem;
+}
+
+.electron .session-chat-scroll {
+  padding-top: 0;
+}
+
+@keyframes workspace-focus-enter {
+  from { opacity: 0; transform: translateY(-6px) scaleX(0.985); }
+  to { opacity: 1; transform: translateY(0) scaleX(1); }
+}
+
+@keyframes agent-command-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.75); }
+}
+
+@media (max-width: 1100px) {
+  .workspace-focus-session {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .workspace-focus-origin span,
+  .workspace-focus-home span {
+    display: none;
+  }
+
+  .workspace-focus-tab-main > span {
+    max-width: 64px;
+  }
+
+  .workspace-wing-label {
+    max-width: 72px;
+  }
+
+  .workbench-header--agent-dock .wh-pill {
+    gap: 3px;
+    padding-inline: 7px;
+  }
+
+  .workbench-header--agent-dock .wh-project-trigger > span {
+    max-width: 76px;
+  }
+
+  .workbench-header--agent-dock .wh-tabs .tabs__tab {
+    padding-inline: 7px !important;
+  }
+
+  .workbench-header--agent-dock .wh-actions .wh-btn {
+    width: 24px;
+  }
+
+  .workbench-header--agent-dock .agent-toolbar-mcp-trigger > span:not(.agent-toolbar-mcp-count) {
+    display: none;
+  }
+
+  .workbench-header--agent-dock .workspace-wing-current {
+    max-width: 112px;
+  }
+
+  .workbench-header--agent-dock .workspace-wing-label {
+    max-width: 64px;
+  }
+}
+
+@media (max-width: 880px) {
+  .session-chat-scroll {
+    padding-top: 104px;
+  }
+
+  .electron .session-chat-scroll {
+    padding-top: 48px;
+  }
+}
+
+@media (max-width: 760px) {
+  .workbench-header.workbench-header--workspace-focus {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-width: none;
+    transform: none;
+    padding: 6px;
+    gap: 0;
+  }
+
+  .workbench-header--workspace-focus .wh-pill--focus {
+    padding-inline: 6px;
+    gap: 4px;
+  }
+
+  .workspace-focus-controls {
+    margin-left: 2px;
+    padding-left: 4px;
+    gap: 1px;
+  }
+
+  .workspace-focus-tab-main > span {
+    max-width: 48px;
+  }
+
+  .wh-project-trigger--compact {
+    max-width: 52px;
+  }
+
+  .wh-project-trigger--compact > span {
+    max-width: 42px;
+  }
+
+  .workspace-focus-globals {
+    gap: 0;
+  }
+
+  .workspace-wing-current {
+    max-width: 104px;
+  }
+
+  .workspace-wing-label {
+    max-width: 52px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workbench-shell[data-chrome-mode="workspaceFocus"] .workbench-island,
+  .agent-command-rail,
+  .workspace-focus-tab,
+  .workspace-chrome-icon {
+    transition: none !important;
+  }
+
+  .workbench-header--workspace-focus .wh-pill--focus,
+  .agent-command-status--running .agent-command-status-dot {
+    animation: none !important;
   }
 }

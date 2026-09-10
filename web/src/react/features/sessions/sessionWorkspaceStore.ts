@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 export type WorkspaceTabKind = 'file' | 'diff' | 'subagent'
+export type WorkspacePresentation = 'dock' | 'focus'
 
 export interface WorkspaceTab {
   id: string
@@ -12,19 +13,37 @@ export interface WorkspaceTab {
   sessionId?: string
 }
 
-interface SessionWorkspaceState {
+export interface WorkspaceSessionState {
   tabs: WorkspaceTab[]
   activeTabId: string | null
-  maximized: boolean
-  openTab: (tab: Omit<WorkspaceTab, 'id'>) => void
-  activateTab: (id: string) => void
-  closeTab: (id: string) => void
-  closeOthers: (id: string) => void
-  closeAll: () => void
-  setMaximized: (value: boolean) => void
-  reset: () => void
-  resetTabs: () => void
+  presentation: WorkspacePresentation
 }
+
+type SessionWorkspaceRecord = Record<string, WorkspaceSessionState>
+
+interface SessionWorkspaceStoreState {
+  sessions: SessionWorkspaceRecord
+  openTab: (sessionId: string, tab: Omit<WorkspaceTab, 'id'>) => void
+  activateTab: (sessionId: string, id: string) => void
+  /** Show the dashboard without discarding the open tabs. */
+  showDashboard: (sessionId: string) => void
+  closeTab: (sessionId: string, id: string) => void
+  closeOthers: (sessionId: string, id: string) => void
+  closeAll: (sessionId: string) => void
+  setPresentation: (sessionId: string, presentation: WorkspacePresentation) => void
+  enterFocus: (sessionId: string) => void
+  exitFocus: (sessionId: string) => void
+  resetSession: (sessionId: string) => void
+  removeSessions: (sessionIds: Iterable<string>) => void
+}
+
+export const EMPTY_SESSION_WORKSPACE: WorkspaceSessionState = Object.freeze({
+  tabs: [],
+  activeTabId: null,
+  presentation: 'dock',
+})
+
+const WIDE_WORKSPACE_QUERY = '(min-width: 1280px)'
 
 function tabIdentity(tab: Omit<WorkspaceTab, 'id'>): string {
   return tab.kind === 'subagent'
@@ -32,58 +51,152 @@ function tabIdentity(tab: Omit<WorkspaceTab, 'id'>): string {
     : `${tab.kind}:${tab.path ?? ''}`
 }
 
-export const useSessionWorkspaceStore = create<SessionWorkspaceState>((set, get) => ({
-  tabs: [],
-  activeTabId: null,
-  maximized: false,
+function workspaceState(value: WorkspaceSessionState | undefined): WorkspaceSessionState {
+  return value ?? EMPTY_SESSION_WORKSPACE
+}
 
-  openTab: (tab) => {
+function patchSession(
+  sessions: SessionWorkspaceRecord,
+  sessionId: string,
+  patch: (current: WorkspaceSessionState) => WorkspaceSessionState,
+): SessionWorkspaceRecord {
+  const current = workspaceState(sessions[sessionId])
+  const next = patch(current)
+  if (next === current) return sessions
+  return { ...sessions, [sessionId]: next }
+}
+
+export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>((set) => ({
+  sessions: {},
+
+  openTab: (sessionId, tab) => set((state) => {
     const id = tabIdentity(tab)
-    set((state) => {
-      const existing = state.tabs.some(item => item.id === id)
-      const tabs = existing ? state.tabs : [...state.tabs, { ...tab, id }]
-      return { tabs, activeTabId: id, maximized: state.maximized || state.tabs.length === 0 }
-    })
-  },
+    return {
+      sessions: patchSession(state.sessions, sessionId, (current) => {
+        const existing = current.tabs.some(item => item.id === id)
+        return {
+          ...current,
+          tabs: existing ? current.tabs : [...current.tabs, { ...tab, id }],
+          activeTabId: id,
+        }
+      }),
+    }
+  }),
 
-  activateTab: (id) => set({ activeTabId: id }),
-
-  closeTab: (id) => {
-    set((state) => {
-      const tabs = state.tabs.filter(item => item.id !== id)
-      const activeTabId = state.activeTabId === id
-        ? (tabs[tabs.length - 1]?.id ?? null)
-        : state.activeTabId
-      return { tabs, activeTabId, maximized: tabs.length > 0 && state.maximized }
-    })
-  },
-
-  closeOthers: (id) => {
-    set((state) => ({
-      tabs: state.tabs.filter(item => item.id === id),
+  activateTab: (sessionId, id) => set((state) => ({
+    sessions: patchSession(state.sessions, sessionId, current => ({
+      ...current,
       activeTabId: id,
-    }))
+    })),
+  })),
+
+  showDashboard: (sessionId) => set((state) => ({
+    sessions: patchSession(state.sessions, sessionId, current => ({
+      ...current,
+      activeTabId: null,
+    })),
+  })),
+
+  closeTab: (sessionId, id) => set((state) => ({
+    sessions: patchSession(state.sessions, sessionId, (current) => {
+      const tabs = current.tabs.filter(item => item.id !== id)
+      const activeTabId = current.activeTabId === id
+        ? (tabs[tabs.length - 1]?.id ?? null)
+        : current.activeTabId
+      return { ...current, tabs, activeTabId }
+    }),
+  })),
+
+  closeOthers: (sessionId, id) => set((state) => ({
+    sessions: patchSession(state.sessions, sessionId, current => ({
+      ...current,
+      tabs: current.tabs.filter(item => item.id === id),
+      activeTabId: id,
+    })),
+  })),
+
+  closeAll: (sessionId) => set((state) => ({
+    sessions: patchSession(state.sessions, sessionId, current => ({
+      ...current,
+      tabs: [],
+      activeTabId: null,
+    })),
+  })),
+
+  setPresentation: (sessionId, presentation) => set((state) => ({
+    sessions: patchSession(state.sessions, sessionId, current => (
+      current.presentation === presentation ? current : { ...current, presentation }
+    )),
+  })),
+
+  enterFocus: (sessionId) => {
+    useSessionWorkspaceStore.getState().setPresentation(sessionId, 'focus')
   },
 
-  closeAll: () => set({ tabs: [], activeTabId: null, maximized: false }),
+  exitFocus: (sessionId) => {
+    useSessionWorkspaceStore.getState().setPresentation(sessionId, 'dock')
+  },
 
-  setMaximized: (value) => set({ maximized: value }),
+  resetSession: (sessionId) => set((state) => {
+    if (!(sessionId in state.sessions)) return state
+    const sessions = { ...state.sessions }
+    delete sessions[sessionId]
+    return { sessions }
+  }),
 
-  reset: () => set({ tabs: [], activeTabId: null, maximized: false }),
-
-  resetTabs: () => set({ tabs: [], activeTabId: null }),
+  removeSessions: (sessionIds) => set((state) => {
+    let changed = false
+    const sessions = { ...state.sessions }
+    for (const sessionId of sessionIds) {
+      if (sessionId in sessions) {
+        delete sessions[sessionId]
+        changed = true
+      }
+    }
+    return changed ? { sessions } : state
+  }),
 }))
 
-export function openWorkspaceFile(path: string) {
-  const name = path.split('/').pop() || path
-  useSessionWorkspaceStore.getState().openTab({ kind: 'file', title: name, path })
+export function useSessionWorkspace(sessionId: string | null | undefined): WorkspaceSessionState {
+  return useSessionWorkspaceStore(state => (
+    sessionId ? workspaceState(state.sessions[sessionId]) : EMPTY_SESSION_WORKSPACE
+  ))
 }
 
-export function openWorkspaceDiff(path: string) {
-  const name = path.split('/').pop() || path
-  useSessionWorkspaceStore.getState().openTab({ kind: 'diff', title: name, path })
+export function isWideWorkspaceViewport(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true
+  return window.matchMedia(WIDE_WORKSPACE_QUERY).matches
 }
 
-export function openWorkspaceSubagent(sessionId: string, title: string) {
-  useSessionWorkspaceStore.getState().openTab({ kind: 'subagent', title, sessionId })
+/** Open a tab, entering focus automatically when the sidecar cannot fit. */
+export function openWorkspaceTab(sessionId: string, tab: Omit<WorkspaceTab, 'id'>): void {
+  const store = useSessionWorkspaceStore.getState()
+  store.openTab(sessionId, tab)
+  if (!isWideWorkspaceViewport()) store.enterFocus(sessionId)
+}
+
+export function showWorkspaceDashboard(sessionId: string): void {
+  const store = useSessionWorkspaceStore.getState()
+  store.showDashboard(sessionId)
+  if (!isWideWorkspaceViewport()) store.enterFocus(sessionId)
+}
+
+export function activateWorkspaceTab(sessionId: string, tabId: string): void {
+  const store = useSessionWorkspaceStore.getState()
+  store.activateTab(sessionId, tabId)
+  if (!isWideWorkspaceViewport()) store.enterFocus(sessionId)
+}
+
+export function openWorkspaceFile(sessionId: string, path: string): void {
+  const name = path.split(/[\\/]/).pop() || path
+  openWorkspaceTab(sessionId, { kind: 'file', title: name, path })
+}
+
+export function openWorkspaceDiff(sessionId: string, path: string): void {
+  const name = path.split(/[\\/]/).pop() || path
+  openWorkspaceTab(sessionId, { kind: 'diff', title: name, path })
+}
+
+export function openWorkspaceSubagent(ownerSessionId: string, subagentSessionId: string, title: string): void {
+  openWorkspaceTab(ownerSessionId, { kind: 'subagent', title, sessionId: subagentSessionId })
 }

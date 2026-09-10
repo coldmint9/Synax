@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Surface } from '@heroui/react'
 import { useSessionList } from './useSessionList'
 import { SessionListHeader } from './SessionListHeader'
 import { SessionTimeGroups } from './SessionTimeGroups'
@@ -41,20 +40,21 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [showClear, setShowClear] = useState(false)
   const [listSplit, setListSplit] = useState<number | null>(readStoredListSplit)
-  const sessionAreaRef = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const sessionCardRef = useRef<HTMLDivElement>(null)
   const splitDragRef = useRef<{ startY: number; startSplit: number; height: number } | null>(null)
 
   const startListSplitDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const sessionArea = sessionAreaRef.current
-    const panel = sessionArea?.parentElement
-    if (!sessionArea || !panel) return
-    const height = panel.getBoundingClientRect().height
+    const root = rootRef.current
+    const sessionCard = sessionCardRef.current
+    if (!root || !sessionCard) return
+    const height = root.getBoundingClientRect().height
     if (height <= 0) return
     event.preventDefault()
     event.currentTarget.setPointerCapture?.(event.pointerId)
     splitDragRef.current = {
       startY: event.clientY,
-      startSplit: sessionArea.getBoundingClientRect().height / height,
+      startSplit: sessionCard.getBoundingClientRect().height / height,
       height,
     }
     const handleMove = (move: PointerEvent) => {
@@ -89,35 +89,37 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
   }
 
   return (
-    <Surface className="session-list-panel flex h-full flex-col bg-background" variant="default">
-      <SessionListHeader
-        listView={listView}
-        workflowCount={list.viewCounts.workflow}
-        searchQuery={list.searchQuery}
-        onSearchChange={list.setSearchQuery}
-        onClearInactive={() => setShowClear(true)}
-        onNewSession={handleNewSession}
-        onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
-        onBackToSessions={() => navigate(sessionsPath(projectId))}
-      />
+    <div ref={rootRef} className="session-list-panel flex h-full min-h-0 flex-col">
       <div
-        ref={sessionAreaRef}
-        className="session-list-session-area min-h-0"
+        ref={sessionCardRef}
+        className="session-list-card session-list-card--sessions min-h-0"
         style={listSplit === null ? undefined : { flexBasis: `${(listSplit * 100).toFixed(2)}%` }}
       >
-        <SessionTimeGroups
-          groups={list.groups}
-        selectedId={list.selectedId}
-        isLoadingMore={list.isLoadingMore}
-        hasMore={list.hasMore}
-        hideGroupHeaders
-        emptyLabel={listView === 'workflow' ? t('sessionWorkflowEmpty') : t('sessionListEmpty')}
-        onSelect={list.select}
-        onToggleGroup={list.toggleGroup}
-        onToggleExpand={list.toggleExpand}
-          onLoadMore={() => { void list.loadMore() }}
-          onDelete={id => setDeleteId(id)}
+        <SessionListHeader
+          listView={listView}
+          workflowCount={list.viewCounts.workflow}
+          searchQuery={list.searchQuery}
+          onSearchChange={list.setSearchQuery}
+          onClearInactive={() => setShowClear(true)}
+          onNewSession={handleNewSession}
+          onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
+          onBackToSessions={() => navigate(sessionsPath(projectId))}
         />
+        <div className="session-list-session-area min-h-0">
+          <SessionTimeGroups
+            groups={list.groups}
+            selectedId={list.selectedId}
+            isLoadingMore={list.isLoadingMore}
+            hasMore={list.hasMore}
+            hideGroupHeaders
+            emptyLabel={listView === 'workflow' ? t('sessionWorkflowEmpty') : t('sessionListEmpty')}
+            onSelect={list.select}
+            onToggleGroup={list.toggleGroup}
+            onToggleExpand={list.toggleExpand}
+            onLoadMore={() => { void list.loadMore() }}
+            onDelete={id => setDeleteId(id)}
+          />
+        </div>
       </div>
       <div
         className="session-list-resizer-h"
@@ -126,7 +128,7 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
         aria-label={t('sessionListSplitResize')}
         onPointerDown={startListSplitDrag}
       />
-      <div className="session-list-profile-area min-h-0">
+      <div className="session-list-card session-list-card--profile min-h-0">
         <SessionProfilePanel sessionId={list.selectedId} />
       </div>
 
@@ -163,6 +165,6 @@ export function SessionListPanel({ listView = 'sessions', projectId }: Props) {
         onCleared={() => { void list.refresh() }}
       />
 
-    </Surface>
+    </div>
   )
 }

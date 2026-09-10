@@ -1,13 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { useParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { useAgentSessionStore } from './agentSessionStore'
 import { AgentConversationView } from './AgentConversationView'
-import { SessionComposer } from './SessionComposer'
-import { SessionFileChangeIsland } from './SessionFileChangeIsland'
 import { SessionLiveTurn } from './SessionLiveTurn'
 import { SessionNavigationPanel } from './SessionNavigationPanel'
-import { isGoalModeSession } from './sessionBuckets'
 
 function useSessionTranscriptStatic() {
   return useAgentSessionStore(useShallow(s => {
@@ -32,8 +28,6 @@ function useSessionLiveState() {
     streamingStepId: s.streamingStepId,
     streamingLive: s.streamingLive,
     streamingCompletedSteps: s.streamingCompletedSteps,
-    permissions: s.permissions,
-    replyPermission: s.replyPermission,
   })))
 }
 
@@ -49,8 +43,6 @@ function SessionLiveTurnLayer({
       streamingStepId={liveState.streamingStepId}
       streamingLive={liveState.streamingLive}
       streamingCompletedSteps={liveState.streamingCompletedSteps}
-      permissions={liveState.permissions}
-      onReplyPermission={liveState.replyPermission}
       scrollContainerRef={scrollContainerRef}
     />
   )
@@ -58,7 +50,6 @@ function SessionLiveTurnLayer({
 
 export function SessionTranscript() {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const { projectId = '' } = useParams()
 
   const {
     session,
@@ -72,7 +63,6 @@ export function SessionTranscript() {
     resumeSession,
   } = useSessionTranscriptStatic()
 
-  const showSessionComposer = Boolean(session && isGoalModeSession(session))
   const streamingStep = streamingStepId ? steps.find(s => s.id === streamingStepId) : undefined
   const showLiveBlock = Boolean(streamingStepId) && (!streamingStep || streamingStep.status === 'running')
 
@@ -124,18 +114,6 @@ export function SessionTranscript() {
         </div>
         <SessionNavigationPanel scrollRootRef={scrollRef} />
       </div>
-      {showSessionComposer && session ? (
-        <SessionComposer
-          session={session}
-          projectId={projectId}
-          statusSlot={
-            <SessionFileChangeIsland
-              sessionId={session.id}
-              isRunning={session.status === 'running'}
-            />
-          }
-        />
-      ) : null}
     </div>
   )
 }

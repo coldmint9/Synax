@@ -21,6 +21,7 @@ import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, readSynaxPermissionTier, 
 import { useNotificationStore } from '../../state/notificationStore'
 import { useShellStore } from '../../state/shellStore'
 import { patchAgentSession, canEnqueueSessionInput } from './sessionComposerState'
+import { useSessionWorkspaceStore } from './sessionWorkspaceStore'
 import type { TurnContentBlock } from './buildInterleavedTurns'
 import {
   EMPTY_STREAMING_BUFFERS,
@@ -37,6 +38,8 @@ const READ_MARKERS_KEY = 'synax-session-read-markers'
 
 export type SessionInputBody = {
   message: string
+  /** `system_injection` renders the message as an "injected" chip, not a bubble. */
+  messageSource?: 'user' | 'system_injection'
   /** Enriched create/turn prompt; defaults to `message` when omitted. */
   prompt?: string
   model?: string | null
@@ -519,6 +522,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   deleteSession: async (sessionId) => {
     const { deletedSessionIds } = await agentRuntimeApi.deleteSession(sessionId)
     const deleted = new Set(deletedSessionIds)
+    useSessionWorkspaceStore.getState().removeSessions(deleted)
     const shouldClosePanel = Boolean(get().selectedSessionId && deleted.has(get().selectedSessionId!))
     const nextCache = { ...get().sessionDetailCache }
     for (const id of deleted) delete nextCache[id]
@@ -829,6 +833,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       if (shouldResume) {
         await agentRuntimeApi.resumeStream(sessionId, {
           message: body.message,
+          messageSource: body.messageSource,
           model: body.model ?? undefined,
           reasoningEffort: body.reasoningEffort ?? undefined,
           permissionTier: body.permissionTier,
@@ -839,6 +844,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       } else {
         await agentRuntimeApi.streamTurn(sessionId, {
           message: body.message,
+          messageSource: body.messageSource,
           model: body.model ?? undefined,
           reasoningEffort: body.reasoningEffort ?? undefined,
           permissionTier: body.permissionTier,

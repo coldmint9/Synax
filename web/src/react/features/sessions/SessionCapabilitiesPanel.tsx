@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Accordion } from '@heroui/react'
-import { Lock, Sparkles, Wrench } from 'lucide-react'
+import { Lock, Plug, Sparkles, Wrench } from 'lucide-react'
 import type { AgentToolSummary, SessionCapabilities } from '../../../lib/api/agentRuntime'
 import type { SkillSummary } from '../../../lib/api/skills'
 
@@ -35,20 +35,6 @@ function sortTools(tools: AgentToolSummary[]): AgentToolSummary[] {
     if (aRank !== bRank) return aRank - bRank
     return a.label.localeCompare(b.label)
   })
-}
-
-function AgentProfileBadge({ profile }: { profile: SessionCapabilities['profile'] }) {
-  return (
-    <div className="border-b border-border/40 px-2 py-2">
-      <div className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Agent</div>
-      <div className="mt-1 flex items-center gap-1.5">
-        <span className="rounded bg-secondary/70 px-1.5 py-0.5 text-[10px] font-medium text-foreground/90">
-          {profile.label}
-        </span>
-        <span className="text-[9px] text-muted-foreground/60">{profile.kind}</span>
-      </div>
-    </div>
-  )
 }
 
 function ToolsCard({ tools }: { tools: SessionCapabilities['tools'] }) {
@@ -167,12 +153,60 @@ function SkillRow({ skill, active = false }: { skill: SkillSummary; active?: boo
   )
 }
 
+function McpCard({ mcp }: { mcp: SessionCapabilities['mcp'] }) {
+  const servers = mcp?.servers ?? []
+  const toolCount = servers.reduce((sum, server) => sum + server.toolCount, 0)
+  const active = servers.filter(server => server.enabled).length
+
+  return (
+    <Accordion className="gap-0 border-b border-border/40 px-0" defaultExpandedKeys={[]}>
+      <Accordion.Item id="mcp" aria-label="MCP" className="rounded-none border-0 bg-transparent shadow-none">
+        <Accordion.Trigger className="flex w-full items-center gap-1 px-2 py-2 text-left">
+          <span className="flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+            <Plug size={9} />
+            MCP
+          </span>
+          <span className="ml-auto text-[9px] text-muted-foreground/60">
+            {active > 0 ? `${servers.length} 个已挂载 · ${toolCount} tools` : '未挂载'}
+          </span>
+          <Accordion.Indicator className="text-muted-foreground/50 [&>svg]:size-3" />
+        </Accordion.Trigger>
+        <Accordion.Panel>
+          <Accordion.Body className="px-2 pb-2 pt-0">
+            {servers.length === 0 ? (
+              <div className="text-[10px] text-muted-foreground/50">
+                该会话未挂载 MCP server（在项目设置中配置后随会话挂载）
+              </div>
+            ) : (
+              <ul className="space-y-1">
+                {servers.map(server => (
+                  <li key={server.id} className="flex min-w-0 items-center gap-1.5">
+                    <span
+                      className={`size-1.5 shrink-0 rounded-full ${server.enabled ? 'bg-success' : 'bg-muted-foreground/30'}`}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-[10px] text-foreground/85" title={server.id}>
+                      {server.name}
+                    </span>
+                    <span className="shrink-0 text-[9px] text-muted-foreground/60">
+                      {server.enabled ? `${server.toolCount} tools` : '已停用'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Accordion.Body>
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
+  )
+}
+
 export function SessionCapabilitiesPanel({ capabilities }: { capabilities: SessionCapabilities }) {
   return (
     <>
-      <AgentProfileBadge profile={capabilities.profile} />
       <ToolsCard tools={capabilities.tools} />
       <SkillsCard skills={capabilities.skills} />
+      <McpCard mcp={capabilities.mcp} />
     </>
   )
 }

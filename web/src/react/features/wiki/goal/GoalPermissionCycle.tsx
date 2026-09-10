@@ -27,10 +27,12 @@ export function GoalPermissionCycle({ value, onChange, disabled }: Props) {
       title={`${currentLabel} · 点击切换为${labelMap[next]}`}
       disabled={disabled}
       onClick={() => onChange(next)}
+      data-tier={value}
       className="goal-permission-cycle goal-dock-composer-chip inline-flex h-7 max-w-[7.5rem] shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-normal"
     >
-      <Shield size={12} className="shrink-0" />
-      <span className="truncate">{currentLabel}</span>
+      <Shield size={12} className="goal-permission-cycle-icon shrink-0" />
+      {/* Keyed so the swap replays the roll animation on every tier change. */}
+      <span key={value} className="goal-permission-cycle-label truncate">{currentLabel}</span>
     </button>
   )
 }
