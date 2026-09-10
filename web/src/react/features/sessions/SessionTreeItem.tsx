@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Loader2, Trash2 } from 'lucide-react'
 import type { SessionTreeNode } from './useSessionList'
 import { isSessionUnread, useAgentSessionStore } from './agentSessionStore'
 import { useSessionDisplayTitle } from './useSessionDisplayTitle'
@@ -82,6 +82,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   const { session, depth, children } = node
   const hasKids = children.length > 0
   const isParent = depth === 0
+  const isRunning = session.status === 'running'
   const readMarkers = useAgentSessionStore(s => s.readSessionMarkers)
   const showStatusDot = isSessionUnread(session, readMarkers)
 
@@ -105,9 +106,11 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             >
               {hasKids ? (node.expanded ? '\u25BE' : '\u25B8') : <span className="w-3" />}
             </button>
-            {showStatusDot && (
+            {isRunning ? (
+              <Loader2 size={12} className="shrink-0 animate-spin text-[var(--color-run)]" aria-hidden />
+            ) : showStatusDot ? (
               <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
-            )}
+            ) : null}
             <SessionTitle session={session} />
             <span className="shrink-0 text-[10px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
               {relTime(session.updatedAt)}
@@ -117,10 +120,12 @@ export const SessionTreeItem = memo(function SessionTreeItem({
         </>
       ) : (
         <>
-          {/* Dot: only show when active */}
-          {isSelected && (
+          {/* Spinner while running; dot only when selected */}
+          {isRunning ? (
+            <Loader2 size={10} className="shrink-0 animate-spin text-[var(--color-run)]" aria-hidden />
+          ) : isSelected ? (
             <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-slate-500'}`} />
-          )}
+          ) : null}
           <SessionChildTitle session={session} />
           {isSelected && session.profileId && !isSynaxSession(session) && PROFILES[session.profileId] && (
             <span className="list-badge">{PROFILES[session.profileId]}</span>
