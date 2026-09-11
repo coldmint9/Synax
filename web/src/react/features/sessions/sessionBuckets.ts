@@ -12,7 +12,7 @@ const WORKFLOW_PROFILE_IDS = new Set([
 const LEGACY_GOAL_PROFILE_ID = 'goal'
 const SYNAX_PROFILE_ID = 'synax'
 
-const GOAL_MODE_VALUES = new Set(['goal', 'plan_node'])
+const GOAL_MODE_VALUES = new Set(['plan', 'goal', 'plan_node'])
 const GOAL_MODE_SOURCES = new Set(['goal-dock', 'session-page', 'plan-execution'])
 
 function isSynaxProfile(profileId: string): boolean {
@@ -50,7 +50,7 @@ export function isWorkflowSession(session: AgentSession): boolean {
   return false
 }
 
-/** Synax session running in goal or plan_node mode (not a separate agent profile). */
+/** Sessions using the goal composer, including public plan and legacy plan_node. */
 export function isGoalModeSession(session: AgentSession): boolean {
   const mode = resolveSynaxMode(session)
   if (mode && GOAL_MODE_VALUES.has(mode)) return true

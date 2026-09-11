@@ -9,6 +9,7 @@ import { useDesktopNotification } from '../../hooks/useDesktopNotification'
 import { useTaskNotificationListener } from '../../hooks/useTaskNotificationListener'
 import { useRuntimeSSE } from '../features/sessions/useRuntimeSSE'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
+import { useSessionWorkspace } from '../features/sessions/sessionWorkspaceStore'
 import { sessionPath } from '../features/sessions/sessionRoutes'
 import { resolveSessionsEntryPath } from '../features/sessions/sessionLastVisit'
 import type { ActivityPanel } from './ActivityBar'
@@ -96,9 +97,15 @@ export default function WorkbenchLayout() {
 
   const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
   const agentPanelOpen = useAgentSessionStore(s => s.panelOpen)
-  const chromeMode: ChromeMode = activePanel === 'sessions' && agentPanelOpen && selectedSessionId
-    ? 'agentDock'
-    : 'global'
+  const workspaceState = useSessionWorkspace(selectedSessionId)
+  const workspaceViewerOpen = Boolean(
+    activePanel === 'sessions' && agentPanelOpen && selectedSessionId && workspaceState.activeTabId,
+  )
+  const chromeMode: ChromeMode = workspaceViewerOpen
+    ? (workspaceState.presentation === 'focus' ? 'workspaceFocus' : 'workspaceDock')
+    : activePanel === 'sessions' && agentPanelOpen && selectedSessionId
+      ? 'agentDock'
+      : 'global'
 
   const panelRoutes: Record<ActivityPanel, string> = {
     wiki: `/projects/${effectiveProjectId}/wiki`,

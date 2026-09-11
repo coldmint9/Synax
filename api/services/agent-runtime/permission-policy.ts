@@ -90,6 +90,12 @@ function defaultDecision(input: PermissionRequestInput): { action: PermissionAct
   return { action: 'ask', reason: 'High-risk action requires approval.' };
 }
 
+export function resolvePermissionDecision(input: PermissionRequestInput): { action: PermissionAction; reason: string } {
+  const rule = [...(input.rules ?? [])].reverse().find(candidate => matches(candidate,input));
+  const fallback = defaultDecision(input);
+  return { action: rule?.action ?? fallback.action, reason: rule?.reason ?? fallback.reason };
+}
+
 export class PermissionPolicy {
   constructor(private readonly store: AgentRuntimeStore = agentRuntimeStore) {}
 
@@ -158,10 +164,7 @@ export class PermissionPolicy {
   }
 
   evaluate(input: PermissionRequestInput): PermissionDecision {
-    const rule = [...(input.rules ?? [])].reverse().find((candidate) => matches(candidate, input));
-    const fallback = defaultDecision(input);
-    const action = rule?.action ?? fallback.action;
-    const reason = rule?.reason ?? fallback.reason;
+    const { action, reason } = resolvePermissionDecision(input);
     const now = nowIso();
     return this.store.appendPermission({
       id: makeRuntimeId('pd'),

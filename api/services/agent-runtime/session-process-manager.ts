@@ -86,12 +86,14 @@ class SessionProcessManager {
   private readonly activeMainStreams = new Set<string>();
   /** Sessions whose children we are intentionally tearing down (idle release / interrupt). */
   private readonly releasingChildren = new Set<string>();
+  private readonly terminatingChildren = new Map<ChildProcess, string>();
 
   isSessionStreaming(sessionId: string): boolean {
     return this.activeMainStreams.has(sessionId);
   }
 
   canSpawnChild(sessionId?: string): boolean {
+    if (sessionId && [...this.terminatingChildren.values()].includes(sessionId)) return false;
     if (sessionId) {
       const existing = this.children.get(sessionId);
       if (existing?.child.connected) return true;
@@ -200,6 +202,13 @@ class SessionProcessManager {
     if (!state) return;
 
     this.releasingChildren.add(sessionId);
+    if(state.child.exitCode == null && state.child.signalCode == null){
+      this.terminatingChildren.set(state.child,sessionId);
+      const force=setTimeout(()=>{if(this.terminatingChildren.has(state.child))state.child.kill('SIGKILL');},3000);
+      force.unref();
+      state.child.once('exit',()=>{clearTimeout(force);this.terminatingChildren.delete(state.child);});
+    }
+
 
     if (options?.pushStreamError) {
       for (const stream of state.streams.values()) {
@@ -228,7 +237,7 @@ class SessionProcessManager {
   ): Promise<void> {
     const ids = [...new Set(sessionIds)];
     const deadline = Date.now() + timeoutMs;
-    while (ids.some((sessionId) => this.activeMainStreams.has(sessionId) || this.children.has(sessionId))) {
+    while (ids.some((sessionId) => this.activeMainStreams.has(sessionId) || this.children.has(sessionId) || [...this.terminatingChildren.values()].includes(sessionId))) {
       if (Date.now() >= deadline) {
         throw new AgentRuntimeError(
           'Timed out while waiting for active agent runtime sessions to stop.',
@@ -245,12 +254,13 @@ class SessionProcessManager {
     reason = 'Agent runtime session deleted by user.',
     timeoutMs = ACTIVE_SESSION_TIMEOUT_MS,
   ): Promise<void> {
-    this.interruptSessions(sessionIds, reason);
-    await this.waitForIdleSessions(sessionIds, timeoutMs);
+    const ids = [...sessionIds];
+    this.interruptSessions(ids, reason);
+    await this.waitForIdleSessions(ids, timeoutMs);
   }
 
   private countChildren(): number {
-    return this.children.size;
+    return this.children.size + this.terminatingChildren.size;
   }
 
   private async ensureChild(sessionId: string): Promise<SessionChildState> {

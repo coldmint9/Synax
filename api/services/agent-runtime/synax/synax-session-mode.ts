@@ -3,7 +3,7 @@ export const SYNAX_AGENT_PROFILE_ID = 'synax';
 /** @deprecated Legacy profile id — kept for existing sessions in the database. */
 export const LEGACY_GOAL_PROFILE_ID = 'goal';
 
-export const SYNAX_SESSION_MODES = ['chat', 'goal', 'plan_node'] as const;
+export const SYNAX_SESSION_MODES = ['chat', 'plan', 'goal', 'plan_node'] as const;
 export type SynaxSessionMode = (typeof SYNAX_SESSION_MODES)[number];
 
 export const SYNAX_SESSION_SOURCES = [

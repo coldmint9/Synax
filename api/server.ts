@@ -1,3 +1,4 @@
+import { startInteractionRecovery } from './services/agent-runtime/agent-stream-proxy.js';
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
@@ -120,6 +121,7 @@ rebuildWikiFtsIndex().catch((err) => {
 });
 
 startPermissionTimeoutSweeper();
+startInteractionRecovery();
 
 function startServer(): void {
   serve({

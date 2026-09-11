@@ -1,3 +1,9 @@
+import { withCommandSignal } from './tools/exec-async.js';
+import { resolvePermissionDecision } from './permission-policy.js';
+import { specialistSpecSchema, buildSpecialistChildInput, assertSpecialistToolAllowed } from './specialist-profile.js';
+import { controlTools } from './control-tools.js';
+import { controlToolError } from './control-policy.js';
+import { interactionService } from './interaction-service.js';
 import type { PermissionDecision, RegisteredTool, SessionToolProvider, ToolCallRecord, ToolExecutionInput, ToolExecutionResult, ToolHook, ToolHookContext } from './contracts.js';
 import * as z from 'zod/v4';
 import { evidenceService, type EvidenceService } from './evidence-service.js';
@@ -43,6 +49,7 @@ function summarize(value: unknown): string {
 }
 
 export interface ExecuteToolOptions {
+  abortSignal?: AbortSignal;
   runId?: string | null;
   stepId?: string | null;
   modelToolCallId?: string | null;
@@ -53,6 +60,7 @@ export interface ExecuteToolResult {
   record: ToolCallRecord;
   permission?: PermissionDecision;
   toolResult?: ToolExecutionResult;
+  interactionId?: string;
 }
 
 export class ToolRegistry {
@@ -67,7 +75,7 @@ export class ToolRegistry {
     private readonly evidence: EvidenceService = evidenceService,
     private readonly profiles: ProfileService = profileService,
   ) {
-    [bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, editTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, INVALID_TOOL].forEach((tool) =>
+    [...controlTools, bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, editTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, INVALID_TOOL].forEach((tool) =>
       this.register(tool),
     );
     this.registerProvider(mcpSessionToolProvider);
@@ -81,8 +89,11 @@ export class ToolRegistry {
       mutability: 'task',
       resumeBehavior: 'auto',
       progressiveDetails:
-        'Accepts { profileId?: string, prompt: string, nodeId?: string | null, thinkingMode?: "fast" | "standard" | "deep" }. Max depth: 3, max concurrent: 3.',
+        'Use a builtin profileId or define specialist: { name, role, instructions, capabilities, skillIds, writeScope? }, plus prompt, deliverable and acceptanceCriteria. Specialists are scoped to this task. One child level; at most 3 active children. No shell; file writes need an explicit scope.',
       inputSchema: z.object({
+        specialist: specialistSpecSchema.optional(),
+        deliverable: z.string().min(1).max(4000).optional(),
+        acceptanceCriteria: z.array(z.string().min(1).max(1000)).max(20).optional(),
         profileId: z.string().optional().describe('Child agent profile. Defaults to explorer. Must be a subagent-capable profile.'),
         prompt: z.string().min(1).describe('Bounded prompt for the child agent session.'),
         nodeId: z.string().min(1).nullable().optional().describe('Optional graph node context for the child session.'),
@@ -97,11 +108,12 @@ export class ToolRegistry {
           throw new AgentValidationError('Sub-agents cannot delegate further sub-agents.');
         }
 
-        const args = input.args as { profileId?: string; prompt?: string; nodeId?: string | null; thinkingMode?: 'fast' | 'standard' | 'deep' };
-        const profileId = args.profileId ?? 'explorer';
+        const args = input.args as { profileId?: string; prompt: string; nodeId?: string | null; thinkingMode?: 'fast' | 'standard' | 'deep'; specialist?: import('./specialist-profile.js').SpecialistSpec; deliverable?: string; acceptanceCriteria?: string[] };
+        if (args.specialist && args.profileId) throw new AgentValidationError('Choose specialist or profileId, not both.');
+        const profileId = args.specialist ? 'specialist' : args.profileId ?? 'explorer';
 
         const ALLOWED_SUBTASK_PROFILES = ['explorer', 'reviewer', 'wiki-explorer', 'wiki-verifier', 'wiki-package-explorer'];
-        if (!ALLOWED_SUBTASK_PROFILES.includes(profileId)) {
+        if (!args.specialist && !ALLOWED_SUBTASK_PROFILES.includes(profileId)) {
           throw new AgentValidationError(`Subtask profile must be one of: ${ALLOWED_SUBTASK_PROFILES.join(', ')}. Got "${profileId}".`);
         }
         if (!args.prompt?.trim()) throw new AgentValidationError('prompt is required for subagent.delegate.');
@@ -113,13 +125,24 @@ export class ToolRegistry {
         // Concurrency check: count active children of the immediate parent
         const siblings = (parent.childSessionIds ?? [])
           .map(id => { try { return this.store.getSession(id); } catch { return null; } })
-          .filter(s => s && s.status === 'running');
+          .filter(s => s && ['queued','running','waiting_permission','waiting_input'].includes(s.status));
         if (siblings.length >= MAX_CONCURRENT_SUBTASKS) {
           throw new AgentValidationError(`Maximum concurrent subtasks (${MAX_CONCURRENT_SUBTASKS}) reached. Wait for existing subtasks to complete.`);
         }
 
-        const child = agentSessionRuntime.create({
+        if (args.specialist?.capabilities.some(c=>['file.write','edit','file.delete'].includes(c)) && siblings.some(s=>(s!.sessionMetadata?.specialist as {writeScope?:string[]}|undefined)?.writeScope?.length)) throw new AgentValidationError('A specialist writer is already active. Delegate writes serially.');
+        if(args.specialist?.writeScope?.length){
+          for(const capability of args.specialist.capabilities.filter(c=>['file.write','edit','file.delete'].includes(c)))for(const scope of args.specialist.writeScope){
+            const action=resolvePermissionDecision({sessionId:parent.id,category:'write',internalGate:capability==='file.delete'?'delete':'write',pattern:scope,rules:parent.permissionRules}).action;
+            if(action!=='allow')throw new AgentValidationError('Writable specialists require parent write permissions already granted for their scope. Ask the user to grant them or delegate read-only and apply changes on the parent.');
+          }
+          if(this.store.listToolCalls(parent.id).some(c=>c.status==='running'&&(c.mutability==='write'||c.toolId==='bash'||c.category==='mcp')))throw new AgentValidationError('Parent workspace operation is still running. Delegate writer tasks separately.');
+        }
+        const child = agentSessionRuntime.create(args.specialist ? buildSpecialistChildInput(parent,{specialist:args.specialist,prompt:args.prompt,deliverable:args.deliverable,acceptanceCriteria:args.acceptanceCriteria,thinkingMode:args.thinkingMode},this.profiles.getForSession(parent)) : {
           projectId: parent.projectId,
+          sessionMetadata: { mode: parent.sessionMetadata?.mode ?? 'chat' },
+          mcpServerIds: parent.mcpServerIds,
+          skillIds: parent.skillIds,
           nodeId: args.nodeId ?? parent.nodeId,
           profileId,
           parentSessionId: parent.id,
@@ -159,7 +182,7 @@ export class ToolRegistry {
       }),
       execute: (input) => {
         const session = this.store.getSession(input.sessionId);
-        const profile = this.profiles.get(session.profileId);
+        const profile = this.profiles.getForSession(session);
         const args = input.args as { skillId?: string };
         if (!args?.skillId) throw new Error('skillId is required.');
         const skill = skillAgentBridge.loadForTool({
@@ -225,7 +248,9 @@ export class ToolRegistry {
     const globalTools = [...this.tools.values()]
       .map(({ execute: _execute, ...summary }) => summary)
       .filter((t) => !seen.has(t.id));
-    return [...sessionTools, ...globalTools];
+    const session = this.store.getSession(sessionId);
+    const effective = this.profiles.getForSession(session);
+    return [...sessionTools, ...globalTools].filter(t => !controlToolError(session,t) && (session.profileId!=='specialist'||effective.allowedCapabilities.includes(t.id)||t.id===INVALID_TOOL_ID));
   }
 
   get(toolId: string): RegisteredTool {
@@ -244,7 +269,7 @@ export class ToolRegistry {
     return this.get(toolId);
   }
 
-  async resumePending(sessionId: string, permission: PermissionDecision): Promise<ExecuteToolResult> {
+  async resumePending(sessionId: string, permission: PermissionDecision, abortSignal?: AbortSignal): Promise<ExecuteToolResult> {
     if (permission.action !== 'allow') {
       throw new AgentValidationError('Only approved permission requests can be resumed.');
     }
@@ -256,16 +281,17 @@ export class ToolRegistry {
     if (record.status !== 'pending') {
       return { record, permission };
     }
-    return this.performExecution(sessionId, tool, record, record.inputRef, permission);
+    return this.performExecution(sessionId, tool, record, record.inputRef, permission, abortSignal);
   }
 
   async execute(sessionId: string, toolId: string, args: unknown, options: ExecuteToolOptions = {}): Promise<ExecuteToolResult> {
     const session = this.store.getSession(sessionId);
-    const profile = this.profiles.get(session.profileId);
+    const profile = this.profiles.getForSession(session);
     const tool = this.getForSession(sessionId, toolId);
 
-    if (!profile.allowedCapabilities.includes(tool.id) && tool.category !== 'skill' && tool.category !== 'mcp' && tool.id !== INVALID_TOOL_ID) {
-      const errorMsg = `Tool ${tool.id} is not available to profile ${profile.id}. Use only the tools listed in your capabilities.`;
+    const controlError = controlToolError(session, tool, args);
+    if (controlError || !profile.allowedCapabilities.includes(tool.id) && tool.category !== 'skill' && tool.category !== 'mcp' && tool.id !== INVALID_TOOL_ID) {
+      const errorMsg = controlError ?? `Tool ${tool.id} is not available to profile ${profile.id}. Use only the tools listed in your capabilities.`;
       const now = nowIso();
       const record = this.store.appendToolCall({
         id: makeRuntimeId('tc'),
@@ -281,7 +307,7 @@ export class ToolRegistry {
         inputRef: args ?? null,
         outputSummary: errorMsg,
         outputRef: { error: true, message: errorMsg },
-        status: 'failed',
+        status: controlError ? 'denied' : 'failed',
         permissionDecisionId: null,
         startedAt: now,
         endedAt: now,
@@ -370,6 +396,11 @@ export class ToolRegistry {
         });
     this.store.updateToolCall(sessionId, record.id, { permissionDecisionId: decision.id });
 
+    if (decision.action === 'ask' && session.profileId === 'specialist') {
+      const reason='This operation needs user approval. Return the permission blocker to the primary agent; specialists never open their own approval dialog.';
+      const denied=this.store.updatePermission(sessionId,decision.id,{action:'deny',resolvedAt:nowIso(),reason});
+      return {record:this.store.updateToolCall(sessionId,record.id,{status:'denied',error:reason,outputSummary:reason,endedAt:nowIso()}),permission:denied};
+    }
     if (decision.action === 'ask') {
       this.store.updateSession(sessionId, {
         status: 'waiting_permission',
@@ -411,7 +442,7 @@ export class ToolRegistry {
       };
     }
 
-    return this.performExecution(sessionId, tool, record, args, decision);
+    return this.performExecution(sessionId, tool, record, args, decision, options.abortSignal);
   }
 
   private async performExecution(
@@ -420,8 +451,29 @@ export class ToolRegistry {
     record: ToolCallRecord,
     args: unknown,
     permission?: PermissionDecision,
+    abortSignal?: AbortSignal,
   ): Promise<ExecuteToolResult> {
     try {
+      abortSignal?.throwIfAborted();
+      const freshSession = this.store.getSession(sessionId);
+      const policyError = controlToolError(freshSession, tool, args);
+      if (policyError) throw new AgentValidationError(policyError);
+      assertSpecialistToolAllowed(freshSession, tool.id, args);
+      if(freshSession.profileId==='specialist' && freshSession.parentSessionId){
+        const parent=this.store.getSession(freshSession.parentSessionId);
+        const decision=resolvePermissionDecision({sessionId:parent.id,category:tool.category,internalGate:tool.internalGate,pattern:tool.getPattern?.(args)??tool.id,rules:parent.permissionRules});
+        if(decision.action==='deny'||(decision.action==='ask'&&!permission?.userReply))throw new AgentValidationError('Parent permissions no longer authorize this specialist operation.');
+        if(tool.id==='skill.load'&&!parent.skillIds.includes((args as {skillId:string}).skillId))throw new AgentValidationError('The skill is no longer assigned to the parent.');
+      }
+      if (tool.mutability === 'write' || tool.id === 'bash' || tool.category === 'mcp') {
+        const rootId=freshSession.parentSessionId??freshSession.id;
+        const root=this.store.getSession(rootId);
+        if(freshSession.profileId==='specialist' && resolvePermissionDecision({sessionId:rootId,category:tool.category,internalGate:tool.internalGate,pattern:tool.getPattern?.(args)??tool.id,rules:root.permissionRules}).action!=='allow')throw new AgentValidationError('Parent no longer grants this write operation.');
+        if(freshSession.parentSessionId&&root.status!=='running')throw new AgentValidationError('Parent is not running; child writes are suspended.');
+        const otherWriter=root.childSessionIds.map(id=>this.store.tryGetSession(id)).find(s=>s&&s.id!==sessionId&&['running','waiting_permission','waiting_input'].includes(s.status)&&(s.sessionMetadata?.specialist as {writeScope?:string[]}|undefined)?.writeScope?.length);
+        if(otherWriter)throw new AgentValidationError('Another specialist owns the workspace write slot.');
+      }
+      args = tool.inputSchema ? tool.inputSchema.parse(args ?? {}) : args;
       const running = record.status === 'running'
         ? record
         : this.store.updateToolCall(sessionId, record.id, {
@@ -445,7 +497,11 @@ export class ToolRegistry {
       const hookCtx: ToolHookContext = { sessionId, runId: running.runId, stepId: running.stepId, toolCallId: running.id, toolId: running.toolId, args, result: null! };
       void sessionHooks.emit({ type: 'tool:before', ctx: hookCtx });
       sandboxPolicy.validateToolArgs(running.toolId, args, workspaceRoot(sessionId), sessionId);
-      const result = await tool.execute(input);
+      const result = await withCommandSignal(abortSignal, () => tool.execute(input));
+      abortSignal?.throwIfAborted();
+      if (result.suspend) {
+        return { record: this.store.getToolCall(sessionId, running.id), interactionId: result.suspend.interactionId };
+      }
       const outputSummary = result.displaySummary.slice(0, SUMMARY_LIMIT);
       const status = result.displaySummary.length > SUMMARY_LIMIT ? 'compacted' : 'completed';
 

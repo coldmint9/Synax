@@ -16,6 +16,7 @@ export const sessionStatusSchema = z.enum([
   'queued',
   'running',
   'waiting_permission',
+  'waiting_input',
   'blocked',
   'completed',
   'failed',
@@ -28,6 +29,7 @@ export type AgentSessionStatus = z.infer<typeof sessionStatusSchema>;
 export const runStatusSchema = z.enum([
   'running',
   'waiting_permission',
+  'waiting_input',
   'blocked',
   'completed',
   'failed',
@@ -39,6 +41,7 @@ export type AgentRunStatus = z.infer<typeof runStatusSchema>;
 export const stepStatusSchema = z.enum([
   'running',
   'waiting_permission',
+  'waiting_input',
   'blocked',
   'completed',
   'failed',
@@ -105,6 +108,8 @@ export const runtimeEventTypeSchema = z.enum([
   'tool_call',
   'tool_result',
   'permission_requested',
+  'interaction_requested',
+  'interaction_resolved',
   'permission_resolved',
   'artifact_created',
   'progress_updated',
@@ -468,6 +473,7 @@ export interface ToolExecutionArtifactInput {
 }
 
 export interface ToolExecutionResult {
+  suspend?: { interactionId: string };
   result: unknown;
   displaySummary: string;
   artifacts: ToolExecutionArtifactInput[];

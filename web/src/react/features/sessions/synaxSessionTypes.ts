@@ -1,6 +1,18 @@
+import type { AgentSession, AgentSessionMode } from '../../../lib/api/agentRuntime'
+
 export const SYNAX_PROFILE_ID = 'synax'
 
-export type SynaxSessionMode = 'chat' | 'goal' | 'plan_node'
+export type SynaxSessionMode = AgentSessionMode | 'plan_node'
+
+export function readSynaxSessionMode(metadata: Record<string, unknown> | null | undefined): SynaxSessionMode {
+  const mode = metadata?.mode
+  return mode === 'plan' || mode === 'goal' || mode === 'plan_node' ? mode : 'chat'
+}
+
+export function isAcpSession(session?: AgentSession, model?: string | null): boolean {
+  return Boolean(session?.sessionMetadata?.acp)
+    || [model, session?.model].some(value => value?.split('/')[0].endsWith('-acp'))
+}
 
 export function createSynaxSessionMetadata(
   mode: SynaxSessionMode,

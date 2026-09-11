@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import {
   agentRuntimeApi,
+  type AgentInteraction,
+  type AgentInteractionReply,
+  type AgentSessionMode,
   type AgentRun,
   type AgentRunStep,
   type AgentRuntimeMessage,
@@ -17,10 +20,10 @@ import {
 import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
 import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { AppError } from '../../../lib/errors'
-import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, readSynaxPermissionTier, type SynaxPermissionTier } from './synaxSessionTypes'
+import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, isAcpSession, readSynaxPermissionTier, type SynaxPermissionTier } from './synaxSessionTypes'
 import { useNotificationStore } from '../../state/notificationStore'
 import { useShellStore } from '../../state/shellStore'
-import { patchAgentSession, canEnqueueSessionInput } from './sessionComposerState'
+import { patchAgentSession, canEnqueueSessionInput, canSwitchSessionMode } from './sessionComposerState'
 import { useSessionWorkspaceStore } from './sessionWorkspaceStore'
 import type { TurnContentBlock } from './buildInterleavedTurns'
 import {
@@ -38,6 +41,7 @@ const READ_MARKERS_KEY = 'synax-session-read-markers'
 
 export type SessionInputBody = {
   message: string
+  mode?: AgentSessionMode
   /** `system_injection` renders the message as an "injected" chip, not a bubble. */
   messageSource?: 'user' | 'system_injection'
   /** Enriched create/turn prompt; defaults to `message` when omitted. */
@@ -89,6 +93,7 @@ function saveReadMarkers(projectId: string | null, markers: Record<string, strin
 const ATTENTION_SESSION_STATUSES = new Set<AgentSession['status']>([
   'running',
   'waiting_permission',
+  'waiting_input',
   'queued',
 ])
 
@@ -120,6 +125,7 @@ export interface SessionDetailCacheEntry {
 }
 
 let activeDetailRefresh: { sessionId: string; promise: Promise<void> } | null = null
+let interactionRefreshVersion = 0
 
 function trimSessionDetailCache(
   cache: Record<string, SessionDetailCacheEntry>,
@@ -153,12 +159,14 @@ function emptyDetailPayload(): Pick<
 }
 
 function isActiveSessionStatus(status: AgentSession['status'] | undefined): boolean {
-  return status === 'running' || status === 'waiting_permission'
+  return status === 'running' || status === 'waiting_permission' || status === 'waiting_input'
 }
 
 type AgentRunStreamChunk = {
   type?: string
-  run?: { id: string; status?: string }
+  event?: RuntimeEvent
+  run?: { id: string; status?: AgentRun['status'] }
+  error?: string
   runId?: string
   sessionId?: string
 }
@@ -167,6 +175,8 @@ function applySessionStreamChunk(sessionId: string, chunk: unknown): Partial<Age
   if (!chunk || typeof chunk !== 'object') return null
   const typed = chunk as AgentRunStreamChunk
   switch (typed.type) {
+    case 'event':
+      return typed.event?.type === 'interaction_requested' ? { status: 'waiting_input' } : null
     case 'run_started':
     case 'run_resumed':
       return typed.run
@@ -176,16 +186,22 @@ function applySessionStreamChunk(sessionId: string, chunk: unknown): Partial<Age
       return typed.runId
         ? { status: 'waiting_permission', activeRunId: typed.runId }
         : { status: 'waiting_permission' }
+    case 'interaction_requested':
+    case 'waiting_input':
+      return { status: 'waiting_input' }
     case 'run_completed':
-      return { status: 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null }
+      return { status: typed.run?.status ?? 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null }
     case 'run_failed':
-      return { status: 'failed', activeRunId: null, pendingResumeToken: null }
+      return { status: typed.run?.status ?? 'failed', activeRunId: null, pendingResumeToken: null,
+        ...(typed.run?.status === 'blocked' && typed.error ? { blockedReason: typed.error } : {}),
+      }
     case 'done': {
       const current = useAgentSessionStore.getState().sessions.find(s => s.id === sessionId)
       if (current?.status === 'waiting_permission') {
         return { activeRunId: null }
       }
-      return { status: 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null }
+      // Stream EOF is not completion: preserve blocked/cancelled/waiting states.
+      return null
     }
     default:
       return null
@@ -322,6 +338,13 @@ if (typeof document !== 'undefined') {
 
 export interface AgentSessionStoreState {
   projectId: string | null
+  draftMode: AgentSessionMode
+  interactionState: {
+    sessionId: string
+    items: AgentInteraction[]
+    loading: boolean
+    error: string | null
+  } | null
   sessions: AgentSession[]
   selectedSessionId: string | null
   panelOpen: boolean
@@ -350,6 +373,10 @@ export interface AgentSessionStoreState {
   inputQueues: Record<string, QueuedInput[]>
 
   setProjectId: (projectId: string | null) => void
+  setDraftMode: (mode: AgentSessionMode) => void
+  refreshInteractions: (sessionId: string) => Promise<void>
+  replyInteraction: (sessionId: string, interactionId: string, body: AgentInteractionReply) => Promise<void>
+  updateSessionMode: (sessionId: string, mode: AgentSessionMode) => Promise<void>
   refreshSessions: () => Promise<void>
   resetSessionDetailForDraft: () => void
   submitSessionDraft: (projectId: string, body: SessionInputBody) => Promise<AgentSession>
@@ -381,6 +408,7 @@ export interface AgentSessionStoreState {
 type SessionDetailState = Pick<
   AgentSessionStoreState,
   | 'selectedSessionId'
+  | 'interactionState'
   | 'panelOpen'
   | 'runs'
   | 'steps'
@@ -400,6 +428,7 @@ type SessionDetailState = Pick<
 function emptySessionDetailState(): SessionDetailState {
   return {
     selectedSessionId: null,
+    interactionState: null,
     panelOpen: false,
     runs: [],
     steps: [],
@@ -424,6 +453,8 @@ function clearStreamingBuffers(): void {
 
 export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) => ({
   projectId: null,
+  draftMode: 'chat',
+  interactionState: null,
   sessions: [],
   selectedSessionId: null,
   panelOpen: false,
@@ -444,12 +475,60 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   streamingCompletedSteps: [],
   inputQueues: {},
 
+  setDraftMode: (draftMode) => set({ draftMode }),
+
+  refreshInteractions: async (sessionId) => {
+    if (get().selectedSessionId !== sessionId) return
+    const version = ++interactionRefreshVersion
+    const previous = get().interactionState
+    set({ interactionState: {
+      sessionId, items: previous?.sessionId === sessionId ? previous.items : [], loading: true, error: null,
+    } })
+    try {
+      const { interactions } = await agentRuntimeApi.listInteractions(sessionId)
+      if (version !== interactionRefreshVersion || get().selectedSessionId !== sessionId) return
+      set({ interactionState: { sessionId, items: interactions, loading: false, error: null } })
+    } catch (error) {
+      if (version !== interactionRefreshVersion || get().selectedSessionId !== sessionId) return
+      set({ interactionState: {
+        sessionId, items: get().interactionState?.items ?? [], loading: false,
+        error: error instanceof Error ? error.message : String(error),
+      } })
+    }
+  },
+
+  replyInteraction: async (sessionId, interactionId, body) => {
+    const { interaction } = await agentRuntimeApi.replyInteraction(sessionId, interactionId, body)
+    const current = get().interactionState
+    if (get().selectedSessionId === sessionId && current?.sessionId === sessionId) {
+      // A GET started before this reply must not resurrect its old pending form.
+      ++interactionRefreshVersion
+      set({ interactionState: { ...current, loading: false, error: null,
+        items: current.items.map(item => item.id === interactionId ? interaction : item),
+      } })
+    }
+    void get().refreshSessions()
+  },
+
+  updateSessionMode: async (sessionId, mode) => {
+    const session = get().sessions.find(s => s.id === sessionId)
+    const interactions = get().interactionState
+    const hasPendingInteractions = interactions?.sessionId !== sessionId || interactions.loading
+      || Boolean(interactions.error) || interactions.items.some(item => item.status === 'pending')
+    if (!session || !canSwitchSessionMode(session, { hasPendingInteractions })) {
+      throw new AppError('Mode can only change in an idle native session without pending requests.', { level: 'business', code: 'SESSION_BUSY' })
+    }
+    const { session: updated } = await agentRuntimeApi.updateSessionMode(sessionId, mode)
+    get().patchSession(sessionId, updated)
+  },
+
   setProjectId: (projectId) => {
     if (projectId === get().projectId) return
     releaseSessionLiveSubscription()
     clearStreamingBuffers()
     set({
       projectId,
+      draftMode: 'chat',
       sessions: [],
       readSessionMarkers: loadReadMarkers(projectId),
       sessionDetailCache: {},
@@ -473,6 +552,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     set({
       panelOpen: false,
       selectedSessionId: null,
+      interactionState: null,
       runs: [],
       steps: [],
       events: [],
@@ -496,6 +576,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     const prompt = body.prompt?.trim() || message
     const wikiAttachMode = body.wikiAttachMode
     const documentId = body.documentId ?? null
+    const mode = body.mode ?? get().draftMode
+    if (isAcpSession(undefined, body.model) && mode !== 'chat') {
+      throw new AppError('Plan and goal modes require the native Synax engine.', { level: 'business', code: 'VALIDATION' })
+    }
     const payload = await agentRuntimeApi.createSession({
       projectId,
       profileId: SYNAX_PROFILE_ID,
@@ -504,7 +588,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       skillIds: body.skillIds?.length ? body.skillIds : undefined,
       mcpServerIds: body.mcpServerIds?.length ? body.mcpServerIds : undefined,
       permissionTier: body.permissionTier,
-      sessionMetadata: createSynaxSessionMetadata('goal', {
+      sessionMetadata: createSynaxSessionMetadata(mode, {
         source: 'session-page',
         goalContent: message,
         ...(wikiAttachMode
@@ -531,6 +615,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       sessionDetailCache: nextCache,
       selectedSessionId: shouldClosePanel ? null : get().selectedSessionId,
       panelOpen: shouldClosePanel ? false : get().panelOpen,
+      interactionState: shouldClosePanel ? null : get().interactionState,
       runs: shouldClosePanel ? [] : get().runs,
       steps: shouldClosePanel ? [] : get().steps,
       events: shouldClosePanel ? [] : get().events,
@@ -553,6 +638,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     set({
       panelOpen: true,
       selectedSessionId: sessionId,
+      ...(isSwitch ? { interactionState: null } : {}),
       streamingStepId: null,
       streamingLive: EMPTY_STREAMING_BUFFERS,
       streamingCompletedSteps: [],

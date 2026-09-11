@@ -3727,6 +3727,11 @@
 .session-list-panel .list-row {
   position: relative;
 }
+.session-list-panel .list-card:not(.list-card--active) {
+  border-color: transparent;
+  background: transparent;
+}
+.session-list-panel .list-card { padding-left: 6px; }
 .session-list-panel .session-list-title {
   min-width: 0;
   padding-right: 0.25rem;
@@ -3778,18 +3783,6 @@
 .dark .session-list-panel .list-card--active .session-list-hover-actions {
   background: linear-gradient(90deg, transparent 0%, hsl(var(--card) / 0.78) 26%, hsl(var(--card) / 0.97) 58%, hsl(var(--card) / 1) 100%);
 }
-
-/* Session titles occupy the full row. On hover, time/delete actions float
-   above the title with a soft left-to-right Gaussian-like fade surface. */
-.session-list-panel .list-card > .flex.items-center,
-.session-list-panel .list-row {
-  position: relative;
-}
-.session-list-panel .session-list-title {
-  min-width: 0;
-  padding-right: 0.25rem;
-}
-
 
 /* Project-level MCP entry in the Agent toolbar. It deliberately borrows
    wh-pill-btn (the Worker / Skills tab geometry) instead of drawing its own
@@ -4128,40 +4121,39 @@
 }
 
 /* ───────────────────────────────────────────────────────────────────────────
-   Single-island Agent workspace chrome
-   The island is the only top-level navigation object. In dock mode it floats
-   above the transcript; in focus mode it becomes a reserved rail and the
-   workspace owns the full canvas below it.
+   Workspace viewer chrome
+   An open workspace tab uses one full-width chrome rail: compact global
+   controls on the left, browser-like tabs filling the remaining width.
    ─────────────────────────────────────────────────────────────────────────── */
 .workbench-shell[data-chrome-mode="workspaceFocus"] .workbench-island {
   padding-top: 56px;
-  transition: padding-top 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: padding-top 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .electron .workbench-shell[data-chrome-mode="workspaceFocus"] .workbench-island {
   padding-top: 0;
 }
 
-.workbench-header.workbench-header--workspace-focus {
+.workbench-header:is(.workbench-header--workspace-dock, .workbench-header--workspace-focus) {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: 8px;
+  left: calc(var(--agent-header-left-inset, 0px) + 8px);
+  right: calc(var(--agent-header-right-inset, 0px) + 8px);
   width: auto;
   max-width: none;
   transform: none;
-  padding: 8px 10px 0;
+  padding: 0;
   justify-content: stretch;
   flex-wrap: nowrap;
   gap: 0;
 }
 
-.electron .workbench-header.workbench-header--workspace-focus {
+.electron .workbench-header:is(.workbench-header--workspace-dock, .workbench-header--workspace-focus) {
   position: fixed;
   top: 2px;
 }
 
-.workbench-header--workspace-focus .wh-pill--focus {
+.wh-pill--workspace-chrome {
   width: 100%;
   max-width: 100%;
   height: 48px;
@@ -4169,36 +4161,172 @@
   padding: 0 8px;
   gap: 6px;
   border-radius: 16px;
-  overflow: hidden;
-  animation: workspace-focus-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  overflow: visible;
 }
 
-.workspace-focus-origin,
-.workspace-focus-tab-main,
-.workspace-focus-tab-close,
-.workspace-focus-overflow,
+.workspace-global-cluster {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.workspace-global-cluster .wh-tabs {
+  flex: 0 0 auto;
+}
+
+.workspace-global-cluster .wh-divider {
+  margin-inline: 3px;
+}
+
+.wh-project-trigger--icon {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+}
+
+.wh-tabs--icon-only .tabs__tab {
+  width: 30px;
+  min-width: 30px;
+  height: 30px !important;
+  justify-content: center;
+  padding: 0 !important;
+}
+
+.workspace-global-cluster .wh-actions .wh-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.workspace-tab-chrome {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-tab-rail {
+  display: flex;
+  min-width: 0;
+  height: 34px;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid hsl(var(--border-hsl) / 0.65);
+  border-radius: 12px;
+  background: hsl(var(--secondary) / 0.38);
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+.workspace-tab-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-tab-item {
+  display: flex;
+  min-width: 96px;
+  max-width: 220px;
+  height: 28px;
+  flex: 1 1 160px;
+  align-items: center;
+  border: 1px solid hsl(var(--border-hsl) / 0.48);
+  border-radius: 9px;
+  background: hsl(var(--card) / 0.56);
+  color: hsl(var(--muted-foreground));
+  scroll-snap-align: nearest;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.workspace-tab-item--active {
+  border-color: hsl(var(--border-hsl) / 0.82);
+  background: hsl(var(--card) / 0.96);
+  color: hsl(var(--foreground-hsl));
+  box-shadow: 0 1px 3px hsl(var(--foreground-hsl) / 0.08);
+}
+
+.workspace-tab-main {
+  display: inline-flex;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px 0 9px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.workspace-tab-main > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tab-close {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  opacity: 0;
+  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+.workspace-tab-item:hover .workspace-tab-close,
+.workspace-tab-item--active .workspace-tab-close,
+.workspace-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.workspace-tab-close:hover {
+  background: hsl(var(--secondary) / 0.72);
+  color: hsl(var(--foreground-hsl));
+}
+
+.workspace-tab-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+}
+
 .workspace-chrome-icon {
   display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease, opacity 120ms ease;
 }
 
-.workspace-chrome-icon {
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
-  border-radius: 999px;
-}
-
-.workspace-chrome-icon:hover:not(:disabled),
-.workspace-focus-origin:hover,
-.workspace-focus-tab-close:hover,
-.workspace-focus-overflow:hover {
+.workspace-chrome-icon:hover:not(:disabled) {
   background: hsl(var(--secondary) / 0.72);
   color: hsl(var(--foreground-hsl));
 }
@@ -4206,208 +4334,6 @@
 .workspace-chrome-icon:disabled {
   opacity: 0.45;
   cursor: default;
-}
-
-.workspace-focus-origin {
-  height: 30px;
-  flex: 0 0 auto;
-  gap: 5px;
-  padding: 0 9px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.workspace-focus-session {
-  display: flex;
-  min-width: 0;
-  max-width: 230px;
-  align-items: center;
-  gap: 5px;
-  margin-left: 2px;
-  font-size: 11px;
-}
-
-.workspace-focus-project {
-  max-width: 90px;
-  overflow: hidden;
-  color: hsl(var(--muted-foreground));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-focus-separator {
-  flex: 0 0 auto;
-  color: hsl(var(--muted-foreground) / 0.45);
-}
-
-.workspace-focus-title {
-  min-width: 0;
-  overflow: hidden;
-  color: hsl(var(--foreground-hsl) / 0.88);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-focus-controls {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 6px;
-  margin-left: 5px;
-  padding-left: 7px;
-  border-left: 1px solid hsl(var(--border-hsl) / 0.6);
-}
-
-.workspace-tabs-pill {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid hsl(var(--border-hsl) / 0.7);
-  border-radius: 999px;
-  background: hsl(var(--secondary) / 0.45);
-}
-
-.workspace-focus-tab-main {
-  min-width: 0;
-  height: 24px;
-  gap: 5px;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 500;
-}
-
-.workspace-focus-tab--active {
-  border-color: hsl(var(--border-hsl) / 0.8);
-  background: hsl(var(--card) / 0.96);
-  color: hsl(var(--foreground-hsl));
-  box-shadow: 0 1px 3px hsl(var(--foreground-hsl) / 0.08);
-}
-
-.workspace-focus-tab {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 140px;
-  flex: 0 1 auto;
-  align-items: center;
-  border: 1px solid hsl(var(--border-hsl) / 0.5);
-  border-radius: 999px;
-  background: hsl(var(--card) / 0.58);
-}
-
-.workspace-focus-tab-main {
-  border: none;
-  background: transparent;
-  color: inherit;
-}
-
-.workspace-focus-tab-main > span {
-  min-width: 0;
-  max-width: 94px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-focus-tab-close {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  margin-right: 2px;
-  border-radius: 6px;
-  opacity: 0;
-}
-
-.workspace-focus-tab:hover .workspace-focus-tab-close,
-.workspace-focus-tab--active .workspace-focus-tab-close {
-  opacity: 1;
-}
-
-.workspace-focus-overflow {
-  height: 26px;
-  flex: 0 0 auto;
-  padding: 0 7px;
-  border-radius: 8px;
-  font-family: var(--font-mono);
-  font-size: 9px;
-}
-
-.workspace-focus-globals {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
-}
-
-.wh-project-trigger--compact {
-  max-width: 88px;
-  padding-inline: 7px;
-}
-
-/* Workspace wing attached to the Agent toolbar in dock mode. */
-.workspace-wing {
-  display: inline-flex;
-  min-width: 0;
-  flex: 0 1 auto;
-  align-items: center;
-  gap: 2px;
-  margin-left: 4px;
-}
-
-.workspace-wing-current {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 178px;
-  height: 24px;
-  align-items: center;
-  gap: 5px;
-  padding: 0 8px;
-  border: 1px solid hsl(var(--border-hsl) / 0.45);
-  border-radius: 999px;
-  background: hsl(var(--card) / 0.7);
-  color: hsl(var(--foreground-hsl) / 0.82);
-  cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
-}
-
-.workspace-wing-current:hover {
-  border-color: hsl(var(--border-hsl) / 0.6);
-  background: hsl(var(--secondary) / 0.5);
-}
-
-.workspace-wing-label {
-  min-width: 0;
-  max-width: 122px;
-  overflow: hidden;
-  font-size: 10px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-wing-count {
-  flex: 0 0 auto;
-  color: hsl(var(--muted-foreground) / 0.72);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 600;
-}
-
-.workspace-new-tab-menu--chrome {
-  right: 0;
-  left: auto;
-}
-
-/* The Agent toolbar owns popovers (workspace switcher / new tab). Keep the
-   shared pill clipped for geometry, but let those menus escape its bounds. */
-.workbench-header .wh-pill-slot > .wh-pill.wh-pill--overflow-visible {
-  overflow: visible;
 }
 
 /* The workspace panel is now content-only; controls live in the island. */
@@ -4447,6 +4373,34 @@
   box-shadow:
     0 10px 24px -20px hsl(var(--foreground-hsl) / 0.38),
     0 2px 8px hsl(var(--foreground-hsl) / 0.06);
+}
+
+.session-workspace-panel--content[data-fullscreen="true"] {
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--background);
+  box-shadow: none;
+}
+
+.workspace-viewer-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.workspace-viewer-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.workspace-viewer-body > * {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .electron .session-workspace-panel--content {
@@ -4910,35 +4864,12 @@
   padding-top: 0;
 }
 
-@keyframes workspace-focus-enter {
-  from { opacity: 0; transform: translateY(-6px) scaleX(0.985); }
-  to { opacity: 1; transform: translateY(0) scaleX(1); }
-}
-
 @keyframes agent-command-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.45; transform: scale(0.75); }
 }
 
-@media (max-width: 1100px) {
-  .workspace-focus-session {
-    display: none;
-  }
-}
-
 @media (max-width: 900px) {
-  .workspace-focus-origin span {
-    display: none;
-  }
-
-  .workspace-focus-tab-main > span {
-    max-width: 64px;
-  }
-
-  .workspace-wing-label {
-    max-width: 72px;
-  }
-
   .workbench-header--agent-dock .wh-pill {
     gap: 3px;
     padding-inline: 7px;
@@ -4960,12 +4891,29 @@
     display: none;
   }
 
-  .workbench-header--agent-dock .workspace-wing-current {
-    max-width: 112px;
+  .wh-pill--workspace-chrome {
+    gap: 3px;
+    padding-inline: 6px;
   }
 
-  .workbench-header--agent-dock .workspace-wing-label {
-    max-width: 64px;
+  .workspace-global-cluster {
+    gap: 0;
+  }
+
+  .workspace-global-cluster .wh-divider {
+    margin-inline: 2px;
+  }
+
+  .wh-project-trigger--icon,
+  .wh-tabs--icon-only .tabs__tab {
+    width: 26px;
+    min-width: 26px;
+    height: 26px !important;
+  }
+
+  .workspace-tab-item {
+    min-width: 80px;
+    flex-basis: 132px;
   }
 }
 
@@ -4978,67 +4926,74 @@
     margin-top: 104px;
   }
 
+  .workbench-shell[data-chrome-mode="workspaceDock"] .session-workspace-panel--content {
+    margin-top: 56px;
+  }
+
   .electron .session-chat-scroll {
     padding-top: 48px;
   }
 }
 
 @media (max-width: 760px) {
-  .workbench-header.workbench-header--workspace-focus {
-    left: 0;
-    right: 0;
-    width: auto;
-    max-width: none;
-    transform: none;
-    padding: 6px;
-    gap: 0;
+  .wh-pill--workspace-chrome {
+    height: 44px;
+    gap: 2px;
+    padding-inline: 5px;
+    border-radius: 14px;
   }
 
-  .workbench-header--workspace-focus .wh-pill--focus {
-    padding-inline: 6px;
+  .wh-project-trigger--icon,
+  .wh-tabs--icon-only .tabs__tab,
+  .workspace-global-cluster .wh-actions .wh-btn {
+    width: 24px;
+    min-width: 24px;
+    height: 24px !important;
+  }
+
+  .workspace-global-cluster .wh-divider {
+    margin-inline: 1px;
+  }
+
+  .workspace-tab-rail {
+    height: 32px;
+    padding: 2px;
+  }
+
+  .workspace-tab-item {
+    height: 26px;
+    min-width: 72px;
+    flex-basis: 108px;
+  }
+
+  .workspace-tab-main {
     gap: 4px;
+    padding-inline: 7px;
+    font-size: 9px;
   }
 
-  .workspace-focus-controls {
-    margin-left: 2px;
-    padding-left: 4px;
-    gap: 1px;
+  .workspace-tab-close {
+    width: 16px;
+    height: 16px;
+    flex-basis: 16px;
   }
 
-  .workspace-focus-tab-main > span {
-    max-width: 48px;
-  }
-
-  .wh-project-trigger--compact {
-    max-width: 52px;
-  }
-
-  .wh-project-trigger--compact > span {
-    max-width: 42px;
-  }
-
-  .workspace-focus-globals {
-    gap: 0;
-  }
-
-  .workspace-wing-current {
-    max-width: 104px;
-  }
-
-  .workspace-wing-label {
-    max-width: 52px;
+  .workspace-chrome-icon {
+    width: 24px;
+    height: 24px;
+    flex-basis: 24px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .workbench-shell[data-chrome-mode="workspaceFocus"] .workbench-island,
   .agent-command-rail,
-  .workspace-focus-tab,
+  .workspace-tab-item,
+  .workspace-tab-rail,
   .workspace-chrome-icon {
     transition: none !important;
   }
 
-  .workbench-header--workspace-focus .wh-pill--focus,
   .agent-command-status--running .agent-command-status-dot {
     animation: none !important;
   }

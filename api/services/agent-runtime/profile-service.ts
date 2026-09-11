@@ -1,4 +1,5 @@
-import type { AgentProfile, AgentProfileKind } from './contracts.js';
+import { specialistBaseProfile, resolveSpecialistProfile } from './specialist-profile.js';
+import type { AgentProfile, AgentProfileKind, AgentSession } from './contracts.js';
 import { AgentNotFoundError, AgentValidationError } from './runtime-errors.js';
 
 const allowRead = (reason = 'Project-contained read is allowed.'): { gate: 'read'; pattern: string; action: 'allow'; reason: string } => ({
@@ -16,6 +17,7 @@ const denyWrite = (reason: string): { gate: 'write'; pattern: string; action: 'd
 });
 
 export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
+  specialistBaseProfile,
   {
     id: 'planner',
     label: 'Planner',
@@ -114,6 +116,10 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
 export class ProfileService {
   private readonly profiles = new Map(BUILTIN_AGENT_PROFILES.map((profile) => [profile.id, profile]));
 
+  getForSession(session: AgentSession): AgentProfile {
+    return resolveSpecialistProfile(this.get(session.profileId), session);
+  }
+
   list(): AgentProfile[] {
     return [...this.profiles.values()].filter((profile) => profile.status === 'active');
   }
@@ -136,6 +142,7 @@ export class ProfileService {
 
   assertCanStart(profileId: string, input: { parentSessionId?: string | null } = {}): AgentProfile {
     const profile = this.get(profileId);
+    if (profile.id==='specialist'&&!input.parentSessionId)throw new AgentValidationError('Specialist sessions require a parent and a task snapshot.');
     if (profile.status !== 'active') throw new AgentValidationError(`Agent profile ${profileId} is disabled.`);
     if (input.parentSessionId && profile.mode !== 'subagent') {
       throw new AgentValidationError('Child sessions must use a subagent profile.');

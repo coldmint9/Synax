@@ -143,4 +143,20 @@ describe('sessionProcessManager idle child release', () => {
     expect(forkMock).toHaveBeenCalledTimes(3);
     expect(sessionProcessManager.canSpawnChild()).toBe(true);
   });
+  it('waits for the real exit event rather than just clearing tracking maps', async () => {
+    const child=createMockChild('sess-release-a');
+    child.kill.mockImplementation(()=>{child.killed=true;return true;});
+    forkMock.mockImplementationOnce(()=>{queueMicrotask(()=>child.emit('message',{type:'session:ready',sessionId:'sess-release-a'}));return child;});
+    for await(const _chunk of sessionProcessManager.streamSession('sess-release-a','turn',{})){ /* drain */ }
+    expect(sessionProcessManager.canSpawnChild('sess-release-a')).toBe(false);
+    let idle=false;
+    const waiting=sessionProcessManager.waitForIdleSessions(['sess-release-a']).then(()=>{idle=true;});
+    await new Promise(resolve=>setTimeout(resolve,30));
+    expect(idle).toBe(false);
+    child.connected=false;child.emit('exit',0,'SIGTERM');
+    await waiting;
+    expect(idle).toBe(true);
+    expect(sessionProcessManager.canSpawnChild('sess-release-a')).toBe(true);
+  });
+
 });

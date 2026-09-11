@@ -35,6 +35,7 @@ vi.mock('../../../../lib/api/agentRuntime', () => ({
 afterEach(() => {
   useAgentSessionStore.setState({
     projectId: null,
+    draftMode: 'chat',
     sessions: [],
     selectedSessionId: null,
     panelOpen: false,
@@ -105,7 +106,7 @@ describe('useAgentSessionStore.submitSessionDraft', () => {
       skillIds: undefined,
       permissionTier: undefined,
       sessionMetadata: {
-        mode: 'goal',
+        mode: 'chat',
         source: 'session-page',
         goalContent: 'Improve auth',
         wikiAttachMode: 'auto',
@@ -125,7 +126,7 @@ describe('useAgentSessionStore.submitSessionDraft', () => {
       expect.objectContaining({
         prompt: 'plain message',
         sessionMetadata: {
-          mode: 'goal',
+          mode: 'chat',
           source: 'session-page',
           goalContent: 'plain message',
         },

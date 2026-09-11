@@ -5,22 +5,28 @@ import { useProjectSettings } from './useProjectSettings'
 import { useConfig } from './useConfig'
 import { useLocale } from '../../../hooks/useLocale'
 import { McpServersSection } from './components/McpServersSection'
+import type { I18nKey } from '../../../lib/i18n'
 import { SettingsCard } from './components/SettingsCard'
 
+function ComingSoon({ titleKey }: { titleKey: I18nKey }) {
+  const { t } = useLocale()
+  return <SettingsCard title={t(titleKey)}><p className="settings-note">{t('settingsComingSoon')}</p></SettingsCard>
+}
+
 function ProviderTab(_props: { settings: any; globalConfig: any; providers: any; onSave: (data: any) => void }) {
-  return <SettingsCard title="Provider settings"><p className="settings-note">Coming soon</p></SettingsCard>
+  return <ComingSoon titleKey="settingsTabProvider" />
 }
 function BasicsTab(_props: { settings: any; onSave: (data: any) => void }) {
-  return <SettingsCard title="Basic settings"><p className="settings-note">Coming soon</p></SettingsCard>
+  return <ComingSoon titleKey="settingsTabBasics" />
 }
 function CollaborationTab(_props: { settings: any; onSave: (data: any) => void }) {
-  return <SettingsCard title="Collaboration settings"><p className="settings-note">Coming soon</p></SettingsCard>
+  return <ComingSoon titleKey="settingsTabCollaboration" />
 }
 function NotificationsTab(_props: { settings: any; onSave: (data: any) => void }) {
-  return <SettingsCard title="Notification settings"><p className="settings-note">Coming soon</p></SettingsCard>
+  return <ComingSoon titleKey="settingsTabNotifications" />
 }
 function ComplianceTab(_props: { settings: any; onSave: (data: any) => void }) {
-  return <SettingsCard title="Compliance settings"><p className="settings-note">Coming soon</p></SettingsCard>
+  return <ComingSoon titleKey="settingsTabCompliance" />
 }
 
 export default function ProjectSettingsPage() {
@@ -29,7 +35,7 @@ export default function ProjectSettingsPage() {
   const { globalConfig, providers } = useConfig(projectId)
   const { t } = useLocale()
 
-  if (!projectId) return <div className="p-6 text-sm text-destructive">Missing project ID</div>
+  if (!projectId) return <div className="p-6 text-sm text-destructive">{t('settingsMissingProjectId')}</div>
 
   if (loading || !settings) {
     return (
@@ -54,7 +60,7 @@ export default function ProjectSettingsPage() {
                 {projectId}
               </Typography>
             </div>
-            <Button size="sm" variant="outline" isIconOnly onPress={reload} aria-label="Refresh">
+            <Button size="sm" variant="outline" isIconOnly onPress={reload} aria-label={t('settingsRefresh')}>
               <RefreshCw size={12} />
             </Button>
           </div>
@@ -64,8 +70,8 @@ export default function ProjectSettingsPage() {
             <McpServersSection
               servers={settings.mcpServers}
               onSave={async (servers) => { await patchSection('mcp', { mcpServers: servers }) }}
-              title="项目 MCP 配置"
-              description="MCP 服务器仅属于当前项目，并会自动提供给该项目的 Agent。"
+              title={t('settingsMcpTitle')}
+              description={t('settingsMcpDesc')}
             />
             <BasicsTab settings={settings} onSave={(data) => patchSection('basics', data)} />
             <CollaborationTab settings={settings} onSave={(data) => patchSection('collaboration', data)} />
