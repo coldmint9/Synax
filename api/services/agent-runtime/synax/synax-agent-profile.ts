@@ -32,6 +32,9 @@ export const synaxAgentProfile: AgentProfile = {
     'subagent.delegate',
     'skill.load',
     'agent.adapt',
+    'human.ask',
+    'plan.propose',
+    'goal.finish',
   ],
   permissionDefaults: [
     { gate: 'read', pattern: '*', action: 'allow', reason: 'Synax agent reads freely.' },

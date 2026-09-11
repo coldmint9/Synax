@@ -1,20 +1,19 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from '@heroui/react'
-import { ArrowLeft, BookOpen, Bot, Search, Settings2, Sun, Moon, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw, Minimize2 } from 'lucide-react'
+import { BookOpen, Bot, Folder, Search, Settings2, Sun, Moon, Plus, Trash2, BookDashed, Ellipsis, Download, RotateCcw } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
 import { useLocale } from '../../hooks/useLocale'
 import { wikiApi } from '../../lib/api/wiki'
 import { NotificationBell } from '../components/notifications/NotificationBell'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
-import { getSessionDisplayTitle } from '../features/sessions/useSessionDisplayTitle'
-import { useSessionWorkspace, useSessionWorkspaceStore } from '../features/sessions/sessionWorkspaceStore'
-import { WorkspaceFocusControls, WorkspaceWing } from '../features/sessions/WorkspaceChromeControls'
+import { useSessionWorkspaceStore } from '../features/sessions/sessionWorkspaceStore'
+import { WorkspaceTabStrip } from '../features/sessions/WorkspaceChromeControls'
 import WikiSearchPanel from '../features/wiki/WikiSearchPanel'
 import { useWikiSearch, type SearchResult } from '../features/wiki/WikiSearchPanel'
 import type { ActivityPanel } from './ActivityBar'
 
-export type ChromeMode = 'global' | 'agentDock' | 'workspaceFocus'
+export type ChromeMode = 'global' | 'agentDock' | 'workspaceDock' | 'workspaceFocus'
 
 interface WorkbenchHeaderProps {
   chromeMode: ChromeMode
@@ -42,7 +41,7 @@ function ProjectSwitcher({
   onProjectSwitch,
   onCreateProject,
   onRemoveRequest,
-  compact = false,
+  iconOnly = false,
 }: {
   hasProject: boolean
   projectName: string
@@ -51,7 +50,7 @@ function ProjectSwitcher({
   onProjectSwitch: (projectId: string) => void
   onCreateProject: () => void
   onRemoveRequest: (event: React.MouseEvent, project: ProjectSummary) => void
-  compact?: boolean
+  iconOnly?: boolean
 }) {
   const { t } = useLocale()
   const labelRef = useRef<HTMLSpanElement>(null)
@@ -63,20 +62,25 @@ function ProjectSwitcher({
         <div
           role="button"
           tabIndex={0}
-          className={`wh-project-trigger ${compact ? 'wh-project-trigger--compact' : ''}`}
+          className={`wh-project-trigger ${iconOnly ? 'wh-project-trigger--icon' : ''}`}
           title={displayName}
+          aria-label={t('appSwitchProject')}
         >
-          <span
-            ref={labelRef}
-            className="wh-project-label text-xs font-medium"
-            onMouseEnter={() => labelRef.current?.scrollTo({ left: labelRef.current.scrollWidth, behavior: 'smooth' })}
-            onMouseLeave={() => labelRef.current?.scrollTo({ left: 0, behavior: 'smooth' })}
-          >
-            {displayName}
-          </span>
+          {iconOnly ? (
+            <Folder size={14} />
+          ) : (
+            <span
+              ref={labelRef}
+              className="wh-project-label text-xs font-medium"
+              onMouseEnter={() => labelRef.current?.scrollTo({ left: labelRef.current.scrollWidth, behavior: 'smooth' })}
+              onMouseLeave={() => labelRef.current?.scrollTo({ left: 0, behavior: 'smooth' })}
+            >
+              {displayName}
+            </span>
+          )}
         </div>
       </Dropdown.Trigger>
-      <Dropdown.Popover placement={compact ? 'bottom start' : 'top start'}>
+      <Dropdown.Popover placement={iconOnly ? 'bottom start' : 'top start'}>
         <Dropdown.Menu
           aria-label={t('appSwitchProject')}
           onAction={(key) => {
@@ -108,6 +112,56 @@ function ProjectSwitcher({
         </Dropdown.Menu>
       </Dropdown.Popover>
     </Dropdown>
+  )
+}
+
+function MainNavTabs({
+  activePanel,
+  hasProject,
+  onPanelToggle,
+  iconOnly = false,
+}: {
+  activePanel: ActivityPanel | null
+  hasProject: boolean
+  onPanelToggle: (panel: ActivityPanel) => void
+  iconOnly?: boolean
+}) {
+  const { t } = useLocale()
+
+  return (
+    <Tabs
+      selectedKey={activePanel ?? ''}
+      onSelectionChange={(key) => onPanelToggle(key as ActivityPanel)}
+      className={`wh-tabs ${iconOnly ? 'wh-tabs--icon-only' : ''}`}
+    >
+      <Tabs.ListContainer>
+        <Tabs.List aria-label={t('workspaceMainNav')} className="wh-tabs-list">
+          {navTabs.map((tab, i) => {
+            const Icon = tab.icon
+            return (
+              <Tabs.Tab
+                key={tab.id}
+                id={tab.id}
+                isDisabled={!hasProject}
+                aria-label={tab.label}
+                className={`wh-tab wh-tab--${tab.id}`}
+              >
+                {i > 0 && <Tabs.Separator />}
+                {iconOnly ? (
+                  <span className="inline-flex" title={tab.label}><Icon size={13} /></span>
+                ) : (
+                  <>
+                    <Icon size={13} />
+                    <span>{tab.label}</span>
+                  </>
+                )}
+                <Tabs.Indicator />
+              </Tabs.Tab>
+            )
+          })}
+        </Tabs.List>
+      </Tabs.ListContainer>
+    </Tabs>
   )
 }
 
@@ -291,17 +345,6 @@ function WikiToolbar() {
   )
 }
 
-function AgentToolbarPill({ visible }: { visible: boolean }) {
-  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
-  const { tabs } = useSessionWorkspace(selectedSessionId)
-
-  return (
-    <ToolbarPill visible={visible && tabs.length > 0} allowOverflow>
-      <WorkspaceWing sessionId={selectedSessionId} />
-    </ToolbarPill>
-  )
-}
-
 function WikiToolbarPill({ visible }: { visible: boolean }) {
   return (
     <ToolbarPill visible={visible}>
@@ -313,11 +356,9 @@ function WikiToolbarPill({ visible }: { visible: boolean }) {
 function ToolbarPill({
   visible,
   children,
-  allowOverflow = false,
 }: {
   visible: boolean
   children: ReactNode
-  allowOverflow?: boolean
 }) {
   const [mounted, setMounted] = useState(false)
   const [phase, setPhase] = useState<'enter' | 'exit' | ''>('')
@@ -342,7 +383,7 @@ function ToolbarPill({
   if (!mounted) return null
 
   const slotClass = `wh-pill-slot ${phase === 'enter' ? 'open' : phase === 'exit' ? 'closing' : ''}`
-  const pillClass = `wh-pill ${allowOverflow ? 'wh-pill--overflow-visible' : ''} ${phase === 'enter' ? 'wh-pill-enter' : phase === 'exit' ? 'wh-pill-exit' : ''}`
+  const pillClass = `wh-pill ${phase === 'enter' ? 'wh-pill-enter' : phase === 'exit' ? 'wh-pill-exit' : ''}`
 
   return (
     <div ref={ref} className={slotClass}>
@@ -353,123 +394,70 @@ function ToolbarPill({
   )
 }
 
-function FocusGlobalMenu({
+function WorkspaceGlobalControls({
+  activePanel,
   onPanelToggle,
+  hasProject,
+  projectName,
+  currentProjectId,
+  projects,
+  onProjectSwitch,
+  onCreateProject,
+  onRemoveRequest,
 }: {
+  activePanel: ActivityPanel | null
   onPanelToggle: (panel: ActivityPanel) => void
+  hasProject: boolean
+  projectName: string
+  currentProjectId: string
+  projects: ProjectSummary[]
+  onProjectSwitch: (projectId: string) => void
+  onCreateProject: () => void
+  onRemoveRequest: (event: React.MouseEvent, project: ProjectSummary) => void
 }) {
   const { t } = useLocale()
   const theme = useShellStore(s => s.preferences.theme)
   const setTheme = useShellStore(s => s.setTheme)
 
   return (
-    <Dropdown>
-      <Dropdown.Trigger>
-        <span role="button" tabIndex={0} className="workspace-chrome-icon" aria-label={t('projectMoreActions')} title={t('projectMoreActions')}>
-          <Ellipsis size={13} />
-        </span>
-      </Dropdown.Trigger>
-      <Dropdown.Popover placement="bottom end">
-        <Dropdown.Menu
-          aria-label={t('projectMoreActions')}
-          onAction={(key) => {
-            if (key === 'agent') onPanelToggle('sessions')
-            if (key === 'wiki') onPanelToggle('wiki')
-            if (key === 'settings') onPanelToggle('settings')
-            if (key === 'theme') setTheme(theme === 'dark' ? 'light' : 'dark')
-          }}
-        >
-          <Dropdown.Item id="agent" textValue={t('titlebarAgent')}>
-            <span className="flex items-center gap-2 text-xs"><Bot size={12} />{t('titlebarAgent')}</span>
-          </Dropdown.Item>
-          <Dropdown.Item id="wiki" textValue="Wiki">
-            <span className="flex items-center gap-2 text-xs"><BookOpen size={12} />Wiki</span>
-          </Dropdown.Item>
-          <Dropdown.Item id="settings" textValue={t('appSettings')}>
-            <span className="flex items-center gap-2 text-xs"><Settings2 size={12} />{t('appSettings')}</span>
-          </Dropdown.Item>
-          <Dropdown.Item id="theme" textValue={theme === 'dark' ? t('appLightMode') : t('appDarkMode')}>
-            <span className="flex items-center gap-2 text-xs">
-              {theme === 'dark' ? <Sun size={12} /> : <Moon size={12} />}
-              {theme === 'dark' ? t('appLightMode') : t('appDarkMode')}
-            </span>
-          </Dropdown.Item>
-        </Dropdown.Menu>
-      </Dropdown.Popover>
-    </Dropdown>
-  )
-}
-
-function WorkspaceFocusRail({
-  projectName,
-  hasProject,
-  currentProjectId,
-  projects,
-  onProjectSwitch,
-  onCreateProject,
-  onRemoveRequest,
-  onPanelToggle,
-}: {
-  projectName: string
-  hasProject: boolean
-  currentProjectId: string
-  projects: ProjectSummary[]
-  onProjectSwitch: (projectId: string) => void
-  onCreateProject: () => void
-  onRemoveRequest: (event: React.MouseEvent, project: ProjectSummary) => void
-  onPanelToggle: (panel: ActivityPanel) => void
-}) {
-  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
-  const { t } = useLocale()
-  const selectedSession = useAgentSessionStore(s => (
-    selectedSessionId ? s.sessions.find(session => session.id === selectedSessionId) : undefined
-  ))
-  const exitFocus = useSessionWorkspaceStore(s => s.exitFocus)
-  const sessionTitle = selectedSession ? getSessionDisplayTitle(selectedSession, t('sessionFallbackTitle')) : t('sessionFallbackTitle')
-
-  if (!selectedSessionId) return null
-
-  return (
-    <div className="wh-pill wh-pill--focus">
-      <button
-        type="button"
-        className="workspace-focus-origin"
-        aria-label={t('workspaceBackToChat')}
-        title={t('workspaceBackToChatTitle')}
-        onClick={() => exitFocus(selectedSessionId)}
-      >
-        <ArrowLeft size={12} />
-        <span>{t('workspaceChat')}</span>
-      </button>
-
-      <div className="workspace-focus-session" title={`${projectName} / ${sessionTitle}`}>
-        <span className="workspace-focus-project">{projectName}</span>
-        <span className="workspace-focus-separator">/</span>
-        <span className="workspace-focus-title">{sessionTitle}</span>
-      </div>
-
-      <WorkspaceFocusControls sessionId={selectedSessionId} />
-
-      <div className="workspace-focus-globals">
-        <ProjectSwitcher
-          compact
-          hasProject={hasProject}
-          projectName={projectName}
-          currentProjectId={currentProjectId}
-          projects={projects}
-          onProjectSwitch={onProjectSwitch}
-          onCreateProject={onCreateProject}
-          onRemoveRequest={onRemoveRequest}
-        />
-        <FocusGlobalMenu onPanelToggle={onPanelToggle} />
+    <div className="workspace-global-cluster">
+      <ProjectSwitcher
+        iconOnly
+        hasProject={hasProject}
+        projectName={projectName}
+        currentProjectId={currentProjectId}
+        projects={projects}
+        onProjectSwitch={onProjectSwitch}
+        onCreateProject={onCreateProject}
+        onRemoveRequest={onRemoveRequest}
+      />
+      <div className="wh-divider" />
+      <MainNavTabs
+        iconOnly
+        activePanel={activePanel}
+        hasProject={hasProject}
+        onPanelToggle={onPanelToggle}
+      />
+      <div className="wh-divider" />
+      <div className="wh-actions">
+        <NotificationBell />
         <button
           type="button"
-          className="workspace-chrome-icon"
-          aria-label={t('workspaceRestore')}
-          title={t('workspaceRestore')}
-          onClick={() => exitFocus(selectedSessionId)}
+          className="wh-btn"
+          aria-label={t('appSettings')}
+          title={t('appSettings')}
+          onClick={() => onPanelToggle('settings')}
         >
-          <Minimize2 size={12} />
+          <Settings2 size={14} />
+        </button>
+        <button
+          type="button"
+          className="wh-btn"
+          aria-label={theme === 'dark' ? t('appLightMode') : t('appDarkMode')}
+          title={theme === 'dark' ? t('appLightMode') : t('appDarkMode')}
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        >
+          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
         </button>
       </div>
     </div>
@@ -528,26 +516,33 @@ export function WorkbenchHeader({
   }, [chromeMode, selectedSessionId])
 
   const headerClass = `workbench-header ${
-    chromeMode === 'workspaceFocus'
-      ? 'workbench-header--workspace-focus'
-      : chromeMode === 'agentDock'
-        ? 'workbench-header--agent-dock'
-        : 'workbench-header--global'
+    chromeMode === 'workspaceDock'
+      ? 'workbench-header--workspace-dock'
+      : chromeMode === 'workspaceFocus'
+        ? 'workbench-header--workspace-focus'
+        : chromeMode === 'agentDock'
+          ? 'workbench-header--agent-dock'
+          : 'workbench-header--global'
   }`
+  const workspaceChrome = chromeMode === 'workspaceDock' || chromeMode === 'workspaceFocus'
 
   return (
     <div className={headerClass}>
-      {chromeMode === 'workspaceFocus' ? (
-        <WorkspaceFocusRail
-          projectName={projectName}
-          hasProject={hasProject}
-          currentProjectId={currentProjectId}
-          projects={projects}
-          onProjectSwitch={onProjectSwitch}
-          onCreateProject={onCreateProject}
-          onRemoveRequest={handleRemoveClick}
-          onPanelToggle={onPanelToggle}
-        />
+      {workspaceChrome ? (
+        <div className="wh-pill wh-pill--workspace-chrome">
+          <WorkspaceGlobalControls
+            activePanel={activePanel}
+            onPanelToggle={onPanelToggle}
+            hasProject={hasProject}
+            projectName={projectName}
+            currentProjectId={currentProjectId}
+            projects={projects}
+            onProjectSwitch={onProjectSwitch}
+            onCreateProject={onCreateProject}
+            onRemoveRequest={handleRemoveClick}
+          />
+          <WorkspaceTabStrip sessionId={selectedSessionId} />
+        </div>
       ) : (
         <>
           <div className="wh-pill">
@@ -563,33 +558,11 @@ export function WorkbenchHeader({
 
             <div className="wh-divider" />
 
-            <Tabs
-              selectedKey={activePanel ?? ''}
-              onSelectionChange={(key) => onPanelToggle(key as ActivityPanel)}
-              className="wh-tabs"
-            >
-              <Tabs.ListContainer>
-                <Tabs.List aria-label={t('workspaceMainNav')} className="wh-tabs-list">
-                  {navTabs.map((tab, i) => {
-                    const Icon = tab.icon
-                    const label = tab.label
-                    return (
-                      <Tabs.Tab
-                        key={tab.id}
-                        id={tab.id}
-                        isDisabled={!hasProject}
-                        className={`wh-tab wh-tab--${tab.id}`}
-                      >
-                        {i > 0 && <Tabs.Separator />}
-                        <Icon size={13} />
-                        <span>{label}</span>
-                        <Tabs.Indicator />
-                      </Tabs.Tab>
-                    )
-                  })}
-                </Tabs.List>
-              </Tabs.ListContainer>
-            </Tabs>
+            <MainNavTabs
+              activePanel={activePanel}
+              hasProject={hasProject}
+              onPanelToggle={onPanelToggle}
+            />
 
             <div className="wh-divider" />
 
@@ -610,7 +583,6 @@ export function WorkbenchHeader({
           </div>
 
           <WikiToolbarPill visible={activePanel === 'wiki'} />
-          <AgentToolbarPill visible={activePanel === 'sessions'} />
         </>
       )}
 

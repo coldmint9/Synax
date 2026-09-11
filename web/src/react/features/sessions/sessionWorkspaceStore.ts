@@ -101,7 +101,12 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>((set)
       const activeTabId = current.activeTabId === id
         ? (tabs[tabs.length - 1]?.id ?? null)
         : current.activeTabId
-      return { ...current, tabs, activeTabId }
+      return {
+        ...current,
+        tabs,
+        activeTabId,
+        presentation: tabs.length === 0 ? 'dock' : current.presentation,
+      }
     }),
   })),
 
@@ -118,6 +123,7 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>((set)
       ...current,
       tabs: [],
       activeTabId: null,
+      presentation: 'dock',
     })),
   })),
 

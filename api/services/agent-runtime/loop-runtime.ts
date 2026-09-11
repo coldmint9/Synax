@@ -1,3 +1,8 @@
+import { INVALID_TOOL_ID } from './tool-invalid.js';
+import { interactionService } from './interaction-service.js';
+import { validateControlBatch } from './control-policy.js';
+import { rootGoal, recordGoalStep, goalStopReason, belongsToPlanExecution, goalEvidenceSection, type PlanExecutionBoundary } from './control-runtime.js';
+import { getGoalState, initializeGoal } from './goal-control.js';
 import type {
   AgentContextBundle,
   AgentRun,
@@ -65,10 +70,14 @@ export class AgentLoopRuntime {
     private readonly store: AgentRuntimeStore = agentRuntimeStore,
     private readonly profiles: ProfileService = profileService,
     private readonly events: AgentEventService = agentEventService,
-    private readonly tools: ToolRegistry = toolRegistry,
+    private readonly toolsOverride?: ToolRegistry,
     private readonly permissions: PermissionPolicy = permissionPolicy,
     private readonly resume: LoopResumeService = loopResumeService,
   ) {}
+
+  // ToolRegistry and session/runtime modules import each other. Resolve the
+  // default at call time rather than capturing an uninitialized singleton.
+  private get tools(): ToolRegistry { return this.toolsOverride ?? toolRegistry; }
 
   listMessages(sessionId: string): AgentRuntimeMessage[] {
     this.store.getSession(sessionId);
@@ -164,6 +173,13 @@ export class AgentLoopRuntime {
     resume = false,
   ): AsyncGenerator<AgentRunStreamChunk> {
     this.assertSessionNotBusy(sessionId);
+    const beforeStart = this.store.getSession(sessionId);
+    if (!resume && input.message?.trim() && !beforeStart.parentSessionId && beforeStart.sessionMetadata?.mode==='goal') {
+      const previousGoal=getGoalState(beforeStart.sessionMetadata);
+      if(previousGoal&&['completed','cancelled'].includes(previousGoal.status))this.store.updateSessionMetadata(sessionId,{goal:initializeGoal(input.message),plan:null});
+      else if(previousGoal?.status==='blocked')this.store.updateSessionMetadata(sessionId,{goal:{...previousGoal,status:(beforeStart.sessionMetadata?.plan as {status?:string}|undefined)?.status==='approved'?'executing':'planning',reason:undefined}});
+    }
+    if (beforeStart.status === 'waiting_input' && (!resume || !interactionService.ready(sessionId))) throw new AgentValidationError('Resolve the pending form before continuing.');
     if (input.permissionTier !== undefined || input.permissionOverrides !== undefined) {
       applySessionPermissionUpdate(sessionId, {
         permissionTier: input.permissionTier,
@@ -174,14 +190,15 @@ export class AgentLoopRuntime {
     if (input.reasoningEffort) {
       session = this.store.updateSession(sessionId, { reasoningEffort: input.reasoningEffort, updatedAt: nowIso() });
     }
+    const profile = this.profiles.getForSession(session);
+    const prompt = input.message?.trim() || session.prompt;
+    const inputResume = resume ? interactionService.ready(sessionId) : null;
+    let pendingResume = resume && !inputResume ? this.resume.resolvePendingRun(sessionId) : null;
+    if (resume && !inputResume && !pendingResume) throw new AgentValidationError('No pending runtime action is available to resume.');
     const activeExecution = this.beginSessionExecution(sessionId, abortSignal);
     const runAbortSignal = activeExecution.signal;
-    const profile = this.profiles.tryGet(session.profileId);
-    const prompt = input.message?.trim() || session.prompt;
+    try {
     let run: AgentRun;
-    let pendingResume = resume
-      ? this.resume.resolvePendingRun(sessionId)
-      : null;
     let pendingPermission = pendingResume?.permission ?? null;
 
     logger.info(
@@ -195,7 +212,24 @@ export class AgentLoopRuntime {
       "[agent-runtime] run starting",
     );
 
-    if (resume) {
+    if (inputResume) {
+      const resolved = interactionService.consume(sessionId);
+      if (!resolved) throw new AgentValidationError('The input checkpoint was already consumed.');
+      run = this.store.getRun(resolved.runId);
+      yield { type: 'run_resumed', run };
+      yield { type: 'tool_result', runId: run.id, stepId: resolved.stepId, toolCall: this.store.getToolCall(sessionId,resolved.toolCallId) };
+      if (['save','cancel','decline'].includes(resolved.response!.action)) {
+        const saved = resolved.response!.action === 'save';
+        const reason = saved ? 'Plan saved without execution.' : 'User declined or cancelled the requested input.';
+        const finished = this.store.updateRun(run.id,{status:saved?'completed':'blocked',completedAt:nowIso(),stopReason:reason});
+        this.store.updateSession(sessionId,{status:saved?'completed':'blocked',activeRunId:null,pendingResumeToken:null,completedAt:nowIso(),resultSummary:reason,blockedReason:saved?null:reason});
+        if (!saved) {const g=getGoalState(this.store.getSession(sessionId).sessionMetadata);if(g)this.store.updateSessionMetadata(sessionId,{goal:{...g,status:'blocked',reason}});}
+        yield saved ? {type:'run_completed',run:finished} : {type:'run_failed',run:finished,error:reason};
+        yield {type:'done',sessionId,runId:run.id};
+        return;
+      }
+      session = this.store.getSession(sessionId);
+    } else if (resume) {
       if (!pendingResume)
         throw new AgentValidationError(
           "No pending runtime action is available to resume.",
@@ -256,6 +290,8 @@ export class AgentLoopRuntime {
       yield { type: "message", message: userMessage };
 
       run = this.createRun(sessionId, userMessage.id, input.model ?? null);
+      const planBoundary = rootGoal(session).root.sessionMetadata?.plan as PlanExecutionBoundary | undefined;
+      if(planBoundary?.executionId)run=this.store.updateRun(run.id,{metadata:{...run.metadata,goalExecutionId:planBoundary.executionId}});
       this.store.updateSession(sessionId, {
         status: "running",
         updatedAt: nowIso(),
@@ -295,7 +331,9 @@ export class AgentLoopRuntime {
     }
 
     try {
-      const maxSteps = profile.maxSteps;
+      const initialGoal = rootGoal(session).goal;
+      const maxSteps = initialGoal && !session.parentSessionId ? run.currentStep + Math.max(1, initialGoal.maxSteps - initialGoal.stepsUsed) : profile.maxSteps;
+      let emptyGoalTurns = 0;
       const context = session.contextSnapshotId
         ? this.tryGetContext(session.contextSnapshotId)
         : null;
@@ -359,6 +397,7 @@ export class AgentLoopRuntime {
         const resumedToolExecution = await this.tools.resumePending(
           sessionId,
           pendingResume.permission,
+          runAbortSignal,
         );
         this.appendToolResultPart({
           runId: run.id,
@@ -381,6 +420,13 @@ export class AgentLoopRuntime {
       let clearingActivated = false;
 
       while (run.currentStep < maxSteps) {
+        const liveSession=this.store.getSession(sessionId);
+        if(['paused','interrupted','cancelled'].includes(liveSession.status)) {this.interruptSessions([sessionId],'Session stopped by user.');throw new Error('Session stopped by user.');}
+        const stopReason = goalStopReason(this.store.getSession(sessionId));
+        if (stopReason) {
+          yield* this.finishControlledGoal(sessionId,run,stopReason);
+          return;
+        }
         if (runAbortSignal.aborted) {
           throw new AgentRuntimeError(
             "Run interrupted by client.",
@@ -453,7 +499,7 @@ export class AgentLoopRuntime {
           previousToolCalls,
           stepIndex: step.index,
           maxSteps,
-          mustFinalize: shouldForceFinalSummary(step.index, maxSteps),
+          mustFinalize: !initialGoal && shouldForceFinalSummary(step.index, maxSteps),
           blockedByPermission: pendingPermission?.userReply === "reject",
           previousStepUsage: previousStep?.metadata?.usage as Record<string, unknown> | undefined,
           abortSignal: runAbortSignal,
@@ -647,7 +693,28 @@ export class AgentLoopRuntime {
           return;
         }
 
-        if (modelResult.step.toolCalls.length === 0 || modelResult.step.final) {
+        recordGoalStep(sessionId,modelResult.step.usage);
+        const budgetStop = goalStopReason(this.store.getSession(sessionId));
+        if (budgetStop) {
+          this.store.updateRunStep(step.id,{status:'blocked',completedAt:nowIso(),finishReason:'goal_stop'});
+          yield* this.finishControlledGoal(sessionId,run,budgetStop);
+          return;
+        }
+        const activeGoal = rootGoal(this.store.getSession(sessionId)).goal;
+        if (activeGoal && !session.parentSessionId && modelResult.step.toolCalls.length === 0) {
+          this.finishAssistantMessage(sessionId,run.id,step.id,modelResult.step.message?.trim()||'Goal requires further work.',modelResult.model,'goal_progress',modelResult.step.usage);
+          this.store.updateRunStep(step.id,{status:'completed',completedAt:nowIso(),finishReason:'goal_continue'});
+          emptyGoalTurns++;
+          if(emptyGoalTurns>=3){
+            const reason='No actionable progress after three goal turns. Clarification or a revised approach is required.';
+            this.store.updateSessionMetadata(sessionId,{goal:{...activeGoal,status:'blocked',reason}});
+            yield* this.finishControlledGoal(sessionId,run,reason);return;
+          }
+          currentPrompt='Continue the approved goal. Plain final text does not finish it. Use human.ask for missing decisions, plan.propose for approval, or goal.finish with evidence / an explicit blocker.';
+          continue;
+        }
+        emptyGoalTurns=0;
+        if (modelResult.step.toolCalls.length === 0 || (modelResult.step.final && !activeGoal && !modelResult.step.toolCalls.some(c => ['human.ask','plan.propose'].includes(c.toolId)))) {
           const finalText =
             modelResult.step.message?.trim() || "Run completed.";
           logger.info(
@@ -738,7 +805,9 @@ export class AgentLoopRuntime {
           permission: NonNullable<typeof pendingPermission>;
           record: ToolCallRecord;
         };
-        const allCalls = withIds(modelResult.step.toolCalls.slice(0, 50));
+        const batchError = validateControlBatch(modelResult.step.toolCalls);
+        const calls = batchError ? modelResult.step.toolCalls.map(c=>({...c,toolId:INVALID_TOOL_ID,args:{tool:c.toolId,error:batchError}})) : modelResult.step.toolCalls;
+        const allCalls = withIds(calls.slice(0, 50));
 
         // Build dedup index from previous steps — same tool + same args on a
         // read-only tool is needless re-execution that burns context.  Fold it.
@@ -759,6 +828,8 @@ export class AgentLoopRuntime {
 
         const dedupIndex = new Map<string, ToolCallRecord>();
         for (const prev of this.store.listRunToolCalls(run.id)) {
+          const boundary=rootGoal(this.store.getSession(sessionId)).root.sessionMetadata?.plan as PlanExecutionBoundary|undefined;
+          if(boundary?.executionId&&!belongsToPlanExecution(prev,boundary))continue;
           if (prev.status === 'completed' || prev.status === 'compacted') {
             // Don't dedup against calls whose output was cleared from context
             if (clearedIds?.has(prev.id)) continue;
@@ -792,6 +863,7 @@ export class AgentLoopRuntime {
                     runId: run.id, stepId: step.id,
                     modelToolCallId: call.id,
                     resumeToken: optionsResumeToken(run.id, step.id, call.id),
+              abortSignal: runAbortSignal,
                   }).then((exec) => ({ call, exec }));
                 }
 
@@ -827,6 +899,7 @@ export class AgentLoopRuntime {
               runId: run.id, stepId: step.id,
               modelToolCallId: call.id,
               resumeToken: optionsResumeToken(run.id, step.id, call.id),
+              abortSignal: runAbortSignal,
             }).then((exec) => ({ call, exec }));
           }),
         );
@@ -843,6 +916,14 @@ export class AgentLoopRuntime {
             { sessionId, runId: run.id, stepId: step.id, toolCallId: exec.record.id, toolId: call.toolId, status: exec.record.status, permissionAction: exec.permission?.action ?? null },
             "[agent-runtime] tool call executed",
           );
+        }
+
+        const interactionExec = executions.find(({exec})=>exec.interactionId);
+        if(interactionExec){
+          const event=this.events.append({sessionId,type:'interaction_requested',summary:'Waiting for user input.',payload:{interactionId:interactionExec.exec.interactionId,runId:run.id,stepId:step.id}});
+          yield {type:'event',event};
+          yield {type:'done',sessionId,runId:run.id};
+          return;
         }
 
         // Check for permission "ask" — pause at the first one in model order.
@@ -1038,6 +1119,12 @@ export class AgentLoopRuntime {
         }
       }
 
+      const finalGoal = rootGoal(this.store.getSession(sessionId)).goal;
+      if (finalGoal) {
+        const reason = finalGoal.reason ?? 'Goal execution limit reached before acceptance.';
+        if(!session.parentSessionId && !['completed','blocked','cancelled','budget_exhausted'].includes(finalGoal.status))this.store.updateSessionMetadata(sessionId,{goal:{...finalGoal,status:'budget_exhausted',reason}});
+        yield* this.finishControlledGoal(sessionId,run,reason);return;
+      }
       const stoppedRun = this.store.updateRun(run.id, {
         status: "completed",
         completedAt: nowIso(),
@@ -1152,8 +1239,19 @@ export class AgentLoopRuntime {
           void sessionHooks.emit({ type: 'run:completed', sessionId, runId: run.id, status: finalRun.status });
         } catch { /* run may not exist if creation failed */ }
       }
-      activeExecution.dispose();
     }
+    } finally { activeExecution.dispose(); }
+  }
+
+  private *finishControlledGoal(sessionId:string, run:AgentRun, reason:string):Generator<AgentRunStreamChunk> {
+    const session=this.store.getSession(sessionId), goal=rootGoal(session).goal;
+    const completed=goal?.status==='completed';
+    const finished=this.store.updateRun(run.id,{status:completed?'completed':'blocked',completedAt:nowIso(),stopReason:reason});
+    this.store.updateSession(sessionId,{status:completed?'completed':'blocked',completedAt:nowIso(),resultSummary:reason,blockedReason:completed?null:reason,activeRunId:null,pendingResumeToken:null});
+    const message=this.store.appendMessage({id:makeRuntimeId('msg'),sessionId,runId:run.id,stepId:null,role:'assistant',content:reason,metadata:{goalStatus:goal?.status},createdAt:nowIso()});
+    yield {type:'message',message};
+    yield completed?{type:'run_completed',run:finished,message}:{type:'run_failed',run:finished,error:reason};
+    yield {type:'done',sessionId,runId:run.id};
   }
 
   interruptSessions(
@@ -1423,7 +1521,7 @@ export class AgentLoopRuntime {
       locale,
       permissionTier: permissionConfig.permissionTier,
       includeToolCallFallback: false,
-      modePromptSection: synaxAgent.buildModePromptSection(session),
+      modePromptSection: [synaxAgent.buildModePromptSection(session),goalEvidenceSection(session,input.previousToolCalls)].filter(Boolean).join('\n'),
       variantPromptSection: synaxAgent.buildVariantPromptSection(session),
       intentPromptSection: synaxAgent.isSynaxSession(session)
         ? synaxAgent.buildIntentPromptSection(session, input.prompt, input.stepIndex)
@@ -1704,6 +1802,8 @@ export class AgentLoopRuntime {
     record: ToolCallRecord;
     reason?: string;
   }): AgentRunPart {
+    const existing = this.store.listRunParts(input.stepId).find(p=>p.kind==='tool_call'&&p.toolCallId===input.record.id);
+    if(existing)return existing;
     return this.store.appendRunPart({
       id: makeRuntimeId("prt"),
       runId: input.runId,

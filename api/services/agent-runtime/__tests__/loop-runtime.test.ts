@@ -213,6 +213,9 @@ vi.mock('../../llm-runtime/gateway.js', () => ({
   resolveGatewaySelection: vi.fn().mockRejectedValue(new Error('not configured in test')),
 }));
 
+import { ensureSynaxAgentRegistered } from '../synax/index.js';
+import { interactionService } from '../interaction-service.js';
+import { initializeGoal } from '../goal-control.js';
 import { agentLoopRuntime } from '../loop-runtime.js';
 import { inputQueueService } from '../input-queue-service.js';
 import { permissionPolicy } from '../permission-policy.js';
@@ -689,4 +692,97 @@ describe('agentLoopRuntime', () => {
     const userMessages = agentRuntimeStore.listMessages(session.id).filter((m) => m.role === 'user');
     expect(userMessages.some((m) => m.content.includes('Please summarize after reading.'))).toBe(true);
   });
+  it('suspends for a form, resumes the original tool result, then saves a plan without executing', async () => {
+    ensureSynaxAgentRegistered();
+    const questions=[{id:'scope',type:'text',label:'Scope?',required:true}];
+    const plan={title:'Small plan',objective:'Implement a bounded change',steps:[{id:'s1',title:'Implement',description:'Do the approved work',dependsOn:[],expectedFiles:[]}],acceptanceCriteria:['The behavior is verified'],assumptions:[],risks:[]};
+    queueMockStep(makeToolStep({toolName:'human_ask',toolCallId:'ask-1',args:{title:'Clarify scope',questions}}));
+    queueMockStep(makeToolStep({toolName:'plan_propose',toolCallId:'plan-1',args:plan}));
+    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'Plan a bounded implementation',sessionMetadata:{mode:'plan'}});
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{}));
+    const [run]=agentLoopRuntime.listRuns(session.id);
+    expect(run.status).toBe('waiting_input');
+    const first=interactionService.pending(session.id)!;
+    expect(first.kind).toBe('clarification');
+    interactionService.reply(session.id,first.id,{revision:first.revision,action:'submit',answers:{scope:'Only the API'}});
+    await agentLoopRuntime.resumeRun(session.id);
+    expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
+    const second=interactionService.pending(session.id)!;
+    expect(second.kind).toBe('plan_approval');
+    expect(agentRuntimeStore.getToolCall(session.id,first.toolCallId).outputRef).toMatchObject({answers:{scope:'Only the API'}});
+    const parts=agentRuntimeStore.listRunParts(first.stepId);
+    expect(parts.filter(p=>p.kind==='tool_result'&&p.toolCallId===first.toolCallId)).toHaveLength(1);
+    interactionService.reply(session.id,second.id,{revision:second.revision,action:'save'});
+    await agentLoopRuntime.resumeRun(session.id);
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'completed',sessionMetadata:{mode:'plan',plan:{status:'saved'}}});
+    expect(agentRuntimeStore.listToolCalls(session.id).map(c=>c.toolId)).toEqual(['human.ask','plan.propose']);
+  });
+
+  it('rejects an entire mixed interaction batch before a write can execute', async () => {
+    ensureSynaxAgentRegistered();
+    queueMockStep(makeStream([
+      {type:'tool-call',toolCallId:'ask',toolName:'human_ask',input:{title:'Clarify',questions:[{id:'ok',type:'boolean',label:'Proceed?'}]}},
+      {type:'tool-call',toolCallId:'write',toolName:'file_write',input:{path:'tmp/agent-loop-runtime-write.txt',content:'must not execute'}},
+      {type:'finish-step',finishReason:'tool-calls',usage:{}},
+    ]));
+    queueMockStep(makeTextStep('I will ask separately.'));
+    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'Inspect this',permissionTier:'unrestricted',sessionMetadata:{mode:'chat'}});
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{}));
+    expect(fs.existsSync(path.resolve('tmp/agent-loop-runtime-write.txt'))).toBe(false);
+    expect(interactionService.pending(session.id)).toBeNull();
+    expect(agentRuntimeStore.listToolCalls(session.id)).toHaveLength(2);
+    expect(agentRuntimeStore.listToolCalls(session.id).every(c=>c.toolId==='tools.invalid')).toBe(true);
+    expect(agentRuntimeStore.getSession(session.id).status).toBe('completed');
+  });
+
+  it('does not declare a goal complete on a final text answer or exhausted budget', async () => {
+    ensureSynaxAgentRegistered();
+    queueMockStep(makeTextStep('Everything is done.'));
+    queueMockStep(makeTextStep('Everything is done again.'));
+    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'Complete an approved goal',sessionMetadata:{mode:'goal'}});
+    agentRuntimeStore.updateSessionMetadata(session.id,{goal:initializeGoal('Complete an approved goal',{maxSteps:2})});
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{}));
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'blocked',sessionMetadata:{goal:{status:'budget_exhausted',stepsUsed:2}}});
+    expect(agentLoopRuntime.listRuns(session.id)[0].status).toBe('blocked');
+  });
+
+  it('executes an approved goal and completes only with real task and tool evidence', async () => {
+    ensureSynaxAgentRegistered();
+    const criterion='Package metadata was inspected';
+    const plan={title:'Inspect package',objective:criterion,steps:[{id:'read',title:'Read package',description:'Inspect package.json'}],acceptanceCriteria:[criterion]};
+    queueMockStep(makeToolStep({toolName:'plan_propose',toolCallId:'propose-goal',args:plan}));
+    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:criterion,sessionMetadata:{mode:'goal'}});
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{}));
+    const approval=interactionService.pending(session.id)!;
+    expect(approval.kind).toBe('plan_approval');
+    interactionService.reply(session.id,approval.id,{revision:approval.revision,action:'execute'});
+    queueMockStep(makeToolStep({toolName:'file_read',toolCallId:'proof-read',args:{path:'package.json'}}));
+    queueMockStep(makeToolStep({toolName:'task_update',toolCallId:'task-done',args:{taskId:'1',status:'completed'}}));
+    mockStepResults.push({fullStream:(async function*(){
+      const proof=agentRuntimeStore.listToolCalls(session.id).find(c=>c.modelToolCallId==='proof-read')!;
+      yield {type:'tool-call' as const,toolCallId:'goal-done',toolName:'goal_finish',input:{status:'completed',reason:'Package metadata verified',evidence:[{criterion,summary:'Read package.json successfully',toolCallIds:[proof.id]}]}};
+      yield {type:'finish-step' as const,finishReason:'tool-calls',usage:{}};
+    })()});
+    await agentLoopRuntime.resumeRun(session.id);
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'completed',sessionMetadata:{goal:{status:'completed',stepsUsed:4},plan:{status:'approved'}}});
+    expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
+    expect(agentRuntimeStore.listToolCalls(session.id).every(c=>c.status==='completed')).toBe(true);
+    expect(mockStepResults).toHaveLength(0);
+  });
+
+  it('runs a task-defined specialist with its persisted effective capability profile', async () => {
+    ensureSynaxAgentRegistered();
+    queueMockStep(makeToolStep({toolName:'subagent_delegate',toolCallId:'specialist-1',args:{specialist:{name:'Package expert',role:'Node package reviewer',instructions:'Inspect package metadata only',capabilities:['file.read'],skillIds:[]},prompt:'Read package.json',deliverable:'Name and scripts'}}));
+    queueMockStep(makeToolStep({toolName:'file_read',toolCallId:'expert-read',args:{path:'package.json'}}));
+    queueMockStep(makeTextStep('Package metadata reviewed.'));
+    queueMockStep(makeTextStep('Expert review integrated.'));
+    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'Inspect package metadata',sessionMetadata:{mode:'chat'}});
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{}));
+    const [child]=agentRuntimeStore.listSessionTree(session.id).filter(s=>s.parentSessionId===session.id);
+    expect(child).toMatchObject({profileId:'specialist',status:'completed',sessionMetadata:{specialist:{name:'Package expert',capabilities:['file.read']}}});
+    expect(agentRuntimeStore.listToolCalls(child.id).map(c=>c.toolId)).toEqual(['file.read']);
+    expect(agentRuntimeStore.getSession(session.id).status).toBe('completed');
+    expect(mockStepResults).toHaveLength(0);
+  });
+
 });

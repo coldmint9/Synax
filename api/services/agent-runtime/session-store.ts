@@ -195,6 +195,7 @@ interface RunPartRow {
 }
 
 const RUNTIME_TABLES = [
+  'agent_runtime_interactions',
   'agent_runtime_run_parts',
   'agent_runtime_run_steps',
   'agent_runtime_runs',
@@ -572,6 +573,8 @@ export class AgentRuntimeStore {
         });
       }
 
+      const deleteInteractions = db.prepare('DELETE FROM agent_runtime_interactions WHERE session_id = ?');
+      for (const id of deleteIds) deleteInteractions.run(id);
       const deleteRunPartsBySession = db.prepare('DELETE FROM agent_runtime_run_parts WHERE session_id = ?');
       const deleteRunStepsBySession = db.prepare('DELETE FROM agent_runtime_run_steps WHERE session_id = ?');
       const deleteRunsBySession = db.prepare('DELETE FROM agent_runtime_runs WHERE session_id = ?');

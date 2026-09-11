@@ -7,6 +7,7 @@ import type { AgentSessionStatus } from '../../../lib/api/agentRuntime'
 const STATUS_DOT: Record<AgentSessionStatus, string> = {
   running: 'bg-[var(--color-run)] animate-pulse',
   waiting_permission: 'bg-warning',
+  waiting_input: 'bg-warning',
   blocked: 'bg-warning',
   completed: 'bg-success',
   failed: 'bg-danger',

@@ -1,3 +1,5 @@
+import { interactionService } from './interaction-service.js';
+import { initializeGoal } from './goal-control.js';
 import type { AgentSession, CreateSessionRequest } from './contracts.js';
 import {
   rebuildSessionPermissionRules,
@@ -56,6 +58,11 @@ export class AgentSessionRuntime {
       permissionTier: input.permissionTier,
       permissionOverrides: input.permissionOverrides,
     });
+    if (!parent && (input.profileId === 'synax' || input.profileId === 'goal')) {
+      delete sessionMetadata.plan;
+      delete sessionMetadata.goal;
+      if (sessionMetadata.mode === 'goal') sessionMetadata.goal = initializeGoal(input.prompt);
+    }
     const sessionDraft: AgentSession = {
       id: makeRuntimeId('ars'),
       projectId: input.projectId,
@@ -138,6 +145,9 @@ export class AgentSessionRuntime {
   }
 
   cancel(sessionId: string): AgentSession {
+    interactionService.cancel(sessionId);
+    const existingGoal = this.store.getSession(sessionId).sessionMetadata?.goal;
+    if (existingGoal && typeof existingGoal === 'object') this.store.updateSessionMetadata(sessionId, { goal: { ...existingGoal, status: 'cancelled', reason: 'Stopped by user.' } });
     const current = this.store.getSession(sessionId);
     const now = nowIso();
     const reason = 'User stopped run.';
@@ -182,6 +192,7 @@ export class AgentSessionRuntime {
 
   pause(sessionId: string): AgentSession {
     const current = this.store.getSession(sessionId);
+    if (current.status === 'waiting_input') return current;
     if (current.status !== 'running' && current.status !== 'waiting_permission') {
       throw new AgentValidationError('Only running or waiting_permission sessions can be paused.');
     }

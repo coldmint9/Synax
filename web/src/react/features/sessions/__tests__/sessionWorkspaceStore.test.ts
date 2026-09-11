@@ -29,7 +29,7 @@ describe('sessionWorkspaceStore', () => {
     expect(useSessionWorkspaceStore.getState().sessions['session-a'].presentation).toBe('dock')
   })
 
-  it('keeps focus after closing the last tab and only exits explicitly', () => {
+  it('leaves fullscreen when the last tab closes', () => {
     const store = useSessionWorkspaceStore.getState()
     store.openTab('session-a', { kind: 'file', title: 'a.ts', path: 'a.ts' })
     store.enterFocus('session-a')
@@ -38,11 +38,8 @@ describe('sessionWorkspaceStore', () => {
     expect(useSessionWorkspaceStore.getState().sessions['session-a']).toMatchObject({
       tabs: [],
       activeTabId: null,
-      presentation: 'focus',
+      presentation: 'dock',
     })
-
-    store.exitFocus('session-a')
-    expect(useSessionWorkspaceStore.getState().sessions['session-a'].presentation).toBe('dock')
   })
 
   it('removes only the deleted sessions', () => {

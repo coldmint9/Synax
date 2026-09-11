@@ -24,3 +24,10 @@ New waiting_input status for sessions/runs/steps. Live interaction events lead c
 
 ## Verification
 Regression checks cover read-only enforcement including children and permission resume; form validation/idempotency/late rejection/restart; mixed-call barriers; checkpoint answer consumption; plan approval/revision; goal budget and completion evidence; specialist snapshot and permission inheritance; accessible typed form submission and mode controls. Preserve pre-existing local edits and report baseline/environment failures separately. No production DB reset or service restart as part of tests.
+
+
+## Implemented authority details
+- Plan approval assigns a server-generated executionId and its run/step boundary. Eligible completion evidence must belong to this execution and postdate approval; previous-goal and previous-revision evidence cannot be reused implicitly. The prompt exposes eligible runtime evidence IDs.
+- Plans can mark a subset of acceptanceCriteria as humanAcceptanceCriteria. Completion produces server-bound boolean forms for those items; only stored answers for the current plan revision count as approval.
+- Native controls cannot be bypassed by changing a turn to an ACP model. Legacy ACP sessions without native goal state remain compatible.
+- The interaction table intentionally uses application-checked references and explicit tree-deletion cleanup: existing runtime record upserts use INSERT OR REPLACE, whose FK cascades would delete checkpoints during ordinary state updates.

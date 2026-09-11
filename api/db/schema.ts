@@ -756,3 +756,15 @@ export const wikiJobs = sqliteTable('wiki_jobs', {
 
 export type WikiJobRow = typeof wikiJobs.$inferSelect;
 export type NewWikiJobRow = typeof wikiJobs.$inferInsert;
+
+// Durable human-input checkpoints (forms and versioned plan approval).
+export const agentRuntimeInteractions = sqliteTable('agent_runtime_interactions', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id').notNull(),
+  runId: text('run_id').notNull(),
+  stepId: text('step_id').notNull(),
+  toolCallId: text('tool_call_id').notNull().unique(),
+  kind: text('kind').notNull(), revision: integer('revision').notNull(), status: text('status').notNull(),
+  requestJson: text('request_json').notNull(), responseJson: text('response_json'),
+  createdAt: text('created_at').notNull(), resolvedAt: text('resolved_at'), consumedAt: text('consumed_at'),
+});

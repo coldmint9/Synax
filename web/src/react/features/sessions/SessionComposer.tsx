@@ -13,14 +13,19 @@ import {
   isSessionComposerLocked,
   sessionHasPendingPermissions,
   canEnqueueSessionInput,
+  canSwitchSessionMode,
 } from './sessionComposerState'
 import { InputQueueStrip } from './InputQueueStrip'
-import type { AgentSession, ReasoningEffort } from '../../../lib/api/agentRuntime'
+import type { AgentSession, AgentSessionMode, ReasoningEffort } from '../../../lib/api/agentRuntime'
+import { AgentInteractionPanel } from './AgentInteractionPanel'
+import { SessionModePicker } from './SessionModePicker'
 import { effectiveReasoningEfforts } from '../settings/lib/providerPresets'
 import {
   readSynaxDocumentId,
   readSynaxPermissionTier,
   readSynaxWikiAttachMode,
+  readSynaxSessionMode,
+  isAcpSession,
   type SynaxPermissionTier,
 } from './synaxSessionTypes'
 
@@ -33,11 +38,18 @@ interface Props {
 }
 
 export function SessionComposer({ session, projectId, layout = 'footer', statusSlot }: Props) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
+  const zh = locale === 'zh'
   const navigate = useNavigate()
   const [content, setContent] = useState('')
   const [skillIds, setSkillIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
+  const [changingMode, setChangingMode] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const draftMode = useAgentSessionStore(s => s.draftMode)
+  const setDraftMode = useAgentSessionStore(s => s.setDraftMode)
+  const updateSessionMode = useAgentSessionStore(s => s.updateSessionMode)
+  const interactionState = useAgentSessionStore(s => s.interactionState)
   const sendSessionMessage = useAgentSessionStore(s => s.sendSessionMessage)
   const submitOrEnqueueSessionInput = useAgentSessionStore(s => s.submitOrEnqueueSessionInput)
   const loadInputQueue = useAgentSessionStore(s => s.loadInputQueue)
@@ -54,12 +66,15 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
     sessionHasPendingPermissions(sessionId, s.selectedSessionId, s.permissions),
   )
   const isDraft = !session
-  const isGenerating = isSessionComposerLocked(session, { submitting, hasPendingPermissions })
-  const queueWhileGenerating = canEnqueueSessionInput(session)
+  const currentInteractions = interactionState?.sessionId === sessionId ? interactionState : null
+  const hasPendingInteractions = currentInteractions?.items.some(item => item.status === 'pending') ?? false
+  const isGenerating = isSessionComposerLocked(session, { submitting, hasPendingPermissions, hasPendingInteractions })
+  const queueWhileGenerating = !hasPendingInteractions && canEnqueueSessionInput(session)
   const resyncedStaleWaitingRef = useRef(false)
 
   useEffect(() => {
     resyncedStaleWaitingRef.current = false
+    setError(null)
   }, [sessionId])
 
   useEffect(() => {
@@ -86,6 +101,32 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   const documents = useWikiStore(s => s.documents)
   const loadProjectSnapshot = useWikiStore(s => s.loadProjectSnapshot)
   const updateSessionPermissions = useAgentSessionStore(s => s.updateSessionPermissions)
+  const acp = providers.some(provider => provider.id === providerId && provider.kind === 'acp')
+    || isAcpSession(session, formatTurnModel(providerId, modelId))
+  const mode = isDraft ? (acp ? 'chat' : draftMode) : readSynaxSessionMode(session.sessionMetadata)
+  const modeEnabled = !submitting && !changingMode && canSwitchSessionMode(session, {
+    acp,
+    hasPendingPermissions,
+    hasPendingInteractions: Boolean(session && (!currentInteractions || currentInteractions.loading || currentInteractions.error || hasPendingInteractions)),
+  })
+  const incompatibleModel = Boolean(session && !isAcpSession(session) && acp && (mode === 'plan' || mode === 'goal'))
+
+  const handleModeChange = async (next: AgentSessionMode) => {
+    if (!modeEnabled) return
+    setError(null)
+    if (isDraft) {
+      setDraftMode(next)
+      return
+    }
+    setChangingMode(true)
+    try {
+      await updateSessionMode(session.id, next)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setChangingMode(false)
+    }
+  }
 
   useEffect(() => {
     if (!projectId) return
@@ -152,7 +193,8 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
 
   const handleSubmit = useCallback(async () => {
     const message = content.trim()
-    if (!message || (isGenerating && !queueWhileGenerating)) return
+    if (!message || changingMode || incompatibleModel || (isGenerating && !queueWhileGenerating)) return
+    setError(null)
     setContent('')
     setSubmitting(true)
     const model = formatTurnModel(providerId, modelId)
@@ -170,6 +212,7 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
         })
         const created = await submitSessionDraft(projectId, {
           message,
+          mode: acp ? 'chat' : draftMode,
           prompt,
           model,
           reasoningEffort: effortPayload,
@@ -193,16 +236,24 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       } else {
         await submitOrEnqueueSessionInput(session.id, { message, model, reasoningEffort: effortPayload, permissionTier })
       }
+    } catch (error) {
+      setContent(message)
+      setError(error instanceof Error ? error.message : String(error))
     } finally {
       setSubmitting(false)
     }
   }, [
     content,
+    acp,
+    draftMode,
+    changingMode,
+    incompatibleModel,
     documentId,
     documents,
     isDraft,
     isGenerating,
     modelId,
+    mode,
     navigate,
     permissionTier,
     projectId,
@@ -228,6 +279,10 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
 
   const composer = (
     <GoalComposerPill
+      modeControl={<SessionModePicker mode={mode} disabled={!modeEnabled} onChange={next => void handleModeChange(next)}
+        description={acp ? (zh ? '计划和目标模式仅适用于原生 Synax 引擎。' : 'Plan and goal require the native Synax engine.')
+          : !modeEnabled ? (zh ? '会话空闲且无待处理请求时可切换模式。' : 'Switch when idle with no pending requests.')
+            : (zh ? '模式不会改变工具权限。' : 'Mode does not change tool permissions.')} />}
       projectId={projectId}
       content={content}
       onContentChange={setContent}
@@ -238,6 +293,10 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       providerId={providerId}
       modelId={modelId}
       onModelSelect={(selection) => {
+        if (session && !isAcpSession(session) && selection.kind === 'acp' && (mode === 'plan' || mode === 'goal')) {
+          setError(zh ? '请先切换为对话模式，再选择 ACP。' : 'Switch to chat mode before selecting ACP.')
+          return
+        }
         setProviderId(selection.providerId)
         setModelId(selection.modelId)
       }}
@@ -255,25 +314,30 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       allowedReasoningEfforts={allowedReasoningEfforts}
       permissionTier={permissionTier}
       onPermissionTierChange={handlePermissionTierChange}
-      disabled={isGenerating && !queueWhileGenerating}
+      disabled={changingMode || (isGenerating && !queueWhileGenerating)}
       wikiAttachDisabled={!isDraft}
       queueWhileGenerating={queueWhileGenerating}
     />
   )
 
   const composerShell = (
-    <div
-      className={`goal-session-composer-shell goal-dock-shell w-full flex flex-col items-center${isCentered ? ' goal-session-composer-shell--draft' : ''}`}
-      data-multiline={expandedShell ? 'true' : undefined}
-    >
-      {sessionId && (
-        <InputQueueStrip
-          items={queuedInputs}
-          onRemove={(itemId) => void removeQueuedInput(sessionId, itemId)}
-          onForce={(itemId) => void forceQueuedInput(sessionId, itemId)}
-        />
-      )}
-      <div className="goal-dock-shell-content">{composer}</div>
+    <div className="agent-session-controls w-full">
+      {error && <p role="alert" className="mb-2 px-2 text-xs text-danger">{error}</p>}
+      {incompatibleModel && <p role="alert" className="mb-2 px-2 text-xs text-danger">{zh ? '请选择 API 模型，或先切换为对话模式。' : 'Choose an API model or switch to chat mode first.'}</p>}
+      {session && <AgentInteractionPanel key={session.id} session={session} />}
+      <div
+        className={`goal-session-composer-shell goal-dock-shell w-full flex flex-col items-center${isCentered ? ' goal-session-composer-shell--draft' : ''}`}
+        data-multiline={expandedShell ? 'true' : undefined}
+      >
+        {sessionId && (
+          <InputQueueStrip
+            items={queuedInputs}
+            onRemove={(itemId) => void removeQueuedInput(sessionId, itemId)}
+            onForce={(itemId) => void forceQueuedInput(sessionId, itemId)}
+          />
+        )}
+        <div className="goal-dock-shell-content">{composer}</div>
+      </div>
     </div>
   )
 

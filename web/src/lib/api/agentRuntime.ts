@@ -12,6 +12,7 @@ export type AgentSessionStatus =
   | 'queued'
   | 'running'
   | 'waiting_permission'
+  | 'waiting_input'
   | 'blocked'
   | 'completed'
   | 'failed'
@@ -22,6 +23,7 @@ export type AgentSessionStatus =
 export type AgentRunStatus =
   | 'running'
   | 'waiting_permission'
+  | 'waiting_input'
   | 'blocked'
   | 'completed'
   | 'failed'
@@ -39,6 +41,68 @@ export interface AgentProfile {
   maxSteps: number
   status: 'active' | 'disabled'
   allowsSubsessions?: boolean
+}
+
+export type AgentSessionMode = 'chat' | 'plan' | 'goal'
+
+export interface HumanQuestion {
+  id: string
+  type: 'single_select' | 'multi_select' | 'text' | 'textarea' | 'number' | 'boolean'
+  label: string
+  required?: boolean
+  options?: { value: string; label: string }[]
+  allowOther?: boolean
+  min?: number
+  max?: number
+}
+
+export interface AgentPlan {
+  title: string
+  objective: string
+  steps: { id: string; title: string; description: string; dependsOn: string[]; expectedFiles: string[] }[]
+  acceptanceCriteria: string[]
+  humanAcceptanceCriteria?: string[]
+  assumptions: string[]
+  risks: string[]
+}
+
+export interface AgentGoalState {
+  objective: string
+  status: 'planning' | 'executing' | 'completed' | 'blocked' | 'budget_exhausted' | 'cancelled'
+  maxSteps: number
+  stepsUsed: number
+  maxTokens: number
+  tokensUsed: number
+  acceptanceEvidence?: unknown
+  reason?: string
+}
+
+export interface AgentSessionMetadata extends Record<string, unknown> {
+  mode?: AgentSessionMode | 'plan_node'
+  plan?: (AgentPlan & { revision: number; status: 'draft' | 'approved' | 'saved' }) | null
+  goal?: AgentGoalState | null
+}
+
+export interface AgentInteractionReply {
+  revision: number
+  action: 'submit' | 'decline' | 'cancel' | 'save' | 'revise' | 'execute'
+  answers?: Record<string, string | string[] | number | boolean>
+  message?: string
+}
+
+export interface AgentInteraction {
+  id: string
+  sessionId: string
+  runId: string
+  stepId: string
+  toolCallId: string
+  kind: 'clarification' | 'plan_approval'
+  revision: number
+  status: 'pending' | 'answered' | 'declined' | 'cancelled'
+  request: { title: string; questions?: HumanQuestion[]; plan?: AgentPlan }
+  response: AgentInteractionReply | null
+  createdAt: string
+  resolvedAt: string | null
 }
 
 export interface AgentSession {
@@ -64,7 +128,7 @@ export interface AgentSession {
   activeRunId: string | null
   pendingResumeToken: string | null
   model: string | null
-  sessionMetadata?: Record<string, unknown> | null
+  sessionMetadata?: AgentSessionMetadata | null
 }
 
 export interface AgentRun {
@@ -349,6 +413,17 @@ export const agentRuntimeApi = {
     return request<SessionListResponse>(`/sessions${qs.size ? `?${qs.toString()}` : ''}`)
   },
   getSession: (sessionId: string) => request<SessionPayload>(`/sessions/${encodeURIComponent(sessionId)}`),
+  listInteractions: (sessionId: string) =>
+    request<{ interactions: AgentInteraction[] }>(`/sessions/${encodeURIComponent(sessionId)}/interactions`),
+  replyInteraction: (sessionId: string, interactionId: string, body: AgentInteractionReply) =>
+    request<{ interaction: AgentInteraction }>(
+      `/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reply`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  updateSessionMode: (sessionId: string, mode: AgentSessionMode) =>
+    request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/mode`, {
+      method: 'PATCH', body: JSON.stringify({ mode }),
+    }),
   cancelSession: (sessionId: string) =>
     request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: 'POST' }),
   deleteSession: (sessionId: string) =>

@@ -96,7 +96,7 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
       setSaved(true)
       setTimeout(() => setSaved(false), 1200)
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : '保存失败')
+      setSaveError(err instanceof Error ? err.message : t('settingsMcpSaveFailed'))
     } finally {
       setSaving(false)
     }
@@ -104,19 +104,19 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
 
   async function handleTest(server: McpServerConfig) {
     setTestingId(server.id)
-    setTestMessages(m => ({ ...m, [server.id]: '正在连接…' }))
+    setTestMessages(m => ({ ...m, [server.id]: t('settingsMcpConnecting') }))
     try {
       const result = await configApi.testMcpServer(server)
       if (result.ok) {
         setTestMessages(m => ({
           ...m,
-          [server.id]: `✓ 连接成功，发现 ${result.tools.length} 个工具：${result.tools.slice(0, 8).map(t => t.name).join(', ') || '—'}`,
+          [server.id]: t('settingsMcpConnectedTools', { count: result.tools.length, tools: result.tools.slice(0, 8).map(tool => tool.name).join(', ') || '—' }),
         }))
       } else {
-        setTestMessages(m => ({ ...m, [server.id]: `✗ ${result.error ?? '连接失败'}` }))
+        setTestMessages(m => ({ ...m, [server.id]: `✗ ${result.error ?? t('settingsMcpConnectionFailed')}` }))
       }
     } catch (err) {
-      setTestMessages(m => ({ ...m, [server.id]: `✗ ${err instanceof Error ? err.message : '连接失败'}` }))
+      setTestMessages(m => ({ ...m, [server.id]: `✗ ${err instanceof Error ? err.message : t('settingsMcpConnectionFailed')}` }))
     } finally {
       setTestingId(null)
     }
@@ -130,7 +130,7 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
   function handleSaveDraft() {
     if (!editing) return
     if (!editing.name.trim() || !editing.command.trim()) {
-      setSaveError('名称与命令不能为空')
+      setSaveError(t('settingsMcpNameCommandRequired'))
       return
     }
     const configDraft = draftToConfig(editing)
@@ -160,14 +160,14 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
             onPress={() => setEditing(emptyDraft(randomId()))}
           >
             <Plus size={12} />
-            添加服务器
+            {t('settingsMcpAddServer')}
           </Button>
         </div>
       }
     >
       <p className="settings-note">{description ?? t('settingsMcpDesc')}</p>
       {servers.length === 0 && !editing && (
-        <p className="settings-note">尚未配置 MCP 服务器。添加 stdio 服务器后可在 agent 输入框按会话启用。</p>
+        <p className="settings-note">{t('settingsMcpEmpty')}</p>
       )}
       <div className="settings-list">
         {servers.map(server => (
@@ -176,14 +176,14 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
               <Checkbox
                 isSelected={server.enabled !== false}
                 onChange={(checked) => handleToggleEnabled(server, Boolean(checked))}
-                aria-label={`启用 ${server.name}`}
+                aria-label={t('settingsMcpEnableServer', { name: server.name })}
               >
                 <Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>
               </Checkbox>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-foreground">{server.name}</span>
-                  {server.enabled === false && <span className="settings-chip settings-chip--muted">已停用</span>}
+                  {server.enabled === false && <span className="settings-chip settings-chip--muted">{t('settingsMcpDisabled')}</span>}
                 </div>
                 <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
                   {server.command} {server.args?.join(' ') ?? ''}
@@ -193,15 +193,15 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
                 )}
                 <div className="mt-2 flex items-center gap-1.5">
                   <Button size="sm" variant="secondary" onPress={() => { setEditing(configToDraft(server)); setSaveError(null) }}>
-                    <Pencil size={12} /> 编辑
+                    <Pencil size={12} /> {t('settingsMcpEdit')}
                   </Button>
                   <Button size="sm" variant="secondary" isPending={testingId === server.id} onPress={() => void handleTest(server)}>
                     {({ isPending }) => (
-                      <>{isPending ? null : <Wifi size={12} />}测试连接</>
+                      <>{isPending ? null : <Wifi size={12} />}{t('settingsMcpTest')}</>
                     )}
                   </Button>
                   <Button size="sm" variant="danger-soft" onPress={() => handleDelete(server.id)}>
-                    <Trash2 size={12} /> 删除
+                    <Trash2 size={12} /> {t('settingsMcpDelete')}
                   </Button>
                 </div>
               </div>
@@ -213,31 +213,31 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
       {editing && (
         <div className="mt-3 space-y-3 rounded-lg border border-border/40 p-3">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-foreground">{servers.some(s => s.id === editing.id) ? '编辑 MCP 服务器' : '新增 MCP 服务器'}</span>
-            <Button isIconOnly size="sm" variant="ghost" aria-label="关闭" onPress={() => setEditing(null)}>
+            <span className="text-xs font-semibold text-foreground">{servers.some(s => s.id === editing.id) ? t('settingsMcpEditTitle') : t('settingsMcpAddTitle')}</span>
+            <Button isIconOnly size="sm" variant="ghost" aria-label={t('settingsMcpClose')} onPress={() => setEditing(null)}>
               <X size={13} />
             </Button>
           </div>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-foreground">名称</span>
+            <span className="mb-1 block text-xs font-medium text-foreground">{t('settingsMcpName')}</span>
             <input
               className="import-input w-full"
               value={editing.name}
               onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-              placeholder="例如 Filesystem"
+              placeholder={t('settingsMcpNamePlaceholder')}
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-foreground">命令</span>
+            <span className="mb-1 block text-xs font-medium text-foreground">{t('settingsMcpCommand')}</span>
             <input
               className="import-input w-full font-mono"
               value={editing.command}
               onChange={(e) => setEditing({ ...editing, command: e.target.value })}
-              placeholder="npx / 可执行文件路径"
+              placeholder={t('settingsMcpCommandPlaceholder')}
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-foreground">参数（每行一个）</span>
+            <span className="mb-1 block text-xs font-medium text-foreground">{t('settingsMcpArgs')}</span>
             <textarea
               className="import-input w-full font-mono"
               rows={3}
@@ -247,7 +247,7 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-foreground">环境变量（KEY=VALUE，每行一个）</span>
+            <span className="mb-1 block text-xs font-medium text-foreground">{t('settingsMcpEnv')}</span>
             <textarea
               className="import-input w-full font-mono"
               rows={3}
@@ -263,7 +263,7 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
             >
               <Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>
             </Checkbox>
-            <span className="text-xs text-foreground">启用该服务器（可在 agent 输入框按会话选择）</span>
+            <span className="text-xs text-foreground">{t('settingsMcpEnable')}</span>
           </label>
           <div className="flex items-center justify-end gap-2 pt-1">
             <Button size="sm" variant="secondary" onPress={() => {
@@ -274,15 +274,15 @@ export function McpServersSection({ config, servers: initialServers, onUpdate, o
                 setTestMessages(m => ({
                   ...m,
                   [probe.id]: result.ok
-                    ? `✓ 连接成功，发现 ${result.tools.length} 个工具`
-                    : `✗ ${result.error ?? '连接失败'}`,
+                    ? t('settingsMcpConnectedCount', { count: result.tools.length })
+                    : `✗ ${result.error ?? t('settingsMcpConnectionFailed')}`,
                 }))
               }).finally(() => setTestingId(null))
             }}>
               {testingId === editing.id ? <Loader2 size={12} className="animate-spin" /> : <Wifi size={12} />}
-              测试连接
+              {t('settingsMcpTest')}
             </Button>
-            <Button size="sm" onPress={handleSaveDraft}>保存</Button>
+            <Button size="sm" onPress={handleSaveDraft}>{t('settingsMcpSave')}</Button>
           </div>
         </div>
       )}

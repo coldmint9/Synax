@@ -2,15 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useSessionWorkspaceStore } from '../sessionWorkspaceStore'
 
+const mocks = vi.hoisted(() => ({ reload: vi.fn() }))
+
 vi.mock('../SessionEnvironmentContext', () => ({
   useSessionWorkspaceEnvironment: () => ({
     environment: null,
     loading: false,
-    reload: vi.fn(),
+    reload: mocks.reload,
   }),
 }))
 
-const { WorkspaceFocusControls, WorkspaceWing } = await import('../WorkspaceChromeControls')
+const { WorkspaceTabStrip } = await import('../WorkspaceChromeControls')
 
 function matchWideViewport() {
   Object.defineProperty(window, 'matchMedia', {
@@ -29,9 +31,17 @@ function matchWideViewport() {
   })
 }
 
-describe('WorkspaceChromeControls', () => {
+describe('WorkspaceTabStrip', () => {
+  const scrollIntoView = vi.fn()
+
   beforeEach(() => {
     matchWideViewport()
+    mocks.reload.mockReset()
+    scrollIntoView.mockReset()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
     useSessionWorkspaceStore.setState({
       sessions: {
         'session-1': {
@@ -50,35 +60,44 @@ describe('WorkspaceChromeControls', () => {
 
   afterEach(() => cleanup())
 
-  it('renders the dock wing without replacing the workspace layout', () => {
-    render(<WorkspaceWing sessionId="session-1" />)
+  it('renders every tab in a scrollable rail and keeps the active tab visible', () => {
+    const { container } = render(<WorkspaceTabStrip sessionId="session-1" />)
 
-    expect(screen.getByText('d.ts')).toBeTruthy()
-    expect(screen.getByText('4')).toBeTruthy()
+    expect(screen.getAllByRole('tab')).toHaveLength(4)
+    expect(container.querySelector('.workspace-tab-rail')).toBeTruthy()
+    expect(screen.queryByLabelText('还有 1 个标签')).toBeNull()
+    expect(screen.getByRole('tab', { name: 'd.ts' }).getAttribute('aria-selected')).toBe('true')
+    expect(scrollIntoView).toHaveBeenCalled()
 
-    fireEvent.click(screen.getByLabelText('切换工作区标签'))
-    expect(screen.getByRole('menuitem', { name: 'b.ts' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'b.ts' }))
+    expect(useSessionWorkspaceStore.getState().sessions['session-1'].activeTabId).toBe('diff:b.ts')
+  })
 
-    fireEvent.click(screen.getByLabelText('切换到 d.ts'))
+  it('closes a tab and selects the remaining tab', () => {
+    render(<WorkspaceTabStrip sessionId="session-1" />)
+
+    fireEvent.click(screen.getByLabelText('关闭 d.ts'))
+
     expect(useSessionWorkspaceStore.getState().sessions['session-1']).toMatchObject({
-      activeTabId: 'diff:d.ts',
+      activeTabId: 'diff:c.ts',
       presentation: 'dock',
     })
   })
 
-  it('wraps the tab strip in a pill without workspace actions', () => {
-    const { container } = render(<WorkspaceFocusControls sessionId="session-1" />)
+  it('refreshes and toggles fullscreen mode from the tab actions', () => {
+    render(<WorkspaceTabStrip sessionId="session-1" />)
 
-    expect(container.querySelector('.workspace-tabs-pill')).toBeTruthy()
-    expect(screen.queryByRole('tab', { name: '工作区' })).toBeNull()
-    expect(screen.queryByLabelText('新建标签页')).toBeNull()
-    expect(screen.queryByLabelText('关闭全部标签')).toBeNull()
-    expect(screen.getByRole('tab', { name: /d.ts/ }).getAttribute('aria-selected')).toBe('true')
-    fireEvent.click(screen.getByLabelText('还有 1 个标签'))
-    expect(screen.getByRole('menuitem', { name: 'c.ts' })).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('刷新工作区'))
+    expect(mocks.reload).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByLabelText('全屏'))
+    expect(useSessionWorkspaceStore.getState().sessions['session-1'].presentation).toBe('focus')
+
+    fireEvent.click(screen.getByLabelText('退出全屏'))
+    expect(useSessionWorkspaceStore.getState().sessions['session-1'].presentation).toBe('dock')
   })
 
-  it('hides the dashboard launcher when there is nothing open', () => {
+  it('renders nothing without an active tab', () => {
     useSessionWorkspaceStore.setState({
       sessions: {
         'session-1': {
@@ -89,10 +108,9 @@ describe('WorkspaceChromeControls', () => {
       },
     })
 
-    render(<WorkspaceWing sessionId="session-1" />)
+    render(<WorkspaceTabStrip sessionId="session-1" />)
 
-    expect(screen.queryByLabelText('切换工作区标签')).toBeNull()
-    expect(screen.queryByLabelText('打开工作区面板')).toBeNull()
-    expect(screen.queryByLabelText('新建标签页')).toBeNull()
+    expect(screen.queryByRole('tab')).toBeNull()
+    expect(screen.queryByLabelText('刷新工作区')).toBeNull()
   })
 })

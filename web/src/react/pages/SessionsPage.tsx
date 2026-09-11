@@ -126,10 +126,11 @@ export default memo(function SessionsPage() {
 
   const isNewDraft = listView === 'sessions' && isNewSessionPath(location.pathname)
   const showTranscript = Boolean(agentPanelOpen && agentSessionId)
+  const workspaceFullscreen = showTranscript && hasWorkspaceContent && workspaceState.presentation === 'focus'
   const canCreateSession = listView === 'sessions' && Boolean(projectId)
 
   const commandRailLeft = leftPanel.collapsed ? 0 : leftPanel.width
-  const commandRailRight = showTranscript && wideWorkspace ? rightPanel.width : 0
+  const commandRailRight = showTranscript && wideWorkspace && !workspaceFullscreen ? rightPanel.width : 0
 
   // Keep the island centered in the space between the two side panels instead
   // of centering it against the viewport and letting it overlap the right rail.
@@ -150,6 +151,7 @@ export default memo(function SessionsPage() {
   return (
     <div className="agent-page-shell relative flex h-full min-h-0">
       <>
+          {!workspaceFullscreen && (
           <aside
             className={`session-panel-host session-panel-host--left relative shrink-0 transition-[width] duration-200 ${leftPanel.collapsed ? 'overflow-visible' : 'overflow-hidden'}`}
             data-collapsed={leftPanel.collapsed ? 'true' : undefined}
@@ -170,6 +172,7 @@ export default memo(function SessionsPage() {
               </>
             )}
           </aside>
+          )}
 
           {showTranscript ? (
             <>
@@ -180,7 +183,7 @@ export default memo(function SessionsPage() {
                   <SessionTranscript />
                 )}
               </div>
-              {wideWorkspace ? (
+              {wideWorkspace && !workspaceFullscreen ? (
                 <SessionDetailSidebar
                   width={rightPanel.width}
                   onResize={rightPanel.startResize}

@@ -1,3 +1,6 @@
+import { interactionService } from '../services/agent-runtime/interaction-service.js';
+import { interactionReplySchema } from '../services/agent-runtime/control-contracts.js';
+import { initializeGoal } from '../services/agent-runtime/goal-control.js';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -45,7 +48,7 @@ export const agentRuntimeRoutes = new Hono();
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
 
 function isHealthyAgentRuntimeSession(session: ReturnType<typeof agentSessionRuntime.get>): boolean {
-  if (session.status === 'running' || session.status === 'waiting_permission') {
+  if (session.status === 'running' || session.status === 'waiting_permission' || session.status === 'waiting_input') {
     return session.activeRunId !== null;
   }
   return true;
@@ -70,7 +73,7 @@ function runtimeError(c: Context, error: unknown) {
 
 function withSessionPayload(sessionId: string) {
   const session = agentSessionRuntime.get(sessionId);
-  const profile = profileService.get(session.profileId);
+  const profile = profileService.getForSession(session);
   return {
     session,
     profile,
@@ -128,17 +131,23 @@ agentRuntimeRoutes.get('/sessions/:sessionId', (c) => {
   }
 });
 
-agentRuntimeRoutes.post('/sessions/:sessionId/cancel', (c) => {
+agentRuntimeRoutes.post('/sessions/:sessionId/cancel', async (c) => {
   try {
-    return c.json(agentSessionRuntime.cancel(c.req.param('sessionId')));
+    const id = c.req.param('sessionId');
+    agentSessionRuntime.cancel(id);
+    await interruptAgentSessionsAndWait([id], 'User canceld session.');
+    return c.json(agentRuntimeStore.getSession(id));
   } catch (error) {
     return runtimeError(c, error);
   }
 });
 
-agentRuntimeRoutes.post('/sessions/:sessionId/pause', (c) => {
+agentRuntimeRoutes.post('/sessions/:sessionId/pause', async (c) => {
   try {
-    return c.json(agentSessionRuntime.pause(c.req.param('sessionId')));
+    const id = c.req.param('sessionId');
+    agentSessionRuntime.pause(id);
+    await interruptAgentSessionsAndWait([id], 'User paused session.');
+    return c.json(agentRuntimeStore.getSession(id));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -167,7 +176,7 @@ agentRuntimeRoutes.post('/sessions/clear-inactive', async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const { projectId } = parsed.data;
-    const keep = new Set(['running', 'waiting_permission', 'paused', 'queued']);
+    const keep = new Set(['running', 'waiting_permission', 'waiting_input', 'paused', 'queued']);
 
     const allSessions = agentSessionRuntime.list({ projectId, limit: Number.MAX_SAFE_INTEGER });
     const toDelete = allSessions.filter(
@@ -700,4 +709,32 @@ agentRuntimeRoutes.get('/sessions/:sessionId/live', (c) => {
     clearInterval(heartbeat);
     unsubscribe();
   });
+});
+
+// Forms are durable resources, not permission grants or queued chat messages.
+agentRuntimeRoutes.get('/sessions/:sessionId/interactions', (c) => {
+  try { return c.json({ interactions: interactionService.list(c.req.param('sessionId')) }); }
+  catch (error) { return runtimeError(c, error); }
+});
+agentRuntimeRoutes.post('/sessions/:sessionId/interactions/:interactionId/reply', async (c) => {
+  const body=await readJson(c); if(!body.ok)return c.json({error:body.error},400);
+  const parsed=interactionReplySchema.safeParse(body.data); if(!parsed.success)return validationError(c,parsed.error);
+  try {
+    const sessionId=c.req.param('sessionId');
+    const interaction=interactionService.reply(sessionId,c.req.param('interactionId'),parsed.data);
+    if(interactionService.ready(sessionId)) resumeAgentSessionInBackground(sessionId);
+    return c.json({interaction});
+  } catch(error){return runtimeError(c,error);}
+});
+agentRuntimeRoutes.patch('/sessions/:sessionId/mode', async (c) => {
+  const body=await readJson(c);if(!body.ok)return c.json({error:body.error},400);
+  const parsed=z.object({mode:z.enum(['chat','plan','goal'])}).strict().safeParse(body.data);if(!parsed.success)return validationError(c,parsed.error);
+  try {
+    const id=c.req.param('sessionId'), session=agentRuntimeStore.getSession(id);
+    if(session.parentSessionId||!['synax','goal'].includes(session.profileId)||sessionUsesAcpEngine(id))return c.json({error:'Modes are only available on primary native Synax sessions.'},400);
+    if(session.activeRunId||['running','waiting_input','waiting_permission'].includes(session.status)||interactionService.pending(id))return c.json({error:'Stop the run and resolve any input form before switching mode.'},409);
+    const mode=parsed.data.mode;
+    const updated=agentRuntimeStore.updateSessionMetadata(id,{mode,plan:null,goal:mode==='goal'?initializeGoal(session.prompt):null});
+    return c.json({session:updated});
+  } catch(error){return runtimeError(c,error);}
 });

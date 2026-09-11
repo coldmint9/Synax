@@ -19,7 +19,7 @@ export function useSessionDetailPolling() {
   useEffect(() => {
     if (apiReachable === 'unreachable') return
     if (!panelOpen || !selectedSessionId) return
-    const isActive = selectedStatus === 'running' || selectedStatus === 'waiting_permission'
+    const isActive = selectedStatus === 'running' || selectedStatus === 'waiting_permission' || selectedStatus === 'waiting_input'
     if (!isActive) return
 
     const refresh = () => {

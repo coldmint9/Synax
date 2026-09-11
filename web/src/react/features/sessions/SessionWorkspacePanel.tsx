@@ -35,10 +35,13 @@ export const SessionWorkspacePanel = memo(function SessionWorkspacePanel({
 
   if (mode === 'content' && !activeTab) return null
 
+  const fullscreen = presentation === 'focus'
+
   return (
     <div
       className={`session-workspace-panel session-workspace-panel--${mode === 'auto' ? presentation : mode}`}
       data-workspace-presentation={presentation}
+      data-fullscreen={fullscreen ? 'true' : undefined}
     >
       {mode === 'dashboard' || !activeTab ? (
         <WorkspaceDashboard
@@ -47,6 +50,12 @@ export const SessionWorkspacePanel = memo(function SessionWorkspacePanel({
           loading={loading}
           reload={reload}
         />
+      ) : mode === 'content' ? (
+        <div className="workspace-viewer-shell">
+          <div className="workspace-viewer-body">
+            <ActiveTabContent tab={activeTab} sessionId={sessionId} />
+          </div>
+        </div>
       ) : (
         <ActiveTabContent tab={activeTab} sessionId={sessionId} />
       )}

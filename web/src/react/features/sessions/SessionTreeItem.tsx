@@ -110,7 +110,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
     >
       {isParent ? (
         <>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-0.5">
             <button
               className="shrink-0 w-4 h-4 flex items-center justify-center text-[10px] text-muted-foreground hover:text-foreground"
               onClick={e => { e.stopPropagation(); onToggleExpand(session.id) }}

@@ -1,11 +1,13 @@
+import './agentControls.css'
 import { memo, useEffect, useMemo, useState } from 'react'
 import { formatContextLimit, formatTokenCount } from '../../../lib/formatTokens'
-import { CheckCircle2, Circle, Clock, Cpu, FileEdit, FilePlus, FileX, File, Loader2, Users } from 'lucide-react'
+import { ChevronRight, Target, CheckCircle2, Circle, Clock, Cpu, FileEdit, FilePlus, FileX, File, Loader2, Users } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAgentSessionStore } from './agentSessionStore'
-import type { SessionStats, TodoItem, AgentRunStep } from '../../../lib/api/agentRuntime'
+import type { AgentSession, SessionStats, TodoItem, AgentRunStep } from '../../../lib/api/agentRuntime'
 import { SessionCapabilitiesPanel } from './SessionCapabilitiesPanel'
 import { sumAgentTurnDurationMs } from './sumAgentTurnDuration'
+import { useLocale } from '../../../hooks/useLocale'
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -25,6 +27,7 @@ const STATUS_BADGE: Record<string, string> = {
   queued: 'bg-primary/12 text-primary',
   running: 'bg-[var(--color-run)]/15 text-[var(--color-run)]',
   waiting_permission: 'bg-warning/15 text-warning',
+  waiting_input: 'bg-warning/15 text-warning',
   blocked: 'bg-warning/15 text-warning',
   completed: 'bg-success/15 text-success',
   failed: 'bg-danger/15 text-danger',
@@ -55,6 +58,7 @@ export function SessionStatusCard({
   steps: AgentRunStep[]
   todos: TodoItem[]
 }) {
+  const { locale } = useLocale()
   const [tick, setTick] = useState(0)
   const isLive = stats.status === 'running' || steps.some(step => step.status === 'running')
 
@@ -74,7 +78,7 @@ export function SessionStatusCard({
   return (
     <div className="border-b border-border/40 px-2 py-2 space-y-2">
       <div className="flex items-center justify-between">
-        <span className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`}>{stats.status}</span>
+        <span className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`}>{stats.status === 'waiting_input' ? (locale === 'zh' ? '等待输入' : 'Waiting for input') : stats.status}</span>
         <span className="flex items-center gap-1 text-[9px] text-muted-foreground">
           <Clock size={9} />{fmtDuration(elapsed)}
         </span>
@@ -101,6 +105,54 @@ export function SessionStatusCard({
         )}
       </div>
     </div>
+  )
+}
+
+const GOAL_STATUS_LABELS = {
+  planning: ['规划中', 'Planning'],
+  executing: ['执行中', 'Executing'],
+  completed: ['目标已完成', 'Goal completed'],
+  blocked: ['目标受阻', 'Goal blocked'],
+  budget_exhausted: ['预算已耗尽', 'Budget exhausted'],
+  cancelled: ['目标已取消', 'Goal cancelled'],
+}
+
+export function SessionModeSummary({ session }: { session: AgentSession }) {
+  const { locale } = useLocale()
+  const zh = locale === 'zh'
+  const { goal, plan, specialist } = session.sessionMetadata ?? {}
+  const snapshot = specialist && typeof specialist === 'object' ? specialist as Record<string, unknown> : null
+  const name = typeof snapshot?.name === 'string' ? snapshot.name : null
+  const role = typeof snapshot?.role === 'string' ? snapshot.role : null
+  if (!goal && !plan && !name && !role) return null
+  const title = goal?.objective ?? plan?.title ?? name ?? role
+  const status = goal ? (GOAL_STATUS_LABELS[goal.status]?.[zh ? 0 : 1] ?? goal.status)
+    : plan ? (plan.status === 'approved' ? (zh ? '已批准' : 'Approved') : plan.status === 'saved' ? (zh ? '已保存' : 'Saved') : (zh ? '草稿' : 'Draft')) : null
+  return (
+    <details key={session.id} className="agent-summary" aria-label={zh ? '会话目标和角色' : 'Session goal and specialist'}>
+      <summary>
+        <ChevronRight size={11} aria-hidden className="agent-disclosure-arrow" />
+        <Target size={11} aria-hidden className="shrink-0 opacity-65" />
+        <span className="min-w-0 flex-1 truncate" title={title ?? undefined}>{title}</span>
+        {status && <span role="status" className="shrink-0 text-[10px] opacity-80">{status}</span>}
+      </summary>
+      <div className="agent-context-body space-y-2">
+        {(name || role) && <p><strong className="font-medium">{zh ? '专家：' : 'Specialist: '}{name}</strong>{role && <span> — {role}</span>}</p>}
+        {plan && <p>{zh ? '计划' : 'Plan'} v{plan.revision}: {plan.title}</p>}
+        {goal && <>
+          <p className="whitespace-pre-wrap text-foreground/85">{goal.objective}</p>
+          <div className="grid gap-3 sm:grid-cols-2 text-[11px]">
+            <label>{zh ? '步骤预算' : 'Step budget'}: {goal.stepsUsed} / {goal.maxSteps}
+              <progress aria-label={zh ? '步骤预算' : 'Step budget'} className="agent-budget-bar" value={goal.stepsUsed} max={Math.max(1, goal.maxSteps)} />
+            </label>
+            <label>{zh ? 'Token 预算' : 'Token budget'}: {formatTokenCount(goal.tokensUsed)} / {formatTokenCount(goal.maxTokens)}
+              <progress aria-label={zh ? 'Token 预算' : 'Token budget'} className="agent-budget-bar" value={goal.tokensUsed} max={Math.max(1, goal.maxTokens)} />
+            </label>
+          </div>
+        </>}
+      </div>
+      {goal?.reason && <p className="pb-1 text-[11px] leading-relaxed text-warning">{goal.reason}</p>}
+    </details>
   )
 }
 
@@ -179,6 +231,7 @@ function FilesCard({ files }: { files: FileChange[] }) {
 }
 
 export const SessionWorkspace = memo(function SessionWorkspace() {
+  const session = useAgentSessionStore(s => s.sessions.find(item => item.id === s.selectedSessionId))
   const { events, sessionStats, sessionTodos, sessionCapabilities, steps } = useAgentSessionStore(useShallow(s => ({
     events: s.events,
     sessionStats: s.sessionStats,
@@ -201,6 +254,7 @@ export const SessionWorkspace = memo(function SessionWorkspace() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto text-[10px]">
+      {session && <SessionModeSummary session={session} />}
       {sessionStats ? (
         <SessionStatusCard stats={sessionStats} steps={steps} todos={sessionTodos} />
       ) : sessionTodos.length > 0 ? (

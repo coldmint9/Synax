@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { AsyncLocalStorage } from "node:async_hooks";
+import { spawn } from "node:child_process";
 
 /**
  * Async process execution helpers for agent tools.
@@ -13,6 +14,7 @@ import { spawn } from 'node:child_process';
  */
 
 export interface AsyncCommandOptions {
+  signal?: AbortSignal;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   /** Hard wall-clock limit; the process group is killed when exceeded. */
@@ -39,6 +41,29 @@ export interface AsyncCommandResult {
   stderrBytes: number;
 }
 
+const commandSignal = new AsyncLocalStorage<AbortSignal | undefined>();
+const ownedCommands = new Map<
+  (signal: NodeJS.Signals) => void,
+  Promise<void>
+>();
+export function withCommandSignal<T>(
+  signal: AbortSignal | undefined,
+  action: () => T,
+): T {
+  return commandSignal.run(signal, action);
+}
+/** Worker shutdown must kill command groups before exiting the worker itself. */
+export async function terminateOwnedCommands(): Promise<void> {
+  const commands = [...ownedCommands];
+  for (const [kill] of commands) kill("SIGKILL");
+  await Promise.all(commands.map(([, closed]) => closed));
+}
+const abortError = (): NodeJS.ErrnoException =>
+  Object.assign(new Error("Command cancelled."), {
+    name: "AbortError",
+    code: "ABORT_ERR",
+  });
+
 const DEFAULT_MAX_BUFFER = 1024 * 1024;
 const KILL_GRACE_MS = 2000;
 
@@ -53,7 +78,11 @@ function createCapture(maxBytes: number): CaptureBuffer {
   return { chunks: [], size: 0, total: 0, truncated: false };
 }
 
-function captureChunk(buffer: CaptureBuffer, chunk: Buffer, maxBytes: number): void {
+function captureChunk(
+  buffer: CaptureBuffer,
+  chunk: Buffer,
+  maxBytes: number,
+): void {
   buffer.total += chunk.length;
   if (buffer.size >= maxBytes) {
     buffer.truncated = true;
@@ -67,7 +96,7 @@ function captureChunk(buffer: CaptureBuffer, chunk: Buffer, maxBytes: number): v
 }
 
 function captureText(buffer: CaptureBuffer): string {
-  return Buffer.concat(buffer.chunks, buffer.size).toString('utf8');
+  return Buffer.concat(buffer.chunks, buffer.size).toString("utf8");
 }
 
 /**
@@ -81,21 +110,35 @@ export function runCommand(
   args: string[],
   options: AsyncCommandOptions = {},
 ): Promise<AsyncCommandResult> {
+  const signal = options.signal ?? commandSignal.getStore();
+  if (signal?.aborted)
+    return Promise.resolve({
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: abortError(),
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutBytes: 0,
+      stderrBytes: 0,
+    });
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER;
-  const useProcessGroup = process.platform !== 'win32';
+  const useProcessGroup = process.platform !== "win32";
 
   return new Promise<AsyncCommandResult>((resolve) => {
     const stdout = createCapture(maxBufferBytes);
     const stderr = createCapture(maxBufferBytes);
     let timedOut = false;
     let settled = false;
+    let aborted = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
       shell: options.shell ?? false,
-      stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       detached: useProcessGroup,
     });
 
@@ -105,32 +148,60 @@ export function runCommand(
         if (useProcessGroup) process.kill(-child.pid, signal);
         else child.kill(signal);
       } catch {
-        try { child.kill(signal); } catch { /* already gone */ }
+        try {
+          child.kill(signal);
+        } catch {
+          /* already gone */
+        }
       }
     };
+
+    let markClosed!: () => void;
+    const closed = new Promise<void>((resolveClosed) => {
+      markClosed = resolveClosed;
+    });
+    ownedCommands.set(killTree, closed);
+    const onAbort = () => {
+      aborted = true;
+      killTree("SIGKILL");
+    };
+    const cleanup = () => {
+      ownedCommands.delete(killTree);
+      signal?.removeEventListener("abort", onAbort);
+      markClosed();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
 
     if (options.timeoutMs && options.timeoutMs > 0) {
       const timeout = setTimeout(() => {
         timedOut = true;
-        killTree('SIGTERM');
-        killTimer = setTimeout(() => killTree('SIGKILL'), KILL_GRACE_MS);
+        killTree("SIGTERM");
+        killTimer = setTimeout(() => killTree("SIGKILL"), KILL_GRACE_MS);
         killTimer.unref?.();
       }, options.timeoutMs);
       timeout.unref?.();
-      child.once('close', () => clearTimeout(timeout));
+      child.once("close", () => clearTimeout(timeout));
     }
 
-    child.stdout?.on('data', (chunk: Buffer) => captureChunk(stdout, chunk, maxBufferBytes));
-    child.stderr?.on('data', (chunk: Buffer) => captureChunk(stderr, chunk, maxBufferBytes));
+    child.stdout?.on("data", (chunk: Buffer) =>
+      captureChunk(stdout, chunk, maxBufferBytes),
+    );
+    child.stderr?.on("data", (chunk: Buffer) =>
+      captureChunk(stderr, chunk, maxBufferBytes),
+    );
 
     if (options.stdin !== undefined) {
-      child.stdin?.on('error', () => { /* the command may not read stdin */ });
+      child.stdin?.on("error", () => {
+        /* the command may not read stdin */
+      });
       child.stdin?.end(options.stdin);
     }
 
     let spawnError: NodeJS.ErrnoException | undefined;
-    child.on('error', (error: NodeJS.ErrnoException) => {
+    child.on("error", (error: NodeJS.ErrnoException) => {
       spawnError = error;
+      if (child.pid === undefined) cleanup();
       if (settled) return;
       settled = true;
       if (killTimer) clearTimeout(killTimer);
@@ -138,7 +209,7 @@ export function runCommand(
         status: null,
         stdout: captureText(stdout),
         stderr: captureText(stderr),
-        error: spawnError,
+        error: aborted ? abortError() : spawnError,
         timedOut,
         stdoutTruncated: stdout.truncated,
         stderrTruncated: stderr.truncated,
@@ -147,7 +218,8 @@ export function runCommand(
       });
     });
 
-    child.on('close', (code, signal) => {
+    child.on("close", (code, signal) => {
+      cleanup();
       if (settled) return;
       settled = true;
       if (killTimer) clearTimeout(killTimer);
@@ -155,7 +227,7 @@ export function runCommand(
         status: code ?? (signal ? null : 0),
         stdout: captureText(stdout),
         stderr: captureText(stderr),
-        error: spawnError,
+        error: aborted ? abortError() : spawnError,
         timedOut,
         stdoutTruncated: stdout.truncated,
         stderrTruncated: stderr.truncated,

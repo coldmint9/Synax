@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useCallback, type ReactNode } from 'react'
 import { Square, ArrowUp } from 'lucide-react'
 import type { ProviderDef } from '../../../../lib/contracts/config'
 import type { GlobalConfig } from '../../../../lib/contracts/config'
@@ -13,6 +13,8 @@ import type { GoalModelSelection } from './goalModelOptions'
 import type { GoalPermissionTier, GoalWikiAttachMode } from './goalAttachTypes'
 
 interface Props {
+  /** Optional session-only control, beside the model picker in either layout. */
+  modeControl?: ReactNode
   projectId: string
   content: string
   onContentChange: (value: string) => void
@@ -47,6 +49,7 @@ interface Props {
 }
 
 export function GoalComposerPill({
+  modeControl,
   projectId,
   content,
   onContentChange,
@@ -168,6 +171,7 @@ export function GoalComposerPill({
         disabled={disabled}
       />
 
+      {modeControl}
       <GoalModelPicker
         globalConfig={globalConfig}
         providers={providers}
@@ -237,6 +241,7 @@ export function GoalComposerPill({
   return (
     <div
       className="goal-dock-composer w-full"
+      data-session-controls={modeControl ? 'true' : undefined}
       data-multiline={expandedLayout ? 'true' : undefined}
       data-expanded={defaultExpanded ? 'true' : undefined}
     >
@@ -291,6 +296,7 @@ export function GoalComposerPill({
             rows={1}
             className="goal-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
           />
+          {modeControl}
           <GoalModelPicker
             globalConfig={globalConfig}
             providers={providers}

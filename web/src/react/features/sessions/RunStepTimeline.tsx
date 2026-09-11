@@ -12,6 +12,7 @@ const STATUS_ICON = {
   completed: <CheckCircle2 size={12} className="text-success" />,
   failed: <XCircle size={12} className="text-danger" />,
   waiting_permission: <AlertCircle size={12} className="text-warning" />,
+  waiting_input: <AlertCircle size={12} className="text-warning" />,
   blocked: <AlertCircle size={12} className="text-warning" />,
   cancelled: <Circle size={12} className="text-muted-foreground/50" />,
   interrupted: <XCircle size={12} className="text-muted-foreground/50" />,

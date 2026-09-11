@@ -77,7 +77,7 @@ function resolveMcpServers(
 
 export function resolveSessionCapabilities(sessionId: string): SessionCapabilities {
   const session = agentSessionRuntime.get(sessionId);
-  const profile = profileService.get(session.profileId);
+  const profile = profileService.getForSession(session);
   const available = filterAvailableTools(toolRegistry.listForSession(sessionId), profile);
 
   return {

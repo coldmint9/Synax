@@ -79,7 +79,7 @@ export function applySessionPermissionUpdate(
   }
 
   const session = agentRuntimeStore.getSession(sessionId);
-  const profile = profileService.get(session.profileId);
+  const profile = profileService.getForSession(session);
   const current = readSessionPermissionConfig(session.sessionMetadata);
 
   const metadataPatch: Record<string, unknown> = {};
@@ -109,7 +109,7 @@ export function appendAlwaysPermissionRule(
   rule: PermissionRule,
 ): AgentSession {
   const session = agentRuntimeStore.getSession(sessionId);
-  const profile = profileService.get(session.profileId);
+  const profile = profileService.getForSession(session);
   const config = readSessionPermissionConfig(session.sessionMetadata);
   const alwaysPermissionRules = [...config.alwaysPermissionRules, rule];
 
