@@ -65,7 +65,7 @@ describe('session mode boundaries', () => {
   })
   it('uses the server mode metadata and preserves it if a later switch fails', async () => {
     vi.spyOn(agentRuntimeApi, 'updateSessionMode').mockResolvedValueOnce({ session: { ...session, sessionMetadata: { ...session.sessionMetadata, mode: 'goal', goal: {
-      objective: 'Task', status: 'planning', maxSteps: 10, stepsUsed: 0, maxTokens: 1000, tokensUsed: 0,
+      objective: 'Task', status: 'planning',
     }, plan: null } } }).mockRejectedValueOnce(new Error('Run started'))
     await useAgentSessionStore.getState().updateSessionMode('s1', 'goal')
     expect(useAgentSessionStore.getState().sessions[0].sessionMetadata).toMatchObject({ mode: 'goal', permissionTier: 'readonly', goal: { status: 'planning' }, plan: null })

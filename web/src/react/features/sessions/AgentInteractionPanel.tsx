@@ -63,7 +63,6 @@ function InteractionForm({ interaction, disabled }: {
   const [otherEnabled, setOtherEnabled] = useState<Record<string, boolean>>({})
   const [otherValues, setOtherValues] = useState<Record<string, string>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const [message, setMessage] = useState('')
   const [serverError, setServerError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
@@ -118,10 +117,6 @@ function InteractionForm({ interaction, disabled }: {
     if (disabled || submittingRef.current) return
     const answers = action === 'submit' ? collectAnswers() : undefined
     if (answers === null) return
-    if (action === 'revise' && !message.trim()) {
-      setErrors({ message: zh ? '请说明需要修改的内容' : 'Describe the requested revision' })
-      return
-    }
     submittingRef.current = true
     setSubmitting(true)
     setServerError(null)
@@ -130,7 +125,6 @@ function InteractionForm({ interaction, disabled }: {
         revision: interaction.revision,
         action,
         ...(answers ? { answers } : {}),
-        ...(message.trim() ? { message: message.trim() } : {}),
       })
     } catch (error) {
       setServerError(error instanceof Error ? error.message : String(error))
@@ -227,27 +221,18 @@ function InteractionForm({ interaction, disabled }: {
               {errors[question.id] && <p id={`${formId}-${question.id}-error`} className="mt-1 text-xs text-danger">{errors[question.id]}</p>}
             </fieldset>
           ))}
-          {isPlan && <div>
-            <label className="agent-request-label block" htmlFor={`${formId}-message`}>{zh ? '修改意见' : 'Revision feedback'}</label>
-            <textarea id={`${formId}-message`} className={inputClass} rows={2} value={message} onChange={event => setMessage(event.target.value)}
-              aria-invalid={Boolean(errors.message)} aria-describedby={errors.message ? `${formId}-message-error` : undefined} />
-            {errors.message && <p id={`${formId}-message-error`} className="mt-1 text-xs text-danger">{errors.message}</p>}
-          </div>}
         </div>
         <footer className="agent-request-footer">
-          {isPlan && <p className="text-[11px] leading-relaxed text-muted-foreground">{zh ? '仅批准当前计划版本，不会提升工具权限。' : 'Approves only this plan version; tool permissions do not change.'}</p>}
+          {isPlan && <p className="text-[11px] leading-relaxed text-muted-foreground">{zh ? '执行当前计划，或取消这次快捷确认。取消不会删除计划。' : 'Execute this plan now, or cancel this shortcut. Cancelling keeps the plan.'}</p>}
           <div className="flex flex-wrap items-center gap-1">
-            {isPlan ? <>
-              <button type="button" className={buttonClass} onClick={() => void reply('save')}>{zh ? '保存计划' : 'Save plan'}</button>
-              <button type="button" className={buttonClass} onClick={() => void reply('revise')}>{zh ? '请求修改' : 'Request revision'}</button>
-            </> : <button type="button" className={buttonClass} onClick={() => void reply('decline')}>{zh ? '拒绝回答' : 'Decline'}</button>}
-            <button type="button" className={buttonClass} onClick={() => void reply('cancel')}>{zh ? '取消请求' : 'Cancel request'}</button>
+            {!isPlan && <button type="button" className={buttonClass} onClick={() => void reply('decline')}>{zh ? '拒绝回答' : 'Decline'}</button>}
+            <button type="button" className={buttonClass} onClick={() => void reply('cancel')}>{isPlan ? (zh ? '取消' : 'Cancel') : (zh ? '取消请求' : 'Cancel request')}</button>
             <button type={isPlan ? 'button' : 'submit'} className={`${buttonClass} agent-request-primary ml-auto`}
               onClick={isPlan ? () => void reply('execute') : undefined}>
-              {isPlan ? (zh ? '执行此版本' : 'Execute this version') : (zh ? '提交回答' : 'Submit answers')}
+              {isPlan ? (zh ? '执行' : 'Execute') : (zh ? '提交回答' : 'Submit answers')}
             </button>
           </div>
-          <p className="text-[10px] leading-relaxed text-muted-foreground">{zh ? '拒绝或取消将停止本轮执行，不会使用默认答案。' : 'Declining or cancelling stops this round; no default answers are assumed.'}</p>
+          <p className="text-[10px] leading-relaxed text-muted-foreground">{isPlan ? (zh ? '也可以忽略此确认，直接在输入框中发送后续执行指令。' : 'You may ignore this confirmation and send a later execution instruction instead.') : (zh ? '拒绝或取消将停止本轮执行，不会使用默认答案。' : 'Declining or cancelling stops this round; no default answers are assumed.')}</p>
           {Object.keys(errors).length > 0 && <p role="alert" className="text-xs text-danger">{zh ? '请检查上方标记的字段。' : 'Check the highlighted fields above.'}</p>}
           {serverError && <div role="alert" className="space-y-1 text-xs text-danger">
             <p className="break-words">{serverError}</p>
@@ -262,11 +247,11 @@ function InteractionForm({ interaction, disabled }: {
 function InteractionHistory({ interaction, zh }: { interaction: AgentInteraction; zh: boolean }) {
   const reply = interaction.response
   const action = reply?.action
-  const status = action === 'save' ? (zh ? '已保存' : 'Saved')
+  const status = action === 'save' ? (zh ? '已保存，可稍后执行' : 'Saved for later execution')
     : action === 'revise' ? (zh ? '已请求修改' : 'Revision requested')
-      : action === 'execute' ? (zh ? '已批准执行' : 'Approved for execution')
+      : action === 'execute' ? (zh ? '已开始执行' : 'Execution started')
         : interaction.status === 'declined' ? (zh ? '已拒绝' : 'Declined')
-          : interaction.status === 'cancelled' ? (zh ? '已取消' : 'Cancelled') : (zh ? '已回答' : 'Answered')
+          : interaction.status === 'cancelled' ? (interaction.request.plan ? (zh ? '已取消快捷执行' : 'Shortcut execution cancelled') : (zh ? '已取消' : 'Cancelled')) : (zh ? '已回答' : 'Answered')
   return <details className="agent-history-item">
     <summary className="cursor-pointer">{interaction.request.title} v{interaction.revision} — {status}</summary>
     <div className="mt-2 space-y-2">

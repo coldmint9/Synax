@@ -1,11 +1,7 @@
 import type { AgentSession } from "./contracts.js";
 import { agentRuntimeStore as store } from "./session-store.js";
 import { controlRoot } from "./control-policy.js";
-import { getGoalState, recordGoalUsage } from "./goal-control.js";
-import {
-  readUsageInputTokens,
-  readUsageOutputTokens,
-} from "./acp-engine/acp-usage.js";
+import { getGoalState } from "./goal-control.js";
 
 export function rootGoal(session: AgentSession) {
   const root = controlRoot(session);
@@ -16,18 +12,6 @@ export function rootGoal(session: AgentSession) {
         ? getGoalState(root.sessionMetadata)
         : null,
   };
-}
-export function recordGoalStep(
-  sessionId: string,
-  usage: Record<string, unknown> | undefined,
-): void {
-  const { root, goal } = rootGoal(store.getSession(sessionId));
-  if (!goal) return;
-  const tokens =
-    readUsageInputTokens(usage ?? {}) + readUsageOutputTokens(usage ?? {});
-  store.updateSessionMetadata(root.id, {
-    goal: recordGoalUsage(goal, { steps: 1, tokens }),
-  });
 }
 export function goalStopReason(session: AgentSession): string | null {
   const { goal } = rootGoal(session);
@@ -60,6 +44,8 @@ export function belongsToPlanExecution(
 const NON_PROOF_TOOLS = new Set([
   "human.ask",
   "plan.propose",
+  "plan.execute",
+  "mode.switch",
   "goal.finish",
   "task.create",
   "task.update",

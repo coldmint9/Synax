@@ -8,6 +8,8 @@ import {
 export const CONTROL_TOOLS = new Set([
   "human.ask",
   "plan.propose",
+  "plan.execute",
+  "mode.switch",
   "goal.finish",
 ]);
 const PLAN_TOOLS = new Set([
@@ -32,6 +34,8 @@ const PLAN_TOOLS = new Set([
   "subagent.delegate",
   "human.ask",
   "plan.propose",
+  "plan.execute",
+  "mode.switch",
   "goal.finish",
   "tools.invalid",
 ]);
@@ -69,7 +73,7 @@ export function controlToolError(
   const planning =
     mode === "plan" || (mode === "goal" && plan?.status !== "approved");
   if (planning && !PLAN_TOOLS.has(tool.id))
-    return "Planning is read-only. Submit a plan with plan.propose and wait for user approval before executing.";
+    return "Planning is read-only. Submit a plan with plan.propose and wait for the user's execute choice or a later explicit execution instruction.";
   if (
     mode === "goal" &&
     plan?.status === "approved" &&
@@ -100,6 +104,6 @@ export function validateControlBatch(
   calls: ReadonlyArray<{ toolId: string }>,
 ): string | null {
   return calls.length > 1 && calls.some((c) => CONTROL_TOOLS.has(c.toolId))
-    ? "Control tools (human.ask, plan.propose, goal.finish) must be the only call in a step. No tools in this batch were executed."
+    ? "Control tools (human.ask, plan.propose, plan.execute, mode.switch, goal.finish) must be the only call in a step. No tools in this batch were executed."
     : null;
 }

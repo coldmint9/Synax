@@ -5,8 +5,6 @@ import {
   getGoalState,
   goalStateSchema,
   initializeGoal,
-  recordGoalUsage,
-  type GoalState,
 } from '../goal-control.js';
 
 function completionInput(): Parameters<typeof checkGoalCompletion>[0] {
@@ -27,21 +25,12 @@ function completionInput(): Parameters<typeof checkGoalCompletion>[0] {
 
 const invalidCounts = [-1, NaN, Infinity, -Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1];
 
-describe('goal state and bounded usage', () => {
-  it('initializes a trimmed objective with finite default or explicit budgets', () => {
+describe('goal state', () => {
+  it('initializes a trimmed objective without execution budgets', () => {
     expect(initializeGoal('  Ship the fix  ')).toEqual({
       objective: 'Ship the fix', status: 'planning',
-      maxSteps: 128, stepsUsed: 0, maxTokens: 250_000, tokensUsed: 0,
     });
-    expect(initializeGoal('Fix', { maxSteps: 7, maxTokens: 900 })).toMatchObject({ maxSteps: 7, maxTokens: 900 });
-    expect(initializeGoal('Fix', { maxSteps: undefined, maxTokens: 900 })).toMatchObject({ maxSteps: 128, maxTokens: 900 });
     expect(() => initializeGoal(' \n ')).toThrow();
-  });
-
-  it.each(['maxSteps', 'maxTokens'] as const)('rejects invalid %s instead of disabling the budget', (field) => {
-    for (const value of [...invalidCounts, 0, null, '128']) {
-      expect(() => initializeGoal('Fix', { [field]: value } as never)).toThrow();
-    }
   });
 
   it('reads metadata defensively without inventing a fresh goal for malformed state', () => {
@@ -51,7 +40,7 @@ describe('goal state and bounded usage', () => {
     const goal = initializeGoal('Fix');
     expect(getGoalState({ goal, unrelated: true })).toEqual(goal);
     expect(getGoalState({ goal })).not.toBe(goal);
-    expect(getGoalState({ goal: { ...goal, maxSteps: undefined } })).toBeNull();
+    expect(getGoalState({ goal: { ...goal, maxSteps: 1, stepsUsed: 1, maxTokens: 1, tokensUsed: 1 } })).toEqual(goal);
     expect(getGoalState({ goal: { ...goal, status: 'unknown' } })).toBeNull();
   });
 
@@ -70,78 +59,24 @@ describe('goal state and bounded usage', () => {
     expect(getGoalState({ goal: completed })).toEqual(completed);
   });
 
-  it('validates all persisted counters and the six specified statuses', () => {
+  it('validates persisted statuses and acceptance evidence', () => {
     const goal = initializeGoal('Fix');
-    for (const field of ['maxSteps', 'maxTokens', 'stepsUsed', 'tokensUsed']) {
-      for (const value of invalidCounts) {
-        expect(goalStateSchema.safeParse({ ...goal, [field]: value }).success).toBe(false);
-        expect(getGoalState({ goal: { ...goal, [field]: value } })).toBeNull();
-      }
-    }
     for (const status of ['planning', 'executing', 'completed', 'blocked', 'budget_exhausted', 'cancelled']) {
       expect(goalStateSchema.safeParse({ ...goal, status, acceptanceEvidence: completionInput().evidence }).success).toBe(true);
     }
     expect(goalStateSchema.safeParse({ ...goal, acceptanceEvidence: [{ criterion: 'Done', summary: '' }] }).success).toBe(false);
   });
-
-  it('records caller-aggregated usage immutably without approving a plan', () => {
-    const goal = initializeGoal('Fix');
-    const updated = recordGoalUsage(recordGoalUsage(goal, { steps: 3, tokens: 100 }), { steps: 2, tokens: 50 });
-    expect(updated).toMatchObject({ status: 'planning', stepsUsed: 5, tokensUsed: 150 });
-    expect(goal).toMatchObject({ status: 'planning', stepsUsed: 0, tokensUsed: 0 });
-    expect(recordGoalUsage(updated, {})).toEqual(updated);
-  });
-
-  it.each(['steps', 'tokens'] as const)('rejects malformed %s increments and unsafe sums', (field) => {
-    const goal = initializeGoal('Fix');
-    for (const value of [...invalidCounts, null, '1']) {
-      expect(() => recordGoalUsage(goal, { [field]: value } as never)).toThrow();
-    }
-    const usedField = field === 'steps' ? 'stepsUsed' : 'tokensUsed';
-    expect(() => recordGoalUsage({ ...goal, [usedField]: Number.MAX_SAFE_INTEGER }, { [field]: 1 })).toThrow();
-    expect(goal.stepsUsed).toBe(0);
-    expect(goal.tokensUsed).toBe(0);
-  });
-
-  it.each([{ steps: 3 }, { steps: 4 }, { tokens: 100 }, { tokens: 120 }])('exhausts at or beyond either budget: %j', (usage) => {
-    const goal = initializeGoal('Fix', { maxSteps: 3, maxTokens: 100 });
-    const exhausted = recordGoalUsage(goal, usage);
-    expect(exhausted.status).toBe('budget_exhausted');
-    expect(exhausted.reason).toMatch(/budget.*exhausted/i);
-    expect(exhausted.acceptanceEvidence).toBeUndefined();
-    expect(recordGoalUsage(exhausted, {}).status).toBe('budget_exhausted');
-    expect(goal.status).toBe('planning');
-  });
-
-  it('reconciles stale active metadata at the budget boundary without mutating it', () => {
-    const goal: GoalState = { ...initializeGoal('Fix', { maxSteps: 1 }), status: 'executing', stepsUsed: 1 };
-    expect(getGoalState({ goal })?.status).toBe('budget_exhausted');
-    expect(goal.status).toBe('executing');
-  });
-
-  it.each(['completed', 'cancelled', 'budget_exhausted'] as const)('does not revive or replace terminal status %s when late usage arrives', (status) => {
-    const goal: GoalState = { ...initializeGoal('Fix', { maxSteps: 1 }), status, reason: 'Existing reason', acceptanceEvidence: completionInput().evidence };
-    expect(recordGoalUsage(goal, { steps: 2 })).toMatchObject({ status, stepsUsed: 2, reason: 'Existing reason' });
-  });
-
-  it('preserves a blocker below budget, but still enforces the root budget', () => {
-    const goal: GoalState = { ...initializeGoal('Fix', { maxSteps: 2 }), status: 'blocked', reason: 'Need access' };
-    expect(recordGoalUsage(goal, { steps: 1 })).toMatchObject({ status: 'blocked', reason: 'Need access' });
-    expect(recordGoalUsage(goal, { steps: 2 }).status).toBe('budget_exhausted');
-  });
 });
 
 describe('goal instruction', () => {
-  it('requires a proposed and approved plan, while reporting the shared remaining budget', () => {
-    const instruction = buildGoalInstruction(recordGoalUsage(initializeGoal('Fix'), { steps: 2, tokens: 50 }));
+  it('requires a proposed and approved plan without defining a goal-level budget', () => {
+    const instruction = buildGoalInstruction(initializeGoal('Fix'));
     expect(instruction).toContain('Fix');
-    expect(instruction).toContain('2/128');
-    expect(instruction).toContain('50/250000');
-    expect(instruction).toContain('126');
-    expect(instruction).toContain('249950');
     expect(instruction).toContain('plan.propose');
+    expect(instruction).toContain('plan.execute');
     expect(instruction).toMatch(/approved/i);
-    expect(instruction).toMatch(/children/i);
+    expect(instruction).toMatch(/session and model limits/i);
+    expect(instruction).not.toMatch(/remaining budget|maxTokens|maxSteps/i);
   });
 
   it.each(['draft', 'saved'])('does not mistake a %s plan for approval', (status) => {
@@ -168,12 +103,6 @@ describe('goal instruction', () => {
     expect(instruction).not.toContain('plan.propose');
   });
 
-  it('stops on exhausted counters even if persisted status is stale', () => {
-    const instruction = buildGoalInstruction({ ...initializeGoal('Fix'), stepsUsed: 129 });
-    expect(instruction).toContain('budget_exhausted');
-    expect(instruction).not.toContain('plan.propose');
-    expect(instruction).not.toContain('-1 remaining');
-  });
 });
 
 describe('goal completion evidence', () => {
@@ -250,12 +179,6 @@ describe('goal completion evidence', () => {
   it.each(['planning', 'blocked', 'cancelled', 'budget_exhausted', 'completed'] as const)('does not complete an inactive %s goal', (status) => {
     const input = completionInput();
     expect(() => checkGoalCompletion({ ...input, goal: { ...input.goal, status } })).toThrow();
-  });
-
-  it.each(['stepsUsed', 'tokensUsed'] as const)('cannot complete after %s reaches the budget, regardless of status', (field) => {
-    const input = completionInput();
-    input.goal[field] = field === 'stepsUsed' ? input.goal.maxSteps : input.goal.maxTokens;
-    expect(() => checkGoalCompletion(input)).toThrow(/budget.*exhausted/i);
   });
 
   it('normalizes surrounding whitespace without fuzzy-matching different criteria', () => {

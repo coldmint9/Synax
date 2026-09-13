@@ -127,7 +127,7 @@ export function SessionModeSummary({ session }: { session: AgentSession }) {
   if (!goal && !plan && !name && !role) return null
   const title = goal?.objective ?? plan?.title ?? name ?? role
   const status = goal ? (GOAL_STATUS_LABELS[goal.status]?.[zh ? 0 : 1] ?? goal.status)
-    : plan ? (plan.status === 'approved' ? (zh ? '已批准' : 'Approved') : plan.status === 'saved' ? (zh ? '已保存' : 'Saved') : (zh ? '草稿' : 'Draft')) : null
+    : plan ? (plan.status === 'approved' ? (zh ? '已批准' : 'Approved') : plan.status === 'saved' ? (zh ? '已保存，等待执行指令' : 'Saved, awaiting execution instruction') : (zh ? '草稿' : 'Draft')) : null
   return (
     <details key={session.id} className="agent-summary" aria-label={zh ? '会话目标和角色' : 'Session goal and specialist'}>
       <summary>
@@ -141,14 +141,6 @@ export function SessionModeSummary({ session }: { session: AgentSession }) {
         {plan && <p>{zh ? '计划' : 'Plan'} v{plan.revision}: {plan.title}</p>}
         {goal && <>
           <p className="whitespace-pre-wrap text-foreground/85">{goal.objective}</p>
-          <div className="grid gap-3 sm:grid-cols-2 text-[11px]">
-            <label>{zh ? '步骤预算' : 'Step budget'}: {goal.stepsUsed} / {goal.maxSteps}
-              <progress aria-label={zh ? '步骤预算' : 'Step budget'} className="agent-budget-bar" value={goal.stepsUsed} max={Math.max(1, goal.maxSteps)} />
-            </label>
-            <label>{zh ? 'Token 预算' : 'Token budget'}: {formatTokenCount(goal.tokensUsed)} / {formatTokenCount(goal.maxTokens)}
-              <progress aria-label={zh ? 'Token 预算' : 'Token budget'} className="agent-budget-bar" value={goal.tokensUsed} max={Math.max(1, goal.maxTokens)} />
-            </label>
-          </div>
         </>}
       </div>
       {goal?.reason && <p className="pb-1 text-[11px] leading-relaxed text-warning">{goal.reason}</p>}

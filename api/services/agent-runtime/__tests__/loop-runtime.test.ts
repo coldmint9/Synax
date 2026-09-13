@@ -215,7 +215,6 @@ vi.mock('../../llm-runtime/gateway.js', () => ({
 
 import { ensureSynaxAgentRegistered } from '../synax/index.js';
 import { interactionService } from '../interaction-service.js';
-import { initializeGoal } from '../goal-control.js';
 import { agentLoopRuntime } from '../loop-runtime.js';
 import { inputQueueService } from '../input-queue-service.js';
 import { permissionPolicy } from '../permission-policy.js';
@@ -692,7 +691,7 @@ describe('agentLoopRuntime', () => {
     const userMessages = agentRuntimeStore.listMessages(session.id).filter((m) => m.role === 'user');
     expect(userMessages.some((m) => m.content.includes('Please summarize after reading.'))).toBe(true);
   });
-  it('suspends for a form, resumes the original tool result, then saves a plan without executing', async () => {
+  it('suspends for a form, resumes, then offers a one-time execute-or-cancel plan choice', async () => {
     ensureSynaxAgentRegistered();
     const questions=[{id:'scope',type:'text',label:'Scope?',required:true}];
     const plan={title:'Small plan',objective:'Implement a bounded change',steps:[{id:'s1',title:'Implement',description:'Do the approved work',dependsOn:[],expectedFiles:[]}],acceptanceCriteria:['The behavior is verified'],assumptions:[],risks:[]};
@@ -707,15 +706,16 @@ describe('agentLoopRuntime', () => {
     interactionService.reply(session.id,first.id,{revision:first.revision,action:'submit',answers:{scope:'Only the API'}});
     await agentLoopRuntime.resumeRun(session.id);
     expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
-    const second=interactionService.pending(session.id)!;
-    expect(second.kind).toBe('plan_approval');
     expect(agentRuntimeStore.getToolCall(session.id,first.toolCallId).outputRef).toMatchObject({answers:{scope:'Only the API'}});
     const parts=agentRuntimeStore.listRunParts(first.stepId);
     expect(parts.filter(p=>p.kind==='tool_result'&&p.toolCallId===first.toolCallId)).toHaveLength(1);
-    interactionService.reply(session.id,second.id,{revision:second.revision,action:'save'});
-    await agentLoopRuntime.resumeRun(session.id);
-    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'completed',sessionMetadata:{mode:'plan',plan:{status:'saved'}}});
+    const approval=interactionService.pending(session.id)!;
+    expect(approval.kind).toBe('plan_approval');
     expect(agentRuntimeStore.listToolCalls(session.id).map(c=>c.toolId)).toEqual(['human.ask','plan.propose']);
+    interactionService.reply(session.id,approval.id,{revision:approval.revision,action:'cancel'});
+    await agentLoopRuntime.resumeRun(session.id);
+    expect(interactionService.pending(session.id)).toBeNull();
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'completed',sessionMetadata:{mode:'plan',plan:{status:'saved',revision:1}}});
   });
 
   it('rejects an entire mixed interaction batch before a write can execute', async () => {
@@ -735,27 +735,63 @@ describe('agentLoopRuntime', () => {
     expect(agentRuntimeStore.getSession(session.id).status).toBe('completed');
   });
 
-  it('does not declare a goal complete on a final text answer or exhausted budget', async () => {
+  it('converts a legacy pending plan approval into a saved plan when a later user turn arrives', async () => {
+    ensureSynaxAgentRegistered();
+    const plan={title:'Legacy plan',objective:'Save the pending plan',steps:[{id:'s1',title:'Implement',description:'Apply the change'}],acceptanceCriteria:['The change is verified']};
+    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'Plan this change',sessionMetadata:{mode:'plan'}});
+    const now=new Date().toISOString();
+    const run=agentRuntimeStore.appendRun({id:'legacy-plan-run',sessionId:session.id,status:'running',startedAt:now,completedAt:null,triggerMessageId:null,currentStep:1,stopReason:null,model:null,metadata:{}});
+    const step=agentRuntimeStore.appendRunStep({id:'legacy-plan-step',runId:run.id,sessionId:session.id,index:1,status:'running',model:null,startedAt:now,completedAt:null,finishReason:null,metadata:{}});
+    agentRuntimeStore.updateSession(session.id,{activeRunId:run.id});
+    const call=agentRuntimeStore.appendToolCall({id:'legacy-plan-call',sessionId:session.id,runId:run.id,stepId:step.id,modelToolCallId:'legacy-plan-call',toolId:'plan.propose',category:'task',mutability:'task',argsHash:'legacy',inputSummary:'',inputRef:plan,outputSummary:null,outputRef:null,status:'running',permissionDecisionId:null,startedAt:now,endedAt:null,error:null});
+    interactionService.request({sessionId:session.id,runId:run.id,stepId:step.id,toolCallId:call.id,kind:'plan_approval',request:{plan}});
+
+    queueMockStep(makeTextStep('Plan saved for later execution.'));
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{message:'执行这个计划。'}));
+
+    expect(interactionService.pending(session.id)).toBeNull();
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'completed',sessionMetadata:{mode:'plan',plan:{status:'saved',revision:1}}});
+    expect(agentLoopRuntime.listRuns(session.id).find(item=>item.id===run.id)).toMatchObject({status:'completed',stopReason:'plan_saved'});
+    expect(agentLoopRuntime.listRuns(session.id).some(item=>item.id!==run.id)).toBe(true);
+    expect(agentRuntimeStore.listMessages(session.id).some(message=>message.content==='执行这个计划。')).toBe(true);
+  });
+
+  it('stops an active goal at the session step limit without failing the goal', async () => {
     ensureSynaxAgentRegistered();
     queueMockStep(makeTextStep('Everything is done.'));
     queueMockStep(makeTextStep('Everything is done again.'));
     const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'Complete an approved goal',sessionMetadata:{mode:'goal'}});
-    agentRuntimeStore.updateSessionMetadata(session.id,{goal:initializeGoal('Complete an approved goal',{maxSteps:2})});
-    await collectChunks(agentLoopRuntime.streamRun(session.id,{}));
-    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'blocked',sessionMetadata:{goal:{status:'budget_exhausted',stepsUsed:2}}});
-    expect(agentLoopRuntime.listRuns(session.id)[0].status).toBe('blocked');
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{maxSteps:2}));
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'completed',sessionMetadata:{goal:{status:'planning'}}});
+    expect(agentLoopRuntime.listRuns(session.id)[0]).toMatchObject({status:'completed',stopReason:'max_steps'});
   });
 
-  it('executes an approved goal and completes only with real task and tool evidence', async () => {
+  it('executes a plan immediately from the one-time approval HITL', async () => {
     ensureSynaxAgentRegistered();
-    const criterion='Package metadata was inspected';
-    const plan={title:'Inspect package',objective:criterion,steps:[{id:'read',title:'Read package',description:'Inspect package.json'}],acceptanceCriteria:[criterion]};
-    queueMockStep(makeToolStep({toolName:'plan_propose',toolCallId:'propose-goal',args:plan}));
-    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:criterion,sessionMetadata:{mode:'goal'}});
+    const plan={title:'Immediate plan',objective:'Execute from the shortcut',steps:[{id:'s1',title:'Execute',description:'Run immediately'}],acceptanceCriteria:['Execution starts']};
+    queueMockStep(makeToolStep({toolName:'plan_propose',toolCallId:'immediate-plan',args:plan}));
+    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'Plan and execute',sessionMetadata:{mode:'plan'}});
     await collectChunks(agentLoopRuntime.streamRun(session.id,{}));
     const approval=interactionService.pending(session.id)!;
     expect(approval.kind).toBe('plan_approval');
     interactionService.reply(session.id,approval.id,{revision:approval.revision,action:'execute'});
+    queueMockStep(makeToolStep({toolName:'goal_finish',toolCallId:'blocked-goal',args:{status:'blocked',reason:'Execution started from the plan approval.'}}));
+    await agentLoopRuntime.resumeRun(session.id);
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'blocked',sessionMetadata:{mode:'goal',goal:{status:'blocked'},plan:{status:'approved',revision:1}}});
+    expect(agentRuntimeStore.listToolCalls(session.id).map(c=>c.toolId)).toEqual(['plan.propose','goal.finish']);
+  });
+
+  it('executes a deferred plan from a later user instruction and completes with evidence', async () => {
+    ensureSynaxAgentRegistered();
+    const criterion='Package metadata was inspected';
+    const plan={title:'Inspect package',objective:criterion,steps:[{id:'read',title:'Read package',description:'Inspect package.json'}],acceptanceCriteria:[criterion]};
+    queueMockStep(makeToolStep({toolName:'plan_propose',toolCallId:'propose-goal',args:plan}));
+    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'Plan package inspection',sessionMetadata:{mode:'plan'}});
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{}));
+    expect(interactionService.pending(session.id)?.kind).toBe('plan_approval');
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'waiting_input',sessionMetadata:{mode:'plan',plan:{status:'draft'}}});
+
+    queueMockStep(makeToolStep({toolName:'plan_execute',toolCallId:'execute-plan',args:{reason:'User explicitly requested execution.'}}));
     queueMockStep(makeToolStep({toolName:'file_read',toolCallId:'proof-read',args:{path:'package.json'}}));
     queueMockStep(makeToolStep({toolName:'task_update',toolCallId:'task-done',args:{taskId:'1',status:'completed'}}));
     mockStepResults.push({fullStream:(async function*(){
@@ -763,11 +799,23 @@ describe('agentLoopRuntime', () => {
       yield {type:'tool-call' as const,toolCallId:'goal-done',toolName:'goal_finish',input:{status:'completed',reason:'Package metadata verified',evidence:[{criterion,summary:'Read package.json successfully',toolCallIds:[proof.id]}]}};
       yield {type:'finish-step' as const,finishReason:'tool-calls',usage:{}};
     })()});
-    await agentLoopRuntime.resumeRun(session.id);
-    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'completed',sessionMetadata:{goal:{status:'completed',stepsUsed:4},plan:{status:'approved'}}});
-    expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{message:'执行这个计划，完成验收后结束。'}));
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'completed',sessionMetadata:{mode:'goal',goal:{status:'completed'},plan:{status:'approved',revision:1}}});
+    expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(2);
     expect(agentRuntimeStore.listToolCalls(session.id).every(c=>c.status==='completed')).toBe(true);
     expect(mockStepResults).toHaveLength(0);
+  });
+
+  it('lets the agent switch modes on an explicit user instruction', async () => {
+    ensureSynaxAgentRegistered();
+    const plan={title:'Switch plan',objective:'Prepare a plan from chat',steps:[{id:'plan',title:'Plan',description:'Prepare the plan'}],acceptanceCriteria:['A plan is saved']};
+    queueMockStep(makeToolStep({toolName:'mode_switch',toolCallId:'switch-plan',args:{mode:'plan',reason:'The user asked to plan first.'}}));
+    queueMockStep(makeToolStep({toolName:'plan_propose',toolCallId:'save-plan',args:plan}));
+    const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'Prepare this work',sessionMetadata:{mode:'chat'}});
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{message:'先切到计划模式，帮我规划一下。'}));
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({status:'waiting_input',sessionMetadata:{mode:'plan',plan:{status:'draft'}}});
+    expect(interactionService.pending(session.id)?.kind).toBe('plan_approval');
+    expect(agentRuntimeStore.listToolCalls(session.id).map(c=>c.toolId)).toEqual(['mode.switch','plan.propose']);
   });
 
   it('runs a task-defined specialist with its persisted effective capability profile', async () => {

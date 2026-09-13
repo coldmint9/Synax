@@ -114,20 +114,18 @@ describe('AgentInteractionPanel', () => {
     await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith('s1', 'i1', { revision: 3, action }))
   })
 
-  it.each([['Save plan', 'save'], ['Execute this version', 'execute'], ['Request revision', 'revise']])('keeps %s distinct from the other plan actions', async (label, action) => {
+  it.each([['Execute', 'execute'], ['Cancel', 'cancel']])('keeps %s as a one-time plan action', async (label, action) => {
     vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({ interactions: [plan] })
     render(<AgentInteractionPanel session={session} />)
     expect(await screen.findByText('Durable answers')).toBeVisible()
     expect(screen.getByText('form.tsx')).toBeVisible()
     expect(screen.getByText('Reload retains requests')).toBeVisible()
-    if (action === 'revise') {
-      fireEvent.click(screen.getByRole('button', { name: label }))
-      expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled()
-      fireEvent.change(screen.getByRole('textbox', { name: 'Revision feedback' }), { target: { value: 'Add validation' } })
-    }
+    expect(screen.queryByRole('button', { name: 'Save plan' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Request revision' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Revision feedback' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: label }))
     await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith('s1', 'plan1', {
-      revision: 3, action, ...(action === 'revise' ? { message: 'Add validation' } : {}),
+      revision: 3, action,
     }))
   })
 
@@ -187,15 +185,15 @@ describe('AgentInteractionPanel', () => {
     fireEvent.click(await screen.findByText('Interaction history'))
     fireEvent.click(screen.getByText('Clarify scope v1 — Answered'))
     expect(screen.getByText('Earlier answer')).toBeVisible()
-    expect(screen.getByText('Approve plan v3 — Saved')).toBeVisible()
+    expect(screen.getByText('Approve plan v3 — Saved for later execution')).toBeVisible()
     expect(screen.getByText('Clarify scope v2 — Declined')).toBeVisible()
     expect(screen.getAllByRole('button', { name: 'Submit answers' })).toHaveLength(1)
     unmount()
     useAgentSessionStore.setState({ interactionState: null })
     render(<AgentInteractionPanel session={session} />)
-    expect(await screen.findByText('Approve plan v3 — Saved')).not.toBeVisible()
+    expect(await screen.findByText('Approve plan v3 — Saved for later execution')).not.toBeVisible()
     fireEvent.click(screen.getByText('Interaction history'))
-    expect(screen.getByText('Approve plan v3 — Saved')).toBeVisible()
+    expect(screen.getByText('Approve plan v3 — Saved for later execution')).toBeVisible()
   })
 
   it('refreshes on reconnect and same-session events, not another session’s events', async () => {
@@ -235,12 +233,12 @@ describe('AgentInteractionPanel', () => {
     await act(async () => resolve({ interaction: { ...clarification, status: 'answered' } }))
   })
 
-  it('keeps plan approval actions and permission semantics outside the scrolling body', async () => {
+  it('keeps the execute-or-cancel plan actions outside the scrolling body', async () => {
     vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({ interactions: [plan] })
     render(<AgentInteractionPanel session={session} />)
-    const execute = await screen.findByRole('button', { name: 'Execute this version' })
+    const execute = await screen.findByRole('button', { name: 'Execute' })
     expect(execute.closest('.agent-request-body')).toBeNull()
-    expect(execute.closest('footer')).toHaveTextContent('tool permissions do not change')
+    expect(execute.closest('footer')).toHaveTextContent('cancel this shortcut')
     expect(execute.closest('form')).not.toHaveClass('border-warning/40')
   })
 
@@ -250,7 +248,7 @@ describe('AgentInteractionPanel', () => {
     } } }] })
     render(<AgentInteractionPanel session={session} />)
     expect(await screen.findByText('(user confirmation)')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: 'Execute this version' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Execute' }))
     await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith('s1', 'plan1', { revision: 3, action: 'execute' }))
   })
 

@@ -12,8 +12,7 @@ import {
   type AgentInteraction,
   type InteractionReply,
 } from "./control-contracts.js";
-import { TaskStore } from "./tools/task-tools.js";
-import { initializeGoal } from "./goal-control.js";
+import { executeStoredPlan } from "./plan-execution.js";
 
 type Row = {
   id: string;
@@ -243,7 +242,7 @@ export const interactionService = {
       const validActions =
         i.kind === "clarification"
           ? ["submit", "decline", "cancel"]
-          : ["save", "revise", "execute", "cancel"];
+          : ["execute", "cancel"];
       if (!validActions.includes(reply.action))
         throw new AgentValidationError("Invalid action for this interaction.");
       if (reply.action === "submit") {
@@ -281,46 +280,14 @@ export const interactionService = {
         if (plan?.revision !== i.revision)
           conflict("The plan revision changed.");
         if (reply.action === "execute") {
-          const approved = {
-            ...i.request.plan!,
-            revision: i.revision,
-            status: "approved",
-            executionId: makeRuntimeId("goalexec"),
-            approvedRunId: i.runId,
-            approvedStepIndex: store.getRunStep(i.stepId).index,
-          };
-          const approvedRun = store.getRun(i.runId);
-          store.updateRun(i.runId, {
-            metadata: {
-              ...approvedRun.metadata,
-              goalExecutionId: approved.executionId,
-            },
+          executeStoredPlan({
+            sessionId,
+            runId: i.runId,
+            stepId: i.stepId,
+            expectedRevision: i.revision,
+            allowWaitingInput: true,
           });
-          const previousGoal = session.sessionMetadata?.goal as
-            | ReturnType<typeof initializeGoal>
-            | undefined;
-          const goal = previousGoal ?? initializeGoal(approved.objective);
-          store.updateSessionMetadata(sessionId, {
-            mode: "goal",
-            plan: approved,
-            goal: {
-              ...goal,
-              objective: approved.objective,
-              status: "executing",
-            },
-          });
-          const tasks = new TaskStore();
-          const ids = new Map<string, string>();
-          for (const step of approved.steps) {
-            const t = tasks.create(step.title, step.description);
-            ids.set(step.id, t.id);
-            tasks.addBlockedBy(
-              t.id,
-              step.dependsOn.map((id) => ids.get(id)!),
-            );
-          }
-          tasks.persist(sessionId);
-        } else if (reply.action === "save")
+        } else if (reply.action === "cancel")
           store.updateSessionMetadata(sessionId, {
             mode: "plan",
             plan: { ...i.request.plan!, revision: i.revision, status: "saved" },
@@ -345,6 +312,41 @@ export const interactionService = {
         payload: { interactionId: id, runId: i.runId, action: reply.action },
       });
       return { ...i, status, response: reply, resolvedAt };
+    })();
+  },
+  deferPlan(sessionId: string, id: string): AgentInteraction {
+    return getRawSqlite().transaction(() => {
+      const row = getRawSqlite()
+        .prepare("SELECT * FROM agent_runtime_interactions WHERE id = ? AND session_id = ?")
+        .get(id, sessionId) as Row | undefined;
+      if (!row) throw new AgentRuntimeError("Interaction not found.", "NOT_FOUND", 404);
+      const i = map(row);
+      if (i.kind !== "plan_approval")
+        throw new AgentValidationError("Only a plan approval can be deferred.");
+      if (i.status !== "pending")
+        conflict("The interaction was already resolved or cancelled.");
+      const session = store.getSession(sessionId);
+      if (session.status !== "waiting_input" || session.activeRunId !== i.runId)
+        conflict("This run no longer accepts input.");
+      const plan = session.sessionMetadata?.plan as { revision?: number } | undefined;
+      if (plan?.revision !== i.revision)
+        conflict("The plan revision changed.");
+      store.updateSessionMetadata(sessionId, {
+        mode: "plan",
+        plan: { ...i.request.plan!, revision: i.revision, status: "saved" },
+      });
+      const reply: InteractionReply = { revision: i.revision, action: "save" };
+      const resolvedAt = nowIso();
+      getRawSqlite()
+        .prepare("UPDATE agent_runtime_interactions SET status='answered',response_json=?,resolved_at=? WHERE id=? AND status='pending'")
+        .run(JSON.stringify(reply), resolvedAt, id);
+      events.append({
+        sessionId,
+        type: "interaction_resolved",
+        summary: `${i.request.title}: deferred`,
+        payload: { interactionId: id, runId: i.runId, action: "save" },
+      });
+      return { ...i, status: "answered" as const, response: reply, resolvedAt };
     })();
   },
   consume(sessionId: string): AgentInteraction | null {
