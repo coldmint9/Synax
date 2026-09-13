@@ -42,7 +42,7 @@ describe('SessionTreeItem', () => {
     useAgentSessionStore.setState({ projectId: 'p1', readSessionMarkers: {} })
   })
 
-  it('shows a spinning loader before the title for running sessions', () => {
+  it('shows a spinning loader between the expand control and title for running sessions', () => {
     const { container } = render(
       <SessionTreeItem
         node={makeNode(makeSession({ status: 'running' }))}
@@ -52,15 +52,16 @@ describe('SessionTreeItem', () => {
       />,
     )
 
-    const indicator = container.querySelector('.session-list-running-indicator')
+    const indicator = container.querySelector('.animate-spin')
+    const expandControl = container.querySelector('button')
     const title = container.querySelector('.session-list-title')
 
     expect(indicator?.classList.contains('animate-spin')).toBe(true)
+    expect(indicator?.classList.contains('shrink-0')).toBe(true)
+    expect(expandControl).toBeTruthy()
+    expect(expandControl!.compareDocumentPosition(indicator!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(title).toBeTruthy()
-    // The indicator must sit ahead of the title in document order …
     expect(indicator!.compareDocumentPosition(title!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    // … and stay out of the flex flow so it never takes width from the title.
-    expect(indicator?.classList.contains('shrink-0')).toBe(false)
   })
 
   it('does not show a spinner for completed sessions', () => {
@@ -86,10 +87,8 @@ describe('SessionTreeItem', () => {
       />,
     )
 
-    const indicator = container.querySelector('.session-list-running-indicator')
+    const spinner = container.querySelector('.animate-spin')
 
-    expect(indicator?.classList.contains('animate-spin')).toBe(true)
-    // Child rows use their own narrower gutter offset.
-    expect(indicator?.classList.contains('session-list-running-indicator--child')).toBe(true)
+    expect(spinner?.classList.contains('shrink-0')).toBe(true)
   })
 })

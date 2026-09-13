@@ -69,10 +69,6 @@ export interface AgentPlan {
 export interface AgentGoalState {
   objective: string
   status: 'planning' | 'executing' | 'completed' | 'blocked' | 'budget_exhausted' | 'cancelled'
-  maxSteps: number
-  stepsUsed: number
-  maxTokens: number
-  tokensUsed: number
   acceptanceEvidence?: unknown
   reason?: string
 }

@@ -67,8 +67,16 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   )
   const isDraft = !session
   const currentInteractions = interactionState?.sessionId === sessionId ? interactionState : null
-  const hasPendingInteractions = currentInteractions?.items.some(item => item.status === 'pending') ?? false
-  const isGenerating = isSessionComposerLocked(session, { submitting, hasPendingPermissions, hasPendingInteractions })
+  const pendingInteractions = currentInteractions?.items.filter(item => item.status === 'pending') ?? []
+  const hasPendingInteractions = pendingInteractions.length > 0
+  const onlyPlanApprovalPending = Boolean(currentInteractions && !currentInteractions.loading && !currentInteractions.error
+    && pendingInteractions.length > 0 && pendingInteractions.every(item => item.kind === 'plan_approval'))
+  const isGenerating = isSessionComposerLocked(session, {
+    submitting,
+    hasPendingPermissions,
+    hasPendingInteractions: hasPendingInteractions && !onlyPlanApprovalPending,
+    allowWaitingInputForPlanApproval: onlyPlanApprovalPending,
+  })
   const queueWhileGenerating = !hasPendingInteractions && canEnqueueSessionInput(session)
   const resyncedStaleWaitingRef = useRef(false)
 

@@ -8,7 +8,13 @@ import {
 } from "./control-contracts.js";
 import { interactionService } from "./interaction-service.js";
 import { agentRuntimeStore as store } from "./session-store.js";
-import { checkGoalCompletion, getGoalState } from "./goal-control.js";
+import { checkGoalCompletion, getGoalState, initializeGoal } from "./goal-control.js";
+import {
+  assertUserInstructionTurn,
+  executeStoredPlan,
+  getStoredPlan,
+  getUserInstructionText,
+} from "./plan-execution.js";
 import { TaskStore } from "./tools/task-tools.js";
 import { AgentValidationError } from "./runtime-errors.js";
 
@@ -46,7 +52,7 @@ export const planProposeTool: RegisteredTool = {
   id: "plan.propose",
   label: "Propose a plan",
   description:
-    "Submit a versioned implementation plan for human review. User can save, request changes or approve execution. Include explicit acceptance criteria. Must be the only tool call in this step.",
+    "Submit a versioned implementation plan for a one-time execute-or-cancel confirmation. The user may also defer the decision and execute it from a later turn. Include explicit acceptance criteria. Must be the only tool call in this step.",
   category: "task",
   internalGate: "none",
   mutability: "task",
@@ -67,6 +73,90 @@ export const planProposeTool: RegisteredTool = {
       displaySummary: interaction.request.title,
       artifacts: [],
       suspend: { interactionId: interaction.id },
+    };
+  },
+};
+const modeSwitchSchema = z.object({
+  mode: z.enum(["chat", "plan", "goal"]),
+  reason: z.string().trim().min(1).max(1000).optional(),
+}).strict();
+export const modeSwitchTool: RegisteredTool = {
+  id: "mode.switch",
+  label: "Switch session mode",
+  description:
+    "Switch this Synax session between chat, plan, and goal when the user explicitly asks for a different workflow. Switching to goal does not approve or execute a saved plan. Must be the only call in a step.",
+  category: "task",
+  internalGate: "none",
+  mutability: "task",
+  resumeBehavior: "auto",
+  inputSchema: modeSwitchSchema,
+  execute(input) {
+    if (!input.runId || !input.stepId)
+      throw new AgentValidationError("A mode switch requires an active run step.");
+    const args = modeSwitchSchema.parse(input.args);
+    const session = store.getSession(input.sessionId);
+    assertUserInstructionTurn({
+      sessionId: session.id,
+      runId: input.runId,
+      action: "Mode switching",
+    });
+    let goal = getGoalState(session.sessionMetadata);
+    if (args.mode === "goal") {
+      const plan = getStoredPlan(session.id);
+      if (!goal || ["completed", "cancelled", "blocked", "budget_exhausted"].includes(goal.status)) {
+        const instruction = getUserInstructionText(session.id, input.runId)?.trim();
+        goal = initializeGoal(plan?.objective || instruction || session.prompt);
+      }
+    }
+    store.updateSessionMetadata(session.id, {
+      mode: args.mode,
+      ...(goal ? { goal } : {}),
+    });
+    return {
+      result: { mode: args.mode, reason: args.reason ?? null, goalStatus: goal?.status ?? null },
+      displaySummary: `Switched session mode to ${args.mode}.`,
+      artifacts: [],
+    };
+  },
+};
+const planExecuteSchema = z.object({
+  revision: z.number().int().positive().optional(),
+  reason: z.string().trim().min(1).max(1000).optional(),
+}).strict();
+export const planExecuteTool: RegisteredTool = {
+  id: "plan.execute",
+  label: "Execute saved plan",
+  description:
+    "Start executing the current deferred plan in goal mode. Call only when the user explicitly instructs execution in the current turn instead of using the one-time execute shortcut. Must be the only call in a step.",
+  category: "task",
+  internalGate: "none",
+  mutability: "task",
+  resumeBehavior: "auto",
+  inputSchema: planExecuteSchema,
+  execute(input) {
+    if (!input.runId || !input.stepId)
+      throw new AgentValidationError("Plan execution requires an active run step.");
+    const args = planExecuteSchema.parse(input.args ?? {});
+    assertUserInstructionTurn({
+      sessionId: input.sessionId,
+      runId: input.runId,
+      action: "Plan execution",
+    });
+    const plan = executeStoredPlan({
+      sessionId: input.sessionId,
+      runId: input.runId,
+      stepId: input.stepId,
+      expectedRevision: args.revision,
+    });
+    return {
+      result: plan,
+      displaySummary: `Started plan revision ${plan.revision} in goal mode.`,
+      artifacts: [{
+        kind: "decision",
+        title: "Plan execution started",
+        summary: `Started plan revision ${plan.revision}: ${plan.title}.`,
+        risk: "low",
+      }],
     };
   },
 };
@@ -208,4 +298,4 @@ export const goalFinishTool: RegisteredTool = {
   },
 };
 
-export const controlTools = [humanAskTool, planProposeTool, goalFinishTool];
+export const controlTools = [humanAskTool, planProposeTool, planExecuteTool, modeSwitchTool, goalFinishTool];

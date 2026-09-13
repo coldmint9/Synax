@@ -121,7 +121,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             {isRunning ? (
               <Loader2
                 size={10}
-                className="session-list-running-indicator animate-spin text-[var(--color-run)]"
+                className="shrink-0 animate-spin text-[var(--color-run)]"
                 aria-hidden
               />
             ) : showStatusDot ? (
@@ -136,11 +136,11 @@ export const SessionTreeItem = memo(function SessionTreeItem({
         </>
       ) : (
         <>
-          {/* Spinner while running (out of flow, leading gutter); dot only when selected */}
+          {/* Spinner while running; dot only when selected */}
           {isRunning ? (
             <Loader2
               size={10}
-              className="session-list-running-indicator session-list-running-indicator--child animate-spin text-[var(--color-run)]"
+              className="shrink-0 animate-spin text-[var(--color-run)]"
               aria-hidden
             />
           ) : isSelected ? (

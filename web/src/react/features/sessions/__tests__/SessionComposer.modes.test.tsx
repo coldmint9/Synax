@@ -101,23 +101,39 @@ describe('SessionComposer mode controls', () => {
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Keep my draft')
   })
 
-  it('renders server-refreshed goal budgets and specialist role without inferring goal completion from the run', () => {
+  it('keeps free-text input enabled when only a one-time plan approval is pending', async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({ interactions: [{
+      id: 'plan1', sessionId: 's1', runId: 'r1', stepId: 'step1', toolCallId: 'tool1', revision: 1,
+      kind: 'plan_approval', status: 'pending', response: null, createdAt: '', resolvedAt: null,
+      request: { title: 'Approve plan', plan: {
+        title: 'Ship forms', objective: 'Durable answers',
+        steps: [{ id: 'one', title: 'Implement', description: 'Build it', dependsOn: [], expectedFiles: [] }],
+        acceptanceCriteria: ['Tests pass'], assumptions: [], risks: [],
+      } },
+    }] })
+    renderComposer({ ...session, status: 'waiting_input', activeRunId: 'r1' })
+    await screen.findByRole('button', { name: 'Execute' })
+    expect(screen.getByRole('button', { name: 'Session mode' })).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled()
+  })
+
+  it('renders the goal summary and specialist role without goal budgets', () => {
     const goalSession = { ...session, sessionMetadata: {
-      mode: 'goal' as const, goal: { objective: 'Ship safely', status: 'executing' as const, stepsUsed: 4, maxSteps: 10, tokensUsed: 200, maxTokens: 1000 },
+      mode: 'goal' as const, goal: { objective: 'Ship safely', status: 'executing' as const },
       specialist: { name: 'Reviewer', role: 'Security review' },
     } }
     const { rerender } = render(<SessionModeSummary session={goalSession} />)
     expect(screen.getByRole('status')).toHaveTextContent('Executing')
-    expect(screen.getByRole('progressbar', { name: 'Step budget' })).not.toBeVisible()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     fireEvent.click(screen.getByText('Ship safely', { selector: 'summary span' }).closest('summary')!)
-    expect(screen.getByRole('progressbar', { name: 'Step budget' })).toHaveAttribute('value', '4')
-    expect(screen.getByRole('progressbar', { name: 'Token budget' })).toHaveAttribute('max', '1000')
+    expect(screen.getByText('Ship safely', { selector: 'p' })).toBeVisible()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     expect(screen.getByText('Specialist: Reviewer')).toBeVisible()
     expect(screen.getByText('— Security review')).toBeVisible()
     act(() => rerender(<SessionModeSummary session={{ ...goalSession, sessionMetadata: { ...goalSession.sessionMetadata,
-      goal: { ...goalSession.sessionMetadata.goal, status: 'budget_exhausted', stepsUsed: 10, reason: 'Step limit reached' },
+      goal: { ...goalSession.sessionMetadata.goal, status: 'budget_exhausted', reason: 'Legacy goal stop reason' },
     } }} />))
     expect(screen.getByRole('status')).toHaveTextContent('Budget exhausted')
-    expect(screen.getByText('Step limit reached')).toBeVisible()
+    expect(screen.getByText('Legacy goal stop reason')).toBeVisible()
   })
 })

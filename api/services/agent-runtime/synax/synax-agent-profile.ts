@@ -34,6 +34,8 @@ export const synaxAgentProfile: AgentProfile = {
     'agent.adapt',
     'human.ask',
     'plan.propose',
+    'plan.execute',
+    'mode.switch',
     'goal.finish',
   ],
   permissionDefaults: [

@@ -3736,24 +3736,6 @@
   min-width: 0;
   padding-right: 0.25rem;
 }
-/* Running rows render the loading spinner out of flow in the leading gutter:
-   it stays in front of the row content and never takes width away from the
-   session title. */
-.session-list-panel .session-list-running-indicator {
-  position: absolute;
-  left: -10px;
-  top: 50%;
-  z-index: 1;
-  pointer-events: none;
-  /* Use `translate` for vertical centering so it does not fight the
-     transform-based spin animation and make the loader jump. */
-  translate: 0 -50%;
-}
-/* Child rows have no expand caret, so the indicator pins to the row's own
-   padding box (2px border + 10px padding = the same 10px gutter). */
-.session-list-panel .list-row .session-list-running-indicator {
-  left: 0;
-}
 .session-list-panel .list-card .session-list-hover-actions {
   position: absolute;
   right: 0.25rem;

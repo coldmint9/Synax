@@ -124,7 +124,7 @@ describe('specialist configuration', () => {
     expect(input.thinkingMode).toBe('fast');
   });
 
-  it.each(['bash', 'shell', 'mcp.run', 'subagent.delegate', 'human.ask', 'plan.propose', 'agent.adapt', 'external.execute', 'file.*', '*'])('rejects unsafe capability %s even when the parent has it', (capability) => {
+  it.each(['bash', 'shell', 'mcp.run', 'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch', 'agent.adapt', 'external.execute', 'file.*', '*'])('rejects unsafe capability %s even when the parent has it', (capability) => {
     parentProfile.allowedCapabilities.push(capability);
     expect(() => child({ capabilities: [capability] })).toThrow(/cannot use capability/);
   });

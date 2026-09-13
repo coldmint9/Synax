@@ -13,11 +13,8 @@ const evidenceSchema = z.object({
 
 export const goalStateSchema = z.object({
   objective: text,
+  // Kept readable for goals persisted before budget enforcement was removed.
   status: z.enum(['planning', 'executing', 'completed', 'blocked', 'budget_exhausted', 'cancelled']),
-  maxSteps: limit,
-  stepsUsed: count,
-  maxTokens: limit,
-  tokensUsed: count,
   acceptanceEvidence: z.array(evidenceSchema).optional(),
   reason: text.optional(),
 }).refine(goal => goal.status !== 'completed' || Boolean(goal.acceptanceEvidence?.length),
@@ -32,68 +29,43 @@ const planSchema = z.object({
 }).refine(plan => new Set(plan.acceptanceCriteria).size === plan.acceptanceCriteria.length,
   'Acceptance criteria must be unique.');
 
-export function initializeGoal(objective: string, limits?: { maxSteps?: number; maxTokens?: number }): GoalState {
+export function initializeGoal(objective: string): GoalState {
   return goalStateSchema.parse({
     objective,
     status: 'planning',
-    maxSteps: limits?.maxSteps === undefined ? 128 : limits.maxSteps,
-    stepsUsed: 0,
-    maxTokens: limits?.maxTokens === undefined ? 250_000 : limits.maxTokens,
-    tokensUsed: 0,
   });
 }
 
 export function getGoalState(metadata: Record<string, unknown> | null | undefined): GoalState | null {
   const parsed = goalStateSchema.safeParse(metadata?.goal);
-  return parsed.success ? enforceBudget(parsed.data) : null;
-}
-
-function enforceBudget(goal: GoalState): GoalState {
-  if (['completed', 'cancelled', 'budget_exhausted'].includes(goal.status)) return goal;
-  if (goal.stepsUsed >= goal.maxSteps || goal.tokensUsed >= goal.maxTokens) {
-    return { ...goal, status: 'budget_exhausted', reason: 'Goal budget exhausted; request explicit user action before continuing.' };
-  }
-  return goal;
-}
-
-/** Usage is already aggregated over the root and its children by the caller. */
-export function recordGoalUsage(goal: GoalState, usage: { steps?: number; tokens?: number }): GoalState {
-  const current = goalStateSchema.parse(goal);
-  const steps = count.parse(usage.steps === undefined ? 0 : usage.steps);
-  const tokens = count.parse(usage.tokens === undefined ? 0 : usage.tokens);
-  return enforceBudget(goalStateSchema.parse({
-    ...current,
-    stepsUsed: current.stepsUsed + steps,
-    tokensUsed: current.tokensUsed + tokens,
-  }));
+  return parsed.success ? parsed.data : null;
 }
 
 export function buildGoalInstruction(goal: GoalState, plan?: GoalPlan): string {
-  const current = enforceBudget(goalStateSchema.parse(goal));
+  const current = goalStateSchema.parse(goal);
   const lines = [
-    '## Bounded goal',
+    '## Goal',
     `Objective: ${current.objective}`,
     `Goal status: ${current.status}.`,
-    `Root budget (shared with children): steps ${current.stepsUsed}/${current.maxSteps} (${Math.max(0, current.maxSteps - current.stepsUsed)} remaining); tokens ${current.tokensUsed}/${current.maxTokens} (${Math.max(0, current.maxTokens - current.tokensUsed)} remaining).`,
-    'A completed run is not a completed goal; budget exhaustion never means success.',
+    'A completed run is not a completed goal. Session and model limits may end the current run without completing or failing the goal.',
   ];
   if (current.reason) lines.push(`Reason: ${current.reason}`);
   if (!['planning', 'executing'].includes(current.status)) {
-    return [...lines, 'Stop autonomous work. Do not continue or reset the budget; any resumption requires explicit user action.'].join('\n');
+    return [...lines, 'Stop autonomous work. Any resumption requires explicit user action.'].join('\n');
   }
   const parsedPlan = planSchema.safeParse(plan);
   if (!parsedPlan.success || parsedPlan.data.status !== 'approved') {
-    lines.push('No approved plan: use plan.propose to propose or revise a plan with acceptance criteria, then wait for explicit user approval before execution.');
+    lines.push('No approved plan: use plan.propose to submit or revise a plan with acceptance criteria. The runtime offers a one-time execute-or-cancel choice; if the user defers, call plan.execute only after an explicit later execution instruction.');
   } else {
     lines.push(
-      `Approved plan revision: ${parsedPlan.data.revision}. Execute only this approved version within the remaining root budget.`,
+      `Approved plan revision: ${parsedPlan.data.revision}. Execute only this approved version until every criterion is satisfied.`,
       ...parsedPlan.data.acceptanceCriteria.map(criterion => `- ${criterion}`),
     );
   }
   lines.push(
     'Completion requires matching evidence for every approved acceptance criterion, referencing completed/successful tool calls or artifacts validated by the server.',
     'Never fabricate evidence or approvals. Subjective acceptance requires human.ask and explicit trusted user approval; a model-written humanApproved flag is not approval.',
-    'Do not complete while there are unfinished tasks, active children, or pending interactions. Stop for input, approval, blockers, exhausted budget, or cancellation.',
+    'Do not complete while there are unfinished tasks, active children, or pending interactions. Stop for input, approval, blockers, or cancellation.',
   );
   return lines.join('\n');
 }
@@ -114,9 +86,6 @@ export function checkGoalCompletion(input: {
   trustedUserApprovedCriteria?: string[];
 }): GoalState {
   const goal = goalStateSchema.parse(input.goal);
-  if (goal.status === 'budget_exhausted' || goal.stepsUsed >= goal.maxSteps || goal.tokensUsed >= goal.maxTokens) {
-    throw new Error('Goal budget exhausted; exhaustion cannot complete a goal.');
-  }
   if (goal.status !== 'executing') throw new Error(`Cannot complete a goal with status ${goal.status}.`);
   const plan = planSchema.parse(input.plan);
   if (plan.status !== 'approved') throw new Error('Goal completion requires an approved plan.');

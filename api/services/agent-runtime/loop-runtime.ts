@@ -1,7 +1,7 @@
 import { INVALID_TOOL_ID } from './tool-invalid.js';
 import { interactionService } from './interaction-service.js';
-import { validateControlBatch } from './control-policy.js';
-import { rootGoal, recordGoalStep, goalStopReason, belongsToPlanExecution, goalEvidenceSection, type PlanExecutionBoundary } from './control-runtime.js';
+import { CONTROL_TOOLS, validateControlBatch } from './control-policy.js';
+import { rootGoal, goalStopReason, belongsToPlanExecution, goalEvidenceSection, type PlanExecutionBoundary } from './control-runtime.js';
 import { getGoalState, initializeGoal } from './goal-control.js';
 import type {
   AgentContextBundle,
@@ -179,7 +179,40 @@ export class AgentLoopRuntime {
       if(previousGoal&&['completed','cancelled'].includes(previousGoal.status))this.store.updateSessionMetadata(sessionId,{goal:initializeGoal(input.message),plan:null});
       else if(previousGoal?.status==='blocked')this.store.updateSessionMetadata(sessionId,{goal:{...previousGoal,status:(beforeStart.sessionMetadata?.plan as {status?:string}|undefined)?.status==='approved'?'executing':'planning',reason:undefined}});
     }
-    if (beforeStart.status === 'waiting_input' && (!resume || !interactionService.ready(sessionId))) throw new AgentValidationError('Resolve the pending form before continuing.');
+    if (beforeStart.status === 'waiting_input') {
+      const pending = interactionService.pending(sessionId);
+      if (pending?.kind === 'plan_approval' && input.message?.trim()) {
+        interactionService.deferPlan(sessionId, pending.id);
+        const resolved = interactionService.consume(sessionId);
+        if (!resolved)
+          throw new AgentValidationError('Plan approval could not be converted into a saved plan.');
+        const completedAt = nowIso();
+        this.store.updateRun(resolved.runId, {
+          status: 'completed',
+          completedAt,
+          stopReason: 'plan_saved',
+        });
+        this.store.updateSession(sessionId, {
+          status: 'completed',
+          updatedAt: completedAt,
+          completedAt,
+          resultSummary: 'Plan saved for later execution.',
+          blockedReason: null,
+          activeRunId: null,
+          pendingResumeToken: null,
+        });
+        this.events.append({
+          sessionId,
+          type: 'run_completed',
+          summary: 'Plan saved for later execution.',
+          payload: { runId: resolved.runId, stopReason: 'plan_saved' },
+        });
+        yield* this.streamRun(sessionId, input, abortSignal, false);
+        return;
+      }
+      if (!resume || !interactionService.ready(sessionId))
+        throw new AgentValidationError('Resolve the pending form before continuing.');
+    }
     if (input.permissionTier !== undefined || input.permissionOverrides !== undefined) {
       applySessionPermissionUpdate(sessionId, {
         permissionTier: input.permissionTier,
@@ -220,11 +253,17 @@ export class AgentLoopRuntime {
       yield { type: 'tool_result', runId: run.id, stepId: resolved.stepId, toolCall: this.store.getToolCall(sessionId,resolved.toolCallId) };
       if (['save','cancel','decline'].includes(resolved.response!.action)) {
         const saved = resolved.response!.action === 'save';
-        const reason = saved ? 'Plan saved without execution.' : 'User declined or cancelled the requested input.';
-        const finished = this.store.updateRun(run.id,{status:saved?'completed':'blocked',completedAt:nowIso(),stopReason:reason});
-        this.store.updateSession(sessionId,{status:saved?'completed':'blocked',activeRunId:null,pendingResumeToken:null,completedAt:nowIso(),resultSummary:reason,blockedReason:saved?null:reason});
-        if (!saved) {const g=getGoalState(this.store.getSession(sessionId).sessionMetadata);if(g)this.store.updateSessionMetadata(sessionId,{goal:{...g,status:'blocked',reason}});}
-        yield saved ? {type:'run_completed',run:finished} : {type:'run_failed',run:finished,error:reason};
+        const cancelledPlan = resolved.kind === 'plan_approval' && resolved.response!.action === 'cancel';
+        const completed = saved || cancelledPlan;
+        const reason = saved
+          ? 'Plan saved without execution.'
+          : cancelledPlan
+            ? 'Plan saved; immediate execution cancelled.'
+            : 'User declined or cancelled the requested input.';
+        const finished = this.store.updateRun(run.id,{status:completed?'completed':'blocked',completedAt:nowIso(),stopReason:reason});
+        this.store.updateSession(sessionId,{status:completed?'completed':'blocked',activeRunId:null,pendingResumeToken:null,completedAt:nowIso(),resultSummary:reason,blockedReason:completed?null:reason});
+        if (!completed) {const g=getGoalState(this.store.getSession(sessionId).sessionMetadata);if(g)this.store.updateSessionMetadata(sessionId,{goal:{...g,status:'blocked',reason}});}
+        yield completed ? {type:'run_completed',run:finished} : {type:'run_failed',run:finished,error:reason};
         yield {type:'done',sessionId,runId:run.id};
         return;
       }
@@ -332,7 +371,7 @@ export class AgentLoopRuntime {
 
     try {
       const initialGoal = rootGoal(session).goal;
-      const maxSteps = initialGoal && !session.parentSessionId ? run.currentStep + Math.max(1, initialGoal.maxSteps - initialGoal.stepsUsed) : profile.maxSteps;
+      const maxSteps = input.maxSteps ?? profile.maxSteps;
       let emptyGoalTurns = 0;
       const context = session.contextSnapshotId
         ? this.tryGetContext(session.contextSnapshotId)
@@ -693,13 +732,6 @@ export class AgentLoopRuntime {
           return;
         }
 
-        recordGoalStep(sessionId,modelResult.step.usage);
-        const budgetStop = goalStopReason(this.store.getSession(sessionId));
-        if (budgetStop) {
-          this.store.updateRunStep(step.id,{status:'blocked',completedAt:nowIso(),finishReason:'goal_stop'});
-          yield* this.finishControlledGoal(sessionId,run,budgetStop);
-          return;
-        }
         const activeGoal = rootGoal(this.store.getSession(sessionId)).goal;
         if (activeGoal && !session.parentSessionId && modelResult.step.toolCalls.length === 0) {
           this.finishAssistantMessage(sessionId,run.id,step.id,modelResult.step.message?.trim()||'Goal requires further work.',modelResult.model,'goal_progress',modelResult.step.usage);
@@ -710,11 +742,11 @@ export class AgentLoopRuntime {
             this.store.updateSessionMetadata(sessionId,{goal:{...activeGoal,status:'blocked',reason}});
             yield* this.finishControlledGoal(sessionId,run,reason);return;
           }
-          currentPrompt='Continue the approved goal. Plain final text does not finish it. Use human.ask for missing decisions, plan.propose for approval, or goal.finish with evidence / an explicit blocker.';
+          currentPrompt='Continue the goal. Plain final text does not finish it. Use human.ask for missing decisions, plan.propose to save a revised plan, plan.execute only after the user explicitly asks to execute, or goal.finish with evidence / an explicit blocker.';
           continue;
         }
         emptyGoalTurns=0;
-        if (modelResult.step.toolCalls.length === 0 || (modelResult.step.final && !activeGoal && !modelResult.step.toolCalls.some(c => ['human.ask','plan.propose'].includes(c.toolId)))) {
+        if (modelResult.step.toolCalls.length === 0 || (modelResult.step.final && !activeGoal && !modelResult.step.toolCalls.some(c => CONTROL_TOOLS.has(c.toolId)))) {
           const finalText =
             modelResult.step.message?.trim() || "Run completed.";
           logger.info(
@@ -1120,9 +1152,8 @@ export class AgentLoopRuntime {
       }
 
       const finalGoal = rootGoal(this.store.getSession(sessionId)).goal;
-      if (finalGoal) {
-        const reason = finalGoal.reason ?? 'Goal execution limit reached before acceptance.';
-        if(!session.parentSessionId && !['completed','blocked','cancelled','budget_exhausted'].includes(finalGoal.status))this.store.updateSessionMetadata(sessionId,{goal:{...finalGoal,status:'budget_exhausted',reason}});
+      if (finalGoal && ['completed','blocked','cancelled','budget_exhausted'].includes(finalGoal.status)) {
+        const reason = finalGoal.reason ?? (finalGoal.status === 'completed' ? 'Goal completed.' : `Goal ${finalGoal.status}.`);
         yield* this.finishControlledGoal(sessionId,run,reason);return;
       }
       const stoppedRun = this.store.updateRun(run.id, {

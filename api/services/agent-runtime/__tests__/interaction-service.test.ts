@@ -156,6 +156,9 @@ describe("persistent human input", () => {
     expect(
       validateControlBatch([{ toolId: "human.ask" }, { toolId: "file.write" }]),
     ).toBeTruthy();
+    expect(
+      validateControlBatch([{ toolId: "plan.execute" }, { toolId: "file.write" }]),
+    ).toBeTruthy();
     expect(validateControlBatch([{ toolId: "human.ask" }])).toBeNull();
     expect(controlToolError(session, toolRegistry.get("bash"))).toBeTruthy();
     const write = await toolRegistry.execute(session.id, "file.write", {
@@ -163,6 +166,70 @@ describe("persistent human input", () => {
       content: "no",
     });
     expect(write.record.status).toBe("denied");
+  });
+  it.each(["chat", "plan", "goal"] as const)(
+    "exposes plan execution and mode switching in %s mode",
+    (mode) => {
+      const session = agentSessionRuntime.create({
+        projectId: "project-alpha",
+        profileId: "synax",
+        prompt: "Work on this",
+        sessionMetadata: { mode },
+      });
+      expect(controlToolError(session, toolRegistry.get("plan.execute"))).toBeNull();
+      expect(controlToolError(session, toolRegistry.get("mode.switch"))).toBeNull();
+    },
+  );
+  it("limits the one-time plan approval to execute or cancel", () => {
+    const { session, run, step } = setup();
+    const now = new Date().toISOString();
+    const call = store.appendToolCall({
+      id: "plan-call",
+      sessionId: session.id,
+      runId: run.id,
+      stepId: step.id,
+      modelToolCallId: "plan-call",
+      toolId: "plan.propose",
+      category: "task",
+      mutability: "task",
+      argsHash: "plan",
+      inputSummary: "",
+      inputRef: {},
+      outputSummary: null,
+      outputRef: null,
+      status: "running",
+      permissionDecisionId: null,
+      startedAt: now,
+      endedAt: null,
+      error: null,
+    });
+    const interaction = interactionService.request({
+      sessionId: session.id,
+      runId: run.id,
+      stepId: step.id,
+      toolCallId: call.id,
+      kind: "plan_approval",
+      request: { plan: {
+        title: "Plan",
+        objective: "Do the work",
+        steps: [{ id: "one", title: "Work", description: "Do it" }],
+        acceptanceCriteria: ["Work is verified"],
+      } },
+    });
+    expect(() => interactionService.reply(session.id, interaction.id, {
+      revision: interaction.revision,
+      action: "save",
+    })).toThrow(/invalid action/i);
+    expect(() => interactionService.reply(session.id, interaction.id, {
+      revision: interaction.revision,
+      action: "revise",
+      message: "Change it",
+    })).toThrow(/invalid action/i);
+    interactionService.reply(session.id, interaction.id, {
+      revision: interaction.revision,
+      action: "cancel",
+    });
+    expect(store.getSession(session.id).sessionMetadata?.plan).toMatchObject({ status: "saved", revision: 1 });
   });
   it("keeps pending forms and acknowledged replies through a database reopen", () => {
     const { session, run, step, call } = setup();
