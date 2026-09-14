@@ -4,7 +4,7 @@
 >
 > 文档日期：2026-09-14
 >
-> 当前代码版本：`0.1.1` 工作区快照
+> 当前代码版本：`0.1.2` 工作区快照
 
 这份文档回答两件事：
 
@@ -83,6 +83,15 @@ npm run dev:api     # API / Runtime
 npm run dev:web     # Vite Web
 npm run dev:all     # API + Web
 ```
+
+安装 npm 包后，也可以直接从任意代码目录启动终端客户端：
+
+```bash
+cd /path/to/your/project
+synax
+```
+
+CLI 会把当前目录作为默认 `workDir`；如果本地 Runtime 没有启动，会自动启动 API sidecar；如果该目录尚未注册 Project，会自动创建或复用对应的 `source.localPath`。使用 `SYNAX_API` 或 `--url` 时则改为连接指定 Runtime，不会自动启动本地 sidecar。
 
 ### 2.3 编译后启动 Runtime
 

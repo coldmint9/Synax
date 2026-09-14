@@ -60,6 +60,13 @@ export function resolveProjectWorkDir(projectId: string): string {
   return path.resolve(process.cwd());
 }
 
+/** A reference picker must not silently fall back to the server workspace. */
+export function resolveRegisteredProjectWorkDir(projectId: string): string {
+  const registered = readProjectWorkDirEntriesSafely().find(entry => entry.id === projectId)?.source?.localPath;
+  if (!registered) throw new Error('The project has no registered workspace.');
+  return fs.realpathSync(resolveWorkspaceRoot(registered));
+}
+
 /** Prefer an explicit session workspace root, then the project's registered path. */
 export function resolveSessionWorkDir(sessionId: string, projectId: string): string {
   const binding = agentRuntimeStore.tryGetSession(sessionId)?.sessionMetadata?.backend as { workDir?: string | null } | undefined;

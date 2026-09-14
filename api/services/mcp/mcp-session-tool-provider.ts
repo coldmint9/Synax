@@ -1,3 +1,4 @@
+import { effectiveTurnMcpIds } from '../agent-runtime/turn-reference-state.js';
 import { z } from 'zod/v4'
 import type {
   RegisteredTool,
@@ -67,7 +68,7 @@ class McpSessionToolProvider implements SessionToolProvider {
     let serverIds: string[]
     try {
       const session = agentRuntimeStore.getSession(sessionId)
-      serverIds = session.mcpServerIds ?? []
+      serverIds = effectiveTurnMcpIds(sessionId)
     } catch {
       serverIds = []
     }
@@ -102,7 +103,7 @@ export async function warmupMcpForSession(sessionId: string): Promise<void> {
   let serverIds: string[]
   try {
     const session = agentRuntimeStore.getSession(sessionId)
-    serverIds = session.mcpServerIds ?? []
+    serverIds = effectiveTurnMcpIds(sessionId)
   } catch {
     serverIds = []
   }

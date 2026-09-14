@@ -141,4 +141,6 @@ synax rpc
 - CLI：`cli/index.ts`
 - 编译产物：`server-dist/cli.cjs`
 
+安装包中的 `synax` 命令会从自身包目录定位 `server-dist/server.cjs`，而不是从调用者的当前目录查找 Runtime。调用者当前目录只用于创建 Session 的 `workDir` 和自动匹配本地 Project。
+
 同进程 `InProcessTransport` 和完整 `createRuntimeKernel()` 尚未在本阶段启用；后续必须复用同一套协议和事件语义。

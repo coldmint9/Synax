@@ -222,6 +222,25 @@ node server-dist/cli.cjs watch <run-id> --session <session-id>
 
 The CLI reads `${DATA_ROOT}/runtime-access-token` by default. Use `SYNAX_RUNTIME_TOKEN`, `--token`, or `--token-file` for explicit credentials. `--jsonl` emits Runtime events for scripts and other Agent clients; `rpc` uses JSONL over stdin/stdout.
 
+### Package and install
+
+Create an installable npm tarball from the Synax source tree:
+
+```bash
+npm run build
+npm pack --pack-destination /tmp
+npm install -g /tmp/synax-0.1.2.tgz
+```
+
+After installation, enter any code directory and run:
+
+```bash
+cd /path/to/your/project
+synax
+```
+
+The CLI uses the current directory as the default `workDir`. If the local Runtime is not already running, it starts a local API sidecar; if the directory is not registered as a Project, it creates or reuses the matching `source.localPath` Project. Use `DATA_ROOT` and `PORT` for an isolated local instance.
+
 ## Development Workflow
 
 1. Keep changes focused and small enough to review.

@@ -230,6 +230,7 @@ export interface AgentContextBundle {
 }
 
 export interface QueuedInput {
+  references?: TurnReference[]
   id: string
   message: string
   model: string | null
@@ -397,7 +398,14 @@ export interface SessionCapabilities {
   }
 }
 
+export interface TurnReference {
+  kind: 'skill' | 'mcp' | 'file' | 'wiki'
+  id: string
+  label?: string
+}
+
 export interface StreamTurnRequest {
+  references?: TurnReference[]
   message?: string
   /** Marks a prompt the app composed on the user's behalf (goal scaffolding). */
   messageSource?: 'user' | 'system_injection'
@@ -417,6 +425,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const agentRuntimeApi = {
+  listReferenceOptions: (projectId: string, kind: TurnReference['kind'], q = '', sessionId?: string) =>
+    apiRequest<{ items: TurnReference[] }>(`${BASE}/projects/${encodeURIComponent(projectId)}/references?${new URLSearchParams({ kind, q, ...(sessionId ? { sessionId } : {}) })}`),
+
   listBackends: () => request<{ items: Array<{ id: BackendId; label: string; kind: 'native' | 'acp' | 'cli'; experimental?: boolean }> }>('/backends'),
   listBackendModels: (id: BackendId) => request<{ models: Array<{ id: string; label: string; efforts?: string[] }>; defaultModel?: string | null }>(`/backends/${encodeURIComponent(id)}/models`),
   acknowledgeRecovery: (sessionId: string) => request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/recovery`, {
@@ -621,7 +632,7 @@ export const agentRuntimeApi = {
   listInputQueue: (sessionId: string) =>
     apiRequest<{ items: QueuedInput[] }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue`),
 
-  enqueueInput: (sessionId: string, body: { message: string; model?: string | null; reasoningEffort?: ReasoningEffort | null }) =>
+  enqueueInput: (sessionId: string, body: { message: string; model?: string | null; reasoningEffort?: ReasoningEffort | null; references?: TurnReference[] }) =>
     apiRequest<{ items: QueuedInput[] }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },

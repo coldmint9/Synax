@@ -46,7 +46,7 @@ export interface BackendAdapter {
 
 }
 export const BACKENDS: readonly BackendDescription[] = [
-  { id: 'native', label: 'Synax Native', kind: 'native', capabilities: {
+  { id: 'native', label: 'Synax', kind: 'native', capabilities: {
     nativeControls: 'supported', resume: 'supported', permissions: 'supported', interactions: 'supported',
     pause: 'supported', cancel: 'supported', chat: 'supported', plan: 'supported', goal: 'supported',
     nativeSessionResume: 'supported', jsonlEvents: 'supported',

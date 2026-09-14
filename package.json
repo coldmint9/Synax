@@ -1,12 +1,19 @@
 {
   "name": "synax",
-  "private": true,
-  "version": "0.1.1",
+  "private": false,
+  "version": "0.1.2",
   "license": "MIT",
   "author": "Synax",
   "description": "AI-powered code analysis platform",
   "type": "module",
   "main": "dist-electron/main.js",
+  "files": [
+    "server-dist",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "docs/integration"
+  ],
   "bin": {
     "synax": "server-dist/cli.cjs"
   },
@@ -24,6 +31,7 @@
     "prebuild": "tsx scripts/generate-wiki-skill-bundle.ts",
     "build": "tsup --config tsup.config.ts",
     "postbuild": "tsx scripts/copy-native-modules.ts",
+    "prepack": "npm run build",
     "start": "node ./server-dist/server.cjs",
     "cli": "tsx cli/index.ts",
     "cli:build": "npm run build",

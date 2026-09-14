@@ -14,6 +14,9 @@ export async function* executeBackendSession(sessionId: string, mode: AgentSessi
   if (binding.id !== 'native' && (metadata?.mode === 'plan' || (metadata?.mode === 'goal' && metadata.goal))) {
     throw new AgentValidationError('Plan and goal controls require the native Synax engine.');
   }
+  if (binding.id !== 'native' && input.referenceContext?.content) {
+    input = { ...input, message: `${input.message ?? ''}\n\n<user-selected-references>\n${input.referenceContext.content}\n</user-selected-references>` };
+  }
   try {
     for await (const chunk of getBackendAdapter(binding.id).stream(sessionId, mode, model ? { ...input, model } : input, signal)) {
       maybeScheduleSessionTitleFromStreamChunk(sessionId, chunk);
