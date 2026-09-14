@@ -13,16 +13,26 @@ export const backendBindingSchema = z.object({
 });
 export type BackendBinding = z.infer<typeof backendBindingSchema>;
 export type CapabilitySupport = 'supported' | 'unsupported' | 'unverified';
+export interface BackendCapabilities {
+  /** Synax-native plan/goal controls, not the backend's own prompt semantics. */
+  nativeControls: CapabilitySupport;
+  resume: CapabilitySupport;
+  permissions: CapabilitySupport;
+  interactions: CapabilitySupport;
+  pause: CapabilitySupport;
+  cancel: CapabilitySupport;
+  chat: CapabilitySupport;
+  plan: CapabilitySupport;
+  goal: CapabilitySupport;
+  nativeSessionResume: CapabilitySupport;
+  jsonlEvents: CapabilitySupport;
+}
 export interface BackendDescription {
   id: BackendId;
   label: string;
   kind: 'native' | 'acp' | 'cli';
   experimental?: boolean;
-  capabilities: {
-    nativeControls: CapabilitySupport;
-    resume: CapabilitySupport;
-    permissions: CapabilitySupport;
-  };
+  capabilities: BackendCapabilities;
 }
 export interface BackendAdapter {
   stream(sessionId: string, mode: AgentSessionStreamMode, input: StreamTurnRequest, signal?: AbortSignal): AsyncGenerator<AgentRunStreamChunk>;
@@ -37,13 +47,25 @@ export interface BackendAdapter {
 }
 export const BACKENDS: readonly BackendDescription[] = [
   { id: 'native', label: 'Synax Native', kind: 'native', capabilities: {
-    nativeControls: 'supported', resume: 'supported', permissions: 'supported',
+    nativeControls: 'supported', resume: 'supported', permissions: 'supported', interactions: 'supported',
+    pause: 'supported', cancel: 'supported', chat: 'supported', plan: 'supported', goal: 'supported',
+    nativeSessionResume: 'supported', jsonlEvents: 'supported',
   } },
-  { id: 'codex', label: 'Codex CLI', kind: 'cli', experimental: true, capabilities: { nativeControls: 'unsupported', resume: 'supported', permissions: 'supported' } },
-  { id: 'claude-code', label: 'Claude Code CLI', kind: 'cli', experimental: true, capabilities: { nativeControls: 'unsupported', resume: 'supported', permissions: 'supported' } },
+  { id: 'codex', label: 'Codex CLI', kind: 'cli', experimental: true, capabilities: {
+    nativeControls: 'unsupported', resume: 'supported', permissions: 'supported', interactions: 'supported',
+    pause: 'supported', cancel: 'supported', chat: 'supported', plan: 'unsupported', goal: 'unsupported',
+    nativeSessionResume: 'supported', jsonlEvents: 'supported',
+  } },
+  { id: 'claude-code', label: 'Claude Code CLI', kind: 'cli', experimental: true, capabilities: {
+    nativeControls: 'unsupported', resume: 'supported', permissions: 'supported', interactions: 'supported',
+    pause: 'supported', cancel: 'supported', chat: 'supported', plan: 'unsupported', goal: 'unsupported',
+    nativeSessionResume: 'supported', jsonlEvents: 'supported',
+  } },
   ...ACP_PROVIDER_IDS.map((id): BackendDescription => ({
     id, label: id, kind: 'acp', capabilities: {
-      nativeControls: 'unsupported', resume: 'unverified', permissions: 'supported',
+      nativeControls: 'unsupported', resume: 'unverified', permissions: 'supported', interactions: 'unverified',
+      pause: 'unverified', cancel: 'supported', chat: 'supported', plan: 'unsupported', goal: 'unsupported',
+      nativeSessionResume: 'unverified', jsonlEvents: 'supported',
     },
   })),
 ];

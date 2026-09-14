@@ -7,6 +7,9 @@
   "description": "AI-powered code analysis platform",
   "type": "module",
   "main": "dist-electron/main.js",
+  "bin": {
+    "synax": "server-dist/cli.cjs"
+  },
   "engines": {
     "node": ">=22 <23"
   },
@@ -22,12 +25,15 @@
     "build": "tsup --config tsup.config.ts",
     "postbuild": "tsx scripts/copy-native-modules.ts",
     "start": "node ./server-dist/server.cjs",
+    "cli": "tsx cli/index.ts",
+    "cli:build": "npm run build",
     "start:api": "tsx scripts/start-api.ts",
     "web:dev": "npm run dev:web",
     "analyzer:dev": "npm run dev:api",
     "analyzer:start": "npm run start:api",
     "web:build": "npm run --prefix web build",
     "typecheck": "tsc --noEmit",
+    "typecheck:cli": "tsc -p cli/tsconfig.json --noEmit",
     "lint": "eslint api/",
     "test": "vitest run",
     "bench:repl": "tsx scripts/tree-embedding-repl.ts",

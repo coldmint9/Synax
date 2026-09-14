@@ -2,7 +2,7 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['api/**/*.{test,spec}.{ts,tsx}'],
+    include: ['api/**/*.{test,spec}.{ts,tsx}', 'cli/**/*.{test,spec}.{ts,tsx}'],
     fileParallelism: false,
     env: {
       SYNAX_SCAN_IN_PROCESS: '1',

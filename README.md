@@ -170,6 +170,8 @@ Runtime data is local by default and is ignored by Git. Use a stable `CONFIG_ENC
 | `npm run dev:desktop` | Start API, web, Electron compiler watch, and Electron. |
 | `npm run build` | Bundle the API server into `server-dist/`. |
 | `npm run start` | Run the bundled API server. |
+| `npm run cli -- --help` | Run the Synax CLI directly through TypeScript. |
+| `node server-dist/cli.cjs --help` | Run the compiled `synax` CLI. |
 | `npm run web:build` | Build the web app into `web/dist/`. |
 | `npm run typecheck` | Run TypeScript checks for the root project. |
 | `npm run lint` | Lint API code. |
@@ -198,6 +200,27 @@ The API is mounted under `/api` and organized by domain:
 - `/api/context` for memory, coordinates, sessions, and contextual signals.
 - `/api/acp` for Agent Client Protocol discovery and provider integration.
 - `/api/notifications`, `/api/logs`, and `/api/health` for operational support.
+
+## Terminal CLI
+
+The Synax CLI is a headless Runtime API client. It does not access the database directly or implement a second Agent execution loop.
+
+Start the API first:
+
+```bash
+npm run dev:api
+```
+
+Then run the compiled CLI:
+
+```bash
+npm run build
+node server-dist/cli.cjs backends
+node server-dist/cli.cjs exec --project <project-id> "Inspect this project and summarize the risks"
+node server-dist/cli.cjs watch <run-id> --session <session-id>
+```
+
+The CLI reads `${DATA_ROOT}/runtime-access-token` by default. Use `SYNAX_RUNTIME_TOKEN`, `--token`, or `--token-file` for explicit credentials. `--jsonl` emits Runtime events for scripts and other Agent clients; `rpc` uses JSONL over stdin/stdout.
 
 ## Development Workflow
 
