@@ -14,6 +14,7 @@ import { useAcpDiscovery } from './useAcpDiscovery'
 const LARGE_LIST_THRESHOLD = 40
 
 interface Props {
+  backendId?: string
   globalConfig: GlobalConfig | null
   providers: ProviderDef[]
   providerId: string | null
@@ -59,6 +60,7 @@ function ModelOption({
 }
 
 export function GoalModelPicker({
+  backendId,
   globalConfig,
   providers,
   providerId,
@@ -76,8 +78,13 @@ export function GoalModelPicker({
   const acpDiscovery = useAcpDiscovery({ enabled: state.isOpen })
 
   const { apiModels, acpEndpoints } = useMemo(
-    () => buildGoalModelOptions(globalConfig, providers, acpDiscovery),
-    [globalConfig, providers, acpDiscovery],
+    () => {
+      const options = buildGoalModelOptions(globalConfig, providers, acpDiscovery)
+      if (!backendId) return options
+      return { apiModels: backendId === 'native' ? options.apiModels : [],
+        acpEndpoints: options.acpEndpoints.filter(option => option.providerId === backendId) }
+    },
+    [globalConfig, providers, acpDiscovery, backendId],
   )
 
   const allOptions = useMemo(() => [...apiModels, ...acpEndpoints], [apiModels, acpEndpoints])

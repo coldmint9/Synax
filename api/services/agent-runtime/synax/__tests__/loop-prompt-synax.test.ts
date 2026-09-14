@@ -46,7 +46,7 @@ describe('buildLoopSystemPrompt synax mode section', () => {
       stepIndex: 1,
     });
     expect(prompt).toContain('task.create');
-    expect(prompt).toContain('grep.search');
+    expect(prompt).toContain('file/search tools');
     expect(prompt).not.toContain('Prefer the bash tool');
   });
 
@@ -96,7 +96,7 @@ describe('buildLoopSystemPrompt synax mode section', () => {
       locale: 'zh',
       permissionTier: 'readonly',
     });
-    expect(prompt.indexOf('## Language Output Directive')).toBeLessThan(prompt.indexOf('## Permission gates'));
+    expect(prompt.indexOf('## Response language')).toBeLessThan(prompt.indexOf('## Permission gates'));
     expect(prompt).toContain('## Permission gates');
     expect(prompt).toContain('Chinese (Simplified)');
   });
@@ -147,7 +147,7 @@ describe('buildLoopSystemPrompt synax mode section', () => {
 describe('buildCoreLoopSection', () => {
   it('prefers dedicated read tools over bash', () => {
     const section = buildCoreLoopSection(synaxAgentProfile);
-    expect(section).toContain('grep.search');
-    expect(section).toContain('shell gate');
+    expect(section).toContain('file/search tools');
+    expect(section).toContain('permission gate');
   });
 });

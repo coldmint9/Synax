@@ -54,7 +54,7 @@ describe('read-before-write', () => {
     resetAgentRuntimeFixtures();
   });
 
-  it('blocks file.write on unread existing files', () => {
+  it('blocks file.write on unread existing files', async () => {
     const session = agentSessionRuntime.create(executorInput);
     clearSessionFileReads(session.id);
 
@@ -64,20 +64,14 @@ describe('read-before-write', () => {
     setSessionWorkspaceRoot(session.id, tmpDir);
 
     try {
-      expect(() =>
-        fileWriteTool.execute({
-          sessionId: session.id,
-          args: { path: relPath, content: 'updated' },
-          permission: null,
-        }),
-      ).toThrow(/not read in this session/i);
-
-      recordSessionFileRead(session.id, relPath);
-      const result = fileWriteTool.execute({
-        sessionId: session.id,
+      const executeWrite = () => fileWriteTool.execute({
+        sessionId: session.id, runId: null, stepId: null, toolCallId: 'write-guard',
+        toolId: 'file.write', category: 'write', mutability: 'write',
         args: { path: relPath, content: 'updated' },
-        permission: null,
       });
+      await expect(Promise.resolve().then(executeWrite)).rejects.toThrow(/not read in this session/i);
+      recordSessionFileRead(session.id, relPath);
+      const result = await executeWrite();
       expect(result.displaySummary).toContain('Wrote');
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

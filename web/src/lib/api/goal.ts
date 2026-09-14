@@ -126,7 +126,7 @@ export const goalApi = {
   },
 
   async buildSessionPrompt(projectId: string, body: {
-    mode?: 'direct' | 'plan_node'
+    mode?: 'session' | 'direct' | 'plan_node'
     content: string
     wikiAttachMode?: 'auto' | 'manual'
     documentId?: string | null

@@ -59,7 +59,20 @@ describe('SessionComposer mode controls', () => {
     await waitFor(() => expect(agentRuntimeApi.createSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionMetadata: expect.objectContaining({ mode, goalContent: 'Build forms' }), permissionTier: 'readonly',
     })))
+    expect(goalApi.buildSessionPrompt).toHaveBeenCalledWith('p1', expect.objectContaining({ mode: 'session', content: 'Build forms' }))
   })
+
+  it('sends plain session input without hidden implementation scaffolding', async () => {
+    const send = vi.fn(async () => {});
+    vi.spyOn(goalApi, 'buildSessionPrompt').mockResolvedValue({ prompt: '你好', wikiContext: { mode: 'auto', documentId: null } } as never);
+    vi.spyOn(agentRuntimeApi, 'createSession').mockResolvedValue({ session, context: null, profile: {} as never });
+    useAgentSessionStore.setState({ sendSessionMessage: send });
+    renderComposer();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: '你好' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith(session.id, expect.objectContaining({ message: '你好', messageSource: undefined })));
+    expect(goalApi.buildSessionPrompt).toHaveBeenCalledWith('p1', expect.objectContaining({ mode: 'session' }));
+  });
 
   it('disables ACP mode selection and sends ACP drafts as chat without discarding the native draft choice', () => {
     useAgentSessionStore.setState({ draftMode: 'plan' })

@@ -1,3 +1,8 @@
+import { NativeBackendModelPicker } from './NativeBackendModelPicker'
+import { RuntimeRecoveryPanel } from './RuntimeRecoveryPanel'
+import { agentRuntimeApi, type BackendId } from '../../../lib/api/agentRuntime'
+import { SessionBackendPicker } from './SessionBackendPicker'
+import { readSessionBackendId } from './synaxSessionTypes'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from './agentSessionStore'
@@ -95,6 +100,31 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   }, [hasPendingPermissions, isDraft, refreshSessions, session?.status, sessionId])
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId)
+  const [draftBackendId, setDraftBackendId] = useState<BackendId>(() => {
+    const previous = useWikiStore.getState().goalComposerProviderId
+    return previous?.endsWith('-acp') ? previous as BackendId : 'native'
+  })
+  const backendId = session ? readSessionBackendId(session) : draftBackendId
+  const [backendCatalog, setBackendCatalog] = useState<Array<{ id: BackendId; label: string; kind: string; experimental?: boolean }>>([])
+  const [cliModel, setCliModel] = useState<string>('default')
+  const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>()
+  const cliBackend = backendId === 'codex' || backendId === 'claude-code'
+  const backendOptions = [{ id: 'native' as BackendId, label: 'Synax Native' },
+    ...backendCatalog.filter(backend => backend.kind === 'cli').map(backend => ({ id: backend.id, label: `${backend.label}${backend.experimental ? ' · Preview' : ''}` })),
+    ...providers.filter(provider => provider.kind === 'acp').map(provider => ({ id: provider.id as BackendId, label: provider.label ?? provider.id }))]
+  useEffect(() => {
+    let active = true
+    void agentRuntimeApi.listBackends().then(result => { if (active) setBackendCatalog(result.items) }).catch(() => { if (active) setError(zh ? '无法读取执行后端目录，请检查 Runtime 连接。' : 'Cannot load backends. Check the Runtime connection.') })
+    return () => { active = false }
+  }, [zh])
+  useEffect(() => {
+    const metadata = session?.sessionMetadata
+    const native = metadata?.nativeBackend as { model?: string } | undefined
+    const binding = metadata?.backend as { model?: string } | undefined
+    setCliModel(native?.model || binding?.model || 'default')
+    setCliEfforts(undefined)
+  }, [session?.id, backendId])
+
   const providerId = useWikiStore(s => s.goalComposerProviderId)
   const modelId = useWikiStore(s => s.goalComposerModelId)
   const setProviderId = useWikiStore(s => s.setGoalComposerProviderId)
@@ -109,15 +139,14 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   const documents = useWikiStore(s => s.documents)
   const loadProjectSnapshot = useWikiStore(s => s.loadProjectSnapshot)
   const updateSessionPermissions = useAgentSessionStore(s => s.updateSessionPermissions)
-  const acp = providers.some(provider => provider.id === providerId && provider.kind === 'acp')
-    || isAcpSession(session, formatTurnModel(providerId, modelId))
+  const acp = backendId !== 'native'
   const mode = isDraft ? (acp ? 'chat' : draftMode) : readSynaxSessionMode(session.sessionMetadata)
   const modeEnabled = !submitting && !changingMode && canSwitchSessionMode(session, {
     acp,
     hasPendingPermissions,
     hasPendingInteractions: Boolean(session && (!currentInteractions || currentInteractions.loading || currentInteractions.error || hasPendingInteractions)),
   })
-  const incompatibleModel = Boolean(session && !isAcpSession(session) && acp && (mode === 'plan' || mode === 'goal'))
+  const incompatibleModel = backendId === 'native' && Boolean(providerId?.endsWith('-acp'))
 
   const handleModeChange = async (next: AgentSessionMode) => {
     if (!modeEnabled) return
@@ -173,7 +202,7 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   }, [session?.id, session?.reasoningEffort])
 
   useEffect(() => {
-    if (!globalConfig) return
+    if (!globalConfig || cliBackend) return
     if (providerId && modelId) return
     // Default pick from API providers only — do not wait on ACP discovery.
     const { apiModels, acpEndpoints } = buildGoalModelOptions(globalConfig, providers, [])
@@ -185,7 +214,7 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       setProviderId(picked.providerId)
       setModelId(picked.modelId)
     }
-  }, [globalConfig, providers, effectiveConfig, providerId, modelId, setProviderId, setModelId])
+  }, [cliBackend, globalConfig, providers, effectiveConfig, providerId, modelId, setProviderId, setModelId])
 
   useEffect(() => {
     if (!sessionId) return
@@ -205,12 +234,12 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
     setError(null)
     setContent('')
     setSubmitting(true)
-    const model = formatTurnModel(providerId, modelId)
+    const model = backendId === 'native' ? formatTurnModel(providerId, modelId) : backendId.endsWith('-acp') ? `${backendId}/${providerId === backendId ? modelId ?? 'default' : 'default'}` : cliModel !== 'default' ? cliModel : undefined
     const effortPayload = reasoningEffort
     try {
       if (isDraft) {
         const { prompt, wikiContext } = await goalApi.buildSessionPrompt(projectId, {
-          mode: 'direct',
+          mode: 'session',
           content: message,
           wikiAttachMode,
           documentId: wikiAttachMode === 'manual' ? documentId : null,
@@ -220,11 +249,12 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
         })
         const created = await submitSessionDraft(projectId, {
           message,
+          backendId,
           mode: acp ? 'chat' : draftMode,
           prompt,
           model,
           reasoningEffort: effortPayload,
-          permissionTier,
+          permissionTier: cliBackend ? undefined : permissionTier,
           skillIds,
           wikiAttachMode: wikiContext.mode,
           documentId: wikiContext.documentId,
@@ -232,17 +262,15 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
         navigate(sessionPath(projectId, created.id))
         setSkillIds([])
         await sendSessionMessage(created.id, {
-          // `prompt` is the scaffolding the app composed (language directive,
-          // wiki context, instructions); flag it so the transcript collapses it
-          // into an injection chip instead of echoing the whole block back.
+          // Reference-enriched messages retain the app-authored marker; plain user messages stay visible.
           message: prompt,
-          messageSource: 'system_injection',
+          messageSource: prompt === message ? undefined : 'system_injection',
           model,
           reasoningEffort: effortPayload,
-          permissionTier,
+          permissionTier: cliBackend ? undefined : permissionTier,
         })
       } else {
-        await submitOrEnqueueSessionInput(session.id, { message, model, reasoningEffort: effortPayload, permissionTier })
+        await submitOrEnqueueSessionInput(session.id, { message, model, reasoningEffort: effortPayload, permissionTier: cliBackend ? undefined : permissionTier })
       }
     } catch (error) {
       setContent(message)
@@ -251,6 +279,9 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       setSubmitting(false)
     }
   }, [
+    backendId,
+    cliModel,
+    cliBackend,
     content,
     acp,
     draftMode,
@@ -280,18 +311,23 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
     if (session) void cancelSessionRun(session.id)
   }, [cancelSessionRun, session])
 
-  const allowedReasoningEfforts = providerId ? effectiveReasoningEfforts(globalConfig, providerId) : undefined
+  const allowedReasoningEfforts: ReasoningEffort[] | undefined = cliBackend ? cliEfforts ?? (backendId === 'codex' ? ['low', 'medium', 'high', 'xhigh'] : ['low', 'medium', 'high', 'xhigh', 'max']) : providerId ? effectiveReasoningEfforts(globalConfig, providerId) : undefined
   const isCentered = layout === 'centered'
   const isFocusRail = layout === 'focusRail'
   const expandedShell = isCentered || content.includes('\n')
 
   const composer = (
     <GoalComposerPill
-      modeControl={<SessionModePicker mode={mode} disabled={!modeEnabled} onChange={next => void handleModeChange(next)}
+      modelControl={backendId === 'codex' || backendId === 'claude-code'
+        ? <NativeBackendModelPicker key={backendId} backendId={backendId} model={cliModel} onChange={setCliModel} onEffortsChange={setCliEfforts} nativeMetadata={session?.sessionMetadata?.nativeBackend} disabled={submitting || isGenerating} /> : undefined}
+      modeControl={<><SessionBackendPicker value={backendId} options={backendOptions} disabled={!isDraft || submitting}
+        onChange={id => { setDraftBackendId(id); setError(null); if (id !== 'native') { setSkillIds([]); setProviderId(id); setModelId('default') } else { setProviderId(null); setModelId(null) } }} />
+        <SessionModePicker mode={mode} disabled={!modeEnabled} onChange={next => void handleModeChange(next)}
         description={acp ? (zh ? '计划和目标模式仅适用于原生 Synax 引擎。' : 'Plan and goal require the native Synax engine.')
           : !modeEnabled ? (zh ? '会话空闲且无待处理请求时可切换模式。' : 'Switch when idle with no pending requests.')
-            : (zh ? '模式不会改变工具权限。' : 'Mode does not change tool permissions.')} />}
+            : (zh ? '模式不会改变工具权限。' : 'Mode does not change tool permissions.')} /></>}
       projectId={projectId}
+      backendId={backendId}
       content={content}
       onContentChange={setContent}
       onSubmit={() => void handleSubmit()}
@@ -301,8 +337,9 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       providerId={providerId}
       modelId={modelId}
       onModelSelect={(selection) => {
-        if (session && !isAcpSession(session) && selection.kind === 'acp' && (mode === 'plan' || mode === 'goal')) {
-          setError(zh ? '请先切换为对话模式，再选择 ACP。' : 'Switch to chat mode before selecting ACP.')
+        const selectedBackend = selection.kind === 'acp' ? selection.providerId : 'native'
+        if (selectedBackend !== backendId) {
+          setError(zh ? '请先选择对应的执行后端；已有会话需新建后切换。' : 'Choose the matching execution backend first; existing sessions keep their backend.')
           return
         }
         setProviderId(selection.providerId)
@@ -331,7 +368,8 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   const composerShell = (
     <div className="agent-session-controls w-full">
       {error && <p role="alert" className="mb-2 px-2 text-xs text-danger">{error}</p>}
-      {incompatibleModel && <p role="alert" className="mb-2 px-2 text-xs text-danger">{zh ? '请选择 API 模型，或先切换为对话模式。' : 'Choose an API model or switch to chat mode first.'}</p>}
+      {incompatibleModel && <p role="alert" className="mb-2 px-2 text-xs text-danger">{zh ? '请选择当前后端的模型；切换执行后端需新建会话。' : 'Choose a model for this backend; start a new session to change backends.'}</p>}
+      {session && <RuntimeRecoveryPanel key={`recovery-${session.id}`} session={session} />}
       {session && <AgentInteractionPanel key={session.id} session={session} />}
       <div
         className={`goal-session-composer-shell goal-dock-shell w-full flex flex-col items-center${isCentered ? ' goal-session-composer-shell--draft' : ''}`}

@@ -1,3 +1,4 @@
+import type { SharedV3ProviderOptions } from '@ai-sdk/provider'
 import type { ThinkingMode } from '../agent-runtime/contracts.js'
 import {
   buildOpenAICompatibleProviderOptions,
@@ -11,7 +12,7 @@ export type ReasoningEffort = NonNullable<LlmGatewayRequest['reasoningEffort']>
 
 /** Per-request LLM call overrides derived from a thinking-mode strategy. */
 export interface ThinkingStreamOptions {
-  providerOptions?: Record<string, Record<string, unknown>>
+  providerOptions?: SharedV3ProviderOptions
   temperature?: number
 }
 

@@ -1,3 +1,5 @@
+import { ensureSessionLiveSubscription } from '../../../../lib/api/sessionLiveClient'
+import { RuntimeStreamProjector, type RuntimeStreamRecord } from '../../../../lib/api/runtimeStream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeApi, type AgentInteraction, type AgentSession } from '../../../../lib/api/agentRuntime'
 import { useAgentSessionStore, isSessionUnread } from '../agentSessionStore'
@@ -23,6 +25,19 @@ beforeEach(() => {
     interactionState: { sessionId: 's1', items: [], loading: false, error: null },
   })
 })
+
+function mockRunTransport(state: RuntimeStreamRecord['state']) {
+  let deliver!: Parameters<typeof ensureSessionLiveSubscription>[1]
+  vi.mocked(ensureSessionLiveSubscription).mockImplementation((_id, handler) => { deliver = handler })
+  vi.spyOn(agentRuntimeApi, 'submitRun').mockImplementation(async () => {
+    const projector = new RuntimeStreamProjector()
+    for (const [index, type] of ['event', 'done'].entries()) {
+      const record: RuntimeStreamRecord = { sequence: index + 1, sessionId: 's1', runId: 'r1', chunk: { type }, state }
+      for (const event of projector.record(record)) deliver(event)
+    }
+    return { reused: false, run: { id: 'r1', sessionId: 's1', status: 'queued', startedAt: '', completedAt: null, triggerMessageId: null, currentStep: 0, stopReason: null, model: null, metadata: {} } }
+  })
+}
 
 describe('session mode boundaries', () => {
   it.each(['running', 'queued', 'waiting_input', 'waiting_permission'] as const)('does not switch while %s', status => {
@@ -79,20 +94,14 @@ describe('session mode boundaries', () => {
     expect(agentRuntimeApi.updateSessionMode).not.toHaveBeenCalled()
   })
   it('does not turn a durable waiting event followed by stream done into completion', async () => {
-    useAgentSessionStore.setState({ sessions: [{ ...session, status: 'running', activeRunId: 'r1' }], refreshDetail: vi.fn(async () => {}) })
-    vi.spyOn(agentRuntimeApi, 'streamTurn').mockImplementation(async (_id, _body, onChunk) => {
-      onChunk({ type: 'event', event: { type: 'interaction_requested' } })
-      onChunk({ type: 'done', sessionId: 's1', runId: 'r1' })
-    })
+    useAgentSessionStore.setState({ sessions: [{ ...session, status: 'created', activeRunId: null }], refreshDetail: vi.fn(async () => {}), refreshSessions: vi.fn(async () => {}) })
+    mockRunTransport({ status: 'waiting_input', activeRunId: 'r1', pendingResumeToken: 'question', blockedReason: 'Answer needed', updatedAt: '' })
     await useAgentSessionStore.getState().sendSessionMessage('s1', { message: 'Task' })
     expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({ status: 'waiting_input', activeRunId: 'r1' })
   })
   it('keeps a declined round blocked when the failed/blocked event is followed by stream done', async () => {
-    useAgentSessionStore.setState({ sessions: [{ ...session, status: 'running', activeRunId: 'r1' }], refreshDetail: vi.fn(async () => {}) })
-    vi.spyOn(agentRuntimeApi, 'streamTurn').mockImplementation(async (_id, _body, onChunk) => {
-      onChunk({ type: 'run_failed', run: { id: 'r1', status: 'blocked' }, error: 'User declined the requested input.' })
-      onChunk({ type: 'done', sessionId: 's1', runId: 'r1' })
-    })
+    useAgentSessionStore.setState({ sessions: [{ ...session, status: 'created', activeRunId: null }], refreshDetail: vi.fn(async () => {}), refreshSessions: vi.fn(async () => {}) })
+    mockRunTransport({ status: 'blocked', activeRunId: null, pendingResumeToken: null, blockedReason: 'User declined the requested input.', updatedAt: '' })
     await useAgentSessionStore.getState().sendSessionMessage('s1', { message: 'Task' })
     expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({ status: 'blocked', activeRunId: null, blockedReason: 'User declined the requested input.' })
   })

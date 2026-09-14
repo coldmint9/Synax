@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe('session workspace roots', () => {
-  it('allows tools to operate relative to a project directory outside process.cwd()', () => {
+  it('allows tools to operate relative to a project directory outside process.cwd()', async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Synax-project-root-'));
     tempDirs.push(projectDir);
     fs.writeFileSync(path.join(projectDir, 'entry.ts'), 'export const value = 42;\n', 'utf8');
@@ -32,7 +32,7 @@ describe('session workspace roots', () => {
     expect(resolveWorkspaceRoot(projectDir)).toBe(projectDir);
     setSessionWorkspaceRoot(sessionId, projectDir);
 
-    const result = fileReadTool.execute({
+    const result = await fileReadTool.execute({
       sessionId,
       runId: null,
       stepId: null,

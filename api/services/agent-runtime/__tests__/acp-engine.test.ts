@@ -37,13 +37,13 @@ describe('acp engine routing', () => {
     });
   });
 
-  it('routes sessions by turn model and persisted metadata', () => {
+  it('routes sessions by explicit binding and migrates legacy metadata', () => {
     const session = agentSessionRuntime.create(plannerSessionInput);
-    expect(shouldUseAcpEngine(session.id, { model: 'cursor-acp/default' })).toBe(true);
+    expect(() => shouldUseAcpEngine(session.id, { model: 'cursor-acp/default' })).toThrow(/backend/i);
     expect(shouldUseAcpEngine(session.id, {})).toBe(false);
 
     agentRuntimeStore.updateSession(session.id, {
-      sessionMetadata: mergeAcpSessionMetadata(session, {
+      sessionMetadata: mergeAcpSessionMetadata({ ...session, sessionMetadata: null }, {
         providerId: 'cursor-acp',
         acpSessionId: 'acp_sess_1',
         engineModel: 'cursor-acp/default',

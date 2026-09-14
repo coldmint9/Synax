@@ -6,6 +6,7 @@ import type { AgentSession, AgentSessionStatus } from '../../../lib/api/agentRun
 import {
   isGoalModeSession,
   isWorkflowSession,
+  listRootSessions,
   type SessionListView,
 } from './sessionBuckets'
 import { sessionPath, workflowSessionPath, isNewSessionPath, newSessionPath } from './sessionRoutes'
@@ -104,7 +105,7 @@ export function useSessionList(locale: 'zh' | 'en' = 'zh', listView: SessionList
   }, [projectSessions])
 
   const grouped = useMemo(() => {
-    let list = projectSessions.filter(s =>
+    let list = listRootSessions(projectSessions).filter(s =>
       listView === 'workflow' ? isWorkflowSession(s) : isGoalModeSession(s),
     )
     if (searchQuery.trim()) {

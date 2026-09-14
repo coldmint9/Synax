@@ -1,3 +1,4 @@
+import { AuthenticatedEventSource } from './authenticatedEventSource'
 // ---------------------------------------------------------------------------
 // web/src/lib/api/context.ts — \u4e0a\u4e0b\u6587\u7ba1\u7406\u7cfb\u7edf\u524d\u7aef API \u5ba2\u6237\u7aef
 //
@@ -620,7 +621,7 @@ export const contextApi = {
    */
   subscribeSync(projectId: string, onEvent: (event: SyncEvent) => void): () => void {
     const url = `${getApiOrigin()}${API_BASE}/sync?projectId=${encodeURIComponent(projectId)}`
-    const es = new EventSource(url)
+    const es = new AuthenticatedEventSource(url)
     const types = Object.values(SyncEventType)
     for (const t of types) {
       es.addEventListener(t, (ev) => {

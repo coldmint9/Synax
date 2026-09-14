@@ -1,3 +1,5 @@
+import { withDeadline } from '../managed-process.js';
+import { activateAcceptedRun } from '../run-admission.js';
 import type { AgentSessionStreamMode } from '../../../lib/ipc/agent-session-protocol.js';
 import { logger } from '../../../lib/logger.js';
 import {
@@ -17,6 +19,7 @@ import { isAcpModel, parseAcpModel } from './acp-model.js';
 import { resolveSessionEngineModel, sessionUsesAcpEngine } from './acp-engine-routing.js';
 import { mergeAcpSessionMetadata } from './acp-session-metadata.js';
 import { acpPermissionBridge } from './acp-permission-bridge.js';
+import { acpSessionUpdateRouter } from './acp-session-update-router.js';
 import {
   AcpUpdateMapper,
   createPermissionRequestedChunk,
@@ -122,7 +125,7 @@ class AcpSessionEngine {
       else abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
     }
 
-    const task = this.runTurn(sessionId, model, prompt, queue, abortController.signal);
+    const task = this.runTurn(sessionId, model, prompt, queue, abortController.signal, input.acceptedRunId);
     this.activeTurns.set(sessionId, { queue, abortController, task });
 
     try {
@@ -142,7 +145,9 @@ class AcpSessionEngine {
       active.abortController.abort();
       active.queue.close();
     }
-    await acpConnectionPool.cancelPrompt(sessionId);
+    try { await withDeadline(acpConnectionPool.cancelPrompt(sessionId), 1000, 'ACP cancel timed out.'); } catch { /* Stop the host below. */ }
+    await acpConnectionPool.evict(sessionId);
+    if (active) await withDeadline(active.task, 5000, 'ACP execution shutdown could not be confirmed.');
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -195,6 +200,7 @@ class AcpSessionEngine {
     prompt: string,
     queue: StreamQueue,
     abortSignal: AbortSignal,
+    acceptedRunId?: string,
   ): Promise<void> {
     const session = agentRuntimeStore.getSession(sessionId);
     const parsed = parseAcpModel(model);
@@ -213,7 +219,9 @@ class AcpSessionEngine {
       });
       queue.push({ kind: 'chunk', chunk: { type: 'message', message: userMessage } });
 
-      const run = agentRuntimeStore.appendRun({
+      const run = acceptedRunId
+        ? activateAcceptedRun(sessionId, acceptedRunId, userMessage.id, model)
+        : agentRuntimeStore.appendRun({
         id: makeRuntimeId('run'),
         sessionId,
         status: 'running',
@@ -274,6 +282,7 @@ class AcpSessionEngine {
 
       acpPermissionBridge.setTurnContext(sessionId, {
         sessionId,
+        acpSessionId: pooled.acpSessionId,
         runId: run.id,
         stepId: step.id,
         rules: session.permissionRules,

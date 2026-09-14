@@ -5,6 +5,7 @@ import { SessionFloatingPanel } from './SessionFloatingPanel'
 import type { AgentSessionStatus } from '../../../lib/api/agentRuntime'
 
 const STATUS_DOT: Record<AgentSessionStatus, string> = {
+  stopping: 'bg-warning animate-pulse',
   running: 'bg-[var(--color-run)] animate-pulse',
   waiting_permission: 'bg-warning',
   waiting_input: 'bg-warning',

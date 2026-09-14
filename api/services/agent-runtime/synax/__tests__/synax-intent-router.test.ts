@@ -38,13 +38,17 @@ describe('SynaxIntentRouter', () => {
     })).toBeNull();
   });
 
-  it('skips routing when a variant is already active', () => {
+  it('preserves an explicitly adapted variant', () => {
     expect(synaxIntentRouter.route({
       message: 'review the login flow',
       mode: 'chat',
-      metadata: { activeVariant: 'planner' },
+      metadata: { activeVariant: 'planner', routeSource: 'adapt' },
     })).toBeNull();
   });
+});
+
+it('re-evaluates an automatically selected variant for a new request', () => {
+  expect(synaxIntentRouter.route({ message: 'review the login flow', mode: 'chat', metadata: { activeVariant: 'planner', routeSource: 'auto' } })?.variantId).toBe('reviewer');
 });
 
 describe('SynaxVariantRegistry', () => {

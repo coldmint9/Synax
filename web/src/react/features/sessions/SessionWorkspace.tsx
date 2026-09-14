@@ -53,14 +53,17 @@ export function SessionStatusCard({
   stats,
   steps,
   todos,
+  status,
 }: {
   stats: SessionStats
+  status?: AgentSession['status']
   steps: AgentRunStep[]
   todos: TodoItem[]
 }) {
   const { locale } = useLocale()
   const [tick, setTick] = useState(0)
-  const isLive = stats.status === 'running' || steps.some(step => step.status === 'running')
+  const currentStatus = status ?? stats.status
+  const isLive = currentStatus === 'running'
 
   useEffect(() => {
     if (!isLive) return
@@ -69,34 +72,50 @@ export function SessionStatusCard({
   }, [isLive])
 
   const elapsed = useMemo(() => {
-    if (steps.length > 0) return sumAgentTurnDurationMs(steps)
+    if (isLive && steps.length > 0) return sumAgentTurnDurationMs(steps)
     return stats.runningDuration
-  }, [steps, stats.runningDuration, tick])
+  }, [steps, stats.runningDuration, tick, isLive])
 
-  const badgeClass = STATUS_BADGE[stats.status] ?? 'bg-secondary/70 text-foreground/80'
+  const contextKnown = !stats.context || stats.context.inputTokens !== null
+  const windowKnown = stats.contextLimitKnown !== false
+  const badgeClass = STATUS_BADGE[currentStatus] ?? 'bg-secondary/70 text-foreground/80'
 
   return (
     <div className="border-b border-border/40 px-2 py-2 space-y-2">
       <div className="flex items-center justify-between">
-        <span className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`}>{stats.status === 'waiting_input' ? (locale === 'zh' ? '等待输入' : 'Waiting for input') : stats.status}</span>
+        <span className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`}>{currentStatus === 'waiting_input' ? (locale === 'zh' ? '等待输入' : 'Waiting for input') : currentStatus}</span>
         <span className="flex items-center gap-1 text-[9px] text-muted-foreground">
           <Clock size={9} />{fmtDuration(elapsed)}
         </span>
       </div>
       <div className="space-y-0.5">
         <div className="flex items-center justify-between text-[9px] text-muted-foreground">
-          <span>Usage</span><span>{stats.contextUsedPercent}%</span>
+          <span>{locale === 'zh' ? '当前上下文' : 'Context'}</span><span>{contextKnown && windowKnown ? `${stats.contextUsedPercent}%` : '—'}</span>
         </div>
         <div className="h-1.5 w-full rounded-full bg-secondary/60">
           <div
             className={`h-full rounded-full transition-all ${progressColor(stats.contextUsedPercent)}`}
-            style={{ width: `${stats.contextUsedPercent}%` }}
+            style={{ width: `${contextKnown && windowKnown ? stats.contextUsedPercent : 0}%` }}
           />
         </div>
         <div className="text-[8px] text-muted-foreground/60">
-          {formatTokenCount(stats.tokenUsage.total)} / {formatContextLimit(stats.contextLimit)} context
+          {contextKnown ? formatTokenCount(stats.context?.inputTokens ?? stats.tokenUsage.total) : '—'} / {windowKnown ? formatContextLimit(stats.contextLimit) : (locale === 'zh' ? '未知' : 'unknown')} context
         </div>
       </div>
+      {stats.work && <div className="text-[9px] text-muted-foreground" title={stats.work.reason ?? undefined}>
+        {locale === 'zh' ? '工作状态' : 'Work'}: {stats.work.status === 'closing' ? (locale === 'zh' ? '确认交付或剩余工作' : 'Closing decision') : stats.work.status}
+        {stats.work.status === 'blocked' && stats.work.reason && <div className="mt-0.5 line-clamp-3 text-warning">{stats.work.reason}</div>}
+      </div>}
+      {stats.usage && (
+        <div className="space-y-0.5 text-[9px] text-muted-foreground" aria-label={locale === 'zh' ? '累计 Token 用量' : 'Cumulative token usage'}>
+          <div className="flex justify-between"><span>{locale === 'zh' ? '本会话累计' : 'Session total'}</span><span>{formatTokenCount(stats.usage.self.total)}</span></div>
+          <div className="flex justify-between"><span>{locale === 'zh' ? '含子 Agent' : 'Including children'}</span><span>{formatTokenCount(stats.usage.tree.total)}</span></div>
+          <div>{locale === 'zh' ? '输入 / 输出' : 'Input / output'}: {formatTokenCount(stats.usage.self.input)} / {formatTokenCount(stats.usage.self.output)}</div>
+          <div>{locale === 'zh' ? '推理 / 缓存命中' : 'Reasoning / cache read'}: {formatTokenCount(stats.usage.self.reasoning)} / {formatTokenCount(stats.usage.self.cacheRead)}</div>
+          {stats.coverage && !stats.coverage.tree.complete && <div className="text-warning">{locale === 'zh' ? `记录不完整：${stats.coverage.tree.missing} 个请求缺少 usage` : `Incomplete: ${stats.coverage.tree.missing} requests without usage`}</div>}
+          {stats.context && !stats.context.latestRequestUsageAvailable && <div>{contextKnown ? (locale === 'zh' ? '上下文显示最近一次可用记录' : 'Context shows the last available measurement') : (locale === 'zh' ? '后端尚未报告当前上下文' : 'The backend has not reported the current context')}</div>}
+        </div>
+      )}
       <TodoCard items={todos} />
       <div className="flex items-center gap-3 text-[9px] text-muted-foreground">
         <span className="flex items-center gap-1"><Cpu size={9} />{stats.toolCallCount} calls</span>
@@ -248,7 +267,7 @@ export const SessionWorkspace = memo(function SessionWorkspace() {
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto text-[10px]">
       {session && <SessionModeSummary session={session} />}
       {sessionStats ? (
-        <SessionStatusCard stats={sessionStats} steps={steps} todos={sessionTodos} />
+        <SessionStatusCard stats={sessionStats} status={session?.status} steps={steps} todos={sessionTodos} />
       ) : sessionTodos.length > 0 ? (
         <div className="border-b border-border/40 px-2 py-2">
           <TodoCard items={sessionTodos} />

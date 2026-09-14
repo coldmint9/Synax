@@ -1,3 +1,4 @@
+import { recordRuntimeStream } from '../agent-runtime/runtime-stream-writer.js';
 import type { AgentRunStreamChunk, StreamTurnRequest } from '../agent-runtime/contracts.js';
 import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
 import { streamAgentSession } from '../agent-runtime/agent-stream-proxy.js';
@@ -36,20 +37,14 @@ export async function* streamWikiAgent(
 
   // Wiki planner/writer tools keep mutable state in this process (outline draft, verifier handles).
   // Run the agent loop inside the wiki job child; remote fork requires DB-backed tool state (TODO).
+  let source: AsyncGenerator<AgentRunStreamChunk>;
   if (process.env.SYNAX_WIKI_JOB_CHILD === '1') {
-    yield* streamWikiAgentInWikiChild(sessionId, input, abortSignal, resume);
-    return;
-  }
-
-  if (process.env.SYNAX_AGENT_SESSION_IN_PROCESS === '1') {
+    source = streamWikiAgentInWikiChild(sessionId, input, abortSignal, resume);
+  } else if (process.env.SYNAX_AGENT_SESSION_IN_PROCESS === '1') {
     ensureWikiProfilesLoaded();
-    if (resume) {
-      yield* agentLoopRuntime.streamRun(sessionId, input, abortSignal, true);
-      return;
-    }
-    yield* agentLoopRuntime.streamRun(sessionId, input, abortSignal, false);
-    return;
+    source = agentLoopRuntime.streamRun(sessionId, input, abortSignal, resume);
+  } else {
+    source = streamAgentSession(sessionId, mode, input, abortSignal);
   }
-
-  yield* streamAgentSession(sessionId, mode, input, abortSignal);
+  yield* recordRuntimeStream(sessionId, source);
 }

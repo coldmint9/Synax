@@ -19,6 +19,9 @@ export interface ClearingOptions {
 
 export interface BuildMessagesOptions {
   compactionSummary?: string | null;
+  initialUserMessage?: { original: string; content: string };
+  workId?: string;
+  excludedStepIds?: Set<string>;
   clearing?: ClearingOptions;
 }
 
@@ -52,14 +55,13 @@ export function buildLoopModelMessages(
   }
 
   for (const userMessage of userMessages) {
-    messages.push({
-      role: 'user',
-      content: userMessage.content,
-    });
-
     const run = runsByTrigger.get(userMessage.id);
+    if (options.workId && run?.metadata.workId !== options.workId && !(run && store.listRunSteps(run.id).some(s => s.metadata?.workId === options.workId))) continue;
+    const steps = run ? store.listRunSteps(run.id) : [];
+    if (steps.length && steps.every(step => options.excludedStepIds?.has(step.id))) continue;
+    messages.push({ role: 'user', content: userMessage.metadata?.source === 'system_injection' && userMessage.content.trim() === options.initialUserMessage?.original ? options.initialUserMessage.content : userMessage.content });
     if (!run) continue;
-    messages.push(...buildRunMessages(store, run.id, toolSet, clearSet));
+    messages.push(...buildRunMessages(store, run.id, toolSet, clearSet, options.excludedStepIds));
   }
 
   return messages;
@@ -70,6 +72,7 @@ function buildRunMessages(
   runId: string,
   toolSet: Pick<LoopToolSet, 'resolveModelToolName'>,
   clearSet: Set<string> | null,
+  excludedStepIds?: Set<string>,
 ): ModelMessage[] {
   const steps = store.listRunSteps(runId);
   const toolCalls = store.listRunToolCalls(runId);
@@ -77,13 +80,21 @@ function buildRunMessages(
   const messages: ModelMessage[] = [];
 
   for (const step of steps) {
+    if (excludedStepIds?.has(step.id)) continue;
     const stepParts = store.listRunParts(step.id);
     const assistantContent: NonNullable<Extract<ModelMessage, { role: 'assistant' }>['content']> = [];
     const emittedToolCallIds = new Set<string>();
+    const reasoningParts = step.metadata?.reasoningParts as Array<{ text: string; providerMetadata?: Record<string, Record<string, unknown>> }> | undefined;
+    if (reasoningParts?.length && !stepParts.some(p => p.kind === 'thought' && p.content.trim())) {
+      for (const segment of reasoningParts) assistantContent.push({ type: 'reasoning', text: segment.text, providerOptions: segment.providerMetadata as never });
+    }
 
     for (const part of stepParts) {
       if (part.kind === 'thought' && part.content.trim()) {
-        assistantContent.push({ type: 'reasoning', text: part.content });
+        const reasoning = step.metadata?.reasoningParts as Array<{ text: string; providerMetadata?: Record<string, Record<string, unknown>> }> | undefined;
+        if (reasoning?.length) {
+          for (const segment of reasoning) assistantContent.push({ type: 'reasoning', text: segment.text, providerOptions: segment.providerMetadata as never });
+        } else assistantContent.push({ type: 'reasoning', text: part.content });
       }
       if (part.kind === 'text' && part.content.trim()) {
         assistantContent.push({ type: 'text', text: part.content });
@@ -98,6 +109,7 @@ function buildRunMessages(
           toolCallId,
           toolName: toolSet.resolveModelToolName(record.toolId) ?? sanitizeToolName(record.toolId),
           input: toToolCallInput(record, clearSet),
+          providerOptions: (step.metadata?.toolCallProviderMetadata as Record<string, never> | undefined)?.[record.modelToolCallId ?? record.id],
         });
       }
     }

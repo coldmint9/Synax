@@ -1,3 +1,5 @@
+import { resolveSessionUserRequest } from '../session-user-request.js';
+import { isWorkContinuation } from '../work-intent.js';
 import type { AgentSession } from '../contracts.js';
 import { profileService } from '../profile-service.js';
 import { registerTitleGenerator } from '../session-title-service.js';
@@ -92,13 +94,13 @@ export class SynaxAgent {
   }
 
   buildIntentPromptSection(
-    session: Pick<AgentSession, 'profileId' | 'sessionMetadata'>,
+    session: Pick<AgentSession, 'profileId' | 'sessionMetadata'> & Partial<Pick<AgentSession, 'prompt'>>,
     message: string,
     stepIndex = 1,
   ): string | null {
     if (!this.isSynaxSession(session)) return null;
     return buildSynaxIntentPromptSection({
-      message,
+      message: resolveSessionUserRequest({ ...session, prompt: session.prompt ?? '' }, message),
       mode: this.resolveMode(session),
       stepIndex,
     });
@@ -113,26 +115,16 @@ export class SynaxAgent {
     if (!variant) return null;
 
     const lines = [
-      `Active variant: ${variant.label} (${variant.id}).`,
-      `Route reason: ${state.routeReason}`,
-      'Variant hints:',
-      ...variant.loopHints.map((hint) => `- ${hint}`),
+      `## Specialist focus: ${variant.id}`,
+      ...variant.loopHints,
+      'This focus does not change the user request, session mode, permissions, or acceptance requirements.',
     ];
-    if (variant.id === 'explorer') {
-      lines.push('- Exploration variant: delegate discovery via subagent.delegate(profileId: "explorer"); children run wiki-first then code evidence.');
-    } else if (variant.delegateProfileId) {
-      lines.push(`- For isolated deep work, delegate via subagent.delegate(profileId: "${variant.delegateProfileId}").`);
-    }
     return lines.join('\n');
   }
 
   buildEffectiveLoopHints(session: Pick<AgentSession, 'profileId' | 'sessionMetadata'>): string[] {
     if (!this.isSynaxSession(session)) return [];
-    const baseHints = synaxAgentProfile.loopHints ?? [];
-    const variant = this.resolveVariantState(session);
-    if (!variant) return baseHints;
-    const variantHints = synaxVariantRegistry.get(variant.activeVariant)?.loopHints ?? [];
-    return dedupeLoopHints([...baseHints, ...variantHints]);
+    return [];
   }
 
   createSessionMetadata(
@@ -171,6 +163,7 @@ export class SynaxAgent {
     const session = agentRuntimeStore.getSession(sessionId);
     if (!this.isSynaxSession(session)) return null;
 
+    message = resolveSessionUserRequest(session, message);
     const mode = this.resolveMode(session);
     if (isGoalLikeMode(mode)) return null;
 
@@ -179,7 +172,12 @@ export class SynaxAgent {
       mode,
       metadata: this.asMetadata(session.sessionMetadata),
     });
-    if (!decision) return null;
+    if (!decision) {
+      const metadata = this.asMetadata(session.sessionMetadata);
+      if (metadata.routeSource === 'auto' && !isWorkContinuation(message))
+        agentRuntimeStore.updateSessionMetadata(sessionId, { activeVariant: null, routeReason: null, routeSource: null });
+      return null;
+    }
 
     this.applyVariant(sessionId, decision.variantId, decision.reason, 'auto');
     agentEventService.append({

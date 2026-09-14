@@ -27,6 +27,8 @@ function resolveThinkingOptions(
   return buildThinkingStreamOptions(selection, request)
 }
 
+export type GatewayStreamResult = ReturnType<typeof streamText>
+
 export type ExecutionMode =
   | {
       kind: 'stream'
@@ -68,6 +70,14 @@ function assertApiKey(selection: ResolvedModelSelection): void {
   }
 }
 
+export function executePipeline(
+  request: LlmGatewayRequest, selection: ResolvedModelSelection,
+  mode: Extract<ExecutionMode, { kind: 'stream' }>, abortSignal?: AbortSignal,
+): Promise<GatewayStreamResult>;
+export function executePipeline(
+  request: LlmGatewayRequest, selection: ResolvedModelSelection,
+  mode: ExecutionMode, abortSignal?: AbortSignal,
+): Promise<unknown>;
 export async function executePipeline(
   request: LlmGatewayRequest,
   selection: ResolvedModelSelection,
@@ -112,7 +122,7 @@ function dispatchStream(
   enableCache: boolean | undefined,
   thinkingStream: ThinkingStreamOptions,
   abortSignal?: AbortSignal,
-) {
+): GatewayStreamResult {
   const { system, messages } = toModelPrompt(request.messages, enableCache)
   return streamText({
     model,

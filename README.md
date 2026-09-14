@@ -35,6 +35,10 @@ Author note: Synax is currently developed and dogfooded mostly with DeepSeek V4.
 
 Because this is `0.1.0-snapshot`, provider details are still evolving. Some lower-level runtime adapters exist in code, but they should not be treated as product-ready provider support until they are wired into configuration, validation, and the UI.
 
+## Integration Guide
+
+- [Synax Usage and Integration Guide](./docs/integration/synax-runtime-integration.md)
+
 ## Quick Start
 
 ### Prerequisites

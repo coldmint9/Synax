@@ -185,11 +185,15 @@ export class PermissionPolicy {
     });
   }
 
-  reply(sessionId: string, permissionId: string, reply: PermissionReply, message?: string): PermissionDecision {
+  reply(sessionId: string, permissionId: string, reply: PermissionReply, message?: string, persistRule = true): PermissionDecision {
     const decision = this.list(sessionId).find((item) => item.id === permissionId);
     if (!decision) throw new AgentNotFoundError(permissionId);
     if (decision.resolvedAt && decision.userReply !== null && decision.action !== 'ask') {
       throw new AgentPermissionError('Permission request is already resolved.', 400);
+    }
+    const allowedReplies = decision.metadata?.allowedReplies;
+    if (Array.isArray(allowedReplies) && !allowedReplies.includes(reply)) {
+      throw new AgentPermissionError('This reply is not supported by the native permission request.', 400);
     }
     const action: PermissionAction = reply === 'reject' ? 'deny' : 'allow';
     const updated = this.store.updatePermission(sessionId, permissionId, {
@@ -198,7 +202,7 @@ export class PermissionPolicy {
       resolvedAt: nowIso(),
       reason: message ? `${decision.reason} ${message}` : decision.reason,
     });
-    if (reply === 'always') {
+    if (reply === 'always' && persistRule) {
       const pattern = decision.patterns[0] ?? '*';
       const gate = decision.internalGate === 'none' ? decision.coarseCategory : decision.internalGate;
       appendAlwaysPermissionRule(sessionId, { gate, pattern, action, reason: updated.reason });

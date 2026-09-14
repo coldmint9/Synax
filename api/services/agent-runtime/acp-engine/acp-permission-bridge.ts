@@ -27,6 +27,7 @@ interface PendingAcpPermission {
 
 export interface AcpPermissionTurnContext {
   sessionId: string;
+  acpSessionId?: string;
   runId: string;
   stepId: string;
   rules: import('../contracts.js').PermissionRule[];
@@ -42,19 +43,22 @@ export class AcpPermissionBridge {
   private readonly turnContext = new Map<string, AcpPermissionTurnContext>();
 
   setTurnContext(sessionId: string, context: AcpPermissionTurnContext): void {
+    this.rejectAllForSession(sessionId, 'Turn replaced.');
     this.turnContext.set(sessionId, context);
   }
 
   clearTurnContext(sessionId: string): void {
+    this.rejectAllForSession(sessionId, 'Turn ended.');
     this.turnContext.delete(sessionId);
   }
 
-  async handleRequest(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    const context = this.turnContext.get(params.sessionId);
-    if (!context) {
-      const first = params.options[0];
-      if (!first) return { outcome: { outcome: 'cancelled' } };
-      return { outcome: { outcome: 'selected', optionId: first.optionId } };
+  async handleRequest(
+    params: RequestPermissionRequest,
+    synaxSessionId = params.sessionId,
+  ): Promise<RequestPermissionResponse> {
+    const context = this.turnContext.get(synaxSessionId);
+    if (!context || (context.acpSessionId ?? context.sessionId) !== params.sessionId) {
+      return { outcome: { outcome: 'cancelled' } };
     }
 
     const toolCallRecord = agentRuntimeStore.appendToolCall({
@@ -147,11 +151,21 @@ export class AcpPermissionBridge {
       if (pending.sessionId !== sessionId) continue;
       this.pending.delete(permissionId);
       pending.resolve({ outcome: { outcome: 'cancelled' } });
+      const decision = agentRuntimeStore.listPermissions(sessionId).find(item => item.id === permissionId);
+      if (decision && !decision.resolvedAt) {
+        agentRuntimeStore.updatePermission(sessionId, permissionId, {
+          action: 'deny', userReply: 'reject', resolvedAt: new Date().toISOString(), reason,
+        });
+      }
       logger.info(
         { sessionId, permissionId, reason },
         '[AcpPermissionBridge] cancelled pending permission',
       );
     }
+  }
+
+  hasPendingPermission(sessionId: string, permissionId: string): boolean {
+    return this.pending.get(permissionId)?.sessionId === sessionId;
   }
 
   hasPendingForSession(sessionId: string): boolean {
@@ -203,20 +217,13 @@ function pickOption(
   options: PermissionOption[],
   reply: PermissionReply,
 ): PermissionOption | null {
-  if (options.length === 0) return null;
-  if (reply === 'reject') {
-    return options.find((item) => item.kind.startsWith('reject'))
-      ?? options.find((item) => item.kind === 'allow_once')
-      ?? options[0]!;
-  }
+  if (reply === 'reject') return options.find((item) => item.kind.startsWith('reject')) ?? null;
   if (reply === 'always') {
     return options.find((item) => item.kind === 'allow_always')
-      ?? options.find((item) => item.kind === 'allow_once')
-      ?? options[0]!;
+      ?? options.find((item) => item.kind === 'allow_once') ?? null;
   }
-  return options.find((item) => item.kind === 'allow_once')
-    ?? options.find((item) => item.kind.startsWith('allow'))
-    ?? options[0]!;
+  // An allow-once decision must never grant persistent backend permission.
+  return options.find((item) => item.kind === 'allow_once') ?? null;
 }
 
 function toAcpResponse(

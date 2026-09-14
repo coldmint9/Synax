@@ -1,57 +1,35 @@
 import type { PermissionRule, PermissionTier } from './contracts.js';
-import { isUnrestrictedPermissionRules, resolveSessionPermissionRules } from './permission-tiers.js';
+import { resolveSessionPermissionRules } from './permission-tiers.js';
+import { resolvePermissionDecision } from './permission-policy.js';
 
 export interface BuildPermissionSectionInput {
   permissionTier?: PermissionTier;
   profileDefaults: PermissionRule[];
-}
-
-function actionForGate(rules: PermissionRule[], gate: string, pattern = '*'): string | null {
-  const rule = rules.find((entry) => entry.gate === gate && entry.pattern === pattern);
-  return rule?.action ?? null;
+  /** Already-resolved session rules, including overrides and previously approved patterns. */
+  effectiveRules?: PermissionRule[];
+  isSubSession?: boolean;
 }
 
 export function buildPermissionSection(input: BuildPermissionSectionInput): string {
-  const rules = resolveSessionPermissionRules(input.profileDefaults, {
-    permissionTier: input.permissionTier,
-  });
-
-  if (isUnrestrictedPermissionRules(rules)) {
-    return [
-      '## Permission gates',
-      'Unrestricted: read, write, delete, and shell are allowed without approval.',
-    ].join('\n');
+  const rules = input.effectiveRules ?? resolveSessionPermissionRules(input.profileDefaults, { permissionTier: input.permissionTier });
+  const labels = { allow: 'allowed', ask: 'requires user approval', deny: 'denied' };
+  const decision = (category: 'read' | 'write' | 'delete' | 'shell', pattern = '*') => resolvePermissionDecision({
+    sessionId: 'prompt-preview', category: category === 'delete' ? 'write' : category, pattern, rules, isSubSession: input.isSubSession,
+    ...(category !== 'read' ? { internalGate: category } : {}),
+  }).action;
+  const unscoped = rules.filter(r => r.pattern === '*');
+  const scoped = rules.filter(r => r.pattern !== '*' && !(r.gate === 'shell' && ['read', 'write'].includes(r.pattern)));
+  const lines = ['## Permission gates'];
+  if (rules.length === 1 && rules[0].gate === '*' && rules[0].pattern === '*' && rules[0].action === 'allow') {
+    lines.push('Unrestricted tool permissions. This is not authorization to expand the task or bypass mode/Work gates.');
+  } else {
+    lines.push(`Default decisions: read ${labels[decision('read')]}; write ${labels[decision('write')]}; delete ${labels[decision('delete')]}.`);
+    lines.push(`Shell: read-only ${labels[decision('shell', 'read')]}; mutating ${labels[decision('shell', 'write')]}.`);
+    if (scoped.length || unscoped.some(r => !['*', 'read', 'write', 'delete', 'shell'].includes(r.gate))) {
+      // Preserve ordered pattern rules instead of claiming all paths/commands share the default action.
+      lines.push(`Effective rules (ordered; evaluated by runtime per operation): ${JSON.stringify(rules.map(({ gate, pattern, action }) => ({ gate, pattern, action }))).replace(/</g, '\\u003c')}`);
+    }
   }
-
-  const tier = input.permissionTier ?? 'profile-default';
-  const write = actionForGate(rules, 'write');
-  const deleteAction = actionForGate(rules, 'delete');
-  const shellRead = actionForGate(rules, 'shell', 'read');
-  const shellWrite = actionForGate(rules, 'shell', 'write');
-
-  const lines = [
-    '## Permission gates',
-    `Active tier: ${tier}.`,
-    '- Read tools (file.read, grep.search, file.glob, file.list, diff.read, wiki.*): allowed.',
-  ];
-
-  if (write === 'ask') lines.push('- Write tools (file.write, edit): require user approval before execution.');
-  else if (write === 'allow') lines.push('- Write tools (file.write, edit): allowed.');
-  else if (write === 'deny') lines.push('- Write tools (file.write, edit): denied.');
-
-  if (deleteAction === 'ask') lines.push('- Delete (file.delete): requires user approval.');
-  else if (deleteAction === 'allow') lines.push('- Delete (file.delete): allowed.');
-  else if (deleteAction === 'deny') lines.push('- Delete (file.delete): denied.');
-
-  if (shellRead === 'ask') lines.push('- bash (read-only): requires user approval.');
-  else if (shellRead === 'allow') lines.push('- bash (read-only): allowed.');
-  else if (shellRead === 'deny') lines.push('- bash (read-only): denied.');
-
-  if (shellWrite === 'deny') lines.push('- bash (mutating): denied.');
-  else if (shellWrite === 'ask') lines.push('- bash (mutating): requires user approval.');
-  else if (shellWrite === 'allow') lines.push('- bash (mutating): allowed.');
-
-  lines.push('If a tool waits on approval, continue with read-only work or summarize blockers for the user.');
-
+  lines.push('Runtime decisions are authoritative. Wait when approval or input is pending; do not route around a denial through another tool.');
   return lines.join('\n');
 }

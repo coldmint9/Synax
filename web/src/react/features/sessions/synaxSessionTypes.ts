@@ -1,4 +1,4 @@
-import type { AgentSession, AgentSessionMode } from '../../../lib/api/agentRuntime'
+import type { AgentSession, AgentSessionMode, BackendId } from '../../../lib/api/agentRuntime'
 
 export const SYNAX_PROFILE_ID = 'synax'
 
@@ -9,7 +9,16 @@ export function readSynaxSessionMode(metadata: Record<string, unknown> | null | 
   return mode === 'plan' || mode === 'goal' || mode === 'plan_node' ? mode : 'chat'
 }
 
+export function readSessionBackendId(session?: AgentSession): BackendId {
+  const explicit = session?.sessionMetadata?.backend as { id?: BackendId } | undefined
+  if (explicit?.id) return explicit.id
+  const legacy = session?.sessionMetadata?.acp as { providerId?: BackendId } | undefined
+  const prefix = session?.model?.split('/')[0]
+  return legacy?.providerId ?? (prefix?.endsWith('-acp') ? prefix as BackendId : 'native')
+}
+
 export function isAcpSession(session?: AgentSession, model?: string | null): boolean {
+  if (session?.sessionMetadata?.backend) return readSessionBackendId(session) !== 'native'
   return Boolean(session?.sessionMetadata?.acp)
     || [model, session?.model].some(value => value?.split('/')[0].endsWith('-acp'))
 }

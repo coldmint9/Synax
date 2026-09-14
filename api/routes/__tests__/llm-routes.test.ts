@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const createGatewayStream = vi.fn()
 const validateGatewayModel = vi.fn()
 
-vi.mock('../../services/llm-runtime/stream.js', () => ({
+vi.mock('../../services/llm-runtime/gateway.js', () => ({
   createGatewayStream,
   validateGatewayModel,
 }))

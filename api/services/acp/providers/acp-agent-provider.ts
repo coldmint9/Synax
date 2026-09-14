@@ -1,3 +1,4 @@
+import { createWorkspaceClientHandler } from '../protocol/reverse-handlers.js'
 // ---------------------------------------------------------------------------
 // Shared ACP provider factory.
 //
@@ -120,7 +121,7 @@ class AcpAgentClient implements AcpClient {
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined
     let acpConn: AcpConnection | undefined
     const sourceLinkHints: SourceLinkHint[] = []
-    const baseline = await captureFileChangeBaseline(input.context?.workDir)
+    let baseline: Awaited<ReturnType<typeof captureFileChangeBaseline>> | undefined
 
     // run_started immediately so the consumer sees progress even before spawn.
     queue.push({
@@ -131,8 +132,11 @@ class AcpAgentClient implements AcpClient {
     })
 
     try {
+      const workDir = input.context?.workDir
+      if (!workDir) throw new Error('An explicit workspace is required for ACP execution.')
+      baseline = await captureFileChangeBaseline(workDir)
       const spawnSpec = await resolveSpawn()
-      acpConn = spawnAcpConnection({
+      acpConn = spawnAcpConnection(createWorkspaceClientHandler(workDir, {
         sessionUpdate: async (params: SessionNotification) => {
           ts += 1
           const event = mapSessionUpdate(base, ts, params.update)
@@ -147,7 +151,7 @@ class AcpAgentClient implements AcpClient {
             )
           }
         },
-      }, spawnSpec)
+      }), spawnSpec, workDir)
 
       // Spawn error watchdog (EINVAL, ENOENT, etc.)
       const spawnErrorPromise = new Promise<never>((_resolve, reject) => {

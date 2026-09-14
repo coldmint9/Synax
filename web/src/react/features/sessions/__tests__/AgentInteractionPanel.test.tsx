@@ -64,6 +64,21 @@ async function fillForm() {
 }
 
 describe('AgentInteractionPanel', () => {
+  it.each(['codex', 'claude-code'])('loads and answers persisted questions for the %s native CLI backend', async backendId => {
+    const nativeSession = { ...session, sessionMetadata: { mode: 'chat', backend: { id: backendId, version: 1, model: null, workDir: '/tmp' } } }
+    useAgentSessionStore.setState({ sessions: [nativeSession] })
+    render(<AgentInteractionPanel session={nativeSession} />)
+    const user = await fillForm()
+    await user.click(screen.getByRole('button', { name: 'Submit answers' }))
+    await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith('s1', 'i1', expect.objectContaining({ revision: 3, action: 'submit' })))
+  })
+
+  it('keeps unsupported ACP forms hidden', () => {
+    render(<AgentInteractionPanel session={{ ...session, sessionMetadata: { backend: { id: 'codex-acp', version: 1 } } }} />)
+    expect(agentRuntimeApi.listInteractions).not.toHaveBeenCalled()
+    expect(screen.queryByRole('region', { name: 'Agent requests' })).not.toBeInTheDocument()
+  })
+
   it('renders no empty panel or loading placeholder when the session is idle', () => {
     vi.mocked(agentRuntimeApi.listInteractions).mockReturnValue(new Promise(() => {}))
     render(<AgentInteractionPanel session={{ ...session, status: 'completed' }} />)

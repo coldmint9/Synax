@@ -73,6 +73,14 @@ export function classifySession(session: AgentSession): SessionListView {
   return 'sessions'
 }
 
+/**
+ * Session list data source: root sessions only. Subagent child sessions are hidden
+ * from the Sessions page list and never render as nested child items.
+ */
+export function listRootSessions(sessions: AgentSession[]): AgentSession[] {
+  return sessions.filter(session => !session.parentSessionId)
+}
+
 export const SESSION_LIST_VIEW_LABELS: Record<SessionListView, { zh: string; en: string }> = {
   sessions: { zh: '会话', en: 'Sessions' },
   workflow: { zh: 'Workflow', en: 'Workflows' },

@@ -511,7 +511,7 @@ const createGoalBodySchema = z.object({
 });
 
 const buildGoalSessionPromptBodySchema = z.object({
-  mode: z.enum(['direct', 'plan_node']).optional(),
+  mode: z.enum(['session', 'direct', 'plan_node']).optional(),
   content: z.string().min(1).max(100_000),
   documentId: z.string().nullable().optional(),
   documentTitle: z.string().nullable().optional(),

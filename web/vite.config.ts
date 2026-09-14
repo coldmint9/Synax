@@ -12,6 +12,8 @@ function removeCrossOrigin(): Plugin {
   }
 }
 
+const apiTarget = `http://127.0.0.1:${process.env.PORT ?? '3210'}`
+
 const localNoProxyHosts = ['localhost', '127.0.0.1', '::1']
 const noProxy = `${process.env.NO_PROXY ?? ''},${process.env.no_proxy ?? ''}`
   .split(',')
@@ -37,11 +39,11 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:3210',
+        target: apiTarget,
         changeOrigin: true,
         configure(proxy) {
           proxy.on('error', (err) => {
-            console.error('[vite proxy] /api -> http://127.0.0.1:3210 failed:', err.message)
+            console.error(`[vite proxy] /api -> ${apiTarget} failed:`, err.message)
           })
         },
       },

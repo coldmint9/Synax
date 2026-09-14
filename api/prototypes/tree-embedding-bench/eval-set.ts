@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { runtimeAsset } from '../../lib/runtime-paths.js';
 
 import type { CodeMapCodeIndex } from '../../services/contracts/code-map.js';
 import type { RetrievalTask } from './contracts.js';
 
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const MODULE_DIR = runtimeAsset(import.meta.url, '.', 'prototypes/tree-embedding-bench');
 export const DEFAULT_EVAL_SET_PATH = path.join(MODULE_DIR, 'eval-set.json');
 export const SYNAX_EVAL_SET_PATH = path.join(MODULE_DIR, 'eval-set-synax.json');
 

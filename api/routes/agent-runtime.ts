@@ -1,3 +1,13 @@
+import { backendIdSchema } from '../services/agent-runtime/backends/backend-contracts.js';
+import { acknowledgeRuntimeRecovery } from '../services/agent-runtime/runtime-recovery.js';
+import { AgentValidationError } from '../services/agent-runtime/runtime-errors.js';
+import { projectSessionState } from '../services/agent-runtime/session-projection.js';
+import { randomUUID } from 'node:crypto';
+import { runCoordinator } from '../services/agent-runtime/run-coordinator.js';
+import { runtimeJournal } from '../services/agent-runtime/runtime-journal.js';
+import { resolveSessionBackend, validateBackendTurnInput } from '../services/agent-runtime/backends/backend-binding.js';
+import { describeBackends, getBackendAdapter } from '../services/agent-runtime/backends/backend-registry.js';
+import { workStore } from '../services/agent-runtime/work-store.js';
 import { interactionService } from '../services/agent-runtime/interaction-service.js';
 import { interactionReplySchema } from '../services/agent-runtime/control-contracts.js';
 import { initializeGoal } from '../services/agent-runtime/goal-control.js';
@@ -31,7 +41,6 @@ import {
   interruptAgentSessionsAndWait,
   closeAcpAgentSessions,
   resumeAgentSessionInBackground,
-  streamAgentSession,
 } from '../services/agent-runtime/agent-stream-proxy.js';
 import { acpPermissionBridge } from '../services/agent-runtime/acp-engine/index.js';
 import { sessionUsesAcpEngine } from '../services/agent-runtime/acp-engine/index.js';
@@ -47,12 +56,6 @@ import { resolveSessionConfiguredContextLimit } from '../services/agent-runtime/
 export const agentRuntimeRoutes = new Hono();
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
 
-function isHealthyAgentRuntimeSession(session: ReturnType<typeof agentSessionRuntime.get>): boolean {
-  if (session.status === 'running' || session.status === 'waiting_permission' || session.status === 'waiting_input') {
-    return session.activeRunId !== null;
-  }
-  return true;
-}
 
 async function readJson(c: Context) {
   try {
@@ -72,14 +75,23 @@ function runtimeError(c: Context, error: unknown) {
 }
 
 function withSessionPayload(sessionId: string) {
-  const session = agentSessionRuntime.get(sessionId);
+  const session = projectSessionState(agentSessionRuntime.get(sessionId));
   const profile = profileService.getForSession(session);
   return {
     session,
     profile,
+    work: workStore.current(sessionId),
     context: session.contextSnapshotId ? agentRuntimeStore.getContextBundle(session.contextSnapshotId) : null,
   };
 }
+
+agentRuntimeRoutes.get('/backends', (c) => c.json({ items: describeBackends() }));
+agentRuntimeRoutes.get('/backends/:id/models', async c => {
+  const id = backendIdSchema.safeParse(c.req.param('id')); if (!id.success) return validationError(c, id.error);
+  try { const backend = getBackendAdapter(id.data); return backend.models ? c.json(await backend.models()) : c.json({ error: 'Use the provider model catalog for this backend.' }, 400); }
+  catch (error) { return runtimeError(c, error); }
+});
+
 
 agentRuntimeRoutes.get('/profiles', (c) => c.json({ items: profileService.list() }));
 
@@ -101,7 +113,7 @@ agentRuntimeRoutes.post('/sessions', async (c) => {
   const parsed = createSessionRequestSchema.safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
-    assertLlmProviderConfigured(parsed.data.projectId);
+    if (!parsed.data.backendId || parsed.data.backendId === 'native') assertLlmProviderConfigured(parsed.data.projectId);
     const session = agentSessionRuntime.create(parsed.data);
     return c.json(withSessionPayload(session.id), 201);
   } catch (error) {
@@ -112,8 +124,8 @@ agentRuntimeRoutes.post('/sessions', async (c) => {
 agentRuntimeRoutes.get('/sessions', (c) => {
   const parsed = listSessionsQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
   if (!parsed.success) return validationError(c, parsed.error);
-  const { limit, offset, ...filter } = parsed.data;
-  const allFiltered = agentSessionRuntime.list({ ...filter, limit: Number.MAX_SAFE_INTEGER });
+  const { limit, offset, status, ...filter } = parsed.data;
+  const allFiltered = agentSessionRuntime.list({ ...filter, limit: Number.MAX_SAFE_INTEGER }).map(projectSessionState).filter(session => !status || session.status === status);
   const countByStatus: Record<string, number> = {};
   for (const s of allFiltered) {
     countByStatus[s.status] = (countByStatus[s.status] || 0) + 1;
@@ -131,42 +143,44 @@ agentRuntimeRoutes.get('/sessions/:sessionId', (c) => {
   }
 });
 
-agentRuntimeRoutes.post('/sessions/:sessionId/cancel', async (c) => {
+async function readControl(c: Context) {
   try {
-    const id = c.req.param('sessionId');
-    agentSessionRuntime.cancel(id);
-    await interruptAgentSessionsAndWait([id], 'User canceld session.');
-    return c.json(agentRuntimeStore.getSession(id));
-  } catch (error) {
-    return runtimeError(c, error);
-  }
+    const text = await c.req.text();
+    return z.object({ runId: z.string().min(1).optional() }).parse(text ? JSON.parse(text) : {});
+  } catch { throw new AgentValidationError('Invalid control request.'); }
+}
+
+agentRuntimeRoutes.post('/sessions/:sessionId/cancel', async c => {
+  try {
+    const id = c.req.param('sessionId'); const control = await readControl(c);
+    await runCoordinator.interrupt(id, 'User requested session stop.', () => agentSessionRuntime.cancel(id), control.runId);
+    return c.json(projectSessionState(agentRuntimeStore.getSession(id)));
+  } catch (error) { return runtimeError(c, error); }
 });
 
-agentRuntimeRoutes.post('/sessions/:sessionId/pause', async (c) => {
+agentRuntimeRoutes.post('/sessions/:sessionId/pause', async c => {
   try {
-    const id = c.req.param('sessionId');
-    agentSessionRuntime.pause(id);
-    await interruptAgentSessionsAndWait([id], 'User paused session.');
-    return c.json(agentRuntimeStore.getSession(id));
-  } catch (error) {
-    return runtimeError(c, error);
-  }
+    const id = c.req.param('sessionId'); const control = await readControl(c);
+    const current = agentRuntimeStore.getSession(id);
+    if (current.status === 'waiting_input') return c.json(current);
+    if (!['queued', 'running', 'waiting_permission'].includes(current.status)) return c.json({ error: 'Only an active session can be paused.' }, 400);
+    await runCoordinator.interrupt(id, 'User requested pause.', () => {
+      agentRuntimeStore.updateSession(id, { status: 'paused', activeRunId: null, blockedReason: 'User paused session.', updatedAt: new Date().toISOString() });
+    }, control.runId);
+    return c.json(projectSessionState(agentRuntimeStore.getSession(id)));
+  } catch (error) { return runtimeError(c, error); }
 });
 
-agentRuntimeRoutes.delete('/sessions/:sessionId', async (c) => {
+agentRuntimeRoutes.delete('/sessions/:sessionId', async c => {
   try {
-    const sessionIds = agentSessionRuntime.listSessionTree(c.req.param('sessionId')).map((session) => session.id);
-    await interruptAgentSessionsAndWait(sessionIds);
-    await closeAcpAgentSessions(sessionIds);
-    const deletedSessionIds = agentSessionRuntime.delete(c.req.param('sessionId'));
-    for (const deletedId of deletedSessionIds) invalidateSessionEnvironment(deletedId);
-    return c.json({
-      ok: true,
-      deletedSessionIds,
-    });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
+    const id = c.req.param('sessionId'); const control = await readControl(c);
+    let deletedSessionIds: string[] = [];
+    await runCoordinator.interrupt(id, 'Session deleted by user.', () => {
+      deletedSessionIds = agentSessionRuntime.delete(id);
+      for (const deletedId of deletedSessionIds) invalidateSessionEnvironment(deletedId);
+    }, control.runId);
+    return c.json({ ok: true, deletedSessionIds });
+  } catch (error) { return runtimeError(c, error); }
 });
 
 agentRuntimeRoutes.post('/sessions/clear-inactive', async (c) => {
@@ -176,11 +190,11 @@ agentRuntimeRoutes.post('/sessions/clear-inactive', async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const { projectId } = parsed.data;
-    const keep = new Set(['running', 'waiting_permission', 'waiting_input', 'paused', 'queued']);
+    const keep = new Set(['running', 'stopping', 'waiting_permission', 'waiting_input', 'paused', 'queued']);
 
     const allSessions = agentSessionRuntime.list({ projectId, limit: Number.MAX_SAFE_INTEGER });
     const toDelete = allSessions.filter(
-      (s) => !keep.has(s.status),
+      (s) => !keep.has(s.status) && !s.sessionMetadata?.runtimeControl && !runCoordinator.isActive(s.id),
     );
 
     const toDeleteIds = new Set(toDelete.map((s) => s.id));
@@ -191,12 +205,12 @@ agentRuntimeRoutes.post('/sessions/clear-inactive', async (c) => {
 
     const deletedIds: string[] = [];
     for (const root of roots) {
-      const treeIds = agentSessionRuntime.listSessionTree(root.id).map((s) => s.id);
-      await agentLoopRuntime.interruptAndWaitForSessions(treeIds);
-      deletedIds.push(...agentSessionRuntime.delete(root.id));
+      const currentTree = agentSessionRuntime.listSessionTree(root.id);
+      if (currentTree.some(session => keep.has(projectSessionState(session).status) || session.sessionMetadata?.runtimeControl || runCoordinator.isActive(session.id))) continue;
+      await runCoordinator.interrupt(root.id, 'Inactive session cleared.', () => { deletedIds.push(...agentSessionRuntime.delete(root.id)); });
     }
 
-    return c.json({ ok: true, deletedCount: toDelete.length, deletedSessionIds: deletedIds });
+    return c.json({ ok: true, deletedCount: deletedIds.length, deletedSessionIds: deletedIds });
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -242,120 +256,109 @@ agentRuntimeRoutes.get('/sessions/:sessionId/steps', (c) => {
   }
 });
 
-agentRuntimeRoutes.post('/sessions/:sessionId/turns/stream', async (c) => {
-  const body = await readJson(c);
-  if (!body.ok) return c.json({ error: body.error }, 400);
-  const parsed = streamTurnRequestSchema.safeParse(body.data);
-  if (!parsed.success) return validationError(c, parsed.error);
-  const sessionId = c.req.param('sessionId');
-  let session: ReturnType<typeof agentSessionRuntime.get>;
-  try {
-    session = agentSessionRuntime.get(sessionId);
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-  try {
-    assertLlmProviderConfigured(session.projectId);
-  } catch (error) {
-    return runtimeError(c, error);
-  }
+const submitRunSchema = streamTurnRequestSchema.extend({
+  requestId: z.string().trim().min(1).max(128),
+  mode: z.enum(['turn', 'continue']).default('turn'),
+});
 
-  const abortController = new AbortController();
-  const abortWithReason = (reason: string) => {
-    if (!abortController.signal.aborted) {
-      abortController.abort(new Error(reason));
-    }
-  };
+function requireSessionBackendConfig(sessionId: string): void {
+  const session = agentSessionRuntime.get(sessionId);
+  if (resolveSessionBackend(sessionId).id === 'native') assertLlmProviderConfigured(session.projectId);
+}
 
-  if (c.req.raw.signal.aborted) {
-    abortWithReason('Client disconnected before the agent runtime stream started.');
-  } else {
-    c.req.raw.signal.addEventListener(
-      'abort',
-      () => {
-        abortWithReason('Client disconnected.');
-      },
-      { once: true },
-    );
-  }
-
-  return streamSSE(c, async (stream) => {
+function observeRunResponse(c: Context, sessionId: string, runId: string, after = 0) {
+  return streamSSE(c, async stream => {
+    const observer = new AbortController();
+    const detach = () => observer.abort();
+    c.req.raw.signal.addEventListener('abort', detach, { once: true });
+    stream.onAbort(detach);
+    if (c.req.raw.signal.aborted) detach();
     const heartbeat = setInterval(() => {
-      if (abortController.signal.aborted) return;
-
-      let session: ReturnType<typeof agentSessionRuntime.get>;
-      try {
-        session = agentSessionRuntime.get(sessionId);
-      } catch (error) {
-        logger.warn(
-          {
-            sessionId,
-            err: error instanceof Error ? error.message : String(error),
-          },
-          '[agent-runtime] session health check failed',
-        );
-        abortWithReason('Agent runtime session is unavailable.');
-        return;
-      }
-
-      if (!isHealthyAgentRuntimeSession(session)) {
-        logger.warn(
-          {
-            sessionId,
-            status: session.status,
-            activeRunId: session.activeRunId,
-          },
-          '[agent-runtime] session health check failed',
-        );
-        abortWithReason(`Agent runtime session became unhealthy (${session.status}).`);
-        return;
-      }
-
-      void stream
-        .writeSSE({
-          event: SseEventType.Ping,
-          data: JSON.stringify({
-            type: SseEventType.Ping,
-            sessionId,
-            timestamp: Date.now(),
-          }),
-        })
-        .catch((error) => {
-          logger.warn(
-            {
-              sessionId,
-              err: error instanceof Error ? error.message : String(error),
-            },
-            '[agent-runtime] heartbeat write failed',
-          );
-          abortWithReason('Agent runtime heartbeat failed.');
-        });
+      if (!observer.signal.aborted) void stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) }).catch(detach);
     }, AGENT_RUNTIME_HEARTBEAT_MS);
-
-    stream.onAbort(() => {
-      clearInterval(heartbeat);
-      agentEventService.append({
-        sessionId,
-        type: 'progress_updated',
-        summary: 'Runtime turn stream aborted by client.',
-        payload: { aborted: true },
-        visibility: 'internal',
-      });
-      abortWithReason('Client disconnected.');
-    });
-
     try {
-      for await (const chunk of streamAgentSession(sessionId, 'turn', parsed.data, abortController.signal)) {
-        await stream.writeSSE({ data: JSON.stringify(chunk) });
+      for await (const record of runCoordinator.observeRun(sessionId, runId, after, observer.signal)) {
+        await stream.writeSSE({ id: String(record.sequence), data: JSON.stringify(record.chunk) });
       }
+      if (!observer.signal.aborted) await stream.writeSSE({ data: '[DONE]' });
+    } catch (error) {
+      if (!observer.signal.aborted) throw error;
     } finally {
-      clearInterval(heartbeat);
-      ensureSessionTitleGenerated(sessionId);
-    }
-    if (!abortController.signal.aborted) {
-      await stream.writeSSE({ data: '[DONE]' });
+      detach(); clearInterval(heartbeat);
+      c.req.raw.signal.removeEventListener('abort', detach);
     }
   });
+}
+
+agentRuntimeRoutes.post('/sessions/:sessionId/runs', async c => {
+  const body = await readJson(c); if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = submitRunSchema.safeParse(body.data); if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const sessionId = c.req.param('sessionId');
+    requireSessionBackendConfig(sessionId);
+    const { requestId, mode, ...input } = parsed.data;
+    return c.json(runCoordinator.submit(sessionId, input, requestId, mode), 202);
+  } catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.get('/sessions/:sessionId/runs/:runId/stream', c => {
+  try {
+    const sessionId = c.req.param('sessionId'); const runId = c.req.param('runId');
+    if (agentRuntimeStore.getRun(runId).sessionId !== sessionId) return c.json({ error: 'Run not found' }, 404);
+    const after = z.coerce.number().int().min(0).safeParse(c.req.query('after') ?? '0');
+    if (!after.success) return validationError(c, after.error);
+    return observeRunResponse(c, sessionId, runId, after.data);
+  } catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.post('/sessions/:sessionId/recovery', async c => {
+  const body = await readJson(c); if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = z.object({ reviewedWorkspace: z.literal(true), confirmedNoRemainingWork: z.literal(true) }).safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const id = c.req.param('sessionId');
+    await runCoordinator.reconcileFailedStop(id);
+    await acknowledgeRuntimeRecovery(id);
+    return c.json({ session: projectSessionState(agentRuntimeStore.getSession(id)) });
+  } catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.get('/sessions/:sessionId/snapshot', c => {
+  try { return c.json(runtimeJournal.snapshot(c.req.param('sessionId'))); }
+  catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.get('/sessions/:sessionId/stream', c => {
+  const sessionId = c.req.param('sessionId');
+  try { agentSessionRuntime.get(sessionId); } catch (error) { return runtimeError(c, error); }
+  return streamSSE(c, async stream => {
+    const observer = new AbortController();
+    const detach = () => observer.abort();
+    stream.onAbort(detach);
+    c.req.raw.signal.addEventListener('abort', detach, { once: true });
+    if (c.req.raw.signal.aborted) detach();
+    const heartbeat = setInterval(() => {
+      if (!observer.signal.aborted) void stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) }).catch(detach);
+    }, AGENT_RUNTIME_HEARTBEAT_MS);
+    try {
+      const snapshot = runtimeJournal.snapshot(sessionId);
+      await stream.writeSSE({ event: 'snapshot', id: String(snapshot.cursor), data: JSON.stringify(snapshot) });
+      for await (const record of runtimeJournal.observe(sessionId, snapshot.cursor, observer.signal)) {
+        await stream.writeSSE({ event: 'chunk', id: String(record.sequence), data: JSON.stringify(record) });
+      }
+    } catch (error) { if (!observer.signal.aborted) throw error; }
+    finally { detach(); clearInterval(heartbeat); c.req.raw.signal.removeEventListener('abort', detach); }
+  });
+});
+
+agentRuntimeRoutes.post('/sessions/:sessionId/turns/stream', async c => {
+  const body = await readJson(c); if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = streamTurnRequestSchema.safeParse(body.data); if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const id = c.req.param('sessionId'); requireSessionBackendConfig(id);
+    const accepted = runCoordinator.submit(id, parsed.data, c.req.header('Idempotency-Key') ?? randomUUID());
+    return observeRunResponse(c, id, accepted.run.id);
+  } catch (error) { return runtimeError(c, error); }
 });
 
 agentRuntimeRoutes.get('/sessions/:sessionId/events', (c) => {
@@ -368,68 +371,14 @@ agentRuntimeRoutes.get('/sessions/:sessionId/events', (c) => {
   }
 });
 
-agentRuntimeRoutes.post('/sessions/:sessionId/resume/stream', async (c) => {
-  const body = await readJson(c);
-  if (!body.ok) return c.json({ error: body.error }, 400);
-  const parsed = streamTurnRequestSchema.safeParse(body.data ?? {});
-  if (!parsed.success) return validationError(c, parsed.error);
-  const sessionId = c.req.param('sessionId');
-  let session: ReturnType<typeof agentSessionRuntime.get>;
+agentRuntimeRoutes.post('/sessions/:sessionId/resume/stream', async c => {
+  const body = await readJson(c); if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = streamTurnRequestSchema.safeParse(body.data ?? {}); if (!parsed.success) return validationError(c, parsed.error);
   try {
-    session = agentSessionRuntime.get(sessionId);
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-  try {
-    assertLlmProviderConfigured(session.projectId);
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-
-  const abortController = new AbortController();
-  const abortWithReason = (reason: string) => {
-    if (!abortController.signal.aborted) {
-      abortController.abort(new Error(reason));
-    }
-  };
-
-  if (c.req.raw.signal.aborted) {
-    abortWithReason('Client disconnected before the agent runtime stream started.');
-  } else {
-    c.req.raw.signal.addEventListener('abort', () => abortWithReason('Client disconnected.'), { once: true });
-  }
-
-  return streamSSE(c, async (stream) => {
-    const heartbeat = setInterval(() => {
-      if (abortController.signal.aborted) return;
-      stream.writeSSE({ data: JSON.stringify({ type: 'heartbeat', sessionId, timestamp: Date.now() }) })
-        .catch((error) => {
-          logger.warn({ sessionId, err: error instanceof Error ? error.message : String(error) }, '[agent-runtime] resume heartbeat write failed');
-          abortWithReason('Agent runtime heartbeat failed.');
-        });
-    }, AGENT_RUNTIME_HEARTBEAT_MS);
-
-    stream.onAbort(() => {
-      clearInterval(heartbeat);
-      abortWithReason('Client disconnected.');
-    });
-
-    try {
-      for await (const chunk of streamAgentSession(sessionId, 'continue', parsed.data, abortController.signal)) {
-        await stream.writeSSE({ data: JSON.stringify(chunk) });
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error({ sessionId, err: message }, '[agent-runtime] resume stream error');
-      await stream.writeSSE({ data: JSON.stringify({ type: 'error', error: message }) });
-    } finally {
-      clearInterval(heartbeat);
-      ensureSessionTitleGenerated(sessionId);
-    }
-    if (!abortController.signal.aborted) {
-      await stream.writeSSE({ data: '[DONE]' });
-    }
-  });
+    const id = c.req.param('sessionId'); requireSessionBackendConfig(id);
+    const accepted = runCoordinator.submit(id, parsed.data, c.req.header('Idempotency-Key') ?? randomUUID(), 'continue');
+    return observeRunResponse(c, id, accepted.run.id);
+  } catch (error) { return runtimeError(c, error); }
 });
 
 agentRuntimeRoutes.get('/sessions/:sessionId/artifacts', (c) => {
@@ -529,7 +478,8 @@ agentRuntimeRoutes.patch('/sessions/:sessionId/permissions', async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   const sessionId = c.req.param('sessionId');
   try {
-    agentSessionRuntime.get(sessionId);
+    if (agentSessionRuntime.get(sessionId).sessionMetadata?.runtimeControl) return c.json({ error: 'Wait for execution shutdown before changing permissions.' }, 409);
+    validateBackendTurnInput(resolveSessionBackend(sessionId).id, parsed.data);
     const session = applySessionPermissionUpdate(sessionId, parsed.data);
     return c.json(withSessionPayload(session.id));
   } catch (error) {
@@ -545,14 +495,31 @@ agentRuntimeRoutes.post('/sessions/:sessionId/permissions/:permissionId/reply', 
   const sessionId = c.req.param('sessionId');
   try {
     const session = agentRuntimeStore.getSession(sessionId);
+    const previous = permissionPolicy.list(sessionId).find(item => item.id === c.req.param('permissionId'));
+    if (previous?.resolvedAt) {
+      return previous.userReply === parsed.data.reply
+        ? c.json(previous)
+        : c.json({ error: 'Permission was already resolved differently.', code: 'PERMISSION_CONFLICT' }, 409);
+    }
+    if (runCoordinator.isStopping(sessionId)) return c.json({ error: 'Execution is stopping.' }, 409);
+    if (previous?.runId && session.activeRunId !== previous.runId) {
+      return c.json({ error: 'This permission no longer belongs to the active execution.', code: 'PERMISSION_EXPIRED' }, 409);
+    }
+    const backendId = resolveSessionBackend(sessionId).id;
+    const backend = getBackendAdapter(backendId);
+    if (backendId !== 'native' && !backend.hasPendingPermission?.(sessionId, c.req.param('permissionId'))) {
+      return c.json({ error: 'The native permission request has expired.', code: 'PERMISSION_EXPIRED' }, 409);
+    }
     const decision = permissionPolicy.reply(
       sessionId,
       c.req.param('permissionId'),
       parsed.data.reply,
       parsed.data.message,
+      backendId === 'native',
     );
-    if (sessionUsesAcpEngine(sessionId)) {
-      acpPermissionBridge.resolve(sessionId, decision.id, parsed.data.reply);
+    if (backendId !== 'native') {
+      backend.replyPermission?.(sessionId, decision.id, parsed.data.reply);
+      return c.json(decision);
     }
     logger.info(
       {
@@ -641,7 +608,10 @@ agentRuntimeRoutes.get('/events/stream', (c) => {
 
     const onEvent = (event: { type: string; sessionId: string; patch?: Record<string, unknown> }) => {
       if (closed) return;
-      stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+      const current = event.patch && ('status' in event.patch || 'activeRunId' in event.patch) ? agentRuntimeStore.tryGetSession(event.sessionId) : undefined;
+      const projected = current ? projectSessionState(current) : undefined;
+      const wire = projected ? { ...event, patch: { ...event.patch, status: projected.status, activeRunId: projected.activeRunId } } : event;
+      stream.writeSSE({ event: event.type, data: JSON.stringify(wire) })
         .catch(() => { closed = true; });
     };
 
@@ -721,8 +691,14 @@ agentRuntimeRoutes.post('/sessions/:sessionId/interactions/:interactionId/reply'
   const parsed=interactionReplySchema.safeParse(body.data); if(!parsed.success)return validationError(c,parsed.error);
   try {
     const sessionId=c.req.param('sessionId');
-    const interaction=interactionService.reply(sessionId,c.req.param('interactionId'),parsed.data);
-    if(interactionService.ready(sessionId)) resumeAgentSessionInBackground(sessionId);
+    if(agentRuntimeStore.getSession(sessionId).sessionMetadata?.runtimeControl)return c.json({error:'Execution is stopping or requires recovery.'},409);
+    const backendId=resolveSessionBackend(sessionId).id, backend=getBackendAdapter(backendId);
+    const id=c.req.param('interactionId');
+    const previous=interactionService.list(sessionId).find(item=>item.id===id);
+    if(backendId!=='native'&&previous?.status==='pending'&&!backend.hasPendingInteraction?.(sessionId,id))return c.json({error:'Native input request expired.'},409);
+    const interaction=interactionService.reply(sessionId,id,parsed.data);
+    if(backendId==='native') { if(interactionService.ready(sessionId)) resumeAgentSessionInBackground(sessionId); }
+    else backend.replyInteraction?.(sessionId,id);
     return c.json({interaction});
   } catch(error){return runtimeError(c,error);}
 });
@@ -732,9 +708,9 @@ agentRuntimeRoutes.patch('/sessions/:sessionId/mode', async (c) => {
   try {
     const id=c.req.param('sessionId'), session=agentRuntimeStore.getSession(id);
     if(session.parentSessionId||!['synax','goal'].includes(session.profileId)||sessionUsesAcpEngine(id))return c.json({error:'Modes are only available on primary native Synax sessions.'},400);
-    if(session.activeRunId||['running','waiting_input','waiting_permission'].includes(session.status)||interactionService.pending(id))return c.json({error:'Stop the run and resolve any input form before switching mode.'},409);
+    if(session.sessionMetadata?.runtimeControl||session.activeRunId||['running','waiting_input','waiting_permission'].includes(session.status)||interactionService.pending(id))return c.json({error:'Stop the run and resolve any input form before switching mode.'},409);
     const mode=parsed.data.mode;
-    const updated=agentRuntimeStore.updateSessionMetadata(id,{mode,plan:null,goal:mode==='goal'?initializeGoal(session.prompt):null});
+    const updated=agentRuntimeStore.updateSessionMetadata(id,{mode,...(mode==='goal'&&!session.sessionMetadata?.goal?{goal:initializeGoal(session.prompt)}:{})});
     return c.json({session:updated});
   } catch(error){return runtimeError(c,error);}
 });

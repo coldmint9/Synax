@@ -29,7 +29,7 @@ describe('goal stream observation', () => {
   it('cannot bypass native plan restrictions by selecting an ACP model',async()=>{
     const session=agentSessionRuntime.create({projectId:'project-alpha',profileId:'synax',prompt:'A plan',sessionMetadata:{mode:'plan'}});
     const stream=streamAgentSession(session.id,'turn',{model:'cursor-acp/default'});
-    await expect(stream.next()).rejects.toThrow('native Synax');
+    await expect(stream.next()).rejects.toThrow('execution backend');
     expect(agentLoopRuntime.streamRun).not.toHaveBeenCalled();
   });
 });

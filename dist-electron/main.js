@@ -1,8 +1,9 @@
+import fs from 'node:fs/promises';
 import { app, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startSidecar, stopSidecar, getSidecarPort } from './lib/node-sidecar.js';
-import { getResourcePath } from './lib/data-paths.js';
+import { getDataRoot, getResourcePath } from './lib/data-paths.js';
 import { loadWindowState, saveWindowState } from './lib/window-state.js';
 import { buildAppMenu, updateProjectsMenu } from './menu.js';
 const __filename = fileURLToPath(import.meta.url);
@@ -74,11 +75,23 @@ function createWindow() {
     });
     return win;
 }
+let protocolRegistered = false;
+let ipcRegistered = false;
 function registerIPC() {
+    if (ipcRegistered)
+        return;
+    ipcRegistered = true;
     ipcMain.handle('dialog:open', (_e, options) => dialog.showOpenDialog(options));
     ipcMain.handle('dialog:save', (_e, options) => dialog.showSaveDialog(options));
     ipcMain.handle('app:version', () => app.getVersion());
     ipcMain.handle('app:api-port', () => getSidecarPort());
+    ipcMain.handle('app:runtime-token', async (event) => {
+        const url = event.senderFrame?.url ?? '';
+        const trusted = url.startsWith('app://./') || url.startsWith(`http://localhost:${process.env.WEB_PORT ?? '5173'}/`);
+        if (!mainWindow || event.sender !== mainWindow.webContents || !trusted)
+            throw new Error('Untrusted runtime credential request.');
+        return (await fs.readFile(path.join(getDataRoot(), 'runtime-access-token'), 'utf8')).trim();
+    });
     ipcMain.on('menu:update-projects', (_e, projects) => {
         updateProjectsMenu(projects);
     });
@@ -88,11 +101,24 @@ async function bootstrap() {
     buildAppMenu();
     // Register custom protocol to serve frontend assets over app:// scheme.
     // This is required because <script type="module"> does not work with file:// protocol.
-    protocol.handle('app', (request) => {
-        const url = new URL(request.url);
-        const filePath = path.join(getResourcePath('dist'), url.pathname);
-        return net.fetch(pathToFileURL(filePath).href);
-    });
+    if (!protocolRegistered) {
+        protocol.handle('app', async (request) => {
+            const url = new URL(request.url);
+            const root = path.resolve(getResourcePath('dist'));
+            const filePath = path.resolve(root, decodeURIComponent(url.pathname).replace(/^\/+/, ''));
+            if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`))
+                return new Response('Forbidden', { status: 403 });
+            try {
+                if ((await fs.stat(filePath)).isFile())
+                    return net.fetch(pathToFileURL(filePath).href);
+            }
+            catch { /* SPA route or missing asset. */ }
+            if (!path.extname(filePath) || filePath === root)
+                return net.fetch(pathToFileURL(path.join(root, 'index.html')).href);
+            return new Response('Not found', { status: 404 });
+        });
+        protocolRegistered = true;
+    }
     const externalApi = process.env.ELECTRON_SKIP_SIDECAR === '1';
     if (!externalApi) {
         console.log('[electron] starting API sidecar...');
@@ -117,7 +143,6 @@ app.whenReady().then(bootstrap).catch((err) => {
     dialog.showErrorBox('Synax failed to start', err instanceof Error ? err.stack ?? err.message : String(err));
 });
 app.on('window-all-closed', () => {
-    stopSidecar();
     if (process.platform !== 'darwin')
         app.quit();
 });

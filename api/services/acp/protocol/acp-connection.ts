@@ -16,7 +16,8 @@ import {
   type SessionModelState,
   type SessionNotification,
 } from '@agentclientprotocol/sdk'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawnManagedProcess } from '../../agent-runtime/managed-process.js'
 import { Readable, Writable } from 'node:stream'
 import { logger } from '../../../lib/logger.js'
 import { createClientHandler, type ClientOverrides } from './reverse-handlers.js'
@@ -182,6 +183,7 @@ export interface AcpConnection {
   spawn: AcpSpawnSpec
   /** Kill the child process and clean up. */
   cleanup(): void
+  stop?(): Promise<void>
 }
 
 /**
@@ -193,15 +195,18 @@ export interface AcpConnection {
 export function spawnAcpConnection(
   overrides: ClientOverrides,
   spawnSpec: AcpSpawnSpec = resolveOpenCodeSpawn(),
+  cwd?: string,
 ): AcpConnection {
   const { command, args } = spawnSpec
-  const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+  const managed = spawnManagedProcess(command, args, { cwd })
+  const child = managed.child
 
   const stderrChunks: string[] = []
   child.stderr.setEncoding('utf-8')
   child.stderr.on('data', (chunk: string) => {
-    stderrChunks.push(chunk)
-    logger.debug({ providerId: spawnSpec.providerId, text: chunk.trim() }, '[AcpConnection] stderr')
+    stderrChunks.push(chunk.slice(-16_384))
+    while (stderrChunks.reduce((size, text) => size + text.length, 0) > 65_536) stderrChunks.shift()
+    logger.debug({ providerId: spawnSpec.providerId, bytes: Buffer.byteLength(chunk) }, '[AcpConnection] stderr received')
   })
 
   const stdoutWeb = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
@@ -212,16 +217,11 @@ export function spawnAcpConnection(
   const conn = new ClientSideConnection(() => handler, stream)
 
   const cleanup = () => {
-    if (!child.killed) {
-      try {
-        child.kill()
-      } catch {
-        /* ignore */
-      }
-    }
+    void managed.stop().catch(error => logger.warn({ providerId: spawnSpec.providerId, error }, '[AcpConnection] shutdown unconfirmed'))
   }
 
-  return { conn, child, stderrChunks, spawn: spawnSpec, cleanup }
+  return { conn, child, stderrChunks, spawn: spawnSpec, cleanup, stop: managed.stop }
+
 }
 
 export interface AcpInitResult {
@@ -364,10 +364,7 @@ export async function openAcpSession(
     if (input.capabilities.sessionCapabilities?.resume) {
       return resumeAcpSession(conn, input.acpSessionId, input.cwd)
     }
-    logger.warn(
-      { acpSessionId: input.acpSessionId },
-      '[AcpConnection] agent lacks loadSession/resume; creating new ACP session instead',
-    )
+    throw new Error('This ACP backend cannot restore the stored session. Start a new session explicitly.')
   }
   return createAcpSession(conn, input.cwd)
 }

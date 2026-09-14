@@ -1,3 +1,4 @@
+import { spawnOwnedProcess } from '../owned-process.js';
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 
@@ -134,12 +135,9 @@ export function runCommand(
     let aborted = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env,
-      shell: options.shell ?? false,
-      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-      detached: useProcessGroup,
+    const child = spawnOwnedProcess(command, args, {
+      cwd: options.cwd, env: options.env, shell: options.shell ?? false,
+      stdin: options.stdin === undefined ? 'ignore' : 'pipe',
     });
 
     const killTree = (signal: NodeJS.Signals): void => {

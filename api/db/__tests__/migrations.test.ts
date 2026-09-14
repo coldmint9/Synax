@@ -27,9 +27,9 @@ afterEach(async () => {
   if (tempDir) {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
-  process.env.DATA_ROOT = originalEnv.DATA_ROOT;
-  process.env.LOG_LEVEL = originalEnv.LOG_LEVEL;
-  process.env.SYNAX_AGENT_SESSION_CHILD = originalEnv.SYNAX_AGENT_SESSION_CHILD;
+  for (const [key, value] of Object.entries(originalEnv)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
 });
 
 describe('runMigrations ledger', () => {
@@ -37,7 +37,7 @@ describe('runMigrations ledger', () => {
     const { getRawSqlite } = await import('../index.js');
     const dbPath = path.join(tempDir, 'context.db');
 
-    const db1 = getRawSqlite(dbPath);
+    const db1 = getRawSqlite();
     const firstCount = (
       db1.prepare('SELECT COUNT(*) as c FROM _schema_migrations').get() as { c: number }
     ).c;
@@ -47,7 +47,7 @@ describe('runMigrations ledger', () => {
     closeDb();
     vi.resetModules();
     const { getRawSqlite: openAgain } = await import('../index.js');
-    const db2 = openAgain(dbPath);
+    const db2 = openAgain();
 
     const secondCount = (
       db2.prepare('SELECT COUNT(*) as c FROM _schema_migrations').get() as { c: number }
@@ -58,37 +58,48 @@ describe('runMigrations ledger', () => {
   it('bootstraps ledger for pre-existing databases without re-running migrations', async () => {
     const dbPath = path.join(tempDir, 'context.db');
     const sqlite = new NativeDatabase(dbPath);
-    sqlite.exec(`
-      CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT INTO _meta (key, value) VALUES ('schema_version', '25');
-      CREATE TABLE wiki_snapshots (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        branch TEXT NOT NULL,
-        head_commit_sha TEXT NOT NULL,
-        working_tree_hash TEXT NOT NULL,
-        revision INTEGER NOT NULL DEFAULT 1,
-        status TEXT NOT NULL DEFAULT 'ready',
-        document_ids_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        created_by TEXT NOT NULL DEFAULT 'system'
-      );
-    `);
+    const migrations = path.resolve('api/db/migrations');
+    for (const file of fs.readdirSync(migrations).filter(file => file.endsWith('.sql') && Number.parseInt(file, 10) <= 25).sort()) {
+      sqlite.exec(fs.readFileSync(path.join(migrations, file), 'utf8'));
+    }
+    sqlite.exec(`INSERT INTO agent_runtime_sessions (id, project_id, profile_id, status, prompt, thinking_mode, created_at, updated_at)
+      VALUES ('historical-session', 'project', 'explorer', 'completed', 'Preserve this request', 'standard', 'old', 'old');
+      INSERT INTO agent_runtime_runs (id, session_id, status, started_at) VALUES ('historical-run', 'historical-session', 'completed', 'old');
+      INSERT INTO agent_runtime_messages (id, session_id, project_id, role, content, created_at) VALUES ('historical-message', 'historical-session', 'project', 'assistant', 'Preserve this answer', 'old');`);
     sqlite.close();
 
     const { getRawSqlite } = await import('../index.js');
-    getRawSqlite(dbPath);
+    getRawSqlite();
 
-    const ledger = getRawSqlite(dbPath)
+    const ledger = getRawSqlite()
       .prepare('SELECT file FROM _schema_migrations ORDER BY file')
       .all() as Array<{ file: string }>;
     expect(ledger.length).toBeGreaterThan(0);
     expect(ledger.some((row) => row.file === '0020_wiki_drop_blocks.sql')).toBe(true);
 
-    const blocks = getRawSqlite(dbPath)
+    const blocks = getRawSqlite()
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wiki_blocks'")
       .get();
     expect(blocks).toBeUndefined();
+    const db = getRawSqlite();
+    expect(db.prepare("SELECT content FROM agent_runtime_messages WHERE id='historical-message'").get()).toMatchObject({ content: 'Preserve this answer' });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name='agent_runtime_stream_records'").get()).toBeTruthy();
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name='idx_arr_runtime_request'").get()).toBeTruthy();
+    expect(ledger.some(row => row.file === '0029_runtime_stream_journal.sql')).toBe(true);
+
+  });
+
+  it('fails an unrecognized ancient schema without declaring new migrations applied or deleting data', async () => {
+    const dbPath = path.join(tempDir, 'context.db');
+    const legacy = new NativeDatabase(dbPath);
+    legacy.exec("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT); INSERT INTO _meta VALUES ('important', 'keep');");
+    legacy.close();
+    const { getRawSqlite } = await import('../index.js');
+    expect(() => getRawSqlite()).toThrow(/Legacy database/);
+    const unchanged = new NativeDatabase(dbPath);
+    expect(unchanged.prepare('SELECT value FROM _meta').get()).toMatchObject({ value: 'keep' });
+    expect(unchanged.prepare('SELECT COUNT(*) AS count FROM _schema_migrations').get()).toMatchObject({ count: 0 });
+    unchanged.close();
   });
 
   it('skips migrations in agent session child processes', async () => {
@@ -99,10 +110,10 @@ describe('runMigrations ledger', () => {
     sqlite.close();
 
     const { getRawSqlite } = await import('../index.js');
-    getRawSqlite(dbPath);
+    getRawSqlite();
 
     const count = (
-      getRawSqlite(dbPath).prepare('SELECT COUNT(*) as c FROM _schema_migrations').get() as { c: number }
+      getRawSqlite().prepare('SELECT COUNT(*) as c FROM _schema_migrations').get() as { c: number }
     ).c;
     expect(count).toBe(0);
   });

@@ -1,3 +1,4 @@
+import { runtimeTransaction } from './runtime-transaction.js';
 import { z } from 'zod';
 import { emitRuntimeBusEvent } from './runtime-bus-bridge.js';
 import { AgentValidationError } from './runtime-errors.js';
@@ -64,6 +65,7 @@ export const inputQueueService = {
   },
 
   enqueue(sessionId: string, input: EnqueueInputRequest): QueuedInput[] {
+    return runtimeTransaction(() => {
     assertSessionExists(sessionId);
     const session = agentRuntimeStore.getSession(sessionId);
     const queue = readQueue(session.sessionMetadata);
@@ -78,9 +80,12 @@ export const inputQueueService = {
       enqueuedAt: nowIso(),
     };
     return writeQueue(sessionId, [...queue, item]);
+
+    });
   },
 
   remove(sessionId: string, itemId: string): QueuedInput[] {
+    return runtimeTransaction(() => {
     assertSessionExists(sessionId);
     const session = agentRuntimeStore.getSession(sessionId);
     const queue = readQueue(session.sessionMetadata);
@@ -89,6 +94,8 @@ export const inputQueueService = {
       throw new AgentValidationError('Queued input not found.');
     }
     return writeQueue(sessionId, next);
+
+    });
   },
 
   peek(sessionId: string): QueuedInput | null {
@@ -98,15 +105,19 @@ export const inputQueueService = {
   },
 
   drainNext(sessionId: string): QueuedInput | null {
+    return runtimeTransaction(() => {
     const session = agentRuntimeStore.getSession(sessionId);
     const queue = readQueue(session.sessionMetadata);
     if (queue.length === 0) return null;
     const [head, ...rest] = queue;
     writeQueue(sessionId, rest);
     return head;
+
+    });
   },
 
   take(sessionId: string, itemId: string): QueuedInput | null {
+    return runtimeTransaction(() => {
     assertSessionExists(sessionId);
     const session = agentRuntimeStore.getSession(sessionId);
     const queue = readQueue(session.sessionMetadata);
@@ -115,6 +126,8 @@ export const inputQueueService = {
     const [item] = queue.splice(index, 1);
     writeQueue(sessionId, queue);
     return item;
+
+    });
   },
 
   getForceInjectId(sessionId: string): string | null {
@@ -123,6 +136,7 @@ export const inputQueueService = {
   },
 
   markForceInject(sessionId: string, itemId: string): QueuedInput[] {
+    return runtimeTransaction(() => {
     assertSessionExists(sessionId);
     const session = agentRuntimeStore.getSession(sessionId);
     const queue = readQueue(session.sessionMetadata);
@@ -138,21 +152,29 @@ export const inputQueueService = {
       patch: { forceInjectItemId: itemId },
     });
     return queue;
+
+    });
   },
 
   clearForceInject(sessionId: string): void {
+    return runtimeTransaction(() => {
     agentRuntimeStore.updateSessionMetadata(sessionId, {
       [FORCE_INJECT_METADATA_KEY]: null,
+    });
+
     });
   },
 
   consumeNext(sessionId: string): QueuedInput | null {
+    return runtimeTransaction(() => {
     const forceId = this.getForceInjectId(sessionId);
     if (forceId) {
       this.clearForceInject(sessionId);
       return this.take(sessionId, forceId);
     }
     return this.drainNext(sessionId);
+
+    });
   },
 
   hasPending(sessionId: string): boolean {

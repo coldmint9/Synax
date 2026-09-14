@@ -1,3 +1,4 @@
+import { AuthenticatedEventSource } from './authenticatedEventSource'
 import { SseEventType, TaskNotificationEventType } from './eventTypes'
 
 type EventHandler = (e: MessageEvent) => void
@@ -11,16 +12,16 @@ interface Subscription {
 const RECONNECT_BASE_MS = 2000
 const RECONNECT_MAX_MS = 30_000
 
-let es: EventSource | null = null
+let es: AuthenticatedEventSource | null = null
 let retries = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let subscribers = new Set<Subscription>()
 let currentProjectId: string | null = null
 
 function connect(projectId: string) {
-  if (es && es.readyState !== EventSource.CLOSED) return
+  if (es && es.readyState !== AuthenticatedEventSource.CLOSED) return
   currentProjectId = projectId
-  es = new EventSource(`/api/notifications/stream?projectId=${encodeURIComponent(projectId)}`)
+  es = new AuthenticatedEventSource(`/api/notifications/stream?projectId=${encodeURIComponent(projectId)}`)
 
   es.addEventListener(SseEventType.Connected, () => {
     retries = 0
@@ -59,7 +60,7 @@ function scheduleReconnect(projectId: string) {
 }
 
 export function subscribe(projectId: string, sub: Subscription): () => void {
-  const alreadyOpen = es?.readyState === EventSource.OPEN
+  const alreadyOpen = es?.readyState === AuthenticatedEventSource.OPEN
   subscribers.add(sub)
   if (currentProjectId !== projectId) {
     es?.close()
@@ -68,7 +69,7 @@ export function subscribe(projectId: string, sub: Subscription): () => void {
   }
   if (subscribers.size >= 1) connect(projectId)
   // Late subscribers miss the initial wiki_snapshot pushed on connect — refetch then.
-  if (alreadyOpen && es?.readyState === EventSource.OPEN) {
+  if (alreadyOpen && es?.readyState === AuthenticatedEventSource.OPEN) {
     queueMicrotask(() => sub.onConnect?.())
   }
   return () => {

@@ -1,3 +1,5 @@
+import { BACKENDS, type BackendDescription } from './backends/backend-contracts.js';
+import { resolveSessionBackend } from './backends/backend-binding.js';
 import type { AgentProfile, RegisteredTool } from './contracts.js';
 import { profileService } from './profile-service.js';
 import { agentSessionRuntime } from './session-runtime.js';
@@ -17,6 +19,7 @@ export interface SessionMcpServerSummary {
 }
 
 export interface SessionCapabilities {
+  backend?: BackendDescription;
   profile: { id: string; label: string; kind: string };
   tools: {
     available: ToolSummary[];
@@ -78,9 +81,16 @@ function resolveMcpServers(
 export function resolveSessionCapabilities(sessionId: string): SessionCapabilities {
   const session = agentSessionRuntime.get(sessionId);
   const profile = profileService.getForSession(session);
+  const binding = resolveSessionBackend(sessionId);
+  const backend = BACKENDS.find((item) => item.id === binding.id)!;
+  if (binding.id !== 'native') {
+    return { backend, profile: { id: profile.id, label: profile.label, kind: profile.kind },
+      tools: { available: [], visible: [] }, skills: { active: [], candidates: [] }, mcp: { servers: [] } };
+  }
   const available = filterAvailableTools(toolRegistry.listForSession(sessionId), profile);
 
   return {
+    backend,
     profile: { id: profile.id, label: profile.label, kind: profile.kind },
     tools: { available, visible: available },
     skills: {

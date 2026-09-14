@@ -65,7 +65,7 @@ function PermissionItem({
         >
           {t('permAllowOnce')}
         </Button>
-        <Tooltip delay={0}>
+        {(!Array.isArray(permission.metadata?.allowedReplies) || permission.metadata.allowedReplies.includes('always')) && <Tooltip delay={0}>
           <Button
             size="sm"
             variant="ghost"
@@ -75,7 +75,7 @@ function PermissionItem({
             {t('permAlwaysAllow')}
           </Button>
           <Tooltip.Content>{t('permAlwaysAllowHint')}</Tooltip.Content>
-        </Tooltip>
+        </Tooltip>}
         <Button
           size="sm"
           variant="danger-soft"

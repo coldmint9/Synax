@@ -1,3 +1,4 @@
+import { RuntimeAccessGate } from './react/features/runtime/RuntimeAccessGate'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter, useNavigate } from 'react-router-dom'
@@ -30,7 +31,7 @@ async function bootstrap() {
     <React.StrictMode>
       <BrowserRouter>
         <HeroUIRouter>
-          <App />
+          <RuntimeAccessGate><App /></RuntimeAccessGate>
         </HeroUIRouter>
       </BrowserRouter>
     </React.StrictMode>,

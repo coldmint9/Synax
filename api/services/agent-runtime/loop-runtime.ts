@@ -1,6 +1,15 @@
+import { resolveSessionUserRequest } from './session-user-request.js';
+import { runtimeTransaction } from './runtime-transaction.js';
+import type { AgentSession } from './contracts.js';
+import { activateAcceptedRun, type AcceptedRuntimeInput } from './run-admission.js';
+import { isWorkContinuation } from './work-intent.js';
+import { workRuntime, CLOSING_TOOLS } from './work-runtime.js';
+import { workStore } from './work-store.js';
+import { projectWorkContext, evictedContextToolIds } from './context-projection.js';
+import { getRawSqlite } from '../../db/index.js';
 import { INVALID_TOOL_ID } from './tool-invalid.js';
 import { interactionService } from './interaction-service.js';
-import { CONTROL_TOOLS, validateControlBatch } from './control-policy.js';
+import { CONTROL_TOOLS, validateControlBatch, controlToolError } from './control-policy.js';
 import { rootGoal, goalStopReason, belongsToPlanExecution, goalEvidenceSection, type PlanExecutionBoundary } from './control-runtime.js';
 import { getGoalState, initializeGoal } from './goal-control.js';
 import type {
@@ -10,7 +19,6 @@ import type {
   AgentRunStep,
   AgentRunStreamChunk,
   AgentRuntimeMessage,
-  CompactionConfig,
   LoopModelStreamEvent,
   LoopStepModelResult,
   StreamTurnRequest,
@@ -20,8 +28,7 @@ import type {
 import { agentEventService, type AgentEventService } from "./event-service.js";
 import { detectDoomLoop, shouldForceFinalSummary, buildConsecutiveFailureReminder } from "./loop-guards.js";
 import { buildLoopToolSet } from "./loop-ai-tools.js";
-import { buildLoopModelMessages, computeClearedToolCallIds } from "./loop-model-messages.js";
-import { generateLoopModelStep, streamLoopModelStep } from "./loop-model-stream.js";
+import { streamLoopModelStep } from "./loop-model-stream.js";
 import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
 import { synaxAgent } from "./synax/index.js";
 import { loadProjectRulesSection } from "./synax/synax-instructions.js";
@@ -44,8 +51,6 @@ import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
 import { rebuildSessionFileReads } from "./read-tracker.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
-import { shouldCompact, compactMessages, getCompactionConfig } from "./context-compressor.js";
-import { buildTaskDriftReminder } from "./tools/task-tools.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
 import { runChildToCompletion, DEFAULT_PER_CHILD_TIMEOUT_MS } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
@@ -54,7 +59,7 @@ import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
 import { mapThinkingModeToReasoningEffort, type ReasoningEffort } from "../llm-runtime/thinking-mode-strategy.js";
 import { getGlobalConfigForRuntime } from "../../lib/config/config-store.js";
 import { logger } from "../../lib/logger.js";
-import { CONTEXT_TOOL_CLEAR_THRESHOLD, CONTEXT_TOOL_CLEAR_KEEP_RECENT, CONTEXT_TOOL_CLEAR_EXCLUDE } from "../../lib/env.js";
+import { CONTEXT_TOOL_CLEAR_THRESHOLD } from "../../lib/env.js";
 import { inputQueueService } from "./input-queue-service.js";
 import { warmupMcpForSession } from "../mcp/mcp-session-tool-provider.js";
 
@@ -122,7 +127,13 @@ export class AgentLoopRuntime {
     input: StreamTurnRequest,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<AgentRunStreamChunk> {
-    const session = this.store.getSession(sessionId);
+    let session = this.store.getSession(sessionId);
+    if (input.acceptedRunId && session.status === 'queued') {
+      const accepted = this.store.getRun(input.acceptedRunId);
+      const runtime = accepted.metadata.runtime as AcceptedRuntimeInput;
+      if (accepted.sessionId !== sessionId || !runtime) throw new AgentValidationError('Invalid accepted Run.');
+      session = { ...session, status: runtime.previousSessionStatus as AgentSession['status'] };
+    }
 
     const RESUMABLE: string[] = ['interrupted', 'paused', 'completed', 'blocked', 'failed', 'cancelled'];
     if (!RESUMABLE.includes(session.status)) {
@@ -162,7 +173,7 @@ export class AgentLoopRuntime {
         }
       }
       const continuationPrompt = this.buildContinuationPrompt(sessionId, session.status);
-      yield* this.streamRun(sessionId, { ...input, message: continuationPrompt }, abortSignal, false);
+      yield* this.streamRun(sessionId, { ...input, message: continuationPrompt, messageSource: 'system_injection' }, abortSignal, false);
     }
   }
 
@@ -174,7 +185,7 @@ export class AgentLoopRuntime {
   ): AsyncGenerator<AgentRunStreamChunk> {
     this.assertSessionNotBusy(sessionId);
     const beforeStart = this.store.getSession(sessionId);
-    if (!resume && input.message?.trim() && !beforeStart.parentSessionId && beforeStart.sessionMetadata?.mode==='goal') {
+    if (!resume && input.message?.trim() && !isWorkContinuation(input.message) && !beforeStart.parentSessionId && beforeStart.sessionMetadata?.mode==='goal') {
       const previousGoal=getGoalState(beforeStart.sessionMetadata);
       if(previousGoal&&['completed','cancelled'].includes(previousGoal.status))this.store.updateSessionMetadata(sessionId,{goal:initializeGoal(input.message),plan:null});
       else if(previousGoal?.status==='blocked')this.store.updateSessionMetadata(sessionId,{goal:{...previousGoal,status:(beforeStart.sessionMetadata?.plan as {status?:string}|undefined)?.status==='approved'?'executing':'planning',reason:undefined}});
@@ -328,7 +339,7 @@ export class AgentLoopRuntime {
       });
       yield { type: "message", message: userMessage };
 
-      run = this.createRun(sessionId, userMessage.id, input.model ?? null);
+      run = this.createRun(sessionId, userMessage.id, input.model ?? null, input.acceptedRunId);
       const planBoundary = rootGoal(session).root.sessionMetadata?.plan as PlanExecutionBoundary | undefined;
       if(planBoundary?.executionId)run=this.store.updateRun(run.id,{metadata:{...run.metadata,goalExecutionId:planBoundary.executionId}});
       this.store.updateSession(sessionId, {
@@ -362,6 +373,8 @@ export class AgentLoopRuntime {
       void sessionHooks.emit({ type: 'run:started', sessionId, runId: run.id });
     }
 
+    workRuntime.attach(sessionId, run);
+    run = this.store.getRun(run.id);
     if (!resume && synaxAgent.isSynaxSession(session)) {
       const routed = synaxAgent.maybeAutoRoute(sessionId, prompt);
       if (routed) {
@@ -372,13 +385,13 @@ export class AgentLoopRuntime {
     try {
       const initialGoal = rootGoal(session).goal;
       const maxSteps = input.maxSteps ?? profile.maxSteps;
-      let emptyGoalTurns = 0;
       const context = session.contextSnapshotId
         ? this.tryGetContext(session.contextSnapshotId)
         : null;
 
       // Resolve model capabilities/context window/reasoning effort once for the run
       let modelCapabilities: { reasoning: boolean } | undefined
+      let runOutputReserve = input.maxTokens ?? 8192;
       let runContextLimit = DEFAULT_CONTEXT_LIMIT
       let runReasoningEffort: ReasoningEffort = mapThinkingModeToReasoningEffort(session.thinkingMode)
       try {
@@ -388,6 +401,7 @@ export class AgentLoopRuntime {
           model: input.model ?? undefined,
         })
         modelCapabilities = { reasoning: selection.modelDef.reasoning ?? false }
+        runOutputReserve = input.maxTokens ?? selection.modelDef.maxTokens ?? 8192;
         if (typeof selection.modelDef.contextLimit === 'number' && selection.modelDef.contextLimit > 0) {
           runContextLimit = selection.modelDef.contextLimit
           // Persist the provider-configured window on the run: the usage bar
@@ -459,6 +473,10 @@ export class AgentLoopRuntime {
       let clearingActivated = false;
 
       while (run.currentStep < maxSteps) {
+        const terminalWork = workStore.current(sessionId);
+        if (terminalWork && ['completed', 'blocked', 'cancelled'].includes(terminalWork.status)) {
+          yield* this.finishWorkRun(sessionId, run); return;
+        }
         const liveSession=this.store.getSession(sessionId);
         if(['paused','interrupted','cancelled'].includes(liveSession.status)) {this.interruptSessions([sessionId],'Session stopped by user.');throw new Error('Session stopped by user.');}
         const stopReason = goalStopReason(this.store.getSession(sessionId));
@@ -487,8 +505,9 @@ export class AgentLoopRuntime {
           startedAt: nowIso(),
           completedAt: null,
           finishReason: null,
-          metadata: {},
+          metadata: { workId: workStore.current(sessionId)?.id, workChangeVersion: workStore.current(sessionId)?.changeVersion },
         });
+        const workVersionBeforeStep = workStore.current(sessionId)?.progressVersion ?? 0;
         const stepStarted = this.events.append({
           sessionId,
           type: "step_started",
@@ -544,10 +563,14 @@ export class AgentLoopRuntime {
           abortSignal: runAbortSignal,
           clearingActivated,
           contextLimit: runContextLimit,
+          outputReserve: runOutputReserve,
         })) {
           if (inputQueueService.getForceInjectId(sessionId)) {
             stepForceInjectRequested = true;
             break;
+          }
+          if (event.type === 'usage') {
+            this.store.updateRunStep(step.id, { metadata: { ...this.store.getRunStep(step.id).metadata, usage: event.usage } });
           }
           if (event.type === "thought_delta") {
             const evt = this.events.append({
@@ -628,6 +651,9 @@ export class AgentLoopRuntime {
           throw new AgentRuntimeError("Model step produced no result.", "INTERNAL", 500);
         }
 
+        this.store.updateRunStep(step.id, { metadata: { ...this.store.getRunStep(step.id).metadata,
+          usage: modelResult.step.usage, reasoningParts: modelResult.step.reasoningParts,
+          providerMetadata: modelResult.step.providerMetadata, toolCallProviderMetadata: modelResult.step.toolCallProviderMetadata } });
         const stepUsage = modelResult.step.usage as Record<string, unknown> | undefined;
         if (!clearingActivated && typeof stepUsage?.inputTokens === 'number') {
           const stepContextLimit = runContextLimit;
@@ -694,7 +720,7 @@ export class AgentLoopRuntime {
             completedAt: nowIso(),
             finishReason:
               modelResult.step.finishReason ?? "permission_rejected",
-            metadata: { usage: modelResult.step.usage },
+            metadata: { ...this.store.getRunStep(step.id).metadata, usage: modelResult.step.usage },
           });
           void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
           const blockedRun = this.store.updateRun(run.id, {
@@ -733,19 +759,28 @@ export class AgentLoopRuntime {
         }
 
         const activeGoal = rootGoal(this.store.getSession(sessionId)).goal;
-        if (activeGoal && !session.parentSessionId && modelResult.step.toolCalls.length === 0) {
-          this.finishAssistantMessage(sessionId,run.id,step.id,modelResult.step.message?.trim()||'Goal requires further work.',modelResult.model,'goal_progress',modelResult.step.usage);
-          this.store.updateRunStep(step.id,{status:'completed',completedAt:nowIso(),finishReason:'goal_continue'});
-          emptyGoalTurns++;
-          if(emptyGoalTurns>=3){
-            const reason='No actionable progress after three goal turns. Clarification or a revised approach is required.';
-            this.store.updateSessionMetadata(sessionId,{goal:{...activeGoal,status:'blocked',reason}});
-            yield* this.finishControlledGoal(sessionId,run,reason);return;
+        if (modelResult.step.toolCalls.length === 0 && workStore.current(sessionId)) {
+          const finalText = modelResult.step.message?.trim();
+          try {
+            if (!finalText) throw new AgentValidationError('An empty response is not a final result.');
+            const result = await workRuntime.complete({ sessionId, runId: run.id, stepId: step.id,
+              toolCallId: '', toolId: 'work.checkpoint', category: 'task', mutability: 'task', args: {} }, finalText);
+            this.store.updateRunStep(step.id, { status: 'completed', completedAt: nowIso(), finishReason: 'work_completion' });
+            if (result.suspend) {
+              yield { type: 'done', sessionId, runId: run.id }; return;
+            }
+            yield* this.finishWorkRun(sessionId, run); return;
+          } catch (error) {
+            const work = workStore.current(sessionId)!;
+            work.noProgressSteps++;
+            work.status = work.noProgressSteps >= 3 ? 'blocked' : 'closing';
+            work.reason = error instanceof Error ? error.message : String(error);
+            workStore.save(work);
+            this.store.updateRunStep(step.id, { status: 'completed', completedAt: nowIso(), finishReason: 'work_closing' });
+            currentPrompt = work.reason;
+            continue;
           }
-          currentPrompt='Continue the goal. Plain final text does not finish it. Use human.ask for missing decisions, plan.propose to save a revised plan, plan.execute only after the user explicitly asks to execute, or goal.finish with evidence / an explicit blocker.';
-          continue;
         }
-        emptyGoalTurns=0;
         if (modelResult.step.toolCalls.length === 0 || (modelResult.step.final && !activeGoal && !modelResult.step.toolCalls.some(c => CONTROL_TOOLS.has(c.toolId)))) {
           const finalText =
             modelResult.step.message?.trim() || "Run completed.";
@@ -775,7 +810,7 @@ export class AgentLoopRuntime {
               modelResult.step.finishReason ??
               modelResult.step.stopReason ??
               "stop",
-            metadata: { usage: modelResult.step.usage },
+            metadata: { ...this.store.getRunStep(step.id).metadata, usage: modelResult.step.usage },
           });
           void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
           const completedRun = this.store.updateRun(run.id, {
@@ -845,18 +880,7 @@ export class AgentLoopRuntime {
         // read-only tool is needless re-execution that burns context.  Fold it.
         // However, if the original output has been cleared from context, the LLM
         // legitimately needs the data again — skip those from the dedup index.
-        const clearedIds = clearingActivated
-          ? computeClearedToolCallIds(this.store, sessionId, {
-              priorInputTokens: typeof (modelResult.step.usage as Record<string, unknown>)?.inputTokens === 'number'
-                ? (modelResult.step.usage as Record<string, unknown>).inputTokens as number
-                : null,
-              contextLimit: runContextLimit,
-              threshold: CONTEXT_TOOL_CLEAR_THRESHOLD,
-              keepRecent: CONTEXT_TOOL_CLEAR_KEEP_RECENT,
-              excludeTools: CONTEXT_TOOL_CLEAR_EXCLUDE,
-              forceActivated: clearingActivated,
-            })
-          : null;
+        const clearedIds = evictedContextToolIds(sessionId);
 
         const dedupIndex = new Map<string, ToolCallRecord>();
         for (const prev of this.store.listRunToolCalls(run.id)) {
@@ -864,7 +888,8 @@ export class AgentLoopRuntime {
           if(boundary?.executionId&&!belongsToPlanExecution(prev,boundary))continue;
           if (prev.status === 'completed' || prev.status === 'compacted') {
             // Don't dedup against calls whose output was cleared from context
-            if (clearedIds?.has(prev.id)) continue;
+            if (clearedIds.has(prev.id)) continue;
+            if (prev.stepId && this.store.getRunStep(prev.stepId).metadata.workChangeVersion !== workStore.current(sessionId)?.changeVersion) continue;
             dedupIndex.set(`${prev.toolId}:${prev.argsHash}`, prev);
           }
         }
@@ -876,7 +901,7 @@ export class AgentLoopRuntime {
         const executions = await Promise.all(
           allCalls.map(async (call) => {
             const tool = this.tools.list().find(t => t.id === call.toolId);
-            if (tool?.mutability === 'read') {
+            if (tool?.mutability === 'read' && !['bash', 'verification.run', 'context.read'].includes(tool.id) && tool.category !== 'mcp') {
               const argsHash = this.store.hashArgs(call.args);
               const prev = dedupIndex.get(`${call.toolId}:${argsHash}`);
               if (prev) {
@@ -1029,7 +1054,7 @@ export class AgentLoopRuntime {
             ? "permission_required"
             : (modelResult.step.finishReason ?? "tool_calls"),
           model: modelResult.model,
-          metadata: { usage: modelResult.step.usage },
+          metadata: { ...this.store.getRunStep(step.id).metadata, usage: modelResult.step.usage },
         });
         void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
 
@@ -1080,7 +1105,12 @@ export class AgentLoopRuntime {
           return;
         }
 
-        const doomLoop = detectDoomLoop(this.store.listRunToolCalls(run.id), profile?.doomLoopThreshold);
+        workRuntime.afterStep(sessionId, step.id, workVersionBeforeStep);
+        const afterWork = workStore.current(sessionId);
+        if (afterWork && ['completed', 'blocked', 'cancelled'].includes(afterWork.status)) {
+          yield* this.finishWorkRun(sessionId, run); return;
+        }
+        const doomLoop = workStore.current(sessionId) ? null : detectDoomLoop(this.store.listRunToolCalls(run.id), profile?.doomLoopThreshold);
         if (doomLoop) {
           const note = `Repeated tool call detected for ${doomLoop.toolId}.`;
           logger.warn(
@@ -1203,6 +1233,17 @@ export class AgentLoopRuntime {
       };
       yield { type: "done", sessionId, runId: stoppedRun.id };
     } catch (error) {
+      const committedWork = workStore.current(sessionId);
+      if (committedWork?.status === 'completed') {
+        yield* this.finishWorkRun(sessionId, run); return;
+      }
+      for (const step of this.store.listRunSteps(run.id)) {
+        if (step.status === 'running') this.store.updateRunStep(step.id, { status: 'interrupted', completedAt: nowIso(), finishReason: 'interrupted' });
+      }
+      if (error instanceof Error && error.message.startsWith('context_blocked:') && committedWork) {
+        committedWork.status = 'blocked'; committedWork.reason = error.message; workStore.save(committedWork);
+        yield* this.finishWorkRun(sessionId, run); return;
+      }
       const abortReason =
         runAbortSignal.aborted && 'reason' in runAbortSignal
           ? (runAbortSignal as AbortSignal & { reason?: unknown }).reason
@@ -1265,6 +1306,9 @@ export class AgentLoopRuntime {
       yield { type: "done", sessionId, runId: failedRun.id };
     } finally {
       if (run) {
+        for (const step of this.store.listRunSteps(run.id)) {
+          if (step.status === 'running') this.store.updateRunStep(step.id, { status: 'interrupted', completedAt: nowIso(), finishReason: 'run_ended' });
+        }
         try {
           const finalRun = this.store.getRun(run.id);
           void sessionHooks.emit({ type: 'run:completed', sessionId, runId: run.id, status: finalRun.status });
@@ -1272,6 +1316,26 @@ export class AgentLoopRuntime {
       }
     }
     } finally { activeExecution.dispose(); }
+  }
+
+  private *finishWorkRun(sessionId: string, run: AgentRun): Generator<AgentRunStreamChunk> {
+    const work = workStore.current(sessionId)!;
+    let message: AgentRuntimeMessage | undefined;
+    getRawSqlite().transaction(() => {
+      workRuntime.persistTerminal(work, run.id);
+      message = this.store.listMessages(sessionId).find(m => m.metadata.purpose === 'work_result' && m.content === (work.result ?? work.reason));
+      if (!message) message = this.finishAssistantMessage(sessionId, run.id, null,
+        work.result ?? work.reason ?? 'Work completed.', run.model, 'work_result');
+    })();
+    const terminalRun = this.store.getRun(run.id);
+    const eventType = work.status === 'completed' ? 'run_completed' : 'run_failed';
+    const latest = this.store.getLatestEventOfTypes(sessionId, ['run_completed', 'run_failed']);
+    if (latest?.payload.runId !== run.id) this.events.append({ sessionId, type: eventType, summary: message!.content,
+      payload: { runId: run.id, workId: work.id, status: terminalRun.status } });
+    yield { type: 'message', message: message! };
+    if (work.status === 'completed') yield { type: 'run_completed', run: terminalRun, message: message! };
+    else yield { type: 'run_failed', run: terminalRun, error: work.reason ?? 'Work blocked.' };
+    yield { type: 'done', sessionId, runId: run.id };
   }
 
   private *finishControlledGoal(sessionId:string, run:AgentRun, reason:string):Generator<AgentRunStreamChunk> {
@@ -1342,6 +1406,7 @@ export class AgentLoopRuntime {
     sessionId: string,
     run: AgentRun,
   ): { message: string; model: string | null; userMessage: AgentRuntimeMessage; queueItemId: string } | null {
+    return runtimeTransaction(() => {
     const item = inputQueueService.consumeNext(sessionId);
     if (!item) return null;
 
@@ -1355,6 +1420,7 @@ export class AgentLoopRuntime {
       metadata: { source: "input_queue", queueItemId: item.id },
       createdAt: nowIso(),
     });
+    workRuntime.attach(sessionId, { ...run, triggerMessageId: userMessage.id });
     this.events.append({
       sessionId,
       type: "progress_updated",
@@ -1375,13 +1441,17 @@ export class AgentLoopRuntime {
       userMessage,
       queueItemId: item.id,
     };
+
+    });
   }
 
   private createRun(
     sessionId: string,
     triggerMessageId: string,
     model: string | null,
+    acceptedRunId?: string,
   ): AgentRun {
+    if (acceptedRunId) return activateAcceptedRun(sessionId, acceptedRunId, triggerMessageId, model);
     return this.store.appendRun({
       id: makeRuntimeId("run"),
       sessionId,
@@ -1413,6 +1483,7 @@ export class AgentLoopRuntime {
     abortSignal?: AbortSignal;
     clearingActivated?: boolean;
     contextLimit?: number;
+    outputReserve?: number;
   }): AsyncGenerator<LoopModelStreamEvent> {
     if (input.blockedByPermission) {
       logger.info(
@@ -1456,37 +1527,24 @@ export class AgentLoopRuntime {
       .filter(
         (tool) =>
           input.profile.allowedCapabilities.includes(tool.id) ||
+          ['work.checkpoint', 'context.read'].includes(tool.id) ||
+          (tool.id === 'verification.run' && input.profile.allowedCapabilities.includes('bash')) ||
           tool.category === "skill" ||
           tool.category === "mcp" ||
           tool.id === "tools.invalid",
       );
-    const toolSet = buildLoopToolSet(availableTools);
+    const session = this.store.getSession(input.sessionId);
+    const userRequest = resolveSessionUserRequest(session, input.prompt);
+    const allowedTools = availableTools.filter(tool => !controlToolError(session, tool))
+      .filter(tool => workStore.current(input.sessionId)?.status !== 'closing' || CLOSING_TOOLS.has(tool.id));
+    const toolSet = buildLoopToolSet(allowedTools);
     const contextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
 
-    const prevInputTokens = typeof input.previousStepUsage?.inputTokens === 'number'
-      ? input.previousStepUsage.inputTokens as number
-      : null;
+    let conversationMessages: import('@ai-sdk/provider-utils').ModelMessage[] = [];
 
-    let conversationMessages = buildLoopModelMessages(
-      this.store,
-      input.sessionId,
-      toolSet,
-      {
-        clearing: {
-          priorInputTokens: prevInputTokens,
-          contextLimit,
-          threshold: CONTEXT_TOOL_CLEAR_THRESHOLD,
-          keepRecent: CONTEXT_TOOL_CLEAR_KEEP_RECENT,
-          excludeTools: CONTEXT_TOOL_CLEAR_EXCLUDE,
-          forceActivated: input.clearingActivated ?? false,
-        },
-      },
-    );
-
-    const session = this.store.getSession(input.sessionId);
     const relevantMemories = memoryManager.getRelevantMemories(
       session.projectId,
-      input.prompt,
+      userRequest,
       5,
     );
     const projectMemoriesSection = relevantMemories.length > 0
@@ -1512,7 +1570,7 @@ export class AgentLoopRuntime {
       activeSkillIds: session.skillIds,
     });
     const activeSkillIds = new Set(session.skillIds);
-    const skillsSection = skillCandidates.length > 0
+    const skillsSection = allowedTools.some(tool => tool.id === 'skill.load') && skillCandidates.length > 0
       ? [
         '## Available skills',
         'Call skill.load with skillId when a skill description matches the task. Full instructions load on demand.',
@@ -1524,7 +1582,7 @@ export class AgentLoopRuntime {
       : null;
 
     const permissionConfig = readSessionPermissionConfig(session.sessionMetadata);
-    const locale = resolvePromptLocale(input.input.locale, input.prompt);
+    const locale = resolvePromptLocale(input.input.locale, userRequest);
 
     let contextForPrompt = input.context;
     try {
@@ -1533,7 +1591,7 @@ export class AgentLoopRuntime {
         input.context,
         session.projectId,
         workDir,
-        input.prompt,
+        userRequest,
       );
     } catch {
       contextForPrompt = input.context;
@@ -1545,17 +1603,22 @@ export class AgentLoopRuntime {
       history: input.history,
       previousParts: input.previousParts,
       previousToolCalls: input.previousToolCalls,
-      currentPrompt: input.prompt,
+      currentPrompt: userRequest,
       maxSteps: input.maxSteps,
       stepIndex: input.stepIndex,
       mustFinalize: input.mustFinalize,
       locale,
       permissionTier: permissionConfig.permissionTier,
+      effectivePermissionRules: session.permissionRules,
+      isSubSession: Boolean(session.parentSessionId),
+      availableToolIds: allowedTools.map(tool => tool.id),
+      specializedOutput: isWikiAgentProfile(input.profile.id),
       includeToolCallFallback: false,
-      modePromptSection: [synaxAgent.buildModePromptSection(session),goalEvidenceSection(session,input.previousToolCalls)].filter(Boolean).join('\n'),
+      modePromptSection: synaxAgent.buildModePromptSection(session),
+      workPromptSection: [workRuntime.prompt(input.sessionId), goalEvidenceSection(session, input.previousToolCalls)].filter(Boolean).join('\n'),
       variantPromptSection: synaxAgent.buildVariantPromptSection(session),
       intentPromptSection: synaxAgent.isSynaxSession(session)
-        ? synaxAgent.buildIntentPromptSection(session, input.prompt, input.stepIndex)
+        ? synaxAgent.buildIntentPromptSection(session, userRequest, input.stepIndex)
         : null,
       loopHintsOverride: synaxAgent.isSynaxSession(session)
         ? synaxAgent.buildEffectiveLoopHints(session)
@@ -1573,83 +1636,18 @@ export class AgentLoopRuntime {
       // Non-critical: metadata write failure should not block the step
     }
 
-    const compactionConfig = getCompactionConfig();
+    const projection = projectWorkContext({
+      sessionId: input.sessionId, toolSet, contextLimit,
+      outputReserve: input.outputReserve ?? input.input.maxTokens ?? 8192,
+      systemTokens: countTokens(systemPromptContent, input.input.model ?? undefined) + estimateToolDefinitionsTokens(allowedTools.length, input.input.model ?? undefined),
+      model: input.input.model ?? undefined,
+    });
+    conversationMessages = projection.messages;
+    if (projection.compacted) yield { type: 'context_compacted' as const, originalTokens: projection.originalTokens, compressedTokens: projection.tokens, messageCount: projection.messages.length };
 
-    const totalTokens = prevInputTokens ?? (
-      countTokens(systemPromptContent, input.input.model ?? undefined) +
-      countMessagesTokens(
-        conversationMessages as unknown as import('../llm-runtime/types.js').LlmGatewayMessage[],
-        input.input.model ?? undefined,
-      ) +
-      estimateToolDefinitionsTokens(availableTools.length, input.input.model ?? undefined)
-    );
+    const needsInstructionOverride = input.stepIndex > 1 && userRequest.length > 0
+      && !input.history.some(message => message.role === 'user' && resolveSessionUserRequest(session, message.content) === userRequest);
 
-    if (shouldCompact(totalTokens, contextLimit, compactionConfig)) {
-      logger.info(
-        {
-          sessionId: input.sessionId,
-          stepIndex: input.stepIndex,
-          totalTokens,
-          contextLimit,
-          threshold: compactionConfig.threshold,
-          source: prevInputTokens != null ? 'provider_usage' : 'tiktoken_estimate',
-        },
-        "[agent-runtime] context approaching limit, triggering compaction",
-      );
-
-      const compactionResult = await compactMessages(conversationMessages, {
-        sessionId: input.sessionId,
-        runId: input.input.purpose ?? null,
-        model: input.input.model ?? undefined,
-        contextLimit,
-        config: compactionConfig,
-        generateSummary: async (sysPrompt, userPrompt) => {
-          const summaryResult = await generateLoopModelStep({
-            request: {
-              projectId: this.store.getSession(input.sessionId).projectId,
-              purpose: 'context-compaction',
-              model: compactionConfig.summaryModel ?? input.input.model,
-              messages: [
-                { role: 'system' as const, content: sysPrompt },
-                { role: 'user' as const, content: userPrompt },
-              ],
-              maxTokens: compactionConfig.maxSummaryTokens,
-            },
-            tools: buildLoopToolSet([]),
-            mustFinalize: true,
-            model: compactionConfig.summaryModel ?? input.input.model ?? null,
-            abortSignal: input.abortSignal,
-            hookContext: { sessionId: input.sessionId, purpose: 'context-compaction' },
-          });
-          return summaryResult.step.message ?? '';
-        },
-      });
-
-      if (compactionResult.didCompact && compactionResult.record) {
-        conversationMessages = compactionResult.messages as typeof conversationMessages;
-        this.store.saveCompactionRecord(compactionResult.record);
-        yield {
-          type: 'context_compacted' as const,
-          originalTokens: compactionResult.record.originalTokenCount,
-          compressedTokens: compactionResult.record.compressedTokenCount,
-          messageCount: compactionResult.record.compressedMessageCount,
-        };
-      }
-    }
-
-    const lastUserMessage = [...conversationMessages]
-      .reverse()
-      .find((message) => message.role === "user");
-    const needsInstructionOverride =
-      input.stepIndex > 1 &&
-      input.prompt.trim().length > 0 &&
-      !(
-        lastUserMessage?.role === "user" &&
-        typeof lastUserMessage.content === "string" &&
-        lastUserMessage.content.trim() === input.prompt.trim()
-      );
-
-    const todoDriftReminder = input.stepIndex > 1 ? buildTaskDriftReminder(input.sessionId) : null;
     const failureReminder = buildConsecutiveFailureReminder(
       input.previousToolCalls,
       input.profile.consecutiveFailureReminderThreshold,
@@ -1658,9 +1656,8 @@ export class AgentLoopRuntime {
     const stepNote = buildLoopStepNote(input);
     const tailReminders = [
       stepNote,
-      todoDriftReminder ?? '',
       failureReminder ?? '',
-      needsInstructionOverride ? input.prompt.trim() : '',
+      needsInstructionOverride ? userRequest : '',
     ].filter(Boolean);
 
     const request = {
@@ -1687,6 +1684,8 @@ export class AgentLoopRuntime {
       temperature: input.input.temperature,
       maxTokens: input.input.maxTokens,
     };
+    if (countMessagesTokens(request.messages as never, input.input.model ?? undefined) + estimateToolDefinitionsTokens(allowedTools.length, input.input.model ?? undefined) > contextLimit - (input.outputReserve ?? input.input.maxTokens ?? 8192))
+      throw new AgentValidationError('context_blocked: the final request, including required reminders and output reservation, exceeds the model window.');
     yield* streamLoopModelStep({
       request,
       tools: toolSet,
@@ -2064,7 +2063,7 @@ export class AgentLoopRuntime {
       .filter(tc => tc.status === 'running' || tc.status === 'pending');
 
     const parts: string[] = [
-      'Session was interrupted (server restarted). You MUST continue the original task — do NOT just summarize what happened.',
+      'Execution was interrupted. Reconcile the current Work checkpoint and existing results first. If the task is already done, deliver the result; otherwise perform only the remaining necessary action.',
     ];
 
     if (incompleteTools.length > 0) {

@@ -1,4 +1,4 @@
-import { interruptAgentSessionsAndWait } from "../agent-stream-proxy.js";
+import { agentLoopRuntime } from "../loop-runtime.js";
 import { closeDb } from "../../../db/index.js";
 import { agentRuntimeRoutes } from "../../../routes/agent-runtime.js";
 vi.mock("../agent-stream-proxy.js", () => ({
@@ -316,15 +316,17 @@ describe("persistent human input", () => {
   });
   it("forwards an explicit pause to the native producer instead of just updating the UI", async () => {
     const { session } = setup();
+    const interruptProducer = vi.spyOn(agentLoopRuntime, "interruptAndWaitForSessions");
     const response = await agentRuntimeRoutes.request(
       `http://local/sessions/${session.id}/pause`,
       { method: "POST" },
     );
     expect(response.status).toBe(200);
     expect((await response.json()).status).toBe("paused");
-    expect(interruptAgentSessionsAndWait).toHaveBeenCalledWith(
+    expect(interruptProducer).toHaveBeenCalledWith(
       [session.id],
-      "User paused session.",
+      "User requested pause.",
     );
+    interruptProducer.mockRestore();
   });
 });

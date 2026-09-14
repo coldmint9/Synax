@@ -98,7 +98,8 @@ export const interactionService = {
       const session = store.getSession(input.sessionId);
       if (
         session.parentSessionId ||
-        !["synax", "goal"].includes(session.profileId)
+        (!["synax", "goal"].includes(session.profileId) &&
+          ((session.sessionMetadata?.backend as { id?: string } | undefined)?.id ?? 'native') === 'native')
       )
         throw new AgentValidationError(
           "Only the primary Synax agent can ask the user.",

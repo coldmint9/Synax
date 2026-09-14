@@ -1,3 +1,4 @@
+import { useLocale } from '../../../../hooks/useLocale'
 import { Shield } from 'lucide-react'
 import type { GoalPermissionTier } from './goalAttachTypes'
 
@@ -7,10 +8,20 @@ interface Props {
   value: GoalPermissionTier
   onChange: (value: GoalPermissionTier) => void
   disabled?: boolean
+  backendId?: string
 }
 
 /** Inline permission control: one click cycles readonly -> readwrite -> unrestricted. */
-export function GoalPermissionCycle({ value, onChange, disabled }: Props) {
+export function GoalPermissionCycle({ value, onChange, disabled, backendId }: Props) {
+  const { locale } = useLocale()
+  if (backendId === 'codex' || backendId === 'claude-code') {
+    const label = locale === 'zh' ? 'CLI 原生审批' : 'Native CLI approvals'
+    return <span role="note" aria-label={label} data-native-policy="true"
+      title={locale === 'zh' ? '由 CLI 沙箱及原生审批控制，不使用 Synax 权限档位。' : 'Controlled by the CLI sandbox and native approval prompts, not Synax permission tiers.'}
+      className="goal-permission-cycle goal-dock-composer-chip inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-normal">
+      <Shield size={12} aria-hidden /><span>{label}</span>
+    </span>
+  }
   const labelMap: Record<GoalPermissionTier, string> = {
     readonly: '只读',
     readwrite: '读写',

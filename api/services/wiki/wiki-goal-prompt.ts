@@ -1,8 +1,9 @@
+import { buildSessionUserMessage } from '../agent-runtime/session-user-request.js'
 import type { GoalAnchor, WikiGoal } from './wiki-goal-service.js'
 import { buildLanguageDirective } from '../prompts/language-directive.js'
 import type { GoalWikiAttachMode } from './wiki-goal-wiki-context.js'
 
-export type GoalPromptMode = 'direct' | 'plan_node'
+export type GoalPromptMode = 'session' | 'direct' | 'plan_node'
 
 export type GoalPlanNodeContext = {
   title: string
@@ -30,6 +31,7 @@ export function buildGoalSessionPrompt(input: {
   redoFeedback?: string
   locale?: 'zh' | 'en'
 }): string {
+  if (input.mode === 'session') return buildSessionUserMessage(input)
   const mode = input.mode ?? 'direct'
   const locale = input.locale ?? 'zh'
 

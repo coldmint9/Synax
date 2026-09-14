@@ -105,7 +105,7 @@ export function SkillAddSourceModal({ state, form, busy, error, labels, onChange
   }
 
   return (
-    <Modal state={state}>
+    <Modal isOpen={state.isOpen} onOpenChange={open => open ? state.open() : state.close()}>
       <Modal.Backdrop>
         <Modal.Container size="sm">
           <Modal.Dialog className="sm:max-w-md">

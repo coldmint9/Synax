@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -48,9 +48,27 @@ vi.mock('@heroui/react', () => {
   SelectComp.Popover = Passthrough
   const ListBoxComp = ({ children }: any) => <div role="listbox">{children}</div>
   ListBoxComp.Item = ({ children, id, textValue }: any) => <div role="option" aria-label={textValue}>{children}</div>
+  ListBoxComp.ItemIndicator = () => null
+  const { createContext, useContext } = require('react')
+  const fieldContext = createContext({ value: '', onChange: (_value: string) => {} })
+  const InputGroupComp = Object.assign(Passthrough, {
+    Input: (props: any) => {
+      const field = useContext(fieldContext)
+      return <input {...props} value={field.value ?? ''} onChange={event => field.onChange?.(event.target.value)} />
+    }, Prefix: Passthrough, Suffix: Passthrough,
+  })
+  const dialog = (role: string) => ({
+    Backdrop: ({ children, isOpen = true }: any) => isOpen ? <>{children}</> : null,
+    Container: Passthrough, Dialog: ({ children }: any) => <div role={role}>{children}</div>,
+    Header: Passthrough, Body: Passthrough, Footer: Passthrough,
+    Heading: ({ children }: any) => <h2>{children}</h2>, Icon: () => null, CloseTrigger: () => null,
+  })
   return {
-    Button: ({ children, onPress, startContent, isLoading, isDisabled, isIconOnly, ...props }: any) => (
-      <button onClick={onPress} disabled={isDisabled || isLoading} {...props}>{startContent}{children}</button>
+    Modal: dialog('dialog'), AlertDialog: dialog('alertdialog'),
+    TextField: ({ children, value, onChange }: any) => <fieldContext.Provider value={{ value, onChange }}><div>{children}</div></fieldContext.Provider>,
+    InputGroup: InputGroupComp, FieldError: Passthrough, Description: Passthrough,
+    Button: ({ children, onPress, startContent, isLoading, isPending, isDisabled, isIconOnly, ...props }: any) => (
+      <button onClick={onPress} disabled={isDisabled || isLoading || isPending} {...props}>{startContent}{typeof children === 'function' ? children({ isPending: Boolean(isPending) }) : children}</button>
     ),
     Card: CardComp,
     Chip: ({ children }: any) => <span>{children}</span>,
@@ -286,8 +304,8 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     await user.click(screen.getByRole('button', { name: /添加/ }))
     await user.click(screen.getByRole('button', { name: /^自定义/ }))
 
-    const baseUrlInput = screen.getByDisplayValue('https://api.openai.com/v1')
-    const modelInput = screen.getByDisplayValue('gpt-4o-mini')
+    const baseUrlInput = screen.getByPlaceholderText('https://api.example.com')
+    const modelInput = within(screen.getByRole('dialog')).getByText('模型', { selector: 'span' }).parentElement!.querySelector('input')!
 
     await user.clear(baseUrlInput)
     await user.type(baseUrlInput, 'https://llm.internal/v1')
@@ -309,7 +327,7 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     )
   })
 
-  it('discovers models and shows them in a select', async () => {
+  it('discovers models and shows them in the model menu', async () => {
     const user = userEvent.setup()
     mocks.discoverAiModels.mockResolvedValueOnce({
       ok: true,
@@ -325,11 +343,9 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     await user.type(apiKeyInput, 'sk-test')
     await user.click(screen.getByRole('button', { name: /发现/ }))
 
-    await waitFor(() => {
-      expect(screen.getByRole('option', { name: 'gpt-4o-mini' })).toBeInTheDocument()
-    })
-    expect(screen.getByRole('option', { name: 'gpt-4.1' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'gpt-4o-mini', exact: true }))
+    expect(screen.getByRole('button', { name: 'gpt-4.1', exact: true })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'gpt-4o', exact: true })).toBeInTheDocument()
   })
 
   it('removes a configured provider card', async () => {
@@ -363,6 +379,8 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
       expect(screen.getByRole('button', { name: /删除/ })).toBeInTheDocument()
     })
     await user.click(screen.getByRole('button', { name: /删除/ }))
+    expect(mocks.updateGlobalConfig).not.toHaveBeenCalled()
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '删除', exact: true }))
 
     expect(mocks.updateGlobalConfig).toHaveBeenCalledWith(
       expect.objectContaining({

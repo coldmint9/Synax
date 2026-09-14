@@ -112,6 +112,7 @@ describe('config routes ai api provider auth', () => {
     expect(res.status).toBe(200)
     expect(body).toEqual({
       ok: true,
+      status: 200,
       models: ['claude-opus-4-7', 'claude-sonnet-4-6'],
       source: 'anthropic/models',
     })
@@ -176,6 +177,7 @@ describe('config routes ai api provider auth', () => {
     expect(res.status).toBe(200)
     expect(body).toEqual({
       ok: true,
+      status: 200,
       models: [],
       source: 'openai/models',
       error: '模型接口未返回可识别的模型 ID',
@@ -407,8 +409,8 @@ describe('config routes ai api provider auth', () => {
     const body = await res.json()
 
     expect(res.status).toBe(200)
-    expect(body.config.defaultApiProviderId).toBe('openai')
-    expect(body.config.providerConnections.openai.apiKeyMasked).toBeUndefined()
+    expect(body.config.defaultApiProviderId).toBe('custom-api:deepseek')
+    expect(body.config.providerConnections.openai?.apiKeyMasked).toBeUndefined()
     expect(body.config.providers).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'custom-api:deepseek' })]),
     )

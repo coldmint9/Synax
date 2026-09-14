@@ -149,8 +149,8 @@ describe('config-store provider model metadata persistence', () => {
     const provider = {
       id: 'custom-api:deepseek',
       label: 'DeepSeek',
-      status: 'live',
-      kind: 'api',
+      status: 'live' as const,
+      kind: 'api' as const,
       caps: { canFollowUp: true, canCancel: true },
       models: [
         { id: 'deepseek-chat', label: 'deepseek-chat', isDefault: true, contextLimit: 1_000_000 },

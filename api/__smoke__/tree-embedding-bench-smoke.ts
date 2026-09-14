@@ -1,3 +1,4 @@
+export {};
 /**
  * Smoke：Synax 全库 chunk embedding（需 embd-gema）
  *

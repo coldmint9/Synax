@@ -1,3 +1,4 @@
+import type { BackendId } from '../../../lib/api/agentRuntime'
 import { create } from 'zustand'
 import {
   agentRuntimeApi,
@@ -40,6 +41,7 @@ import {
 const READ_MARKERS_KEY = 'synax-session-read-markers'
 
 export type SessionInputBody = {
+  backendId?: BackendId
   message: string
   mode?: AgentSessionMode
   /** `system_injection` renders the message as an "injected" chip, not a bubble. */
@@ -124,7 +126,8 @@ export interface SessionDetailCacheEntry {
   cachedAt: number
 }
 
-let activeDetailRefresh: { sessionId: string; promise: Promise<void> } | null = null
+let activeDetailRefresh: { sessionId: string; promise: Promise<void>; again: boolean } | null = null
+let detailRefreshEpoch = 0
 let interactionRefreshVersion = 0
 
 function trimSessionDetailCache(
@@ -195,14 +198,7 @@ function applySessionStreamChunk(sessionId: string, chunk: unknown): Partial<Age
       return { status: typed.run?.status ?? 'failed', activeRunId: null, pendingResumeToken: null,
         ...(typed.run?.status === 'blocked' && typed.error ? { blockedReason: typed.error } : {}),
       }
-    case 'done': {
-      const current = useAgentSessionStore.getState().sessions.find(s => s.id === sessionId)
-      if (current?.status === 'waiting_permission') {
-        return { activeRunId: null }
-      }
-      // Stream EOF is not completion: preserve blocked/cancelled/waiting states.
-      return null
-    }
+    case 'done': return null
     default:
       return null
   }
@@ -582,6 +578,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     }
     const payload = await agentRuntimeApi.createSession({
       projectId,
+      backendId: body.backendId ?? 'native',
+      model: body.model ?? undefined,
       profileId: SYNAX_PROFILE_ID,
       prompt,
       reasoningEffort: body.reasoningEffort ?? undefined,
@@ -685,12 +683,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     if (!targetSessionId) return
 
     if (activeDetailRefresh?.sessionId === targetSessionId) {
+      activeDetailRefresh.again = true
       return activeDetailRefresh.promise
     }
 
+    const refresh = { sessionId: targetSessionId, again: false, promise: Promise.resolve() }
     const promise = (async () => {
+      do {
+        refresh.again = false
+        const epoch = ++detailRefreshEpoch
       try {
-        const isCurrent = () => get().selectedSessionId === targetSessionId
+        const isCurrent = () => get().selectedSessionId === targetSessionId && detailRefreshEpoch === epoch && !refresh.again
         const cachedEntry = get().sessionDetailCache[targetSessionId]
         const knownEventId = cachedEntry?.events?.length
           ? cachedEntry.events[cachedEntry.events.length - 1].id
@@ -782,13 +785,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
         // The transcript refresh keeps running without holding the poll loop.
         void transcriptTask
       } catch { /* silent */ }
+      } while (refresh.again && get().selectedSessionId === targetSessionId)
     })()
 
-    activeDetailRefresh = { sessionId: targetSessionId, promise }
+    refresh.promise = promise
+    activeDetailRefresh = refresh
     try {
       await promise
     } finally {
-      if (activeDetailRefresh?.sessionId === targetSessionId) {
+      if (activeDetailRefresh === refresh) {
         activeDetailRefresh = null
       }
     }
@@ -804,7 +809,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
 
   pauseSession: async (sessionId) => {
     try {
-      await agentRuntimeApi.pauseSession(sessionId)
+      await agentRuntimeApi.pauseSession(sessionId, get().sessions.find(session => session.id === sessionId)?.activeRunId)
       void get().refreshSessions()
       void get().refreshDetail()
     } catch { /* silent */ }
@@ -812,34 +817,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
 
   resumeSession: async (sessionId, message) => {
     ensureLiveStream(sessionId)
-    set({
-      sessions: get().sessions.map(s =>
-        s.id === sessionId ? { ...s, status: 'running' as const } : s,
-      ),
-    })
-    agentRuntimeApi.resumeStream(sessionId, message ? { message, locale: useShellStore.getState().locale } : { locale: useShellStore.getState().locale }, (chunk) => {
-      onSessionStreamChunk(sessionId, chunk)
-      const c = chunk as { type?: string; error?: string }
-      if (c.type === 'error') {
-        console.error('[resume] backend error:', c.error)
-        void get().refreshSessions()
-        void get().refreshDetail()
-      }
-    }).then(() => {
-      void get().refreshSessions()
-      void get().refreshDetail()
-    }).catch((err) => {
-      if (err instanceof AppError && err.code === 'SESSION_BUSY') {
-        useNotificationStore.getState().push({
-          type: 'warning',
-          message: 'This session already has an active run.',
-        })
-      } else {
-        console.error('[resume] stream failed:', err)
-      }
-      void get().refreshSessions()
-      void get().refreshDetail()
-    })
+    await agentRuntimeApi.submitRun(sessionId, { message, locale: useShellStore.getState().preferences.locale }, crypto.randomUUID(), 'continue')
+    void get().refreshSessions()
+    void get().refreshDetail()
   },
 
   fetchSessionStats: async () => {
@@ -907,42 +887,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   sendSessionMessage: async (sessionId, body) => {
     ensureLiveStream(sessionId)
     const session = get().sessions.find(s => s.id === sessionId)
-    const shouldResume = session
-      && ['interrupted', 'paused', 'cancelled', 'failed', 'blocked', 'completed'].includes(session.status)
-
-    set(s => ({
-      sessions: s.sessions.map(sess =>
-        sess.id === sessionId ? { ...sess, status: 'running' as const } : sess,
-      ),
-    }))
-    try {
-      if (shouldResume) {
-        await agentRuntimeApi.resumeStream(sessionId, {
-          message: body.message,
-          messageSource: body.messageSource,
-          model: body.model ?? undefined,
-          reasoningEffort: body.reasoningEffort ?? undefined,
-          permissionTier: body.permissionTier,
-          locale: useShellStore.getState().locale,
-        }, (chunk) => {
-          onSessionStreamChunk(sessionId, chunk)
-        })
-      } else {
-        await agentRuntimeApi.streamTurn(sessionId, {
-          message: body.message,
-          messageSource: body.messageSource,
-          model: body.model ?? undefined,
-          reasoningEffort: body.reasoningEffort ?? undefined,
-          permissionTier: body.permissionTier,
-          locale: useShellStore.getState().locale,
-        }, (chunk) => {
-          onSessionStreamChunk(sessionId, chunk)
-        })
-      }
-    } finally {
-      void get().refreshSessions()
-      void get().refreshDetail()
-    }
+    const mode = session && ['interrupted', 'paused', 'cancelled', 'failed', 'blocked', 'completed'].includes(session.status) ? 'continue' : 'turn'
+    await agentRuntimeApi.submitRun(sessionId, {
+      message: body.message, messageSource: body.messageSource, model: body.model ?? undefined,
+      reasoningEffort: body.reasoningEffort ?? undefined, permissionTier: body.permissionTier,
+      locale: useShellStore.getState().preferences.locale,
+    }, crypto.randomUUID(), mode)
+    void get().refreshSessions()
   },
 
   submitOrEnqueueSessionInput: async (sessionId, body) => {
@@ -985,7 +936,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
 
   cancelSessionRun: async (sessionId) => {
     try {
-      await agentRuntimeApi.cancelSession(sessionId)
+      await agentRuntimeApi.cancelSession(sessionId, get().sessions.find(session => session.id === sessionId)?.activeRunId)
     } finally {
       void get().refreshSessions()
       void get().refreshDetail()
@@ -994,6 +945,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
 
   applyLiveEvent: (event) => {
     switch (event.type) {
+      case 'runtime_state': {
+        get().patchSession(event.sessionId, event.patch)
+        if (get().selectedSessionId !== event.sessionId) break
+        if (event.reset) {
+          clearStreamingBuffers()
+          set({ streamingStepId: null, streamingLive: EMPTY_STREAMING_BUFFERS, streamingCompletedSteps: [] })
+        }
+        if (event.refresh) void get().refreshDetail()
+        break
+      }
       case 'step_started': {
         const s = get()
         const hasContent = s.streamingStepId && hasStreamingContent(s.streamingLive)

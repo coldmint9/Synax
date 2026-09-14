@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { runtimeAsset } from '../../lib/runtime-paths.js';
 import { Worker } from 'node:worker_threads';
 import type { CodeMapScanRequest, CodeMapScanResult } from '../contracts/code-map.js';
 import { sendToParent } from '../../lib/ipc/child-forward.js';
@@ -9,14 +9,13 @@ import { logger } from '../../lib/logger.js';
 import type { NormalizedScanRequest } from './scan.js';
 import type { ScanPipelineWorkerRequest, ScanPipelineWorkerResponse } from './scan-pipeline-messages.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const workerDir = runtimeAsset(import.meta.url, '.', 'workers');
 
-const IS_DEV = fs.existsSync(path.join(__dirname, 'scan-pipeline-worker.thread.ts'));
+const IS_DEV = fs.existsSync(path.join(workerDir, 'scan-pipeline-worker.thread.ts'));
 const WORKER_SCRIPT = IS_DEV
-  ? path.join(__dirname, 'worker-bootstrap.ts')
-  : path.join(__dirname, 'scan-pipeline-worker.thread.js');
-const ACTUAL_WORKER = path.join(__dirname, 'scan-pipeline-worker.thread.ts');
+  ? path.join(workerDir, 'worker-bootstrap.ts')
+  : path.join(workerDir, 'scan-pipeline-worker.thread.cjs');
+const ACTUAL_WORKER = path.join(workerDir, 'scan-pipeline-worker.thread.ts');
 
 const SCAN_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -84,7 +83,7 @@ class ScanPipelineFacade {
     return worker;
   }
 
-  private handleMessage(msg: ScanPipelineWorkerResponse): void {
+  private handleMessage(msg: Exclude<ScanPipelineWorkerResponse, { type: 'scan:progress' }>): void {
     const pending = this.pendingById.get(msg.id);
     if (!pending) return;
     if (pending.timeout) clearTimeout(pending.timeout);

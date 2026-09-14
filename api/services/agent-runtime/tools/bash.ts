@@ -1,6 +1,6 @@
 import { runCommand, runShellCommand } from './exec-async.js';
 import * as z from 'zod/v4';
-import type { RegisteredTool, ToolExecutionResult } from '../contracts.js';
+import type { RegisteredTool, ToolExecutionResult, ToolExecutionInput } from '../contracts.js';
 import { recordBashFileReads } from '../read-tracker.js';
 import { isUnrestrictedPermissionRules } from '../permission-tiers.js';
 import { agentRuntimeStore } from '../session-store.js';
@@ -156,7 +156,10 @@ export const bashTool: RegisteredTool = {
     }
     return undefined;
   },
-  execute(input) {
+  execute(input) { return executeBash(input); },
+};
+
+export function executeBash(input: ToolExecutionInput, timeoutMs = EXEC_TIMEOUT_MS): ToolExecutionResult | Promise<ToolExecutionResult> {
     const args = input.args as { command?: string; workdir?: string; stdin?: string };
     if (!args?.command) throw new Error('command is required.');
 
@@ -193,11 +196,13 @@ export const bashTool: RegisteredTool = {
       commandPreview,
       cwd,
       stdin: args.stdin,
+      timeoutMs,
     });
-  },
-};
+}
+
 
 interface BashExecutionInput {
+  timeoutMs?: number;
   sessionId: string;
   command: string;
   commandPreview: string;
@@ -245,7 +250,7 @@ async function executeBashCommand(input: BashExecutionInput): Promise<ToolExecut
   const result = await runShellCommand(command, {
     cwd,
     maxBufferBytes: MAX_OUTPUT_BYTES * 2,
-    timeoutMs: EXEC_TIMEOUT_MS,
+    timeoutMs: input.timeoutMs ?? EXEC_TIMEOUT_MS,
     env: { ...process.env, HOME: cwd },
     stdin: input.stdin ?? undefined,
   });
@@ -253,7 +258,7 @@ async function executeBashCommand(input: BashExecutionInput): Promise<ToolExecut
   // 6. Handle spawn/timeout errors
   if (result.error || result.timedOut) {
     const errorMsg = result.timedOut
-      ? `Command timed out after ${EXEC_TIMEOUT_MS / 1000}s.`
+      ? `Command timed out after ${(input.timeoutMs ?? EXEC_TIMEOUT_MS) / 1000}s.`
       : `Spawn error: ${result.error?.message ?? 'unknown error'}`;
     return {
       result: { command, exitCode: null, stdout: '', stderr: errorMsg, stdoutTruncated: false, stderrTruncated: false },

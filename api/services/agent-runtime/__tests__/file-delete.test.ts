@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe('fileDeleteTool', () => {
-  it('deletes a workspace file', () => {
+  it('deletes a workspace file', async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Synax-file-delete-'));
     tempDirs.push(projectDir);
     const filePath = path.join(projectDir, 'obsolete.ts');
@@ -34,7 +34,7 @@ describe('fileDeleteTool', () => {
     sessionIds.push(sessionId);
     setSessionWorkspaceRoot(sessionId, projectDir);
 
-    const result = fileDeleteTool.execute({
+    const result = await fileDeleteTool.execute({
       sessionId,
       runId: null,
       stepId: null,

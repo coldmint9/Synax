@@ -1,0 +1,243 @@
+import { withDeadline } from './managed-process.js';
+import { restoreUnlaunchedInput } from './runtime-recovery.js';
+import { profileService } from './profile-service.js';
+import { randomUUID } from 'node:crypto';
+import { withinExecutionContext, type RuntimeExecutionContext } from '../../lib/execution-context.js';
+import { RuntimeStreamWriter } from './runtime-stream-writer.js';
+import { agentEventService } from './event-service.js';
+import type { AgentSessionStreamMode } from '../../lib/ipc/agent-session-protocol.js';
+import type { AgentRunStreamChunk, StreamTurnRequest } from './contracts.js';
+import { getRawSqlite } from '../../db/index.js';
+import { acceptRuntimeRun, type AcceptedRuntimeInput } from './run-admission.js';
+import { executeBackendSession } from './backend-execution.js';
+import { getBackendAdapter } from './backends/backend-registry.js';
+import { resolveSessionBackend } from './backends/backend-binding.js';
+import { agentRuntimeStore } from './session-store.js';
+import { runtimeJournal, type RuntimeStreamRecord } from './runtime-journal.js';
+import { AgentRuntimeError } from './runtime-errors.js';
+import { nowIso } from './runtime-ids.js';
+import { logger } from '../../lib/logger.js';
+
+interface Owner { context?: RuntimeExecutionContext; runId: string; controller: AbortController; task: Promise<void>; stopping: boolean; stopTask?: Promise<void>; stopFailed?: boolean; finalizers?: Array<() => void> }
+interface Driver {
+  execute: typeof executeBackendSession;
+  interrupt: (sessionId: string, reason: string) => Promise<void>;
+}
+const defaultDriver: Driver = {
+  execute: executeBackendSession,
+  async interrupt(id, reason) {
+    for (const session of agentRuntimeStore.listSessionTree(id).reverse()) {
+      await getBackendAdapter(resolveSessionBackend(session.id).id).interrupt(session.id, reason);
+    }
+  },
+};
+
+export class RunCoordinator {
+  private readonly owners = new Map<string, Owner>();
+  private readonly pendingResumes = new Map<string, StreamTurnRequest>();
+  constructor(private readonly driver: Driver = defaultDriver) {}
+
+  isActive(sessionId: string): boolean { return this.owners.has(sessionId); }
+  isStopping(sessionId: string): boolean { return Boolean(this.owners.get(sessionId)?.stopping); }
+
+  submit(sessionId: string, input: StreamTurnRequest, requestId: string, mode: AgentSessionStreamMode = 'turn') {
+    if (this.isActive(sessionId)) {
+      const previous = getRawSqlite().prepare(`SELECT id FROM agent_runtime_runs WHERE session_id = ?
+        AND json_extract(metadata_json, '$.runtime.requestId') = ?`).get(sessionId, requestId);
+      if (!previous) throw new AgentRuntimeError('The previous execution has not released this session.', 'SESSION_BUSY', 409);
+    }
+    if (mode === 'continue') input = restoreUnlaunchedInput(sessionId, input);
+    const accepted = acceptRuntimeRun(sessionId, input, requestId, mode);
+    if (!accepted.reused) {
+      const runtime = accepted.run.metadata.runtime as AcceptedRuntimeInput;
+      this.launch(sessionId, accepted.run.id, mode, { ...runtime.input, acceptedRunId: accepted.run.id });
+    }
+    return accepted;
+  }
+
+  resume(sessionId: string, input: StreamTurnRequest = {}): void {
+    const owner = this.owners.get(sessionId);
+    if (owner?.stopping) return;
+    if (owner) { this.pendingResumes.set(sessionId, input); return; }
+    const session = agentRuntimeStore.getSession(sessionId);
+    if (session.sessionMetadata?.runtimeControl || profileService.getForSession(session).executionHost === 'embedded') {
+      throw new AgentRuntimeError('This session requires recovery through its owning host.', 'RECOVERY_REQUIRED', 409);
+    }
+    const runId = session.activeRunId ?? agentRuntimeStore.listRuns(sessionId)
+      .find(run => ['waiting_permission', 'waiting_input'].includes(run.status))?.id;
+    if (!runId) throw new AgentRuntimeError('There is no pending Run to resume.', 'NOT_RESUMABLE', 409);
+    this.launch(sessionId, runId, 'resume', input);
+  }
+
+  private launch(sessionId: string, runId: string, mode: AgentSessionStreamMode, input: StreamTurnRequest): void {
+    const context: RuntimeExecutionContext = { runId, sessionId, epoch: randomUUID(), hostId: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}` };
+    const run = agentRuntimeStore.getRun(runId);
+    agentRuntimeStore.updateRun(runId, { metadata: { ...run.metadata, executionLease: { ...context, closed: false } } });
+    input = { ...input, executionContext: context };
+    const owner: Owner = { context, runId, controller: new AbortController(), stopping: false, task: Promise.resolve() };
+    this.owners.set(sessionId, owner);
+    owner.task = Promise.resolve().then(() => this.drive(sessionId, owner, mode, input))
+      .catch(error => this.quarantinePersistenceFailure(sessionId, owner, error));
+  }
+
+  private async quarantinePersistenceFailure(sessionId: string, owner: Owner, error: unknown): Promise<void> {
+    if (this.owners.get(sessionId) !== owner) return;
+    owner.stopping = true;
+    owner.stopFailed = true;
+    this.pendingResumes.delete(sessionId);
+    owner.controller.abort();
+    let reason = `Runtime could not persist the execution outcome: ${error instanceof Error ? error.message : String(error)}`;
+    logger.error({ sessionId, runId: owner.runId, error }, '[run-coordinator] persistence failure requires recovery');
+    const markUnconfirmed = () => {
+      try { agentRuntimeStore.updateSessionMetadata(sessionId, { runtimeControl: { state: 'unconfirmed', runId: owner.runId, reason } }); }
+      catch (writeError) { logger.error({ sessionId, writeError }, '[run-coordinator] recovery block retained in memory; persistence is unavailable'); }
+    };
+    markUnconfirmed();
+    try { await withDeadline(this.driver.interrupt(sessionId, reason), 10_000, 'Execution shutdown could not be confirmed.'); }
+    catch (stopError) { reason += ` ${stopError instanceof Error ? stopError.message : String(stopError)}`; markUnconfirmed(); }
+  }
+
+  private async drive(sessionId: string, owner: Owner, mode: AgentSessionStreamMode, input: StreamTurnRequest): Promise<void> {
+    const writer = new RuntimeStreamWriter(sessionId, owner.runId, () => this.ownsLease(owner));
+    const record = (chunk: AgentRunStreamChunk) => writer.write(chunk);
+    const flush = () => writer.flush();
+    try {
+      if (owner.controller.signal.aborted) throw new Error('Execution stopped before launch.');
+      for await (const chunk of withinExecutionContext(owner.context, this.driver.execute(sessionId, mode, input, owner.controller.signal))) record(chunk);
+      flush();
+      const run = agentRuntimeStore.getRun(owner.runId);
+      if (run.status === 'queued' || run.status === 'running') {
+        throw new Error('Backend ended without settling its Run.');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ sessionId, runId: owner.runId, error: message }, '[run-coordinator] execution ended with an error');
+      if (!this.ownsLease(owner)) return;
+      flush();
+      const run = agentRuntimeStore.getRun(owner.runId);
+      if (!['completed', 'cancelled', 'interrupted'].includes(run.status)) {
+        const failed = agentRuntimeStore.updateRun(run.id, { status: owner.controller.signal.aborted ? 'interrupted' : 'failed',
+          completedAt: nowIso(), stopReason: message });
+        const session = agentRuntimeStore.getSession(sessionId);
+        if (session.activeRunId === run.id) agentRuntimeStore.updateSession(sessionId, {
+          status: failed.status, activeRunId: null, blockedReason: message, updatedAt: nowIso(),
+        });
+        record({ type: 'run_failed', run: failed, error: message });
+      }
+      record({ type: 'done', sessionId, runId: run.id });
+    } finally {
+      if (!this.ownsLease(owner)) writer.abandon();
+      if (this.ownsLease(owner)) {
+        writer.finish();
+        const run = agentRuntimeStore.getRun(owner.runId);
+        agentRuntimeStore.updateRun(run.id, { metadata: { ...run.metadata, executionLease: { ...owner.context, closed: true } } });
+      }
+      if (!owner.stopping && this.owners.get(sessionId) === owner) this.owners.delete(sessionId);
+      const pending = this.pendingResumes.get(sessionId);
+      this.pendingResumes.delete(sessionId);
+      if (pending && !owner.stopping) {
+        try { this.resume(sessionId, pending); }
+        catch (error) { logger.warn({ sessionId, error }, '[run-coordinator] resume was no longer applicable'); }
+      }
+    }
+  }
+
+  private ownsLease(owner: Owner): boolean {
+    if (!owner.context) return true;
+    const run = agentRuntimeStore.getRun(owner.runId);
+    return (run.metadata.executionLease as { epoch?: string } | undefined)?.epoch === owner.context.epoch;
+  }
+
+  async interrupt(sessionId: string, reason: string, finalize?: () => void, expectedRunId?: string): Promise<void> {
+    let owner = this.owners.get(sessionId);
+    const session = agentRuntimeStore.getSession(sessionId);
+    if (profileService.getForSession(session).executionHost === 'embedded') throw new AgentRuntimeError('Use the embedded job’s controls to stop this session.', 'EMBEDDED_HOST_REQUIRED', 409);
+    if (session.parentSessionId && !owner && ['queued', 'running', 'waiting_permission', 'waiting_input'].includes(session.status)) {
+      throw new AgentRuntimeError('This child execution is controlled by its parent. Stop the parent to interrupt it safely.', 'PARENT_CONTROL_REQUIRED', 409);
+    }
+    const currentRunId = owner?.runId || session.activeRunId || agentRuntimeStore.listRuns(sessionId)[0]?.id;
+    if (expectedRunId && currentRunId !== expectedRunId) throw new AgentRuntimeError('The active Run changed; this control request is stale.', 'RUN_CHANGED', 409);
+    if (owner?.stopTask) {
+      if (finalize) owner.finalizers!.push(finalize);
+      return owner.stopTask;
+    }
+    if (!owner) {
+      owner = { runId: currentRunId ?? '', controller: new AbortController(), stopping: true, task: Promise.resolve() };
+      this.owners.set(sessionId, owner);
+    }
+    const stopping = owner;
+    stopping.stopping = true;
+    stopping.finalizers = finalize ? [finalize] : [];
+    this.pendingResumes.delete(sessionId);
+    agentRuntimeStore.updateSessionMetadata(sessionId, { runtimeControl: { state: 'stopping', runId: stopping.runId, reason } });
+    this.controlEvent(sessionId, stopping.runId, reason);
+    stopping.controller.abort(new Error(reason));
+    stopping.stopTask = (async () => {
+      try {
+        await this.driver.interrupt(sessionId, reason);
+        await stopping.task;
+        for (const action of stopping.finalizers!) action();
+        if (agentRuntimeStore.tryGetSession(sessionId)) {
+          agentRuntimeStore.updateSessionMetadata(sessionId, { runtimeControl: null });
+          this.controlEvent(sessionId, stopping.runId, 'Execution shutdown confirmed.');
+        }
+        if (this.owners.get(sessionId) === stopping) this.owners.delete(sessionId);
+      } catch (error) {
+        stopping.stopFailed = true;
+        if (agentRuntimeStore.tryGetSession(sessionId)) {
+          agentRuntimeStore.updateSessionMetadata(sessionId, { runtimeControl: { state: 'unconfirmed', runId: stopping.runId,
+            reason: error instanceof Error ? error.message : 'Execution shutdown could not be confirmed.' } });
+          this.controlEvent(sessionId, stopping.runId, 'Execution shutdown could not be confirmed.');
+        }
+        throw error;
+      }
+    })();
+    return stopping.stopTask;
+  }
+
+  private controlEvent(sessionId: string, runId: string, summary: string): void {
+    if (!runId) return;
+    const event = agentEventService.append({ sessionId, type: 'progress_updated', summary, payload: { runId }, visibility: 'internal' });
+    runtimeJournal.append(sessionId, runId, { type: 'event', event });
+  }
+
+  activeSessionIds(): string[] { return [...this.owners.keys()]; }
+
+  async reconcileFailedStop(sessionId: string): Promise<void> {
+    const owner = this.owners.get(sessionId);
+    if (!owner) return;
+    if (!owner.stopping || !owner.stopFailed) throw new AgentRuntimeError('Execution has not finished stopping.', 'SESSION_BUSY', 409);
+    owner.stopTask = undefined; owner.stopFailed = false; owner.finalizers = [];
+    await this.interrupt(sessionId, 'Recovery rechecked the owned processes.');
+  }
+
+  async waitForIdle(): Promise<void> {
+    while (this.owners.size) {
+      const owners = [...this.owners.values()];
+      if (owners.some(owner => owner.stopFailed && !owner.stopTask)) {
+        throw new AgentRuntimeError('An execution requires recovery before Runtime can become idle.', 'RECOVERY_REQUIRED', 409);
+      }
+      await Promise.all(owners.map(owner => owner.stopTask ?? owner.task));
+    }
+  }
+
+  async *observeRun(sessionId: string, runId: string, after = 0, signal?: AbortSignal): AsyncGenerator<RuntimeStreamRecord> {
+    if (agentRuntimeStore.getRun(runId).sessionId !== sessionId) throw new AgentRuntimeError('Run belongs to another session.', 'NOT_FOUND', 404);
+    let cursor = after;
+    while (!signal?.aborted) {
+      const records = runtimeJournal.read(sessionId, cursor, 256, runId);
+      for (const record of records) {
+        if (signal?.aborted) return;
+        cursor = record.sequence; yield record;
+        if (record.chunk.type === 'done') return;
+      }
+      if (!records.length) {
+        const run = agentRuntimeStore.getRun(runId);
+        if (!this.isActive(sessionId) && !['queued', 'running'].includes(run.status)) return;
+        await runtimeJournal.wait(sessionId, signal);
+      }
+    }
+  }
+}
+
+export const runCoordinator = new RunCoordinator();

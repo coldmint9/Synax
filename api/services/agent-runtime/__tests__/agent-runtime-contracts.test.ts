@@ -1,9 +1,20 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentRuntimeRoutes } from '../../../routes/agent-runtime.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
+const configured = vi.hoisted(() => vi.fn());
+vi.mock('../../llm-runtime/provider-check.js', () => ({ assertLlmProviderConfigured: configured }));
+import { AgentProviderNotConfiguredError } from '../runtime-errors.js';
+
 describe('agent runtime route contracts', () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(() => { resetAgentRuntimeFixtures(); configured.mockReset(); });
+
+  it('rejects Native creation when its provider is not configured', async () => {
+    configured.mockImplementationOnce(() => { throw new AgentProviderNotConfiguredError(); });
+    const response = await agentRuntimeRoutes.request('http://local/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'project-alpha', profileId: 'planner', prompt: 'Plan' }) });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: 'LLM_PROVIDER_NOT_CONFIGURED' });
+  });
 
   it('lists profiles and creates role-specific sessions', async () => {
     const profiles = await agentRuntimeRoutes.request('http://local/profiles');

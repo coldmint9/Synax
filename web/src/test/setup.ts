@@ -1,3 +1,4 @@
+import { Storage as BrowserStorage } from 'happy-dom'
 import * as matchers from '@testing-library/jest-dom/matchers'
 import { cleanup } from '@testing-library/react'
 import { afterEach, expect, vi } from 'vitest'
@@ -17,10 +18,20 @@ for (const method of ['focus', 'blur', 'scrollIntoView'] as const) {
 }
 
 
+// Node's experimental global storage is not the browser's Storage implementation.
+const browserStorageInstances: BrowserStorage[] = []
+for (const key of ['localStorage', 'sessionStorage'] as const) {
+  const storage = new BrowserStorage()
+  browserStorageInstances.push(storage)
+  Object.defineProperty(globalThis, key, { configurable: true, value: storage })
+  Object.defineProperty(window, key, { configurable: true, value: storage })
+}
+
 expect.extend(matchers)
 
 afterEach(() => {
   cleanup()
+  for (const storage of browserStorageInstances) storage.clear()
 })
 
 Object.defineProperty(window, 'matchMedia', {

@@ -31,6 +31,10 @@
 
 由于当前仍是 `0.1.0-snapshot`，Provider 细节还在演进中。代码里有一些更底层的 runtime adapter，但在完成配置、校验和 UI 串联之前，不应把它们视为已经产品化支持的 Provider。
 
+## 对接文档
+
+- [Synax 使用与对接指南](./docs/integration/synax-runtime-integration.md)
+
 ## 快速开始
 
 ### 环境要求

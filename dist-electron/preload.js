@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     showSaveDialog: (options) => ipcRenderer.invoke('dialog:save', options),
     getAppVersion: () => ipcRenderer.invoke('app:version'),
     getApiPort: () => ipcRenderer.invoke('app:api-port'),
+    getRuntimeToken: () => ipcRenderer.invoke('app:runtime-token'),
     onDeepLink: (callback) => {
         ipcRenderer.on('deep-link', (_event, url) => callback(url));
     },

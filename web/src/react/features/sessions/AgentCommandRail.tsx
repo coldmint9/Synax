@@ -7,6 +7,7 @@ import { isGoalModeSession } from './sessionBuckets'
 
 function statusLabel(status: string): string | null {
   switch (status) {
+    case 'stopping': return '正在停止'
     case 'running': return '运行中'
     case 'waiting_permission': return '等待授权'
     case 'paused': return '已暂停'
@@ -20,6 +21,7 @@ function statusLabel(status: string): string | null {
 function statusClass(status: string): string {
   switch (status) {
     case 'running': return 'agent-command-status--running'
+    case 'stopping':
     case 'waiting_permission': return 'agent-command-status--warning'
     case 'failed': return 'agent-command-status--danger'
     case 'paused':

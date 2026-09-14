@@ -45,6 +45,7 @@ for (const pkg of libsqlPackages) {
 
 // tree-sitter packages use dynamic import() at runtime
 const dynamicPackages = [
+  '@anthropic-ai/claude-agent-sdk',
   'tree-sitter',
   'node-gyp-build',
   'node-addon-api',
@@ -63,4 +64,11 @@ for (const pkg of [...dynamicPackages, ...treeSitterLangs]) {
   }
 }
 
+cpSync(join(root, 'api/skills/builtin'), join(serverDist, 'skills/builtin'), { recursive: true });
+for (const name of ['eval-set.json', 'eval-set-synax.json', 'fixtures']) {
+  cpSync(join(root, 'api/prototypes/tree-embedding-bench', name), join(serverDist, 'prototypes/tree-embedding-bench', name), { recursive: true });
+}
+cpSync(join(root, 'api/db/migrations'), join(serverDist, 'migrations'), { recursive: true });
+mkdirSync(join(serverDist, 'workers'), { recursive: true });
+cpSync(join(root, 'api/workers/owned-process-runner.cjs'), join(serverDist, 'workers/owned-process-runner.cjs'));
 console.log('native modules ready.');

@@ -1,7 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { runtimeAsset } from '../../lib/runtime-paths.js';
 import { logger } from '../../lib/logger.js';
 import { handleWikiJobChildMessage } from '../../lib/ipc/wiki-job-bridge.js';
 import {
@@ -21,10 +21,9 @@ export type { WikiJobPayload } from '../../lib/ipc/protocol.js';
 type ExitCallback = () => void;
 
 function resolveWikiJobRunnerPath(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const tsRunner = path.resolve(here, '../../workers/wiki-job-runner.ts');
-  if (fs.existsSync(tsRunner)) return tsRunner;
-  return path.resolve(here, '../../../server-dist/workers/wiki-job-runner.cjs');
+  const runner = runtimeAsset(import.meta.url, '../../workers/wiki-job-runner.ts', 'workers/wiki-job-runner.cjs');
+  if (!fs.existsSync(runner)) throw new Error('The wiki-job-runner executable is missing from this Runtime build.');
+  return runner;
 }
 
 async function runWikiJobInProcess(job: WikiJobPayload): Promise<void> {

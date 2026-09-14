@@ -1,3 +1,9 @@
+import { assertRuntimeExecutionCurrent } from '../../db/index.js';
+import { workTools } from './tools/work-tools.js';
+import { verificationTool } from './tools/verification.js';
+import { workRuntime } from './work-runtime.js';
+import { workStore } from './work-store.js';
+import { workspaceFingerprint } from './work-fingerprint.js';
 import { withCommandSignal } from './tools/exec-async.js';
 import { resolvePermissionDecision } from './permission-policy.js';
 import { specialistSpecSchema, buildSpecialistChildInput, assertSpecialistToolAllowed } from './specialist-profile.js';
@@ -75,7 +81,9 @@ export class ToolRegistry {
     private readonly evidence: EvidenceService = evidenceService,
     private readonly profiles: ProfileService = profileService,
   ) {
-    [...controlTools, bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, editTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, INVALID_TOOL].forEach((tool) =>
+    [...controlTools,
+      ...workTools,
+      verificationTool, bashTool, fileReadTool, fileListTool, fileGlobTool, grepSearchTool, diffReadTool, fileWriteTool, editTool, fileDeleteTool, taskCreateTool, taskUpdateTool, taskGetTool, taskListTool, INVALID_TOOL].forEach((tool) =>
       this.register(tool),
     );
     this.registerProvider(mcpSessionToolProvider);
@@ -290,7 +298,7 @@ export class ToolRegistry {
     const tool = this.getForSession(sessionId, toolId);
 
     const controlError = controlToolError(session, tool, args);
-    if (controlError || !profile.allowedCapabilities.includes(tool.id) && tool.category !== 'skill' && tool.category !== 'mcp' && tool.id !== INVALID_TOOL_ID) {
+    if (controlError || !profile.allowedCapabilities.includes(tool.id) && tool.category !== 'skill' && tool.category !== 'mcp' && tool.id !== INVALID_TOOL_ID && !['work.checkpoint', 'context.read'].includes(tool.id) && !(tool.id === 'verification.run' && profile.allowedCapabilities.includes('bash'))) {
       const errorMsg = controlError ?? `Tool ${tool.id} is not available to profile ${profile.id}. Use only the tools listed in your capabilities.`;
       const now = nowIso();
       const record = this.store.appendToolCall({
@@ -351,7 +359,7 @@ export class ToolRegistry {
       },
     });
 
-    const bashCommand = tool.id === 'bash'
+    const bashCommand = (tool.id === 'bash' || tool.id === 'verification.run')
       && typeof args === 'object'
       && args
       && 'command' in args
@@ -465,7 +473,7 @@ export class ToolRegistry {
         if(decision.action==='deny'||(decision.action==='ask'&&!permission?.userReply))throw new AgentValidationError('Parent permissions no longer authorize this specialist operation.');
         if(tool.id==='skill.load'&&!parent.skillIds.includes((args as {skillId:string}).skillId))throw new AgentValidationError('The skill is no longer assigned to the parent.');
       }
-      if (tool.mutability === 'write' || tool.id === 'bash' || tool.category === 'mcp') {
+      if (tool.mutability === 'write' || (tool.id === 'bash' || tool.id === 'verification.run') || tool.category === 'mcp') {
         const rootId=freshSession.parentSessionId??freshSession.id;
         const root=this.store.getSession(rootId);
         if(freshSession.profileId==='specialist' && resolvePermissionDecision({sessionId:rootId,category:tool.category,internalGate:tool.internalGate,pattern:tool.getPattern?.(args)??tool.id,rules:root.permissionRules}).action!=='allow')throw new AgentValidationError('Parent no longer grants this write operation.');
@@ -497,9 +505,17 @@ export class ToolRegistry {
       const hookCtx: ToolHookContext = { sessionId, runId: running.runId, stepId: running.stepId, toolCallId: running.id, toolId: running.toolId, args, result: null! };
       void sessionHooks.emit({ type: 'tool:before', ctx: hookCtx });
       sandboxPolicy.validateToolArgs(running.toolId, args, workspaceRoot(sessionId), sessionId);
+      const trackChanges = workStore.current(sessionId) && (tool.mutability === 'write' || tool.id === 'bash' || tool.id === 'verification.run' || tool.category === 'mcp');
+      const fingerprintScope = typeof (args as { path?: unknown })?.path === 'string' ? [(args as { path: string }).path] : ['.'];
+      const before = trackChanges ? await workspaceFingerprint(sessionId, fingerprintScope).catch(() => undefined) : undefined;
+      abortSignal?.throwIfAborted();
+      assertRuntimeExecutionCurrent();
       const result = await withCommandSignal(abortSignal, () => tool.execute(input));
+      const after = trackChanges ? await workspaceFingerprint(sessionId, fingerprintScope).catch(() => undefined) : undefined;
       abortSignal?.throwIfAborted();
       if (result.suspend) {
+        const work = workStore.current(sessionId);
+        if (work) { work.status = 'waiting'; work.reason = 'awaiting_input'; workStore.save(work); }
         return { record: this.store.getToolCall(sessionId, running.id), interactionId: result.suspend.interactionId };
       }
       const outputSummary = result.displaySummary.slice(0, SUMMARY_LIMIT);
@@ -523,6 +539,14 @@ export class ToolRegistry {
         outputRef: result.result ?? null,
         endedAt: nowIso(),
       });
+
+      workRuntime.recordTool(completed, before, after);
+      if (trackChanges && (!before || !after)) {
+        const work = workStore.current(sessionId);
+        if (work && !['completed', 'cancelled'].includes(work.status)) {
+          work.hasChanges = true; work.changeVersion++; workStore.save(work);
+        }
+      }
 
       // A write tool just touched the working tree; drop the cached
       // environment snapshot so the UI's next poll reflects the new diff
@@ -554,6 +578,10 @@ export class ToolRegistry {
       });
       return { record: completed, permission, toolResult: result };
     } catch (error) {
+      const work = workStore.current(sessionId);
+      if (work && !['completed', 'cancelled'].includes(work.status) && (tool.mutability === 'write' || tool.id === 'bash' || tool.id === 'verification.run' || tool.category === 'mcp')) {
+        work.hasChanges = true; work.changeVersion++; workStore.save(work);
+      }
       const message = error instanceof Error ? error.message : String(error);
       const failed = this.store.updateToolCall(sessionId, record.id, {
         status: error instanceof AgentPermissionError ? 'denied' : 'failed',

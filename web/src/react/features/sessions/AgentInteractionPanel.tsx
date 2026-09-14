@@ -12,7 +12,7 @@ import {
 import { subscribe } from '../../../lib/api/runtimeEventBus'
 import { useLocale } from '../../../hooks/useLocale'
 import { useAgentSessionStore } from './agentSessionStore'
-import { isAcpSession } from './synaxSessionTypes'
+import { readSessionBackendId } from './synaxSessionTypes'
 
 const inputClass = 'agent-request-input'
 const buttonClass = 'agent-request-action'
@@ -277,7 +277,7 @@ export function AgentInteractionPanel({ session }: { session: AgentSession }) {
   const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
   const refreshInteractions = useAgentSessionStore(s => s.refreshInteractions)
   const refreshSessions = useAgentSessionStore(s => s.refreshSessions)
-  const acp = isAcpSession(session)
+  const acp = readSessionBackendId(session).endsWith('-acp')
 
   useEffect(() => {
     if (!acp && selectedSessionId === session.id) void refreshInteractions(session.id)

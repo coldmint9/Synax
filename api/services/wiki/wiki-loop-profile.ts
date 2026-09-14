@@ -30,6 +30,7 @@ export const wikiPlannerProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   toolProviderId: 'wiki-session-tools',
+  executionHost: 'embedded',
   loopHints: [
     'Step 1: Review the pre-loaded Core Packages, directory tree, and dependencies in the system prompt.',
     'Step 2: Call wiki.create_outline_draft ONCE with section folder nodes + document page nodes (parentId hierarchy, all core packages as documents).',
@@ -71,6 +72,7 @@ export const wikiWriterProfile: AgentProfile = {
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
   doomLoopThreshold: 6,
   toolProviderId: 'wiki-session-tools',
+  executionHost: 'embedded',
   loopHints: [
     'Generate root-level documents (directory_tree, overview, architecture) yourself — they need global context.',
     'For module_spec documents, use subagent.delegate(profileId: "wiki-explorer") to gather existing wiki context when needed.',
@@ -168,6 +170,7 @@ export const wikiDocumentWriterProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   toolProviderId: 'wiki-session-tools',
+  executionHost: 'embedded',
   loopHints: [
     'Study Source Excerpts in the prompt before writing; use file.read when behavior is still unclear.',
     'Use wiki.check_mermaid before committing any diagram block.',
@@ -207,6 +210,7 @@ export const wikiGeneratorProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   toolProviderId: 'wiki-session-tools',
+  executionHost: 'embedded',
   loopHints: [],
 };
 
@@ -236,6 +240,7 @@ export const wikiVerifierProfile: AgentProfile = {
   status: 'active',
   toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
   toolProviderId: 'wiki-session-tools',
+  executionHost: 'embedded',
   loopHints: [
     'Verify each claim by reading actual source files. Call wiki.submit_verdict once per claim.',
     'If you cannot find supporting evidence for a claim, default to refuted=true.',
