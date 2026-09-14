@@ -106,6 +106,7 @@ export async function validateGatewayModel(input: ValidateLlmRequest): Promise<{
   try {
     const config = {
       providerId: parsed.providerId,
+      apiFormat: input.apiFormat,
       baseUrl: input.baseUrl,
       apiKey: input.apiKey,
       options: input.options,
@@ -116,7 +117,9 @@ export async function validateGatewayModel(input: ValidateLlmRequest): Promise<{
     const apiFormat = input.apiFormat ?? resolveProviderApiFormat({
       providerId: parsed.providerId,
       connection: globalConfig.providerConnections[parsed.providerId],
+      modelId: parsed.modelId,
     })
+    config.apiFormat = apiFormat
     const client = await instantiateProvider(provider, config)
     const model = selectLanguageModel(client, parsed.modelId, undefined, apiFormat)
     await withRetry(() => generateText({

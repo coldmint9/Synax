@@ -4,14 +4,16 @@ import { ChevronDown } from 'lucide-react'
 import { agentRuntimeApi, type BackendId, type ReasoningEffort } from '../../../lib/api/agentRuntime'
 import { useLocale } from '../../../hooks/useLocale'
 
-export function NativeBackendModelPicker({ backendId, model, onChange, disabled, onEffortsChange, nativeMetadata }: {
+export function NativeBackendModelPicker({ backendId, model, onChange, disabled, onEffortsChange, nativeMetadata, onOpenChange }: {
   backendId: BackendId; model: string | null; onChange: (value: string) => void; disabled: boolean
+  onOpenChange?: (open: boolean) => void
   onEffortsChange?: (efforts: ReasoningEffort[] | undefined) => void; nativeMetadata?: unknown
 }) {
   const { locale } = useLocale(); const zh = locale === 'zh'
   const [open, setOpen] = useState(false), [loading, setLoading] = useState(false)
   const [models, setModels] = useState<Array<{ id: string; label: string; efforts?: string[] }>>([])
   const [defaultModel, setDefaultModel] = useState<string | null>(null)
+  useEffect(() => { onOpenChange?.(open && !disabled); return () => onOpenChange?.(false) }, [open, disabled, onOpenChange])
   const native = nativeMetadata as { version?: string; model?: string; cwd?: string; sessionId?: string; auth?: { kind?: string; source?: string }; instructionSources?: unknown } | undefined
   useEffect(() => {
     const selected = models.find(item => item.id === (model && model !== 'default' ? model : defaultModel)) ?? (model === 'default' ? models.find(item => item.id === 'default') : undefined)

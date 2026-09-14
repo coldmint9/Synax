@@ -11,6 +11,8 @@ import { applyReasoningMiddleware } from './middleware/reasoning.js'
 import { buildHookCallbacks } from './middleware/hook-callbacks.js'
 import { toModelPrompt, ensureJsonObjectResponseFormatInstruction } from './prompt.js'
 import { buildThinkingDisabledOptions, buildThinkingStreamOptions, type ThinkingStreamOptions } from './thinking-mode-strategy.js'
+import { buildProtocolProviderOptions } from './protocol-options.js'
+import { mergeProviderOptions } from './custom-api-compat.js'
 
 const THINKING_DISABLED_PURPOSES = new Set(['session-title', 'context-signal', 'validate'])
 
@@ -103,14 +105,18 @@ export async function executePipeline(
   const enableCache = strategy.supportsCacheControl(selection) && request.cacheControl
   const callbacks = buildHookCallbacks(request)
   const thinkingStream = resolveThinkingOptions(request, selection)
+  const providerOptions = mergeProviderOptions(
+    thinkingStream.providerOptions,
+    buildProtocolProviderOptions(selection, request),
+  )
 
   switch (mode.kind) {
     case 'stream':
-      return dispatchStream(model, request, mode, callbacks, enableCache, thinkingStream, abortSignal)
+      return dispatchStream(model, request, mode, callbacks, enableCache, { ...thinkingStream, providerOptions }, selection.apiFormat === 'openai-responses', abortSignal)
     case 'text':
-      return dispatchText(model, request, callbacks, enableCache, thinkingStream, abortSignal)
+      return dispatchText(model, request, callbacks, enableCache, { ...thinkingStream, providerOptions }, abortSignal)
     case 'object':
-      return dispatchObject(model, request, mode.schema, callbacks, abortSignal)
+      return dispatchObject(model, request, mode.schema, callbacks, { ...thinkingStream, providerOptions }, abortSignal)
   }
 }
 
@@ -121,6 +127,7 @@ function dispatchStream(
   callbacks: ReturnType<typeof buildHookCallbacks>,
   enableCache: boolean | undefined,
   thinkingStream: ThinkingStreamOptions,
+  includeRawChunks: boolean,
   abortSignal?: AbortSignal,
 ): GatewayStreamResult {
   const { system, messages } = toModelPrompt(request.messages, enableCache)
@@ -137,6 +144,7 @@ function dispatchStream(
     maxOutputTokens: request.maxTokens,
     stopSequences: request.stop,
     maxRetries: mode.maxRetries,
+    includeRawChunks,
     abortSignal,
     ...callbacks,
   })
@@ -169,6 +177,7 @@ function dispatchObject(
   request: LlmGatewayRequest,
   schema: ZodType<unknown>,
   callbacks: ReturnType<typeof buildHookCallbacks>,
+  thinkingStream: ThinkingStreamOptions,
   abortSignal?: AbortSignal,
 ) {
   const { system, messages } = toModelPrompt(ensureJsonObjectResponseFormatInstruction(request.messages))
@@ -177,7 +186,8 @@ function dispatchObject(
     output: Output.object({ schema }),
     system,
     messages,
-    temperature: request.temperature,
+    temperature: thinkingStream.temperature ?? request.temperature,
+    providerOptions: thinkingStream.providerOptions,
     maxOutputTokens: request.maxTokens,
     abortSignal,
     ...callbacks,

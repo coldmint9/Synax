@@ -116,6 +116,7 @@ export default memo(function SessionsPage() {
 
   useSessionRouteSync(listView, projectId)
 
+  const [historyReading, setHistoryReading] = useState(false)
   const agentSessionId = useAgentSessionStore(s => s.selectedSessionId)
   const agentPanelOpen = useAgentSessionStore(s => s.panelOpen)
   const workspaceState = useSessionWorkspace(agentSessionId)
@@ -180,7 +181,7 @@ export default memo(function SessionsPage() {
                 {hasWorkspaceContent ? (
                   <SessionWorkspacePanel sessionId={agentSessionId} mode="content" />
                 ) : (
-                  <SessionTranscript />
+                  <SessionTranscript key={agentSessionId} onReadingHistoryChange={setHistoryReading} />
                 )}
               </div>
               {wideWorkspace && !workspaceFullscreen ? (
@@ -216,6 +217,7 @@ export default memo(function SessionsPage() {
       {showTranscript && agentSessionId && !hasWorkspaceContent ? (
         <AgentCommandRail
           sessionId={agentSessionId}
+          readingHistory={historyReading}
           projectId={projectId}
           focus={false}
           insetLeft={commandRailLeft}

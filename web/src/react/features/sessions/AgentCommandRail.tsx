@@ -1,4 +1,3 @@
-import { Pause } from 'lucide-react'
 import { useAgentSessionStore } from './agentSessionStore'
 import { SessionComposer } from './SessionComposer'
 import { SessionFileChangeIsland } from './SessionFileChangeIsland'
@@ -33,12 +32,14 @@ function statusClass(status: string): string {
 
 export function AgentCommandRail({
   sessionId,
+  readingHistory = false,
   projectId,
   focus,
   insetLeft,
   insetRight,
 }: {
   sessionId: string
+  readingHistory?: boolean
   projectId: string
   focus: boolean
   insetLeft: number
@@ -47,7 +48,6 @@ export function AgentCommandRail({
   const session = useAgentSessionStore(state => state.sessions.find(item => item.id === sessionId))
   const permissions = useAgentSessionStore(state => state.permissions)
   const replyPermission = useAgentSessionStore(state => state.replyPermission)
-  const pauseSession = useAgentSessionStore(state => state.pauseSession)
   const pendingPermissions = listPendingGoalPermissions(permissions)
   const goalMode = Boolean(session && isGoalModeSession(session))
   const label = session ? statusLabel(session.status) : null
@@ -61,26 +61,12 @@ export function AgentCommandRail({
       style={{ left: insetLeft, right: insetRight }}
     >
       <div className="agent-command-rail-inner">
-        {(label || (session.status === 'running' && goalMode)) ? (
+        {label ? (
           <div className="agent-command-status-row">
-            {label ? (
-              <span className={`agent-command-status ${statusClass(session.status)}`}>
-                <span className="agent-command-status-dot" />
-                {label}
-              </span>
-            ) : null}
-            {session.status === 'running' ? (
-              <button
-                type="button"
-                className="agent-command-action"
-                aria-label="暂停会话"
-                title="暂停会话"
-                onClick={() => void pauseSession(session.id)}
-              >
-                <Pause size={10} />
-                暂停
-              </button>
-            ) : null}
+            <span className={`agent-command-status ${statusClass(session.status)}`}>
+              <span className="agent-command-status-dot" />
+              {label}
+            </span>
           </div>
         ) : null}
 
@@ -96,6 +82,7 @@ export function AgentCommandRail({
         {goalMode ? (
           <SessionComposer
             session={session}
+            readingHistory={readingHistory}
             projectId={projectId}
             layout="focusRail"
             statusSlot={<SessionFileChangeIsland sessionId={session.id} isRunning={session.status === 'running'} />}

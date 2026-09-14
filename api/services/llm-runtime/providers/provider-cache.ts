@@ -16,7 +16,10 @@ export async function getOrCreateClient(selection: ResolvedModelSelection): Prom
   const cached = clientCache.get(key)
   if (cached) return cached
 
-  const client = await instantiateProvider(selection.provider, selection.config)
+  const client = await instantiateProvider(selection.provider, {
+    ...selection.config,
+    apiFormat: selection.apiFormat,
+  })
   clientCache.set(key, client)
   return client
 }

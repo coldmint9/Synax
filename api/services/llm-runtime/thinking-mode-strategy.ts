@@ -97,6 +97,20 @@ function buildDeepSeekThinkingOptions(
   selection: ResolvedModelSelection,
   effort: ReasoningEffort,
 ): ThinkingStreamOptions {
+  // A DeepSeek connection explicitly configured as Responses is handled by
+  // the native OpenAI Responses adapter, not by DeepSeek's Chat Completions
+  // body fields. Keep the reasoning control in the OpenAI namespace.
+  if (selection.apiFormat === 'openai-responses') {
+    return {
+      providerOptions: {
+        openai: {
+          reasoningEffort: effort,
+        },
+      },
+      temperature: undefined,
+    }
+  }
+
   // Native @ai-sdk/deepseek — providerOptions.deepseek (camelCase reasoningEffort)
   if (selection.provider.npm === '@ai-sdk/deepseek') {
     return {

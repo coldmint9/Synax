@@ -56,7 +56,7 @@ async function selectMode(mode: 'plan' | 'goal', prefix = '') {
 }
 
 async function expectModeUnavailable() {
-  const trigger = screen.getByRole('button', { name: 'Add references or switch mode' })
+  const trigger = screen.getByRole('button', { name: 'Add context' })
   if ((trigger as HTMLButtonElement).disabled) { expect(trigger).toBeDisabled(); return }
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: '/plan' } })
   expect(await screen.findByRole('option', { name: /^\/plan / })).toHaveAttribute('aria-disabled', 'true')

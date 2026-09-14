@@ -2,13 +2,23 @@ import type { OnFinishEvent, OnStartEvent, OnStepFinishEvent, OnStepStartEvent, 
 import type { LlmGatewayRequest } from '../types.js'
 import { llmHooks } from '../llm-hooks.js'
 
-function normalizeUsage(usage: unknown): { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined {
+function normalizeUsage(usage: unknown): { promptTokens?: number; completionTokens?: number; totalTokens?: number; inputTokens?: number; outputTokens?: number; reasoningTokens?: number; cachedInputTokens?: number } | undefined {
   if (!usage || typeof usage !== 'object') return undefined
   const u = usage as Record<string, unknown>
+  const inputTokens = typeof u.inputTokens === 'number'
+    ? u.inputTokens
+    : typeof u.promptTokens === 'number' ? u.promptTokens : undefined
+  const outputTokens = typeof u.outputTokens === 'number'
+    ? u.outputTokens
+    : typeof u.completionTokens === 'number' ? u.completionTokens : undefined
   return {
-    promptTokens: typeof u.promptTokens === 'number' ? u.promptTokens : undefined,
-    completionTokens: typeof u.completionTokens === 'number' ? u.completionTokens : undefined,
+    promptTokens: typeof u.promptTokens === 'number' ? u.promptTokens : inputTokens,
+    completionTokens: typeof u.completionTokens === 'number' ? u.completionTokens : outputTokens,
     totalTokens: typeof u.totalTokens === 'number' ? u.totalTokens : undefined,
+    inputTokens: typeof inputTokens === 'number' ? inputTokens : undefined,
+    outputTokens: typeof outputTokens === 'number' ? outputTokens : undefined,
+    reasoningTokens: typeof u.reasoningTokens === 'number' ? u.reasoningTokens : undefined,
+    cachedInputTokens: typeof u.cachedInputTokens === 'number' ? u.cachedInputTokens : undefined,
   }
 }
 
@@ -30,10 +40,10 @@ export function buildHookCallbacks(request: LlmGatewayRequest) {
       llmHooks.emit({ type: 'tool_call:end', toolName: event.toolCall.toolName, toolCallId: event.toolCall.toolCallId, durationMs: event.durationMs, success: event.success, error: !event.success ? String(event.error) : undefined, context: ctx })
     },
     onStepFinish: (event: OnStepFinishEvent<ToolSet>) => {
-      llmHooks.emit({ type: 'step:finish', stepNumber: event.stepNumber, finishReason: event.finishReason ?? 'unknown', usage: normalizeUsage(event.usage), modelId: event.model.modelId, provider: event.model.provider, context: ctx })
+      llmHooks.emit({ type: 'step:finish', stepNumber: event.stepNumber, finishReason: event.finishReason ?? 'unknown', usage: normalizeUsage(event.usage), providerMetadata: event.providerMetadata as Record<string, unknown> | undefined, modelId: event.model.modelId, provider: event.model.provider, context: ctx })
     },
     onFinish: (event: OnFinishEvent<ToolSet>) => {
-      llmHooks.emit({ type: 'generation:finish', totalSteps: event.steps?.length ?? 1, totalUsage: normalizeUsage(event.totalUsage), durationMs: Date.now() - genStart, context: ctx })
+      llmHooks.emit({ type: 'generation:finish', totalSteps: event.steps?.length ?? 1, totalUsage: normalizeUsage(event.totalUsage), providerMetadata: event.providerMetadata as Record<string, unknown> | undefined, durationMs: Date.now() - genStart, context: ctx })
     },
   }
 }

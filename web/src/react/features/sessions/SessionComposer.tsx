@@ -1,3 +1,4 @@
+import { ComposerIsland } from './ComposerIsland'
 import { useComposerCommands } from './useComposerCommands'
 import type { TurnReference } from '../../../lib/api/agentRuntime'
 import { NativeBackendModelPicker } from './NativeBackendModelPicker'
@@ -40,9 +41,10 @@ interface Props {
   layout?: 'footer' | 'centered' | 'focusRail'
   /** Rendered directly above the input pill (e.g. the file-change island). */
   statusSlot?: React.ReactNode
+  readingHistory?: boolean
 }
 
-export function SessionComposer({ session, projectId, layout = 'footer', statusSlot }: Props) {
+export function SessionComposer({ session, projectId, layout = 'footer', statusSlot, readingHistory = false }: Props) {
   const { t, locale } = useLocale()
   const zh = locale === 'zh'
   const navigate = useNavigate()
@@ -50,6 +52,7 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   const [skillIds, setSkillIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [changingMode, setChangingMode] = useState(false)
+  const [overlayOpen, setOverlayOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const draftMode = useAgentSessionStore(s => s.draftMode)
   const setDraftMode = useAgentSessionStore(s => s.setDraftMode)
@@ -278,8 +281,9 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   const composer = (
     <GoalComposerPill
       commands={commands}
+      onOverlayOpenChange={setOverlayOpen}
       modelControl={backendId === 'codex' || backendId === 'claude-code'
-        ? <NativeBackendModelPicker key={backendId} backendId={backendId} model={cliModel} onChange={setCliModel} onEffortsChange={setCliEfforts} nativeMetadata={session?.sessionMetadata?.nativeBackend} disabled={submitting || isGenerating} /> : undefined}
+        ? <NativeBackendModelPicker key={backendId} backendId={backendId} model={cliModel} onChange={setCliModel} onEffortsChange={setCliEfforts} nativeMetadata={session?.sessionMetadata?.nativeBackend} onOpenChange={setOverlayOpen} disabled={submitting || isGenerating} /> : undefined}
       modeControl={<SessionBackendPicker value={backendId} options={backendOptions} disabled={!isDraft || submitting || Boolean(createdDraftRef.current)}
         onChange={id => { setDraftBackendId(id); setError(null); if (id !== 'native') { setReferences(items => items.filter(item => item.kind === 'file' || item.kind === 'wiki')); setSkillIds([]); setProviderId(id); setModelId('default') } else { setProviderId(null); setModelId(null) } }} />}
       projectId={projectId}
@@ -323,24 +327,27 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
 
   const composerShell = (
     <div className="agent-session-controls w-full">
-      {commands.menu}
       {error && <p role="alert" className="mb-2 px-2 text-xs text-danger">{error}</p>}
       {incompatibleModel && <p role="alert" className="mb-2 px-2 text-xs text-danger">{zh ? '请选择当前后端的模型；切换执行后端需新建会话。' : 'Choose a model for this backend; start a new session to change backends.'}</p>}
       {session && <RuntimeRecoveryPanel key={`recovery-${session.id}`} session={session} />}
       {session && <AgentInteractionPanel key={session.id} session={session} />}
-      <div
-        className={`goal-session-composer-shell goal-dock-shell w-full flex flex-col items-center${isCentered ? ' goal-session-composer-shell--draft' : ''}`}
-        data-multiline="true"
-      >
-        {sessionId && (
-          <InputQueueStrip
-            items={queuedInputs}
-            onRemove={(itemId) => void removeQueuedInput(sessionId, itemId)}
-            onForce={(itemId) => void forceQueuedInput(sessionId, itemId)}
-          />
-        )}
-        <div className="goal-dock-shell-content">{composer}</div>
-      </div>
+      {commands.menu}
+      <ComposerIsland key={`composer-${sessionId ?? 'draft'}`} sessionId={sessionId} running={session?.status === 'running'} readingHistory={readingHistory}
+        protectedInteraction={overlayOpen || commands.overlayOpen || hasPendingPermissions || hasPendingInteractions || Boolean(error) || submitting || changingMode} onStop={handleStop}>
+        <div
+          className={`goal-session-composer-shell goal-dock-shell w-full flex flex-col items-center${isCentered ? ' goal-session-composer-shell--draft' : ''}`}
+          data-multiline="true"
+        >
+          {sessionId && (
+            <InputQueueStrip
+              items={queuedInputs}
+              onRemove={(itemId) => void removeQueuedInput(sessionId, itemId)}
+              onForce={(itemId) => void forceQueuedInput(sessionId, itemId)}
+            />
+          )}
+          <div className="goal-dock-shell-content">{composer}</div>
+        </div>
+      </ComposerIsland>
     </div>
   )
 

@@ -39,6 +39,7 @@ function filterAvailableTools(tools: ToolSummary[], profile: AgentProfile): Tool
     (tool) =>
       profile.allowedCapabilities.includes(tool.id) ||
       tool.category === 'skill' ||
+      tool.category === 'mcp' ||
       tool.id === 'tools.invalid',
   );
 }
@@ -87,12 +88,19 @@ export function resolveSessionCapabilities(sessionId: string): SessionCapabiliti
     return { backend, profile: { id: profile.id, label: profile.label, kind: profile.kind },
       tools: { available: [], visible: [] }, skills: { active: [], candidates: [] }, mcp: { servers: [] } };
   }
-  const available = filterAvailableTools(toolRegistry.listForSession(sessionId), profile);
+  // Capability listings show every mounted tool; the execution gates are
+  // reported through `visible` so the panel can mark blocked tools instead of
+  // hiding the whole list once a work reaches a terminal state.
+  const available = filterAvailableTools(toolRegistry.listForSession(sessionId, { includeGated: true }), profile);
+  const visibleIds = new Set(
+    filterAvailableTools(toolRegistry.listForSession(sessionId), profile).map((tool) => tool.id),
+  );
+  const visible = available.filter((tool) => visibleIds.has(tool.id));
 
   return {
     backend,
     profile: { id: profile.id, label: profile.label, kind: profile.kind },
-    tools: { available, visible: available },
+    tools: { available, visible },
     skills: {
       active: resolveActiveSkillSummaries(session.skillIds, session.projectId),
       candidates: skillAgentBridge.listForPrompt({

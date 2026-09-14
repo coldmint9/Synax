@@ -243,8 +243,10 @@ export class ToolRegistry {
   }
 
   /** List all tools available for a specific session, merging global tools
-   *  with session-provider tools. Provider tools shadow global tools with the same ID. */
-  listForSession(sessionId: string): Array<Omit<RegisteredTool, 'execute'>> {
+   *  with session-provider tools. Provider tools shadow global tools with the same ID.
+   *  Execution gates (work state, plan mode) are applied unless `includeGated` is set,
+   *  which capability listings use to keep showing mounted tools the runtime blocks. */
+  listForSession(sessionId: string, options: { includeGated?: boolean } = {}): Array<Omit<RegisteredTool, 'execute'>> {
     const sessionTools: Array<Omit<RegisteredTool, 'execute'>> = [];
     for (const provider of this.providers.values()) {
       for (const tool of provider.getTools(sessionId)) {
@@ -258,7 +260,7 @@ export class ToolRegistry {
       .filter((t) => !seen.has(t.id));
     const session = this.store.getSession(sessionId);
     const effective = this.profiles.getForSession(session);
-    return [...sessionTools, ...globalTools].filter(t => !controlToolError(session,t) && (session.profileId!=='specialist'||effective.allowedCapabilities.includes(t.id)||t.id===INVALID_TOOL_ID));
+    return [...sessionTools, ...globalTools].filter(t => (options.includeGated || !controlToolError(session,t)) && (session.profileId!=='specialist'||effective.allowedCapabilities.includes(t.id)||t.id===INVALID_TOOL_ID));
   }
 
   get(toolId: string): RegisteredTool {

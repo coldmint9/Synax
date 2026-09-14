@@ -6,6 +6,10 @@ export interface LlmUsage {
   promptTokens?: number
   completionTokens?: number
   totalTokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  reasoningTokens?: number
+  cachedInputTokens?: number
 }
 
 export type LlmHookEvent =
@@ -13,8 +17,8 @@ export type LlmHookEvent =
   | { type: 'step:start'; stepNumber: number; modelId: string; provider: string; purpose: string; context?: LlmHookContext }
   | { type: 'tool_call:start'; toolName: string; toolCallId: string; stepNumber?: number; context?: LlmHookContext }
   | { type: 'tool_call:end'; toolName: string; toolCallId: string; durationMs: number; success: boolean; error?: string; context?: LlmHookContext }
-  | { type: 'step:finish'; stepNumber: number; finishReason: string; usage?: LlmUsage; modelId: string; provider: string; context?: LlmHookContext }
-  | { type: 'generation:finish'; totalSteps: number; totalUsage?: LlmUsage; durationMs: number; context?: LlmHookContext }
+  | { type: 'step:finish'; stepNumber: number; finishReason: string; usage?: LlmUsage; providerMetadata?: Record<string, unknown>; modelId: string; provider: string; context?: LlmHookContext }
+  | { type: 'generation:finish'; totalSteps: number; totalUsage?: LlmUsage; providerMetadata?: Record<string, unknown>; durationMs: number; context?: LlmHookContext }
 
 export type LlmHookEventType = LlmHookEvent['type']
 

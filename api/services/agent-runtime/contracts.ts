@@ -563,6 +563,15 @@ export interface LoopModelStep {
   finishReason?: string | null;
   usage?: Record<string, unknown>;
   providerMetadata?: Record<string, unknown>;
+  /** Native protocol envelope retained alongside normalized model output. */
+  protocol?: {
+    protocol: 'openai-responses';
+    responseId?: string;
+    status?: string;
+    output?: unknown[];
+    incompleteDetails?: unknown;
+    usage?: Record<string, unknown>;
+  };
 }
 
 export interface LoopStepModelResult {

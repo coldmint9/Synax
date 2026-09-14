@@ -21,6 +21,22 @@ const llmStreamSchema = z.object({
   temperature: z.number().optional(),
   maxTokens: z.number().int().positive().optional(),
   stop: z.array(z.string()).optional(),
+  responseOptions: z.object({
+    conversation: z.string().optional(),
+    include: z.array(z.string()).optional(),
+    instructions: z.string().optional(),
+    metadata: z.record(z.string(), z.string()).optional(),
+    maxToolCalls: z.number().int().positive().optional(),
+    parallelToolCalls: z.boolean().optional(),
+    previousResponseId: z.string().optional(),
+    promptCacheKey: z.string().optional(),
+    promptCacheRetention: z.enum(['in_memory', '24h']).optional(),
+    reasoningSummary: z.string().optional(),
+    forceReasoning: z.boolean().optional(),
+    serviceTier: z.enum(['auto', 'flex', 'priority', 'default']).optional(),
+    store: z.boolean().optional(),
+    truncation: z.enum(['auto', 'disabled']).optional(),
+  }).optional(),
 })
 
 const llmValidateSchema = z.object({
