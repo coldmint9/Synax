@@ -660,7 +660,8 @@ export class AgentLoopRuntime {
 
         this.store.updateRunStep(step.id, { metadata: { ...this.store.getRunStep(step.id).metadata,
           usage: modelResult.step.usage, reasoningParts: modelResult.step.reasoningParts,
-          providerMetadata: modelResult.step.providerMetadata, toolCallProviderMetadata: modelResult.step.toolCallProviderMetadata } });
+          providerMetadata: modelResult.step.providerMetadata, toolCallProviderMetadata: modelResult.step.toolCallProviderMetadata,
+          protocol: modelResult.step.protocol } });
         const stepUsage = modelResult.step.usage as Record<string, unknown> | undefined;
         if (!clearingActivated && typeof stepUsage?.inputTokens === 'number') {
           const stepContextLimit = runContextLimit;

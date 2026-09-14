@@ -100,6 +100,8 @@ function tryResolveCandidate(
     apiFormat: resolveProviderApiFormat({
       providerId: parsed.providerId,
       apiFormat: config.apiFormat,
+      modelId: parsed.modelId,
+      modelReasoning: modelDef.reasoning,
     }),
     provider,
     modelDef,
@@ -109,19 +111,31 @@ function tryResolveCandidate(
 
 /**
  * Resolve the wire protocol for a provider connection.
- * Explicit `extra.apiFormat` wins; otherwise the provider id decides the default:
- * `anthropic` speaks Messages, everything else speaks OpenAI Chat Completions.
+ * Explicit `extra.apiFormat` wins. OpenAI reasoning/GPT-5 class models use
+ * Responses by default; older/general OpenAI-compatible models retain Chat
+ * Completions unless the connection explicitly opts into Responses.
  */
 export function resolveProviderApiFormat(input: {
   providerId?: string
   connection?: ProviderConnection | null
   apiFormat?: unknown
+  modelId?: string
+  modelReasoning?: boolean
 }): ApiFormat {
   const format = input.apiFormat ?? toRecord(input.connection?.extra)?.apiFormat
   if (format === 'anthropic' || format === 'openai-responses' || format === 'openai') {
     return format
   }
+  if (input.providerId === 'openai' && isResponsesFirstModel(input.modelId, input.modelReasoning)) {
+    return 'openai-responses'
+  }
   return input.providerId === 'anthropic' ? 'anthropic' : 'openai'
+}
+
+function isResponsesFirstModel(modelId?: string, reasoning?: boolean): boolean {
+  if (reasoning) return true
+  if (!modelId) return false
+  return /^(?:gpt-5(?:[.-]|$)|o1(?:[.-]|$)|o3(?:[.-]|$)|o4(?:[.-]|$))/i.test(modelId)
 }
 
 function findModel(provider: RuntimeProvider, modelId: string, config: ResolvedProviderConfig): RuntimeModel | null {

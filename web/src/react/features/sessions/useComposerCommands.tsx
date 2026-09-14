@@ -1,5 +1,6 @@
+import { ComposerContextPicker } from './ComposerContextPicker'
 import { useEffect, useLayoutEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
-import { BookOpen, FileText, ListTodo, MessageSquare, Plus, Plug, Sparkles, Target, X } from 'lucide-react'
+import { BookOpen, FileText, ListTodo, Plug, Sparkles, Target, X } from 'lucide-react'
 import { agentRuntimeApi, type AgentSessionMode, type TurnReference } from '../../../lib/api/agentRuntime'
 import { useLocale } from '../../../hooks/useLocale'
 
@@ -10,7 +11,6 @@ const commands = [
   { id: 'wiki', zh: 'Wiki 文档', en: 'Wiki document', Icon: BookOpen },
   { id: 'plan', zh: '计划模式', en: 'Plan mode', Icon: ListTodo },
   { id: 'goal', zh: '目标模式', en: 'Goal mode', Icon: Target },
-  { id: 'chat', zh: '普通对话', en: 'Chat', Icon: MessageSquare },
 ] as const
 
 type CommandId = typeof commands[number]['id']
@@ -33,6 +33,7 @@ export function useComposerCommands({ projectId, sessionId, backendId, content, 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const listId = useId()
+  const [contextOpen, setContextOpen] = useState(false)
   const [query, setQuery] = useState<Query | null>(null)
   const [options, setOptions] = useState<TurnReference[]>([])
   const [active, setActive] = useState(0)
@@ -76,7 +77,7 @@ export function useComposerCommands({ projectId, sessionId, backendId, content, 
 
   const unavailable = (id: CommandId) => {
     if ((id === 'skill' || id === 'mcp') && !native) return zh ? '此后端使用原生配置' : 'Managed by this backend'
-    if (['plan', 'goal', 'chat'].includes(id) && !modeEnabled) return zh ? '仅支持 Synax，且须会话空闲、无待处理请求' : 'Requires an idle Synax session without pending requests'
+    if (['plan', 'goal'].includes(id) && !modeEnabled) return zh ? '仅支持 Synax，且须会话空闲、无待处理请求' : 'Requires an idle Synax session without pending requests'
     return undefined
   }
   const rows = query?.command
@@ -104,7 +105,7 @@ export function useComposerCommands({ projectId, sessionId, backendId, content, 
       if (references.length >= 20) { setError(zh ? '最多添加 20 个引用' : 'Up to 20 references'); return }
       setReferences([...references, row.ref]); replaceQuery(''); return
     }
-    if (row.command === 'chat' || row.command === 'plan' || row.command === 'goal') {
+    if (row.command === 'plan' || row.command === 'goal') {
       try { await onModeChange(row.command); replaceQuery('') }
       catch (err) { setError(err instanceof Error ? err.message : String(err)) }
     } else { replaceQuery(`/${row.command} `, true); setActive(0) }
@@ -120,14 +121,14 @@ export function useComposerCommands({ projectId, sessionId, backendId, content, 
     }
     return false
   }
-  const trigger = <button type="button" className="goal-dock-composer-chip inline-flex size-7 shrink-0 items-center justify-center rounded-full" aria-label={zh ? '添加引用或切换模式' : 'Add references or switch mode'} disabled={disabled}
-    onClick={() => { const cursor = inputRef.current?.selectionStart ?? content.length; const separator = cursor > 0 && !/\s/.test(content[cursor - 1]) ? ' ' : ''; const value = content.slice(0, cursor) + separator + '/' + content.slice(cursor); setContent(value); updateQuery(value, cursor + separator.length + 1); requestAnimationFrame(() => { inputRef.current?.focus(); inputRef.current?.setSelectionRange(cursor + separator.length + 1, cursor + separator.length + 1) }) }}><Plus size={16} /></button>
+  const trigger = <ComposerContextPicker projectId={projectId} sessionId={sessionId} backendId={backendId}
+    references={references} onChange={setReferences} disabled={disabled} onOpenChange={setContextOpen} onOpen={() => setQuery(null)} />
   const header = (mode !== 'chat' || references.length > 0) && <div className="session-composer-reference-tags" aria-label={zh ? '当前模式与本条消息引用' : 'Mode and references for this message'}>
     {mode !== 'chat' && <span className="session-composer-reference-tag" data-kind="mode"><ListTodo size={12} /><span>{mode === 'goal' ? (zh ? '目标模式' : 'Goal mode') : mode === 'plan' ? (zh ? '计划模式' : 'Plan mode') : (zh ? '计划节点' : 'Plan node')}</span><button type="button" disabled={!modeEnabled || disabled} aria-label={zh ? '回到普通对话' : 'Return to chat'} onClick={() => { void onModeChange('chat').catch(err => setError(String(err))) }}><X size={12}/></button></span>}
     {references.map(ref => { const Icon = commands.find(cmd => cmd.id === ref.kind)!.Icon; return <span key={`${ref.kind}:${ref.id}`} className="session-composer-reference-tag" data-kind={ref.kind} title={ref.id}><Icon size={12}/><span>{ref.kind} · {ref.label ?? ref.id}</span><button type="button" disabled={disabled} aria-label={`${zh ? '移除' : 'Remove'} ${ref.label ?? ref.id}`} onClick={() => setReferences(references.filter(item => item !== ref))}><X size={12}/></button></span> })}
   </div>
   const menu = query && !disabled && <div ref={menuRef} className="session-composer-command-menu" style={{ maxHeight: menuHeight }} onMouseDown={event => event.preventDefault()}>
-    <div className="session-composer-command-heading">{query.command ? `/${query.command} · ${zh ? '输入名称搜索' : 'Search by name'}` : (zh ? '添加引用或切换模式' : 'Add references or switch mode')}</div>
+    <div className="session-composer-command-heading">{query.command ? `/${query.command} · ${zh ? '输入名称搜索' : 'Search by name'}` : (zh ? '选择命令' : 'Choose a command')}</div>
     <div id={listId} role="listbox" aria-label={zh ? '斜杠命令' : 'Slash commands'}>
       {rows.map((row, index) => { const Icon = commands.find(cmd => cmd.id === row.command)!.Icon; return <div key={row.id} id={`${listId}-${index}`} role="option" aria-selected={index === active} aria-disabled={Boolean(row.disabled)} className="session-composer-command-option" onMouseEnter={() => setActive(index)} onClick={() => void select(index)}><Icon size={15}/><span><strong>{row.title}</strong><small>{row.disabled || row.detail}</small></span></div> })}
     </div>
@@ -135,5 +136,5 @@ export function useComposerCommands({ projectId, sessionId, backendId, content, 
     {!loading && rows.length === 0 && <p role={error ? "alert" : "status"}>{error || (zh ? '没有匹配项' : 'No matches')}</p>}
     {error && rows.length > 0 && <p role="alert">{error}</p>}
   </div>
-  return { inputRef, onInput: updateQuery, onKeyDown, header, trigger, menu, open: Boolean(query) && !disabled, listId, activeId: rows.length ? `${listId}-${Math.min(active, rows.length - 1)}` : undefined }
+  return { overlayOpen: contextOpen || Boolean(query), inputRef, onInput: updateQuery, onKeyDown, header, trigger, menu, open: Boolean(query) && !disabled, listId, activeId: rows.length ? `${listId}-${Math.min(active, rows.length - 1)}` : undefined }
 }

@@ -43,6 +43,19 @@ export async function instantiateProvider(
   const baseURL = config.baseUrl ?? provider.api
 
   if (provider.npm === '@ai-sdk/openai-compatible') {
+    // The compatibility provider only exposes Chat Completions. For an
+    // explicitly configured Responses connection, use the native OpenAI
+    // provider against the configured base URL instead of silently falling
+    // back to chat semantics.
+    if (config.apiFormat === 'openai-responses') {
+      const createResponses = await getFactory('@ai-sdk/openai')
+      return createResponses({
+        ...(baseURL ? { baseURL } : {}),
+        ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+        ...options,
+      })
+    }
     return create(buildOpenAICompatibleClientSettings(provider, config))
   }
 
@@ -84,7 +97,7 @@ export function selectLanguageModel(
 
   if (apiFormat === 'openai-responses') {
     if (typeof c.responses === 'function') return (c.responses as Function)(modelId, modelOptions)
-    logger.warn({ modelId }, '[llm-runtime] client has no responses API; falling back to default selector')
+    throw new Error(`Provider client cannot resolve Responses model '${modelId}': this connection has no native responses selector`)
   }
   if (apiFormat === 'openai' && typeof c.chat === 'function') {
     return (c.chat as Function)(modelId, modelOptions)

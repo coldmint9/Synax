@@ -169,6 +169,18 @@ export function GoalComposerPill({
     onCompositionEnd: handleCompositionEnd,
   }
 
+  const actionButton = (
+    <button
+      type="button"
+      aria-label={t(isGenerating ? 'goalStop' : 'goalSend')}
+      className={`goal-dock-composer-chip ${isGenerating ? 'goal-dock-composer-stop' : 'goal-dock-composer-send'} ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed`}
+      disabled={isGenerating ? !onStop : disabled || !content.trim()}
+      onClick={isGenerating ? onStop : onSubmit}
+    >
+      {isGenerating ? <Square size={12} fill="currentColor" /> : <ArrowUp size={15} />}
+    </button>
+  )
+
   const toolbar = (
     <>
       <div className="goal-dock-composer-leading contents">
@@ -217,50 +229,7 @@ export function GoalComposerPill({
         />
       </div>
       <div className="goal-dock-composer-actions contents">
-        {isGenerating ? (
-          queueWhileGenerating ? (
-            <>
-              {onStop && (
-                <button
-                  type="button"
-                  aria-label={t('goalStop')}
-                  className="goal-dock-composer-chip goal-dock-composer-stop inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
-                  onClick={onStop}
-                >
-                  <Square size={12} fill="currentColor" />
-                </button>
-              )}
-              <button
-                type="button"
-                aria-label={t('goalSend')}
-                className="goal-dock-composer-chip goal-dock-composer-send ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
-                disabled={(disabled && !queueWhileGenerating) || !content.trim()}
-                onClick={onSubmit}
-              >
-                <ArrowUp size={15} />
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              aria-label={t('goalStop')}
-              className="goal-dock-composer-chip goal-dock-composer-stop ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
-              onClick={onStop}
-            >
-              <Square size={12} fill="currentColor" />
-            </button>
-          )
-        ) : (
-          <button
-            type="button"
-            aria-label={t('goalSend')}
-            className="goal-dock-composer-chip goal-dock-composer-send ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
-            disabled={disabled || !content.trim()}
-            onClick={onSubmit}
-          >
-            <ArrowUp size={15} />
-          </button>
-        )}
+        {actionButton}
       </div>
     </>
   )
@@ -353,50 +322,7 @@ export function GoalComposerPill({
             disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}
           />
-          {isGenerating ? (
-            queueWhileGenerating ? (
-              <>
-                {onStop && (
-                  <button
-                    type="button"
-                    aria-label={t('goalStop')}
-                    className="goal-dock-composer-chip goal-dock-composer-stop inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
-                    onClick={onStop}
-                  >
-                    <Square size={12} fill="currentColor" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  aria-label={t('goalSend')}
-                  className="goal-dock-composer-chip goal-dock-composer-send inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
-                  disabled={(disabled && !queueWhileGenerating) || !content.trim()}
-                  onClick={onSubmit}
-                >
-                  <ArrowUp size={15} />
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                aria-label={t('goalStop')}
-                className="goal-dock-composer-chip goal-dock-composer-stop inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
-                onClick={onStop}
-              >
-                <Square size={12} fill="currentColor" />
-              </button>
-            )
-          ) : (
-            <button
-              type="button"
-              aria-label={t('goalSend')}
-              className="goal-dock-composer-chip goal-dock-composer-send inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
-              disabled={disabled || !content.trim()}
-              onClick={onSubmit}
-            >
-              <ArrowUp size={15} />
-            </button>
-          )}
+          {actionButton}
         </div>
       )}
     </div>

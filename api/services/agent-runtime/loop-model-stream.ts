@@ -6,6 +6,7 @@ import type { LoopModelStreamEvent, LoopStepModelResult, StructuredToolCall } fr
 import type { LoopToolSet } from './loop-ai-tools.js';
 import { isRecord, parseLoopModelStepText } from './loop-model-output.js';
 import { makeRuntimeId } from './runtime-ids.js';
+import { ResponsesSnapshotAccumulator } from './responses-snapshot.js';
 
 export interface GenerateLoopModelStepInput {
   request: LlmGatewayRequest;
@@ -45,9 +46,13 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
   const toolCalls: StructuredToolCall[] = [];
   const toolCallProviderMetadata: Record<string, Record<string, unknown>> = {};
   const reasoningParts: Array<{ id: string; text: string; providerMetadata?: Record<string, Record<string, unknown>> }> = [];
+  const protocolSnapshot = new ResponsesSnapshotAccumulator();
 
   for await (const event of result.fullStream) {
     switch (event.type) {
+      case 'raw':
+        protocolSnapshot.ingest((event as { rawValue?: unknown }).rawValue);
+        break;
       case 'text-delta':
         text += event.text;
         break;
@@ -116,6 +121,7 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
       finishReason: input.mustFinalize ? 'max_steps' : (parsedFallback?.finishReason ?? finishReason ?? null),
       usage,
       providerMetadata,
+      protocol: protocolSnapshot.snapshot(),
     },
   };
 }
@@ -151,9 +157,13 @@ export async function* streamLoopModelStep(
   const toolCalls: StructuredToolCall[] = [];
   const toolCallProviderMetadata: Record<string, Record<string, unknown>> = {};
   const reasoningParts: Array<{ id: string; text: string; providerMetadata?: Record<string, Record<string, unknown>> }> = [];
+  const protocolSnapshot = new ResponsesSnapshotAccumulator();
 
   for await (const event of result.fullStream) {
     switch (event.type) {
+      case 'raw':
+        protocolSnapshot.ingest((event as { rawValue?: unknown }).rawValue);
+        break;
       case 'text-delta':
         text += event.text;
         yield { type: 'text_delta', delta: event.text };
@@ -226,6 +236,7 @@ export async function* streamLoopModelStep(
       finishReason: input.mustFinalize ? 'max_steps' : (parsedFallback?.finishReason ?? finishReason ?? null),
       usage,
       providerMetadata,
+      protocol: protocolSnapshot.snapshot(),
     },
     model: input.model,
   };

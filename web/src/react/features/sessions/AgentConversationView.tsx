@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Chip, Card } from '@heroui/react'
-import { Pause, Play, XCircle, Zap } from 'lucide-react'
+import { Play, XCircle, Zap } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import type { CompactionEvent } from '../../state/agentRuntimeStore'
@@ -16,7 +16,6 @@ interface Props {
   messages: AgentRuntimeMessage[]
   childSessions?: AgentSession[]
   compactions?: CompactionEvent[]
-  onPause?: (sessionId: string) => void
   onResume?: (sessionId: string) => void
   onCancel?: (sessionId: string) => void
   onExpandChild?: (sessionId: string) => void
@@ -34,7 +33,6 @@ export const AgentConversationView = memo(function AgentConversationView({
   messages,
   childSessions,
   compactions,
-  onPause,
   onResume,
   onCancel,
   onExpandChild,
@@ -68,15 +66,6 @@ export const AgentConversationView = memo(function AgentConversationView({
         ) : null}
         <div className="ml-auto flex items-center gap-2">
           <div className="flex items-center gap-1.5">
-            {isRunning && onPause && session ? (
-              <button
-                type="button"
-                onClick={() => onPause(session.id)}
-                className="wh-pill-btn wh-pill-btn--neutral"
-              >
-                <Pause size={10} /> {t('sessionPause')}
-              </button>
-            ) : null}
             {isResumable && onResume && session ? (
               <button
                 type="button"

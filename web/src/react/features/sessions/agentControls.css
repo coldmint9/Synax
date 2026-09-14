@@ -231,3 +231,51 @@ textarea.agent-request-input { resize: vertical; }
 .session-composer-command-option strong { display: block; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
 .session-composer-command-option small { display: block; font-size: 10px; color: hsl(var(--muted-foreground)); overflow-wrap: anywhere; }
 .session-composer-command-menu > p { padding: 0.5rem; font-size: 12px; color: hsl(var(--muted-foreground)); }
+
+.session-context-picker { width: min(22rem, calc(100vw - 2rem)); padding: 0.375rem; border-radius: 0.75rem; }
+.session-context-picker-heading { display: flex; align-items: center; gap: 0.5rem; padding: 0.375rem 0.5rem; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.session-context-picker-heading > button { display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; border-radius: 0.375rem; }
+.session-context-picker-search { width: 100%; padding: 0.5rem; margin-bottom: 0.25rem; border: 1px solid hsl(var(--border-hsl)); border-radius: 0.5rem; font-size: 12px; background: transparent; }
+.session-context-picker-results { max-height: min(16rem, 35vh); overflow-y: auto; overscroll-behavior: contain; }
+.session-context-picker-option { display: flex; align-items: center; gap: 0.625rem; width: 100%; min-height: 2.25rem; padding: 0.5rem; border-radius: 0.5rem; text-align: start; font-size: 12px; }
+.session-context-picker-option > svg { flex-shrink: 0; }
+.session-context-picker-option > span { min-width: 0; overflow-wrap: anywhere; }
+.session-context-picker-option small { display: block; font-size: 10px; color: hsl(var(--muted-foreground)); overflow-wrap: anywhere; }
+.session-context-picker-option:disabled { opacity: 0.45; cursor: not-allowed; }
+.session-context-picker-option:not(:disabled):hover, .session-context-picker-heading > button:hover { background: hsl(var(--primary) / 0.12); }
+.session-context-picker :is(button, input):focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; }
+.session-context-picker > p { padding: 0.5rem; font-size: 12px; color: hsl(var(--muted-foreground)); }
+
+/* The transcript retains its geometry; only this independently positioned composer morphs. */
+.session-composer-island { width: 100%; pointer-events: none; }
+.session-composer-island-frame {
+  position: relative; margin-inline: auto; width: 100%; border-radius: 1rem;
+  transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1), height 320ms cubic-bezier(0.22, 1, 0.36, 1), border-radius 320ms ease;
+}
+.session-composer-island-frame[data-measured="true"] { height: var(--composer-island-height); }
+.session-composer-island-content { width: 100%; pointer-events: auto; opacity: 1; transition: opacity 160ms ease 100ms, transform 320ms cubic-bezier(0.22, 1, 0.36, 1); }
+.session-composer-island-frame[data-measured="true"] > .session-composer-island-content {
+  position: absolute; bottom: 0; left: 50%; width: var(--composer-island-width); transform: translateX(-50%);
+}
+.session-composer-island-pill {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+  border: 1px solid hsl(var(--border-hsl) / 0.65); background: hsl(var(--card) / 0.98); border-radius: inherit;
+  box-shadow: 0 2px 8px hsl(var(--foreground-hsl) / 0.04); opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity 120ms ease, visibility 0s 120ms;
+}
+.session-composer-island[data-collapsed="true"] > .session-composer-island-frame { width: min(14rem, 100%); height: 2.5rem; border-radius: 999px; }
+.session-composer-island[data-collapsed="true"] .session-composer-island-content { opacity: 0; visibility: hidden; pointer-events: none; transform: translateX(-50%) translateY(8px) scale(0.98); transition: opacity 120ms ease, transform 280ms ease, visibility 0s 120ms; }
+.session-composer-island[data-collapsed="true"] .session-composer-island-pill { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 200ms ease 100ms, visibility 0s; }
+.session-composer-island-expand { display: inline-flex; align-items: center; justify-content: center; gap: 0.625rem; height: 100%; flex: 1; min-width: 0; padding-inline: 1rem 0; font-size: 12px; color: hsl(var(--muted-foreground)); border-radius: inherit; }
+.session-composer-island-stop { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; flex-shrink: 0; margin-inline-end: 0.375rem; border-radius: 50%; background: hsl(var(--foreground-hsl)); color: var(--background); }
+.session-composer-island-expand:hover { color: var(--foreground); }
+.session-composer-island-stop:hover { opacity: 0.8; }
+.session-composer-island-pill button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; }
+.session-composer-island[data-collapsed="true"] .session-composer-island-spinner { animation: session-composer-island-spin 1.2s linear infinite; }
+@keyframes session-composer-island-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .session-composer-island-frame, .session-composer-island-content, .session-composer-island-pill { transition: none !important; }
+  .session-composer-island[data-collapsed="true"] .session-composer-island-spinner { animation: none; }
+}
+
+.session-chat-scroll:focus-visible { outline: 1px solid hsl(var(--ring) / 0.5); outline-offset: -2px; }

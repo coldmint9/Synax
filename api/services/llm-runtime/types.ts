@@ -75,6 +75,8 @@ export interface LlmGatewayRequest {
   temperature?: number
   /** DeepSeek thinking strength when thinking mode is enabled. */
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  /** Native protocol controls. These are kept separate from generic provider options. */
+  responseOptions?: LlmResponseOptions
   maxTokens?: number
   stop?: string[]
   tools?: ToolSet
@@ -84,6 +86,28 @@ export interface LlmGatewayRequest {
   repairToolCall?: ToolCallRepairFunction<ToolSet>
   cacheControl?: boolean
   hookContext?: LlmHookContext
+}
+
+/**
+ * OpenAI Responses controls that must survive the generic gateway boundary.
+ * The AI SDK's OpenAI provider consumes these as providerOptions.openai.
+ */
+export interface LlmResponseOptions {
+  conversation?: string
+  include?: Array<'reasoning.encrypted_content' | 'file_search_call.results' | 'message.output_text.logprobs' | string>
+  instructions?: string
+  metadata?: Record<string, string>
+  maxToolCalls?: number
+  parallelToolCalls?: boolean
+  previousResponseId?: string
+  promptCacheKey?: string
+  promptCacheRetention?: 'in_memory' | '24h'
+  reasoningSummary?: string
+  /** Force Responses reasoning handling for custom or gateway model IDs. */
+  forceReasoning?: boolean
+  serviceTier?: 'auto' | 'flex' | 'priority' | 'default'
+  store?: boolean
+  truncation?: 'auto' | 'disabled'
 }
 
 export interface LlmGatewayConfig {
