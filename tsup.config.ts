@@ -3,6 +3,7 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
     entry: {
     server: 'api/server.ts',
+    cli: 'cli/index.ts',
     'workers/analyzer-worker': 'api/services/analyzer/analyzer-worker.ts',
     'workers/scan-pipeline-worker.thread': 'api/services/analyzer/scan-pipeline-worker.thread.ts',
     'workers/wiki-job-runner': 'api/workers/wiki-job-runner.ts',

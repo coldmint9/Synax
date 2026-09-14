@@ -52,6 +52,7 @@ import { SseEventType } from '../lib/sse-events.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 import { getSessionEnvironment, getSessionEnvironmentFile, invalidateSessionEnvironment } from '../services/agent-runtime/session-environment.js';
 import { resolveSessionConfiguredContextLimit } from '../services/agent-runtime/session-context-limit.js';
+import { RUNTIME_PROTOCOL_SCHEMA, RUNTIME_PROTOCOL_VERSION } from '../services/agent-runtime/runtime-protocol.js';
 
 export const agentRuntimeRoutes = new Hono();
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
@@ -85,7 +86,13 @@ function withSessionPayload(sessionId: string) {
   };
 }
 
-agentRuntimeRoutes.get('/backends', (c) => c.json({ items: describeBackends() }));
+agentRuntimeRoutes.get('/protocol', (c) => c.json({
+  protocol: RUNTIME_PROTOCOL_VERSION,
+  schema: RUNTIME_PROTOCOL_SCHEMA,
+  transports: ['http-json', 'sse', 'jsonl-rpc'],
+  operations: ['backends.list', 'projects.list', 'sessions.list', 'sessions.get', 'sessions.create', 'runs.submit', 'runs.watch', 'permissions.reply', 'interactions.reply', 'sessions.cancel', 'sessions.pause'],
+}));
+agentRuntimeRoutes.get('/backends', (c) => c.json({ protocol: RUNTIME_PROTOCOL_VERSION, items: describeBackends() }));
 agentRuntimeRoutes.get('/backends/:id/models', async c => {
   const id = backendIdSchema.safeParse(c.req.param('id')); if (!id.success) return validationError(c, id.error);
   try { const backend = getBackendAdapter(id.data); return backend.models ? c.json(await backend.models()) : c.json({ error: 'Use the provider model catalog for this backend.' }, 400); }

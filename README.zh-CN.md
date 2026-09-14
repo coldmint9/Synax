@@ -165,6 +165,8 @@ Synax 会通过 `dotenv/config` 自动读取 `.env`，但项目不要求必须�
 | `npm run dev:desktop` | 启动 API、Web、Electron 编译监听和 Electron。 |
 | `npm run build` | 将 API 服务打包到 `server-dist/`。 |
 | `npm run start` | 运行已打包的 API 服务。 |
+| `npm run cli -- --help` | 通过 TypeScript 直接运行 Synax CLI。 |
+| `node server-dist/cli.cjs --help` | 运行编译后的 `synax` CLI。 |
 | `npm run web:build` | 将 Web 应用构建到 `web/dist/`。 |
 | `npm run typecheck` | 运行根项目 TypeScript 检查。 |
 | `npm run lint` | 检查 API 代码。 |
@@ -193,6 +195,25 @@ API 统一挂载在 `/api` 下，并按领域拆分：
 - `/api/context`：memory、coordinates、session 和上下文信号。
 - `/api/acp`：Agent Client Protocol 发现和 Provider 集成。
 - `/api/notifications`、`/api/logs`、`/api/health`：运行状态与运维辅助接口。
+
+## 终端 CLI
+
+Synax CLI 是 Runtime API 的无界面客户端，不会直接访问数据库或另起一套 Agent 执行逻辑。先启动 API：
+
+```bash
+npm run dev:api
+```
+
+然后使用编译后的命令：
+
+```bash
+npm run build
+node server-dist/cli.cjs backends
+node server-dist/cli.cjs exec --project <project-id> "检查当前项目并总结风险"
+node server-dist/cli.cjs watch <run-id> --session <session-id>
+```
+
+CLI 默认读取 `${DATA_ROOT}/runtime-access-token`，也可以通过 `SYNAX_RUNTIME_TOKEN`、`--token` 或 `--token-file` 指定认证信息。`--jsonl` 输出可供脚本和其他 Agent 客户端消费的 Runtime 事件；`rpc` 命令使用 stdin/stdout JSONL。
 
 ## 开发流程
 
