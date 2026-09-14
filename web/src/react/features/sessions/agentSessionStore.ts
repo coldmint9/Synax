@@ -170,7 +170,7 @@ function isActiveSessionStatus(status: AgentSession['status'] | undefined): bool
 type AgentRunStreamChunk = {
   type?: string
   event?: RuntimeEvent
-  run?: { id: string; status?: AgentRun['status'] }
+  run?: { id: string; status?: AgentRun['status']; stopReason?: string | null }
   error?: string
   runId?: string
   sessionId?: string
@@ -195,7 +195,7 @@ function applySessionStreamChunk(sessionId: string, chunk: unknown): Partial<Age
     case 'waiting_input':
       return { status: 'waiting_input' }
     case 'run_completed':
-      return { status: typed.run?.status ?? 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null }
+      return { status: typed.run?.stopReason === 'round_yielded' ? 'paused' : typed.run?.status ?? 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null }
     case 'run_failed':
       return { status: typed.run?.status ?? 'failed', activeRunId: null, pendingResumeToken: null,
         ...(typed.run?.status === 'blocked' && typed.error ? { blockedReason: typed.error } : {}),

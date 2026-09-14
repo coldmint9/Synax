@@ -16,6 +16,7 @@ import { agentRuntimeStore } from './session-store.js';
 import { runtimeJournal, type RuntimeStreamRecord } from './runtime-journal.js';
 import { AgentRuntimeError } from './runtime-errors.js';
 import { nowIso } from './runtime-ids.js';
+import { goalContinuationInput } from './goal-continuation.js';
 import { logger } from '../../lib/logger.js';
 
 interface Owner { context?: RuntimeExecutionContext; runId: string; controller: AbortController; task: Promise<void>; stopping: boolean; stopTask?: Promise<void>; stopFailed?: boolean; finalizers?: Array<() => void> }
@@ -101,6 +102,7 @@ export class RunCoordinator {
     const writer = new RuntimeStreamWriter(sessionId, owner.runId, () => this.ownsLease(owner));
     const record = (chunk: AgentRunStreamChunk) => writer.write(chunk);
     const flush = () => writer.flush();
+    let settledNormally = false;
     try {
       if (owner.controller.signal.aborted) throw new Error('Execution stopped before launch.');
       for await (const chunk of withinExecutionContext(owner.context, this.driver.execute(sessionId, mode, input, owner.controller.signal))) record(chunk);
@@ -109,6 +111,7 @@ export class RunCoordinator {
       if (run.status === 'queued' || run.status === 'running') {
         throw new Error('Backend ended without settling its Run.');
       }
+      settledNormally = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn({ sessionId, runId: owner.runId, error: message }, '[run-coordinator] execution ended with an error');
@@ -126,8 +129,9 @@ export class RunCoordinator {
       }
       record({ type: 'done', sessionId, runId: run.id });
     } finally {
-      if (!this.ownsLease(owner)) writer.abandon();
-      if (this.ownsLease(owner)) {
+      const ownsLease = this.ownsLease(owner);
+      if (!ownsLease) writer.abandon();
+      if (ownsLease) {
         writer.finish();
         const run = agentRuntimeStore.getRun(owner.runId);
         agentRuntimeStore.updateRun(run.id, { metadata: { ...run.metadata, executionLease: { ...owner.context, closed: true } } });
@@ -138,6 +142,13 @@ export class RunCoordinator {
       if (pending && !owner.stopping) {
         try { this.resume(sessionId, pending); }
         catch (error) { logger.warn({ sessionId, error }, '[run-coordinator] resume was no longer applicable'); }
+      } else if (settledNormally && ownsLease && !owner.stopping && !owner.controller.signal.aborted && !this.isActive(sessionId)) {
+        try {
+          const continuation = goalContinuationInput(sessionId, owner.runId);
+          if (continuation) this.submit(sessionId, continuation, `goal-continuation:${owner.runId}`, 'continue');
+        } catch (error) {
+          logger.warn({ sessionId, runId: owner.runId, error }, '[run-coordinator] goal handoff could not be continued');
+        }
       }
     }
   }

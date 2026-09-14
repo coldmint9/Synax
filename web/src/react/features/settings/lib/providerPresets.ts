@@ -82,7 +82,13 @@ export type ApiProviderDraft = {
   apiKey: string
   apiKeyMasked: string
   model: string
+  /** Models the user selected for this provider. Only these are persisted. */
   models: string[]
+  /**
+   * Candidate pool offered by the model picker (discovered models plus the ones
+   * already configured). Never persisted: picking a candidate is what adds a model.
+   */
+  modelOptions: string[]
   /** Per-model input context window metadata keyed by model id. */
   modelMeta: Record<string, { contextLimit?: number }>
   /** Reasoning effort levels allowed for this provider (multi-select). Empty = unrestricted. */
@@ -191,6 +197,41 @@ export function normalizeModelList(models: string[], model: string): string[] {
   return Array.from(new Set(merged.map(s => s.trim()).filter(Boolean)))
 }
 
+/** Ordered, de-duplicated union of model ids (used for picker candidates). */
+export function mergeModelOptions(...lists: Array<string[] | undefined>): string[] {
+  return Array.from(
+    new Set(lists.flatMap(list => list ?? []).map(item => item.trim()).filter(Boolean)),
+  )
+}
+
+/**
+ * Models the current draft would configure: the selected ones plus the default
+ * model, which is always part of the provider definition.
+ */
+export function configuredModelList(draft: ApiProviderDraft): string[] {
+  return mergeModelOptions(draft.models, [draft.model])
+}
+
+/**
+ * Multi-select toggle for a model picker candidate. The default model stays
+ * configured while it is the default; pick another default to drop it.
+ */
+export function toggleModelSelection(draft: ApiProviderDraft, candidate: string): ApiProviderDraft {
+  const model = candidate.trim()
+  if (!model || model === draft.model) return draft
+  if (draft.models.includes(model)) {
+    return { ...draft, models: draft.models.filter(item => item !== model) }
+  }
+  return { ...draft, models: mergeModelOptions(draft.models, [model]) }
+}
+
+/** Make `candidate` the default model used for connection checks, keeping it configured. */
+export function selectDefaultModel(draft: ApiProviderDraft, candidate: string): ApiProviderDraft {
+  const model = candidate.trim()
+  if (!model || model === draft.model) return draft
+  return { ...draft, model, models: mergeModelOptions(draft.models, [model]) }
+}
+
 export function resolveFormat(providerId: string, connection?: ProviderConnection): ApiFormat {
   const raw = connection?.extra?.apiFormat
   if (raw === 'anthropic') return 'anthropic'
@@ -253,6 +294,7 @@ export function buildApiDrafts(globalConfig: GlobalConfig, providers: ProviderDe
       apiKeyMasked: connection?.apiKeyMasked ?? '',
       model,
       models: normalizeModelList(provider.models.map(m => m.id), model),
+      modelOptions: normalizeModelList(provider.models.map(m => m.id), model),
       modelMeta: Object.fromEntries(
         provider.models
           .filter(m => typeof m.contextLimit === 'number')
@@ -281,6 +323,7 @@ export function createDraftFromPreset(preset: ProviderPreset): ApiProviderDraft 
     apiKeyMasked: '',
     model: preset.defaultModel,
     models: [preset.defaultModel],
+    modelOptions: [preset.defaultModel],
     modelMeta: {},
     reasoningEfforts: [],
     custom: false,
@@ -305,6 +348,7 @@ export function createCustomDraft(existing: ApiProviderDraft[]): ApiProviderDraf
     apiKeyMasked: '',
     model: defaultModel('openai'),
     models: [defaultModel('openai')],
+    modelOptions: [defaultModel('openai')],
     modelMeta: {},
     reasoningEfforts: [],
     custom: true,
@@ -360,6 +404,7 @@ export function upsertDraft(drafts: ApiProviderDraft[], draft: ApiProviderDraft)
     label: draft.label.trim() || draft.id,
     model: draft.model.trim(),
     models: normalizeModelList(draft.models, draft.model.trim()),
+    modelOptions: mergeModelOptions(existing?.modelOptions, draft.modelOptions, draft.models, [draft.model]),
     modelMeta: mergedMeta,
     reasoningEfforts: draft.reasoningEfforts ?? existing?.reasoningEfforts ?? [],
   }

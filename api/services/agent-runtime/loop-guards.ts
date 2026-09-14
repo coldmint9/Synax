@@ -35,8 +35,8 @@ export function detectDoomLoop(toolCalls: ToolCallRecord[], threshold = DOOM_LOO
   return null;
 }
 
-export function shouldForceFinalSummary(stepIndex: number, maxSteps: number): boolean {
-  return stepIndex >= maxSteps;
+export function shouldConverge(stepIndex: number, stepThreshold: number): boolean {
+  return stepIndex >= stepThreshold;
 }
 
 const DEFAULT_FAILURE_REMINDER_THRESHOLD = 3;

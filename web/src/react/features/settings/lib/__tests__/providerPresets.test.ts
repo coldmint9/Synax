@@ -6,11 +6,15 @@ import {
   apiFormatLabel,
   applyProtocolDefaults,
   buildApiDrafts,
+  configuredModelList,
   createDraftFromPreset,
   draftToConnection,
   draftToProviderDef,
   effectiveReasoningEfforts,
+  mergeModelOptions,
   providerReasoningEfforts,
+  selectDefaultModel,
+  toggleModelSelection,
   upsertDraft,
   type ApiProviderDraft,
 } from '../providerPresets'
@@ -142,5 +146,50 @@ describe('provider protocol selection', () => {
     const draft = buildApiDrafts(makeConfig(provider, {}), [provider]).find(d => d.id === provider.id)!
     const connection = draftToConnection({ ...draft, format: 'openai-responses' })
     expect(connection.extra?.apiFormat).toBe('openai-responses')
+  })
+
+  it('keeps discovered models as picker candidates until they are selected', () => {
+    const provider = makeProvider()
+    const draft = buildApiDrafts(makeConfig(provider, {}), [provider]).find(d => d.id === provider.id)!
+    expect(draft.models).toEqual(['deepseek-chat', 'deepseek-reasoner'])
+    expect(draft.modelOptions).toEqual(['deepseek-chat', 'deepseek-reasoner'])
+
+    // 发现回来的模型只进入候选池，不会自动变成已配置模型
+    const widened = { ...draft, modelOptions: mergeModelOptions(['gpt-4o', 'gpt-4.1'], draft.modelOptions) }
+    expect(widened.modelOptions).toEqual(['gpt-4o', 'gpt-4.1', 'deepseek-chat', 'deepseek-reasoner'])
+    expect(configuredModelList(widened)).toEqual(['deepseek-chat', 'deepseek-reasoner'])
+
+    const selected = toggleModelSelection(widened, 'gpt-4o')
+    expect(configuredModelList(selected)).toEqual(['deepseek-chat', 'deepseek-reasoner', 'gpt-4o'])
+
+    const deselected = toggleModelSelection(selected, 'gpt-4o')
+    expect(configuredModelList(deselected)).toEqual(['deepseek-chat', 'deepseek-reasoner'])
+  })
+
+  it('keeps the default model configured and promotes a new default', () => {
+    const provider = makeProvider()
+    const draft = buildApiDrafts(makeConfig(provider, {}), [provider]).find(d => d.id === provider.id)!
+    const promoted = selectDefaultModel(toggleModelSelection(draft, 'gpt-4o'), 'gpt-4o')
+
+    expect(promoted.model).toBe('gpt-4o')
+    expect(promoted.models).toEqual(['deepseek-chat', 'deepseek-reasoner', 'gpt-4o'])
+    // 默认模型不能被取消勾选，非默认模型可以
+    expect(toggleModelSelection(promoted, 'gpt-4o')).toBe(promoted)
+    expect(configuredModelList(toggleModelSelection(promoted, 'deepseek-chat')))
+      .toEqual(['deepseek-reasoner', 'gpt-4o'])
+  })
+
+  it('persists only the selected models for the provider', () => {
+    const provider = makeProvider()
+    const draft = buildApiDrafts(makeConfig(provider, {}), [provider]).find(d => d.id === provider.id)!
+    // 仅出现在候选池里的模型不会被保存
+    const withCandidate = { ...draft, modelOptions: mergeModelOptions(draft.modelOptions, ['gpt-4o']) }
+    expect(withCandidate.modelOptions).toContain('gpt-4o')
+    expect(draftToProviderDef(withCandidate).models.map(m => m.id))
+      .toEqual(['deepseek-chat', 'deepseek-reasoner'])
+
+    // 勾选后才写入 provider 定义
+    expect(draftToProviderDef(toggleModelSelection(withCandidate, 'gpt-4o')).models.map(m => m.id))
+      .toEqual(['deepseek-chat', 'deepseek-reasoner', 'gpt-4o'])
   })
 })

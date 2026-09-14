@@ -10,6 +10,7 @@ import { copyTextToClipboard } from '../../../lib/clipboard'
 import { useLocale } from '../../../hooks/useLocale'
 import type { I18nKey } from '../../../lib/i18n'
 import { openWorkspaceDiff, openWorkspaceFile, openWorkspaceSubagent } from './sessionWorkspaceStore'
+import { SessionCommitDialog } from './SessionCommitDialog'
 import { useSessionEnvironment } from './useSessionEnvironment'
 
 /** Split a workspace path so the panel can keep the file name readable while
@@ -244,6 +245,8 @@ function RepositoryCard({
   reload: () => void | Promise<void>
 }) {
   const { t } = useLocale()
+  const [commitOpen, setCommitOpen] = useState(false)
+  const changedCount = environment.changedFiles.length
   return (
     <section className="ws-card ws-card--repo">
       <div className="ws-repo-head">
@@ -252,6 +255,16 @@ function RepositoryCard({
         <span className={`ws-repo-state ${environment.dirty ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}`}>
           {environment.dirty ? 'dirty' : 'clean'}
         </span>
+        <button
+          type="button"
+          className="ws-repo-action"
+          onClick={() => setCommitOpen(true)}
+          disabled={loading || changedCount === 0}
+          title={t('workspaceCommitPush')}
+        >
+          <GitCommit size={10} />
+          <span>{t('workspaceCommitPush')}</span>
+        </button>
         <button
           type="button"
           className="ws-icon-button"
@@ -277,6 +290,14 @@ function RepositoryCard({
       {environment.workspacePath ? (
         <div className="ws-repo-path" title={environment.workspacePath}>{environment.workspacePath}</div>
       ) : null}
+      <SessionCommitDialog
+        isOpen={commitOpen}
+        sessionId={environment.sessionId}
+        branch={environment.branch}
+        changedFiles={changedCount}
+        onClose={() => setCommitOpen(false)}
+        onCommitted={() => void reload()}
+      />
     </section>
   )
 }
