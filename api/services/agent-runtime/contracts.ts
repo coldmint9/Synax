@@ -1,3 +1,4 @@
+import { backendIdSchema } from './backends/backend-contracts.js';
 import * as z from 'zod/v4';
 
 export const agentProfileKindSchema = z.enum(['planner', 'executor', 'reviewer', 'explorer']);
@@ -13,6 +14,7 @@ export const reasoningEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', '
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 
 export const sessionStatusSchema = z.enum([
+  'stopping',
   'queued',
   'running',
   'waiting_permission',
@@ -27,6 +29,7 @@ export const sessionStatusSchema = z.enum([
 export type AgentSessionStatus = z.infer<typeof sessionStatusSchema>;
 
 export const runStatusSchema = z.enum([
+  'queued',
   'running',
   'waiting_permission',
   'waiting_input',
@@ -172,6 +175,7 @@ export interface ToolPolicy {
 }
 
 export interface AgentProfile {
+  executionHost?: 'session' | 'embedded';
   id: string;
   label: string;
   kind: AgentProfileKind;
@@ -379,6 +383,9 @@ export interface ThinkingSummary {
 }
 
 export const createSessionRequestSchema = z.object({
+  backendId: backendIdSchema.optional(),
+  model: z.string().min(1).max(256).optional(),
+  workDir: z.string().min(1).max(4096).optional(),
   projectId: z.string().min(1).max(128),
   nodeId: z.string().min(1).max(256).nullable().optional(),
   profileId: z.string().min(1).max(64),
@@ -450,7 +457,11 @@ export const streamTurnRequestSchema = z.object({
   permissionTier: permissionTierSchema.optional(),
   permissionOverrides: permissionOverridesSchema.optional(),
 });
-export type StreamTurnRequest = z.infer<typeof streamTurnRequestSchema>;
+export type StreamTurnRequest = z.infer<typeof streamTurnRequestSchema> & {
+  /** Internal admission token; intentionally absent from the public request schema. */
+  acceptedRunId?: string;
+  executionContext?: import('../../lib/execution-context.js').RuntimeExecutionContext;
+};
 
 export interface ToolExecutionInput {
   sessionId: string;
@@ -534,6 +545,8 @@ export interface StructuredToolCall {
 }
 
 export interface LoopModelStep {
+  toolCallProviderMetadata?: Record<string, Record<string, unknown>>;
+  reasoningParts?: Array<{ text: string; providerMetadata?: Record<string, Record<string, unknown>> }>;
   thought?: string;
   message?: string;
   toolCalls: StructuredToolCall[];
@@ -550,6 +563,7 @@ export interface LoopStepModelResult {
 }
 
 export type LoopModelStreamEvent =
+  | { type: 'usage'; usage: Record<string, unknown> }
   | { type: 'text_delta'; delta: string }
   | { type: 'thought_delta'; delta: string }
   | { type: 'context_compacted'; originalTokens: number; compressedTokens: number; messageCount: number }

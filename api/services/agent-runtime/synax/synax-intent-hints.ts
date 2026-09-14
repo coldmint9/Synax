@@ -1,5 +1,4 @@
 import type { SynaxSessionMode } from './synax-session-mode.js';
-import { EXPLORER_WIKI_PLAYBOOK } from './synax-explorer-delegate.js';
 
 export type SynaxIntentKind = 'explore' | 'coding' | 'review' | 'plan';
 
@@ -56,7 +55,7 @@ export const SYNAX_VARIANT_INTENT_RULES: ReadonlyArray<{
       /\bunderstand\b/i,
       /\btrace\b/i,
       /\bmap (the )?(codebase|project|architecture)\b/i,
-      /探索|调研|摸清|架构|在哪里|怎么实现|梳理/,
+      /探索|调查|调研|摸清|架构|在哪里|怎么实现|梳理|解释/,
     ],
   },
 ];
@@ -75,7 +74,7 @@ const CODING_INTENT_RULE: IntentPatternRule = {
     /\bcreate\b.+\b(file|module|class|function)\b/i,
     /\bupdate\b.+\b(code|logic|handler)\b/i,
     /\bchange\b.+\b(code|implementation)\b/i,
-    /实现.+(功能|模块|接口|逻辑)|修复|重构|编码|改代码|添加功能|写测试|补丁/,
+    /实现.+(功能|模块|接口|逻辑)|修复|重构|编码|改代码|添加功能|写测试|补丁|修改.+(代码|会话|组件|接口|逻辑)|隐藏.+(子会话|列表)/,
   ],
 };
 
@@ -94,6 +93,11 @@ function matchesAny(text: string, patterns: RegExp[]): boolean {
 export function classifySynaxIntent(message: string): SynaxIntentKind | null {
   const text = message.trim();
   if (!text) return null;
+  // Mentioning an operation while asking how it works is not permission to perform it.
+  const asksForExplanation = /^(?:how\b|why\b|what\b|explain\b|(?:请)?(?:解释|调查|调研|分析)|为什么|如何)/i.test(text)
+    || /(?:plan|计划)\s*模式.*[吗？?]/i.test(text);
+  const alsoRequestsChange = /(?:and|then)\s+(?:fix|implement|change|add|refactor)|(?:并|然后|顺便)(?:且)?(?:修复|实现|修改|添加|重构)/i.test(text);
+  if (asksForExplanation && !alsoRequestsChange) return 'explore';
 
   for (const rule of INTENT_CLASSIFICATION_ORDER) {
     if (matchesAny(text, rule.patterns)) {
@@ -111,73 +115,19 @@ export function isConversationalMessage(message: string): boolean {
   return false;
 }
 
-function buildExploreIntentSection(stepIndex: number): string {
-  const firstStep = stepIndex <= 1;
-  const lines = [
-    '## Exploration Intent',
-    'The user wants discovery/research — not implementation. The parent agent orchestrates; exploration runs in a child session.',
-    '- Delegate via subagent.delegate(profileId: "explorer", prompt: "<pass the user question verbatim plus any focus constraints>").',
-    '- The explorer child is wiki-first: it will run wiki FTS/search, read wiki sections, then code tools for evidence.',
-    '- Do NOT call bash, wiki.*, file.read, grep.search, or file.glob on the parent for this exploration — only subagent.delegate.',
-    '- After the child returns, synthesize its report for the user. Re-delegate only for a clearly new sub-question.',
-    '',
-    'Explorer child playbook (for reference — injected automatically into the delegate prompt):',
-    EXPLORER_WIKI_PLAYBOOK,
-  ];
-  if (firstStep) {
-    lines.push('', 'Step 1 rule: your first and only tool call must be subagent.delegate to explorer unless the answer is already complete in context.');
-  }
-  return lines.join('\n');
-}
-
-function buildCodingIntentSection(): string {
-  return [
-    '## Coding Task Role',
-    'You are implementing bounded code changes in this repository.',
-    '- Clarify scope, read relevant code first, then edit.',
-    '- Keep changes minimal and verifiable; avoid unrelated refactors.',
-    '',
-    '## Task Breakdown',
-    '- One logical change per step; read/search before write.',
-    '',
-    '## Coding Style',
-    '- Match naming, patterns, and formatting of touched files.',
-    '- Prefer edit for surgical edits; avoid drive-by cleanup.',
-    '- Reuse existing abstractions; do not introduce new layers without need.',
-    '',
-    '## Test & Verification',
-    '- Run the narrowest relevant test command after edits (e.g. vitest for a single file, npm test when appropriate).',
-    '- Run typecheck/lint when the project uses them and your change could break types.',
-    '- If tests cannot run, state why and what manual check you performed.',
-    '',
-    '## File Change Summary',
-    '- When finishing or pausing, list every file touched with a one-line reason each.',
-    '- Mention any follow-up the user should do (migrations, env vars, manual QA).',
-  ].join('\n');
-}
-
 export function shouldApplyCodingHints(input: SynaxIntentHintInput, intent: SynaxIntentKind | null): boolean {
-  if (intent === 'coding') return true;
-  if (intent === 'explore' || intent === 'review' || intent === 'plan') return false;
-  if (isConversationalMessage(input.message)) return false;
-  return false;
+  return input.mode !== 'plan' && intent === 'coding';
 }
 
+/** A classification is an advisory focus, never an execution or delegation mandate. */
 export function buildSynaxIntentPromptSection(input: SynaxIntentHintInput): string | null {
-  const message = input.message.trim();
-  if (!message) return null;
-
-  const intent = classifySynaxIntent(message);
-  const stepIndex = input.stepIndex ?? 1;
-  const sections: string[] = [];
-
-  if (intent === 'explore') {
-    sections.push(buildExploreIntentSection(stepIndex));
-  }
-
-  if (shouldApplyCodingHints(input, intent)) {
-    sections.push(buildCodingIntentSection());
-  }
-
-  return sections.length > 0 ? sections.join('\n\n') : null;
+  const intent = classifySynaxIntent(input.message);
+  if (!intent) return null;
+  const focus = {
+    explore: 'Investigate and explain; do not implement changes unless the user also requests them.',
+    coding: input.mode === 'plan' ? 'Design the requested change without implementing it.' : 'Implement the requested change within current authorization; inspect and verify the affected behavior.',
+    review: 'Report actionable findings with file references; do not change code merely to perform a review.',
+    plan: 'Produce a decision-complete proposal proportional to the task; planning alone is not execution authorization.',
+  }[intent];
+  return `## Request focus\n${focus}\nThis routing hint is advisory; the actual user request and runtime mode take precedence.`;
 }

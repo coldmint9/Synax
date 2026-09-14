@@ -61,7 +61,7 @@ const appendEntrySchema = z.object({
     .enum(['text', 'code', 'tool_call', 'tool_result', 'markdown'])
     .default('text'),
   tokenEstimate: z.number().int().nonnegative().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   parentEntryId: z.string().optional(),
 });
 
@@ -73,7 +73,7 @@ const entryListQuerySchema = z.object({
 
 const updateEntrySchema = z.object({
   content: z.string().max(100_000).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const createSnapshotSchema = z.object({
@@ -124,7 +124,7 @@ const updateMemorySchema = z.object({
   memoryType: z
     .enum(['pattern', 'decision', 'preference', 'convention', 'insight', 'risk'])
     .optional(),
-  references: z.record(z.unknown()).optional(),
+  references: z.record(z.string(), z.unknown()).optional(),
 });
 
 const createLinkSchema = z.object({

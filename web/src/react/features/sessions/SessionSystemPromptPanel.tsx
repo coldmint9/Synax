@@ -12,10 +12,8 @@ export const SessionSystemPromptPanel = memo(function SessionSystemPromptPanel()
   }))
   const [open, setOpen] = useState(false)
   // Prefer the dynamically built system prompt, fall back to the initial session prompt
-  const prompt =
-    (session?.sessionMetadata as Record<string, unknown> | null)?.latestSystemPrompt ??
-    session?.prompt ??
-    ''
+  const latestPrompt = session?.sessionMetadata?.latestSystemPrompt
+  const prompt = typeof latestPrompt === 'string' ? latestPrompt : session?.prompt ?? ''
 
   useEffect(() => {
     setOpen(false)

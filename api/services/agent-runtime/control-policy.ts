@@ -1,3 +1,4 @@
+import { workRuntime } from './work-runtime.js';
 import type { AgentSession, RegisteredTool } from "./contracts.js";
 import { agentRuntimeStore as store } from "./session-store.js";
 import {
@@ -11,8 +12,10 @@ export const CONTROL_TOOLS = new Set([
   "plan.execute",
   "mode.switch",
   "goal.finish",
+  "work.checkpoint",
 ]);
 const PLAN_TOOLS = new Set([
+  "context.read",
   "file.read",
   "file.list",
   "file.glob",
@@ -37,6 +40,7 @@ const PLAN_TOOLS = new Set([
   "plan.execute",
   "mode.switch",
   "goal.finish",
+  "work.checkpoint",
   "tools.invalid",
 ]);
 export function controlRoot(session: AgentSession): AgentSession {
@@ -54,12 +58,14 @@ export function controlToolError(
   tool: Pick<RegisteredTool, "id">,
   args?: unknown,
 ): string | null {
+  const workError = workRuntime.toolError(session.id, tool.id, args);
+  if (workError) return workError;
   const root = controlRoot(session);
   if (!isSynaxProfile(root.profileId))
-    return CONTROL_TOOLS.has(tool.id)
+    return CONTROL_TOOLS.has(tool.id) && tool.id !== "work.checkpoint"
       ? "Human/goal controls are only available in native Synax sessions."
       : null;
-  if (session.parentSessionId && CONTROL_TOOLS.has(tool.id))
+  if (session.parentSessionId && CONTROL_TOOLS.has(tool.id) && tool.id !== "work.checkpoint")
     return "Return questions or blockers to the primary agent instead.";
   const mode = inferSynaxSessionMode(root);
   if (
@@ -71,24 +77,21 @@ export function controlToolError(
     return "The controlling session is not running; execution is suspended.";
   const plan = root.sessionMetadata?.plan as { status?: string } | undefined;
   const planning =
-    mode === "plan" || (mode === "goal" && plan?.status !== "approved");
+    mode === "plan" || (mode === "goal" && plan?.status !== "approved") || (Boolean(plan) && plan?.status !== "approved");
   if (planning && !PLAN_TOOLS.has(tool.id))
     return "Planning is read-only. Submit a plan with plan.propose and wait for the user's execute choice or a later explicit execution instruction.";
   if (
-    mode === "goal" &&
     plan?.status === "approved" &&
     tool.id === "task.create"
   )
     return "Plan structure is frozen. Propose a revised plan before adding tasks.";
   if (
-    mode === "goal" &&
     plan?.status === "approved" &&
     tool.id === "task.update" &&
     (args as { status?: string } | undefined)?.status === "deleted"
   )
     return "Approved plan tasks cannot be deleted; propose a revised plan.";
   if (
-    mode === "goal" &&
     plan?.status === "approved" &&
     tool.id === "task.update" &&
     args &&

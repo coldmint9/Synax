@@ -1,3 +1,6 @@
+import { runCoordinator } from './run-coordinator.js';
+import { getBackendAdapter } from './backends/backend-registry.js';
+import { resolveBackendModel, resolveSessionBackend } from './backends/backend-binding.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { interactionService } from './interaction-service.js';
 import { getRawSqlite } from '../../db/index.js';
@@ -7,7 +10,6 @@ import { agentLoopRuntime } from './loop-runtime.js';
 import { sessionProcessManager } from './session-process-manager.js';
 import { maybeScheduleSessionTitleFromStreamChunk, ensureSessionTitleGenerated } from './session-title-service.js';
 import type { AgentSessionStreamMode } from '../../lib/ipc/agent-session-protocol.js';
-import { forwardChunkToLiveBus } from '../../lib/ipc/agent-session-protocol.js';
 import { acpSessionEngine, shouldUseAcpEngine } from './acp-engine/index.js';
 import { agentRuntimeStore } from './session-store.js';
 
@@ -41,25 +43,6 @@ export function assertCanStartAgentSessionProcess(sessionId?: string): void {
   sessionProcessManager.assertCanSpawnChild(sessionId);
 }
 
-async function* inProcessStream(
-  sessionId: string,
-  mode: AgentSessionStreamMode,
-  input: StreamTurnRequest,
-  abortSignal?: AbortSignal,
-): AsyncGenerator<AgentRunStreamChunk> {
-  switch (mode) {
-    case 'turn':
-      yield* agentLoopRuntime.streamRun(sessionId, input, abortSignal, false);
-      return;
-    case 'continue':
-      yield* agentLoopRuntime.streamContinue(sessionId, input, abortSignal);
-      return;
-    case 'resume':
-      yield* agentLoopRuntime.streamRun(sessionId, input, abortSignal, true);
-      return;
-  }
-}
-
 async function* withSessionTitleScheduling(
   sessionId: string,
   source: AsyncGenerator<AgentRunStreamChunk>,
@@ -74,61 +57,29 @@ async function* withSessionTitleScheduling(
   }
 }
 
-async function* acpEngineStream(
-  sessionId: string,
-  mode: AgentSessionStreamMode,
-  input: StreamTurnRequest,
-  abortSignal?: AbortSignal,
-): AsyncGenerator<AgentRunStreamChunk> {
-  for await (const chunk of acpSessionEngine.stream(sessionId, mode, input, abortSignal)) {
-    forwardChunkToLiveBus(sessionId, chunk);
-    yield chunk;
-  }
-}
-
 export async function* streamAgentSession(
   sessionId: string,
   mode: AgentSessionStreamMode,
   input: StreamTurnRequest,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<AgentRunStreamChunk> {
-  if (shouldUseAcpEngine(sessionId, input)) {
-    const metadata = agentRuntimeStore.getSession(sessionId).sessionMetadata;
-    if (metadata?.mode === 'plan' || (metadata?.mode === 'goal' && metadata.goal)) throw new AgentValidationError('Plan and goal controls require the native Synax engine. Switch to ordinary mode before using ACP.');
-    yield* withSessionTitleScheduling(sessionId, acpEngineStream(sessionId, mode, input, abortSignal));
-    return;
+  const binding = resolveSessionBackend(sessionId);
+  const model = resolveBackendModel(sessionId, input);
+  const metadata = agentRuntimeStore.getSession(sessionId).sessionMetadata;
+  if (binding.id !== 'native' && (metadata?.mode === 'plan' || (metadata?.mode === 'goal' && metadata.goal))) {
+    throw new AgentValidationError('Plan and goal controls require the native Synax engine. Start a Native session to use them.');
   }
-  if (agentRuntimeStore.getSession(sessionId).sessionMetadata?.mode === 'goal') {
-    const source = useInProcessAgentSessions() ? inProcessStream(sessionId,mode,input) : sessionProcessManager.streamSession(sessionId,mode,input);
-    yield* observeBackgroundRun(withSessionTitleScheduling(sessionId,source),abortSignal);
-    return;
+  const backend = getBackendAdapter(binding.id);
+  const request = model ? { ...input, model } : input;
+  if (binding.id === 'native' && metadata?.mode === 'goal') {
+    yield* observeBackgroundRun(withSessionTitleScheduling(sessionId, backend.stream(sessionId, mode, request)), abortSignal);
+  } else {
+    yield* withSessionTitleScheduling(sessionId, backend.stream(sessionId, mode, request, abortSignal));
   }
-  if (useInProcessAgentSessions()) {
-    yield* withSessionTitleScheduling(sessionId, inProcessStream(sessionId, mode, input, abortSignal));
-    return;
-  }
-  yield* withSessionTitleScheduling(sessionId, sessionProcessManager.streamSession(sessionId, mode, input, abortSignal));
 }
 
-const backgroundResumes = new Set<string>();
 export function resumeAgentSessionInBackground(sessionId: string, input: StreamTurnRequest = {}): void {
-  if (backgroundResumes.has(sessionId)) return;
-  backgroundResumes.add(sessionId);
-  void (async () => {
-    try {
-      for await (const _chunk of streamAgentSession(sessionId, 'resume', input)) {
-        // Background resumes persist into the runtime store and event log.
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      agentEventService.append({
-        sessionId,
-        type: 'run_failed',
-        summary: message,
-        payload: { source: 'permission_reply_resume', error: message },
-      });
-    } finally { backgroundResumes.delete(sessionId); }
-  })();
+  runCoordinator.resume(sessionId, input);
 }
 
 export async function interruptAgentSessionsAndWait(
@@ -137,6 +88,8 @@ export async function interruptAgentSessionsAndWait(
 ): Promise<void> {
   const ids = [...new Set([...sessionIds].flatMap(id => agentRuntimeStore.tryGetSession(id) ? agentRuntimeStore.listSessionTree(id).map(s=>s.id) : [id]))];
   for (const sessionId of ids) {
+    if (!agentRuntimeStore.tryGetSession(sessionId)) continue;
+    await runCoordinator.interrupt(sessionId, reason);
     if (acpSessionEngine.usesAcpSession(sessionId)) {
       await acpSessionEngine.interruptSession(sessionId, reason);
     }

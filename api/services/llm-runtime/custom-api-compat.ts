@@ -1,3 +1,4 @@
+import type { JSONObject, SharedV3ProviderOptions } from '@ai-sdk/provider'
 import type { ResolvedModelSelection, ResolvedProviderConfig, RuntimeProvider } from './types.js'
 
 /**
@@ -80,9 +81,9 @@ export function buildOpenAICompatibleClientSettings(
 
 /** Merge providerOptions layers (later wins per key). */
 export function mergeProviderOptions(
-  ...layers: Array<Record<string, Record<string, unknown>> | undefined>
-): Record<string, Record<string, unknown>> {
-  const merged: Record<string, Record<string, unknown>> = {}
+  ...layers: Array<SharedV3ProviderOptions | undefined>
+): SharedV3ProviderOptions {
+  const merged: SharedV3ProviderOptions = {}
   for (const layer of layers) {
     if (!layer) continue
     for (const [namespace, values] of Object.entries(layer)) {
@@ -102,8 +103,8 @@ export function mergeProviderOptions(
  */
 export function buildOpenAICompatibleProviderOptions(
   namespace: string,
-  bodyFields: Record<string, unknown>,
-): Record<string, Record<string, unknown>> {
+  bodyFields: JSONObject,
+): SharedV3ProviderOptions {
   return { [namespace]: bodyFields }
 }
 

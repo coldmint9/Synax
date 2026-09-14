@@ -1,3 +1,4 @@
+import { withinExecutionContext } from "../lib/execution-context.js";
 import { terminateOwnedCommands } from "../services/agent-runtime/tools/exec-async.js";
 import { logger } from "../lib/logger.js";
 import {
@@ -39,12 +40,12 @@ async function runStream(
   const abortController = new AbortController();
   activeStreams.set(streamId, abortController);
   try {
-    for await (const chunk of pickGenerator(
+    for await (const chunk of withinExecutionContext(input.executionContext, pickGenerator(
       mode,
       sessionId,
       input,
       abortController.signal,
-    )) {
+    ))) {
       sendAgentSessionToParent({
         type: "stream:chunk",
         sessionId,
@@ -87,8 +88,15 @@ function main(): void {
     return;
   }
 
-  setSessionWorkspaceRoot(init.sessionId, init.workDir);
-  bootstrapAgentChildForSession(init.sessionId);
+  let initialized = false;
+  const initialize = () => {
+    if (initialized || !process.connected) return;
+    initialized = true;
+    setSessionWorkspaceRoot(init.sessionId, init.workDir);
+    bootstrapAgentChildForSession(init.sessionId);
+    sendAgentSessionToParent({ type: 'session:ready', sessionId: init.sessionId });
+    logger.info({ sessionId: init.sessionId, pid: process.pid }, '[agent-session-runner] ready');
+  };
 
   let stopping = false;
   const shutdown = async (reason: string) => {
@@ -113,6 +121,8 @@ function main(): void {
   process.on("message", (message: unknown) => {
     if (stopping || !isAgentSessionParentMessage(message)) return;
 
+    if (message.type === 'session:initialize') { initialize(); return; }
+    if (!initialized) return;
     if (message.type === "stream:start") {
       const task = runStream(
         init.sessionId,
@@ -140,14 +150,10 @@ function main(): void {
     }
   });
 
-  sendAgentSessionToParent({
-    type: "session:ready",
-    sessionId: init.sessionId,
-  });
-  logger.info(
-    { sessionId: init.sessionId, pid: process.pid },
-    "[agent-session-runner] ready",
-  );
+  // Retain compatibility with an already-running pre-upgrade parent.
+  if (process.env.SYNAX_RECORDED_START !== '1') initialize();
+  else sendAgentSessionToParent({ type: 'session:booted', sessionId: init.sessionId });
+  if (!process.connected) void shutdown('Parent disconnected before initialization.');
 }
 
 setImmediate(main);

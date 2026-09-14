@@ -94,7 +94,7 @@ export default function AgentLoopTestPage() {
       sessionIdRef.current = activeSession.id
       // Open panel in agentSessionStore to load data and enable SSE rendering
       sessionStore.openPanel(activeSession.id)
-      await agentRuntimeApi.streamTurn(activeSession.id, { message: text, locale: useShellStore.getState().locale }, (raw) => {
+      await agentRuntimeApi.streamTurn(activeSession.id, { message: text, locale: useShellStore.getState().preferences.locale }, (raw) => {
         const chunk = raw as StreamChunk
         if (chunk.event) {
           setEvents((current) => [...current, chunk.event!])

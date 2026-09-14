@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_ROOT } from '../../../lib/env.js';
+import { agentRuntimeStore } from '../session-store.js';
 import { sandboxPolicy } from '../sandbox/index.js';
 
 const SECRET_SEGMENTS = new Set(['.env', '.ssh', '.git', 'node_modules', 'dist', 'build']);
@@ -61,7 +62,25 @@ export function resolveProjectWorkDir(projectId: string): string {
 
 /** Prefer an explicit session workspace root, then the project's registered path. */
 export function resolveSessionWorkDir(sessionId: string, projectId: string): string {
-  return tryGetSessionWorkspaceRoot(sessionId) ?? resolveProjectWorkDir(projectId);
+  const binding = agentRuntimeStore.tryGetSession(sessionId)?.sessionMetadata?.backend as { workDir?: string | null } | undefined;
+  return binding?.workDir ?? tryGetSessionWorkspaceRoot(sessionId) ?? resolveProjectWorkDir(projectId);
+}
+
+/** Freeze the real execution root before accepting work; never infer it from server cwd. */
+export function bindSessionWorkDir(sessionId: string): string {
+  const session = agentRuntimeStore.getSession(sessionId);
+  const binding = session.sessionMetadata?.backend as { workDir?: string | null } | undefined;
+  const registered = readProjectWorkDirEntriesSafely().find((entry) => entry.id === session.projectId)?.source?.localPath;
+  const requested = binding?.workDir ?? tryGetSessionWorkspaceRoot(sessionId) ?? registered;
+  if (!requested) throw new Error('The session has no registered workspace. Select an existing working directory before executing.');
+  const root = fs.realpathSync(resolveWorkspaceRoot(requested));
+  setSessionWorkspaceRoot(sessionId, root);
+  agentRuntimeStore.updateSessionMetadata(sessionId, { backend: { ...binding, workDir: root } });
+  return root;
+}
+
+function readProjectWorkDirEntriesSafely(): ProjectWorkDirEntry[] {
+  try { return readProjectWorkDirEntries(); } catch { return []; }
 }
 
 export function clearSessionWorkspaceRoot(sessionId: string): void {

@@ -1,12 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetAgentRuntimeFixtures } from '../../services/agent-runtime/__tests__/agent-runtime-fixtures.js';
 
 const mockCreateGatewayStream = vi.fn();
+const mockProviderCheck = vi.hoisted(() => vi.fn());
+// The model transport is mocked below; these route tests must not require real credentials.
+vi.mock('../../services/llm-runtime/provider-check.js', () => ({
+  assertLlmProviderConfigured: mockProviderCheck,
+}));
 
-vi.mock('../../services/llm-runtime/stream.js', () => ({
+
+vi.mock('../../services/llm-runtime/gateway.js', () => ({
   createGatewayStream: (...args: unknown[]) => mockCreateGatewayStream(...args),
+  resolveGatewaySelection: vi.fn().mockRejectedValue(new Error('Mock transport has no live provider.')),
 }));
 
 type MockStreamEvent =
@@ -45,7 +52,7 @@ function makeToolStep(input: {
   ]);
 }
 
-async function waitFor(check: () => Promise<boolean>, attempts = 25, delayMs = 10): Promise<void> {
+async function waitFor(check: () => Promise<boolean>, attempts = 200, delayMs = 10): Promise<void> {
   for (let index = 0; index < attempts; index += 1) {
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -54,10 +61,24 @@ async function waitFor(check: () => Promise<boolean>, attempts = 25, delayMs = 1
 }
 
 describe('agent runtime routes', () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network is forbidden in this mocked route test.')));
     resetAgentRuntimeFixtures();
     fs.rmSync(path.resolve('tmp/agent-runtime-route-resume.txt'), { force: true });
+  });
+
+  it('creates an external backend session without requiring Native API credentials', async () => {
+    const { agentRuntimeRoutes } = await import('../agent-runtime.js');
+    const response = await agentRuntimeRoutes.request('http://localhost/sessions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p1', profileId: 'explorer', prompt: 'Explore', backendId: 'codex-acp' }),
+    });
+    expect(response.status).toBe(201);
+    expect(mockProviderCheck).not.toHaveBeenCalled();
+    expect((await response.json() as { session: { sessionMetadata: unknown } }).session.sessionMetadata)
+      .toMatchObject({ backend: { id: 'codex-acp' } });
   });
 
   it('streams loop-runtime SSE events and persists assistant output', async () => {
@@ -69,10 +90,12 @@ describe('agent runtime routes', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         projectId: 'p1',
+        workDir: process.cwd(),
         profileId: 'explorer',
         prompt: 'Explore runtime behavior',
       }),
     });
+    expect(created.status).toBe(201);
     const payload = await created.json() as { session: { id: string } };
 
     const stream = await agentRuntimeRoutes.request(`http://localhost/sessions/${payload.session.id}/turns/stream`, {
@@ -106,6 +129,13 @@ describe('agent runtime routes', () => {
           args: { path: writePath, content: 'route resume' },
         }),
       )
+      .mockResolvedValueOnce(makeToolStep({
+        toolName: 'verification_run', toolCallId: 'route-verify',
+        args: {
+          command: `node -e "if(require('fs').readFileSync('${writePath}','utf8')!=='route resume')process.exit(1)"`,
+          criterion: 'Requested behavior', purpose: 'Verify the resumed file write', scope: [writePath],
+        },
+      }))
       .mockResolvedValueOnce(makeTextStep('Write finished.'));
     const { agentRuntimeRoutes } = await import('../agent-runtime.js');
 
@@ -114,10 +144,12 @@ describe('agent runtime routes', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         projectId: 'p1',
+        workDir: process.cwd(),
         profileId: 'executor',
         prompt: 'Write a file',
       }),
     });
+    expect(created.status).toBe(201);
     const payload = await created.json() as { session: { id: string } };
 
     const firstStream = await agentRuntimeRoutes.request(`http://localhost/sessions/${payload.session.id}/turns/stream`, {
@@ -141,6 +173,32 @@ describe('agent runtime routes', () => {
       },
     );
     expect(replyResponse.status).toBe(200);
+
+    // Native Work requires a real verification receipt after an edit; approving
+    // the write must not implicitly approve the verification shell command.
+    let verificationPermissionId: string | undefined;
+    await waitFor(async () => {
+      const response = await agentRuntimeRoutes.request(`http://localhost/sessions/${payload.session.id}/permissions`);
+      const body = await response.json() as { items: Array<{ id: string; resolvedAt: string | null; action: string }> };
+      verificationPermissionId = body.items.find(item => item.id !== permissionId && item.action === 'ask' && !item.resolvedAt)?.id;
+      return Boolean(verificationPermissionId);
+    });
+    const verificationReply = await agentRuntimeRoutes.request(
+      `http://localhost/sessions/${payload.session.id}/permissions/${verificationPermissionId}/reply`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reply: 'once' }) },
+    );
+    expect(verificationReply.status).toBe(200);
+    const replay = await agentRuntimeRoutes.request(
+      `http://localhost/sessions/${payload.session.id}/permissions/${permissionId}/reply`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reply: 'once' }) },
+    );
+    expect(replay.status).toBe(200);
+    const conflict = await agentRuntimeRoutes.request(
+      `http://localhost/sessions/${payload.session.id}/permissions/${permissionId}/reply`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reply: 'always' }) },
+    );
+    expect(conflict.status).toBe(409);
+
 
     await waitFor(async () => {
       const sessionResponse = await agentRuntimeRoutes.request(`http://localhost/sessions/${payload.session.id}`);

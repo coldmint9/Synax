@@ -1,25 +1,30 @@
+import { recordRuntimeStream } from '../../services/agent-runtime/runtime-stream-writer.js';
 import type { ChildProcess } from 'node:child_process';
 import { sessionProcessManager } from '../../services/agent-runtime/session-process-manager.js';
 import { logger } from '../logger.js';
 import type { WikiAgentChildToParentMessage } from './protocol.js';
 
-const activeRequests = new Map<string, AbortController>();
+const activeRequests = new Map<string, { controller: AbortController; childPid: number | undefined }>();
 
 export function handleWikiAgentChildMessage(
   wikiChild: ChildProcess,
   message: WikiAgentChildToParentMessage,
 ): void {
   if (message.type === 'agent:cancel') {
-    const controller = activeRequests.get(message.requestId);
-    if (controller && !controller.signal.aborted) {
-      controller.abort(new Error(message.reason ?? 'Wiki agent request cancelled.'));
+    const owned = activeRequests.get(message.requestId);
+    if (owned && owned.childPid === wikiChild.pid && !owned.controller.signal.aborted) {
+      owned.controller.abort(new Error(message.reason ?? 'Wiki agent request cancelled.'));
     }
-    activeRequests.delete(message.requestId);
     return;
   }
 
+  if (activeRequests.has(message.requestId)) {
+    if (wikiChild.connected) wikiChild.send({ type: 'agent:error', requestId: message.requestId, error: 'Request ID is already active.' });
+    return;
+  }
   const abortController = new AbortController();
-  activeRequests.set(message.requestId, abortController);
+  const owned = { controller: abortController, childPid: wikiChild.pid };
+  activeRequests.set(message.requestId, owned);
 
   logger.info(
     {
@@ -33,12 +38,12 @@ export function handleWikiAgentChildMessage(
 
   void (async () => {
     try {
-      for await (const chunk of sessionProcessManager.streamSession(
+      for await (const chunk of recordRuntimeStream(message.sessionId, sessionProcessManager.streamSession(
         message.sessionId,
         message.mode,
         message.input,
         abortController.signal,
-      )) {
+      ))) {
         if (!wikiChild.connected) break;
         wikiChild.send({
           type: 'agent:chunk',
@@ -63,18 +68,16 @@ export function handleWikiAgentChildMessage(
         '[wiki-agent] request failed',
       );
     } finally {
-      activeRequests.delete(message.requestId);
+      if (activeRequests.get(message.requestId) === owned) activeRequests.delete(message.requestId);
     }
   })();
 }
 
 export function cancelWikiAgentRequestsForChild(wikiChildPid: number | undefined): void {
-  if (activeRequests.size === 0) return;
-  logger.warn({ wikiChildPid, activeCount: activeRequests.size }, '[wiki-agent] cancelling pending requests');
-  for (const [requestId, controller] of activeRequests) {
-    if (!controller.signal.aborted) {
-      controller.abort(new Error('Wiki job child process exited.'));
+  if (wikiChildPid === undefined) return;
+  for (const owned of activeRequests.values()) {
+    if (owned.childPid === wikiChildPid && !owned.controller.signal.aborted) {
+      owned.controller.abort(new Error('Wiki job child process exited.'));
     }
-    activeRequests.delete(requestId);
   }
 }

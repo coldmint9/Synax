@@ -12,7 +12,7 @@ import {
 } from './resolver.js'
 import type { LlmGatewayRequest, ResolvedModelSelection, ValidateLlmRequest } from './types.js'
 import { executePipeline, hasConfiguredApiKey, missingApiKeyMessage } from './pipeline.js'
-import type { ExecutionMode } from './pipeline.js'
+import type { ExecutionMode, GatewayStreamResult } from './pipeline.js'
 import { withRetry } from './middleware/retry.js'
 import { withRateLimit, withStreamRateLimit } from './middleware/rate-limiter.js'
 import { instantiateProvider, selectLanguageModel } from './providers/provider-registry.js'
@@ -44,7 +44,7 @@ export async function resolveGatewaySelection(
 export async function createGatewayStream(
   request: LlmGatewayRequest,
   abortSignal?: AbortSignal,
-): Promise<unknown> {
+): Promise<GatewayStreamResult> {
   const selection = await resolveGatewaySelection(request)
   return withRetry(() => withStreamRateLimit(selection.providerId, selection.modelId, request.maxTokens ?? 4096, () => executePipeline(request, selection, {
     kind: 'stream',

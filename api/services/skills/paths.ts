@@ -1,12 +1,11 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { runtimeAsset } from '../../lib/runtime-paths.js';
 import os from 'node:os';
 import { DATA_ROOT } from '../../lib/env.js';
 
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 export function resolveBuiltinSkillsRoot(): string {
-  return path.join(MODULE_DIR, '..', '..', 'skills', 'builtin');
+  return runtimeAsset(import.meta.url, '../../skills/builtin', 'skills/builtin');
 }
 
 export function resolveGlobalSkillsRoot(): string {

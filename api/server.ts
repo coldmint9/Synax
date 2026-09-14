@@ -1,9 +1,16 @@
+import type { Server } from 'node:http';
+import { closeDb } from './db/index.js';
+import { stopHostProcesses } from './services/agent-runtime/process-ownership.js';
+import { acquireRuntimeHost } from './services/agent-runtime/runtime-host.js';
+import { recoverRuntime } from './services/agent-runtime/runtime-recovery.js';
+import { runCoordinator } from './services/agent-runtime/run-coordinator.js';
+import path from 'node:path';
+import { installRuntimeAccess } from './middleware/runtime-access.js';
 import { startInteractionRecovery } from './services/agent-runtime/agent-stream-proxy.js';
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { API_SESSION_LOG_FILE, logger as pinoLogger } from "./lib/logger.js";
-import { PORT } from "./lib/env.js";
+import { PORT, DATA_ROOT } from "./lib/env.js";
 import { acpRoutes } from "./routes/acp.js";
 import { healthRoutes } from "./routes/health.js";
 import { projectRoutes } from "./routes/projects.js";
@@ -33,7 +40,11 @@ import { startPermissionTimeoutSweeper } from "./services/agent-runtime/permissi
 export const app = new Hono();
 
 // --- 中间件 ---
-app.use("*", cors());
+installRuntimeAccess(app, {
+  dataRoot: DATA_ROOT,
+  webOrigins: [`http://localhost:${process.env.WEB_PORT ?? '5173'}`, `http://127.0.0.1:${process.env.WEB_PORT ?? '5173'}`],
+  trustedHosts: process.env.SYNAX_TRUSTED_HOSTS?.split(',').map(value => value.trim()).filter(Boolean),
+});
 
 // 请求日志
 app.use("*", async (c, next) => {
@@ -63,11 +74,16 @@ app.route("/api/logs", logRoutes);
 app.route("/api/health", healthRoutes);
 app.route("/api/prototypes/tree-embedding-bench", treeEmbeddingBenchRoutes);
 
+const runtimeHost = acquireRuntimeHost(DATA_ROOT);
+process.env.SYNAX_RUNTIME_HOST_ID = runtimeHost.hostId;
+process.env.SYNAX_RUNTIME_DATA_ROOT = path.resolve(DATA_ROOT);
+
 // --- 初始化上下文数据库（提前触发 WAL 模式与迁移执行） ---
 try {
   getDb();
 } catch (err) {
   pinoLogger.error({ err }, "failed to initialize context db");
+  throw err;
 }
 
 // --- 提前注册 wiki / plan profiles，确保服务重启后能恢复 session 并响应 skills 查询 ---
@@ -78,16 +94,12 @@ ensureSynaxAgentRegistered();
 ensureLegacyGoalProfileRegistered();
 registerSessionTitleHooks();
 
-// --- 启动时恢复孤儿 running session ---
-try {
-  const recovered = agentRuntimeStore.recoverOrphanedSessions();
-  if (recovered > 0) {
-    pinoLogger.warn({ count: recovered }, "recovered orphaned running sessions on startup");
-  }
-} catch (err) {
-  pinoLogger.error({ err }, "failed to recover orphaned sessions");
-}
+let httpServer: Server | undefined;
+let shuttingDown = false;
 
+async function startRuntime(): Promise<void> {
+  const recovery = await recoverRuntime(runtimeHost.hostId);
+  if (recovery.reviewed) pinoLogger.warn({ count: recovery.reviewed }, 'interrupted executions require recovery');
 // --- 启动时恢复 wiki 文档写入队列（先于 snapshot 恢复，避免误标记 writing 为 failed）---
 wikiWriteQueue.recoverOrphaned().then(async ({ batches, items, interruptedSnapshotIds }) => {
   if (items > 0) {
@@ -123,12 +135,17 @@ rebuildWikiFtsIndex().catch((err) => {
 startPermissionTimeoutSweeper();
 startInteractionRecovery();
 
+
+  for (const sessionId of recovery.resumable) runCoordinator.resume(sessionId);
+  if (!shuttingDown) startServer();
+}
+
 function startServer(): void {
-  serve({
+  httpServer = serve({
     fetch: app.fetch,
     port: PORT,
     hostname: "127.0.0.1",
-  });
+  }) as Server;
 
   pinoLogger.info(
     { logFile: API_SESSION_LOG_FILE },
@@ -136,5 +153,21 @@ function startServer(): void {
   );
 }
 
+async function shutdownRuntime(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  httpServer?.closeAllConnections(); httpServer?.close();
+  let failed = false;
+  for (const id of runCoordinator.activeSessionIds()) {
+    try { await runCoordinator.interrupt(id, 'Runtime host is shutting down.'); }
+    catch (error) { failed = true; pinoLogger.error({ id, error }, 'runtime shutdown unconfirmed'); }
+  }
+  const unresolved = await stopHostProcesses(runtimeHost.hostId);
+  if (unresolved.length) { failed = true; pinoLogger.error({ count: unresolved.length }, 'owned processes require recovery'); }
+  runtimeHost.release(); closeDb(); process.exit(failed ? 1 : 0);
+}
+process.on('SIGINT', () => { void shutdownRuntime(); });
+process.on('SIGTERM', () => { void shutdownRuntime(); });
+
 // --- 启动服务 ---
-startServer();
+void startRuntime().catch(error => { pinoLogger.error({ error }, 'runtime startup failed'); runtimeHost.release(); process.exitCode = 1; });

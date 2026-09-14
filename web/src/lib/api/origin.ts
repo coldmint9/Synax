@@ -1,3 +1,4 @@
+import { ensureRuntimeAuthentication, runtimeAuthHeaders, runtimeAuthEnabled, resetRuntimeAuthentication, notifyRuntimeAuthenticationRequired } from './runtimeAuth'
 import {
   createOfflineError,
   probeApiHealth,
@@ -28,21 +29,31 @@ export function applyConnectivityFromResponse(resp: Response): void {
   }
 }
 
-export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
-  if (useApiConnectivityStore.getState().shouldSkipRequest()) {
-    return Promise.reject(createOfflineError())
+export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  if (useApiConnectivityStore.getState().shouldSkipRequest()) throw createOfflineError()
+  const origin = getApiOrigin()
+  let url = `${origin}${input}`
+  if (/^https?:/.test(input)) {
+    const expected = origin || (typeof window !== 'undefined' ? window.location.origin : '')
+    if (!expected || new URL(input).origin !== new URL(expected).origin) throw new Error('Refusing to send runtime credentials to another origin.')
+    url = input
+  } else if (!input.startsWith('/api/') && input !== '/api') throw new Error('Runtime requests must target the API.')
+  await ensureRuntimeAuthentication()
+  const send = () => {
+    const headers = new Headers(init?.headers)
+    for (const [name, value] of Object.entries(runtimeAuthHeaders())) headers.set(name, value)
+    return fetch(url, { ...init, credentials: 'include', headers })
   }
-
-  return fetch(`${getApiOrigin()}${input}`, init).then(
-    (resp) => {
-      applyConnectivityFromResponse(resp)
-      return resp
-    },
-    (err) => {
-      useApiConnectivityStore.getState().markFailure()
-      throw err
-    },
-  )
+  try {
+    let response = await send()
+    if (response.status === 401 && runtimeAuthEnabled()) {
+      resetRuntimeAuthentication()
+      try { await ensureRuntimeAuthentication(); response = await send() }
+      catch { notifyRuntimeAuthenticationRequired() }
+    }
+    applyConnectivityFromResponse(response)
+    return response
+  } catch (error) { useApiConnectivityStore.getState().markFailure(); throw error }
 }
 
 export interface ApiRequestOptions extends RequestInit {

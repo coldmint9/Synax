@@ -1,8 +1,9 @@
+import { prepareOwnedProcess, recordOwnedPid, releaseOwnedProcess } from './process-ownership.js';
 import { fork, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { runtimeAsset } from '../../lib/runtime-paths.js';
 import {
   isAgentSessionChildMessage,
   forwardChunkToLiveBus,
@@ -75,10 +76,9 @@ interface SessionChildState {
 }
 
 function resolveAgentSessionRunnerPath(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const tsRunner = path.resolve(here, '../../workers/agent-session-runner.ts');
-  if (fs.existsSync(tsRunner)) return tsRunner;
-  return path.resolve(here, '../../../server-dist/workers/agent-session-runner.cjs');
+  const runner = runtimeAsset(import.meta.url, '../../workers/agent-session-runner.ts', 'workers/agent-session-runner.cjs');
+  if (!fs.existsSync(runner)) throw new Error('The agent-session-runner executable is missing from this Runtime build.');
+  return runner;
 }
 
 class SessionProcessManager {
@@ -283,16 +283,23 @@ class SessionProcessManager {
 
     const runnerPath = resolveAgentSessionRunnerPath();
     const isTs = runnerPath.endsWith('.ts');
+    const processTicket = prepareOwnedProcess('native-agent-worker', true);
     const child = fork(runnerPath, [], {
+      detached: process.platform !== 'win32',
       env: {
         ...process.env,
         SYNAX_AGENT_SESSION_CHILD: '1',
+        SYNAX_PROCESS_OWNER: processTicket.id,
+        SYNAX_RECORDED_START: '1',
         AGENT_SESSION_INIT: JSON.stringify(init),
       },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       execArgv: isTs ? ['--import', 'tsx/esm'] : [],
     });
 
+    recordOwnedPid(processTicket.id, child.pid);
+    child.once('close', () => releaseOwnedProcess(processTicket.id));
+    child.once('error', () => releaseOwnedProcess(processTicket.id));
     const state: SessionChildState = {
       sessionId,
       child,
@@ -308,6 +315,10 @@ class SessionProcessManager {
     });
 
     child.on('message', (message: unknown) => {
+      if (isAgentSessionChildMessage(message) && message.type === 'session:booted') {
+        child.send?.({ type: 'session:initialize' });
+        return;
+      }
       this.handleChildMessage(sessionId, message);
     });
 
@@ -329,7 +340,9 @@ class SessionProcessManager {
       this.activeMainStreams.delete(sessionId);
     });
 
-    await this.waitForChildReady(sessionId);
+    const ready = this.waitForChildReady(sessionId);
+    child.send?.({ type: 'session:initialize' });
+    await ready;
     logger.info({ sessionId, pid: child.pid }, '[agent-session] child started');
     return state;
   }

@@ -101,6 +101,10 @@ describe('useAgentSessionStore.submitSessionDraft', () => {
 
     expect(agentRuntimeApi.createSession).toHaveBeenCalledWith({
       projectId: 'project-a',
+      backendId: 'native',
+      model: undefined,
+      reasoningEffort: undefined,
+      mcpServerIds: undefined,
       profileId: 'synax',
       prompt: '## User Goal\nImprove auth\n\n## Wiki Context\n- Document ID: doc_1',
       skillIds: undefined,

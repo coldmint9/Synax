@@ -41,9 +41,7 @@ export class SynaxVariantRegistry {
     if (planner) {
       this.variants.set('planner', variantFromProfile('planner', planner, {
         loopHints: [
-          ...(planner.loopHints ?? []),
-          'Break the request into bounded goals and next actions before editing code.',
-          'Use task tools when decomposition needs to persist across steps.',
+          'Focus on decisions, constraints and acceptance criteria. Keep the proposal proportional to the task.',
         ],
       }));
     }
@@ -51,8 +49,7 @@ export class SynaxVariantRegistry {
     if (explorer) {
       this.variants.set('explorer', variantFromProfile('explorer', explorer, {
         loopHints: [
-          ...(explorer.loopHints ?? []),
-          'Exploration variant: delegate each discovery question via subagent.delegate(profileId: "explorer") so wiki-first research runs in an isolated child session.',
+          'Find the smallest evidence set that answers the question; distinguish observed facts from inference.',
         ],
         delegateProfileId: 'explorer',
       }));
@@ -61,9 +58,7 @@ export class SynaxVariantRegistry {
     if (reviewer) {
       this.variants.set('reviewer', variantFromProfile('reviewer', reviewer, {
         loopHints: [
-          ...(reviewer.loopHints ?? []),
-          'Focus on regressions, missing evidence, and acceptance criteria.',
-          'Delegate deep diff review via subagent.delegate(profileId: "reviewer") when needed.',
+          'Prioritize concrete regressions, missing evidence and acceptance risks; cite the affected code.',
         ],
         delegateProfileId: 'reviewer',
       }));

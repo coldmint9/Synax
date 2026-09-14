@@ -61,7 +61,7 @@ function makeDeps(behaviors: Record<string, {
 
   // Seed a parent session.
   sessions.set('parent', { id: 'parent', status: 'running', resultSummary: null, blockedReason: null });
-  return { loop: loop as never, sessions: sessionsRuntime as never, store: store as never };
+  return { loop: loop as never, sessions: sessionsRuntime as never, store: store as never, createSession: sessionsRuntime.create };
 }
 
 const spec = (label: string): SubagentSpec => ({ profileId: 'explorer', prompt: `explore ${label}`, label });
@@ -110,7 +110,7 @@ describe('subagent-orchestrator', () => {
   it('runChildToCompletion never throws on a hung child', async () => {
     vi.useFakeTimers();
     const deps = makeDeps({ 'child-1': { durationMs: 10_000_000 } });
-    deps.sessions.create({ profileId: 'explorer' }); // create child-1
+    deps.createSession({ profileId: 'explorer' }); // create child-1
     const promise = runChildToCompletion('child-1', spec('x'), { timeoutMs: 500 }, deps);
     await vi.advanceTimersByTimeAsync(1000);
     const result = await promise;

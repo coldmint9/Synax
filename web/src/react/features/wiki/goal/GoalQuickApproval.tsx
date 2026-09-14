@@ -10,11 +10,13 @@ interface ActionsProps {
   permissionId: string
   onReply: (permissionId: string, reply: 'once' | 'always' | 'reject') => void
   size?: 'mini' | 'strip'
+  allowedReplies?: unknown
 }
 
-export function GoalQuickApprovalActions({ permissionId, onReply, size = 'mini' }: ActionsProps) {
+export function GoalQuickApprovalActions({ permissionId, onReply, size = 'mini', allowedReplies }: ActionsProps) {
   const { t } = useLocale()
   const isMini = size === 'mini'
+  const supports = (reply: string) => !Array.isArray(allowedReplies) || allowedReplies.includes(reply)
 
   return (
     <div
@@ -23,15 +25,15 @@ export function GoalQuickApprovalActions({ permissionId, onReply, size = 'mini' 
       onClick={e => e.stopPropagation()}
       onKeyDown={e => e.stopPropagation()}
     >
-      <button
+      {supports('once') && <button
         type="button"
         className="goal-dock-approval-btn goal-dock-approval-btn--allow"
         aria-label={t('permAllowOnce')}
         onClick={() => onReply(permissionId, 'once')}
       >
         {isMini ? '✓' : t('goalPermAllowShort')}
-      </button>
-      {!isMini && (
+      </button>}
+      {!isMini && supports('always') && (
         <button
           type="button"
           className="goal-dock-approval-btn goal-dock-approval-btn--muted"
@@ -42,14 +44,14 @@ export function GoalQuickApprovalActions({ permissionId, onReply, size = 'mini' 
           {t('goalPermAlwaysShort')}
         </button>
       )}
-      <button
+      {supports('reject') && <button
         type="button"
         className="goal-dock-approval-btn goal-dock-approval-btn--deny"
         aria-label={t('permReject')}
         onClick={() => onReply(permissionId, 'reject')}
       >
         {isMini ? '×' : t('goalPermDenyShort')}
-      </button>
+      </button>}
     </div>
   )
 }
@@ -95,7 +97,7 @@ export function GoalQuickApproval({
           {label}
         </button>
       ) : labelNode}
-      <GoalQuickApprovalActions permissionId={permission.id} onReply={onReply} size={isMini ? 'mini' : 'strip'} />
+      <GoalQuickApprovalActions allowedReplies={permission.metadata?.allowedReplies} permissionId={permission.id} onReply={onReply} size={isMini ? 'mini' : 'strip'} />
     </div>
   )
 }

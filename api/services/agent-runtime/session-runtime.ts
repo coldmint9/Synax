@@ -1,3 +1,7 @@
+import { resolveSessionUserRequest } from './session-user-request.js';
+import { makeBackendBinding, validateBackendTurnInput } from './backends/backend-binding.js';
+import { resolveWorkspaceRoot } from './tools/workspace.js';
+import { workStore } from './work-store.js';
 import { interactionService } from './interaction-service.js';
 import { initializeGoal } from './goal-control.js';
 import type { AgentSession, CreateSessionRequest } from './contracts.js';
@@ -40,12 +44,16 @@ export class AgentSessionRuntime {
     );
 
     const parent = input.parentSessionId ? this.store.getSession(input.parentSessionId) : undefined;
+    validateBackendTurnInput(input.backendId ?? 'native', input);
     const profile = this.profiles.assertCanStart(input.profileId, { parentSessionId: input.parentSessionId });
     if (parent && parent.projectId !== input.projectId) {
       throw new AgentValidationError('Sub-session projectId must match parent session projectId.');
     }
+    if (input.backendId && input.backendId !== 'native' && (input.skillIds?.length || input.mcpServerIds?.length)) {
+      throw new AgentValidationError('Synax Skills/MCP selection is not yet supported by this backend. Configure native backend tools separately.');
+    }
     const createdAt = nowIso();
-    const projectMcpServerIds = input.mcpServerIds ?? (() => {
+    const projectMcpServerIds = input.backendId && input.backendId !== 'native' ? [] : input.mcpServerIds ?? (() => {
       try {
         return getProjectSettings(input.projectId).mcpServers
           .filter((server) => server.enabled !== false)
@@ -58,10 +66,13 @@ export class AgentSessionRuntime {
       permissionTier: input.permissionTier,
       permissionOverrides: input.permissionOverrides,
     });
+    delete sessionMetadata.runtimeControl;
+    sessionMetadata.backend = makeBackendBinding(input.backendId ?? 'native', input.model,
+      input.workDir ? resolveWorkspaceRoot(input.workDir) : null);
     if (!parent && (input.profileId === 'synax' || input.profileId === 'goal')) {
       delete sessionMetadata.plan;
       delete sessionMetadata.goal;
-      if (sessionMetadata.mode === 'goal') sessionMetadata.goal = initializeGoal(input.prompt);
+      if (sessionMetadata.mode === 'goal') sessionMetadata.goal = initializeGoal(resolveSessionUserRequest({ prompt: input.prompt, sessionMetadata }, input.prompt));
     }
     const sessionDraft: AgentSession = {
       id: makeRuntimeId('ars'),
@@ -145,6 +156,8 @@ export class AgentSessionRuntime {
   }
 
   cancel(sessionId: string): AgentSession {
+    const work = workStore.current(sessionId);
+    if (work && work.status !== 'completed') { work.status = 'cancelled'; work.reason = 'Stopped by user.'; workStore.save(work); }
     interactionService.cancel(sessionId);
     const existingGoal = this.store.getSession(sessionId).sessionMetadata?.goal;
     if (existingGoal && typeof existingGoal === 'object') this.store.updateSessionMetadata(sessionId, { goal: { ...existingGoal, status: 'cancelled', reason: 'Stopped by user.' } });

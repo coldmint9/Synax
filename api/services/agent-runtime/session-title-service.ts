@@ -1,3 +1,5 @@
+import { outsideExecutionContext } from '../../lib/execution-context.js';
+import { startAuxUsage, finishAuxUsage } from './usage-projection.js';
 import { logger } from '../../lib/logger.js';
 import { sessionHooks } from './session-hooks.js';
 import { generateGatewayTextResult } from '../llm-runtime/gateway.js';
@@ -52,7 +54,7 @@ function scheduleSessionTitleGeneration(
     titleGenerationQueued.add(sessionId);
     return;
   }
-  const task = runDeferredSessionTitleGeneration(sessionId, runId, trigger);
+  const task = outsideExecutionContext(() => runDeferredSessionTitleGeneration(sessionId, runId, trigger));
   titleGenerationInFlight.set(sessionId, task);
   void task.finally(() => {
     titleGenerationInFlight.delete(sessionId);
@@ -160,10 +162,12 @@ async function applyGeneratedSessionTitle(
     return;
   }
 
+  const current = agentRuntimeStore.tryGetSession(session.id);
+  if (!current || current.title !== session.title) return;
   agentRuntimeStore.updateSession(session.id, {
     title: resolved.title,
     updatedAt: nowIso(),
-    sessionMetadata: { ...(session.sessionMetadata ?? {}), titleSummarized: true },
+    sessionMetadata: { ...(current.sessionMetadata ?? {}), titleSummarized: true },
   });
   logger.info(
     {
@@ -300,6 +304,7 @@ export async function generateSessionTitle(
 }
 
 async function resolveTitleTextWithLlm(ctx: TitleGeneratorContext): Promise<string | null> {
+  const usageId = startAuxUsage(ctx.sessionId, "session-title");
   try {
     const truncated = ctx.prompt.slice(0, 600);
     const result = await generateGatewayTextResult({
@@ -320,9 +325,11 @@ async function resolveTitleTextWithLlm(ctx: TitleGeneratorContext): Promise<stri
       temperature: 0.3,
     });
 
+    finishAuxUsage(usageId, result.totalUsage ?? result.usage);
     const title = (result.text ?? '').trim().slice(0, 50);
     return title || null;
   } catch (err) {
+    finishAuxUsage(usageId);
     logger.warn({ sessionId: ctx.sessionId, err }, '[session-title] LLM title generation failed');
     return null;
   }

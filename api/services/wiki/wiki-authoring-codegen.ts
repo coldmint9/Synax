@@ -6,10 +6,10 @@
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { runtimeAsset } from '../../lib/runtime-paths.js';
 import { parseSkillMarkdown } from '../skills/skill-parser.js';
 
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const MODULE_DIR = runtimeAsset(import.meta.url, '.', '.');
 const REPO_ROOT = path.join(MODULE_DIR, '..', '..', '..');
 
 export const WIKI_AUTHORING_SKILL_PATH = path.join(

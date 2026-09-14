@@ -5,8 +5,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const mockLimit = vi.fn();
-const mockOrderBy = vi.fn(() => ({ limit: mockLimit }));
-const mockWhere = vi.fn(() => ({ limit: mockLimit, orderBy: mockOrderBy }));
+const mockOrderBy = vi.fn<() => { limit: typeof mockLimit } | Promise<unknown[]>>(() => ({ limit: mockLimit }));
+const mockWhere = vi.fn<() => { limit: typeof mockLimit; orderBy: typeof mockOrderBy } | Promise<unknown[]>>(() => ({ limit: mockLimit, orderBy: mockOrderBy }));
 const mockFrom = vi.fn(() => ({ where: mockWhere, orderBy: mockOrderBy }));
 const mockSelect = vi.fn(() => ({ from: mockFrom }));
 const mockOnConflictDoUpdate = vi.fn().mockResolvedValue(undefined);

@@ -35,6 +35,7 @@ function getServerEntry(): string {
 }
 
 export async function startSidecar(): Promise<number> {
+  if (sidecar) return assignedPort;
   assignedPort = await findFreePort();
   const entry = getServerEntry();
   const dataRoot = getDataRoot();

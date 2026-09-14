@@ -5,13 +5,13 @@ import {
 } from '../synax-explorer-delegate.js';
 
 describe('buildExplorerSubagentPrompt', () => {
-  it('wraps investigation with wiki-first playbook', () => {
+  it('wraps a bounded read-only investigation without a fixed tool sequence', () => {
     const prompt = buildExplorerSubagentPrompt('How is auth implemented?');
     expect(prompt).toContain('## Investigation Task');
     expect(prompt).toContain('How is auth implemented?');
-    expect(prompt).toContain('## Explorer Playbook (mandatory)');
-    expect(prompt).toContain('wiki.search_batch');
-    expect(prompt).toContain('wiki.read_section');
+    expect(prompt).toContain('## Explorer Playbook');
+    expect(prompt).toContain('search code directly');
+    expect(prompt).toContain('Stop when the assigned question is answered.');
   });
 });
 

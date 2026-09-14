@@ -90,5 +90,10 @@ dist-app/
 .synax-test2/
 .synax-test3/
 .superpowers/
+# Keep the public integration guide trackable while continuing to ignore generated/internal docs.
 docs/
+!docs/
+docs/*
+!docs/integration/
+!docs/integration/**
 .plan/

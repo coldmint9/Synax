@@ -20,6 +20,7 @@ interface Props {
   onSkillIdsChange: (ids: string[]) => void
   disabled?: boolean
   /** Disable wiki attach controls only (skills/permissions stay editable). */
+  skillsDisabled?: boolean
   wikiAttachDisabled?: boolean
   onOverlayOpenChange?: (open: boolean) => void
 }
@@ -139,9 +140,10 @@ export function GoalAttachMenu({
   onSkillIdsChange,
   disabled,
   wikiAttachDisabled,
+  skillsDisabled,
   onOverlayOpenChange,
 }: Props) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const [skills, setSkills] = useState<SkillSummary[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
   const skillsLoadedRef = useRef(false)
@@ -210,7 +212,7 @@ export function GoalAttachMenu({
 
           <Dropdown.Section>
             <Header>{t('goalAttachSkills')}</Header>
-            {skillsLoading ? (
+            {skillsDisabled ? (<div className="px-3 py-2 text-[10px] text-muted-foreground">{locale === 'zh' ? '此后端使用原生 Skills 配置。' : 'This backend uses its native Skills configuration.'}</div>) : skillsLoading ? (
               <div className="px-3 py-2 text-[10px] text-muted-foreground">{t('goalAttachSkillsLoading')}</div>
             ) : skills.length === 0 ? (
               <div className="px-3 py-2 text-[10px] text-muted-foreground">{t('goalAttachSkillsEmpty')}</div>

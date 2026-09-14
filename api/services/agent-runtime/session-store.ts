@@ -1,3 +1,7 @@
+import { runtimeTransaction } from './runtime-transaction.js';
+import { logger } from '../../lib/logger.js';
+import type { WorkRecord } from './work-store.js';
+import { projectSessionUsage, type SessionUsageProjection } from './usage-projection.js';
 import { createHash } from 'node:crypto';
 import { getRawSqlite } from '../../db/index.js';
 import {
@@ -195,6 +199,10 @@ interface RunPartRow {
 }
 
 const RUNTIME_TABLES = [
+  'agent_runtime_processes',
+  'agent_runtime_stream_records',
+  'agent_runtime_work',
+  'agent_runtime_aux_usage',
   'agent_runtime_interactions',
   'agent_runtime_run_parts',
   'agent_runtime_run_steps',
@@ -479,20 +487,34 @@ export class AgentRuntimeStore {
   }
 
   updateSession(id: string, patch: Partial<AgentSession>): AgentSession {
-    const current = this.getSession(id);
-    const next = { ...current, ...patch };
-    this.upsertSession(next);
-    emitRuntimeBusEvent({ type: 'session_changed', sessionId: id, patch: patch as Record<string, unknown> });
-    if (patch.status && patch.status !== current.status) {
-      void sessionHooks.emit({ type: 'session:status_changed', sessionId: id, from: current.status, to: patch.status, patch: patch as Record<string, unknown> });
-    }
+    const { current, next } = runtimeTransaction(() => {
+      const current = this.getSession(id);
+      const next = { ...current, ...patch };
+      this.upsertSession(next);
+      return { current, next };
+    });
+    const notify = () => {
+      const actual = this.tryGetSession(id);
+      if (!actual) return;
+      const currentPatch = Object.fromEntries(Object.keys(patch).map(key => [key, actual[key as keyof AgentSession]]));
+      emitRuntimeBusEvent({ type: 'session_changed', sessionId: id, patch: currentPatch });
+      if (patch.status && patch.status !== current.status && actual.status === patch.status) {
+        void sessionHooks.emit({ type: 'session:status_changed', sessionId: id, from: current.status, to: actual.status, patch: currentPatch });
+      }
+    };
+    if (getRawSqlite().inTransaction) queueMicrotask(() => {
+      try { notify(); } catch (error) { logger.debug({ id, error }, '[session-store] deferred notification unavailable'); }
+    });
+    else notify();
     return next;
   }
 
   updateSessionMetadata(sessionId: string, patch: Record<string, unknown>): AgentSession {
-    const current = this.getSession(sessionId);
-    const next = { ...(current.sessionMetadata ?? {}), ...patch };
-    return this.updateSession(sessionId, { sessionMetadata: next });
+    return runtimeTransaction(() => {
+      const current = this.getSession(sessionId);
+      const next = { ...(current.sessionMetadata ?? {}), ...patch };
+      return this.updateSession(sessionId, { sessionMetadata: next });
+    });
   }
 
   listSessions(filter: { projectId?: string; nodeId?: string; status?: string; limit?: number } = {}): AgentSession[] {
@@ -573,6 +595,11 @@ export class AgentRuntimeStore {
         });
       }
 
+      for (const id of deleteIds) db.prepare('UPDATE agent_runtime_processes SET session_id = NULL WHERE session_id = ?').run(id);
+      const deleteStream = db.prepare('DELETE FROM agent_runtime_stream_records WHERE session_id = ?');
+      for (const id of deleteIds) deleteStream.run(id);
+      const deleteWork = db.prepare('DELETE FROM agent_runtime_work WHERE session_id = ?');
+      const deleteAuxUsage = db.prepare('DELETE FROM agent_runtime_aux_usage WHERE session_id = ?');
       const deleteInteractions = db.prepare('DELETE FROM agent_runtime_interactions WHERE session_id = ?');
       for (const id of deleteIds) deleteInteractions.run(id);
       const deleteRunPartsBySession = db.prepare('DELETE FROM agent_runtime_run_parts WHERE session_id = ?');
@@ -601,6 +628,8 @@ export class AgentRuntimeStore {
         deleteToolCallsBySession.run(id);
         deleteEventsBySession.run(id);
         deleteMessagesBySession.run(id);
+        deleteWork.run(id);
+        deleteAuxUsage.run(id);
         deleteSessionById.run(id);
       }
 
@@ -1096,8 +1125,13 @@ export class AgentRuntimeStore {
     sessionId: string,
     options: { configuredContextLimit?: number | null } = {},
   ): {
+    work: Pick<WorkRecord, 'id' | 'status' | 'remaining' | 'reason'> | null;
+    context: SessionUsageProjection['context'];
+    usage: SessionUsageProjection['usage'];
+    coverage: SessionUsageProjection['coverage'];
     tokenUsage: { input: number; output: number; total: number };
     contextLimit: number;
+    contextLimitKnown: boolean;
     contextUsedPercent: number;
     toolCallCount: number;
     runningDuration: number;
@@ -1107,57 +1141,22 @@ export class AgentRuntimeStore {
     const session = this.getSession(sessionId);
     const db = getRawSqlite();
 
-    const stepRows = db
-      .prepare(
-        `SELECT metadata_json, started_at, completed_at, status
-         FROM agent_runtime_run_steps
-         WHERE session_id = ?
-         ORDER BY step_index ASC`,
-      )
-      .all(sessionId) as Array<{
-        metadata_json: string
-        started_at: string
-        completed_at: string | null
-        status: string
-      }>
-
-    let cumulativeOutput = 0
-    let latestInputTokens = 0
-    let latestContextWindowSize: number | null = null
-    let totalTurnDurationMs = 0
-    const now = Date.now()
-    for (const row of stepRows) {
-      const start = new Date(row.started_at).getTime()
-      if (Number.isFinite(start)) {
-        const end = row.completed_at
-          ? new Date(row.completed_at).getTime()
-          : row.status === 'running'
-            ? now
-            : start
-        totalTurnDurationMs += Math.max(0, end - start)
-      }
-      try {
-        const meta = JSON.parse(row.metadata_json || '{}')
-        const u = (meta.usage ?? {}) as Record<string, unknown>
-        const stepInput = readUsageInputTokens(u)
-        const stepOutput = readUsageOutputTokens(u)
-        cumulativeOutput += stepOutput
-        if (stepInput > 0) latestInputTokens = stepInput
-        const contextSize = readUsageContextWindowSize(u)
-        if (contextSize) latestContextWindowSize = contextSize
-      } catch { /* skip */ }
-    }
-    const input = latestInputTokens;
-    const output = cumulativeOutput;
-    const total = input; // current context window size (excludes historical output)
-
-    // The progress bar must follow the provider configuration: an explicitly
-    // configured window (Settings → provider model → contextLimit, e.g. the 1M
-    // toggle) wins over the window the provider reports in its usage payload.
-    const contextLimit = normalizeContextLimit(options.configuredContextLimit)
-      ?? readLatestRunContextLimit(db, sessionId)
-      ?? latestContextWindowSize
-      ?? DEFAULT_CONTEXT_WINDOW_SIZE;
+    const workRow = typeof session.sessionMetadata?.activeWorkId === 'string'
+      ? db.prepare('SELECT payload_json FROM agent_runtime_work WHERE id = ? AND session_id = ?').get(session.sessionMetadata.activeWorkId, sessionId) as { payload_json: string } | undefined
+      : undefined;
+    const currentWork = workRow ? JSON.parse(workRow.payload_json) as WorkRecord : null;
+    const projected = projectSessionUsage(sessionId, this.listSessionTree(sessionId).map(s => s.id));
+    const input = projected.context.inputTokens ?? 0;
+    const output = projected.usage.self.output;
+    const total = input;
+    const latestContextWindowSize = projected.reportedWindow;
+    const backendId = (session.sessionMetadata?.backend as { id?: string } | undefined)?.id;
+    const cli = backendId === 'codex' || backendId === 'claude-code';
+    // Native API sessions honor configured windows; CLI sessions report their own, independent policy.
+    const knownWindow = cli ? latestContextWindowSize : normalizeContextLimit(options.configuredContextLimit)
+      ?? readLatestRunContextLimit(db, sessionId) ?? latestContextWindowSize;
+    const contextLimitKnown = !cli || knownWindow !== null;
+    const contextLimit = knownWindow ?? DEFAULT_CONTEXT_WINDOW_SIZE;
     const contextUsedPercent = contextLimit > 0
       ? Math.min(Math.round((input / contextLimit) * 100), 100)
       : 0;
@@ -1167,7 +1166,7 @@ export class AgentRuntimeStore {
       .get(sessionId) as { cnt: number };
     const toolCallCount = toolCountRow?.cnt ?? 0;
 
-    const runningDuration = totalTurnDurationMs
+    const runningDuration = projected.durationMs
 
     let activeSubAgentCount = 0;
     if (session.childSessionIds.length > 0) {
@@ -1180,8 +1179,11 @@ export class AgentRuntimeStore {
     }
 
     return {
+      work: currentWork ? { id: currentWork.id, status: currentWork.status, remaining: currentWork.remaining, reason: currentWork.reason } : null,
+      context: projected.context, usage: projected.usage, coverage: projected.coverage,
       tokenUsage: { input, output, total },
       contextLimit,
+      contextLimitKnown,
       contextUsedPercent,
       toolCallCount,
       runningDuration,
@@ -1202,7 +1204,7 @@ export class AgentRuntimeStore {
     db.prepare(
       `UPDATE agent_runtime_runs
        SET status = 'interrupted', completed_at = ?, stop_reason = ?
-       WHERE status IN ('running', 'waiting_permission')`,
+       WHERE status IN ('queued', 'running', 'waiting_permission')`,
     ).run(now, reason);
     const result = db
       .prepare(

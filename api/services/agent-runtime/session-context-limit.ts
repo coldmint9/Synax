@@ -25,6 +25,8 @@ export function resetSessionContextLimitCacheForTests(): void {
 export async function resolveSessionConfiguredContextLimit(
   session: AgentSession,
 ): Promise<number | null> {
+  const backend = session.sessionMetadata?.backend as { id?: string } | undefined;
+  if (backend?.id && backend.id !== 'native') return null;
   const engineModel = resolveSessionEngineModel(session.id, {});
   if (isAcpModel(engineModel)) return null;
 

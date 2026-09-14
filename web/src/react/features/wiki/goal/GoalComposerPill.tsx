@@ -14,6 +14,8 @@ import type { GoalPermissionTier, GoalWikiAttachMode } from './goalAttachTypes'
 
 interface Props {
   /** Optional session-only control, beside the model picker in either layout. */
+  backendId?: string
+  modelControl?: ReactNode
   modeControl?: ReactNode
   projectId: string
   content: string
@@ -49,6 +51,8 @@ interface Props {
 }
 
 export function GoalComposerPill({
+  modelControl,
+  backendId,
   modeControl,
   projectId,
   content,
@@ -152,6 +156,7 @@ export function GoalComposerPill({
   const toolbar = (
     <>
       <GoalAttachMenu
+        skillsDisabled={Boolean(backendId && backendId !== 'native')}
         projectId={projectId}
         documentId={documentId}
         onDocumentChange={onDocumentChange}
@@ -166,13 +171,15 @@ export function GoalComposerPill({
       />
 
       <GoalPermissionCycle
+        backendId={backendId}
         value={permissionTier}
         onChange={onPermissionTierChange}
         disabled={disabled}
       />
 
       {modeControl}
-      <GoalModelPicker
+      {modelControl ?? (<GoalModelPicker
+        backendId={backendId}
         globalConfig={globalConfig}
         providers={providers}
         providerId={providerId}
@@ -180,7 +187,7 @@ export function GoalComposerPill({
         onSelect={onModelSelect}
         disabled={disabled}
         onOverlayOpenChange={onOverlayOpenChange}
-      />
+      />)}
 
       <GoalEffortPicker
         effort={reasoningEffort}
@@ -268,6 +275,7 @@ export function GoalComposerPill({
       ) : (
         <div className="goal-dock-composer-inline flex h-11 items-center gap-1.5 px-1.5 pl-2.5">
           <GoalAttachMenu
+        skillsDisabled={Boolean(backendId && backendId !== 'native')}
             projectId={projectId}
             documentId={documentId}
             onDocumentChange={onDocumentChange}
@@ -280,6 +288,7 @@ export function GoalComposerPill({
             onOverlayOpenChange={onOverlayOpenChange}
           />
           <GoalPermissionCycle
+        backendId={backendId}
             value={permissionTier}
             onChange={onPermissionTierChange}
             disabled={disabled && !queueWhileGenerating}
@@ -297,7 +306,8 @@ export function GoalComposerPill({
             className="goal-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
           />
           {modeControl}
-          <GoalModelPicker
+          {modelControl ?? (<GoalModelPicker
+        backendId={backendId}
             globalConfig={globalConfig}
             providers={providers}
             providerId={providerId}
@@ -305,7 +315,7 @@ export function GoalComposerPill({
             onSelect={onModelSelect}
             disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}
-          />
+          />)}
           <GoalEffortPicker
             effort={reasoningEffort}
             allowed={allowedReasoningEfforts}

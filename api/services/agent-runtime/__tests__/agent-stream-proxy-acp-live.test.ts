@@ -32,6 +32,7 @@ describe('streamAgentSession ACP live forwarding', () => {
   it('forwards ACP stream chunks to sessionLiveBus', async () => {
     const session = agentSessionRuntime.create({
       ...plannerSessionInput,
+      backendId: 'cursor-acp',
       model: 'cursor-acp/default',
     });
     agentRuntimeStore.updateSession(session.id, {

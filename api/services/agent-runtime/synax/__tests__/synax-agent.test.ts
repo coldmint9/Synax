@@ -92,7 +92,7 @@ describe('SynaxAgent', () => {
         routeReason: 'Review requested',
       },
     });
-    expect(section).toContain('Active variant: Reviewer');
-    expect(section).toContain('Review requested');
+    expect(section).toContain('Specialist focus: reviewer');
+    expect(section).toContain('does not change the user request');
   });
 });

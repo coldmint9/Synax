@@ -11,11 +11,13 @@ export interface AgentSessionChildInit {
 }
 
 export type AgentSessionParentMessage =
+  | { type: 'session:initialize' }
   | { type: 'stream:start'; streamId: string; mode: AgentSessionStreamMode; input: StreamTurnRequest }
   | { type: 'stream:cancel'; streamId: string; reason?: string }
   | { type: 'session:interrupt'; reason: string };
 
 export type AgentSessionChildMessage =
+  | { type: 'session:booted'; sessionId: string }
   | { type: 'session:ready'; sessionId: string }
   | { type: 'session:live'; sessionId: string; event: SessionLiveEvent }
   | { type: 'runtime:event'; event: import('../../services/agent-runtime/runtime-bus.js').RuntimeBusEvent }
@@ -26,7 +28,7 @@ export type AgentSessionChildMessage =
 export function isAgentSessionChildMessage(value: unknown): value is AgentSessionChildMessage {
   if (!value || typeof value !== 'object') return false;
   const type = (value as { type?: unknown }).type;
-  return type === 'session:ready'
+  return type === 'session:booted' || type === 'session:ready'
     || type === 'session:live'
     || type === 'runtime:event'
     || type === 'stream:chunk'
@@ -37,13 +39,13 @@ export function isAgentSessionChildMessage(value: unknown): value is AgentSessio
 export function isAgentSessionParentMessage(value: unknown): value is AgentSessionParentMessage {
   if (!value || typeof value !== 'object') return false;
   const type = (value as { type?: unknown }).type;
-  return type === 'stream:start'
+  return type === 'session:initialize' || type === 'stream:start'
     || type === 'stream:cancel'
     || type === 'session:interrupt';
 }
 
 export function sendAgentSessionToParent(message: AgentSessionChildMessage): boolean {
-  if (process.env.SYNAX_AGENT_SESSION_CHILD !== '1' || typeof process.send !== 'function') {
+  if (process.env.SYNAX_AGENT_SESSION_CHILD !== '1' || typeof process.send !== 'function' || process.connected === false) {
     return false;
   }
   process.send(message);

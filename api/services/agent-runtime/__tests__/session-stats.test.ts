@@ -130,3 +130,23 @@ describe('getSessionStats runningDuration', () => {
     expect(stats.contextLimit).toBe(1_000_000)
   })
 });
+
+describe('usage projection across runs', () => {
+  beforeEach(resetAgentRuntimeFixtures)
+  it('orders context by real request time, sums cumulative usage and reports missing requests', () => {
+    const session = agentSessionRuntime.create(explorerSessionInput)
+    const add = (runId: string, index: number, time: string, input?: number) => {
+      agentRuntimeStore.appendRun({ id: runId, sessionId: session.id, status: 'interrupted', startedAt: time, completedAt: time, triggerMessageId: null, currentStep: index, stopReason: 'disconnect', model: null, metadata: {} })
+      agentRuntimeStore.appendRunStep({ id: `step-${runId}`, runId, sessionId: session.id, index, status: input === undefined ? 'running' : 'completed', startedAt: time, completedAt: null, model: null, finishReason: null,
+        metadata: input === undefined ? {} : { usage: { inputTokens: input, outputTokens: 100, reasoningTokens: 80, cachedInputTokens: 50 } } })
+    }
+    add('old', 17, '2026-09-13T12:00:00Z', 329597)
+    add('new', 4, '2026-09-13T13:00:00Z', 403292)
+    add('interrupted', 5, '2026-09-13T13:01:00Z')
+    const stats = agentRuntimeStore.getSessionStats(session.id)
+    expect(stats.context).toMatchObject({ inputTokens: 403292, requestId: 'step-new', latestRequestUsageAvailable: false })
+    expect(stats.usage.self).toEqual({ input: 732889, output: 200, reasoning: 160, cacheRead: 100, total: 733089 })
+    expect(stats.coverage.self).toEqual({ requests: 3, recorded: 2, missing: 1, complete: false })
+    expect(stats.runningDuration).toBe(0)
+  })
+})

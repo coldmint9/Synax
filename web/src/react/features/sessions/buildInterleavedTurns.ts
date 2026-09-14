@@ -99,6 +99,7 @@ export function buildInterleavedTurns(
 
   const toolCallsByStep = new Map<string, ToolCallRecord[]>()
   for (const toolCall of toolCallRecords) {
+    if (!toolCall.stepId) continue
     const bucket = toolCallsByStep.get(toolCall.stepId)
     if (bucket) bucket.push(toolCall)
     else toolCallsByStep.set(toolCall.stepId, [toolCall])

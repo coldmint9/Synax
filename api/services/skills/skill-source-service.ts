@@ -1,3 +1,4 @@
+import type NativeDatabase from 'libsql';
 import { getRawSqlite } from '../../db/index.js';
 import type { SkillSourceConfig, SkillSourceRecord, SkillSourceType } from './types.js';
 
@@ -83,7 +84,7 @@ function rowToRecord(row: SkillSourceRow): SkillSourceRecord {
 }
 
 function insertSourceRow(
-  insert: ReturnType<ReturnType<typeof getRawSqlite>['prepare']>,
+  insert: NativeDatabase.Statement<unknown[]>,
   source: Omit<SkillSourceRecord, 'lastSyncAt' | 'lastSyncError' | 'createdAt' | 'updatedAt'>,
   now: string,
 ): void {

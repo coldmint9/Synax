@@ -204,6 +204,12 @@ function McpCard({ mcp }: { mcp: SessionCapabilities['mcp'] }) {
 export function SessionCapabilitiesPanel({ capabilities }: { capabilities: SessionCapabilities }) {
   return (
     <>
+      {capabilities.backend && capabilities.backend.kind !== 'native' && (
+        <p className="border-b border-border/40 px-2 py-2 text-[10px] text-muted-foreground">
+          {capabilities.backend.label}: tools and configuration are managed by this backend.
+          Synax Native Skills/MCP are not injected.
+        </p>
+      )}
       <ToolsCard tools={capabilities.tools} />
       <SkillsCard skills={capabilities.skills} />
       <McpCard mcp={capabilities.mcp} />

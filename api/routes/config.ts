@@ -290,7 +290,7 @@ configRoutes.post('/open-file', async (c) => {
 
   const cmd = buildOpenFileCommand(filePath, line ?? undefined)
 
-  return new Promise((resolve) => {
+  return new Promise<Response>((resolve) => {
     execFile(cmd.bin, cmd.args, (err) => {
       if (err) {
         logger.error({ err: err.message, filePath, line }, '[config] open-file failed')

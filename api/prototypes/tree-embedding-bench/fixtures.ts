@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { runtimeAsset } from '../../lib/runtime-paths.js';
 
 import { parseOneFile } from '../../services/analyzer/parse-lib.js';
 import type { CodeMapCodeIndex } from '../../services/contracts/code-map.js';
@@ -9,7 +9,7 @@ import type { FileEntry, SymbolEntry } from '../../services/contracts/forest.js'
 import type { ParsedFixtureIndex, RetrievalTask, SymbolContext } from './contracts.js';
 import { loadEvalTasks } from './eval-set.js';
 
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const MODULE_DIR = runtimeAsset(import.meta.url, '.', 'prototypes/tree-embedding-bench');
 const SAMPLES_DIR = path.join(MODULE_DIR, 'fixtures', 'samples');
 
 export function getFixtureSamplesDir(): string {

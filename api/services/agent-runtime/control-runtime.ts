@@ -8,7 +8,7 @@ export function rootGoal(session: AgentSession) {
   return {
     root,
     goal:
-      root.sessionMetadata?.mode === "goal"
+      Boolean(root.sessionMetadata?.goal)
         ? getGoalState(root.sessionMetadata)
         : null,
   };
@@ -47,6 +47,8 @@ const NON_PROOF_TOOLS = new Set([
   "plan.execute",
   "mode.switch",
   "goal.finish",
+  "work.checkpoint",
+  "context.read",
   "task.create",
   "task.update",
   "task.get",

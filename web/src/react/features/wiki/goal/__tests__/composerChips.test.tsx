@@ -8,6 +8,14 @@ import type { GoalPermissionTier } from '../goalAttachTypes'
 afterEach(cleanup)
 
 describe('GoalPermissionCycle', () => {
+  it('does not present Synax tiers as if they controlled native CLI execution', () => {
+    const change = vi.fn()
+    render(<GoalPermissionCycle backendId="codex" value="readonly" onChange={change} />)
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.getByRole('note')).toHaveAttribute('data-native-policy', 'true')
+    expect(change).not.toHaveBeenCalled()
+  })
+
   it('exposes the active tier so each level can be colour-coded', () => {
     const { rerender } = render(
       <GoalPermissionCycle value="readonly" onChange={() => {}} />,

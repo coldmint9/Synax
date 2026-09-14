@@ -35,17 +35,17 @@ describe('isConversationalMessage', () => {
 });
 
 describe('buildSynaxIntentPromptSection', () => {
-  it('injects explorer delegation hints for exploration intent', () => {
+  it('keeps investigation read-only without mandating delegation', () => {
     const section = buildSynaxIntentPromptSection({
       message: 'Explore where sessions are stored',
       mode: 'chat',
       stepIndex: 1,
     });
-    expect(section).toContain('## Exploration Intent');
-    expect(section).toContain('subagent.delegate(profileId: "explorer"');
-    expect(section).toContain('wiki.search_batch');
-    expect(section).toContain('Do NOT call bash');
-    expect(section).toContain('Step 1 rule');
+    expect(section).toContain('Investigate and explain');
+    expect(section).not.toContain('first and only tool');
+    expect(section).not.toContain('subagent.delegate');
+    expect(section).not.toContain('wiki.search_batch');
+    expect(section).toContain('advisory');
   });
 
   it('injects coding discipline hints for coding intent', () => {
@@ -54,11 +54,7 @@ describe('buildSynaxIntentPromptSection', () => {
       mode: 'chat',
       stepIndex: 2,
     });
-    expect(section).toContain('## Coding Task Role');
-    expect(section).toContain('## Task Breakdown');
-    expect(section).toContain('## Coding Style');
-    expect(section).toContain('## Test & Verification');
-    expect(section).toContain('## File Change Summary');
+    expect(section).toContain('Implement the requested change within current authorization');
   });
 
   it('does not inject coding hints for goal mode without explicit coding verbs', () => {
@@ -84,7 +80,7 @@ describe('buildSynaxIntentPromptSection', () => {
       mode: 'goal',
       stepIndex: 1,
     });
-    expect(section).toContain('## Coding Task Role');
+    expect(section).toContain('Implement the requested change within current authorization');
   });
 
   it('skips coding hints for pure exploration in goal mode', () => {
@@ -93,7 +89,19 @@ describe('buildSynaxIntentPromptSection', () => {
       mode: 'goal',
       stepIndex: 1,
     });
-    expect(section).toContain('## Exploration Intent');
-    expect(section).not.toContain('## Coding Task Role');
+    expect(section).toContain('Investigate and explain');
+    expect(section).not.toContain('Implement the requested change');
+  });
+});
+
+
+describe('intent is not execution authorization', () => {
+  it.each(['plan 模式真的有效吗？', 'How do I fix this bug?', '请调查会话列表的过滤机制'])('keeps %s in investigation', message => {
+    expect(classifySynaxIntent(message)).toBe('explore');
+  });
+  it('retains read-only planning even when implementation verbs are present', () => {
+    const prompt = buildSynaxIntentPromptSection({ message: 'Implement a login form', mode: 'plan' });
+    expect(prompt).toContain('without implementing');
+    expect(prompt).not.toContain('Implement the requested change');
   });
 });

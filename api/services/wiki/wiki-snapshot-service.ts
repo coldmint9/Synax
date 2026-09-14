@@ -1,3 +1,5 @@
+import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
+import { runCodeMapScan } from '../analyzer/scan.js';
 // ---------------------------------------------------------------------------
 // api/services/wiki/wiki-snapshot-service.ts
 //

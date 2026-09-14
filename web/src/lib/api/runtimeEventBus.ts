@@ -1,3 +1,4 @@
+import { AuthenticatedEventSource } from './authenticatedEventSource'
 import { useApiConnectivityStore } from '../apiConnectivity'
 
 type EventHandler = (e: MessageEvent) => void
@@ -11,15 +12,15 @@ interface Subscription {
 const RECONNECT_BASE_MS = 2000
 const RECONNECT_MAX_MS = 30_000
 
-let es: EventSource | null = null
+let es: AuthenticatedEventSource | null = null
 let retries = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let subscribers = new Set<Subscription>()
 
 function connect() {
   if (useApiConnectivityStore.getState().shouldSkipRequest()) return
-  if (es && es.readyState !== EventSource.CLOSED) return
-  es = new EventSource('/api/agent-runtime/events/stream')
+  if (es && es.readyState !== AuthenticatedEventSource.CLOSED) return
+  es = new AuthenticatedEventSource('/api/agent-runtime/events/stream')
 
   es.addEventListener('connected', () => {
     retries = 0

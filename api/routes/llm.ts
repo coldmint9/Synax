@@ -29,7 +29,7 @@ const llmValidateSchema = z.object({
   apiFormat: z.enum(['openai', 'openai-responses', 'anthropic']).optional(),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
-  options: z.record(z.unknown()).optional(),
+  options: z.record(z.string(), z.unknown()).optional(),
 })
 
 llmRoutes.post('/validate', async (c) => {

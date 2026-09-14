@@ -24,3 +24,5 @@ export const PATH_EXTRACTORS: Record<string, (args: unknown) => string[]> = {
     return paths;
   },
 };
+
+PATH_EXTRACTORS['verification.run'] = (args: unknown) => [...PATH_EXTRACTORS.bash(args), ...((args as { scope?: string[] })?.scope ?? [])];

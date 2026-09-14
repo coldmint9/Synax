@@ -240,7 +240,7 @@ export async function streamGoalAgentTurn(
   onChunk: (chunk: unknown) => void,
   options?: { continue?: boolean },
 ): Promise<void> {
-  const locale = useShellStore.getState().locale
+  const locale = useShellStore.getState().preferences.locale
   const body = {
     ...(input.message ? { message: input.message } : {}),
     ...(input.model ? { model: input.model } : {}),

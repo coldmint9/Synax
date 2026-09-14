@@ -112,9 +112,9 @@ export function assertUserInstructionTurn(input: {
 
 export function getUserInstructionText(sessionId: string, runId: string): string | null {
   const run = store.getRun(runId);
-  const message = run.triggerMessageId
-    ? store.listMessages(sessionId).find((item) => item.id === run.triggerMessageId)
-    : null;
+  const messages = store.listMessages(sessionId);
+  const queued = messages.filter(item => item.runId === runId && item.role === 'user' && item.metadata.source === 'input_queue').at(-1);
+  const message = queued ?? (run.triggerMessageId ? messages.find((item) => item.id === run.triggerMessageId) : null);
   if (!message || message.metadata.source === 'system_injection') return null;
   return message.content;
 }

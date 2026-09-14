@@ -12,6 +12,8 @@ export class AgentEventService {
     payload?: Record<string, unknown>;
     visibility?: RuntimeEvent['visibility'];
   }): RuntimeEvent {
+    let workId: unknown;
+    try { workId = this.store.getSession(input.sessionId).sessionMetadata?.activeWorkId; } catch { /* session creation event */ }
     return this.store.appendEvent({
       id: makeRuntimeId('evt'),
       sessionId: input.sessionId,
@@ -19,7 +21,7 @@ export class AgentEventService {
       timestamp: nowIso(),
       visibility: input.visibility ?? 'user_visible',
       summary: input.summary,
-      payload: input.payload ?? {},
+      payload: { ...(typeof workId === "string" ? { workId } : {}), ...input.payload },
     });
   }
 

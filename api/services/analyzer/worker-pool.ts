@@ -1,22 +1,21 @@
 import os from 'node:os';
 import fs from 'node:fs';
 import { Worker } from 'node:worker_threads';
-import { fileURLToPath } from 'node:url';
+import { runtimeAsset } from '../../lib/runtime-paths.js';
 import path from 'node:path';
 import type { FileEntry, SymbolEntry, ChunkEntry } from '../contracts/forest.js';
 import type { CodeMapCallEdge, CodeMapImport } from '../contracts/code-map.js';
 import type { AnalyzerSourceFile } from './shared.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const workerDir = runtimeAsset(import.meta.url, '.', 'workers');
 
 // Resolve the worker script path. In dev (tsx), the .ts source exists and
 // tsx can execute it directly. In production builds, only the .js output exists.
-const IS_DEV = fs.existsSync(path.join(__dirname, 'analyzer-worker.ts'));
+const IS_DEV = fs.existsSync(path.join(workerDir, 'analyzer-worker.ts'));
 const WORKER_SCRIPT = IS_DEV
-	? path.join(__dirname, 'worker-bootstrap.ts')
-	: path.join(__dirname, 'analyzer-worker.js');
-const ACTUAL_WORKER = path.join(__dirname, 'analyzer-worker.ts');
+	? path.join(workerDir, 'worker-bootstrap.ts')
+	: path.join(workerDir, 'analyzer-worker.cjs');
+const ACTUAL_WORKER = path.join(workerDir, 'analyzer-worker.ts');
 
 export interface FileParseResult {
 	fileEntry: FileEntry;

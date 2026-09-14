@@ -1,3 +1,7 @@
+import { resolveGatewaySelection } from '../../llm-runtime/gateway.js';
+import { buildGoalSessionPrompt } from '../../wiki/wiki-goal-prompt.js';
+import { workStore } from '../work-store.js';
+import { acceptRuntimeRun } from '../run-admission.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +24,8 @@ function makeStream(events: MockStreamEvent[]) {
     })(),
   };
 }
+
+const capturedRequests: Array<{ messages: Array<{ role: string; content: unknown }>; tools: string[]; reasoningEffort?: string }> = [];
 
 const mockStepResults: Array<{
   fullStream: AsyncIterable<MockStreamEvent>;
@@ -74,6 +80,7 @@ function parseJsonToolShorthand(text: string): { toolId: string; args: Record<st
  * real implementation does, yielding text_delta / thought_delta / step_complete.
  */
 async function* mockStreamLoopModelStep(input: {
+  request?: { messages: Array<{ role: string; content: unknown }>; reasoningEffort?: string };
   tools: { resolveToolId: (name: string) => string | undefined };
   mustFinalize?: boolean;
   model?: string | null;
@@ -92,6 +99,10 @@ async function* mockStreamLoopModelStep(input: {
   };
   model?: string | null;
 }> {
+  if (input.request) capturedRequests.push({
+    messages: structuredClone(input.request.messages), reasoningEffort: input.request.reasoningEffort,
+    tools: [...((input.tools as { activeTools?: string[] }).activeTools ?? [])],
+  });
   const data = mockStepResults.shift();
   if (!data) throw new Error('No mock step data queued — call queueMockStep() first.');
 
@@ -239,6 +250,18 @@ describe('agentLoopRuntime', () => {
     fs.writeFileSync(API_SESSION_LOG_FILE, '', 'utf8');
   });
 
+  it('uses the durable accepted Run instead of allocating a second Native Run', async () => {
+    queueMockStep(makeTextStep('Accepted task finished.'));
+    const session = agentSessionRuntime.create({ ...executorInput, workDir: process.cwd() });
+    const accepted = acceptRuntimeRun(session.id, { message: 'Do the task' }, 'native-admission');
+    const chunks = await collectChunks(agentLoopRuntime.streamRun(session.id, {
+      message: 'Do the task', acceptedRunId: accepted.run.id,
+    }));
+    expect(agentRuntimeStore.listRuns(session.id)).toHaveLength(1);
+    expect(agentRuntimeStore.getRun(accepted.run.id).status).toBe('completed');
+    expect(chunks.find(chunk => chunk.type === 'run_started')).toMatchObject({ run: { id: accepted.run.id } });
+  });
+
   it('persists a multi-step read tool loop with run-step transcript parts', async () => {
     const readPath = 'tmp/agent-loop-runtime-read.txt';
     fs.mkdirSync(path.dirname(path.resolve(readPath)), { recursive: true });
@@ -330,6 +353,10 @@ describe('agentLoopRuntime', () => {
         args: { path: writePath, content: 'hello' },
       }),
     );
+    queueMockStep(makeToolStep({ toolName: 'verification_run', toolCallId: 'verify-write', args: {
+      command: `node -e "if(require('fs').readFileSync('${writePath}','utf8')!=='hello')process.exit(1)"`,
+      criterion: 'Requested file content', purpose: 'Read back the written file', scope: [writePath],
+    } }));
     queueMockStep(makeTextStep('Write complete.'));
 
     const session = agentSessionRuntime.create(executorInput);
@@ -339,13 +366,17 @@ describe('agentLoopRuntime', () => {
     const [permission] = permissionPolicy.list(session.id);
     permissionPolicy.reply(session.id, permission.id, 'once');
     await agentLoopRuntime.resumeRun(session.id);
+    const verificationPermission = permissionPolicy.list(session.id).find(p => p.id !== permission.id && p.action === 'ask' && !p.resolvedAt);
+    expect(verificationPermission).toBeTruthy();
+    permissionPolicy.reply(session.id, verificationPermission!.id, 'once');
+    await agentLoopRuntime.resumeRun(session.id);
 
     expect(fs.readFileSync(path.resolve(writePath), 'utf8')).toBe('hello');
     expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
 
     const [run] = agentLoopRuntime.listRuns(session.id);
     const steps = agentLoopRuntime.listRunSteps(session.id, run.id);
-    expect(steps).toHaveLength(2);
+    expect(steps).toHaveLength(3);
 
     const firstStepParts = agentRuntimeStore.listRunParts(steps[0].id);
     expect(firstStepParts.map((part) => part.kind)).toEqual(['text', 'tool_call', 'system_note', 'tool_result']);
@@ -833,4 +864,130 @@ describe('agentLoopRuntime', () => {
     expect(mockStepResults).toHaveLength(0);
   });
 
+});
+
+describe('cooperative closing incident replay', () => {
+  beforeEach(() => { vi.clearAllMocks(); mockStepResults.length = 0; resetAgentRuntimeFixtures(); });
+
+  it('delivers a small verified edit without another final-check loop', async () => {
+    const file = 'tmp/work-closing-fixture.cjs';
+    fs.mkdirSync(path.resolve('tmp'), { recursive: true });
+    fs.writeFileSync(path.resolve(file), 'module.exports = false;');
+    try {
+      queueMockStep(makeToolStep({ toolName: 'file_read', toolCallId: 'read', args: { path: file } }));
+      queueMockStep(makeToolStep({ toolName: 'file_write', toolCallId: 'write', args: { path: file, content: 'module.exports = true;' } }));
+      queueMockStep(makeToolStep({ toolName: 'verification_run', toolCallId: 'verify', args: { command: `node -e "if(require('./${file}')!==true)process.exit(1)"`, criterion: 'Requested behavior', purpose: 'Focused behavior check', scope: [file] } }));
+      queueMockStep(makeTextStep('Implemented and verified the requested behavior.'));
+      queueMockStep(makeToolStep({ toolName: 'bash', toolCallId: 'unnecessary', args: { command: 'git status --porcelain' } }));
+      const session = agentSessionRuntime.create({ ...executorInput, permissionTier: 'unrestricted' });
+      await collectChunks(agentLoopRuntime.streamRun(session.id, { message: 'Make the small change and verify it.' }));
+      expect(agentRuntimeStore.getSession(session.id).status).toBe('completed');
+      expect(agentRuntimeStore.listToolCalls(session.id).map(c => c.toolId)).toEqual(['file.read', 'file.write', 'verification.run']);
+      expect(mockStepResults).toHaveLength(1);
+      expect(agentRuntimeStore.listRuns(session.id)[0].currentStep).toBe(4);
+    } finally { fs.rmSync(path.resolve(file), { force: true }); }
+  });
+
+  it('does not reopen completed work on a continue request', async () => {
+    queueMockStep(makeTextStep('The investigation is complete.'));
+    const session = agentSessionRuntime.create(executorInput);
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: 'Explain the existing result.' }));
+    const count = agentRuntimeStore.listSessionSteps(session.id).length;
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: '继续' }));
+    expect(agentRuntimeStore.getSession(session.id).status).toBe('completed');
+    expect(agentRuntimeStore.listSessionSteps(session.id)).toHaveLength(count);
+    expect(agentRuntimeStore.listMessages(session.id).filter(m => m.metadata.purpose === 'work_result')).toHaveLength(1);
+  });
+});
+
+
+describe('closing tool enforcement', () => {
+  beforeEach(() => { vi.clearAllMocks(); mockStepResults.length = 0; resetAgentRuntimeFixtures(); });
+  it('blocks an unnecessary shell check after tracked work is done and accepts one closing decision', async () => {
+    const forbidden = 'tmp/work-unnecessary-check.txt';
+    fs.rmSync(path.resolve(forbidden), { force: true });
+    queueMockStep(makeToolStep({ toolName: 'task_create', toolCallId: 'todo', args: { subject: 'Inspect the known behavior', description: 'Read-only assessment' } }));
+    queueMockStep(makeToolStep({ toolName: 'task_update', toolCallId: 'done', args: { taskId: '1', status: 'completed' } }));
+    queueMockStep(makeToolStep({ toolName: 'bash', toolCallId: 'extra-check', args: { command: `node -e "require('fs').writeFileSync('${forbidden}', 'should-not-run')"` } }));
+    queueMockStep(makeToolStep({ toolName: 'work_checkpoint', toolCallId: 'close', args: { action: 'complete', summary: 'Inspection complete.', evidence: [] } }));
+    const session = agentSessionRuntime.create({ ...executorInput, permissionTier: 'unrestricted' });
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: 'Report the known behavior without changing files.' }));
+    const extra = agentRuntimeStore.listToolCalls(session.id).find(c => c.modelToolCallId === 'extra-check');
+    expect(extra?.status).toBe('denied');
+    expect(extra?.outputSummary).toContain('closing decision');
+    expect(fs.existsSync(path.resolve(forbidden))).toBe(false);
+    expect(agentRuntimeStore.getSession(session.id).status).toBe('completed');
+    expect(mockStepResults).toHaveLength(0);
+  });
+});
+
+
+describe('provider-bound session initialization prompt', () => {
+  beforeEach(() => { vi.clearAllMocks(); capturedRequests.length = 0; mockStepResults.length = 0; resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
+
+  it.each(['你好', 'plan 模式真的有效吗？', '请调查会话列表的过滤机制'])('preserves request intent all the way to the model: %s', async message => {
+    vi.mocked(resolveGatewaySelection).mockResolvedValueOnce({ modelDef: { reasoning: true, contextLimit: 200000 }, providerId: 'fixture' } as never);
+    const prompt = buildGoalSessionPrompt({ mode: 'session', content: message, wikiAttachMode: 'auto', locale: 'zh' });
+    const session = agentSessionRuntime.create({ projectId: 'prompt-fixture', profileId: 'synax', prompt, reasoningEffort: 'max',
+      sessionMetadata: { source: 'session-page', mode: 'chat', goalContent: message, wikiAttachMode: 'auto' } });
+    queueMockStep(makeTextStep('根据已有信息作答。'));
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: prompt }));
+    expect(capturedRequests).toHaveLength(1);
+    const request = capturedRequests[0];
+    const text = JSON.stringify(request.messages);
+    expect(request.messages.filter(m => m.role === 'user').some(m => m.content === message)).toBe(true);
+    expect(text).not.toContain('implement the goal');
+    expect(text).not.toContain('Think and process internally in English');
+    expect(text).not.toContain('first and only tool call');
+    expect(text).not.toContain('One logical change per step');
+    expect(text).not.toContain('otherwise run a code-map scan');
+    expect(text).not.toContain('Keep wiki documentation aligned');
+    expect(text).toContain('Current work (authoritative runtime state)');
+    expect(request.reasoningEffort).toBe('max');
+    expect(workStore.current(session.id)?.objective).toBe(message);
+    expect(agentRuntimeStore.listToolCalls(session.id)).toHaveLength(0);
+    if (message !== '你好') expect(text).toContain('Investigate and explain');
+  });
+
+  it('repairs legacy initial scaffolding in projection without changing the transcript or re-injecting it on step two', async () => {
+    const raw = '请调查 package.json';
+    const prompt = buildGoalSessionPrompt({ mode: 'direct', content: raw, wikiAttachMode: 'auto' });
+    const session = agentSessionRuntime.create({ projectId: 'prompt-fixture', profileId: 'synax', prompt,
+      sessionMetadata: { source: 'session-page', mode: 'chat', goalContent: raw } });
+    queueMockStep(makeToolStep({ toolName: 'file_read', toolCallId: 'read', args: { path: 'package.json' } }));
+    queueMockStep(makeTextStep('已核对文件。'));
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: prompt, messageSource: 'system_injection' }));
+    expect(capturedRequests).toHaveLength(2);
+    for (const request of capturedRequests) {
+      expect(JSON.stringify(request.messages)).not.toContain('implement the goal');
+      expect(JSON.stringify(request.messages)).toContain('Investigate and explain');
+    }
+    expect(agentRuntimeStore.listMessages(session.id).find(m => m.role === 'user')?.content).toBe(prompt);
+  });
+
+  it('renders actual permission overrides and keeps forbidden operations gated', async () => {
+    const session = agentSessionRuntime.create({ projectId: 'prompt-fixture', profileId: 'synax', prompt: '调查代码', permissionTier: 'unrestricted', sessionMetadata: { source: 'session-page', goalContent: '调查代码', mode: 'chat' } });
+    agentRuntimeStore.updateSession(session.id, { permissionRules: [{ gate: 'read', pattern: '*', action: 'deny' }, { gate: 'shell', pattern: '*', action: 'deny' }] });
+    queueMockStep(makeTextStep('读取权限受限。'));
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: '调查代码' }));
+    const text = JSON.stringify(capturedRequests[0].messages);
+    expect(text).toContain('read denied');
+    expect(text).not.toContain('Unrestricted tool permissions');
+  });
+
+  it('only exposes closing tools without a full execution playbook', async () => {
+    const session = agentSessionRuntime.create({ projectId: 'prompt-fixture', profileId: 'synax', prompt: '完成已有检查' });
+    queueMockStep(makeToolStep({ toolName: 'task_create', toolCallId: 'todo', args: { subject: '检查', description: '已有信息' } }));
+    queueMockStep(makeToolStep({ toolName: 'task_update', toolCallId: 'done', args: { taskId: '1', status: 'completed' } }));
+    queueMockStep(makeTextStep('已完成。'));
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: '完成已有检查' }));
+    const closing = capturedRequests.at(-1)!;
+    expect(closing.tools).toContain('work_checkpoint');
+    expect(closing.tools).not.toContain('bash');
+    expect(closing.tools).not.toContain('verification_run');
+    const system = String(closing.messages[0].content);
+    expect(system).toContain('Closing decision required');
+    expect(system).not.toContain('Use bash for commands');
+    expect(system).not.toContain('TODO tracking is optional');
+  });
 });

@@ -1,3 +1,4 @@
+import type { streamText } from 'ai';
 import { createGatewayStream } from '../llm-runtime/gateway.js';
 import type { LlmGatewayRequest } from '../llm-runtime/types.js';
 import type { LlmHookContext } from '../llm-runtime/llm-hooks.js';
@@ -34,7 +35,7 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
       hookContext: input.hookContext,
     },
     input.abortSignal,
-  );
+  ) as ReturnType<typeof streamText>;
 
   let text = '';
   let thought = '';
@@ -42,16 +43,29 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
   let usage: Record<string, unknown> | undefined;
   let providerMetadata: Record<string, unknown> | undefined;
   const toolCalls: StructuredToolCall[] = [];
+  const toolCallProviderMetadata: Record<string, Record<string, unknown>> = {};
+  const reasoningParts: Array<{ id: string; text: string; providerMetadata?: Record<string, Record<string, unknown>> }> = [];
 
   for await (const event of result.fullStream) {
     switch (event.type) {
       case 'text-delta':
         text += event.text;
         break;
+      case 'reasoning-start':
+        reasoningParts.push({ id: event.id, text: '', providerMetadata: event.providerMetadata as never });
+        break;
+      case 'reasoning-end': {
+        const part = reasoningParts.findLast(p => p.id === event.id);
+        if (part && event.providerMetadata) part.providerMetadata = event.providerMetadata as never;
+        break;
+      }
       case 'reasoning-delta':
+        if (!reasoningParts.some(p => p.id === event.id)) reasoningParts.push({ id: event.id, text: '' });
+        reasoningParts.findLast(p => p.id === event.id)!.text += event.text;
         thought += event.text;
         break;
       case 'tool-call': {
+        if (event.providerMetadata) toolCallProviderMetadata[normalizeToolCallId(event.toolCallId)] = event.providerMetadata as Record<string, unknown>;
         const toolId = input.tools.resolveToolId(event.toolName) ?? event.toolName;
         toolCalls.push({
           id: normalizeToolCallId(event.toolCallId),
@@ -93,6 +107,8 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
     model: input.model,
     step: {
       thought: thought.trim() || undefined,
+      reasoningParts: reasoningParts.map(({ id, ...part }) => part),
+      toolCallProviderMetadata,
       message: finalMessage,
       toolCalls: finalToolCalls,
       final: input.mustFinalize || finalToolCalls.length === 0,
@@ -125,7 +141,7 @@ export async function* streamLoopModelStep(
       hookContext: input.hookContext,
     },
     input.abortSignal,
-  );
+  ) as ReturnType<typeof streamText>;
 
   let text = '';
   let thought = '';
@@ -133,6 +149,8 @@ export async function* streamLoopModelStep(
   let usage: Record<string, unknown> | undefined;
   let providerMetadata: Record<string, unknown> | undefined;
   const toolCalls: StructuredToolCall[] = [];
+  const toolCallProviderMetadata: Record<string, Record<string, unknown>> = {};
+  const reasoningParts: Array<{ id: string; text: string; providerMetadata?: Record<string, Record<string, unknown>> }> = [];
 
   for await (const event of result.fullStream) {
     switch (event.type) {
@@ -140,11 +158,22 @@ export async function* streamLoopModelStep(
         text += event.text;
         yield { type: 'text_delta', delta: event.text };
         break;
+      case 'reasoning-start':
+        reasoningParts.push({ id: event.id, text: '', providerMetadata: event.providerMetadata as never });
+        break;
+      case 'reasoning-end': {
+        const part = reasoningParts.findLast(p => p.id === event.id);
+        if (part && event.providerMetadata) part.providerMetadata = event.providerMetadata as never;
+        break;
+      }
       case 'reasoning-delta':
+        if (!reasoningParts.some(p => p.id === event.id)) reasoningParts.push({ id: event.id, text: '' });
+        reasoningParts.findLast(p => p.id === event.id)!.text += event.text;
         thought += event.text;
         yield { type: 'thought_delta', delta: event.text };
         break;
       case 'tool-call': {
+        if (event.providerMetadata) toolCallProviderMetadata[normalizeToolCallId(event.toolCallId)] = event.providerMetadata as Record<string, unknown>;
         const toolId = input.tools.resolveToolId(event.toolName) ?? event.toolName;
         toolCalls.push({
           id: normalizeToolCallId(event.toolCallId),
@@ -157,10 +186,12 @@ export async function* streamLoopModelStep(
         finishReason = event.finishReason;
         usage = isRecord(event.usage) ? event.usage : usage;
         providerMetadata = isRecord(event.providerMetadata) ? event.providerMetadata : providerMetadata;
+        if (usage) yield { type: 'usage', usage };
         break;
       case 'finish':
         finishReason ??= event.finishReason;
         usage ??= isRecord(event.totalUsage) ? event.totalUsage : undefined;
+        if (usage) yield { type: 'usage', usage };
         break;
       case 'error':
         throw event.error;
@@ -186,6 +217,8 @@ export async function* streamLoopModelStep(
     type: 'step_complete',
     step: {
       thought: thought.trim() || undefined,
+      reasoningParts: reasoningParts.map(({ id, ...part }) => part),
+      toolCallProviderMetadata,
       message: finalMessage,
       toolCalls: finalToolCalls,
       final: input.mustFinalize || finalToolCalls.length === 0,

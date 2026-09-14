@@ -1,5 +1,6 @@
+import { assertDatabaseWriteAllowed } from '../lib/execution-context.js';
 
-import { createClient, type Client } from '@libsql/client';
+import { createClient, type Client, type InStatement, type TransactionMode } from '@libsql/client';
 import NativeDatabase from 'libsql';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -67,7 +68,9 @@ function createTransaction(sqlite: NativeDatabase.Database): SqliteTransaction {
         }
       }
 
-      sqlite.exec('BEGIN');
+      // Runtime checkpoints read before writing; reserve the writer before that read so
+      // another process cannot invalidate a deferred transaction's snapshot upgrade.
+      sqlite.exec('BEGIN IMMEDIATE');
       state.depth++;
       try {
         const result = fn(...args);
@@ -83,8 +86,29 @@ function createTransaction(sqlite: NativeDatabase.Database): SqliteTransaction {
   };
 }
 
-function installSqliteCompat(sqlite: NativeDatabase.Database): RawSqlite {
+function installSqliteCompat(sqlite: NativeDatabase.Database, databasePath: string): RawSqlite {
   const compat = sqlite as RawSqlite;
+  const prepare = sqlite.prepare.bind(sqlite);
+  const exec = sqlite.exec.bind(sqlite);
+  const mutates = (sql: string) => /\b(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b/i.test(sql.replace(/--[^\n]*/g, ''));
+  Object.defineProperty(compat, 'prepare', { configurable: true, value: (sql: string) => {
+    const statement = prepare(sql);
+    if (!mutates(sql)) return statement;
+    const wrapped = new Proxy(statement, { get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        assertDatabaseWriteAllowed(compat, databasePath);
+        const result = value.apply(target, args);
+        return result === target ? wrapped : result;
+      };
+    } });
+    return wrapped;
+  } });
+  Object.defineProperty(compat, 'exec', { configurable: true, value: (sql: string) => {
+    if (mutates(sql)) assertDatabaseWriteAllowed(compat, databasePath);
+    return exec(sql);
+  } });
   Object.defineProperty(compat, 'transaction', {
     configurable: true,
     value: createTransaction(sqlite),
@@ -117,11 +141,17 @@ function resolveMigrationsDir(): string {
   } catch {
     /* noop */
   }
-  const cwdCandidates = [
+  const candidates = [
+    ...(process.argv[1] ? [
+      path.join(path.dirname(process.argv[1]), 'migrations'),
+      path.join(path.dirname(process.argv[1]), '..', 'migrations'),
+    ] : []),
     path.resolve(process.cwd(), 'migrations'),
     path.resolve(process.cwd(), 'api/db/migrations'),
   ];
-  return cwdCandidates.find((candidate) => fs.existsSync(candidate)) ?? cwdCandidates[1];
+  const found = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!found) throw new Error('Runtime migration assets are missing from this build.');
+  return found;
 }
 
 function hasExecutableSql(sql: string): boolean {
@@ -162,7 +192,7 @@ function markMigrationApplied(sqlite: NativeDatabase.Database, file: string): vo
     .run(file, new Date().toISOString());
 }
 
-/** Pre-ledger databases: mark all migration files applied without re-executing DDL. */
+/** The ledger was introduced at 0025. Bootstrap only that historical baseline, never later DDL. */
 function bootstrapMigrationLedger(sqlite: NativeDatabase.Database, files: string[]): void {
   const row = sqlite.prepare('SELECT COUNT(*) as c FROM _schema_migrations').get() as { c: number };
   if (row.c > 0) return;
@@ -171,15 +201,19 @@ function bootstrapMigrationLedger(sqlite: NativeDatabase.Database, files: string
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('wiki_snapshots', '_meta')")
     .all() as Array<{ name: string }>;
   if (legacy.length === 0) return;
+  const runtimeTables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('agent_runtime_sessions', 'agent_runtime_runs')")
+    .all() as Array<{ name: string }>;
+  if (runtimeTables.length !== 2) throw new Error('Legacy database predates the supported runtime baseline. Back up and migrate it with the matching Synax version; no migration ledger was guessed.');
 
+  const baselineFiles = files.filter(file => Number.parseInt(file, 10) <= 25);
   const now = new Date().toISOString();
   const insert = sqlite.prepare(
     'INSERT OR IGNORE INTO _schema_migrations (file, applied_at) VALUES (?, ?)',
   );
-  for (const file of files) {
+  for (const file of baselineFiles) {
     insert.run(file, now);
   }
-  pinoLogger.info({ count: files.length }, 'context db: bootstrapped migration ledger for existing database');
+  pinoLogger.info({ count: baselineFiles.length }, 'context db: bootstrapped migration ledger for existing database');
 }
 
 function shouldRunMigrationsInThisProcess(): boolean {
@@ -218,8 +252,10 @@ function runMigrations(sqlite: NativeDatabase.Database): void {
       continue;
     }
     try {
-      sqlite.exec(sql);
-      markMigrationApplied(sqlite, f);
+      sqlite.transaction(() => {
+        sqlite.exec(sql);
+        markMigrationApplied(sqlite, f);
+      })();
       pinoLogger.info({ file: f }, 'context db: migration applied');
     } catch (err) {
       pinoLogger.error({ file: f, err }, 'context db: migration failed');
@@ -318,11 +354,13 @@ function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
 
 function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
   if (_sqlite) return _sqlite;
-  const sqlite = installSqliteCompat(new NativeDatabase(dbPath));
+  const sqlite = installSqliteCompat(new NativeDatabase(dbPath), dbPath);
   configureSqlite(sqlite);
 
-  runMigrations(sqlite);
-  ensureRuntimeSchema(sqlite);
+  try {
+    runMigrations(sqlite);
+    ensureRuntimeSchema(sqlite);
+  } catch (error) { sqlite.close(); throw error; }
 
   _sqlite = sqlite;
   pinoLogger.info({ dbPath }, 'context db: ready');
@@ -332,7 +370,32 @@ function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
 function getOrCreateClient(dbPath = resolveDbPath()): Client {
   if (_client) return _client;
   _client = createClient({ url: pathToFileURL(dbPath).href });
-  return _client;
+  const client = _client;
+  const execute = client.execute.bind(client);
+  client.execute = ((statement: InStatement, args?: unknown) => {
+    const sql = typeof statement === 'string' ? statement : statement.sql;
+    if (/\b(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b/i.test(sql)) assertDatabaseWriteAllowed(getOrCreateRawSqlite(dbPath), dbPath);
+    return (execute as (...input: unknown[]) => ReturnType<Client['execute']>)(statement, args);
+  }) as Client['execute'];
+  const batch = client.batch.bind(client);
+  client.batch = ((statements: Parameters<Client['batch']>[0], mode?: Parameters<Client['batch']>[1]) => {
+    assertDatabaseWriteAllowed(getOrCreateRawSqlite(dbPath), dbPath);
+    return batch(statements, mode);
+  }) as Client['batch'];
+  const transaction = client.transaction.bind(client);
+  client.transaction = (async (mode?: TransactionMode) => {
+    const tx = await (transaction as (mode?: TransactionMode) => ReturnType<Client['transaction']>)(mode);
+    const executeTx = tx.execute.bind(tx);
+    tx.execute = ((statement: InStatement, args?: unknown) => {
+      const sql = typeof statement === 'string' ? statement : statement.sql;
+      if (/\b(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b/i.test(sql)) assertDatabaseWriteAllowed(getOrCreateRawSqlite(dbPath), dbPath);
+      return (executeTx as (...input: unknown[]) => ReturnType<Client['execute']>)(statement, args);
+    }) as typeof tx.execute;
+    const commit = tx.commit.bind(tx);
+    tx.commit = async () => { assertDatabaseWriteAllowed(getOrCreateRawSqlite(dbPath), dbPath); return commit(); };
+    return tx;
+  }) as Client['transaction'];
+  return client;
 }
 
 export function getDb(): ContextDb {
@@ -345,9 +408,13 @@ export function getDb(): ContextDb {
   return _db;
 }
 
+export function assertRuntimeExecutionCurrent(): void { assertDatabaseWriteAllowed(getRawSqlite(), resolveDbPath()); }
+
 export function getRawSqlite(): RawSqlite {
   return getOrCreateRawSqlite();
 }
+
+export function tryGetRawSqlite(): RawSqlite | null { return _sqlite; }
 
 export function closeDb(): void {
   if (_client) {

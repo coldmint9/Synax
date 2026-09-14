@@ -1,3 +1,5 @@
+export type BackendId = 'native' | 'codex' | 'claude-code' | 'opencode-acp' | 'cursor-acp' | 'codex-acp' | 'pi-acp'
+
 import { apiFetch, apiRequest } from './origin'
 import { createAppError, handleError } from '../errors'
 import type { SkillSummary } from './skills'
@@ -9,6 +11,7 @@ export type AgentMode = 'primary' | 'subagent'
 export type ThinkingMode = 'fast' | 'standard' | 'deep'
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type AgentSessionStatus =
+  | 'stopping'
   | 'queued'
   | 'running'
   | 'waiting_permission'
@@ -21,6 +24,7 @@ export type AgentSessionStatus =
   | 'paused'
 
 export type AgentRunStatus =
+  | 'queued'
   | 'running'
   | 'waiting_permission'
   | 'waiting_input'
@@ -140,12 +144,14 @@ export interface AgentRun {
   metadata: Record<string, unknown>
 }
 
+export type AgentRunStepStatus = Exclude<AgentRunStatus, 'queued'>
+
 export interface AgentRunStep {
   id: string
   runId: string
   sessionId: string
   index: number
-  status: AgentRunStatus
+  status: AgentRunStepStatus
   model: string | null
   startedAt: string
   completedAt: string | null
@@ -192,7 +198,20 @@ export interface AgentRuntimeMessage {
   createdAt: string
 }
 
+export interface AgentWork {
+  id: string
+  sessionId: string
+  parentWorkId: string | null
+  objective: string
+  status: 'active' | 'waiting' | 'closing' | 'completed' | 'blocked' | 'cancelled'
+  remaining: string[]
+  progressVersion: number
+  result: string | null
+  reason: string | null
+}
+
 export interface SessionPayload {
+  work?: AgentWork | null
   session: AgentSession
   profile: AgentProfile
   context: AgentContextBundle | null
@@ -248,6 +267,9 @@ export interface EvidenceArtifact {
 }
 
 export interface CreateSessionRequest {
+  backendId?: BackendId
+  model?: string
+  workDir?: string
   projectId: string
   nodeId?: string | null
   profileId: string
@@ -273,9 +295,16 @@ export interface DeleteSessionResult {
   deletedSessionIds: string[]
 }
 
+export interface SessionUsageTotals { input: number; output: number; reasoning: number; cacheRead: number; total: number }
+export interface SessionUsageCoverage { requests: number; recorded: number; missing: number; complete: boolean }
 export interface SessionStats {
+  work?: { id: string; status: 'active' | 'waiting' | 'closing' | 'completed' | 'blocked' | 'cancelled'; remaining: string[]; reason: string | null } | null
+  context?: { inputTokens: number | null; requestId: string | null; measuredAt: string | null; latestRequestUsageAvailable: boolean }
+  usage?: { self: SessionUsageTotals; tree: SessionUsageTotals }
+  coverage?: { self: SessionUsageCoverage; tree: SessionUsageCoverage }
   tokenUsage: { input: number; output: number; total: number }
   contextLimit: number
+  contextLimitKnown?: boolean
   contextUsedPercent: number
   toolCallCount: number
   runningDuration: number
@@ -353,6 +382,7 @@ export interface SessionMcpServerSummary {
 }
 
 export interface SessionCapabilities {
+  backend?: { id: BackendId; label: string; kind: 'native' | 'acp' | 'cli'; capabilities: Record<string, 'supported' | 'unsupported' | 'unverified'> }
   profile: { id: string; label: string; kind: string }
   tools: {
     available: AgentToolSummary[]
@@ -387,6 +417,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const agentRuntimeApi = {
+  listBackends: () => request<{ items: Array<{ id: BackendId; label: string; kind: 'native' | 'acp' | 'cli'; experimental?: boolean }> }>('/backends'),
+  listBackendModels: (id: BackendId) => request<{ models: Array<{ id: string; label: string; efforts?: string[] }>; defaultModel?: string | null }>(`/backends/${encodeURIComponent(id)}/models`),
+  acknowledgeRecovery: (sessionId: string) => request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/recovery`, {
+    method: 'POST', body: JSON.stringify({ reviewedWorkspace: true, confirmedNoRemainingWork: true }),
+  }),
+  submitRun: (sessionId: string, body: StreamTurnRequest, requestId: string, mode: 'turn' | 'continue' = 'turn') =>
+    request<{ run: AgentRun; reused: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/runs`, {
+      method: 'POST', body: JSON.stringify({ ...body, requestId, mode }),
+    }),
   listProfiles: () => request<{ items: AgentProfile[] }>('/profiles'),
   buildContext: (projectId: string, body: { nodeId?: string | null; profileId?: string; include?: string[] }) =>
     request<AgentContextBundle>(`/contexts/${encodeURIComponent(projectId)}`, {
@@ -420,8 +459,8 @@ export const agentRuntimeApi = {
     request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/mode`, {
       method: 'PATCH', body: JSON.stringify({ mode }),
     }),
-  cancelSession: (sessionId: string) =>
-    request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: 'POST' }),
+  cancelSession: (sessionId: string, runId?: string | null) =>
+    request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: 'POST', body: JSON.stringify({ runId: runId ?? undefined }) }),
   deleteSession: (sessionId: string) =>
     request<DeleteSessionResult>(`/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
   clearInactiveSessions: (projectId: string) =>
@@ -481,8 +520,8 @@ export const agentRuntimeApi = {
     request<{ items: TodoItem[] }>(`/sessions/${encodeURIComponent(sessionId)}/todos`),
   getSessionCapabilities: (sessionId: string) =>
     request<SessionCapabilities>(`/sessions/${encodeURIComponent(sessionId)}/capabilities`),
-  pauseSession: (sessionId: string) =>
-    request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/pause`, { method: 'POST' }),
+  pauseSession: (sessionId: string, runId?: string | null) =>
+    request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/pause`, { method: 'POST', body: JSON.stringify({ runId: runId ?? undefined }) }),
   resumeStream: async (
     sessionId: string,
     body: StreamTurnRequest,
@@ -490,7 +529,7 @@ export const agentRuntimeApi = {
   ): Promise<void> => {
     const response = await apiFetch(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/resume/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
       body: JSON.stringify(body),
     })
     if (!response.ok || !response.body) {
@@ -534,7 +573,7 @@ export const agentRuntimeApi = {
   ): Promise<void> => {
     const response = await apiFetch(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/turns/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
       body: JSON.stringify(body),
     })
     if (!response.ok || !response.body) {
@@ -585,7 +624,7 @@ export const agentRuntimeApi = {
   enqueueInput: (sessionId: string, body: { message: string; model?: string | null; reasoningEffort?: ReasoningEffort | null }) =>
     apiRequest<{ items: QueuedInput[] }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
       body: JSON.stringify(body),
     }),
 

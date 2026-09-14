@@ -34,6 +34,8 @@ export class TaskStore {
     // Read only the newest task snapshot instead of scanning the whole log.
     const latest = agentRuntimeStore.getLatestEventByType(sessionId, TaskToolEventType.TaskStateUpdated)
     if (!latest) return store
+    const workId = agentRuntimeStore.getSession(sessionId).sessionMetadata?.activeWorkId
+    if (workId && latest.payload.workId && latest.payload.workId !== workId) return store
     const items = latest.payload.tasks as Task[]
     for (const t of items) store.tasks.set(t.id, t)
     store.nextId = (latest.payload.nextId as number) ?? items.length + 1
