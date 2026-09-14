@@ -29,6 +29,14 @@ export interface VerificationRecord {
   external: boolean;
   risk?: string;
 }
+export interface WorkLedgerEntry {
+  /** `${toolId}:${argsHash}` — identity of a call, not of its result. */
+  key: string;
+  /** Digest of the newest outcome for this call; a changed outcome is new information. */
+  outcome: string;
+  count: number;
+  at: string;
+}
 export interface WorkRecord {
   id: string;
   sessionId: string;
@@ -45,11 +53,10 @@ export interface WorkRecord {
   expectedEvidence: string | null;
   progressVersion: number;
   changeVersion: number;
-  observedFacts: string[];
+  ledger: WorkLedgerEntry[];
   observedSteps: string[];
   noProgressSteps: number;
   decisionFailures: number;
-  continuedAtVersion: number | null;
   checkpoint: WorkCheckpoint | null;
   verifications: VerificationRecord[];
   changedPaths: string[];
@@ -64,7 +71,13 @@ export interface WorkRecord {
 export const workStore = {
   get(id: string): WorkRecord | null {
     const row = getRawSqlite().prepare('SELECT payload_json FROM agent_runtime_work WHERE id = ?').get(id) as { payload_json: string } | undefined;
-    return row ? JSON.parse(row.payload_json) as WorkRecord : null;
+    if (!row) return null;
+    const work = JSON.parse(row.payload_json) as WorkRecord;
+    // Records persisted before the action ledger existed carry no novelty history.
+    if (!Array.isArray(work.ledger)) work.ledger = [];
+    if (typeof work.noProgressSteps !== 'number') work.noProgressSteps = 0;
+    if (typeof work.decisionFailures !== 'number') work.decisionFailures = 0;
+    return work;
   },
   current(sessionId: string): WorkRecord | null {
     const id = store.getSession(sessionId).sessionMetadata?.activeWorkId;
@@ -84,7 +97,7 @@ export const workStore = {
       id: makeRuntimeId('work'), sessionId, parentWorkId: parent?.id ?? null, objective,
       requirements: [], status: 'active', planRevision: null, acceptanceCriteria: [], evidence: [], remaining: [],
       nextAction: null, expectedEvidence: null, progressVersion: 0, changeVersion: 0,
-      observedFacts: [], observedSteps: [], noProgressSteps: 0, decisionFailures: 0, continuedAtVersion: null,
+      ledger: [], observedSteps: [], noProgressSteps: 0, decisionFailures: 0,
       checkpoint: null, verifications: [], changedPaths: [], hasChanges: false, legacyEvidenceIncomplete: legacy,
       result: null, reason: null, createdAt: nowIso(), updatedAt: nowIso(),
     };

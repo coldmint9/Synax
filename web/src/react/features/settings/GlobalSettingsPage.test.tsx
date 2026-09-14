@@ -327,7 +327,7 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     )
   })
 
-  it('discovers models and shows them in the model menu', async () => {
+  it('discovers models as candidates and only configures the selected ones', async () => {
     const user = userEvent.setup()
     mocks.discoverAiModels.mockResolvedValueOnce({
       ok: true,
@@ -343,9 +343,25 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     await user.type(apiKeyInput, 'sk-test')
     await user.click(screen.getByRole('button', { name: /发现/ }))
 
-    await user.click(await screen.findByRole('button', { name: 'gpt-4o-mini', exact: true }))
-    expect(screen.getByRole('button', { name: 'gpt-4.1', exact: true })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'gpt-4o', exact: true })).toBeInTheDocument()
+    // 发现的模型只是候选：没有任何一个被自动配置
+    const discovered = await screen.findByRole('button', { name: 'gpt-4.1', exact: true })
+    expect(discovered).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'gpt-4o-mini', exact: true })).toHaveAttribute('aria-pressed', 'false')
+
+    // 只勾选 gpt-4o，默认模型仍是 deepseek-chat
+    await user.click(screen.getByRole('button', { name: 'gpt-4o', exact: true }))
+    expect(screen.getByRole('button', { name: 'gpt-4o', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await user.click(screen.getByRole('button', { name: '完成' }))
+    await user.click(screen.getByRole('button', { name: /保存 Provider/ }))
+
+    await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled())
+
+    const payload = mocks.updateGlobalConfig.mock.calls[0][0]
+    const provider = payload.providers.find((p: ProviderDef) => p.id === 'custom-api:deepseek')
+    expect(provider.models.map((m: { id: string }) => m.id)).toEqual(['deepseek-chat', 'gpt-4o'])
+    expect(provider.models.find((m: { id: string }) => m.id === 'deepseek-chat')).toEqual(
+      expect.objectContaining({ isDefault: true }),
+    )
   })
 
   it('removes a configured provider card', async () => {

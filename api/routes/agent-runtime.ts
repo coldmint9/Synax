@@ -52,6 +52,7 @@ import { logger } from '../lib/logger.js';
 import { SseEventType } from '../lib/sse-events.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 import { getSessionEnvironment, getSessionEnvironmentFile, invalidateSessionEnvironment } from '../services/agent-runtime/session-environment.js';
+import { commitAndPushSessionWorkspace } from '../services/agent-runtime/session-git-commit.js';
 import { resolveSessionConfiguredContextLimit } from '../services/agent-runtime/session-context-limit.js';
 import { RUNTIME_PROTOCOL_SCHEMA, RUNTIME_PROTOCOL_VERSION } from '../services/agent-runtime/runtime-protocol.js';
 
@@ -429,6 +430,24 @@ agentRuntimeRoutes.get('/sessions/:sessionId/environment/file', async (c) => {
   if (!filePath) return c.json({ error: 'Missing path' }, 400)
   try {
     return c.json(await getSessionEnvironmentFile(c.req.param('sessionId'), filePath, kind))
+  } catch (error) {
+    return runtimeError(c, error)
+  }
+})
+
+const commitSessionWorkspaceSchema = z.object({
+  // Empty message = generate one with the session's current model.
+  message: z.string().max(2000).optional(),
+  model: z.string().max(256).optional(),
+})
+
+agentRuntimeRoutes.post('/sessions/:sessionId/git/commit', async (c) => {
+  const body = await readJson(c)
+  if (!body.ok) return c.json({ error: body.error }, 400)
+  const parsed = commitSessionWorkspaceSchema.safeParse(body.data ?? {})
+  if (!parsed.success) return validationError(c, parsed.error)
+  try {
+    return c.json(await commitAndPushSessionWorkspace(c.req.param('sessionId'), parsed.data))
   } catch (error) {
     return runtimeError(c, error)
   }

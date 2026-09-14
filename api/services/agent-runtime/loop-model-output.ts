@@ -1,29 +1,27 @@
 import type { LoopModelStep } from './contracts.js';
 import { makeRuntimeId } from './runtime-ids.js';
 
-export function parseLoopModelStepText(text: string, mustFinalize: boolean): LoopModelStep {
+/** The legacy finalization flag is ignored: a prompt threshold must not discard tool calls. */
+export function parseLoopModelStepText(text: string, _legacyMustFinalize?: boolean): LoopModelStep {
   const normalized = text.trim();
-  if (!mustFinalize) {
-    const shorthand = parseLeadingToolJson(normalized);
-    if (shorthand) {
-      return {
-        thought: undefined,
-        message: shorthand.message,
-        toolCalls: [{ id: makeRuntimeId('mtc'), toolId: shorthand.toolId, args: shorthand.args }],
-        final: false,
-        stopReason: null,
-        finishReason: 'tool_text_fallback',
-      };
-    }
+  const shorthand = parseLeadingToolJson(normalized);
+  if (shorthand) {
+    return {
+      thought: undefined,
+      message: shorthand.message,
+      toolCalls: [{ id: makeRuntimeId('mtc'), toolId: shorthand.toolId, args: shorthand.args }],
+      final: false,
+      stopReason: null,
+      finishReason: 'tool_text_fallback',
+    };
   }
-
   return {
     thought: undefined,
     message: normalized || undefined,
     toolCalls: [],
     final: true,
-    stopReason: mustFinalize ? 'max_steps' : null,
-    finishReason: mustFinalize ? 'max_steps' : 'text',
+    stopReason: null,
+    finishReason: 'text',
   };
 }
 

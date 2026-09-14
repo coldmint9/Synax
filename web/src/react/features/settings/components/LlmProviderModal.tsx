@@ -1,11 +1,15 @@
 import { useState } from 'react'
 import { Button, Checkbox, Description, FieldError, InputGroup, Label, Modal, TextField } from '@heroui/react'
-import { Eye, EyeOff, RefreshCw, Save, Search, Wifi } from 'lucide-react'
+import { Check, ChevronDown, Eye, EyeOff, Plus, RefreshCw, Save, Search, Wifi, X } from 'lucide-react'
 import {
   ALL_REASONING_EFFORTS,
   API_FORMAT_OPTIONS,
   REASONING_EFFORT_LABELS,
   applyProtocolDefaults,
+  configuredModelList,
+  mergeModelOptions,
+  selectDefaultModel,
+  toggleModelSelection,
   type ApiProviderDraft,
 } from '../lib/providerPresets'
 import { validateProviderDraft } from '../lib/validation'
@@ -40,10 +44,15 @@ export function LlmProviderModal({
   const fieldError = (field: string) => errors.find(e => e.field === field)?.message
 
   const selectedModelHas1M = draft.modelMeta?.[draft.model]?.contextLimit === 1_000_000
-  const showModelDropdown = draft.models.length > 1
-  const filteredModels = modelQuery.trim()
-    ? draft.models.filter(m => m.toLowerCase().includes(modelQuery.trim().toLowerCase()))
-    : draft.models
+  /** Models this provider would configure (the multi-select result). */
+  const configuredModels = configuredModelList(draft)
+  /** Picker candidates: discovered models plus whatever is already configured. */
+  const candidateModels = mergeModelOptions(draft.modelOptions, configuredModels)
+  const normalizedQuery = modelQuery.trim().toLowerCase()
+  const filteredCandidates = normalizedQuery
+    ? candidateModels.filter(m => m.toLowerCase().includes(normalizedQuery))
+    : candidateModels
+  const hasExactCandidate = candidateModels.some(m => m.toLowerCase() === normalizedQuery)
 
   async function handleSave() {
     if (errors.length > 0) return
@@ -77,13 +86,14 @@ export function LlmProviderModal({
     try {
       const models = await onDiscoverModels(draft)
       if (models.length > 0) {
+        // Discovery only fills the candidate pool; the user picks what to configure.
         setDraft(d => ({
           ...d,
           discoveringModels: false,
-          models,
-          model: models.includes(d.model) ? d.model : models[0],
-          modelMessage: `发现 ${models.length} 个模型`,
+          modelOptions: mergeModelOptions(models, d.modelOptions, configuredModelList(d)),
+          modelMessage: `发现 ${models.length} 个模型，勾选需要启用的模型`,
         }))
+        setModelMenuOpen(true)
       } else {
         setDraft(d => ({ ...d, discoveringModels: false, modelMessage: '未发现可用模型' }))
       }
@@ -96,10 +106,39 @@ export function LlmProviderModal({
     }
   }
 
-  function selectModel(model: string) {
-    setDraft(d => ({ ...d, model }))
-    setModelMenuOpen(false)
+  /** Multi-select toggle: adds or removes a candidate from the configured models. */
+  function handleToggleModel(model: string) {
+    setDraft(d => toggleModelSelection(
+      { ...d, modelOptions: mergeModelOptions(d.modelOptions, [model]) },
+      model,
+    ))
+  }
+
+  function handleSetDefaultModel(model: string) {
+    setDraft(d => selectDefaultModel(
+      { ...d, modelOptions: mergeModelOptions(d.modelOptions, [model]) },
+      model,
+    ))
+  }
+
+  /** Enter or "添加" turns the typed text into a configured model and the default one. */
+  function addQueryModel() {
+    const typed = modelQuery.trim()
+    if (!typed) return
+    setDraft(d => {
+      const known = mergeModelOptions(d.modelOptions, configuredModelList(d))
+        .find(m => m.toLowerCase() === typed.toLowerCase())
+      const model = known ?? typed
+      return {
+        ...d,
+        model,
+        models: mergeModelOptions(d.models, [model]),
+        modelOptions: mergeModelOptions(d.modelOptions, [model]),
+        modelMessage: null,
+      }
+    })
     setModelQuery('')
+    setModelMenuOpen(false)
   }
 
   function toggleEffort(effort: ReasoningEffort) {
@@ -194,100 +233,147 @@ export function LlmProviderModal({
                 }
               </TextField>
 
-              {showModelDropdown ? (
-                <div className="space-y-1">
-                  <span className="block text-xs text-foreground pb-1">{t('llmCardModel')}</span>
-                  <div className="flex gap-1.5 items-end">
-                    <div className="relative flex-1">
+              <div className="space-y-1">
+                <span className="block text-xs text-foreground pb-1">{t('llmCardModel')}</span>
+                <div className="flex gap-1.5 items-end">
+                  <div className="relative flex-1">
+                    <div className={`flex h-9 items-center gap-2 rounded-lg border bg-transparent px-2.5 ${fieldError('model') ? 'border-destructive' : 'border-default'}`}>
+                      <input
+                        value={draft.model}
+                        onChange={(e) => setDraft(d => ({ ...d, model: e.target.value }))}
+                        placeholder="模型 ID"
+                        aria-label={t('llmCardModel')}
+                        className="h-full w-full bg-transparent font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
+                      />
                       <button
                         type="button"
+                        aria-label="候选模型"
+                        aria-expanded={modelMenuOpen}
                         onClick={() => setModelMenuOpen(o => !o)}
-                        className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-default bg-transparent px-2.5 text-xs text-foreground transition-colors hover:bg-muted/40"
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60"
                       >
-                        <span className="truncate font-mono">{draft.model || '选择模型…'}</span>
+                        <ChevronDown size={13} />
                       </button>
-                      {modelMenuOpen && (
-                        <div className="mt-1 w-full overflow-hidden rounded-lg border border-default bg-background shadow-lg">
-                          <div className="flex items-center gap-1.5 border-b border-border/40 px-2">
-                            <Search size={12} className="shrink-0 text-muted-foreground" />
-                            <input
-                              autoFocus
-                              value={modelQuery}
-                              onChange={(e) => setModelQuery(e.target.value)}
-                              placeholder="搜索模型…"
-                              className="h-8 w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
-                            />
-                          </div>
-                          <ul className="max-h-52 space-y-0.5 overflow-y-auto p-1.5">
-                            {filteredModels.map(m => (
-                              <li key={m}>
+                    </div>
+                    {modelMenuOpen && (
+                      <div className="mt-1 w-full overflow-hidden rounded-lg border border-default bg-background shadow-lg">
+                        <div className="flex items-center gap-1.5 border-b border-border/40 px-2">
+                          <Search size={12} className="shrink-0 text-muted-foreground" />
+                          <input
+                            autoFocus
+                            value={modelQuery}
+                            onChange={(e) => setModelQuery(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key !== 'Enter') return
+                              e.preventDefault()
+                              addQueryModel()
+                            }}
+                            placeholder="搜索或输入模型…"
+                            aria-label="搜索模型"
+                            className="h-8 w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
+                          />
+                        </div>
+                        <ul className="max-h-52 space-y-0.5 overflow-y-auto p-1.5">
+                          {filteredCandidates.map(m => {
+                            const selected = configuredModels.includes(m)
+                            return (
+                              <li key={m} className="flex items-center gap-1">
                                 <button
                                   type="button"
-                                  onClick={() => selectModel(m)}
-                                  className={`flex w-full items-center justify-between gap-2 rounded-full px-3 py-1.5 text-left text-[11px] transition-colors ${
-                                    m === draft.model
+                                  onClick={() => handleToggleModel(m)}
+                                  aria-pressed={selected}
+                                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-full px-2.5 py-1.5 text-left text-[11px] transition-colors ${
+                                    selected
                                       ? 'bg-primary/10 font-medium text-primary'
                                       : 'text-foreground/85 hover:bg-muted/60'
                                   }`}
                                 >
+                                  <span aria-hidden className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${selected ? 'border-primary bg-primary text-primary-foreground' : 'border-border'}`}>
+                                    {selected && <Check size={10} />}
+                                  </span>
                                   <span className="truncate font-mono">{m}</span>
                                   {draft.modelMeta?.[m]?.contextLimit === 1_000_000 && (
-                                    <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] font-medium text-primary">1M</span>
+                                    <span aria-hidden className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] font-medium text-primary">1M</span>
                                   )}
                                 </button>
+                                {m === draft.model.trim() ? (
+                                  <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] font-medium text-primary">默认</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSetDefaultModel(m)}
+                                    className="shrink-0 rounded-full px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:bg-muted/60"
+                                  >
+                                    设为默认
+                                  </button>
+                                )}
                               </li>
-                            ))}
-                            {filteredModels.length === 0 && (
-                              <li className="px-2.5 py-2 text-center text-[10px] text-muted-foreground/60">无匹配模型</li>
-                            )}
-                          </ul>
+                            )
+                          })}
+                          {normalizedQuery && !hasExactCandidate && (
+                            <li>
+                              <button
+                                type="button"
+                                onClick={addQueryModel}
+                                className="flex w-full items-center gap-1.5 rounded-full px-2.5 py-1.5 text-left text-[11px] text-foreground/85 transition-colors hover:bg-muted/60"
+                              >
+                                <Plus size={11} className="shrink-0" />
+                                {`添加 “${modelQuery.trim()}”`}
+                              </button>
+                            </li>
+                          )}
+                          {filteredCandidates.length === 0 && !normalizedQuery && (
+                            <li className="px-2.5 py-2 text-center text-[10px] text-muted-foreground/60">暂无候选模型，点击“{t('llmCardDiscover')}”获取</li>
+                          )}
+                        </ul>
+                        <div className="flex items-center justify-between gap-2 border-t border-border/40 px-2.5 py-1.5">
+                          <span className="text-[10px] text-muted-foreground/70">勾选要启用的模型，输入新模型名后回车可新增</span>
+                          <button
+                            type="button"
+                            onClick={() => setModelMenuOpen(false)}
+                            className="shrink-0 rounded-full px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted/60"
+                          >
+                            完成
+                          </button>
                         </div>
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    isPending={draft.discoveringModels}
+                    onPress={handleDiscover}
+                  >
+                    <RefreshCw size={12} />
+                    {t('llmCardDiscover')}
+                  </Button>
+                </div>
+                {fieldError('model') && <FieldError>{fieldError('model')}</FieldError>}
+                {draft.modelMessage && (
+                  <div className="text-[10px] text-muted-foreground">{draft.modelMessage}</div>
+                )}
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <span className="text-[10px] text-muted-foreground/70">已启用模型</span>
+                  {configuredModels.map(m => (
+                    <span key={m} className="inline-flex items-center gap-1 rounded-full border border-border/50 px-2 py-0.5 text-[10px]">
+                      <span className="font-mono">{m}</span>
+                      {m === draft.model.trim() ? (
+                        <span className="text-primary">默认</span>
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label={`移除模型 ${m}`}
+                          onClick={() => handleToggleModel(m)}
+                          className="text-muted-foreground transition-colors hover:text-destructive"
+                        >
+                          <X size={10} />
+                        </button>
                       )}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      isPending={draft.discoveringModels}
-                      onPress={handleDiscover}
-                    >
-                      <RefreshCw size={12} />
-                      {t('llmCardDiscover')}
-                    </Button>
-                  </div>
-                  {draft.modelMessage && (
-                    <div className="text-[10px] text-muted-foreground">{draft.modelMessage}</div>
-                  )}
+                    </span>
+                  ))}
                 </div>
-              ) : (
-                <div className="space-y-1">
-                  <div className="flex gap-1.5 items-end">
-                    <TextField
-                      className="flex-1"
-                      isInvalid={!!fieldError('model')}
-                      value={draft.model}
-                      onChange={(val) => setDraft(d => ({ ...d, model: val }))}
-                    >
-                      <Label className="text-xs">{t('llmCardModel')}</Label>
-                      <InputGroup>
-                        <InputGroup.Input />
-                      </InputGroup>
-                      {fieldError('model') && <FieldError>{fieldError('model')}</FieldError>}
-                    </TextField>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      isPending={draft.discoveringModels}
-                      onPress={handleDiscover}
-                    >
-                      <RefreshCw size={12} />
-                      {t('llmCardDiscover')}
-                    </Button>
-                  </div>
-                  {draft.modelMessage && (
-                    <div className="text-[10px] text-muted-foreground">{draft.modelMessage}</div>
-                  )}
-                </div>
-              )}
+              </div>
 
               <div className="flex items-center justify-between gap-2 rounded-lg border border-border/40 px-2.5 py-2">
                 <div className="min-w-0">

@@ -12,6 +12,8 @@ const native: BackendAdapter = {
   async *stream(sessionId, mode, input, signal) {
     if (process.env.SYNAX_AGENT_SESSION_IN_PROCESS !== '1') {
       yield* sessionProcessManager.streamSession(sessionId, mode, input, signal);
+      // A goal may start its next round immediately. The previous worker must exit first.
+      await sessionProcessManager.waitForIdleSessions([sessionId]);
     } else if (mode === 'continue') {
       yield* agentLoopRuntime.streamContinue(sessionId, input, signal);
     } else {

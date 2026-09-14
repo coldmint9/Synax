@@ -27,7 +27,7 @@ interface BuildLoopPromptInput {
   currentPrompt: string;
   maxSteps: number;
   stepIndex: number;
-  mustFinalize?: boolean;
+  converging?: boolean;
   /** Skill summaries (id, label, description) for on-demand skill.load. */
   skillsSection?: string | null;
   /** Synax session mode prompt section when profileId is synax. */
@@ -139,12 +139,17 @@ export function buildLoopSystemPrompt(input: BuildLoopPromptInput): string {
     .join('\n');
 }
 
-export function buildLoopStepNote(input: Pick<BuildLoopPromptInput, 'stepIndex' | 'maxSteps' | 'mustFinalize'>): string {
+export function buildLoopStepNote(input: Pick<BuildLoopPromptInput, 'stepIndex' | 'maxSteps' | 'converging'>): string {
   const parts = [
-    `[Step ${input.stepIndex}/${input.maxSteps}]`,
+    `[Step ${input.stepIndex}; convergence threshold ${input.maxSteps}]`,
   ];
-  if (input.mustFinalize) {
-    parts.push('This is the final allowed step. You MUST submit your output now using the appropriate submit tool, or provide a textual summary if no submit tool is available.');
+  if (input.converging) {
+    parts.push(
+      'Begin a graceful wrap-up of this round. This is a soft threshold, not a hard stop; tools remain available.',
+      'Do not expand scope or start another large work item. Finish the current atomic operation and necessary verification, then report completed work, evidence, unverified or unfinished items, blockers, and the next action to the user.',
+      'If the work is fully verified, complete it through the normal acceptance path. Otherwise use work.checkpoint(action="yield", summary=...) or a plain-text status report to end only this round without claiming work or goal completion.',
+      'An executing, approved root goal will continue in a new round from this handoff. Use human.ask for required input or work.checkpoint(action="blocked") for a real blocker; never invent completion just to end the round.',
+    );
   }
   return parts.join(' ');
 }
@@ -157,7 +162,7 @@ export function buildLoopUserPrompt(input: BuildLoopPromptInput): string {
     .join('\n\n');
   return [
     `Primary task:\n${input.currentPrompt}`,
-    input.mustFinalize ? '\nThis response must finish the run now with a textual summary only.' : '',
+    input.converging ? buildLoopStepNote(input) : '',
     conversation ? `\nConversation history:\n${conversation}` : '',
     transcript ? `\nPrevious step transcript:\n${transcript}` : '',
     toolHistory ? `\nTool results available:\n${toolHistory}` : '',

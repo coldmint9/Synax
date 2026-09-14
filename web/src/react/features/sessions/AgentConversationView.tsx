@@ -126,7 +126,7 @@ export const AgentConversationView = memo(function AgentConversationView({
         <Card className="border-run/15 bg-run/[0.03] shadow-none">
           <div className="px-3.5 py-2.5">
             <Chip size="sm" color="default" variant="soft" className="mb-1 text-[10px]">
-              {session?.status === 'paused' ? 'Paused' : 'Interrupted'}
+              {session?.status === 'paused' ? 'Paused' : session?.status === 'blocked' ? 'Blocked' : 'Interrupted'}
             </Chip>
             <div className="text-[13px] leading-relaxed text-muted-foreground">
               {session?.blockedReason ?? t('sessionPausedHint')}

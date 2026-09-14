@@ -14,9 +14,9 @@ const evidence = z.array(z.object({
 })).max(30).default([]);
 export const workCheckpointTool: RegisteredTool = {
   id: 'work.checkpoint', label: 'Work checkpoint', category: 'task', internalGate: 'none', mutability: 'task', resumeBehavior: 'auto',
-  description: 'Make a work-boundary or closing decision, not a per-step progress log. complete submits the final answer and evidence and ends execution immediately; blocked reports a concrete blocker; continue identifies an unmet requirement, necessary next action and expected evidence. start requires a new user instruction. Must be the only call in the step.',
+  description: 'Make a work-boundary or closing decision, not a per-step progress log. complete submits the final answer and evidence for acceptance; yield reports completed work, verification, remaining work and the next action, ending only this round without accepting the work (an executing approved goal automatically continues); blocked reports a real blocker requiring intervention, not a step threshold; continue identifies an unmet requirement, necessary next action and expected evidence. start requires a new user instruction. Must be the only call in the step.',
   inputSchema: z.object({
-    action: z.enum(['start', 'continue', 'complete', 'blocked']),
+    action: z.enum(['start', 'continue', 'complete', 'yield', 'blocked']),
     summary: z.string().trim().min(1).max(16000),
     objective: z.string().trim().min(1).max(16000).optional(),
     unmetRequirement: z.string().trim().min(1).max(4000).optional(),
@@ -31,6 +31,7 @@ export const workCheckpointTool: RegisteredTool = {
       throw new AgentValidationError('A work checkpoint requires the active run step.');
     if (args.action === 'complete' || args.action === 'blocked')
       return workRuntime.complete(input, args.summary, args.evidence, args.action === 'blocked');
+    if (args.action === 'yield') return workRuntime.yieldRound(input, args.summary, args.nextAction);
     if (args.action === 'start') {
       const user = getUserInstructionText(input.sessionId, input.runId);
       if (!user || isWorkContinuation(user) || !args.objective)
@@ -50,7 +51,6 @@ export const workCheckpointTool: RegisteredTool = {
       throw new AgentValidationError('Continuing requires an unmet requirement, a necessary next action, and expected evidence.');
     if (work.acceptanceCriteria.length && !work.acceptanceCriteria.includes(args.unmetRequirement))
       throw new AgentValidationError('The unmet requirement must identify an acceptance criterion of the approved plan.');
-    work.continuedAtVersion = work.progressVersion;
     work.status = 'active'; work.noProgressSteps = 0; work.decisionFailures = 0; work.reason = args.summary;
     work.remaining = [args.unmetRequirement]; work.nextAction = args.nextAction; work.expectedEvidence = args.expectedEvidence;
     workStore.save(work);

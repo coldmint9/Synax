@@ -11,20 +11,14 @@ import { ResponsesSnapshotAccumulator } from './responses-snapshot.js';
 export interface GenerateLoopModelStepInput {
   request: LlmGatewayRequest;
   tools: LoopToolSet;
-  mustFinalize: boolean;
   model: string | null;
   abortSignal?: AbortSignal;
   hookContext?: LlmHookContext;
 }
 
 export async function generateLoopModelStep(input: GenerateLoopModelStepInput): Promise<LoopStepModelResult> {
-  const finalizeSubmitTools = input.mustFinalize
-    ? input.tools.activeTools.filter(t => t.includes('submit'))
-    : null;
-  const hasTools = finalizeSubmitTools
-    ? finalizeSubmitTools.length > 0
-    : input.tools.activeTools.length > 0;
-  const activeTools = finalizeSubmitTools ?? input.tools.activeTools;
+  const activeTools = input.tools.activeTools;
+  const hasTools = activeTools.length > 0;
   const result = await createGatewayStream(
     {
       ...input.request,
@@ -97,14 +91,12 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
 
   const message = text.trim() || undefined;
   const deduplicatedToolCalls = deduplicateToolCalls(toolCalls);
-  const parsedFallback = !input.mustFinalize && deduplicatedToolCalls.length === 0 && message
-    ? parseLoopModelStepText(message, false)
+  const parsedFallback = deduplicatedToolCalls.length === 0 && message
+    ? parseLoopModelStepText(message)
     : null;
-  const rawFinalToolCalls = input.mustFinalize
-    ? []
-    : parsedFallback?.toolCalls.length
-      ? parsedFallback.toolCalls
-      : deduplicatedToolCalls;
+  const rawFinalToolCalls = parsedFallback?.toolCalls.length
+    ? parsedFallback.toolCalls
+    : deduplicatedToolCalls;
   const finalToolCalls = rawFinalToolCalls.filter(c => !c.toolId.includes('multi_tool_use'));
   const finalMessage = parsedFallback?.toolCalls.length ? parsedFallback.message : message;
 
@@ -116,9 +108,9 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
       toolCallProviderMetadata,
       message: finalMessage,
       toolCalls: finalToolCalls,
-      final: input.mustFinalize || finalToolCalls.length === 0,
-      stopReason: input.mustFinalize ? 'max_steps' : null,
-      finishReason: input.mustFinalize ? 'max_steps' : (parsedFallback?.finishReason ?? finishReason ?? null),
+      final: finalToolCalls.length === 0,
+      stopReason: null,
+      finishReason: parsedFallback?.finishReason ?? finishReason ?? null,
       usage,
       providerMetadata,
       protocol: protocolSnapshot.snapshot(),
@@ -129,13 +121,8 @@ export async function generateLoopModelStep(input: GenerateLoopModelStepInput): 
 export async function* streamLoopModelStep(
   input: GenerateLoopModelStepInput,
 ): AsyncGenerator<LoopModelStreamEvent> {
-  const finalizeSubmitTools = input.mustFinalize
-    ? input.tools.activeTools.filter(t => t.includes('submit'))
-    : null;
-  const hasTools = finalizeSubmitTools
-    ? finalizeSubmitTools.length > 0
-    : input.tools.activeTools.length > 0;
-  const activeTools = finalizeSubmitTools ?? input.tools.activeTools;
+  const activeTools = input.tools.activeTools;
+  const hasTools = activeTools.length > 0;
   const result = await createGatewayStream(
     {
       ...input.request,
@@ -212,14 +199,12 @@ export async function* streamLoopModelStep(
 
   const message = text.trim() || undefined;
   const deduplicatedToolCalls = deduplicateToolCalls(toolCalls);
-  const parsedFallback = !input.mustFinalize && deduplicatedToolCalls.length === 0 && message
-    ? parseLoopModelStepText(message, false)
+  const parsedFallback = deduplicatedToolCalls.length === 0 && message
+    ? parseLoopModelStepText(message)
     : null;
-  const rawFinalToolCalls = input.mustFinalize
-    ? []
-    : parsedFallback?.toolCalls.length
-      ? parsedFallback.toolCalls
-      : deduplicatedToolCalls;
+  const rawFinalToolCalls = parsedFallback?.toolCalls.length
+    ? parsedFallback.toolCalls
+    : deduplicatedToolCalls;
   const finalToolCalls = rawFinalToolCalls.filter(c => !c.toolId.includes('multi_tool_use'));
   const finalMessage = parsedFallback?.toolCalls.length ? parsedFallback.message : message;
 
@@ -231,9 +216,9 @@ export async function* streamLoopModelStep(
       toolCallProviderMetadata,
       message: finalMessage,
       toolCalls: finalToolCalls,
-      final: input.mustFinalize || finalToolCalls.length === 0,
-      stopReason: input.mustFinalize ? 'max_steps' : null,
-      finishReason: input.mustFinalize ? 'max_steps' : (parsedFallback?.finishReason ?? finishReason ?? null),
+      final: finalToolCalls.length === 0,
+      stopReason: null,
+      finishReason: parsedFallback?.finishReason ?? finishReason ?? null,
       usage,
       providerMetadata,
       protocol: protocolSnapshot.snapshot(),

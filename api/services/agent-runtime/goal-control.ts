@@ -47,7 +47,8 @@ export function buildGoalInstruction(goal: GoalState, plan?: GoalPlan): string {
     '## Goal',
     `Objective: ${current.objective}`,
     `Goal status: ${current.status}.`,
-    'A completed run is not a completed goal. Session and model limits may end the current run without completing or failing the goal.',
+    'A completed run is not a completed goal. The round step threshold only requests a graceful wrap-up; it never forces completion or failure.',
+    'When a round needs to end before acceptance, use work.checkpoint(action="yield") with a factual summary and next action. An executing approved root goal automatically continues in a new run after the previous execution releases ownership.',
   ];
   if (current.reason) lines.push(`Reason: ${current.reason}`);
   if (!['planning', 'executing'].includes(current.status)) {

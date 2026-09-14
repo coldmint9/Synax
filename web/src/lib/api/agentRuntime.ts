@@ -42,6 +42,7 @@ export interface AgentProfile {
   description: string
   defaultThinkingMode: ThinkingMode
   allowedCapabilities: string[]
+  /** Soft round convergence threshold; retained under the legacy name for compatibility. */
   maxSteps: number
   status: 'active' | 'disabled'
   allowsSubsessions?: boolean
@@ -375,6 +376,17 @@ export interface SessionEnvironmentFileView {
   truncated: boolean
 }
 
+export interface SessionGitCommitResult {
+  branch: string
+  commitSha: string
+  message: string
+  /** True when the message was generated because the user left the input empty. */
+  messageGenerated: boolean
+  pushed: boolean
+  upstream: string | null
+  committedFiles: number
+}
+
 export interface SessionMcpServerSummary {
   id: string
   name: string
@@ -413,6 +425,7 @@ export interface StreamTurnRequest {
   purpose?: string
   temperature?: number
   maxTokens?: number
+  /** Soft round convergence threshold, not an execution cap. */
   maxSteps?: number
   locale?: 'zh' | 'en'
   reasoningEffort?: ReasoningEffort
@@ -525,6 +538,11 @@ export const agentRuntimeApi = {
     request<SessionEnvironmentFileView>(
       `/sessions/${encodeURIComponent(sessionId)}/environment/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}`,
     ),
+  commitSessionWorkspace: (sessionId: string, body: { message?: string; model?: string } = {}) =>
+    request<SessionGitCommitResult>(`/sessions/${encodeURIComponent(sessionId)}/git/commit`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   getSessionStats: (sessionId: string) =>
     request<SessionStats>(`/sessions/${encodeURIComponent(sessionId)}/stats`),
   getSessionTodos: (sessionId: string) =>

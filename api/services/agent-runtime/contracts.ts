@@ -184,6 +184,7 @@ export interface AgentProfile {
   defaultThinkingMode: ThinkingMode;
   allowedCapabilities: string[];
   permissionDefaults: PermissionRule[];
+  /** Legacy name: steps before requesting a graceful round handoff, not an execution cap. */
   maxSteps: number;
   status: 'active' | 'disabled';
   toolPolicy?: ToolPolicy;
@@ -458,7 +459,7 @@ export const streamTurnRequestSchema = z.object({
   purpose: z.string().min(1).max(64).optional(),
   temperature: z.number().min(0).max(2).optional(),
   maxTokens: z.number().int().positive().max(200_000).optional(),
-  maxSteps: z.number().int().positive().max(500).optional(),
+  maxSteps: z.number().int().positive().max(500).describe('Soft convergence threshold for the current round, not a hard step limit.').optional(),
   locale: z.enum(['zh', 'en']).optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   permissionTier: permissionTierSchema.optional(),

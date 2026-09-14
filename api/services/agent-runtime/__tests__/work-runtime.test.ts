@@ -69,17 +69,25 @@ describe('durable cooperative work runtime', () => {
     expect(workRuntime.toolError(session.id, 'bash')).toMatch(/closing decision/);
   });
 
-  it('status checks with different commands cannot reset progress; a second stall blocks', async () => {
+  it('stalled steps nudge, gate, and release the closing decision without blocking', async () => {
     const { session, run } = setup();
-    const doStall = () => {
-      for (let n = 0; n < 3; n++) {
+    const doStall = (steps: number) => {
+      for (let n = 0; n < steps; n++) {
         const w = workStore.current(session.id)!;
         workRuntime.afterStep(session.id, step(session.id, run.id), w.progressVersion);
       }
     };
-    doStall(); expect(workStore.current(session.id)?.status).toBe('closing');
-    await workCheckpointTool.execute(input(session.id, run.id, { action: 'continue', summary: 'A specific check remains', unmetRequirement: 'Validate filtering', nextAction: 'Run focused test', expectedEvidence: 'One successful test receipt', evidence: [] }));
-    doStall(); expect(workStore.current(session.id)).toMatchObject({ status: 'blocked', reason: expect.stringContaining('no_progress') });
+    doStall(3);
+    expect(workStore.current(session.id)).toMatchObject({ status: 'active', noProgressSteps: 3 });
+    expect(workStore.current(session.id)?.reason).toMatch(/No new information/);
+    expect(workRuntime.toolError(session.id, 'bash')).toBeNull();
+
+    doStall(3);
+    expect(workStore.current(session.id)).toMatchObject({ status: 'closing', noProgressSteps: 6 });
+    expect(workRuntime.toolError(session.id, 'bash')).toMatch(/closing decision/);
+
+    doStall(3);
+    expect(workStore.current(session.id)).toMatchObject({ status: 'active', decisionFailures: 0 });
   });
 
   it('new read discoveries and negative search results remain progress', () => {
