@@ -1,3 +1,4 @@
+import type { TurnReference } from '../../../lib/api/agentRuntime'
 import type { BackendId } from '../../../lib/api/agentRuntime'
 import { create } from 'zustand'
 import {
@@ -41,6 +42,7 @@ import {
 const READ_MARKERS_KEY = 'synax-session-read-markers'
 
 export type SessionInputBody = {
+  references?: TurnReference[]
   backendId?: BackendId
   message: string
   mode?: AgentSessionMode
@@ -889,7 +891,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     const session = get().sessions.find(s => s.id === sessionId)
     const mode = session && ['interrupted', 'paused', 'cancelled', 'failed', 'blocked', 'completed'].includes(session.status) ? 'continue' : 'turn'
     await agentRuntimeApi.submitRun(sessionId, {
-      message: body.message, messageSource: body.messageSource, model: body.model ?? undefined,
+      message: body.message, messageSource: body.messageSource, references: body.references, model: body.model ?? undefined,
       reasoningEffort: body.reasoningEffort ?? undefined, permissionTier: body.permissionTier,
       locale: useShellStore.getState().preferences.locale,
     }, crypto.randomUUID(), mode)

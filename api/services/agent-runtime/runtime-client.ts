@@ -208,8 +208,8 @@ export class HttpRuntimeClient implements RuntimeClient {
         if (!response.ok) {
           const errorBody = (body && typeof body === 'object' ? body : {}) as Partial<RuntimeErrorBody>;
           const error = new SynaxRuntimeError(
-            typeof errorBody.error === 'string' ? errorBody.error : `Runtime request failed: HTTP ${response.status}`,
-            { status: response.status, code: errorBody.code, details: errorBody.details },
+            typeof errorBody.error === 'string' ? errorBody.error : `Runtime request failed (${method} ${pathname}): HTTP ${response.status}`,
+            { status: response.status, code: errorBody.code, details: { response: errorBody.details, method, path: pathname } },
           );
           if (retry && error.retryable && attempt < this.maxRetries) {
             await wait(this.retryDelayMs * 2 ** attempt);
@@ -258,6 +258,10 @@ export class HttpRuntimeClient implements RuntimeClient {
     return this.request('/api/projects');
   }
 
+  createProject(body: { name: string; environment?: 'production' | 'staging' | 'development'; source: { kind: 'localPath'; localPath: string } }): Promise<{ project: { id: string; name: string; source?: { localPath?: string; kind?: string } } }> {
+    return this.request('/api/projects', { method: 'POST', body: JSON.stringify(body) }, { retry: false });
+  }
+
   listSessions(query: Record<string, string | number | undefined> = {}): Promise<RuntimeSessionListResponse> {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
@@ -304,8 +308,8 @@ export class HttpRuntimeClient implements RuntimeClient {
     if (!response.ok) {
       const body = parseJson(await response.text());
       const errorBody = (body && typeof body === 'object' ? body : {}) as Partial<RuntimeErrorBody>;
-      throw new SynaxRuntimeError(typeof errorBody.error === 'string' ? errorBody.error : `Runtime stream failed: HTTP ${response.status}`, {
-        status: response.status, code: errorBody.code, details: errorBody.details,
+      throw new SynaxRuntimeError(typeof errorBody.error === 'string' ? errorBody.error : `Runtime stream failed (GET ${sessionId}/${runId}/stream): HTTP ${response.status}`, {
+        status: response.status, code: errorBody.code, details: { response: errorBody.details, method: 'GET', path: `/api/agent-runtime/sessions/${sessionId}/runs/${runId}/stream` },
       });
     }
     for await (const frame of readSse(response, signal)) {

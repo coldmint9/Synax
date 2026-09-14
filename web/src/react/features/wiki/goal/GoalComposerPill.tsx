@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useCallback, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useCallback, type ReactNode, type RefObject, type KeyboardEvent } from 'react'
 import { Square, ArrowUp } from 'lucide-react'
 import type { ProviderDef } from '../../../../lib/contracts/config'
 import type { GlobalConfig } from '../../../../lib/contracts/config'
@@ -12,7 +12,19 @@ import { GoalPermissionCycle } from './GoalPermissionCycle'
 import type { GoalModelSelection } from './goalModelOptions'
 import type { GoalPermissionTier, GoalWikiAttachMode } from './goalAttachTypes'
 
+export interface ComposerCommands {
+  inputRef: RefObject<HTMLTextAreaElement | null>
+  onInput: (value: string, cursor: number) => void
+  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean
+  header: ReactNode
+  trigger: ReactNode
+  open: boolean
+  listId: string
+  activeId?: string
+}
+
 interface Props {
+  commands?: ComposerCommands
   /** Optional session-only control, beside the model picker in either layout. */
   backendId?: string
   modelControl?: ReactNode
@@ -51,6 +63,7 @@ interface Props {
 }
 
 export function GoalComposerPill({
+  commands,
   modelControl,
   backendId,
   modeControl,
@@ -84,11 +97,13 @@ export function GoalComposerPill({
   defaultExpanded = false,
 }: Props) {
   const { t } = useLocale()
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const localTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const textareaRef = commands?.inputRef ?? localTextareaRef
   const isComposingRef = useRef(false)
   const suppressEnterRef = useRef(false)
   const isMultiline = content.includes('\n')
-  const expandedLayout = defaultExpanded || isMultiline
+  const isSessionComposer = Boolean(modeControl)
+  const expandedLayout = isSessionComposer || defaultExpanded || isMultiline
 
   const handleCompositionStart = useCallback(() => {
     isComposingRef.current = true
@@ -104,18 +119,19 @@ export function GoalComposerPill({
   }, [])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key !== 'Enter' || e.shiftKey) return
     if (
       isComposingRef.current
       || suppressEnterRef.current
       || e.nativeEvent.isComposing
       || e.keyCode === 229
     ) return
+    if (commands?.onKeyDown(e)) return
+    if (e.key !== 'Enter' || e.shiftKey) return
     e.preventDefault()
     if (disabled && !queueWhileGenerating) return
     if (!content.trim()) return
     onSubmit()
-  }, [content, disabled, isGenerating, onSubmit, queueWhileGenerating])
+  }, [content, commands, disabled, isGenerating, onSubmit, queueWhileGenerating])
 
   useLayoutEffect(() => {
     const el = textareaRef.current
@@ -125,14 +141,14 @@ export function GoalComposerPill({
       el.style.height = ''
       return
     }
-    if (defaultExpanded && !isMultiline) {
+    if (!isSessionComposer && defaultExpanded && !isMultiline) {
       el.style.height = ''
       return
     }
-    const maxHeight = defaultExpanded ? 192 : 128
+    const maxHeight = isSessionComposer || defaultExpanded ? 192 : 128
     el.style.height = '0px'
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
-  }, [content, defaultExpanded, expandedLayout, isMultiline])
+  }, [content, defaultExpanded, expandedLayout, isMultiline, isSessionComposer])
 
   useLayoutEffect(() => {
     if (!defaultExpanded) return
@@ -155,93 +171,97 @@ export function GoalComposerPill({
 
   const toolbar = (
     <>
-      <GoalAttachMenu
-        skillsDisabled={Boolean(backendId && backendId !== 'native')}
-        projectId={projectId}
-        documentId={documentId}
-        onDocumentChange={onDocumentChange}
-        wikiAttachMode={wikiAttachMode}
-        onWikiAttachModeChange={onWikiAttachModeChange}
-        documents={documents}
-        skillIds={skillIds}
-        onSkillIdsChange={onSkillIdsChange}
-        disabled={disabled}
-        wikiAttachDisabled={wikiAttachDisabled}
-        onOverlayOpenChange={onOverlayOpenChange}
-      />
+      <div className="goal-dock-composer-leading contents">
+        {commands?.trigger ?? <GoalAttachMenu
+          skillsDisabled={Boolean(backendId && backendId !== 'native')}
+          projectId={projectId}
+          documentId={documentId}
+          onDocumentChange={onDocumentChange}
+          wikiAttachMode={wikiAttachMode}
+          onWikiAttachModeChange={onWikiAttachModeChange}
+          documents={documents}
+          skillIds={skillIds}
+          onSkillIdsChange={onSkillIdsChange}
+          disabled={disabled && !(isSessionComposer && queueWhileGenerating)}
+          wikiAttachDisabled={wikiAttachDisabled}
+          onOverlayOpenChange={onOverlayOpenChange}
+        />}
 
-      <GoalPermissionCycle
-        backendId={backendId}
-        value={permissionTier}
-        onChange={onPermissionTierChange}
-        disabled={disabled}
-      />
+        <GoalPermissionCycle
+          backendId={backendId}
+          value={permissionTier}
+          onChange={onPermissionTierChange}
+          disabled={disabled && !(isSessionComposer && queueWhileGenerating)}
+        />
+      </div>
+      <div className="goal-dock-composer-settings contents">
+        {modeControl}
+        {modelControl ?? (<GoalModelPicker
+          backendId={backendId}
+          globalConfig={globalConfig}
+          providers={providers}
+          providerId={providerId}
+          modelId={modelId}
+          onSelect={onModelSelect}
+          disabled={disabled && !(isSessionComposer && queueWhileGenerating)}
+          onOverlayOpenChange={onOverlayOpenChange}
+        />)}
 
-      {modeControl}
-      {modelControl ?? (<GoalModelPicker
-        backendId={backendId}
-        globalConfig={globalConfig}
-        providers={providers}
-        providerId={providerId}
-        modelId={modelId}
-        onSelect={onModelSelect}
-        disabled={disabled}
-        onOverlayOpenChange={onOverlayOpenChange}
-      />)}
-
-      <GoalEffortPicker
-        effort={reasoningEffort}
-        allowed={allowedReasoningEfforts}
-        modelLabel={modelId}
-        onChange={onReasoningEffortChange}
-        disabled={disabled}
-        onOverlayOpenChange={onOverlayOpenChange}
-      />
-
-      {isGenerating ? (
-        queueWhileGenerating ? (
-          <>
-            {onStop && (
+        <GoalEffortPicker
+          effort={reasoningEffort}
+          allowed={allowedReasoningEfforts}
+          modelLabel={modelId}
+          onChange={onReasoningEffortChange}
+          disabled={disabled && !(isSessionComposer && queueWhileGenerating)}
+          onOverlayOpenChange={onOverlayOpenChange}
+        />
+      </div>
+      <div className="goal-dock-composer-actions contents">
+        {isGenerating ? (
+          queueWhileGenerating ? (
+            <>
+              {onStop && (
+                <button
+                  type="button"
+                  aria-label={t('goalStop')}
+                  className="goal-dock-composer-chip goal-dock-composer-stop inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+                  onClick={onStop}
+                >
+                  <Square size={12} fill="currentColor" />
+                </button>
+              )}
               <button
                 type="button"
-                aria-label={t('goalStop')}
-                className="goal-dock-composer-chip goal-dock-composer-stop inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
-                onClick={onStop}
+                aria-label={t('goalSend')}
+                className="goal-dock-composer-chip goal-dock-composer-send ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
+                disabled={(disabled && !queueWhileGenerating) || !content.trim()}
+                onClick={onSubmit}
               >
-                <Square size={12} fill="currentColor" />
+                <ArrowUp size={15} />
               </button>
-            )}
+            </>
+          ) : (
             <button
               type="button"
-              aria-label={t('goalSend')}
-              className="goal-dock-composer-chip goal-dock-composer-send ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
-              disabled={(disabled && !queueWhileGenerating) || !content.trim()}
-              onClick={onSubmit}
+              aria-label={t('goalStop')}
+              className="goal-dock-composer-chip goal-dock-composer-stop ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+              onClick={onStop}
             >
-              <ArrowUp size={15} />
+              <Square size={12} fill="currentColor" />
             </button>
-          </>
+          )
         ) : (
           <button
             type="button"
-            aria-label={t('goalStop')}
-            className="goal-dock-composer-chip goal-dock-composer-stop ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
-            onClick={onStop}
+            aria-label={t('goalSend')}
+            className="goal-dock-composer-chip goal-dock-composer-send ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
+            disabled={disabled || !content.trim()}
+            onClick={onSubmit}
           >
-            <Square size={12} fill="currentColor" />
+            <ArrowUp size={15} />
           </button>
-        )
-      ) : (
-        <button
-          type="button"
-          aria-label={t('goalSend')}
-          className="goal-dock-composer-chip goal-dock-composer-send ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
-          disabled={disabled || !content.trim()}
-          onClick={onSubmit}
-        >
-          <ArrowUp size={15} />
-        </button>
-      )}
+        )}
+      </div>
     </>
   )
 
@@ -254,18 +274,23 @@ export function GoalComposerPill({
     >
       {expandedLayout ? (
         <>
+          {commands?.header}
           <textarea
             ref={textareaRef}
             value={content}
-            onChange={(e) => onContentChange(e.target.value)}
+            onChange={(e) => { onContentChange(e.target.value); commands?.onInput(e.target.value, e.target.selectionStart) }}
+            onSelect={(e) => commands?.onInput(e.currentTarget.value, e.currentTarget.selectionStart)}
+            aria-autocomplete={commands ? "list" : undefined}
+            aria-controls={commands?.open ? commands.listId : undefined}
+            aria-activedescendant={commands?.open ? commands.activeId : undefined}
             onKeyDown={handleKeyDown}
             {...compositionProps}
             placeholder={t('goalPlaceholder')}
             aria-label={t('goalPlaceholder')}
             disabled={disabled && !queueWhileGenerating}
-            rows={defaultExpanded && !isMultiline ? 4 : 1}
+            rows={isSessionComposer ? 2 : defaultExpanded && !isMultiline ? 4 : 1}
             className={`goal-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[13px] leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
-              defaultExpanded && !isMultiline ? 'min-h-[5.5rem] max-h-48' : 'min-h-[1.5rem] max-h-32'
+              isSessionComposer ? 'min-h-12 max-h-48' : defaultExpanded && !isMultiline ? 'min-h-[5.5rem] max-h-48' : 'min-h-[1.5rem] max-h-32'
             }`}
           />
           <div className="goal-dock-composer-toolbar flex items-center gap-1.5">
@@ -296,7 +321,11 @@ export function GoalComposerPill({
           <textarea
             ref={textareaRef}
             value={content}
-            onChange={(e) => onContentChange(e.target.value)}
+            onChange={(e) => { onContentChange(e.target.value); commands?.onInput(e.target.value, e.target.selectionStart) }}
+            onSelect={(e) => commands?.onInput(e.currentTarget.value, e.currentTarget.selectionStart)}
+            aria-autocomplete={commands ? "list" : undefined}
+            aria-controls={commands?.open ? commands.listId : undefined}
+            aria-activedescendant={commands?.open ? commands.activeId : undefined}
             onKeyDown={handleKeyDown}
             {...compositionProps}
             placeholder={t('goalPlaceholder')}

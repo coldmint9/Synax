@@ -88,13 +88,18 @@ export function buildInterleavedTurns(
   childSessions?: AgentSession[],
 ): InterleavedTurn[] {
   const sorted = [...steps].sort((a, b) => a.index - b.index)
+  const lastStepByRun = new Map(sorted.map(step => [step.runId, step.id]))
 
   const messagesByStep = new Map<string, AgentRuntimeMessage[]>()
   for (const message of messages) {
-    if (!message.stepId || message.role !== 'assistant') continue
-    const bucket = messagesByStep.get(message.stepId)
+    if (message.role !== 'assistant') continue
+    // Work/goal completion messages are persisted without a step. They belong
+    // to the final step of their Run so the transcript survives live cleanup.
+    const stepId = message.stepId ?? (message.runId ? lastStepByRun.get(message.runId) : null)
+    if (!stepId) continue
+    const bucket = messagesByStep.get(stepId)
     if (bucket) bucket.push(message)
-    else messagesByStep.set(message.stepId, [message])
+    else messagesByStep.set(stepId, [message])
   }
 
   const toolCallsByStep = new Map<string, ToolCallRecord[]>()

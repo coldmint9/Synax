@@ -1,3 +1,5 @@
+import { useComposerCommands } from './useComposerCommands'
+import type { TurnReference } from '../../../lib/api/agentRuntime'
 import { NativeBackendModelPicker } from './NativeBackendModelPicker'
 import { RuntimeRecoveryPanel } from './RuntimeRecoveryPanel'
 import { agentRuntimeApi, type BackendId } from '../../../lib/api/agentRuntime'
@@ -9,7 +11,6 @@ import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from './agentSessionStore'
 import { useConfig } from '../settings/useConfig'
 import { useWikiStore } from '../../state/wikiStore'
 import { useLocale } from '../../../hooks/useLocale'
-import { goalApi } from '../../../lib/api/goal'
 import { GoalComposerPill } from '../wiki/goal/GoalComposerPill'
 import { buildGoalModelOptions, formatTurnModel, pickDefaultSelection } from '../wiki/goal/goalModelOptions'
 import { prefetchAcpDiscoveryIdle } from '../wiki/goal/useAcpDiscovery'
@@ -23,7 +24,6 @@ import {
 import { InputQueueStrip } from './InputQueueStrip'
 import type { AgentSession, AgentSessionMode, ReasoningEffort } from '../../../lib/api/agentRuntime'
 import { AgentInteractionPanel } from './AgentInteractionPanel'
-import { SessionModePicker } from './SessionModePicker'
 import { effectiveReasoningEfforts } from '../settings/lib/providerPresets'
 import {
   readSynaxDocumentId,
@@ -70,6 +70,9 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   const hasPendingPermissions = useAgentSessionStore(s =>
     sessionHasPendingPermissions(sessionId, s.selectedSessionId, s.permissions),
   )
+  const [references, setReferences] = useState<TurnReference[]>([])
+  const createdDraftRef = useRef<AgentSession | null>(null)
+  useEffect(() => { setReferences([]); createdDraftRef.current = null }, [sessionId, projectId])
   const isDraft = !session
   const currentInteractions = interactionState?.sessionId === sessionId ? interactionState : null
   const pendingInteractions = currentInteractions?.items.filter(item => item.status === 'pending') ?? []
@@ -109,7 +112,7 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   const [cliModel, setCliModel] = useState<string>('default')
   const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>()
   const cliBackend = backendId === 'codex' || backendId === 'claude-code'
-  const backendOptions = [{ id: 'native' as BackendId, label: 'Synax Native' },
+  const backendOptions = [{ id: 'native' as BackendId, label: 'Synax' },
     ...backendCatalog.filter(backend => backend.kind === 'cli').map(backend => ({ id: backend.id, label: `${backend.label}${backend.experimental ? ' · Preview' : ''}` })),
     ...providers.filter(provider => provider.kind === 'acp').map(provider => ({ id: provider.id as BackendId, label: provider.label ?? provider.id }))]
   useEffect(() => {
@@ -149,17 +152,19 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   const incompatibleModel = backendId === 'native' && Boolean(providerId?.endsWith('-acp'))
 
   const handleModeChange = async (next: AgentSessionMode) => {
-    if (!modeEnabled) return
+    if (!modeEnabled) throw new Error(zh ? '当前无法切换模式' : 'Mode cannot be switched right now')
     setError(null)
-    if (isDraft) {
+    if (isDraft && !createdDraftRef.current) {
       setDraftMode(next)
       return
     }
     setChangingMode(true)
     try {
-      await updateSessionMode(session.id, next)
+      await updateSessionMode(session?.id ?? createdDraftRef.current!.id, next)
+      if (isDraft) setDraftMode(next)
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
+      throw error
     } finally {
       setChangingMode(false)
     }
@@ -230,82 +235,37 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
 
   const handleSubmit = useCallback(async () => {
     const message = content.trim()
-    if (!message || changingMode || incompatibleModel || (isGenerating && !queueWhileGenerating)) return
+    if (!message || submitting || changingMode || incompatibleModel || (isGenerating && !queueWhileGenerating)) return
     setError(null)
-    setContent('')
     setSubmitting(true)
     const model = backendId === 'native' ? formatTurnModel(providerId, modelId) : backendId.endsWith('-acp') ? `${backendId}/${providerId === backendId ? modelId ?? 'default' : 'default'}` : cliModel !== 'default' ? cliModel : undefined
-    const effortPayload = reasoningEffort
+    const body = { message, model, reasoningEffort, permissionTier: cliBackend ? undefined : permissionTier, references }
     try {
       if (isDraft) {
-        const { prompt, wikiContext } = await goalApi.buildSessionPrompt(projectId, {
-          mode: 'session',
-          content: message,
-          wikiAttachMode,
-          documentId: wikiAttachMode === 'manual' ? documentId : null,
-          documentTitle: wikiAttachMode === 'manual' && documentId
-            ? documents.find(d => d.id === documentId)?.title ?? null
-            : null,
+        const created = createdDraftRef.current ?? await submitSessionDraft(projectId, {
+          ...body, backendId, mode: acp ? 'chat' : draftMode, prompt: message,
         })
-        const created = await submitSessionDraft(projectId, {
-          message,
-          backendId,
-          mode: acp ? 'chat' : draftMode,
-          prompt,
-          model,
-          reasoningEffort: effortPayload,
-          permissionTier: cliBackend ? undefined : permissionTier,
-          skillIds,
-          wikiAttachMode: wikiContext.mode,
-          documentId: wikiContext.documentId,
-        })
+        createdDraftRef.current = created
+        await sendSessionMessage(created.id, body)
+        createdDraftRef.current = null
         navigate(sessionPath(projectId, created.id))
-        setSkillIds([])
-        await sendSessionMessage(created.id, {
-          // Reference-enriched messages retain the app-authored marker; plain user messages stay visible.
-          message: prompt,
-          messageSource: prompt === message ? undefined : 'system_injection',
-          model,
-          reasoningEffort: effortPayload,
-          permissionTier: cliBackend ? undefined : permissionTier,
-        })
       } else {
-        await submitOrEnqueueSessionInput(session.id, { message, model, reasoningEffort: effortPayload, permissionTier: cliBackend ? undefined : permissionTier })
+        await submitOrEnqueueSessionInput(session.id, body)
       }
+      setContent('')
+      setReferences([])
     } catch (error) {
-      setContent(message)
       setError(error instanceof Error ? error.message : String(error))
     } finally {
       setSubmitting(false)
     }
-  }, [
-    backendId,
-    cliModel,
-    cliBackend,
-    content,
-    acp,
-    draftMode,
-    changingMode,
-    incompatibleModel,
-    documentId,
-    documents,
-    isDraft,
-    isGenerating,
-    modelId,
-    mode,
-    navigate,
-    permissionTier,
-    projectId,
-    providerId,
-    queueWhileGenerating,
-    reasoningEffort,
-    sendSessionMessage,
-    session,
-    skillIds,
-    submitSessionDraft,
-    submitOrEnqueueSessionInput,
-    wikiAttachMode,
-  ])
+  }, [content, submitting, changingMode, incompatibleModel, isGenerating, queueWhileGenerating, backendId, providerId, modelId, cliModel, reasoningEffort, cliBackend, permissionTier, references, isDraft, projectId, acp, draftMode, submitSessionDraft, sendSessionMessage, navigate, submitOrEnqueueSessionInput, session])
+
+  const commands = useComposerCommands({
+    projectId, sessionId, backendId, content, setContent, references, setReferences,
+    mode, modeEnabled, onModeChange: handleModeChange,
+    disabled: submitting || changingMode || (isGenerating && !queueWhileGenerating),
+  })
 
   const handleStop = useCallback(() => {
     if (session) void cancelSessionRun(session.id)
@@ -314,18 +274,14 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
   const allowedReasoningEfforts: ReasoningEffort[] | undefined = cliBackend ? cliEfforts ?? (backendId === 'codex' ? ['low', 'medium', 'high', 'xhigh'] : ['low', 'medium', 'high', 'xhigh', 'max']) : providerId ? effectiveReasoningEfforts(globalConfig, providerId) : undefined
   const isCentered = layout === 'centered'
   const isFocusRail = layout === 'focusRail'
-  const expandedShell = isCentered || content.includes('\n')
 
   const composer = (
     <GoalComposerPill
+      commands={commands}
       modelControl={backendId === 'codex' || backendId === 'claude-code'
         ? <NativeBackendModelPicker key={backendId} backendId={backendId} model={cliModel} onChange={setCliModel} onEffortsChange={setCliEfforts} nativeMetadata={session?.sessionMetadata?.nativeBackend} disabled={submitting || isGenerating} /> : undefined}
-      modeControl={<><SessionBackendPicker value={backendId} options={backendOptions} disabled={!isDraft || submitting}
-        onChange={id => { setDraftBackendId(id); setError(null); if (id !== 'native') { setSkillIds([]); setProviderId(id); setModelId('default') } else { setProviderId(null); setModelId(null) } }} />
-        <SessionModePicker mode={mode} disabled={!modeEnabled} onChange={next => void handleModeChange(next)}
-        description={acp ? (zh ? '计划和目标模式仅适用于原生 Synax 引擎。' : 'Plan and goal require the native Synax engine.')
-          : !modeEnabled ? (zh ? '会话空闲且无待处理请求时可切换模式。' : 'Switch when idle with no pending requests.')
-            : (zh ? '模式不会改变工具权限。' : 'Mode does not change tool permissions.')} /></>}
+      modeControl={<SessionBackendPicker value={backendId} options={backendOptions} disabled={!isDraft || submitting || Boolean(createdDraftRef.current)}
+        onChange={id => { setDraftBackendId(id); setError(null); if (id !== 'native') { setReferences(items => items.filter(item => item.kind === 'file' || item.kind === 'wiki')); setSkillIds([]); setProviderId(id); setModelId('default') } else { setProviderId(null); setModelId(null) } }} />}
       projectId={projectId}
       backendId={backendId}
       content={content}
@@ -359,21 +315,22 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       allowedReasoningEfforts={allowedReasoningEfforts}
       permissionTier={permissionTier}
       onPermissionTierChange={handlePermissionTierChange}
-      disabled={changingMode || (isGenerating && !queueWhileGenerating)}
+      disabled={submitting || changingMode || (isGenerating && !queueWhileGenerating)}
       wikiAttachDisabled={!isDraft}
-      queueWhileGenerating={queueWhileGenerating}
+      queueWhileGenerating={queueWhileGenerating && !submitting && !changingMode}
     />
   )
 
   const composerShell = (
     <div className="agent-session-controls w-full">
+      {commands.menu}
       {error && <p role="alert" className="mb-2 px-2 text-xs text-danger">{error}</p>}
       {incompatibleModel && <p role="alert" className="mb-2 px-2 text-xs text-danger">{zh ? '请选择当前后端的模型；切换执行后端需新建会话。' : 'Choose a model for this backend; start a new session to change backends.'}</p>}
       {session && <RuntimeRecoveryPanel key={`recovery-${session.id}`} session={session} />}
       {session && <AgentInteractionPanel key={session.id} session={session} />}
       <div
         className={`goal-session-composer-shell goal-dock-shell w-full flex flex-col items-center${isCentered ? ' goal-session-composer-shell--draft' : ''}`}
-        data-multiline={expandedShell ? 'true' : undefined}
+        data-multiline="true"
       >
         {sessionId && (
           <InputQueueStrip

@@ -88,22 +88,146 @@ textarea.agent-request-input { resize: vertical; }
 .agent-plan-details { font-size: 12px; line-height: 1.65; }
 @media (prefers-reduced-motion: reduce) { .agent-disclosure-arrow { transition: none; } }
 
-/* A narrow Session container uses the existing textarea + toolbar rhythm.
-   Shared Wiki composers without the optional mode slot are unchanged. */
+/* Session inputs keep writing separate from configuration; Wiki dock morphs stay compact. */
 .agent-session-controls { container-type: inline-size; }
+.agent-session-controls .goal-session-composer-shell.goal-dock-shell {
+  border: 1px solid hsl(var(--border-hsl) / 0.65);
+  border-radius: 1rem;
+  min-height: 0;
+  background: hsl(var(--card) / 0.97);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 2px 8px hsl(var(--foreground-hsl) / 0.035);
+}
+.agent-session-controls .goal-session-composer-shell:focus-within {
+  border-color: hsl(var(--muted-foreground) / 0.45);
+}
+.agent-session-controls .goal-dock-composer[data-session-controls] {
+  gap: 0.75rem;
+  padding: 0.875rem 0.75rem 0.625rem;
+}
+.goal-dock-composer[data-session-controls] .goal-dock-composer-input {
+  field-sizing: fixed;
+  min-height: 3rem;
+  max-height: 12rem;
+  padding-inline: 0.25rem;
+  font-size: 14px;
+  line-height: 1.5rem;
+  overflow-y: auto;
+}
+.goal-dock-composer[data-session-controls] .goal-dock-composer-toolbar {
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.goal-dock-composer[data-session-controls] .goal-dock-composer-leading,
+.goal-dock-composer[data-session-controls] .goal-dock-composer-settings,
+.goal-dock-composer[data-session-controls] .goal-dock-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.goal-dock-composer[data-session-controls] .goal-dock-composer-settings {
+  flex: 1;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.goal-dock-composer[data-session-controls] .goal-dock-composer-actions {
+  align-self: flex-end;
+  flex-shrink: 0;
+  gap: 0.375rem;
+}
+.agent-session-controls .goal-dock-composer[data-session-controls] :is(.goal-dock-composer-chip, .button--tertiary) {
+  border-color: transparent;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.goal-dock-composer[data-session-controls] .goal-dock-composer-settings .goal-dock-composer-chip {
+  max-width: min(10rem, 100%);
+  min-width: 0;
+  padding-inline: 0.375rem;
+  font-size: 11px;
+  border-radius: 0.5rem;
+}
+.goal-dock-composer[data-session-controls] .goal-dock-composer-settings .goal-dock-composer-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  color: inherit;
+}
+.agent-session-controls .goal-dock-composer .goal-permission-cycle[data-tier] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.agent-session-controls .goal-dock-composer .goal-permission-cycle[data-tier="readonly"] {
+  color: hsl(var(--muted-foreground));
+}
+.agent-session-controls .goal-dock-composer .goal-permission-cycle[data-tier="readwrite"] {
+  color: hsl(var(--run));
+}
+.agent-session-controls .goal-dock-composer .goal-permission-cycle[data-tier="unrestricted"] {
+  color: hsl(var(--destructive));
+}
+.agent-session-controls .goal-dock-composer[data-session-controls] :is(.goal-dock-composer-chip, .button--tertiary):where(:not(:disabled):not([aria-disabled="true"])):hover {
+  background: hsl(var(--foreground-hsl) / 0.05);
+}
+.goal-dock-composer[data-session-controls] :is(.goal-dock-composer-chip, .button--tertiary):focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+.agent-session-controls .goal-dock-composer[data-session-controls] .goal-dock-composer-actions > button {
+  background: hsl(var(--foreground-hsl));
+  color: var(--background);
+}
+.agent-session-controls .goal-dock-composer[data-session-controls] .goal-dock-composer-actions > button:not(:disabled):hover {
+  background: hsl(var(--foreground-hsl) / 0.85);
+}
+.agent-session-controls .goal-dock-composer[data-session-controls] .goal-dock-composer-actions > button:disabled {
+  border-color: transparent;
+  background: hsl(var(--foreground-hsl) / 0.06);
+  color: hsl(var(--muted-foreground) / 0.45);
+}
 @container (max-width: 32rem) {
-  .agent-session-controls .goal-session-composer-shell.goal-dock-shell:has(.goal-dock-composer[data-session-controls]) { border-radius: 1rem; }
-  .goal-dock-composer[data-session-controls] .goal-dock-composer-inline {
-    height: auto; flex-wrap: wrap; padding: 0.625rem;
-  }
-  .goal-dock-composer[data-session-controls] .goal-dock-composer-inline > .goal-dock-composer-input {
-    order: -1; flex: 1 0 100%; width: 100%; min-width: 100%; height: 1.5rem;
-    min-height: 1.5rem; max-height: 1.5rem; margin-bottom: 0.25rem;
-  }
-  .goal-dock-composer[data-session-controls] .goal-dock-composer-toolbar { flex-wrap: wrap; }
-  .goal-dock-composer[data-session-controls] .agent-mode-trigger + [data-slot="popover-trigger"] {
-    flex: 1 1 3rem; min-width: 3rem; max-width: 9.5rem;
+  .goal-dock-composer[data-session-controls] .goal-dock-composer-leading {
+    flex-basis: 100%;
   }
 }
 
 .agent-session-controls > [role="alert"] { pointer-events: auto; }
+
+.agent-session-controls { position: relative; }
+.session-composer-reference-tags { display: flex; flex-wrap: wrap; gap: 0.375rem; min-width: 0; }
+.session-composer-reference-tag {
+  display: inline-flex; align-items: center; gap: 0.375rem; min-width: 0; max-width: 100%;
+  padding: 0.25rem 0.375rem 0.25rem 0.5rem; border-radius: 0.5rem;
+  background: hsl(var(--primary) / 0.12); color: var(--foreground); border: 1px solid hsl(var(--primary) / 0.22);
+  font-size: 11px; line-height: 1rem;
+}
+.session-composer-reference-tag[data-kind="mode"] { background: hsl(var(--primary) / 0.24); }
+.session-composer-reference-tag > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-composer-reference-tag > svg, .session-composer-reference-tag > button { flex-shrink: 0; }
+.session-composer-reference-tag > button { display: inline-flex; padding: 0.125rem; border-radius: 0.25rem; }
+.session-composer-reference-tag > button:hover { background: hsl(var(--foreground-hsl) / 0.08); }
+.session-composer-reference-tag > button:disabled { opacity: 0.4; cursor: not-allowed; }
+.session-composer-reference-tag > button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.session-composer-command-menu {
+  position: absolute; z-index: 70; bottom: calc(100% + 0.5rem); left: 0; width: min(24rem, 100%);
+  max-height: min(22rem, 45vh); overflow-y: auto; overscroll-behavior: contain;
+  border: 1px solid hsl(var(--border-hsl)); border-radius: 0.75rem;
+  background: hsl(var(--card)); color: var(--foreground); padding: 0.375rem;
+  box-shadow: 0 4px 20px hsl(0 0% 0% / 0.12); pointer-events: auto;
+}
+.session-composer-command-heading { padding: 0.375rem 0.5rem; color: hsl(var(--muted-foreground)); font-size: 11px; }
+.session-composer-command-option { display: flex; align-items: center; gap: 0.625rem; padding: 0.5rem; border-radius: 0.5rem; cursor: pointer; }
+.session-composer-command-option[aria-selected="true"] { background: hsl(var(--primary) / 0.15); }
+.session-composer-command-option[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+.session-composer-command-option > svg { flex-shrink: 0; }
+.session-composer-command-option > span { min-width: 0; }
+.session-composer-command-option strong { display: block; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.session-composer-command-option small { display: block; font-size: 10px; color: hsl(var(--muted-foreground)); overflow-wrap: anywhere; }
+.session-composer-command-menu > p { padding: 0.5rem; font-size: 12px; color: hsl(var(--muted-foreground)); }

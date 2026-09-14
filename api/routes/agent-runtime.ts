@@ -1,3 +1,4 @@
+import { listTurnReferenceOptions } from '../services/agent-runtime/turn-references.js';
 import { backendIdSchema } from '../services/agent-runtime/backends/backend-contracts.js';
 import { acknowledgeRuntimeRecovery } from '../services/agent-runtime/runtime-recovery.js';
 import { AgentValidationError } from '../services/agent-runtime/runtime-errors.js';
@@ -99,6 +100,14 @@ agentRuntimeRoutes.get('/backends/:id/models', async c => {
   catch (error) { return runtimeError(c, error); }
 });
 
+
+agentRuntimeRoutes.get('/projects/:projectId/references', c => {
+  const parsed = z.object({ kind: z.enum(['skill', 'mcp', 'file', 'wiki']), q: z.string().max(256).default(''), sessionId: z.string().optional() })
+    .safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+  if (!parsed.success) return validationError(c, parsed.error);
+  try { return c.json({ items: listTurnReferenceOptions(c.req.param('projectId'), parsed.data.kind, parsed.data.q, parsed.data.sessionId) }); }
+  catch (error) { return runtimeError(c, error); }
+});
 
 agentRuntimeRoutes.get('/profiles', (c) => c.json({ items: profileService.list() }));
 

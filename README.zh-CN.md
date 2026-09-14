@@ -215,6 +215,25 @@ node server-dist/cli.cjs watch <run-id> --session <session-id>
 
 CLI 默认读取 `${DATA_ROOT}/runtime-access-token`，也可以通过 `SYNAX_RUNTIME_TOKEN`、`--token` 或 `--token-file` 指定认证信息。`--jsonl` 输出可供脚本和其他 Agent 客户端消费的 Runtime 事件；`rpc` 命令使用 stdin/stdout JSONL。
 
+### 打包安装
+
+在 Synax 源码目录生成可安装 npm 包：
+
+```bash
+npm run build
+npm pack --pack-destination /tmp
+npm install -g /tmp/synax-0.1.2.tgz
+```
+
+安装后进入任意代码目录直接运行：
+
+```bash
+cd /path/to/your/project
+synax
+```
+
+CLI 会把当前目录作为默认 `workDir`。如果本地 Runtime 尚未运行，会自动启动本地 API sidecar；如果当前目录尚未注册为 Project，会自动创建或复用 `source.localPath` 对应的 Project。需要临时隔离实例时可以设置 `DATA_ROOT` 和 `PORT`。
+
 ## 开发流程
 
 1. 保持改动聚焦，方便 review。

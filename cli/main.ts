@@ -1,13 +1,15 @@
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 import { stdin, stdout, stderr } from 'node:process';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { createSynaxClient, SynaxRuntimeError } from '../api/services/agent-runtime/runtime-client.js';
 import { exitCodeForError, exitCodeForRun, type RuntimeClient, type RuntimeEventEnvelope, type RuntimeInteraction, type RuntimeInteractionReply, type RuntimeTerminalResult } from '../api/services/agent-runtime/runtime-protocol.js';
 import type { BackendCapabilities } from '../api/services/agent-runtime/backends/backend-contracts.js';
 import type { CreateSessionRequest, PermissionReply, StreamTurnRequest } from '../api/services/agent-runtime/contracts.js';
 import { HELP, parseArgs, type CliOptions, type OutputMode } from './args.js';
+import { ensureRuntime } from './runtime-host.js';
 
-export const CLI_VERSION = '0.1.1';
+export const CLI_VERSION = '0.1.2';
 export const EXIT = { completed: 0, failed: 1, interrupted: 2, usage: 3, blocked: 4, transport: 5 } as const;
 
 type IO = { out: NodeJS.WriteStream; err: NodeJS.WriteStream; input: NodeJS.ReadStream };
@@ -94,10 +96,13 @@ function sessionBody(options: CliOptions, projectId: string, prompt: string): Cr
 async function resolveProject(client: RuntimeClient, options: CliOptions): Promise<string> {
   const selected = options.project ?? process.env.SYNAX_PROJECT_ID;
   if (selected) return selected;
+  const workDir = options.workDir ?? process.env.SYNAX_WORK_DIR ?? process.cwd();
   const projects = await client.listProjects();
-  if (projects.items.length === 1) return projects.items[0].id;
-  const available = projects.items.map(project => `${project.id} (${project.name})`).join(', ');
-  throw new Error(`A project is required. Use --project <id> or SYNAX_PROJECT_ID. Available: ${available || 'none'}`);
+  const normalized = path.resolve(workDir);
+  const matching = projects.items.find(project => project.source?.kind === 'localPath' && project.source.localPath && path.resolve(project.source.localPath) === normalized);
+  if (matching) return matching.id;
+  const created = await client.createProject({ name: path.basename(normalized) || 'Synax workspace', environment: 'development', source: { kind: 'localPath', localPath: normalized } });
+  return created.project.id;
 }
 
 async function ensureSession(client: RuntimeClient, options: CliOptions, prompt: string): Promise<string> {
@@ -372,7 +377,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const options = parseArgs(argv);
   if (options.version) { io.out.write(`${CLI_VERSION}\n`); return EXIT.completed; }
   if (options.help) { io.out.write(HELP); return EXIT.completed; }
-  const client = clientFor(options);
+  const runtime = await ensureRuntime(options);
+  const client = createSynaxClient({ baseUrl: runtime.baseUrl, token: options.token, tokenFile: options.tokenFile ?? (runtime.managed || !options.url && !process.env.SYNAX_API ? runtime.tokenFile : undefined) });
   switch (options.command) {
     case 'backends': {
       const result = await client.listBackends();

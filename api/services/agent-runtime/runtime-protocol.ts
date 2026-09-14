@@ -152,6 +152,7 @@ export interface RuntimeClient {
   listBackends(): Promise<{ items: RuntimeBackendDescriptor[] }>;
   listBackendModels(id: string): Promise<{ models: Array<{ id: string; label: string; efforts?: string[] }>; defaultModel?: string | null }>;
   listProjects(): Promise<{ items: Array<{ id: string; name: string; source?: { localPath?: string; kind?: string } }> }>;
+  createProject(body: { name: string; environment?: 'production' | 'staging' | 'development'; source: { kind: 'localPath'; localPath: string } }): Promise<{ project: { id: string; name: string; source?: { localPath?: string; kind?: string } } }>;
   listSessions(query?: Record<string, string | number | undefined>): Promise<RuntimeSessionListResponse>;
   listRuns(sessionId: string): Promise<{ items: AgentRun[] }>;
   listMessages(sessionId: string): Promise<{ items: AgentRuntimeMessage[] }>;

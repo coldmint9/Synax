@@ -439,7 +439,14 @@ export const clearInactiveSessionsBodySchema = z.object({
 });
 export type ClearInactiveSessionsBody = z.infer<typeof clearInactiveSessionsBodySchema>;
 
+export const turnReferenceSchema = z.object({
+  kind: z.enum(['skill', 'mcp', 'file', 'wiki']),
+  id: z.string().min(1).max(1024),
+  label: z.string().max(256).optional(),
+});
+
 export const streamTurnRequestSchema = z.object({
+  references: z.array(turnReferenceSchema).max(20).optional(),
   message: z.string().min(1).max(100_000).optional(),
   /**
    * Marks a message the runtime composed on the user's behalf (goal prompt
@@ -459,6 +466,7 @@ export const streamTurnRequestSchema = z.object({
 });
 export type StreamTurnRequest = z.infer<typeof streamTurnRequestSchema> & {
   /** Internal admission token; intentionally absent from the public request schema. */
+  referenceContext?: import('./turn-reference-state.js').TurnReferenceContext;
   acceptedRunId?: string;
   executionContext?: import('../../lib/execution-context.js').RuntimeExecutionContext;
 };

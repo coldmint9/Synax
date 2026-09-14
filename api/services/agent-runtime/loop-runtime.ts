@@ -1,3 +1,5 @@
+import { activeTurnReferences } from './turn-reference-state.js';
+import { prepareTurnReferences } from './turn-references.js';
 import { resolveSessionUserRequest } from './session-user-request.js';
 import { runtimeTransaction } from './runtime-transaction.js';
 import type { AgentSession } from './contracts.js';
@@ -329,6 +331,7 @@ export class AgentLoopRuntime {
         role: "user",
         content: prompt,
         metadata: {
+          references: input.references,
           source: input.messageSource === "system_injection"
             ? "system_injection"
             : input.message
@@ -373,6 +376,10 @@ export class AgentLoopRuntime {
       void sessionHooks.emit({ type: 'run:started', sessionId, runId: run.id });
     }
 
+    if (!resume) {
+      const referenceContext = input.referenceContext ?? prepareTurnReferences(sessionId, input.references);
+      run = this.store.updateRun(run.id, { metadata: { ...this.store.getRun(run.id).metadata, turnReferences: referenceContext ?? null } });
+    }
     workRuntime.attach(sessionId, run);
     run = this.store.getRun(run.id);
     if (!resume && synaxAgent.isSynaxSession(session)) {
@@ -636,7 +643,7 @@ export class AgentLoopRuntime {
             finishReason: "input_force_inject",
           });
           void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
-          const forced = this.injectQueuedInput(sessionId, run);
+          const forced = await this.injectQueuedInput(sessionId, run);
           if (forced) {
             yield { type: "input_injected", message: forced.userMessage, queueItemId: forced.queueItemId };
             currentPrompt = forced.message;
@@ -857,7 +864,7 @@ export class AgentLoopRuntime {
             finishReason: "input_force_inject",
           });
           void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
-          const forced = this.injectQueuedInput(sessionId, run);
+          const forced = await this.injectQueuedInput(sessionId, run);
           if (forced) {
             yield { type: "input_injected", message: forced.userMessage, queueItemId: forced.queueItemId };
             currentPrompt = forced.message;
@@ -1170,7 +1177,7 @@ export class AgentLoopRuntime {
         pendingPermission = null;
 
         if (inputQueueService.hasPending(sessionId)) {
-          const injected = this.injectQueuedInput(sessionId, run);
+          const injected = await this.injectQueuedInput(sessionId, run);
           if (injected) {
             yield { type: "input_injected", message: injected.userMessage, queueItemId: injected.queueItemId };
             currentPrompt = injected.message;
@@ -1402,14 +1409,15 @@ export class AgentLoopRuntime {
     await this.waitForIdleSessions(sessionIds, timeoutMs);
   }
 
-  private injectQueuedInput(
+  private async injectQueuedInput(
     sessionId: string,
     run: AgentRun,
-  ): { message: string; model: string | null; userMessage: AgentRuntimeMessage; queueItemId: string } | null {
-    return runtimeTransaction(() => {
+  ): Promise<{ message: string; model: string | null; userMessage: AgentRuntimeMessage; queueItemId: string } | null> {
+    const injected = runtimeTransaction(() => {
     const item = inputQueueService.consumeNext(sessionId);
     if (!item) return null;
 
+    this.store.updateRun(run.id, { metadata: { ...this.store.getRun(run.id).metadata, turnReferences: item.referenceContext ?? null } });
     const userMessage = this.store.appendMessage({
       id: makeRuntimeId("msg"),
       sessionId,
@@ -1417,7 +1425,7 @@ export class AgentLoopRuntime {
       stepId: null,
       role: "user",
       content: item.message,
-      metadata: { source: "input_queue", queueItemId: item.id },
+      metadata: { source: "input_queue", queueItemId: item.id, references: item.references },
       createdAt: nowIso(),
     });
     workRuntime.attach(sessionId, { ...run, triggerMessageId: userMessage.id });
@@ -1443,6 +1451,8 @@ export class AgentLoopRuntime {
     };
 
     });
+    if (injected) await warmupMcpForSession(sessionId);
+    return injected;
   }
 
   private createRun(
@@ -1564,12 +1574,14 @@ export class AgentLoopRuntime {
       projectRulesSection = null;
     }
 
+    const selectedReferences = activeTurnReferences(input.sessionId);
+    const turnSkillIds = [...new Set([...session.skillIds, ...selectedReferences?.skillIds ?? []])];
     const skillCandidates = skillAgentBridge.listForPrompt({
       profileId: input.profile.id,
       projectId: session.projectId,
-      activeSkillIds: session.skillIds,
+      activeSkillIds: turnSkillIds,
     });
-    const activeSkillIds = new Set(session.skillIds);
+    const activeSkillIds = new Set(turnSkillIds);
     const skillsSection = allowedTools.some(tool => tool.id === 'skill.load') && skillCandidates.length > 0
       ? [
         '## Available skills',
@@ -1625,7 +1637,7 @@ export class AgentLoopRuntime {
         : null,
       projectMemoriesSection,
       projectRulesSection,
-      skillsSection,
+      skillsSection: [skillsSection, selectedReferences?.content].filter(Boolean).join("\n\n") || null,
     });
 
 

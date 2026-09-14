@@ -3276,36 +3276,6 @@
 }
 .goal-session-composer--footer .goal-session-composer-shell {
   pointer-events: auto;
-  border-color: var(--goal-glass-border) !important;
-  background: var(--goal-glass-bg) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.75) brightness(1.02) !important;
-  backdrop-filter: blur(22px) saturate(1.75) brightness(1.02) !important;
-  /* Layered downward shadow: a tight contact edge plus two progressively
-     softer blurs lift the pill off the transcript so it reads as floating. */
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.92) inset,
-    0 2px 4px hsl(var(--foreground-hsl) / 0.12),
-    0 6px 12px -2px hsl(var(--foreground-hsl) / 0.18),
-    0 14px 24px -8px hsl(var(--foreground-hsl) / 0.22) !important;
-  overflow: hidden;
-}
-.goal-session-composer--footer .goal-session-composer-shell:not([data-multiline="true"]),
-.goal-session-composer--footer .goal-session-composer-shell.goal-dock-shell:not([data-multiline="true"]) {
-  border-radius: 9999px;
-}
-.goal-session-composer--footer .goal-session-composer-shell .goal-dock-shell-content {
-  padding-bottom: 0.25rem;
-}
-.dark .goal-session-composer--footer .goal-session-composer-shell {
-  border-color: hsl(0 0% 100% / 0.14) !important;
-  background:
-    linear-gradient(180deg, hsl(0 0% 100% / 0.07), hsl(0 0% 100% / 0.015) 42%, transparent),
-    hsl(var(--card) / 0.55) !important;
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.18) inset,
-    0 2px 5px hsl(0 0% 0% / 0.45),
-    0 8px 16px -4px hsl(0 0% 0% / 0.5),
-    0 18px 30px -12px hsl(0 0% 0% / 0.55) !important;
 }
 
 .session-chat-scroll {
@@ -4821,18 +4791,6 @@
 
 .goal-session-composer--focus-rail .goal-session-composer-shell {
   pointer-events: auto;
-  border-color: var(--goal-glass-border) !important;
-  background: var(--goal-glass-bg) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.75) brightness(1.02) !important;
-  backdrop-filter: blur(22px) saturate(1.75) brightness(1.02) !important;
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.9) inset,
-    0 2px 5px hsl(var(--foreground-hsl) / 0.12),
-    0 10px 28px -8px hsl(var(--foreground-hsl) / 0.22) !important;
-}
-
-.goal-session-composer--focus-rail .goal-session-composer-shell:not([data-multiline="true"]) {
-  border-radius: 9999px;
 }
 
 

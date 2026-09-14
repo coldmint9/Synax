@@ -1,3 +1,4 @@
+import { prepareTurnReferences } from './turn-references.js';
 import { profileService } from './profile-service.js';
 import { createHash } from 'node:crypto';
 import { getRawSqlite } from '../../db/index.js';
@@ -83,7 +84,7 @@ export function acceptRuntimeRun(
     try { workDir = bindSessionWorkDir(sessionId); }
     catch (error) { throw new AgentValidationError(error instanceof Error ? error.message : 'Invalid execution workspace.'); }
     const runtime: AcceptedRuntimeInput = {
-      version: 1, requestId, inputHash, mode, input: { ...input, ...(model ? { model } : {}) },
+      version: 1, requestId, inputHash, mode, input: { ...input, referenceContext: prepareTurnReferences(sessionId, input.references), ...(model ? { model } : {}) },
       backendId: binding.id, workDir, previousSessionStatus: session.status,
     };
     const run = agentRuntimeStore.appendRun({

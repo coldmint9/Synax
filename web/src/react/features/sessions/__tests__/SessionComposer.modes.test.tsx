@@ -1,5 +1,6 @@
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
+import type { ComposerCommands } from '../../wiki/goal/GoalComposerPill'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,10 +19,12 @@ vi.mock('../../settings/useConfig', () => ({ useConfig: () => ({
   providers: [{ id: 'api', kind: 'api' }, { id: 'codex-acp', kind: 'acp' }], globalConfig: null, effectiveConfig: null,
 }) }))
 vi.mock('../../wiki/goal/GoalComposerPill', () => ({ GoalComposerPill: (props: {
-  modeControl?: ReactNode; content: string; onContentChange: (value: string) => void; onSubmit: () => void; disabled: boolean
+  commands?: ComposerCommands; modeControl?: ReactNode; content: string; onContentChange: (value: string) => void; onSubmit: () => void; disabled: boolean
 }) => <form onSubmit={event => { event.preventDefault(); props.onSubmit() }}>
-  {props.modeControl}
-  <textarea aria-label="Message" value={props.content} disabled={props.disabled} onChange={event => props.onContentChange(event.target.value)} />
+  {props.modeControl}{props.commands?.header}{props.commands?.trigger}
+  <textarea ref={props.commands?.inputRef} aria-label="Message" value={props.content} disabled={props.disabled}
+    onKeyDown={event => props.commands?.onKeyDown(event)}
+    onChange={event => { props.onContentChange(event.target.value); props.commands?.onInput(event.target.value, event.target.selectionStart) }} />
   <button type="submit" disabled={props.disabled}>Send</button>
 </form> }))
 
@@ -42,9 +45,22 @@ beforeEach(() => {
   })
   vi.spyOn(agentRuntimeApi, 'listInteractions').mockResolvedValue({ interactions: [] })
   vi.spyOn(agentRuntimeApi, 'listInputQueue').mockResolvedValue({ items: [] })
+  vi.spyOn(agentRuntimeApi, 'listBackends').mockResolvedValue({ items: [] })
 })
 
 const renderComposer = (existing?: AgentSession) => render(<MemoryRouter><SessionComposer session={existing} projectId="p1" /></MemoryRouter>)
+
+async function selectMode(mode: 'plan' | 'goal', prefix = '') {
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: `${prefix}/${mode}` } })
+  await userEvent.click(await screen.findByRole('option', { name: new RegExp(`^/${mode} `) }))
+}
+
+async function expectModeUnavailable() {
+  const trigger = screen.getByRole('button', { name: 'Add references or switch mode' })
+  if ((trigger as HTMLButtonElement).disabled) { expect(trigger).toBeDisabled(); return }
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: '/plan' } })
+  expect(await screen.findByRole('option', { name: /^\/plan / })).toHaveAttribute('aria-disabled', 'true')
+}
 
 describe('SessionComposer mode controls', () => {
   it.each(['plan', 'goal'] as const)('sends the selected draft %s mode through createSession metadata', async mode => {
@@ -52,14 +68,13 @@ describe('SessionComposer mode controls', () => {
     vi.spyOn(agentRuntimeApi, 'createSession').mockResolvedValue({ session, context: null, profile: {} as never })
     useAgentSessionStore.setState({ sendSessionMessage: vi.fn(async () => {}) })
     renderComposer()
-    await userEvent.click(screen.getByRole('button', { name: 'Session mode' }))
-    await userEvent.click(await screen.findByRole('option', { name: mode === 'plan' ? 'Plan' : 'Goal' }))
+    await selectMode(mode)
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Build forms' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     await waitFor(() => expect(agentRuntimeApi.createSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionMetadata: expect.objectContaining({ mode, goalContent: 'Build forms' }), permissionTier: 'readonly',
     })))
-    expect(goalApi.buildSessionPrompt).toHaveBeenCalledWith('p1', expect.objectContaining({ mode: 'session', content: 'Build forms' }))
+    expect(goalApi.buildSessionPrompt).not.toHaveBeenCalled()
   })
 
   it('sends plain session input without hidden implementation scaffolding', async () => {
@@ -70,23 +85,23 @@ describe('SessionComposer mode controls', () => {
     renderComposer();
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: '你好' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    await waitFor(() => expect(send).toHaveBeenCalledWith(session.id, expect.objectContaining({ message: '你好', messageSource: undefined })));
-    expect(goalApi.buildSessionPrompt).toHaveBeenCalledWith('p1', expect.objectContaining({ mode: 'session' }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith(session.id, expect.objectContaining({ message: '你好', references: [] })));
+    expect(goalApi.buildSessionPrompt).not.toHaveBeenCalled();
   });
 
-  it('disables ACP mode selection and sends ACP drafts as chat without discarding the native draft choice', () => {
+  it('disables ACP mode selection and sends ACP drafts as chat without discarding the native draft choice', async () => {
     useAgentSessionStore.setState({ draftMode: 'plan' })
     useWikiStore.setState({ goalComposerProviderId: 'codex-acp', goalComposerModelId: 'default' })
     renderComposer()
-    expect(screen.getByRole('button', { name: 'Session mode' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Session mode' })).toHaveAttribute('data-mode', 'chat')
+    await expectModeUnavailable()
+    expect(screen.queryByRole('button', { name: 'Session mode' })).not.toBeInTheDocument()
     expect(useAgentSessionStore.getState().draftMode).toBe('plan')
   })
 
   it('disables a live session’s mode selector, even when activeRunId is temporarily absent', async () => {
     renderComposer({ ...session, status: 'running' })
     await waitFor(() => expect(agentRuntimeApi.listInteractions).toHaveBeenCalled())
-    expect(screen.getByRole('button', { name: 'Session mode' })).toBeDisabled()
+    await expectModeUnavailable()
   })
 
   it('disables mode and free-text input while a durable form is pending, even before the status patch arrives', async () => {
@@ -97,7 +112,7 @@ describe('SessionComposer mode controls', () => {
     }] })
     renderComposer(session)
     await screen.findByRole('textbox', { name: 'Answer' })
-    expect(screen.getByRole('button', { name: 'Session mode' })).toBeDisabled()
+    await expectModeUnavailable()
     expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Submit answers' })).toBeEnabled()
   })
@@ -105,13 +120,12 @@ describe('SessionComposer mode controls', () => {
   it('retains the existing mode and composer text when a safe idle switch is rejected by the server', async () => {
     vi.spyOn(agentRuntimeApi, 'updateSessionMode').mockRejectedValue(new Error('Run started; mode is locked'))
     renderComposer(session)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Session mode' })).toBeEnabled())
-    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Keep my draft' } })
-    await userEvent.click(screen.getByRole('button', { name: 'Session mode' }))
-    await userEvent.click(await screen.findByRole('option', { name: 'Plan' }))
+    await waitFor(() => expect(agentRuntimeApi.listInteractions).toHaveBeenCalled())
+    await waitFor(() => expect(useAgentSessionStore.getState().interactionState?.loading).toBe(false))
+    await selectMode('plan', 'Keep my draft ')
     expect(await screen.findByRole('alert')).toHaveTextContent('Run started')
-    expect(screen.getByRole('button', { name: 'Session mode' })).toHaveAttribute('data-mode', 'chat')
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Keep my draft')
+    expect(screen.queryByRole('button', { name: 'Session mode' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Keep my draft /plan')
   })
 
   it('keeps free-text input enabled when only a one-time plan approval is pending', async () => {
@@ -126,7 +140,7 @@ describe('SessionComposer mode controls', () => {
     }] })
     renderComposer({ ...session, status: 'waiting_input', activeRunId: 'r1' })
     await screen.findByRole('button', { name: 'Execute' })
-    expect(screen.getByRole('button', { name: 'Session mode' })).toBeDisabled()
+    await expectModeUnavailable()
     expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled()
   })
 
