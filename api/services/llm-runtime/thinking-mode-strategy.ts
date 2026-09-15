@@ -42,7 +42,7 @@ export interface ThinkingModeStrategy {
   defaultReasoningCapability: boolean
   buildStreamOptions(
     ctx: ThinkingModeContext,
-    request: Pick<LlmGatewayRequest, 'reasoningEffort' | 'temperature'>,
+    request: Pick<LlmGatewayRequest, 'reasoningEffort' | 'responseOptions' | 'temperature'>,
     selection: ResolvedModelSelection,
   ): ThinkingStreamOptions
 }
@@ -95,12 +95,23 @@ function toContextFromConnection(
 
 function buildDeepSeekThinkingOptions(
   selection: ResolvedModelSelection,
-  effort: ReasoningEffort,
+  request: Pick<LlmGatewayRequest, 'reasoningEffort' | 'responseOptions' | 'temperature'>,
 ): ThinkingStreamOptions {
+  const effort = request.reasoningEffort ?? 'high'
   // A DeepSeek connection explicitly configured as Responses is handled by
   // the native OpenAI Responses adapter, not by DeepSeek's Chat Completions
   // body fields. Keep the reasoning control in the OpenAI namespace.
   if (selection.apiFormat === 'openai-responses') {
+    // The Responses adapter logs an AI SDK warning for reasoning options sent
+    // to a model it does not classify as reasoning (custom/gateway IDs such as
+    // deepseek-v4-flash are unknown to it). Without a reasoning-capable flag
+    // the options are ignored anyway, so keep the call plain.
+    const reasoningCapable = Boolean(
+      request.responseOptions?.forceReasoning ?? selection.modelDef.reasoning,
+    )
+    if (!reasoningCapable) {
+      return { temperature: request.temperature }
+    }
     return {
       providerOptions: {
         openai: {
@@ -196,8 +207,7 @@ const deepSeekThinkingStrategy: ThinkingModeStrategy = {
       || providerIdIncludes(ctx.providerId, 'deepseek')
   },
   buildStreamOptions(_ctx, request, selection) {
-    const effort = request.reasoningEffort ?? 'high'
-    return buildDeepSeekThinkingOptions(selection, effort)
+    return buildDeepSeekThinkingOptions(selection, request)
   },
 }
 
@@ -243,7 +253,7 @@ export function resolveThinkingModeStrategy(
 
 export function buildThinkingStreamOptions(
   selection: ResolvedModelSelection,
-  request: Pick<LlmGatewayRequest, 'reasoningEffort' | 'temperature'>,
+  request: Pick<LlmGatewayRequest, 'reasoningEffort' | 'responseOptions' | 'temperature'>,
 ): ThinkingStreamOptions {
   const strategy = resolveThinkingModeStrategy(toContext(selection))
   if (!strategy) {

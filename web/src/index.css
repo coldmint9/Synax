@@ -3174,6 +3174,21 @@
   border-radius: 0 8px 8px 0;
 }
 
+/* Synax brand mark. It inherits `currentColor` for the ribbon so the
+   surrounding accent/foreground tokens drive the stroke. */
+.synax-mark {
+  display: block;
+  overflow: visible;
+  flex: none;
+}
+/* Terminal nodes read as the light "synapse" beads of the app icon. */
+.synax-mark-node {
+  fill: hsl(var(--foreground-hsl) / 0.82);
+}
+.session-panel-collapse:hover .synax-mark-node {
+  fill: hsl(var(--primary));
+}
+
 @media (max-width: 1279px) {
   .session-panel-collapse--right,
   .session-panel-resizer--right {
@@ -3189,6 +3204,22 @@
 .agent-conversation-copy {
   font-size: var(--agent-chat-font-size, 14px) !important;
 }
+.session-answer-region > .agent-conversation-copy {
+  font-weight: 600;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+}
+/* Keep the tool rail compact and the answer area visually distinct. */
+.session-completed-step:has(> .session-turn-content > .bui-tool-group:only-child)
+  + :is(.session-completed-step:has(> .session-turn-content > .bui-tool-group:first-child),
+        .session-turn-content:has(> .bui-tool-group:first-child)) {
+  margin-top: -16px;
+}
+
 .agent-conversation-copy.feed-prose h1 {
   font-size: calc(var(--agent-chat-font-size, 14px) * 1.35) !important;
 }
@@ -3242,13 +3273,19 @@
 }
 
 /* Fully collapsed left session panel: consume zero layout width; the reopen
-   button overlays the content edge and points right. */
+   tab overlays the content edge. It is the only Synax affordance left on the
+   rail, so it is widened to carry the brand mark legibly. */
 .session-panel-host--left[data-collapsed="true"] .session-panel-collapse--left {
-  /* Only shown while collapsed: it sits on the title row and points right. */
+  /* Only shown while collapsed: it sits on the title row. */
   top: 40px;
-  right: -18px;
+  width: 24px;
+  right: -24px;
   transform: none;
   border-radius: 0 8px 8px 0;
+  color: var(--accent);
+}
+.session-panel-host--left[data-collapsed="true"] .session-panel-collapse--left:hover {
+  color: hsl(var(--primary));
 }
 
 /* Global interface typography scale. The preference is expressed as a scale
@@ -4999,3 +5036,7 @@
   line-height: 1.25;
   margin-bottom: 1rem;
 }
+
+.session-tool-region { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.session-answer-region { display: flex; flex-direction: column; gap: 2px; min-width: 0; margin-top: 2px; }
+.session-tool-region:empty, .session-answer-region:empty { display: none; }

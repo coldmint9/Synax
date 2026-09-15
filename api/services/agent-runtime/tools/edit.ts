@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
-import { assertSessionFileReadForWrite } from '../read-tracker.js';
+import { assertSessionFileReadForWrite, clearSessionFileRead, recordSessionFileMutation } from '../read-tracker.js';
 import { resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
 import { deriveNewContentsFromChunks, parseApplyPatchEnvelope } from './patch-format.js';
 
@@ -115,8 +115,13 @@ export const editTool: RegisteredTool = {
     }
     if (deleted) {
       fs.rmSync(filePath, { force: true });
+      clearSessionFileRead(input.sessionId, filePath);
     } else {
       fs.writeFileSync(filePath, next, 'utf8');
+      // Refresh the tracked mtime: this write satisfies the read-before-write
+      // guard, so a follow-up edit of the same file must not be rejected as
+      // "changed on disk".
+      recordSessionFileMutation(input.sessionId, filePath);
     }
     return {
       result: {

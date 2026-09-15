@@ -15,7 +15,7 @@
   color: var(--bui-ink);
 }
 
-.bui-tool-group { padding: 3px 0; }
+.bui-tool-group { width: 66.6667%; align-self: flex-start; padding: 0; }
 .bui-tool-group-heading,
 .bui-tool-trigger,
 .bui-activity-trigger,
@@ -50,7 +50,8 @@ button.bui-activity-trigger:focus-visible,
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
-.bui-tool-list { display: flex; flex-direction: column; gap: 2px; }
+.bui-tool-list { display: flex; flex-direction: column; gap: 0; }
+.bui-tool-trigger { gap: 4px; padding: 2px 0; }
 .bui-tool-symbol,
 .bui-activity-symbol {
   display: inline-flex;
@@ -253,7 +254,7 @@ button.bui-activity-trigger:focus-visible,
   background-repeat: no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: bui-thinking-sweep 5.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: none;
 }
 @keyframes bui-thinking-sweep {
   0%, 100% { background-position: 100% 50%; }
@@ -291,3 +292,27 @@ button.bui-activity-trigger:focus-visible,
     background-clip: border-box;
   }
 }
+
+/* Match the mini composer's single-line vertical carousel. */
+.bui-tool-group-heading { width: 100%; }
+.bui-tool-group-count, .bui-tool-group-heading > svg { flex-shrink: 0; }
+.bui-activity-carousel { position: relative; flex: 1; min-width: 0; height: 18px; overflow: hidden; margin-left: 6px; }
+.bui-activity-brief { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 18px;
+  background: linear-gradient(110deg, var(--bui-muted) 30%, var(--bui-ink) 48%, var(--bui-muted) 65%);
+  background-size: 200% 100%; background-clip: text; -webkit-background-clip: text; color: transparent;
+
+}
+@media (prefers-reduced-motion: reduce) { .bui-activity-brief { animation: none; } }
+
+.bui-activity-brief--live { animation: goal-mini-carousel-in .2s ease-out, shimmer 2.8s linear infinite; }
+
+.bui-thinking-banner:not([data-live="true"]) .bui-thinking-banner-text {
+  color: var(--bui-ink); background-image: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bui-thinking-banner[data-live="true"] .bui-thinking-banner-text {
+    animation: bui-thinking-sweep 5.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+}
+.bui-activity-brief:not(.bui-activity-brief--live) { animation: none; color: var(--bui-muted); background: none; }
+@media (prefers-reduced-motion: reduce) { .bui-activity-brief--live { animation: none; } }

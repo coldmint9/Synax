@@ -60,3 +60,27 @@ describe('persistent work context projection', () => {
     expect((calls[0] as any).toolCallId).toBe((results[0] as any).toolCallId);
   });
 });
+
+
+describe('completed conversation follow-ups', () => {
+  it.each([false, true])('preserves history across Work boundaries (compressed=%s)', (compressed) => {
+    const sessionId = fixture();
+    const input = { sessionId, toolSet, contextLimit: compressed ? 12000 : 100000, outputReserve: 2000, systemTokens: 100 };
+    const before = projectWorkContext(input);
+    expect(before.compacted).toBe(compressed);
+    const previous = workStore.current(sessionId)!;
+    previous.status = 'completed';
+    workStore.save(previous);
+    store.updateRun('run', { status: 'completed' });
+    store.updateSession(sessionId, { status: 'completed', activeRunId: null });
+    store.appendMessage({ id: 'follow-up', sessionId, runId: null, stepId: null, role: 'user', content: 'Explain the earlier findings', metadata: { source: 'turn_request' }, createdAt: '2026-09-13T00:01:00Z' });
+    const run = store.appendRun({ id: 'next-run', sessionId, status: 'running', startedAt: '2026-09-13T00:01:00Z', completedAt: null, triggerMessageId: 'follow-up', currentStep: 0, model: null, stopReason: null, metadata: {} });
+    const next = workRuntime.attach(sessionId, run);
+    expect(next.id).not.toBe(previous.id);
+    expect(next.checkpoint).toBeNull();
+    const after = projectWorkContext({ ...input, contextLimit: 100000 });
+    expect(after.messages).toEqual([...before.messages, { role: 'user', content: 'Explain the earlier findings' }]);
+    expect(after.compacted).toBe(false);
+    expect(projectWorkContext({ ...input, contextLimit: 100000 }).messages).toEqual(after.messages);
+  });
+});
