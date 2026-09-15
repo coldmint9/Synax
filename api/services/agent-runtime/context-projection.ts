@@ -1,3 +1,26 @@
+import { resolveContextInputOwners } from "./context-input-boundaries.js";
+import { createHash } from "node:crypto";
+import { runtimeTransaction } from "./runtime-transaction.js";
+import {
+  readContextEpochState,
+  sessionContextBoundary,
+  sentContextRequests,
+  contextGrowthP95,
+  type ContextEpochState,
+} from "./context-epoch-store.js";
+import {
+  resolveContextCompactionPolicy,
+  contextWatermarks,
+  evaluateContextCompaction,
+  type ContextWatermarks,
+  type ContextCompactionDecision,
+} from "./context-compaction-policy.js";
+import {
+  buildContextMemorySegment,
+  assembleContextMemory,
+  type ContextMemorySegment,
+  type ContextMemorySnapshot,
+} from "./context-memory.js";
 import { initialSessionMessageProjection } from "./session-user-request.js";
 import * as z from "zod/v4";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -6,45 +29,11 @@ import type { LoopToolSet } from "./loop-ai-tools.js";
 import { agentRuntimeStore as store } from "./session-store.js";
 import { workStore } from "./work-store.js";
 import { buildLoopModelMessages } from "./loop-model-messages.js";
-import { countMessagesTokens } from "./context-tokenizer.js";
+import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { AgentValidationError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
 
-// Conversation history and compression boundaries survive transitions between Works.
-function sessionBoundary(sessionId: string) {
-  const runs = store
-    .listRuns(sessionId)
-    .sort(
-      (a, b) =>
-        a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id),
-    );
-  const steps = runs.flatMap((r) => store.listRunSteps(r.id));
-  let boundary = -1;
-  let summary: string | null = null;
-  const ids = new Set<string>();
-  for (const r of runs)
-    if (typeof r.metadata.workId === "string") ids.add(r.metadata.workId);
-  for (const s of steps)
-    if (typeof s.metadata.workId === "string") ids.add(s.metadata.workId);
-  const current = workStore.current(sessionId);
-  if (current) ids.add(current.id);
-  for (const id of ids) {
-    const w = workStore.get(id);
-    if (w?.sessionId !== sessionId || !w.checkpoint) continue;
-    const i = steps.findIndex((s) => s.id === w.checkpoint!.throughStepId);
-    if (i < 0)
-      throw new AgentValidationError(
-        "context_blocked: the persisted context boundary is missing.",
-      );
-    if (i > boundary) {
-      boundary = i;
-      summary = w.checkpoint.summary;
-    }
-  }
-  return { runs, steps, boundary, summary };
-}
-
-export function projectWorkContext(input: {
+export interface ContextProjectionInput {
   sessionId: string;
   toolSet: LoopToolSet;
   contextLimit: number;
@@ -52,16 +41,36 @@ export function projectWorkContext(input: {
   systemTokens: number;
   model?: string;
   currentStepId?: string;
-}): {
+  configurationFingerprint?: string;
+}
+
+export interface ContextCompactionDiagnostic {
+  version: 1;
+  epoch: number;
+  action: string;
+  reason: string;
+  compacted: boolean;
+  originalTokens: number;
+  projectedTokens: number;
+  reclaimedTokens: number;
+  stableRequests: number;
+  preparedThroughStepId: string | null;
+  throughStepId: string | null;
+  configurationChanged: boolean;
+  watermarks: ContextWatermarks;
+  economics: ContextCompactionDecision["economics"];
+}
+
+export function projectWorkContext(input: ContextProjectionInput): {
   messages: ModelMessage[];
   compacted: boolean;
   originalTokens: number;
   tokens: number;
+  compaction?: ContextCompactionDiagnostic;
 } {
+  const session = store.getSession(input.sessionId);
   const work = workStore.current(input.sessionId);
-  const initialUserMessage = initialSessionMessageProjection(
-    store.getSession(input.sessionId),
-  );
+  const initialUserMessage = initialSessionMessageProjection(session);
   const count = (messages: ModelMessage[]) =>
     countMessagesTokens(messages as never, input.model) + input.systemTokens;
   if (!work) {
@@ -71,6 +80,10 @@ export function projectWorkContext(input: {
       input.toolSet,
       { initialUserMessage, currentStepId: input.currentStepId },
     );
+    if (count(messages) > input.contextLimit - input.outputReserve)
+      throw new AgentValidationError(
+        "context_blocked: required context exceeds the model window.",
+      );
     return {
       messages,
       compacted: false,
@@ -78,63 +91,427 @@ export function projectWorkContext(input: {
       tokens: count(messages),
     };
   }
-  const state = sessionBoundary(input.sessionId);
-  const { steps } = state;
-  let { boundary, summary: contextSummary } = state;
-  const build = () =>
+  const boundaryState = sessionContextBoundary(input.sessionId);
+  const { steps, boundary } = boundaryState;
+  const policy = resolveContextCompactionPolicy(
+    session.sessionMetadata?.contextCompactionPolicy,
+  );
+  const epochState = readContextEpochState(
+    session.sessionMetadata?.contextCompactionState,
+  );
+  const sent = sentContextRequests(steps, input.currentStepId);
+  const checkpointEpoch = boundaryState.checkpointWork?.checkpoint?.epoch;
+  if (
+    typeof checkpointEpoch === "number" &&
+    Number.isSafeInteger(checkpointEpoch) &&
+    checkpointEpoch > epochState.epoch
+  ) {
+    // A legacy/restored session may retain its Work checkpoint but not its new
+    // scheduling counters. Recover identity; do not invent a warm-cache interval.
+    epochState.epoch = checkpointEpoch;
+    epochState.committedRequestCount = sent.length;
+    delete epochState.draft;
+  }
+
+  const configurationChanged = Boolean(
+    input.configurationFingerprint &&
+    epochState.configurationFingerprint &&
+    input.configurationFingerprint !== epochState.configurationFingerprint,
+  );
+  const nextState: ContextEpochState = {
+    ...epochState,
+    ...(input.configurationFingerprint
+      ? { configurationFingerprint: input.configurationFingerprint }
+      : {}),
+    ...(configurationChanged
+      ? { committedRequestCount: sent.length, draft: undefined }
+      : {}),
+  };
+  const stableRequests = Math.max(
+    0,
+    sent.length - nextState.committedRequestCount,
+  );
+  const watermarks = contextWatermarks(
+    policy,
+    input.contextLimit,
+    input.outputReserve,
+    contextGrowthP95(sent, epochState.epoch),
+  );
+  const users = store
+    .listMessages(input.sessionId)
+    .filter((message) => message.role === "user");
+  const build = (
+    through = boundary,
+    summary = boundaryState.summary,
+    memory = boundaryState.memory,
+  ) =>
     buildLoopModelMessages(store, input.sessionId, input.toolSet, {
-      excludedStepIds: new Set(steps.slice(0, boundary + 1).map((s) => s.id)),
-      compactionSummary: contextSummary,
+      excludedStepIds: new Set(
+        steps.slice(0, through + 1).map((step) => step.id),
+      ),
+      compactionSummary: summary,
+      summarizedInputIds: new Set(
+        users
+          .filter(
+            (message) =>
+              !message.contentParts?.some((part) => part.type !== "text") &&
+              memory?.entries.some(
+                (entry) =>
+                  entry.required &&
+                  entry.source.kind === "message" &&
+                  entry.source.id === message.id &&
+                  entry.source.field === "content" &&
+                  entry.text === message.content,
+              ),
+          )
+          .map((message) => message.id),
+      ),
       initialUserMessage,
       currentStepId: input.currentStepId,
     });
-  let messages = build();
+  const messages = build();
   const originalTokens = count(messages);
-  const hard = input.contextLimit - input.outputReserve;
-  const soft = Math.min(64_000, Math.floor(hard / 2));
-  let compacted = false;
-  // A checkpoint replaces whole finished tool exchanges, never individual reasoning/signature fields.
-  // Keep the newest finished exchange and the current in-flight step intact when possible.
-  while (count(messages) > soft && boundary + 1 < steps.length - 2) {
-    const candidate = steps[boundary + 1];
-    const calls = store
-      .listRunToolCalls(candidate.runId)
-      .filter((c) => c.stepId === candidate.id);
+  const evaluate = (candidateTokens?: number) =>
+    evaluateContextCompaction({
+      policy,
+      watermarks,
+      currentTokens: originalTokens,
+      candidateTokens,
+      stableRequests,
+      stablePrefixTokens: input.systemTokens,
+    });
+  let decision = evaluate();
+  let preparedThroughStepId: string | null = null;
+  const diagnostic = (
+    projectedTokens = originalTokens,
+    compacted = false,
+    throughStepId: string | null = steps[boundary]?.id ?? null,
+  ): ContextCompactionDiagnostic => ({
+    version: 1,
+    epoch: nextState.epoch,
+    action: decision.action,
+    reason: decision.reason,
+    compacted,
+    originalTokens,
+    projectedTokens,
+    reclaimedTokens: originalTokens - projectedTokens,
+    stableRequests,
+    preparedThroughStepId,
+    throughStepId,
+    configurationChanged,
+    watermarks,
+    economics: decision.economics,
+  });
+  const finishUnchanged = () => {
+    if (originalTokens > watermarks.hard)
+      throw new AgentValidationError(
+        `context_blocked: ${decision.reason}; required intact context cannot fit.`,
+      );
+    store.updateSessionMetadata(input.sessionId, {
+      contextCompactionState: nextState,
+    });
+    return {
+      messages,
+      compacted: false,
+      originalTokens,
+      tokens: originalTokens,
+      compaction: diagnostic(),
+    };
+  };
+  if (originalTokens < watermarks.prepare) return finishUnchanged();
+  // Preparation is not a per-turn summarizer. Keep an existing invisible draft
+  // until commit pressure; sources are revalidated below before any activation.
+  if (
+    originalTokens < watermarks.high &&
+    nextState.draft &&
+    !configurationChanged &&
+    nextState.draft.fromStepId === (steps[boundary]?.id ?? null)
+  ) {
+    preparedThroughStepId = nextState.draft.throughStepId;
+    return finishUnchanged();
+  }
+
+  const pinned = new Set(
+    Array.isArray(session.sessionMetadata?.contextPinnedStepIds)
+      ? session.sessionMetadata.contextPinnedStepIds.filter(
+          (id): id is string => typeof id === "string",
+        )
+      : [],
+  );
+  const allCalls = store.listToolCalls(input.sessionId);
+  const byStep = new Map<string, typeof allCalls>();
+  for (const call of allCalls)
+    if (call.stepId)
+      byStep.set(call.stepId, [...(byStep.get(call.stepId) ?? []), call]);
+
+  const triggers = new Map(
+    store
+      .listRuns(input.sessionId)
+      .map((run) => [run.id, run.triggerMessageId]),
+  );
+  const queueOwners = new Map<
+    string,
+    { stepId: string; placement: "before" | "after" }
+  >();
+  for (const run of store.listRuns(input.sessionId)) {
+    const owned = resolveContextInputOwners(
+      steps.filter((step) => step.runId === run.id),
+      users.filter(
+        (message) =>
+          message.runId === run.id && message.metadata.source === "input_queue",
+      ),
+    );
+    for (const [id, owner] of owned) queueOwners.set(id, owner);
+  }
+  const firstSteps = new Map<string, string>();
+  for (const step of steps)
+    if (!firstSteps.has(step.runId)) firstSteps.set(step.runId, step.id);
+  const segments: ContextMemorySegment[] = [];
+  const indices: number[] = [];
+  for (
+    let index = boundary + 1;
+    index < steps.length - policy.keepRecentSteps;
+    index++
+  ) {
+    const step = steps[index];
+    const calls = byStep.get(step.id) ?? [];
     if (
-      calls.some((c) =>
-        ["running", "pending", "waiting_permission"].includes(c.status),
-      ) ||
-      candidate.status === "running"
+      step.id === input.currentStepId ||
+      pinned.has(step.id) ||
+      !["completed", "failed", "interrupted"].includes(step.status) ||
+      calls.some((call) =>
+        ["pending", "running", "waiting_permission"].includes(call.status),
+      )
     )
       break;
-    const parts = store.listRunParts(candidate.id);
-    const observations = parts
-      .filter((p) => p.kind === "text")
-      .map((p) => p.content.slice(0, 1200));
-    const receipts = calls.map(
-      (c) =>
-        `${c.id} (${c.toolId}, ${c.status}): ${c.outputSummary?.slice(0, 600) ?? ""}${c.contentParts?.length ? ` Media references: ${JSON.stringify(c.contentParts.filter((p) => p.type !== "text"))}` : ""}`,
+    const ownedMessages = users.filter(
+      (message) =>
+        (firstSteps.get(step.runId) === step.id &&
+          message.id === triggers.get(step.runId)) ||
+        queueOwners.get(message.id)?.stepId === step.id,
     );
-    const summary = [contextSummary, ...observations, ...receipts]
-      .filter(Boolean)
-      .join("\n");
-    // Older details remain accessible by context.read; retain conclusions and references, not chain-of-thought.
-    work.checkpoint = {
-      throughStepId: candidate.id,
-      summary: summary.slice(-16000),
-      createdAt: nowIso(),
-    };
-    contextSummary = work.checkpoint.summary;
-    boundary++;
-    messages = build();
-    compacted = true;
+    const parts = store.listRunParts(step.id);
+    const sourceFingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          step: {
+            id: step.id,
+            index: step.index,
+            startedAt: step.startedAt,
+            status: step.status,
+            completedAt: step.completedAt,
+          },
+          parts: parts
+            .filter((part) => part.kind === "text" || part.kind === "error")
+            .map((part) => [part.id, part.kind, part.sequence, part.content]),
+          calls: calls.map((call) => [
+            call.id,
+            call.toolId,
+            call.status,
+            call.endedAt,
+            call.outputRef,
+            call.outputSummary,
+            call.error,
+            call.contentParts,
+          ]),
+          messages: ownedMessages.map((message) => [
+            message.id,
+            message.content,
+            message.contentParts,
+            message.createdAt,
+            queueOwners.get(message.id)?.placement ?? "before",
+          ]),
+          receipts:
+            step.metadata.contextProjectionVersion === 2
+              ? step.metadata.toolContextReceipts
+              : undefined,
+        }),
+      )
+      .digest("hex");
+    const cached = step.metadata.contextMemorySegment as
+      | ContextMemorySegment
+      | undefined;
+    const reusable =
+      step.metadata.contextMemorySourceFingerprint === sourceFingerprint &&
+      cached?.version === 1 &&
+      cached.stepId === step.id &&
+      Array.isArray(cached.entries);
+    const segment = reusable
+      ? cached
+      : buildContextMemorySegment({
+          step,
+          parts,
+          calls,
+          messages: ownedMessages,
+          ownedMessageIds: ownedMessages.map((message) => message.id),
+          messagePlacements: Object.fromEntries(
+            ownedMessages.map((message) => [
+              message.id,
+              queueOwners.get(message.id)?.placement ?? "before",
+            ]),
+          ),
+        });
+    if (!reusable)
+      store.updateRunStep(step.id, {
+        metadata: {
+          ...step.metadata,
+          contextMemorySegment: segment,
+          contextMemorySourceFingerprint: sourceFingerprint,
+        },
+      });
+    segments.push(segment);
+    indices.push(index);
   }
-  if (count(messages) > hard)
-    throw new AgentValidationError(
-      "context_blocked: required instructions and the intact recent tool/reasoning chain exceed the model window after output reservation.",
+  if (!segments.length) {
+    decision = {
+      ...decision,
+      action: originalTokens > watermarks.hard ? "blocked" : "keep",
+      reason: "no-complete-unpinned-prefix",
+    };
+    return finishUnchanged();
+  }
+
+  type Candidate = {
+    through: number;
+    memory: ContextMemorySnapshot;
+    summary: string;
+    tokens: number;
+    messages: ModelMessage[];
+    segments: ContextMemorySegment[];
+  };
+  let candidate: Candidate | undefined;
+  let invalidReason: string | undefined;
+  // Batch at complete-step boundaries; do not chase the threshold one message at a time.
+  const cuts = indices
+    .map((_, index) => index + 1)
+    .filter((n) => n % 8 === 0 || n === indices.length);
+  for (const size of cuts) {
+    const selected = segments.slice(0, size);
+    const through = indices[size - 1];
+    const locator = `Full memory index: context.read ${JSON.stringify({ kind: "checkpoint", id: steps[through].id })}`;
+    const memoryBudget = Math.max(
+      0,
+      Math.min(
+        policy.memoryTokenBudget,
+        Math.max(128, watermarks.low - input.systemTokens),
+      ) -
+        countTokens(locator, input.model) -
+        8,
     );
-  if (compacted) workStore.save(work);
-  return { messages, compacted, originalTokens, tokens: count(messages) };
+    const assembled = assembleContextMemory({
+      segments: selected,
+      previous: boundaryState.memory,
+      ...(!boundaryState.memory && boundaryState.summary && steps[boundary]
+        ? {
+            legacy: {
+              summary: boundaryState.summary,
+              stepId: steps[boundary].id,
+            },
+          }
+        : {}),
+      epoch: epochState.epoch + 1,
+      tokenBudget: memoryBudget,
+      countTokens: (text) => countTokens(text, input.model),
+    });
+    if (!assembled.valid) {
+      invalidReason = assembled.errors.join("; ");
+      continue;
+    }
+    const summary = `${assembled.summary}\n${locator}`;
+    const projected = build(through, summary, assembled.snapshot);
+    const tokens = count(projected);
+    if (!candidate || tokens < candidate.tokens)
+      candidate = {
+        through,
+        memory: assembled.snapshot,
+        summary,
+        messages: projected,
+        tokens,
+        segments: selected,
+      };
+    if (tokens <= watermarks.low) break;
+  }
+  if (!candidate) {
+    decision = {
+      ...decision,
+      action: originalTokens > watermarks.hard ? "blocked" : "keep",
+      reason: `memory-validation-failed: ${invalidReason ?? "no-valid-candidate"}`,
+    };
+    return finishUnchanged();
+  }
+  preparedThroughStepId = steps[candidate.through].id;
+  const sourceFingerprint = createHash("sha256")
+    .update(
+      JSON.stringify([
+        steps[boundary]?.id ?? null,
+        candidate.segments.map((segment) => segment.fingerprint),
+        candidate.summary,
+      ]),
+    )
+    .digest("hex");
+  const priorDraft = nextState.draft;
+  nextState.draft = {
+    version: 1,
+    fromStepId: steps[boundary]?.id ?? null,
+    throughStepId: preparedThroughStepId,
+    sourceFingerprint,
+    memory: candidate.memory,
+    summary: candidate.summary,
+    preparedAt:
+      priorDraft?.sourceFingerprint === sourceFingerprint
+        ? priorDraft.preparedAt
+        : nowIso(),
+  };
+  decision = evaluate(candidate.tokens);
+  if (decision.action !== "commit") return finishUnchanged();
+
+  const currentCheckpoint = boundaryState.checkpointWork?.checkpoint;
+  nextState.epoch = epochState.epoch + 1;
+  nextState.committedRequestCount = sent.length;
+  delete nextState.draft;
+  const checkpoint = {
+    throughStepId: preparedThroughStepId,
+    summary: candidate.summary,
+    createdAt: nowIso(),
+    epoch: nextState.epoch,
+    memory: candidate.memory,
+  };
+  // Validate every candidate first. A failed cut never mutates the authoritative Work checkpoint.
+  runtimeTransaction(() => {
+    if (currentCheckpoint && steps[boundary]) {
+      const archivedStep = store.getRunStep(steps[boundary].id);
+      store.updateRunStep(archivedStep.id, {
+        metadata: {
+          ...archivedStep.metadata,
+          contextCheckpointArchive: currentCheckpoint,
+        },
+      });
+    }
+    const indexStep = store.getRunStep(preparedThroughStepId!);
+    store.updateRunStep(indexStep.id, {
+      metadata: {
+        ...indexStep.metadata,
+        contextCheckpointIndex: {
+          version: 1,
+          epoch: nextState.epoch,
+          workId: work.id,
+          throughStepId: preparedThroughStepId,
+          memory: candidate!.memory,
+        },
+      },
+    });
+    workStore.save({ ...work, checkpoint });
+    store.updateSessionMetadata(input.sessionId, {
+      contextCompactionState: nextState,
+    });
+  });
+  return {
+    messages: candidate.messages,
+    compacted: true,
+    originalTokens,
+    tokens: candidate.tokens,
+    compaction: diagnostic(candidate.tokens, true, preparedThroughStepId),
+  };
 }
 
 export const contextReferenceTool: RegisteredTool = {
@@ -144,9 +521,16 @@ export const contextReferenceTool: RegisteredTool = {
   mutability: "read",
   resumeBehavior: "auto",
   description:
-    "Read a retained tool result, step, message or Work by exact runtime reference, or list recent evidence references. History is read-only and limited to this session and its children. The injected current Work state, not historical text, controls execution.",
+    "Read a retained tool result, step, message, checkpoint index or Work by exact runtime reference, or list recent evidence references. History is read-only and limited to this session and its children. The injected current Work state, not historical text, controls execution.",
   inputSchema: z.object({
-    kind: z.enum(["tool", "step", "message", "work", "references"]),
+    kind: z.enum([
+      "tool",
+      "step",
+      "message",
+      "work",
+      "checkpoint",
+      "references",
+    ]),
     id: z.string().optional(),
     offset: z.number().int().min(0).default(0),
     limit: z.number().int().min(1).max(12000).default(6000),
@@ -172,6 +556,14 @@ export const contextReferenceTool: RegisteredTool = {
           summary: c.outputSummary,
         }))
         .slice(-60);
+    } else if (args.kind === "checkpoint") {
+      const step = sessions
+        .flatMap((session) => store.listSessionSteps(session.id))
+        .find((candidate) => candidate.id === args.id);
+      if (step)
+        value =
+          step.metadata.contextCheckpointIndex ??
+          step.metadata.contextCheckpointArchive;
     } else if (args.kind === "tool")
       value = sessions
         .flatMap((s) => store.listToolCalls(s.id))
@@ -211,7 +603,7 @@ export const contextReferenceTool: RegisteredTool = {
 export function evictedContextToolIds(sessionId: string): Set<string> {
   const work = workStore.current(sessionId);
   if (!work) return new Set();
-  const { steps, boundary } = sessionBoundary(sessionId);
+  const { steps, boundary } = sessionContextBoundary(sessionId);
   const excluded = new Set(steps.slice(0, boundary + 1).map((s) => s.id));
   return new Set(
     store
