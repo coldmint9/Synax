@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
 /**
@@ -50,6 +50,7 @@ export const ActivityRow = memo(function ActivityRow({
     () => (rememberKey ? expandedRows.get(rememberKey) ?? false : false),
   )
   const bodyRef = useRef<HTMLDivElement>(null)
+  const bodyId = useId()
   const hasBody = Boolean(body) || Boolean(bodyContent)
 
   // A row stops streaming: fall back to whatever the reader chose (collapsed by
@@ -76,63 +77,42 @@ export const ActivityRow = memo(function ActivityRow({
     })
   }, [hasBody, rememberKey])
 
+  const heading = (
+    <>
+      {icon && <span className="bui-activity-symbol">{icon}</span>}
+      <span className="bui-activity-label">{label}</span>
+      {meta && <span className="bui-activity-meta" title={meta}>{meta}</span>}
+      {preview && !isOpen && <span className="bui-activity-preview">{preview}</span>}
+      {interactive && (isOpen
+        ? <ChevronDown size={12} className="bui-chevron" aria-hidden="true" />
+        : <ChevronRight size={12} className="bui-chevron" aria-hidden="true" />)}
+    </>
+  )
+
   return (
-    <div className="group/activity flex min-w-0 flex-col">
+    <div className="bui-activity" data-live={live || undefined}>
       {interactive ? (
         <button
           type="button"
           onClick={toggle}
           aria-expanded={isOpen}
-          className="flex w-full min-w-0 items-center gap-1.5 text-left"
+          aria-controls={isOpen ? bodyId : undefined}
+          className="bui-activity-trigger"
         >
-          {icon}
-          <span
-            className="shrink-0 text-[11px] text-muted-foreground/60"
-          >
-            {label}
-          </span>
-          {meta ? (
-            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/40">{meta}</span>
-          ) : null}
-          {preview && !isOpen ? (
-            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/40">
-              {preview}
-            </span>
-          ) : null}
-          <span className="ml-auto shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-focus-within/activity:opacity-100 group-hover/activity:opacity-100">
-            {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-          </span>
+          {heading}
         </button>
-      ) : (
-        <div className="flex w-full min-w-0 items-center gap-1.5">
-          {icon}
-          <span
-            className={`shrink-0 text-[11px] ${live ? 'animate-pulse text-muted-foreground/80' : 'text-muted-foreground/60'}`}
-          >
-            {label}
-          </span>
-          {meta ? (
-            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/40">{meta}</span>
-          ) : null}
-          {preview ? (
-            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/40">
-              {preview}
-            </span>
-          ) : null}
-        </div>
-      )}
-
+      ) : <div className="bui-activity-trigger">{heading}</div>}
       {isOpen && hasBody ? (
         <div
+          id={bodyId}
           ref={bodyRef}
           data-activity-body=""
+          data-plain={Boolean(body) || undefined}
           style={{ maxHeight: bodyMaxHeight }}
-          className={`ms-[17px] mt-0.5 overflow-y-auto break-words text-[11px] leading-relaxed ${body ? 'whitespace-pre-wrap italic text-muted-foreground/60' : ''}`}
+          className="bui-activity-body"
         >
           {bodyContent ?? body}
-          {footnote ? (
-            <div className="mt-1 not-italic text-[10px] text-muted-foreground/35">{footnote}</div>
-          ) : null}
+          {footnote ? <div className="bui-activity-footnote">{footnote}</div> : null}
         </div>
       ) : null}
     </div>

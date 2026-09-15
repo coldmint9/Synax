@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { ListChecks } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { ConversationTimelineEntry } from './buildConversationTimeline'
 import { ActivityRow } from './ActivityRow'
@@ -41,6 +42,7 @@ export const WorkLogEntry = memo(function WorkLogEntry({ entry, onExpandChild }:
 
   return (
     <ActivityRow
+      icon={<ListChecks size={13} aria-hidden="true" />}
       label={t('sessionWorkLog')}
       meta={meta}
       preview={preview ? activityPreview(preview) : null}
