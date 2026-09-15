@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { ListChecks } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { ConversationTimelineEntry } from './buildConversationTimeline'
 import { ActivityRow } from './ActivityRow'
@@ -29,18 +30,19 @@ function workDuration(elapsedMs: number): string {
 
 /** Completed activity from one round, collapsed into a compact expandable row. */
 export const WorkLogEntry = memo(function WorkLogEntry({ entry, onExpandChild }: Props) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const { stepCount, toolCallCount, thinkingChars, elapsedMs } = entry.stats
   const preview = firstThinking(entry)
   const meta = [
-    `${stepCount} 步`,
-    `${toolCallCount} 次调用`,
+    t('sessionWorkLogSteps', { count: stepCount }),
+    t('sessionWorkLogCalls', { count: toolCallCount }),
     thinkingChars > 0 ? t('sessionActivityChars', { count: formatCharCount(thinkingChars) }) : null,
   ].filter(Boolean).join(' · ')
 
   return (
     <ActivityRow
-      label={`工作用时 ${workDuration(elapsedMs)}`}
+      icon={<ListChecks size={13} aria-hidden="true" />}
+      label={locale === 'zh' ? `工作用时 ${workDuration(elapsedMs)}` : t('sessionTurnWorked', { duration: formatDurationMs(elapsedMs) ?? '0s' })}
       meta={meta}
       preview={preview ? activityPreview(preview) : null}
       bodyContent={(

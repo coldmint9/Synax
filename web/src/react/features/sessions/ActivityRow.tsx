@@ -1,33 +1,70 @@
-import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
+/**
+ * Expand state deliberately lives outside React: transcript rows unmount when
+ * they scroll out of the lazy window, and a reader who opened one activity row
+ * should not have to open it again after scrolling back.
+ */
 const expandedRows = new Map<string, boolean>()
+
+/**
+ * Body cap, mirroring the ~8.75rem window Codex gives a reasoning body. A raw
+ * reasoning block can be 50k+ characters, which must never be laid out whole.
+ */
 const BODY_MAX_HEIGHT = 140
 
 interface Props {
   icon?: ReactNode
   label: string
+  /** Right-aligned dim metadata, e.g. the character count. */
   meta?: string | null
+  /** One-line teaser shown while collapsed. */
   preview?: string | null
+  /** Full text. Mounted only while expanded — this is what keeps rows cheap. */
   body?: string | null
+  /** Rich body, used instead of `body` when a row expands into nested content. */
   bodyContent?: ReactNode
+  /** Dim note rendered under an expanded body, e.g. how much text was elided. */
   footnote?: string | null
+  /** Expanded height cap; rows that open a nested list need more room. */
   bodyMaxHeight?: number
+  /** Streaming row: badge label, body always mounted and scrolled to the end. */
   live?: boolean
   rememberKey?: string
 }
 
-export const ActivityRow = memo(function ActivityRow({ icon, label, meta, preview, body, bodyContent, footnote, bodyMaxHeight = BODY_MAX_HEIGHT, live = false, rememberKey }: Props) {
-  const [expanded, setExpanded] = useState(() => (rememberKey ? expandedRows.get(rememberKey) ?? false : false))
+export const ActivityRow = memo(function ActivityRow({
+  icon,
+  label,
+  meta,
+  preview,
+  body,
+  bodyContent,
+  footnote,
+  bodyMaxHeight = BODY_MAX_HEIGHT,
+  live = false,
+  rememberKey,
+}: Props) {
+  const [expanded, setExpanded] = useState(
+    () => (rememberKey ? expandedRows.get(rememberKey) ?? false : false),
+  )
   const bodyRef = useRef<HTMLDivElement>(null)
+  const bodyId = useId()
   const hasBody = Boolean(body) || Boolean(bodyContent)
+
+  // A row stops streaming: fall back to whatever the reader chose (collapsed by
+  // default), so finished reasoning never keeps its body in the DOM.
   useEffect(() => {
     if (live) return
     setExpanded(rememberKey ? expandedRows.get(rememberKey) ?? false : false)
   }, [live, rememberKey])
+
   useEffect(() => {
-    if (!live && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+    const element = bodyRef.current
+    if (element) element.scrollTop = element.scrollHeight
   }, [live, body])
+
   const isOpen = live || expanded
   const interactive = !live && hasBody
   const toggle = useCallback(() => {
@@ -39,26 +76,42 @@ export const ActivityRow = memo(function ActivityRow({ icon, label, meta, previe
     })
   }, [hasBody, rememberKey])
 
+  const heading = (
+    <>
+      {icon && <span className="bui-activity-symbol">{icon}</span>}
+      <span className="bui-activity-label">{label}</span>
+      {meta && <span className="bui-activity-meta" title={meta}>{meta}</span>}
+      {preview && !isOpen && <span className="bui-activity-preview">{preview}</span>}
+      {interactive && (isOpen
+        ? <ChevronDown size={12} className="bui-chevron" aria-hidden="true" />
+        : <ChevronRight size={12} className="bui-chevron" aria-hidden="true" />)}
+    </>
+  )
+
   return (
-    <div className="group/activity flex min-w-0 flex-col">
+    <div className="bui-activity" data-live={live || undefined}>
       {interactive ? (
-        <button type="button" onClick={toggle} aria-expanded={isOpen} className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-primary/15 bg-primary/[0.045] px-3 py-2 text-left transition-colors hover:border-primary/30 hover:bg-primary/[0.08]">
-          <span className="shrink-0 text-primary transition-transform duration-300">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
-          <span className="shrink-0 text-xs font-semibold text-primary">{label}</span>
-          {meta ? <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/55">{meta}</span> : null}
-          {preview && !isOpen ? <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/50">{preview}</span> : null}
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={isOpen}
+          aria-controls={isOpen ? bodyId : undefined}
+          className="bui-activity-trigger"
+        >
+          {heading}
         </button>
-      ) : (
-        <div className="flex w-full min-w-0 items-center gap-1.5">
-          {icon}<span className={`shrink-0 text-[11px] ${live ? 'animate-pulse text-muted-foreground/80' : 'text-muted-foreground/60'}`}>{label}</span>
-          {meta ? <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/40">{meta}</span> : null}
-          {preview ? <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/40">{preview}</span> : null}
-        </div>
-      )}
+      ) : <div className="bui-activity-trigger">{heading}</div>}
       {isOpen && hasBody ? (
-        <div ref={bodyRef} data-activity-body="" style={{ maxHeight: bodyMaxHeight }} className={`session-work-log-body ms-2 mt-1 overflow-y-auto break-words text-[11px] leading-relaxed ${body ? 'whitespace-pre-wrap italic text-muted-foreground/60' : ''}`}>
+        <div
+          id={bodyId}
+          ref={bodyRef}
+          data-activity-body=""
+          data-plain={Boolean(body) || undefined}
+          style={{ maxHeight: bodyMaxHeight }}
+          className="bui-activity-body session-work-log-body"
+        >
           {bodyContent ?? body}
-          {footnote ? <div className="mt-1 not-italic text-[10px] text-muted-foreground/35">{footnote}</div> : null}
+          {footnote ? <div className="bui-activity-footnote">{footnote}</div> : null}
         </div>
       ) : null}
     </div>
