@@ -32,6 +32,8 @@ interface Props {
   /** Streaming row: badge label, body always mounted and scrolled to the end. */
   live?: boolean
   rememberKey?: string
+  /** Visual weight. `work-log` marks the folded record of a whole finished round. */
+  variant?: 'default' | 'work-log'
 }
 
 export const ActivityRow = memo(function ActivityRow({
@@ -45,6 +47,7 @@ export const ActivityRow = memo(function ActivityRow({
   bodyMaxHeight = BODY_MAX_HEIGHT,
   live = false,
   rememberKey,
+  variant = 'default',
 }: Props) {
   const [expanded, setExpanded] = useState(
     () => (rememberKey ? expandedRows.get(rememberKey) ?? false : false),
@@ -89,7 +92,7 @@ export const ActivityRow = memo(function ActivityRow({
   )
 
   return (
-    <div className="bui-activity" data-live={live || undefined}>
+    <div className="bui-activity" data-live={live || undefined} data-variant={variant}>
       {interactive ? (
         <button
           type="button"
@@ -102,16 +105,20 @@ export const ActivityRow = memo(function ActivityRow({
         </button>
       ) : <div className="bui-activity-trigger">{heading}</div>}
       {isOpen && hasBody ? (
-        <div
-          id={bodyId}
-          ref={bodyRef}
-          data-activity-body=""
-          data-plain={Boolean(body) || undefined}
-          style={{ maxHeight: bodyMaxHeight }}
-          className="bui-activity-body session-work-log-body"
-        >
-          {bodyContent ?? body}
-          {footnote ? <div className="bui-activity-footnote">{footnote}</div> : null}
+        // The reveal wrapper animates the open/close height; the body inside
+        // keeps its own scroll window so a long record never lays out whole.
+        <div className="bui-activity-reveal">
+          <div
+            id={bodyId}
+            ref={bodyRef}
+            data-activity-body=""
+            data-plain={Boolean(body) || undefined}
+            style={{ maxHeight: bodyMaxHeight }}
+            className="bui-activity-body session-work-log-body"
+          >
+            {bodyContent ?? body}
+            {footnote ? <div className="bui-activity-footnote">{footnote}</div> : null}
+          </div>
         </div>
       ) : null}
     </div>

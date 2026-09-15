@@ -1,7 +1,16 @@
 import { useMemo } from 'react'
 import type { AgentSession } from '../../../lib/api/agentRuntime'
+import { useLocale } from '../../../hooks/useLocale'
+import { t, type Locale } from '../../../lib/i18n'
 
 export const SESSION_DISPLAY_TITLE_MAX = 80
+
+/** Placeholder titles only mean "not summarized yet"; they are localized. */
+const PLACEHOLDER_TITLES = ['new agent', 'new session', '新会话']
+
+function isPlaceholderTitle(title: string): boolean {
+  return PLACEHOLDER_TITLES.includes(title.trim().toLowerCase())
+}
 
 function looksLikeSystemPrompt(prompt: string): boolean {
   return prompt.includes('## ') || /^You are\b/m.test(prompt)
@@ -28,8 +37,10 @@ export function resolveSessionUserInput(session: AgentSession): string | null {
 export function getSessionDisplayTitle(
   session: AgentSession,
   fallback = '',
+  locale: Locale = 'en',
 ): string {
   const title = session.title?.trim()
+  if (title && isPlaceholderTitle(title)) return t(locale, 'sessionPlaceholderTitle')
   if (title) return title
 
   const userInput = resolveSessionUserInput(session)
@@ -47,8 +58,9 @@ export function useSessionDisplayTitle(
   session: AgentSession | null | undefined,
   fallback = '',
 ): string {
+  const { locale } = useLocale()
   return useMemo(
-    () => (session ? getSessionDisplayTitle(session, fallback) : fallback),
-    [session, fallback, session?.title, session?.prompt, session?.sessionMetadata?.goalContent, session?.sessionMetadata?.planNodeTitle],
+    () => (session ? getSessionDisplayTitle(session, fallback, locale) : fallback),
+    [session, fallback, locale, session?.title, session?.prompt, session?.sessionMetadata?.goalContent, session?.sessionMetadata?.planNodeTitle],
   )
 }

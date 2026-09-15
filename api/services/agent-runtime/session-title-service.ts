@@ -17,7 +17,19 @@ function resolveUserTitleInput(sessionId: string, sessionPrompt: string): string
 }
 
 const INITIAL_TITLE_MAX_LEN = 80;
-export const DEFAULT_NEW_AGENT_SESSION_TITLE = 'new agent';
+export const DEFAULT_NEW_SESSION_TITLE = 'new session';
+
+/**
+ * Titles that only mean "no title yet". Legacy spellings stay
+ * recognized so sessions created before the rename still get summarized.
+ */
+const PLACEHOLDER_SESSION_TITLES = [DEFAULT_NEW_SESSION_TITLE, 'new agent', '新会话'];
+
+function isPlaceholderSessionTitle(title: string | null | undefined): boolean {
+  const normalized = title?.trim().toLowerCase();
+  if (!normalized) return false;
+  return PLACEHOLDER_SESSION_TITLES.some((placeholder) => placeholder.toLowerCase() === normalized);
+}
 
 export interface TitleGeneratorContext {
   sessionId: string;
@@ -93,7 +105,7 @@ function truncateInitialTitle(text: string): string {
 
 function fallbackTitleFromUserInput(userInput: string): string | null {
   const trimmed = userInput.trim();
-  if (!trimmed || trimmed === DEFAULT_NEW_AGENT_SESSION_TITLE) return null;
+  if (!trimmed || isPlaceholderSessionTitle(trimmed)) return null;
   if (looksLikeSystemPrompt(trimmed)) return null;
   return truncateInitialTitle(trimmed);
 }
@@ -116,7 +128,7 @@ function countEnglishWords(text: string): number {
 export function isValidGeneratedSessionTitle(title: string): boolean {
   const trimmed = title.trim();
   if (!trimmed || trimmed.length > MAX_GENERATED_TITLE_LEN) return false;
-  if (trimmed === DEFAULT_NEW_AGENT_SESSION_TITLE) return false;
+  if (isPlaceholderSessionTitle(trimmed)) return false;
   if (/[\n\r]/.test(trimmed)) return false;
   if (looksLikeSystemPrompt(trimmed)) return false;
   if (/^["'`「『【〈《[]/.test(trimmed) && /["'`」』】〉》\])]$/.test(trimmed)) return false;
@@ -187,7 +199,7 @@ export function resolveInitialSessionTitle(input: {
 }): string | null {
   const meta = input.sessionMetadata;
   if (meta?.source === 'session-page') {
-    return DEFAULT_NEW_AGENT_SESSION_TITLE;
+    return DEFAULT_NEW_SESSION_TITLE;
   }
 
   const fromGoal = resolveGoalTitleSource(input);
@@ -203,18 +215,23 @@ export function resolveInitialSessionTitle(input: {
 
 export function needsGeneratedSessionTitle(session: AgentSession): boolean {
   if (session.sessionMetadata?.titleSummarized === true) return false;
-  if (session.title?.trim() === DEFAULT_NEW_AGENT_SESSION_TITLE) return true;
+  if (isPlaceholderSessionTitle(session.title)) return true;
   if (session.sessionMetadata?.source === 'session-page') return true;
   return !session.title?.trim();
 }
 
-/** Prefer stream_done so assistant context is available for synax title LLM. */
+/**
+ * Start title generation together with the first turn instead of waiting
+ * for the stream to finish, so the session gets its name while the
+ * conversation is still streaming. The call stays deferred and coalesced
+ * by scheduleSessionTitleGeneration, so it never blocks the turn itself.
+ */
 export function maybeScheduleSessionTitleFromStreamChunk(
   sessionId: string,
   chunk: AgentRunStreamChunk,
 ): void {
   if (chunk.type !== 'run_started') return;
-  // Title generation runs on stream_done via ensureSessionTitleGenerated.
+  scheduleSessionTitleGeneration(sessionId, chunk.run.id, 'run_started');
 }
 
 export function scheduleSessionTitleAfterRunStart(sessionId: string, runId: string): void {
@@ -241,10 +258,10 @@ async function runSessionTitleGeneration(
       logger.debug({ sessionId, trigger, title: session.title }, '[session-title] skipped: title already set');
       return;
     }
-    if (session.activeRunId) {
-      // A run is still in flight (for example the client stream ended before
-      // the run did). Generating now would put a second model call in front of
-      // the run itself; the run's completion triggers generation instead.
+    if (session.activeRunId && trigger !== 'run_started') {
+      // A late fallback fired while the run is still in flight (for example
+      // the client stream ended before the run did). The run-start trigger
+      // is intentionally allowed to overlap the first turn.
       logger.debug({ sessionId, trigger, activeRunId: session.activeRunId }, '[session-title] deferred: run still active');
       return;
     }

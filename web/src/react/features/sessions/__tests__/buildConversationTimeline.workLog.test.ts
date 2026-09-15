@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { WORK_LOG_MIN_TURNS, buildConversationTimeline } from '../buildConversationTimeline'
+import { buildConversationTimeline } from '../buildConversationTimeline'
 import type { AgentRun, AgentRunStep, AgentRuntimeMessage, ToolCallRecord } from '../../../../lib/api/agentRuntime'
 
 const SESSION_ID = 'sess-1'
@@ -65,24 +65,40 @@ function toolCall(stepIndex: number): ToolCallRecord {
   }
 }
 
-function build(steps: AgentRunStep[], messages: AgentRuntimeMessage[], toolCalls: ToolCallRecord[], foldWorkRuns?: boolean) {
-  const run: AgentRun = {
+function makeRun(status: AgentRun['status'] = 'completed', stepCount = 0): AgentRun {
+  return {
     id: RUN_ID,
     sessionId: SESSION_ID,
-    status: 'completed',
+    status,
     startedAt: '2026-01-01T00:00:00.000Z',
     completedAt: '2026-01-01T01:00:00.000Z',
     triggerMessageId: 'msg-user',
-    currentStep: steps.length,
+    currentStep: stepCount,
     stopReason: null,
     model: null,
     metadata: {},
   }
-  return buildConversationTimeline(run ? [run] : [], steps, messages, toolCalls, undefined, { foldWorkRuns })
+}
+
+function build(
+  steps: AgentRunStep[],
+  messages: AgentRuntimeMessage[],
+  toolCalls: ToolCallRecord[],
+  foldWorkRuns?: boolean,
+  runStatus: AgentRun['status'] = 'completed',
+) {
+  return buildConversationTimeline(
+    [makeRun(runStatus, steps.length)],
+    steps,
+    messages,
+    toolCalls,
+    undefined,
+    { foldWorkRuns },
+  )
 }
 
 describe('buildConversationTimeline work logs', () => {
-  it('folds a run of activity-only turns into one entry', () => {
+  it('folds a process-only run into one entry', () => {
     const steps = [1, 2, 3, 4].map(index => makeStep(index))
     const messages = steps.map(step => thinking(step.index))
     const toolCalls = steps.map(step => toolCall(step.index))
@@ -102,31 +118,53 @@ describe('buildConversationTimeline work logs', () => {
     expect(entry.id).toBe('work-log-step-1')
   })
 
-  it('leaves short runs expanded', () => {
-    const steps = [1, 2].map(index => makeStep(index))
-    const messages = steps.map(step => thinking(step.index))
-
-    const timeline = build(steps, messages, [])
-
-    expect(timeline).toHaveLength(2)
-    expect(timeline.every(entry => entry.kind === 'agent')).toBe(true)
-  })
-
-  it('breaks the run where a turn answers the user', () => {
-    const steps = [1, 2, 3, 4, 5, 6].map(index => makeStep(index))
+  it('folds the whole process of a finished round and leaves its answer outside', () => {
+    const steps = [1, 2, 3, 4].map(index => makeStep(index))
     const messages = [
       thinking(1), thinking(2), thinking(3),
-      thinking(4), answer(4),
-      thinking(5), thinking(6),
+      // The answer shares its step with reasoning: only the answer stays out.
+      thinking(4), answer(4, 'the answer'),
     ]
 
     const timeline = build(steps, messages, [])
 
-    // 1-3 fold, 4 stays as the answer, 5-6 are too short to fold.
-    expect(timeline.map(entry => entry.kind)).toEqual(['work_log', 'agent', 'agent', 'agent'])
+    expect(timeline.map(entry => entry.kind)).toEqual(['work_log', 'agent'])
+
+    const folded = timeline[0]
+    if (folded.kind !== 'work_log') throw new Error('expected work log')
+    expect(folded.stats.stepCount).toBe(4)
+    expect(folded.turns.map(turn => turn.stepId)).toEqual(['step-1', 'step-2', 'step-3', 'step-4'])
+    // The answer step's own reasoning folds too, rather than trailing the answer.
+    expect(folded.turns[3].blocks.map(block => block.type)).toEqual(['thinking'])
+    expect(folded.turns.flatMap(turn => turn.blocks).some(block => block.type === 'text')).toBe(false)
+
+    const answerEntry = timeline[1]
+    if (answerEntry.kind !== 'agent') throw new Error('expected the answer turn')
+    expect(answerEntry.id).toBe('step-4-answer')
+    expect(answerEntry.turn.blocks.map(block => block.type)).toEqual(['text'])
   })
 
-  it('breaks the run at a user message', () => {
+  it('never folds while the round is still running', () => {
+    const steps = [1, 2, 3, 4].map(index => makeStep(index))
+    const messages = steps.map(step => thinking(step.index))
+
+    const timeline = build(steps, messages, [], undefined, 'running')
+
+    expect(timeline).toHaveLength(4)
+    expect(timeline.every(entry => entry.kind === 'agent')).toBe(true)
+  })
+
+  it('folds history even when the run record is missing', () => {
+    const steps = [1, 2, 3].map(index => makeStep(index))
+    const messages = steps.map(step => thinking(step.index))
+
+    const timeline = buildConversationTimeline([], steps, messages, [])
+
+    expect(timeline).toHaveLength(1)
+    expect(timeline[0].kind).toBe('work_log')
+  })
+
+  it('breaks the run at a user message and folds each side separately', () => {
     const steps = [1, 2, 3, 4, 5, 6, 7].map(index => makeStep(index))
     const messages = [
       thinking(1), thinking(2), thinking(3),
@@ -148,6 +186,18 @@ describe('buildConversationTimeline work logs', () => {
     const timeline = build(steps, messages, [])
 
     expect(timeline.map(entry => entry.kind)).toEqual(['work_log', 'user', 'work_log'])
+  })
+
+  it('folds even a single intermediate turn, so no stray step survives', () => {
+    const steps = [1, 2].map(index => makeStep(index))
+    const messages = [thinking(1), thinking(2), answer(2, 'done')]
+
+    const timeline = build(steps, messages, [])
+
+    expect(timeline.map(entry => entry.kind)).toEqual(['work_log', 'agent'])
+    const folded = timeline[0]
+    if (folded.kind !== 'work_log') throw new Error('expected work log')
+    expect(folded.turns.map(turn => turn.stepId)).toEqual(['step-1', 'step-2'])
   })
 
   it('keeps every turn when the switch is off', () => {
@@ -187,13 +237,5 @@ describe('buildConversationTimeline work logs', () => {
     expect(timeline[0].kind).toBe('work_log')
     if (timeline[0].kind !== 'work_log') throw new Error('expected work log')
     expect(timeline[0].turns.map(turn => turn.stepId)).toEqual(['step-1', 'step-2', 'step-3'])
-  })
-
-  it('needs at least WORK_LOG_MIN_TURNS turns to fold', () => {
-    const steps = Array.from({ length: WORK_LOG_MIN_TURNS }, (_, i) => makeStep(i + 1))
-    const messages = steps.map(step => thinking(step.index))
-
-    expect(build(steps, messages, [])[0].kind).toBe('work_log')
-    expect(build(steps.slice(1), messages.slice(1), [])[0].kind).toBe('agent')
   })
 })

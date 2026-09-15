@@ -1,5 +1,5 @@
 import type { SessionTreeNode } from './sessionGrouping'
-import { getSessionDisplayTitle } from './useSessionDisplayTitle'
+import { useSessionDisplayTitle } from './useSessionDisplayTitle'
 
 interface Props {
   node: SessionTreeNode
@@ -10,6 +10,7 @@ interface Props {
 
 export function GroupedSessionTreeItem({ node, depth = 0, selectedId, onSelect }: Props) {
   const { session } = node
+  const title = useSessionDisplayTitle(session)
   const active = session.id === selectedId
 
   return (
@@ -20,8 +21,8 @@ export function GroupedSessionTreeItem({ node, depth = 0, selectedId, onSelect }
         onClick={() => onSelect(session.id)}
       >
         {/* Title: always visible */}
-        <span className="flex-1 truncate font-medium" title={getSessionDisplayTitle(session)}>
-          {getSessionDisplayTitle(session).slice(0, 40)}
+        <span className="flex-1 truncate font-medium" title={title}>
+          {title.slice(0, 40)}
         </span>
         {/* Detail info: only visible when active */}
         {active && (

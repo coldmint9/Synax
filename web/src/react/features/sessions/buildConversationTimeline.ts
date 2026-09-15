@@ -1,6 +1,6 @@
 import type { RuntimeContentPart } from '../../../lib/api/runtimeMedia'
 import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
-import { buildInterleavedTurns, type InterleavedTurn } from './buildInterleavedTurns'
+import { buildInterleavedTurns, type InterleavedTurn, type TurnContentBlock } from './buildInterleavedTurns'
 
 export type ConversationTimelineEntry =
   | {
@@ -37,10 +37,12 @@ export interface WorkLogStats {
 }
 
 /**
- * Runs shorter than this stay as plain turns: folding two steps saves nothing
- * and costs the reader their place in the transcript.
+ * Fewest turns worth hiding behind a `工作用时` row.
+ *
+ * One, because a finished round collapses *all* of its intermediate process: a
+ * single leftover step is still noise sitting between the prompt and the answer.
  */
-export const WORK_LOG_MIN_TURNS = 3
+export const WORK_LOG_MIN_TURNS = 1
 
 function truncate(text: string, max = 48): string {
   const trimmed = text.replace(/\s+/g, ' ').trim()
@@ -165,6 +167,12 @@ interface TimelineItem {
   entry: ConversationTimelineEntry
 }
 
+/**
+ * The transcript is a flat list. Entries keep their own timestamps so the list
+ * stays sorted once a round is rewritten into a folded row plus its answer.
+ */
+type AgentTimelineItem = { timestamp: number; entry: Extract<ConversationTimelineEntry, { kind: 'agent' }> }
+
 function buildTimelineItems(
   steps: AgentRunStep[],
   agentTurns: InterleavedTurn[],
@@ -192,9 +200,16 @@ function buildTimelineItems(
   return items
 }
 
-/** A turn whose only output is reasoning/tool activity — nothing the reader asked for. */
-function isWorkOnlyTurn(turn: InterleavedTurn): boolean {
-  return turn.blocks.every(block => block.type !== 'text' && block.type !== 'sub_session')
+/**
+ * Whether a Run has finished. Steps without a Run record are treated as
+ * finished: a transcript with no run rows is history being read, not live work.
+ *
+ * An unfinished round keeps every step expanded so the reader can watch it run;
+ * only a completed round folds its own process away.
+ */
+function isRunComplete(status: AgentRun['status'] | undefined): boolean {
+  if (!status) return true
+  return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'interrupted'
 }
 
 function turnToolCallCount(turn: InterleavedTurn): number {
@@ -216,6 +231,7 @@ function turnThinkingChars(turn: InterleavedTurn): number {
 function workLogEntry(
   turns: InterleavedTurn[],
   stepById: Map<string, AgentRunStep>,
+  anchorId: string,
 ): ConversationTimelineEntry {
   const first = stepById.get(turns[0].stepId)
   const last = stepById.get(turns[turns.length - 1].stepId)
@@ -224,7 +240,7 @@ function workLogEntry(
 
   return {
     // Anchored to the first step so the id stays stable while the run grows.
-    id: `work-log-${turns[0].stepId}`,
+    id: `work-log-${anchorId}`,
     kind: 'work_log',
     createdAt: first?.startedAt ?? turns[0].stepId,
     label: `Work log · ${turns.length} steps`,
@@ -239,43 +255,124 @@ function workLogEntry(
 }
 
 /**
- * Fold runs of activity-only turns into a single work-log row.
+ * Split a turn into the process that led to its answer and the answer itself.
+ *
+ * Only the trailing text block is the answer; anything the model wrote earlier
+ * in the same step was still working out loud, so it folds with the rest.
+ */
+function splitTurnAnswer(turn: InterleavedTurn): {
+  process: TurnContentBlock[]
+  answer: { type: 'text'; content: string } | null
+} {
+  for (let i = turn.blocks.length - 1; i >= 0; i -= 1) {
+    const block = turn.blocks[i]
+    if (block.type !== 'text' || !block.content.trim()) continue
+    return { process: turn.blocks.slice(0, i), answer: block }
+  }
+  return { process: turn.blocks, answer: null }
+}
+
+function turnWithBlocks(turn: InterleavedTurn, blocks: TurnContentBlock[]): InterleavedTurn {
+  return { ...turn, blocks }
+}
+
+function foldSegment(
+  segment: AgentTimelineItem[],
+  stepById: Map<string, AgentRunStep>,
+): TimelineItem[] {
+  if (segment.length === 0) return []
+  const turns = segment.map(item => item.entry.turn)
+  if (turns.length < WORK_LOG_MIN_TURNS) return segment.map(item => ({ timestamp: item.timestamp, entry: item.entry }))
+  return [{ timestamp: segment[0].timestamp, entry: workLogEntry(turns, stepById, segment[0].entry.id) }]
+}
+
+/**
+ * Fold one finished round into `工作用时 …` plus its answer.
+ *
+ * A round is everything the agent did between two user prompts. Once it has
+ * finished, all of that process collapses into a single expandable row; only
+ * the answer text stays in the transcript, followed by whatever the agent kept
+ * doing afterwards (a goal continuation, for example) in its own row.
+ */
+function foldRound(
+  round: AgentTimelineItem[],
+  stepById: Map<string, AgentRunStep>,
+): TimelineItem[] {
+  let answerIndex = -1
+  for (let i = round.length - 1; i >= 0; i -= 1) {
+    if (round[i].entry.turn.blocks.some(block => block.type === 'text' && block.content.trim() !== '')) {
+      answerIndex = i
+      break
+    }
+  }
+
+  if (answerIndex < 0) {
+    return foldSegment(round, stepById)
+  }
+
+  const answerItem = round[answerIndex]
+  const { process, answer } = splitTurnAnswer(answerItem.entry.turn)
+  if (!answer) return foldSegment(round, stepById)
+
+  const leading = round.slice(0, answerIndex)
+  const trailing = round.slice(answerIndex + 1)
+
+  const folded: TimelineItem[] = []
+  // The answer step's own reasoning and tool calls belong to the process row in
+  // front of the answer, not behind it.
+  const leadingSegment = process.length > 0
+    ? [...leading, { timestamp: answerItem.timestamp, entry: { ...answerItem.entry, turn: turnWithBlocks(answerItem.entry.turn, process) } }]
+    : leading
+  folded.push(...foldSegment(leadingSegment, stepById))
+  folded.push({
+    timestamp: answerItem.timestamp,
+    entry: {
+      ...answerItem.entry,
+      // A distinct anchor: the same step id also names the folded process row.
+      id: `${answerItem.entry.id}-answer`,
+      label: truncate(answer.content),
+      turn: turnWithBlocks(answerItem.entry.turn, [answer]),
+    },
+  })
+  folded.push(...foldSegment(trailing, stepById))
+  return folded
+}
+
+/**
+ * Collapse every finished round's intermediate process into one row.
  *
  * A long agent run spends most of its steps on think → tool → think loops that
  * produce no answer: the measured local session has 82 steps, 81 of them
- * activity-only. Rendering one entry per step makes the transcript long and
- * expensive to lay out; folding them keeps the answer turns (and every user
- * message) exactly where they were, with one collapsible row in between.
+ * process. Rendering one entry per step makes the transcript long and expensive
+ * to lay out, and buries the answer under it. Folding keeps every user message
+ * and every answer exactly where they were, with one expandable row in between
+ * that still holds the full record.
  */
-function foldWorkLogs(
+function foldCompletedRounds(
   items: TimelineItem[],
   stepById: Map<string, AgentRunStep>,
-  minTurns: number,
+  runStatusByStepId: Map<string, AgentRun['status'] | undefined>,
 ): TimelineItem[] {
   const folded: TimelineItem[] = []
   let index = 0
 
   while (index < items.length) {
     const entry = items[index].entry
-    if (entry.kind !== 'agent' || !isWorkOnlyTurn(entry.turn)) {
+    if (entry.kind !== 'agent') {
       folded.push(items[index])
       index += 1
       continue
     }
 
-    const turns: InterleavedTurn[] = []
     let end = index
-    while (end < items.length) {
-      const candidate = items[end].entry
-      if (candidate.kind !== 'agent' || !isWorkOnlyTurn(candidate.turn)) break
-      turns.push(candidate.turn)
-      end += 1
-    }
+    while (end < items.length && items[end].entry.kind === 'agent') end += 1
 
-    if (turns.length < minTurns) {
-      for (let cursor = index; cursor < end; cursor += 1) folded.push(items[cursor])
+    const round = items.slice(index, end) as AgentTimelineItem[]
+    const complete = round.every(item => isRunComplete(runStatusByStepId.get(item.entry.turn.stepId)))
+    if (!complete) {
+      for (const item of round) folded.push({ timestamp: item.timestamp, entry: item.entry })
     } else {
-      folded.push({ timestamp: items[index].timestamp, entry: workLogEntry(turns, stepById) })
+      folded.push(...foldRound(round, stepById))
     }
     index = end
   }
@@ -304,7 +401,12 @@ export function buildConversationTimeline(
   if (options?.foldWorkRuns === false) return items.map(item => item.entry)
 
   const stepById = new Map(filteredSteps.map(step => [step.id, step]))
-  return foldWorkLogs(items, stepById, WORK_LOG_MIN_TURNS).map(item => item.entry)
+  const runStatusById = new Map(runs.map(run => [run.id, run.status]))
+  const runStatusByStepId = new Map(
+    filteredSteps.map(step => [step.id, runStatusById.get(step.runId)]),
+  )
+
+  return foldCompletedRounds(items, stepById, runStatusByStepId).map(item => item.entry)
 }
 
 export function sessionEntryDomId(entryId: string): string {

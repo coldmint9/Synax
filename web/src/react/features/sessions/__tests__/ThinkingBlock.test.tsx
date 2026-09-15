@@ -57,4 +57,26 @@ describe('ThinkingBlock', () => {
     expect(body).toContain('TAILMARK')
     expect(body).toContain('Hidden')
   })
+
+  it('renders a headline-only block as a banner without the markdown markers', () => {
+    const { container } = render(<ThinkingBlock content="**Inspecting backend metadata**" />)
+
+    expect(container.querySelector('.bui-thinking-banner')).not.toBeNull()
+    expect(container.querySelector('.bui-thinking-banner-text')?.textContent).toBe('Inspecting backend metadata')
+    expect(container.textContent).not.toContain('**')
+    // No row body: there is nothing under the headline to expand.
+    expect(container.querySelector('[data-activity-body]')).toBeNull()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('marks a streaming banner live so the sweep reads as in-progress', () => {
+    const { container } = render(<ThinkingBlock content="**Inspecting backend metadata**" isStreaming />)
+    expect(container.querySelector('.bui-thinking-banner')?.getAttribute('data-live')).toBe('true')
+  })
+
+  it('keeps paragraph reasoning on the expandable row', () => {
+    const { container } = render(<ThinkingBlock content="**Bold** plus a real reasoning paragraph." />)
+    expect(container.querySelector('.bui-thinking-banner')).toBeNull()
+    expect(screen.getByRole('button')).toBeTruthy()
+  })
 })

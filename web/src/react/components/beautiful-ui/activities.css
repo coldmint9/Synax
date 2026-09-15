@@ -4,6 +4,7 @@
 .bui-tool-group,
 .bui-tool,
 .bui-activity,
+.bui-thinking-banner,
 .bui-task {
   --bui-ink: var(--foreground);
   --bui-muted: hsl(var(--muted-foreground));
@@ -169,6 +170,122 @@ button.bui-activity-trigger:focus-visible,
 .bui-activity-body { overflow-y: auto; overflow-wrap: anywhere; font-size: 12px; line-height: 1.7; }
 .bui-activity-body[data-plain="true"] { white-space: pre-wrap; color: var(--bui-muted); }
 .bui-activity-footnote { margin-top: 6px; color: var(--bui-muted); font-size: 10px; white-space: normal; }
+
+/* Expand reveal. The body only mounts while open, so the wrapper carries the
+   grow animation: a row unfolds into place instead of popping in. */
+.bui-activity-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-width: 0;
+  animation: bui-activity-reveal 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.bui-activity-reveal > .bui-activity-body { min-height: 0; }
+@keyframes bui-activity-reveal {
+  from { grid-template-rows: 0fr; opacity: 0; transform: translateY(-3px); }
+  to { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
+}
+
+/* Folded record of a whole finished round. The theme accent marks it as one
+   block sitting between the prompt and the answer, rather than more noise. */
+.bui-activity[data-variant="work-log"] {
+  margin: 2px 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  border-radius: 10px;
+  padding: 1px 4px;
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--accent) 8%, var(--surface)) 0%,
+    color-mix(in srgb, var(--accent) 2%, var(--surface)) 60%
+  );
+}
+.bui-activity[data-variant="work-log"] .bui-activity-trigger { padding: 5px 6px; }
+.bui-activity[data-variant="work-log"] .bui-activity-symbol,
+.bui-activity[data-variant="work-log"] .bui-chevron {
+  color: color-mix(in srgb, var(--accent) 55%, var(--foreground));
+}
+.bui-activity[data-variant="work-log"] .bui-activity-label {
+  color: color-mix(in srgb, var(--accent) 45%, var(--foreground));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.bui-activity[data-variant="work-log"] .bui-activity-preview { color: var(--bui-muted); }
+
+/* Reasoning whose whole payload is one `**phrase**`: the remote model is
+   reporting loop state rather than thinking out loud, so there is no body to
+   expand. It renders as a banner whose phrase is crossed by a highlight sweep
+   travelling left to right. */
+.bui-thinking-banner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  border-radius: 999px;
+  padding: 3px 11px;
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--accent) 11%, var(--surface)) 0%,
+    color-mix(in srgb, var(--accent) 3%, var(--surface)) 50%,
+    color-mix(in srgb, var(--accent) 11%, var(--surface)) 100%
+  );
+}
+/* Travelling light band behind the text. */
+.bui-thinking-banner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--accent) 30%, transparent) 50%,
+    transparent 70%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  animation: bui-thinking-sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.bui-thinking-banner-symbol { display: inline-flex; flex: 0 0 auto; align-items: center; color: var(--bui-muted); }
+.bui-thinking-banner[data-live="true"] .bui-thinking-banner-symbol { color: color-mix(in srgb, var(--accent) 45%, var(--foreground)); }
+.bui-thinking-banner-label {
+  flex: 0 0 auto;
+  color: var(--bui-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+/* The same sweep carried by the glyphs: the bright stop is the highlight that
+   crosses the phrase, so the text itself flashes as it is lit. */
+.bui-thinking-banner-text {
+  min-width: 0;
+  overflow: hidden;
+  color: transparent;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background-image: linear-gradient(
+    100deg,
+    var(--bui-ink) 0%,
+    var(--bui-ink) 32%,
+    color-mix(in srgb, var(--accent) 60%, var(--foreground)) 47%,
+    var(--bui-ink) 62%,
+    var(--bui-ink) 100%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: bui-thinking-sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes bui-thinking-sweep {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
 .bui-task { border: 1px solid var(--bui-line); border-radius: 10px; background: var(--surface); }
 .bui-task-header { display: flex; align-items: center; gap: 6px; padding: 4px; }
 .bui-task-trigger { flex: 1; padding: 6px; }
@@ -191,4 +308,13 @@ button.bui-activity-trigger:focus-visible,
 @media (prefers-reduced-motion: reduce) {
   .bui-status-spinner { animation: none; }
   .bui-tool-group-heading, .bui-tool-trigger, .bui-activity-trigger, .bui-task-trigger { transition: none; }
+  /* Keep the banner readable without the sweep: text back to a solid colour. */
+  .bui-thinking-banner::after { animation: none; opacity: 0.5; }
+  .bui-thinking-banner-text {
+    animation: none;
+    color: var(--bui-ink);
+    background-image: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+  }
 }

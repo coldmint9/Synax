@@ -34,6 +34,12 @@ describe('getSessionDisplayTitle', () => {
     expect(getSessionDisplayTitle(session({ title: '认证模块排查' }))).toBe('认证模块排查')
   })
 
+  it('localizes the placeholder title instead of showing the raw value', () => {
+    expect(getSessionDisplayTitle(session({ title: 'new session' }), '', 'zh')).toBe('新会话')
+    expect(getSessionDisplayTitle(session({ title: 'new agent' }), '', 'zh')).toBe('新会话')
+    expect(getSessionDisplayTitle(session({ title: 'new session' }), '', 'en')).toBe('new session')
+  })
+
   it('falls back to goalContent before system prompt', () => {
     expect(getSessionDisplayTitle(session({
       sessionMetadata: { goalContent: '你好' },

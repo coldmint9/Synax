@@ -2,7 +2,8 @@ import { useLocale } from '../../../hooks/useLocale'
 import { Sparkles } from 'lucide-react'
 import { ActivityStatus } from '../../components/beautiful-ui/ActivityStatus'
 import { ActivityRow } from './ActivityRow'
-import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay } from './activityText'
+import { ThinkingBanner } from './ThinkingBanner'
+import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay, thinkingBannerPhrase } from './activityText'
 
 interface Props {
   content: string
@@ -15,9 +16,15 @@ interface Props {
  * Reasoning rendered as a single collapsed activity line, the way Codex shows
  * `Thought`. The body is mounted only while expanded, so a transcript holding
  * dozens of reasoning blocks no longer keeps their text in the DOM.
+ *
+ * Reasoning whose whole payload is one `**phrase**` has no body to expand: the
+ * remote model is reporting loop state, so it renders as a banner instead.
  */
 export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
   const { t } = useLocale()
+  const banner = thinkingBannerPhrase(content)
+  if (banner) return <ThinkingBanner phrase={banner} isStreaming={isStreaming} />
+
   const { text, hidden } = tailForDisplay(content)
 
   return (

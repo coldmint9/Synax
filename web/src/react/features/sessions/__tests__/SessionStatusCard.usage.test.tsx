@@ -6,7 +6,7 @@ import type { SessionStats } from '../../../../lib/api/agentRuntime'
 
 const stats: SessionStats = {
   roundCount: 32,
-  contextComposition: { tools: 200, mcp: 300, skills: 100, messages: 400, total: 1000, measuredAt: '2026-09-15T00:00:00Z' },
+  contextComposition: { tools: 80_000, mcp: 120_000, skills: 40_000, messages: 160_000, total: 400_000, measuredAt: '2026-09-15T00:00:00Z' },
   status: 'interrupted', tokenUsage: { input: 403292, output: 275308, total: 403292 },
   context: { inputTokens: 403292, requestId: 'latest', measuredAt: '2026-09-13T13:00:00Z', latestRequestUsageAvailable: false },
   contextLimit: 1000000, contextUsedPercent: 40, toolCallCount: 132, runningDuration: 5000, activeSubAgentCount: 0,
@@ -34,12 +34,21 @@ describe('SessionStatusCard usage boundaries', () => {
     expect(screen.getByText('运行轮次')).toBeTruthy()
     expect(screen.getByText('32')).toBeTruthy()
     expect(screen.getByText('上下文组成')).toBeTruthy()
+    // The track is the whole 1M window and the measured request is 400K, so the
+    // four categories split the filled 40% instead of filling the track.
     expect(Array.from(container.querySelectorAll<HTMLElement>('[data-context-category]')).map(bar => bar.style.width))
-      .toEqual(['20%', '30%', '10%', '40%'])
+      .toEqual(['8%', '12%', '4%', '16%'])
+    expect(screen.getByText(/400\.0K \/ 1M/)).toBeTruthy()
     for (const label of ['当前上下文', '本会话累计', '含子 Agent', '记录不完整：8 个请求缺少 usage', '上下文显示最近一次可用记录']) {
       expect(screen.queryByText(label)).toBeNull()
     }
     expect(screen.getByText(/确认交付或剩余工作/)).toBeTruthy()
+  })
+
+  it('keeps the four categories proportional when the model window is unknown', () => {
+    const { container } = render(<SessionStatusCard stats={{ ...stats, contextLimitKnown: false }} steps={[]} todos={[]} />)
+    expect(Array.from(container.querySelectorAll<HTMLElement>('[data-context-category]')).map(bar => bar.style.width))
+      .toEqual(['20%', '30%', '10%', '40%'])
   })
   it('does not add time for a stale running step after the run has ended', () => {
     render(<SessionStatusCard stats={stats} steps={[{ id: 'stale', runId: 'ended', sessionId: 'session', index: 1, status: 'running', model: null, startedAt: '2020-01-01T00:00:00Z', completedAt: null, finishReason: null, metadata: {} }]} todos={[]} />)

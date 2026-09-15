@@ -84,7 +84,11 @@ export function SessionStatusCard({
         <span>{locale === 'zh' ? '运行轮次' : 'Execution rounds'}</span>
         <span className="tabular-nums text-foreground/80">{stats.roundCount ?? steps.length}</span>
       </div>
-      <ContextCompositionBar composition={stats.contextComposition} />
+      <ContextCompositionBar
+        composition={stats.contextComposition}
+        contextLimit={stats.contextLimit}
+        contextLimitKnown={stats.contextLimitKnown !== false}
+      />
       {stats.work && <div className="text-[9px] text-muted-foreground" title={stats.work.reason ?? undefined}>
         {locale === 'zh' ? '工作状态' : 'Work'}: {stats.work.status === 'closing' ? (locale === 'zh' ? '确认交付或剩余工作' : 'Closing decision') : stats.work.status}
         {stats.work.status === 'blocked' && stats.work.reason && <div className="mt-0.5 line-clamp-3 text-warning">{stats.work.reason}</div>}
