@@ -44,8 +44,9 @@ export class ExternalTurn {
     this.run = input.acceptedRunId ? activateAcceptedRun(sessionId, input.acceptedRunId, user.id, input.model ?? null)
       : store.appendRun({ id: makeRuntimeId('run'), sessionId, status: 'running', startedAt: nowIso(), completedAt: null,
         triggerMessageId: user.id, currentStep: 1, stopReason: null, model: input.model ?? null, metadata: { backendId } });
+    this.run = store.updateRun(this.run.id, { metadata: { ...this.run.metadata, reasoningEffort: input.reasoningEffort ?? null } });
     this.step = store.appendRunStep({ id: makeRuntimeId('step'), sessionId, runId: this.run.id, index: 1, status: 'running',
-      model: input.model ?? null, startedAt: nowIso(), completedAt: null, finishReason: null, metadata: { backendId, externalTurn: true } });
+      model: input.model ?? null, startedAt: nowIso(), completedAt: null, finishReason: null, metadata: { backendId, externalTurn: true, reasoningEffort: input.reasoningEffort ?? null } });
     store.updateSession(sessionId, { status: 'running', activeRunId: this.run.id, pendingResumeToken: null, blockedReason: null, updatedAt: nowIso() });
     this.emit({ type: 'message', message: user }); this.emit({ type: 'run_started', run: this.run }); this.emit({ type: 'step_started', step: this.step });
   }

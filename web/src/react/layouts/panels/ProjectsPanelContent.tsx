@@ -4,6 +4,7 @@ import { Plus, Search, Trash2, X, Shield, Circle } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../../state/shellStore'
 import { projectApi } from '../../../lib/api/project'
 import { useLocale } from '../../../hooks/useLocale'
+import { resolveSessionsEntryPath } from '../../features/sessions/sessionLastVisit'
 
 const STATUS_COLOR: Record<string, string> = {
   healthy: 'text-success',
@@ -145,7 +146,7 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
             key={project.id}
             type="button"
             className="sp-list-item group"
-            onClick={() => navigate(`/projects/${project.id}/wiki`)}
+            onClick={() => navigate(resolveSessionsEntryPath(project.id))}
           >
             <Circle
               size={6}

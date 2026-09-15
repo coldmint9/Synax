@@ -1,3 +1,4 @@
+import { useSessionComposerSelection } from "./useSessionComposerSelection";
 import { useMediaDraft } from "../media/useMediaDraft";
 import { ComposerIsland } from "./ComposerIsland";
 import { useComposerCommands } from "./useComposerCommands";
@@ -158,7 +159,6 @@ export function SessionComposer({
       experimental?: boolean;
     }>
   >([]);
-  const [cliModel, setCliModel] = useState<string>("default");
   const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>();
   const cliBackend = backendId === "codex" || backendId === "claude-code";
   const backendOptions = [
@@ -196,21 +196,14 @@ export function SessionComposer({
     };
   }, [zh]);
   useEffect(() => {
-    const metadata = session?.sessionMetadata;
-    const native = metadata?.nativeBackend as { model?: string } | undefined;
-    const binding = metadata?.backend as { model?: string } | undefined;
-    setCliModel(native?.model || binding?.model || "default");
     setCliEfforts(undefined);
   }, [session?.id, backendId]);
 
-  const providerId = useWikiStore((s) => s.goalComposerProviderId);
-  const modelId = useWikiStore((s) => s.goalComposerModelId);
-  const setProviderId = useWikiStore((s) => s.setGoalComposerProviderId);
-  const setModelId = useWikiStore((s) => s.setGoalComposerModelId);
-  const reasoningEffort = useWikiStore((s) => s.goalComposerReasoningEffort);
-  const setReasoningEffort = useWikiStore(
-    (s) => s.setGoalComposerReasoningEffort,
+  const { providerId, modelId, cliModel, reasoningEffort, setSelection } = useSessionComposerSelection(
+    projectId, session, backendId, globalConfig, providers, effectiveConfig,
   );
+  const setCliModel = useCallback((cliModel: string) => setSelection({ cliModel }), [setSelection]);
+  const setReasoningEffort = useCallback((reasoningEffort: ReasoningEffort) => setSelection({ reasoningEffort }), [setSelection]);
   const permissionTier = useWikiStore((s) => s.goalComposerPermissionTier);
   const wikiAttachMode = useWikiStore((s) => s.goalComposerWikiAttachMode);
   const setWikiAttachMode = useWikiStore(
@@ -296,47 +289,6 @@ export function SessionComposer({
   useEffect(() => {
     prefetchAcpDiscoveryIdle();
   }, []);
-
-  useEffect(() => {
-    if (!session) return;
-    const stored = session.reasoningEffort ?? null;
-    const current = useWikiStore.getState().goalComposerReasoningEffort;
-    const next: ReasoningEffort = stored ?? "high";
-    if (current !== next) {
-      useWikiStore.setState({ goalComposerReasoningEffort: next });
-    }
-  }, [session?.id, session?.reasoningEffort]);
-
-  useEffect(() => {
-    if (!globalConfig || cliBackend) return;
-    if (providerId && modelId) return;
-    // Default pick from API providers only — do not wait on ACP discovery.
-    const { apiModels, acpEndpoints } = buildGoalModelOptions(
-      globalConfig,
-      providers,
-      [],
-    );
-    const preferred = effectiveConfig
-      ? {
-          providerId: effectiveConfig.providerId,
-          modelId: effectiveConfig.modelId,
-        }
-      : null;
-    const picked = pickDefaultSelection(apiModels, acpEndpoints, preferred);
-    if (picked) {
-      setProviderId(picked.providerId);
-      setModelId(picked.modelId);
-    }
-  }, [
-    cliBackend,
-    globalConfig,
-    providers,
-    effectiveConfig,
-    providerId,
-    modelId,
-    setProviderId,
-    setModelId,
-  ]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -504,11 +456,6 @@ export function SessionComposer({
                 ),
               );
               setSkillIds([]);
-              setProviderId(id);
-              setModelId("default");
-            } else {
-              setProviderId(null);
-              setModelId(null);
             }
           }}
         />
@@ -534,8 +481,7 @@ export function SessionComposer({
           );
           return;
         }
-        setProviderId(selection.providerId);
-        setModelId(selection.modelId);
+        setSelection({ providerId: selection.providerId, modelId: selection.modelId });
       }}
       providers={providers}
       globalConfig={globalConfig}

@@ -28,7 +28,7 @@ export default function App() {
             <Route path="/" element={<WelcomeView />} />
             <Route path="/settings" element={<GlobalSettingsPage />} />
             <Route path="/about" element={<AboutPage />} />
-            <Route path="/projects/:projectId" element={<Navigate to="wiki" replace />} />
+            <Route path="/projects/:projectId" element={<Navigate to="sessions" replace />} />
             {/* wiki/sessions 由 WorkbenchLayout keep-alive 块渲染，路由仅用于 URL 匹配 */}
             <Route path="/projects/:projectId/wiki" element={null} />
             <Route path="/projects/:projectId/sessions" element={null} />

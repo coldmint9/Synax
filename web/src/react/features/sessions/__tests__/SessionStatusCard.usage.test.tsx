@@ -42,7 +42,7 @@ describe('SessionStatusCard usage boundaries', () => {
     for (const label of ['当前上下文', '本会话累计', '含子 Agent', '记录不完整：8 个请求缺少 usage', '上下文显示最近一次可用记录']) {
       expect(screen.queryByText(label)).toBeNull()
     }
-    expect(screen.getByText(/确认交付或剩余工作/)).toBeTruthy()
+    expect(screen.queryByText(/工作状态|确认交付或剩余工作/)).toBeNull()
   })
 
   it('keeps the four categories proportional when the model window is unknown', () => {

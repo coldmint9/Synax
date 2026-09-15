@@ -5,6 +5,7 @@ import {
   PROVIDER_LOGO_ASSETS,
   REASONING_EFFORT_LABELS,
   apiFormatLabel,
+  modelsWithContextLimit,
   type ApiProviderDraft,
 } from '../lib/providerPresets'
 import { ProviderLogo } from '../../../components/ProviderLogo'
@@ -36,6 +37,9 @@ export function LlmProviderCard({
 }: LlmProviderCardProps) {
   const { t } = useLocale()
   const logo = PROVIDER_LOGO_ASSETS[draft.id]
+  /** Models with their own input window: the 1M switch is configured per model. */
+  const windowModels = modelsWithContextLimit(draft)
+  const largestWindow = windowModels.reduce((max, model) => Math.max(max, model.contextLimit), 0)
 
   return (
     <div className="settings-item overflow-hidden">
@@ -60,9 +64,9 @@ export function LlmProviderCard({
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground truncate">
             <span className="truncate font-mono">{draft.model}</span>
-            {draft.modelMeta?.[draft.model]?.contextLimit && (
+            {windowModels.length > 0 && (
               <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] font-medium text-primary">
-                上下文 {formatContextLimit(draft.modelMeta[draft.model].contextLimit!)}
+                {`上下文 ${formatContextLimit(largestWindow)}${windowModels.length > 1 ? ` ×${windowModels.length}` : ''}`}
               </span>
             )}
           </div>
@@ -84,12 +88,12 @@ export function LlmProviderCard({
             <span className="text-foreground">{apiFormatLabel(draft.format)}</span>
             <span className="text-muted-foreground">{t('llmCardModel')}</span>
             <span className="text-foreground font-mono truncate">{draft.model || '—'}</span>
-            {draft.modelMeta?.[draft.model]?.contextLimit && (
-              <>
-                <span className="text-muted-foreground">上下文窗口</span>
-                <span className="text-foreground font-mono truncate">{formatContextLimit(draft.modelMeta[draft.model].contextLimit!)}</span>
-              </>
-            )}
+            <span className="text-muted-foreground">上下文窗口</span>
+            <span className="text-foreground font-mono truncate">
+              {windowModels.length > 0
+                ? windowModels.map(model => `${model.id} ${formatContextLimit(model.contextLimit)}`).join('、')
+                : '—'}
+            </span>
             <span className="text-muted-foreground">思考强度</span>
             <span className="text-foreground">
               {(draft.reasoningEfforts?.length ?? 0) > 0

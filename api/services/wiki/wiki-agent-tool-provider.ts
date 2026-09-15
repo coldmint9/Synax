@@ -2,6 +2,7 @@ import type { AgentProfile, RegisteredTool, SessionToolProvider } from '../agent
 import { profileService } from '../agent-runtime/profile-service.js';
 import { agentRuntimeStore } from '../agent-runtime/session-store.js';
 import { createWikiAgentTools } from './tools/agent-tools.js';
+import { projectHasGeneratedWiki } from './wiki-existence.js';
 
 export const WIKI_AGENT_TOOL_PROVIDER_ID = 'wiki-agent-tools';
 
@@ -38,6 +39,11 @@ class WikiAgentToolProvider implements SessionToolProvider {
 
     const profile = profileService.maybeGet(session.profileId);
     if (!profile || !profileHasWikiAgentReadTools(profile)) return [];
+
+    // Wiki reads mount only once the project actually has a generated wiki. The
+    // probe runs on every listing so a wiki created after session start is picked
+    // up without restarting the session.
+    if (!projectHasGeneratedWiki(session.projectId)) return [];
 
     let tools = this.projectTools.get(session.projectId);
     if (!tools) {

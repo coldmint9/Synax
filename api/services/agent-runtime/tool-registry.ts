@@ -68,6 +68,7 @@ import {
   buildExplorerSubagentPrompt,
   shouldWrapExplorerDelegatePrompt,
 } from "./synax/synax-explorer-delegate.js";
+import { profileCanUseTool } from "./tool-mount-policy.js";
 import {
   taskCreateTool,
   taskUpdateTool,
@@ -462,7 +463,7 @@ export class ToolRegistry {
       (t) =>
         (options.includeGated || !controlToolError(session, t)) &&
         (session.profileId !== "specialist" ||
-          effective.allowedCapabilities.includes(t.id) ||
+          profileCanUseTool(effective, t) ||
           t.id === INVALID_TOOL_ID),
     );
   }
@@ -526,14 +527,14 @@ export class ToolRegistry {
     const controlError = controlToolError(session, tool, args);
     if (
       controlError ||
-      (!profile.allowedCapabilities.includes(tool.id) &&
+      (!profileCanUseTool(profile, tool) &&
         tool.category !== "skill" &&
         tool.category !== "mcp" &&
         tool.id !== INVALID_TOOL_ID &&
         !["work.checkpoint", "context.read"].includes(tool.id) &&
         !(
           tool.id === "verification.run" &&
-          profile.allowedCapabilities.includes("bash")
+          profileCanUseTool(profile, { id: "bash" })
         ))
     ) {
       const errorMsg =

@@ -5,6 +5,7 @@ import { profileService } from './profile-service.js';
 import { agentSessionRuntime } from './session-runtime.js';
 import { skillAgentBridge, resolveActiveSkillSummaries } from '../skills/index.js';
 import { toolRegistry } from './tool-registry.js';
+import { profileCanUseTool } from './tool-mount-policy.js';
 import { getProjectSettings } from '../../lib/config/project-settings-store.js';
 import type { SkillSummary } from '../skills/types.js';
 
@@ -37,7 +38,7 @@ export interface SessionCapabilities {
 function filterAvailableTools(tools: ToolSummary[], profile: AgentProfile): ToolSummary[] {
   return tools.filter(
     (tool) =>
-      profile.allowedCapabilities.includes(tool.id) ||
+      profileCanUseTool(profile, tool) ||
       tool.category === 'skill' ||
       tool.category === 'mcp' ||
       tool.id === 'tools.invalid',

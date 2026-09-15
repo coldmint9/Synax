@@ -12,6 +12,7 @@ import {
 import { formatProjectPath } from '../../lib/formatProjectPath'
 import { Link } from 'react-router-dom'
 import { useLocale } from '../../hooks/useLocale'
+import { resolveSessionsEntryPath } from '../features/sessions/sessionLastVisit'
 import type { ProjectSummary } from '../state/shellStore'
 import type { ProjectStats } from '../../lib/api/project'
 
@@ -50,7 +51,7 @@ export function ProjectCard({
     <div className={`project-card group ${className ?? ''}`.trim()}>
       <div className="flex items-center justify-between gap-2">
         <Link
-          to={`/projects/${project.id}/wiki`}
+          to={resolveSessionsEntryPath(project.id)}
           className="flex min-w-0 flex-1 items-center gap-2"
         >
           <SourceIcon size={14} className="shrink-0 text-muted-foreground" />

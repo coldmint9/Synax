@@ -364,6 +364,43 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     )
   })
 
+  it('configures the 1M input window per enabled model', async () => {
+    const user = userEvent.setup()
+    mocks.discoverAiModels.mockResolvedValueOnce({
+      ok: true,
+      models: ['deepseek-chat', 'deepseek-reasoner'],
+      source: 'api/models',
+    })
+    await renderPage()
+
+    await user.click(screen.getByRole('button', { name: /添加/ }))
+    await user.click(screen.getByRole('button', { name: /^DeepSeek$/ }))
+
+    await user.type(screen.getByPlaceholderText('输入 API Key'), 'sk-test')
+    await user.click(screen.getByRole('button', { name: /发现/ }))
+    await user.click(await screen.findByRole('button', { name: 'deepseek-reasoner', exact: true }))
+    await user.click(screen.getByRole('button', { name: '完成' }))
+
+    const chatWindow = screen.getByRole('checkbox', { name: 'deepseek-chat 输入上下文窗口支持 1M' })
+    const reasonerWindow = screen.getByRole('checkbox', { name: 'deepseek-reasoner 输入上下文窗口支持 1M' })
+    expect(chatWindow).not.toBeChecked()
+
+    // 逐个模型生效：只给 deepseek-reasoner 打开 1M
+    await user.click(reasonerWindow)
+    expect(reasonerWindow).toBeChecked()
+    expect(chatWindow).not.toBeChecked()
+
+    await user.click(screen.getByRole('button', { name: /保存 Provider/ }))
+    await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled())
+
+    const payload = mocks.updateGlobalConfig.mock.calls[0][0]
+    const provider = payload.providers.find((p: ProviderDef) => p.id === 'custom-api:deepseek')
+    expect(provider.models.find((m: { id: string }) => m.id === 'deepseek-reasoner')).toEqual(
+      expect.objectContaining({ contextLimit: 1_000_000 }),
+    )
+    expect(provider.models.find((m: { id: string }) => m.id === 'deepseek-chat')?.contextLimit).toBeUndefined()
+  })
+
   it('removes a configured provider card', async () => {
     const user = userEvent.setup()
     const deepseekProvider: ProviderDef = {

@@ -7,6 +7,8 @@ import { useAgentSessionStore } from './agentSessionStore'
 import type { AgentSession, SessionStats, TodoItem, AgentRunStep } from '../../../lib/api/agentRuntime'
 import { SessionCapabilitiesPanel } from './SessionCapabilitiesPanel'
 import { sumAgentTurnDurationMs } from './sumAgentTurnDuration'
+import { sessionRuntimeSelection } from './sessionRuntimeSelection'
+import type { AgentRun } from '../../../lib/api/agentRuntime'
 import { useLocale } from '../../../hooks/useLocale'
 
 function fmtDuration(ms: number): string {
@@ -45,18 +47,23 @@ const CHANGE_COLOR = {
 
 export function SessionStatusCard({
   stats,
+  session,
+  runs = [],
   steps,
   todos,
   status,
 }: {
   stats: SessionStats
+  session?: AgentSession
+  runs?: AgentRun[]
   status?: AgentSession['status']
   steps: AgentRunStep[]
   todos: TodoItem[]
 }) {
   const { locale } = useLocale()
   const [tick, setTick] = useState(0)
-  const currentStatus = status ?? stats.status
+  const currentStatus = status ?? session?.status ?? stats.status
+  const runtime = sessionRuntimeSelection(session, runs, steps)
   const isLive = currentStatus === 'running'
 
   useEffect(() => {
@@ -89,10 +96,14 @@ export function SessionStatusCard({
         contextLimit={stats.contextLimit}
         contextLimitKnown={stats.contextLimitKnown !== false}
       />
-      {stats.work && <div className="text-[9px] text-muted-foreground" title={stats.work.reason ?? undefined}>
-        {locale === 'zh' ? '工作状态' : 'Work'}: {stats.work.status === 'closing' ? (locale === 'zh' ? '确认交付或剩余工作' : 'Closing decision') : stats.work.status}
-        {stats.work.status === 'blocked' && stats.work.reason && <div className="mt-0.5 line-clamp-3 text-warning">{stats.work.reason}</div>}
-      </div>}
+      <dl className="space-y-1 text-[9px] text-muted-foreground">
+        <div className="flex items-center justify-between gap-2">
+          <dt>LLM</dt><dd className="truncate text-foreground/80" title={runtime.model ?? undefined}>{runtime.model ?? '—'}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <dt>Effort</dt><dd className="text-foreground/80">{runtime.reasoningEffort ?? '—'}</dd>
+        </div>
+      </dl>
       <TodoCard items={todos} />
       <div className="flex items-center gap-3 text-[9px] text-muted-foreground">
         {stats.activeSubAgentCount > 0 && (
@@ -219,12 +230,13 @@ function FilesCard({ files }: { files: FileChange[] }) {
 
 export const SessionWorkspace = memo(function SessionWorkspace() {
   const session = useAgentSessionStore(s => s.sessions.find(item => item.id === s.selectedSessionId))
-  const { events, sessionStats, sessionTodos, sessionCapabilities, steps } = useAgentSessionStore(useShallow(s => ({
+  const { events, sessionStats, sessionTodos, sessionCapabilities, steps, runs } = useAgentSessionStore(useShallow(s => ({
     events: s.events,
     sessionStats: s.sessionStats,
     sessionTodos: s.sessionTodos,
     sessionCapabilities: s.sessionCapabilities,
     steps: s.steps,
+    runs: s.runs,
   })))
 
   const fileChanges = useMemo<FileChange[]>(() => {
@@ -243,7 +255,7 @@ export const SessionWorkspace = memo(function SessionWorkspace() {
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto text-[10px]">
       {session && <SessionModeSummary session={session} />}
       {sessionStats ? (
-        <SessionStatusCard stats={sessionStats} status={session?.status} steps={steps} todos={sessionTodos} />
+        <SessionStatusCard stats={sessionStats} session={session} runs={runs} steps={steps} todos={sessionTodos} />
       ) : sessionTodos.length > 0 ? (
         <div className="border-b border-border/40 px-2 py-2">
           <TodoCard items={sessionTodos} />
