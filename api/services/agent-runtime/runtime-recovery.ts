@@ -1,3 +1,4 @@
+import { hasInput } from './content-parts.js';
 import { getRawSqlite } from '../../db/index.js';
 import { agentRuntimeStore } from './session-store.js';
 import { profileService } from './profile-service.js';
@@ -53,7 +54,7 @@ export async function recoverRuntime(hostId: string): Promise<{ reviewed: number
 }
 
 export function restoreUnlaunchedInput(sessionId: string, input: StreamTurnRequest): StreamTurnRequest {
-  if (input.message?.trim()) return input;
+  if (hasInput(input)) return input;
   const last = agentRuntimeStore.listRuns(sessionId)[0];
   if ((last?.metadata.recovery as { phase?: string } | undefined)?.phase !== 'queued') return input;
   const accepted = last.metadata.runtime as { input?: StreamTurnRequest } | undefined;

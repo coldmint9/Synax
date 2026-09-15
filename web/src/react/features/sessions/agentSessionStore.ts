@@ -1,3 +1,4 @@
+import type { RuntimeContentPart } from '../../../lib/api/runtimeMedia'
 import type { TurnReference } from '../../../lib/api/agentRuntime'
 import type { BackendId } from '../../../lib/api/agentRuntime'
 import { create } from 'zustand'
@@ -42,6 +43,7 @@ import {
 const READ_MARKERS_KEY = 'synax-session-read-markers'
 
 export type SessionInputBody = {
+  contentParts?: RuntimeContentPart[]
   references?: TurnReference[]
   backendId?: BackendId
   message: string
@@ -568,10 +570,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
 
   submitSessionDraft: async (projectId, body) => {
     const message = body.message.trim()
-    if (!message) {
+    if (!message && !body.contentParts?.some(p=>p.type!=='text')) {
       throw new AppError('Session message is required.', { level: 'business', code: 'VALIDATION' })
     }
-    const prompt = body.prompt?.trim() || message
+    const prompt = body.prompt?.trim() || message || '附件输入 / Media input'
     const wikiAttachMode = body.wikiAttachMode
     const documentId = body.documentId ?? null
     const mode = body.mode ?? get().draftMode
@@ -891,7 +893,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
     const session = get().sessions.find(s => s.id === sessionId)
     const mode = session && ['interrupted', 'paused', 'cancelled', 'failed', 'blocked', 'completed'].includes(session.status) ? 'continue' : 'turn'
     await agentRuntimeApi.submitRun(sessionId, {
-      message: body.message, messageSource: body.messageSource, references: body.references, model: body.model ?? undefined,
+      message: body.message, contentParts: body.contentParts, messageSource: body.messageSource, references: body.references, model: body.model ?? undefined,
       reasoningEffort: body.reasoningEffort ?? undefined, permissionTier: body.permissionTier,
       locale: useShellStore.getState().preferences.locale,
     }, crypto.randomUUID(), mode)

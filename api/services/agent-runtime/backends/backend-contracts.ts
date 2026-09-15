@@ -1,3 +1,4 @@
+import type { InputModality } from '../content-parts.js';
 import { z } from 'zod/v4';
 import { ACP_PROVIDER_IDS } from '../../../lib/config/acp-provider-ids.js';
 import type { AgentRunStreamChunk, StreamTurnRequest } from '../contracts.js';
@@ -42,7 +43,7 @@ export interface BackendAdapter {
   replyPermission?(sessionId: string, permissionId: string, reply: import('../contracts.js').PermissionReply): boolean;
   hasPendingInteraction?(sessionId: string, interactionId: string): boolean;
   replyInteraction?(sessionId: string, interactionId: string): boolean;
-  models?(): Promise<{ models: Array<{ id: string; label: string; efforts?: string[] }>; defaultModel?: string | null }>;
+  models?(): Promise<{ models: Array<{ id: string; label: string; efforts?: string[]; inputModalities?: InputModality[] }>; defaultModel?: string | null }>;
 
 }
 export const BACKENDS: readonly BackendDescription[] = [

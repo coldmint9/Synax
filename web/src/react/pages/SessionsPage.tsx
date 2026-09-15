@@ -122,6 +122,8 @@ export default memo(function SessionsPage() {
   const workspaceState = useSessionWorkspace(agentSessionId)
   const hasWorkspaceContent = Boolean(workspaceState.activeTabId)
   const wideWorkspace = useMediaQuery('(min-width: 1280px)')
+  const narrowWorkspace = useMediaQuery('(max-width: 767px)')
+  useEffect(() => { if (narrowWorkspace) leftPanel.setCollapsed(true) }, [narrowWorkspace, leftPanel.setCollapsed])
 
   useSessionLiveStream(agentPanelOpen ? agentSessionId : null)
 

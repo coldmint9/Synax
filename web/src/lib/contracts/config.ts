@@ -10,6 +10,7 @@ export interface ProviderCaps {
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export interface ProviderModelDef {
+  inputModalities?: Array<'text' | 'image' | 'audio' | 'video' | 'file'>;
   id: string
   label: string
   isDefault?: boolean

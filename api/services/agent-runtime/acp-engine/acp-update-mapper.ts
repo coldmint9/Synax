@@ -1,3 +1,4 @@
+import type { RuntimeContentPart } from '../content-parts.js';
 import type { SessionUpdate, ToolKind } from '@agentclientprotocol/sdk';
 import type {
   AgentRun,
@@ -50,7 +51,7 @@ export class AcpUpdateMapper {
     return { ...this.usageRecord };
   }
 
-  mapUpdate(update: SessionUpdate): AgentRunStreamChunk[] {
+  mapUpdate(update: SessionUpdate & { contentParts?: RuntimeContentPart[] }): AgentRunStreamChunk[] {
     if (this.ctx.isReplay) return [];
 
     switch (update.sessionUpdate) {
@@ -106,6 +107,7 @@ export class AcpUpdateMapper {
           inputRef: update.rawInput ?? null,
           outputSummary: null,
           outputRef: null,
+          contentParts: update.contentParts,
           status: 'running',
           permissionDecisionId: null,
           startedAt: nowIso(),
@@ -137,6 +139,7 @@ export class AcpUpdateMapper {
             status: update.status === 'failed' ? 'failed' : isComplete ? 'completed' : existing.status,
             outputSummary: update.title ?? existing.outputSummary,
             outputRef: update.rawOutput ?? existing.outputRef,
+            contentParts: update.contentParts ?? (Array.isArray(update.content) && existing.contentParts ? [] : existing.contentParts),
             endedAt: isComplete ? nowIso() : existing.endedAt,
             error: update.status === 'failed' ? 'ACP tool call failed' : existing.error,
           })
@@ -154,6 +157,7 @@ export class AcpUpdateMapper {
             inputRef: update.rawInput ?? null,
             outputSummary: update.title ?? null,
             outputRef: update.rawOutput ?? null,
+            contentParts: update.contentParts,
             status: update.status === 'failed' ? 'failed' : isComplete ? 'completed' : 'running',
             permissionDecisionId: null,
             startedAt: nowIso(),

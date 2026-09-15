@@ -90,7 +90,7 @@ export type ApiProviderDraft = {
    */
   modelOptions: string[]
   /** Per-model input context window metadata keyed by model id. */
-  modelMeta: Record<string, { contextLimit?: number }>
+  modelMeta: Record<string, { contextLimit?: number; inputModalities?: Array<'text'|'image'|'audio'|'video'|'file'> }>
   /** Reasoning effort levels allowed for this provider (multi-select). Empty = unrestricted. */
   reasoningEfforts: ReasoningEffort[]
   custom: boolean
@@ -297,8 +297,8 @@ export function buildApiDrafts(globalConfig: GlobalConfig, providers: ProviderDe
       modelOptions: normalizeModelList(provider.models.map(m => m.id), model),
       modelMeta: Object.fromEntries(
         provider.models
-          .filter(m => typeof m.contextLimit === 'number')
-          .map(m => [m.id, { contextLimit: m.contextLimit as number }]),
+          .filter(m => typeof m.contextLimit === 'number' || m.inputModalities)
+          .map(m => [m.id, { contextLimit: m.contextLimit, inputModalities: m.inputModalities }]),
       ),
       reasoningEfforts: providerReasoningEfforts(globalConfig, provider.id),
       custom: !preset,
@@ -373,6 +373,7 @@ export function draftToProviderDef(draft: ApiProviderDraft): ProviderDef {
       id,
       label: id,
       isDefault: id === draft.model,
+      ...(draft.modelMeta?.[id]?.inputModalities ? { inputModalities: draft.modelMeta[id].inputModalities } : {}),
       ...(draft.modelMeta?.[id]?.contextLimit ? { contextLimit: draft.modelMeta[id].contextLimit } : {}),
     })),
   }
@@ -395,7 +396,7 @@ export function draftToConnection(draft: ApiProviderDraft): ProviderConnection {
 
 export function upsertDraft(drafts: ApiProviderDraft[], draft: ApiProviderDraft): ApiProviderDraft[] {
   const existing = drafts.find(d => d.id === draft.id)
-  const mergedMeta: Record<string, { contextLimit?: number }> = {
+  const mergedMeta: Record<string, { contextLimit?: number; inputModalities?: Array<'text'|'image'|'audio'|'video'|'file'> }> = {
     ...(existing?.modelMeta ?? {}),
     ...(draft.modelMeta ?? {}),
   }

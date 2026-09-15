@@ -1,3 +1,5 @@
+import { contentPartsSchema, normalizeInput, hasInput, inputParts } from './content-parts.js';
+import { bindAssets } from './media-assets.js';
 import { turnReferenceSchema } from './contracts.js';
 import { prepareTurnReferences } from './turn-references.js';
 import type { TurnReferenceContext } from './turn-reference-state.js';
@@ -11,10 +13,11 @@ import { agentRuntimeStore } from './session-store.js';
 export const MAX_INPUT_QUEUE_SIZE = 20;
 
 export const queuedInputSchema = z.object({
+  contentParts: contentPartsSchema.optional(),
   references: z.array(turnReferenceSchema).max(20).optional(),
   referenceContext: z.custom<TurnReferenceContext>().optional(),
   id: z.string().min(1),
-  message: z.string().min(1).max(100_000),
+  message: z.string().max(100_000).default(''),
   model: z.string().min(1).max(256).nullable().optional(),
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   enqueuedAt: z.string().min(1),
@@ -23,8 +26,9 @@ export const queuedInputSchema = z.object({
 export type QueuedInput = z.infer<typeof queuedInputSchema>;
 
 export const enqueueInputRequestSchema = z.object({
+  contentParts: contentPartsSchema.optional(),
   references: z.array(turnReferenceSchema).max(20).optional(),
-  message: z.string().min(1).max(100_000),
+  message: z.string().max(100_000).default(''),
   model: z.string().min(1).max(256).optional(),
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
 });
@@ -71,6 +75,8 @@ export const inputQueueService = {
   },
 
   enqueue(sessionId: string, input: EnqueueInputRequest): QueuedInput[] {
+    input = normalizeInput(input);
+    if (!hasInput(input)) throw new AgentValidationError('Input is empty.');
     return runtimeTransaction(() => {
     assertSessionExists(sessionId);
     const session = agentRuntimeStore.getSession(sessionId);
@@ -78,7 +84,9 @@ export const inputQueueService = {
     if (queue.length >= MAX_INPUT_QUEUE_SIZE) {
       throw new AgentValidationError(`Input queue is full (max ${MAX_INPUT_QUEUE_SIZE}).`);
     }
+    bindAssets(sessionId, inputParts(input));
     const item: QueuedInput = {
+      contentParts: input.contentParts,
       id: makeRuntimeId('inq'),
       message: input.message.trim(),
       model: input.model ?? null,

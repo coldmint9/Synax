@@ -1,3 +1,4 @@
+import { useMediaDraft } from '../../media/useMediaDraft'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLocale } from '../../../../hooks/useLocale'
@@ -31,6 +32,9 @@ export function GoalPillDock({ projectId }: Props) {
 
   const goalDockState = useWikiStore(s => s.goalDockState)
   const setGoalDockState = useWikiStore(s => s.setGoalDockState)
+  const media = useMediaDraft(projectId,parts=>useWikiStore.setState({goalComposerContentParts:parts}))
+  const storedMediaParts = useWikiStore(s => s.goalComposerContentParts)
+  useEffect(() => { if (storedMediaParts?.length === 0 && media.parts.length) media.clear() }, [storedMediaParts])
   const content = useWikiStore(s => s.goalComposerContent)
   const setContent = useWikiStore(s => s.setGoalComposerContent)
   const providerId = useWikiStore(s => s.goalComposerProviderId)
@@ -209,10 +213,12 @@ export function GoalPillDock({ projectId }: Props) {
 
   const composer = (
     <GoalComposerPill
+      media={media}
+      sessionId={goalSession.sessionId ?? undefined}
       projectId={projectId}
       content={content}
       onContentChange={setContent}
-      onSubmit={() => void submitGoal(projectId)}
+      onSubmit={() => { if(!media.ready)return;void submitGoal(projectId).then(()=>{if(!useWikiStore.getState().goalComposerContentParts?.length)media.clear()}) }}
       onStop={stopGoal}
       isGenerating={isGenerating}
       providerId={providerId}

@@ -116,10 +116,22 @@ function routeError(err: AppError): void {
     return
   }
   console.warn('[business]', err.message, err.code ?? '', err.statusCode ?? '')
+  const message = userMessage(err)
+  const isMissingRuntimeResource = err.code === 'NOT_FOUND'
+    && /^Agent runtime resource not found:/i.test(err.message)
+  if (isMissingRuntimeResource) {
+    useNotificationStore.getState().pushAggregated({
+      id: 'err-agent-runtime-resource-not-found',
+      type: toastTypeForError(err),
+      message,
+      duration: 5000,
+    })
+    return
+  }
   useNotificationStore.getState().push({
     id: `err-${Date.now().toString(36)}`,
     type: toastTypeForError(err),
-    message: userMessage(err),
+    message,
     ...(err.code && LLM_CONFIG_ERROR_CODES.has(err.code) && {
       action: { label: '前往配置', onClick: () => { window.location.href = '/settings' } },
       duration: 8000,

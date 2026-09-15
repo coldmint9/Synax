@@ -1,31 +1,40 @@
-import { ComposerIsland } from './ComposerIsland'
-import { useComposerCommands } from './useComposerCommands'
-import type { TurnReference } from '../../../lib/api/agentRuntime'
-import { NativeBackendModelPicker } from './NativeBackendModelPicker'
-import { RuntimeRecoveryPanel } from './RuntimeRecoveryPanel'
-import { agentRuntimeApi, type BackendId } from '../../../lib/api/agentRuntime'
-import { SessionBackendPicker } from './SessionBackendPicker'
-import { readSessionBackendId } from './synaxSessionTypes'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from './agentSessionStore'
-import { useConfig } from '../settings/useConfig'
-import { useWikiStore } from '../../state/wikiStore'
-import { useLocale } from '../../../hooks/useLocale'
-import { GoalComposerPill } from '../wiki/goal/GoalComposerPill'
-import { buildGoalModelOptions, formatTurnModel, pickDefaultSelection } from '../wiki/goal/goalModelOptions'
-import { prefetchAcpDiscoveryIdle } from '../wiki/goal/useAcpDiscovery'
-import { sessionPath } from './sessionRoutes'
+import { useMediaDraft } from "../media/useMediaDraft";
+import { ComposerIsland } from "./ComposerIsland";
+import { useComposerCommands } from "./useComposerCommands";
+import type { TurnReference } from "../../../lib/api/agentRuntime";
+import { NativeBackendModelPicker } from "./NativeBackendModelPicker";
+import { RuntimeRecoveryPanel } from "./RuntimeRecoveryPanel";
+import { agentRuntimeApi, type BackendId } from "../../../lib/api/agentRuntime";
+import { SessionBackendPicker } from "./SessionBackendPicker";
+import { readSessionBackendId } from "./synaxSessionTypes";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from "./agentSessionStore";
+import { useConfig } from "../settings/useConfig";
+import { useWikiStore } from "../../state/wikiStore";
+import { useLocale } from "../../../hooks/useLocale";
+import { GoalComposerPill } from "../wiki/goal/GoalComposerPill";
+import {
+  buildGoalModelOptions,
+  formatTurnModel,
+  pickDefaultSelection,
+} from "../wiki/goal/goalModelOptions";
+import { prefetchAcpDiscoveryIdle } from "../wiki/goal/useAcpDiscovery";
+import { sessionPath } from "./sessionRoutes";
 import {
   isSessionComposerLocked,
   sessionHasPendingPermissions,
   canEnqueueSessionInput,
   canSwitchSessionMode,
-} from './sessionComposerState'
-import { InputQueueStrip } from './InputQueueStrip'
-import type { AgentSession, AgentSessionMode, ReasoningEffort } from '../../../lib/api/agentRuntime'
-import { AgentInteractionPanel } from './AgentInteractionPanel'
-import { effectiveReasoningEfforts } from '../settings/lib/providerPresets'
+} from "./sessionComposerState";
+import { InputQueueStrip } from "./InputQueueStrip";
+import type {
+  AgentSession,
+  AgentSessionMode,
+  ReasoningEffort,
+} from "../../../lib/api/agentRuntime";
+import { AgentInteractionPanel } from "./AgentInteractionPanel";
+import { effectiveReasoningEfforts } from "../settings/lib/providerPresets";
 import {
   readSynaxDocumentId,
   readSynaxPermissionTier,
@@ -33,259 +42,477 @@ import {
   readSynaxSessionMode,
   isAcpSession,
   type SynaxPermissionTier,
-} from './synaxSessionTypes'
+} from "./synaxSessionTypes";
 
 interface Props {
-  projectId: string
-  session?: AgentSession
-  layout?: 'footer' | 'centered' | 'focusRail'
+  projectId: string;
+  session?: AgentSession;
+  layout?: "footer" | "centered" | "focusRail";
   /** Rendered directly above the input pill (e.g. the file-change island). */
-  statusSlot?: React.ReactNode
-  readingHistory?: boolean
+  statusSlot?: React.ReactNode;
+  readingHistory?: boolean;
 }
 
-export function SessionComposer({ session, projectId, layout = 'footer', statusSlot, readingHistory = false }: Props) {
-  const { t, locale } = useLocale()
-  const zh = locale === 'zh'
-  const navigate = useNavigate()
-  const [content, setContent] = useState('')
-  const [skillIds, setSkillIds] = useState<string[]>([])
-  const [submitting, setSubmitting] = useState(false)
-  const [changingMode, setChangingMode] = useState(false)
-  const [overlayOpen, setOverlayOpen] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const draftMode = useAgentSessionStore(s => s.draftMode)
-  const setDraftMode = useAgentSessionStore(s => s.setDraftMode)
-  const updateSessionMode = useAgentSessionStore(s => s.updateSessionMode)
-  const interactionState = useAgentSessionStore(s => s.interactionState)
-  const sendSessionMessage = useAgentSessionStore(s => s.sendSessionMessage)
-  const submitOrEnqueueSessionInput = useAgentSessionStore(s => s.submitOrEnqueueSessionInput)
-  const loadInputQueue = useAgentSessionStore(s => s.loadInputQueue)
-  const removeQueuedInput = useAgentSessionStore(s => s.removeQueuedInput)
-  const forceQueuedInput = useAgentSessionStore(s => s.forceQueuedInput)
-  const sessionId = session?.id
-  const queuedInputs = useAgentSessionStore(s =>
-    sessionId ? (s.inputQueues[sessionId] ?? EMPTY_INPUT_QUEUE) : EMPTY_INPUT_QUEUE,
-  )
-  const submitSessionDraft = useAgentSessionStore(s => s.submitSessionDraft)
-  const cancelSessionRun = useAgentSessionStore(s => s.cancelSessionRun)
-  const refreshSessions = useAgentSessionStore(s => s.refreshSessions)
-  const hasPendingPermissions = useAgentSessionStore(s =>
+export function SessionComposer({
+  session,
+  projectId,
+  layout = "footer",
+  statusSlot,
+  readingHistory = false,
+}: Props) {
+  const { t, locale } = useLocale();
+  const zh = locale === "zh";
+  const navigate = useNavigate();
+  const [content, setContent] = useState("");
+  const [skillIds, setSkillIds] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [changingMode, setChangingMode] = useState(false);
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const draftMode = useAgentSessionStore((s) => s.draftMode);
+  const setDraftMode = useAgentSessionStore((s) => s.setDraftMode);
+  const updateSessionMode = useAgentSessionStore((s) => s.updateSessionMode);
+  const interactionState = useAgentSessionStore((s) => s.interactionState);
+  const sendSessionMessage = useAgentSessionStore((s) => s.sendSessionMessage);
+  const submitOrEnqueueSessionInput = useAgentSessionStore(
+    (s) => s.submitOrEnqueueSessionInput,
+  );
+  const loadInputQueue = useAgentSessionStore((s) => s.loadInputQueue);
+  const removeQueuedInput = useAgentSessionStore((s) => s.removeQueuedInput);
+  const forceQueuedInput = useAgentSessionStore((s) => s.forceQueuedInput);
+  const sessionId = session?.id;
+  const queuedInputs = useAgentSessionStore((s) =>
+    sessionId
+      ? (s.inputQueues[sessionId] ?? EMPTY_INPUT_QUEUE)
+      : EMPTY_INPUT_QUEUE,
+  );
+  const submitSessionDraft = useAgentSessionStore((s) => s.submitSessionDraft);
+  const cancelSessionRun = useAgentSessionStore((s) => s.cancelSessionRun);
+  const refreshSessions = useAgentSessionStore((s) => s.refreshSessions);
+  const hasPendingPermissions = useAgentSessionStore((s) =>
     sessionHasPendingPermissions(sessionId, s.selectedSessionId, s.permissions),
-  )
-  const [references, setReferences] = useState<TurnReference[]>([])
-  const createdDraftRef = useRef<AgentSession | null>(null)
-  useEffect(() => { setReferences([]); createdDraftRef.current = null }, [sessionId, projectId])
-  const isDraft = !session
-  const currentInteractions = interactionState?.sessionId === sessionId ? interactionState : null
-  const pendingInteractions = currentInteractions?.items.filter(item => item.status === 'pending') ?? []
-  const hasPendingInteractions = pendingInteractions.length > 0
-  const onlyPlanApprovalPending = Boolean(currentInteractions && !currentInteractions.loading && !currentInteractions.error
-    && pendingInteractions.length > 0 && pendingInteractions.every(item => item.kind === 'plan_approval'))
+  );
+  const media = useMediaDraft(projectId);
+  const hasMediaInput = media.parts.length > 0;
+  const [references, setReferences] = useState<TurnReference[]>([]);
+  const createdDraftRef = useRef<AgentSession | null>(null);
+  useEffect(() => {
+    setReferences([]);
+    createdDraftRef.current = null;
+  }, [sessionId, projectId]);
+  const isDraft = !session;
+  const currentInteractions =
+    interactionState?.sessionId === sessionId ? interactionState : null;
+  const pendingInteractions =
+    currentInteractions?.items.filter((item) => item.status === "pending") ??
+    [];
+  const hasPendingInteractions = pendingInteractions.length > 0;
+  const onlyPlanApprovalPending = Boolean(
+    currentInteractions &&
+    !currentInteractions.loading &&
+    !currentInteractions.error &&
+    pendingInteractions.length > 0 &&
+    pendingInteractions.every((item) => item.kind === "plan_approval"),
+  );
   const isGenerating = isSessionComposerLocked(session, {
     submitting,
     hasPendingPermissions,
     hasPendingInteractions: hasPendingInteractions && !onlyPlanApprovalPending,
     allowWaitingInputForPlanApproval: onlyPlanApprovalPending,
-  })
-  const queueWhileGenerating = !hasPendingInteractions && canEnqueueSessionInput(session)
-  const resyncedStaleWaitingRef = useRef(false)
+  });
+  const queueWhileGenerating =
+    !hasPendingInteractions && canEnqueueSessionInput(session);
+  const resyncedStaleWaitingRef = useRef(false);
 
   useEffect(() => {
-    resyncedStaleWaitingRef.current = false
-    setError(null)
-  }, [sessionId])
+    resyncedStaleWaitingRef.current = false;
+    setError(null);
+  }, [sessionId]);
 
   useEffect(() => {
-    if (isDraft || !sessionId) return
-    if (session?.status !== 'waiting_permission') return
-    if (hasPendingPermissions) return
-    if (resyncedStaleWaitingRef.current) return
-    resyncedStaleWaitingRef.current = true
-    void refreshSessions()
-  }, [hasPendingPermissions, isDraft, refreshSessions, session?.status, sessionId])
-
-  const { providers, globalConfig, effectiveConfig } = useConfig(projectId)
-  const [draftBackendId, setDraftBackendId] = useState<BackendId>(() => {
-    const previous = useWikiStore.getState().goalComposerProviderId
-    return previous?.endsWith('-acp') ? previous as BackendId : 'native'
-  })
-  const backendId = session ? readSessionBackendId(session) : draftBackendId
-  const [backendCatalog, setBackendCatalog] = useState<Array<{ id: BackendId; label: string; kind: string; experimental?: boolean }>>([])
-  const [cliModel, setCliModel] = useState<string>('default')
-  const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>()
-  const cliBackend = backendId === 'codex' || backendId === 'claude-code'
-  const backendOptions = [{ id: 'native' as BackendId, label: 'Synax' },
-    ...backendCatalog.filter(backend => backend.kind === 'cli').map(backend => ({ id: backend.id, label: `${backend.label}${backend.experimental ? ' · Preview' : ''}` })),
-    ...providers.filter(provider => provider.kind === 'acp').map(provider => ({ id: provider.id as BackendId, label: provider.label ?? provider.id }))]
-  useEffect(() => {
-    let active = true
-    void agentRuntimeApi.listBackends().then(result => { if (active) setBackendCatalog(result.items) }).catch(() => { if (active) setError(zh ? '无法读取执行后端目录，请检查 Runtime 连接。' : 'Cannot load backends. Check the Runtime connection.') })
-    return () => { active = false }
-  }, [zh])
-  useEffect(() => {
-    const metadata = session?.sessionMetadata
-    const native = metadata?.nativeBackend as { model?: string } | undefined
-    const binding = metadata?.backend as { model?: string } | undefined
-    setCliModel(native?.model || binding?.model || 'default')
-    setCliEfforts(undefined)
-  }, [session?.id, backendId])
-
-  const providerId = useWikiStore(s => s.goalComposerProviderId)
-  const modelId = useWikiStore(s => s.goalComposerModelId)
-  const setProviderId = useWikiStore(s => s.setGoalComposerProviderId)
-  const setModelId = useWikiStore(s => s.setGoalComposerModelId)
-  const reasoningEffort = useWikiStore(s => s.goalComposerReasoningEffort)
-  const setReasoningEffort = useWikiStore(s => s.setGoalComposerReasoningEffort)
-  const permissionTier = useWikiStore(s => s.goalComposerPermissionTier)
-  const wikiAttachMode = useWikiStore(s => s.goalComposerWikiAttachMode)
-  const setWikiAttachMode = useWikiStore(s => s.setGoalComposerWikiAttachMode)
-  const documentId = useWikiStore(s => s.goalComposerDocumentId)
-  const setDocumentId = useWikiStore(s => s.setGoalComposerDocumentId)
-  const documents = useWikiStore(s => s.documents)
-  const loadProjectSnapshot = useWikiStore(s => s.loadProjectSnapshot)
-  const updateSessionPermissions = useAgentSessionStore(s => s.updateSessionPermissions)
-  const acp = backendId !== 'native'
-  const mode = isDraft ? (acp ? 'chat' : draftMode) : readSynaxSessionMode(session.sessionMetadata)
-  const modeEnabled = !submitting && !changingMode && canSwitchSessionMode(session, {
-    acp,
+    if (isDraft || !sessionId) return;
+    if (session?.status !== "waiting_permission") return;
+    if (hasPendingPermissions) return;
+    if (resyncedStaleWaitingRef.current) return;
+    resyncedStaleWaitingRef.current = true;
+    void refreshSessions();
+  }, [
     hasPendingPermissions,
-    hasPendingInteractions: Boolean(session && (!currentInteractions || currentInteractions.loading || currentInteractions.error || hasPendingInteractions)),
-  })
-  const incompatibleModel = backendId === 'native' && Boolean(providerId?.endsWith('-acp'))
+    isDraft,
+    refreshSessions,
+    session?.status,
+    sessionId,
+  ]);
+
+  const { providers, globalConfig, effectiveConfig } = useConfig(projectId);
+  const [draftBackendId, setDraftBackendId] = useState<BackendId>(() => {
+    const previous = useWikiStore.getState().goalComposerProviderId;
+    return previous?.endsWith("-acp") ? (previous as BackendId) : "native";
+  });
+  const backendId = session ? readSessionBackendId(session) : draftBackendId;
+  const [backendCatalog, setBackendCatalog] = useState<
+    Array<{
+      id: BackendId;
+      label: string;
+      kind: string;
+      experimental?: boolean;
+    }>
+  >([]);
+  const [cliModel, setCliModel] = useState<string>("default");
+  const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>();
+  const cliBackend = backendId === "codex" || backendId === "claude-code";
+  const backendOptions = [
+    { id: "native" as BackendId, label: "Synax" },
+    ...backendCatalog
+      .filter((backend) => backend.kind === "cli")
+      .map((backend) => ({
+        id: backend.id,
+        label: `${backend.label}${backend.experimental ? " · Preview" : ""}`,
+      })),
+    ...providers
+      .filter((provider) => provider.kind === "acp")
+      .map((provider) => ({
+        id: provider.id as BackendId,
+        label: provider.label ?? provider.id,
+      })),
+  ];
+  useEffect(() => {
+    let active = true;
+    void agentRuntimeApi
+      .listBackends()
+      .then((result) => {
+        if (active) setBackendCatalog(result.items);
+      })
+      .catch(() => {
+        if (active)
+          setError(
+            zh
+              ? "无法读取执行后端目录，请检查 Runtime 连接。"
+              : "Cannot load backends. Check the Runtime connection.",
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [zh]);
+  useEffect(() => {
+    const metadata = session?.sessionMetadata;
+    const native = metadata?.nativeBackend as { model?: string } | undefined;
+    const binding = metadata?.backend as { model?: string } | undefined;
+    setCliModel(native?.model || binding?.model || "default");
+    setCliEfforts(undefined);
+  }, [session?.id, backendId]);
+
+  const providerId = useWikiStore((s) => s.goalComposerProviderId);
+  const modelId = useWikiStore((s) => s.goalComposerModelId);
+  const setProviderId = useWikiStore((s) => s.setGoalComposerProviderId);
+  const setModelId = useWikiStore((s) => s.setGoalComposerModelId);
+  const reasoningEffort = useWikiStore((s) => s.goalComposerReasoningEffort);
+  const setReasoningEffort = useWikiStore(
+    (s) => s.setGoalComposerReasoningEffort,
+  );
+  const permissionTier = useWikiStore((s) => s.goalComposerPermissionTier);
+  const wikiAttachMode = useWikiStore((s) => s.goalComposerWikiAttachMode);
+  const setWikiAttachMode = useWikiStore(
+    (s) => s.setGoalComposerWikiAttachMode,
+  );
+  const documentId = useWikiStore((s) => s.goalComposerDocumentId);
+  const setDocumentId = useWikiStore((s) => s.setGoalComposerDocumentId);
+  const documents = useWikiStore((s) => s.documents);
+  const loadProjectSnapshot = useWikiStore((s) => s.loadProjectSnapshot);
+  const updateSessionPermissions = useAgentSessionStore(
+    (s) => s.updateSessionPermissions,
+  );
+  const acp = backendId !== "native";
+  const mode = isDraft
+    ? acp
+      ? "chat"
+      : draftMode
+    : readSynaxSessionMode(session.sessionMetadata);
+  const modeEnabled =
+    !submitting &&
+    !changingMode &&
+    canSwitchSessionMode(session, {
+      acp,
+      hasPendingPermissions,
+      hasPendingInteractions: Boolean(
+        session &&
+        (!currentInteractions ||
+          currentInteractions.loading ||
+          currentInteractions.error ||
+          hasPendingInteractions),
+      ),
+    });
+  const incompatibleModel =
+    backendId === "native" && Boolean(providerId?.endsWith("-acp"));
 
   const handleModeChange = async (next: AgentSessionMode) => {
-    if (!modeEnabled) throw new Error(zh ? '当前无法切换模式' : 'Mode cannot be switched right now')
-    setError(null)
+    if (!modeEnabled)
+      throw new Error(
+        zh ? "当前无法切换模式" : "Mode cannot be switched right now",
+      );
+    setError(null);
     if (isDraft && !createdDraftRef.current) {
-      setDraftMode(next)
-      return
+      setDraftMode(next);
+      return;
     }
-    setChangingMode(true)
+    setChangingMode(true);
     try {
-      await updateSessionMode(session?.id ?? createdDraftRef.current!.id, next)
-      if (isDraft) setDraftMode(next)
+      await updateSessionMode(session?.id ?? createdDraftRef.current!.id, next);
+      if (isDraft) setDraftMode(next);
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error))
-      throw error
+      setError(error instanceof Error ? error.message : String(error));
+      throw error;
     } finally {
-      setChangingMode(false)
+      setChangingMode(false);
     }
-  }
+  };
 
   useEffect(() => {
-    if (!projectId) return
-    void loadProjectSnapshot(projectId)
-  }, [loadProjectSnapshot, projectId])
+    if (!projectId) return;
+    void loadProjectSnapshot(projectId);
+  }, [loadProjectSnapshot, projectId]);
 
   useEffect(() => {
-    if (!session) return
-    const tier = readSynaxPermissionTier(session.sessionMetadata)
+    if (!session) return;
+    const tier = readSynaxPermissionTier(session.sessionMetadata);
     // Local-only sync — do not call setGoalPermissionTier (it PATCHes goalSession and loops).
-    if (useWikiStore.getState().goalComposerPermissionTier === tier) return
-    useWikiStore.setState({ goalComposerPermissionTier: tier })
-  }, [session?.id, session?.sessionMetadata])
+    if (useWikiStore.getState().goalComposerPermissionTier === tier) return;
+    useWikiStore.setState({ goalComposerPermissionTier: tier });
+  }, [session?.id, session?.sessionMetadata]);
 
-  const handlePermissionTierChange = useCallback((tier: SynaxPermissionTier) => {
-    if (useWikiStore.getState().goalComposerPermissionTier !== tier) {
-      useWikiStore.setState({ goalComposerPermissionTier: tier })
-    }
-    if (sessionId) {
-      void updateSessionPermissions(sessionId, { permissionTier: tier })
-    }
-  }, [sessionId, updateSessionPermissions])
+  const handlePermissionTierChange = useCallback(
+    (tier: SynaxPermissionTier) => {
+      if (useWikiStore.getState().goalComposerPermissionTier !== tier) {
+        useWikiStore.setState({ goalComposerPermissionTier: tier });
+      }
+      if (sessionId) {
+        void updateSessionPermissions(sessionId, { permissionTier: tier });
+      }
+    },
+    [sessionId, updateSessionPermissions],
+  );
 
   useEffect(() => {
-    prefetchAcpDiscoveryIdle()
-  }, [])
+    prefetchAcpDiscoveryIdle();
+  }, []);
 
   useEffect(() => {
-    if (!session) return
-    const stored = session.reasoningEffort ?? null
-    const current = useWikiStore.getState().goalComposerReasoningEffort
-    const next: ReasoningEffort = stored ?? 'high'
+    if (!session) return;
+    const stored = session.reasoningEffort ?? null;
+    const current = useWikiStore.getState().goalComposerReasoningEffort;
+    const next: ReasoningEffort = stored ?? "high";
     if (current !== next) {
-      useWikiStore.setState({ goalComposerReasoningEffort: next })
+      useWikiStore.setState({ goalComposerReasoningEffort: next });
     }
-  }, [session?.id, session?.reasoningEffort])
+  }, [session?.id, session?.reasoningEffort]);
 
   useEffect(() => {
-    if (!globalConfig || cliBackend) return
-    if (providerId && modelId) return
+    if (!globalConfig || cliBackend) return;
+    if (providerId && modelId) return;
     // Default pick from API providers only — do not wait on ACP discovery.
-    const { apiModels, acpEndpoints } = buildGoalModelOptions(globalConfig, providers, [])
+    const { apiModels, acpEndpoints } = buildGoalModelOptions(
+      globalConfig,
+      providers,
+      [],
+    );
     const preferred = effectiveConfig
-      ? { providerId: effectiveConfig.providerId, modelId: effectiveConfig.modelId }
-      : null
-    const picked = pickDefaultSelection(apiModels, acpEndpoints, preferred)
+      ? {
+          providerId: effectiveConfig.providerId,
+          modelId: effectiveConfig.modelId,
+        }
+      : null;
+    const picked = pickDefaultSelection(apiModels, acpEndpoints, preferred);
     if (picked) {
-      setProviderId(picked.providerId)
-      setModelId(picked.modelId)
+      setProviderId(picked.providerId);
+      setModelId(picked.modelId);
     }
-  }, [cliBackend, globalConfig, providers, effectiveConfig, providerId, modelId, setProviderId, setModelId])
+  }, [
+    cliBackend,
+    globalConfig,
+    providers,
+    effectiveConfig,
+    providerId,
+    modelId,
+    setProviderId,
+    setModelId,
+  ]);
 
   useEffect(() => {
-    if (!sessionId) return
-    void loadInputQueue(sessionId)
-  }, [loadInputQueue, sessionId])
+    if (!sessionId) return;
+    void loadInputQueue(sessionId);
+  }, [loadInputQueue, sessionId]);
 
   const displayWikiAttachMode = isDraft
     ? wikiAttachMode
-    : readSynaxWikiAttachMode(session?.sessionMetadata)
+    : readSynaxWikiAttachMode(session?.sessionMetadata);
   const displayDocumentId = isDraft
     ? documentId
-    : readSynaxDocumentId(session?.sessionMetadata)
+    : readSynaxDocumentId(session?.sessionMetadata);
 
   const handleSubmit = useCallback(async () => {
-    const message = content.trim()
-    if (!message || submitting || changingMode || incompatibleModel || (isGenerating && !queueWhileGenerating)) return
-    setError(null)
-    setSubmitting(true)
-    const model = backendId === 'native' ? formatTurnModel(providerId, modelId) : backendId.endsWith('-acp') ? `${backendId}/${providerId === backendId ? modelId ?? 'default' : 'default'}` : cliModel !== 'default' ? cliModel : undefined
-    const body = { message, model, reasoningEffort, permissionTier: cliBackend ? undefined : permissionTier, references }
+    const message = content.trim();
+    if (
+      (!message && !media.parts.length) ||
+      !media.ready ||
+      submitting ||
+      changingMode ||
+      incompatibleModel ||
+      (isGenerating && !queueWhileGenerating)
+    )
+      return;
+    setError(null);
+    setSubmitting(true);
+    const model =
+      backendId === "native"
+        ? formatTurnModel(providerId, modelId)
+        : backendId.endsWith("-acp")
+          ? `${backendId}/${providerId === backendId ? (modelId ?? "default") : "default"}`
+          : cliModel !== "default"
+            ? cliModel
+            : undefined;
+    const body = {
+      message,
+      contentParts: media.parts.length
+        ? [
+            ...(message ? [{ type: "text" as const, text: message }] : []),
+            ...media.parts,
+          ]
+        : undefined,
+      model,
+      reasoningEffort,
+      permissionTier: cliBackend ? undefined : permissionTier,
+      references,
+    };
     try {
       if (isDraft) {
-        const created = createdDraftRef.current ?? await submitSessionDraft(projectId, {
-          ...body, backendId, mode: acp ? 'chat' : draftMode, prompt: message,
-        })
-        createdDraftRef.current = created
-        await sendSessionMessage(created.id, body)
-        createdDraftRef.current = null
-        navigate(sessionPath(projectId, created.id))
+        const created =
+          createdDraftRef.current ??
+          (await submitSessionDraft(projectId, {
+            ...body,
+            backendId,
+            mode: acp ? "chat" : draftMode,
+            prompt: message,
+          }));
+        createdDraftRef.current = created;
+        await sendSessionMessage(created.id, body);
+        createdDraftRef.current = null;
+        navigate(sessionPath(projectId, created.id));
       } else {
-        await submitOrEnqueueSessionInput(session.id, body)
+        await submitOrEnqueueSessionInput(session.id, body);
       }
-      setContent('')
-      setReferences([])
+      setContent("");
+      media.clear();
+      setReferences([]);
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error))
+      setError(error instanceof Error ? error.message : String(error));
     } finally {
-      setSubmitting(false)
+      setSubmitting(false);
     }
-  }, [content, submitting, changingMode, incompatibleModel, isGenerating, queueWhileGenerating, backendId, providerId, modelId, cliModel, reasoningEffort, cliBackend, permissionTier, references, isDraft, projectId, acp, draftMode, submitSessionDraft, sendSessionMessage, navigate, submitOrEnqueueSessionInput, session])
+  }, [
+    media,
+    content,
+    submitting,
+    changingMode,
+    incompatibleModel,
+    isGenerating,
+    queueWhileGenerating,
+    backendId,
+    providerId,
+    modelId,
+    cliModel,
+    reasoningEffort,
+    cliBackend,
+    permissionTier,
+    references,
+    isDraft,
+    projectId,
+    acp,
+    draftMode,
+    submitSessionDraft,
+    sendSessionMessage,
+    navigate,
+    submitOrEnqueueSessionInput,
+    session,
+  ]);
 
   const commands = useComposerCommands({
-    projectId, sessionId, backendId, content, setContent, references, setReferences,
-    mode, modeEnabled, onModeChange: handleModeChange,
-    disabled: submitting || changingMode || (isGenerating && !queueWhileGenerating),
-  })
+    projectId,
+    sessionId,
+    backendId,
+    content,
+    setContent,
+    references,
+    setReferences,
+    mode,
+    modeEnabled,
+    onModeChange: handleModeChange,
+    disabled:
+      submitting || changingMode || (isGenerating && !queueWhileGenerating),
+  });
 
   const handleStop = useCallback(() => {
-    if (session) void cancelSessionRun(session.id)
-  }, [cancelSessionRun, session])
+    if (session) void cancelSessionRun(session.id);
+  }, [cancelSessionRun, session]);
 
-  const allowedReasoningEfforts: ReasoningEffort[] | undefined = cliBackend ? cliEfforts ?? (backendId === 'codex' ? ['low', 'medium', 'high', 'xhigh'] : ['low', 'medium', 'high', 'xhigh', 'max']) : providerId ? effectiveReasoningEfforts(globalConfig, providerId) : undefined
-  const isCentered = layout === 'centered'
-  const isFocusRail = layout === 'focusRail'
+  const allowedReasoningEfforts: ReasoningEffort[] | undefined = cliBackend
+    ? (cliEfforts ??
+      (backendId === "codex"
+        ? ["low", "medium", "high", "xhigh"]
+        : ["low", "medium", "high", "xhigh", "max"]))
+    : providerId
+      ? effectiveReasoningEfforts(globalConfig, providerId)
+      : undefined;
+  const isCentered = layout === "centered";
+  const isFocusRail = layout === "focusRail";
 
   const composer = (
     <GoalComposerPill
+      media={media}
+      sessionId={sessionId ?? undefined}
+      inputModel={
+        cliBackend ? (cliModel === "default" ? undefined : cliModel) : undefined
+      }
       commands={commands}
       onOverlayOpenChange={setOverlayOpen}
-      modelControl={backendId === 'codex' || backendId === 'claude-code'
-        ? <NativeBackendModelPicker key={backendId} backendId={backendId} model={cliModel} onChange={setCliModel} onEffortsChange={setCliEfforts} nativeMetadata={session?.sessionMetadata?.nativeBackend} onOpenChange={setOverlayOpen} disabled={submitting || isGenerating} /> : undefined}
-      modeControl={<SessionBackendPicker value={backendId} options={backendOptions} disabled={!isDraft || submitting || Boolean(createdDraftRef.current)}
-        onChange={id => { setDraftBackendId(id); setError(null); if (id !== 'native') { setReferences(items => items.filter(item => item.kind === 'file' || item.kind === 'wiki')); setSkillIds([]); setProviderId(id); setModelId('default') } else { setProviderId(null); setModelId(null) } }} />}
+      modelControl={
+        backendId === "codex" || backendId === "claude-code" ? (
+          <NativeBackendModelPicker
+            key={backendId}
+            backendId={backendId}
+            model={cliModel}
+            onChange={setCliModel}
+            onEffortsChange={setCliEfforts}
+            nativeMetadata={session?.sessionMetadata?.nativeBackend}
+            onOpenChange={setOverlayOpen}
+            disabled={submitting || isGenerating}
+          />
+        ) : undefined
+      }
+      modeControl={
+        <SessionBackendPicker
+          value={backendId}
+          options={backendOptions}
+          disabled={!isDraft || submitting || Boolean(createdDraftRef.current)}
+          onChange={(id) => {
+            setDraftBackendId(id);
+            setError(null);
+            if (id !== "native") {
+              setReferences((items) =>
+                items.filter(
+                  (item) => item.kind === "file" || item.kind === "wiki",
+                ),
+              );
+              setSkillIds([]);
+              setProviderId(id);
+              setModelId("default");
+            } else {
+              setProviderId(null);
+              setModelId(null);
+            }
+          }}
+        />
+      }
       projectId={projectId}
       backendId={backendId}
       content={content}
@@ -297,13 +524,18 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       providerId={providerId}
       modelId={modelId}
       onModelSelect={(selection) => {
-        const selectedBackend = selection.kind === 'acp' ? selection.providerId : 'native'
+        const selectedBackend =
+          selection.kind === "acp" ? selection.providerId : "native";
         if (selectedBackend !== backendId) {
-          setError(zh ? '请先选择对应的执行后端；已有会话需新建后切换。' : 'Choose the matching execution backend first; existing sessions keep their backend.')
-          return
+          setError(
+            zh
+              ? "请先选择对应的执行后端；已有会话需新建后切换。"
+              : "Choose the matching execution backend first; existing sessions keep their backend.",
+          );
+          return;
         }
-        setProviderId(selection.providerId)
-        setModelId(selection.modelId)
+        setProviderId(selection.providerId);
+        setModelId(selection.modelId);
       }}
       providers={providers}
       globalConfig={globalConfig}
@@ -319,23 +551,57 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
       allowedReasoningEfforts={allowedReasoningEfforts}
       permissionTier={permissionTier}
       onPermissionTierChange={handlePermissionTierChange}
-      disabled={submitting || changingMode || (isGenerating && !queueWhileGenerating)}
+      disabled={
+        submitting || changingMode || (isGenerating && !queueWhileGenerating)
+      }
       wikiAttachDisabled={!isDraft}
-      queueWhileGenerating={queueWhileGenerating && !submitting && !changingMode}
+      queueWhileGenerating={
+        queueWhileGenerating && !submitting && !changingMode
+      }
     />
-  )
+  );
 
   const composerShell = (
     <div className="agent-session-controls w-full">
-      {error && <p role="alert" className="mb-2 px-2 text-xs text-danger">{error}</p>}
-      {incompatibleModel && <p role="alert" className="mb-2 px-2 text-xs text-danger">{zh ? '请选择当前后端的模型；切换执行后端需新建会话。' : 'Choose a model for this backend; start a new session to change backends.'}</p>}
-      {session && <RuntimeRecoveryPanel key={`recovery-${session.id}`} session={session} />}
+      {error && (
+        <p role="alert" className="mb-2 px-2 text-xs text-danger">
+          {error}
+        </p>
+      )}
+      {incompatibleModel && (
+        <p role="alert" className="mb-2 px-2 text-xs text-danger">
+          {zh
+            ? "请选择当前后端的模型；切换执行后端需新建会话。"
+            : "Choose a model for this backend; start a new session to change backends."}
+        </p>
+      )}
+      {session && (
+        <RuntimeRecoveryPanel
+          key={`recovery-${session.id}`}
+          session={session}
+        />
+      )}
       {session && <AgentInteractionPanel key={session.id} session={session} />}
       {commands.menu}
-      <ComposerIsland key={`composer-${sessionId ?? 'draft'}`} sessionId={sessionId} running={session?.status === 'running'} readingHistory={readingHistory}
-        protectedInteraction={overlayOpen || commands.overlayOpen || hasPendingPermissions || hasPendingInteractions || Boolean(error) || submitting || changingMode} onStop={handleStop}>
+      <ComposerIsland
+        key={`composer-${sessionId ?? "draft"}`}
+        sessionId={sessionId}
+        running={session?.status === "running"}
+        readingHistory={readingHistory}
+        protectedInteraction={
+          overlayOpen ||
+          commands.overlayOpen ||
+          hasPendingPermissions ||
+          hasPendingInteractions ||
+          Boolean(error) ||
+          submitting ||
+          changingMode
+        }
+        onStop={handleStop}
+      >
         <div
-          className={`goal-session-composer-shell goal-dock-shell w-full flex flex-col items-center${isCentered ? ' goal-session-composer-shell--draft' : ''}`}
+          className={`goal-session-composer-shell goal-dock-shell w-full flex flex-col items-center${isCentered ? " goal-session-composer-shell--draft" : ""}`}
+          data-has-media={hasMediaInput ? "true" : "false"}
           data-multiline="true"
         >
           {sessionId && (
@@ -349,23 +615,27 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
         </div>
       </ComposerIsland>
     </div>
-  )
+  );
 
   return (
     <div
       className={
         isCentered
-          ? 'goal-session-composer--centered flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-10'
+          ? "goal-session-composer--centered flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-10"
           : isFocusRail
-            ? 'goal-session-composer goal-session-composer--focus-rail w-full shrink-0'
-            : 'goal-session-composer goal-session-composer--footer shrink-0 px-4 pb-4 pt-2'
+            ? "goal-session-composer goal-session-composer--focus-rail w-full shrink-0"
+            : "goal-session-composer goal-session-composer--footer shrink-0 px-4 pb-4 pt-2"
       }
     >
       {isCentered ? (
         <div className="flex w-full max-w-3xl flex-col items-center gap-6">
           <div className="max-w-lg text-center">
-            <h2 className="text-lg font-medium text-foreground">{t('sessionDraftTitle')}</h2>
-            <p className="mt-2 text-sm text-muted-foreground">{t('sessionDraftHint')}</p>
+            <h2 className="text-lg font-medium text-foreground">
+              {t("sessionDraftTitle")}
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {t("sessionDraftHint")}
+            </p>
           </div>
           <div className="w-full min-w-0">{composerShell}</div>
         </div>
@@ -376,5 +646,5 @@ export function SessionComposer({ session, projectId, layout = 'footer', statusS
         </div>
       )}
     </div>
-  )
+  );
 }

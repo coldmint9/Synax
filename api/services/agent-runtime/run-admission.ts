@@ -1,3 +1,5 @@
+import { normalizeInput, hasInput, inputParts } from './content-parts.js';
+import { bindAssets } from './media-assets.js';
 import { prepareTurnReferences } from './turn-references.js';
 import { profileService } from './profile-service.js';
 import { createHash } from 'node:crypto';
@@ -37,6 +39,8 @@ export function acceptRuntimeRun(
   requestId: string,
   mode: AgentSessionStreamMode = 'turn',
 ): { run: AgentRun; reused: boolean } {
+  input = normalizeInput(input);
+  if (input.contentParts && !hasInput(input)) throw new AgentValidationError('Input is empty.');
   if (!requestId.trim() || requestId.length > 128) throw new AgentValidationError('A request ID of 1–128 characters is required.');
   if (mode === 'resume') throw new AgentValidationError('Resume the pending interaction instead of submitting a new Run.');
   const inputHash = createHash('sha256').update(JSON.stringify(stable({ input, mode }))).digest('hex');
@@ -70,15 +74,16 @@ export function acceptRuntimeRun(
       .get(sessionId) as { id: string } | undefined;
     if (active) throw new AgentRuntimeError('This session already has an active or queued execution.', 'SESSION_BUSY', 409);
     const pending = interactionService.pending(sessionId);
-    const defersPlan = pending?.kind === 'plan_approval' && Boolean(input.message?.trim());
+    const defersPlan = pending?.kind === 'plan_approval' && hasInput(input);
     if ((pending && !defersPlan) || session.status === 'waiting_permission') {
       throw new AgentRuntimeError('Resolve the pending interaction before submitting another execution.', 'INTERACTION_PENDING', 409);
     }
-    if (mode === 'continue' && session.status === 'completed' && !input.message?.trim()) {
+    if (mode === 'continue' && session.status === 'completed' && !hasInput(input)) {
       throw new AgentValidationError('Completed sessions require a new message to continue.');
     }
     const binding = resolveSessionBackend(sessionId);
     validateBackendTurnInput(binding.id, input);
+    bindAssets(sessionId, inputParts(input));
     const model = resolveBackendModel(sessionId, input);
     let workDir: string;
     try { workDir = bindSessionWorkDir(sessionId); }

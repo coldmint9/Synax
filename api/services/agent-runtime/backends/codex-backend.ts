@@ -1,3 +1,5 @@
+import { validateInputMedia } from '../media-capabilities.js';
+import { codexMediaInput } from '../media-backend-input.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_ROOT } from '../../../lib/env.js';
@@ -17,6 +19,7 @@ export class CodexBackend implements BackendAdapter {
     if (this.active.has(sessionId)) throw new Error('Codex session is already active.');
     if (input.reasoningEffort === 'max') throw new Error('Codex does not support max effort; choose a supported CLI effort.');
     if (input.maxSteps || input.maxTokens || input.temperature !== undefined) throw new Error('Codex controls its own agent-loop limits; these Native Synax overrides are unsupported.');
+    if(input.contentParts?.some(p=>p.type!=='text'))await validateInputMedia(sessionId,input);
     const turn = new ExternalTurn(sessionId, 'codex', input);
     const controller = new AbortController();
     const entry: Active = { turn, controller, task: Promise.resolve() };
@@ -102,7 +105,7 @@ export class CodexBackend implements BackendAdapter {
       ...(usageBaseline ? { totalUsage: usageBaseline } : {}), isolated: connection.isolated, model: response.model ?? connection.config.model, cwd: turn.workDir, approvalPolicy: 'untrusted', sandbox, instructionSources: response.instructionSources } });
     acceptingTurn = true;
     entry.startingTurn = entry.rpc.request('turn/start', { threadId: entry.threadId,
-      input: [{ type: 'text', text: turn.message }], model,
+      input: await codexMediaInput(input, turn.message), model,
       ...(input.reasoningEffort && input.reasoningEffort !== 'max' ? { effort: input.reasoningEffort } : {}),
       approvalPolicy: 'untrusted', sandboxPolicy: { type: 'workspaceWrite', writableRoots: [turn.workDir], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true },
     });
@@ -193,6 +196,7 @@ export class CodexBackend implements BackendAdapter {
       const response = object(await connection.rpc.request('model/list', { limit: 100 }));
       return { defaultModel: string(connection.config.model), models: array(response.data).map(value => {
         const model = object(value); return { id: string(model.model) || string(model.id), label: string(model.displayName) || string(model.model),
+          inputModalities: Array.isArray(model.inputModalities) ? model.inputModalities.filter((v): v is import('../content-parts.js').InputModality => ['text','image','audio','video','file'].includes(String(v))) : undefined,
           efforts: array(model.supportedReasoningEfforts).map(value => string(object(value).reasoningEffort)) };
       }) };
     } finally { await connection.rpc.stop(); }

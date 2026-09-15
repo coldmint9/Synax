@@ -1,3 +1,6 @@
+import { hasInlineMedia, normalizeMediaPayload, redactInlineMedia } from '../media-tool-content.js';
+import type { RuntimeContentPart } from '../content-parts.js';
+import { normalizeInput, hasInput } from '../content-parts.js';
 import { AsyncQueue } from '../../acp/protocol/async-queue.js';
 import { captureFileChangeBaseline, captureFileChanges, type FileChangeBaseline } from '../../acp/file-change-capture.js';
 import { agentRuntimeStore as store } from '../session-store.js';
@@ -23,18 +26,21 @@ export class ExternalTurn {
   private thought = '';
   private ended = false;
   private finishing = false;
+  private readonly mediaTasks: Promise<void>[] = [];
+  private mediaError: string | undefined;
   private baseline: FileChangeBaseline | null = null;
   constructor(readonly sessionId: string, readonly backendId: string, readonly input: StreamTurnRequest) {
+    input = normalizeInput(input);
     validateBackendTurnInput(backendId, input);
     this.workDir = bindSessionWorkDir(sessionId);
     const session = store.getSession(sessionId);
     const native = session.sessionMetadata?.nativeBackend as { id?: string; sessionId?: string } | undefined;
     const continuesNative = native?.id === backendId && typeof native.sessionId === 'string';
-    this.message = input.message?.trim() || (continuesNative
+    this.message = hasInput(input) ? input.message?.trim() ?? '' : (continuesNative
       ? 'Continue the existing task from the current native session state. Check unfinished work and prior tool outcomes first. Do not replay completed actions.'
       : session.prompt);
     const user = store.appendMessage({ id: makeRuntimeId('msg'), sessionId, runId: input.acceptedRunId ?? null, stepId: null,
-      role: 'user', content: this.message, metadata: { source: input.messageSource ?? (continuesNative && !input.message?.trim() ? `${backendId}_continue` : `${backendId}_turn`) }, createdAt: nowIso() });
+      role: 'user', content: this.message, contentParts: input.contentParts, metadata: { source: input.messageSource ?? (continuesNative && !hasInput(input) ? `${backendId}_continue` : `${backendId}_turn`) }, createdAt: nowIso() });
     this.run = input.acceptedRunId ? activateAcceptedRun(sessionId, input.acceptedRunId, user.id, input.model ?? null)
       : store.appendRun({ id: makeRuntimeId('run'), sessionId, status: 'running', startedAt: nowIso(), completedAt: null,
         triggerMessageId: user.id, currentStep: 1, stopReason: null, model: input.model ?? null, metadata: { backendId } });
@@ -64,6 +70,7 @@ export class ExternalTurn {
     store.updateRunStep(step.id, { metadata: { ...step.metadata, contextUsage: { ...previous, ...usage, source: this.backendId, measuredAt: nowIso() } } });
   }
   tool(id: string, name: string, input: unknown, category: CapabilityCategory = 'task'): ToolCallRecord {
+    input = redactInlineMedia(input);
     const previous = this.tools.get(id);
     if (previous) return previous;
     if (this.finishing || this.ended) throw new Error('The external turn has ended.');
@@ -76,8 +83,18 @@ export class ExternalTurn {
   }
   result(id: string, output: unknown, failed: boolean | 'denied' = false): void {
     const tool = this.tools.get(id); if (!tool || this.ended || this.finishing) return;
+    if (hasInlineMedia(output)) {
+      const task=normalizeMediaPayload(store.getSession(this.sessionId).projectId,output)
+        .then(normalized=>this.applyResult(id,normalized.value,failed,normalized.contentParts))
+        .catch(error=>{this.mediaError=error instanceof Error?error.message:String(error);this.applyResult(id,{error:this.mediaError},true)});
+      this.mediaTasks.push(task);return;
+    }
+    this.applyResult(id,output,failed);
+  }
+  private applyResult(id:string, output:unknown, failed:boolean|'denied', contentParts?:RuntimeContentPart[]):void {
+    const tool=this.tools.get(id);if(!tool||this.ended)return;
     const summary = typeof output === 'string' ? output : JSON.stringify(output ?? {});
-    const updated = store.updateToolCall(this.sessionId, tool.id, { status: failed === 'denied' ? 'denied' : failed ? 'failed' : 'completed', outputRef: output,
+    const updated = store.updateToolCall(this.sessionId, tool.id, { status: failed === 'denied' ? 'denied' : failed ? 'failed' : 'completed', outputRef: output, contentParts,
       outputSummary: summary.slice(0, 2000), error: failed ? summary.slice(0, 2000) : null, endedAt: nowIso() });
     this.tools.set(id, updated); this.emit({ type: 'tool_result', runId: this.run.id, stepId: this.step.id, toolCall: updated });
   }
@@ -150,6 +167,8 @@ export class ExternalTurn {
   async finish(error?: string, interrupted = false): Promise<void> {
     if (this.ended || this.finishing) return;
     this.finishing = true;
+    await Promise.all(this.mediaTasks);
+    error ??= this.mediaError;
     this.cancelPending();
     for (const tool of this.tools.values()) {
       const current = store.getToolCall(this.sessionId, tool.id);

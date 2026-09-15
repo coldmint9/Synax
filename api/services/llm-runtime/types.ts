@@ -1,3 +1,4 @@
+import type { InputModality } from '../agent-runtime/content-parts.js';
 import type { ModelMessage } from '@ai-sdk/provider-utils'
 import type { ToolCallRepairFunction, ToolChoice, ToolSet } from 'ai'
 import type { ApiFormat, GlobalConfig, ProjectConfig } from '../../lib/config/config-types.js'
@@ -14,6 +15,7 @@ export type LlmPurpose =
   | 'validate'
 
 export interface ModelsDevModel {
+  modalities?: { input?: InputModality[]; output?: string[] };
   id: string
   name?: string
   family?: string
@@ -36,6 +38,7 @@ export interface ModelsDevProvider {
 }
 
 export interface RuntimeModel {
+  inputModalities?: InputModality[];
   id: string
   label: string
   isDefault?: boolean
@@ -119,6 +122,7 @@ export interface LlmGatewayConfig {
 }
 
 export interface ModelOverrideConfig {
+  inputModalities?: InputModality[];
   label?: string
 }
 

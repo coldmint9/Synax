@@ -13,9 +13,9 @@ import {
   type Client,
   type InitializeResponse,
   type SessionModeState,
-  type SessionModelState,
   type SessionNotification,
 } from '@agentclientprotocol/sdk'
+import { readSessionModels, type SessionModelState } from '../acp-model-catalog.js'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawnManagedProcess } from '../../agent-runtime/managed-process.js'
 import { Readable, Writable } from 'node:stream'
@@ -281,7 +281,7 @@ export async function createAcpSession(
   })
   return {
     sessionId: response.sessionId,
-    models: response.models ?? null,
+    models: readSessionModels(response),
     modes: response.modes ?? null,
   }
 }
@@ -298,7 +298,7 @@ export async function loadAcpSession(
   })
   return {
     sessionId: acpSessionId,
-    models: response.models ?? null,
+    models: readSessionModels(response),
     modes: response.modes ?? null,
   }
 }
@@ -315,7 +315,7 @@ export async function resumeAcpSession(
   })
   return {
     sessionId: acpSessionId,
-    models: response.models ?? null,
+    models: readSessionModels(response),
     modes: response.modes ?? null,
   }
 }
@@ -324,9 +324,13 @@ export async function setAcpSessionModel(
   conn: ClientSideConnection,
   acpSessionId: string,
   modelId: string,
+  configId?: string,
 ): Promise<boolean> {
-  if (typeof conn.unstable_setSessionModel !== 'function') return false
-  await conn.unstable_setSessionModel({ sessionId: acpSessionId, modelId })
+  if (configId) {
+    await conn.setSessionConfigOption({ sessionId: acpSessionId, configId, value: modelId })
+  } else {
+    await conn.request('session/set_model', { sessionId: acpSessionId, modelId })
+  }
   return true
 }
 

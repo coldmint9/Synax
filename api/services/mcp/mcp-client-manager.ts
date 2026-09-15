@@ -1,3 +1,5 @@
+import { hasInlineMedia, importToolContent } from '../agent-runtime/media-tool-content.js';
+import type { RuntimeContentPart } from '../agent-runtime/content-parts.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { McpServerConfig } from '../../lib/config/config-types.js'
@@ -52,7 +54,7 @@ function toText(content: unknown): string {
       if (typeof res.text === 'string') parts.push(res.text)
       else parts.push(JSON.stringify(res))
     } else if (rec.type === 'image' && typeof rec.data === 'string') {
-      parts.push(`[image ${rec.mimeType ?? 'image/png'} (${rec.data.length} bytes)]`)
+      throw new Error('Image results require structured media handling.')
     } else {
       try { parts.push(JSON.stringify(rec)) } catch { /* ignore */ }
     }
@@ -141,7 +143,7 @@ export class McpClientManager {
     return state?.status === 'ready' ? state.tools : []
   }
 
-  async callTool(serverId: string, toolName: string, args: unknown, projectId?: string): Promise<{ ok: boolean; text: string; error?: string }> {
+  async callTool(serverId: string, toolName: string, args: unknown, projectId?: string): Promise<{ ok: boolean; text: string; error?: string; contentParts?: RuntimeContentPart[] }> {
     const byId = this.configById(projectId)
     const config = byId.get(serverId)
     if (!config) return { ok: false, text: '', error: `MCP server ${serverId} 未配置` }
@@ -152,7 +154,7 @@ export class McpClientManager {
       return { ok: false, text: '', error: reason ?? `MCP server ${serverId} 启动失败` }
     }
 
-    const callOnce = async (client: Client): Promise<{ ok: boolean; text: string; error?: string }> => {
+    const callOnce = async (client: Client): Promise<{ ok: boolean; text: string; error?: string; contentParts?: RuntimeContentPart[] }> => {
       const timeout = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error(`MCP tool ${toolName} 调用超时`)), CALL_TIMEOUT_MS)
       })
@@ -160,11 +162,19 @@ export class McpClientManager {
         client.callTool({ name: toolName, arguments: (args ?? {}) as Record<string, unknown> }),
         timeout,
       ]) as { content?: unknown; isError?: boolean }
-      const text = toText(result.content)
-      if (result.isError) {
-        return { ok: false, text, error: text || `MCP tool ${toolName} 执行失败` }
+      let contentParts: RuntimeContentPart[] = []
+      try {
+        if (!projectId && hasInlineMedia(result.content)) throw new Error('Media results require a project context.')
+        contentParts = projectId ? await importToolContent(projectId, result.content) : []
+      } catch (error) {
+        // The tool already executed. A media import failure must not repeat its side effects.
+        return { ok: false, text: '', error: `Tool completed but media could not be retained: ${error instanceof Error ? error.message : String(error)} Do not automatically repeat the tool call.` }
       }
-      return { ok: true, text }
+      const text = contentParts.length ? contentParts.filter(p=>p.type==='text').map(p=>p.text).join('\n') : toText(result.content)
+      if (result.isError) {
+        return { ok: false, text, contentParts, error: text || `MCP tool ${toolName} 执行失败` }
+      }
+      return { ok: true, text, ...(contentParts.some(p=>p.type!=='text') ? {contentParts} : {}) }
     }
     try {
       return await callOnce(state.client)

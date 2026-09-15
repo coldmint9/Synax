@@ -45,7 +45,7 @@ export function projectWorkContext(input: {
     if (calls.some(c => ['running', 'pending', 'waiting_permission'].includes(c.status)) || candidate.status === 'running') break;
     const parts = store.listRunParts(candidate.id);
     const observations = parts.filter(p => p.kind === 'text').map(p => p.content.slice(0, 1200));
-    const receipts = calls.map(c => `${c.id} (${c.toolId}, ${c.status}): ${c.outputSummary?.slice(0, 600) ?? ''}`);
+    const receipts = calls.map(c => `${c.id} (${c.toolId}, ${c.status}): ${c.outputSummary?.slice(0, 600) ?? ''}${c.contentParts?.length ? ` Media references: ${JSON.stringify(c.contentParts.filter(p=>p.type!=='text'))}` : ''}`);
     const summary = [work.checkpoint?.summary, ...observations, ...receipts].filter(Boolean).join('\n');
     // Older details remain accessible by context.read; retain conclusions and references, not chain-of-thought.
     work.checkpoint = { throughStepId: candidate.id, summary: summary.slice(-16000), createdAt: nowIso() };

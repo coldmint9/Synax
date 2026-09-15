@@ -1,3 +1,4 @@
+import type { RuntimeContentPart } from './content-parts.js';
 import { getRawSqlite } from '../../db/index.js';
 import { agentRuntimeStore as store } from './session-store.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
@@ -42,7 +43,7 @@ export interface WorkRecord {
   sessionId: string;
   parentWorkId: string | null;
   objective: string;
-  requirements: Array<{ messageId: string; text: string }>;
+  requirements: Array<{ messageId: string; text: string; contentParts?: RuntimeContentPart[] }>;
   status: 'active' | 'waiting' | 'closing' | 'completed' | 'blocked' | 'cancelled';
   planRevision: number | null;
   planSnapshot?: Record<string, unknown>;

@@ -47,12 +47,14 @@ function buildTool(serverId: string, tool: McpRuntimeToolDef): RegisteredTool {
       const result = await mcpClientManager.callTool(parsed.serverId, parsed.toolName, input.args, session.projectId)
       if (!result.ok) {
         return {
+          contentParts: result.contentParts,
           result: { ok: false, error: result.error ?? 'MCP tool failed' },
           displaySummary: truncate(result.error ?? 'MCP tool failed'),
           artifacts: [],
         }
       }
       return {
+        contentParts: result.contentParts,
         result: { ok: true, text: result.text },
         displaySummary: truncate(result.text || '(empty result)'),
         artifacts: [],

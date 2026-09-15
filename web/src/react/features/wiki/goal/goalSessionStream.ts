@@ -1,3 +1,4 @@
+import type { RuntimeContentPart } from '../../../../lib/api/runtimeMedia'
 import {
   agentRuntimeApi,
   type PermissionDecision,
@@ -233,6 +234,7 @@ export async function streamGoalAgentTurn(
   sessionId: string,
   input: {
     message?: string
+    contentParts?: RuntimeContentPart[]
     model?: string | null
     permissionTier?: 'readonly' | 'readwrite' | 'unrestricted'
     reasoningEffort?: ReasoningEffort
@@ -242,6 +244,7 @@ export async function streamGoalAgentTurn(
 ): Promise<void> {
   const locale = useShellStore.getState().preferences.locale
   const body = {
+    ...(input.contentParts ? { contentParts: input.contentParts } : {}),
     ...(input.message ? { message: input.message } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.permissionTier ? { permissionTier: input.permissionTier } : {}),

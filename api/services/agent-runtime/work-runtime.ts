@@ -36,7 +36,9 @@ class WorkRuntime {
     const trigger = store.listMessages(sessionId).find(m => m.id === run.triggerMessageId);
     const text = resolveSessionUserRequest(session, trigger?.content ?? '');
     const user = trigger?.metadata.source !== 'system_injection';
-    const continuing = isWorkContinuation(text) || text.startsWith('Session was ') || text.startsWith('Session previously ');
+    const hasMedia = Boolean(trigger?.contentParts?.some(part => part.type !== 'text'));
+    const hasContent = Boolean(text) || hasMedia;
+    const continuing = !hasMedia && (isWorkContinuation(text) || text.startsWith('Session was ') || text.startsWith('Session previously '));
     const historicalGoal = getGoalState(session.sessionMetadata);
     if (!work && historicalGoal?.status === 'completed') {
       work = workStore.create(sessionId, historicalGoal.objective, true);
@@ -46,25 +48,25 @@ class WorkRuntime {
       for (const previous of store.listRuns(sessionId).filter(r => r.id !== run.id && !r.metadata.workId))
         store.updateRun(previous.id, { metadata: { ...previous.metadata, workId: work.id } });
     }
-    if (!work || (TERMINAL.has(work.status) && user && text && !continuing)) {
+    if (!work || (TERMINAL.has(work.status) && user && hasContent && !continuing)) {
       if (work && TERMINAL.has(work.status)) {
-        store.updateSessionMetadata(sessionId, { plan: null, goal: session.sessionMetadata?.mode === 'goal' ? { objective: text, status: 'planning' } : null });
+        store.updateSessionMetadata(sessionId, { plan: null, goal: session.sessionMetadata?.mode === 'goal' ? { objective: text || 'Media input', status: 'planning' } : null });
       }
       const old = store.listRuns(sessionId).some(r => r.id !== run.id);
       const previousMessages = store.listMessages(sessionId).filter(m => m.role === 'user' && m.metadata.source !== 'system_injection' && !isWorkContinuation(m.content));
       const savedPlan = session.sessionMetadata?.plan as { objective?: string } | undefined;
       const lastProposal = old ? store.listToolCalls(sessionId).filter(c => c.toolId === 'plan.propose').at(-1)?.inputRef as { objective?: string } | undefined : undefined;
-      const objective = continuing ? savedPlan?.objective ?? getGoalState(session.sessionMetadata)?.objective ?? lastProposal?.objective ?? previousMessages.at(-1)?.content ?? session.prompt : text || session.prompt;
+      const objective = continuing ? savedPlan?.objective ?? getGoalState(session.sessionMetadata)?.objective ?? lastProposal?.objective ?? previousMessages.at(-1)?.content ?? session.prompt : text || (hasMedia ? 'Media input' : session.prompt);
       work = workStore.create(sessionId, objective, old);
-      if (old) work.requirements = previousMessages.map(m => ({ messageId: m.id, text: m.content }));
+      if (old) work.requirements = previousMessages.map(m => ({ messageId: m.id, text: m.content, ...(m.contentParts ? { contentParts: m.contentParts } : {}) }));
       // Legacy transcripts remain unmodified; binding establishes their provenance, not successful acceptance.
       if (old) for (const r of store.listRuns(sessionId)) {
         if (!r.metadata.workId) store.updateRun(r.id, { metadata: { ...r.metadata, workId: work.id } });
       }
     }
-    if (trigger && user && text) {
+    if (trigger && user && hasContent) {
       const fresh = !continuing && !work.requirements.some(r => r.messageId === trigger.id);
-      if (fresh) work.requirements.push({ messageId: trigger.id, text });
+      if (fresh) work.requirements.push({ messageId: trigger.id, text, ...(trigger.contentParts ? { contentParts: trigger.contentParts } : {}) });
       // A user turn is also the human decision a blocked work was waiting for, so plain
       // continuations reopen it instead of bouncing off the status checks below.
       if (fresh || work.status === 'blocked') {

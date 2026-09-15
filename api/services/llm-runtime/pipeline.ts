@@ -1,6 +1,7 @@
+import { resolveMediaMessages } from '../agent-runtime/media-capabilities.js';
 import { generateText, Output, streamText } from 'ai'
 import type { GenerateTextResult, ToolSet, ToolChoice, ToolCallRepairFunction } from 'ai'
-import type { LanguageModelV3 } from '@ai-sdk/provider'
+import type { LanguageModelV4 } from '@ai-sdk/provider'
 import type { ModelMessage, SystemModelMessage } from '@ai-sdk/provider-utils'
 import type { ZodType } from 'zod'
 import type { LlmGatewayRequest, ResolvedModelSelection } from './types.js'
@@ -86,6 +87,7 @@ export async function executePipeline(
   mode: ExecutionMode,
   abortSignal?: AbortSignal,
 ): Promise<unknown> {
+  request = { ...request, messages: await resolveMediaMessages(request.messages, selection, request.projectId) };
   assertApiKey(selection)
 
   const client = await getOrCreateClient(selection)
@@ -96,7 +98,7 @@ export async function executePipeline(
     selection.modelId,
     modelOptions,
     selection.apiFormat,
-  ) as LanguageModelV3
+  ) as LanguageModelV4
 
   if (strategy.needsReasoningMiddleware(selection.modelDef)) {
     model = applyReasoningMiddleware(model)
@@ -108,20 +110,27 @@ export async function executePipeline(
   const providerOptions = mergeProviderOptions(
     thinkingStream.providerOptions,
     buildProtocolProviderOptions(selection, request),
+    ...(selection.apiFormat==='openai-responses' ? [{openai:{passThroughUnsupportedFiles:true}}] : []),
   )
+
+  const temperature = selection.apiFormat === 'openai-responses'
+    && (providerOptions?.openai?.forceReasoning ?? selection.modelDef.reasoning)
+    ? undefined
+    : thinkingStream.temperature
+  const callOptions = { ...thinkingStream, providerOptions, temperature }
 
   switch (mode.kind) {
     case 'stream':
-      return dispatchStream(model, request, mode, callbacks, enableCache, { ...thinkingStream, providerOptions }, selection.apiFormat === 'openai-responses', abortSignal)
+      return dispatchStream(model, request, mode, callbacks, enableCache, callOptions, selection.apiFormat === 'openai-responses', abortSignal)
     case 'text':
-      return dispatchText(model, request, callbacks, enableCache, { ...thinkingStream, providerOptions }, abortSignal)
+      return dispatchText(model, request, callbacks, enableCache, callOptions, abortSignal)
     case 'object':
-      return dispatchObject(model, request, mode.schema, callbacks, { ...thinkingStream, providerOptions }, abortSignal)
+      return dispatchObject(model, request, mode.schema, callbacks, callOptions, abortSignal)
   }
 }
 
 function dispatchStream(
-  model: LanguageModelV3,
+  model: LanguageModelV4,
   request: LlmGatewayRequest,
   mode: Extract<ExecutionMode, { kind: 'stream' }>,
   callbacks: ReturnType<typeof buildHookCallbacks>,
@@ -139,7 +148,7 @@ function dispatchStream(
     toolChoice: mode.toolChoice,
     activeTools: mode.activeTools,
     experimental_repairToolCall: mode.repairToolCall,
-    temperature: thinkingStream.temperature ?? request.temperature,
+    temperature: thinkingStream.temperature,
     providerOptions: thinkingStream.providerOptions,
     maxOutputTokens: request.maxTokens,
     stopSequences: request.stop,
@@ -151,7 +160,7 @@ function dispatchStream(
 }
 
 function dispatchText(
-  model: LanguageModelV3,
+  model: LanguageModelV4,
   request: LlmGatewayRequest,
   callbacks: ReturnType<typeof buildHookCallbacks>,
   enableCache: boolean | undefined,
@@ -163,7 +172,7 @@ function dispatchText(
     model,
     system,
     messages,
-    temperature: thinkingStream.temperature ?? request.temperature,
+    temperature: thinkingStream.temperature,
     providerOptions: thinkingStream.providerOptions,
     maxOutputTokens: request.maxTokens,
     stopSequences: request.stop,
@@ -173,7 +182,7 @@ function dispatchText(
 }
 
 function dispatchObject(
-  model: LanguageModelV3,
+  model: LanguageModelV4,
   request: LlmGatewayRequest,
   schema: ZodType<unknown>,
   callbacks: ReturnType<typeof buildHookCallbacks>,
@@ -186,7 +195,7 @@ function dispatchObject(
     output: Output.object({ schema }),
     system,
     messages,
-    temperature: thinkingStream.temperature ?? request.temperature,
+    temperature: thinkingStream.temperature,
     providerOptions: thinkingStream.providerOptions,
     maxOutputTokens: request.maxTokens,
     abortSignal,

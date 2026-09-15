@@ -1,3 +1,6 @@
+import { readFile, stat } from 'node:fs/promises';
+import { basename } from 'node:path';
+import { MAX_FILE_BYTES, modalityForMime, type RuntimeContentPart } from '../api/services/agent-runtime/content-parts.js';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 import { stdin, stdout, stderr } from 'node:process';
 import { randomUUID } from 'node:crypto';
@@ -187,11 +190,27 @@ function finalResult(options: CliOptions, result: Observation): number {
   return code;
 }
 
+const uploadedFiles=new WeakMap<CliOptions,{projectId:string;parts:RuntimeContentPart[]}>();
+async function turnInput(client:RuntimeClient,options:CliOptions,sessionId:string,message?:string):Promise<StreamTurnRequest>{
+  if(!options.files?.length)return message?{message,model:options.model,reasoningEffort:options.reasoningEffort}:{};
+  const {session}=await client.getSession(sessionId);
+  let cached=uploadedFiles.get(options);
+  if(!cached||cached.projectId!==session.projectId){
+    if(options.files.length>10)throw new Error('At most 10 files may be attached.');
+    const sizes=await Promise.all(options.files.map(file=>stat(file)));
+    if(sizes.some(s=>!s.isFile()||!s.size||s.size>MAX_FILE_BYTES)||sizes.reduce((sum,s)=>sum+s.size,0)>100*1024*1024)throw new Error('Attachments exceed file or input limits.');
+    cached={projectId:session.projectId,parts:[]};
+    for(const file of options.files){const bytes=await readFile(file);const {asset}=await client.uploadAsset(session.projectId,new File([new Uint8Array(bytes)],basename(file)));cached.parts.push({type:modalityForMime(asset.mediaType),assetId:asset.id});}
+    uploadedFiles.set(options,cached);
+  }
+  return {message,model:options.model,reasoningEffort:options.reasoningEffort,contentParts:[...(message?[{type:'text' as const,text:message}]:[]),...cached.parts]};
+}
 async function submitAndObserve(client: RuntimeClient, options: CliOptions, sessionId: string, message: string | undefined, mode: 'turn' | 'continue', controller = new AbortController()): Promise<{ result: Observation; controller: AbortController }> {
-  const accepted = await client.submitRun(sessionId, message ? { message, model: options.model, reasoningEffort: options.reasoningEffort } : {}, {
+  const accepted = await client.submitRun(sessionId, await turnInput(client, options, sessionId, message), {
     requestId: options.requestId ?? `synax-cli-${randomUUID()}`,
     mode,
   });
+  options.files = undefined; uploadedFiles.delete(options);
   const result = await observe(client, options, sessionId, accepted.run.id, controller);
   return { result, controller };
 }
@@ -260,7 +279,8 @@ async function interactiveSession(client: RuntimeClient, options: CliOptions, in
     if (active) { io.err.write('A Run is active. Use /approve, /answer, /pause, /cancel, or /exit.\n'); return; }
     if (!sessionId) sessionId = await ensureSession(client, options, message ?? 'Interactive Synax session');
     const activeSessionId = sessionId;
-    const accepted = await client.submitRun(activeSessionId, message ? { message, model: options.model, reasoningEffort: options.reasoningEffort } : {}, { requestId: options.requestId ?? `synax-cli-${randomUUID()}`, mode });
+    const accepted = await client.submitRun(activeSessionId, await turnInput(client, options, activeSessionId, message), { requestId: options.requestId ?? `synax-cli-${randomUUID()}`, mode });
+    options.files=undefined;uploadedFiles.delete(options);
     const controller = new AbortController();
     active = { runId: accepted.run.id, controller, promise: observe(client, options, activeSessionId, accepted.run.id, controller) };
     void active.promise.then(result => { if (!closing) { finalCode = finalResult(options, result); if (oneShot) { closing = true; rl.close(); } } }).catch(error => { if (!closing) { io.err.write(`Run error: ${error instanceof Error ? error.message : String(error)}\n`); finalCode = exitCodeForError(error); if (oneShot) { closing = true; rl.close(); } } }).finally(() => { active = undefined; if (!closing) rl.prompt(); });
@@ -275,7 +295,7 @@ async function interactiveSession(client: RuntimeClient, options: CliOptions, in
   };
   rl.on('SIGINT', () => { if (active) void stop(true); else { closing = true; rl.close(); } });
   rl.setPrompt(`synax${sessionId ? `:${sessionId.slice(-8)}` : ''}> `);
-  if (initialMessage) await start(initialMessage, 'turn');
+  if (initialMessage || options.files?.length) await start(initialMessage, 'turn');
   else if (sessionId) {
     const current = (await client.getSession(sessionId)).session.activeRunId;
     if (current) {
@@ -343,6 +363,10 @@ async function runRpc(client: RuntimeClient): Promise<number> {
       case 'sessions.list': result = await client.listSessions(params as Record<string, string | number | undefined>); break;
       case 'sessions.get': result = await client.getSession(required(params, 'sessionId')); break;
       case 'sessions.create': result = await client.createSession(params as unknown as CreateSessionRequest); break;
+      case 'sessions.inputCapabilities': result = await client.getInputCapabilities(required(params,'sessionId'),typeof params.model==='string'?params.model:undefined); break;
+      case 'assets.get': result = await client.getAsset(required(params,'assetId')); break;
+      case 'assets.delete': result = await client.deleteAsset(required(params,'assetId')); break;
+      case 'assets.upload': { const file=required(params,'path');const size=await stat(file);if(!size.isFile()||size.size>MAX_FILE_BYTES)throw new Error('File must be at most 50 MiB.');result=await client.uploadAsset(required(params,'projectId'),new File([new Uint8Array(await readFile(file))],basename(file)));break; }
       case 'runs.submit': result = await client.submitRun(required(params, 'sessionId'), (params.input ?? {}) as StreamTurnRequest, { requestId: required(params, 'requestId'), mode: params.mode === 'continue' ? 'continue' : 'turn' }); break;
       case 'permissions.reply': result = await client.replyPermission(required(params, 'sessionId'), required(params, 'permissionId'), params.reply as PermissionReply, typeof params.message === 'string' ? params.message : undefined); break;
       case 'interactions.reply': result = await client.replyInteraction(required(params, 'sessionId'), required(params, 'interactionId'), params.reply as RuntimeInteractionReply); break;
