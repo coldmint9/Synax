@@ -268,10 +268,24 @@ describe('persisted specialist resolution and execution boundary', () => {
     expect(() => assertSpecialistToolAllowed(writer, 'file.write', { path: 'src/a' })).toThrow(/Plan specialists/);
   });
 
-  it.each(['../outside', 'src/../../outside', '/tmp/absolute', 'C:/outside', 'C:outside', 'src\\..\\outside', '\\\\server/share', 'src/%2e%2e/outside', '.', './', '*', 'src/*', 'src/a\0b', '.git/config', '.ssh/key', '.env', 'src/key.pem', 'src/cert.p12'])('rejects unsafe writeScope and write path %j', (unsafe) => {
+  it.each(['../outside', 'src/../../outside', '/tmp/absolute', 'C:/outside', 'C:outside', 'src\\..\\outside', '\\\\server/share', 'src/%2e%2e/outside', '.', './', '*', 'src/*', 'src/a\0b', 'src/key.pem', 'src/cert.p12'])('rejects unsafe writeScope and write path %j', (unsafe) => {
     expect(() => child({ capabilities: ['file.write'], writeScope: [unsafe] })).toThrow();
     const session = child({ capabilities: ['file.write'], writeScope: ['src'] });
     expect(() => assertSpecialistToolAllowed(session, 'file.write', { path: unsafe })).toThrow();
+  });
+
+  it('allows formerly blocked segment names while still rejecting blocked extensions', () => {
+    // `.env`, `.git` and `.ssh` are no longer restricted segments.
+    for (const allowed of ['.env', '.git/config', '.ssh/key']) {
+      expect(() => child({ capabilities: ['file.write'], writeScope: [allowed] })).not.toThrow();
+      const session = child({ capabilities: ['file.write'], writeScope: [allowed] });
+      expect(() => assertSpecialistToolAllowed(session, 'file.write', { path: allowed })).not.toThrow();
+    }
+    // The remaining extension rule still applies.
+    for (const blocked of ['src/key.pem', 'src/cert.p12']) {
+      const session = child({ capabilities: ['file.write'], writeScope: ['src'] });
+      expect(() => assertSpecialistToolAllowed(session, 'file.write', { path: blocked })).toThrow();
+    }
   });
 
   it('enforces exact path or directory boundaries for all file mutations, not string prefixes', () => {

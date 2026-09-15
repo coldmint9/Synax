@@ -9,8 +9,6 @@ import { isWorkspaceRelativePathBlocked, resolveWorkspacePath, toWorkspaceRelati
 // Node.js glob fallback helpers (used when ripgrep is not available)
 // ---------------------------------------------------------------------------
 
-const BLOCKED_SEGMENTS = new Set(['.git', 'node_modules', 'dist', 'build', '.env', '.ssh']);
-
 function segMatch(name: string, segment: string): boolean {
   const regex = new RegExp(
     '^' +
@@ -57,8 +55,6 @@ function globWalk(baseDir: string, pattern: string, limit: number): string[] {
       for (const entry of entries) {
         if (hits.length >= limit) return;
         if (!entry.isDirectory()) continue;
-        if (BLOCKED_SEGMENTS.has(entry.name)) continue;
-        if (entry.name.startsWith('.')) continue;
         walk(path.join(currentDir, entry.name), segIdx); // keep ** active
       }
       return;
@@ -77,7 +73,6 @@ function globWalk(baseDir: string, pattern: string, limit: number): string[] {
       for (const entry of entries) {
         if (hits.length >= limit) return;
         if (!entry.isFile()) continue;
-        if (BLOCKED_SEGMENTS.has(entry.name)) continue;
         if (!segMatch(entry.name, seg)) continue;
         try {
           const full = path.join(currentDir, entry.name);
@@ -92,7 +87,6 @@ function globWalk(baseDir: string, pattern: string, limit: number): string[] {
       for (const entry of entries) {
         if (hits.length >= limit) return;
         if (!entry.isDirectory()) continue;
-        if (BLOCKED_SEGMENTS.has(entry.name)) continue;
         if (!segMatch(entry.name, seg)) continue;
         walk(path.join(currentDir, entry.name), segIdx + 1);
       }
@@ -178,7 +172,7 @@ async function runGlobSearch(input: GlobSearchInput): Promise<ToolExecutionResul
       .filter(Boolean)
       .map((relativePath) => path.resolve(base, relativePath))
       .map((absolutePath) => toWorkspaceRelative(absolutePath, sessionId))
-      .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath))
+      .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath, sessionId))
       .map((relativePath) => ({
         path: relativePath,
         mtimeMs: fs.statSync(resolveWorkspacePath(relativePath, sessionId)).mtimeMs,
@@ -197,7 +191,7 @@ async function runGlobSearch(input: GlobSearchInput): Promise<ToolExecutionResul
   const absoluteFiles = globWalk(base, pattern, limit);
   const files = absoluteFiles
     .map((absolutePath) => toWorkspaceRelative(absolutePath, sessionId))
-    .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath))
+    .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath, sessionId))
     .slice(0, limit);
 
   return {

@@ -4,6 +4,7 @@ import {
   useApiConnectivityStore,
 } from './apiConnectivity'
 import { AppError, createOfflineError, isOfflineError } from './appError'
+import { isRuntimeResourceGone } from './runtimeResourceRegistry'
 
 export { AppError, createOfflineError, isOfflineError } from './appError'
 
@@ -104,9 +105,21 @@ function routeConnectivityError(message: string): void {
 
 const LLM_CONFIG_ERROR_CODES = new Set(['LLM_PROVIDER_NOT_CONFIGURED', 'API_KEY_MISSING'])
 
+/**
+ * A missing runtime resource is only worth reporting when the user did not
+ * remove it themselves. Deletion tears down a session tree while parallel
+ * detail requests are still in flight, so those replies are expected.
+ */
+function isExpectedMissingRuntimeResource(err: AppError): boolean {
+  if (err.code !== 'NOT_FOUND') return false
+  const match = /^Agent runtime resource not found:\s*(\S+)/i.exec(err.message)
+  return Boolean(match && isRuntimeResourceGone(match[1]))
+}
+
 function routeError(err: AppError): void {
   if (err.level === 'system') {
     console.error('[system]', err.message, err.code ?? '', err.statusCode ?? '')
+    if (isExpectedMissingRuntimeResource(err)) return
     useNotificationStore.getState().pushAggregated({
       id: `sys-${err.code ?? 'unknown'}`,
       type: 'warning',
@@ -117,6 +130,7 @@ function routeError(err: AppError): void {
   }
   console.warn('[business]', err.message, err.code ?? '', err.statusCode ?? '')
   const message = userMessage(err)
+  if (isExpectedMissingRuntimeResource(err)) return
   const isMissingRuntimeResource = err.code === 'NOT_FOUND'
     && /^Agent runtime resource not found:/i.test(err.message)
   if (isMissingRuntimeResource) {

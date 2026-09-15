@@ -1,4 +1,4 @@
-import { createWorkspaceClientHandler } from '../protocol/reverse-handlers.js'
+import { createWorkspaceClientHandlerForSession } from '../protocol/reverse-handlers.js'
 // ---------------------------------------------------------------------------
 // Shared ACP provider factory.
 //
@@ -136,7 +136,7 @@ class AcpAgentClient implements AcpClient {
       if (!workDir) throw new Error('An explicit workspace is required for ACP execution.')
       baseline = await captureFileChangeBaseline(workDir)
       const spawnSpec = await resolveSpawn()
-      acpConn = spawnAcpConnection(createWorkspaceClientHandler(workDir, {
+      acpConn = spawnAcpConnection(createWorkspaceClientHandlerForSession(workDir, input.sessionId ?? null, {
         sessionUpdate: async (params: SessionNotification) => {
           ts += 1
           const event = mapSessionUpdate(base, ts, params.update)

@@ -9,18 +9,13 @@ const ICONS: Record<NotificationType, typeof Info> = {
   warning: AlertTriangle,
 }
 
-const TYPE_STYLES: Record<NotificationType, string> = {
-  info: 'border-primary/30 bg-primary/[0.06]',
-  success: 'border-success/30 bg-success/[0.06]',
-  error: 'border-destructive/30 bg-destructive/[0.06]',
-  warning: 'border-warning/30 bg-warning/[0.06]',
-}
-
+/* HeroUI default toast: the surface stays opaque and only the indicator/title
+   carries the variant tone, so no per-type translucent background is needed. */
 const ICON_STYLES: Record<NotificationType, string> = {
-  info: 'text-primary',
-  success: 'text-success',
-  error: 'text-destructive',
-  warning: 'text-warning',
+  info: 'text-accent-soft-foreground',
+  success: 'text-success-soft-foreground',
+  error: 'text-danger-soft-foreground',
+  warning: 'text-warning-soft-foreground',
 }
 
 const MAX_VISIBLE_STACK = 3
@@ -91,11 +86,11 @@ function ToastItem({ notification, index, total, expanded }: {
         pointerEvents: hidden ? 'none' : 'auto',
         transition: 'transform 0.3s ease, opacity 0.3s ease',
       }}
-      className={`flex items-start gap-2.5 rounded-xl border px-3.5 py-3 shadow-lg backdrop-blur-sm ${index === 0 ? 'animate-in slide-in-from-right-5 fade-in duration-300' : ''} ${TYPE_STYLES[notification.type]}`}
+      className={`flex items-start gap-2.5 rounded-3xl bg-surface px-4 py-3 shadow-overlay ${index === 0 ? 'animate-in slide-in-from-right-5 fade-in duration-300' : ''}`}
     >
       <Icon size={15} className={`shrink-0 mt-0.5 ${ICON_STYLES[notification.type]}`} />
       <div className="flex-1 min-w-0">
-        <p className="text-[12px] text-foreground/85 leading-relaxed">
+        <p className="text-sm leading-relaxed text-overlay-foreground">
           {notification.message}
         </p>
         {notification.actions && notification.actions.length > 0 && (

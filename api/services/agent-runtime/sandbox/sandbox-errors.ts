@@ -3,7 +3,6 @@ import { AgentPermissionError } from '../runtime-errors.js';
 export type SandboxViolationKind =
   | 'boundary_escape'
   | 'symlink_escape'
-  | 'blocked_segment'
   | 'blocked_extension'
   | 'depth_exceeded'
   | 'null_byte';

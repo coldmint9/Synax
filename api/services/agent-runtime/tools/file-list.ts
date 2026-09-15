@@ -14,7 +14,7 @@ export const fileListTool: RegisteredTool = {
   resumeBehavior: 'auto',
   internalGate: 'none',
   progressiveDetails:
-    'Accepts { path?: string, limit?: number } and returns names only. Directories are returned with their relative paths; blocked entries like .git and node_modules are hidden.',
+    'Accepts { path?: string, limit?: number } and returns names only. Directories are returned with their relative paths.',
   inputSchema: z.object({
     path: z.string().min(1).optional().describe('Workspace-relative directory path. Defaults to the workspace root.'),
     limit: z.number().int().positive().max(300).optional().describe('Maximum number of entries to return.'),
@@ -25,7 +25,7 @@ export const fileListTool: RegisteredTool = {
     const limit = Math.min(Math.max(args.limit ?? 100, 1), 300);
     const items = fs
       .readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => isWorkspaceEntryVisible(entry.name))
+      .filter((entry) => isWorkspaceEntryVisible(entry.name, input.sessionId))
       .slice(0, limit)
       .map((entry) => ({
         name: entry.name,

@@ -1,20 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { SandboxViolationError, type SandboxViolation, type SandboxViolationKind } from './sandbox-errors.js';
-import { defaultSandboxConfig, type SandboxConfig } from './sandbox-config.js';
+import { sandboxConfigForSession, type SandboxConfig } from './sandbox-config.js';
 import { SandboxAuditLog, sandboxAuditLog } from './sandbox-audit.js';
 import { PATH_EXTRACTORS } from './path-extractors.js';
 
 export class SandboxPolicy {
   constructor(
     private readonly audit: SandboxAuditLog = sandboxAuditLog,
-    private readonly configFactory: (sessionId: string) => SandboxConfig = () => defaultSandboxConfig(),
+    private readonly configFactory: (sessionId: string) => SandboxConfig = (sessionId) => sandboxConfigForSession(sessionId),
   ) {}
 
   resolve(inputPath: string, workspaceRoot: string, sessionId: string, toolId: string): string {
     const config = this.configFactory(sessionId);
 
-    // Layer 1: Null byte check
+    // Layer 1: Null byte check — an invalid filesystem input, not a policy rule.
     if (inputPath.includes('\0')) {
       this.deny('null_byte', inputPath, null, workspaceRoot, sessionId, toolId, 'Path contains null byte.');
     }
@@ -30,6 +30,10 @@ export class SandboxPolicy {
       realPath = this.resolveReal(resolved);
     }
 
+    // Unrestricted sessions release every remaining rule: no workspace boundary,
+    // no blocked extensions, no depth ceiling.
+    if (config.unrestricted) return realPath;
+
     // Layer 4: Boundary check
     let normalizedRoot = path.resolve(workspaceRoot);
     if (config.resolveSymlinks) {
@@ -43,24 +47,16 @@ export class SandboxPolicy {
         `Path escapes workspace boundary: ${inputPath}`);
     }
 
-    // Layer 5: Blocked segments
-    const relative = path.relative(normalizedRoot, realPath);
-    const segments = relative.split(path.sep).filter(Boolean);
-    for (const seg of segments) {
-      if (config.blockedSegments.has(seg)) {
-        this.deny('blocked_segment', inputPath, realPath, workspaceRoot, sessionId, toolId,
-          `Path contains blocked segment: ${seg}`);
-      }
-    }
+    const segments = path.relative(normalizedRoot, realPath).split(path.sep).filter(Boolean);
 
-    // Layer 6: Blocked extensions
+    // Layer 5: Blocked extensions
     const ext = path.extname(realPath).toLowerCase();
     if (ext && config.blockedExtensions.has(ext)) {
       this.deny('blocked_extension', inputPath, realPath, workspaceRoot, sessionId, toolId,
         `Path has blocked extension: ${ext}`);
     }
 
-    // Layer 7: Depth check
+    // Layer 6: Depth check
     if (segments.length > config.maxDepth) {
       this.deny('depth_exceeded', inputPath, realPath, workspaceRoot, sessionId, toolId,
         `Path depth ${segments.length} exceeds maximum ${config.maxDepth}.`);

@@ -12,7 +12,7 @@ import {
   spawnAcpConnection,
   type AcpConnection,
 } from '../../acp/protocol/acp-connection.js';
-import { createWorkspaceClientHandler } from '../../acp/protocol/reverse-handlers.js';
+import { createWorkspaceClientHandlerForSession } from '../../acp/protocol/reverse-handlers.js';
 import { ACP_SESSION_IDLE_TIMEOUT_MS, MAX_ACP_SESSIONS } from '../../../lib/env.js';
 import { logger } from '../../../lib/logger.js';
 import { AgentRuntimeError } from '../runtime-errors.js';
@@ -110,7 +110,7 @@ class AcpConnectionPool {
       ? await resolveSpawnForProviderAsync(input.providerId)
       : resolveSpawnForProvider(input.providerId);
     const synaxSessionId = input.synaxSessionId;
-    const connection = spawnAcpConnection(createWorkspaceClientHandler(workDir, {
+    const connection = spawnAcpConnection(createWorkspaceClientHandlerForSession(workDir, synaxSessionId, {
       async sessionUpdate(params) {
         acpSessionUpdateRouter.dispatch(synaxSessionId, params);
       },
