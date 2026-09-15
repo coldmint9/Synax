@@ -128,6 +128,9 @@ export function forwardChunkToLiveBus(sessionId: string, chunk: AgentRunStreamCh
         stepIndex: chunk.step.index,
       };
       break;
+    case 'retry_status':
+      event = { type: 'retry_status', stepId: chunk.stepId, retry: chunk.retry };
+      break;
     case 'message_delta':
       event = { type: 'message_delta', stepId: chunk.stepId, delta: chunk.delta };
       break;

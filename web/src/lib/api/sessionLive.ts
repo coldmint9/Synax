@@ -1,9 +1,12 @@
+import type { LlmRetryState } from '../../../../api/services/llm-runtime/retry-state'
+export type { LlmRetryState } from '../../../../api/services/llm-runtime/retry-state'
 import { AuthenticatedEventSource } from './authenticatedEventSource'
 import { useApiConnectivityStore } from '../apiConnectivity'
 import { RuntimeStreamProjector, type RuntimeSnapshot, type RuntimeStreamRecord } from './runtimeStream'
 import type { AgentSession, ToolCallRecord } from './agentRuntime'
 
 export type SessionLiveEvent =
+  | { type: 'retry_status'; stepId: string; retry: LlmRetryState }
   | { type: 'runtime_state'; sessionId: string; patch: Partial<AgentSession>; reset: boolean; refresh: boolean }
   | { type: 'step_started'; stepId: string; stepIndex: number }
   | { type: 'message_delta'; stepId: string; delta: string }

@@ -169,6 +169,7 @@ function dispatchText(
 ) {
   const { system, messages } = toModelPrompt(request.messages, enableCache)
   return generateText({
+    maxRetries: 0,
     model,
     system,
     messages,
@@ -191,6 +192,7 @@ function dispatchObject(
 ) {
   const { system, messages } = toModelPrompt(ensureJsonObjectResponseFormatInstruction(request.messages))
   return generateText({
+    maxRetries: 0,
     model,
     output: Output.object({ schema }),
     system,

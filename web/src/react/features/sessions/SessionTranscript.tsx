@@ -28,6 +28,7 @@ function useSessionLiveState() {
     steps: s.steps,
     streamingStepId: s.streamingStepId,
     streamingLive: s.streamingLive,
+    streamingRetry: s.streamingRetry,
     streamingCompletedSteps: s.streamingCompletedSteps,
   })))
 }
@@ -43,6 +44,7 @@ function SessionLiveTurnLayer({
       steps={liveState.steps}
       streamingStepId={liveState.streamingStepId}
       streamingLive={liveState.streamingLive}
+      retry={liveState.streamingRetry}
       streamingCompletedSteps={liveState.streamingCompletedSteps}
       scrollContainerRef={scrollContainerRef}
     />

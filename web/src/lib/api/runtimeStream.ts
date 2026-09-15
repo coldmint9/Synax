@@ -1,10 +1,11 @@
 import type { AgentRun, AgentRunStep, AgentSession, ToolCallRecord } from './agentRuntime'
-import type { SessionLiveEvent } from './sessionLive'
+import type { LlmRetryState, SessionLiveEvent } from './sessionLive'
 
 export interface RuntimeChunk {
   type: string
   runId?: string
   stepId?: string
+  retry?: LlmRetryState
   delta?: string
   step?: AgentRunStep
   toolCall?: ToolCallRecord
@@ -68,6 +69,9 @@ export class RuntimeStreamProjector {
       return [{ type: 'step_started', stepId: chunk.step.id, stepIndex: chunk.step.index }]
     }
     if (!chunk.stepId || chunk.stepId !== this.stepId) return []
+    if (chunk.type === 'retry_status' && chunk.retry) {
+      return [{ type: 'retry_status', stepId: chunk.stepId, retry: chunk.retry }]
+    }
     if ((chunk.type === 'message_delta' || chunk.type === 'thought_delta') && chunk.delta !== undefined) {
       return [{ type: chunk.type, stepId: chunk.stepId, delta: chunk.delta }]
     }

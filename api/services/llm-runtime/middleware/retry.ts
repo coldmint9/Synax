@@ -1,24 +1,38 @@
-import { logger } from '../../../lib/logger.js'
+import { setTimeout as delay } from "node:timers/promises";
+import { logger } from "../../../lib/logger.js";
+
+import type { LlmRetryState } from "../retry-state.js";
+export type { LlmRetryState } from "../retry-state.js";
 
 export interface RetryConfig {
-  maxRetries: number
-  baseDelayMs: number
-  maxDelayMs: number
-  shouldRetry: (error: unknown) => boolean
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  shouldRetry: (error: unknown) => boolean;
+  signal?: AbortSignal;
+  repeatNetworkGroups: boolean;
+  networkGroupDelayMs: number;
+  onRetry?: (state: LlmRetryState) => void;
 }
 
 const DEFAULT_CONFIG: RetryConfig = {
-  maxRetries: 3,
-  baseDelayMs: 1000,
-  maxDelayMs: 30_000,
+  maxRetries: 5,
+  baseDelayMs: 2000,
+  maxDelayMs: 32_500,
   shouldRetry: isRetryableLlmError,
-}
+  repeatNetworkGroups: false,
+  networkGroupDelayMs: 120_000,
+};
 
 const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524])
 
 const NON_RETRYABLE_HTTP_STATUSES = new Set([400, 401, 403, 404, 405, 409, 422])
 
 const NETWORK_ERROR_CODES = new Set([
+  'EPIPE',
+  'ConnectionRefused',
+  'ConnectionClosed',
+  'FailedToOpenSocket',
   'ECONNABORTED',
   'ECONNREFUSED',
   'ECONNRESET',
@@ -45,10 +59,6 @@ const CONNECTION_MESSAGE_PATTERNS = [
   'connect timeout',
   'timed out',
   'timeout',
-  'temporarily unavailable',
-  'service unavailable',
-  'bad gateway',
-  'gateway timeout',
   'failed to fetch',
   'unable to connect',
   'dns',
@@ -70,30 +80,151 @@ export async function withRetry<T>(
   fn: () => Promise<T>,
   config: Partial<RetryConfig> = {},
 ): Promise<T> {
-  const { maxRetries, baseDelayMs, maxDelayMs, shouldRetry } = { ...DEFAULT_CONFIG, ...config }
-  let lastError: unknown
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  let result!: T;
+  for await (const event of withRetryStream(async function* () {
+    yield await fn();
+  }, config)) {
+    if (event.type === "value") result = event.value;
+    else config.onRetry?.(event.retry);
+  }
+  return result;
+}
+
+/** Retry the entire consumption, not just creation of a lazy SDK stream. */
+export async function* withRetryStream<T>(
+  fn: () => AsyncIterable<T>,
+  config: Partial<RetryConfig> = {},
+): AsyncGenerator<
+  { type: "value"; value: T } | { type: "retry_status"; retry: LlmRetryState }
+> {
+  const options = { ...DEFAULT_CONFIG, ...config };
+  const { maxRetries, baseDelayMs, maxDelayMs, signal } = options;
+  let attempt = 0;
+  let group = 1;
+  let upstreamRetries = 0;
+  let state: LlmRetryState | undefined;
+  while (true) {
+    signal?.throwIfAborted();
+    if (state)
+      yield {
+        type: "retry_status",
+        retry: { ...state, phase: "retrying", nextRetryAt: null },
+      };
     try {
-      return await fn()
-    } catch (err) {
-      lastError = err
-      if (attempt < maxRetries && shouldRetry(err)) {
-        const delay = computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs)
-        logger.warn(
-          { attempt: attempt + 1, maxRetries, delay, reason: retryReason(err) },
-          '[llm-runtime] transient LLM error, retrying with exponential backoff',
-        )
-        await new Promise((r) => setTimeout(r, delay))
-        continue
+      for await (const value of fn()) {
+        signal?.throwIfAborted();
+        yield { type: "value", value };
       }
-      throw err
+      signal?.throwIfAborted();
+      if (state)
+        yield {
+          type: "retry_status",
+          retry: { ...state, phase: "recovered", nextRetryAt: null },
+        };
+      return;
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (isAbortError(error) || !options.shouldRetry(error)) throw error;
+      const reason = isNetworkError(error)
+        ? "network"
+        : isRateLimitError(error)
+          ? "rate_limit"
+          : "upstream";
+      // Once an HTTP response arrives the network is reachable; upstream failures
+      // have a separate finite budget and must never inherit infinite network retries.
+      if (reason !== state?.reason)
+        attempt = reason === "network" ? 0 : upstreamRetries;
+      if (reason !== "network") attempt = upstreamRetries;
+      state = {
+        reason,
+        phase: "waiting",
+        group: reason === "network" ? group : 1,
+        attempt,
+        maxRetries,
+        nextRetryAt: null,
+        error: errorMessage(error).slice(0, 1000),
+      };
+      if (attempt >= maxRetries) {
+        if (
+          reason !== "network" ||
+          !options.repeatNetworkGroups ||
+          maxRetries === 0
+        ) {
+          yield {
+            type: "retry_status",
+            retry: { ...state, phase: "exhausted" },
+          };
+          if (maxRetries === 0) throw error;
+          throw new Error(
+            `${state.error} (retried ${maxRetries} times; 已重试 ${maxRetries} 次)`,
+            { cause: error },
+          );
+        }
+        group++;
+        attempt = 0;
+        state = {
+          ...state,
+          phase: "group_wait",
+          group,
+          attempt,
+          nextRetryAt: Date.now() + options.networkGroupDelayMs,
+        };
+        yield { type: "retry_status", retry: state };
+        await delay(Math.max(0, state.nextRetryAt! - Date.now()), undefined, {
+          signal,
+        });
+      }
+      const waitMs = computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs);
+      attempt++;
+      if (reason !== "network") upstreamRetries++;
+      state = {
+        ...state,
+        phase: "waiting",
+        attempt,
+        nextRetryAt: Date.now() + waitMs,
+      };
+      logger.warn(
+        { attempt, maxRetries, group: state.group, delay: waitMs, reason },
+        "[llm-runtime] transient LLM error, retrying with exponential backoff",
+      );
+      yield { type: "retry_status", retry: state };
+      await delay(Math.max(0, state.nextRetryAt! - Date.now()), undefined, {
+        signal,
+      });
     }
   }
-  throw lastError
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error != null &&
+    typeof error === "object" &&
+    (error as { name?: string }).name === "AbortError"
+  );
+}
+
+/** Transport failures only. HTTP 5xx/429 are upstream errors, not an offline network. */
+export function isNetworkError(error: unknown): boolean {
+  if (
+    isAbortError(error) ||
+    isExplicitlyNonRetryable(error) ||
+    (errorStatusCode(error) ?? 0) >= 400
+  )
+    return false;
+  if (hasNetworkErrorCode(error)) return true;
+  if (
+    CONNECTION_MESSAGE_PATTERNS.some((pattern) =>
+      errorMessage(error).toLowerCase().includes(pattern),
+    )
+  )
+    return true;
+  const cause = readErrorCause(error);
+  return Boolean(cause && cause !== error && isNetworkError(cause));
 }
 
 export function isRetryableLlmError(err: unknown): boolean {
-  if (isExplicitlyNonRetryable(err)) return false
+  if (isAbortError(err) || isExplicitlyNonRetryable(err)) return false
+  if (errorMessage(err).toLowerCase().includes('overload')) return true
   if (isRateLimitError(err)) return true
   if (isConnectionError(err)) return true
   return false
@@ -126,6 +257,7 @@ export function isConnectionError(err: unknown): boolean {
 
   const msg = errorMessage(err).toLowerCase()
   if (CONNECTION_MESSAGE_PATTERNS.some(pattern => msg.includes(pattern))) return true
+  if (['overload', 'temporarily unavailable', 'service unavailable', 'bad gateway', 'gateway timeout'].some(pattern => msg.includes(pattern))) return true
 
   const cause = readErrorCause(err)
   if (cause && cause !== err && isConnectionError(cause)) return true
@@ -145,7 +277,8 @@ function isExplicitlyNonRetryable(err: unknown): boolean {
     msg.includes('permission denied') ||
     msg.includes('content filter') ||
     msg.includes('content_policy') ||
-    msg.includes('invalid_request_error')
+    msg.includes('invalid_request_error') ||
+    msg.includes('invalid request error')
 }
 
 function readExplicitRetryable(err: unknown): boolean | undefined {
@@ -185,12 +318,4 @@ function errorMessage(err: unknown): string {
 function readErrorCause(err: unknown): unknown {
   if (err == null || typeof err !== 'object') return undefined
   return (err as Record<string, unknown>).cause
-}
-
-function retryReason(err: unknown): string {
-  if (isRateLimitError(err)) return 'rate_limit'
-  if (hasNetworkErrorCode(err)) return 'network_code'
-  const status = errorStatusCode(err)
-  if (status != null) return `http_${status}`
-  return 'connection'
 }

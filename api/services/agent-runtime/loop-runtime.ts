@@ -1,3 +1,4 @@
+import { measureContextComposition } from './context-composition.js';
 import { normalizeInput, hasInput, mediaSafeErrorText } from './content-parts.js';
 import { activeTurnReferences } from './turn-reference-state.js';
 import { prepareTurnReferences } from './turn-references.js';
@@ -584,6 +585,30 @@ export class AgentLoopRuntime {
           if (inputQueueService.getForceInjectId(sessionId)) {
             stepForceInjectRequested = true;
             break;
+          }
+          if (event.type === 'context_composition') {
+            this.store.updateRunStep(step.id, {
+              metadata: { ...this.store.getRunStep(step.id).metadata, contextComposition: event.composition },
+            });
+            const contextEvent = this.events.append({
+              sessionId, type: 'progress_updated', visibility: 'internal',
+              summary: 'Request context composition updated',
+              payload: { kind: 'context_composition', runId: run.id, stepId: step.id },
+            });
+            yield { type: 'event', event: contextEvent };
+          }
+          if (event.type === 'retry_status') {
+            this.store.updateRunStep(step.id, {
+              metadata: { ...this.store.getRunStep(step.id).metadata,
+                retry: event.retry.phase === 'recovered' ? null : event.retry },
+            });
+            const retryEvent = this.events.append({
+              sessionId, type: 'progress_updated', visibility: 'internal',
+              summary: `LLM ${event.retry.reason}: ${event.retry.phase} (${event.retry.group}/${event.retry.attempt}/${event.retry.maxRetries})`,
+              payload: { kind: 'llm_retry', runId: run.id, stepId: step.id, retry: event.retry },
+            });
+            yield { type: 'retry_status', runId: run.id, stepId: step.id, retry: event.retry, event: retryEvent };
+            emitSessionLive(sessionId, { type: 'retry_status', stepId: step.id, retry: event.retry });
           }
           if (event.type === 'usage') {
             this.store.updateRunStep(step.id, { metadata: { ...this.store.getRunStep(step.id).metadata, usage: event.usage } });
@@ -1671,6 +1696,10 @@ export class AgentLoopRuntime {
     };
     if (countMessagesTokens(request.messages as never, input.input.model ?? undefined) + estimateToolDefinitionsTokens(allowedTools.length, input.input.model ?? undefined) > contextLimit - (input.outputReserve ?? input.input.maxTokens ?? 8192))
       throw new AgentValidationError('context_blocked: the final request, including required reminders and output reservation, exceeds the model window.');
+    yield { type: 'context_composition', composition: await measureContextComposition({
+      messages: request.messages, tools: toolSet, model: input.input.model,
+      skillsSection, selectedReferences: selectedReferences?.content,
+    }) };
     yield* streamLoopModelStep({
       request,
       tools: toolSet,

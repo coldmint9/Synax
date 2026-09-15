@@ -21,27 +21,26 @@ function firstThinking(entry: WorkLogEntryData): string | null {
   return null
 }
 
-/**
- * A run of activity-only turns collapsed into one row, the way Codex collapses
- * a long think/tool stretch behind a single line and a `Worked for` divider.
- * The folded turns mount only when the reader opens the row.
- */
+function workDuration(elapsedMs: number): string {
+  const minutes = elapsedMs / 60_000
+  if (minutes >= 1) return `${minutes < 10 ? minutes.toFixed(1) : Math.round(minutes)} 分钟`
+  return `${Math.max(1, Math.round(elapsedMs / 1_000))} 秒`
+}
+
+/** Completed activity from one round, collapsed into a compact expandable row. */
 export const WorkLogEntry = memo(function WorkLogEntry({ entry, onExpandChild }: Props) {
   const { t } = useLocale()
   const { stepCount, toolCallCount, thinkingChars, elapsedMs } = entry.stats
-  const duration = formatDurationMs(elapsedMs)
   const preview = firstThinking(entry)
-
   const meta = [
-    t('sessionWorkLogSteps', { count: stepCount }),
-    t('sessionWorkLogCalls', { count: toolCallCount }),
+    `${stepCount} 步`,
+    `${toolCallCount} 次调用`,
     thinkingChars > 0 ? t('sessionActivityChars', { count: formatCharCount(thinkingChars) }) : null,
-    duration ? t('sessionTurnWorked', { duration }) : null,
   ].filter(Boolean).join(' · ')
 
   return (
     <ActivityRow
-      label={t('sessionWorkLog')}
+      label={`工作用时 ${workDuration(elapsedMs)}`}
       meta={meta}
       preview={preview ? activityPreview(preview) : null}
       bodyContent={(

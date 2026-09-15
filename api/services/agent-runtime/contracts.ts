@@ -1,3 +1,5 @@
+import type { ContextComposition } from './context-composition.js';
+import type { LlmRetryState } from "../llm-runtime/retry-state.js";
 import {
   contentPartsSchema,
   type RuntimeContentPart,
@@ -661,6 +663,8 @@ export interface LoopStepModelResult {
 }
 
 export type LoopModelStreamEvent =
+  | { type: "context_composition"; composition: ContextComposition }
+  | { type: "retry_status"; retry: LlmRetryState }
   | { type: "usage"; usage: Record<string, unknown> }
   | { type: "text_delta"; delta: string }
   | { type: "thought_delta"; delta: string }
@@ -692,6 +696,13 @@ export interface CompactionRecord {
 }
 
 export type AgentRunStreamChunk =
+  | {
+      type: "retry_status";
+      runId: string;
+      stepId: string;
+      retry: LlmRetryState;
+      event?: RuntimeEvent;
+    }
   | { type: "run_started"; run: AgentRun; event?: RuntimeEvent }
   | { type: "step_started"; step: AgentRunStep; event?: RuntimeEvent }
   | {
