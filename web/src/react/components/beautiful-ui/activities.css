@@ -1,0 +1,194 @@
+/* Adapted from Beautiful UI ToolChips, ThinkingState and TaskRows (MIT).
+   Copyright 2026 Shane Levine; source ff0f74d, license in web/public/licenses/beautiful-ui.txt.
+   Scoped to Synax activity surfaces; no upstream global tokens or demo timers. */
+.bui-tool-group,
+.bui-tool,
+.bui-activity,
+.bui-task {
+  --bui-ink: var(--foreground);
+  --bui-muted: hsl(var(--muted-foreground));
+  --bui-line: color-mix(in srgb, var(--border) 65%, transparent);
+  --bui-hover: color-mix(in srgb, var(--foreground) 4%, transparent);
+  --bui-chip: color-mix(in srgb, var(--foreground) 4%, var(--surface));
+  min-width: 0;
+  color: var(--bui-ink);
+}
+
+.bui-tool-group { padding: 3px 0; }
+.bui-tool-group-heading,
+.bui-tool-trigger,
+.bui-activity-trigger,
+.bui-task-trigger {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  border-radius: 8px;
+  padding: 5px 6px;
+  text-align: left;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+button.bui-tool-trigger:hover,
+button.bui-activity-trigger:hover,
+.bui-tool-group-heading:hover,
+.bui-task-trigger:hover { background: var(--bui-hover); }
+button.bui-tool-trigger:focus-visible,
+button.bui-activity-trigger:focus-visible,
+.bui-tool-group-heading:focus-visible,
+.bui-task-trigger:focus-visible,
+.bui-task-open:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.bui-tool-group-heading {
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 3px;
+  color: var(--bui-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.bui-tool-list { display: flex; flex-direction: column; gap: 2px; }
+.bui-tool-symbol,
+.bui-activity-symbol {
+  display: inline-flex;
+  width: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--bui-muted);
+}
+.bui-tool-label {
+  min-width: 0;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+.bui-tool-target {
+  display: block;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid var(--bui-line);
+  border-radius: 6px;
+  background: var(--bui-chip);
+  padding: 2px 6px;
+  color: var(--bui-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bui-tool-meta {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  color: var(--bui-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.bui-chevron { flex-shrink: 0; color: var(--bui-muted); }
+.bui-tool-details,
+.bui-tool-batch-body,
+.bui-activity-body {
+  margin: 3px 6px 6px 13px;
+  border-left: 1px solid var(--bui-line);
+  padding-left: 14px;
+}
+.bui-tool-details { display: flex; flex-direction: column; gap: 10px; }
+.bui-tool-detail-label {
+  margin-bottom: 4px;
+  color: var(--bui-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+.bui-tool-details pre {
+  max-height: 192px;
+  overflow: auto;
+  border: 1px solid var(--bui-line);
+  border-radius: 8px;
+  background: var(--bui-chip);
+  padding: 8px 10px;
+  color: var(--bui-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bui-tool-count {
+  flex-shrink: 0;
+  color: var(--bui-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.bui-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.bui-status[data-tone="active"] { color: color-mix(in srgb, var(--accent) 35%, var(--foreground)); }
+.bui-status[data-tone="success"] { color: color-mix(in srgb, var(--success) 70%, var(--foreground)); }
+.bui-status[data-tone="danger"] { color: color-mix(in srgb, var(--danger) 70%, var(--foreground)); }
+.bui-status[data-tone="warning"] { color: color-mix(in srgb, var(--warning) 70%, var(--foreground)); }
+.bui-status-spinner { animation: bui-status-spin 1s linear infinite; }
+@keyframes bui-status-spin { to { transform: rotate(360deg); } }
+.bui-activity-label { flex-shrink: 0; font-size: 12px; font-weight: 500; color: var(--bui-muted); }
+.bui-activity[data-live="true"] .bui-activity-label { color: var(--bui-ink); }
+.bui-activity-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--bui-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.bui-activity-preview {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--bui-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bui-activity-trigger > .bui-chevron { margin-left: auto; }
+.bui-activity-body { overflow-y: auto; overflow-wrap: anywhere; font-size: 12px; line-height: 1.7; }
+.bui-activity-body[data-plain="true"] { white-space: pre-wrap; color: var(--bui-muted); }
+.bui-activity-footnote { margin-top: 6px; color: var(--bui-muted); font-size: 10px; white-space: normal; }
+.bui-task { border: 1px solid var(--bui-line); border-radius: 10px; background: var(--surface); }
+.bui-task-header { display: flex; align-items: center; gap: 6px; padding: 4px; }
+.bui-task-trigger { flex: 1; padding: 6px; }
+.bui-task-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.bui-task-profile { color: var(--bui-muted); font-size: 10px; }
+.bui-task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.bui-task-open {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  margin-right: 6px;
+  border-radius: 6px;
+  padding: 4px;
+  color: var(--bui-muted);
+  font-size: 10px;
+}
+.bui-task-open:hover { background: var(--bui-hover); color: var(--bui-ink); }
+.bui-task-body { max-height: 240px; overflow: auto; border-top: 1px solid var(--bui-line); padding: 10px 14px; color: var(--bui-muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) {
+  .bui-status-spinner { animation: none; }
+  .bui-tool-group-heading, .bui-tool-trigger, .bui-activity-trigger, .bui-task-trigger { transition: none; }
+}

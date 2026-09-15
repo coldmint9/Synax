@@ -1,73 +1,47 @@
-import { useState } from 'react'
-import { Chip } from '@heroui/react'
-import { ChevronRight, ChevronDown, Clock } from 'lucide-react'
-import type { ToolCallView } from './buildInterleavedTurns'
+import { useId, useMemo, useState } from 'react'
+import { ChevronRight, ChevronDown } from 'lucide-react'
+import { useLocale } from '../../../hooks/useLocale'
+import { ActivityStatus } from '../../components/beautiful-ui/ActivityStatus'
 import { ToolCallSummaryLine } from './ToolCallSummaryLine'
+import { aggregateToolStatus, toolCallPresentation } from './toolCallPresentation'
 import type { ToolCallBatch } from './toolCallUtils'
 
 interface Props {
   batch: ToolCallBatch
 }
 
-function aggregateStatus(calls: ToolCallView[]): { label: string; color: 'accent' | 'success' | 'danger' | 'warning' | 'default' } {
-  if (calls.some(c => c.status === 'failed')) return { label: 'failed', color: 'danger' }
-  if (calls.some(c => c.status === 'running')) return { label: 'running', color: 'accent' }
-  if (calls.some(c => c.status === 'denied')) return { label: 'denied', color: 'warning' }
-  if (calls.every(c => c.status === 'completed')) return { label: 'completed', color: 'success' }
-  return { label: 'pending', color: 'default' }
-}
-
-function maxDuration(calls: ToolCallView[]): string | null {
-  const durations = calls.map(c => c.duration).filter(Boolean) as string[]
-  return durations.length > 0 ? durations[durations.length - 1] : null
-}
-
 export function ToolCallBatchSummaryLine({ batch }: Props) {
+  const { t } = useLocale()
   const [expanded, setExpanded] = useState(false)
+  const detailsId = useId()
   const { calls, toolId } = batch
-  const count = calls.length
-  const status = aggregateStatus(calls)
-  const duration = maxDuration(calls)
-  const isSingle = count === 1
+  const presentation = useMemo(() => toolCallPresentation(calls[0]), [calls])
+  const Icon = presentation.icon
+  const status = aggregateToolStatus(calls)
 
-  if (isSingle) {
-    return <ToolCallSummaryLine call={calls[0]} />
-  }
+  if (calls.length === 1) return <ToolCallSummaryLine call={calls[0]} />
 
   return (
-    <div className="rounded-md border border-border/40 bg-background/30">
+    <div className="bui-tool" data-tool-status={status}>
       <button
         type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-muted/20"
+        onClick={() => setExpanded(value => !value)}
+        className="bui-tool-trigger"
+        aria-expanded={expanded}
+        aria-controls={expanded ? detailsId : undefined}
       >
-        <span className="shrink-0 font-mono text-[11px] font-semibold tabular-nums text-primary">
-          {count}×
-        </span>
-        <span className="shrink-0 font-mono text-[11px] font-medium text-foreground">
-          {toolId}
-        </span>
-        <span className="ml-auto flex shrink-0 items-center gap-1.5">
-          {duration && (
-            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
-              <Clock size={9} className="shrink-0 text-muted-foreground" />
-              {duration}
-            </span>
-          )}
-          <Chip size="sm" color={status.color} variant="soft" className="h-4 text-[9px]">
-            {status.label}
-          </Chip>
-          {expanded
-            ? <ChevronDown size={11} className="shrink-0 text-muted-foreground" />
-            : <ChevronRight size={11} className="shrink-0 text-muted-foreground" />}
+        <span className="bui-tool-symbol"><Icon size={13} aria-hidden="true" /></span>
+        <span className="bui-tool-label" title={toolId}>{presentation.label ? t(presentation.label) : toolId}</span>
+        <span className="bui-tool-count">×{calls.length}</span>
+        {presentation.target && <span className="bui-tool-target" title={presentation.target}>{presentation.target}</span>}
+        <span className="bui-tool-meta">
+          <ActivityStatus status={status} compact={status === 'completed'} />
+          {expanded ? <ChevronDown size={11} className="bui-chevron" aria-hidden="true" /> : <ChevronRight size={11} className="bui-chevron" aria-hidden="true" />}
         </span>
       </button>
-
       {expanded && (
-        <div className="space-y-1 border-t border-border/30 p-1.5">
-          {calls.map(call => (
-            <ToolCallSummaryLine key={call.id} call={call} />
-          ))}
+        <div id={detailsId} className="bui-tool-batch-body">
+          {calls.map(call => <ToolCallSummaryLine key={call.id} call={call} />)}
         </div>
       )}
     </div>

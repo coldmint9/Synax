@@ -54,7 +54,7 @@ describe('WorkLogEntry', () => {
   it('collapses a run into one row and keeps the folded turns unmounted', () => {
     const { container } = render(<WorkLogEntry entry={ENTRY} />)
 
-    expect(container.textContent).toContain('Work log')
+    expect(container.textContent).toContain('Worked for 1m 30s')
     expect(container.textContent).toContain('3 steps')
     expect(container.textContent).toContain('3 calls')
     expect(container.textContent).toContain('1m 30s')
