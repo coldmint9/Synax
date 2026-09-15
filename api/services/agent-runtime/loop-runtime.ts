@@ -52,6 +52,7 @@ import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
+import { profileCanUseTool } from "./tool-mount-policy.js";
 import { rebuildSessionFileReads } from "./read-tracker.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
 import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
@@ -432,6 +433,7 @@ export class AgentLoopRuntime {
           ?? mapThinkingModeToReasoningEffort(session.thinkingMode)
       } catch { /* non-critical, proceed without capabilities */ }
       input = { ...input, reasoningEffort: runReasoningEffort }
+      run = this.store.updateRun(run.id, { metadata: { ...run.metadata, reasoningEffort: runReasoningEffort } })
 
       await warmupMcpForSession(sessionId)
 
@@ -521,7 +523,7 @@ export class AgentLoopRuntime {
           startedAt: nowIso(),
           completedAt: null,
           finishReason: null,
-          metadata: { workId: workStore.current(sessionId)?.id, workChangeVersion: workStore.current(sessionId)?.changeVersion,
+          metadata: { reasoningEffort: input.reasoningEffort, workId: workStore.current(sessionId)?.id, workChangeVersion: workStore.current(sessionId)?.changeVersion,
             converging: shouldConverge(run.currentStep, convergenceThreshold) },
         });
         const workVersionBeforeStep = workStore.current(sessionId)?.progressVersion ?? 0;
@@ -1533,9 +1535,9 @@ export class AgentLoopRuntime {
       .listForSession(input.sessionId)
       .filter(
         (tool) =>
-          input.profile.allowedCapabilities.includes(tool.id) ||
+          profileCanUseTool(input.profile, tool) ||
           ['work.checkpoint', 'context.read'].includes(tool.id) ||
-          (tool.id === 'verification.run' && input.profile.allowedCapabilities.includes('bash')) ||
+          (tool.id === 'verification.run' && profileCanUseTool(input.profile, { id: 'bash' })) ||
           tool.category === "skill" ||
           tool.category === "mcp" ||
           tool.id === "tools.invalid",

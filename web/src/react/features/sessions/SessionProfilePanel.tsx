@@ -6,11 +6,13 @@ import { SessionCapabilitiesPanel } from './SessionCapabilitiesPanel'
 import { SessionStatusCard } from './SessionWorkspace'
 
 export const SessionProfilePanel = memo(function SessionProfilePanel({ sessionId }: { sessionId: string | null }) {
-  const { sessionStats, sessionTodos, sessionCapabilities, steps } = useAgentSessionStore(useShallow(s => ({
+  const { sessionStats, sessionTodos, sessionCapabilities, steps, runs, session } = useAgentSessionStore(useShallow(s => ({
     sessionStats: s.sessionStats,
     sessionTodos: s.sessionTodos,
     sessionCapabilities: s.sessionCapabilities,
     steps: s.steps,
+    runs: s.runs,
+    session: s.sessions.find(item => item.id === sessionId),
   })))
 
   return (
@@ -28,7 +30,7 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({ sessionId
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {sessionStats && <SessionStatusCard stats={sessionStats} steps={steps} todos={sessionTodos} />}
+          {sessionStats && <SessionStatusCard stats={sessionStats} session={session} runs={runs} steps={steps} todos={sessionTodos} />}
           {sessionCapabilities && <SessionCapabilitiesPanel capabilities={sessionCapabilities} />}
         </div>
       )}

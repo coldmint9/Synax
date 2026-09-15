@@ -12,8 +12,10 @@ import {
   draftToProviderDef,
   effectiveReasoningEfforts,
   mergeModelOptions,
+  modelsWithContextLimit,
   providerReasoningEfforts,
   selectDefaultModel,
+  toggleModelContextLimit,
   toggleModelSelection,
   upsertDraft,
   type ApiProviderDraft,
@@ -100,6 +102,73 @@ describe('providerPresets model metadata', () => {
     expect(saved.model).toBe('deepseek-reasoner')
     expect(saved.modelMeta['deepseek-chat']?.contextLimit).toBe(1_000_000)
     expect(saved.reasoningEfforts).toEqual(['medium', 'high'])
+  })
+})
+
+describe('per-model context window', () => {
+  function draftWithBothModels(): ApiProviderDraft {
+    const provider = makeProvider()
+    const draft = buildApiDrafts(makeConfig(provider, {}), [provider])
+      .find(d => d.id === provider.id)!
+    return {
+      ...draft,
+      models: ['deepseek-chat', 'deepseek-reasoner'],
+      modelMeta: { 'deepseek-chat': { contextLimit: 1_000_000 } },
+    }
+  }
+
+  it('enables and disables the 1M window per model without touching siblings', () => {
+    const draft = draftWithBothModels()
+    expect(modelsWithContextLimit(draft)).toEqual([{ id: 'deepseek-chat', contextLimit: 1_000_000 }])
+
+    const enabled = toggleModelContextLimit(draft, 'deepseek-reasoner', true)
+    expect(modelsWithContextLimit(enabled)).toEqual([
+      { id: 'deepseek-chat', contextLimit: 1_000_000 },
+      { id: 'deepseek-reasoner', contextLimit: 1_000_000 },
+    ])
+
+    const disabled = toggleModelContextLimit(enabled, 'deepseek-chat', false)
+    expect(disabled.modelMeta['deepseek-chat']?.contextLimit).toBeUndefined()
+    expect(disabled.modelMeta['deepseek-reasoner']?.contextLimit).toBe(1_000_000)
+    expect(modelsWithContextLimit(disabled)).toEqual([
+      { id: 'deepseek-reasoner', contextLimit: 1_000_000 },
+    ])
+  })
+
+  it('stores only the flagged models in the provider definition', () => {
+    const draft = draftWithBothModels()
+    const def = draftToProviderDef(toggleModelContextLimit(draft, 'deepseek-reasoner', true))
+    expect(def.models.find(m => m.id === 'deepseek-chat')?.contextLimit).toBe(1_000_000)
+    expect(def.models.find(m => m.id === 'deepseek-reasoner')?.contextLimit).toBe(1_000_000)
+
+    const single = draftToProviderDef(draft)
+    expect(single.models.find(m => m.id === 'deepseek-chat')?.contextLimit).toBe(1_000_000)
+    expect(single.models.find(m => m.id === 'deepseek-reasoner')?.contextLimit).toBeUndefined()
+  })
+
+  it('keeps input modalities while the window changes and honours custom windows', () => {
+    const draft = draftWithBothModels()
+    const withModalities: ApiProviderDraft = {
+      ...draft,
+      modelMeta: {
+        ...draft.modelMeta,
+        'deepseek-reasoner': { inputModalities: ['text', 'image'] },
+      },
+    }
+    const toggled = toggleModelContextLimit(withModalities, 'deepseek-reasoner', true)
+    expect(toggled.modelMeta['deepseek-reasoner']).toEqual({
+      inputModalities: ['text', 'image'],
+      contextLimit: 1_000_000,
+    })
+
+    const custom = toggleModelContextLimit(toggled, 'deepseek-reasoner', true, 400_000)
+    expect(custom.modelMeta['deepseek-reasoner']?.contextLimit).toBe(400_000)
+    expect(custom.modelMeta['deepseek-reasoner']?.inputModalities).toEqual(['text', 'image'])
+  })
+
+  it('ignores blank model ids', () => {
+    const draft = draftWithBothModels()
+    expect(toggleModelContextLimit(draft, '  ', true)).toBe(draft)
   })
 })
 

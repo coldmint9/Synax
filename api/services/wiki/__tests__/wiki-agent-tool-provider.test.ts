@@ -14,6 +14,12 @@ vi.mock('../../agent-runtime/profile-service.js', () => ({
   },
 }));
 
+const mockProjectHasGeneratedWiki = vi.fn();
+
+vi.mock('../wiki-existence.js', () => ({
+  projectHasGeneratedWiki: (...args: unknown[]) => mockProjectHasGeneratedWiki(...args),
+}));
+
 import { profileService } from '../../agent-runtime/profile-service.js';
 import {
   profileHasWikiAgentReadTools,
@@ -24,6 +30,7 @@ describe('wikiAgentToolProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     wikiAgentToolProvider.resetForTests();
+    mockProjectHasGeneratedWiki.mockReturnValue(true);
   });
 
   it('profileHasWikiAgentReadTools detects wiki read capabilities', () => {

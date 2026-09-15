@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Checkbox, Description, FieldError, InputGroup, Label, Modal, TextField } from '@heroui/react'
+import { Button, Description, FieldError, InputGroup, Label, Modal, TextField } from '@heroui/react'
 import { Check, ChevronDown, Eye, EyeOff, Plus, RefreshCw, Save, Search, Wifi, X } from 'lucide-react'
 import {
   ALL_REASONING_EFFORTS,
@@ -9,10 +9,12 @@ import {
   configuredModelList,
   mergeModelOptions,
   selectDefaultModel,
+  toggleModelContextLimit,
   toggleModelSelection,
   type ApiProviderDraft,
 } from '../lib/providerPresets'
 import { validateProviderDraft } from '../lib/validation'
+import { formatContextLimit } from '../../../../lib/formatTokens'
 import { useLocale } from '../../../../hooks/useLocale'
 import { SettingsSelect } from './SettingsSelect'
 import type { ApiFormat, ReasoningEffort } from '../../../../lib/contracts/config'
@@ -54,7 +56,6 @@ export function LlmProviderModal({
   const errors = validateProviderDraft(draft)
   const fieldError = (field: string) => errors.find(e => e.field === field)?.message
 
-  const selectedModelHas1M = draft.modelMeta?.[draft.model]?.contextLimit === 1_000_000
   /** Models this provider would configure (the multi-select result). */
   const configuredModels = configuredModelList(draft)
   /** Picker candidates: discovered models plus whatever is already configured. */
@@ -181,24 +182,24 @@ export function LlmProviderModal({
     })
   }
 
-  function resetModelModalities(modelId: string) {
+  /** Drops every manual override for one model so it follows its catalog declaration again. */
+  function resetModelOverrides(modelId: string) {
     setDraft(current => ({
       ...current,
       modelMeta: {
         ...current.modelMeta,
-        [modelId]: { ...current.modelMeta?.[modelId], inputModalities: undefined },
+        [modelId]: {
+          ...current.modelMeta?.[modelId],
+          inputModalities: undefined,
+          contextLimit: undefined,
+        },
       },
     }))
   }
 
-  function toggle1M(checked: boolean) {
-    setDraft(d => {
-      const modelMeta = {
-        ...(d.modelMeta ?? {}),
-        [d.model]: { ...(d.modelMeta?.[d.model] ?? {}), contextLimit: checked ? 1_000_000 : undefined },
-      }
-      return { ...d, modelMeta }
-    })
+  /** The 1M input window is a per-model switch, so it never touches sibling models. */
+  function toggleModel1M(modelId: string, checked: boolean) {
+    setDraft(current => toggleModelContextLimit(current, modelId, checked))
   }
 
   return (
@@ -395,20 +396,22 @@ export function LlmProviderModal({
                 )}
                 <div className="space-y-2 pt-1">
                   <p className="text-[10px] text-muted-foreground/70">
-                    {zh ? '已启用模型 · 独立输入能力' : 'Enabled models · Individual input capabilities'}
+                    {zh ? '已启用模型 · 独立能力' : 'Enabled models · Individual capabilities'}
                   </p>
                   <p className="text-[10px] leading-relaxed text-muted-foreground">
                     {zh
-                      ? '分别勾选每个模型实际支持的输入类型；未手动配置时使用目录声明。'
-                      : 'Select the inputs supported by each model. Unconfigured models use their catalog declarations.'}
+                      ? '逐个模型勾选实际支持的输入类型与 1M 上下文窗口；未手动配置时使用目录声明。'
+                      : 'Configure input types and the 1M context window per model. Unconfigured models use their catalog declarations.'}
                   </p>
                   {configuredModels.map(modelId => {
                     const modalities = draft.modelMeta?.[modelId]?.inputModalities
+                    const contextLimit = draft.modelMeta?.[modelId]?.contextLimit
+                    const hasOverride = modalities !== undefined || contextLimit !== undefined
                     const isDefault = modelId === draft.model.trim()
                     return (
                       <fieldset
                         key={modelId}
-                        aria-label={`${modelId} ${zh ? '输入模态' : 'input modalities'}`}
+                        aria-label={`${modelId} ${zh ? '独立能力' : 'capabilities'}`}
                         className="min-w-0 space-y-2 rounded-lg border border-border/40 px-2.5 py-2"
                       >
                         <div className="flex min-w-0 items-center gap-2">
@@ -421,7 +424,7 @@ export function LlmProviderModal({
                             </span>
                           )}
                           <span className="shrink-0 text-[9px] text-muted-foreground">
-                            {modalities === undefined ? (zh ? '使用目录' : 'Catalog') : (zh ? '手动配置' : 'Custom')}
+                            {hasOverride ? (zh ? '手动配置' : 'Custom') : (zh ? '使用目录' : 'Catalog')}
                           </span>
                           {!isDefault && (
                             <button
@@ -450,34 +453,36 @@ export function LlmProviderModal({
                           <button
                             type="button"
                             aria-label={zh ? `恢复 ${modelId} 的目录声明` : `Use catalog declarations for ${modelId}`}
-                            disabled={modalities === undefined}
-                            onClick={() => resetModelModalities(modelId)}
+                            disabled={!hasOverride}
+                            onClick={() => resetModelOverrides(modelId)}
                             className="ml-auto text-[10px] text-primary disabled:cursor-default disabled:text-muted-foreground/40"
                           >
                             {zh ? '恢复目录声明' : 'Use catalog'}
                           </button>
                         </div>
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/30 pt-2">
+                          <label className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[10px] text-foreground/85">
+                            <input
+                              type="checkbox"
+                              aria-label={`${modelId} ${zh ? '输入上下文窗口支持 1M' : '1M input context window'}`}
+                              checked={contextLimit === 1_000_000}
+                              onChange={event => toggleModel1M(modelId, event.target.checked)}
+                              className="size-3.5 accent-primary"
+                            />
+                            {zh ? '输入上下文窗口支持 1M' : '1M input context window'}
+                          </label>
+                          <span className="min-w-0 text-[10px] leading-relaxed text-muted-foreground/70">
+                            {contextLimit === undefined
+                              ? (zh ? '按目录声明的窗口计算' : 'Uses the catalog window')
+                              : (zh
+                                ? `按 ${formatContextLimit(contextLimit)} token 输入窗口计算，压缩/清窗阈值同步放大`
+                                : `Counts a ${formatContextLimit(contextLimit)}-token input window; compaction thresholds scale with it`)}
+                          </span>
+                        </div>
                       </fieldset>
                     )
                   })}
                 </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-2 rounded-lg border border-border/40 px-2.5 py-2">
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-foreground">输入上下文窗口支持 1M</p>
-                  <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
-                    当前模型 {draft.model || '—'} 按 1,000,000 token 输入窗口计算，压缩/清窗阈值同步放大
-                    {selectedModelHas1M ? '（已启用）' : ''}
-                  </p>
-                </div>
-                <Checkbox
-                  isSelected={selectedModelHas1M}
-                  onChange={(checked) => toggle1M(Boolean(checked))}
-                  aria-label="输入上下文窗口支持 1M"
-                >
-                  <Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>
-                </Checkbox>
               </div>
 
               <div className="space-y-1.5">

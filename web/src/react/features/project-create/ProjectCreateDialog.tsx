@@ -4,6 +4,7 @@ import { FolderOpen, Loader2, X } from 'lucide-react'
 import { useShellStore, type ProjectSummary } from '../../state/shellStore'
 import { apiFetch } from '../../../lib/api/origin'
 import { openDirectoryPicker, isElectron } from '../../../lib/open-directory-picker'
+import { resolveSessionsEntryPath } from '../sessions/sessionLastVisit'
 
 interface ProjectCreateDialogProps {
   open: boolean
@@ -65,7 +66,7 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
       })
       reset()
       onClose()
-      navigate(`/projects/${project.id}/wiki`)
+      navigate(resolveSessionsEntryPath(project.id))
     } catch (err) {
       setError((err as Error).message || String(err))
       setSubmitting(false)

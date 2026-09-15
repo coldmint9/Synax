@@ -141,7 +141,7 @@ export default function WorkbenchLayout() {
     if (isCurrentProject) {
       const remaining = useShellStore.getState().projects
       if (remaining.length > 0) {
-        navigate(`/projects/${remaining[0].id}/wiki`, { replace: true })
+        navigate(resolveSessionsEntryPath(remaining[0].id), { replace: true })
       } else {
         navigate('/', { replace: true })
       }
@@ -161,7 +161,7 @@ export default function WorkbenchLayout() {
           projectName={projectName}
           currentProjectId={effectiveProjectId}
           projects={projects}
-          onProjectSwitch={(id) => navigate(`/projects/${id}/wiki`)}
+          onProjectSwitch={(id) => navigate(resolveSessionsEntryPath(id))}
           onCreateProject={() => setCreateDialogOpen(true)}
           onRemoveProject={handleRemoveProject}
         />

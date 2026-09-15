@@ -4,6 +4,7 @@ import { Plus, FolderCode } from 'lucide-react'
 import { IconSurface } from '../components/IconSurface'
 import { useShellStore } from '../state/shellStore'
 import { useLocale } from '../../hooks/useLocale'
+import { resolveSessionsEntryPath } from '../features/sessions/sessionLastVisit'
 
 interface WorkbenchContext {
   onCreateProject: () => void
@@ -31,7 +32,7 @@ export function WelcomeView() {
       const tb = b.updatedAt === 'just now' ? Date.now() : new Date(b.updatedAt).getTime()
       return tb - ta
     })
-    navigate(`/projects/${sorted[0].id}/wiki`, { replace: true })
+    navigate(resolveSessionsEntryPath(sorted[0].id), { replace: true })
   }, [projectsLoaded, projects, defaultHome, navigate])
 
   if (!projectsLoaded) return null

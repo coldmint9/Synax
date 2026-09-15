@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,10 +11,17 @@ import { fileWriteTool } from '../tools/file-write.js';
 import { setSessionWorkspaceRoot } from '../tools/workspace.js';
 import { explorerSessionInput, executorInput, resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
+const mockHasWiki = vi.hoisted(() => ({ value: true }));
+
+vi.mock('../../wiki/wiki-existence.js', () => ({
+  projectHasGeneratedWiki: () => mockHasWiki.value,
+}));
+
 describe('resolveSessionCapabilities', () => {
   beforeEach(() => {
     resetAgentRuntimeFixtures();
     toolRegistry.registerProvider(wikiAgentToolProvider);
+    mockHasWiki.value = true;
   });
 
   it('returns profile-scoped tools and active skills for explorer sessions', () => {

@@ -245,6 +245,11 @@ export interface AgentProfile {
    *  The provider is consulted on every tool listing and execution so that
    *  paused/interrupted sessions recover their tool set on resume. */
   toolProviderId?: string;
+  /** Mount every registered tool for this profile instead of filtering by
+   *  `allowedCapabilities`. Used by the primary Synax agent, which mounts its
+   *  tools up front instead of disclosing them progressively. Session-scoped
+   *  providers still decide what they supply (wiki reads need a generated wiki). */
+  mountAllTools?: boolean;
 }
 
 export interface AgentSession {

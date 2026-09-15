@@ -78,4 +78,5 @@ export const synaxAgentProfile: AgentProfile = {
     "Preserve the user request and finish authorized work with relevant evidence.",
   ],
   allowsSubsessions: true,
+  mountAllTools: true,
 };

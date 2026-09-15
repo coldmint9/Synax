@@ -213,39 +213,13 @@ button.bui-activity-trigger:focus-visible,
 /* Reasoning whose whole payload is one `**phrase**`: the remote model is
    reporting loop state rather than thinking out loud, so there is no body to
    expand. It renders as a banner whose phrase is crossed by a highlight sweep
-   travelling left to right. */
+   that loops smoothly from left to right and back. */
 .bui-thinking-banner {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 7px;
   min-width: 0;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
-  border-radius: 999px;
-  padding: 3px 11px;
-  background: linear-gradient(
-    100deg,
-    color-mix(in srgb, var(--accent) 11%, var(--surface)) 0%,
-    color-mix(in srgb, var(--accent) 3%, var(--surface)) 50%,
-    color-mix(in srgb, var(--accent) 11%, var(--surface)) 100%
-  );
-}
-/* Travelling light band behind the text. */
-.bui-thinking-banner::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    100deg,
-    transparent 30%,
-    color-mix(in srgb, var(--accent) 30%, transparent) 50%,
-    transparent 70%
-  );
-  background-size: 220% 100%;
-  background-repeat: no-repeat;
-  animation: bui-thinking-sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  padding: 3px 6px;
 }
 .bui-thinking-banner-symbol { display: inline-flex; flex: 0 0 auto; align-items: center; color: var(--bui-muted); }
 .bui-thinking-banner[data-live="true"] .bui-thinking-banner-symbol { color: color-mix(in srgb, var(--accent) 45%, var(--foreground)); }
@@ -256,7 +230,7 @@ button.bui-activity-trigger:focus-visible,
   font-weight: 500;
   letter-spacing: 0.02em;
 }
-/* The same sweep carried by the glyphs: the bright stop is the highlight that
+/* A sweep clipped to the glyphs: the bright stop is the highlight that
    crosses the phrase, so the text itself flashes as it is lit. */
 .bui-thinking-banner-text {
   min-width: 0;
@@ -279,11 +253,11 @@ button.bui-activity-trigger:focus-visible,
   background-repeat: no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: bui-thinking-sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: bui-thinking-sweep 5.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 @keyframes bui-thinking-sweep {
-  0% { background-position: 0% 50%; }
-  100% { background-position: 100% 50%; }
+  0%, 100% { background-position: 100% 50%; }
+  50% { background-position: 0% 50%; }
 }
 
 .bui-task { border: 1px solid var(--bui-line); border-radius: 10px; background: var(--surface); }
@@ -309,7 +283,6 @@ button.bui-activity-trigger:focus-visible,
   .bui-status-spinner { animation: none; }
   .bui-tool-group-heading, .bui-tool-trigger, .bui-activity-trigger, .bui-task-trigger { transition: none; }
   /* Keep the banner readable without the sweep: text back to a solid colour. */
-  .bui-thinking-banner::after { animation: none; opacity: 0.5; }
   .bui-thinking-banner-text {
     animation: none;
     color: var(--bui-ink);

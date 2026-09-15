@@ -213,6 +213,21 @@ export function configuredModelList(draft: ApiProviderDraft): string[] {
 }
 
 /**
+ * Selected models that carry their own input context window, in selection order.
+ * Each model owns its `contextLimit`, so one provider can mix 1M and catalog windows.
+ */
+export function modelsWithContextLimit(
+  draft: ApiProviderDraft,
+): Array<{ id: string; contextLimit: number }> {
+  const out: Array<{ id: string; contextLimit: number }> = []
+  for (const id of configuredModelList(draft)) {
+    const contextLimit = draft.modelMeta?.[id]?.contextLimit
+    if (typeof contextLimit === 'number' && contextLimit > 0) out.push({ id, contextLimit })
+  }
+  return out
+}
+
+/**
  * Multi-select toggle for a model picker candidate. The default model stays
  * configured while it is the default; pick another default to drop it.
  */
@@ -230,6 +245,31 @@ export function selectDefaultModel(draft: ApiProviderDraft, candidate: string): 
   const model = candidate.trim()
   if (!model || model === draft.model) return draft
   return { ...draft, model, models: mergeModelOptions(draft.models, [model]) }
+}
+
+/**
+ * Turns the 1M input window on or off for one selected model. Passing `false`
+ * drops that model's override so it falls back to its catalog declaration, while
+ * every other model keeps whatever window it was configured with.
+ */
+export function toggleModelContextLimit(
+  draft: ApiProviderDraft,
+  modelId: string,
+  enabled: boolean,
+  contextLimit = 1_000_000,
+): ApiProviderDraft {
+  const model = modelId.trim()
+  if (!model) return draft
+  return {
+    ...draft,
+    modelMeta: {
+      ...draft.modelMeta,
+      [model]: {
+        ...(draft.modelMeta?.[model] ?? {}),
+        contextLimit: enabled ? contextLimit : undefined,
+      },
+    },
+  }
 }
 
 export function resolveFormat(providerId: string, connection?: ProviderConnection): ApiFormat {
