@@ -4,7 +4,6 @@ import { useConfig } from './useConfig'
 import { useLocale } from '../../../hooks/useLocale'
 import { LayoutSection } from './components/LayoutSection'
 import { LlmProviderSection } from './components/LlmProviderSection'
-import { AcpSection } from './components/AcpSection'
 import { LimitsSection } from './components/LimitsSection'
 import { AdvancedSection } from './components/AdvancedSection'
 import { ProjectIntegrationsSection } from './components/ProjectIntegrationsSection'
@@ -48,7 +47,6 @@ export default function GlobalSettingsPage() {
               onUpdate={updateGlobalConfig}
               onReload={reload}
             />
-            <AcpSection config={globalConfig} onUpdate={updateGlobalConfig} onReload={reload} />
             <LimitsSection config={globalConfig} onUpdate={updateGlobalConfig} />
             <AdvancedSection config={globalConfig} onUpdate={updateGlobalConfig} />
           </div>

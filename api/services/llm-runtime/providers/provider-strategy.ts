@@ -1,4 +1,5 @@
 import type { ResolvedModelSelection, RuntimeModel } from '../types.js'
+import { resolvePromptCaching } from '../cache-policy.js'
 
 export interface ProviderStrategy {
   needsReasoningMiddleware(model: RuntimeModel): boolean
@@ -8,7 +9,10 @@ export interface ProviderStrategy {
 
 const defaultStrategy: ProviderStrategy = {
   needsReasoningMiddleware: (model) => Boolean(model.reasoning),
-  supportsCacheControl: () => false,
+  supportsCacheControl: (selection) => {
+    resolvePromptCaching(selection.config.options?.promptCaching)
+    return false
+  },
   modelOptions: () => undefined,
 }
 
@@ -25,8 +29,8 @@ const nativeReasoningStrategy: ProviderStrategy = {
 const anthropicStrategy: ProviderStrategy = {
   ...nativeReasoningStrategy,
   supportsCacheControl: (sel) => {
-    if (sel.providerId === 'anthropic') return true
-    return (sel.config.baseUrl ?? sel.provider.api ?? '').includes('anthropic.com')
+    const policy = resolvePromptCaching(sel.config.options?.promptCaching)
+    return policy !== 'off' && sel.apiFormat === 'anthropic' && sel.provider.npm === '@ai-sdk/anthropic'
   },
 }
 

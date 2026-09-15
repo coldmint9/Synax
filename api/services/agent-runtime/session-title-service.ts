@@ -1,34 +1,46 @@
-import { outsideExecutionContext } from '../../lib/execution-context.js';
-import { startAuxUsage, finishAuxUsage } from './usage-projection.js';
-import { logger } from '../../lib/logger.js';
-import { sessionHooks } from './session-hooks.js';
-import { generateGatewayTextResult } from '../llm-runtime/gateway.js';
-import { resolveGoalTitleSource } from '../wiki/wiki-goal-title.js';
-import type { AgentRunStreamChunk, AgentSession } from './contracts.js';
-import { agentRuntimeStore } from './session-store.js';
-import { nowIso } from './runtime-ids.js';
+import { normalizeResultUsage } from "../llm-runtime/usage.js";
+import { outsideExecutionContext } from "../../lib/execution-context.js";
+import { startAuxUsage, finishAuxUsage } from "./usage-projection.js";
+import { logger } from "../../lib/logger.js";
+import { sessionHooks } from "./session-hooks.js";
+import { generateGatewayTextResult } from "../llm-runtime/gateway.js";
+import { resolveGoalTitleSource } from "../wiki/wiki-goal-title.js";
+import type { AgentRunStreamChunk, AgentSession } from "./contracts.js";
+import { agentRuntimeStore } from "./session-store.js";
+import { nowIso } from "./runtime-ids.js";
 
-function resolveUserTitleInput(sessionId: string, sessionPrompt: string): string {
+function resolveUserTitleInput(
+  sessionId: string,
+  sessionPrompt: string,
+): string {
   const session = agentRuntimeStore.tryGetSession(sessionId);
-  return resolveGoalTitleSource({
-    sessionMetadata: session?.sessionMetadata ?? null,
-    prompt: sessionPrompt,
-  }) ?? sessionPrompt.trim();
+  return (
+    resolveGoalTitleSource({
+      sessionMetadata: session?.sessionMetadata ?? null,
+      prompt: sessionPrompt,
+    }) ?? sessionPrompt.trim()
+  );
 }
 
 const INITIAL_TITLE_MAX_LEN = 80;
-export const DEFAULT_NEW_SESSION_TITLE = 'new session';
+export const DEFAULT_NEW_SESSION_TITLE = "new session";
 
 /**
  * Titles that only mean "no title yet". Legacy spellings stay
  * recognized so sessions created before the rename still get summarized.
  */
-const PLACEHOLDER_SESSION_TITLES = [DEFAULT_NEW_SESSION_TITLE, 'new agent', '新会话'];
+const PLACEHOLDER_SESSION_TITLES = [
+  DEFAULT_NEW_SESSION_TITLE,
+  "new agent",
+  "新会话",
+];
 
 function isPlaceholderSessionTitle(title: string | null | undefined): boolean {
   const normalized = title?.trim().toLowerCase();
   if (!normalized) return false;
-  return PLACEHOLDER_SESSION_TITLES.some((placeholder) => placeholder.toLowerCase() === normalized);
+  return PLACEHOLDER_SESSION_TITLES.some(
+    (placeholder) => placeholder.toLowerCase() === normalized,
+  );
 }
 
 export interface TitleGeneratorContext {
@@ -58,7 +70,7 @@ const titleGenerationQueued = new Set<string>();
 function scheduleSessionTitleGeneration(
   sessionId: string,
   runId: string | undefined,
-  trigger: 'run_started' | 'stream_done',
+  trigger: "run_started" | "stream_done",
 ): void {
   if (titleGenerationInFlight.has(sessionId)) {
     // A generation is already running; re-check once it settles so a title
@@ -66,12 +78,14 @@ function scheduleSessionTitleGeneration(
     titleGenerationQueued.add(sessionId);
     return;
   }
-  const task = outsideExecutionContext(() => runDeferredSessionTitleGeneration(sessionId, runId, trigger));
+  const task = outsideExecutionContext(() =>
+    runDeferredSessionTitleGeneration(sessionId, runId, trigger),
+  );
   titleGenerationInFlight.set(sessionId, task);
   void task.finally(() => {
     titleGenerationInFlight.delete(sessionId);
     if (titleGenerationQueued.delete(sessionId)) {
-      scheduleSessionTitleGeneration(sessionId, undefined, 'stream_done');
+      scheduleSessionTitleGeneration(sessionId, undefined, "stream_done");
     }
   });
 }
@@ -79,13 +93,16 @@ function scheduleSessionTitleGeneration(
 async function runDeferredSessionTitleGeneration(
   sessionId: string,
   runId: string | undefined,
-  trigger: 'run_started' | 'stream_done',
+  trigger: "run_started" | "stream_done",
 ): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
   await runSessionTitleGeneration(sessionId, runId, trigger);
 }
 
-export function registerTitleGenerator(profileId: string, generator: TitleGenerator): void {
+export function registerTitleGenerator(
+  profileId: string,
+  generator: TitleGenerator,
+): void {
   registry.set(profileId, generator);
 }
 
@@ -94,7 +111,7 @@ export function unregisterTitleGenerator(profileId: string): void {
 }
 
 function looksLikeSystemPrompt(prompt: string): boolean {
-  return prompt.includes('## ') || /^You are\b/m.test(prompt);
+  return prompt.includes("## ") || /^You are\b/m.test(prompt);
 }
 
 function truncateInitialTitle(text: string): string {
@@ -119,7 +136,7 @@ function countCjkChars(text: string): number {
 }
 
 function countEnglishWords(text: string): number {
-  const latin = text.replace(/\p{Script=Han}/gu, ' ').trim();
+  const latin = text.replace(/\p{Script=Han}/gu, " ").trim();
   if (!latin) return 0;
   return latin.split(/\s+/).filter(Boolean).length;
 }
@@ -131,14 +148,20 @@ export function isValidGeneratedSessionTitle(title: string): boolean {
   if (isPlaceholderSessionTitle(trimmed)) return false;
   if (/[\n\r]/.test(trimmed)) return false;
   if (looksLikeSystemPrompt(trimmed)) return false;
-  if (/^["'`「『【〈《[]/.test(trimmed) && /["'`」』】〉》\])]$/.test(trimmed)) return false;
+  if (/^["'`「『【〈《[]/.test(trimmed) && /["'`」』】〉》\])]$/.test(trimmed))
+    return false;
   if (!/[\p{L}\p{N}]/u.test(trimmed)) return false;
 
   const cjkCount = countCjkChars(trimmed);
   const wordCount = countEnglishWords(trimmed);
-  if (cjkCount > 0 && wordCount === 0) return cjkCount <= MAX_GENERATED_CJK_CHARS;
-  if (wordCount > 0 && cjkCount === 0) return wordCount >= 1 && wordCount <= MAX_GENERATED_ENGLISH_WORDS;
-  return cjkCount <= MAX_GENERATED_CJK_CHARS && wordCount <= MAX_GENERATED_ENGLISH_WORDS;
+  if (cjkCount > 0 && wordCount === 0)
+    return cjkCount <= MAX_GENERATED_CJK_CHARS;
+  if (wordCount > 0 && cjkCount === 0)
+    return wordCount >= 1 && wordCount <= MAX_GENERATED_ENGLISH_WORDS;
+  return (
+    cjkCount <= MAX_GENERATED_CJK_CHARS &&
+    wordCount <= MAX_GENERATED_ENGLISH_WORDS
+  );
 }
 
 function resolveFinalSessionTitle(
@@ -157,20 +180,33 @@ function resolveFinalSessionTitle(
 async function applyGeneratedSessionTitle(
   session: AgentSession,
   userInput: string,
-  trigger: 'run_started' | 'stream_done',
+  trigger: "run_started" | "stream_done",
   runId?: string,
 ): Promise<void> {
-  const llmTitle = await resolveSessionTitleText(session.id, session.projectId, session.profileId, userInput);
+  const llmTitle = await resolveSessionTitleText(
+    session.id,
+    session.projectId,
+    session.profileId,
+    userInput,
+  );
   if (llmTitle && !isValidGeneratedSessionTitle(llmTitle.trim())) {
     logger.warn(
-      { sessionId: session.id, runId: runId ?? null, trigger, llmTitle: llmTitle.trim() },
-      '[session-title] generated title failed validation',
+      {
+        sessionId: session.id,
+        runId: runId ?? null,
+        trigger,
+        llmTitle: llmTitle.trim(),
+      },
+      "[session-title] generated title failed validation",
     );
   }
 
   const resolved = resolveFinalSessionTitle(llmTitle, userInput);
   if (!resolved) {
-    logger.warn({ sessionId: session.id, runId: runId ?? null, trigger }, '[session-title] no usable title');
+    logger.warn(
+      { sessionId: session.id, runId: runId ?? null, trigger },
+      "[session-title] no usable title",
+    );
     return;
   }
 
@@ -179,7 +215,10 @@ async function applyGeneratedSessionTitle(
   agentRuntimeStore.updateSession(session.id, {
     title: resolved.title,
     updatedAt: nowIso(),
-    sessionMetadata: { ...(current.sessionMetadata ?? {}), titleSummarized: true },
+    sessionMetadata: {
+      ...(current.sessionMetadata ?? {}),
+      titleSummarized: true,
+    },
   });
   logger.info(
     {
@@ -189,7 +228,7 @@ async function applyGeneratedSessionTitle(
       trigger,
       fallback: resolved.usedFallback,
     },
-    '[session-title] session title updated',
+    "[session-title] session title updated",
   );
 }
 
@@ -198,7 +237,7 @@ export function resolveInitialSessionTitle(input: {
   prompt: string;
 }): string | null {
   const meta = input.sessionMetadata;
-  if (meta?.source === 'session-page') {
+  if (meta?.source === "session-page") {
     return DEFAULT_NEW_SESSION_TITLE;
   }
 
@@ -216,7 +255,7 @@ export function resolveInitialSessionTitle(input: {
 export function needsGeneratedSessionTitle(session: AgentSession): boolean {
   if (session.sessionMetadata?.titleSummarized === true) return false;
   if (isPlaceholderSessionTitle(session.title)) return true;
-  if (session.sessionMetadata?.source === 'session-page') return true;
+  if (session.sessionMetadata?.source === "session-page") return true;
   return !session.title?.trim();
 }
 
@@ -230,52 +269,73 @@ export function maybeScheduleSessionTitleFromStreamChunk(
   sessionId: string,
   chunk: AgentRunStreamChunk,
 ): void {
-  if (chunk.type !== 'run_started') return;
-  scheduleSessionTitleGeneration(sessionId, chunk.run.id, 'run_started');
+  if (chunk.type !== "run_started") return;
+  scheduleSessionTitleGeneration(sessionId, chunk.run.id, "run_started");
 }
 
-export function scheduleSessionTitleAfterRunStart(sessionId: string, runId: string): void {
-  scheduleSessionTitleGeneration(sessionId, runId, 'run_started');
+export function scheduleSessionTitleAfterRunStart(
+  sessionId: string,
+  runId: string,
+): void {
+  scheduleSessionTitleGeneration(sessionId, runId, "run_started");
 }
 
 /** Reliable fallback: generate title after a streamed turn completes. */
 export function ensureSessionTitleGenerated(sessionId: string): void {
-  scheduleSessionTitleGeneration(sessionId, undefined, 'stream_done');
+  scheduleSessionTitleGeneration(sessionId, undefined, "stream_done");
 }
 
 async function runSessionTitleGeneration(
   sessionId: string,
   runId: string | undefined,
-  trigger: 'run_started' | 'stream_done',
+  trigger: "run_started" | "stream_done",
 ): Promise<void> {
   try {
     const session = agentRuntimeStore.tryGetSession(sessionId);
     if (!session) {
-      logger.debug({ sessionId, trigger }, '[session-title] skipped: session not found');
+      logger.debug(
+        { sessionId, trigger },
+        "[session-title] skipped: session not found",
+      );
       return;
     }
     if (!needsGeneratedSessionTitle(session)) {
-      logger.debug({ sessionId, trigger, title: session.title }, '[session-title] skipped: title already set');
+      logger.debug(
+        { sessionId, trigger, title: session.title },
+        "[session-title] skipped: title already set",
+      );
       return;
     }
-    if (session.activeRunId && trigger !== 'run_started') {
+    if (session.activeRunId && trigger !== "run_started") {
       // A late fallback fired while the run is still in flight (for example
       // the client stream ended before the run did). The run-start trigger
       // is intentionally allowed to overlap the first turn.
-      logger.debug({ sessionId, trigger, activeRunId: session.activeRunId }, '[session-title] deferred: run still active');
+      logger.debug(
+        { sessionId, trigger, activeRunId: session.activeRunId },
+        "[session-title] deferred: run still active",
+      );
       return;
     }
 
     const userInput = resolveUserTitleInput(sessionId, session.prompt);
     if (!userInput.trim()) {
-      logger.debug({ sessionId, trigger }, '[session-title] skipped: no user input for title');
+      logger.debug(
+        { sessionId, trigger },
+        "[session-title] skipped: no user input for title",
+      );
       return;
     }
 
-    logger.info({ sessionId, runId: runId ?? null, trigger }, '[session-title] generating session title');
+    logger.info(
+      { sessionId, runId: runId ?? null, trigger },
+      "[session-title] generating session title",
+    );
     await applyGeneratedSessionTitle(session, userInput, trigger, runId);
   } catch (err) {
-    logger.warn({ sessionId, runId: runId ?? null, trigger, err }, '[session-title] generation failed');
+    logger.warn(
+      { sessionId, runId: runId ?? null, trigger, err },
+      "[session-title] generation failed",
+    );
   }
 }
 
@@ -285,20 +345,31 @@ export async function resolveSessionTitleText(
   profileId: string,
   userInput: string,
 ): Promise<string | null> {
-  const ctx: TitleGeneratorContext = { sessionId, projectId, profileId, prompt: userInput };
+  const ctx: TitleGeneratorContext = {
+    sessionId,
+    projectId,
+    profileId,
+    prompt: userInput,
+  };
   const custom = registry.get(profileId);
 
   if (custom) {
     const result = custom.generate(ctx);
-    if (typeof result === 'string') {
+    if (typeof result === "string") {
       return result.trim() || null;
     }
-    if (result && typeof (result as Promise<string | null>).then === 'function') {
+    if (
+      result &&
+      typeof (result as Promise<string | null>).then === "function"
+    ) {
       try {
         const title = await (result as Promise<string | null>);
         return title?.trim() || null;
       } catch (err) {
-        logger.warn({ sessionId, err }, '[session-title] custom generator failed');
+        logger.warn(
+          { sessionId, err },
+          "[session-title] custom generator failed",
+        );
         return null;
       }
     }
@@ -314,40 +385,50 @@ export async function generateSessionTitle(
   profileId: string,
   prompt: string,
 ): Promise<boolean> {
-  const title = await resolveSessionTitleText(sessionId, projectId, profileId, prompt);
+  const title = await resolveSessionTitleText(
+    sessionId,
+    projectId,
+    profileId,
+    prompt,
+  );
   if (!title) return false;
   agentRuntimeStore.updateSession(sessionId, { title, updatedAt: nowIso() });
   return true;
 }
 
-async function resolveTitleTextWithLlm(ctx: TitleGeneratorContext): Promise<string | null> {
+async function resolveTitleTextWithLlm(
+  ctx: TitleGeneratorContext,
+): Promise<string | null> {
   const usageId = startAuxUsage(ctx.sessionId, "session-title");
   try {
     const truncated = ctx.prompt.slice(0, 600);
     const result = await generateGatewayTextResult({
       projectId: ctx.projectId,
-      purpose: 'session-title',
+      purpose: "session-title",
       messages: [
         {
-          role: 'user',
+          role: "user",
           content: [
-            'Generate a short title (max 10 Chinese characters or 6 English words) from the user input below.',
-            'Return ONLY the title, no quotes or punctuation.',
-            '',
+            "Generate a short title (max 10 Chinese characters or 6 English words) from the user input below.",
+            "Return ONLY the title, no quotes or punctuation.",
+            "",
             truncated,
-          ].join('\n'),
+          ].join("\n"),
         },
       ],
       maxTokens: 128,
       temperature: 0.3,
     });
 
-    finishAuxUsage(usageId, result.totalUsage ?? result.usage);
-    const title = (result.text ?? '').trim().slice(0, 50);
+    finishAuxUsage(usageId, normalizeResultUsage(result));
+    const title = (result.text ?? "").trim().slice(0, 50);
     return title || null;
   } catch (err) {
     finishAuxUsage(usageId);
-    logger.warn({ sessionId: ctx.sessionId, err }, '[session-title] LLM title generation failed');
+    logger.warn(
+      { sessionId: ctx.sessionId, err },
+      "[session-title] LLM title generation failed",
+    );
     return null;
   }
 }
@@ -361,10 +442,10 @@ async function resolveTitleTextWithLlm(ctx: TitleGeneratorContext): Promise<stri
  */
 export function registerSessionTitleHooks(): void {
   sessionHooks.register({
-    id: 'session-title-after-run',
-    filter: { eventTypes: ['run:completed'] },
+    id: "session-title-after-run",
+    filter: { eventTypes: ["run:completed"] },
     handler: (event) => {
-      if (event.type !== 'run:completed') return;
+      if (event.type !== "run:completed") return;
       ensureSessionTitleGenerated(event.sessionId);
     },
   });

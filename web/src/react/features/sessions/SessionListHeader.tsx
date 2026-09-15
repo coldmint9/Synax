@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronLeft, Search, Trash2, Plus } from 'lucide-react'
+import { ArrowLeft, PanelLeftClose, Search, Trash2, Plus } from 'lucide-react'
 import { Button } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { SessionListView } from './sessionBuckets'
@@ -57,7 +57,7 @@ export function SessionListHeader({
               aria-label={t('appCollapseSidebar')}
               title={t('appCollapseSidebar')}
             >
-              <ChevronLeft size={14} />
+              <PanelLeftClose size={14} />
             </button>
           ) : null}
         </div>

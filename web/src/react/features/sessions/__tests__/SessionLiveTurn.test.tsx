@@ -41,7 +41,8 @@ describe('SessionLiveTurn', () => {
     rerender(<SessionLiveTurn {...props} steps={[persisted]} />)
     expect(screen.queryByText('Locating BUI styles elsewhere')).toBeNull()
     expect(screen.queryByText('bui-tool|bui-activity|StreamingTextBlock')).toBeNull()
-    expect(container.querySelectorAll('.animate-thinking-bounce')).toHaveLength(3)
+    expect(container.querySelector('.bui-thinking')).toHaveAttribute('data-live', 'true')
+    expect(screen.getByRole('status').textContent).toBeTruthy()
   })
 
   it('keeps an unsynced step even when its contents match a persisted step', () => {

@@ -1,7 +1,7 @@
-import { memo, useId, useState, useEffect } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
-import { ScrollShadow } from '@heroui/react'
+import { memo, useState, useEffect } from 'react'
+import { Wrench } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
+import { ThinkingTrace } from './ThinkingTrace'
 import type { TurnContentBlock } from './buildInterleavedTurns'
 import { toolBlocksToBatches } from './toolCallUtils'
 import { ThinkingBlock } from './ThinkingBlock'
@@ -20,8 +20,6 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
   isStreaming = false,
 }: Props) {
   const { t } = useLocale()
-  const [expanded, setExpanded] = useState(false)
-  const listId = useId()
   const previews = toolBlocks.flatMap((block, index) => {
     if (block.type === 'thinking') return [{ id: `thinking-${index}`, text: activityPreview(block.content.replace(/\*\*/g, ''), 160) }]
     const calls = block.type === 'tool_call' ? [block.call] : block.type === 'tool_call_group' ? block.calls : []
@@ -31,11 +29,11 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
   const [cursor, setCursor] = useState<string | undefined>(undefined)
   useEffect(() => { setCursor(latestId) }, [latestId])
   useEffect(() => {
-    if (!isStreaming || expanded || previews.length < 2) return
+    if (!isStreaming || previews.length < 2) return
     const ids = previews.map(item => item.id)
     const timer = window.setInterval(() => setCursor(current => ids[(ids.indexOf(current ?? '') + 1) % ids.length]), 2800)
     return () => window.clearInterval(timer)
-  }, [expanded, isStreaming, latestId, previews.length])
+  }, [isStreaming, latestId, previews.length])
   const preview = (isStreaming ? previews.find(item => item.id === cursor) : undefined) ?? previews[previews.length - 1]
   if (toolBlocks.length === 0) return null
   const batches = toolBlocksToBatches(toolBlocks)
@@ -44,26 +42,21 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
 
   return (
     <div className="bui-tool-group">
-      {<button
-        type="button"
-        className="bui-tool-group-heading"
-        aria-expanded={expanded}
-        aria-controls={expanded ? listId : undefined}
-        onClick={() => setExpanded(value => !value)}
+      <ThinkingTrace
+        label={preview?.text ?? t('sessionActivityThinking')}
+        title={preview?.text}
+        meta={calls.length ? t('sessionWorkLogCalls', { count: calls.length }) : null}
+        working={isStreaming}
+        variant="coding"
+        icon={calls.length ? <Wrench size={16} aria-hidden="true" /> : undefined}
+        maxHeight={maxHeight}
       >
-        {expanded ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
-        <span className="bui-tool-group-count">{calls.length ? t('sessionWorkLogCalls', { count: calls.length }) : '思考'}</span>
-        {preview && <span className="bui-activity-carousel" title={preview.text}><span key={preview.id} className={`bui-activity-brief${isStreaming ? ' bui-activity-brief--live' : ''}`}>{preview.text}</span></span>}
-      </button>}
-      {expanded && (
-        <ScrollShadow id={listId} style={{ maxHeight }} visibility="none">
-          <div className="bui-tool-list">
-            {toolBlocks.map((block, index) => block.type === 'thinking'
-              ? <ThinkingBlock key={`thinking-${index}`} content={block.content} isStreaming={isStreaming && index === toolBlocks.length - 1} />
-              : toolBlocksToBatches([block]).map(batch => <ToolCallBatchSummaryLine key={`${batch.toolId}-${batch.calls[0]?.id}`} batch={batch} />))}
-          </div>
-        </ScrollShadow>
-      )}
+        <div className="bui-tool-list">
+          {toolBlocks.map((block, index) => block.type === 'thinking'
+            ? <ThinkingBlock key={`thinking-${index}`} content={block.content} isStreaming={isStreaming && index === toolBlocks.length - 1} />
+            : toolBlocksToBatches([block]).map(batch => <ToolCallBatchSummaryLine key={`${batch.toolId}-${batch.calls[0]?.id}`} batch={batch} />))}
+        </div>
+      </ThinkingTrace>
     </div>
   )
 })

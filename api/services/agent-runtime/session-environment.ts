@@ -62,13 +62,15 @@ export interface SessionEnvironmentFileView {
   truncated: boolean
 }
 
-async function git(workspacePath: string, args: string[]): Promise<string> {
+async function git(workspacePath: string, args: string[], input?: string): Promise<string> {
   try {
-    const result = await execFileAsync('git', args, {
+    const pending = execFileAsync('git', args, {
       cwd: workspacePath,
       maxBuffer: MAX_BUFFER,
       encoding: 'utf8',
     })
+    if (input !== undefined) pending.child.stdin?.end(input)
+    const result = await pending
     return String(result.stdout ?? '')
   } catch (error) {
     const output = error as { stdout?: string }
@@ -99,26 +101,35 @@ function resolveSafeFile(workspacePath: string, relativePath: string): string {
   return absolute
 }
 
-function parseStatusLine(line: string): { xy: string; path: string; originalPath?: string } | null {
-  if (line.length < 4) return null
-  const xy = line.slice(0, 2)
-  const raw = line.slice(3)
-  if (xy.includes('R') && raw.includes(' -> ')) {
-    const [originalPath, nextPath] = raw.split(' -> ')
-    return { xy, path: nextPath, originalPath }
+function parseStatus(output: string): Array<{ xy: string; path: string }> {
+  const entries: Array<{ xy: string; path: string }> = []
+  const records = output.split('\0')
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]
+    if (record.length < 4) continue
+    const xy = record.slice(0, 2)
+    entries.push({ xy, path: record.slice(3) })
+    // Porcelain -z puts the destination first, followed by the original path.
+    if (xy.includes('R') || xy.includes('C')) index += 1
   }
-  return { xy, path: raw }
+  return entries
 }
 
 function parseNumstat(output: string): Map<string, { additions: number; deletions: number }> {
   const result = new Map<string, { additions: number; deletions: number }>()
-  for (const line of output.split('\n')) {
-    if (!line.trim()) continue
-    const parts = line.split('\t')
+  const records = output.split('\0')
+  for (let index = 0; index < records.length; index += 1) {
+    const parts = records[index].split('\t')
     if (parts.length < 3) continue
     const additions = Number(parts[0])
     const deletions = Number(parts[1])
-    const filePath = parts.slice(2).join('\t')
+    let filePath = parts.slice(2).join('\t')
+    if (!filePath) {
+      // Renames have separate original and destination path records with -z.
+      filePath = records[index + 2]
+      index += 2
+    }
+    if (!filePath) continue
     result.set(filePath, {
       additions: Number.isFinite(additions) ? additions : 0,
       deletions: Number.isFinite(deletions) ? deletions : 0,
@@ -230,15 +241,22 @@ async function computeSessionEnvironment(sessionId: string): Promise<SessionEnvi
   const [branchRaw, headCommitShaRaw, statusRaw, numstatRaw] = await Promise.all([
     git(workspacePath, ['branch', '--show-current']),
     git(workspacePath, ['rev-parse', 'HEAD']),
-    git(workspacePath, ['status', '--porcelain=v1', '-uall']),
-    git(workspacePath, ['diff', 'HEAD', '--numstat']),
+    git(workspacePath, ['status', '--porcelain=v1', '-uall', '-z']),
+    git(workspacePath, ['diff', 'HEAD', '--numstat', '-z']),
   ])
 
   const numstat = parseNumstat(numstatRaw)
+  const statusEntries = parseStatus(statusRaw)
+  // Status already excludes ignored untracked files. Check without the index
+  // so tracked files (including staged deletions) also respect ignore rules.
+  // NUL delimiters preserve spaces, Unicode and newlines in file names.
+  const ignoredPaths = new Set(statusEntries.length > 0
+    ? (await git(workspacePath, ['check-ignore', '--no-index', '--stdin', '-z'],
+      `${statusEntries.map(entry => entry.path).join('\0')}\0`)).split('\0')
+    : [])
   const changedFiles: SessionEnvironmentFile[] = []
-  for (const line of statusRaw.split('\n')) {
-    const parsed = parseStatusLine(line)
-    if (!parsed) continue
+  for (const parsed of statusEntries) {
+    if (ignoredPaths.has(parsed.path)) continue
     const status = parsed.xy.includes('R')
       ? 'renamed'
       : parsed.xy === '??'

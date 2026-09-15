@@ -25,6 +25,30 @@ const cursorProvider: ProviderDef = {
 };
 
 describe('buildGoalModelOptions', () => {
+  it('hides registered ACP providers before discovery', () => {
+    expect(buildGoalModelOptions(baseGlobalConfig, [cursorProvider]).acpEndpoints).toEqual([]);
+  });
+
+  it.each([
+    { status: 'missing', installed: false, handshakeOk: false },
+    { status: 'available', installed: true, handshakeOk: false },
+    { status: 'available', installed: false, handshakeOk: true },
+  ] as const)('excludes unusable discovery results: %j', result => {
+    expect(buildGoalModelOptions(baseGlobalConfig, [cursorProvider], [{
+      id: 'cursor-acp', label: 'Cursor ACP', command: 'agent', selected: false,
+      compatibility: '', ...result,
+    }]).acpEndpoints).toEqual([]);
+  });
+
+  it('offers discovered ACP without global settings or enable toggles', () => {
+    const discovery = [{ id: 'cursor-acp', label: 'Cursor ACP', command: 'agent',
+      status: 'available' as const, installed: true, handshakeOk: true, selected: false, compatibility: '' }];
+    for (const config of [null, { ...baseGlobalConfig, enabledAcpProviderIds: [] }]) {
+      expect(buildGoalModelOptions(config, [cursorProvider], discovery).acpEndpoints)
+        .toEqual([{ kind: 'acp', providerId: 'cursor-acp', modelId: 'cursor-default', label: 'Cursor Default' }]);
+    }
+  });
+
   it('expands ACP provider models from discovery catalog', () => {
     const { acpEndpoints } = buildGoalModelOptions(
       baseGlobalConfig,

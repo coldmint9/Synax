@@ -1,6 +1,5 @@
-import { ChevronLeft } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
-import { SynaxMark } from '../../components/SynaxMark'
 
 interface Props {
   collapsed: boolean
@@ -8,10 +7,10 @@ interface Props {
 }
 
 /**
- * Edge control for the left session panel. While the panel is collapsed it is
- * the only Synax affordance left on the rail, so it carries the brand mark
- * instead of a bare chevron; the expand affordance stays in the label and in
- * the rightward nudge on hover.
+ * Edge control for the left session panel. It uses the standard sidebar-panel
+ * glyph in both directions (`panel-left-close` while open, `panel-left-open`
+ * on the collapsed rail) so the affordance reads as a sidebar toggle rather
+ * than a generic back/forward chevron.
  */
 export function SessionPanelCollapseButton({ collapsed, onToggle }: Props) {
   const { t } = useLocale()
@@ -25,11 +24,7 @@ export function SessionPanelCollapseButton({ collapsed, onToggle }: Props) {
       onClick={onToggle}
       className="session-panel-collapse session-panel-collapse--left"
     >
-      {collapsed ? (
-        <SynaxMark size={15} />
-      ) : (
-        <ChevronLeft size={12} />
-      )}
+      {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
     </button>
   )
 }

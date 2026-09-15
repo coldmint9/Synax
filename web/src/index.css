@@ -3174,21 +3174,6 @@
   border-radius: 0 8px 8px 0;
 }
 
-/* Synax brand mark. It inherits `currentColor` for the ribbon so the
-   surrounding accent/foreground tokens drive the stroke. */
-.synax-mark {
-  display: block;
-  overflow: visible;
-  flex: none;
-}
-/* Terminal nodes read as the light "synapse" beads of the app icon. */
-.synax-mark-node {
-  fill: hsl(var(--foreground-hsl) / 0.82);
-}
-.session-panel-collapse:hover .synax-mark-node {
-  fill: hsl(var(--primary));
-}
-
 @media (max-width: 1279px) {
   .session-panel-collapse--right,
   .session-panel-resizer--right {
@@ -3273,19 +3258,13 @@
 }
 
 /* Fully collapsed left session panel: consume zero layout width; the reopen
-   tab overlays the content edge. It is the only Synax affordance left on the
-   rail, so it is widened to carry the brand mark legibly. */
+   tab overlays the content edge and points right. */
 .session-panel-host--left[data-collapsed="true"] .session-panel-collapse--left {
-  /* Only shown while collapsed: it sits on the title row. */
+  /* Only shown while collapsed: it sits on the title row and points right. */
   top: 40px;
-  width: 24px;
-  right: -24px;
+  right: -18px;
   transform: none;
   border-radius: 0 8px 8px 0;
-  color: var(--accent);
-}
-.session-panel-host--left[data-collapsed="true"] .session-panel-collapse--left:hover {
-  color: hsl(var(--primary));
 }
 
 /* Global interface typography scale. The preference is expressed as a scale

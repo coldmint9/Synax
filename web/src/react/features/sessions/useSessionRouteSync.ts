@@ -60,6 +60,15 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
   ])
 
   useEffect(() => {
+    // Child effects run before the layout's, which is what binds `projectId`
+    // into the store. Right after a project switch the store therefore still
+    // holds the previous project, so opening the panel here would select a
+    // session that the layout's setProjectId then wipes (it resets
+    // selectedSessionId/panelOpen). None of this effect's dependencies change
+    // afterwards, so the panel would never reopen and the detail never loads.
+    // Wait until the store has bound the project this page renders.
+    if (!isProjectReady) return
+
     if (listView === 'workflow') {
       if (sessionIdFromUrl) {
         openPanel(sessionIdFromUrl)
@@ -92,6 +101,7 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
       closePanel()
     }
   }, [
+    isProjectReady,
     listView,
     location.pathname,
     sessionIdFromUrl,

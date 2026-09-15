@@ -353,6 +353,10 @@ export interface SessionUsageTotals {
   output: number;
   reasoning: number;
   cacheRead: number;
+  cacheWrite?: number;
+  cacheReadMatched?: number;
+  cacheInputMatched?: number;
+  cacheReadRatio?: number | null;
   total: number;
 }
 export interface SessionUsageCoverage {
@@ -360,6 +364,11 @@ export interface SessionUsageCoverage {
   recorded: number;
   missing: number;
   complete: boolean;
+  cacheReadKnown?: number;
+  cacheReadUnknown?: number;
+  cacheWriteKnown?: number;
+  cacheWriteUnknown?: number;
+  cacheMatched?: number;
 }
 export interface ContextComposition {
   tools: number;
@@ -390,8 +399,18 @@ export interface SessionStats {
     measuredAt: string | null;
     latestRequestUsageAvailable: boolean;
   };
-  usage?: { self: SessionUsageTotals; tree: SessionUsageTotals };
-  coverage?: { self: SessionUsageCoverage; tree: SessionUsageCoverage };
+  usage?: {
+    self: SessionUsageTotals;
+    tree: SessionUsageTotals;
+    steps?: { self: SessionUsageTotals; tree: SessionUsageTotals };
+    auxiliary?: { self: SessionUsageTotals; tree: SessionUsageTotals };
+  };
+  coverage?: {
+    self: SessionUsageCoverage;
+    tree: SessionUsageCoverage;
+    steps?: { self: SessionUsageCoverage; tree: SessionUsageCoverage };
+    auxiliary?: { self: SessionUsageCoverage; tree: SessionUsageCoverage };
+  };
   tokenUsage: { input: number; output: number; total: number };
   contextLimit: number;
   contextLimitKnown?: boolean;

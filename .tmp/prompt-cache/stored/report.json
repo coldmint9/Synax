@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-15T13:48:47.868Z",
+  "mode": "stored-session-read-only",
+  "serverCacheMeasurement": "provider-reported-only; unavailable counts remain unknown",
+  "latencyMeaning": "recorded adapter timings only; unavailable timings remain unknown",
+  "regression": {
+    "status": "not-run",
+    "exitCode": null,
+    "scope": "local Native request/regression fixtures"
+  },
+  "groups": [
+    {
+      "provider": "unknown",
+      "model": "fixture",
+      "source": "main",
+      "phase": "unknown",
+      "requests": 1,
+      "cacheReadKnown": 1,
+      "cacheWriteKnown": 0,
+      "cacheRead": 8000,
+      "cacheWrite": null,
+      "matchedInput": 10000,
+      "matchedCacheRead": 8000,
+      "durationMs": null,
+      "firstTokenMs": null,
+      "costs": [],
+      "cacheReadCoverage": 1,
+      "cacheWriteCoverage": 0,
+      "cacheReadRate": 0.8,
+      "cost": null,
+      "costKnown": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "fixture",
+      "source": "subsession",
+      "phase": "unknown",
+      "requests": 1,
+      "cacheReadKnown": 1,
+      "cacheWriteKnown": 0,
+      "cacheRead": 8000,
+      "cacheWrite": null,
+      "matchedInput": 10000,
+      "matchedCacheRead": 8000,
+      "durationMs": null,
+      "firstTokenMs": null,
+      "costs": [],
+      "cacheReadCoverage": 1,
+      "cacheWriteCoverage": 0,
+      "cacheReadRate": 0.8,
+      "cost": null,
+      "costKnown": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "unknown",
+      "source": "auxiliary",
+      "phase": "unknown",
+      "requests": 1,
+      "cacheReadKnown": 0,
+      "cacheWriteKnown": 0,
+      "cacheRead": null,
+      "cacheWrite": null,
+      "matchedInput": 0,
+      "matchedCacheRead": 0,
+      "durationMs": null,
+      "firstTokenMs": null,
+      "costs": [],
+      "cacheReadCoverage": 0,
+      "cacheWriteCoverage": 0,
+      "cacheReadRate": null,
+      "cost": null,
+      "costKnown": 0
+    }
+  ],
+  "measurements": [
+    {
+      "provider": "unknown",
+      "model": "fixture",
+      "source": "main",
+      "phase": "unknown",
+      "scenario": "stored-native-request",
+      "usage": {
+        "inputTokens": 10000,
+        "cachedInputTokens": 8000,
+        "normalization": {
+          "version": 1,
+          "source": "legacy",
+          "inputSemantics": "total",
+          "input": {
+            "status": "known",
+            "value": 10000,
+            "source": "raw:prompt_tokens",
+            "rawPresent": true
+          },
+          "output": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          },
+          "reasoning": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          },
+          "cacheRead": {
+            "status": "known",
+            "value": 8000,
+            "source": "raw:prompt_cache_hit_tokens",
+            "rawPresent": true
+          },
+          "cacheWrite": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          }
+        }
+      },
+      "firstTokenMs": null,
+      "durationMs": null,
+      "cost": null,
+      "comparison": null
+    },
+    {
+      "provider": "unknown",
+      "model": "fixture",
+      "source": "subsession",
+      "phase": "unknown",
+      "scenario": "stored-native-request",
+      "usage": {
+        "inputTokens": 10000,
+        "cachedInputTokens": 8000,
+        "normalization": {
+          "version": 1,
+          "source": "legacy",
+          "inputSemantics": "total",
+          "input": {
+            "status": "known",
+            "value": 10000,
+            "source": "raw:prompt_tokens",
+            "rawPresent": true
+          },
+          "output": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          },
+          "reasoning": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          },
+          "cacheRead": {
+            "status": "known",
+            "value": 8000,
+            "source": "raw:prompt_cache_hit_tokens",
+            "rawPresent": true
+          },
+          "cacheWrite": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          }
+        }
+      },
+      "firstTokenMs": null,
+      "durationMs": null,
+      "cost": null,
+      "comparison": null
+    },
+    {
+      "provider": "unknown",
+      "model": "unknown",
+      "source": "auxiliary",
+      "phase": "unknown",
+      "scenario": "stored-auxiliary-request",
+      "usage": {
+        "inputTokens": 10,
+        "normalization": {
+          "version": 1,
+          "source": "legacy",
+          "inputSemantics": "total",
+          "input": {
+            "status": "known",
+            "value": 10,
+            "source": "legacy:inputTokens",
+            "rawPresent": false
+          },
+          "output": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          },
+          "reasoning": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          },
+          "cacheRead": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          },
+          "cacheWrite": {
+            "status": "unknown",
+            "source": "missing",
+            "rawPresent": false
+          }
+        }
+      },
+      "firstTokenMs": null,
+      "durationMs": null,
+      "cost": null,
+      "comparison": null
+    }
+  ]
+}

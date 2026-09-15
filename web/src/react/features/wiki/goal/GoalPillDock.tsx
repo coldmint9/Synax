@@ -13,7 +13,7 @@ import { GoalPreviewPill } from './GoalPreviewPill'
 import { listPendingGoalPermissions } from './GoalQuickApproval'
 import { goalDockStateToMorph } from './goalDockTypes'
 import { buildGoalModelOptions, pickDefaultSelection } from './goalModelOptions'
-import { prefetchAcpDiscoveryIdle } from './useAcpDiscovery'
+import { useAcpDiscovery } from './useAcpDiscovery'
 import { isGoalSessionActive, resolveGoalSessionDisplayTitle } from './goalSessionStream'
 import { useGoalSessionBridge } from './useGoalSessionBridge'
 import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from '../../sessions/agentSessionStore'
@@ -29,6 +29,7 @@ export function GoalPillDock({ projectId }: Props) {
   const { t } = useLocale()
   const navigate = useNavigate()
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId)
+  const acpDiscovery = useAcpDiscovery()
 
   const goalDockState = useWikiStore(s => s.goalDockState)
   const setGoalDockState = useWikiStore(s => s.setGoalDockState)
@@ -136,13 +137,9 @@ export function GoalPillDock({ projectId }: Props) {
   }, [])
 
   useEffect(() => {
-    prefetchAcpDiscoveryIdle()
-  }, [])
-
-  useEffect(() => {
     if (!globalConfig) return
     if (providerId && modelId) return
-    const { apiModels, acpEndpoints } = buildGoalModelOptions(globalConfig, providers, [])
+    const { apiModels, acpEndpoints } = buildGoalModelOptions(globalConfig, providers, acpDiscovery)
     const preferred = effectiveConfig
       ? { providerId: effectiveConfig.providerId, modelId: effectiveConfig.modelId }
       : null
@@ -151,7 +148,7 @@ export function GoalPillDock({ projectId }: Props) {
       setProviderId(picked.providerId)
       setModelId(picked.modelId)
     }
-  }, [globalConfig, providers, effectiveConfig, providerId, modelId, setProviderId, setModelId])
+  }, [globalConfig, providers, acpDiscovery, effectiveConfig, providerId, modelId, setProviderId, setModelId])
 
   useEffect(() => {
     if (hasActiveWork && (isBar || isPrompt)) {

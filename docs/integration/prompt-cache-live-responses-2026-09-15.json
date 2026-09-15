@@ -1,0 +1,370 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-15T14:12:07.346Z",
+  "mode": "live-explicit-opt-in",
+  "serverCacheMeasurement": "provider-reported-only; unavailable counts remain unknown",
+  "latencyMeaning": "measured provider call duration; text-mode first token unavailable",
+  "regression": {
+    "status": "not-run",
+    "exitCode": null,
+    "scope": "local Native request/regression fixtures"
+  },
+  "liveOutcome": "completed",
+  "groups": [
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "source": "auxiliary",
+      "phase": "cold",
+      "requests": 1,
+      "cacheReadKnown": 1,
+      "cacheWriteKnown": 0,
+      "cacheRead": 3840,
+      "cacheWrite": null,
+      "matchedInput": 9472,
+      "matchedCacheRead": 3840,
+      "durationMs": 2727.4522500000003,
+      "firstTokenMs": null,
+      "costs": [],
+      "cacheReadCoverage": 1,
+      "cacheWriteCoverage": 0,
+      "cacheReadRate": 0.40540540540540543,
+      "cost": null,
+      "costKnown": 0
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "source": "auxiliary",
+      "phase": "continuous",
+      "requests": 2,
+      "cacheReadKnown": 2,
+      "cacheWriteKnown": 0,
+      "cacheRead": 7680,
+      "cacheWrite": null,
+      "matchedInput": 19047,
+      "matchedCacheRead": 7680,
+      "durationMs": 8362.0255415,
+      "firstTokenMs": null,
+      "costs": [],
+      "cacheReadCoverage": 1,
+      "cacheWriteCoverage": 0,
+      "cacheReadRate": 0.40321310442589386,
+      "cost": null,
+      "costKnown": 0
+    }
+  ],
+  "measurements": [
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "source": "auxiliary",
+      "phase": "cold",
+      "scenario": "synthetic-stable-prefix",
+      "historyAnchorStatus": "cold",
+      "usage": {
+        "inputTokens": 9472,
+        "outputTokens": 5,
+        "totalTokens": 9477,
+        "reasoningTokens": 0,
+        "cachedInputTokens": 3840,
+        "normalization": {
+          "version": 1,
+          "source": "sdk",
+          "protocol": "openai-responses",
+          "adapter": "@ai-sdk/openai",
+          "inputSemantics": "total",
+          "input": {
+            "status": "known",
+            "value": 9472,
+            "source": "raw:input_tokens",
+            "rawPresent": true
+          },
+          "output": {
+            "status": "known",
+            "value": 5,
+            "source": "raw:output_tokens",
+            "rawPresent": true
+          },
+          "reasoning": {
+            "status": "known",
+            "value": 0,
+            "source": "raw:output_tokens_details.reasoning_tokens",
+            "rawPresent": true
+          },
+          "cacheRead": {
+            "status": "known",
+            "value": 3840,
+            "source": "raw:input_tokens_details.cached_tokens",
+            "rawPresent": true
+          },
+          "cacheWrite": {
+            "status": "unknown",
+            "source": "sdk:inputTokenDetails.cacheWriteTokens",
+            "rawPresent": false
+          }
+        }
+      },
+      "outcome": "completed",
+      "durationMs": 2727.4522500000003,
+      "firstTokenMs": null,
+      "cost": null,
+      "request": {
+        "version": 1,
+        "blocks": [
+          {
+            "kind": "tools",
+            "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "bytes": 2
+          },
+          {
+            "kind": "system",
+            "fingerprint": "feef7b838a9fb82d3e5bd507c720915ea3ea7f992455955cdf25268faa5df0f1",
+            "bytes": 2527
+          },
+          {
+            "kind": "reference",
+            "fingerprint": "f72dc033604e5b55e4db13eb3c1ed8a06f1d03409513c10ec0489911b523bec2",
+            "bytes": 29064
+          },
+          {
+            "kind": "history",
+            "fingerprint": "57a1b08d3ca07e7a682cad3e06d9cc878e213a2f1111f3ee504750c06b176f3e",
+            "bytes": 75
+          },
+          {
+            "kind": "runtime",
+            "fingerprint": "1b28f1b4be3beac1185748502fcafe1f14f02fc9d3ae3777b31c6da129fe2f4f",
+            "bytes": 92
+          }
+        ]
+      },
+      "comparison": null
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "source": "auxiliary",
+      "phase": "continuous",
+      "scenario": "synthetic-stable-prefix",
+      "historyAnchorStatus": "matched",
+      "usage": {
+        "inputTokens": 9505,
+        "outputTokens": 5,
+        "totalTokens": 9510,
+        "reasoningTokens": 0,
+        "cachedInputTokens": 3840,
+        "normalization": {
+          "version": 1,
+          "source": "sdk",
+          "protocol": "openai-responses",
+          "adapter": "@ai-sdk/openai",
+          "inputSemantics": "total",
+          "input": {
+            "status": "known",
+            "value": 9505,
+            "source": "raw:input_tokens",
+            "rawPresent": true
+          },
+          "output": {
+            "status": "known",
+            "value": 5,
+            "source": "raw:output_tokens",
+            "rawPresent": true
+          },
+          "reasoning": {
+            "status": "known",
+            "value": 0,
+            "source": "raw:output_tokens_details.reasoning_tokens",
+            "rawPresent": true
+          },
+          "cacheRead": {
+            "status": "known",
+            "value": 3840,
+            "source": "raw:input_tokens_details.cached_tokens",
+            "rawPresent": true
+          },
+          "cacheWrite": {
+            "status": "unknown",
+            "source": "sdk:inputTokenDetails.cacheWriteTokens",
+            "rawPresent": false
+          }
+        }
+      },
+      "outcome": "completed",
+      "durationMs": 2213.2303329999995,
+      "firstTokenMs": null,
+      "cost": null,
+      "request": {
+        "version": 1,
+        "blocks": [
+          {
+            "kind": "tools",
+            "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "bytes": 2
+          },
+          {
+            "kind": "system",
+            "fingerprint": "feef7b838a9fb82d3e5bd507c720915ea3ea7f992455955cdf25268faa5df0f1",
+            "bytes": 2527
+          },
+          {
+            "kind": "reference",
+            "fingerprint": "f72dc033604e5b55e4db13eb3c1ed8a06f1d03409513c10ec0489911b523bec2",
+            "bytes": 29064
+          },
+          {
+            "kind": "history",
+            "fingerprint": "57a1b08d3ca07e7a682cad3e06d9cc878e213a2f1111f3ee504750c06b176f3e",
+            "bytes": 75
+          },
+          {
+            "kind": "runtime",
+            "fingerprint": "1b28f1b4be3beac1185748502fcafe1f14f02fc9d3ae3777b31c6da129fe2f4f",
+            "bytes": 92
+          },
+          {
+            "kind": "history",
+            "fingerprint": "4d3fd85ffaa22b1c3350ec728371dff55b4ae15a3809381b5342fb9c2233f29f",
+            "bytes": 35
+          },
+          {
+            "kind": "runtime",
+            "fingerprint": "b0b2d5fc6d42aad834a4811e3afa2da96ebfac7ca9319116c582cd3e5f1a88b6",
+            "bytes": 101
+          }
+        ]
+      },
+      "comparison": {
+        "unchanged": false,
+        "commonPrefixBlocks": 5,
+        "firstChange": {
+          "index": 5,
+          "before": null,
+          "after": "history"
+        },
+        "stableSystem": true,
+        "stableTools": true,
+        "stableReferences": true
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "source": "auxiliary",
+      "phase": "continuous",
+      "scenario": "synthetic-stable-prefix",
+      "historyAnchorStatus": "matched",
+      "usage": {
+        "inputTokens": 9542,
+        "outputTokens": 5,
+        "totalTokens": 9547,
+        "reasoningTokens": 0,
+        "cachedInputTokens": 3840,
+        "normalization": {
+          "version": 1,
+          "source": "sdk",
+          "protocol": "openai-responses",
+          "adapter": "@ai-sdk/openai",
+          "inputSemantics": "total",
+          "input": {
+            "status": "known",
+            "value": 9542,
+            "source": "raw:input_tokens",
+            "rawPresent": true
+          },
+          "output": {
+            "status": "known",
+            "value": 5,
+            "source": "raw:output_tokens",
+            "rawPresent": true
+          },
+          "reasoning": {
+            "status": "known",
+            "value": 0,
+            "source": "raw:output_tokens_details.reasoning_tokens",
+            "rawPresent": true
+          },
+          "cacheRead": {
+            "status": "known",
+            "value": 3840,
+            "source": "raw:input_tokens_details.cached_tokens",
+            "rawPresent": true
+          },
+          "cacheWrite": {
+            "status": "unknown",
+            "source": "sdk:inputTokenDetails.cacheWriteTokens",
+            "rawPresent": false
+          }
+        }
+      },
+      "outcome": "completed",
+      "durationMs": 14510.820749999999,
+      "firstTokenMs": null,
+      "cost": null,
+      "request": {
+        "version": 1,
+        "blocks": [
+          {
+            "kind": "tools",
+            "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "bytes": 2
+          },
+          {
+            "kind": "system",
+            "fingerprint": "feef7b838a9fb82d3e5bd507c720915ea3ea7f992455955cdf25268faa5df0f1",
+            "bytes": 2527
+          },
+          {
+            "kind": "reference",
+            "fingerprint": "f72dc033604e5b55e4db13eb3c1ed8a06f1d03409513c10ec0489911b523bec2",
+            "bytes": 29064
+          },
+          {
+            "kind": "history",
+            "fingerprint": "57a1b08d3ca07e7a682cad3e06d9cc878e213a2f1111f3ee504750c06b176f3e",
+            "bytes": 75
+          },
+          {
+            "kind": "runtime",
+            "fingerprint": "1b28f1b4be3beac1185748502fcafe1f14f02fc9d3ae3777b31c6da129fe2f4f",
+            "bytes": 92
+          },
+          {
+            "kind": "history",
+            "fingerprint": "4d3fd85ffaa22b1c3350ec728371dff55b4ae15a3809381b5342fb9c2233f29f",
+            "bytes": 35
+          },
+          {
+            "kind": "runtime",
+            "fingerprint": "b0b2d5fc6d42aad834a4811e3afa2da96ebfac7ca9319116c582cd3e5f1a88b6",
+            "bytes": 101
+          },
+          {
+            "kind": "history",
+            "fingerprint": "4d3fd85ffaa22b1c3350ec728371dff55b4ae15a3809381b5342fb9c2233f29f",
+            "bytes": 35
+          },
+          {
+            "kind": "runtime",
+            "fingerprint": "981d3ace3a14ddcee67a93e99137bf143d732fef79e4d6fd3bb3b789a813e2c1",
+            "bytes": 112
+          }
+        ]
+      },
+      "comparison": {
+        "unchanged": false,
+        "commonPrefixBlocks": 7,
+        "firstChange": {
+          "index": 7,
+          "before": null,
+          "after": "history"
+        },
+        "stableSystem": true,
+        "stableTools": true,
+        "stableReferences": true
+      }
+    }
+  ],
+  "provenanceNote": "Standalone diagnostic calls are auxiliary, not a production Native main session. Source label corrected after capture; provider usage and timing values are unchanged."
+}

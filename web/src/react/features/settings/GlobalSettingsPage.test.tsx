@@ -254,6 +254,13 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     }))
   })
 
+  it('does not expose ACP configuration in settings', async () => {
+    await renderPage()
+    expect(screen.queryByText('OpenCode ACP')).not.toBeInTheDocument()
+    expect(screen.queryByText('Cursor ACP')).not.toBeInTheDocument()
+    expect(mocks.discoverAcp).not.toHaveBeenCalled()
+  })
+
   it('opens the add dropdown and enters a preset configuration view', async () => {
     const user = userEvent.setup()
     await renderPage()

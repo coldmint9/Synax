@@ -8,13 +8,14 @@ import { agentRuntimeApi, type AgentSession } from '../../../../lib/api/agentRun
 import { goalApi } from '../../../../lib/api/goal'
 import { useAgentSessionStore } from '../agentSessionStore'
 import { useWikiStore } from '../../../state/wikiStore'
+import { useAcpDiscovery } from '../../wiki/goal/useAcpDiscovery'
 import { SessionComposer } from '../SessionComposer'
 import { SessionModeSummary } from '../SessionWorkspace'
 
 vi.mock('../../../../hooks/useLocale', () => ({ useLocale: () => ({ locale: 'en', t: (key: string) => key }) }))
 vi.mock('../../../../lib/api/runtimeEventBus', () => ({ subscribe: () => vi.fn() }))
 vi.mock('../../../../lib/api/sessionLiveClient', () => ({ ensureSessionLiveSubscription: vi.fn(), releaseSessionLiveSubscription: vi.fn() }))
-vi.mock('../../wiki/goal/useAcpDiscovery', () => ({ prefetchAcpDiscoveryIdle: vi.fn() }))
+vi.mock('../../wiki/goal/useAcpDiscovery', () => ({ useAcpDiscovery: vi.fn() }))
 vi.mock('../../settings/useConfig', () => ({ useConfig: () => ({
   providers: [{ id: 'api', kind: 'api' }, { id: 'codex-acp', kind: 'acp' }], globalConfig: null, effectiveConfig: null,
 }) }))
@@ -37,6 +38,10 @@ const session: AgentSession = {
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  vi.mocked(useAcpDiscovery).mockReturnValue([{
+    id: 'codex-acp', label: 'Codex ACP', command: 'codex-acp', status: 'available',
+    installed: true, handshakeOk: true, selected: false, compatibility: '',
+  }])
   useAgentSessionStore.setState({ ...useAgentSessionStore.getInitialState(), sessions: [session], selectedSessionId: 's1' })
   useWikiStore.setState({
     goalComposerProviderId: 'api', goalComposerModelId: 'test-model', goalComposerPermissionTier: 'readonly',
@@ -63,6 +68,28 @@ async function expectModeUnavailable() {
 }
 
 describe('SessionComposer mode controls', () => {
+  it('lists only discovered ACP backends and reacts when discovery completes', async () => {
+    const discovered = vi.mocked(useAcpDiscovery)()
+    vi.mocked(useAcpDiscovery).mockReturnValue([])
+    const view = renderComposer()
+    await userEvent.click(screen.getByRole('button', { name: 'Execution backend' }))
+    expect(screen.queryByRole('option', { name: 'codex-acp' })).not.toBeInTheDocument()
+    vi.mocked(useAcpDiscovery).mockReturnValue(discovered)
+    view.rerender(<MemoryRouter><SessionComposer projectId="p1" /></MemoryRouter>)
+    expect(await screen.findByRole('option', { name: 'codex-acp' })).toBeInTheDocument()
+  })
+
+  it('blocks a remembered undiscovered ACP draft while allowing backend selection', async () => {
+    vi.mocked(useAcpDiscovery).mockReturnValue([])
+    useWikiStore.setState({ goalComposerProviderId: 'codex-acp', goalComposerModelId: 'default' })
+    renderComposer()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('has not discovered this ACP')
+    await userEvent.click(screen.getByRole('button', { name: 'Execution backend' }))
+    expect(screen.getByRole('option', { name: 'Synax' })).toBeEnabled()
+    expect(screen.queryByRole('option', { name: 'codex-acp' })).not.toBeInTheDocument()
+  })
+
   it.each(['plan', 'goal'] as const)('sends the selected draft %s mode through createSession metadata', async mode => {
     vi.spyOn(goalApi, 'buildSessionPrompt').mockResolvedValue({ prompt: 'Scaffold', wikiContext: { mode: 'auto', documentId: null } } as never)
     vi.spyOn(agentRuntimeApi, 'createSession').mockResolvedValue({ session, context: null, profile: {} as never })
