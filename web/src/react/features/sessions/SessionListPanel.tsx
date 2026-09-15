@@ -83,7 +83,7 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
   const deleteSession = deleteId
     ? list.groups.flatMap(g => g.sessions).find(n => n.session.id === deleteId)?.session
     : undefined
-  const deleteTitle = deleteSession ? getSessionDisplayTitle(deleteSession) : ''
+  const deleteTitle = deleteSession ? getSessionDisplayTitle(deleteSession, '', locale) : ''
 
   const handleNewSession = () => {
     list.openNewDraft()

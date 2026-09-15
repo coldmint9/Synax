@@ -4,7 +4,7 @@ import { useLocale } from '../../../hooks/useLocale'
 import type { ConversationTimelineEntry } from './buildConversationTimeline'
 import { ActivityRow } from './ActivityRow'
 import { TurnBody } from './TurnBody'
-import { activityPreview, formatCharCount, formatDurationMs } from './activityText'
+import { activityPreview, formatCharCount, formatDurationMs, thinkingBannerPhrase } from './activityText'
 
 type WorkLogEntryData = Extract<ConversationTimelineEntry, { kind: 'work_log' }>
 
@@ -32,7 +32,10 @@ function workDuration(elapsedMs: number): string {
 export const WorkLogEntry = memo(function WorkLogEntry({ entry, onExpandChild }: Props) {
   const { t, locale } = useLocale()
   const { stepCount, toolCallCount, thinkingChars, elapsedMs } = entry.stats
-  const preview = firstThinking(entry)
+  const thinking = firstThinking(entry)
+  // A headline-style reasoning block renders as a banner in the turn body; its
+  // row preview must not leak the markdown markers that the banner strips.
+  const preview = thinking ? thinkingBannerPhrase(thinking) ?? activityPreview(thinking) : null
   const meta = [
     t('sessionWorkLogSteps', { count: stepCount }),
     t('sessionWorkLogCalls', { count: toolCallCount }),
@@ -42,9 +45,10 @@ export const WorkLogEntry = memo(function WorkLogEntry({ entry, onExpandChild }:
   return (
     <ActivityRow
       icon={<ListChecks size={13} aria-hidden="true" />}
+      variant="work-log"
       label={locale === 'zh' ? `工作用时 ${workDuration(elapsedMs)}` : t('sessionTurnWorked', { duration: formatDurationMs(elapsedMs) ?? '0s' })}
       meta={meta}
-      preview={preview ? activityPreview(preview) : null}
+      preview={preview}
       bodyContent={(
         <div className="flex flex-col gap-2 py-1">
           {entry.turns.map(turn => (

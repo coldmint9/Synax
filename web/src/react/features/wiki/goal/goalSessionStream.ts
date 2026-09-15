@@ -44,12 +44,15 @@ export const initialGoalSessionState: GoalSessionState = {
   error: null,
 }
 
+/** Placeholder titles only mean "not summarized yet"; prefer the user's input. */
+const PLACEHOLDER_TITLES = ['new agent', 'new session', '新会话']
+
 export function resolveGoalSessionDisplayTitle(
   session: GoalSessionState,
   workingLabel: string,
 ): string {
   const title = session.title?.trim()
-  if (title) return title
+  if (title && !PLACEHOLDER_TITLES.includes(title.toLowerCase())) return title
   const fallback = session.promptFallback?.trim()
   if (fallback) return fallback
   if (isGoalSessionActive(session.status)) return workingLabel

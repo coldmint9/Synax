@@ -41,6 +41,34 @@ export function activityPreview(content: string, max = 90): string {
 }
 
 /**
+ * Longest `**phrase**` payload still treated as a reasoning headline.
+ *
+ * Real reasoning text is written in paragraphs; a model that only emits a
+ * wrapped one-liner is reporting loop state, not thinking out loud.
+ */
+const THINKING_BANNER_MAX_CHARS = 120
+
+/**
+ * Remote models running a tool loop often send their whole reasoning as a
+ * single `**Inspecting backend metadata**` string. There is no reasoning text
+ * to read and no reason to show the markdown markers, so the transcript
+ * promotes the payload to a banner instead.
+ *
+ * Returns the bare phrase, or null when this is ordinary reasoning.
+ */
+export function thinkingBannerPhrase(content: string): string | null {
+  const trimmed = content.trim()
+  if (!trimmed || trimmed.length > THINKING_BANNER_MAX_CHARS) return null
+  if (trimmed.includes('\n')) return null
+  // While streaming, the payload is banner-shaped from the opening `**` on.
+  // Accepting the unterminated form keeps the raw markers from flashing before
+  // the closing pair arrives.
+  const match = /^\*\*([^*]+?)\*{0,2}$/.exec(trimmed)
+  const phrase = match?.[1].trim() ?? ''
+  return phrase.length > 0 ? phrase : null
+}
+
+/**
  * How much of a reasoning body is rendered when the reader expands a row.
  *
  * Real sessions contain single reasoning messages over 90k characters; laying

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay } from '../activityText'
+import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay, thinkingBannerPhrase } from '../activityText'
 
 describe('formatCharCount', () => {
   it('keeps small counts exact and compacts large ones', () => {
@@ -31,5 +31,29 @@ describe('tailForDisplay', () => {
     expect(text.startsWith('a')).toBe(true)
     expect(text.endsWith('TAIL')).toBe(true)
     expect(text).toHaveLength(ACTIVITY_BODY_LIMIT)
+  })
+})
+
+describe('thinkingBannerPhrase', () => {
+  it('strips the markers of a headline-only reasoning block', () => {
+    expect(thinkingBannerPhrase('**Inspecting backend metadata**')).toBe('Inspecting backend metadata')
+    expect(thinkingBannerPhrase('  **检查后端元数据**  ')).toBe('检查后端元数据')
+  })
+
+  it('keeps an unterminated headline stable while it streams', () => {
+    expect(thinkingBannerPhrase('**Inspect')).toBe('Inspect')
+    expect(thinkingBannerPhrase('**Inspecting backend metadata*')).toBe('Inspecting backend metadata')
+  })
+
+  it('leaves ordinary reasoning to the expandable row', () => {
+    expect(thinkingBannerPhrase('')).toBeNull()
+    expect(thinkingBannerPhrase('Let me check the state.')).toBeNull()
+    expect(thinkingBannerPhrase('**Bold** and then a paragraph.')).toBeNull()
+    expect(thinkingBannerPhrase('**Heading**\nmore reasoning below')).toBeNull()
+    expect(thinkingBannerPhrase('****')).toBeNull()
+  })
+
+  it('treats a paragraph-length bold payload as reasoning, not a headline', () => {
+    expect(thinkingBannerPhrase(`**${'x'.repeat(200)}**`)).toBeNull()
   })
 })

@@ -1990,27 +1990,39 @@
 .prose-block blockquote { @apply border-l-2 border-primary/30 pl-4 italic text-muted-foreground mb-2; }
 .prose-block a { @apply text-primary underline decoration-primary/30 hover:decoration-primary; }
 
-.feed-prose { @apply text-[11px] leading-relaxed text-foreground/90; }
+/* Transcript markdown. Answers are read, not skimmed, so the ramp is heavier
+   than the app chrome: full-ink body text, decisive headings, and a single
+   accent (--primary) reserved for links, quotes, code and marked blocks. */
+.feed-prose { @apply text-foreground/92 leading-[1.8]; }
 .feed-prose > :first-child { @apply mt-0; }
 .feed-prose > :last-child { @apply mb-0; }
-.feed-prose p { @apply my-1.5; }
-.feed-prose h1 { @apply text-sm font-semibold mb-1 mt-2; }
-.feed-prose h2 { @apply text-xs font-semibold mb-1 mt-2; }
-.feed-prose h3 { @apply text-[11px] font-semibold mb-0.5 mt-1.5; }
-.feed-prose h4, .feed-prose h5, .feed-prose h6 { @apply text-[11px] font-medium mb-0.5 mt-1.5; }
-.feed-prose ul { @apply ml-4 my-1.5 list-disc; }
-.feed-prose ol { @apply ml-4 my-1.5 list-decimal; }
-.feed-prose li { @apply mb-0.5; }
+.feed-prose p { @apply my-2; }
+.feed-prose h1 { @apply text-sm font-bold mb-1.5 mt-3.5; }
+.feed-prose h2 { @apply text-xs font-bold mb-1.5 mt-3; }
+.feed-prose h3 { @apply text-[11px] font-bold mb-1 mt-2.5; }
+.feed-prose h4, .feed-prose h5, .feed-prose h6 { @apply text-[11px] font-semibold mb-1 mt-2.5; }
+.feed-prose h1,
+.feed-prose h2 { @apply border-b border-primary/20 pb-1; }
+.feed-prose strong, .feed-prose b { @apply font-bold text-foreground; }
+.feed-prose em { @apply text-foreground/95; }
+.feed-prose ul { @apply ml-4 my-2 list-disc; }
+.feed-prose ol { @apply ml-4 my-2 list-decimal; }
+.feed-prose li { @apply mb-1; }
 .feed-prose li > p { @apply my-0; }
-.feed-prose code { @apply font-mono text-[10px] bg-secondary/80 px-1 py-0.5 rounded; }
-.feed-prose pre { @apply bg-secondary/70 p-2 rounded my-2 overflow-x-auto; }
-.feed-prose pre code { @apply bg-transparent p-0 text-[10px] leading-snug; }
-.feed-prose blockquote { @apply border-l-2 border-primary/30 pl-2 italic text-muted-foreground my-1.5; }
-.feed-prose a { @apply text-primary underline decoration-primary/30 hover:decoration-primary; }
-.feed-prose hr { @apply my-2 border-border/40; }
-.feed-prose table { @apply w-full border-collapse my-2 text-[10px]; }
-.feed-prose th, .feed-prose td { @apply border border-border/60 px-1.5 py-1 text-left; }
-.feed-prose th { @apply bg-secondary/60 font-medium; }
+.feed-prose li::marker { @apply text-primary/70; }
+.feed-prose code { @apply font-mono text-[0.9em] font-medium rounded border border-primary/15 bg-primary/[0.07] px-1 py-0.5 text-foreground; }
+.feed-prose pre { @apply rounded-lg border border-primary/20 bg-primary/[0.05] p-2.5 my-2.5 overflow-x-auto; }
+.feed-prose pre code { @apply border-0 bg-transparent p-0 text-[0.9em] leading-relaxed; }
+.feed-prose blockquote {
+  @apply my-2.5 rounded-r-md border-l-[3px] border-primary/60 bg-primary/[0.06] py-1.5 pl-3 pr-2 font-medium text-foreground/90;
+}
+.feed-prose blockquote p { @apply my-1; }
+.feed-prose a { @apply font-medium text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary; }
+.feed-prose mark { @apply rounded bg-primary/15 px-0.5 font-medium text-foreground; }
+.feed-prose hr { @apply my-3 border-border/40; }
+.feed-prose table { @apply w-full border-collapse my-2.5 text-[0.92em]; }
+.feed-prose th, .feed-prose td { @apply border border-border/60 px-2 py-1 text-left; }
+.feed-prose th { @apply bg-primary/[0.06] font-semibold; }
 .feed-prose img { @apply max-w-full rounded; }
 
 .session-quick-toolbar {

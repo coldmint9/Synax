@@ -100,7 +100,9 @@ describe('buildConversationTimeline', () => {
       [],
     )
 
-    expect(timeline.map(entry => entry.kind)).toEqual(['user', 'agent', 'user', 'agent'])
+    // Neither run produced an answer, so each finished round folds its process
+    // into one `工作用时` row while the prompts stay in place.
+    expect(timeline.map(entry => entry.kind)).toEqual(['user', 'work_log', 'user', 'work_log'])
     if (timeline[2]?.kind === 'user') {
       expect(timeline[2].content).toBe('Follow up')
     }
@@ -114,7 +116,7 @@ describe('buildConversationTimeline', () => {
       [],
     )
 
-    expect(timeline.map(entry => entry.kind)).toEqual(['user', 'agent'])
+    expect(timeline.map(entry => entry.kind)).toEqual(['user', 'work_log'])
   })
 
   it('excludes session_prompt user messages from the timeline', () => {
@@ -132,7 +134,7 @@ describe('buildConversationTimeline', () => {
       [],
     )
 
-    expect(timeline.map(entry => entry.kind)).toEqual(['agent'])
+    expect(timeline.map(entry => entry.kind)).toEqual(['work_log'])
   })
 })
 

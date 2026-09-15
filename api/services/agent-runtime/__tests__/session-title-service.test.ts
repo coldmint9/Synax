@@ -28,7 +28,7 @@ describe('resolveInitialSessionTitle', () => {
     expect(resolveInitialSessionTitle({
       sessionMetadata: { source: 'session-page', goalContent: '帮我看看认证模块' },
       prompt: '帮我看看认证模块',
-    })).toBe('new agent');
+    })).toBe('new session');
   });
 
   it('uses goalContent from session metadata', () => {
@@ -71,14 +71,14 @@ describe('session title after first run', () => {
     mockGenerateGatewayTextResult.mockResolvedValue({ text: '问候用户' } as Awaited<ReturnType<typeof generateGatewayTextResult>>);
   });
 
-  it('does not generate title on run_started (waits for stream_done)', async () => {
+  it('generates the title on run_started while the first turn is still running', async () => {
     const session = agentSessionRuntime.create({
       projectId: 'project-alpha',
       profileId: 'synax',
       prompt: '你好',
       sessionMetadata: { mode: 'goal', source: 'session-page', goalContent: '你好' },
     });
-    expect(session.title).toBe('new agent');
+    expect(session.title).toBe('new session');
 
     const run = agentRuntimeStore.appendRun({
       id: 'run_title_test',
@@ -93,11 +93,28 @@ describe('session title after first run', () => {
       metadata: {},
     });
 
+    agentRuntimeStore.updateSession(session.id, { activeRunId: run.id });
     maybeScheduleSessionTitleFromStreamChunk(session.id, { type: 'run_started', run });
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(agentRuntimeStore.getSession(session.id).title).toBe('new agent');
-    expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(agentRuntimeStore.getSession(session.id).title).toBe('问候用户');
+    });
+  });
+
+  it('still summarizes sessions left with the legacy placeholder title', async () => {
+    const session = agentSessionRuntime.create({
+      projectId: 'project-alpha',
+      profileId: 'synax',
+      prompt: '你好',
+      sessionMetadata: { mode: 'goal', source: 'session-page', goalContent: '你好' },
+    });
+    agentRuntimeStore.updateSession(session.id, { title: 'new agent' });
+
+    ensureSessionTitleGenerated(session.id);
+
+    await vi.waitFor(() => {
+      expect(agentRuntimeStore.getSession(session.id).title).toBe('问候用户');
+    });
   });
 
   it('scheduleSessionTitleAfterRunStart generates title for placeholder sessions', async () => {
@@ -151,7 +168,7 @@ describe('session title after first run', () => {
       prompt: '你好',
       sessionMetadata: { mode: 'goal', source: 'session-page', goalContent: '你好' },
     });
-    expect(session.title).toBe('new agent');
+    expect(session.title).toBe('new session');
 
     ensureSessionTitleGenerated(session.id);
 
@@ -242,7 +259,7 @@ describe('session title after first run', () => {
     ensureSessionTitleGenerated(session.id);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
-    expect(agentRuntimeStore.getSession(session.id).title).toBe('new agent');
+    expect(agentRuntimeStore.getSession(session.id).title).toBe('new session');
 
     agentRuntimeStore.updateSession(session.id, { activeRunId: null });
     ensureSessionTitleGenerated(session.id);
