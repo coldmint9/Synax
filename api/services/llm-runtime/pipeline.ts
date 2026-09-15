@@ -1,3 +1,12 @@
+import { applyUsageMiddleware } from "./middleware/usage.js";
+import {
+  applyPromptCachePolicy,
+  inspectHistoryCacheAnchor,
+} from "./cache-policy.js";
+import {
+  applyCacheDiagnosticsMiddleware,
+  cacheDiagnosticsEnabled,
+} from "./cache-diagnostics.js";
 import { resolveMediaMessages } from "../agent-runtime/media-capabilities.js";
 import { generateText, Output, streamText } from "ai";
 import type {
@@ -127,6 +136,20 @@ export async function executePipeline(
       request.projectId,
     ),
   };
+  // Apply once to the complete request, including tools; all dispatch paths share the same budget.
+  const cached = applyPromptCachePolicy(
+    mode.kind === "object"
+      ? ensureJsonObjectResponseFormatInstruction(request.messages)
+      : request.messages,
+    {
+      selection,
+      cacheControl: request.cacheControl,
+      previousHistoryAnchor: request.previousHistoryAnchor,
+      tools: mode.kind === "stream" ? mode.tools : request.tools,
+    },
+  );
+  request = { ...request, messages: cached.messages, tools: cached.tools };
+  if (mode.kind === "stream") mode = { ...mode, tools: cached.tools };
   assertApiKey(selection);
 
   const client = await getOrCreateClient(selection);
@@ -163,8 +186,21 @@ export async function executePipeline(
     model = applyReasoningMiddleware(model);
   }
 
-  const enableCache =
-    strategy.supportsCacheControl(selection) && request.cacheControl;
+  model = applyUsageMiddleware(model, {
+    source: "sdk",
+    protocol: selection.apiFormat,
+    adapter: selection.provider.npm,
+  });
+  if (cacheDiagnosticsEnabled())
+    model = applyCacheDiagnosticsMiddleware(model, {
+      provider: selection.providerId,
+      model: selection.modelId,
+      protocol: selection.apiFormat,
+      source: request.cacheDiagnosticsContext?.source ?? "auxiliary",
+      ...request.cacheDiagnosticsContext,
+    });
+  // Policy has already handled every marker; the legacy system-only flag must not run again.
+  const enableCache = undefined;
   const callbacks = buildHookCallbacks(request);
   const thinkingStream = resolveThinkingOptions(request, selection);
   const providerOptions = mergeProviderOptions(
@@ -182,6 +218,12 @@ export async function executePipeline(
       : thinkingStream.temperature;
   const callOptions = { ...thinkingStream, providerOptions, temperature };
 
+  // Native snapshots persist exactly the hydrated/compiled representation verified by policy.
+  const preparedAnchor = inspectHistoryCacheAnchor(request.messages, request.previousHistoryAnchor);
+  await request.onRequestPrepared?.({
+    messages: request.messages,
+    ...preparedAnchor,
+  });
   switch (mode.kind) {
     case "stream":
       return dispatchStream(

@@ -23,14 +23,15 @@ export function formatTurnModel(providerId: string | null, modelId: string | nul
   return modelId.trim()
 }
 
-function isAcpEndpointAvailable(
-  provider: ProviderDef,
-  discovery: AcpDiscoveryItem | undefined,
-): boolean {
-  if (provider.status === 'inactive') return false
-  if (!discovery) return true
-  if (discovery.status === 'missing') return false
-  return discovery.handshakeOk
+export function discoveredAcpProviders(
+  providers: ProviderDef[],
+  discovery: AcpDiscoveryItem[],
+): ProviderDef[] {
+  const availableIds = new Set(discovery
+    .filter(item => item.status === 'available' && item.installed && item.handshakeOk)
+    .map(item => item.id))
+  return providers.filter(provider => provider.kind === 'acp'
+    && provider.status !== 'inactive' && availableIds.has(provider.id))
 }
 
 export function buildGoalModelOptions(
@@ -55,16 +56,10 @@ export function buildGoalModelOptions(
     }
   }
 
-  const enabledAcp = new Set(globalConfig?.enabledAcpProviderIds ?? [])
   const discoveryById = new Map(acpDiscovery.map(item => [item.id, item]))
 
-  for (const provider of providers) {
-    if (provider.kind !== 'acp' || !enabledAcp.has(provider.id)) continue
+  for (const provider of discoveredAcpProviders(providers, acpDiscovery)) {
     const discoveryItem = discoveryById.get(provider.id)
-    if (!isAcpEndpointAvailable(provider, discoveryItem)) {
-      continue
-    }
-
     const catalogModels = discoveryItem?.models ?? []
     if (catalogModels.length > 0) {
       for (const model of catalogModels) {

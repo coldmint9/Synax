@@ -1,24 +1,36 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import * as z from 'zod/v4';
-import type { RegisteredTool } from '../contracts.js';
-import { assertSessionFileReadForWrite, clearSessionFileRead, recordSessionFileMutation } from '../read-tracker.js';
-import { resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
-import { deriveNewContentsFromChunks, parseApplyPatchEnvelope } from './patch-format.js';
+import fs from "node:fs";
+import path from "node:path";
+import * as z from "zod/v4";
+import type { RegisteredTool } from "../contracts.js";
+import {
+  assertSessionFileReadForWrite,
+  clearSessionFileRead,
+  recordSessionFileMutation,
+} from "../read-tracker.js";
+import { resolveWorkspacePath, toWorkspaceRelative } from "./workspace.js";
+import {
+  deriveNewContentsFromChunks,
+  parseApplyPatchEnvelope,
+} from "./patch-format.js";
 
 function applySimplePatch(current: string, patch: string): string {
-  const lines = patch.replace(/\r\n/g, '\n').split('\n');
-  const body = lines.filter((line) => !line.startsWith('--- ') && !line.startsWith('+++ ') && !line.startsWith('@@'));
-  if (body.length === 0) {
-    throw new Error('patch does not contain any editable lines.');
+  const lines = patch.replace(/\r\n/g, "\n").split("\n");
+  const body = lines.filter(
+    (line) =>
+      !line.startsWith("--- ") &&
+      !line.startsWith("+++ ") &&
+      !line.startsWith("@@"),
+  );
+  if (!body.some((line) => line.startsWith("+") || line.startsWith("-"))) {
+    throw new Error("patch does not contain any editable lines.");
   }
 
   let cursor = 0;
-  const sourceLines = current.replace(/\r\n/g, '\n').split('\n');
+  const sourceLines = current.replace(/\r\n/g, "\n").split("\n");
   const output: string[] = [];
 
   for (const line of body) {
-    if (line.startsWith(' ')) {
+    if (line.startsWith(" ")) {
       const expected = line.slice(1);
       while (cursor < sourceLines.length && sourceLines[cursor] !== expected) {
         output.push(sourceLines[cursor]);
@@ -31,7 +43,7 @@ function applySimplePatch(current: string, patch: string): string {
       cursor += 1;
       continue;
     }
-    if (line.startsWith('-')) {
+    if (line.startsWith("-")) {
       const expected = line.slice(1);
       while (cursor < sourceLines.length && sourceLines[cursor] !== expected) {
         output.push(sourceLines[cursor]);
@@ -43,7 +55,7 @@ function applySimplePatch(current: string, patch: string): string {
       cursor += 1;
       continue;
     }
-    if (line.startsWith('+')) {
+    if (line.startsWith("+")) {
       output.push(line.slice(1));
       continue;
     }
@@ -53,89 +65,117 @@ function applySimplePatch(current: string, patch: string): string {
     output.push(sourceLines[cursor]);
     cursor += 1;
   }
-  return output.join('\n');
+  return output.join("\n");
 }
 
 export const editTool: RegisteredTool = {
-  id: 'edit',
-  label: 'Edit File',
+  id: "edit",
+  label: "Edit File",
   description:
-    'Apply a bounded file edit or an opencode-style apply_patch envelope. Prefer targeted edits over full rewrites when modifying existing files.',
-  category: 'write',
-  internalGate: 'write',
-  mutability: 'write',
-  resumeBehavior: 'wait_permission',
+    "Apply a bounded file edit or an opencode-style apply_patch envelope. Prefer targeted edits over full rewrites when modifying existing files.",
+  category: "write",
+  internalGate: "write",
+  mutability: "write",
+  resumeBehavior: "wait_permission",
   progressiveDetails:
-    'Accepts { path: string, patch?: string, content?: string }. Supports the *** Begin Patch / *** End Patch format with Add/Update/Delete headers, and keeps a legacy single-file patch fallback for simple +/- hunks.',
+    "Accepts { path: string, patch?: string, content?: string }. A non-empty patch takes precedence over content. Supports the *** Begin Patch / *** End Patch format with Add/Update/Delete headers, and keeps a legacy single-file patch fallback for simple +/- hunks.",
   inputSchema: z.object({
-    path: z.string().min(1).describe('Workspace-relative file path to edit.'),
-    patch: z.string().optional().describe('Patch content. Prefer the apply_patch envelope format.'),
-    content: z.string().optional().describe('Complete replacement content when a patch is not used.'),
+    path: z.string().min(1).describe("Workspace-relative file path to edit."),
+    patch: z
+      .string()
+      .optional()
+      .describe("Patch content. Prefer the apply_patch envelope format."),
+    content: z
+      .string()
+      .optional()
+      .describe("Complete replacement content when a patch is not used."),
   }),
   getPattern(args) {
-    return typeof args === 'object' && args && 'path' in args && typeof (args as { path?: unknown }).path === 'string'
+    return typeof args === "object" &&
+      args &&
+      "path" in args &&
+      typeof (args as { path?: unknown }).path === "string"
       ? (args as { path: string }).path
       : undefined;
   },
   execute(input) {
-    const args = input.args as { path?: string; patch?: string; content?: string };
-    if (!args?.path) throw new Error('path is required.');
-    if (!args.patch && typeof args.content !== 'string') {
-      throw new Error('patch or content is required.');
+    const args = input.args as {
+      path?: string;
+      patch?: string;
+      content?: string;
+    };
+    if (!args?.path) throw new Error("path is required.");
+    const hasPatch =
+      typeof args.patch === "string" && args.patch.trim().length > 0;
+    if (!hasPatch && typeof args.content !== "string") {
+      throw new Error("patch or content is required.");
     }
     assertSessionFileReadForWrite(input.sessionId, args.path);
     const filePath = resolveWorkspacePath(args.path, input.sessionId);
-    const current = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+    const current = fs.existsSync(filePath)
+      ? fs.readFileSync(filePath, "utf8")
+      : "";
     let next = current;
     let deleted = false;
-    if (typeof args.content === 'string') {
+    // A populated patch wins over schema-generated content: "" placeholders.
+    // Invalid patches must throw, never fall back to replacement content.
+    if (!hasPatch && typeof args.content === "string") {
       next = args.content;
-    } else if ((args.patch ?? '').includes('*** Begin Patch')) {
-      const hunks = parseApplyPatchEnvelope(args.patch ?? '');
+    } else if ((args.patch ?? "").includes("*** Begin Patch")) {
+      const hunks = parseApplyPatchEnvelope(args.patch ?? "");
       if (hunks.length !== 1) {
-        throw new Error('edit accepts exactly one file operation per call.');
+        throw new Error("edit accepts exactly one file operation per call.");
       }
       const hunk = hunks[0];
-      const expectedPath = args.path.replace(/\\/g, '/');
-      if (hunk.path.replace(/\\/g, '/') !== expectedPath) {
-        throw new Error(`Patch path ${hunk.path} does not match requested path ${args.path}.`);
+      const expectedPath = args.path.replace(/\\/g, "/");
+      if (hunk.path.replace(/\\/g, "/") !== expectedPath) {
+        throw new Error(
+          `Patch path ${hunk.path} does not match requested path ${args.path}.`,
+        );
       }
-      if (hunk.type === 'add') {
-        next = hunk.contents.endsWith('\n') ? hunk.contents : `${hunk.contents}\n`;
-      } else if (hunk.type === 'delete') {
+      if (hunk.type === "add") {
+        next = hunk.contents.endsWith("\n")
+          ? hunk.contents
+          : `${hunk.contents}\n`;
+      } else if (hunk.type === "delete") {
         deleted = true;
       } else {
-        if (hunk.movePath && path.normalize(hunk.movePath) !== path.normalize(args.path)) {
-          throw new Error('edit does not support moving files; use file.write to the destination path.');
+        if (
+          hunk.movePath &&
+          path.normalize(hunk.movePath) !== path.normalize(args.path)
+        ) {
+          throw new Error(
+            "edit does not support moving files; use file.write to the destination path.",
+          );
         }
         next = deriveNewContentsFromChunks(args.path, hunk.chunks, current);
       }
     } else {
-      next = applySimplePatch(current, args.patch ?? '');
+      next = applySimplePatch(current, args.patch ?? "");
     }
     if (deleted) {
       fs.rmSync(filePath, { force: true });
       clearSessionFileRead(input.sessionId, filePath);
     } else {
-      fs.writeFileSync(filePath, next, 'utf8');
+      fs.writeFileSync(filePath, next, "utf8");
       // Refresh the tracked mtime: this write satisfies the read-before-write
       // guard, so a follow-up edit of the same file must not be rejected as
       // "changed on disk".
-      recordSessionFileMutation(input.sessionId, filePath);
+      recordSessionFileMutation(input.sessionId, filePath, next);
     }
     return {
       result: {
         path: toWorkspaceRelative(filePath, input.sessionId),
-        bytes: deleted ? 0 : Buffer.byteLength(next, 'utf8'),
+        bytes: deleted ? 0 : Buffer.byteLength(next, "utf8"),
         deleted,
       },
-      displaySummary: `${deleted ? 'Deleted' : 'Edited'} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
+      displaySummary: `${deleted ? "Deleted" : "Edited"} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
       artifacts: [
         {
-          kind: 'decision',
-          title: 'File edit',
-          summary: `${deleted ? 'Deleted' : 'Edited'} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
-          risk: 'medium',
+          kind: "decision",
+          title: "File edit",
+          summary: `${deleted ? "Deleted" : "Edited"} ${toWorkspaceRelative(filePath, input.sessionId)}.`,
+          risk: "medium",
         },
       ],
     };

@@ -4,10 +4,34 @@ import { agentSessionRuntime, type AgentSessionRuntime } from './session-runtime
 import { agentRuntimeStore, type AgentRuntimeStore } from './session-store.js';
 import { nowIso } from './runtime-ids.js';
 import { logger } from '../../lib/logger.js';
+import { getEffectiveConfig } from '../../lib/config/config-store.js';
 
-/** Default per-child wall-clock budget. Large-repo explorers run bash + read
- *  many files, so the ceiling is generous; callers may override. */
-export const DEFAULT_PER_CHILD_TIMEOUT_MS = 180_000;
+/** Fallback per-child wall-clock budget. Mirrors the main-agent default in
+ *  config-defaults.ts (`limits.agentTimeoutMs: 300_000`) so a child never gets a
+ *  shorter budget than the parent. Production callers resolve the project's
+ *  configured value via resolvePerChildTimeoutMs(). */
+export const DEFAULT_PER_CHILD_TIMEOUT_MS = 300_000;
+
+/**
+ * Per-child wall-clock budget, taken from the same setting the main agent uses:
+ * `limits.agentTimeoutMs` of the project's effective config (project → global →
+ * default). Sub-agents therefore follow the user's "Agent timeout" setting
+ * instead of a hard-coded 180s ceiling. Falls back to the default on any
+ * config-read problem so delegation never fails because of a bad config file.
+ */
+export function resolvePerChildTimeoutMs(projectId: string | null | undefined): number {
+  if (!projectId) return DEFAULT_PER_CHILD_TIMEOUT_MS;
+  try {
+    const configured = getEffectiveConfig(projectId).limits?.agentTimeoutMs;
+    if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) {
+      return configured;
+    }
+  } catch (err) {
+    logger.warn({ projectId, err },
+      '[subagent-orchestrator] failed to read configured agent timeout; using default');
+  }
+  return DEFAULT_PER_CHILD_TIMEOUT_MS;
+}
 /** Mirror of the existing subagent.delegate concurrency cap. */
 export const DEFAULT_MAX_CONCURRENCY = 5;
 
@@ -216,5 +240,4 @@ function tallyStatus(results: SubagentResult[]): Record<SubagentBatchStatus, num
 }
 
 export const subagentOrchestrator = { runBatch, runChildToCompletion };
-
 

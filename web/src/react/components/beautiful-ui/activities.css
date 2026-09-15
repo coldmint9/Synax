@@ -5,6 +5,7 @@
 .bui-tool,
 .bui-activity,
 .bui-thinking-banner,
+.bui-thinking,
 .bui-task {
   --bui-ink: var(--foreground);
   --bui-muted: hsl(var(--muted-foreground));
@@ -316,3 +317,40 @@ button.bui-activity-trigger:focus-visible,
 }
 .bui-activity-brief:not(.bui-activity-brief--live) { animation: none; color: var(--bui-muted); background: none; }
 @media (prefers-reduced-motion: reduce) { .bui-activity-brief--live { animation: none; } }
+
+/* Real-event thinking trace. Closing bodies are released after the transition. */
+.bui-thinking { width: 100%; min-width: 0; }
+.bui-thinking-trigger {
+  display: flex; width: fit-content; max-width: 100%; min-width: 0; align-items: center;
+  gap: 8px; border-radius: 8px; padding: 4px 6px; text-align: left;
+  color: var(--bui-muted); transition: background-color 150ms ease, color 200ms ease;
+}
+button.bui-thinking-trigger:hover { background: var(--bui-hover); }
+.bui-thinking-trigger:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.bui-thinking-symbol { display: inline-flex; flex: 0 0 16px; align-items: center; justify-content: center; }
+.bui-thinking[data-live="true"] .bui-thinking-symbol { color: var(--bui-ink); }
+.bui-thinking-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.bui-thinking[data-live="true"] .bui-thinking-label {
+  background: linear-gradient(90deg, var(--bui-muted) 35%, var(--bui-ink) 50%, var(--bui-muted) 65%);
+  background-size: 200% 100%; background-clip: text; -webkit-background-clip: text; color: transparent;
+  animation: bui-thinking-shimmer 1.4s linear infinite;
+}
+.bui-thinking:not([data-live="true"]) .bui-thinking-label { animation: bui-thinking-fade 350ms ease-out both; }
+.bui-thinking-meta { flex-shrink: 0; color: var(--bui-muted); font-size: 10px; }
+.bui-thinking-chevron { flex-shrink: 0; color: var(--bui-muted); transition: transform 300ms ease; }
+.bui-thinking[data-expanded="true"] .bui-thinking-chevron { transform: rotate(180deg); }
+.bui-thinking-reveal { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows 400ms cubic-bezier(.23,1,.32,1), opacity 400ms ease; }
+.bui-thinking-reveal[aria-hidden="true"] { grid-template-rows: 0fr; opacity: 0; }
+.bui-thinking-clip { min-height: 0; overflow: hidden; }
+.bui-thinking-trace { margin: 3px 6px 6px 13px; border-left: 1px solid var(--bui-line); padding-left: 14px; }
+.bui-thinking-body { overflow: auto; overflow-wrap: anywhere; color: var(--bui-muted); font-size: 12.5px; line-height: 1.7; }
+.bui-thinking-prose { white-space: pre-wrap; }
+.bui-thinking-body > .bui-tool-list { gap: 4px; padding: 4px 0; }
+.bui-thinking-body .bui-tool-trigger { min-height: 28px; padding: 2px 6px; }
+@keyframes bui-thinking-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes bui-thinking-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .bui-thinking[data-live] .bui-thinking-label,
+  .bui-thinking:not([data-live="true"]) .bui-thinking-label { animation: none; color: var(--bui-muted); background: none; }
+  .bui-thinking-trigger, .bui-thinking-reveal, .bui-thinking-chevron { transition: none; }
+}

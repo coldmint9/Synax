@@ -168,7 +168,9 @@ configRoutes.get('/acp/discovery', async (c) => {
   const global = getGlobalConfig()
   const providers = listAcpProviders()
   const items = await discoverAcpProviders(providers, global.defaultProviderId)
-  const enabledIds = global.enabledAcpProviderIds ?? [global.defaultProviderId]
+  const enabledIds = items
+    .filter(item => item.status === 'available' && item.installed && item.handshakeOk)
+    .map(item => item.id)
   return c.json({
     selectedProviderId: global.defaultProviderId,
     enabledIds,

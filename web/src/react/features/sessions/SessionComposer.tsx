@@ -16,11 +16,10 @@ import { useWikiStore } from "../../state/wikiStore";
 import { useLocale } from "../../../hooks/useLocale";
 import { GoalComposerPill } from "../wiki/goal/GoalComposerPill";
 import {
-  buildGoalModelOptions,
+  discoveredAcpProviders,
   formatTurnModel,
-  pickDefaultSelection,
 } from "../wiki/goal/goalModelOptions";
-import { prefetchAcpDiscoveryIdle } from "../wiki/goal/useAcpDiscovery";
+import { useAcpDiscovery } from "../wiki/goal/useAcpDiscovery";
 import { sessionPath } from "./sessionRoutes";
 import {
   isSessionComposerLocked,
@@ -146,11 +145,15 @@ export function SessionComposer({
   ]);
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId);
+  const acpDiscovery = useAcpDiscovery({ enabled: isDraft });
+  const availableAcp = discoveredAcpProviders(providers, acpDiscovery);
   const [draftBackendId, setDraftBackendId] = useState<BackendId>(() => {
     const previous = useWikiStore.getState().goalComposerProviderId;
     return previous?.endsWith("-acp") ? (previous as BackendId) : "native";
   });
   const backendId = session ? readSessionBackendId(session) : draftBackendId;
+  const unavailableDraftAcp = isDraft && backendId.endsWith("-acp")
+    && !availableAcp.some(provider => provider.id === backendId);
   const [backendCatalog, setBackendCatalog] = useState<
     Array<{
       id: BackendId;
@@ -169,8 +172,7 @@ export function SessionComposer({
         id: backend.id,
         label: `${backend.label}${backend.experimental ? " · Preview" : ""}`,
       })),
-    ...providers
-      .filter((provider) => provider.kind === "acp")
+    ...availableAcp
       .map((provider) => ({
         id: provider.id as BackendId,
         label: provider.label ?? provider.id,
@@ -287,10 +289,6 @@ export function SessionComposer({
   );
 
   useEffect(() => {
-    prefetchAcpDiscoveryIdle();
-  }, []);
-
-  useEffect(() => {
     if (!sessionId) return;
     void loadInputQueue(sessionId);
   }, [loadInputQueue, sessionId]);
@@ -310,6 +308,7 @@ export function SessionComposer({
       submitting ||
       changingMode ||
       incompatibleModel ||
+      unavailableDraftAcp ||
       (isGenerating && !queueWhileGenerating)
     )
       return;
@@ -367,6 +366,7 @@ export function SessionComposer({
     submitting,
     changingMode,
     incompatibleModel,
+    unavailableDraftAcp,
     isGenerating,
     queueWhileGenerating,
     backendId,
@@ -498,7 +498,7 @@ export function SessionComposer({
       permissionTier={permissionTier}
       onPermissionTierChange={handlePermissionTierChange}
       disabled={
-        submitting || changingMode || (isGenerating && !queueWhileGenerating)
+        submitting || changingMode || unavailableDraftAcp || (isGenerating && !queueWhileGenerating)
       }
       wikiAttachDisabled={!isDraft}
       queueWhileGenerating={
@@ -512,6 +512,13 @@ export function SessionComposer({
       {error && (
         <p role="alert" className="mb-2 px-2 text-xs text-danger">
           {error}
+        </p>
+      )}
+      {unavailableDraftAcp && (
+        <p role="alert" className="mb-2 px-2 text-xs text-danger">
+          {zh
+            ? "网关尚未发现此 ACP。请选择可用的执行后端。"
+            : "The gateway has not discovered this ACP. Choose an available execution backend."}
         </p>
       )}
       {incompatibleModel && (

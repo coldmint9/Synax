@@ -1,21 +1,52 @@
-import { measureContextComposition } from './context-composition.js';
-import { normalizeInput, hasInput, mediaSafeErrorText } from './content-parts.js';
-import { activeTurnReferences } from './turn-reference-state.js';
-import { prepareTurnReferences } from './turn-references.js';
-import { resolveSessionUserRequest } from './session-user-request.js';
-import { runtimeTransaction } from './runtime-transaction.js';
-import type { AgentSession } from './contracts.js';
-import { activateAcceptedRun, type AcceptedRuntimeInput } from './run-admission.js';
-import { isWorkContinuation } from './work-intent.js';
-import { workRuntime } from './work-runtime.js';
-import { workStore } from './work-store.js';
-import { projectWorkContext, evictedContextToolIds } from './context-projection.js';
-import { getRawSqlite } from '../../db/index.js';
-import { INVALID_TOOL_ID } from './tool-invalid.js';
-import { interactionService } from './interaction-service.js';
-import { CONTROL_TOOLS, validateControlBatch, controlToolError } from './control-policy.js';
-import { rootGoal, goalStopReason, belongsToPlanExecution, goalEvidenceSection, type PlanExecutionBoundary } from './control-runtime.js';
-import { getGoalState, initializeGoal } from './goal-control.js';
+import {
+  cacheDiagnosticsEnabled,
+  fingerprintGatewayRequest,
+  compareRequests,
+  readCacheFingerprint,
+  type CacheRequestFingerprint,
+} from "../llm-runtime/cache-diagnostics.js";
+import {
+  readRuntimeReminder,
+  snapshotRuntimeReminder,
+} from "./runtime-request-snapshot.js";
+import { measureContextComposition } from "./context-composition.js";
+import {
+  normalizeInput,
+  hasInput,
+  mediaSafeErrorText,
+} from "./content-parts.js";
+import { activeTurnReferences } from "./turn-reference-state.js";
+import { prepareTurnReferences } from "./turn-references.js";
+import { resolveSessionUserRequest } from "./session-user-request.js";
+import { runtimeTransaction } from "./runtime-transaction.js";
+import type { AgentSession } from "./contracts.js";
+import {
+  activateAcceptedRun,
+  type AcceptedRuntimeInput,
+} from "./run-admission.js";
+import { isWorkContinuation } from "./work-intent.js";
+import { workRuntime } from "./work-runtime.js";
+import { workStore } from "./work-store.js";
+import {
+  projectWorkContext,
+  evictedContextToolIds,
+} from "./context-projection.js";
+import { getRawSqlite } from "../../db/index.js";
+import { INVALID_TOOL_ID } from "./tool-invalid.js";
+import { interactionService } from "./interaction-service.js";
+import {
+  CONTROL_TOOLS,
+  validateControlBatch,
+  controlToolError,
+} from "./control-policy.js";
+import {
+  rootGoal,
+  goalStopReason,
+  belongsToPlanExecution,
+  goalEvidenceSection,
+  type PlanExecutionBoundary,
+} from "./control-runtime.js";
+import { getGoalState, initializeGoal } from "./goal-control.js";
 import type {
   AgentContextBundle,
   AgentRun,
@@ -30,7 +61,11 @@ import type {
   ToolCallRecord,
 } from "./contracts.js";
 import { agentEventService, type AgentEventService } from "./event-service.js";
-import { detectDoomLoop, shouldConverge, buildConsecutiveFailureReminder } from "./loop-guards.js";
+import {
+  detectDoomLoop,
+  shouldConverge,
+  buildConsecutiveFailureReminder,
+} from "./loop-guards.js";
 import { buildLoopToolSet } from "./loop-ai-tools.js";
 import { streamLoopModelStep } from "./loop-model-stream.js";
 import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
@@ -55,13 +90,19 @@ import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
 import { profileCanUseTool } from "./tool-mount-policy.js";
 import { rebuildSessionFileReads } from "./read-tracker.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
-import { countMessagesTokens, countTokens, estimateToolDefinitionsTokens } from "./context-tokenizer.js";
+import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
-import { runChildToCompletion, DEFAULT_PER_CHILD_TIMEOUT_MS } from "./subagent-orchestrator.js";
+import {
+  runChildToCompletion,
+  resolvePerChildTimeoutMs,
+} from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../lib/ipc/agent-session-protocol.js";
 import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
-import { mapThinkingModeToReasoningEffort, type ReasoningEffort } from "../llm-runtime/thinking-mode-strategy.js";
+import {
+  mapThinkingModeToReasoningEffort,
+  type ReasoningEffort,
+} from "../llm-runtime/thinking-mode-strategy.js";
 import { getGlobalConfigForRuntime } from "../../lib/config/config-store.js";
 import { logger } from "../../lib/logger.js";
 import { CONTEXT_TOOL_CLEAR_THRESHOLD } from "../../lib/env.js";
@@ -74,7 +115,10 @@ const ACTIVE_SESSION_TIMEOUT_MS = 5_000;
 const DEFAULT_CONTEXT_LIMIT = 200_000;
 
 export class AgentLoopRuntime {
-  private readonly activeSessionControllers = new Map<string, Set<AbortController>>();
+  private readonly activeSessionControllers = new Map<
+    string,
+    Set<AbortController>
+  >();
 
   constructor(
     private readonly store: AgentRuntimeStore = agentRuntimeStore,
@@ -87,7 +131,9 @@ export class AgentLoopRuntime {
 
   // ToolRegistry and session/runtime modules import each other. Resolve the
   // default at call time rather than capturing an uninitialized singleton.
-  private get tools(): ToolRegistry { return this.toolsOverride ?? toolRegistry; }
+  private get tools(): ToolRegistry {
+    return this.toolsOverride ?? toolRegistry;
+  }
 
   listMessages(sessionId: string): AgentRuntimeMessage[] {
     this.store.getSession(sessionId);
@@ -133,26 +179,37 @@ export class AgentLoopRuntime {
     abortSignal?: AbortSignal,
   ): AsyncGenerator<AgentRunStreamChunk> {
     let session = this.store.getSession(sessionId);
-    if (input.acceptedRunId && session.status === 'queued') {
+    if (input.acceptedRunId && session.status === "queued") {
       const accepted = this.store.getRun(input.acceptedRunId);
       const runtime = accepted.metadata.runtime as AcceptedRuntimeInput;
-      if (accepted.sessionId !== sessionId || !runtime) throw new AgentValidationError('Invalid accepted Run.');
-      session = { ...session, status: runtime.previousSessionStatus as AgentSession['status'] };
+      if (accepted.sessionId !== sessionId || !runtime)
+        throw new AgentValidationError("Invalid accepted Run.");
+      session = {
+        ...session,
+        status: runtime.previousSessionStatus as AgentSession["status"],
+      };
     }
 
-    const RESUMABLE: string[] = ['interrupted', 'paused', 'completed', 'blocked', 'failed', 'cancelled'];
+    const RESUMABLE: string[] = [
+      "interrupted",
+      "paused",
+      "completed",
+      "blocked",
+      "failed",
+      "cancelled",
+    ];
     if (!RESUMABLE.includes(session.status)) {
       throw new AgentValidationError(
-        `Session status "${session.status}" cannot be resumed. Resumable statuses: ${RESUMABLE.join(', ')}`,
+        `Session status "${session.status}" cannot be resumed. Resumable statuses: ${RESUMABLE.join(", ")}`,
       );
     }
 
     input = normalizeInput(input);
     const hasNewMessage = hasInput(input);
 
-    if (!hasNewMessage && session.status === 'completed') {
+    if (!hasNewMessage && session.status === "completed") {
       throw new AgentValidationError(
-        'Completed sessions require a new message to continue. Provide input.message.',
+        "Completed sessions require a new message to continue. Provide input.message.",
       );
     }
 
@@ -162,24 +219,39 @@ export class AgentLoopRuntime {
     if (hasNewMessage) {
       yield* this.streamRun(sessionId, input, abortSignal, false);
     } else {
-      if (session.status === 'interrupted') {
+      if (session.status === "interrupted") {
         const runs = this.store.listRuns(sessionId);
-        const lastRun = runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
-        if (lastRun?.status === 'completed') {
+        const lastRun = runs.sort((a, b) =>
+          b.startedAt.localeCompare(a.startedAt),
+        )[0];
+        if (lastRun?.status === "completed") {
           this.store.updateSession(sessionId, {
-            status: 'completed',
+            status: "completed",
             updatedAt: nowIso(),
             completedAt: nowIso(),
-            resultSummary: lastRun.stopReason ?? 'Run completed before interruption.',
+            resultSummary:
+              lastRun.stopReason ?? "Run completed before interruption.",
             blockedReason: null,
             activeRunId: null,
           });
-          yield { type: 'done', sessionId, runId: lastRun.id };
+          yield { type: "done", sessionId, runId: lastRun.id };
           return;
         }
       }
-      const continuationPrompt = this.buildContinuationPrompt(sessionId, session.status);
-      yield* this.streamRun(sessionId, { ...input, message: continuationPrompt, messageSource: 'system_injection' }, abortSignal, false);
+      const continuationPrompt = this.buildContinuationPrompt(
+        sessionId,
+        session.status,
+      );
+      yield* this.streamRun(
+        sessionId,
+        {
+          ...input,
+          message: continuationPrompt,
+          messageSource: "system_injection",
+        },
+        abortSignal,
+        false,
+      );
     }
   }
 
@@ -192,46 +264,81 @@ export class AgentLoopRuntime {
     input = normalizeInput(input);
     this.assertSessionNotBusy(sessionId);
     const beforeStart = this.store.getSession(sessionId);
-    if (!resume && input.messageSource !== 'system_injection' && hasInput(input) && !isWorkContinuation(input.message ?? '') && !beforeStart.parentSessionId && beforeStart.sessionMetadata?.mode==='goal') {
-      const previousGoal=getGoalState(beforeStart.sessionMetadata);
-      if(previousGoal&&['completed','cancelled'].includes(previousGoal.status))this.store.updateSessionMetadata(sessionId,{goal:initializeGoal(input.message || 'Media request'),plan:null});
-      else if(previousGoal?.status==='blocked')this.store.updateSessionMetadata(sessionId,{goal:{...previousGoal,status:(beforeStart.sessionMetadata?.plan as {status?:string}|undefined)?.status==='approved'?'executing':'planning',reason:undefined}});
+    if (
+      !resume &&
+      input.messageSource !== "system_injection" &&
+      hasInput(input) &&
+      !isWorkContinuation(input.message ?? "") &&
+      !beforeStart.parentSessionId &&
+      beforeStart.sessionMetadata?.mode === "goal"
+    ) {
+      const previousGoal = getGoalState(beforeStart.sessionMetadata);
+      if (
+        previousGoal &&
+        ["completed", "cancelled"].includes(previousGoal.status)
+      )
+        this.store.updateSessionMetadata(sessionId, {
+          goal: initializeGoal(input.message || "Media request"),
+          plan: null,
+        });
+      else if (previousGoal?.status === "blocked")
+        this.store.updateSessionMetadata(sessionId, {
+          goal: {
+            ...previousGoal,
+            status:
+              (
+                beforeStart.sessionMetadata?.plan as
+                  | { status?: string }
+                  | undefined
+              )?.status === "approved"
+                ? "executing"
+                : "planning",
+            reason: undefined,
+          },
+        });
     }
-    if (beforeStart.status === 'waiting_input') {
+    if (beforeStart.status === "waiting_input") {
       const pending = interactionService.pending(sessionId);
-      if (pending?.kind === 'plan_approval' && hasInput(input)) {
+      if (pending?.kind === "plan_approval" && hasInput(input)) {
         interactionService.deferPlan(sessionId, pending.id);
         const resolved = interactionService.consume(sessionId);
         if (!resolved)
-          throw new AgentValidationError('Plan approval could not be converted into a saved plan.');
+          throw new AgentValidationError(
+            "Plan approval could not be converted into a saved plan.",
+          );
         const completedAt = nowIso();
         this.store.updateRun(resolved.runId, {
-          status: 'completed',
+          status: "completed",
           completedAt,
-          stopReason: 'plan_saved',
+          stopReason: "plan_saved",
         });
         this.store.updateSession(sessionId, {
-          status: 'completed',
+          status: "completed",
           updatedAt: completedAt,
           completedAt,
-          resultSummary: 'Plan saved for later execution.',
+          resultSummary: "Plan saved for later execution.",
           blockedReason: null,
           activeRunId: null,
           pendingResumeToken: null,
         });
         this.events.append({
           sessionId,
-          type: 'run_completed',
-          summary: 'Plan saved for later execution.',
-          payload: { runId: resolved.runId, stopReason: 'plan_saved' },
+          type: "run_completed",
+          summary: "Plan saved for later execution.",
+          payload: { runId: resolved.runId, stopReason: "plan_saved" },
         });
         yield* this.streamRun(sessionId, input, abortSignal, false);
         return;
       }
       if (!resume || !interactionService.ready(sessionId))
-        throw new AgentValidationError('Resolve the pending form before continuing.');
+        throw new AgentValidationError(
+          "Resolve the pending form before continuing.",
+        );
     }
-    if (input.permissionTier !== undefined || input.permissionOverrides !== undefined) {
+    if (
+      input.permissionTier !== undefined ||
+      input.permissionOverrides !== undefined
+    ) {
       applySessionPermissionUpdate(sessionId, {
         permissionTier: input.permissionTier,
         permissionOverrides: input.permissionOverrides,
@@ -239,1119 +346,1767 @@ export class AgentLoopRuntime {
     }
     let session = this.store.getSession(sessionId);
     if (input.reasoningEffort) {
-      session = this.store.updateSession(sessionId, { reasoningEffort: input.reasoningEffort, updatedAt: nowIso() });
+      session = this.store.updateSession(sessionId, {
+        reasoningEffort: input.reasoningEffort,
+        updatedAt: nowIso(),
+      });
     }
     const profile = this.profiles.getForSession(session);
-    const prompt = hasInput(input) ? input.message?.trim() ?? '' : session.prompt;
+    const prompt = hasInput(input)
+      ? (input.message?.trim() ?? "")
+      : session.prompt;
     const inputResume = resume ? interactionService.ready(sessionId) : null;
-    let pendingResume = resume && !inputResume ? this.resume.resolvePendingRun(sessionId) : null;
-    if (resume && !inputResume && !pendingResume) throw new AgentValidationError('No pending runtime action is available to resume.');
+    let pendingResume =
+      resume && !inputResume ? this.resume.resolvePendingRun(sessionId) : null;
+    if (resume && !inputResume && !pendingResume)
+      throw new AgentValidationError(
+        "No pending runtime action is available to resume.",
+      );
     const activeExecution = this.beginSessionExecution(sessionId, abortSignal);
     const runAbortSignal = activeExecution.signal;
     try {
-    let run: AgentRun;
-    let pendingPermission = pendingResume?.permission ?? null;
+      let run: AgentRun;
+      let pendingPermission = pendingResume?.permission ?? null;
 
-    logger.info(
-      {
-        sessionId,
-        profileId: session.profileId,
-        resume,
-        model: input.model ?? null,
-        prompt: truncateLogText(prompt),
-      },
-      "[agent-runtime] run starting",
-    );
-
-    if (inputResume) {
-      const resolved = interactionService.consume(sessionId);
-      if (!resolved) throw new AgentValidationError('The input checkpoint was already consumed.');
-      run = this.store.getRun(resolved.runId);
-      yield { type: 'run_resumed', run };
-      yield { type: 'tool_result', runId: run.id, stepId: resolved.stepId, toolCall: this.store.getToolCall(sessionId,resolved.toolCallId) };
-      if (['save','cancel','decline'].includes(resolved.response!.action)) {
-        const saved = resolved.response!.action === 'save';
-        const cancelledPlan = resolved.kind === 'plan_approval' && resolved.response!.action === 'cancel';
-        const completed = saved || cancelledPlan;
-        const reason = saved
-          ? 'Plan saved without execution.'
-          : cancelledPlan
-            ? 'Plan saved; immediate execution cancelled.'
-            : 'User declined or cancelled the requested input.';
-        const finished = this.store.updateRun(run.id,{status:completed?'completed':'blocked',completedAt:nowIso(),stopReason:reason});
-        this.store.updateSession(sessionId,{status:completed?'completed':'blocked',activeRunId:null,pendingResumeToken:null,completedAt:nowIso(),resultSummary:reason,blockedReason:completed?null:reason});
-        if (!completed) {const g=getGoalState(this.store.getSession(sessionId).sessionMetadata);if(g)this.store.updateSessionMetadata(sessionId,{goal:{...g,status:'blocked',reason}});}
-        yield completed ? {type:'run_completed',run:finished} : {type:'run_failed',run:finished,error:reason};
-        yield {type:'done',sessionId,runId:run.id};
-        return;
-      }
-      session = this.store.getSession(sessionId);
-    } else if (resume) {
-      if (!pendingResume)
-        throw new AgentValidationError(
-          "No pending runtime action is available to resume.",
-        );
-      run = this.store.updateRun(pendingResume.run.id, {
-        status: "running",
-        completedAt: null,
-        stopReason: null,
-        model: input.model ?? pendingResume.run.model,
-      });
-      this.store.updateSession(sessionId, {
-        status: "running",
-        updatedAt: nowIso(),
-        blockedReason: null,
-        completedAt: null,
-        activeRunId: run.id,
-        pendingResumeToken: null,
-      });
-      const resumedEvent = this.events.append({
-        sessionId,
-        type: "run_resumed",
-        summary: "Run resumed from pending permission.",
-        payload: {
-          runId: run.id,
-          stepId: pendingResume.step.id,
-          permissionId: pendingResume.permission.id,
-          toolCallId: pendingResume.toolCall?.id ?? null,
-        },
-      });
       logger.info(
         {
           sessionId,
-          runId: run.id,
-          stepId: pendingResume.step.id,
-          permissionId: pendingResume.permission.id,
-          toolCallId: pendingResume.toolCall?.id ?? null,
-        },
-        "[agent-runtime] run resumed from pending permission",
-      );
-      yield { type: "run_resumed", run, event: resumedEvent };
-    } else {
-      const userMessage = this.store.appendMessage({
-        id: makeRuntimeId("msg"),
-        sessionId,
-        runId: null,
-        stepId: null,
-        role: "user",
-        content: prompt,
-        contentParts: input.contentParts,
-        metadata: {
-          references: input.references,
-          source: input.messageSource === "system_injection"
-            ? "system_injection"
-            : hasInput(input)
-              ? "turn_request"
-              : "session_prompt",
-        },
-        createdAt: nowIso(),
-      });
-      yield { type: "message", message: userMessage };
-
-      run = this.createRun(sessionId, userMessage.id, input.model ?? null, input.acceptedRunId);
-      const planBoundary = rootGoal(session).root.sessionMetadata?.plan as PlanExecutionBoundary | undefined;
-      if(planBoundary?.executionId)run=this.store.updateRun(run.id,{metadata:{...run.metadata,goalExecutionId:planBoundary.executionId}});
-      this.store.updateSession(sessionId, {
-        status: "running",
-        updatedAt: nowIso(),
-        blockedReason: null,
-        activeRunId: run.id,
-        pendingResumeToken: null,
-        completedAt: null,
-      });
-      const startedEvent = this.events.append({
-        sessionId,
-        type: "run_started",
-        summary: `${profile.label} run started`,
-        payload: {
-          runId: run.id,
-          triggerMessageId: userMessage.id,
+          profileId: session.profileId,
+          resume,
           model: input.model ?? null,
+          prompt: truncateLogText(prompt),
         },
-      });
-      logger.info(
-        {
-          sessionId,
-          runId: run.id,
-          triggerMessageId: userMessage.id,
-          model: input.model ?? null,
-        },
-        "[agent-runtime] run started",
+        "[agent-runtime] run starting",
       );
-      yield { type: "run_started", run, event: startedEvent };
-      void sessionHooks.emit({ type: 'run:started', sessionId, runId: run.id });
-    }
 
-    if (!resume) {
-      const referenceContext = input.referenceContext ?? prepareTurnReferences(sessionId, input.references);
-      run = this.store.updateRun(run.id, { metadata: { ...this.store.getRun(run.id).metadata, turnReferences: referenceContext ?? null } });
-    }
-    workRuntime.attach(sessionId, run);
-    run = this.store.getRun(run.id);
-    if (!resume && input.messageSource !== 'system_injection' && synaxAgent.isSynaxSession(session)) {
-      const routed = synaxAgent.maybeAutoRoute(sessionId, prompt);
-      if (routed) {
-        session = this.store.getSession(sessionId);
-      }
-    }
-
-    try {
-      // Keep maxSteps readable for existing clients/profiles; it now controls only the prompt.
-      const convergenceThreshold = input.maxSteps ?? (run.metadata.convergenceThreshold as number | undefined) ?? profile.maxSteps;
-      run = this.store.updateRun(run.id, { metadata: { ...run.metadata, convergenceThreshold } });
-      const context = session.contextSnapshotId
-        ? this.tryGetContext(session.contextSnapshotId)
-        : null;
-
-      // Resolve model capabilities/context window/reasoning effort once for the run
-      let modelCapabilities: { reasoning: boolean } | undefined
-      let runOutputReserve = input.maxTokens ?? 8192;
-      let runContextLimit = DEFAULT_CONTEXT_LIMIT
-      let runReasoningEffort: ReasoningEffort = mapThinkingModeToReasoningEffort(session.thinkingMode)
-      try {
-        const selection = await resolveGatewaySelection({
-          projectId: session.projectId,
-          purpose: input.purpose ?? profile.kind,
-          model: input.model ?? undefined,
-        })
-        modelCapabilities = { reasoning: selection.modelDef.reasoning ?? false }
-        runOutputReserve = input.maxTokens ?? selection.modelDef.maxTokens ?? 8192;
-        if (typeof selection.modelDef.contextLimit === 'number' && selection.modelDef.contextLimit > 0) {
-          runContextLimit = selection.modelDef.contextLimit
-          // Persist the provider-configured window on the run: the usage bar
-          // (`GET /sessions/:id/stats`) must render the configured context size
-          // (e.g. the 1M toggle in provider settings) instead of whatever
-          // window the provider happens to report in its usage payload.
-          run = this.store.updateRun(run.id, {
-            metadata: { ...run.metadata, contextLimit: runContextLimit },
-          })
+      if (inputResume) {
+        const resolved = interactionService.consume(sessionId);
+        if (!resolved)
+          throw new AgentValidationError(
+            "The input checkpoint was already consumed.",
+          );
+        run = this.store.getRun(resolved.runId);
+        yield { type: "run_resumed", run };
+        yield {
+          type: "tool_result",
+          runId: run.id,
+          stepId: resolved.stepId,
+          toolCall: this.store.getToolCall(sessionId, resolved.toolCallId),
+        };
+        if (["save", "cancel", "decline"].includes(resolved.response!.action)) {
+          const saved = resolved.response!.action === "save";
+          const cancelledPlan =
+            resolved.kind === "plan_approval" &&
+            resolved.response!.action === "cancel";
+          const completed = saved || cancelledPlan;
+          const reason = saved
+            ? "Plan saved without execution."
+            : cancelledPlan
+              ? "Plan saved; immediate execution cancelled."
+              : "User declined or cancelled the requested input.";
+          const finished = this.store.updateRun(run.id, {
+            status: completed ? "completed" : "blocked",
+            completedAt: nowIso(),
+            stopReason: reason,
+          });
+          this.store.updateSession(sessionId, {
+            status: completed ? "completed" : "blocked",
+            activeRunId: null,
+            pendingResumeToken: null,
+            completedAt: nowIso(),
+            resultSummary: reason,
+            blockedReason: completed ? null : reason,
+          });
+          if (!completed) {
+            const g = getGoalState(
+              this.store.getSession(sessionId).sessionMetadata,
+            );
+            if (g)
+              this.store.updateSessionMetadata(sessionId, {
+                goal: { ...g, status: "blocked", reason },
+              });
+          }
+          yield completed
+            ? { type: "run_completed", run: finished }
+            : { type: "run_failed", run: finished, error: reason };
+          yield { type: "done", sessionId, runId: run.id };
+          return;
         }
-        runReasoningEffort =
-          input.reasoningEffort
-          ?? session.reasoningEffort
-          ?? readProviderDefaultReasoningEffort(selection.providerId)
-          ?? mapThinkingModeToReasoningEffort(session.thinkingMode)
-      } catch { /* non-critical, proceed without capabilities */ }
-      input = { ...input, reasoningEffort: runReasoningEffort }
-      run = this.store.updateRun(run.id, { metadata: { ...run.metadata, reasoningEffort: runReasoningEffort } })
-
-      await warmupMcpForSession(sessionId)
-
-      let currentPrompt = prompt;
-      if (pendingResume?.permission.userReply) {
-        this.appendSystemNotePart({
-          runId: run.id,
-          stepId: pendingResume.step.id,
-          sessionId,
-          content: `Permission reply: ${pendingResume.permission.userReply}`,
-          toolCallId: pendingResume.permission.toolCallId,
-          metadata: { permissionId: pendingResume.permission.id },
+        session = this.store.getSession(sessionId);
+      } else if (resume) {
+        if (!pendingResume)
+          throw new AgentValidationError(
+            "No pending runtime action is available to resume.",
+          );
+        run = this.store.updateRun(pendingResume.run.id, {
+          status: "running",
+          completedAt: null,
+          stopReason: null,
+          model: input.model ?? pendingResume.run.model,
         });
-      }
-      if (
-        pendingResume?.permission.action === "allow" &&
-        pendingResume.toolCall
-      ) {
+        this.store.updateSession(sessionId, {
+          status: "running",
+          updatedAt: nowIso(),
+          blockedReason: null,
+          completedAt: null,
+          activeRunId: run.id,
+          pendingResumeToken: null,
+        });
+        const resumedEvent = this.events.append({
+          sessionId,
+          type: "run_resumed",
+          summary: "Run resumed from pending permission.",
+          payload: {
+            runId: run.id,
+            stepId: pendingResume.step.id,
+            permissionId: pendingResume.permission.id,
+            toolCallId: pendingResume.toolCall?.id ?? null,
+          },
+        });
         logger.info(
           {
             sessionId,
             runId: run.id,
             stepId: pendingResume.step.id,
             permissionId: pendingResume.permission.id,
-            toolCallId: pendingResume.toolCall.id,
+            toolCallId: pendingResume.toolCall?.id ?? null,
           },
-          "[agent-runtime] resuming approved tool call",
+          "[agent-runtime] run resumed from pending permission",
         );
-        const resumedToolExecution = await this.tools.resumePending(
+        yield { type: "run_resumed", run, event: resumedEvent };
+      } else {
+        const userMessage = this.store.appendMessage({
+          id: makeRuntimeId("msg"),
           sessionId,
-          pendingResume.permission,
-          runAbortSignal,
-        );
-        this.appendToolResultPart({
-          runId: run.id,
-          stepId: pendingResume.step.id,
-          sessionId,
-          record: resumedToolExecution.record,
+          runId: null,
+          stepId: null,
+          role: "user",
+          content: prompt,
+          contentParts: input.contentParts,
+          metadata: {
+            references: input.references,
+            source:
+              input.messageSource === "system_injection"
+                ? "system_injection"
+                : hasInput(input)
+                  ? "turn_request"
+                  : "session_prompt",
+          },
+          createdAt: nowIso(),
         });
-        yield {
-          type: "tool_result",
+        yield { type: "message", message: userMessage };
+
+        run = this.createRun(
+          sessionId,
+          userMessage.id,
+          input.model ?? null,
+          input.acceptedRunId,
+        );
+        const planBoundary = rootGoal(session).root.sessionMetadata?.plan as
+          | PlanExecutionBoundary
+          | undefined;
+        if (planBoundary?.executionId)
+          run = this.store.updateRun(run.id, {
+            metadata: {
+              ...run.metadata,
+              goalExecutionId: planBoundary.executionId,
+            },
+          });
+        this.store.updateSession(sessionId, {
+          status: "running",
+          updatedAt: nowIso(),
+          blockedReason: null,
+          activeRunId: run.id,
+          pendingResumeToken: null,
+          completedAt: null,
+        });
+        const startedEvent = this.events.append({
+          sessionId,
+          type: "run_started",
+          summary: `${profile.label} run started`,
+          payload: {
+            runId: run.id,
+            triggerMessageId: userMessage.id,
+            model: input.model ?? null,
+          },
+        });
+        logger.info(
+          {
+            sessionId,
+            runId: run.id,
+            triggerMessageId: userMessage.id,
+            model: input.model ?? null,
+          },
+          "[agent-runtime] run started",
+        );
+        yield { type: "run_started", run, event: startedEvent };
+        void sessionHooks.emit({
+          type: "run:started",
+          sessionId,
           runId: run.id,
-          stepId: pendingResume.step.id,
-          toolCall: resumedToolExecution.record,
-        };
-        pendingPermission = null;
-        pendingResume = null;
+        });
       }
 
-      rebuildSessionFileReads(sessionId, this.store.listToolCalls(sessionId));
-
-      let clearingActivated = false;
-
-      while (true) {
-        const terminalWork = workStore.current(sessionId);
-        if (terminalWork && ['completed', 'blocked', 'cancelled'].includes(terminalWork.status)) {
-          yield* this.finishWorkRun(sessionId, run); return;
-        }
-        const liveSession=this.store.getSession(sessionId);
-        if(['paused','interrupted','cancelled'].includes(liveSession.status)) {this.interruptSessions([sessionId],'Session stopped by user.');throw new Error('Session stopped by user.');}
-        const stopReason = goalStopReason(this.store.getSession(sessionId));
-        if (stopReason) {
-          yield* this.finishControlledGoal(sessionId,run,stopReason);
-          return;
-        }
-        if (runAbortSignal.aborted) {
-          throw new AgentRuntimeError(
-            "Run interrupted by client.",
-            "ABORTED",
-            499,
-          );
-        }
-        if (this.store.getRun(run.id).metadata.roundHandoff) {
-          yield* this.finishYieldedRun(sessionId, run); return;
-        }
-
+      if (!resume) {
+        const referenceContext =
+          input.referenceContext ??
+          prepareTurnReferences(sessionId, input.references);
         run = this.store.updateRun(run.id, {
-          currentStep: run.currentStep + 1,
-        });
-        const step = this.store.appendRunStep({
-          id: makeRuntimeId("stp"),
-          runId: run.id,
-          sessionId,
-          index: run.currentStep,
-          status: "running",
-          model: input.model ?? null,
-          startedAt: nowIso(),
-          completedAt: null,
-          finishReason: null,
-          metadata: { reasoningEffort: input.reasoningEffort, workId: workStore.current(sessionId)?.id, workChangeVersion: workStore.current(sessionId)?.changeVersion,
-            converging: shouldConverge(run.currentStep, convergenceThreshold) },
-        });
-        const workVersionBeforeStep = workStore.current(sessionId)?.progressVersion ?? 0;
-        const stepStarted = this.events.append({
-          sessionId,
-          type: "step_started",
-          summary: `Step ${step.index} started`,
-          payload: { runId: run.id, stepId: step.id, index: step.index },
-        });
-        logger.info(
-          {
-            sessionId,
-            runId: run.id,
-            stepId: step.id,
-            stepIndex: step.index,
-            convergenceThreshold,
+          metadata: {
+            ...this.store.getRun(run.id).metadata,
+            turnReferences: referenceContext ?? null,
           },
-          "[agent-runtime] step started",
-        );
-        yield { type: "step_started", step, event: stepStarted };
-        emitSessionLive(sessionId, { type: 'step_started', stepId: step.id, stepIndex: step.index, modelCapabilities });
-
-        const history = this.store
-          .listMessages(sessionId)
-          .filter(
-            (message) =>
-              message.role === "user" || message.role === "assistant",
-          );
-        const previousToolCalls = this.store.listRunToolCalls(run.id);
-        const previousSteps = this.store.listRunSteps(run.id);
-        const previousStep =
-          previousSteps.find(
-            (candidate) => candidate.index === step.index - 1,
-          ) ?? null;
-        const previousStepParts = previousStep
-          ? this.store.listRunParts(previousStep.id)
-          : [];
-
-        let modelResult: LoopStepModelResult | null = null;
-        let stepForceInjectRequested = false;
-        void sessionHooks.emit({ type: 'step:before', sessionId, runId: run.id, stepIndex: step.index });
-        for await (const event of this.generateStep({
-          sessionId,
-          prompt: currentPrompt,
-          input,
-          profile,
-          context,
-          history,
-          previousParts: previousStepParts,
-          previousToolCalls,
-          stepIndex: step.index,
-          maxSteps: convergenceThreshold,
-          converging: shouldConverge(step.index, convergenceThreshold),
-          blockedByPermission: pendingPermission?.userReply === "reject",
-          previousStepUsage: previousStep?.metadata?.usage as Record<string, unknown> | undefined,
-          abortSignal: runAbortSignal,
-          clearingActivated,
-          contextLimit: runContextLimit,
-          outputReserve: runOutputReserve,
-        })) {
-          if (inputQueueService.getForceInjectId(sessionId)) {
-            stepForceInjectRequested = true;
-            break;
-          }
-          if (event.type === 'context_composition') {
-            this.store.updateRunStep(step.id, {
-              metadata: { ...this.store.getRunStep(step.id).metadata, contextComposition: event.composition },
-            });
-            const contextEvent = this.events.append({
-              sessionId, type: 'progress_updated', visibility: 'internal',
-              summary: 'Request context composition updated',
-              payload: { kind: 'context_composition', runId: run.id, stepId: step.id },
-            });
-            yield { type: 'event', event: contextEvent };
-          }
-          if (event.type === 'retry_status') {
-            this.store.updateRunStep(step.id, {
-              metadata: { ...this.store.getRunStep(step.id).metadata,
-                retry: event.retry.phase === 'recovered' ? null : event.retry },
-            });
-            const retryEvent = this.events.append({
-              sessionId, type: 'progress_updated', visibility: 'internal',
-              summary: `LLM ${event.retry.reason}: ${event.retry.phase} (${event.retry.group}/${event.retry.attempt}/${event.retry.maxRetries})`,
-              payload: { kind: 'llm_retry', runId: run.id, stepId: step.id, retry: event.retry },
-            });
-            yield { type: 'retry_status', runId: run.id, stepId: step.id, retry: event.retry, event: retryEvent };
-            emitSessionLive(sessionId, { type: 'retry_status', stepId: step.id, retry: event.retry });
-          }
-          if (event.type === 'usage') {
-            this.store.updateRunStep(step.id, { metadata: { ...this.store.getRunStep(step.id).metadata, usage: event.usage } });
-          }
-          if (event.type === "thought_delta") {
-            const evt = this.events.append({
-              sessionId,
-              type: "thought_delta",
-              summary: event.delta,
-              payload: { runId: run.id, stepId: step.id, delta: event.delta },
-              visibility: "internal",
-            });
-            yield {
-              type: "thought_delta",
-              runId: run.id,
-              stepId: step.id,
-              delta: event.delta,
-              event: evt,
-            };
-            emitSessionLive(sessionId, { type: 'thought_delta', stepId: step.id, delta: event.delta });
-          }
-          if (event.type === "text_delta") {
-            const evt = this.events.append({
-              sessionId,
-              type: "message_delta",
-              summary: event.delta,
-              payload: { runId: run.id, stepId: step.id, delta: event.delta },
-              visibility: "user_visible",
-            });
-            yield {
-              type: "message_delta",
-              runId: run.id,
-              stepId: step.id,
-              delta: event.delta,
-              event: evt,
-            };
-            emitSessionLive(sessionId, { type: 'message_delta', stepId: step.id, delta: event.delta });
-          }
-          if (event.type === "step_complete") {
-            modelResult = { model: event.model, step: event.step };
-          }
-          if (event.type === "context_compacted") {
-            const compactEvt = this.events.append({
-              sessionId,
-              type: "progress_updated",
-              summary: `Context compacted: ${event.originalTokens} → ${event.compressedTokens} tokens`,
-              payload: { kind: 'compaction', originalTokens: event.originalTokens, compressedTokens: event.compressedTokens, messageCount: event.messageCount },
-            });
-            yield {
-              type: "context_compacted",
-              runId: run.id,
-              stepId: step.id,
-              originalTokens: event.originalTokens,
-              compressedTokens: event.compressedTokens,
-              messageCount: event.messageCount,
-              event: compactEvt,
-            };
-            emitSessionLive(sessionId, { type: 'context_compacted', stepId: step.id, originalTokens: event.originalTokens, compressedTokens: event.compressedTokens, messageCount: event.messageCount });
-          }
+        });
+      }
+      workRuntime.attach(sessionId, run);
+      run = this.store.getRun(run.id);
+      if (
+        !resume &&
+        input.messageSource !== "system_injection" &&
+        synaxAgent.isSynaxSession(session)
+      ) {
+        const routed = synaxAgent.maybeAutoRoute(sessionId, prompt);
+        if (routed) {
+          session = this.store.getSession(sessionId);
         }
+      }
 
-        if (stepForceInjectRequested) {
-          this.store.updateRunStep(step.id, {
-            status: "interrupted",
-            completedAt: nowIso(),
-            finishReason: "input_force_inject",
+      try {
+        // Keep maxSteps readable for existing clients/profiles; it now controls only the prompt.
+        const convergenceThreshold =
+          input.maxSteps ??
+          (run.metadata.convergenceThreshold as number | undefined) ??
+          profile.maxSteps;
+        run = this.store.updateRun(run.id, {
+          metadata: { ...run.metadata, convergenceThreshold },
+        });
+        const context = session.contextSnapshotId
+          ? this.tryGetContext(session.contextSnapshotId)
+          : null;
+
+        // Resolve model capabilities/context window/reasoning effort once for the run
+        let modelCapabilities: { reasoning: boolean } | undefined;
+        let runOutputReserve = input.maxTokens ?? 8192;
+        let runContextLimit = DEFAULT_CONTEXT_LIMIT;
+        let runReasoningEffort: ReasoningEffort =
+          mapThinkingModeToReasoningEffort(session.thinkingMode);
+        try {
+          const selection = await resolveGatewaySelection({
+            projectId: session.projectId,
+            purpose: input.purpose ?? profile.kind,
+            model: input.model ?? undefined,
           });
-          void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
-          const forced = await this.injectQueuedInput(sessionId, run);
-          if (forced) {
-            yield { type: "input_injected", message: forced.userMessage, queueItemId: forced.queueItemId };
-            currentPrompt = forced.message;
-            if (forced.model) {
-              input = { ...input, model: forced.model };
-            }
+          modelCapabilities = {
+            reasoning: selection.modelDef.reasoning ?? false,
+          };
+          runOutputReserve =
+            input.maxTokens ?? selection.modelDef.maxTokens ?? 8192;
+          if (
+            typeof selection.modelDef.contextLimit === "number" &&
+            selection.modelDef.contextLimit > 0
+          ) {
+            runContextLimit = selection.modelDef.contextLimit;
+            // Persist the provider-configured window on the run: the usage bar
+            // (`GET /sessions/:id/stats`) must render the configured context size
+            // (e.g. the 1M toggle in provider settings) instead of whatever
+            // window the provider happens to report in its usage payload.
+            run = this.store.updateRun(run.id, {
+              metadata: { ...run.metadata, contextLimit: runContextLimit },
+            });
           }
-          continue;
+          runReasoningEffort =
+            input.reasoningEffort ??
+            session.reasoningEffort ??
+            readProviderDefaultReasoningEffort(selection.providerId) ??
+            mapThinkingModeToReasoningEffort(session.thinkingMode);
+        } catch {
+          /* non-critical, proceed without capabilities */
         }
+        input = { ...input, reasoningEffort: runReasoningEffort };
+        run = this.store.updateRun(run.id, {
+          metadata: { ...run.metadata, reasoningEffort: runReasoningEffort },
+        });
 
-        if (!modelResult) {
-          throw new AgentRuntimeError("Model step produced no result.", "INTERNAL", 500);
-        }
+        await warmupMcpForSession(sessionId);
 
-        this.store.updateRunStep(step.id, { metadata: { ...this.store.getRunStep(step.id).metadata,
-          usage: modelResult.step.usage, reasoningParts: modelResult.step.reasoningParts,
-          providerMetadata: modelResult.step.providerMetadata, toolCallProviderMetadata: modelResult.step.toolCallProviderMetadata,
-          protocol: modelResult.step.protocol } });
-        const stepUsage = modelResult.step.usage as Record<string, unknown> | undefined;
-        if (!clearingActivated && typeof stepUsage?.inputTokens === 'number') {
-          const stepContextLimit = runContextLimit;
-          if ((stepUsage.inputTokens as number) > stepContextLimit * CONTEXT_TOOL_CLEAR_THRESHOLD) {
-            clearingActivated = true;
-          }
-        }
-
-        const willEmitFinalAssistantMessage =
-          pendingPermission?.userReply === "reject" ||
-          modelResult.step.toolCalls.length === 0 ||
-          modelResult.step.final;
-        await this.persistStepOutput(
-          run.id,
-          step.id,
-          sessionId,
-          modelResult.step,
-          { skipAssistantText: willEmitFinalAssistantMessage },
-        );
-        logger.info(
-          {
-            sessionId,
+        let currentPrompt = prompt;
+        if (pendingResume?.permission.userReply) {
+          this.appendSystemNotePart({
             runId: run.id,
-            stepId: step.id,
-            stepIndex: step.index,
-            model: modelResult.model,
-            final: modelResult.step.final,
-            finishReason: modelResult.step.finishReason ?? null,
-            stopReason: modelResult.step.stopReason ?? null,
-            thought: truncateLogText(modelResult.step.thought ?? ""),
-            message: truncateLogText(modelResult.step.message ?? ""),
-            toolCalls: modelResult.step.toolCalls.map((call) => ({
-              id: call.id,
-              toolId: call.toolId,
-              reason: truncateLogText(call.reason ?? ""),
-            })),
-          },
-          "[agent-runtime] model step completed",
-        );
-        if (pendingPermission?.userReply === "reject") {
-          const blockedSummary =
-            modelResult.step.message?.trim() || pendingPermission.reason;
-          logger.warn(
+            stepId: pendingResume.step.id,
+            sessionId,
+            content: `Permission reply: ${pendingResume.permission.userReply}`,
+            toolCallId: pendingResume.permission.toolCallId,
+            metadata: { permissionId: pendingResume.permission.id },
+          });
+        }
+        if (
+          pendingResume?.permission.action === "allow" &&
+          pendingResume.toolCall
+        ) {
+          logger.info(
             {
               sessionId,
               runId: run.id,
-              stepId: step.id,
-              permissionId: pendingPermission.id,
-              reason: pendingPermission.reason,
+              stepId: pendingResume.step.id,
+              permissionId: pendingResume.permission.id,
+              toolCallId: pendingResume.toolCall.id,
             },
-            "[agent-runtime] run blocked by rejected permission",
+            "[agent-runtime] resuming approved tool call",
           );
-          const assistantMessage = this.finishAssistantMessage(
+          const resumedToolExecution = await this.tools.resumePending(
             sessionId,
-            run.id,
-            step.id,
-            blockedSummary,
-            modelResult.model,
-            input.purpose ?? profile.kind,
-            modelResult.step.usage,
+            pendingResume.permission,
+            runAbortSignal,
           );
-          const completedStep = this.store.updateRunStep(step.id, {
-            status: "blocked",
-            completedAt: nowIso(),
-            finishReason:
-              modelResult.step.finishReason ?? "permission_rejected",
-            metadata: { ...this.store.getRunStep(step.id).metadata, usage: modelResult.step.usage },
-          });
-          void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
-          const blockedRun = this.store.updateRun(run.id, {
-            status: "blocked",
-            completedAt: nowIso(),
-            stopReason: pendingPermission.reason,
-          });
-          this.store.updateSession(sessionId, {
-            status: "blocked",
-            updatedAt: nowIso(),
-            completedAt: nowIso(),
-            resultSummary: blockedSummary,
-            blockedReason: pendingPermission.reason,
-            activeRunId: null,
-            pendingResumeToken: null,
-          });
-          const event = this.events.append({
+          this.appendToolResultPart({
+            runId: run.id,
+            stepId: pendingResume.step.id,
             sessionId,
-            type: "run_failed",
-            summary: pendingPermission.reason,
-            payload: {
-              runId: blockedRun.id,
-              stepId: completedStep.id,
-              stopReason: pendingPermission.reason,
-            },
+            record: resumedToolExecution.record,
           });
-          yield { type: "message", message: assistantMessage };
           yield {
-            type: "run_failed",
-            run: blockedRun,
-            error: pendingPermission.reason,
-            event,
+            type: "tool_result",
+            runId: run.id,
+            stepId: pendingResume.step.id,
+            toolCall: resumedToolExecution.record,
           };
-          yield { type: "done", sessionId, runId: blockedRun.id };
-          return;
+          pendingPermission = null;
+          pendingResume = null;
         }
 
-        if (modelResult.step.toolCalls.length === 0 && inputQueueService.hasPending(sessionId)) {
-          const injected = await this.injectQueuedInput(sessionId, run);
-          if (injected) {
-            this.store.updateRunStep(step.id, { status: 'completed', completedAt: nowIso(), finishReason: 'input_injected' });
-            void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
-            yield { type: 'input_injected', message: injected.userMessage, queueItemId: injected.queueItemId };
-            currentPrompt = injected.message;
-            if (injected.model) input = { ...input, model: injected.model };
-            continue;
+        rebuildSessionFileReads(sessionId, this.store.listToolCalls(sessionId));
+
+        let clearingActivated = false;
+
+        while (true) {
+          const terminalWork = workStore.current(sessionId);
+          if (
+            terminalWork &&
+            ["completed", "blocked", "cancelled"].includes(terminalWork.status)
+          ) {
+            yield* this.finishWorkRun(sessionId, run);
+            return;
           }
-        }
-        if (modelResult.step.toolCalls.length === 0 && workStore.current(sessionId)) {
-          const finalText = modelResult.step.message?.trim();
-          try {
-            if (!finalText) throw new AgentValidationError('An empty response is not a final result.');
-            if (shouldConverge(step.index, convergenceThreshold)) {
-              workRuntime.yieldRound({ sessionId, runId: run.id, stepId: step.id,
-                toolCallId: '', toolId: 'work.checkpoint', category: 'task', mutability: 'task', args: {} }, finalText);
-              this.store.updateRunStep(step.id, { status: 'completed', completedAt: nowIso(), finishReason: 'round_yielded' });
-              void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
-              yield* this.finishYieldedRun(sessionId, run); return;
-            }
-            const result = await workRuntime.complete({ sessionId, runId: run.id, stepId: step.id,
-              toolCallId: '', toolId: 'work.checkpoint', category: 'task', mutability: 'task', args: {} }, finalText);
-            this.store.updateRunStep(step.id, { status: 'completed', completedAt: nowIso(), finishReason: 'work_completion' });
-            if (result.suspend) {
-              yield { type: 'done', sessionId, runId: run.id }; return;
-            }
-            yield* this.finishWorkRun(sessionId, run); return;
-          } catch (error) {
-            const work = workRuntime.rejectedCompletion(sessionId, error instanceof Error ? error.message : String(error));
-            this.store.updateRunStep(step.id, { status: 'completed', completedAt: nowIso(), finishReason: 'work_closing' });
-            currentPrompt = work?.reason ?? 'The final answer was rejected; fix the gap before finishing again.';
-            continue;
+          const liveSession = this.store.getSession(sessionId);
+          if (
+            ["paused", "interrupted", "cancelled"].includes(liveSession.status)
+          ) {
+            this.interruptSessions([sessionId], "Session stopped by user.");
+            throw new Error("Session stopped by user.");
           }
-        }
-        if (modelResult.step.toolCalls.length === 0) {
-          const finalText =
-            modelResult.step.message?.trim() || "Run completed.";
+          const stopReason = goalStopReason(this.store.getSession(sessionId));
+          if (stopReason) {
+            yield* this.finishControlledGoal(sessionId, run, stopReason);
+            return;
+          }
+          if (runAbortSignal.aborted) {
+            throw new AgentRuntimeError(
+              "Run interrupted by client.",
+              "ABORTED",
+              499,
+            );
+          }
+          if (this.store.getRun(run.id).metadata.roundHandoff) {
+            yield* this.finishYieldedRun(sessionId, run);
+            return;
+          }
+
+          run = this.store.updateRun(run.id, {
+            currentStep: run.currentStep + 1,
+          });
+          const step = this.store.appendRunStep({
+            id: makeRuntimeId("stp"),
+            runId: run.id,
+            sessionId,
+            index: run.currentStep,
+            status: "running",
+            model: input.model ?? null,
+            startedAt: nowIso(),
+            completedAt: null,
+            finishReason: null,
+            metadata: {
+              reasoningEffort: input.reasoningEffort,
+              workId: workStore.current(sessionId)?.id,
+              workChangeVersion: workStore.current(sessionId)?.changeVersion,
+              converging: shouldConverge(run.currentStep, convergenceThreshold),
+            },
+          });
+          const workVersionBeforeStep =
+            workStore.current(sessionId)?.progressVersion ?? 0;
+          const stepStarted = this.events.append({
+            sessionId,
+            type: "step_started",
+            summary: `Step ${step.index} started`,
+            payload: { runId: run.id, stepId: step.id, index: step.index },
+          });
           logger.info(
             {
               sessionId,
               runId: run.id,
               stepId: step.id,
               stepIndex: step.index,
-              summary: truncateLogText(finalText),
+              convergenceThreshold,
             },
-            "[agent-runtime] run completed in step",
+            "[agent-runtime] step started",
           );
-          const assistantMessage = this.finishAssistantMessage(
-            sessionId,
-            run.id,
-            step.id,
-            finalText,
-            modelResult.model,
-            input.purpose ?? profile.kind,
-            modelResult.step.usage,
-          );
-          const completedStep = this.store.updateRunStep(step.id, {
-            status: "completed",
-            completedAt: nowIso(),
-            finishReason:
-              modelResult.step.finishReason ??
-              modelResult.step.stopReason ??
-              "stop",
-            metadata: { ...this.store.getRunStep(step.id).metadata, usage: modelResult.step.usage },
+          yield { type: "step_started", step, event: stepStarted };
+          emitSessionLive(sessionId, {
+            type: "step_started",
+            stepId: step.id,
+            stepIndex: step.index,
+            modelCapabilities,
           });
-          void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
-          const completedRun = this.store.updateRun(run.id, {
-            status: "completed",
-            completedAt: nowIso(),
-            stopReason: modelResult.step.stopReason ?? "completed",
-            model: modelResult.model,
-          });
-          this.store.updateSession(sessionId, {
-            status: "completed",
-            updatedAt: nowIso(),
-            completedAt: nowIso(),
-            resultSummary: finalText,
-            blockedReason: null,
-            activeRunId: null,
-            pendingResumeToken: null,
-          });
-          const completedEvent = this.events.append({
-            sessionId,
-            type: "run_completed",
-            summary: finalText,
-            payload: {
-              runId: completedRun.id,
-              stepId: completedStep.id,
-              messageId: assistantMessage.id,
-              stopReason: completedRun.stopReason,
-            },
-          });
-          yield { type: "message", message: assistantMessage };
-          yield {
-            type: "run_completed",
-            run: completedRun,
-            message: assistantMessage,
-            event: completedEvent,
-          };
-          yield { type: "done", sessionId, runId: completedRun.id };
-          return;
-        }
 
-        if (inputQueueService.getForceInjectId(sessionId)) {
-          this.store.updateRunStep(step.id, {
-            status: "interrupted",
-            completedAt: nowIso(),
-            finishReason: "input_force_inject",
+          const history = this.store
+            .listMessages(sessionId)
+            .filter(
+              (message) =>
+                message.role === "user" || message.role === "assistant",
+            );
+          const previousToolCalls = this.store.listRunToolCalls(run.id);
+          const previousSteps = this.store.listRunSteps(run.id);
+          const previousStep =
+            previousSteps.find(
+              (candidate) => candidate.index === step.index - 1,
+            ) ?? null;
+          const previousStepParts = previousStep
+            ? this.store.listRunParts(previousStep.id)
+            : [];
+
+          let modelResult: LoopStepModelResult | null = null;
+          let stepForceInjectRequested = false;
+          void sessionHooks.emit({
+            type: "step:before",
+            sessionId,
+            runId: run.id,
+            stepIndex: step.index,
           });
-          void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
-          const forced = await this.injectQueuedInput(sessionId, run);
-          if (forced) {
-            yield { type: "input_injected", message: forced.userMessage, queueItemId: forced.queueItemId };
-            currentPrompt = forced.message;
-            if (forced.model) {
-              input = { ...input, model: forced.model };
+          for await (const event of this.generateStep({
+            sessionId,
+            stepId: step.id,
+            prompt: currentPrompt,
+            input,
+            profile,
+            context,
+            history,
+            previousParts: previousStepParts,
+            previousToolCalls,
+            stepIndex: step.index,
+            maxSteps: convergenceThreshold,
+            converging: shouldConverge(step.index, convergenceThreshold),
+            blockedByPermission: pendingPermission?.userReply === "reject",
+            previousStepUsage: previousStep?.metadata?.usage as
+              | Record<string, unknown>
+              | undefined,
+            abortSignal: runAbortSignal,
+            clearingActivated,
+            contextLimit: runContextLimit,
+            outputReserve: runOutputReserve,
+          })) {
+            if (inputQueueService.getForceInjectId(sessionId)) {
+              stepForceInjectRequested = true;
+              break;
             }
-          }
-          continue;
-        }
-
-        let waitingPermission = null as null | {
-          permission: NonNullable<typeof pendingPermission>;
-          record: ToolCallRecord;
-        };
-        const batchError = validateControlBatch(modelResult.step.toolCalls);
-        const calls = batchError ? modelResult.step.toolCalls.map(c=>({...c,toolId:INVALID_TOOL_ID,args:{tool:c.toolId,error:batchError}})) : modelResult.step.toolCalls;
-        const allCalls = withIds(calls.slice(0, 50));
-
-        // Build dedup index from previous steps — same tool + same args on a
-        // read-only tool is needless re-execution that burns context.  Fold it.
-        // However, if the original output has been cleared from context, the LLM
-        // legitimately needs the data again — skip those from the dedup index.
-        const clearedIds = evictedContextToolIds(sessionId);
-
-        const dedupIndex = new Map<string, ToolCallRecord>();
-        for (const prev of this.store.listRunToolCalls(run.id)) {
-          const boundary=rootGoal(this.store.getSession(sessionId)).root.sessionMetadata?.plan as PlanExecutionBoundary|undefined;
-          if(boundary?.executionId&&!belongsToPlanExecution(prev,boundary))continue;
-          if (prev.status === 'completed' || prev.status === 'compacted') {
-            // Don't dedup against calls whose output was cleared from context
-            if (clearedIds.has(prev.id)) continue;
-            if (prev.stepId && this.store.getRunStep(prev.stepId).metadata.workChangeVersion !== workStore.current(sessionId)?.changeVersion) continue;
-            dedupIndex.set(`${prev.toolId}:${prev.argsHash}`, prev);
-          }
-        }
-
-        // Unified parallel: launch all tool calls concurrently, no arbitrary cap.
-        // The LLM already determined these calls are independent when it emitted
-        // them together. If a write depends on a read, the LLM should call the
-        // read in step N and the write in step N+1.
-        const executions = await Promise.all(
-          allCalls.map(async (call) => {
-            const tool = this.tools.list().find(t => t.id === call.toolId);
-            if (tool?.mutability === 'read' && !['bash', 'verification.run', 'context.read'].includes(tool.id) && tool.category !== 'mcp') {
-              const argsHash = this.store.hashArgs(call.args);
-              const prev = dedupIndex.get(`${call.toolId}:${argsHash}`);
-              if (prev) {
-                // Safety valve: if the same call has already been deduped 2+ times
-                // in this run, the LLM clearly can't see the original result (likely
-                // cleared or compacted away). Re-execute instead of deduping again.
-                const priorDedups = this.store.listRunToolCalls(run.id).filter(
-                  tc => tc.toolId === call.toolId && tc.argsHash === argsHash && tc.status === 'compacted' && tc.outputRef === null,
-                ).length;
-                if (priorDedups >= 2) {
-                  logger.info(
-                    { sessionId, runId: run.id, stepId: step.id, toolId: call.toolId, argsHash, priorDedups },
-                    '[agent-runtime] dedup safety valve — re-executing after repeated dedup misses',
-                  );
-                  return this.tools.execute(sessionId, call.toolId, call.args, {
-                    runId: run.id, stepId: step.id,
-                    modelToolCallId: call.id,
-                    resumeToken: optionsResumeToken(run.id, step.id, call.id),
-              abortSignal: runAbortSignal,
-                  }).then((exec) => ({ call, exec }));
-                }
-
-                logger.info(
-                  { sessionId, runId: run.id, stepId: step.id, toolId: call.toolId, argsHash, originalCallId: prev.id },
-                  '[agent-runtime] tool call deduplicated',
-                );
-                const dedupRecord = this.store.appendToolCall({
-                  id: makeRuntimeId('tc'),
-                  sessionId,
+            if (event.type === "context_composition") {
+              this.store.updateRunStep(step.id, {
+                metadata: {
+                  ...this.store.getRunStep(step.id).metadata,
+                  contextComposition: event.composition,
+                },
+              });
+              const contextEvent = this.events.append({
+                sessionId,
+                type: "progress_updated",
+                visibility: "internal",
+                summary: "Request context composition updated",
+                payload: {
+                  kind: "context_composition",
                   runId: run.id,
                   stepId: step.id,
-                  modelToolCallId: call.id,
-                  toolId: call.toolId,
-                  category: tool.category,
-                  mutability: tool.mutability,
-                  argsHash,
-                  inputSummary: prev.inputSummary,
-                  inputRef: null,
-                  outputSummary: `[Duplicate of earlier ${call.toolId} call — the result is already in your context above. Re-read what you received earlier instead of calling again.]`,
-                  outputRef: null,
-                  status: 'compacted',
-                  permissionDecisionId: null,
-                  startedAt: nowIso(),
-                  endedAt: nowIso(),
-                  error: null,
-                });
-                return { call, exec: { record: dedupRecord } };
+                },
+              });
+              yield { type: "event", event: contextEvent };
+            }
+            if (event.type === "retry_status") {
+              this.store.updateRunStep(step.id, {
+                metadata: {
+                  ...this.store.getRunStep(step.id).metadata,
+                  retry: event.retry.phase === "recovered" ? null : event.retry,
+                },
+              });
+              const retryEvent = this.events.append({
+                sessionId,
+                type: "progress_updated",
+                visibility: "internal",
+                summary: `LLM ${event.retry.reason}: ${event.retry.phase} (${event.retry.group}/${event.retry.attempt}/${event.retry.maxRetries})`,
+                payload: {
+                  kind: "llm_retry",
+                  runId: run.id,
+                  stepId: step.id,
+                  retry: event.retry,
+                },
+              });
+              yield {
+                type: "retry_status",
+                runId: run.id,
+                stepId: step.id,
+                retry: event.retry,
+                event: retryEvent,
+              };
+              emitSessionLive(sessionId, {
+                type: "retry_status",
+                stepId: step.id,
+                retry: event.retry,
+              });
+            }
+            if (event.type === "usage") {
+              this.store.updateRunStep(step.id, {
+                metadata: {
+                  ...this.store.getRunStep(step.id).metadata,
+                  usage: event.usage,
+                },
+              });
+            }
+            if (event.type === "thought_delta") {
+              const evt = this.events.append({
+                sessionId,
+                type: "thought_delta",
+                summary: event.delta,
+                payload: { runId: run.id, stepId: step.id, delta: event.delta },
+                visibility: "internal",
+              });
+              yield {
+                type: "thought_delta",
+                runId: run.id,
+                stepId: step.id,
+                delta: event.delta,
+                event: evt,
+              };
+              emitSessionLive(sessionId, {
+                type: "thought_delta",
+                stepId: step.id,
+                delta: event.delta,
+              });
+            }
+            if (event.type === "text_delta") {
+              const evt = this.events.append({
+                sessionId,
+                type: "message_delta",
+                summary: event.delta,
+                payload: { runId: run.id, stepId: step.id, delta: event.delta },
+                visibility: "user_visible",
+              });
+              yield {
+                type: "message_delta",
+                runId: run.id,
+                stepId: step.id,
+                delta: event.delta,
+                event: evt,
+              };
+              emitSessionLive(sessionId, {
+                type: "message_delta",
+                stepId: step.id,
+                delta: event.delta,
+              });
+            }
+            if (event.type === "step_complete") {
+              modelResult = { model: event.model, step: event.step };
+            }
+            if (event.type === "context_compacted") {
+              const compactEvt = this.events.append({
+                sessionId,
+                type: "progress_updated",
+                summary: `Context compacted: ${event.originalTokens} → ${event.compressedTokens} tokens`,
+                payload: {
+                  kind: "compaction",
+                  originalTokens: event.originalTokens,
+                  compressedTokens: event.compressedTokens,
+                  messageCount: event.messageCount,
+                },
+              });
+              yield {
+                type: "context_compacted",
+                runId: run.id,
+                stepId: step.id,
+                originalTokens: event.originalTokens,
+                compressedTokens: event.compressedTokens,
+                messageCount: event.messageCount,
+                event: compactEvt,
+              };
+              emitSessionLive(sessionId, {
+                type: "context_compacted",
+                stepId: step.id,
+                originalTokens: event.originalTokens,
+                compressedTokens: event.compressedTokens,
+                messageCount: event.messageCount,
+              });
+            }
+          }
+
+          if (stepForceInjectRequested) {
+            this.store.updateRunStep(step.id, {
+              status: "interrupted",
+              completedAt: nowIso(),
+              finishReason: "input_force_inject",
+            });
+            void sessionHooks.emit({
+              type: "step:after",
+              sessionId,
+              runId: run.id,
+              stepIndex: step.index,
+            });
+            const forced = await this.injectQueuedInput(sessionId, run);
+            if (forced) {
+              yield {
+                type: "input_injected",
+                message: forced.userMessage,
+                queueItemId: forced.queueItemId,
+              };
+              currentPrompt = forced.message;
+              if (forced.model) {
+                input = { ...input, model: forced.model };
               }
             }
-
-            return this.tools.execute(sessionId, call.toolId, call.args, {
-              runId: run.id, stepId: step.id,
-              modelToolCallId: call.id,
-              resumeToken: optionsResumeToken(run.id, step.id, call.id),
-              abortSignal: runAbortSignal,
-            }).then((exec) => ({ call, exec }));
-          }),
-        );
-
-        // Emit tool_call events in model-dictated order (allCalls order)
-        for (const { call, exec } of executions) {
-          this.appendToolCallPart({ runId: run.id, stepId: step.id, sessionId, record: exec.record, reason: call.reason });
-          yield {
-            type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record,
-            event: this.events.append({ sessionId, type: "tool_call", summary: `${call.toolId} requested`, payload: { runId: run.id, stepId: step.id, toolCallId: exec.record.id, modelToolCallId: call.id } }),
-          };
-          emitSessionLive(sessionId, { type: 'tool_call', stepId: step.id, toolCall: exec.record });
-          logger.info(
-            { sessionId, runId: run.id, stepId: step.id, toolCallId: exec.record.id, toolId: call.toolId, status: exec.record.status, permissionAction: exec.permission?.action ?? null },
-            "[agent-runtime] tool call executed",
-          );
-        }
-
-        const interactionExec = executions.find(({exec})=>exec.interactionId);
-        if(interactionExec){
-          const event=this.events.append({sessionId,type:'interaction_requested',summary:'Waiting for user input.',payload:{interactionId:interactionExec.exec.interactionId,runId:run.id,stepId:step.id}});
-          yield {type:'event',event};
-          yield {type:'done',sessionId,runId:run.id};
-          return;
-        }
-
-        // Check for permission "ask" — pause at the first one in model order.
-        // If any tool needs user approval, we persist results for tools that
-        // completed BEFORE it and yield a permission_requested event.
-        const askIndex = executions.findIndex(({ exec }) => exec.permission?.action === "ask");
-
-        if (askIndex >= 0) {
-          const askExec = executions[askIndex];
-          waitingPermission = { permission: askExec.exec.permission!, record: askExec.exec.record };
-          logger.info(
-            { sessionId, runId: run.id, stepId: step.id, permissionId: askExec.exec.permission!.id, toolCallId: askExec.exec.record.id, reason: truncateLogText(askExec.exec.permission!.reason) },
-            "[agent-runtime] permission requested",
-          );
-
-          // Emit tool_result for tools that completed BEFORE the ask-point (model order)
-          for (let i = 0; i < askIndex; i++) {
-            const { call, exec } = executions[i];
-            const completedRecord =
-              call.toolId === "subagent.delegate" && exec.toolResult?.result
-                ? await this.awaitTaskResult(exec.record, exec.toolResult.result, runAbortSignal)
-                : exec.record;
-            this.appendToolResultPart({ runId: run.id, stepId: step.id, sessionId, record: completedRecord });
-            if (completedRecord.status === "denied") {
-              logger.warn(
-                { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId },
-                "[agent-runtime] tool call denied",
-              );
-            }
-            logger.info(
-              { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId, status: completedRecord.status, outputSummary: truncateLogText(completedRecord.outputSummary ?? completedRecord.error ?? "") },
-              "[agent-runtime] tool result recorded",
-            );
-            yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
-            emitSessionLive(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
+            continue;
           }
-        } else {
-          // No permission issues — resolve subagent delegation results in parallel,
-          // then emit tool_result events in model-dictated order.
-          const resolved = await Promise.all(
-            executions.map(({ call, exec }) =>
-              call.toolId === "subagent.delegate" && exec.toolResult?.result
-                ? this.awaitTaskResult(exec.record, exec.toolResult.result, runAbortSignal)
-                : Promise.resolve(exec.record),
-            ),
-          );
 
-          for (let i = 0; i < resolved.length; i++) {
-            const completedRecord = resolved[i];
-            const { call } = executions[i];
-            this.appendToolResultPart({ runId: run.id, stepId: step.id, sessionId, record: completedRecord });
-            if (completedRecord.status === "denied") {
-              logger.warn(
-                { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId },
-                "[agent-runtime] tool call denied",
-              );
-            }
-            logger.info(
-              { sessionId, runId: run.id, stepId: step.id, toolCallId: completedRecord.id, toolId: call.toolId, status: completedRecord.status, outputSummary: truncateLogText(completedRecord.outputSummary ?? completedRecord.error ?? "") },
-              "[agent-runtime] tool result recorded",
+          if (!modelResult) {
+            throw new AgentRuntimeError(
+              "Model step produced no result.",
+              "INTERNAL",
+              500,
             );
-            yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: completedRecord };
-            emitSessionLive(sessionId, { type: 'tool_result', stepId: step.id, toolCall: completedRecord });
           }
-        }
 
-        const completedStep = this.store.updateRunStep(step.id, {
-          status: waitingPermission ? "waiting_permission" : "completed",
-          completedAt: nowIso(),
-          finishReason: waitingPermission
-            ? "permission_required"
-            : (modelResult.step.finishReason ?? "tool_calls"),
-          model: modelResult.model,
-          metadata: { ...this.store.getRunStep(step.id).metadata, usage: modelResult.step.usage },
-        });
-        void sessionHooks.emit({ type: 'step:after', sessionId, runId: run.id, stepIndex: step.index });
+          this.store.updateRunStep(step.id, {
+            metadata: {
+              ...this.store.getRunStep(step.id).metadata,
+              usage: modelResult.step.usage,
+              reasoningParts: modelResult.step.reasoningParts,
+              providerMetadata: modelResult.step.providerMetadata,
+              toolCallProviderMetadata:
+                modelResult.step.toolCallProviderMetadata,
+              protocol: modelResult.step.protocol,
+            },
+          });
+          const stepUsage = modelResult.step.usage as
+            | Record<string, unknown>
+            | undefined;
+          if (
+            !clearingActivated &&
+            typeof stepUsage?.inputTokens === "number"
+          ) {
+            const stepContextLimit = runContextLimit;
+            if (
+              (stepUsage.inputTokens as number) >
+              stepContextLimit * CONTEXT_TOOL_CLEAR_THRESHOLD
+            ) {
+              clearingActivated = true;
+            }
+          }
 
-        if (waitingPermission) {
-          const resumedRun = this.store.updateRun(run.id, {
-            status: "waiting_permission",
-            stopReason: waitingPermission.permission.reason,
-            model: modelResult.model,
-          });
-          this.store.updateSession(sessionId, {
-            status: "waiting_permission",
-            updatedAt: nowIso(),
-            blockedReason: waitingPermission.permission.reason,
-            resultSummary: waitingPermission.permission.reason,
-            activeRunId: resumedRun.id,
-            pendingResumeToken: waitingPermission.permission.resumeToken,
-          });
-          const permissionEvent = this.events.append({
+          const willEmitFinalAssistantMessage =
+            pendingPermission?.userReply === "reject" ||
+            modelResult.step.toolCalls.length === 0 ||
+            modelResult.step.final;
+          await this.persistStepOutput(
+            run.id,
+            step.id,
             sessionId,
-            type: "permission_requested",
-            summary: waitingPermission.permission.reason,
-            payload: {
-              runId: resumedRun.id,
-              stepId: completedStep.id,
-              permissionId: waitingPermission.permission.id,
-              toolCallId: waitingPermission.record.id,
-            },
-          });
-          logger.info(
-            {
-              sessionId,
-              runId: resumedRun.id,
-              stepId: completedStep.id,
-              permissionId: waitingPermission.permission.id,
-              toolCallId: waitingPermission.record.id,
-            },
-            "[agent-runtime] waiting for permission",
+            modelResult.step,
+            { skipAssistantText: willEmitFinalAssistantMessage },
           );
-          yield {
-            type: "permission_requested",
-            runId: resumedRun.id,
-            stepId: completedStep.id,
-            permission: waitingPermission.permission,
-            toolCall: waitingPermission.record,
-            event: permissionEvent,
-          };
-          yield { type: "done", sessionId, runId: resumedRun.id };
-          return;
-        }
-
-        if (this.store.getRun(run.id).metadata.roundHandoff) {
-          yield* this.finishYieldedRun(sessionId, run); return;
-        }
-        workRuntime.afterStep(sessionId, step.id, workVersionBeforeStep);
-        const afterWork = workStore.current(sessionId);
-        if (afterWork && ['completed', 'blocked', 'cancelled'].includes(afterWork.status)) {
-          yield* this.finishWorkRun(sessionId, run); return;
-        }
-        const doomLoop = workStore.current(sessionId) ? null : detectDoomLoop(this.store.listRunToolCalls(run.id), profile?.doomLoopThreshold);
-        if (doomLoop) {
-          const note = `Repeated tool call detected for ${doomLoop.toolId} with identical arguments. Change approach or report the blocker; converge to an honest status report without repeating unchanged calls.`;
-          logger.warn(
+          logger.info(
             {
               sessionId,
               runId: run.id,
               stepId: step.id,
-              toolCallId: doomLoop.id,
-              toolId: doomLoop.toolId,
-              argsHash: doomLoop.argsHash,
+              stepIndex: step.index,
+              model: modelResult.model,
+              final: modelResult.step.final,
+              finishReason: modelResult.step.finishReason ?? null,
+              stopReason: modelResult.step.stopReason ?? null,
+              thought: truncateLogText(modelResult.step.thought ?? ""),
+              message: truncateLogText(modelResult.step.message ?? ""),
+              toolCalls: modelResult.step.toolCalls.map((call) => ({
+                id: call.id,
+                toolId: call.toolId,
+                reason: truncateLogText(call.reason ?? ""),
+              })),
             },
-            "[agent-runtime] doom loop detected",
+            "[agent-runtime] model step completed",
           );
-          this.store.appendRunPart({
-            id: makeRuntimeId("prt"),
-            runId: run.id,
-            stepId: step.id,
-            sessionId,
-            kind: "system_note",
-            sequence: this.store.nextRunPartSequence(step.id),
-            content: note,
-            toolCallId: doomLoop.id,
-            metadata: { guard: "doom_loop" },
-            createdAt: nowIso(),
+          if (pendingPermission?.userReply === "reject") {
+            const blockedSummary =
+              modelResult.step.message?.trim() || pendingPermission.reason;
+            logger.warn(
+              {
+                sessionId,
+                runId: run.id,
+                stepId: step.id,
+                permissionId: pendingPermission.id,
+                reason: pendingPermission.reason,
+              },
+              "[agent-runtime] run blocked by rejected permission",
+            );
+            const assistantMessage = this.finishAssistantMessage(
+              sessionId,
+              run.id,
+              step.id,
+              blockedSummary,
+              modelResult.model,
+              input.purpose ?? profile.kind,
+              modelResult.step.usage,
+            );
+            const completedStep = this.store.updateRunStep(step.id, {
+              status: "blocked",
+              completedAt: nowIso(),
+              finishReason:
+                modelResult.step.finishReason ?? "permission_rejected",
+              metadata: {
+                ...this.store.getRunStep(step.id).metadata,
+                usage: modelResult.step.usage,
+              },
+            });
+            void sessionHooks.emit({
+              type: "step:after",
+              sessionId,
+              runId: run.id,
+              stepIndex: step.index,
+            });
+            const blockedRun = this.store.updateRun(run.id, {
+              status: "blocked",
+              completedAt: nowIso(),
+              stopReason: pendingPermission.reason,
+            });
+            this.store.updateSession(sessionId, {
+              status: "blocked",
+              updatedAt: nowIso(),
+              completedAt: nowIso(),
+              resultSummary: blockedSummary,
+              blockedReason: pendingPermission.reason,
+              activeRunId: null,
+              pendingResumeToken: null,
+            });
+            const event = this.events.append({
+              sessionId,
+              type: "run_failed",
+              summary: pendingPermission.reason,
+              payload: {
+                runId: blockedRun.id,
+                stepId: completedStep.id,
+                stopReason: pendingPermission.reason,
+              },
+            });
+            yield { type: "message", message: assistantMessage };
+            yield {
+              type: "run_failed",
+              run: blockedRun,
+              error: pendingPermission.reason,
+              event,
+            };
+            yield { type: "done", sessionId, runId: blockedRun.id };
+            return;
+          }
+
+          if (
+            modelResult.step.toolCalls.length === 0 &&
+            inputQueueService.hasPending(sessionId)
+          ) {
+            const injected = await this.injectQueuedInput(sessionId, run);
+            if (injected) {
+              this.store.updateRunStep(step.id, {
+                status: "completed",
+                completedAt: nowIso(),
+                finishReason: "input_injected",
+              });
+              void sessionHooks.emit({
+                type: "step:after",
+                sessionId,
+                runId: run.id,
+                stepIndex: step.index,
+              });
+              yield {
+                type: "input_injected",
+                message: injected.userMessage,
+                queueItemId: injected.queueItemId,
+              };
+              currentPrompt = injected.message;
+              if (injected.model) input = { ...input, model: injected.model };
+              continue;
+            }
+          }
+          if (
+            modelResult.step.toolCalls.length === 0 &&
+            workStore.current(sessionId)
+          ) {
+            const finalText = modelResult.step.message?.trim();
+            try {
+              if (!finalText)
+                throw new AgentValidationError(
+                  "An empty response is not a final result.",
+                );
+              if (shouldConverge(step.index, convergenceThreshold)) {
+                workRuntime.yieldRound(
+                  {
+                    sessionId,
+                    runId: run.id,
+                    stepId: step.id,
+                    toolCallId: "",
+                    toolId: "work.checkpoint",
+                    category: "task",
+                    mutability: "task",
+                    args: {},
+                  },
+                  finalText,
+                );
+                this.store.updateRunStep(step.id, {
+                  status: "completed",
+                  completedAt: nowIso(),
+                  finishReason: "round_yielded",
+                });
+                void sessionHooks.emit({
+                  type: "step:after",
+                  sessionId,
+                  runId: run.id,
+                  stepIndex: step.index,
+                });
+                yield* this.finishYieldedRun(sessionId, run);
+                return;
+              }
+              const result = await workRuntime.complete(
+                {
+                  sessionId,
+                  runId: run.id,
+                  stepId: step.id,
+                  toolCallId: "",
+                  toolId: "work.checkpoint",
+                  category: "task",
+                  mutability: "task",
+                  args: {},
+                },
+                finalText,
+              );
+              this.store.updateRunStep(step.id, {
+                status: "completed",
+                completedAt: nowIso(),
+                finishReason: "work_completion",
+              });
+              if (result.suspend) {
+                yield { type: "done", sessionId, runId: run.id };
+                return;
+              }
+              yield* this.finishWorkRun(sessionId, run);
+              return;
+            } catch (error) {
+              const work = workRuntime.rejectedCompletion(
+                sessionId,
+                error instanceof Error ? error.message : String(error),
+              );
+              this.store.updateRunStep(step.id, {
+                status: "completed",
+                completedAt: nowIso(),
+                finishReason: "work_closing",
+              });
+              currentPrompt =
+                work?.reason ??
+                "The final answer was rejected; fix the gap before finishing again.";
+              continue;
+            }
+          }
+          if (modelResult.step.toolCalls.length === 0) {
+            const finalText =
+              modelResult.step.message?.trim() || "Run completed.";
+            logger.info(
+              {
+                sessionId,
+                runId: run.id,
+                stepId: step.id,
+                stepIndex: step.index,
+                summary: truncateLogText(finalText),
+              },
+              "[agent-runtime] run completed in step",
+            );
+            const assistantMessage = this.finishAssistantMessage(
+              sessionId,
+              run.id,
+              step.id,
+              finalText,
+              modelResult.model,
+              input.purpose ?? profile.kind,
+              modelResult.step.usage,
+            );
+            const completedStep = this.store.updateRunStep(step.id, {
+              status: "completed",
+              completedAt: nowIso(),
+              finishReason:
+                modelResult.step.finishReason ??
+                modelResult.step.stopReason ??
+                "stop",
+              metadata: {
+                ...this.store.getRunStep(step.id).metadata,
+                usage: modelResult.step.usage,
+              },
+            });
+            void sessionHooks.emit({
+              type: "step:after",
+              sessionId,
+              runId: run.id,
+              stepIndex: step.index,
+            });
+            const completedRun = this.store.updateRun(run.id, {
+              status: "completed",
+              completedAt: nowIso(),
+              stopReason: modelResult.step.stopReason ?? "completed",
+              model: modelResult.model,
+            });
+            this.store.updateSession(sessionId, {
+              status: "completed",
+              updatedAt: nowIso(),
+              completedAt: nowIso(),
+              resultSummary: finalText,
+              blockedReason: null,
+              activeRunId: null,
+              pendingResumeToken: null,
+            });
+            const completedEvent = this.events.append({
+              sessionId,
+              type: "run_completed",
+              summary: finalText,
+              payload: {
+                runId: completedRun.id,
+                stepId: completedStep.id,
+                messageId: assistantMessage.id,
+                stopReason: completedRun.stopReason,
+              },
+            });
+            yield { type: "message", message: assistantMessage };
+            yield {
+              type: "run_completed",
+              run: completedRun,
+              message: assistantMessage,
+              event: completedEvent,
+            };
+            yield { type: "done", sessionId, runId: completedRun.id };
+            return;
+          }
+
+          if (inputQueueService.getForceInjectId(sessionId)) {
+            this.store.updateRunStep(step.id, {
+              status: "interrupted",
+              completedAt: nowIso(),
+              finishReason: "input_force_inject",
+            });
+            void sessionHooks.emit({
+              type: "step:after",
+              sessionId,
+              runId: run.id,
+              stepIndex: step.index,
+            });
+            const forced = await this.injectQueuedInput(sessionId, run);
+            if (forced) {
+              yield {
+                type: "input_injected",
+                message: forced.userMessage,
+                queueItemId: forced.queueItemId,
+              };
+              currentPrompt = forced.message;
+              if (forced.model) {
+                input = { ...input, model: forced.model };
+              }
+            }
+            continue;
+          }
+
+          let waitingPermission = null as null | {
+            permission: NonNullable<typeof pendingPermission>;
+            record: ToolCallRecord;
+          };
+          const batchError = validateControlBatch(modelResult.step.toolCalls);
+          const calls = batchError
+            ? modelResult.step.toolCalls.map((c) => ({
+                ...c,
+                toolId: INVALID_TOOL_ID,
+                args: { tool: c.toolId, error: batchError },
+              }))
+            : modelResult.step.toolCalls;
+          const allCalls = withIds(calls.slice(0, 50));
+
+          // Build dedup index from previous steps — same tool + same args on a
+          // read-only tool is needless re-execution that burns context.  Fold it.
+          // However, if the original output has been cleared from context, the LLM
+          // legitimately needs the data again — skip those from the dedup index.
+          const clearedIds = evictedContextToolIds(sessionId);
+
+          const dedupIndex = new Map<string, ToolCallRecord>();
+          for (const prev of this.store.listRunToolCalls(run.id)) {
+            const boundary = rootGoal(this.store.getSession(sessionId)).root
+              .sessionMetadata?.plan as PlanExecutionBoundary | undefined;
+            if (
+              boundary?.executionId &&
+              !belongsToPlanExecution(prev, boundary)
+            )
+              continue;
+            if (prev.status === "completed" || prev.status === "compacted") {
+              // Don't dedup against calls whose output was cleared from context
+              if (clearedIds.has(prev.id)) continue;
+              if (
+                prev.stepId &&
+                this.store.getRunStep(prev.stepId).metadata
+                  .workChangeVersion !==
+                  workStore.current(sessionId)?.changeVersion
+              )
+                continue;
+              dedupIndex.set(`${prev.toolId}:${prev.argsHash}`, prev);
+            }
+          }
+
+          // Unified parallel: launch all tool calls concurrently, no arbitrary cap.
+          // The LLM already determined these calls are independent when it emitted
+          // them together. If a write depends on a read, the LLM should call the
+          // read in step N and the write in step N+1.
+          const executions = await Promise.all(
+            allCalls.map(async (call) => {
+              const tool = this.tools.list().find((t) => t.id === call.toolId);
+              if (
+                tool?.mutability === "read" &&
+                !["bash", "verification.run", "context.read"].includes(
+                  tool.id,
+                ) &&
+                tool.category !== "mcp"
+              ) {
+                const argsHash = this.store.hashArgs(call.args);
+                const prev = dedupIndex.get(`${call.toolId}:${argsHash}`);
+                if (prev) {
+                  // Safety valve: if the same call has already been deduped 2+ times
+                  // in this run, the LLM clearly can't see the original result (likely
+                  // cleared or compacted away). Re-execute instead of deduping again.
+                  const priorDedups = this.store
+                    .listRunToolCalls(run.id)
+                    .filter(
+                      (tc) =>
+                        tc.toolId === call.toolId &&
+                        tc.argsHash === argsHash &&
+                        tc.status === "compacted" &&
+                        tc.outputRef === null,
+                    ).length;
+                  if (priorDedups >= 2) {
+                    logger.info(
+                      {
+                        sessionId,
+                        runId: run.id,
+                        stepId: step.id,
+                        toolId: call.toolId,
+                        argsHash,
+                        priorDedups,
+                      },
+                      "[agent-runtime] dedup safety valve — re-executing after repeated dedup misses",
+                    );
+                    return this.tools
+                      .execute(sessionId, call.toolId, call.args, {
+                        runId: run.id,
+                        stepId: step.id,
+                        modelToolCallId: call.id,
+                        resumeToken: optionsResumeToken(
+                          run.id,
+                          step.id,
+                          call.id,
+                        ),
+                        abortSignal: runAbortSignal,
+                      })
+                      .then((exec) => ({ call, exec }));
+                  }
+
+                  logger.info(
+                    {
+                      sessionId,
+                      runId: run.id,
+                      stepId: step.id,
+                      toolId: call.toolId,
+                      argsHash,
+                      originalCallId: prev.id,
+                    },
+                    "[agent-runtime] tool call deduplicated",
+                  );
+                  const dedupRecord = this.store.appendToolCall({
+                    id: makeRuntimeId("tc"),
+                    sessionId,
+                    runId: run.id,
+                    stepId: step.id,
+                    modelToolCallId: call.id,
+                    toolId: call.toolId,
+                    category: tool.category,
+                    mutability: tool.mutability,
+                    argsHash,
+                    inputSummary: prev.inputSummary,
+                    inputRef: null,
+                    outputSummary: `[Duplicate of earlier ${call.toolId} call — the result is already in your context above. Re-read what you received earlier instead of calling again.]`,
+                    outputRef: null,
+                    status: "compacted",
+                    permissionDecisionId: null,
+                    startedAt: nowIso(),
+                    endedAt: nowIso(),
+                    error: null,
+                  });
+                  return { call, exec: { record: dedupRecord } };
+                }
+              }
+
+              return this.tools
+                .execute(sessionId, call.toolId, call.args, {
+                  runId: run.id,
+                  stepId: step.id,
+                  modelToolCallId: call.id,
+                  resumeToken: optionsResumeToken(run.id, step.id, call.id),
+                  abortSignal: runAbortSignal,
+                })
+                .then((exec) => ({ call, exec }));
+            }),
+          );
+
+          // Emit tool_call events in model-dictated order (allCalls order)
+          for (const { call, exec } of executions) {
+            this.appendToolCallPart({
+              runId: run.id,
+              stepId: step.id,
+              sessionId,
+              record: exec.record,
+              reason: call.reason,
+            });
+            yield {
+              type: "tool_call",
+              runId: run.id,
+              stepId: step.id,
+              toolCall: exec.record,
+              event: this.events.append({
+                sessionId,
+                type: "tool_call",
+                summary: `${call.toolId} requested`,
+                payload: {
+                  runId: run.id,
+                  stepId: step.id,
+                  toolCallId: exec.record.id,
+                  modelToolCallId: call.id,
+                },
+              }),
+            };
+            emitSessionLive(sessionId, {
+              type: "tool_call",
+              stepId: step.id,
+              toolCall: exec.record,
+            });
+            logger.info(
+              {
+                sessionId,
+                runId: run.id,
+                stepId: step.id,
+                toolCallId: exec.record.id,
+                toolId: call.toolId,
+                status: exec.record.status,
+                permissionAction: exec.permission?.action ?? null,
+              },
+              "[agent-runtime] tool call executed",
+            );
+          }
+
+          const interactionExec = executions.find(
+            ({ exec }) => exec.interactionId,
+          );
+          if (interactionExec) {
+            const event = this.events.append({
+              sessionId,
+              type: "interaction_requested",
+              summary: "Waiting for user input.",
+              payload: {
+                interactionId: interactionExec.exec.interactionId,
+                runId: run.id,
+                stepId: step.id,
+              },
+            });
+            yield { type: "event", event };
+            yield { type: "done", sessionId, runId: run.id };
+            return;
+          }
+
+          // Check for permission "ask" — pause at the first one in model order.
+          // If any tool needs user approval, we persist results for tools that
+          // completed BEFORE it and yield a permission_requested event.
+          const askIndex = executions.findIndex(
+            ({ exec }) => exec.permission?.action === "ask",
+          );
+
+          if (askIndex >= 0) {
+            const askExec = executions[askIndex];
+            waitingPermission = {
+              permission: askExec.exec.permission!,
+              record: askExec.exec.record,
+            };
+            logger.info(
+              {
+                sessionId,
+                runId: run.id,
+                stepId: step.id,
+                permissionId: askExec.exec.permission!.id,
+                toolCallId: askExec.exec.record.id,
+                reason: truncateLogText(askExec.exec.permission!.reason),
+              },
+              "[agent-runtime] permission requested",
+            );
+
+            // Emit tool_result for tools that completed BEFORE the ask-point (model order)
+            for (let i = 0; i < askIndex; i++) {
+              const { call, exec } = executions[i];
+              const completedRecord =
+                call.toolId === "subagent.delegate" && exec.toolResult?.result
+                  ? await this.awaitTaskResult(
+                      exec.record,
+                      exec.toolResult.result,
+                      runAbortSignal,
+                    )
+                  : exec.record;
+              this.appendToolResultPart({
+                runId: run.id,
+                stepId: step.id,
+                sessionId,
+                record: completedRecord,
+              });
+              if (completedRecord.status === "denied") {
+                logger.warn(
+                  {
+                    sessionId,
+                    runId: run.id,
+                    stepId: step.id,
+                    toolCallId: completedRecord.id,
+                    toolId: call.toolId,
+                  },
+                  "[agent-runtime] tool call denied",
+                );
+              }
+              logger.info(
+                {
+                  sessionId,
+                  runId: run.id,
+                  stepId: step.id,
+                  toolCallId: completedRecord.id,
+                  toolId: call.toolId,
+                  status: completedRecord.status,
+                  outputSummary: truncateLogText(
+                    completedRecord.outputSummary ??
+                      completedRecord.error ??
+                      "",
+                  ),
+                },
+                "[agent-runtime] tool result recorded",
+              );
+              yield {
+                type: "tool_result",
+                runId: run.id,
+                stepId: step.id,
+                toolCall: completedRecord,
+              };
+              emitSessionLive(sessionId, {
+                type: "tool_result",
+                stepId: step.id,
+                toolCall: completedRecord,
+              });
+            }
+          } else {
+            // No permission issues — resolve subagent delegation results in parallel,
+            // then emit tool_result events in model-dictated order.
+            const resolved = await Promise.all(
+              executions.map(({ call, exec }) =>
+                call.toolId === "subagent.delegate" && exec.toolResult?.result
+                  ? this.awaitTaskResult(
+                      exec.record,
+                      exec.toolResult.result,
+                      runAbortSignal,
+                    )
+                  : Promise.resolve(exec.record),
+              ),
+            );
+
+            for (let i = 0; i < resolved.length; i++) {
+              const completedRecord = resolved[i];
+              const { call } = executions[i];
+              this.appendToolResultPart({
+                runId: run.id,
+                stepId: step.id,
+                sessionId,
+                record: completedRecord,
+              });
+              if (completedRecord.status === "denied") {
+                logger.warn(
+                  {
+                    sessionId,
+                    runId: run.id,
+                    stepId: step.id,
+                    toolCallId: completedRecord.id,
+                    toolId: call.toolId,
+                  },
+                  "[agent-runtime] tool call denied",
+                );
+              }
+              logger.info(
+                {
+                  sessionId,
+                  runId: run.id,
+                  stepId: step.id,
+                  toolCallId: completedRecord.id,
+                  toolId: call.toolId,
+                  status: completedRecord.status,
+                  outputSummary: truncateLogText(
+                    completedRecord.outputSummary ??
+                      completedRecord.error ??
+                      "",
+                  ),
+                },
+                "[agent-runtime] tool result recorded",
+              );
+              yield {
+                type: "tool_result",
+                runId: run.id,
+                stepId: step.id,
+                toolCall: completedRecord,
+              };
+              emitSessionLive(sessionId, {
+                type: "tool_result",
+                stepId: step.id,
+                toolCall: completedRecord,
+              });
+            }
+          }
+
+          const completedStep = this.store.updateRunStep(step.id, {
+            status: waitingPermission ? "waiting_permission" : "completed",
+            completedAt: nowIso(),
+            finishReason: waitingPermission
+              ? "permission_required"
+              : (modelResult.step.finishReason ?? "tool_calls"),
+            model: modelResult.model,
+            metadata: {
+              ...this.store.getRunStep(step.id).metadata,
+              usage: modelResult.step.usage,
+            },
           });
-        }
+          void sessionHooks.emit({
+            type: "step:after",
+            sessionId,
+            runId: run.id,
+            stepIndex: step.index,
+          });
 
-        currentPrompt = prompt;
-        pendingPermission = null;
+          if (waitingPermission) {
+            const resumedRun = this.store.updateRun(run.id, {
+              status: "waiting_permission",
+              stopReason: waitingPermission.permission.reason,
+              model: modelResult.model,
+            });
+            this.store.updateSession(sessionId, {
+              status: "waiting_permission",
+              updatedAt: nowIso(),
+              blockedReason: waitingPermission.permission.reason,
+              resultSummary: waitingPermission.permission.reason,
+              activeRunId: resumedRun.id,
+              pendingResumeToken: waitingPermission.permission.resumeToken,
+            });
+            const permissionEvent = this.events.append({
+              sessionId,
+              type: "permission_requested",
+              summary: waitingPermission.permission.reason,
+              payload: {
+                runId: resumedRun.id,
+                stepId: completedStep.id,
+                permissionId: waitingPermission.permission.id,
+                toolCallId: waitingPermission.record.id,
+              },
+            });
+            logger.info(
+              {
+                sessionId,
+                runId: resumedRun.id,
+                stepId: completedStep.id,
+                permissionId: waitingPermission.permission.id,
+                toolCallId: waitingPermission.record.id,
+              },
+              "[agent-runtime] waiting for permission",
+            );
+            yield {
+              type: "permission_requested",
+              runId: resumedRun.id,
+              stepId: completedStep.id,
+              permission: waitingPermission.permission,
+              toolCall: waitingPermission.record,
+              event: permissionEvent,
+            };
+            yield { type: "done", sessionId, runId: resumedRun.id };
+            return;
+          }
 
-        if (inputQueueService.hasPending(sessionId)) {
-          const injected = await this.injectQueuedInput(sessionId, run);
-          if (injected) {
-            yield { type: "input_injected", message: injected.userMessage, queueItemId: injected.queueItemId };
-            currentPrompt = injected.message;
-            if (injected.model) {
-              input = { ...input, model: injected.model };
+          if (this.store.getRun(run.id).metadata.roundHandoff) {
+            yield* this.finishYieldedRun(sessionId, run);
+            return;
+          }
+          workRuntime.afterStep(sessionId, step.id, workVersionBeforeStep);
+          const afterWork = workStore.current(sessionId);
+          if (
+            afterWork &&
+            ["completed", "blocked", "cancelled"].includes(afterWork.status)
+          ) {
+            yield* this.finishWorkRun(sessionId, run);
+            return;
+          }
+          const doomLoop = workStore.current(sessionId)
+            ? null
+            : detectDoomLoop(
+                this.store.listRunToolCalls(run.id),
+                profile?.doomLoopThreshold,
+              );
+          if (doomLoop) {
+            const note = `Repeated tool call detected for ${doomLoop.toolId} with identical arguments. Change approach or report the blocker; converge to an honest status report without repeating unchanged calls.`;
+            logger.warn(
+              {
+                sessionId,
+                runId: run.id,
+                stepId: step.id,
+                toolCallId: doomLoop.id,
+                toolId: doomLoop.toolId,
+                argsHash: doomLoop.argsHash,
+              },
+              "[agent-runtime] doom loop detected",
+            );
+            this.store.appendRunPart({
+              id: makeRuntimeId("prt"),
+              runId: run.id,
+              stepId: step.id,
+              sessionId,
+              kind: "system_note",
+              sequence: this.store.nextRunPartSequence(step.id),
+              content: note,
+              toolCallId: doomLoop.id,
+              metadata: { guard: "doom_loop" },
+              createdAt: nowIso(),
+            });
+          }
+
+          currentPrompt = prompt;
+          pendingPermission = null;
+
+          if (inputQueueService.hasPending(sessionId)) {
+            const injected = await this.injectQueuedInput(sessionId, run);
+            if (injected) {
+              yield {
+                type: "input_injected",
+                message: injected.userMessage,
+                queueItemId: injected.queueItemId,
+              };
+              currentPrompt = injected.message;
+              if (injected.model) {
+                input = { ...input, model: injected.model };
+              }
             }
           }
         }
-      }
-
-    } catch (error) {
-      const committedWork = workStore.current(sessionId);
-      if (committedWork?.status === 'completed') {
-        yield* this.finishWorkRun(sessionId, run); return;
-      }
-      for (const step of this.store.listRunSteps(run.id)) {
-        if (step.status === 'running') this.store.updateRunStep(step.id, { status: 'interrupted', completedAt: nowIso(), finishReason: 'interrupted' });
-      }
-      if (error instanceof AgentRuntimeError && ['UNSUPPORTED_MEDIA','MEDIA_CAPABILITY_UNKNOWN','MEDIA_TOO_LARGE','MEDIA_NOT_FOUND','MEDIA_CHANGED'].includes(error.code)) {
-        const message = error.message;
-        this.store.updateRun(run.id,{status:'blocked',completedAt:nowIso(),stopReason:message});
-        this.store.updateSession(sessionId,{status:'blocked',blockedReason:message,activeRunId:null});
-        yield {type:'run_failed',run:this.store.getRun(run.id),error:message};
-        yield {type:'done',sessionId,runId:run.id};return;
-      }
-      if (error instanceof Error && error.message.startsWith('context_blocked:') && committedWork) {
-        committedWork.status = 'blocked'; committedWork.reason = error.message; workStore.save(committedWork);
-        yield* this.finishWorkRun(sessionId, run); return;
-      }
-      const abortReason =
-        runAbortSignal.aborted && 'reason' in runAbortSignal
-          ? (runAbortSignal as AbortSignal & { reason?: unknown }).reason
-          : undefined;
-      const message = mediaSafeErrorText(
-        abortReason instanceof Error
-          ? abortReason.message
-          : typeof abortReason === 'string'
-            ? abortReason
-            : error instanceof Error
-              ? error.message
-              : String(error));
-      const responseBody = (error as any)?.responseBody ?? (error as any)?.data ?? undefined;
-      const statusCode = (error as any)?.statusCode ?? (error as any)?.status ?? undefined;
-      logger.error(
-        {
-          sessionId,
-          runId: run.id,
-          aborted: Boolean(runAbortSignal.aborted),
-          err: { name: error instanceof Error ? error.name : undefined, message },
-          statusCode,
-          responseBody: responseBody === undefined ? undefined : mediaSafeErrorText(typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody)).slice(0, 1000),
-        },
-        "[agent-runtime] run failed",
-      );
-      const isAbort = Boolean(runAbortSignal.aborted);
-      const failedRun = this.store.updateRun(run.id, {
-        status: isAbort ? "interrupted" : "failed",
-        completedAt: nowIso(),
-        stopReason: message,
-      });
-
-      // If session was already set to 'paused' (by pause()), don't overwrite
-      const currentSession = this.store.getSession(sessionId);
-      const sessionStatus = currentSession.status === 'paused'
-        ? 'paused'
-        : isAbort ? 'interrupted' : 'failed';
-
-      this.store.updateSession(sessionId, {
-        status: sessionStatus,
-        updatedAt: nowIso(),
-        completedAt: sessionStatus === 'failed' ? nowIso() : null,
-        blockedReason: message,
-        resultSummary: message,
-        activeRunId: null,
-        pendingResumeToken: null,
-      });
-      const failedEvent = this.events.append({
-        sessionId,
-        type: "run_failed",
-        summary: message,
-        payload: { runId: failedRun.id, error: message, resumable: sessionStatus !== 'failed' },
-      });
-      yield {
-        type: "run_failed",
-        run: failedRun,
-        error: message,
-        event: failedEvent,
-      };
-      yield { type: "done", sessionId, runId: failedRun.id };
-    } finally {
-      if (run) {
-        for (const step of this.store.listRunSteps(run.id)) {
-          if (step.status === 'running') this.store.updateRunStep(step.id, { status: 'interrupted', completedAt: nowIso(), finishReason: 'run_ended' });
+      } catch (error) {
+        const committedWork = workStore.current(sessionId);
+        if (committedWork?.status === "completed") {
+          yield* this.finishWorkRun(sessionId, run);
+          return;
         }
-        try {
-          const finalRun = this.store.getRun(run.id);
-          void sessionHooks.emit({ type: 'run:completed', sessionId, runId: run.id, status: finalRun.status });
-        } catch { /* run may not exist if creation failed */ }
+        for (const step of this.store.listRunSteps(run.id)) {
+          if (step.status === "running")
+            this.store.updateRunStep(step.id, {
+              status: "interrupted",
+              completedAt: nowIso(),
+              finishReason: "interrupted",
+            });
+        }
+        if (
+          error instanceof AgentRuntimeError &&
+          [
+            "UNSUPPORTED_MEDIA",
+            "MEDIA_CAPABILITY_UNKNOWN",
+            "MEDIA_TOO_LARGE",
+            "MEDIA_NOT_FOUND",
+            "MEDIA_CHANGED",
+          ].includes(error.code)
+        ) {
+          const message = error.message;
+          this.store.updateRun(run.id, {
+            status: "blocked",
+            completedAt: nowIso(),
+            stopReason: message,
+          });
+          this.store.updateSession(sessionId, {
+            status: "blocked",
+            blockedReason: message,
+            activeRunId: null,
+          });
+          yield {
+            type: "run_failed",
+            run: this.store.getRun(run.id),
+            error: message,
+          };
+          yield { type: "done", sessionId, runId: run.id };
+          return;
+        }
+        if (
+          error instanceof Error &&
+          error.message.startsWith("context_blocked:") &&
+          committedWork
+        ) {
+          committedWork.status = "blocked";
+          committedWork.reason = error.message;
+          workStore.save(committedWork);
+          yield* this.finishWorkRun(sessionId, run);
+          return;
+        }
+        const abortReason =
+          runAbortSignal.aborted && "reason" in runAbortSignal
+            ? (runAbortSignal as AbortSignal & { reason?: unknown }).reason
+            : undefined;
+        const message = mediaSafeErrorText(
+          abortReason instanceof Error
+            ? abortReason.message
+            : typeof abortReason === "string"
+              ? abortReason
+              : error instanceof Error
+                ? error.message
+                : String(error),
+        );
+        const responseBody =
+          (error as any)?.responseBody ?? (error as any)?.data ?? undefined;
+        const statusCode =
+          (error as any)?.statusCode ?? (error as any)?.status ?? undefined;
+        logger.error(
+          {
+            sessionId,
+            runId: run.id,
+            aborted: Boolean(runAbortSignal.aborted),
+            err: {
+              name: error instanceof Error ? error.name : undefined,
+              message,
+            },
+            statusCode,
+            responseBody:
+              responseBody === undefined
+                ? undefined
+                : mediaSafeErrorText(
+                    typeof responseBody === "string"
+                      ? responseBody
+                      : JSON.stringify(responseBody),
+                  ).slice(0, 1000),
+          },
+          "[agent-runtime] run failed",
+        );
+        const isAbort = Boolean(runAbortSignal.aborted);
+        const failedRun = this.store.updateRun(run.id, {
+          status: isAbort ? "interrupted" : "failed",
+          completedAt: nowIso(),
+          stopReason: message,
+        });
+
+        // If session was already set to 'paused' (by pause()), don't overwrite
+        const currentSession = this.store.getSession(sessionId);
+        const sessionStatus =
+          currentSession.status === "paused"
+            ? "paused"
+            : isAbort
+              ? "interrupted"
+              : "failed";
+
+        this.store.updateSession(sessionId, {
+          status: sessionStatus,
+          updatedAt: nowIso(),
+          completedAt: sessionStatus === "failed" ? nowIso() : null,
+          blockedReason: message,
+          resultSummary: message,
+          activeRunId: null,
+          pendingResumeToken: null,
+        });
+        const failedEvent = this.events.append({
+          sessionId,
+          type: "run_failed",
+          summary: message,
+          payload: {
+            runId: failedRun.id,
+            error: message,
+            resumable: sessionStatus !== "failed",
+          },
+        });
+        yield {
+          type: "run_failed",
+          run: failedRun,
+          error: message,
+          event: failedEvent,
+        };
+        yield { type: "done", sessionId, runId: failedRun.id };
+      } finally {
+        if (run) {
+          for (const step of this.store.listRunSteps(run.id)) {
+            if (step.status === "running")
+              this.store.updateRunStep(step.id, {
+                status: "interrupted",
+                completedAt: nowIso(),
+                finishReason: "run_ended",
+              });
+          }
+          try {
+            const finalRun = this.store.getRun(run.id);
+            void sessionHooks.emit({
+              type: "run:completed",
+              sessionId,
+              runId: run.id,
+              status: finalRun.status,
+            });
+          } catch {
+            /* run may not exist if creation failed */
+          }
+        }
       }
+    } finally {
+      activeExecution.dispose();
     }
-    } finally { activeExecution.dispose(); }
   }
 
-  private *finishWorkRun(sessionId: string, run: AgentRun): Generator<AgentRunStreamChunk> {
+  private *finishWorkRun(
+    sessionId: string,
+    run: AgentRun,
+  ): Generator<AgentRunStreamChunk> {
     const work = workStore.current(sessionId)!;
     let message: AgentRuntimeMessage | undefined;
     getRawSqlite().transaction(() => {
       workRuntime.persistTerminal(work, run.id);
-      message = this.store.listMessages(sessionId).find(m => m.metadata.purpose === 'work_result' && m.content === (work.result ?? work.reason));
-      if (!message) message = this.finishAssistantMessage(sessionId, run.id, null,
-        work.result ?? work.reason ?? 'Work completed.', run.model, 'work_result');
+      message = this.store
+        .listMessages(sessionId)
+        .find(
+          (m) =>
+            m.metadata.purpose === "work_result" &&
+            m.content === (work.result ?? work.reason),
+        );
+      if (!message)
+        message = this.finishAssistantMessage(
+          sessionId,
+          run.id,
+          null,
+          work.result ?? work.reason ?? "Work completed.",
+          run.model,
+          "work_result",
+        );
     })();
     const terminalRun = this.store.getRun(run.id);
-    const eventType = work.status === 'completed' ? 'run_completed' : 'run_failed';
-    const latest = this.store.getLatestEventOfTypes(sessionId, ['run_completed', 'run_failed']);
-    if (latest?.payload.runId !== run.id) this.events.append({ sessionId, type: eventType, summary: message!.content,
-      payload: { runId: run.id, workId: work.id, status: terminalRun.status } });
-    yield { type: 'message', message: message! };
-    if (work.status === 'completed') yield { type: 'run_completed', run: terminalRun, message: message! };
-    else yield { type: 'run_failed', run: terminalRun, error: work.reason ?? 'Work blocked.' };
-    yield { type: 'done', sessionId, runId: run.id };
+    const eventType =
+      work.status === "completed" ? "run_completed" : "run_failed";
+    const latest = this.store.getLatestEventOfTypes(sessionId, [
+      "run_completed",
+      "run_failed",
+    ]);
+    if (latest?.payload.runId !== run.id)
+      this.events.append({
+        sessionId,
+        type: eventType,
+        summary: message!.content,
+        payload: { runId: run.id, workId: work.id, status: terminalRun.status },
+      });
+    yield { type: "message", message: message! };
+    if (work.status === "completed")
+      yield { type: "run_completed", run: terminalRun, message: message! };
+    else
+      yield {
+        type: "run_failed",
+        run: terminalRun,
+        error: work.reason ?? "Work blocked.",
+      };
+    yield { type: "done", sessionId, runId: run.id };
   }
 
-  private *finishYieldedRun(sessionId: string, run: AgentRun): Generator<AgentRunStreamChunk> {
-    const handoff = this.store.getRun(run.id).metadata.roundHandoff as { stepId: string; summary: string };
+  private *finishYieldedRun(
+    sessionId: string,
+    run: AgentRun,
+  ): Generator<AgentRunStreamChunk> {
+    const handoff = this.store.getRun(run.id).metadata.roundHandoff as {
+      stepId: string;
+      summary: string;
+    };
     let message!: AgentRuntimeMessage;
     let finished!: AgentRun;
     getRawSqlite().transaction(() => {
-      message = this.finishAssistantMessage(sessionId, run.id, handoff.stepId, handoff.summary, run.model, 'round_handoff');
-      finished = this.store.updateRun(run.id, { status: 'completed', completedAt: nowIso(), stopReason: 'round_yielded' });
-      this.store.updateSession(sessionId, { status: 'paused', activeRunId: null, pendingResumeToken: null,
-        completedAt: nowIso(), updatedAt: nowIso(), resultSummary: handoff.summary, blockedReason: null });
+      message = this.finishAssistantMessage(
+        sessionId,
+        run.id,
+        handoff.stepId,
+        handoff.summary,
+        run.model,
+        "round_handoff",
+      );
+      finished = this.store.updateRun(run.id, {
+        status: "completed",
+        completedAt: nowIso(),
+        stopReason: "round_yielded",
+      });
+      this.store.updateSession(sessionId, {
+        status: "paused",
+        activeRunId: null,
+        pendingResumeToken: null,
+        completedAt: nowIso(),
+        updatedAt: nowIso(),
+        resultSummary: handoff.summary,
+        blockedReason: null,
+      });
     })();
-    const event = this.events.append({ sessionId, type: 'run_completed', summary: handoff.summary,
-      payload: { runId: run.id, stepId: handoff.stepId, messageId: message.id, stopReason: 'round_yielded', workCompleted: false } });
-    yield { type: 'message', message };
-    yield { type: 'run_completed', run: finished, message, event };
-    yield { type: 'done', sessionId, runId: run.id };
+    const event = this.events.append({
+      sessionId,
+      type: "run_completed",
+      summary: handoff.summary,
+      payload: {
+        runId: run.id,
+        stepId: handoff.stepId,
+        messageId: message.id,
+        stopReason: "round_yielded",
+        workCompleted: false,
+      },
+    });
+    yield { type: "message", message };
+    yield { type: "run_completed", run: finished, message, event };
+    yield { type: "done", sessionId, runId: run.id };
   }
 
-  private *finishControlledGoal(sessionId:string, run:AgentRun, reason:string):Generator<AgentRunStreamChunk> {
-    const session=this.store.getSession(sessionId), goal=rootGoal(session).goal;
-    const completed=goal?.status==='completed';
-    const finished=this.store.updateRun(run.id,{status:completed?'completed':'blocked',completedAt:nowIso(),stopReason:reason});
-    this.store.updateSession(sessionId,{status:completed?'completed':'blocked',completedAt:nowIso(),resultSummary:reason,blockedReason:completed?null:reason,activeRunId:null,pendingResumeToken:null});
-    const message=this.store.appendMessage({id:makeRuntimeId('msg'),sessionId,runId:run.id,stepId:null,role:'assistant',content:reason,metadata:{goalStatus:goal?.status},createdAt:nowIso()});
-    yield {type:'message',message};
-    yield completed?{type:'run_completed',run:finished,message}:{type:'run_failed',run:finished,error:reason};
-    yield {type:'done',sessionId,runId:run.id};
+  private *finishControlledGoal(
+    sessionId: string,
+    run: AgentRun,
+    reason: string,
+  ): Generator<AgentRunStreamChunk> {
+    const session = this.store.getSession(sessionId),
+      goal = rootGoal(session).goal;
+    const completed = goal?.status === "completed";
+    const finished = this.store.updateRun(run.id, {
+      status: completed ? "completed" : "blocked",
+      completedAt: nowIso(),
+      stopReason: reason,
+    });
+    this.store.updateSession(sessionId, {
+      status: completed ? "completed" : "blocked",
+      completedAt: nowIso(),
+      resultSummary: reason,
+      blockedReason: completed ? null : reason,
+      activeRunId: null,
+      pendingResumeToken: null,
+    });
+    const message = this.store.appendMessage({
+      id: makeRuntimeId("msg"),
+      sessionId,
+      runId: run.id,
+      stepId: null,
+      role: "assistant",
+      content: reason,
+      metadata: { goalStatus: goal?.status },
+      createdAt: nowIso(),
+    });
+    yield { type: "message", message };
+    yield completed
+      ? { type: "run_completed", run: finished, message }
+      : { type: "run_failed", run: finished, error: reason };
+    yield { type: "done", sessionId, runId: run.id };
   }
 
   interruptSessions(
@@ -1371,7 +2126,8 @@ export class AgentLoopRuntime {
       }
     }
     for (const sessionId of ids) {
-      for (const controller of this.activeSessionControllers.get(sessionId) ?? []) {
+      for (const controller of this.activeSessionControllers.get(sessionId) ??
+        []) {
         if (!controller.signal.aborted) {
           controller.abort(new Error(reason));
         }
@@ -1386,7 +2142,12 @@ export class AgentLoopRuntime {
   ): Promise<void> {
     const ids = [...new Set(sessionIds)];
     const deadline = Date.now() + timeoutMs;
-    while (ids.some((sessionId) => (this.activeSessionControllers.get(sessionId)?.size ?? 0) > 0)) {
+    while (
+      ids.some(
+        (sessionId) =>
+          (this.activeSessionControllers.get(sessionId)?.size ?? 0) > 0,
+      )
+    ) {
       if (Date.now() >= deadline) {
         throw new AgentRuntimeError(
           "Timed out while waiting for active agent runtime sessions to stop.",
@@ -1394,7 +2155,9 @@ export class AgentLoopRuntime {
           409,
         );
       }
-      await new Promise((resolve) => setTimeout(resolve, ACTIVE_SESSION_WAIT_MS));
+      await new Promise((resolve) =>
+        setTimeout(resolve, ACTIVE_SESSION_WAIT_MS),
+      );
     }
   }
 
@@ -1410,45 +2173,74 @@ export class AgentLoopRuntime {
   private async injectQueuedInput(
     sessionId: string,
     run: AgentRun,
-  ): Promise<{ message: string; model: string | null; userMessage: AgentRuntimeMessage; queueItemId: string } | null> {
+  ): Promise<{
+    message: string;
+    model: string | null;
+    userMessage: AgentRuntimeMessage;
+    queueItemId: string;
+  } | null> {
     const injected = runtimeTransaction(() => {
-    const item = inputQueueService.consumeNext(sessionId);
-    if (!item) return null;
+      const item = inputQueueService.consumeNext(sessionId);
+      if (!item) return null;
 
-    this.store.updateRun(run.id, { metadata: { ...this.store.getRun(run.id).metadata, turnReferences: item.referenceContext ?? null } });
-    const userMessage = this.store.appendMessage({
-      id: makeRuntimeId("msg"),
-      sessionId,
-      runId: run.id,
-      stepId: null,
-      role: "user",
-      content: item.message,
-      contentParts: item.contentParts,
-      metadata: { source: "input_queue", queueItemId: item.id, references: item.references },
-      createdAt: nowIso(),
-    });
-    workRuntime.attach(sessionId, { ...run, triggerMessageId: userMessage.id });
-    this.events.append({
-      sessionId,
-      type: "progress_updated",
-      summary: `User input injected from queue`,
-      payload: { queueItemId: item.id, messageId: userMessage.id, runId: run.id },
-      visibility: "user_visible",
-    });
-    if (item.reasoningEffort) {
-      this.store.updateSession(sessionId, { reasoningEffort: item.reasoningEffort, updatedAt: nowIso() });
-    }
-    logger.info(
-      { sessionId, runId: run.id, queueItemId: item.id, messageId: userMessage.id },
-      "[agent-runtime] queued user input injected at step boundary",
-    );
-    return {
-      message: item.message,
-      model: item.model ?? null,
-      userMessage,
-      queueItemId: item.id,
-    };
-
+      this.store.updateRun(run.id, {
+        metadata: {
+          ...this.store.getRun(run.id).metadata,
+          turnReferences: item.referenceContext ?? null,
+        },
+      });
+      const userMessage = this.store.appendMessage({
+        id: makeRuntimeId("msg"),
+        sessionId,
+        runId: run.id,
+        stepId: null,
+        role: "user",
+        content: item.message,
+        contentParts: item.contentParts,
+        metadata: {
+          source: "input_queue",
+          queueItemId: item.id,
+          consumedBeforeStepIndex: this.store.getRun(run.id).currentStep + 1,
+          references: item.references,
+        },
+        createdAt: nowIso(),
+      });
+      workRuntime.attach(sessionId, {
+        ...run,
+        triggerMessageId: userMessage.id,
+      });
+      this.events.append({
+        sessionId,
+        type: "progress_updated",
+        summary: `User input injected from queue`,
+        payload: {
+          queueItemId: item.id,
+          messageId: userMessage.id,
+          runId: run.id,
+        },
+        visibility: "user_visible",
+      });
+      if (item.reasoningEffort) {
+        this.store.updateSession(sessionId, {
+          reasoningEffort: item.reasoningEffort,
+          updatedAt: nowIso(),
+        });
+      }
+      logger.info(
+        {
+          sessionId,
+          runId: run.id,
+          queueItemId: item.id,
+          messageId: userMessage.id,
+        },
+        "[agent-runtime] queued user input injected at step boundary",
+      );
+      return {
+        message: item.message,
+        model: item.model ?? null,
+        userMessage,
+        queueItemId: item.id,
+      };
     });
     if (injected) await warmupMcpForSession(sessionId);
     return injected;
@@ -1460,7 +2252,13 @@ export class AgentLoopRuntime {
     model: string | null,
     acceptedRunId?: string,
   ): AgentRun {
-    if (acceptedRunId) return activateAcceptedRun(sessionId, acceptedRunId, triggerMessageId, model);
+    if (acceptedRunId)
+      return activateAcceptedRun(
+        sessionId,
+        acceptedRunId,
+        triggerMessageId,
+        model,
+      );
     return this.store.appendRun({
       id: makeRuntimeId("run"),
       sessionId,
@@ -1477,6 +2275,7 @@ export class AgentLoopRuntime {
 
   private async *generateStep(input: {
     sessionId: string;
+    stepId: string;
     prompt: string;
     input: StreamTurnRequest;
     profile: ReturnType<ProfileService["get"]>;
@@ -1504,7 +2303,7 @@ export class AgentLoopRuntime {
         "[agent-runtime] generation skipped due to blocked permission",
       );
       yield {
-        type: 'step_complete',
+        type: "step_complete",
         model: input.input.model ?? null,
         step: {
           thought: undefined,
@@ -1536,62 +2335,81 @@ export class AgentLoopRuntime {
       .filter(
         (tool) =>
           profileCanUseTool(input.profile, tool) ||
-          ['work.checkpoint', 'context.read'].includes(tool.id) ||
-          (tool.id === 'verification.run' && profileCanUseTool(input.profile, { id: 'bash' })) ||
+          ["work.checkpoint", "context.read"].includes(tool.id) ||
+          (tool.id === "verification.run" &&
+            profileCanUseTool(input.profile, { id: "bash" })) ||
           tool.category === "skill" ||
           tool.category === "mcp" ||
           tool.id === "tools.invalid",
       );
     const session = this.store.getSession(input.sessionId);
     const userRequest = resolveSessionUserRequest(session, input.prompt);
-    const allowedTools = availableTools.filter(tool => !controlToolError(session, tool));
+    const allowedTools = availableTools.filter(
+      (tool) => !controlToolError(session, tool),
+    );
     const toolSet = buildLoopToolSet(allowedTools);
-    const contextLimit = (input as { contextLimit?: number }).contextLimit ?? DEFAULT_CONTEXT_LIMIT;
+    const contextLimit =
+      (input as { contextLimit?: number }).contextLimit ??
+      DEFAULT_CONTEXT_LIMIT;
 
-    let conversationMessages: import('@ai-sdk/provider-utils').ModelMessage[] = [];
+    let conversationMessages: import("@ai-sdk/provider-utils").ModelMessage[] =
+      [];
 
     const relevantMemories = memoryManager.getRelevantMemories(
       session.projectId,
       userRequest,
       5,
     );
-    const projectMemoriesSection = relevantMemories.length > 0
-      ? [
-        '## Relevant project memories',
-        ...relevantMemories.map((m) => `- [${m.memoryType}] ${m.title}: ${m.content.slice(0, 400)}`),
-      ].join('\n')
-      : null;
+    const projectMemoriesSection =
+      relevantMemories.length > 0
+        ? [
+            "## Relevant project memories",
+            ...relevantMemories.map(
+              (m) =>
+                `- [${m.memoryType}] ${m.title}: ${m.content.slice(0, 400)}`,
+            ),
+          ].join("\n")
+        : null;
 
     let projectRulesSection: string | null = null;
     try {
       const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
       projectRulesSection = loadProjectRulesSection(workDir, {
-        scope: isWikiAgentProfile(input.profile.id) ? 'synax-only' : 'all',
+        scope: isWikiAgentProfile(input.profile.id) ? "synax-only" : "all",
       });
     } catch {
       projectRulesSection = null;
     }
 
     const selectedReferences = activeTurnReferences(input.sessionId);
-    const turnSkillIds = [...new Set([...session.skillIds, ...selectedReferences?.skillIds ?? []])];
+    const turnSkillIds = [
+      ...new Set([
+        ...session.skillIds,
+        ...(selectedReferences?.skillIds ?? []),
+      ]),
+    ];
     const skillCandidates = skillAgentBridge.listForPrompt({
       profileId: input.profile.id,
       projectId: session.projectId,
       activeSkillIds: turnSkillIds,
     });
     const activeSkillIds = new Set(turnSkillIds);
-    const skillsSection = allowedTools.some(tool => tool.id === 'skill.load') && skillCandidates.length > 0
-      ? [
-        '## Available skills',
-        'Call skill.load with skillId when a skill description matches the task. Full instructions load on demand.',
-        ...skillCandidates.map((skill) => {
-          const active = activeSkillIds.has(skill.id) ? ' [active]' : '';
-          return `- ${skill.id}: ${skill.label} — ${skill.description}${active}`;
-        }),
-      ].join('\n')
-      : null;
+    const skillsSection =
+      allowedTools.some((tool) => tool.id === "skill.load") &&
+      skillCandidates.length > 0
+        ? [
+            "## Available skills",
+            "Call skill.load with skillId when a skill description matches the task. Full instructions load on demand.",
+            ...skillCandidates.map((skill) => {
+              const active = activeSkillIds.has(skill.id) ? " [active]" : "";
+              return `- ${skill.id}: ${skill.label} — ${skill.description}${active}`;
+            }),
+          ].join("\n")
+        : null;
 
-    const permissionConfig = readSessionPermissionConfig(session.sessionMetadata);
+    const permissionConfig = readSessionPermissionConfig(
+      session.sessionMetadata,
+    );
     const locale = resolvePromptLocale(input.input.locale, userRequest);
 
     let contextForPrompt = input.context;
@@ -1621,42 +2439,46 @@ export class AgentLoopRuntime {
       permissionTier: permissionConfig.permissionTier,
       effectivePermissionRules: session.permissionRules,
       isSubSession: Boolean(session.parentSessionId),
-      availableToolIds: allowedTools.map(tool => tool.id),
+      availableToolIds: allowedTools.map((tool) => tool.id),
       specializedOutput: isWikiAgentProfile(input.profile.id),
       includeToolCallFallback: false,
       modePromptSection: synaxAgent.buildModePromptSection(session),
-      workPromptSection: [workRuntime.prompt(input.sessionId), goalEvidenceSection(session, input.previousToolCalls)].filter(Boolean).join('\n'),
       variantPromptSection: synaxAgent.buildVariantPromptSection(session),
       intentPromptSection: synaxAgent.isSynaxSession(session)
-        ? synaxAgent.buildIntentPromptSection(session, userRequest, input.stepIndex)
+        ? synaxAgent.buildIntentPromptSection(
+            session,
+            userRequest,
+            input.stepIndex,
+          )
         : null,
       loopHintsOverride: synaxAgent.isSynaxSession(session)
         ? synaxAgent.buildEffectiveLoopHints(session)
         : null,
       projectMemoriesSection,
       projectRulesSection,
-      skillsSection: [skillsSection, selectedReferences?.content].filter(Boolean).join("\n\n") || null,
+      skillsSection:
+        [skillsSection, selectedReferences?.content]
+          .filter(Boolean)
+          .join("\n\n") || null,
     });
 
-
-    // Store the dynamic system prompt so the frontend can display the latest version
+    // Static instructions/reference preview; the complete request also contains historical and latest reminders
     try {
-      this.store.updateSessionMetadata(input.sessionId, { latestSystemPrompt: systemPromptContent });
+      this.store.updateSessionMetadata(input.sessionId, {
+        latestSystemPrompt: systemPromptContent,
+      });
     } catch {
       // Non-critical: metadata write failure should not block the step
     }
 
-    const projection = projectWorkContext({
-      sessionId: input.sessionId, toolSet, contextLimit,
-      outputReserve: input.outputReserve ?? input.input.maxTokens ?? 8192,
-      systemTokens: countTokens(systemPromptContent, input.input.model ?? undefined) + estimateToolDefinitionsTokens(allowedTools.length, input.input.model ?? undefined),
-      model: input.input.model ?? undefined,
-    });
-    conversationMessages = projection.messages;
-    if (projection.compacted) yield { type: 'context_compacted' as const, originalTokens: projection.originalTokens, compressedTokens: projection.tokens, messageCount: projection.messages.length };
-
-    const needsInstructionOverride = input.stepIndex > 1 && userRequest.length > 0
-      && !input.history.some(message => message.role === 'user' && resolveSessionUserRequest(session, message.content) === userRequest);
+    const needsInstructionOverride =
+      input.stepIndex > 1 &&
+      userRequest.length > 0 &&
+      !input.history.some(
+        (message) =>
+          message.role === "user" &&
+          resolveSessionUserRequest(session, message.content) === userRequest,
+      );
 
     const failureReminder = buildConsecutiveFailureReminder(
       input.previousToolCalls,
@@ -1665,49 +2487,237 @@ export class AgentLoopRuntime {
 
     const stepNote = buildLoopStepNote(input);
     const tailReminders = [
+      workRuntime.prompt(input.sessionId) ?? "",
+      synaxAgent.buildRuntimeStateSection(session) ?? "",
+      goalEvidenceSection(session, input.previousToolCalls) ?? "",
       stepNote,
-      failureReminder ?? '',
-      needsInstructionOverride ? userRequest : '',
+      failureReminder ?? "",
+      needsInstructionOverride ? userRequest : "",
     ].filter(Boolean);
 
+    const currentStep = this.store.getRunStep(input.stepId);
+    const reminder = snapshotRuntimeReminder(
+      currentStep.metadata,
+      tailReminders,
+      this.store
+        .listMessages(input.sessionId)
+        .filter(
+          (message) =>
+            message.runId === currentStep.runId &&
+            message.metadata.source === "input_queue" &&
+            message.metadata.consumedBeforeStepIndex === currentStep.index,
+        )
+        .map((message) => message.id),
+    );
+    const reminderTokens = countMessagesTokens(
+      [{ role: "user", content: reminder.content }],
+      input.input.model ?? undefined,
+    );
+    const toolComposition = await measureContextComposition({
+      messages: [],
+      tools: toolSet,
+      model: input.input.model,
+    });
+    const projection = projectWorkContext({
+      sessionId: input.sessionId,
+      toolSet,
+      contextLimit,
+      currentStepId: input.stepId,
+      outputReserve: input.outputReserve ?? input.input.maxTokens ?? 8192,
+      systemTokens:
+        reminderTokens +
+        countMessagesTokens(
+          [{ role: "system", content: systemPromptContent }],
+          input.input.model ?? undefined,
+        ) +
+        toolComposition.tools +
+        toolComposition.mcp,
+      model: input.input.model ?? undefined,
+    });
+    conversationMessages = projection.messages;
+    if (projection.compacted)
+      yield {
+        type: "context_compacted" as const,
+        originalTokens: projection.originalTokens,
+        compressedTokens: projection.tokens,
+        messageCount: projection.messages.length,
+      };
+
+    const previousRequests = this.store
+      .listSessionSteps(input.sessionId)
+      .filter(
+        (step) => step.id !== input.stepId && step.metadata.runtimeReminder,
+      );
+    const diagnosticsContext = {
+      requestId: input.stepId,
+      source: session.parentSessionId
+        ? ("subsession" as const)
+        : ("main" as const),
+      phase: projection.compacted
+        ? ("post-compaction" as const)
+        : previousRequests.length
+          ? ("continuous" as const)
+          : ("cold" as const),
+    };
+    const previousReminder = readRuntimeReminder(
+      previousRequests.at(-1)?.metadata,
+    );
     const request = {
+      previousHistoryAnchor: previousReminder?.historyAnchor,
+      onRequestPrepared: async (
+        prepared: Parameters<
+          NonNullable<
+            import("../llm-runtime/types.js").LlmGatewayRequest["onRequestPrepared"]
+          >
+        >[0],
+      ) => {
+        const latest = this.store.getRunStep(input.stepId);
+        const saved = readRuntimeReminder(latest.metadata);
+        if (!saved)
+          throw new AgentValidationError(
+            "request_snapshot_missing: runtime reminder must be saved before dispatch.",
+          );
+        if (
+          saved.historyAnchor &&
+          saved.historyAnchor.fingerprint !== prepared.historyAnchor.fingerprint
+        )
+          throw new AgentValidationError(
+            "request_snapshot_changed: media or history changed during retry; start a new request.",
+          );
+        const preparedComposition = await measureContextComposition({
+          messages: prepared.messages,
+          tools: toolSet,
+          model: input.input.model,
+          skillsSection,
+          selectedReferences: selectedReferences?.content,
+        });
+        if (
+          preparedComposition.total >
+          contextLimit - (input.outputReserve ?? input.input.maxTokens ?? 8192)
+        )
+          throw new AgentValidationError(
+            "context_blocked: prepared media/text/schema request exceeds the model window.",
+          );
+        const status =
+          !previousReminder?.historyAnchor && previousReminder
+            ? "unknown"
+            : prepared.historyAnchorStatus;
+        this.store.updateRunStep(input.stepId, {
+          metadata: {
+            ...latest.metadata,
+            runtimeReminder: saved.historyAnchor
+              ? saved
+              : { ...saved, historyAnchor: prepared.historyAnchor },
+            requestComposition: {
+              ...(latest.metadata.requestComposition as Record<
+                string,
+                unknown
+              >),
+              historyAnchorStatus: status,
+            },
+            contextComposition: preparedComposition,
+            ...(latest.metadata.cacheDiagnostics
+              ? {
+                  cacheDiagnostics: {
+                    ...(latest.metadata.cacheDiagnostics as Record<
+                      string,
+                      unknown
+                    >),
+                    historyAnchorStatus: status,
+                  },
+                }
+              : {}),
+          },
+        });
+      },
+      cacheDiagnosticsContext: diagnosticsContext,
       projectId: this.store.getSession(input.sessionId).projectId,
       purpose: input.input.purpose ?? input.profile.kind,
       model: input.input.model,
       cacheControl: true,
       // The native loop rebuilds history locally, including encrypted reasoning.
       responseOptions: { store: false },
-      reasoningEffort: input.input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode),
+      reasoningEffort:
+        input.input.reasoningEffort ??
+        mapThinkingModeToReasoningEffort(session.thinkingMode),
       messages: [
         {
           role: "system" as const,
           content: systemPromptContent,
         },
         ...conversationMessages,
-        ...(tailReminders.length > 0
-          ? [
-              {
-                role: "user" as const,
-                content: `<system-reminder>\n${tailReminders.join('\n')}\n</system-reminder>`,
-              },
-            ]
-          : []),
+        { role: "user" as const, content: reminder.content },
       ],
       temperature: input.input.temperature,
       maxTokens: input.input.maxTokens,
     };
-    if (countMessagesTokens(request.messages as never, input.input.model ?? undefined) + estimateToolDefinitionsTokens(allowedTools.length, input.input.model ?? undefined) > contextLimit - (input.outputReserve ?? input.input.maxTokens ?? 8192))
-      throw new AgentValidationError('context_blocked: the final request, including required reminders and output reservation, exceeds the model window.');
-    yield { type: 'context_composition', composition: await measureContextComposition({
-      messages: request.messages, tools: toolSet, model: input.input.model,
-      skillsSection, selectedReferences: selectedReferences?.content,
-    }) };
+    const composition = await measureContextComposition({
+      messages: request.messages,
+      tools: toolSet,
+      model: input.input.model,
+      skillsSection,
+      selectedReferences: selectedReferences?.content,
+    });
+    if (
+      composition.total >
+      contextLimit - (input.outputReserve ?? input.input.maxTokens ?? 8192)
+    )
+      throw new AgentValidationError(
+        "context_blocked: the final request, including required reminders, active tool schemas and output reservation, exceeds the model window.",
+      );
+    yield { type: "context_composition", composition };
+    input.abortSignal?.throwIfAborted();
+    let diagnostics: Record<string, unknown> | undefined;
+    if (cacheDiagnosticsEnabled()) {
+      const fingerprint = await fingerprintGatewayRequest({
+        ...request,
+        tools: toolSet.tools,
+        activeTools: toolSet.activeTools,
+      });
+      const previous = previousRequests.at(-1)?.metadata.cacheDiagnostics as
+        | { request?: CacheRequestFingerprint }
+        | undefined;
+      diagnostics = {
+        version: 1,
+        boundary: "native",
+        ...diagnosticsContext,
+        model: input.input.model ?? null,
+        request: fingerprint,
+        comparison: readCacheFingerprint(previous?.request)
+          ? compareRequests(
+              readCacheFingerprint(previous?.request)!,
+              fingerprint,
+            )
+          : null,
+        compacted: projection.compacted,
+        runtimeReminderTokens: reminderTokens,
+      };
+    }
+    // Save before network dispatch. Metadata failure is fatal: an unsaved request cannot be replayed reliably.
+    this.store.updateRunStep(input.stepId, {
+      metadata: {
+        ...this.store.getRunStep(input.stepId).metadata,
+        runtimeReminder: reminder,
+        ...(diagnostics ? { cacheDiagnostics: diagnostics } : {}),
+        runtimeReminderTokens: reminderTokens,
+        requestComposition: {
+          version: 1,
+          systemMeaning: "static-instructions-and-references",
+          compacted: projection.compacted,
+        },
+      },
+    });
     yield* streamLoopModelStep({
       request,
       tools: toolSet,
       model: input.input.model ?? null,
       abortSignal: input.abortSignal,
-      hookContext: { sessionId: input.sessionId, purpose: input.input.purpose ?? undefined },
+      hookContext: {
+        sessionId: input.sessionId,
+        runId: currentStep.runId,
+        stepId: input.stepId,
+        purpose: input.input.purpose ?? undefined,
+      },
     });
   }
 
@@ -1847,8 +2857,10 @@ export class AgentLoopRuntime {
     record: ToolCallRecord;
     reason?: string;
   }): AgentRunPart {
-    const existing = this.store.listRunParts(input.stepId).find(p=>p.kind==='tool_call'&&p.toolCallId===input.record.id);
-    if(existing)return existing;
+    const existing = this.store
+      .listRunParts(input.stepId)
+      .find((p) => p.kind === "tool_call" && p.toolCallId === input.record.id);
+    if (existing) return existing;
     return this.store.appendRunPart({
       id: makeRuntimeId("prt"),
       runId: input.runId,
@@ -1910,10 +2922,13 @@ export class AgentLoopRuntime {
 
     // Run the child with a wall-clock timeout so a hung sub-agent (e.g. a stalled
     // LLM call) aborts itself instead of blocking the parent's Promise.all forever.
+    // The budget follows the same `limits.agentTimeoutMs` setting as the main
+    // agent, so children are no longer capped at a shorter hard-coded ceiling.
+    const childProjectId = this.store.getSession(childSessionId).projectId;
     const childResult = await runChildToCompletion(
       childSessionId,
-      { profileId: 'subagent', prompt: '' },
-      { timeoutMs: DEFAULT_PER_CHILD_TIMEOUT_MS, abortSignal },
+      { profileId: "subagent", prompt: "" },
+      { timeoutMs: resolvePerChildTimeoutMs(childProjectId), abortSignal },
     );
 
     const childSession = this.store.getSession(childSessionId);
@@ -1958,93 +2973,126 @@ export class AgentLoopRuntime {
    * interrupted/paused are resumed to completion; unrecoverable children
    * are marked as failed so the model can re-delegate if needed.
    */
-  private async recoverIncompleteSubtasks(sessionId: string, abortSignal?: AbortSignal): Promise<void> {
+  private async recoverIncompleteSubtasks(
+    sessionId: string,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
     const runs = this.store.listRuns(sessionId);
     for (const run of runs) {
       const calls = this.store.listRunToolCalls(run.id);
       for (const call of calls) {
-        if (call.toolId !== 'subagent.delegate') continue;
-        if (call.status === 'completed' || call.status === 'failed') continue;
+        if (call.toolId !== "subagent.delegate") continue;
+        if (call.status === "completed" || call.status === "failed") continue;
 
-        const inputRef = call.inputRef as { taskId?: unknown; session?: { id?: unknown } } | null;
+        const inputRef = call.inputRef as {
+          taskId?: unknown;
+          session?: { id?: unknown };
+        } | null;
         const childId =
-          typeof inputRef?.taskId === 'string'
+          typeof inputRef?.taskId === "string"
             ? inputRef.taskId
-            : typeof inputRef?.session?.id === 'string'
+            : typeof inputRef?.session?.id === "string"
               ? inputRef.session.id
               : null;
 
         if (!childId) {
           this.store.updateToolCall(sessionId, call.id, {
-            status: 'failed',
-            outputSummary: 'Subtask reference lost — child session ID not found.',
+            status: "failed",
+            outputSummary:
+              "Subtask reference lost — child session ID not found.",
             endedAt: nowIso(),
-            error: 'Child session ID missing from tool call inputRef.',
+            error: "Child session ID missing from tool call inputRef.",
           });
           continue;
         }
 
         try {
           const child = this.store.getSession(childId);
-          if (child.status === 'interrupted' || child.status === 'paused') {
-            logger.info({ sessionId, childSessionId: childId, childStatus: child.status },
-              '[agent-runtime] recovering interrupted child session');
+          if (child.status === "interrupted" || child.status === "paused") {
+            logger.info(
+              { sessionId, childSessionId: childId, childStatus: child.status },
+              "[agent-runtime] recovering interrupted child session",
+            );
             // Resume the child to completion
-            for await (const _chunk of this.streamRun(childId, { contentParts: this.store.getSession(childId).sessionMetadata?.initialContentParts as import('./content-parts.js').RuntimeContentPart[] | undefined }, abortSignal)) {
+            for await (const _chunk of this.streamRun(
+              childId,
+              {
+                contentParts: this.store.getSession(childId).sessionMetadata
+                  ?.initialContentParts as
+                  | import("./content-parts.js").RuntimeContentPart[]
+                  | undefined,
+              },
+              abortSignal,
+            )) {
               // consume stream; child persists its own state
             }
             const updated = this.store.getSession(childId);
-            const summary = updated.resultSummary ?? `Child session finished with status ${updated.status}.`;
+            const summary =
+              updated.resultSummary ??
+              `Child session finished with status ${updated.status}.`;
             this.store.updateToolCall(sessionId, call.id, {
-              status: updated.status === 'completed' ? 'completed' : 'failed',
+              status: updated.status === "completed" ? "completed" : "failed",
               outputSummary: `Subtask ${childId} ${updated.status}: ${summary}`,
               outputRef: {
-                ...(call.inputRef as Record<string, unknown> ?? {}),
+                ...((call.inputRef as Record<string, unknown>) ?? {}),
                 childSessionId: childId,
                 childStatus: updated.status,
                 childSummary: summary,
               },
               endedAt: nowIso(),
-              error: updated.status === 'failed' ? summary : null,
+              error: updated.status === "failed" ? summary : null,
             } as Partial<ToolCallRecord>);
-            logger.info({ sessionId, childSessionId: childId, childStatus: updated.status },
-              '[agent-runtime] child session recovered');
-          } else if (child.status === 'running') {
+            logger.info(
+              {
+                sessionId,
+                childSessionId: childId,
+                childStatus: updated.status,
+              },
+              "[agent-runtime] child session recovered",
+            );
+          } else if (child.status === "running") {
             // Zombie child: mark as interrupted so it doesn't block future delegates
             this.store.updateSession(childId, {
-              status: 'interrupted',
+              status: "interrupted",
               updatedAt: nowIso(),
-              blockedReason: 'Parent session resumed; child marked as interrupted.',
+              blockedReason:
+                "Parent session resumed; child marked as interrupted.",
             });
             this.store.updateToolCall(sessionId, call.id, {
-              status: 'failed',
-              outputSummary: 'Subtask was interrupted and could not be recovered. Re-delegate if needed.',
+              status: "failed",
+              outputSummary:
+                "Subtask was interrupted and could not be recovered. Re-delegate if needed.",
               endedAt: nowIso(),
-              error: 'interrupted',
+              error: "interrupted",
             });
-          } else if (child.status === 'completed' || child.status === 'failed') {
+          } else if (
+            child.status === "completed" ||
+            child.status === "failed"
+          ) {
             // Child finished independently — update parent record
-            const summary = child.resultSummary ?? `Child session finished with status ${child.status}.`;
+            const summary =
+              child.resultSummary ??
+              `Child session finished with status ${child.status}.`;
             this.store.updateToolCall(sessionId, call.id, {
-              status: child.status === 'completed' ? 'completed' : 'failed',
+              status: child.status === "completed" ? "completed" : "failed",
               outputSummary: `Subtask ${childId} ${child.status}: ${summary}`,
               outputRef: {
-                ...(call.inputRef as Record<string, unknown> ?? {}),
+                ...((call.inputRef as Record<string, unknown>) ?? {}),
                 childSessionId: childId,
                 childStatus: child.status,
                 childSummary: summary,
               },
               endedAt: nowIso(),
-              error: child.status === 'failed' ? summary : null,
+              error: child.status === "failed" ? summary : null,
             } as Partial<ToolCallRecord>);
           }
         } catch {
           // Child session deleted or lost
           this.store.updateToolCall(sessionId, call.id, {
-            status: 'failed',
-            outputSummary: 'Child session lost — re-delegate if needed.',
+            status: "failed",
+            outputSummary: "Child session lost — re-delegate if needed.",
             endedAt: nowIso(),
-            error: 'Child session not found.',
+            error: "Child session not found.",
           });
         }
       }
@@ -2060,41 +3108,43 @@ export class AgentLoopRuntime {
   }
 
   private buildContinuationPrompt(sessionId: string, status: string): string {
-    if (status === 'paused') {
-      return 'Session was paused by user. Continue from where you left off.';
+    if (status === "paused") {
+      return "Session was paused by user. Continue from where you left off.";
     }
-    if (status === 'failed') {
-      return 'Session previously failed. Review the error and previous context, then retry the task from where it left off.';
+    if (status === "failed") {
+      return "Session previously failed. Review the error and previous context, then retry the task from where it left off.";
     }
 
     const runs = this.store.listRuns(sessionId);
-    const lastRun = runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    const lastRun = runs.sort((a, b) =>
+      b.startedAt.localeCompare(a.startedAt),
+    )[0];
     if (!lastRun) {
-      return 'Session was interrupted. Continue working on the original task using tools.';
+      return "Session was interrupted. Continue working on the original task using tools.";
     }
 
     const incompleteTools = this.store
       .listRunToolCalls(lastRun.id)
-      .filter(tc => tc.status === 'running' || tc.status === 'pending');
+      .filter((tc) => tc.status === "running" || tc.status === "pending");
 
     const parts: string[] = [
-      'Execution was interrupted. Reconcile the current Work checkpoint and existing results first. If the task is already done, deliver the result; otherwise perform only the remaining necessary action.',
+      "Execution was interrupted. Reconcile the current Work checkpoint and existing results first. If the task is already done, deliver the result; otherwise perform only the remaining necessary action.",
     ];
 
     if (incompleteTools.length > 0) {
       const toolList = incompleteTools
-        .map(tc => `- ${tc.toolId}(${tc.inputSummary?.slice(0, 80) ?? ''})`)
-        .join('\n');
+        .map((tc) => `- ${tc.toolId}(${tc.inputSummary?.slice(0, 80) ?? ""})`)
+        .join("\n");
       parts.push(
         `The following tool calls were interrupted and did not complete:\n${toolList}\nRetry these operations as needed to continue the task.`,
       );
     } else {
       parts.push(
-        'Review your previous tool calls and results. If the task is not fully complete, continue using tools. Only produce a final summary if ALL objectives from the original prompt have been achieved.',
+        "Review your previous tool calls and results. If the task is not fully complete, continue using tools. Only produce a final summary if ALL objectives from the original prompt have been achieved.",
       );
     }
 
-    return parts.join('\n\n');
+    return parts.join("\n\n");
   }
 
   private assertSessionNotBusy(sessionId: string): void {
@@ -2115,11 +3165,15 @@ export class AgentLoopRuntime {
     const controller = new AbortController();
     const onAbort = () => {
       const reason =
-        abortSignal && 'reason' in abortSignal
+        abortSignal && "reason" in abortSignal
           ? (abortSignal as AbortSignal & { reason?: unknown }).reason
           : undefined;
       if (!controller.signal.aborted) {
-        controller.abort(reason instanceof Error ? reason : new Error(String(reason ?? "Run interrupted by client.")));
+        controller.abort(
+          reason instanceof Error
+            ? reason
+            : new Error(String(reason ?? "Run interrupted by client.")),
+        );
       }
     };
 
@@ -2129,7 +3183,9 @@ export class AgentLoopRuntime {
       abortSignal?.addEventListener("abort", onAbort, { once: true });
     }
 
-    const controllers = this.activeSessionControllers.get(sessionId) ?? new Set<AbortController>();
+    const controllers =
+      this.activeSessionControllers.get(sessionId) ??
+      new Set<AbortController>();
     controllers.add(controller);
     this.activeSessionControllers.set(sessionId, controllers);
 
@@ -2148,24 +3204,37 @@ export class AgentLoopRuntime {
   }
 }
 
-function readProviderDefaultReasoningEffort(providerId: string): ReasoningEffort | null {
+function readProviderDefaultReasoningEffort(
+  providerId: string,
+): ReasoningEffort | null {
   try {
-    const global = getGlobalConfigForRuntime()
-    const connection = global?.providerConnections?.[providerId]
-    const raw = connection?.extra
+    const global = getGlobalConfigForRuntime();
+    const connection = global?.providerConnections?.[providerId];
+    const raw = connection?.extra;
     const listed = Array.isArray(raw?.reasoningEfforts)
       ? (raw.reasoningEfforts as unknown[]).filter(
-          (e): e is ReasoningEffort => e === 'low' || e === 'medium' || e === 'high' || e === 'xhigh' || e === 'max',
+          (e): e is ReasoningEffort =>
+            e === "low" ||
+            e === "medium" ||
+            e === "high" ||
+            e === "xhigh" ||
+            e === "max",
         )
-      : []
-    const legacy = raw?.defaultReasoningEffort
-    if (legacy === 'low' || legacy === 'medium' || legacy === 'high' || legacy === 'xhigh' || legacy === 'max') {
-      listed.push(legacy)
+      : [];
+    const legacy = raw?.defaultReasoningEffort;
+    if (
+      legacy === "low" ||
+      legacy === "medium" ||
+      legacy === "high" ||
+      legacy === "xhigh" ||
+      legacy === "max"
+    ) {
+      listed.push(legacy);
     }
-    if (listed.length === 0) return null
-    return listed.includes('high') ? 'high' : listed[0]
+    if (listed.length === 0) return null;
+    return listed.includes("high") ? "high" : listed[0];
   } catch {
-    return null
+    return null;
   }
 }
 
@@ -2179,8 +3248,8 @@ function withIds(toolCalls: StructuredToolCall[]): StructuredToolCall[] {
 }
 
 function normalizeToolCallId(value: unknown): string {
-  if (typeof value === 'string' && value.trim()) return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === "string" && value.trim()) return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return makeRuntimeId("mtc");
 }
 

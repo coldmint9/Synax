@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocale } from '../../../hooks/useLocale'
-import { Sparkles } from 'lucide-react'
-import { ActivityStatus } from '../../components/beautiful-ui/ActivityStatus'
-import { ActivityRow } from './ActivityRow'
+import { ThinkingTrace } from './ThinkingTrace'
 import { ThinkingBanner } from './ThinkingBanner'
 import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay, thinkingBannerPhrase } from './activityText'
 
@@ -33,14 +31,14 @@ export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
   const banner = thinkingBannerPhrase(content)
   if (banner) return <ThinkingBanner phrase={banner} isStreaming={isStreaming} />
   const { text, hidden } = tailForDisplay(isStreaming ? visible : content)
-  return <ActivityRow
-    icon={isStreaming ? <ActivityStatus status="running" compact /> : <Sparkles size={13} aria-hidden="true" />}
+  return <ThinkingTrace
     label={isStreaming ? t('sessionActivityThinking') : t('sessionActivityThought')}
     meta={isStreaming ? null : t('sessionActivityChars', { count: formatCharCount(content.length) })}
-    preview={isStreaming ? null : activityPreview(content)}
-    body={text}
-    footnote={hidden > 0 ? t('sessionActivityTruncated', { hidden: formatCharCount(hidden), shown: formatCharCount(ACTIVITY_BODY_LIMIT) }) : null}
-    live={isStreaming}
+    title={activityPreview(content)}
+    working={isStreaming}
     rememberKey={rememberKey}
-  />
+  >
+    <div className="bui-thinking-prose">{text}</div>
+    {hidden > 0 && <div className="bui-activity-footnote">{t('sessionActivityTruncated', { hidden: formatCharCount(hidden), shown: formatCharCount(ACTIVITY_BODY_LIMIT) })}</div>}
+  </ThinkingTrace>
 }

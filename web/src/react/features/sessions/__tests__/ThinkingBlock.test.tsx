@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useShellStore } from '../../../state/shellStore'
 import { ThinkingBlock } from '../ThinkingBlock'
@@ -22,20 +22,23 @@ describe('ThinkingBlock', () => {
     const { container } = render(<ThinkingBlock content={content} />)
 
     expect(container.querySelector('[data-activity-body]')).toBeNull()
-    // Only the short teaser stays in the DOM — never the 20k-character body.
-    expect(container.textContent ?? '').toContain('reasoning-')
+    // The compact title exposes a bounded preview without mounting the body.
+    expect(screen.getByRole('button').getAttribute('title')).toContain('reasoning-')
     expect((container.textContent ?? '').length).toBeLessThan(300)
   })
 
-  it('mounts the body on expand and unmounts it again', async () => {
-    const user = userEvent.setup()
+  it('mounts the body on expand and releases it after the closing transition', () => {
+    vi.useFakeTimers()
     const { container } = render(<ThinkingBlock content="step one reasoning" />)
     const header = screen.getByRole('button')
 
-    await user.click(header)
+    fireEvent.click(header)
     expect(container.querySelector('[data-activity-body]')?.textContent).toContain('step one reasoning')
 
-    await user.click(header)
+    fireEvent.click(header)
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+    expect(container.querySelector('.bui-thinking-reveal')).toHaveAttribute('inert')
+    act(() => { vi.advanceTimersByTime(400) })
     expect(container.querySelector('[data-activity-body]')).toBeNull()
   })
 
@@ -99,5 +102,28 @@ describe('ThinkingBlock', () => {
     const { container } = render(<ThinkingBlock content="**Bold** plus a real reasoning paragraph." />)
     expect(container.querySelector('.bui-thinking-banner')).toBeNull()
     expect(screen.getByRole('button')).toBeTruthy()
+  })
+
+  it('collapses on completion and can be reopened', () => {
+    vi.useFakeTimers()
+    const { container, rerender } = render(<ThinkingBlock content="live reasoning" isStreaming />)
+    expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'true')
+    rerender(<ThinkingBlock content="finished reasoning" isStreaming={false} />)
+    expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'false')
+    act(() => { vi.advanceTimersByTime(400) })
+    expect(container.querySelector('[data-activity-body]')).toBeNull()
+    fireEvent.click(screen.getByRole('button'))
+    expect(container.querySelector('[data-activity-body]')).toHaveTextContent('finished reasoning')
+  })
+
+  it('retains manual expansion after completion and remount', () => {
+    const { rerender, unmount } = render(<ThinkingBlock content="reasoning" isStreaming rememberKey="manual-trace-test" />)
+    fireEvent.click(screen.getByRole('button'))
+    fireEvent.click(screen.getByRole('button'))
+    rerender(<ThinkingBlock content="finished reasoning" rememberKey="manual-trace-test" />)
+    expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'true')
+    unmount()
+    render(<ThinkingBlock content="finished reasoning" rememberKey="manual-trace-test" />)
+    expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'true')
   })
 })

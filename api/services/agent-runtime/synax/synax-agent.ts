@@ -1,16 +1,19 @@
-import { resolveSessionUserRequest } from '../session-user-request.js';
-import { isWorkContinuation } from '../work-intent.js';
-import type { AgentSession } from '../contracts.js';
-import { profileService } from '../profile-service.js';
-import { registerTitleGenerator } from '../session-title-service.js';
-import { toolRegistry } from '../tool-registry.js';
-import { agentRuntimeStore } from '../session-store.js';
-import { agentEventService } from '../event-service.js';
-import { nowIso } from '../runtime-ids.js';
-import { goalTitleGenerator } from '../../wiki/wiki-goal-title.js';
-import { synaxAgentProfile } from './synax-agent-profile.js';
-import { createSynaxAdaptTool } from './synax-adapt-tool.js';
-import { synaxIntentRouter, type SynaxRouteDecision } from './synax-intent-router.js';
+import { resolveSessionUserRequest } from "../session-user-request.js";
+import { isWorkContinuation } from "../work-intent.js";
+import type { AgentSession } from "../contracts.js";
+import { profileService } from "../profile-service.js";
+import { registerTitleGenerator } from "../session-title-service.js";
+import { toolRegistry } from "../tool-registry.js";
+import { agentRuntimeStore } from "../session-store.js";
+import { agentEventService } from "../event-service.js";
+import { nowIso } from "../runtime-ids.js";
+import { goalTitleGenerator } from "../../wiki/wiki-goal-title.js";
+import { synaxAgentProfile } from "./synax-agent-profile.js";
+import { createSynaxAdaptTool } from "./synax-adapt-tool.js";
+import {
+  synaxIntentRouter,
+  type SynaxRouteDecision,
+} from "./synax-intent-router.js";
 import {
   inferSynaxSessionMode,
   isGoalLikeMode,
@@ -19,12 +22,15 @@ import {
   SYNAX_AGENT_PROFILE_ID,
   type SynaxSessionMetadata,
   type SynaxSessionMode,
-} from './synax-session-mode.js';
-import { buildSynaxIntentPromptSection } from './synax-intent-hints.js';
-import { synaxModePromptRegistry } from './synax-mode-prompt.js';
-import { synaxVariantRegistry, type SynaxVariantId } from './synax-variant.js';
+} from "./synax-session-mode.js";
+import { buildSynaxIntentPromptSection } from "./synax-intent-hints.js";
+import {
+  buildSynaxRuntimeState,
+  synaxModePromptRegistry,
+} from "./synax-mode-prompt.js";
+import { synaxVariantRegistry, type SynaxVariantId } from "./synax-variant.js";
 
-export type SynaxRouteSource = 'auto' | 'adapt';
+export type SynaxRouteSource = "auto" | "adapt";
 
 export interface SynaxVariantState {
   activeVariant: SynaxVariantId;
@@ -55,35 +61,46 @@ export class SynaxAgent {
     this.adaptToolRegistered = true;
   }
 
-  isSynaxSession(session: Pick<AgentSession, 'profileId'>): boolean {
+  isSynaxSession(session: Pick<AgentSession, "profileId">): boolean {
     return isSynaxProfile(session.profileId);
   }
 
-  resolveMode(session: Pick<AgentSession, 'profileId' | 'sessionMetadata'>): SynaxSessionMode {
+  resolveMode(
+    session: Pick<AgentSession, "profileId" | "sessionMetadata">,
+  ): SynaxSessionMode {
     return inferSynaxSessionMode({
       profileId: session.profileId,
       sessionMetadata: session.sessionMetadata,
     });
   }
 
-  asMetadata(metadata: Record<string, unknown> | null | undefined): SynaxSessionMetadata {
+  asMetadata(
+    metadata: Record<string, unknown> | null | undefined,
+  ): SynaxSessionMetadata {
     return (metadata ?? {}) as SynaxSessionMetadata;
   }
 
-  resolveVariantState(session: Pick<AgentSession, 'sessionMetadata'>): SynaxVariantState | null {
+  resolveVariantState(
+    session: Pick<AgentSession, "sessionMetadata">,
+  ): SynaxVariantState | null {
     const metadata = this.asMetadata(session.sessionMetadata);
-    if (!metadata.activeVariant || !synaxVariantRegistry.isAdaptable(metadata.activeVariant)) {
+    if (
+      !metadata.activeVariant ||
+      !synaxVariantRegistry.isAdaptable(metadata.activeVariant)
+    ) {
       return null;
     }
     return {
       activeVariant: metadata.activeVariant,
-      routeReason: metadata.routeReason ?? 'Specialized variant active.',
-      routedAt: typeof metadata.routedAt === 'string' ? metadata.routedAt : '',
-      routeSource: metadata.routeSource === 'adapt' ? 'adapt' : 'auto',
+      routeReason: metadata.routeReason ?? "Specialized variant active.",
+      routedAt: typeof metadata.routedAt === "string" ? metadata.routedAt : "",
+      routeSource: metadata.routeSource === "adapt" ? "adapt" : "auto",
     };
   }
 
-  buildModePromptSection(session: Pick<AgentSession, 'profileId' | 'sessionMetadata' | 'prompt'>): string | null {
+  buildModePromptSection(
+    session: Pick<AgentSession, "profileId" | "sessionMetadata" | "prompt">,
+  ): string | null {
     if (!this.isSynaxSession(session)) return null;
     const mode = this.resolveMode(session);
     return synaxModePromptRegistry.buildSection({
@@ -93,20 +110,37 @@ export class SynaxAgent {
     });
   }
 
+  buildRuntimeStateSection(
+    session: Pick<AgentSession, "profileId" | "sessionMetadata" | "prompt">,
+  ): string | null {
+    if (!this.isSynaxSession(session)) return null;
+    return buildSynaxRuntimeState({
+      mode: this.resolveMode(session),
+      metadata: this.asMetadata(session.sessionMetadata),
+      prompt: session.prompt,
+    });
+  }
+
   buildIntentPromptSection(
-    session: Pick<AgentSession, 'profileId' | 'sessionMetadata'> & Partial<Pick<AgentSession, 'prompt'>>,
+    session: Pick<AgentSession, "profileId" | "sessionMetadata"> &
+      Partial<Pick<AgentSession, "prompt">>,
     message: string,
     stepIndex = 1,
   ): string | null {
     if (!this.isSynaxSession(session)) return null;
     return buildSynaxIntentPromptSection({
-      message: resolveSessionUserRequest({ ...session, prompt: session.prompt ?? '' }, message),
+      message: resolveSessionUserRequest(
+        { ...session, prompt: session.prompt ?? "" },
+        message,
+      ),
       mode: this.resolveMode(session),
       stepIndex,
     });
   }
 
-  buildVariantPromptSection(session: Pick<AgentSession, 'profileId' | 'sessionMetadata'>): string | null {
+  buildVariantPromptSection(
+    session: Pick<AgentSession, "profileId" | "sessionMetadata">,
+  ): string | null {
     if (!this.isSynaxSession(session)) return null;
     const state = this.resolveVariantState(session);
     if (!state) return null;
@@ -117,12 +151,14 @@ export class SynaxAgent {
     const lines = [
       `## Specialist focus: ${variant.id}`,
       ...variant.loopHints,
-      'This focus does not change the user request, session mode, permissions, or acceptance requirements.',
+      "This focus does not change the user request, session mode, permissions, or acceptance requirements.",
     ];
-    return lines.join('\n');
+    return lines.join("\n");
   }
 
-  buildEffectiveLoopHints(session: Pick<AgentSession, 'profileId' | 'sessionMetadata'>): string[] {
+  buildEffectiveLoopHints(
+    session: Pick<AgentSession, "profileId" | "sessionMetadata">,
+  ): string[] {
     if (!this.isSynaxSession(session)) return [];
     return [];
   }
@@ -159,7 +195,10 @@ export class SynaxAgent {
     };
   }
 
-  maybeAutoRoute(sessionId: string, message: string): SynaxRouteDecision | null {
+  maybeAutoRoute(
+    sessionId: string,
+    message: string,
+  ): SynaxRouteDecision | null {
     const session = agentRuntimeStore.getSession(sessionId);
     if (!this.isSynaxSession(session)) return null;
 
@@ -174,20 +213,24 @@ export class SynaxAgent {
     });
     if (!decision) {
       const metadata = this.asMetadata(session.sessionMetadata);
-      if (metadata.routeSource === 'auto' && !isWorkContinuation(message))
-        agentRuntimeStore.updateSessionMetadata(sessionId, { activeVariant: null, routeReason: null, routeSource: null });
+      if (metadata.routeSource === "auto" && !isWorkContinuation(message))
+        agentRuntimeStore.updateSessionMetadata(sessionId, {
+          activeVariant: null,
+          routeReason: null,
+          routeSource: null,
+        });
       return null;
     }
 
-    this.applyVariant(sessionId, decision.variantId, decision.reason, 'auto');
+    this.applyVariant(sessionId, decision.variantId, decision.reason, "auto");
     agentEventService.append({
       sessionId,
-      type: 'progress_updated',
+      type: "progress_updated",
       summary: `Routed to ${decision.variantId}`,
       payload: {
         activeVariant: decision.variantId,
         routeReason: decision.reason,
-        routeSource: 'auto',
+        routeSource: "auto",
       },
     });
     return decision;
@@ -223,13 +266,14 @@ export function ensureLegacyGoalProfileRegistered(): void {
     profileService.register({
       ...synaxAgentProfile,
       id: LEGACY_GOAL_PROFILE_ID,
-      label: 'Synax',
-      description: 'Deprecated profileId alias for legacy sessions; use profileId "synax" with sessionMetadata.mode.',
+      label: "Synax",
+      description:
+        'Deprecated profileId alias for legacy sessions; use profileId "synax" with sessionMetadata.mode.',
       maxSteps: 48,
       loopHints: [
-        'Work toward the user goal with bounded, verifiable steps.',
-        'Read and search before editing. Prefer edit for surgical changes.',
-        'When wiki context is attached, keep documentation in sync after code changes.',
+        "Work toward the user goal with bounded, verifiable steps.",
+        "Read and search before editing. Prefer edit for surgical changes.",
+        "When wiki context is attached, keep documentation in sync after code changes.",
       ],
     });
     registerTitleGenerator(LEGACY_GOAL_PROFILE_ID, goalTitleGenerator);
