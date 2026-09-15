@@ -1,4 +1,6 @@
 import { useLocale } from '../../../hooks/useLocale'
+import { Sparkles } from 'lucide-react'
+import { ActivityStatus } from '../../components/beautiful-ui/ActivityStatus'
 import { ActivityRow } from './ActivityRow'
 import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay } from './activityText'
 
@@ -20,6 +22,7 @@ export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
 
   return (
     <ActivityRow
+      icon={isStreaming ? <ActivityStatus status="running" compact /> : <Sparkles size={13} aria-hidden="true" />}
       label={isStreaming ? t('sessionActivityThinking') : t('sessionActivityThought')}
       meta={isStreaming ? null : t('sessionActivityChars', { count: formatCharCount(content.length) })}
       preview={isStreaming ? null : activityPreview(content)}
