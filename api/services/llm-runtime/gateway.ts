@@ -18,7 +18,7 @@ import { withRateLimit, withStreamRateLimit } from './middleware/rate-limiter.js
 import { instantiateProvider, selectLanguageModel } from './providers/provider-registry.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyGenerateTextResult = GenerateTextResult<any, any>
+type AnyGenerateTextResult = GenerateTextResult<any, any, any>
 
 export interface GatewayObjectResult<T> {
   object: T

@@ -1,3 +1,4 @@
+import { normalizeInput, hasInput, mediaSafeErrorText } from './content-parts.js';
 import { activeTurnReferences } from './turn-reference-state.js';
 import { prepareTurnReferences } from './turn-references.js';
 import { resolveSessionUserRequest } from './session-user-request.js';
@@ -144,7 +145,8 @@ export class AgentLoopRuntime {
       );
     }
 
-    const hasNewMessage = Boolean(input.message?.trim());
+    input = normalizeInput(input);
+    const hasNewMessage = hasInput(input);
 
     if (!hasNewMessage && session.status === 'completed') {
       throw new AgentValidationError(
@@ -185,16 +187,17 @@ export class AgentLoopRuntime {
     abortSignal?: AbortSignal,
     resume = false,
   ): AsyncGenerator<AgentRunStreamChunk> {
+    input = normalizeInput(input);
     this.assertSessionNotBusy(sessionId);
     const beforeStart = this.store.getSession(sessionId);
-    if (!resume && input.messageSource !== 'system_injection' && input.message?.trim() && !isWorkContinuation(input.message) && !beforeStart.parentSessionId && beforeStart.sessionMetadata?.mode==='goal') {
+    if (!resume && input.messageSource !== 'system_injection' && hasInput(input) && !isWorkContinuation(input.message ?? '') && !beforeStart.parentSessionId && beforeStart.sessionMetadata?.mode==='goal') {
       const previousGoal=getGoalState(beforeStart.sessionMetadata);
-      if(previousGoal&&['completed','cancelled'].includes(previousGoal.status))this.store.updateSessionMetadata(sessionId,{goal:initializeGoal(input.message),plan:null});
+      if(previousGoal&&['completed','cancelled'].includes(previousGoal.status))this.store.updateSessionMetadata(sessionId,{goal:initializeGoal(input.message || 'Media request'),plan:null});
       else if(previousGoal?.status==='blocked')this.store.updateSessionMetadata(sessionId,{goal:{...previousGoal,status:(beforeStart.sessionMetadata?.plan as {status?:string}|undefined)?.status==='approved'?'executing':'planning',reason:undefined}});
     }
     if (beforeStart.status === 'waiting_input') {
       const pending = interactionService.pending(sessionId);
-      if (pending?.kind === 'plan_approval' && input.message?.trim()) {
+      if (pending?.kind === 'plan_approval' && hasInput(input)) {
         interactionService.deferPlan(sessionId, pending.id);
         const resolved = interactionService.consume(sessionId);
         if (!resolved)
@@ -237,7 +240,7 @@ export class AgentLoopRuntime {
       session = this.store.updateSession(sessionId, { reasoningEffort: input.reasoningEffort, updatedAt: nowIso() });
     }
     const profile = this.profiles.getForSession(session);
-    const prompt = input.message?.trim() || session.prompt;
+    const prompt = hasInput(input) ? input.message?.trim() ?? '' : session.prompt;
     const inputResume = resume ? interactionService.ready(sessionId) : null;
     let pendingResume = resume && !inputResume ? this.resume.resolvePendingRun(sessionId) : null;
     if (resume && !inputResume && !pendingResume) throw new AgentValidationError('No pending runtime action is available to resume.');
@@ -330,11 +333,12 @@ export class AgentLoopRuntime {
         stepId: null,
         role: "user",
         content: prompt,
+        contentParts: input.contentParts,
         metadata: {
           references: input.references,
           source: input.messageSource === "system_injection"
             ? "system_injection"
-            : input.message
+            : hasInput(input)
               ? "turn_request"
               : "session_prompt",
         },
@@ -1190,6 +1194,13 @@ export class AgentLoopRuntime {
       for (const step of this.store.listRunSteps(run.id)) {
         if (step.status === 'running') this.store.updateRunStep(step.id, { status: 'interrupted', completedAt: nowIso(), finishReason: 'interrupted' });
       }
+      if (error instanceof AgentRuntimeError && ['UNSUPPORTED_MEDIA','MEDIA_CAPABILITY_UNKNOWN','MEDIA_TOO_LARGE','MEDIA_NOT_FOUND','MEDIA_CHANGED'].includes(error.code)) {
+        const message = error.message;
+        this.store.updateRun(run.id,{status:'blocked',completedAt:nowIso(),stopReason:message});
+        this.store.updateSession(sessionId,{status:'blocked',blockedReason:message,activeRunId:null});
+        yield {type:'run_failed',run:this.store.getRun(run.id),error:message};
+        yield {type:'done',sessionId,runId:run.id};return;
+      }
       if (error instanceof Error && error.message.startsWith('context_blocked:') && committedWork) {
         committedWork.status = 'blocked'; committedWork.reason = error.message; workStore.save(committedWork);
         yield* this.finishWorkRun(sessionId, run); return;
@@ -1198,14 +1209,14 @@ export class AgentLoopRuntime {
         runAbortSignal.aborted && 'reason' in runAbortSignal
           ? (runAbortSignal as AbortSignal & { reason?: unknown }).reason
           : undefined;
-      const message =
+      const message = mediaSafeErrorText(
         abortReason instanceof Error
           ? abortReason.message
           : typeof abortReason === 'string'
             ? abortReason
             : error instanceof Error
               ? error.message
-              : String(error);
+              : String(error));
       const responseBody = (error as any)?.responseBody ?? (error as any)?.data ?? undefined;
       const statusCode = (error as any)?.statusCode ?? (error as any)?.status ?? undefined;
       logger.error(
@@ -1213,9 +1224,9 @@ export class AgentLoopRuntime {
           sessionId,
           runId: run.id,
           aborted: Boolean(runAbortSignal.aborted),
-          err: error,
+          err: { name: error instanceof Error ? error.name : undefined, message },
           statusCode,
-          responseBody: typeof responseBody === 'string' ? responseBody.slice(0, 1000) : responseBody,
+          responseBody: responseBody === undefined ? undefined : mediaSafeErrorText(typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody)).slice(0, 1000),
         },
         "[agent-runtime] run failed",
       );
@@ -1385,6 +1396,7 @@ export class AgentLoopRuntime {
       stepId: null,
       role: "user",
       content: item.message,
+      contentParts: item.contentParts,
       metadata: { source: "input_queue", queueItemId: item.id, references: item.references },
       createdAt: nowIso(),
     });
@@ -1636,6 +1648,8 @@ export class AgentLoopRuntime {
       purpose: input.input.purpose ?? input.profile.kind,
       model: input.input.model,
       cacheControl: true,
+      // The native loop rebuilds history locally, including encrypted reasoning.
+      responseOptions: { store: false },
       reasoningEffort: input.input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode),
       messages: [
         {
@@ -1945,7 +1959,7 @@ export class AgentLoopRuntime {
             logger.info({ sessionId, childSessionId: childId, childStatus: child.status },
               '[agent-runtime] recovering interrupted child session');
             // Resume the child to completion
-            for await (const _chunk of this.streamRun(childId, {}, abortSignal)) {
+            for await (const _chunk of this.streamRun(childId, { contentParts: this.store.getSession(childId).sessionMetadata?.initialContentParts as import('./content-parts.js').RuntimeContentPart[] | undefined }, abortSignal)) {
               // consume stream; child persists its own state
             }
             const updated = this.store.getSession(childId);

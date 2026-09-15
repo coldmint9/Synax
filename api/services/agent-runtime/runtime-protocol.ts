@@ -1,3 +1,4 @@
+import type { RuntimeAsset, InputCapabilities, InputModality } from './content-parts.js';
 import type {
   AgentRun,
   AgentRunStep,
@@ -19,6 +20,7 @@ export const RUNTIME_PROTOCOL_SCHEMA = {
   $id: RUNTIME_PROTOCOL_VERSION,
   type: 'object',
   definitions: {
+    contentPart: { oneOf: [{ type:'object',required:['type','text'],properties:{type:{const:'text'},text:{type:'string'}} },{type:'object',required:['type','assetId'],properties:{type:{enum:['image','audio','video','file']},assetId:{type:'string',pattern:'^asset_[a-f0-9]{32}$'}}}] },
     event: {
       type: 'object',
       required: ['protocol', 'sequence', 'sessionId', 'runId', 'type', 'payload'],
@@ -73,7 +75,7 @@ export interface RuntimeTerminalResult {
 }
 
 export interface RuntimeBackendDescriptor extends BackendDescription {
-  models?: Array<{ id: string; label: string; efforts?: string[] }>;
+  models?: Array<{ id: string; label: string; efforts?: string[]; inputModalities?: InputModality[] }>;
   defaultModel?: string | null;
 }
 
@@ -148,9 +150,14 @@ export interface ObserveRunOptions {
 }
 
 export interface RuntimeClient {
+  uploadAsset(projectId: string, file: File, signal?: AbortSignal): Promise<{asset: RuntimeAsset}>;
+  getAsset(id: string): Promise<{asset: RuntimeAsset}>;
+  deleteAsset(id: string): Promise<{deleted: boolean}>;
+  downloadAsset(id: string, signal?: AbortSignal): Promise<Blob>;
+  getInputCapabilities(sessionId: string, model?: string): Promise<InputCapabilities>;
   getProtocol(): Promise<{ protocol: string; schema?: unknown; transports?: string[]; operations?: string[] }>;
   listBackends(): Promise<{ items: RuntimeBackendDescriptor[] }>;
-  listBackendModels(id: string): Promise<{ models: Array<{ id: string; label: string; efforts?: string[] }>; defaultModel?: string | null }>;
+  listBackendModels(id: string): Promise<{ models: Array<{ id: string; label: string; efforts?: string[]; inputModalities?: InputModality[] }>; defaultModel?: string | null }>;
   listProjects(): Promise<{ items: Array<{ id: string; name: string; source?: { localPath?: string; kind?: string } }> }>;
   createProject(body: { name: string; environment?: 'production' | 'staging' | 'development'; source: { kind: 'localPath'; localPath: string } }): Promise<{ project: { id: string; name: string; source?: { localPath?: string; kind?: string } } }>;
   listSessions(query?: Record<string, string | number | undefined>): Promise<RuntimeSessionListResponse>;

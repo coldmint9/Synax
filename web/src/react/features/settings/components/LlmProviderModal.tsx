@@ -17,6 +17,16 @@ import { useLocale } from '../../../../hooks/useLocale'
 import { SettingsSelect } from './SettingsSelect'
 import type { ApiFormat, ReasoningEffort } from '../../../../lib/contracts/config'
 
+const INPUT_MODALITY_OPTIONS = [
+  { id: 'text', zh: '文本', en: 'Text' },
+  { id: 'image', zh: '图片', en: 'Image' },
+  { id: 'audio', zh: '音频', en: 'Audio' },
+  { id: 'video', zh: '视频', en: 'Video' },
+  { id: 'file', zh: '文件', en: 'File' },
+] as const
+
+type InputModality = typeof INPUT_MODALITY_OPTIONS[number]['id']
+
 interface LlmProviderModalProps {
   draft: ApiProviderDraft
   onClose: () => void
@@ -32,7 +42,8 @@ export function LlmProviderModal({
   onValidate,
   onDiscoverModels,
 }: LlmProviderModalProps) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
+  const zh = locale === 'zh'
   const [draft, setDraft] = useState<ApiProviderDraft>({ ...initialDraft })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -149,6 +160,35 @@ export function LlmProviderModal({
         : [...current, effort]
       return { ...d, reasoningEfforts: next }
     })
+  }
+
+  function toggleModelModality(modelId: string, modality: InputModality, checked: boolean) {
+    setDraft(current => {
+      const metadata = current.modelMeta?.[modelId] ?? {}
+      const modalities = metadata.inputModalities ?? []
+      return {
+        ...current,
+        modelMeta: {
+          ...current.modelMeta,
+          [modelId]: {
+            ...metadata,
+            inputModalities: checked
+              ? [...new Set([...modalities, modality])]
+              : modalities.filter(value => value !== modality),
+          },
+        },
+      }
+    })
+  }
+
+  function resetModelModalities(modelId: string) {
+    setDraft(current => ({
+      ...current,
+      modelMeta: {
+        ...current.modelMeta,
+        [modelId]: { ...current.modelMeta?.[modelId], inputModalities: undefined },
+      },
+    }))
   }
 
   function toggle1M(checked: boolean) {
@@ -353,25 +393,73 @@ export function LlmProviderModal({
                 {draft.modelMessage && (
                   <div className="text-[10px] text-muted-foreground">{draft.modelMessage}</div>
                 )}
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                  <span className="text-[10px] text-muted-foreground/70">已启用模型</span>
-                  {configuredModels.map(m => (
-                    <span key={m} className="inline-flex items-center gap-1 rounded-full border border-border/50 px-2 py-0.5 text-[10px]">
-                      <span className="font-mono">{m}</span>
-                      {m === draft.model.trim() ? (
-                        <span className="text-primary">默认</span>
-                      ) : (
-                        <button
-                          type="button"
-                          aria-label={`移除模型 ${m}`}
-                          onClick={() => handleToggleModel(m)}
-                          className="text-muted-foreground transition-colors hover:text-destructive"
-                        >
-                          <X size={10} />
-                        </button>
-                      )}
-                    </span>
-                  ))}
+                <div className="space-y-2 pt-1">
+                  <p className="text-[10px] text-muted-foreground/70">
+                    {zh ? '已启用模型 · 独立输入能力' : 'Enabled models · Individual input capabilities'}
+                  </p>
+                  <p className="text-[10px] leading-relaxed text-muted-foreground">
+                    {zh
+                      ? '分别勾选每个模型实际支持的输入类型；未手动配置时使用目录声明。'
+                      : 'Select the inputs supported by each model. Unconfigured models use their catalog declarations.'}
+                  </p>
+                  {configuredModels.map(modelId => {
+                    const modalities = draft.modelMeta?.[modelId]?.inputModalities
+                    const isDefault = modelId === draft.model.trim()
+                    return (
+                      <fieldset
+                        key={modelId}
+                        aria-label={`${modelId} ${zh ? '输入模态' : 'input modalities'}`}
+                        className="min-w-0 space-y-2 rounded-lg border border-border/40 px-2.5 py-2"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground" title={modelId}>
+                            {modelId}
+                          </span>
+                          {isDefault && (
+                            <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] text-primary">
+                              {zh ? '默认' : 'Default'}
+                            </span>
+                          )}
+                          <span className="shrink-0 text-[9px] text-muted-foreground">
+                            {modalities === undefined ? (zh ? '使用目录' : 'Catalog') : (zh ? '手动配置' : 'Custom')}
+                          </span>
+                          {!isDefault && (
+                            <button
+                              type="button"
+                              aria-label={zh ? `移除模型 ${modelId}` : `Remove model ${modelId}`}
+                              onClick={() => handleToggleModel(modelId)}
+                              className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
+                            >
+                              <X size={11} />
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                          {INPUT_MODALITY_OPTIONS.map(option => (
+                            <label key={option.id} className="inline-flex cursor-pointer items-center gap-1.5 text-[10px] text-foreground/85">
+                              <input
+                                type="checkbox"
+                                aria-label={`${modelId} ${zh ? option.zh : option.en}`}
+                                checked={modalities?.includes(option.id) ?? false}
+                                onChange={event => toggleModelModality(modelId, option.id, event.target.checked)}
+                                className="size-3.5 accent-primary"
+                              />
+                              {zh ? option.zh : option.en}
+                            </label>
+                          ))}
+                          <button
+                            type="button"
+                            aria-label={zh ? `恢复 ${modelId} 的目录声明` : `Use catalog declarations for ${modelId}`}
+                            disabled={modalities === undefined}
+                            onClick={() => resetModelModalities(modelId)}
+                            className="ml-auto text-[10px] text-primary disabled:cursor-default disabled:text-muted-foreground/40"
+                          >
+                            {zh ? '恢复目录声明' : 'Use catalog'}
+                          </button>
+                        </div>
+                      </fieldset>
+                    )
+                  })}
                 </div>
               </div>
 

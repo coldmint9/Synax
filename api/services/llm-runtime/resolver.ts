@@ -140,13 +140,14 @@ function isResponsesFirstModel(modelId?: string, reasoning?: boolean): boolean {
 
 function findModel(provider: RuntimeProvider, modelId: string, config: ResolvedProviderConfig): RuntimeModel | null {
   const fromCatalog = provider.models.find((model) => model.id === modelId)
-  if (fromCatalog) return fromCatalog
+  if (fromCatalog) return { ...fromCatalog, ...(config.models?.[modelId]?.inputModalities ? { inputModalities: config.models[modelId].inputModalities } : {}) }
   const override = config.models?.[modelId]
   if (!override) return null
   const reasoningCapable = inferReasoningCapability({ providerId: provider.id, baseUrl: config.baseUrl })
   return {
     id: modelId,
     label: override.label || modelId,
+    inputModalities: override.inputModalities,
     ...(reasoningCapable ? { reasoning: true, toolCall: true } : {}),
   }
 }
@@ -251,7 +252,7 @@ export function resolveRuntimeProvider(providerId: string, input: ResolveLlmSele
       )
       return {
         ...fromCatalog,
-        models: toRuntimeModels(providerDef, connection),
+        models: toRuntimeModels(providerDef, connection).map(model => ({...fromCatalog.models.find(m=>m.id===model.id),...model,inputModalities:model.inputModalities??fromCatalog.models.find(m=>m.id===model.id)?.inputModalities})),
       }
     }
     return fromCatalog
@@ -355,6 +356,7 @@ function toRuntimeModels(provider: ProviderDef, connection?: ProviderConnection)
   const baseModels = provider.models.map((model) => ({
     id: model.id,
     label: model.label,
+    inputModalities: model.inputModalities,
     isDefault: model.isDefault,
     maxTokens: model.maxTokens,
     ...(typeof model.contextLimit === 'number' ? { contextLimit: model.contextLimit } : {}),
@@ -488,7 +490,8 @@ function toModelOverrideMap(value: unknown): Record<string, ModelOverrideConfig>
     const record = toRecord(raw)
     if (!record) return [] as const
     const label = typeof record.label === 'string' ? record.label.trim() : ''
-    return [[modelId, label ? { label } : {}]] as const
+    const inputModalities = Array.isArray(record.inputModalities) ? record.inputModalities.filter((m): m is import('../agent-runtime/content-parts.js').InputModality => ['text','image','audio','video','file'].includes(String(m))) : undefined
+    return [[modelId, { ...(label ? { label } : {}), ...(inputModalities ? { inputModalities } : {}) }]] as const
   })
 
   if (pairs.length === 0) return undefined

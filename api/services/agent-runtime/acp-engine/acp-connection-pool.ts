@@ -1,5 +1,6 @@
 import { withDeadline } from '../managed-process.js';
-import type { AgentCapabilities, SessionModelState } from '@agentclientprotocol/sdk';
+import type { AgentCapabilities } from '@agentclientprotocol/sdk';
+import type { SessionModelState } from '../../acp/acp-model-catalog.js';
 import {
   cancelAcpPrompt,
   closeAcpSession,
@@ -200,7 +201,7 @@ class AcpConnectionPool {
     if (!entry || !modelId.trim()) return;
     if (entry.currentModelId === modelId) return;
     try {
-      const applied = await setAcpSessionModel(entry.connection.conn, entry.acpSessionId, modelId);
+      const applied = await setAcpSessionModel(entry.connection.conn, entry.acpSessionId, modelId, entry.sessionModels?.configId);
       if (applied) {
         entry.currentModelId = modelId;
         if (entry.sessionModels) {

@@ -1,3 +1,4 @@
+import type { RuntimeAsset, InputCapabilities, InputModality } from './content-parts.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -200,7 +201,7 @@ export class HttpRuntimeClient implements RuntimeClient {
       try {
         const headers = new Headers(init.headers);
         headers.set('Accept', 'application/json');
-        if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+        if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
         if (this.token) headers.set('Authorization', `Bearer ${this.token}`);
         const response = await this.transport.request(joinUrl(this.baseUrl, pathname), { ...init, method, headers, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(this.requestTimeoutMs) });
         const text = await response.text();
@@ -250,7 +251,7 @@ export class HttpRuntimeClient implements RuntimeClient {
     return this.request('/api/agent-runtime/backends');
   }
 
-  listBackendModels(id: string): Promise<{ models: Array<{ id: string; label: string; efforts?: string[] }>; defaultModel?: string | null }> {
+  listBackendModels(id: string): Promise<{ models: Array<{ id: string; label: string; efforts?: string[]; inputModalities?: InputModality[] }>; defaultModel?: string | null }> {
     return this.request(`/api/agent-runtime/backends/${encodeId(id)}/models`);
   }
 
@@ -286,6 +287,18 @@ export class HttpRuntimeClient implements RuntimeClient {
 
   getSessionCapabilities(sessionId: string): Promise<{ backend?: RuntimeBackendDescriptor }> {
     return this.request(`/api/agent-runtime/sessions/${encodeId(sessionId)}/capabilities`);
+  }
+
+  uploadAsset(projectId: string, file: File, signal?: AbortSignal): Promise<{asset: RuntimeAsset}> {
+    const body=new FormData();body.set('projectId',projectId);body.set('file',file);
+    return this.request('/api/agent-runtime/assets',{method:'POST',body,signal},{retry:false});
+  }
+  getAsset(id:string):Promise<{asset:RuntimeAsset}>{return this.request(`/api/agent-runtime/assets/${encodeId(id)}`);}
+  deleteAsset(id:string):Promise<{deleted:boolean}>{return this.request(`/api/agent-runtime/assets/${encodeId(id)}`,{method:'DELETE'});}
+  getInputCapabilities(sessionId:string,model?:string):Promise<InputCapabilities>{return this.request(`/api/agent-runtime/sessions/${encodeId(sessionId)}/input-capabilities${model?`?model=${encodeURIComponent(model)}`:''}`);}
+  async downloadAsset(id:string,signal?:AbortSignal):Promise<Blob>{
+    const response=await this.transport.request(joinUrl(this.baseUrl,`/api/agent-runtime/assets/${encodeId(id)}/content`),{headers:this.token?{Authorization:`Bearer ${this.token}`}:{},redirect:'error',signal:signal??AbortSignal.timeout(this.requestTimeoutMs)});
+    if(!response.ok)throw new SynaxRuntimeError('Unable to download media.',{status:response.status});return response.blob();
   }
 
   submitRun(sessionId: string, input: StreamTurnRequest, options: SubmitRunOptions): Promise<{ run: AgentRun; reused: boolean }> {

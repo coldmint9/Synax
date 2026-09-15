@@ -1,65 +1,92 @@
-import { backendIdSchema } from './backends/backend-contracts.js';
-import * as z from 'zod/v4';
+import {
+  contentPartsSchema,
+  type RuntimeContentPart,
+} from "./content-parts.js";
+import { backendIdSchema } from "./backends/backend-contracts.js";
+import * as z from "zod/v4";
 
-export const agentProfileKindSchema = z.enum(['planner', 'executor', 'reviewer', 'explorer']);
+export const agentProfileKindSchema = z.enum([
+  "planner",
+  "executor",
+  "reviewer",
+  "explorer",
+]);
 export type AgentProfileKind = z.infer<typeof agentProfileKindSchema>;
 
-export const agentModeSchema = z.enum(['primary', 'subagent']);
+export const agentModeSchema = z.enum(["primary", "subagent"]);
 export type AgentMode = z.infer<typeof agentModeSchema>;
 
-export const thinkingModeSchema = z.enum(['fast', 'standard', 'deep']);
+export const thinkingModeSchema = z.enum(["fast", "standard", "deep"]);
 export type ThinkingMode = z.infer<typeof thinkingModeSchema>;
 
-export const reasoningEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
+export const reasoningEffortSchema = z.enum([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 
 export const sessionStatusSchema = z.enum([
-  'stopping',
-  'queued',
-  'running',
-  'waiting_permission',
-  'waiting_input',
-  'blocked',
-  'completed',
-  'failed',
-  'cancelled',
-  'interrupted',
-  'paused',
+  "stopping",
+  "queued",
+  "running",
+  "waiting_permission",
+  "waiting_input",
+  "blocked",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "paused",
 ]);
 export type AgentSessionStatus = z.infer<typeof sessionStatusSchema>;
 
 export const runStatusSchema = z.enum([
-  'queued',
-  'running',
-  'waiting_permission',
-  'waiting_input',
-  'blocked',
-  'completed',
-  'failed',
-  'cancelled',
-  'interrupted',
+  "queued",
+  "running",
+  "waiting_permission",
+  "waiting_input",
+  "blocked",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
 ]);
 export type AgentRunStatus = z.infer<typeof runStatusSchema>;
 
 export const stepStatusSchema = z.enum([
-  'running',
-  'waiting_permission',
-  'waiting_input',
-  'blocked',
-  'completed',
-  'failed',
-  'cancelled',
-  'interrupted',
+  "running",
+  "waiting_permission",
+  "waiting_input",
+  "blocked",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
 ]);
 export type AgentRunStepStatus = z.infer<typeof stepStatusSchema>;
 
-export const permissionActionSchema = z.enum(['allow', 'ask', 'deny']);
+export const permissionActionSchema = z.enum(["allow", "ask", "deny"]);
 export type PermissionAction = z.infer<typeof permissionActionSchema>;
 
-export const permissionOverrideGateSchema = z.enum(['read', 'write', 'delete', 'shell', 'task']);
-export type PermissionOverrideGate = z.infer<typeof permissionOverrideGateSchema>;
+export const permissionOverrideGateSchema = z.enum([
+  "read",
+  "write",
+  "delete",
+  "shell",
+  "task",
+]);
+export type PermissionOverrideGate = z.infer<
+  typeof permissionOverrideGateSchema
+>;
 
-export const permissionTierSchema = z.enum(['readonly', 'readwrite', 'unrestricted']);
+export const permissionTierSchema = z.enum([
+  "readonly",
+  "readwrite",
+  "unrestricted",
+]);
 export type PermissionTier = z.infer<typeof permissionTierSchema>;
 
 export const permissionOverridesSchema = z.partialRecord(
@@ -68,99 +95,115 @@ export const permissionOverridesSchema = z.partialRecord(
 );
 export type PermissionOverrides = z.infer<typeof permissionOverridesSchema>;
 
-
-export const permissionReplySchema = z.enum(['once', 'always', 'reject']);
+export const permissionReplySchema = z.enum(["once", "always", "reject"]);
 export type PermissionReply = z.infer<typeof permissionReplySchema>;
 
 export const capabilityCategorySchema = z.enum([
-  'read',
-  'write',
-  'external_execution',
-  'task',
-  'skill',
-  'shell',
-  'context',
-  'review',
-  'high_risk',
-  'mcp',
+  "read",
+  "write",
+  "external_execution",
+  "task",
+  "skill",
+  "shell",
+  "context",
+  "review",
+  "high_risk",
+  "mcp",
 ]);
 export type CapabilityCategory = z.infer<typeof capabilityCategorySchema>;
 
-export const internalGateSchema = z.enum(['task', 'skill', 'external_path', 'write', 'delete', 'shell', 'none']);
+export const internalGateSchema = z.enum([
+  "task",
+  "skill",
+  "external_path",
+  "write",
+  "delete",
+  "shell",
+  "none",
+]);
 export type InternalGate = z.infer<typeof internalGateSchema>;
 
-export const toolMutabilitySchema = z.enum(['read', 'write', 'task']);
+export const toolMutabilitySchema = z.enum(["read", "write", "task"]);
 export type ToolMutability = z.infer<typeof toolMutabilitySchema>;
 
-export const toolResumeBehaviorSchema = z.enum(['none', 'wait_permission', 'auto']);
+export const toolResumeBehaviorSchema = z.enum([
+  "none",
+  "wait_permission",
+  "auto",
+]);
 export type ToolResumeBehavior = z.infer<typeof toolResumeBehaviorSchema>;
 
 export const runtimeEventTypeSchema = z.enum([
-  'session_started',
-  'session_blocked',
-  'session_completed',
-  'session_failed',
-  'run_started',
-  'run_resumed',
-  'run_completed',
-  'run_failed',
-  'step_started',
-  'step_completed',
-  'message_delta',
-  'thought_delta',
-  'tool_call',
-  'tool_result',
-  'permission_requested',
-  'interaction_requested',
-  'interaction_resolved',
-  'permission_resolved',
-  'artifact_created',
-  'progress_updated',
-  'subsession_started',
-  'todo_updated',
-  'task_state_updated',
+  "session_started",
+  "session_blocked",
+  "session_completed",
+  "session_failed",
+  "run_started",
+  "run_resumed",
+  "run_completed",
+  "run_failed",
+  "step_started",
+  "step_completed",
+  "message_delta",
+  "thought_delta",
+  "tool_call",
+  "tool_result",
+  "permission_requested",
+  "interaction_requested",
+  "interaction_resolved",
+  "permission_resolved",
+  "artifact_created",
+  "progress_updated",
+  "subsession_started",
+  "todo_updated",
+  "task_state_updated",
 ]);
 export type RuntimeEventType = z.infer<typeof runtimeEventTypeSchema>;
 
-export const runtimeMessageRoleSchema = z.enum(['system', 'user', 'assistant', 'tool']);
+export const runtimeMessageRoleSchema = z.enum([
+  "system",
+  "user",
+  "assistant",
+  "tool",
+]);
 export type RuntimeMessageRole = z.infer<typeof runtimeMessageRoleSchema>;
 
 export const toolCallStatusSchema = z.enum([
-  'pending',
-  'running',
-  'completed',
-  'failed',
-  'denied',
-  'cancelled',
-  'compacted',
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "denied",
+  "cancelled",
+  "compacted",
 ]);
 export type ToolCallStatus = z.infer<typeof toolCallStatusSchema>;
 
 export const runPartKindSchema = z.enum([
-  'text',
-  'thought',
-  'tool_call',
-  'tool_result',
-  'system_note',
-  'error',
+  "text",
+  "thought",
+  "tool_call",
+  "tool_result",
+  "system_note",
+  "error",
 ]);
 export type AgentRunPartKind = z.infer<typeof runPartKindSchema>;
 
 export const evidenceArtifactKindSchema = z.enum([
-  'evidence',
-  'decision',
-  'diff_summary',
-  'review_result',
-  'context_signal',
-  'blocker',
+  "evidence",
+  "decision",
+  "diff_summary",
+  "review_result",
+  "context_signal",
+  "blocker",
 ]);
 export type EvidenceArtifactKind = z.infer<typeof evidenceArtifactKindSchema>;
 
-export const riskLevelSchema = z.enum(['low', 'medium', 'high', 'unknown']);
+export const riskLevelSchema = z.enum(["low", "medium", "high", "unknown"]);
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 
 export interface PermissionRule {
-  gate: InternalGate | CapabilityCategory | '*';
+  gate: InternalGate | CapabilityCategory | "*";
   pattern: string;
   action: PermissionAction;
   reason?: string;
@@ -175,7 +218,7 @@ export interface ToolPolicy {
 }
 
 export interface AgentProfile {
-  executionHost?: 'session' | 'embedded';
+  executionHost?: "session" | "embedded";
   id: string;
   label: string;
   kind: AgentProfileKind;
@@ -186,7 +229,7 @@ export interface AgentProfile {
   permissionDefaults: PermissionRule[];
   /** Legacy name: steps before requesting a graceful round handoff, not an execution cap. */
   maxSteps: number;
-  status: 'active' | 'disabled';
+  status: "active" | "disabled";
   toolPolicy?: ToolPolicy;
   loopHints?: string[];
   allowsSubsessions?: boolean;
@@ -275,12 +318,13 @@ export interface RuntimeEvent {
   sessionId: string;
   type: RuntimeEventType;
   timestamp: string;
-  visibility: 'user_visible' | 'internal';
+  visibility: "user_visible" | "internal";
   summary: string;
   payload: Record<string, unknown>;
 }
 
 export interface AgentRuntimeMessage {
+  contentParts?: RuntimeContentPart[];
   id: string;
   sessionId: string;
   runId: string | null;
@@ -292,6 +336,7 @@ export interface AgentRuntimeMessage {
 }
 
 export interface ToolCallRecord {
+  contentParts?: RuntimeContentPart[];
   id: string;
   sessionId: string;
   runId: string | null;
@@ -318,7 +363,7 @@ export interface PermissionDecision {
   runId: string | null;
   stepId: string | null;
   toolCallId: string | null;
-  coarseCategory: 'read' | 'write' | 'external_execution' | 'high_risk';
+  coarseCategory: "read" | "write" | "external_execution" | "high_risk";
   internalGate: InternalGate;
   action: PermissionAction;
   reason: string;
@@ -332,7 +377,15 @@ export interface PermissionDecision {
 
 export interface AgentContextBlock {
   id: string;
-  kind: 'goal' | 'action' | 'memory' | 'code' | 'diff' | 'review' | 'wiki' | 'system';
+  kind:
+    | "goal"
+    | "action"
+    | "memory"
+    | "code"
+    | "diff"
+    | "review"
+    | "wiki"
+    | "system";
   title: string;
   content: string;
   sourceType?: string;
@@ -376,7 +429,11 @@ export interface ThinkingSummary {
   sessionId: string;
   mode: ThinkingMode;
   framing: string;
-  evidenceUsed: Array<{ toolCallId?: string; artifactId?: string; path?: string }>;
+  evidenceUsed: Array<{
+    toolCallId?: string;
+    artifactId?: string;
+    path?: string;
+  }>;
   decision: string;
   assumptions: string[];
   risks: string[];
@@ -415,12 +472,17 @@ export const permissionReplyRequestSchema = z.object({
   reply: permissionReplySchema,
   message: z.string().max(10_000).optional(),
 });
-export type PermissionReplyRequest = z.infer<typeof permissionReplyRequestSchema>;
+export type PermissionReplyRequest = z.infer<
+  typeof permissionReplyRequestSchema
+>;
 
 export const buildContextRequestSchema = z.object({
   nodeId: z.string().min(1).max(256).nullable().optional(),
   profileId: z.string().min(1).max(64).optional(),
-  include: z.array(z.enum(['coord', 'memory', 'graph', 'review', 'wiki'])).max(10).optional(),
+  include: z
+    .array(z.enum(["coord", "memory", "graph", "review", "wiki"]))
+    .max(10)
+    .optional(),
 });
 export type BuildContextRequest = z.infer<typeof buildContextRequestSchema>;
 
@@ -438,41 +500,53 @@ export type ExecuteToolRequest = z.infer<typeof executeToolRequestSchema>;
 export const clearInactiveSessionsBodySchema = z.object({
   projectId: z.string().min(1).max(128),
 });
-export type ClearInactiveSessionsBody = z.infer<typeof clearInactiveSessionsBodySchema>;
+export type ClearInactiveSessionsBody = z.infer<
+  typeof clearInactiveSessionsBodySchema
+>;
 
 export const turnReferenceSchema = z.object({
-  kind: z.enum(['skill', 'mcp', 'file', 'wiki']),
+  kind: z.enum(["skill", "mcp", "file", "wiki"]),
   id: z.string().min(1).max(1024),
   label: z.string().max(256).optional(),
 });
 
 export const streamTurnRequestSchema = z.object({
+  contentParts: contentPartsSchema.optional(),
   references: z.array(turnReferenceSchema).max(20).optional(),
-  message: z.string().min(1).max(100_000).optional(),
+  message: z.string().max(100_000).optional(),
   /**
    * Marks a message the runtime composed on the user's behalf (goal prompt
    * scaffolding, wiki context, language directive…). The transcript shows those
    * as an "injected" chip instead of a user bubble.
    */
-  messageSource: z.enum(['user', 'system_injection']).optional(),
+  messageSource: z.enum(["user", "system_injection"]).optional(),
   model: z.string().min(1).max(256).optional(),
   purpose: z.string().min(1).max(64).optional(),
   temperature: z.number().min(0).max(2).optional(),
   maxTokens: z.number().int().positive().max(200_000).optional(),
-  maxSteps: z.number().int().positive().max(500).describe('Soft convergence threshold for the current round, not a hard step limit.').optional(),
-  locale: z.enum(['zh', 'en']).optional(),
+  maxSteps: z
+    .number()
+    .int()
+    .positive()
+    .max(500)
+    .describe(
+      "Soft convergence threshold for the current round, not a hard step limit.",
+    )
+    .optional(),
+  locale: z.enum(["zh", "en"]).optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
   permissionTier: permissionTierSchema.optional(),
   permissionOverrides: permissionOverridesSchema.optional(),
 });
 export type StreamTurnRequest = z.infer<typeof streamTurnRequestSchema> & {
   /** Internal admission token; intentionally absent from the public request schema. */
-  referenceContext?: import('./turn-reference-state.js').TurnReferenceContext;
+  referenceContext?: import("./turn-reference-state.js").TurnReferenceContext;
   acceptedRunId?: string;
-  executionContext?: import('../../lib/execution-context.js').RuntimeExecutionContext;
+  executionContext?: import("../../lib/execution-context.js").RuntimeExecutionContext;
 };
 
 export interface ToolExecutionInput {
+  abortSignal?: AbortSignal;
   sessionId: string;
   runId: string | null;
   stepId: string | null;
@@ -493,6 +567,7 @@ export interface ToolExecutionArtifactInput {
 }
 
 export interface ToolExecutionResult {
+  contentParts?: RuntimeContentPart[];
   suspend?: { interactionId: string };
   result: unknown;
   displaySummary: string;
@@ -513,7 +588,9 @@ export interface RegisteredTool {
   inputSchema?: z.ZodTypeAny;
   outputSchema?: z.ZodTypeAny;
   getPattern?: (args: unknown) => string | undefined;
-  execute: (input: ToolExecutionInput) => Promise<ToolExecutionResult> | ToolExecutionResult;
+  execute: (
+    input: ToolExecutionInput,
+  ) => Promise<ToolExecutionResult> | ToolExecutionResult;
 }
 
 export interface ToolHookContext {
@@ -528,7 +605,7 @@ export interface ToolHookContext {
 
 export interface ToolHook {
   id: string;
-  toolId: string | '*';
+  toolId: string | "*";
   afterExecute: (ctx: ToolHookContext) => Promise<void> | void;
 }
 
@@ -555,7 +632,10 @@ export interface StructuredToolCall {
 
 export interface LoopModelStep {
   toolCallProviderMetadata?: Record<string, Record<string, unknown>>;
-  reasoningParts?: Array<{ text: string; providerMetadata?: Record<string, Record<string, unknown>> }>;
+  reasoningParts?: Array<{
+    text: string;
+    providerMetadata?: Record<string, Record<string, unknown>>;
+  }>;
   thought?: string;
   message?: string;
   toolCalls: StructuredToolCall[];
@@ -566,7 +646,7 @@ export interface LoopModelStep {
   providerMetadata?: Record<string, unknown>;
   /** Native protocol envelope retained alongside normalized model output. */
   protocol?: {
-    protocol: 'openai-responses';
+    protocol: "openai-responses";
     responseId?: string;
     status?: string;
     output?: unknown[];
@@ -581,11 +661,16 @@ export interface LoopStepModelResult {
 }
 
 export type LoopModelStreamEvent =
-  | { type: 'usage'; usage: Record<string, unknown> }
-  | { type: 'text_delta'; delta: string }
-  | { type: 'thought_delta'; delta: string }
-  | { type: 'context_compacted'; originalTokens: number; compressedTokens: number; messageCount: number }
-  | { type: 'step_complete'; step: LoopModelStep; model: string | null };
+  | { type: "usage"; usage: Record<string, unknown> }
+  | { type: "text_delta"; delta: string }
+  | { type: "thought_delta"; delta: string }
+  | {
+      type: "context_compacted";
+      originalTokens: number;
+      compressedTokens: number;
+      messageCount: number;
+    }
+  | { type: "step_complete"; step: LoopModelStep; model: string | null };
 
 export interface CompactionConfig {
   enabled: boolean;
@@ -607,18 +692,66 @@ export interface CompactionRecord {
 }
 
 export type AgentRunStreamChunk =
-  | { type: 'run_started'; run: AgentRun; event?: RuntimeEvent }
-  | { type: 'step_started'; step: AgentRunStep; event?: RuntimeEvent }
-  | { type: 'message_delta'; runId: string; stepId: string; delta: string; event?: RuntimeEvent }
-  | { type: 'thought_delta'; runId: string; stepId: string; delta: string; event?: RuntimeEvent }
-  | { type: 'tool_call'; runId: string; stepId: string; toolCall: ToolCallRecord; event?: RuntimeEvent }
-  | { type: 'tool_result'; runId: string; stepId: string; toolCall: ToolCallRecord; event?: RuntimeEvent }
-  | { type: 'permission_requested'; runId: string; stepId: string; permission: PermissionDecision; toolCall: ToolCallRecord; event?: RuntimeEvent }
-  | { type: 'run_resumed'; run: AgentRun; event?: RuntimeEvent }
-  | { type: 'message'; message: AgentRuntimeMessage }
-  | { type: 'input_injected'; message: AgentRuntimeMessage; queueItemId: string }
-  | { type: 'event'; event: RuntimeEvent }
-  | { type: 'run_completed'; run: AgentRun; message?: AgentRuntimeMessage; event?: RuntimeEvent }
-  | { type: 'context_compacted'; runId: string; stepId: string; originalTokens: number; compressedTokens: number; messageCount: number; event?: RuntimeEvent }
-  | { type: 'run_failed'; run: AgentRun; error: string; event?: RuntimeEvent }
-  | { type: 'done'; sessionId: string; runId: string };
+  | { type: "run_started"; run: AgentRun; event?: RuntimeEvent }
+  | { type: "step_started"; step: AgentRunStep; event?: RuntimeEvent }
+  | {
+      type: "message_delta";
+      runId: string;
+      stepId: string;
+      delta: string;
+      event?: RuntimeEvent;
+    }
+  | {
+      type: "thought_delta";
+      runId: string;
+      stepId: string;
+      delta: string;
+      event?: RuntimeEvent;
+    }
+  | {
+      type: "tool_call";
+      runId: string;
+      stepId: string;
+      toolCall: ToolCallRecord;
+      event?: RuntimeEvent;
+    }
+  | {
+      type: "tool_result";
+      runId: string;
+      stepId: string;
+      toolCall: ToolCallRecord;
+      event?: RuntimeEvent;
+    }
+  | {
+      type: "permission_requested";
+      runId: string;
+      stepId: string;
+      permission: PermissionDecision;
+      toolCall: ToolCallRecord;
+      event?: RuntimeEvent;
+    }
+  | { type: "run_resumed"; run: AgentRun; event?: RuntimeEvent }
+  | { type: "message"; message: AgentRuntimeMessage }
+  | {
+      type: "input_injected";
+      message: AgentRuntimeMessage;
+      queueItemId: string;
+    }
+  | { type: "event"; event: RuntimeEvent }
+  | {
+      type: "run_completed";
+      run: AgentRun;
+      message?: AgentRuntimeMessage;
+      event?: RuntimeEvent;
+    }
+  | {
+      type: "context_compacted";
+      runId: string;
+      stepId: string;
+      originalTokens: number;
+      compressedTokens: number;
+      messageCount: number;
+      event?: RuntimeEvent;
+    }
+  | { type: "run_failed"; run: AgentRun; error: string; event?: RuntimeEvent }
+  | { type: "done"; sessionId: string; runId: string };

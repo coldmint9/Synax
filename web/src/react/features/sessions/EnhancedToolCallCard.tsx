@@ -1,10 +1,22 @@
-import { useState } from 'react'
-import { Card, Chip } from '@heroui/react'
-import { Terminal, FileEdit, FileSearch, Search, Wrench, GitBranch, ChevronRight, ChevronDown, Clock } from 'lucide-react'
-import type { ToolCallView } from './buildInterleavedTurns'
+import { WebSearchResults, webSearchQuery } from "./WebSearchResults";
+import { MediaParts } from "../media/MediaParts";
+import { useState } from "react";
+import { Card, Chip } from "@heroui/react";
+import {
+  Terminal,
+  FileEdit,
+  FileSearch,
+  Search,
+  Wrench,
+  GitBranch,
+  ChevronRight,
+  ChevronDown,
+  Clock,
+} from "lucide-react";
+import type { ToolCallView } from "./buildInterleavedTurns";
 
 interface Props {
-  call: ToolCallView
+  call: ToolCallView;
 }
 
 const TOOL_ICONS: Record<string, typeof Terminal> = {
@@ -15,34 +27,44 @@ const TOOL_ICONS: Record<string, typeof Terminal> = {
   search: Search,
   context: Search,
   task: GitBranch,
-}
+};
 
 function getToolIcon(category: string) {
-  return TOOL_ICONS[category] ?? Wrench
+  return TOOL_ICONS[category] ?? Wrench;
 }
 
-const STATUS_COLOR: Record<string, 'accent' | 'success' | 'danger' | 'warning' | 'default'> = {
-  running: 'accent',
-  completed: 'success',
-  failed: 'danger',
-  denied: 'warning',
-  cancelled: 'default',
-  compacted: 'default',
-}
+const STATUS_COLOR: Record<
+  string,
+  "accent" | "success" | "danger" | "warning" | "default"
+> = {
+  running: "accent",
+  completed: "success",
+  failed: "danger",
+  denied: "warning",
+  cancelled: "default",
+  compacted: "default",
+};
 
 export function EnhancedToolCallCard({ call }: Props) {
-  const [expanded, setExpanded] = useState(false)
-  const [showFull, setShowFull] = useState(false)
-  const Icon = getToolIcon(call.category)
-  const hasOutput = Boolean(call.outputSummary)
-  const outputText = call.outputSummary ?? ''
-  const isLong = outputText.length > 800
-  const chipColor = STATUS_COLOR[call.status] ?? 'default'
+  const [expanded, setExpanded] = useState(false);
+  const [showFull, setShowFull] = useState(false);
+  const Icon =
+    call.toolId === "webSearch" ? Search : getToolIcon(call.category);
+  const inputLabel =
+    call.toolId === "webSearch"
+      ? webSearchQuery(call.inputSummary)
+      : call.inputSummary;
+  const hasOutput = Boolean(call.outputSummary);
+  const outputText = call.outputSummary ?? "";
+  const isLong = outputText.length > 800;
+  const chipColor = STATUS_COLOR[call.status] ?? "default";
 
   return (
     <Card
       className={`shadow-none transition-colors animate-[fade-up_0.3s_ease-out] ${
-        expanded ? 'border-accent/20 bg-accent/5' : 'border-border/60 bg-background/40'
+        expanded
+          ? "border-accent/20 bg-accent/5"
+          : "border-border/60 bg-background/40"
       }`}
     >
       <button
@@ -56,7 +78,7 @@ export function EnhancedToolCallCard({ call }: Props) {
         </span>
         {call.inputSummary && (
           <span className="truncate text-xs text-muted-foreground">
-            {call.inputSummary}
+            {inputLabel}
           </span>
         )}
         <span className="ml-auto flex items-center gap-2">
@@ -66,22 +88,34 @@ export function EnhancedToolCallCard({ call }: Props) {
               {call.duration}
             </span>
           )}
-          <Chip size="sm" color={chipColor} variant="soft" className="h-4 text-[9px]">
+          <Chip
+            size="sm"
+            color={chipColor}
+            variant="soft"
+            className="h-4 text-[9px]"
+          >
             {call.status}
           </Chip>
-          {hasOutput && (
-            expanded
-              ? <ChevronDown size={12} className="text-muted-foreground" />
-              : <ChevronRight size={12} className="text-muted-foreground" />
-          )}
+          {hasOutput &&
+            (expanded ? (
+              <ChevronDown size={12} className="text-muted-foreground" />
+            ) : (
+              <ChevronRight size={12} className="text-muted-foreground" />
+            ))}
         </span>
       </button>
 
+      <MediaParts parts={call.contentParts} />
       {expanded && call.outputSummary && (
         <div className="border-t border-border/40 px-3 pb-2.5 pt-2">
           <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
-            {showFull || !isLong ? outputText : outputText.slice(0, 800) + '\n...'}
+            {showFull || !isLong
+              ? outputText
+              : outputText.slice(0, 800) + "\n..."}
           </pre>
+          {call.toolId === "webSearch" && (
+            <WebSearchResults output={call.outputRef} />
+          )}
           {isLong && !showFull && (
             <button
               type="button"
@@ -94,5 +128,5 @@ export function EnhancedToolCallCard({ call }: Props) {
         </div>
       )}
     </Card>
-  )
+  );
 }

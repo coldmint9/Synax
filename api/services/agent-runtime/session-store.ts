@@ -1,3 +1,4 @@
+import { bindAssets } from './media-assets.js';
 import { runtimeTransaction } from './runtime-transaction.js';
 import { logger } from '../../lib/logger.js';
 import type { WorkRecord } from './work-store.js';
@@ -57,6 +58,7 @@ interface SessionRow {
 }
 
 interface MessageRow {
+  content_parts_json: string | null;
   id: string;
   session_id: string;
   project_id: string;
@@ -85,6 +87,7 @@ interface EventRow {
 }
 
 interface ToolCallRow {
+  content_parts_json: string | null;
   id: string;
   session_id: string;
   run_id: string | null;
@@ -275,6 +278,7 @@ function mapSession(row: SessionRow): AgentSession {
 
 function mapMessage(row: MessageRow): AgentRuntimeMessage {
   return {
+    contentParts: parseJson(row.content_parts_json, undefined),
     id: row.id,
     sessionId: row.session_id,
     runId: row.run_id,
@@ -328,6 +332,7 @@ function mapEvent(row: EventRow): RuntimeEvent {
 
 function mapToolCall(row: ToolCallRow): ToolCallRecord {
   return {
+    contentParts: parseJson(row.content_parts_json, undefined),
     id: row.id,
     sessionId: row.session_id,
     runId: row.run_id,
@@ -596,6 +601,7 @@ export class AgentRuntimeStore {
       }
 
       for (const id of deleteIds) db.prepare('UPDATE agent_runtime_processes SET session_id = NULL WHERE session_id = ?').run(id);
+      for (const id of deleteIds) db.prepare('DELETE FROM agent_runtime_asset_sessions WHERE session_id=?').run(id);
       const deleteStream = db.prepare('DELETE FROM agent_runtime_stream_records WHERE session_id = ?');
       for (const id of deleteIds) deleteStream.run(id);
       const deleteWork = db.prepare('DELETE FROM agent_runtime_work WHERE session_id = ?');
@@ -647,11 +653,12 @@ export class AgentRuntimeStore {
   appendMessage(message: AgentRuntimeMessage): AgentRuntimeMessage {
     const session = this.getSession(message.sessionId);
     const nextSequence = this.nextMessageSequence(message.sessionId);
+    if (message.contentParts) bindAssets(message.sessionId, message.contentParts);
     getRawSqlite()
       .prepare(
         `INSERT OR REPLACE INTO agent_runtime_messages
-         (id, session_id, project_id, sequence, turn_id, run_id, step_id, role, content, provider_id, model_id, tool_call_id, usage_json, metadata_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, session_id, project_id, sequence, turn_id, run_id, step_id, role, content, provider_id, model_id, tool_call_id, usage_json, metadata_json, created_at, content_parts_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -669,6 +676,7 @@ export class AgentRuntimeStore {
         stringify(message.metadata?.usage ?? {}),
         stringify(message.metadata),
         message.createdAt,
+        message.contentParts ? stringify(message.contentParts) : null,
       );
     return message;
   }
@@ -882,12 +890,13 @@ export class AgentRuntimeStore {
   }
 
   appendToolCall(record: ToolCallRecord): ToolCallRecord {
+    if (record.contentParts) bindAssets(record.sessionId, record.contentParts);
     getRawSqlite()
       .prepare(
         `INSERT OR REPLACE INTO agent_runtime_tool_calls
          (id, session_id, run_id, step_id, model_tool_call_id, tool_id, category, mutability, args_hash, input_summary,
-          input_ref_json, output_summary, output_ref_json, status, permission_decision_id, started_at, ended_at, error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          input_ref_json, output_summary, output_ref_json, status, permission_decision_id, started_at, ended_at, error, content_parts_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         record.id,
@@ -908,6 +917,7 @@ export class AgentRuntimeStore {
         record.startedAt,
         record.endedAt,
         record.error,
+        record.contentParts ? stringify(record.contentParts) : null,
       );
     return record;
   }

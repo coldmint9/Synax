@@ -2589,6 +2589,17 @@
     0 8px 28px hsl(0 0% 0% / 0.1),
     0 2px 8px hsl(0 0% 0% / 0.06);
 }
+.goal-session-composer-shell[data-has-media="false"] {
+  min-height: 0;
+}
+.goal-session-composer-shell[data-has-media="false"] .goal-dock-composer[data-multiline="true"] {
+  gap: 0.25rem;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+.goal-session-composer-shell[data-has-media="false"] .goal-dock-composer[data-multiline="true"] .goal-dock-composer-input {
+  min-height: 1.5rem;
+}
 .goal-session-composer-shell.goal-dock-shell {
   width: 100%;
   height: auto;
@@ -4965,4 +4976,13 @@
   .agent-command-status--running .agent-command-status-dot {
     animation: none !important;
   }
+}
+
+/* File previews have no separate document header, so retain the first heading. */
+.file-viewer-markdown .wiki-markdown > h1:first-child {
+  display: block;
+  font-size: 2em;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-bottom: 1rem;
 }

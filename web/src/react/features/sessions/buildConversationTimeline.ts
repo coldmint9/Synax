@@ -1,3 +1,4 @@
+import type { RuntimeContentPart } from '../../../lib/api/runtimeMedia'
 import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import { buildInterleavedTurns, type InterleavedTurn } from './buildInterleavedTurns'
 
@@ -7,6 +8,7 @@ export type ConversationTimelineEntry =
       kind: 'user'
       createdAt: string
       label: string
+      contentParts?: RuntimeContentPart[]
       content: string
       /** App-composed prompt scaffolding rather than something the user typed. */
       injected?: boolean
@@ -68,7 +70,7 @@ export function extractSessionUserInput(session: AgentSession | undefined): stri
 }
 
 function isTimelineUserMessage(message: AgentRuntimeMessage): boolean {
-  return message.role === 'user' && message.content.trim() !== '' && !isSessionPromptUserMessage(message)
+  return message.role === 'user' && (message.content.trim() !== '' || Boolean(message.contentParts?.length)) && !isSessionPromptUserMessage(message)
 }
 
 export type UserMessageTimelineEntry = {
@@ -76,6 +78,7 @@ export type UserMessageTimelineEntry = {
   createdAt: string
   label: string
   content: string
+  contentParts?: RuntimeContentPart[]
   /** True when the app composed this prompt for the model rather than the user
    *  typing it — the transcript shows those as a compact injection chip. */
   injected?: boolean
@@ -101,6 +104,7 @@ function userTimelineEntry(message: AgentRuntimeMessage): UserMessageTimelineEnt
     createdAt: message.createdAt,
     label: injected ? '已注入系统提示' : truncate(message.content),
     content: message.content,
+    contentParts: message.contentParts,
     ...(injected ? { injected: true } : {}),
   }
 }

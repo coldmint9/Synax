@@ -2,6 +2,7 @@ export type OutputMode = 'human' | 'json' | 'jsonl';
 export interface CliOptions {
   command: string;
   positionals: string[];
+  files?: string[];
   url?: string;
   token?: string;
   tokenFile?: string;
@@ -47,6 +48,7 @@ export function parseArgs(argv: string[]): CliOptions {
       if (!Number.isSafeInteger(options.after) || options.after < 0) throw new Error('--after requires a non-negative integer.');
       continue;
     }
+    if (arg === '--file') { const file=argv[++index]; if(!file || file.startsWith('--'))throw new Error('--file requires a path.'); (options.files??=[]).push(file);continue; }
     const key = stringFlags.get(arg);
     if (key) {
       const value = argv[++index];
@@ -86,6 +88,7 @@ Options:
   --work-dir <path>                      Runtime-local working directory (default: cwd)
   --backend <id>                         native, codex, claude-code, ACP...
   --profile <id>                         Session profile (default: synax)
+  --file <path>                          Attach a local file (repeatable, up to 10)
   --model <id>                           Backend model
   --reasoning-effort <level>             low, medium, high, xhigh, max
   --session <id>                         Reuse a persisted session

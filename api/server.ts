@@ -1,3 +1,5 @@
+import { runtimeAssetRoutes } from './routes/runtime-assets.js';
+import { sweepAssets } from './services/agent-runtime/media-assets.js';
 import type { Server } from 'node:http';
 import { closeDb } from './db/index.js';
 import { stopHostProcesses } from './services/agent-runtime/process-ownership.js';
@@ -65,6 +67,7 @@ app.route("/api/context", contextRoutes);
 app.route("/api/config", configRoutes);
 app.route("/api/mcp", mcpRoutes);
 app.route("/api/llm", llmRoutes);
+app.route("/api/agent-runtime/assets", runtimeAssetRoutes);
 app.route("/api/agent-runtime", agentRuntimeRoutes);
 app.route("/api/skills", skillsRoutes);
 app.route("/api/skill-sources", skillSourcesRoutes);
@@ -75,6 +78,8 @@ app.route("/api/health", healthRoutes);
 app.route("/api/prototypes/tree-embedding-bench", treeEmbeddingBenchRoutes);
 
 const runtimeHost = acquireRuntimeHost(DATA_ROOT);
+void sweepAssets().catch(error => pinoLogger.warn({ error }, 'Media cleanup failed'));
+setInterval(() => { void sweepAssets().catch(error => pinoLogger.warn({ error }, 'Media cleanup failed')); }, 3_600_000).unref();
 process.env.SYNAX_RUNTIME_HOST_ID = runtimeHost.hostId;
 process.env.SYNAX_RUNTIME_DATA_ROOT = path.resolve(DATA_ROOT);
 

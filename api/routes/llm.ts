@@ -1,3 +1,5 @@
+import { contentPartsSchema } from '../services/agent-runtime/content-parts.js'
+import { modelContentParts, validateAssets } from '../services/agent-runtime/media-assets.js'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import * as z from 'zod/v4'
@@ -10,7 +12,8 @@ export const llmRoutes = new Hono()
 
 const llmMessageSchema = z.object({
   role: z.enum(['system', 'user', 'assistant']),
-  content: z.string(),
+  content: z.string().default(''),
+  contentParts: contentPartsSchema.optional(),
 })
 
 const llmStreamSchema = z.object({
@@ -83,7 +86,15 @@ llmRoutes.post('/stream', async (c) => {
     return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400)
   }
 
-  const input = parsed.data
+  const input = { ...parsed.data, messages: parsed.data.messages.map(message => ({ role: message.role, content: message.content })) } as import('../services/llm-runtime/types.js').LlmGatewayRequest
+  try {
+    input.messages = parsed.data.messages.map(message => {
+      if (!message.contentParts) return { role: message.role, content: message.content }
+      if (message.role !== 'user' || !input.projectId) throw new Error('Media requires a user message and projectId.')
+      validateAssets(message.contentParts, input.projectId)
+      return { role: 'user' as const, content: modelContentParts(message.contentParts) }
+    })
+  } catch (error) { return c.json({error:error instanceof Error?error.message:String(error)},400) }
 
   try {
     assertLlmProviderConfigured(input.projectId)

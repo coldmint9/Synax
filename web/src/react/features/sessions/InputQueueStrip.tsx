@@ -1,3 +1,4 @@
+import { MediaParts } from '../media/MediaParts'
 import { ArrowUp, X } from 'lucide-react'
 import type { QueuedInput } from '../../../lib/api/agentRuntime'
 import { useLocale } from '../../../hooks/useLocale'
@@ -31,6 +32,7 @@ export function InputQueueStrip({ items, onRemove, onForce }: Props) {
           >
             <span className="min-w-0 flex-1 truncate" title={item.message}>
               {previewMessage(item.message)}
+              <MediaParts parts={item.contentParts}/>
             </span>
             <button
               type="button"

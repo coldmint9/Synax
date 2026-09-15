@@ -7,8 +7,8 @@ let highlighterPromise: Promise<HighlighterCore> | null = null
 
 const LANG_BY_EXT: Record<string, string> = {
   ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx', mjs: 'javascript', cjs: 'javascript',
-  vue: 'vue', json: 'json', md: 'markdown', css: 'css', scss: 'scss', less: 'less',
-  html: 'html', xml: 'xml', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+  vue: 'vue', json: 'json', md: 'markdown', markdown: 'markdown', css: 'css', scss: 'scss', less: 'less',
+  html: 'html', htm: 'html', xml: 'xml', yaml: 'yaml', yml: 'yaml', toml: 'toml',
   py: 'python', java: 'java', go: 'go', rs: 'rust', rb: 'ruby', php: 'php',
   c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp', swift: 'swift', kt: 'kotlin',
   sh: 'shell', bash: 'shell', sql: 'sql', dockerfile: 'dockerfile', gitignore: 'gitignore',

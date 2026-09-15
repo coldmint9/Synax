@@ -1,3 +1,5 @@
+import { validateInputMedia } from '../media-capabilities.js';
+import { claudeMediaInput } from '../media-backend-input.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -24,6 +26,7 @@ export class ClaudeBackend implements BackendAdapter {
   async *stream(sessionId: string, _mode: string, input: StreamTurnRequest, signal?: AbortSignal): AsyncGenerator<AgentRunStreamChunk> {
     if (this.active.has(sessionId)) throw new Error('Claude session is already active.');
     if (input.maxSteps || input.maxTokens || input.temperature !== undefined) throw new Error('Claude controls its own agent loop; Native Synax limits and temperature overrides are unsupported.');
+    if(input.contentParts?.some(p=>p.type!=='text'))await validateInputMedia(sessionId,input);
     const turn = new ExternalTurn(sessionId, 'claude-code', input);
     const entry: Active = { turn, controller: new AbortController(), task: Promise.resolve(), inputs: new AsyncQueue(), initialized: false };
     this.active.set(sessionId, entry);
@@ -51,7 +54,7 @@ export class ClaudeBackend implements BackendAdapter {
     const model = input.model && input.model !== 'default' ? input.model : context.model;
     const reportedUsage = new Map<string, { inputTokens: number; outputTokens: number; cachedInputTokens: number; cacheWriteTokens: number }>();
     const streamed = new Set<string>(); let currentMessage = ''; let contextModel = ''; let hadText = false; let completed = false;
-    entry.inputs.push({ type: 'user', message: { role: 'user', content: turn.message }, parent_tool_use_id: null, session_id: '', uuid: randomUUID() });
+    entry.inputs.push({ type: 'user', message: { role: 'user', content: await claudeMediaInput(input, turn.message) }, parent_tool_use_id: null, session_id: '', uuid: randomUUID() });
     entry.query = query({ prompt: entry.inputs, options: { ...options, model,
       ...(native.id === 'claude-code' && typeof native.sessionId === 'string' ? { resume: native.sessionId } : {}),
       ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),

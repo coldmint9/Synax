@@ -1,127 +1,211 @@
-import { specialistBaseProfile, resolveSpecialistProfile } from './specialist-profile.js';
-import type { AgentProfile, AgentProfileKind, AgentSession } from './contracts.js';
-import { AgentNotFoundError, AgentValidationError } from './runtime-errors.js';
+import {
+  specialistBaseProfile,
+  resolveSpecialistProfile,
+} from "./specialist-profile.js";
+import type {
+  AgentProfile,
+  AgentProfileKind,
+  AgentSession,
+} from "./contracts.js";
+import { AgentNotFoundError, AgentValidationError } from "./runtime-errors.js";
 
-const allowRead = (reason = 'Project-contained read is allowed.'): { gate: 'read'; pattern: string; action: 'allow'; reason: string } => ({
-  gate: 'read',
-  pattern: '*',
-  action: 'allow',
+const allowRead = (
+  reason = "Project-contained read is allowed.",
+): { gate: "read"; pattern: string; action: "allow"; reason: string } => ({
+  gate: "read",
+  pattern: "*",
+  action: "allow",
   reason,
 });
 
-const denyWrite = (reason: string): { gate: 'write'; pattern: string; action: 'deny'; reason: string } => ({
-  gate: 'write',
-  pattern: '*',
-  action: 'deny',
+const denyWrite = (
+  reason: string,
+): { gate: "write"; pattern: string; action: "deny"; reason: string } => ({
+  gate: "write",
+  pattern: "*",
+  action: "deny",
   reason,
 });
 
 export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
   specialistBaseProfile,
   {
-    id: 'planner',
-    label: 'Planner',
-    kind: 'planner',
-    mode: 'primary',
-    description: 'Turn project intent into Synax goals and actions.',
-    defaultThinkingMode: 'standard',
-    allowedCapabilities: ['subagent.delegate', 'task.create', 'task.update', 'task.get', 'task.list', 'skill.load'],
+    id: "planner",
+    label: "Planner",
+    kind: "planner",
+    mode: "primary",
+    description: "Turn project intent into Synax goals and actions.",
+    defaultThinkingMode: "standard",
+    allowedCapabilities: [
+      "subagent.delegate",
+      "task.create",
+      "task.update",
+      "task.get",
+      "task.list",
+      "skill.load",
+    ],
     permissionDefaults: [
       allowRead(),
-      { gate: 'write', pattern: '*', action: 'ask', reason: 'Planning changes require approval.' },
+      {
+        gate: "write",
+        pattern: "*",
+        action: "ask",
+        reason: "Planning changes require approval.",
+      },
     ],
     maxSteps: 12,
-    status: 'active',
-    toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
-    loopHints: ['Prefer task decomposition and clear next actions.'],
+    status: "active",
+    toolPolicy: {
+      allowParallelReadTools: true,
+      allowSubtasks: true,
+      maxParallelReadTools: 4,
+    },
+    loopHints: ["Prefer task decomposition and clear next actions."],
   },
   {
-    id: 'executor',
-    label: 'Executor',
-    kind: 'executor',
-    mode: 'primary',
-    description: 'Read, edit, and coordinate bounded implementation work inside Synax.',
-    defaultThinkingMode: 'standard',
+    id: "executor",
+    label: "Executor",
+    kind: "executor",
+    mode: "primary",
+    description:
+      "Read, edit, and coordinate bounded implementation work inside Synax.",
+    defaultThinkingMode: "standard",
     allowedCapabilities: [
-      'bash',
-      'file.read',
-      'file.glob',
-      'file.list',
-      'grep.search',
-      'diff.read',
-      'file.write',
-      'edit',
-      'file.delete',
-      'wiki.search_content',
-      'wiki.search_batch',
-      'wiki.read_document',
-      'wiki.read_section',
-      'wiki.get_references',
-      'task.create',
-      'task.update',
-      'task.get',
-      'task.list',
-      'subagent.delegate',
-      'skill.load',
+      "bash",
+      "file.read",
+      "media.read",
+      "file.glob",
+      "file.list",
+      "grep.search",
+      "webSearch",
+      "diff.read",
+      "file.write",
+      "edit",
+      "file.delete",
+      "wiki.search_content",
+      "wiki.search_batch",
+      "wiki.read_document",
+      "wiki.read_section",
+      "wiki.get_references",
+      "task.create",
+      "task.update",
+      "task.get",
+      "task.list",
+      "subagent.delegate",
+      "skill.load",
     ],
     permissionDefaults: [
       allowRead(),
-      { gate: 'write', pattern: '*', action: 'ask', reason: 'Writes require approval.' },
+      {
+        gate: "write",
+        pattern: "*",
+        action: "ask",
+        reason: "Writes require approval.",
+      },
     ],
     maxSteps: 16,
-    status: 'active',
-    toolPolicy: { allowParallelReadTools: true, allowSubtasks: true, maxParallelReadTools: 4 },
-    loopHints: ['Use read tools to build context before any write.', 'For multi-step work, track steps with task.create and task.update.'],
+    status: "active",
+    toolPolicy: {
+      allowParallelReadTools: true,
+      allowSubtasks: true,
+      maxParallelReadTools: 4,
+    },
+    loopHints: [
+      "Use read tools to build context before any write.",
+      "For multi-step work, track steps with task.create and task.update.",
+    ],
   },
   {
-    id: 'reviewer',
-    label: 'Reviewer',
-    kind: 'reviewer',
-    mode: 'subagent',
-    description: 'Review completed action evidence against a goal.',
-    defaultThinkingMode: 'deep',
-    allowedCapabilities: ['bash', 'grep.search', 'diff.read', 'skill.load'],
-    permissionDefaults: [allowRead(), denyWrite('Reviewer is read-only in v1.')],
+    id: "reviewer",
+    label: "Reviewer",
+    kind: "reviewer",
+    mode: "subagent",
+    description: "Review completed action evidence against a goal.",
+    defaultThinkingMode: "deep",
+    allowedCapabilities: [
+      "bash",
+      "grep.search",
+      "webSearch",
+      "diff.read",
+      "skill.load",
+    ],
+    permissionDefaults: [
+      allowRead(),
+      denyWrite("Reviewer is read-only in v1."),
+    ],
     maxSteps: 14,
-    status: 'active',
-    toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
-    loopHints: ['Focus on risks, regressions, and missing evidence.'],
+    status: "active",
+    toolPolicy: {
+      allowParallelReadTools: true,
+      allowSubtasks: false,
+      maxParallelReadTools: 4,
+    },
+    loopHints: ["Focus on risks, regressions, and missing evidence."],
     allowsSubsessions: true,
   },
   {
-    id: 'explorer',
-    label: 'Explorer',
-    kind: 'explorer',
-    mode: 'subagent',
-    description: 'Fast bounded codebase investigation for another agent or user.',
-    defaultThinkingMode: 'fast',
-    allowedCapabilities: ['bash', 'file.glob', 'file.list', 'grep.search', 'diff.read', 'wiki.get_snapshot', 'wiki.get_tree', 'wiki.search_content', 'wiki.search_batch', 'wiki.read_document', 'wiki.read_section', 'wiki.get_references', 'skill.load'],
+    id: "explorer",
+    label: "Explorer",
+    kind: "explorer",
+    mode: "subagent",
+    description:
+      "Fast bounded codebase investigation for another agent or user.",
+    defaultThinkingMode: "fast",
+    allowedCapabilities: [
+      "bash",
+      "file.glob",
+      "file.list",
+      "grep.search",
+      "webSearch",
+      "diff.read",
+      "wiki.get_snapshot",
+      "wiki.get_tree",
+      "wiki.search_content",
+      "wiki.search_batch",
+      "wiki.read_document",
+      "wiki.read_section",
+      "wiki.get_references",
+      "skill.load",
+    ],
     permissionDefaults: [
       allowRead(),
-      denyWrite('Explorer is read-only in v1.'),
-      { gate: 'task', pattern: '*', action: 'deny', reason: 'Explorer cannot delegate more tasks in v1.' },
+      denyWrite("Explorer is read-only in v1."),
+      {
+        gate: "task",
+        pattern: "*",
+        action: "deny",
+        reason: "Explorer cannot delegate more tasks in v1.",
+      },
     ],
     maxSteps: 8,
-    status: 'active',
-    toolPolicy: { allowParallelReadTools: true, allowSubtasks: false, maxParallelReadTools: 4 },
+    status: "active",
+    toolPolicy: {
+      allowParallelReadTools: true,
+      allowSubtasks: false,
+      maxParallelReadTools: 4,
+    },
     loopHints: [
-      'Wiki-first: wiki.get_snapshot → wiki.search_batch/wiki.search_content → wiki.read_section → wiki.get_tree.',
-      'Use file/grep/bash only after wiki coverage or for symbol-level evidence wiki lacks.',
-      'Summarize concrete evidence with cited wiki sections and file paths.',
+      "Wiki-first: wiki.get_snapshot → wiki.search_batch/wiki.search_content → wiki.read_section → wiki.get_tree.",
+      "Use file/grep/bash only after wiki coverage or for symbol-level evidence wiki lacks.",
+      "Summarize concrete evidence with cited wiki sections and file paths.",
     ],
     allowsSubsessions: true,
   },
 ];
 
 export class ProfileService {
-  private readonly profiles = new Map(BUILTIN_AGENT_PROFILES.map((profile) => [profile.id, profile]));
+  private readonly profiles = new Map(
+    BUILTIN_AGENT_PROFILES.map((profile) => [profile.id, profile]),
+  );
 
   getForSession(session: AgentSession): AgentProfile {
     return resolveSpecialistProfile(this.get(session.profileId), session);
   }
 
   list(): AgentProfile[] {
-    return [...this.profiles.values()].filter((profile) => profile.status === 'active');
+    return [...this.profiles.values()].filter(
+      (profile) => profile.status === "active",
+    );
   }
 
   get(profileId: string): AgentProfile {
@@ -136,16 +220,25 @@ export class ProfileService {
 
   tryGet(profileId: string): AgentProfile {
     const profile = this.profiles.get(profileId);
-    if (!profile) return this.profiles.get('executor')!;
+    if (!profile) return this.profiles.get("executor")!;
     return profile;
   }
 
-  assertCanStart(profileId: string, input: { parentSessionId?: string | null } = {}): AgentProfile {
+  assertCanStart(
+    profileId: string,
+    input: { parentSessionId?: string | null } = {},
+  ): AgentProfile {
     const profile = this.get(profileId);
-    if (profile.id==='specialist'&&!input.parentSessionId)throw new AgentValidationError('Specialist sessions require a parent and a task snapshot.');
-    if (profile.status !== 'active') throw new AgentValidationError(`Agent profile ${profileId} is disabled.`);
-    if (input.parentSessionId && profile.mode !== 'subagent') {
-      throw new AgentValidationError('Child sessions must use a subagent profile.');
+    if (profile.id === "specialist" && !input.parentSessionId)
+      throw new AgentValidationError(
+        "Specialist sessions require a parent and a task snapshot.",
+      );
+    if (profile.status !== "active")
+      throw new AgentValidationError(`Agent profile ${profileId} is disabled.`);
+    if (input.parentSessionId && profile.mode !== "subagent") {
+      throw new AgentValidationError(
+        "Child sessions must use a subagent profile.",
+      );
     }
     return profile;
   }
@@ -155,7 +248,7 @@ export class ProfileService {
   }
 
   isReadOnlyProfile(kind: AgentProfileKind): boolean {
-    return kind === 'reviewer' || kind === 'explorer';
+    return kind === "reviewer" || kind === "explorer";
   }
 }
 

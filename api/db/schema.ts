@@ -365,6 +365,7 @@ export const agentRuntimeSessions = sqliteTable('agent_runtime_sessions', {
 });
 
 export const agentRuntimeMessages = sqliteTable('agent_runtime_messages', {
+  contentPartsJson: text('content_parts_json'),
   id: text('id').primaryKey(),
   sessionId: text('session_id').notNull(),
   projectId: text('project_id').notNull(),
@@ -393,6 +394,7 @@ export const agentRuntimeEvents = sqliteTable('agent_runtime_events', {
 });
 
 export const agentRuntimeToolCalls = sqliteTable('agent_runtime_tool_calls', {
+  contentPartsJson: text('content_parts_json'),
   id: text('id').primaryKey(),
   sessionId: text('session_id').notNull(),
   runId: text('run_id'),
@@ -767,4 +769,12 @@ export const agentRuntimeInteractions = sqliteTable('agent_runtime_interactions'
   kind: text('kind').notNull(), revision: integer('revision').notNull(), status: text('status').notNull(),
   requestJson: text('request_json').notNull(), responseJson: text('response_json'),
   createdAt: text('created_at').notNull(), resolvedAt: text('resolved_at'), consumedAt: text('consumed_at'),
+});
+
+export const agentRuntimeAssets = sqliteTable('agent_runtime_assets', {
+  id: text('id').primaryKey(), projectId: text('project_id').notNull(), filename: text('filename').notNull(),
+  mediaType: text('media_type').notNull(), size: integer('size').notNull(), sha256: text('sha256').notNull(), createdAt: text('created_at').notNull(),
+});
+export const agentRuntimeAssetSessions = sqliteTable('agent_runtime_asset_sessions', {
+  assetId: text('asset_id').notNull(), sessionId: text('session_id').notNull(),
 });

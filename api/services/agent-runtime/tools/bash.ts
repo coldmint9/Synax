@@ -1,9 +1,13 @@
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+
 import { runCommand, runShellCommand } from './exec-async.js';
 import * as z from 'zod/v4';
 import type { RegisteredTool, ToolExecutionResult, ToolExecutionInput } from '../contracts.js';
 import { recordBashFileReads } from '../read-tracker.js';
 import { isUnrestrictedPermissionRules } from '../permission-tiers.js';
 import { agentRuntimeStore } from '../session-store.js';
+import { DATA_ROOT } from '../../../lib/env.js';
 import { bashPermissionSummary, parseBashInvocations } from './bash-command-policy.js';
 import { resolveWorkspacePath, workspaceRoot } from './workspace.js';
 
@@ -210,6 +214,13 @@ interface BashExecutionInput {
   stdin?: string;
 }
 
+// Keep tool caches out of the repository without exposing the real user HOME.
+async function sessionHomeDir(sessionId: string): Promise<string> {
+  const directory = path.join(DATA_ROOT, 'agent-home', sessionId);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  return directory;
+}
+
 async function executeBashCommand(input: BashExecutionInput): Promise<ToolExecutionResult> {
   const { command, commandPreview, cwd } = input;
   const stop = (stderr: string, title: string): ToolExecutionResult => ({
@@ -251,7 +262,7 @@ async function executeBashCommand(input: BashExecutionInput): Promise<ToolExecut
     cwd,
     maxBufferBytes: MAX_OUTPUT_BYTES * 2,
     timeoutMs: input.timeoutMs ?? EXEC_TIMEOUT_MS,
-    env: { ...process.env, HOME: cwd },
+    env: { ...process.env, HOME: await sessionHomeDir(input.sessionId) },
     stdin: input.stdin ?? undefined,
   });
 

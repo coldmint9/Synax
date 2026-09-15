@@ -55,6 +55,7 @@ const providerDefSchema = z.object({
       isDefault: z.boolean().optional(),
       maxTokens: z.number().optional(),
       contextLimit: z.number().int().positive().max(10_000_000).optional(),
+      inputModalities: z.array(z.enum(['text','image','audio','video','file'])).optional(),
     }),
   ),
   connectionSchema: z.record(z.string(), z.unknown()).optional(),

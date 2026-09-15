@@ -1,3 +1,4 @@
+import { MediaParts } from '../media/MediaParts'
 import { memo } from 'react'
 import { ChevronRight, ShieldPlus } from 'lucide-react'
 import type { ConversationTimelineEntry } from './buildConversationTimeline'
@@ -37,9 +38,9 @@ export const TimelineEntryView = memo(function TimelineEntryView({
     // are scaffolding, not conversation: collapse them into an indicator the
     // reader can expand if they actually want to inspect the payload.
     if (entry.injected) {
-      return <SystemInjectionChip content={entry.content} />
+      return <><SystemInjectionChip content={entry.content} /><MediaParts parts={entry.contentParts}/></>
     }
-    return <UserMessageBlock content={entry.content} />
+    return <UserMessageBlock content={entry.content} contentParts={entry.contentParts} />
   }
 
   if (entry.kind === 'work_log') {

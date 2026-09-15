@@ -1,3 +1,7 @@
+import { validateInputMedia } from '../media-capabilities.js';
+import { hasInlineMedia, normalizeMediaPayload } from '../media-tool-content.js';
+import { acpMediaInput } from '../media-backend-input.js';
+import { normalizeInput, hasInput, type RuntimeContentPart } from '../content-parts.js';
 import { withDeadline } from '../managed-process.js';
 import { activateAcceptedRun } from '../run-admission.js';
 import type { AgentSessionStreamMode } from '../../../lib/ipc/agent-session-protocol.js';
@@ -95,6 +99,7 @@ class AcpSessionEngine {
     abortSignal?: AbortSignal,
   ): AsyncGenerator<AgentRunStreamChunk> {
     const session = agentRuntimeStore.getSession(sessionId);
+    if(input.contentParts?.some(p=>p.type!=='text'))await validateInputMedia(sessionId,input);
     const model = resolveSessionEngineModel(sessionId, input);
     if (!isAcpModel(model)) {
       throw new AgentValidationError('Session is not configured for an ACP model.');
@@ -113,7 +118,8 @@ class AcpSessionEngine {
       );
     }
 
-    const prompt = this.resolvePrompt(sessionId, mode, input);
+    input = normalizeInput(input);
+    const prompt = hasInput(input) ? input.message ?? '' : this.resolvePrompt(sessionId, mode, input);
     if (mode === 'resume' && acpPermissionBridge.hasPendingForSession(sessionId)) {
       return;
     }
@@ -125,7 +131,7 @@ class AcpSessionEngine {
       else abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
     }
 
-    const task = this.runTurn(sessionId, model, prompt, queue, abortController.signal, input.acceptedRunId);
+    const task = this.runTurn(sessionId, model, prompt, queue, abortController.signal, input.acceptedRunId, input.contentParts);
     this.activeTurns.set(sessionId, { queue, abortController, task });
 
     try {
@@ -201,6 +207,7 @@ class AcpSessionEngine {
     queue: StreamQueue,
     abortSignal: AbortSignal,
     acceptedRunId?: string,
+    contentParts?: RuntimeContentPart[],
   ): Promise<void> {
     const session = agentRuntimeStore.getSession(sessionId);
     const parsed = parseAcpModel(model);
@@ -214,6 +221,7 @@ class AcpSessionEngine {
         stepId: null,
         role: 'user',
         content: prompt,
+        contentParts,
         metadata: { source: 'acp_turn' },
         createdAt: nowIso(),
       });
@@ -272,12 +280,20 @@ class AcpSessionEngine {
         isReplay: pooled.isReplay,
       });
 
+      let updates = Promise.resolve();
+      let updateError: unknown;
       acpSessionUpdateRouter.set(sessionId, (params) => {
         if (params.sessionId !== pooled.acpSessionId) return;
-        const chunks = mapper.mapUpdate(params.update);
-        for (const chunk of chunks) queue.push({ kind: 'chunk', chunk });
-        if (pooled.isReplay) return;
-        acpConnectionPool.clearReplay(sessionId);
+        updates = updates.then(async () => {
+          let update: typeof params.update & {contentParts?:RuntimeContentPart[]} = params.update;
+          if (hasInlineMedia(update)) {
+            const normalized = await normalizeMediaPayload(session.projectId, update);
+            update = { ...(normalized.value as typeof update), contentParts: normalized.contentParts } as typeof update;
+          }
+          const chunks = mapper.mapUpdate(update);
+          for (const chunk of chunks) queue.push({ kind: 'chunk', chunk });
+          if (!pooled.isReplay) acpConnectionPool.clearReplay(sessionId);
+        }).catch(error => { updateError ??= error; });
       });
 
       acpPermissionBridge.setTurnContext(sessionId, {
@@ -303,9 +319,11 @@ class AcpSessionEngine {
 
       const promptResult = await pooled.connection.conn.prompt({
         sessionId: pooled.acpSessionId,
-        prompt: [{ type: 'text', text: prompt }],
+        prompt: await acpMediaInput(contentParts ?? [], prompt),
       });
 
+      await updates;
+      if (updateError) throw updateError;
       acpConnectionPool.touch(sessionId);
       const assistantMessage = mapper.finalizeAssistantMessage();
       const captured = await captureFileChanges(pooled.workDir, [], baseline);

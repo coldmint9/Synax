@@ -1,3 +1,4 @@
+import { validateInputMedia, sessionInputCapabilities, draftInputCapabilities } from '../services/agent-runtime/media-capabilities.js';
 import { listTurnReferenceOptions } from '../services/agent-runtime/turn-references.js';
 import { backendIdSchema } from '../services/agent-runtime/backends/backend-contracts.js';
 import { acknowledgeRuntimeRecovery } from '../services/agent-runtime/runtime-recovery.js';
@@ -92,7 +93,7 @@ agentRuntimeRoutes.get('/protocol', (c) => c.json({
   protocol: RUNTIME_PROTOCOL_VERSION,
   schema: RUNTIME_PROTOCOL_SCHEMA,
   transports: ['http-json', 'sse', 'jsonl-rpc'],
-  operations: ['backends.list', 'projects.list', 'sessions.list', 'sessions.get', 'sessions.create', 'runs.submit', 'runs.watch', 'permissions.reply', 'interactions.reply', 'sessions.cancel', 'sessions.pause'],
+  operations: ['assets.upload', 'assets.get', 'assets.delete', 'sessions.inputCapabilities', 'backends.list', 'projects.list', 'sessions.list', 'sessions.get', 'sessions.create', 'runs.submit', 'runs.watch', 'permissions.reply', 'interactions.reply', 'sessions.cancel', 'sessions.pause'],
 }));
 agentRuntimeRoutes.get('/backends', (c) => c.json({ protocol: RUNTIME_PROTOCOL_VERSION, items: describeBackends() }));
 agentRuntimeRoutes.get('/backends/:id/models', async c => {
@@ -314,6 +315,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/runs', async c => {
     const sessionId = c.req.param('sessionId');
     requireSessionBackendConfig(sessionId);
     const { requestId, mode, ...input } = parsed.data;
+    await validateInputMedia(sessionId, input);
     return c.json(runCoordinator.submit(sessionId, input, requestId, mode), 202);
   } catch (error) { return runtimeError(c, error); }
 });
@@ -373,6 +375,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/turns/stream', async c => {
   const parsed = streamTurnRequestSchema.safeParse(body.data); if (!parsed.success) return validationError(c, parsed.error);
   try {
     const id = c.req.param('sessionId'); requireSessionBackendConfig(id);
+    await validateInputMedia(id, parsed.data);
     const accepted = runCoordinator.submit(id, parsed.data, c.req.header('Idempotency-Key') ?? randomUUID());
     return observeRunResponse(c, id, accepted.run.id);
   } catch (error) { return runtimeError(c, error); }
@@ -393,6 +396,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/resume/stream', async c => {
   const parsed = streamTurnRequestSchema.safeParse(body.data ?? {}); if (!parsed.success) return validationError(c, parsed.error);
   try {
     const id = c.req.param('sessionId'); requireSessionBackendConfig(id);
+    await validateInputMedia(id, parsed.data);
     const accepted = runCoordinator.submit(id, parsed.data, c.req.header('Idempotency-Key') ?? randomUUID(), 'continue');
     return observeRunResponse(c, id, accepted.run.id);
   } catch (error) { return runtimeError(c, error); }
@@ -610,6 +614,7 @@ agentRuntimeRoutes.post('/sessions/:sessionId/input-queue', async (c) => {
   const parsed = enqueueInputRequestSchema.safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
+    await validateInputMedia(c.req.param('sessionId'), parsed.data);
     const items = inputQueueService.enqueue(c.req.param('sessionId'), parsed.data);
     return c.json({ items });
   } catch (error) {
@@ -749,3 +754,7 @@ agentRuntimeRoutes.patch('/sessions/:sessionId/mode', async (c) => {
     return c.json({session:updated});
   } catch(error){return runtimeError(c,error);}
 });
+
+agentRuntimeRoutes.get('/sessions/:sessionId/input-capabilities', async c => { try { return c.json(await sessionInputCapabilities(c.req.param('sessionId'), c.req.query('model'))); } catch(error) { return runtimeError(c,error); } });
+
+agentRuntimeRoutes.get('/input-capabilities', async c => { const parsed=z.object({projectId:z.string().min(1),backendId:backendIdSchema.default('native'),model:z.string().optional()}).safeParse(Object.fromEntries(new URL(c.req.url).searchParams)); if(!parsed.success)return validationError(c,parsed.error);try{return c.json(await draftInputCapabilities(parsed.data.projectId,parsed.data.backendId,parsed.data.model));}catch(error){return runtimeError(c,error);} });

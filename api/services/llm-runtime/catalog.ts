@@ -106,6 +106,7 @@ function toRuntimeProvider(provider: ModelsDevProvider): RuntimeProvider {
   const models = Object.values(provider.models ?? {})
     .map<RuntimeModel>((model) => ({
       id: model.id,
+      inputModalities: model.modalities?.input?.map(m => String(m)==='pdf' ? 'file' : m).filter((m): m is import('../agent-runtime/content-parts.js').InputModality => ['text','image','audio','video','file'].includes(m)),
       label: model.name || model.id,
       maxTokens: model.limit?.output,
       contextLimit: model.limit?.context,

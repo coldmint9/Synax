@@ -1,3 +1,6 @@
+import { useInputCapability } from '../../media/useInputCapability'
+import { MediaAttachButton, MediaDraftPreview } from '../../media/MediaDraftControls'
+import type { MediaDraft } from '../../media/useMediaDraft'
 import { useEffect, useLayoutEffect, useRef, useCallback, type ReactNode, type RefObject, type KeyboardEvent } from 'react'
 import { Square, ArrowUp } from 'lucide-react'
 import type { ProviderDef } from '../../../../lib/contracts/config'
@@ -24,6 +27,9 @@ export interface ComposerCommands {
 }
 
 interface Props {
+  media?: MediaDraft
+  sessionId?: string
+  inputModel?: string
   commands?: ComposerCommands
   /** Optional session-only control, beside the model picker in either layout. */
   backendId?: string
@@ -68,6 +74,9 @@ export function GoalComposerPill({
   backendId,
   modeControl,
   projectId,
+  media,
+  sessionId,
+  inputModel,
   content,
   onContentChange,
   onSubmit,
@@ -97,6 +106,7 @@ export function GoalComposerPill({
   defaultExpanded = false,
 }: Props) {
   const { t } = useLocale()
+  const inputCapability = useInputCapability(projectId,sessionId,backendId??'native',inputModel??(providerId&&modelId?`${providerId}/${modelId}`:undefined),media,globalConfig?.updatedAt)
   const localTextareaRef = useRef<HTMLTextAreaElement>(null)
   const textareaRef = commands?.inputRef ?? localTextareaRef
   const isComposingRef = useRef(false)
@@ -129,9 +139,9 @@ export function GoalComposerPill({
     if (e.key !== 'Enter' || e.shiftKey) return
     e.preventDefault()
     if (disabled && !queueWhileGenerating) return
-    if (!content.trim()) return
+    if ((!content.trim() && !media?.parts.length) || (media && !media.ready) || inputCapability.blocked) return
     onSubmit()
-  }, [content, commands, disabled, isGenerating, onSubmit, queueWhileGenerating])
+  }, [inputCapability.blocked, media, content, commands, disabled, isGenerating, onSubmit, queueWhileGenerating])
 
   useLayoutEffect(() => {
     const el = textareaRef.current
@@ -174,7 +184,7 @@ export function GoalComposerPill({
       type="button"
       aria-label={t(isGenerating ? 'goalStop' : 'goalSend')}
       className={`goal-dock-composer-chip ${isGenerating ? 'goal-dock-composer-stop' : 'goal-dock-composer-send'} ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed`}
-      disabled={isGenerating ? !onStop : disabled || !content.trim()}
+      disabled={isGenerating ? !onStop : disabled || (!content.trim() && !media?.parts.length) || Boolean(media && !media.ready) || inputCapability.blocked}
       onClick={isGenerating ? onStop : onSubmit}
     >
       {isGenerating ? <Square size={12} fill="currentColor" /> : <ArrowUp size={15} />}
@@ -184,6 +194,7 @@ export function GoalComposerPill({
   const toolbar = (
     <>
       <div className="goal-dock-composer-leading contents">
+        {media && <MediaAttachButton media={media} disabled={disabled && !queueWhileGenerating} />}
         {commands?.trigger ?? <GoalAttachMenu
           skillsDisabled={Boolean(backendId && backendId !== 'native')}
           projectId={projectId}
@@ -237,10 +248,15 @@ export function GoalComposerPill({
   return (
     <div
       className="goal-dock-composer w-full"
+      onDragOver={e=>{if(media && e.dataTransfer.types.includes('Files'))e.preventDefault()}}
+      onDrop={e=>{if(media && e.dataTransfer.files.length){e.preventDefault();if(!disabled || queueWhileGenerating)media.add(Array.from(e.dataTransfer.files))}}}
+      onPaste={e=>{if(media && e.clipboardData.files.length && (!disabled || queueWhileGenerating)){media.add(Array.from(e.clipboardData.files));if(!e.clipboardData.getData('text/plain'))e.preventDefault()}}}
       data-session-controls={modeControl ? 'true' : undefined}
       data-multiline={expandedLayout ? 'true' : undefined}
       data-expanded={defaultExpanded ? 'true' : undefined}
     >
+      {media && <MediaDraftPreview media={media}/>}
+      {inputCapability.text && <p role={inputCapability.error?'alert':'status'} className={`w-full break-words px-1 py-1 text-[10px] ${inputCapability.error?'text-danger':'text-muted-foreground'}`}>{inputCapability.text}</p>}
       {expandedLayout ? (
         <>
           {commands?.header}

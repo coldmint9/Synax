@@ -1,3 +1,4 @@
+import type { RuntimeContentPart } from '../../lib/api/runtimeMedia'
 // ---------------------------------------------------------------------------
 // web/src/react/state/wikiStore.ts — Wiki Zustand store
 // ---------------------------------------------------------------------------
@@ -182,6 +183,7 @@ export interface WikiState {
     documentId?: string | null;
     anchor?: GoalAnchor | null;
   }) => void;
+  goalComposerContentParts?: RuntimeContentPart[];
   submitGoal: (projectId: string) => Promise<void>;
   stopGoal: () => void;
   replyGoalPermission: (permissionId: string, reply: 'once' | 'always' | 'reject') => Promise<void>;
@@ -753,7 +755,18 @@ export const useWikiStore = create<WikiState>((set, get) => ({
   submitGoal: async (projectId) => {
     const s = get()
     const content = s.goalComposerContent.trim()
-    if (!content) return
+    const contentParts: RuntimeContentPart[] | undefined = s.goalComposerContentParts?.length ? [...(content ? [{type:'text' as const,text:content}] : []), ...s.goalComposerContentParts] : undefined
+    if (!content && !contentParts?.length) return
+    let draftReleased = false
+    const clearAcceptedDraft = () => {
+      if (draftReleased) return
+      draftReleased = true
+      const current = get()
+      if (current.goalComposerContent === s.goalComposerContent
+        && JSON.stringify(current.goalComposerContentParts ?? []) === JSON.stringify(s.goalComposerContentParts ?? [])) {
+        set({ goalComposerContent: '', goalComposerContentParts: [] })
+      }
+    }
 
     const isFollowUp = Boolean(s.goalSession.sessionId)
       && (
@@ -773,11 +786,11 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           || s.goalSession.status === 'waiting_permission'
 
         if (shouldQueue) {
-          set({ goalComposerContent: '' })
           await useAgentSessionStore.getState().enqueueSessionInput(
             s.goalSession.sessionId,
-            { message: content, model, permissionTier: s.goalComposerPermissionTier },
+            { message: content, contentParts, model, permissionTier: s.goalComposerPermissionTier },
           )
+          clearAcceptedDraft()
           return
         }
 
@@ -791,12 +804,12 @@ export const useWikiStore = create<WikiState>((set, get) => ({
             streamingText: '',
           },
           goalDockState: s.goalDockState === 'expanded' ? 'expanded' : 'working',
-          goalComposerContent: '',
         })
         await streamGoalAgentTurn(
           s.goalSession.sessionId,
-          { message: content, model, permissionTier: s.goalComposerPermissionTier },
+          { message: content, contentParts, model, permissionTier: s.goalComposerPermissionTier },
           (chunk) => {
+            if (['run_started', 'run_resumed'].includes((chunk as {type?: string}).type ?? '')) clearAcceptedDraft()
             set(state => ({
               goalSession: applyGoalStreamChunk(state.goalSession, chunk),
             }))
@@ -809,6 +822,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
             ? 'expanded'
             : settleGoalDockAfterRun(dock),
         })
+        clearAcceptedDraft()
         pushGoalResultToast(final)
         return
       }
@@ -816,7 +830,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
       const wikiAttachMode = s.goalComposerWikiAttachMode
       const { prompt, wikiContext } = await goalApi.buildSessionPrompt(projectId, {
         mode: 'direct',
-        content,
+        content: content || '附件输入 / Media input',
         wikiAttachMode,
         documentId: wikiAttachMode === 'manual' ? s.goalComposerDocumentId : null,
         documentTitle: wikiAttachMode === 'manual' && s.goalComposerDocumentId
@@ -827,7 +841,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
 
       const documentId = wikiContext.documentId
       const goal = await goalApi.create(projectId, {
-        content,
+        content: content || '附件输入 / Media input',
         scope: documentId ? 'document' : 'project',
         documentId: documentId ?? null,
         anchorJson: wikiContext.anchorJson,
@@ -865,7 +879,6 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           error: null,
         },
         goalDockState: 'working',
-        goalComposerContent: '',
         goalComposerAnchorJson: null,
         goalComposerSkillIds: [],
         goalComposerReasoningEffort: 'high',
@@ -875,10 +888,12 @@ export const useWikiStore = create<WikiState>((set, get) => ({
         payload.session.id,
         {
           model,
+          ...(contentParts ? { contentParts: [...(content ? [{type:'text' as const,text:prompt}] : []), ...s.goalComposerContentParts!] } : {}),
           permissionTier: s.goalComposerPermissionTier,
           reasoningEffort: s.goalComposerReasoningEffort,
         },
         (chunk) => {
+          if (['run_started', 'run_resumed'].includes((chunk as {type?: string}).type ?? '')) clearAcceptedDraft()
           set(state => ({
             goalSession: applyGoalStreamChunk(state.goalSession, chunk),
           }))
@@ -892,6 +907,7 @@ export const useWikiStore = create<WikiState>((set, get) => ({
           ? 'expanded'
           : settleGoalDockAfterRun(dock),
       })
+      clearAcceptedDraft()
       pushGoalResultToast(final)
     } catch (err) {
       const message = err instanceof Error ? err.message : '提交 Goal 失败'
