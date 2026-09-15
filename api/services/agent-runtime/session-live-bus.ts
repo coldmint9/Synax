@@ -1,7 +1,9 @@
+import type { LlmRetryState } from '../llm-runtime/retry-state.js';
 import { EventEmitter } from 'node:events';
 import type { ToolCallRecord } from './contracts.js';
 
 export type SessionLiveEvent =
+  | { type: 'retry_status'; stepId: string; retry: LlmRetryState }
   | { type: 'step_started'; stepId: string; stepIndex: number; modelCapabilities?: { reasoning: boolean } }
   | { type: 'message_delta'; stepId: string; delta: string }
   | { type: 'thought_delta'; stepId: string; delta: string }

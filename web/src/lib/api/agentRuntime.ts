@@ -361,7 +361,17 @@ export interface SessionUsageCoverage {
   missing: number;
   complete: boolean;
 }
+export interface ContextComposition {
+  tools: number;
+  mcp: number;
+  skills: number;
+  messages: number;
+  total: number;
+  measuredAt: string;
+}
 export interface SessionStats {
+  roundCount?: number;
+  contextComposition?: ContextComposition | null;
   work?: {
     id: string;
     status:

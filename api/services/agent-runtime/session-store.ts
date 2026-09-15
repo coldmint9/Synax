@@ -1,3 +1,4 @@
+import type { ContextComposition } from './context-composition.js';
 import { bindAssets } from './media-assets.js';
 import { runtimeTransaction } from './runtime-transaction.js';
 import { logger } from '../../lib/logger.js';
@@ -1136,6 +1137,8 @@ export class AgentRuntimeStore {
     options: { configuredContextLimit?: number | null } = {},
   ): {
     work: Pick<WorkRecord, 'id' | 'status' | 'remaining' | 'reason'> | null;
+    roundCount: number;
+    contextComposition: ContextComposition | null;
     context: SessionUsageProjection['context'];
     usage: SessionUsageProjection['usage'];
     coverage: SessionUsageProjection['coverage'];
@@ -1171,6 +1174,14 @@ export class AgentRuntimeStore {
       ? Math.min(Math.round((input / contextLimit) * 100), 100)
       : 0;
 
+    const roundCount = (db.prepare('SELECT COUNT(*) as count FROM agent_runtime_run_steps WHERE session_id = ?')
+      .get(sessionId) as { count: number }).count;
+    // Step updates replace rows, so rowid alone is not the request order.
+    const compositionRow = db.prepare(
+      "SELECT json_extract(metadata_json, '$.contextComposition') AS composition FROM agent_runtime_run_steps WHERE session_id = ? AND json_type(metadata_json, '$.contextComposition') = 'object' ORDER BY json_extract(metadata_json, '$.contextComposition.measuredAt') DESC, started_at DESC, step_index DESC, rowid DESC LIMIT 1",
+    ).get(sessionId) as { composition: string } | undefined;
+    const contextComposition = compositionRow ? JSON.parse(compositionRow.composition) as ContextComposition : null;
+
     const toolCountRow = db
       .prepare('SELECT COUNT(*) as cnt FROM agent_runtime_tool_calls WHERE session_id = ?')
       .get(sessionId) as { cnt: number };
@@ -1190,6 +1201,7 @@ export class AgentRuntimeStore {
 
     return {
       work: currentWork ? { id: currentWork.id, status: currentWork.status, remaining: currentWork.remaining, reason: currentWork.reason } : null,
+      roundCount, contextComposition,
       context: projected.context, usage: projected.usage, coverage: projected.coverage,
       tokenUsage: { input, output, total },
       contextLimit,

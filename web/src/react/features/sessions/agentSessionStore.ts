@@ -20,7 +20,7 @@ import {
   type TodoItem,
   type ToolCallRecord,
 } from '../../../lib/api/agentRuntime'
-import type { SessionLiveEvent } from '../../../lib/api/sessionLive'
+import type { LlmRetryState, SessionLiveEvent } from '../../../lib/api/sessionLive'
 import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { AppError } from '../../../lib/errors'
 import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, isAcpSession, readSynaxPermissionTier, type SynaxPermissionTier } from './synaxSessionTypes'
@@ -362,6 +362,7 @@ export interface AgentSessionStoreState {
   sessionDetailCache: Record<string, SessionDetailCacheEntry>
 
   // 流式进行中状态
+  streamingRetry: LlmRetryState | null
   streamingStepId: string | null
   streamingLive: StreamingLiveBuffers
   streamingCompletedSteps: Array<{
@@ -420,6 +421,7 @@ type SessionDetailState = Pick<
   | 'sessionStats'
   | 'sessionTodos'
   | 'sessionCapabilities'
+  | 'streamingRetry'
   | 'streamingStepId'
   | 'streamingLive'
   | 'streamingCompletedSteps'
@@ -440,6 +442,7 @@ function emptySessionDetailState(): SessionDetailState {
     sessionStats: null,
     sessionTodos: [],
     sessionCapabilities: null,
+    streamingRetry: null,
     streamingStepId: null,
     streamingLive: EMPTY_STREAMING_BUFFERS,
     streamingCompletedSteps: [],
@@ -470,6 +473,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   sessionCapabilities: null,
   readSessionMarkers: {},
   sessionDetailCache: {},
+  streamingRetry: null,
   streamingStepId: null,
   streamingLive: EMPTY_STREAMING_BUFFERS,
   streamingCompletedSteps: [],
@@ -562,6 +566,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       sessionStats: null,
       sessionTodos: [],
       sessionCapabilities: null,
+      streamingRetry: null,
       streamingStepId: null,
       streamingLive: EMPTY_STREAMING_BUFFERS,
       streamingCompletedSteps: [],
@@ -641,6 +646,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       panelOpen: true,
       selectedSessionId: sessionId,
       ...(isSwitch ? { interactionState: null } : {}),
+      streamingRetry: null,
       streamingStepId: null,
       streamingLive: EMPTY_STREAMING_BUFFERS,
       streamingCompletedSteps: [],
@@ -772,6 +778,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
                 [targetSessionId]: cacheEntry,
               }),
               ...(sessionStillRunning ? {} : {
+                streamingRetry: null,
                 streamingStepId: null,
                 streamingLive: EMPTY_STREAMING_BUFFERS,
                 streamingCompletedSteps: [],
@@ -954,7 +961,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
         if (get().selectedSessionId !== event.sessionId) break
         if (event.reset) {
           clearStreamingBuffers()
-          set({ streamingStepId: null, streamingLive: EMPTY_STREAMING_BUFFERS, streamingCompletedSteps: [] })
+          set({ streamingRetry: null, streamingStepId: null, streamingLive: EMPTY_STREAMING_BUFFERS, streamingCompletedSteps: [] })
         }
         if (event.refresh) void get().refreshDetail()
         break
@@ -972,10 +979,19 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
         _textBuffer = ''
         _thinkingBuffer = ''
         set({
+          streamingRetry: null,
           streamingStepId: event.stepId,
           streamingLive: EMPTY_STREAMING_BUFFERS,
           streamingCompletedSteps: completedSteps,
         })
+        break
+      }
+      case 'retry_status': {
+        if (get().streamingStepId !== event.stepId) break
+        const reset = event.retry.phase === 'waiting' || event.retry.phase === 'group_wait'
+        if (reset) clearStreamingBuffers()
+        set({ streamingRetry: event.retry.phase === 'recovered' ? null : event.retry,
+          ...(reset ? { streamingLive: EMPTY_STREAMING_BUFFERS } : {}) })
         break
       }
       case 'message_delta':

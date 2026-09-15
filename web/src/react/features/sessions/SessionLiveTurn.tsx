@@ -1,3 +1,5 @@
+import type { LlmRetryState } from '../../../lib/api/sessionLive'
+import { RetryIndicator } from './RetryIndicator'
 import { memo, useDeferredValue, useEffect, useRef } from 'react'
 import type { AgentRunStep } from '../../../lib/api/agentRuntime'
 import { ThinkingBlock } from './ThinkingBlock'
@@ -63,7 +65,9 @@ const CompletedStepView = memo(function CompletedStepView({
 
 const LiveStepView = memo(function LiveStepView({
   streamingLive,
+  retry,
 }: {
+  retry?: LlmRetryState | null
   streamingLive: StreamingLiveBuffers
 }) {
   const deferredLive = useDeferredValue(streamingLive)
@@ -72,13 +76,15 @@ const LiveStepView = memo(function LiveStepView({
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-2">
-      {hasContent ? renderLiveSegments(blocks, true) : <ThinkingIndicator />}
+      {hasContent ? renderLiveSegments(blocks, true) : !retry ? <ThinkingIndicator /> : null}
+      {retry && <RetryIndicator retry={retry} />}
     </div>
   )
 })
 
 interface Props {
   steps: AgentRunStep[]
+  retry?: LlmRetryState | null
   streamingStepId: string | null
   streamingLive: StreamingLiveBuffers
   streamingCompletedSteps: Array<{
@@ -92,6 +98,7 @@ interface Props {
 export const SessionLiveTurn = memo(function SessionLiveTurn({
   steps,
   streamingStepId,
+  retry,
   streamingLive,
   streamingCompletedSteps,
   scrollContainerRef,
@@ -132,7 +139,7 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
         />
       ))}
       {showLiveBlock ? (
-        <LiveStepView streamingLive={streamingLive} />
+        <LiveStepView streamingLive={streamingLive} retry={retry} />
       ) : null}
     </>
   )

@@ -101,7 +101,10 @@ class RuntimeJournal {
             .all(run.id, start.sequence, cursor) as JournalRow[];
           for (const row of rows) {
             const chunk = mapRow(row).chunk;
-            if ('stepId' in chunk && chunk.stepId === current.id) liveChunks.push(chunk);
+            if ('stepId' in chunk && chunk.stepId === current.id) {
+              if (chunk.type === 'retry_status' && ['waiting', 'group_wait'].includes(chunk.retry.phase)) liveChunks.length = 1;
+              liveChunks.push(chunk);
+            }
           }
         }
       }

@@ -44,7 +44,11 @@ export class RuntimeStreamWriter {
       const existing = db.prepare("SELECT id FROM agent_runtime_messages WHERE run_id = ? AND step_id = ? AND role = 'assistant' LIMIT 1").get(run.id, step.id);
       if (existing) return;
       const records = db.prepare(`SELECT chunk_json FROM agent_runtime_stream_records WHERE run_id = ? AND kind = 'message_delta'
-        AND json_extract(chunk_json, '$.chunk.stepId') = ? ORDER BY sequence`).all(run.id, step.id) as Array<{ chunk_json: string }>;
+        AND json_extract(chunk_json, '$.chunk.stepId') = ?
+        AND sequence > COALESCE((SELECT MAX(sequence) FROM agent_runtime_stream_records
+          WHERE run_id = ? AND kind = 'retry_status' AND json_extract(chunk_json, '$.chunk.stepId') = ?
+          AND json_extract(chunk_json, '$.chunk.retry.phase') IN ('waiting', 'group_wait')), 0)
+        ORDER BY sequence`).all(run.id, step.id, run.id, step.id) as Array<{ chunk_json: string }>;
       const content = records.map(row => (JSON.parse(row.chunk_json) as { chunk: { delta: string } }).chunk.delta).join('');
       if (!content) return;
       agentRuntimeStore.appendMessage({ id: makeRuntimeId('msg'), sessionId: this.sessionId, runId: run.id, stepId: step.id,
