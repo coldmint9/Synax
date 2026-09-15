@@ -59,7 +59,7 @@ export function stripPropertyNames<T>(value: T): T {
   return (changed ? next : value) as T;
 }
 
-function stripUnsupportedKeywords(
+export function stripUnsupportedKeywords(
   params: LanguageModelV4CallOptions,
 ): LanguageModelV4CallOptions {
   let changed = false;

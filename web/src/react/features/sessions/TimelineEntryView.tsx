@@ -29,9 +29,11 @@ function SystemInjectionChip({ content }: { content: string }) {
 export const TimelineEntryView = memo(function TimelineEntryView({
   entry,
   onExpandChild,
+  isStreaming = false,
 }: {
   entry: ConversationTimelineEntry
   onExpandChild?: (sessionId: string) => void
+  isStreaming?: boolean
 }) {
   if (entry.kind === 'user') {
     // App-composed prompts (language directive + wiki context + instructions)
@@ -47,5 +49,5 @@ export const TimelineEntryView = memo(function TimelineEntryView({
     return <WorkLogEntry entry={entry} onExpandChild={onExpandChild} />
   }
 
-  return <TurnBody turn={entry.turn} entryId={entry.id} onExpandChild={onExpandChild} />
+  return <TurnBody isStreaming={isStreaming} turn={entry.turn} entryId={entry.id} onExpandChild={onExpandChild} />
 })

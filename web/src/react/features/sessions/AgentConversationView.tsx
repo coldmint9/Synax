@@ -20,6 +20,7 @@ interface Props {
   onCancel?: (sessionId: string) => void
   onExpandChild?: (sessionId: string) => void
   excludeStepId?: string | null
+  unifiedLive?: boolean
   liveTurn?: React.ReactNode
   /** Scroll container, forwarded so transcript entries can lazy-mount by viewport. */
   scrollRootRef?: React.RefObject<HTMLElement | null>
@@ -38,6 +39,7 @@ export const AgentConversationView = memo(function AgentConversationView({
   onExpandChild,
   excludeStepId = null,
   liveTurn,
+  unifiedLive = false,
   scrollRootRef,
 }: Props) {
   const { t } = useLocale()
@@ -98,6 +100,7 @@ export const AgentConversationView = memo(function AgentConversationView({
         : null}
 
       <SessionStaticTimeline
+        unifiedLive={unifiedLive}
         session={session}
         runs={runs}
         steps={steps}

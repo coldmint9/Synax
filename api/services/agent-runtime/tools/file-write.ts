@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
-import { assertSessionFileReadForWrite } from '../read-tracker.js';
+import { assertSessionFileReadForWrite, recordSessionFileMutation } from '../read-tracker.js';
 import { resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
 
 export const fileWriteTool: RegisteredTool = {
@@ -33,6 +33,9 @@ export const fileWriteTool: RegisteredTool = {
     const filePath = resolveWorkspacePath(args.path, input.sessionId);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, args.content, 'utf8');
+    // Refresh the tracked mtime so a follow-up edit of this same file is not
+    // rejected as "changed on disk since last read".
+    recordSessionFileMutation(input.sessionId, filePath);
     return {
       result: {
         path: toWorkspaceRelative(filePath, input.sessionId),

@@ -4,7 +4,6 @@ import { useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAgentSessionStore } from './agentSessionStore'
 import { AgentConversationView } from './AgentConversationView'
-import { SessionLiveTurn } from './SessionLiveTurn'
 import { SessionNavigationPanel } from './SessionNavigationPanel'
 
 function useSessionTranscriptStatic() {
@@ -21,34 +20,6 @@ function useSessionTranscriptStatic() {
       resumeSession: s.resumeSession,
     }
   }))
-}
-
-function useSessionLiveState() {
-  return useAgentSessionStore(useShallow(s => ({
-    steps: s.steps,
-    streamingStepId: s.streamingStepId,
-    streamingLive: s.streamingLive,
-    streamingRetry: s.streamingRetry,
-    streamingCompletedSteps: s.streamingCompletedSteps,
-  })))
-}
-
-function SessionLiveTurnLayer({
-  scrollContainerRef,
-}: {
-  scrollContainerRef: React.RefObject<HTMLDivElement | null>
-}) {
-  const liveState = useSessionLiveState()
-  return (
-    <SessionLiveTurn
-      steps={liveState.steps}
-      streamingStepId={liveState.streamingStepId}
-      streamingLive={liveState.streamingLive}
-      retry={liveState.streamingRetry}
-      streamingCompletedSteps={liveState.streamingCompletedSteps}
-      scrollContainerRef={scrollContainerRef}
-    />
-  )
 }
 
 export function SessionTranscript({ onReadingHistoryChange }: { onReadingHistoryChange?: (reading: boolean) => void }) {
@@ -84,7 +55,7 @@ export function SessionTranscript({ onReadingHistoryChange }: { onReadingHistory
             childSessions={childSessions}
             onResume={(id) => resumeSession(id)}
             excludeStepId={showLiveBlock ? streamingStepId : null}
-            liveTurn={<SessionLiveTurnLayer scrollContainerRef={scrollRef} />}
+            unifiedLive
             scrollRootRef={scrollRef}
           />
         </div>

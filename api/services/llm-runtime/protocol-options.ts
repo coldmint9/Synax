@@ -33,13 +33,20 @@ export function buildProtocolProviderOptions(
 
   const options = request.responseOptions
   const openai: JSONObject = {}
-  if (request.reasoningEffort) openai.reasoningEffort = request.reasoningEffort
-  if (options?.forceReasoning ?? selection.modelDef.reasoning) {
+  // The provider ignores reasoning controls (with an AI SDK warning per call)
+  // unless it classifies the model as reasoning, which requires forceReasoning
+  // for custom/gateway model IDs. Only send them when they can take effect.
+  const reasoningCapable = Boolean(options?.forceReasoning ?? selection.modelDef.reasoning)
+  if (request.reasoningEffort && reasoningCapable) {
+    openai.reasoningEffort = request.reasoningEffort
+  }
+  if (reasoningCapable) {
     openai.forceReasoning = true
   }
 
   if (options) {
     for (const key of RESPONSE_OPTION_KEYS) {
+      if (key === 'reasoningSummary' && !reasoningCapable) continue
       const value = options[key] as JSONValue | undefined
       if (value !== undefined) openai[key] = value
     }

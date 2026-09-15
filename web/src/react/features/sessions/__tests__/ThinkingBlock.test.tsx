@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useShellStore } from '../../../state/shellStore'
 import { ThinkingBlock } from '../ThinkingBlock'
@@ -10,6 +10,7 @@ import { ThinkingBlock } from '../ThinkingBlock'
  * reasoning blocks pays for all of them on every render.
  */
 describe('ThinkingBlock', () => {
+  afterEach(() => vi.useRealTimers())
   beforeEach(() => {
     useShellStore.setState(state => ({
       preferences: { ...state.preferences, locale: 'en' },
@@ -44,8 +45,28 @@ describe('ThinkingBlock', () => {
   })
 
   it('renders a streaming row expanded and scrollable', () => {
+    vi.useFakeTimers()
     const { container } = render(<ThinkingBlock content="live reasoning" isStreaming />)
+    act(() => { vi.advanceTimersByTime(12 * 14) })
     expect(container.querySelector('[data-activity-body]')?.textContent).toContain('live reasoning')
+  })
+
+  it('prints appended Unicode characters without restarting the timer and flushes on completion', () => {
+    vi.useFakeTimers()
+    const { container, rerender, unmount } = render(<ThinkingBlock content="你" isStreaming />)
+    act(() => { vi.advanceTimersByTime(6) })
+    rerender(<ThinkingBlock content="你好😀" isStreaming />)
+    act(() => { vi.advanceTimersByTime(6) })
+    expect(container.querySelector('[data-activity-body]')?.textContent).toBe('你')
+    act(() => { vi.advanceTimersByTime(12) })
+    expect(container.querySelector('[data-activity-body]')?.textContent).toBe('你好')
+    act(() => { vi.advanceTimersByTime(12) })
+    expect(container.querySelector('[data-activity-body]')?.textContent).toBe('你好😀')
+    rerender(<ThinkingBlock content="你好😀完成" isStreaming={false} />)
+    act(() => { screen.getByRole('button').click() })
+    expect(container.querySelector('[data-activity-body]')?.textContent).toBe('你好😀完成')
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('only renders the tail of an oversized body when expanded', async () => {

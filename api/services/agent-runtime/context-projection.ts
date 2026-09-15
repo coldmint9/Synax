@@ -10,6 +10,26 @@ import { countMessagesTokens } from './context-tokenizer.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { nowIso } from './runtime-ids.js';
 
+// Conversation history and compression boundaries survive transitions between Works.
+function sessionBoundary(sessionId: string) {
+  const runs = store.listRuns(sessionId).sort((a,b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id));
+  const steps = runs.flatMap(r => store.listRunSteps(r.id));
+  let boundary = -1;
+  let summary: string | null = null;
+  const ids = new Set<string>();
+  for (const r of runs) if (typeof r.metadata.workId === 'string') ids.add(r.metadata.workId);
+  for (const s of steps) if (typeof s.metadata.workId === 'string') ids.add(s.metadata.workId);
+  const current = workStore.current(sessionId); if (current) ids.add(current.id);
+  for (const id of ids) {
+    const w = workStore.get(id);
+    if (w?.sessionId !== sessionId || !w.checkpoint) continue;
+    const i = steps.findIndex(s => s.id === w.checkpoint!.throughStepId);
+    if (i < 0) throw new AgentValidationError('context_blocked: the persisted context boundary is missing.');
+    if (i > boundary) { boundary = i; summary = w.checkpoint.summary; }
+  }
+  return { runs, steps, boundary, summary };
+}
+
 export function projectWorkContext(input: {
   sessionId: string; toolSet: LoopToolSet; contextLimit: number; outputReserve: number;
   systemTokens: number; model?: string;
@@ -21,15 +41,12 @@ export function projectWorkContext(input: {
     const messages = buildLoopModelMessages(store, input.sessionId, input.toolSet, { initialUserMessage });
     return { messages, compacted: false, originalTokens: count(messages), tokens: count(messages) };
   }
-  const runs = store.listRuns(input.sessionId).filter(r => r.metadata.workId === work.id || store.listRunSteps(r.id).some(s => s.metadata.workId === work.id))
-    .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id));
-  const steps = runs.flatMap(r => store.listRunSteps(r.id));
-  const foreign = steps.filter(s => (s.metadata.workId ?? store.getRun(s.runId).metadata.workId) !== work.id).map(s => s.id);
-  let boundary = work.checkpoint ? steps.findIndex(s => s.id === work.checkpoint!.throughStepId) : -1;
-  if (work.checkpoint && boundary < 0) throw new AgentValidationError('context_blocked: the persisted context boundary is missing.');
+  const state = sessionBoundary(input.sessionId);
+  const { steps } = state;
+  let { boundary, summary: contextSummary } = state;
   const build = () => buildLoopModelMessages(store, input.sessionId, input.toolSet, {
-    workId: work.id, excludedStepIds: new Set([...foreign, ...steps.slice(0, boundary + 1).map(s => s.id)]),
-    compactionSummary: work.checkpoint?.summary,
+    excludedStepIds: new Set(steps.slice(0, boundary + 1).map(s => s.id)),
+    compactionSummary: contextSummary,
     initialUserMessage,
   });
   let messages = build();
@@ -46,9 +63,10 @@ export function projectWorkContext(input: {
     const parts = store.listRunParts(candidate.id);
     const observations = parts.filter(p => p.kind === 'text').map(p => p.content.slice(0, 1200));
     const receipts = calls.map(c => `${c.id} (${c.toolId}, ${c.status}): ${c.outputSummary?.slice(0, 600) ?? ''}${c.contentParts?.length ? ` Media references: ${JSON.stringify(c.contentParts.filter(p=>p.type!=='text'))}` : ''}`);
-    const summary = [work.checkpoint?.summary, ...observations, ...receipts].filter(Boolean).join('\n');
+    const summary = [contextSummary, ...observations, ...receipts].filter(Boolean).join('\n');
     // Older details remain accessible by context.read; retain conclusions and references, not chain-of-thought.
     work.checkpoint = { throughStepId: candidate.id, summary: summary.slice(-16000), createdAt: nowIso() };
+    contextSummary = work.checkpoint.summary;
     boundary++;
     messages = build();
     compacted = true;
@@ -90,9 +108,7 @@ export const contextReferenceTool: RegisteredTool = {
 export function evictedContextToolIds(sessionId: string): Set<string> {
   const work = workStore.current(sessionId);
   if (!work) return new Set();
-  const steps = store.listRuns(sessionId).sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id))
-    .flatMap(r => store.listRunSteps(r.id));
-  const boundary = work.checkpoint ? steps.findIndex(s => s.id === work.checkpoint!.throughStepId) : -1;
-  const excluded = new Set(steps.filter((s, i) => i <= boundary || (s.metadata.workId ?? store.getRun(s.runId).metadata.workId) !== work.id).map(s => s.id));
+  const { steps, boundary } = sessionBoundary(sessionId);
+  const excluded = new Set(steps.slice(0, boundary + 1).map(s => s.id));
   return new Set(store.listToolCalls(sessionId).filter(c => c.stepId && excluded.has(c.stepId)).map(c => c.id));
 }

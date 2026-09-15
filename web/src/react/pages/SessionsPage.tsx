@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { Button } from '@heroui/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
@@ -12,6 +12,7 @@ import { AgentCommandRail } from '../features/sessions/AgentCommandRail'
 import { SessionWorkspacePanel } from '../features/sessions/SessionWorkspacePanel'
 import { SessionListPanel } from '../features/sessions/SessionListPanel'
 import { SessionComposer } from '../features/sessions/SessionComposer'
+import { SessionPanelCollapseButton } from '../features/sessions/SessionPanelCollapseButton'
 import { useSessionRouteSync } from '../features/sessions/useSessionRouteSync'
 import { isNewSessionPath, newSessionPath } from '../features/sessions/sessionRoutes'
 import type { SessionListView } from '../features/sessions/sessionBuckets'
@@ -71,20 +72,6 @@ function useResizablePanel(side: PanelSide, defaultWidth: number, min: number, m
   }, [collapsed, max, min, side, width])
 
   return { width, collapsed, setCollapsed, startResize }
-}
-
-function LeftPanelCollapseButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-label={collapsed ? '展开左侧面板' : '收起左侧面板'}
-      title={collapsed ? '展开面板' : '收起面板'}
-      onClick={onToggle}
-      className="session-panel-collapse session-panel-collapse--left"
-    >
-      {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
-    </button>
-  )
 }
 
 const SessionDetailSidebar = memo(function SessionDetailSidebar({
@@ -161,9 +148,10 @@ export default memo(function SessionsPage() {
             style={{ width: leftPanel.collapsed ? 0 : leftPanel.width }}
           >
             {/* While the panel is open the control lives next to the SynaxCode
-                title; the edge tab only exists to bring a collapsed panel back. */}
+                title; the edge tab only exists to bring a collapsed panel back,
+                so it carries the Synax brand mark instead of a bare chevron. */}
             {leftPanel.collapsed ? (
-              <LeftPanelCollapseButton collapsed onToggle={() => leftPanel.setCollapsed(value => !value)} />
+              <SessionPanelCollapseButton collapsed onToggle={() => leftPanel.setCollapsed(value => !value)} />
             ) : (
               <>
                 <SessionListPanel

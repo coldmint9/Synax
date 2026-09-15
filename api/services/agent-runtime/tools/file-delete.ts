@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
+import { clearSessionFileRead } from '../read-tracker.js';
 import { resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
 
 export const fileDeleteTool: RegisteredTool = {
@@ -37,6 +38,7 @@ export const fileDeleteTool: RegisteredTool = {
 
     fs.unlinkSync(filePath);
     const relativePath = toWorkspaceRelative(filePath, input.sessionId);
+    clearSessionFileRead(input.sessionId, filePath);
     return {
       result: {
         path: relativePath,
