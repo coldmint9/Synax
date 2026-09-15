@@ -1,3 +1,4 @@
+import { buildToolContextReceipt } from "./tool-context-receipt.js";
 import {
   cacheDiagnosticsEnabled,
   fingerprintGatewayRequest,
@@ -726,6 +727,8 @@ export class AgentLoopRuntime {
             completedAt: null,
             finishReason: null,
             metadata: {
+              contextProjectionVersion: 2,
+              contextReceiptEnabled: false,
               reasoningEffort: input.reasoningEffort,
               workId: workStore.current(sessionId)?.id,
               workChangeVersion: workStore.current(sessionId)?.changeVersion,
@@ -2518,11 +2521,23 @@ export class AgentLoopRuntime {
       tools: toolSet,
       model: input.input.model,
     });
+    const stableContextFingerprint = JSON.stringify({
+      model: input.input.model ?? null,
+      reasoningEffort: input.input.reasoningEffort ?? session.thinkingMode,
+      blocks: (
+        await fingerprintGatewayRequest({
+          messages: [{ role: "system", content: systemPromptContent }],
+          tools: toolSet.tools,
+          activeTools: toolSet.activeTools,
+        })
+      ).blocks,
+    });
     const projection = projectWorkContext({
       sessionId: input.sessionId,
       toolSet,
       contextLimit,
       currentStepId: input.stepId,
+      configurationFingerprint: stableContextFingerprint,
       outputReserve: input.outputReserve ?? input.input.maxTokens ?? 8192,
       systemTokens:
         reminderTokens +
@@ -2698,6 +2713,10 @@ export class AgentLoopRuntime {
       metadata: {
         ...this.store.getRunStep(input.stepId).metadata,
         runtimeReminder: reminder,
+        contextReceiptEnabled: allowedTools.some(tool => tool.id === 'context.read'),
+        ...(projection.compaction
+          ? { contextCompaction: projection.compaction }
+          : {}),
         ...(diagnostics ? { cacheDiagnostics: diagnostics } : {}),
         runtimeReminderTokens: reminderTokens,
         requestComposition: {
@@ -2884,6 +2903,34 @@ export class AgentLoopRuntime {
     sessionId: string;
     record: ToolCallRecord;
   }): AgentRunPart {
+    const step = this.store.getRunStep(input.stepId);
+    if (
+      step.metadata.contextProjectionVersion === 2 &&
+      step.metadata.contextReceiptEnabled &&
+      ["completed", "failed"].includes(input.record.status)
+    ) {
+      const receipts = (step.metadata.toolContextReceipts ?? {}) as Record<
+        string,
+        unknown
+      >;
+      if (!receipts[input.record.id]) {
+        const receipt = buildToolContextReceipt(input.record);
+        if (receipt)
+          this.store.updateRunStep(step.id, {
+            metadata: {
+              ...step.metadata,
+              toolContextReceipts: {
+                ...receipts,
+                [input.record.id]: {
+                  ...receipt,
+                  outputType:
+                    input.record.status === "failed" ? "error-text" : "text",
+                },
+              },
+            },
+          });
+      }
+    }
     const summary =
       input.record.outputSummary ??
       input.record.error ??

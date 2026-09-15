@@ -1803,6 +1803,24 @@ describe("provider-bound session initialization prompt", () => {
     ensureSynaxAgentRegistered();
   });
 
+  it("freezes compact first-emission tool receipts without rewriting raw results or later prefixes", async () => {
+    const session=agentSessionRuntime.create({projectId:'receipt-fixture',profileId:'synax',prompt:'Inspect the diagnostic log',permissionTier:'unrestricted'});
+    queueMockStep(makeToolStep({toolName:'bash',toolCallId:'large-log',args:{command:`node -e "console.log('noise line\\n'.repeat(2200)); console.error('Error: LATE_RECEIPT_PROBE'); process.exitCode=1"`}}));
+    queueMockStep(makeToolStep({toolName:'file_read',toolCallId:'read-after-log',args:{path:'package.json'}}));
+    queueMockStep(makeTextStep('The stored log contains a late failure.'));
+    await collectChunks(agentLoopRuntime.streamRun(session.id,{message:'Inspect the diagnostic log'}));
+    expect(capturedRequests).toHaveLength(3);
+    const call=agentRuntimeStore.listToolCalls(session.id).find(record=>record.modelToolCallId==='large-log')!;
+    expect((call.outputRef as {stdout:string}).stdout.length).toBeGreaterThan(12000);
+    const step=agentRuntimeStore.getRunStep(call.stepId!);
+    const receipt=(step.metadata.toolContextReceipts as Record<string,{text:string;originalChars:number;projectedChars:number}>)[call.id];
+    expect(receipt.text).toContain('LATE_RECEIPT_PROBE');
+    expect(receipt.projectedChars).toBeLessThan(receipt.originalChars);
+    expect(JSON.stringify(capturedRequests[1].messages)).toContain('Tool context receipt');
+    expect(capturedRequests[2].messages.slice(0,capturedRequests[1].messages.length)).toEqual(capturedRequests[1].messages);
+    expect((agentRuntimeStore.getRunStep(call.stepId!).metadata.toolContextReceipts as Record<string,unknown>)[call.id]).toEqual(receipt);
+  });
+
   it.each(["你好", "plan 模式真的有效吗？", "请调查会话列表的过滤机制"])(
     "preserves request intent all the way to the model: %s",
     async (message) => {

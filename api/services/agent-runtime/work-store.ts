@@ -1,3 +1,4 @@
+import type { ContextMemorySnapshot } from "./context-memory.js";
 import type { RuntimeContentPart } from './content-parts.js';
 import { getRawSqlite } from '../../db/index.js';
 import { agentRuntimeStore as store } from './session-store.js';
@@ -10,6 +11,9 @@ export interface WorkEvidence {
   artifactIds?: string[];
 }
 export interface WorkCheckpoint {
+  /** Optional additive metadata; old checkpoints remain valid. */
+  epoch?: number;
+  memory?: ContextMemorySnapshot;
   throughStepId: string;
   summary: string;
   createdAt: string;

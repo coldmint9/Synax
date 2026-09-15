@@ -1,3 +1,4 @@
+import { resolveContextInputOwners } from "./context-input-boundaries.js";
 import { readRuntimeReminder } from "./runtime-request-snapshot.js";
 import type { RuntimeContentPart } from "./content-parts.js";
 import { modelContentParts } from "./media-assets.js";
@@ -25,6 +26,8 @@ export interface BuildMessagesOptions {
   initialUserMessage?: { original: string; content: string };
   workId?: string;
   excludedStepIds?: Set<string>;
+  /** Exact current text already represented in a structured memory checkpoint. */
+  summarizedInputIds?: Set<string>;
   /** Do not replay the in-flight request twice when resuming its snapshot. */
   currentStepId?: string;
   clearing?: ClearingOptions;
@@ -118,6 +121,7 @@ export function buildLoopModelMessages(
         options.excludedStepIds,
         userMessages.filter((m) => m.runId === run.id && injected.has(m.id)),
         options.currentStepId,
+        options.summarizedInputIds,
       ),
     );
   }
@@ -133,6 +137,7 @@ function buildRunMessages(
   excludedStepIds?: Set<string>,
   injected: AgentRuntimeMessage[] = [],
   currentStepId?: string,
+  summarizedInputIds?: Set<string>,
 ): ModelMessage[] {
   const steps = store.listRunSteps(runId);
   const toolCalls = store.listRunToolCalls(runId);
@@ -141,18 +146,16 @@ function buildRunMessages(
   );
   const messages: ModelMessage[] = [];
 
-  // Resolve explicit ownership before any legacy step can consume an equal-timestamp input.
-  const inputOwners = new Map<string, number>();
-  for (const message of injected) {
-    const owner = message.metadata?.consumedBeforeStepIndex;
-    if (typeof owner === "number" && Number.isSafeInteger(owner) && owner > 0)
-      inputOwners.set(message.id, owner);
-  }
-  for (const step of steps)
-    for (const id of readRuntimeReminder(step.metadata)?.queuedInputIds ?? []) {
-      if (!inputOwners.has(id)) inputOwners.set(id, step.index);
-    }
-  const pending = [...injected];
+  const inputOwners = resolveContextInputOwners(steps, injected);
+  const stepOrder = new Map(steps.map((step, index) => [step.id, index]));
+  const pending = injected.filter(
+    (message) =>
+      !(
+        summarizedInputIds?.has(message.id) &&
+        excludedStepIds?.has(inputOwners.get(message.id)?.stepId ?? "") &&
+        !message.contentParts?.some((part) => part.type !== "text")
+      ),
+  );
   const appendInput = (message: AgentRuntimeMessage) =>
     messages.push({
       role: "user",
@@ -165,20 +168,28 @@ function buildRunMessages(
     // Legacy steps keep their original timestamp-based queue projection.
     if (excludedStepIds?.has(step.id) && !reminder) continue;
     // A snapshot records consumption, not a timestamp guess. Equal timestamps are common.
-    const consumed = reminder ? new Set(reminder.queuedInputIds) : null;
     const inputs: AgentRuntimeMessage[] = [];
     for (let i = 0; i < pending.length; ) {
       if (
-        inputOwners.has(pending[i].id)
-          ? inputOwners.get(pending[i].id)! <= step.index
-          : consumed
-            ? consumed.has(pending[i].id)
-            : pending[i].createdAt <= step.startedAt
+        inputOwners.get(pending[i].id)?.placement === "before" &&
+        (stepOrder.get(inputOwners.get(pending[i].id)!.stepId) ?? Infinity) <=
+          stepOrder.get(step.id)!
       )
         inputs.push(...pending.splice(i, 1));
       else i++;
     }
-    if (excludedStepIds?.has(step.id)) continue;
+    if (excludedStepIds?.has(step.id)) {
+      const media = inputs.flatMap(
+        (message) =>
+          message.contentParts?.filter((part) => part.type !== "text") ?? [],
+      );
+      if (media.length)
+        messages.push({
+          role: "user",
+          content: `Earlier media retained; use media.read to inspect: ${JSON.stringify(media)}\nOriginal queued inputs: ${JSON.stringify(inputs.filter((message) => message.contentParts?.some((part) => part.type !== "text")).map((message) => ({ kind: "message", id: message.id })))}; use context.read for their original text.`,
+        });
+      continue;
+    }
     inputs.forEach(appendInput);
     if (step.id === currentStepId) continue;
     if (reminder) messages.push({ role: "user", content: reminder.content });
@@ -270,7 +281,16 @@ function buildRunMessages(
             sanitizeToolName(record.toolId),
           output: shouldClear
             ? toClearedOutput(record)
-            : toToolResultOutput(record),
+            : toToolResultOutput(
+                record,
+                step.metadata?.contextProjectionVersion === 2
+                  ? (
+                      step.metadata.toolContextReceipts as
+                        | Record<string, unknown>
+                        | undefined
+                    )?.[record.id]
+                  : undefined,
+              ),
         };
       });
 
@@ -359,7 +379,20 @@ function toolMediaContent(record: ToolCallRecord) {
   return modelContentParts(parts);
 }
 
-function toToolResultOutput(record: ToolCallRecord): ToolResultOutput {
+function toToolResultOutput(
+  record: ToolCallRecord,
+  savedReceipt?: unknown,
+): ToolResultOutput {
+  const receipt = savedReceipt as
+    | { version?: unknown; text?: unknown; outputType?: unknown }
+    | undefined;
+  if (
+    receipt?.version === 1 &&
+    typeof receipt.text === "string" &&
+    (receipt.outputType === "text" || receipt.outputType === "error-text")
+  )
+    return { type: receipt.outputType, value: receipt.text };
+
   if (record.status === "denied") {
     return {
       type: "execution-denied",

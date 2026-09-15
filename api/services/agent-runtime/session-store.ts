@@ -807,9 +807,13 @@ export class AgentRuntimeStore {
   appendRunStep(step: AgentRunStep): AgentRunStep {
     getRawSqlite()
       .prepare(
-        `INSERT OR REPLACE INTO agent_runtime_run_steps
+        `INSERT INTO agent_runtime_run_steps
          (id, run_id, session_id, step_index, status, model, started_at, completed_at, finish_reason, metadata_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           run_id=excluded.run_id, session_id=excluded.session_id, step_index=excluded.step_index,
+           status=excluded.status, model=excluded.model, started_at=excluded.started_at,
+           completed_at=excluded.completed_at, finish_reason=excluded.finish_reason, metadata_json=excluded.metadata_json`,
       )
       .run(
         step.id,
