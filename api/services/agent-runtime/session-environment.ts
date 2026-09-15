@@ -82,7 +82,8 @@ function assertRelativePath(relativePath: string): string {
     throw new AgentValidationError('File path must be a workspace-relative path.')
   }
   const parts = clean.split('/')
-  if (parts.includes('..') || parts.includes('.git')) {
+  // Segment names such as `.git` are no longer restricted; only traversal is.
+  if (parts.includes('..')) {
     throw new AgentValidationError('File path is outside the visible workspace.')
   }
   return clean

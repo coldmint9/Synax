@@ -5,8 +5,7 @@ import { runCommand, runShellCommand } from './exec-async.js';
 import * as z from 'zod/v4';
 import type { RegisteredTool, ToolExecutionResult, ToolExecutionInput } from '../contracts.js';
 import { recordBashFileReads } from '../read-tracker.js';
-import { isUnrestrictedPermissionRules } from '../permission-tiers.js';
-import { agentRuntimeStore } from '../session-store.js';
+import { isUnrestrictedSession } from '../sandbox/index.js';
 import { DATA_ROOT } from '../../../lib/env.js';
 import { bashPermissionSummary, parseBashInvocations } from './bash-command-policy.js';
 import { resolveWorkspacePath, workspaceRoot } from './workspace.js';
@@ -14,15 +13,6 @@ import { resolveWorkspacePath, workspaceRoot } from './workspace.js';
 const SAFE_REDIRECT_TARGETS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr']);
 const MAX_OUTPUT_BYTES = 64_000;
 const EXEC_TIMEOUT_MS = 30_000;
-
-function isUnrestrictedSession(sessionId: string): boolean {
-  try {
-    const session = agentRuntimeStore.getSession(sessionId);
-    return isUnrestrictedPermissionRules(session.permissionRules);
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Detect file redirections (>, >>) to unsafe targets. Only /dev/null,

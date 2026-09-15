@@ -2,14 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_ROOT } from '../../../lib/env.js';
 import { agentRuntimeStore } from '../session-store.js';
-import { sandboxPolicy } from '../sandbox/index.js';
+import { sandboxConfigForSession, sandboxPolicy } from '../sandbox/index.js';
 
-const SECRET_SEGMENTS = new Set(['.env', '.ssh', '.git', 'node_modules', 'dist', 'build']);
 const sessionWorkspaceRoots = new Map<string, string>();
-
-function hasBlockedSegment(parts: string[]): boolean {
-  return parts.some((part) => SECRET_SEGMENTS.has(part) || part.endsWith('.key') || part.endsWith('.pem'));
-}
 
 export function workspaceRoot(sessionId?: string): string {
   return sessionId ? sessionWorkspaceRoots.get(sessionId) ?? path.resolve(process.cwd()) : path.resolve(process.cwd());
@@ -98,6 +93,10 @@ function workspaceRootForSession(sessionId?: string): string {
   return workspaceRoot(sessionId);
 }
 
+/**
+ * Resolve a tool path. Non-unrestricted sessions stay inside the workspace and
+ * keep the remaining sandbox rules; unrestricted sessions resolve anywhere.
+ */
 export function resolveWorkspacePath(inputPath = '.', sessionId?: string): string {
   const root = workspaceRootForSession(sessionId);
   return sandboxPolicy.resolve(inputPath, root, sessionId ?? '__default__', 'workspace');
@@ -106,34 +105,30 @@ export function resolveWorkspacePath(inputPath = '.', sessionId?: string): strin
 export function toWorkspaceRelative(absPath: string, sessionId?: string): string {
   let root = workspaceRootForSession(sessionId);
   try { root = fs.realpathSync(root); } catch { /* keep as-is */ }
-  return path.relative(root, absPath).replace(/\\/g, '/') || '.';
+  const relative = path.relative(root, absPath).replace(/\\/g, '/');
+  if (!relative) return '.';
+  // Unrestricted sessions can leave the root; show the absolute path instead of `..` chains.
+  if (relative === '..' || relative.startsWith('../')) {
+    return path.isAbsolute(absPath) ? absPath.replace(/\\/g, '/') : relative;
+  }
+  return relative;
 }
 
-export function isWorkspaceRelativePathBlocked(relativePath: string): boolean {
+/**
+ * Listings hide only what the session's sandbox still denies. Segment names such
+ * as `.env`, `.git`, `.ssh`, `node_modules`, `dist` and `build` are no longer
+ * restricted; only the remaining blocked extensions are, and unrestricted
+ * sessions hide nothing.
+ */
+export function isWorkspaceEntryVisible(name: string, sessionId?: string | null): boolean {
+  const config = sandboxConfigForSession(sessionId ?? '__default__');
+  if (config.unrestricted) return true;
+  const ext = path.extname(name).toLowerCase();
+  return !(ext && config.blockedExtensions.has(ext));
+}
+
+export function isWorkspaceRelativePathBlocked(relativePath: string, sessionId?: string | null): boolean {
   const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '');
   if (!normalized || normalized === '.') return false;
-  return hasBlockedSegment(normalized.split('/').filter(Boolean));
-}
-
-export function isWorkspaceEntryVisible(name: string): boolean {
-  return !hasBlockedSegment([name]);
-}
-
-export function walkFiles(rootPath: string, limit = 500): string[] {
-  const out: string[] = [];
-  const visit = (current: string) => {
-    if (out.length >= limit) return;
-    const stat = fs.statSync(current);
-    if (stat.isDirectory()) {
-      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-        if (SECRET_SEGMENTS.has(entry.name)) continue;
-        visit(path.join(current, entry.name));
-        if (out.length >= limit) break;
-      }
-      return;
-    }
-    if (stat.isFile()) out.push(current);
-  };
-  visit(rootPath);
-  return out;
+  return !isWorkspaceEntryVisible(path.posix.basename(normalized), sessionId);
 }

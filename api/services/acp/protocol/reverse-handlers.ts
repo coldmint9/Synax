@@ -21,6 +21,7 @@ import type { Client } from '@agentclientprotocol/sdk'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { isWorkspaceRelativePathBlocked } from '../../agent-runtime/tools/workspace.js'
+import { isUnrestrictedSession } from '../../agent-runtime/sandbox/index.js'
 import { logger } from '../../../lib/logger.js'
 
 /** Partial override map. All fields optional; undefined falls back to default. */
@@ -60,15 +61,28 @@ export function createClientHandler(overrides: ClientOverrides = {}): Client {
 
 
 export function createWorkspaceClientHandler(workDir: string, overrides: ClientOverrides = {}): Client {
+  return createWorkspaceClientHandlerForSession(workDir, null, overrides)
+}
+
+/**
+ * Session-aware variant. Unrestricted sessions release the remaining sandbox
+ * rules, so their filesystem callbacks are no longer filtered.
+ */
+export function createWorkspaceClientHandlerForSession(
+  workDir: string,
+  sessionId: string | null,
+  overrides: ClientOverrides = {},
+): Client {
   return createClientHandler({
     async readTextFile(params) {
+      const unrestricted = isUnrestrictedSession(sessionId)
       const root = await realpath(workDir)
       const target = await realpath(path.resolve(root, params.path))
       const relative = path.relative(root, target)
-      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      if (!unrestricted && (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))) {
         throw new Error('The requested file is outside the bound workspace.')
       }
-      if (isWorkspaceRelativePathBlocked(relative)) throw new Error('This workspace path is protected.')
+      if (!unrestricted && isWorkspaceRelativePathBlocked(relative, sessionId)) throw new Error('This workspace path is protected.')
       const info = await stat(target)
       if (!info.isFile() || info.size > 2 * 1024 * 1024) throw new Error('Requested file is not a supported text file (maximum 2 MiB).')
       const content = await readFile(target, 'utf8')

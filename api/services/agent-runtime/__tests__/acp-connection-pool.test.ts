@@ -10,7 +10,7 @@ vi.mock('../../acp/protocol/acp-connection.js', () => ({
   resolveSpawnForProviderAsync: vi.fn(), cancelAcpPrompt: vi.fn(), closeAcpSession: vi.fn(),
   setAcpSessionModel: vi.fn(),
 }));
-vi.mock('../../acp/protocol/reverse-handlers.js', () => ({ createWorkspaceClientHandler: (_root: string, handler: unknown) => handler }));
+vi.mock('../../acp/protocol/reverse-handlers.js', () => ({ createWorkspaceClientHandlerForSession: (_root: string, _sessionId: string | null, handler: unknown) => handler }));
 vi.mock('../session-store.js', () => ({ agentRuntimeStore: {
   getSession: () => mocks.session,
   updateSession: (_id: string, patch: Record<string, unknown>) => Object.assign(mocks.session, patch),

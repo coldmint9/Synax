@@ -23,6 +23,12 @@ import {
 import type { LlmRetryState, SessionLiveEvent } from '../../../lib/api/sessionLive'
 import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
 import { AppError } from '../../../lib/errors'
+import {
+  clearRuntimeResourcePendingRemoval,
+  isRuntimeResourceGone,
+  markRuntimeResourcePendingRemoval,
+  markRuntimeResourcesRemoved,
+} from '../../../lib/runtimeResourceRegistry'
 import { SYNAX_PROFILE_ID, createSynaxSessionMetadata, isAcpSession, readSynaxPermissionTier, type SynaxPermissionTier } from './synaxSessionTypes'
 import { useNotificationStore } from '../../state/notificationStore'
 import { useShellStore } from '../../state/shellStore'
@@ -611,7 +617,18 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   },
 
   deleteSession: async (sessionId) => {
-    const { deletedSessionIds } = await agentRuntimeApi.deleteSession(sessionId)
+    // Suppress this session's in-flight detail requests before the delete
+    // lands. They cannot be cancelled once dispatched, so without this the
+    // responses arrive as a burst of "resource not found" notifications.
+    markRuntimeResourcePendingRemoval(sessionId)
+    let deletedSessionIds: string[]
+    try {
+      ({ deletedSessionIds } = await agentRuntimeApi.deleteSession(sessionId))
+    } catch (err) {
+      clearRuntimeResourcePendingRemoval(sessionId)
+      throw err
+    }
+    markRuntimeResourcesRemoved(deletedSessionIds)
     const deleted = new Set(deletedSessionIds)
     useSessionWorkspaceStore.getState().removeSessions(deleted)
     const shouldClosePanel = Boolean(get().selectedSessionId && deleted.has(get().selectedSessionId!))
@@ -691,6 +708,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
   refreshDetail: async () => {
     const targetSessionId = get().selectedSessionId
     if (!targetSessionId) return
+    // A deleted session has nothing left to refresh; without this every poll
+    // tick would re-issue the full nine-request burst against a dead id.
+    if (isRuntimeResourceGone(targetSessionId)) return
 
     if (activeDetailRefresh?.sessionId === targetSessionId) {
       activeDetailRefresh.again = true

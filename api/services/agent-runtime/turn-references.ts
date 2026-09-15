@@ -39,7 +39,7 @@ export function listTurnReferenceOptions(projectId: string, kind: TurnReference[
       if (depth > 20 || visited >= 20_000 || items.length >= 100) return;
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         if (++visited > 20_000 || items.length >= 100) break;
-        if (!isWorkspaceEntryVisible(entry.name) || entry.name.startsWith('.env') || entry.isSymbolicLink()) continue;
+        if (!isWorkspaceEntryVisible(entry.name, sessionId) || entry.isSymbolicLink()) continue;
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) visit(full, depth + 1);
         else if (entry.isFile()) {
@@ -98,11 +98,10 @@ export function prepareTurnReferences(sessionId: string, references: TurnReferen
         label = document.title;
         content = document.content_md;
       } else {
-        if (path.isAbsolute(ref.id) || isWorkspaceRelativePathBlocked(ref.id) || ref.id.split(/[\\/]/).some(part => part.startsWith('.env'))) {
+        if (path.isAbsolute(ref.id) || isWorkspaceRelativePathBlocked(ref.id, sessionId)) {
           throw new AgentValidationError(`File is not an allowed project reference: ${ref.id}`);
         }
         const full = sandboxPolicy.resolve(ref.id, root, sessionId, 'workspace');
-        if (path.relative(root, full).split(path.sep).some(part => part.startsWith('.env'))) throw new AgentValidationError(`Secret files cannot be injected: ${ref.id}`);
         const stat = fs.statSync(full);
         if (!stat.isFile() || stat.size > MAX_REFERENCE_BYTES) throw new AgentValidationError(`Select a text file no larger than ${MAX_REFERENCE_BYTES} bytes: ${ref.id}`);
         const bytes = fs.readFileSync(full);
