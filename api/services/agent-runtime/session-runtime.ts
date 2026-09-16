@@ -66,9 +66,14 @@ export class AgentSessionRuntime {
       permissionTier: input.permissionTier,
       permissionOverrides: input.permissionOverrides,
     });
+    const parentBackend = parent?.sessionMetadata?.backend as { workDir?: string | null } | undefined;
+    const requestedWorkDir = input.workDir ?? parentBackend?.workDir ?? null;
+    if (parent && sessionMetadata.gitWorkspace === undefined && parent.sessionMetadata?.gitWorkspace !== undefined) {
+      sessionMetadata.gitWorkspace = parent.sessionMetadata.gitWorkspace;
+    }
     delete sessionMetadata.runtimeControl;
     sessionMetadata.backend = makeBackendBinding(input.backendId ?? 'native', input.model,
-      input.workDir ? resolveWorkspaceRoot(input.workDir) : null);
+      requestedWorkDir ? resolveWorkspaceRoot(requestedWorkDir) : null);
     if (!parent && (input.profileId === 'synax' || input.profileId === 'goal')) {
       delete sessionMetadata.plan;
       delete sessionMetadata.goal;

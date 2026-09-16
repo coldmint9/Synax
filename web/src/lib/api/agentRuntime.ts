@@ -314,6 +314,11 @@ export interface EvidenceArtifact {
   createdAt: string;
 }
 
+export type GitWorkspaceSelection =
+  | { kind: "default" }
+  | { kind: "worktree"; path: string }
+  | { kind: "branch"; branch: string };
+
 export interface CreateSessionRequest {
   backendId?: BackendId;
   model?: string;
@@ -329,6 +334,7 @@ export interface CreateSessionRequest {
   mcpServerIds?: string[];
   sessionMetadata?: Record<string, unknown> | null;
   permissionTier?: "readonly" | "readwrite" | "unrestricted";
+  gitWorkspace?: GitWorkspaceSelection;
   permissionOverrides?: Partial<
     Record<
       "read" | "write" | "delete" | "shell" | "task",

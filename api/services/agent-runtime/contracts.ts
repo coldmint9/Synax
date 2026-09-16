@@ -463,6 +463,19 @@ export const createSessionRequestSchema = z.object({
   sessionMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
   permissionTier: permissionTierSchema.optional(),
   permissionOverrides: permissionOverridesSchema.optional(),
+  gitWorkspace: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('default') }),
+    z.object({ kind: z.literal('worktree'), path: z.string().min(1).max(4096) }),
+    z.object({ kind: z.literal('branch'), branch: z.string().min(1).max(1024) }),
+  ]).optional(),
+}).superRefine((value, context) => {
+  if (value.workDir && value.gitWorkspace) {
+    context.addIssue({
+      code: 'custom',
+      path: ['gitWorkspace'],
+      message: 'workDir and gitWorkspace cannot be selected together.',
+    });
+  }
 });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 

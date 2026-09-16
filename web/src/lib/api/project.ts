@@ -38,7 +38,70 @@ export interface ProjectListParams {
   order?: 'asc' | 'desc'
 }
 
+export interface GitBranchSummary {
+  name: string
+  head: string
+  upstream: string | null
+  checkedOutPath: string | null
+}
+
+export interface GitWorktreeSummary {
+  path: string
+  head: string
+  branch: string | null
+  detached: boolean
+  primary: boolean
+  locked: boolean
+  prunable: boolean
+  managed: boolean
+  dirty: boolean
+  sessionCount: number
+}
+
+export interface GitWorkspaceSummary {
+  repositoryRoot: string
+  defaultPath: string
+  branches: GitBranchSummary[]
+  worktrees: GitWorktreeSummary[]
+}
+
+async function projectRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const resp = await apiFetch(url, init)
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({ error: resp.statusText })) as { error?: string }
+    throw new Error(body.error || `HTTP ${resp.status}`)
+  }
+  return await resp.json() as T
+}
+
 export const projectApi = {
+  listGitWorkspaces(id: string): Promise<GitWorkspaceSummary> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/workspaces`)
+  },
+
+  createGitWorktree(
+    id: string,
+    body: { branch: string; createBranch?: boolean; startPoint?: string },
+  ): Promise<{ worktree: GitWorktreeSummary }> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  removeGitWorktree(id: string, body: { path: string; force?: boolean }): Promise<{ removed: true }> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  pruneGitWorktrees(id: string): Promise<GitWorkspaceSummary> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees/prune`, { method: 'POST' })
+  },
+
   /** List all projects from backend with optional search/filter/sort */
   async listProjects(params?: ProjectListParams): Promise<{ items: ProjectSummary[]; total: number }> {
     try {

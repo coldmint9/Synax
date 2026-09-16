@@ -218,6 +218,7 @@ button.bui-activity-trigger:focus-visible,
    that loops smoothly from left to right and back. */
 .bui-thinking-banner {
   display: flex;
+  width: 100%;
   align-items: center;
   gap: 7px;
   min-width: 0;
@@ -231,6 +232,12 @@ button.bui-activity-trigger:focus-visible,
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.02em;
+}
+.bui-thinking-banner-chunk {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  animation: bui-thinking-chunk-in 180ms ease-out both;
 }
 /* A sweep clipped to the glyphs: the bright stop is the highlight that
    crosses the phrase, so the text itself flashes as it is lit. */
@@ -257,9 +264,38 @@ button.bui-activity-trigger:focus-visible,
   background-clip: text;
   animation: none;
 }
+.bui-thinking-banner-controls {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  color: var(--bui-muted);
+}
+.bui-thinking-banner-nav {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: var(--bui-muted);
+}
+.bui-thinking-banner-nav:hover:not(:disabled) { background: var(--bui-hover); color: var(--bui-ink); }
+.bui-thinking-banner-nav:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.bui-thinking-banner-nav:disabled { opacity: 0.32; }
+.bui-thinking-banner-position {
+  min-width: 32px;
+  text-align: center;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
 @keyframes bui-thinking-sweep {
   0%, 100% { background-position: 100% 50%; }
   50% { background-position: 0% 50%; }
+}
+@keyframes bui-thinking-chunk-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .bui-task { border: 1px solid var(--bui-line); border-radius: 10px; background: var(--surface); }
@@ -292,6 +328,7 @@ button.bui-activity-trigger:focus-visible,
     -webkit-background-clip: border-box;
     background-clip: border-box;
   }
+  .bui-thinking-banner-chunk { animation: none; }
 }
 
 /* Match the mini composer's single-line vertical carousel. */

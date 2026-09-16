@@ -2,11 +2,12 @@ import { useSessionComposerSelection } from "./useSessionComposerSelection";
 import { useMediaDraft } from "../media/useMediaDraft";
 import { ComposerIsland } from "./ComposerIsland";
 import { useComposerCommands } from "./useComposerCommands";
-import type { TurnReference } from "../../../lib/api/agentRuntime";
+import type { GitWorkspaceSelection, TurnReference } from "../../../lib/api/agentRuntime";
 import { NativeBackendModelPicker } from "./NativeBackendModelPicker";
 import { RuntimeRecoveryPanel } from "./RuntimeRecoveryPanel";
 import { agentRuntimeApi, type BackendId } from "../../../lib/api/agentRuntime";
 import { SessionBackendPicker } from "./SessionBackendPicker";
+import { GitWorkspacePicker } from "./GitWorkspacePicker";
 import { readSessionBackendId } from "./synaxSessionTypes";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -64,6 +65,7 @@ export function SessionComposer({
   const zh = locale === "zh";
   const navigate = useNavigate();
   const [content, setContent] = useState("");
+  const [gitWorkspace, setGitWorkspace] = useState<GitWorkspaceSelection>();
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [changingMode, setChangingMode] = useState(false);
@@ -98,6 +100,7 @@ export function SessionComposer({
   const createdDraftRef = useRef<AgentSession | null>(null);
   useEffect(() => {
     setReferences([]);
+    setGitWorkspace(undefined);
     createdDraftRef.current = null;
   }, [sessionId, projectId]);
   const isDraft = !session;
@@ -344,6 +347,7 @@ export function SessionComposer({
             backendId,
             mode: acp ? "chat" : draftMode,
             prompt: message,
+            gitWorkspace,
           }));
         createdDraftRef.current = created;
         await sendSessionMessage(created.id, body);
@@ -381,6 +385,7 @@ export function SessionComposer({
     projectId,
     acp,
     draftMode,
+    gitWorkspace,
     submitSessionDraft,
     sendSessionMessage,
     navigate,
@@ -442,23 +447,33 @@ export function SessionComposer({
         ) : undefined
       }
       modeControl={
-        <SessionBackendPicker
-          value={backendId}
-          options={backendOptions}
-          disabled={!isDraft || submitting || Boolean(createdDraftRef.current)}
-          onChange={(id) => {
-            setDraftBackendId(id);
-            setError(null);
-            if (id !== "native") {
-              setReferences((items) =>
-                items.filter(
-                  (item) => item.kind === "file" || item.kind === "wiki",
-                ),
-              );
-              setSkillIds([]);
-            }
-          }}
-        />
+        <div className="flex items-center gap-1">
+          {isDraft && (
+            <GitWorkspacePicker
+              projectId={projectId}
+              value={gitWorkspace ?? { kind: "default" }}
+              disabled={submitting || Boolean(createdDraftRef.current)}
+              onChange={setGitWorkspace}
+            />
+          )}
+          <SessionBackendPicker
+            value={backendId}
+            options={backendOptions}
+            disabled={!isDraft || submitting || Boolean(createdDraftRef.current)}
+            onChange={(id) => {
+              setDraftBackendId(id);
+              setError(null);
+              if (id !== "native") {
+                setReferences((items) =>
+                  items.filter(
+                    (item) => item.kind === "file" || item.kind === "wiki",
+                  ),
+                );
+                setSkillIds([]);
+              }
+            }}
+          />
+        </div>
       }
       projectId={projectId}
       backendId={backendId}

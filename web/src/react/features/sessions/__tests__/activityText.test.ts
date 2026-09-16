@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay, thinkingBannerPhrase } from '../activityText'
+import {
+  ACTIVITY_BODY_LIMIT,
+  activityPreview,
+  formatCharCount,
+  tailForDisplay,
+  thinkingBannerPhrase,
+  thinkingBannerPhrases,
+} from '../activityText'
 
 describe('formatCharCount', () => {
   it('keeps small counts exact and compacts large ones', () => {
@@ -55,5 +62,26 @@ describe('thinkingBannerPhrase', () => {
 
   it('treats a paragraph-length bold payload as reasoning, not a headline', () => {
     expect(thinkingBannerPhrase(`**${'x'.repeat(200)}**`)).toBeNull()
+  })
+})
+
+describe('thinkingBannerPhrases', () => {
+  it('splits adjacent headline chunks with or without whitespace', () => {
+    expect(thinkingBannerPhrases('**Designing layout****Planning animation****Verifying output**')).toEqual([
+      'Designing layout',
+      'Planning animation',
+      'Verifying output',
+    ])
+    expect(thinkingBannerPhrases('**First**\n\n**Second**')).toEqual(['First', 'Second'])
+  })
+
+  it('accepts an in-flight final chunk while streaming', () => {
+    expect(thinkingBannerPhrases('**First****Second')).toEqual(['First', 'Second'])
+    expect(thinkingBannerPhrases('**First****Second*')).toEqual(['First', 'Second'])
+  })
+
+  it('rejects a sequence when ordinary reasoning is mixed in', () => {
+    expect(thinkingBannerPhrases('**First** then ordinary reasoning')).toBeNull()
+    expect(thinkingBannerPhrases('**First**\nordinary reasoning')).toBeNull()
   })
 })
