@@ -11,6 +11,7 @@ import {
   type AgentRunStep,
   type AgentRuntimeMessage,
   type AgentSession,
+  type GitWorkspaceSelection,
   type PermissionDecision,
   type QueuedInput,
   type ReasoningEffort,
@@ -65,6 +66,7 @@ export type SessionInputBody = {
   mcpServerIds?: string[]
   wikiAttachMode?: 'auto' | 'manual'
   documentId?: string | null
+  gitWorkspace?: GitWorkspaceSelection
 }
 
 /** Stable fallback — never use inline `?? []` in Zustand selectors (breaks getSnapshot caching). */
@@ -601,6 +603,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>((set, get) =>
       skillIds: body.skillIds?.length ? body.skillIds : undefined,
       mcpServerIds: body.mcpServerIds?.length ? body.mcpServerIds : undefined,
       permissionTier: body.permissionTier,
+      gitWorkspace: body.gitWorkspace,
       sessionMetadata: createSynaxSessionMetadata(mode, {
         source: 'session-page',
         goalContent: message,

@@ -49,23 +49,43 @@ export function activityPreview(content: string, max = 90): string {
 const THINKING_BANNER_MAX_CHARS = 120
 
 /**
- * Remote models running a tool loop often send their whole reasoning as a
- * single `**Inspecting backend metadata**` string. There is no reasoning text
- * to read and no reason to show the markdown markers, so the transcript
- * promotes the payload to a banner instead.
+ * Remote models running a tool loop often send their reasoning as one or more
+ * adjacent `**Inspecting backend metadata**` strings. There is no reasoning
+ * text to read, so the transcript promotes each payload to a banner chunk.
  *
- * Returns the bare phrase, or null when this is ordinary reasoning.
+ * Returns every bare phrase, or null when any non-headline content is present.
  */
-export function thinkingBannerPhrase(content: string): string | null {
+export function thinkingBannerPhrases(content: string): string[] | null {
   const trimmed = content.trim()
-  if (!trimmed || trimmed.length > THINKING_BANNER_MAX_CHARS) return null
-  if (trimmed.includes('\n')) return null
-  // While streaming, the payload is banner-shaped from the opening `**` on.
-  // Accepting the unterminated form keeps the raw markers from flashing before
-  // the closing pair arrives.
-  const match = /^\*\*([^*]+?)\*{0,2}$/.exec(trimmed)
-  const phrase = match?.[1].trim() ?? ''
-  return phrase.length > 0 ? phrase : null
+  if (!trimmed) return null
+
+  const phrases: string[] = []
+  let cursor = 0
+  while (cursor < trimmed.length) {
+    while (/\s/.test(trimmed[cursor] ?? '')) cursor += 1
+    if (cursor >= trimmed.length) break
+    if (!trimmed.startsWith('**', cursor)) return null
+    cursor += 2
+
+    const closing = trimmed.indexOf('**', cursor)
+    let rawPhrase = trimmed.slice(cursor, closing < 0 ? undefined : closing)
+    // A single trailing asterisk is an in-flight closing marker.
+    if (closing < 0 && rawPhrase.endsWith('*')) rawPhrase = rawPhrase.slice(0, -1)
+    const phrase = rawPhrase.trim()
+    if (!phrase || phrase.includes('*') || phrase.length > THINKING_BANNER_MAX_CHARS) return null
+    phrases.push(phrase)
+
+    if (closing < 0) break
+    cursor = closing + 2
+  }
+
+  return phrases.length > 0 ? phrases : null
+}
+
+/** Latest headline, used by compact previews that only have room for one. */
+export function thinkingBannerPhrase(content: string): string | null {
+  const phrases = thinkingBannerPhrases(content)
+  return phrases ? phrases[phrases.length - 1] ?? null : null
 }
 
 /**

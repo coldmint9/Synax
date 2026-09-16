@@ -98,6 +98,24 @@ describe('ThinkingBlock', () => {
     expect(container.querySelector('.bui-thinking-banner')?.getAttribute('data-live')).toBe('true')
   })
 
+  it('splits adjacent headlines into a carousel and follows newly streamed chunks', async () => {
+    const user = userEvent.setup()
+    const { container, rerender } = render(
+      <ThinkingBlock content="**Designing layout****Planning animation**" isStreaming />,
+    )
+
+    expect(container.querySelector('.bui-thinking-banner-text')).toHaveTextContent('Planning animation')
+    expect(container.querySelector('.bui-thinking-banner-position')).toHaveTextContent('2/2')
+
+    await user.click(screen.getByRole('button', { name: 'Previous thought' }))
+    expect(container.querySelector('.bui-thinking-banner-text')).toHaveTextContent('Designing layout')
+    expect(container.querySelector('.bui-thinking-banner-position')).toHaveTextContent('1/2')
+
+    rerender(<ThinkingBlock content="**Designing layout****Planning animation****Verifying output**" isStreaming />)
+    expect(container.querySelector('.bui-thinking-banner-text')).toHaveTextContent('Verifying output')
+    expect(container.querySelector('.bui-thinking-banner-position')).toHaveTextContent('3/3')
+  })
+
   it('keeps paragraph reasoning on the expandable row', () => {
     const { container } = render(<ThinkingBlock content="**Bold** plus a real reasoning paragraph." />)
     expect(container.querySelector('.bui-thinking-banner')).toBeNull()

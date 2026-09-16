@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocale } from '../../../hooks/useLocale'
 import { ThinkingTrace } from './ThinkingTrace'
 import { ThinkingBanner } from './ThinkingBanner'
-import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay, thinkingBannerPhrase } from './activityText'
+import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay, thinkingBannerPhrases } from './activityText'
 
 interface Props {
   content: string
@@ -28,8 +28,8 @@ export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
     }, 12)
     return () => window.clearInterval(timer)
   }, [isStreaming])
-  const banner = thinkingBannerPhrase(content)
-  if (banner) return <ThinkingBanner phrase={banner} isStreaming={isStreaming} />
+  const bannerPhrases = thinkingBannerPhrases(content)
+  if (bannerPhrases) return <ThinkingBanner phrases={bannerPhrases} isStreaming={isStreaming} />
   const { text, hidden } = tailForDisplay(isStreaming ? visible : content)
   return <ThinkingTrace
     label={isStreaming ? t('sessionActivityThinking') : t('sessionActivityThought')}

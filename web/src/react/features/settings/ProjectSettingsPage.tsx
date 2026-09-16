@@ -7,6 +7,7 @@ import { useLocale } from '../../../hooks/useLocale'
 import { McpServersSection } from './components/McpServersSection'
 import type { I18nKey } from '../../../lib/i18n'
 import { SettingsCard } from './components/SettingsCard'
+import { GitWorktreesSection } from './components/GitWorktreesSection'
 
 function ComingSoon({ titleKey }: { titleKey: I18nKey }) {
   const { t } = useLocale()
@@ -73,6 +74,7 @@ export default function ProjectSettingsPage() {
               title={t('settingsMcpTitle')}
               description={t('settingsMcpDesc')}
             />
+            <GitWorktreesSection projectId={projectId} />
             <BasicsTab settings={settings} onSave={(data) => patchSection('basics', data)} />
             <CollaborationTab settings={settings} onSave={(data) => patchSection('collaboration', data)} />
             <NotificationsTab settings={settings} onSave={(data) => patchSection('notifications', data)} />

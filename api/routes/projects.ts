@@ -1,11 +1,19 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import * as z from 'zod/v4';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, rmSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, normalize, resolve } from 'node:path';
 import { logger } from '../lib/logger.js';
 import { DATA_ROOT } from '../lib/env.js';
 import { contextService } from '../services/context/context-service.js';
 import { getRawSqlite } from '../db/index.js';
+import { agentRuntimeStore } from '../services/agent-runtime/session-store.js';
+import {
+  createGitWorktree,
+  GitWorkspaceError,
+  listGitWorkspaces,
+  pruneGitWorktrees,
+  removeGitWorktree,
+} from '../services/git-workspaces.js';
 
 // ---------------------------------------------------------------------------
 // Project store — in-memory Map 与磁盘 JSON 双写（原子写入）
@@ -165,6 +173,17 @@ const updateProjectSchema = z.object({
   openRisks: z.number().int().min(0).optional(),
 });
 
+const createWorktreeSchema = z.object({
+  branch: z.string().min(1).max(1024),
+  createBranch: z.boolean().optional().default(false),
+  startPoint: z.string().min(1).max(1024).optional(),
+});
+
+const removeWorktreeSchema = z.object({
+  path: z.string().min(1).max(4096),
+  force: z.boolean().optional().default(false),
+});
+
 // ---------------------------------------------------------------------------
 // Helper: check for duplicate projects
 // ---------------------------------------------------------------------------
@@ -214,6 +233,32 @@ function cleanupGitWorkDir(projectId: string): { cleaned: boolean; error?: strin
     logger.error({ projectId, err: msg }, '[projects] failed to clean git work dir');
     return { cleaned: false, error: msg };
   }
+}
+
+function projectGitPath(project: ProjectRecord): string {
+  const workspace = project.source?.localPath;
+  if (!workspace) throw new GitWorkspaceError('This project has no local Git workspace.', 409);
+  return workspace;
+}
+
+function sessionWorktreeUsage(projectId: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  const sessions = agentRuntimeStore.listSessions({ projectId, limit: Number.MAX_SAFE_INTEGER });
+  for (const session of sessions) {
+    const backend = session.sessionMetadata?.backend as { workDir?: string | null } | undefined;
+    if (!backend?.workDir) continue;
+    const key = normalize(backend.workDir);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function gitWorkspaceRouteError(c: Context, error: unknown) {
+  if (error instanceof GitWorkspaceError) {
+    return c.json({ error: error.message, code: 'GIT_WORKSPACE_ERROR' }, error.status as 400 | 404 | 409 | 500 | 503);
+  }
+  logger.error({ err: error instanceof Error ? error.message : String(error) }, '[projects] git workspace operation failed');
+  return c.json({ error: error instanceof Error ? error.message : 'Git workspace operation failed.' }, 500);
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +347,65 @@ projectRoutes.get('/', (c) => {
 });
 
 // ── Remaining Project Routes ──
+
+/** GET /:id/git/workspaces — list local branches and linked worktrees. */
+projectRoutes.get('/:id/git/workspaces', async (c) => {
+  const project = projects.get(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  try {
+    return c.json(await listGitWorkspaces(projectGitPath(project), project.id, sessionWorktreeUsage(project.id)));
+  } catch (error) {
+    return gitWorkspaceRouteError(c, error);
+  }
+});
+
+/** POST /:id/git/worktrees — create a linked worktree, optionally with a new branch. */
+projectRoutes.post('/:id/git/worktrees', async (c) => {
+  const project = projects.get(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+  const parsed = createWorktreeSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
+  try {
+    const worktree = await createGitWorktree(projectGitPath(project), project.id, parsed.data);
+    return c.json({ worktree }, 201);
+  } catch (error) {
+    return gitWorkspaceRouteError(c, error);
+  }
+});
+
+/** DELETE /:id/git/worktrees — remove a linked worktree after safety checks. */
+projectRoutes.delete('/:id/git/worktrees', async (c) => {
+  const project = projects.get(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+  const parsed = removeWorktreeSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
+  try {
+    const usage = sessionWorktreeUsage(project.id);
+    await removeGitWorktree(projectGitPath(project), project.id, parsed.data.path, {
+      force: parsed.data.force,
+      inUsePaths: new Set(usage.keys()),
+    });
+    return c.json({ removed: true });
+  } catch (error) {
+    return gitWorkspaceRouteError(c, error);
+  }
+});
+
+/** POST /:id/git/worktrees/prune — remove stale Git worktree registrations. */
+projectRoutes.post('/:id/git/worktrees/prune', async (c) => {
+  const project = projects.get(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  try {
+    await pruneGitWorktrees(projectGitPath(project));
+    return c.json(await listGitWorkspaces(projectGitPath(project), project.id, sessionWorktreeUsage(project.id)));
+  } catch (error) {
+    return gitWorkspaceRouteError(c, error);
+  }
+});
 
 /** GET /:id/stats — real-time project statistics from SQLite */
 projectRoutes.get('/:id/stats', (c) => {

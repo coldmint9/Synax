@@ -56,6 +56,8 @@ import { getSessionEnvironment, getSessionEnvironmentFile, invalidateSessionEnvi
 import { commitAndPushSessionWorkspace } from '../services/agent-runtime/session-git-commit.js';
 import { resolveSessionConfiguredContextLimit } from '../services/agent-runtime/session-context-limit.js';
 import { RUNTIME_PROTOCOL_SCHEMA, RUNTIME_PROTOCOL_VERSION } from '../services/agent-runtime/runtime-protocol.js';
+import { resolveRegisteredProjectWorkDir } from '../services/agent-runtime/tools/workspace.js';
+import { GitWorkspaceError, resolveGitWorkspaceSelection } from '../services/git-workspaces.js';
 
 export const agentRuntimeRoutes = new Hono();
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
@@ -132,9 +134,32 @@ agentRuntimeRoutes.post('/sessions', async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     if (!parsed.data.backendId || parsed.data.backendId === 'native') assertLlmProviderConfigured(parsed.data.projectId);
-    const session = agentSessionRuntime.create(parsed.data);
+    let createInput = parsed.data;
+    if (parsed.data.gitWorkspace) {
+      const selected = await resolveGitWorkspaceSelection(
+        resolveRegisteredProjectWorkDir(parsed.data.projectId),
+        parsed.data.projectId,
+        parsed.data.gitWorkspace,
+      );
+      createInput = {
+        ...parsed.data,
+        workDir: selected.workDir,
+        sessionMetadata: {
+          ...(parsed.data.sessionMetadata ?? {}),
+          gitWorkspace: {
+            kind: selected.kind,
+            branch: selected.branch,
+            path: selected.workDir,
+          },
+        },
+      };
+    }
+    const session = agentSessionRuntime.create(createInput);
     return c.json(withSessionPayload(session.id), 201);
   } catch (error) {
+    if (error instanceof GitWorkspaceError) {
+      return c.json({ error: error.message, code: 'GIT_WORKSPACE_ERROR' }, error.status as 400 | 404 | 409 | 500 | 503);
+    }
     return runtimeError(c, error);
   }
 });
