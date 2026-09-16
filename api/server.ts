@@ -27,6 +27,7 @@ import { logRoutes } from "./routes/logs.js";
 import { notificationRoutes } from "./routes/notifications.js";
 import { projectSettingsRoutes } from "./routes/project-settings.js";
 import { treeEmbeddingBenchRoutes } from "./routes/tree-embedding-bench.js";
+import { fsRoutes } from "./routes/fs.js";
 import { getDb } from "./db/index.js";
 import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
 import { wikiStore } from "./services/wiki/wiki-store.js";
@@ -77,6 +78,7 @@ app.route("/api/notifications", notificationRoutes);
 app.route("/api/logs", logRoutes);
 app.route("/api/health", healthRoutes);
 app.route("/api/prototypes/tree-embedding-bench", treeEmbeddingBenchRoutes);
+app.route("/api/fs", fsRoutes);
 
 const runtimeHost = acquireRuntimeHost(DATA_ROOT);
 void sweepAssets().catch(error => pinoLogger.warn({ error }, 'Media cleanup failed'));

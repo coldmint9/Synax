@@ -62,16 +62,18 @@ describe("BrowserSession", () => {
   });
 
   it("tracks tabs and switches the active one", async () => {
-    const pages = [fakePage({ url: "http://a.test/" }), fakePage({ url: "http://b.test/" })];
-    const { browser } = fakeBrowser({ pages });
+    const { browser } = fakeBrowser();
     const session = new BrowserSession({ sessionId: "tabs", launcher: async () => ({ browser, source: "fake" }) });
+    const firstTab = await session.resolvePage();
+    expect(firstTab.seq).toBe(1);
+    const secondTab = await session.resolvePage({ newTab: true });
+    expect(secondTab.seq).toBe(2);
     // The most recently opened page is the active one.
-    const active = await session.resolvePage();
-    expect(active.seq).toBe(2);
-    const first = await session.resolvePage({ pageSeq: 1 });
-    expect(first.seq).toBe(1);
+    expect(session.tabs().find((tab) => tab.active)?.seq).toBe(2);
+    expect(session.describeTabs()).toContain("tab 2*:");
+    const switched = await session.resolvePage({ pageSeq: 1 });
+    expect(switched.seq).toBe(1);
     expect(session.tabs().find((tab) => tab.active)?.seq).toBe(1);
-    expect(session.describeTabs()).toContain("tab 2:");
     await session.closeTab(1);
     expect(session.tabs().find((tab) => tab.active)?.seq).toBe(2);
     await expect(session.closeTab(1)).rejects.toThrow(/not open/);
@@ -102,7 +104,8 @@ describe("browser manager", () => {
   });
 
   function launcherFor(sessionId: string) {
-    const { browser } = fakeBrowser({ pages: [fakePage({ url: `http://${sessionId}.test/` })] });
+    const { browser } = fakeBrowser();
+    void sessionId;
     return async () => ({ browser, source: "fake" });
   }
 

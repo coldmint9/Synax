@@ -5,6 +5,7 @@ import { useShellStore, type ProjectSummary } from '../../state/shellStore'
 import { apiFetch } from '../../../lib/api/origin'
 import { openDirectoryPicker, isElectron } from '../../../lib/open-directory-picker'
 import { resolveSessionsEntryPath } from '../sessions/sessionLastVisit'
+import { DirectoryPickerDialog } from '../../components/directory-picker/DirectoryPickerDialog'
 
 interface ProjectCreateDialogProps {
   open: boolean
@@ -17,11 +18,13 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
   const [pathInput, setPathInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   const reset = () => {
     setPathInput('')
     setError(null)
     setSubmitting(false)
+    setPickerOpen(false)
   }
 
   const handleClose = () => {
@@ -85,18 +88,25 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
   if (!open) return null
 
   const handleBrowse = async () => {
-    const result = await openDirectoryPicker()
-    if (!result) {
-      if (!isElectron) {
-        setError('当前浏览器无法读取本地目录绝对路径，请使用桌面版打开目录，或手动输入路径。')
-      }
+    // The desktop build keeps the native OS dialog. Browsers cannot read a local
+    // absolute path from the renderer, so they browse the runtime host instead.
+    if (!isElectron) {
+      setError(null)
+      setPickerOpen(true)
       return
     }
-    setPathInput(result.path)
-    setError(null)
+    try {
+      const result = await openDirectoryPicker()
+      if (!result) return
+      setPathInput(result.path)
+      setError(null)
+    } catch (err) {
+      setError((err as Error).message || String(err))
+    }
   }
 
   return (
+    <>
     <div className="dialog-overlay" onClick={handleClose}>
       <div className="dialog-content w-full max-w-md" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
@@ -130,7 +140,9 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
               </button>
             </div>
             <span className="mt-1 block text-[11px] text-muted-foreground/60">
-              {isElectron ? '点击“打开”选择本地目录，或直接输入本地代码目录的绝对路径' : '桌面版可点击“打开”选择本地目录；浏览器版请输入本地代码目录的绝对路径'}
+              {isElectron
+                ? '点击“打开”选择本地目录，或直接输入本地代码目录的绝对路径'
+                : '浏览器版点击“打开”浏览运行 Synax 机器的目录，也可直接输入绝对路径'}
             </span>
           </label>
           {error && (
@@ -159,5 +171,16 @@ export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps)
         </div>
       </div>
     </div>
+    <DirectoryPickerDialog
+      open={pickerOpen}
+      initialPath={pathInput.trim() || undefined}
+      onClose={() => setPickerOpen(false)}
+      onSelect={({ path }) => {
+        setPathInput(path)
+        setError(null)
+        setPickerOpen(false)
+      }}
+    />
+    </>
   )
 }
