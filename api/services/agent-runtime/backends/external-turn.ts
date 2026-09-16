@@ -10,6 +10,7 @@ import { makeRuntimeId, nowIso } from '../runtime-ids.js';
 import { interactionService } from '../interaction-service.js';
 import { validateBackendTurnInput } from './backend-binding.js';
 import { bindSessionWorkDir } from '../tools/workspace.js';
+import { externalWorkspace } from './external-workspace.js';
 import type { AgentRun, AgentRunStep, AgentRunStreamChunk, PermissionReply, StreamTurnRequest, ToolCallRecord, CapabilityCategory } from '../contracts.js';
 import type { InteractionReply, HumanQuestion } from '../control-contracts.js';
 
@@ -18,6 +19,7 @@ export class ExternalTurn {
   readonly run: AgentRun;
   readonly step: AgentRunStep;
   readonly workDir: string;
+  readonly workspace: ReturnType<typeof externalWorkspace>;
   readonly message: string;
   private readonly tools = new Map<string, ToolCallRecord>();
   private readonly permissions = new Map<string, (reply: PermissionReply) => void>();
@@ -34,6 +36,7 @@ export class ExternalTurn {
     validateBackendTurnInput(backendId, input);
     this.workDir = bindSessionWorkDir(sessionId);
     const session = store.getSession(sessionId);
+    this.workspace = externalWorkspace(sessionId, session.projectId, this.workDir);
     const native = session.sessionMetadata?.nativeBackend as { id?: string; sessionId?: string } | undefined;
     const continuesNative = native?.id === backendId && typeof native.sessionId === 'string';
     this.message = hasInput(input) ? input.message?.trim() ?? '' : (continuesNative

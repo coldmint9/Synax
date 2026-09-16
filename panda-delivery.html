@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#f5f5ee">
+<title>熊猫急送 · Panda on the move</title>
+<style>
+  :root { --ink:#183e32; --green:#087c4b; --lime:#dcf38a; --paper:#f5f5ee; --muted:#7a897f; }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--ink); background:var(--paper); font-family:Inter,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif; -webkit-font-smoothing:antialiased; }
+  button,input { font:inherit; }
+  button { cursor:pointer; }
+  .page { max-width:1440px; margin:auto; padding:0 56px; }
+  header { height:104px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid #dce2d7; }
+  .brand { display:flex; align-items:center; gap:11px; }
+  .brand-icon { width:47px; height:47px; }
+  .brand-name { font-size:24px; font-weight:900; letter-spacing:-1.1px; line-height:1; }
+  .brand-name span { color:var(--green); }
+  .brand-sub { margin-top:7px; font-size:9px; letter-spacing:3.5px; font-weight:700; }
+  .header-note { display:flex; align-items:center; gap:9px; font-size:11px; letter-spacing:1.8px; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:100%; background:var(--green); }
+  .location { font-size:12px; display:flex; gap:8px; align-items:center; }
+  .location svg { width:15px; height:15px; }
+  main { padding-top:26px; }
+  .scene { position:relative; isolation:isolate; background:#edf1e7; border-radius:20px; overflow:hidden; min-height:620px; }
+  .copy { position:absolute; left:44px; top:40px; z-index:2; pointer-events:none; }
+  .eyebrow { display:flex; align-items:center; gap:8px; font-size:10px; letter-spacing:2px; font-weight:700; }
+  .eyebrow::before { content:""; width:22px; height:2px; background:var(--green); }
+  h1 { margin:23px 0 17px; font-size:clamp(42px,4.6vw,65px); font-weight:900; line-height:1.16; letter-spacing:-3px; }
+  h1 em { color:var(--green); font-style:normal; }
+  .intro { font-size:13px; color:#758277; line-height:1.9; letter-spacing:.4px; margin:0; }
+  .art { width:100%; height:auto; display:block; position:absolute; bottom:0; left:0; }
+  .delivery { position:absolute; top:34px; right:32px; display:flex; align-items:center; gap:9px; padding:10px 13px; border:1px solid #d9e2d3; border-radius:24px; background:#f5f7f0c9; font-size:10px; letter-spacing:1px; }
+  .delivery .dot { box-shadow:0 0 0 4px #087c4b0c; }
+  .scene-label { position:absolute; left:43px; bottom:26px; display:flex; align-items:center; gap:12px; font-size:10px; font-weight:600; letter-spacing:1.8px; }
+  .scene-label .number { border:1px solid #bbcabd; border-radius:50%; width:27px; height:27px; display:grid; place-items:center; font-size:10px; letter-spacing:0; }
+  .scene-caption { position:absolute; right:33px; bottom:31px; font-size:9px; letter-spacing:1.4px; color:#788a7b; }
+  .dashboard { display:grid; grid-template-columns:1fr 1.1fr 1fr; margin-top:23px; border:1px solid #dce2d7; border-radius:14px; padding:24px 29px; gap:28px; background:#fafaf5; }
+  .dashboard>div+div { border-left:1px solid #dce2d7; padding-left:29px; }
+  .small-label { font-size:10px; color:var(--muted); letter-spacing:1.5px; display:block; margin-bottom:10px; }
+  .status-line { display:flex; align-items:center; gap:10px; font-size:15px; font-weight:700; }
+  .status-icon { width:34px; height:34px; background:#e4edda; border-radius:50%; display:grid; place-items:center; }
+  .status-icon svg { width:18px; height:18px; }
+  .status-line small { display:block; font-size:10px; color:var(--muted); font-weight:400; margin-top:5px; }
+  .speed-top { display:flex; align-items:baseline; justify-content:space-between; }
+  .speed-top output { font-size:19px; font-variant-numeric:tabular-nums; font-weight:750; }
+  .speed-top output span { font-size:10px; color:var(--muted); font-weight:400; }
+  input[type=range] { width:100%; margin:4px 0 0; accent-color:var(--green); cursor:pointer; height:16px; }
+  .speed-ends { display:flex; justify-content:space-between; color:#899489; font-size:9px; margin-top:2px; }
+  .playback { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .pace { font-size:22px; font-weight:750; font-variant-numeric:tabular-nums; }
+  .pace span { font-size:11px; font-weight:400; color:var(--muted); }
+  .pause { min-height:43px; min-width:98px; display:flex; align-items:center; justify-content:center; gap:9px; border:0; background:var(--ink); color:#fff; border-radius:25px; font-size:12px; transition:background .2s; }
+  .pause:hover { background:var(--green); }
+  .pause:focus-visible,input:focus-visible { outline:3px solid #6da97d; outline-offset:5px; }
+  .pause svg { width:13px; height:13px; }
+  footer { display:flex; justify-content:space-between; align-items:center; gap:20px; padding:22px 0 25px; font-size:10px; color:#8a958a; letter-spacing:.5px; }
+  footer .tagline { color:#657c6b; }
+  .wheel-spin { animation:spin .3448275862s linear infinite; }
+  .crank-spin { animation:spin .5s linear infinite; }
+  .chain { stroke-dasharray:4 7; animation:chain .033667392s linear infinite; }
+  .road-scroll { animation:road .146349373s linear infinite; }
+  .city-scroll { animation:city 30s linear infinite; }
+  .scarf { transform-origin:462px 220px; animation:scarf .25s ease-in-out infinite alternate; }
+  .blink { transform-box:fill-box; transform-origin:center; animation:blink 4s linear infinite; }
+  .steam { animation:steam 2s ease-out infinite; }
+  .steam.two { animation-delay:-1s; }
+  .speed-line { animation:streak .65s linear infinite; }
+  .speed-line.two { animation-delay:-.24s; }
+  .speed-line.three { animation-delay:-.48s; }
+  .leg-part { animation-duration:.5s; animation-timing-function:linear; animation-iteration-count:infinite; }
+  .paused .art * { animation-play-state:paused !important; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes road { to { transform:translateX(-240px); } }
+  @keyframes city { to { transform:translateX(-1200px); } }
+  @keyframes chain { to { stroke-dashoffset:-11; } }
+  @keyframes scarf { from { transform:rotate(-4deg); } to { transform:rotate(5deg); } }
+  @keyframes blink { 0%,43%,47%,100% { transform:scaleY(1); } 45% { transform:scaleY(.08); } }
+  @keyframes steam { 0% { opacity:0; transform:translateY(4px); } 30% { opacity:.7; } 100% { opacity:0; transform:translateY(-15px); } }
+  @keyframes streak { 0% { opacity:0; transform:translateX(20px); } 20%,60% { opacity:.65; } 100% { opacity:0; transform:translateX(-40px); } }
+  @media(min-width:1300px) { .scene { min-height:665px; } }
+  @media(max-width:900px) { .page { padding:0 25px; } header { height:85px; } .header-note { display:none; } .scene { min-height:590px; } .copy { left:30px; top:30px; } h1 { font-size:48px; } .art { width:115%; left:-10%; } .dashboard { padding:21px; gap:18px; grid-template-columns:1fr 1.2fr; } .dashboard>div+div { padding-left:18px; } .dashboard .playback { grid-column:1/-1; border-left:0; padding:16px 0 0; border-top:1px solid #dce2d7; } .playback .small-label { display:inline; margin-right:15px; } .pace { display:inline; } }
+  @media(max-width:560px) { .page { padding:0 16px; } header { height:78px; } .brand-name { font-size:21px; } .brand-icon { width:40px; height:40px; } .location { font-size:10px; } main { padding-top:16px; } .scene { min-height:610px; border-radius:15px; } .copy { left:25px; top:29px; } h1 { font-size:47px; margin-top:18px; } .intro { font-size:12px; } .delivery { top:285px; right:20px; padding:8px 11px; font-size:9px; } .art { width:185%; left:-68%; bottom:40px; } .scene-label { left:23px; bottom:22px; font-size:9px; } .scene-caption { display:none; } .dashboard { margin-top:16px; padding:19px 17px; gap:15px; } .dashboard>div+div { padding-left:15px; } .status-line { font-size:12px; gap:7px; } .status-icon { width:28px; height:28px; flex-shrink:0; } .status-line small { font-size:9px; } .small-label { font-size:9px; letter-spacing:1px; } .speed-top output { font-size:17px; } footer { font-size:9px; line-height:1.6; align-items:flex-start; } footer .tagline { max-width:150px; text-align:right; } }
+  .delivery { z-index:2; }
+  @media(max-width:560px) {
+    .delivery { top:260px; }
+    .dashboard { grid-template-columns:1fr; }
+    .dashboard>div+div { border-left:0; border-top:1px solid #dce2d7; padding:16px 0 0; }
+    .speed-top output { white-space:nowrap; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="brand" aria-label="Panda Go 熊猫急送">
+      <svg class="brand-icon" viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="15" fill="#087c4b"/><g fill="#193c30"><circle cx="13" cy="13" r="6"/><circle cx="35" cy="13" r="6"/></g><ellipse cx="24" cy="25" rx="17" ry="15" fill="#fffef5"/><ellipse cx="17" cy="24" rx="5" ry="6" transform="rotate(25 17 24)" fill="#193c30"/><ellipse cx="31" cy="24" rx="5" ry="6" transform="rotate(-25 31 24)" fill="#193c30"/><circle cx="18" cy="23" r="1.6" fill="white"/><circle cx="30" cy="23" r="1.6" fill="white"/><path d="M21 31Q24 28 27 31Q24 36 21 31" fill="#193c30"/></svg>
+      <div><div class="brand-name">panda<span>go.</span></div><div class="brand-sub">熊 猫 急 送</div></div>
+    </div>
+    <div class="header-note"><span class="dot"></span> GOOD FOOD. GOOD MOOD.</div>
+    <div class="location"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 8c0 5-6 10-6 10S4 13 4 8a6 6 0 1 1 12 0Z"/><circle cx="10" cy="8" r="2"/></svg> LONDON, UK <span style="color:#9aab9b">↗</span></div>
+  </header>
+  <main>
+    <section class="scene" aria-label="熊猫骑着绿色自行车，在伦敦街头飞快送外卖">
+      <div class="copy"><div class="eyebrow">YOUR HUNGER, OUR HURRY</div><h1>热乎的，<br><em>马上到。</em></h1><p class="intro">把好吃的放进背包，<br>把伦敦的风留在身后。</p></div>
+      <div class="delivery"><span class="dot"></span><span id="delivery-label">小熊猫正在全力配送</span></div>
+      <svg class="art" viewBox="0 0 1200 660" role="img" aria-labelledby="art-title art-desc">
+        <title id="art-title">追着美味跑的熊猫骑手</title>
+        <desc id="art-desc">戴绿色头盔、背绿色保温箱的熊猫，双手稳握车把。两脚交替快速蹬踏，膝盖自然弯曲，车轮向前滚动，伦敦街景向后移动。</desc>
+        <defs>
+          <linearGradient id="bag" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#15975b"/><stop offset="1" stop-color="#057344"/></linearGradient>
+          <linearGradient id="fur" x1="0" y1="0" x2=".7" y2="1"><stop stop-color="#fffef4"/><stop offset="1" stop-color="#e4e8db"/></linearGradient>
+          <linearGradient id="helmet" x1="0" y1="0" x2=".5" y2="1"><stop stop-color="#24a867"/><stop offset="1" stop-color="#07804b"/></linearGradient>
+          <pattern id="windows" width="38" height="46" patternUnits="userSpaceOnUse"><rect x="12" y="9" width="13" height="23" rx="5" fill="#cedacb"/><path d="M18.5 10V32M12 21h13" stroke="#e8eee0" stroke-width="2"/></pattern>
+          <pattern id="roadmarks" width="240" height="8" patternUnits="userSpaceOnUse"><path d="M15 4h56M130 4h18" stroke="#becbb8" stroke-width="3" stroke-linecap="round"/></pattern>
+          <g id="spokes" stroke="#a6b5a5" stroke-width="1.5"><path d="M-77 0H77M0-77V77M-54.45-54.45L54.45 54.45M-54.45 54.45L54.45-54.45M-71.14-29.47L71.14 29.47M-29.47-71.14L29.47 71.14M-71.14 29.47L71.14-29.47M-29.47 71.14L29.47-71.14"/><path d="M53-56l5 5" stroke="#e8edce" stroke-width="5" stroke-linecap="round"/></g>
+          <g id="town">
+            <path d="M0 535V352h29v-16h87v16h23v183M139 535V385h18v-18h108v18h16v150M287 535V332h16v-12h94v12h17v203M433 535V369h17v-18h101v18h22v166M592 535V313h18v-16h94v16h18v222M738 535V365h17v-20h104v20h22v170M898 535V336h19v-19h96v19h21v199M1051 535V379h18v-15h112v15h19v156" fill="#e0e7d8"/>
+            <path d="M30 354h85v170H30zM159 387h104v135H159zM308 337h86v187h-86zM453 373h101v151H453zM614 316h86v208h-86zM760 368h99v156h-99zM921 341h90v183h-90zM1071 385h111v140h-111z" fill="url(#windows)"/>
+            <path d="M0 353h139M139 386h142M287 334h127M433 371h140M592 315h130M738 367h143M898 338h136M1051 381h149" stroke="#d1ddcb" stroke-width="4"/>
+            <g fill="#c6d5c0"><rect x="60" y="481" width="27" height="53" rx="13"/><rect x="200" y="481" width="29" height="53" rx="14"/><rect x="341" y="481" width="28" height="53" rx="14"/><rect x="491" y="481" width="28" height="53" rx="14"/><rect x="641" y="481" width="27" height="53" rx="13"/><rect x="799" y="481" width="29" height="53" rx="14"/><rect x="953" y="481" width="28" height="53" rx="14"/><rect x="1111" y="481" width="28" height="53" rx="14"/></g>
+            <g stroke="#b8cbb3" fill="none" stroke-width="4"><path d="M280 534V403q0-12-12-12h-9M733 534V389q0-12 12-12h9M1042 534V412q0-12-12-12h-9"/><path d="M258 391v14h13v-14M753 377v14h13v-14M1020 400v14h13v-14" fill="#e9ecce" stroke-width="2"/></g>
+          </g>
+          <g id="tiny-panda"><circle cx="-15" cy="-12" r="7" fill="#173c30"/><circle cx="15" cy="-12" r="7" fill="#173c30"/><ellipse rx="23" ry="20" fill="#fffef0"/><ellipse cx="-9" cy="0" rx="6" ry="8" transform="rotate(25 -9 0)" fill="#173c30"/><ellipse cx="9" cy="0" rx="6" ry="8" transform="rotate(-25 9 0)" fill="#173c30"/><circle cx="-8" cy="-2" r="2" fill="#fff"/><circle cx="10" cy="-2" r="2" fill="#fff"/><path d="M-4 9Q0 6 4 9Q0 15-4 9" fill="#173c30"/></g>
+        </defs>
+        <!-- Quiet London skyline; the distant layer moves more slowly than the road. -->
+        <circle cx="831" cy="272" r="178" fill="#e4ecd9"/>
+        <circle cx="831" cy="272" r="140" fill="none" stroke="#dbe6cf" stroke-width="1"/>
+        <g fill="#fafbf2" opacity=".8"><path d="M668 137h92q-2-14-18-13-8-25-30-11-10-8-19 3-22-1-25 21Z"/><path d="M994 240h91q-7-15-24-12-10-26-30-11-21-6-25 13-10 0-12 10Z"/></g>
+        <g opacity=".44" fill="#c1d0b8"><path d="M965 423V270h10v-60h8v-23h6v-19h4v19h6v23h8v60h10v153Z"/><path d="M958 424h66v-20h-66Z"/><circle cx="991" cy="250" r="15" fill="#edf1e7"/><path d="M991 239v12l7 4" fill="none" stroke="#afc0a5" stroke-width="2"/></g>
+        <g class="city-scroll" opacity=".73"><use href="#town"/><use href="#town" x="1200"/></g>
+        <path d="M0 534H1200V660H0Z" fill="#e5eadc"/>
+        <path d="M0 534H1200" stroke="#cfdbc6" stroke-width="2"/>
+        <path d="M0 610H1200" stroke="#c5d2bd" stroke-width="2"/>
+        <g class="road-scroll"><rect x="0" y="624" width="1680" height="8" fill="url(#roadmarks)"/></g>
+        <ellipse cx="724" cy="610" rx="247" ry="13" fill="#bbcab0" opacity=".32"/>
+        <g transform="translate(220 80)">
+          <g fill="none" stroke="#91b68e" stroke-width="3" stroke-linecap="round"><path class="speed-line" d="M254 224h69M294 236h25"/><path class="speed-line two" d="M264 302h54M243 315h29"/><path class="speed-line three" d="M258 385h44"/></g>
+          <!-- Rear limbs sit behind the frame. Hip and limb lengths are fixed. -->
+          <g id="far-leg" fill="none" stroke-linecap="round">
+            <g class="leg-part" id="far-thigh"><path d="M0 0H78" stroke="#263b33" stroke-width="29"/></g>
+            <g class="leg-part" id="far-shin"><path d="M0 0H77" stroke="#263b33" stroke-width="23"/></g>
+            <g class="leg-part" id="far-foot"><path d="M-11-4Q-4-11 9-5l17 8q5 8-4 9H-10q-7-2-1-16" fill="#34493e"/><path d="M-12 11H25" stroke="#a7b59b" stroke-width="3"/></g>
+            <g class="leg-part" id="far-pedal"><path d="M0 0H0" stroke="#64776a" stroke-width="7"/><path d="M-17 0H17" stroke="#506959" stroke-width="6"/></g>
+          </g>
+          <!-- The tyres remain tangent to the ground throughout the animation. -->
+          <g transform="translate(350 440)"><circle r="85" fill="#eff2e53d" stroke="#233e32" stroke-width="10"/><circle r="77" fill="none" stroke="#becbb2" stroke-width="3"/><g class="wheel-spin"><use href="#spokes"/></g><circle r="10" fill="#708671"/><circle r="4" fill="#eaf0d9"/></g>
+          <g transform="translate(620 440)"><circle r="85" fill="#eff2e53d" stroke="#233e32" stroke-width="10"/><circle r="77" fill="none" stroke="#becbb2" stroke-width="3"/><g class="wheel-spin"><use href="#spokes"/></g><circle r="9" fill="#708671"/><circle r="4" fill="#eaf0d9"/></g>
+          <!-- Mudguards, carrier and real bicycle triangles. -->
+          <g fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M264 420A89 89 0 0 1 429 401M547 389A89 89 0 0 1 701 415" stroke="#6e9a72" stroke-width="5"/><path d="M305 346h88M314 349l36 91M387 350l-37 90" stroke="#5c8064" stroke-width="4"/><path d="M350 440 470 410 422 337 350 440 572 328 470 410M570 317 620 440" stroke="#075537" stroke-width="12"/><path d="M350 438 470 408 424 338M358 433 570 328 470 408M572 324 620 438" stroke="#15975b" stroke-width="7"/><path d="M421 338l-10-25" stroke="#768674" stroke-width="6"/><path d="M391 312q22-9 45-1" stroke="#203c30" stroke-width="12"/>
+          <path d="M574 326 565 288Q563 282 572 281h32" stroke="#768674" stroke-width="7"/><path d="M583 281h24M577 274h17" stroke="#213e32" stroke-width="9"/><path d="M604 287q31 27-12 66" stroke="#365743" stroke-width="2"/>
+          <circle cx="350" cy="440" r="16" fill="#48624d" stroke="#adc098" stroke-width="2"/>
+          <path d="M344.525565 422.925090 462.062069 385.241380A26 26 0 1 1 474.647059 435.581338L353.204868 457.642302A17.931034 17.931034 0 0 1 344.525565 422.925090Z" stroke="#4a5b49" stroke-width="3"/><path class="chain" d="M344.525565 422.925090 462.062069 385.241380A26 26 0 1 1 474.647059 435.581338L353.204868 457.642302A17.931034 17.931034 0 0 1 344.525565 422.925090Z" stroke="#9fac93" stroke-width="2"/>
+          </g>
+          <circle cx="470" cy="410" r="24" fill="#243e31" stroke="#aac098" stroke-width="3"/>
+          <g transform="translate(470 410)"><g class="crank-spin"><circle r="17" fill="none" stroke="#4c6850" stroke-width="2"/><path d="M-32 0H32" stroke="#a4b69b" stroke-width="7" stroke-linecap="round"/><path d="M0-15V15M-15 0H15" stroke="#637f5f" stroke-width="3"/></g><circle r="5" fill="#e7ecd9"/></g>
+          <!-- Delivery box, anchored to the rider's back. -->
+          <g transform="rotate(9 404 254)"><path d="M359 191h71q11 0 11 11v89h-90v-89q0-11 8-11Z" fill="#045334"/><path d="M351 207h82v82h-82Z" fill="url(#bag)"/><path d="M433 207l15-10v78l-15 14Z" fill="#075e3b"/><path d="M351 207l13-16h76l8 6-15 10Z" fill="#35ab6d"/><path d="M353 212h78" stroke="#8ed889" stroke-width="2"/><path d="M365 283h54" stroke="#c6eb91" stroke-width="4"/><g transform="translate(392 239) scale(.69)"><use href="#tiny-panda"/></g><text x="393" y="271" text-anchor="middle" fill="#f5ffe1" font-size="11" font-weight="800" font-family="Arial,sans-serif" letter-spacing=".3">pandago.</text><path d="M376 191v-9q0-5 5-5h19q5 0 5 5v9" fill="none" stroke="#174c34" stroke-width="5"/></g>
+          <g class="steam" fill="none" stroke="#92b78a" stroke-width="2.5" stroke-linecap="round"><path d="M383 169q-8-7 0-15t0-13"/></g><g class="steam two" fill="none" stroke="#92b78a" stroke-width="2.5" stroke-linecap="round"><path d="M399 171q-8-7 0-15t0-13"/></g>
+          <!-- Far arm and hand remain on the far grip. -->
+          <path d="M504 230Q527 265 551 266L583 277" fill="none" stroke="#24392f" stroke-width="22" stroke-linecap="round"/><ellipse cx="587" cy="277" rx="12" ry="9" fill="#24392f"/>
+          <path class="scarf" d="M473 220q-24 7-47-2l-9 13 17-1q18 11 40 2Z" fill="#d4ed7a"/>
+          <!-- Seated, forward-leaning torso: pelvis stays directly above the saddle. -->
+          <path d="M434 314q-30-12-24-43 6-27 43-52 24-15 48-6 22 12 17 40-5 23-33 43-28 29-51 18Z" fill="#243b30"/>
+          <path d="M447 222q26-19 52-5 20 17 8 39-20 27-47 41-20 9-35-3-9-28 22-72Z" fill="url(#fur)"/>
+          <path d="M443 225q-15 19-21 40" fill="none" stroke="#075f3b" stroke-width="11" stroke-linecap="round"/><path d="M443 226q-13 18-18 33" fill="none" stroke="#39a96b" stroke-width="3" stroke-linecap="round"/>
+          <path d="M447 306q-15 14-29 4" fill="none" stroke="#20392d" stroke-width="15" stroke-linecap="round"/>
+          <!-- Front leg is in front of the chainset; each foot is level on its pedal. -->
+          <g id="near-leg" stroke-linecap="round">
+            <g class="leg-part" id="near-thigh"><path d="M0 0H78" fill="none" stroke="#20382d" stroke-width="33"/><path d="M8-7H47" fill="none" stroke="#324c3b" stroke-width="5"/></g>
+            <g class="leg-part" id="near-shin"><path d="M0 0H77" fill="none" stroke="#20382d" stroke-width="25"/></g>
+            <g class="leg-part" id="near-foot"><path d="M-12-5Q-5-13 9-6l18 9q6 8-3 10H-11q-7-3-1-18" fill="#263e30"/><path d="M-12 12H27" fill="none" stroke="#d4dfbe" stroke-width="4"/><path d="M10-2l-2 5M16 0l-2 4" stroke="#72876a" stroke-width="2"/></g>
+            <g class="leg-part" id="near-pedal"><path d="M-18 0H18" stroke="#1a392b" stroke-width="6"/><path d="M8 0h7" stroke="#dbe88b" stroke-width="3"/></g>
+          </g>
+          <!-- Panda face, ears and a fitted cycle helmet. -->
+          <circle cx="484" cy="153" r="22" fill="#233b30"/><circle cx="555" cy="144" r="20" fill="#233b30"/><circle cx="484" cy="153" r="11" fill="#3e5240"/>
+          <path d="M479 166q6-33 40-35 42-4 59 31 13 30-4 55-19 24-51 20-37-3-49-30-10-24 5-41Z" fill="url(#fur)"/>
+          <path d="M486 180q7-16 20-11 12 4 9 17-4 16-17 18-17 0-12-24Z" fill="#243b30"/>
+          <path d="M546 170q14-9 23 7 9 18-3 22-12 4-20-10-6-10 0-19Z" fill="#243b30"/>
+          <g class="blink"><ellipse cx="505" cy="182" rx="5" ry="6" fill="#fffef4"/><ellipse cx="559" cy="179" rx="4.5" ry="5.5" fill="#fffef4"/><circle cx="507" cy="182" r="2.8" fill="#172e25"/><circle cx="561" cy="179" r="2.7" fill="#172e25"/></g>
+          <ellipse cx="540" cy="204" rx="25" ry="16" fill="#fffef3"/><path d="M532 197q8-6 16-1-1 9-8 10-6-1-8-9Z" fill="#233b30"/><path d="M540 205v5q8 8 16-3" stroke="#233b30" stroke-width="2.4" fill="none" stroke-linecap="round"/><ellipse cx="491" cy="207" rx="8" ry="4" fill="#e1b9a5" opacity=".6"/>
+          <path d="M482 155Q482 114 520 111q39-3 54 33l-1 11q-44-10-91 8Z" fill="url(#helmet)"/><path d="M485 148q40-11 83-2" fill="none" stroke="#46b878" stroke-width="3"/><path d="M506 120l-5 17M523 118l-1 16M540 121l5 14" stroke="#07673f" stroke-width="5" stroke-linecap="round"/><path d="M477 161q51-19 108-4" fill="none" stroke="#065637" stroke-width="8" stroke-linecap="round"/>
+          <path d="M482 163q0 37 28 59l10-5" fill="none" stroke="#296143" stroke-width="4"/><rect x="506" y="216" width="12" height="7" rx="2" fill="#163e2b" transform="rotate(25 512 219)"/>
+          <!-- Near arm, bent elbow, wrist and visible fingers fixed around the grip. -->
+          <path d="M499 243Q511 263 536 280Q542 285 551 286L597 291" fill="none" stroke="#233c30" stroke-width="24" stroke-linecap="round"/><path d="M510 248q7 17 30 28" fill="none" stroke="#3a5140" stroke-width="4" stroke-linecap="round"/>
+          <ellipse cx="601" cy="291" rx="13" ry="10" transform="rotate(10 601 291)" fill="#233c30"/><path d="M600 293v5M605 292v5M610 291v4" stroke="#61705a" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M586 283h15" stroke="#142f24" stroke-width="5" stroke-linecap="round"/><circle cx="574" cy="274" r="5" fill="#b7c98f" stroke="#496746" stroke-width="2"/>
+        </g>
+        <g transform="translate(946 355) rotate(7)"><rect width="120" height="48" rx="13" fill="#faffed" stroke="#d6e3c6"/><path d="M15 48l-4 10 20-10" fill="#faffed"/><text x="60" y="21" text-anchor="middle" fill="#247749" font-size="11" font-weight="700" font-family="Arial,sans-serif">on my way!</text><text x="60" y="36" text-anchor="middle" fill="#8b9b7d" font-size="8" letter-spacing="1.2" font-family="Arial,sans-serif">好吃的值得飞奔</text></g>
+      </svg>
+      <div class="scene-label"><span class="number">01</span> THE LITTLE DELIVERY CLUB</div>
+      <span class="scene-caption">POWERED BY PAWS & PEDALS ↗</span>
+    </section>
+    <section class="dashboard" aria-label="骑行动画控制">
+      <div><span class="small-label">DELIVERY STATUS / 配送状态</span><div class="status-line"><span class="status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 8h16v12H4zM3 4h18v4H3zM10 4v4M14 4v4M9 13l2 2 4-4"/></svg></span><div id="status-text">美味，全速前进<small>保温箱已就位 · 快乐配送中</small></div></div></div>
+      <div><div class="speed-top"><label for="cadence" class="small-label">PEDAL POWER / 蹬踏频率</label><output id="cadence-value" for="cadence">150 <span>rpm</span></output></div><input id="cadence" type="range" min="70" max="200" value="150" step="1" aria-label="蹬踏频率，每分钟转数"><div class="speed-ends"><span>悠哉骑行</span><span>疯狂蹬蹬蹬 ↗</span></div></div>
+      <div class="playback"><div><span class="small-label">ON THE MOVE / 时速</span><div class="pace"><output id="speed-value">27.9</output> <span>km/h</span></div></div><button class="pause" id="pause" type="button" aria-label="暂停动画"><svg viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path id="pause-icon" d="M3 2h3v10H3zM8 2h3v10H8z"/></svg><span id="pause-text">歇一会儿</span></button></div>
+    </section>
+  </main>
+  <footer><span>英国熊猫外卖灵感 · 原创角色与动画概念</span><span class="tagline">A little panda. A lot of heart. ♡</span></footer>
+</div>
+<script>
+(() => {
+  'use strict';
+  // One revolution is .5 s at the reference cadence of 120 rpm.
+  // JS calculates closed-chain inverse kinematics once; CSS runs the animation.
+  const geometry = Object.freeze({ hipX:438, hipY:304, crankX:470, crankY:410, radius:32, thigh:78, shin:77, ankleHeight:12, gear:1.45, wheelMetres:.34 });
+  function pose(theta) {
+    const g = geometry;
+    const pedal = { x:g.crankX + g.radius*Math.cos(theta), y:g.crankY + g.radius*Math.sin(theta) };
+    const ankle = { x:pedal.x, y:pedal.y-g.ankleHeight };
+    const dx = ankle.x-g.hipX, dy = ankle.y-g.hipY, distance = Math.hypot(dx,dy);
+    const along = (g.thigh*g.thigh-g.shin*g.shin+distance*distance)/(2*distance);
+    const height = Math.sqrt(Math.max(0,g.thigh*g.thigh-along*along));
+    // Select the forward knee branch, keeping both knees anatomically in front.
+    const knee = { x:g.hipX+along*dx/distance+height*dy/distance, y:g.hipY+along*dy/distance-height*dx/distance };
+    return { pedal, ankle, knee, upper:Math.atan2(knee.y-g.hipY,knee.x-g.hipX)*180/Math.PI, lower:Math.atan2(ankle.y-knee.y,ankle.x-knee.x)*180/Math.PI };
+  }
+  const rules = [];
+  for (const [side,offset] of [['near',0],['far',Math.PI]]) {
+    const frames = { thigh:[], shin:[], foot:[], pedal:[] };
+    for (let i=0; i<=360; i++) {
+      const p=pose(i/360*Math.PI*2+offset), percent=(i/360*100).toFixed(6);
+      const transform = {
+        thigh:`translate(${geometry.hipX}px,${geometry.hipY}px) rotate(${p.upper.toFixed(6)}deg)`,
+        shin:`translate(${p.knee.x.toFixed(6)}px,${p.knee.y.toFixed(6)}px) rotate(${p.lower.toFixed(6)}deg)`,
+        foot:`translate(${p.ankle.x.toFixed(6)}px,${p.ankle.y.toFixed(6)}px)`,
+        pedal:`translate(${p.pedal.x.toFixed(6)}px,${p.pedal.y.toFixed(6)}px)`
+      };
+      for (const part of Object.keys(frames)) frames[part].push(`${percent}%{transform:${transform[part]}}`);
+    }
+    for (const [part,keyframes] of Object.entries(frames)) rules.push(`@keyframes ${side}-${part}{${keyframes.join('')}} #${side}-${part}{animation-name:${side}-${part};}`);
+  }
+  const style = document.createElement('style');
+  style.textContent=rules.join('\n');
+  document.head.append(style);
+
+  const scene=document.querySelector('.scene'), slider=document.getElementById('cadence');
+  const button=document.getElementById('pause');
+  const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
+  let paused=reducedMotion.matches;
+  // A shared start time locks pedals, cranks, wheels and the moving road together.
+  const animations=scene.getAnimations({subtree:true});
+  const start=document.timeline.currentTime;
+  for (const animation of animations) { animation.startTime=start; animation.playbackRate=Number(slider.value)/120; }
+  function updateSpeed() {
+    const rpm=Number(slider.value);
+    document.getElementById('cadence-value').innerHTML=`${rpm} <span>rpm</span>`;
+    document.getElementById('speed-value').textContent=paused?'0.0':(rpm*geometry.gear*2*Math.PI*geometry.wheelMetres*60/1000).toFixed(1);
+    slider.setAttribute('aria-valuetext',`每分钟 ${rpm} 转`);
+    // Updating playback rates preserves phase, even when changing speed mid-stroke.
+    for (const animation of animations) animation.updatePlaybackRate(rpm/120);
+  }
+  function updatePlayback() {
+    scene.classList.toggle('paused',paused);
+    document.getElementById('pause-text').textContent=paused?'继续出发':'歇一会儿';
+    document.getElementById('pause-icon').setAttribute('d',paused?'M3 1l10 6-10 6z':'M3 2h3v10H3zM8 2h3v10H8z');
+    button.setAttribute('aria-label',paused?'继续播放动画':'暂停动画');
+    document.getElementById('delivery-label').textContent=paused?'小熊猫正在休息':'小熊猫正在全力配送';
+    document.getElementById('status-text').innerHTML=paused?'休息一下，马上出发<small>保温箱已就位 · 美味仍在保温</small>':'美味，全速前进<small>保温箱已就位 · 快乐配送中</small>';
+    updateSpeed();
+  }
+  slider.addEventListener('input',updateSpeed);
+  button.addEventListener('click',()=>{ paused=!paused; updatePlayback(); });
+  reducedMotion.addEventListener('change',event=>{ paused=event.matches; updatePlayback(); });
+  updatePlayback();
+})();
+</script>
+</body>
+</html>

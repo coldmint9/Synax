@@ -78,11 +78,43 @@ const defaultDeps: OrchestratorDeps = {
   get store() { return agentRuntimeStore; },
 };
 
+/** Child statuses the delegating parent can never resolve in-run: nothing drives
+ *  another round or a resume while the delegate call is returning. Left alone they
+ *  would register the child as pending forever and block parent acceptance. */
+const UNRESOLVABLE_CHILD_STATUSES = new Set(['queued', 'running', 'paused', 'interrupted']);
+
+/** Finalize a child that ended in a non-terminal, non-waiting status. Waiting
+ *  children (permission/form) stay untouched — the user can still answer them. */
+function reapUnresolvableChild(
+  childSessionId: string,
+  timedOut: boolean,
+  timeoutMs: number,
+  deps: OrchestratorDeps,
+): void {
+  let child: ReturnType<AgentRuntimeStore['tryGetSession']> | undefined;
+  try {
+    child = deps.store.tryGetSession(childSessionId);
+  } catch { /* store unavailable — leave the child as-is */ }
+  if (!child || !UNRESOLVABLE_CHILD_STATUSES.has(child.status)) return;
+  const reason = timedOut
+    ? `Subagent timed out after ${timeoutMs}ms.`
+    : `Subagent ended as ${child.status} without a terminal result.`;
+  try {
+    deps.store.updateSession(childSessionId, {
+      status: 'failed',
+      updatedAt: nowIso(),
+      blockedReason: reason,
+    });
+  } catch (err) {
+    logger.warn({ childSessionId, err }, '[subagent-orchestrator] failed to finalize child');
+  }
+}
+
 /**
  * Run a single already-created child session to completion with a wall-clock
  * timeout. Never throws — any failure/timeout is folded into the returned
- * SubagentResult. On timeout the child's own run is aborted (it does not leak),
- * but sibling work is untouched.
+ * SubagentResult. On timeout the child's own run is aborted and finalized (it
+ * does not leak), but sibling work is untouched.
  */
 export async function runChildToCompletion(
   childSessionId: string,
@@ -114,6 +146,7 @@ export async function runChildToCompletion(
   } finally {
     clearTimeout(timer);
     opts.abortSignal?.removeEventListener('abort', onParentAbort);
+    reapUnresolvableChild(childSessionId, timedOut, opts.timeoutMs, deps);
   }
 
   return mapChildToResult(childSessionId, spec, timedOut, deps);
@@ -216,11 +249,25 @@ export async function runBatch(
   const workers = Array.from({ length: Math.min(maxConcurrency, created.length) }, runSlot);
   await Promise.allSettled(workers);
 
-  // Fill any slots skipped by an aborted batch.
+  // Fill any slots skipped by an aborted batch; their sessions were created but
+  // never driven, so finalize them instead of leaving 'running' zombies.
   for (let i = 0; i < specs.length; i++) {
     if (!results[i]) {
+      const childSessionId = created[i]?.childSessionId ?? null;
+      if (childSessionId) {
+        try {
+          deps.store.updateSession(childSessionId, {
+            status: 'failed',
+            updatedAt: nowIso(),
+            blockedReason: 'Batch aborted before execution.',
+          });
+        } catch (err) {
+          logger.warn({ parentSessionId, childSessionId, err },
+            '[subagent-orchestrator] failed to finalize skipped child');
+        }
+      }
       results[i] = {
-        spec: specs[i], childSessionId: created[i]?.childSessionId ?? null,
+        spec: specs[i], childSessionId,
         status: 'failed', summary: null, error: 'Batch aborted before execution.',
       };
     }

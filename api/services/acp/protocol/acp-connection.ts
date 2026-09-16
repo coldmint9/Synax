@@ -274,10 +274,12 @@ function resolveCwd(cwd?: string): string {
 export async function createAcpSession(
   conn: ClientSideConnection,
   cwd: string,
+  additionalDirectories?: string[],
 ): Promise<AcpSessionHandle> {
   const response = await conn.newSession({
     cwd: resolveCwd(cwd),
     mcpServers: [],
+    ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
   })
   return {
     sessionId: response.sessionId,
@@ -290,11 +292,13 @@ export async function loadAcpSession(
   conn: ClientSideConnection,
   acpSessionId: string,
   cwd: string,
+  additionalDirectories?: string[],
 ): Promise<AcpSessionHandle> {
   const response = await conn.loadSession({
     sessionId: acpSessionId,
     cwd: resolveCwd(cwd),
     mcpServers: [],
+    ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
   })
   return {
     sessionId: acpSessionId,
@@ -307,11 +311,13 @@ export async function resumeAcpSession(
   conn: ClientSideConnection,
   acpSessionId: string,
   cwd: string,
+  additionalDirectories?: string[],
 ): Promise<AcpSessionHandle> {
   const response = await conn.resumeSession({
     sessionId: acpSessionId,
     cwd: resolveCwd(cwd),
     mcpServers: [],
+    ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
   })
   return {
     sessionId: acpSessionId,
@@ -359,18 +365,26 @@ export async function openAcpSession(
     cwd: string;
     acpSessionId?: string | null;
     capabilities: AgentCapabilities;
+    additionalDirectories?: string[];
   },
 ): Promise<AcpSessionHandle> {
+  // The SDK defines directory membership on session lifecycle requests, not a
+  // generic config option. Require the agent's advertised support before use.
+  const supportsDirectories = input.capabilities.sessionCapabilities?.additionalDirectories != null;
+  if (input.additionalDirectories?.length && !supportsDirectories) {
+    throw new Error('This ACP backend does not advertise additional workspace directory support.');
+  }
+  const additionalDirectories = supportsDirectories ? input.additionalDirectories : undefined;
   if (input.acpSessionId) {
     if (input.capabilities.loadSession) {
-      return loadAcpSession(conn, input.acpSessionId, input.cwd)
+      return loadAcpSession(conn, input.acpSessionId, input.cwd, additionalDirectories)
     }
     if (input.capabilities.sessionCapabilities?.resume) {
-      return resumeAcpSession(conn, input.acpSessionId, input.cwd)
+      return resumeAcpSession(conn, input.acpSessionId, input.cwd, additionalDirectories)
     }
     throw new Error('This ACP backend cannot restore the stored session. Start a new session explicitly.')
   }
-  return createAcpSession(conn, input.cwd)
+  return createAcpSession(conn, input.cwd, additionalDirectories)
 }
 
 /**

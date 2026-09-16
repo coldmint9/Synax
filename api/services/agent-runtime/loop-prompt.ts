@@ -97,6 +97,10 @@ export function buildCoreLoopSection(
     lines.push(
       "Use context.read to retrieve omitted evidence by reference instead of redoing it.",
     );
+  if ([...tools].some((id) => id.startsWith("browser.")))
+    lines.push(
+      "browser.* tools drive a real Chromium for end-to-end debugging: browser.navigate returns an accessibility snapshot with [ref=eN] handles; browser.click / browser.type act on those handles and re-snapshot; browser.console and browser.network expose client-side errors and API traffic; browser.screenshot captures pixels. Refs go stale after navigation — re-snapshot before interacting.",
+    );
   return lines.join("\n");
 }
 

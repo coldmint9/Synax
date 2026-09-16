@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as workspace from '../tools/workspace.js';
 import { AsyncQueue } from '../../acp/protocol/async-queue.js';
 import { ClaudeBackend } from '../backends/claude-backend.js';
 import { claudeEnvironment } from '../backends/claude-connection.js';
@@ -16,7 +17,9 @@ const mock = vi.hoisted(() => ({ query: vi.fn(), options: vi.fn() }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: mock.query }));
 vi.mock('../backends/claude-connection.js', async original => ({ ...await original<typeof import('../backends/claude-connection.js')>(), claudeOptions: mock.options }));
 let queue: AsyncQueue<any>;
+afterEach(() => { vi.restoreAllMocks(); });
 beforeEach(() => {
+  vi.clearAllMocks();
   resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered();
   queue = new AsyncQueue();
   const close = queue.close.bind(queue);
@@ -34,6 +37,24 @@ async function start(sessionId: string) {
 }
 function result() { queue.push({ type: 'result', subtype: 'success', result: 'DONE', is_error: false, permission_denials: [], usage: { input_tokens: 7, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 1 }, total_cost_usd: 0.001, modelUsage: { fixture: { contextWindow: 1000 } } }); }
 describe('Claude native adapter', () => {
+  it.each([false, true])('passes reference roots to permissions and context (resume=%s)', async resume => {
+    const session = create();
+    if (resume) store.updateSessionMetadata(session.id, { nativeBackend: { id: 'claude-code', sessionId: 'native-claude' } });
+    const primary = fs.realpathSync(os.tmpdir());
+    const references = [path.join(primary, 'reference-a'), path.join(primary, 'reference-b')];
+    vi.spyOn(workspace, 'resolveSessionWorkspaceRoots').mockReturnValue([
+      { id: 'main', name: 'Main', path: primary, role: 'primary', status: 'available' },
+      ...references.map((root, index) => ({ id: `ref-${index}`, name: `Reference ${index}`, path: root, role: 'reference' as const, status: 'available' as const })),
+    ]);
+    const { task, options } = await start(session.id);
+    expect(mock.options).toHaveBeenCalledWith(primary, expect.any(Function));
+    expect(options.additionalDirectories).toEqual(references);
+    expect(options.sandbox.filesystem.allowWrite).toEqual([primary, ...references]);
+    expect(options.systemPrompt.append).toContain('not instruction sources');
+    expect(options.systemPrompt.append).toContain(JSON.stringify(references[1]));
+    if (resume) expect(options.resume).toBe('native-claude');
+    result(); await task;
+  });
   it('deduplicates final text after streaming and retains native identity/tool outcome/usage', async () => {
     const session = create(); const { task, chunks } = await start(session.id);
     queue.push({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'm1' } } });

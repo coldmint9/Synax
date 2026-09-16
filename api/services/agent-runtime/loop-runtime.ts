@@ -684,7 +684,7 @@ export class AgentLoopRuntime {
           const terminalWork = workStore.current(sessionId);
           if (
             terminalWork &&
-            ["completed", "blocked", "cancelled"].includes(terminalWork.status)
+            ["completed", "cancelled"].includes(terminalWork.status)
           ) {
             yield* this.finishWorkRun(sessionId, run);
             return;
@@ -1858,7 +1858,7 @@ export class AgentLoopRuntime {
           error.message.startsWith("context_blocked:") &&
           committedWork
         ) {
-          committedWork.status = "blocked";
+          committedWork.status = "waiting";
           committedWork.reason = error.message;
           workStore.save(committedWork);
           yield* this.finishWorkRun(sessionId, run);
@@ -2047,8 +2047,13 @@ export class AgentLoopRuntime {
         completedAt: nowIso(),
         stopReason: "round_yielded",
       });
+      // A yielded round is a clean stop. Only a parent session rests in 'paused'
+      // (waiting for its next round); a child has no next round — its delegate
+      // call is ending right now, so it must land terminal or the parent's
+      // pending-children acceptance check would count it forever.
+      const childDone = Boolean(this.store.getSession(sessionId).parentSessionId);
       this.store.updateSession(sessionId, {
-        status: "paused",
+        status: childDone ? "completed" : "paused",
         activeRunId: null,
         pendingResumeToken: null,
         completedAt: nowIso(),

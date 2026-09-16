@@ -38,6 +38,7 @@ import { registerSessionTitleHooks } from "./services/agent-runtime/session-titl
 import { wikiWriteQueue } from "./services/wiki/wiki-write-queue-service.js";
 import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
 import { startPermissionTimeoutSweeper } from "./services/agent-runtime/permission-timeout-sweeper.js";
+import { closeAllBrowserSessions } from "./services/agent-runtime/tools/browser/browser-manager.js";
 
 export const app = new Hono();
 
@@ -169,6 +170,7 @@ async function shutdownRuntime(): Promise<void> {
   }
   const unresolved = await stopHostProcesses(runtimeHost.hostId);
   if (unresolved.length) { failed = true; pinoLogger.error({ count: unresolved.length }, 'owned processes require recovery'); }
+  await closeAllBrowserSessions('Runtime host is shutting down.');
   runtimeHost.release(); closeDb(); process.exit(failed ? 1 : 0);
 }
 process.on('SIGINT', () => { void shutdownRuntime(); });

@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ProjectWorkspaceRoot } from '../../../project-workspace.js';
 const fixture = vi.hoisted(() => ({
   scan: { scanId: "stable-scan", text: "auth module" },
   wiki: "Architecture summary",
+  empty: false,
+  roots: [] as ProjectWorkspaceRoot[],
 }));
+vi.mock('../../tools/workspace.js', () => ({ resolveSessionWorkspaceRoots: () => fixture.roots }));
 vi.mock("../../../../db/index.js", () => ({
   getRawSqlite: () => ({
     prepare: (sql: string) => ({
-      get: () =>
+      get: () => fixture.empty ? undefined :
         sql.includes("wiki_scan_git_cache")
           ? { resultJson: JSON.stringify(fixture.scan) }
           : { title: "Landscape", contentMd: fixture.wiki },
@@ -45,4 +49,23 @@ it("re-enriches Code Map/Wiki with fresh storage IDs but stable model-visible co
       enrichContextForPrompt(null, "project", "/workspace", "Investigate auth"),
     ),
   ).not.toBe(prompt(contexts[0]));
+});
+
+it('removes the final reference block even when there is no Code Map or Wiki', () => {
+  fixture.empty = true;
+  fixture.roots = [
+    { id: 'main', name: 'Main', path: '/main', role: 'primary', status: 'available' },
+    { id: 'ref', name: 'Reference', path: '/ref', role: 'reference', status: 'available' },
+  ];
+  try {
+    const previous = enrichContextForPrompt(null, 'project', '/main', undefined, 'session');
+    expect(previous!.blocks[0].content).toContain('/ref');
+    fixture.roots = fixture.roots.slice(0, 1);
+    const next = enrichContextForPrompt(previous, 'project', '/main', undefined, 'session');
+    expect(next!.blocks).toEqual([]);
+    expect(previous!.blocks).toHaveLength(1);
+  } finally {
+    fixture.empty = false;
+    fixture.roots = [];
+  }
 });

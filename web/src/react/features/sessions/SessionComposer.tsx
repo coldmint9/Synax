@@ -27,6 +27,7 @@ import {
   sessionHasPendingPermissions,
   canEnqueueSessionInput,
   canSwitchSessionMode,
+  isSessionResumable,
 } from "./sessionComposerState";
 import { InputQueueStrip } from "./InputQueueStrip";
 import type {
@@ -90,6 +91,7 @@ export function SessionComposer({
   );
   const submitSessionDraft = useAgentSessionStore((s) => s.submitSessionDraft);
   const cancelSessionRun = useAgentSessionStore((s) => s.cancelSessionRun);
+  const resumeSession = useAgentSessionStore((s) => s.resumeSession);
   const refreshSessions = useAgentSessionStore((s) => s.refreshSessions);
   const hasPendingPermissions = useAgentSessionStore((s) =>
     sessionHasPendingPermissions(sessionId, s.selectedSessionId, s.permissions),
@@ -412,6 +414,18 @@ export function SessionComposer({
     if (session) void cancelSessionRun(session.id);
   }, [cancelSessionRun, session]);
 
+  const isResumable = isSessionResumable(session);
+  const handleResume = useCallback(() => {
+    if (!session) return;
+    // Typed input rides along: sending a message to a resting session resumes it.
+    if (content.trim() || media.parts.length) {
+      void handleSubmit();
+      return;
+    }
+    setError(null);
+    void resumeSession(session.id);
+  }, [session, content, media, handleSubmit, resumeSession]);
+
   const allowedReasoningEfforts: ReasoningEffort[] | undefined = cliBackend
     ? (cliEfforts ??
       (backendId === "codex"
@@ -482,6 +496,8 @@ export function SessionComposer({
       onSubmit={() => void handleSubmit()}
       onStop={handleStop}
       isGenerating={isGenerating}
+      isResumable={isResumable}
+      onResume={isResumable ? handleResume : undefined}
       defaultExpanded={isCentered}
       providerId={providerId}
       modelId={modelId}

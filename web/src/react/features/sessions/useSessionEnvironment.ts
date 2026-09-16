@@ -38,5 +38,8 @@ export function useSessionEnvironment(sessionId: string | null) {
     return () => window.clearInterval(timer)
   }, [sessionId, reload])
 
-  return { environment, loading, reload }
+  // The session id is part of the snapshot so consumers (for example
+  // transcript links) can act without a second, possibly divergent, source of
+  // truth for "which session am I inside".
+  return { sessionId, environment, loading, reload }
 }

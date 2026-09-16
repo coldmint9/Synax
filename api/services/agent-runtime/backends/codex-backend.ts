@@ -88,7 +88,8 @@ export class CodexBackend implements BackendAdapter {
     entry.rpc.onRequest((method, params) => this.request(entry, method, object(params)));
     const model = input.model && input.model !== 'default' ? input.model : undefined;
     const start = { cwd: turn.workDir, model, approvalPolicy: 'untrusted', sandbox: 'workspace-write',
-      config: { sandbox_workspace_write: { writable_roots: [turn.workDir], network_access: false, exclude_tmpdir_env_var: true, exclude_slash_tmp: true } } };
+      developerInstructions: turn.workspace.prompt,
+      config: { sandbox_workspace_write: { writable_roots: turn.workspace.writableRoots, network_access: false, exclude_tmpdir_env_var: true, exclude_slash_tmp: true } } };
     const resumed = native.id === 'codex' && typeof native.sessionId === 'string';
     const response = object(await entry.rpc.request(resumed ? 'thread/resume' : 'thread/start', {
       ...start, ...(resumed ? { threadId: native.sessionId } : { ephemeral: false }),
@@ -107,7 +108,7 @@ export class CodexBackend implements BackendAdapter {
     entry.startingTurn = entry.rpc.request('turn/start', { threadId: entry.threadId,
       input: await codexMediaInput(input, turn.message), model,
       ...(input.reasoningEffort && input.reasoningEffort !== 'max' ? { effort: input.reasoningEffort } : {}),
-      approvalPolicy: 'untrusted', sandboxPolicy: { type: 'workspaceWrite', writableRoots: [turn.workDir], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true },
+      approvalPolicy: 'untrusted', sandboxPolicy: { type: 'workspaceWrite', writableRoots: turn.workspace.writableRoots, networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true },
     });
     const started = object(await entry.startingTurn);
     entry.turnId = string(object(started.turn).id) || entry.turnId;

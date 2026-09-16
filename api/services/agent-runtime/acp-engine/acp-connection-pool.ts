@@ -18,6 +18,7 @@ import { logger } from '../../../lib/logger.js';
 import { AgentRuntimeError } from '../runtime-errors.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { resolveSessionWorkDir } from '../tools/workspace.js';
+import { externalWorkspace } from '../backends/external-workspace.js';
 import type { AcpProviderId } from './acp-model.js';
 import { getAcpSessionMetadata, mergeAcpSessionMetadata } from './acp-session-metadata.js';
 import { acpSessionUpdateRouter } from './acp-session-update-router.js';
@@ -31,6 +32,7 @@ export interface PooledAcpConnection {
   capabilities: AgentCapabilities;
   connection: AcpConnection;
   workDir: string;
+  additionalDirectories?: string[];
   lastUsedAt: number;
   isReplay: boolean;
   sessionModels?: SessionModelState | null;
@@ -78,7 +80,11 @@ class AcpConnectionPool {
 
   async acquire(input: AcquireInput): Promise<PooledAcpConnection> {
     const pending = this.acquisitions.get(input.synaxSessionId);
-    if (pending) return pending.task;
+    if (pending) {
+      const connection = await pending.task;
+      if (connection.providerId !== input.providerId) throw new AgentRuntimeError('Cannot change the backend of an existing connection.', 'BACKEND_MISMATCH', 409);
+      return connection;
+    }
     this.assertCanAcquire(input.synaxSessionId);
     const controller = new AbortController();
     const task = Promise.resolve().then(() => this.openConnection(input, controller.signal));
@@ -92,20 +98,26 @@ class AcpConnectionPool {
     if (signal.aborted) throw new Error('ACP connection cancelled before launch.');
     this.assertCanAcquire(input.synaxSessionId);
     const existing = this.pool.get(input.synaxSessionId);
+    const session = agentRuntimeStore.getSession(input.synaxSessionId);
+    const stored = getAcpSessionMetadata(session);
+    if ((existing && existing.providerId !== input.providerId) || (stored && stored.providerId !== input.providerId)) {
+      throw new AgentRuntimeError('Cannot change the backend of an existing session.', 'BACKEND_MISMATCH', 409);
+    }
+    const workDir = resolveSessionWorkDir(input.synaxSessionId, input.projectId);
+    const workspace = externalWorkspace(input.synaxSessionId, input.projectId, workDir);
     if (existing && existing.connection.child.exitCode === null
       && existing.connection.child.signalCode === null && !existing.connection.child.killed) {
-      if (existing.providerId !== input.providerId) throw new AgentRuntimeError('Cannot change the backend of an existing connection.', 'BACKEND_MISMATCH', 409);
-      existing.lastUsedAt = Date.now();
-      return existing;
+      if (existing.workDir === workDir
+        && JSON.stringify(existing.additionalDirectories ?? []) === JSON.stringify(workspace.additionalDirectories)) {
+        existing.lastUsedAt = Date.now();
+        return existing;
+      }
     }
     if (existing) {
       await this.evict(input.synaxSessionId, false);
     }
     if (signal.aborted) throw new Error('ACP connection cancelled before launch.');
 
-    const session = agentRuntimeStore.getSession(input.synaxSessionId);
-    const workDir = resolveSessionWorkDir(input.synaxSessionId, input.projectId);
-    const stored = getAcpSessionMetadata(session);
     const spawnSpec = input.providerId === 'cursor-acp'
       ? await resolveSpawnForProviderAsync(input.providerId)
       : resolveSpawnForProvider(input.providerId);
@@ -124,6 +136,14 @@ class AcpConnectionPool {
     };
     signal.addEventListener('abort', cancelOpening, { once: true });
     try {
+      // Attach directory context at the protocol boundary so media blocks and the
+      // persisted user message remain intact. Include an empty reference list
+      // after removals so restored sessions do not keep using stale directories.
+      if (typeof connection.conn.prompt === 'function') {
+        const prompt = connection.conn.prompt.bind(connection.conn);
+        connection.conn.prompt = params => prompt({ ...params,
+          prompt: [{ type: 'text', text: externalWorkspace(synaxSessionId, input.projectId, workDir).prompt }, ...params.prompt] });
+      }
       if (signal.aborted) { cancelOpening(); throw new Error('ACP connection cancelled.'); }
       const { capabilities } = await withDeadline(initializeProtocol(connection.conn), 30_000, 'ACP handshake timed out.');
 
@@ -136,15 +156,18 @@ class AcpConnectionPool {
         isReplay = false;
         const opened = await openAcpSession(connection.conn, {
           cwd: workDir,
+          additionalDirectories: workspace.additionalDirectories,
           acpSessionId: stored.acpSessionId,
           capabilities,
         });
+        if (opened.sessionId !== stored.acpSessionId) throw new Error('ACP could not restore the original native session.');
         acpSessionId = opened.sessionId;
         sessionModels = opened.models;
         currentModelId = opened.models?.currentModelId ?? null;
       } else {
         const opened = await openAcpSession(connection.conn, {
           cwd: workDir,
+          additionalDirectories: workspace.additionalDirectories,
           capabilities,
         });
         acpSessionId = opened.sessionId;
@@ -169,6 +192,7 @@ class AcpConnectionPool {
         capabilities,
         connection,
         workDir,
+        additionalDirectories: workspace.additionalDirectories,
         lastUsedAt: Date.now(),
         isReplay,
         sessionModels,

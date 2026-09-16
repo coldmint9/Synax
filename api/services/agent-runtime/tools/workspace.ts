@@ -3,6 +3,7 @@ import path from 'node:path';
 import { DATA_ROOT } from '../../../lib/env.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { sandboxConfigForSession, sandboxPolicy } from '../sandbox/index.js';
+import { canonicalWorkspaceDirectory, projectWorkspaceRoots, readWorkspaceProject, type ProjectWorkspaceRoot } from '../../project-workspace.js';
 
 const sessionWorkspaceRoots = new Map<string, string>();
 
@@ -68,6 +69,18 @@ export function resolveSessionWorkDir(sessionId: string, projectId: string): str
   return binding?.workDir ?? tryGetSessionWorkspaceRoot(sessionId) ?? resolveProjectWorkDir(projectId);
 }
 
+/** A persisted membership snapshot also works in session worker processes. */
+export function resolveSessionWorkspaceRoots(sessionId: string, projectId: string): ProjectWorkspaceRoot[] {
+  const binding = agentRuntimeStore.tryGetSession(sessionId)?.sessionMetadata?.backend as { workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
+  if (binding?.workspaceRoots) return binding.workspaceRoots;
+  const project = readWorkspaceProject(projectId);
+  const primary = resolveSessionWorkDir(sessionId, projectId);
+  return [
+    { id: projectId, name: project?.name ?? projectId, path: primary, role: 'primary', status: 'available' },
+    ...(project ? projectWorkspaceRoots(project).filter(root => root.role === 'reference') : []),
+  ];
+}
+
 /** Freeze the real execution root before accepting work; never infer it from server cwd. */
 export function bindSessionWorkDir(sessionId: string): string {
   const session = agentRuntimeStore.getSession(sessionId);
@@ -76,8 +89,18 @@ export function bindSessionWorkDir(sessionId: string): string {
   const requested = binding?.workDir ?? tryGetSessionWorkspaceRoot(sessionId) ?? registered;
   if (!requested) throw new Error('The session has no registered workspace. Select an existing working directory before executing.');
   const root = fs.realpathSync(resolveWorkspaceRoot(requested));
+  // Refresh between executions. Never change the directory set during an active run.
+  const previous = binding as { workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
+  const project = readWorkspaceProject(session.projectId);
+  const roots = (session.activeRunId || session.parentSessionId) && previous?.workspaceRoots
+    ? previous.workspaceRoots
+    : [
+        { id: session.projectId, name: project?.name ?? session.projectId, path: root, role: 'primary' as const, status: 'available' as const },
+        ...(project ? projectWorkspaceRoots(project).filter(item => item.role === 'reference') : []),
+      ];
+  const workspaceRoots = roots.map(item => ({ ...item, path: canonicalWorkspaceDirectory(item.path), status: 'available' as const }));
   setSessionWorkspaceRoot(sessionId, root);
-  agentRuntimeStore.updateSessionMetadata(sessionId, { backend: { ...binding, workDir: root } });
+  agentRuntimeStore.updateSessionMetadata(sessionId, { backend: { ...binding, workDir: root, workspaceRoots } });
   return root;
 }
 

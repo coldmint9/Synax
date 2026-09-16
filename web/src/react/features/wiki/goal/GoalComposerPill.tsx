@@ -2,7 +2,7 @@ import { useInputCapability } from '../../media/useInputCapability'
 import { MediaAttachButton, MediaDraftPreview } from '../../media/MediaDraftControls'
 import type { MediaDraft } from '../../media/useMediaDraft'
 import { useEffect, useLayoutEffect, useRef, useCallback, type ReactNode, type RefObject, type KeyboardEvent } from 'react'
-import { Square, ArrowUp } from 'lucide-react'
+import { Square, ArrowUp, Play } from 'lucide-react'
 import type { ProviderDef } from '../../../../lib/contracts/config'
 import type { GlobalConfig } from '../../../../lib/contracts/config'
 import type { ReasoningEffort } from '../../../../lib/contracts/config'
@@ -41,6 +41,9 @@ interface Props {
   onSubmit: () => void
   onStop?: () => void
   isGenerating?: boolean
+  /** Resumable session: the action key becomes a play control that resumes. */
+  isResumable?: boolean
+  onResume?: () => void
   providerId: string | null
   modelId: string | null
   onModelSelect: (selection: GoalModelSelection) => void
@@ -82,6 +85,8 @@ export function GoalComposerPill({
   onSubmit,
   onStop,
   isGenerating = false,
+  isResumable = false,
+  onResume,
   providerId,
   modelId,
   onModelSelect,
@@ -179,15 +184,16 @@ export function GoalComposerPill({
     onCompositionEnd: handleCompositionEnd,
   }
 
+  const resumeMode = !isGenerating && isResumable && Boolean(onResume)
   const actionButton = (
     <button
       type="button"
-      aria-label={t(isGenerating ? 'goalStop' : 'goalSend')}
+      aria-label={t(isGenerating ? 'goalStop' : resumeMode ? 'sessionResume' : 'goalSend')}
       className={`goal-dock-composer-chip ${isGenerating ? 'goal-dock-composer-stop' : 'goal-dock-composer-send'} ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed`}
-      disabled={isGenerating ? !onStop : disabled || (!content.trim() && !media?.parts.length) || Boolean(media && !media.ready) || inputCapability.blocked}
-      onClick={isGenerating ? onStop : onSubmit}
+      disabled={isGenerating ? !onStop : resumeMode ? disabled : disabled || (!content.trim() && !media?.parts.length) || Boolean(media && !media.ready) || inputCapability.blocked}
+      onClick={isGenerating ? onStop : resumeMode ? onResume : onSubmit}
     >
-      {isGenerating ? <Square size={12} fill="currentColor" /> : <ArrowUp size={15} />}
+      {isGenerating ? <Square size={12} fill="currentColor" /> : resumeMode ? <Play size={13} fill="currentColor" /> : <ArrowUp size={15} />}
     </button>
   )
 

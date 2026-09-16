@@ -51,6 +51,11 @@ export function canEnqueueSessionInput(session: AgentSession | undefined): boole
   return false
 }
 
+/** Statuses where the send key becomes a resume (play) control. */
+export function isSessionResumable(session: AgentSession | undefined): boolean {
+  return Boolean(session && ['paused', 'interrupted', 'failed', 'blocked'].includes(session.status))
+}
+
 export function sessionHasPendingPermissions(
   sessionId: string | undefined,
   selectedSessionId: string | null,

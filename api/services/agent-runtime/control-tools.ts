@@ -183,9 +183,10 @@ export const goalFinishTool: RegisteredTool = {
     evidence: evidenceSchema.default([]),
   }),
   execute(input) {
-    return workRuntime.complete(input, (input.args as { reason: string }).reason,
-      (input.args as { evidence: import('./work-store.js').WorkEvidence[] }).evidence,
-      (input.args as { status: string }).status === 'blocked');
+    const args = input.args as { status: string; reason: string; evidence?: import('./work-store.js').WorkEvidence[] };
+    if (args.status === 'blocked') return workRuntime.reportBlocker(input, args.reason);
+    return workRuntime.complete(input, args.reason,
+      args.evidence ?? []);
   },
 };
 

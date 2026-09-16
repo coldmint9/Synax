@@ -1,6 +1,7 @@
 import { resolveSessionUserRequest } from './session-user-request.js';
 import { makeBackendBinding, validateBackendTurnInput } from './backends/backend-binding.js';
 import { resolveWorkspaceRoot } from './tools/workspace.js';
+import type { ProjectWorkspaceRoot } from '../project-workspace.js';
 import { workStore } from './work-store.js';
 import { interactionService } from './interaction-service.js';
 import { initializeGoal } from './goal-control.js';
@@ -66,14 +67,20 @@ export class AgentSessionRuntime {
       permissionTier: input.permissionTier,
       permissionOverrides: input.permissionOverrides,
     });
-    const parentBackend = parent?.sessionMetadata?.backend as { workDir?: string | null } | undefined;
+    const parentBackend = parent?.sessionMetadata?.backend as { workDir?: string | null; workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
     const requestedWorkDir = input.workDir ?? parentBackend?.workDir ?? null;
     if (parent && sessionMetadata.gitWorkspace === undefined && parent.sessionMetadata?.gitWorkspace !== undefined) {
       sessionMetadata.gitWorkspace = parent.sessionMetadata.gitWorkspace;
     }
     delete sessionMetadata.runtimeControl;
-    sessionMetadata.backend = makeBackendBinding(input.backendId ?? 'native', input.model,
+    const backend = makeBackendBinding(input.backendId ?? 'native', input.model,
       requestedWorkDir ? resolveWorkspaceRoot(requestedWorkDir) : null);
+    if (parentBackend?.workspaceRoots) {
+      backend.workspaceRoots = parentBackend.workspaceRoots.map(root => ({
+        ...root, ...(root.role === 'primary' && backend.workDir ? { path: backend.workDir } : {}),
+      }));
+    }
+    sessionMetadata.backend = backend;
     if (!parent && (input.profileId === 'synax' || input.profileId === 'goal')) {
       delete sessionMetadata.plan;
       delete sessionMetadata.goal;

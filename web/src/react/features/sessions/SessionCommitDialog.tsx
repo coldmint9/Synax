@@ -14,7 +14,7 @@ interface Props {
 }
 
 /**
- * Commit the session workspace on its current branch and push it.
+ * Commit the session workspace on its current branch, optionally pushing it.
  *
  * Leaving the message empty asks the session's current model to write it —
  * that call happens on the server, so the dialog only sends what the user typed.
@@ -29,7 +29,7 @@ export function SessionCommitDialog({
 }: Props) {
   const { t } = useLocale()
   const [message, setMessage] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  const [submitting, setSubmitting] = useState<'commit' | 'push' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<SessionGitCommitResult | null>(null)
 
@@ -39,25 +39,31 @@ export function SessionCommitDialog({
     setMessage('')
     setError(null)
     setResult(null)
-    setSubmitting(false)
+    setSubmitting(null)
   }, [isOpen])
 
-  const handleCommit = async () => {
+  const run = async (push: boolean) => {
     if (!sessionId || submitting) return
-    setSubmitting(true)
+    setSubmitting(push ? 'push' : 'commit')
     setError(null)
     try {
       const trimmed = message.trim()
-      const committed = await agentRuntimeApi.commitSessionWorkspace(
-        sessionId,
-        trimmed ? { message: trimmed } : {},
-      )
+      const committed = await agentRuntimeApi.commitSessionWorkspace(sessionId, {
+        ...(trimmed ? { message: trimmed } : {}),
+        ...(push ? {} : { push: false }),
+      })
       setResult(committed)
       onCommitted(committed)
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : t('workspaceCommitPush'))
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : push
+            ? t('workspaceCommitPush')
+            : t('workspaceCommitOnly'),
+      )
     } finally {
-      setSubmitting(false)
+      setSubmitting(null)
     }
   }
 
@@ -65,10 +71,14 @@ export function SessionCommitDialog({
     if (!open && !submitting) onClose()
   }
 
+  const busy = submitting !== null
+  const upstream = result?.upstream ?? branch
+  const pushed = result?.pushed === true
+
   return (
     <Modal.Backdrop isOpen={isOpen} onOpenChange={handleOpenChange}>
       <Modal.Container size="sm">
-        <Modal.Dialog className="sm:max-w-md">
+        <Modal.Dialog className="sm:max-w-lg">
           <Modal.CloseTrigger />
           <Modal.Header>
             <Modal.Icon className="bg-primary/10 text-primary">
@@ -85,14 +95,25 @@ export function SessionCommitDialog({
                 <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-success" />
                 <div className="min-w-0 space-y-1.5">
                   <p className="text-xs leading-relaxed text-foreground/90">
-                    {t('workspaceCommitSuccess', { sha: result.commitSha.slice(0, 8) })}
+                    {pushed
+                      ? t('workspaceCommitSuccess', { sha: result.commitSha.slice(0, 8) })
+                      : t('workspaceCommitLocalSuccess', { sha: result.commitSha.slice(0, 8) })}
                   </p>
-                  {result.upstream ? (
-                    <p className="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
-                      <GitBranch size={10} className="shrink-0" />
-                      <span className="truncate font-mono">{result.upstream}</span>
+                  {!pushed ? (
+                    <p className="text-[10px] leading-relaxed text-muted-foreground">
+                      {t('workspaceCommitLocalHint')}
                     </p>
                   ) : null}
+                  <p className="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <GitBranch size={10} className="shrink-0" />
+                    <span className="truncate font-mono">{upstream}</span>
+                  </p>
+                  <p
+                    className="truncate font-mono text-[10px] leading-relaxed text-foreground/70"
+                    title={result.message}
+                  >
+                    {result.message}
+                  </p>
                 </div>
               </div>
             ) : (
@@ -131,6 +152,7 @@ export function SessionCommitDialog({
                     onChange={event => setMessage(event.target.value)}
                     placeholder={t('workspaceCommitMessagePlaceholder')}
                     rows={4}
+                    fullWidth
                     className="text-xs"
                   />
                   <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
@@ -138,6 +160,10 @@ export function SessionCommitDialog({
                     <span>{t('workspaceCommitMessageHint')}</span>
                   </p>
                 </div>
+
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {t('workspaceCommitActionHint')}
+                </p>
 
                 {error ? (
                   <p
@@ -151,25 +177,42 @@ export function SessionCommitDialog({
               </>
             )}
           </Modal.Body>
-          <Modal.Footer>
+          <Modal.Footer className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
             {result ? (
-              <Button variant="primary" size="sm" onPress={onClose}>
+              <Button variant="primary" size="sm" onPress={onClose} className="sm:ml-auto">
                 {t('workspaceCommitDone')}
               </Button>
             ) : (
               <>
-                <Button variant="ghost" size="sm" onPress={onClose} isDisabled={submitting}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onPress={onClose}
+                  isDisabled={busy}
+                  className="sm:mr-auto"
+                >
                   {t('workspaceCommitCancel')}
                 </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onPress={() => void handleCommit()}
-                  isPending={submitting}
-                  isDisabled={!sessionId || changedFiles === 0}
-                >
-                  {t('workspaceCommitConfirm')}
-                </Button>
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onPress={() => void run(false)}
+                    isPending={submitting === 'commit'}
+                    isDisabled={!sessionId || changedFiles === 0 || submitting === 'push'}
+                  >
+                    {t('workspaceCommitOnly')}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onPress={() => void run(true)}
+                    isPending={submitting === 'push'}
+                    isDisabled={!sessionId || changedFiles === 0 || submitting === 'commit'}
+                  >
+                    {t('workspaceCommitPush')}
+                  </Button>
+                </div>
               </>
             )}
           </Modal.Footer>
