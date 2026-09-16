@@ -168,14 +168,11 @@ agentRuntimeRoutes.get('/sessions', (c) => {
   const parsed = listSessionsQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
   if (!parsed.success) return validationError(c, parsed.error);
   const { limit, offset, status, ...filter } = parsed.data;
-  const allFiltered = agentSessionRuntime.list({ ...filter, limit: Number.MAX_SAFE_INTEGER }).map(projectSessionState).filter(session => !status || session.status === status);
-  const countByStatus: Record<string, number> = {};
-  for (const s of allFiltered) {
-    countByStatus[s.status] = (countByStatus[s.status] || 0) + 1;
-  }
-  const totalCount = allFiltered.length;
-  const items = allFiltered.slice(offset, offset + limit);
-  return c.json({ items, totalCount, countByStatus });
+  // status filtering, paging and the status histogram are resolved in SQL against
+  // the projected runtimeControl state; only the requested page is materialized.
+  const page = agentRuntimeStore.listSessionsPage({ ...filter, status }, { limit, offset });
+  const items = page.items.map(projectSessionState);
+  return c.json({ items, totalCount: page.totalCount, countByStatus: page.countByStatus });
 });
 
 agentRuntimeRoutes.get('/sessions/:sessionId', (c) => {

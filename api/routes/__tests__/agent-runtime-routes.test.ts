@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetAgentRuntimeFixtures } from '../../services/agent-runtime/__tests__/agent-runtime-fixtures.js';
+import { agentRuntimeStore } from '../../services/agent-runtime/session-store.js';
 
 const mockCreateGatewayStream = vi.fn();
 const mockProviderCheck = vi.hoisted(() => vi.fn());
@@ -211,5 +212,85 @@ describe('agent runtime routes', () => {
     const messagesResponse = await agentRuntimeRoutes.request(`http://localhost/sessions/${payload.session.id}/messages`);
     const messagesBody = await messagesResponse.json() as { items: Array<{ role: string; content: string }> };
     expect(messagesBody.items.map((item) => `${item.role}:${item.content}`)).toContain('assistant:Write finished.');
+  });
+});
+
+describe('GET /sessions projected-status pagination', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    resetAgentRuntimeFixtures();
+  });
+
+  function seed(): void {
+    const base = (id: string, updatedAt: string) => ({
+      id,
+      projectId: 'p1',
+      parentSessionId: null,
+      childSessionIds: [],
+      nodeId: null,
+      profileId: 'explorer',
+      title: null,
+      prompt: 'fixture',
+      contextSnapshotId: null,
+      thinkingMode: 'standard' as const,
+      permissionRules: [],
+      createdAt: updatedAt,
+      updatedAt,
+      completedAt: null,
+      resultSummary: null,
+      blockedReason: null,
+      skillIds: [],
+      mcpServerIds: [],
+      activeRunId: null,
+      pendingResumeToken: null,
+      sessionMetadata: {} as Record<string, unknown>,
+    });
+    agentRuntimeStore.createSession({ ...base('c-new', '2026-01-01T00:00:05Z'), status: 'completed' });
+    agentRuntimeStore.createSession({ ...base('stopping', '2026-01-01T00:00:04Z'), status: 'running', sessionMetadata: { runtimeControl: { state: 'stopping', reason: 'Stopping execution.' } } });
+    agentRuntimeStore.createSession({ ...base('unconfirmed', '2026-01-01T00:00:03Z'), status: 'running', sessionMetadata: { runtimeControl: { state: 'unconfirmed', reason: 'Needs inspection.' } } });
+    agentRuntimeStore.createSession({ ...base('running', '2026-01-01T00:00:02Z'), status: 'running' });
+    agentRuntimeStore.createSession({ ...base('c-old', '2026-01-01T00:00:01Z'), status: 'completed' });
+  }
+
+  it('returns projected items with exact totalCount and countByStatus', async () => {
+    seed();
+    const { agentRuntimeRoutes } = await import('../agent-runtime.js');
+    const response = await agentRuntimeRoutes.request('http://localhost/sessions?projectId=p1&limit=2&offset=0');
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      items: Array<{ id: string; status: string; blockedReason: string | null }>;
+      totalCount: number;
+      countByStatus: Record<string, number>;
+    };
+
+    expect(body.totalCount).toBe(5);
+    expect(body.countByStatus).toEqual({ completed: 2, stopping: 1, blocked: 1, running: 1 });
+    expect(body.items.map((item) => item.id)).toEqual(['c-new', 'stopping']);
+    expect(body.items[1]).toMatchObject({ status: 'stopping', blockedReason: 'Stopping execution.' });
+  });
+
+  it('filters and pages by projected status without dropping counts', async () => {
+    seed();
+    const { agentRuntimeRoutes } = await import('../agent-runtime.js');
+
+    const stopping = await agentRuntimeRoutes.request('http://localhost/sessions?projectId=p1&status=stopping');
+    const stoppingBody = await stopping.json() as { items: Array<{ id: string; status: string }>; totalCount: number; countByStatus: Record<string, number> };
+    expect(stoppingBody.items.map((item) => item.id)).toEqual(['stopping']);
+    expect(stoppingBody.totalCount).toBe(1);
+    expect(stoppingBody.countByStatus).toEqual({ stopping: 1 });
+
+    const blocked = await agentRuntimeRoutes.request('http://localhost/sessions?projectId=p1&status=blocked');
+    const blockedBody = await blocked.json() as { items: Array<{ id: string; status: string; blockedReason: string | null }> };
+    expect(blockedBody.items.map((item) => item.id)).toEqual(['unconfirmed']);
+    expect(blockedBody.items[0]).toMatchObject({ status: 'blocked', blockedReason: 'Needs inspection.' });
+
+    const running = await agentRuntimeRoutes.request('http://localhost/sessions?projectId=p1&status=running');
+    const runningBody = await running.json() as { items: Array<{ id: string }> };
+    expect(runningBody.items.map((item) => item.id)).toEqual(['running']);
+
+    const secondPage = await agentRuntimeRoutes.request('http://localhost/sessions?projectId=p1&limit=2&offset=3');
+    const secondPageBody = await secondPage.json() as { items: Array<{ id: string }>; totalCount: number };
+    expect(secondPageBody.items.map((item) => item.id)).toEqual(['running', 'c-old']);
+    expect(secondPageBody.totalCount).toBe(5);
   });
 });

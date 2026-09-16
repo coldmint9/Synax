@@ -22,19 +22,36 @@ class RuntimeJournal {
   private readonly waiters = new Map<string, Set<() => void>>();
 
   append(sessionId: string, runId: string, chunk: AgentRunStreamChunk): RuntimeStreamRecord {
-    const record = getRawSqlite().transaction(() => {
+    return this.appendBatch(sessionId, runId, [chunk])[0];
+  }
+
+  /**
+   * Commits a burst as one atomic transaction. Contract: all records in the
+   * batch share a single projected session-state snapshot taken at commit time;
+   * caller order is preserved by autoincrement sequence; the batch either lands
+   * whole or not at all; and waiters wake only after COMMIT. This is a
+   * stronger, coarser guarantee than sequential `append` calls, each of which
+   * snapshots state independently and can observe a write that landed between
+   * them — the writer relies on a synchronous burst so no such write can occur
+   * inside one batch.
+   */
+  appendBatch(sessionId: string, runId: string, chunks: AgentRunStreamChunk[]): RuntimeStreamRecord[] {
+    if (chunks.length === 0) return [];
+    const records = getRawSqlite().transaction(() => {
       const run = agentRuntimeStore.getRun(runId);
       if (run.sessionId !== sessionId) throw new AgentValidationError('Stream Run belongs to another session.');
       const session = projectSessionState(agentRuntimeStore.getSession(sessionId));
       const state: RuntimeStreamRecord['state'] = { status: session.status, activeRunId: session.activeRunId,
         pendingResumeToken: session.pendingResumeToken, blockedReason: session.blockedReason, updatedAt: session.updatedAt };
-      const [row] = getRawSqlite().prepare(`INSERT INTO agent_runtime_stream_records
-        (session_id, run_id, kind, chunk_json, created_at) VALUES (?, ?, ?, ?, ?) RETURNING sequence`)
-        .all(sessionId, runId, chunk.type, JSON.stringify({ chunk, state }), nowIso()) as Array<{ sequence: number }>;
-      return { sequence: row.sequence, sessionId, runId, chunk, state };
+      const insert = getRawSqlite().prepare(`INSERT INTO agent_runtime_stream_records
+        (session_id, run_id, kind, chunk_json, created_at) VALUES (?, ?, ?, ?, ?) RETURNING sequence`);
+      return chunks.map(chunk => {
+        const [row] = insert.all(sessionId, runId, chunk.type, JSON.stringify({ chunk, state }), nowIso()) as Array<{ sequence: number }>;
+        return { sequence: row.sequence, sessionId, runId, chunk, state };
+      });
     })();
     for (const wake of [...this.waiters.get(sessionId) ?? []]) wake();
-    return record;
+    return records;
   }
 
   cursor(sessionId: string): number {

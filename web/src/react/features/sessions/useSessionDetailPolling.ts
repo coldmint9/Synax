@@ -4,7 +4,14 @@ import { useAgentSessionStore } from './agentSessionStore'
 
 const ACTIVE_SESSION_POLL_MS = 4_000
 
-/** Poll session list + detail while the selected session is actively running. */
+function isDocumentHidden(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden'
+}
+
+/**
+ * Poll session list + detail while the selected session is actively running.
+ * Non-overlapping: the next cycle starts only after the awaited `refreshDetail` settles, which resolves before the detached transcript task.
+ */
 export function useSessionDetailPolling() {
   const apiReachable = useApiConnectivityStore(s => s.apiReachable)
   const refreshDetail = useAgentSessionStore(s => s.refreshDetail)
@@ -22,14 +29,60 @@ export function useSessionDetailPolling() {
     const isActive = selectedStatus === 'running' || selectedStatus === 'waiting_permission' || selectedStatus === 'waiting_input'
     if (!isActive) return
 
-    const refresh = () => {
-      void refreshSessions()
-      void refreshDetail()
+    let cancelled = false
+    let inFlight = false
+    let timer: number | null = null
+
+    function clearTimer() {
+      if (timer === null) return
+      window.clearTimeout(timer)
+      timer = null
     }
 
-    refresh()
-    const timer = window.setInterval(refresh, ACTIVE_SESSION_POLL_MS)
+    function schedule() {
+      clearTimer()
+      if (cancelled || isDocumentHidden()) return
+      timer = window.setTimeout(tick, ACTIVE_SESSION_POLL_MS)
+    }
 
-    return () => window.clearInterval(timer)
+    function startRefresh() {
+      inFlight = true
+      void Promise.allSettled([refreshSessions(), refreshDetail()]).finally(() => {
+        inFlight = false
+        schedule()
+      })
+    }
+
+    function tick() {
+      clearTimer()
+      if (cancelled || isDocumentHidden()) return
+      if (inFlight) {
+        schedule()
+        return
+      }
+      startRefresh()
+    }
+
+    function handleVisibilityChange() {
+      if (cancelled) return
+      if (isDocumentHidden()) {
+        clearTimer()
+        return
+      }
+      tick()
+    }
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange)
+    }
+    if (!isDocumentHidden()) startRefresh()
+
+    return () => {
+      cancelled = true
+      clearTimer()
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange)
+      }
+    }
   }, [apiReachable, panelOpen, selectedSessionId, selectedStatus, refreshDetail, refreshSessions])
 }

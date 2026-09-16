@@ -14,22 +14,41 @@ export class RuntimeStreamWriter {
 
   write(chunk: AgentRunStreamChunk): void {
     if (!this.current()) { this.abandon(); return; }
+    const commit: AgentRunStreamChunk[] = [];
     if (!this.runId) {
       if ('run' in chunk) this.runId = chunk.run.id;
       else if ('runId' in chunk) this.runId = chunk.runId;
       else if (chunk.type === 'step_started') this.runId = chunk.step.runId;
       if (!this.runId) { this.pending.push(chunk); return; }
-      for (const pending of this.pending) runtimeJournal.append(this.sessionId, this.runId, pending);
+      commit.push(...this.pending);
       this.pending = [];
     }
     if (chunk.type === 'message_delta' || chunk.type === 'thought_delta') {
-      if (this.delta && (this.delta.type !== chunk.type || this.delta.stepId !== chunk.stepId)) this.flush();
+      if (this.delta && (this.delta.type !== chunk.type || this.delta.stepId !== chunk.stepId)) this.drainDelta(commit);
       this.delta = this.delta ? { ...this.delta, delta: this.delta.delta + chunk.delta } : { ...chunk, event: undefined };
-      if (this.delta.delta.length >= 8192) this.flush();
+      if (this.delta.delta.length >= 8192) this.drainDelta(commit);
       else if (!this.timer) this.timer = setTimeout(() => this.flush(), 40);
     } else {
-      this.flush(); runtimeJournal.append(this.sessionId, this.runId, chunk);
+      this.drainDelta(commit);
+      commit.push(chunk);
     }
+    this.commit(commit);
+  }
+
+  /** Move the buffered delta into the pending burst, clearing its pending timer. */
+  private drainDelta(sink: AgentRunStreamChunk[]): void {
+    if (!this.delta) return;
+    sink.push(this.delta);
+    this.delta = undefined;
+    if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
+  }
+
+  /** Append the burst in one transaction; a lone chunk keeps the plain append path. */
+  private commit(chunks: AgentRunStreamChunk[]): void {
+    const runId = this.runId;
+    if (!runId || chunks.length === 0) return;
+    if (chunks.length === 1) runtimeJournal.append(this.sessionId, runId, chunks[0]);
+    else runtimeJournal.appendBatch(this.sessionId, runId, chunks);
   }
 
   finish(): void {

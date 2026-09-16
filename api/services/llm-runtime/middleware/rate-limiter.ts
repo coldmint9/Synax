@@ -3,9 +3,54 @@ import { logger } from '../../../lib/logger.js'
 const DEFAULT_CAPACITY_TPM = 80_000
 const REFILL_INTERVAL_MS = 60_000
 
+interface BucketIdentity {
+  providerId?: string
+  modelId?: string
+}
+
 interface Waiter {
   tokens: number
   resolve: () => void
+  reject: (reason: unknown) => void
+  signal?: AbortSignal
+  onAbort?: () => void
+  queuedAt: number
+}
+
+/**
+ * Thrown when a request's estimate can never fit the bucket. Rejecting is
+ * deterministic; queueing it would head-of-line block every later waiter.
+ * Capacity is deliberately not grown to force it through.
+ */
+export class RateLimitCapacityError extends Error {
+  readonly isRetryable = false
+
+  constructor(
+    readonly estimatedTokens: number,
+    readonly capacity: number,
+    readonly providerId?: string,
+    readonly modelId?: string,
+  ) {
+    super(
+      `Estimated tokens (${estimatedTokens}) exceed bucket capacity (${capacity})` +
+        (providerId && modelId ? ` for ${providerId}/${modelId}` : '') +
+        '; request rejected',
+    )
+    this.name = 'RateLimitCapacityError'
+  }
+}
+
+function abortReason(signal?: AbortSignal): unknown {
+  if (signal?.reason !== undefined) return signal.reason
+  const err = new Error('The operation was aborted')
+  err.name = 'AbortError'
+  return err
+}
+
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  // A pending refill flush must never keep the process alive.
+  const candidate = timer as unknown as { unref?: () => void }
+  if (typeof candidate.unref === 'function') candidate.unref()
 }
 
 export class TokenBucket {
@@ -15,13 +60,27 @@ export class TokenBucket {
   private waiters: Waiter[] = []
   private calibrated = false
 
-  constructor(capacity = DEFAULT_CAPACITY_TPM) {
+  constructor(
+    capacity = DEFAULT_CAPACITY_TPM,
+    private readonly identity: BucketIdentity = {},
+  ) {
     this.capacity = capacity
     this.tokensRemaining = capacity
     this.resetAt = Date.now() + REFILL_INTERVAL_MS
   }
 
-  async acquire(estimatedTokens: number): Promise<void> {
+  async acquire(estimatedTokens: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
+
+    if (estimatedTokens > this.capacity) {
+      throw new RateLimitCapacityError(
+        estimatedTokens,
+        this.capacity,
+        this.identity.providerId,
+        this.identity.modelId,
+      )
+    }
+
     this.maybeRefill()
 
     if (this.tokensRemaining >= estimatedTokens && this.waiters.length === 0) {
@@ -29,9 +88,16 @@ export class TokenBucket {
       return
     }
 
-    return new Promise<void>((resolve) => {
-      this.waiters.push({ tokens: estimatedTokens, resolve })
-      this.scheduleFlush()
+    return new Promise<void>((resolve, reject) => {
+      const waiter: Waiter = { tokens: estimatedTokens, resolve, reject, signal, queuedAt: Date.now() }
+      if (signal) {
+        waiter.onAbort = () => this.abortWaiter(waiter)
+        // Abort events are synchronous we do not race the throwIfAborted() above.
+        signal.addEventListener('abort', waiter.onAbort, { once: true })
+      }
+      this.waiters.push(waiter)
+      this.logWait('queued', waiter)
+      this.afterWaitersChange()
     })
   }
 
@@ -55,6 +121,7 @@ export class TokenBucket {
     }
     this.calibrated = true
     this.flushWaiters()
+    this.afterWaitersChange(true)
   }
 
   private maybeRefill(): void {
@@ -69,14 +136,80 @@ export class TokenBucket {
   private flushWaiters(): void {
     while (this.waiters.length > 0) {
       const next = this.waiters[0]
+      if (next.signal?.aborted) {
+        this.waiters.shift()
+        this.detachAbort(next)
+        next.reject(abortReason(next.signal))
+        this.logWait('cancelled', next)
+        continue
+      }
+      // Capacity can shrink after calibration; an unfittable waiter must not
+      // head-of-line block the queue forever.
+      if (next.tokens > this.capacity) {
+        this.waiters.shift()
+        this.detachAbort(next)
+        next.reject(
+          new RateLimitCapacityError(
+            next.tokens,
+            this.capacity,
+            this.identity.providerId,
+            this.identity.modelId,
+          ),
+        )
+        this.logWait('cancelled', next)
+        continue
+      }
       if (this.tokensRemaining >= next.tokens) {
         this.waiters.shift()
+        this.detachAbort(next)
         this.tokensRemaining -= next.tokens
         next.resolve()
+        this.logWait('granted', next)
       } else {
         break
       }
     }
+    this.afterWaitersChange()
+  }
+
+  private abortWaiter(waiter: Waiter): void {
+    const index = this.waiters.indexOf(waiter)
+    if (index < 0) return
+    this.waiters.splice(index, 1)
+    this.detachAbort(waiter)
+    waiter.reject(abortReason(waiter.signal))
+    this.logWait('cancelled', waiter)
+    // Removing the head may unblock a follower that already fits.
+    this.flushWaiters()
+  }
+
+  private detachAbort(waiter: Waiter): void {
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort)
+    }
+  }
+
+  private logWait(event: 'queued' | 'granted' | 'cancelled', waiter: Waiter): void {
+    logger.debug(
+      {
+        providerId: this.identity.providerId,
+        modelId: this.identity.modelId,
+        event,
+        tokens: waiter.tokens,
+        queueDepth: this.waiters.length,
+        elapsedMs: Date.now() - waiter.queuedAt,
+      },
+      `[rate-limiter] waiter ${event}`,
+    )
+  }
+
+  private afterWaitersChange(force = false): void {
+    if (this.waiters.length === 0) {
+      this.clearFlushTimer()
+      return
+    }
+    if (force) this.clearFlushTimer()
+    this.scheduleFlush()
   }
 
   private flushTimer: ReturnType<typeof setTimeout> | null = null
@@ -84,10 +217,27 @@ export class TokenBucket {
   private scheduleFlush(): void {
     if (this.flushTimer) return
     const delay = Math.max(0, this.resetAt - Date.now())
-    this.flushTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
       this.flushTimer = null
-      this.maybeRefill()
+      this.refillAndFlush()
     }, delay)
+    unrefTimer(timer)
+    this.flushTimer = timer
+  }
+
+  private refillAndFlush(): void {
+    this.maybeRefill()
+    // maybeRefill() flushes only on an interval boundary; keep waking while
+    // waiters remain so multi-cycle queues drain without new traffic.
+    if (this.waiters.length > 0) this.scheduleFlush()
+    else this.clearFlushTimer()
+  }
+
+  private clearFlushTimer(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
   }
 }
 
@@ -103,7 +253,7 @@ export function getOrCreateBucket(providerId: string, modelId: string): TokenBuc
   const key = bucketKey(providerId, modelId)
   let bucket = buckets.get(key)
   if (!bucket) {
-    bucket = new TokenBucket()
+    bucket = new TokenBucket(DEFAULT_CAPACITY_TPM, { providerId, modelId })
     buckets.set(key, bucket)
   }
   return bucket
@@ -199,14 +349,17 @@ export async function withRateLimit<T>(
   modelId: string,
   maxTokens: number,
   fn: () => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const bucket = getOrCreateBucket(providerId, modelId)
   const estimatedInput = Math.ceil(maxTokens * INPUT_TOKEN_ESTIMATE_RATIO)
   const estimatedTotal = estimatedInput + maxTokens
 
-  await bucket.acquire(estimatedTotal)
+  await bucket.acquire(estimatedTotal, signal)
 
   try {
+    // The signal may have fired after acquire resolved; never dispatch then.
+    signal?.throwIfAborted()
     const result = await fn()
     // Best-effort reconciliation: if the result carries usage info, release the diff
     const usage = extractUsage(result)
@@ -215,7 +368,7 @@ export async function withRateLimit<T>(
     }
     return result
   } catch (err) {
-    // On failure, release the full estimate back (no tokens were consumed)
+    // On failure or abort-before-dispatch, release the full estimate back.
     bucket.release(0, estimatedTotal)
     throw err
   }
@@ -244,14 +397,17 @@ export async function withStreamRateLimit<T>(
   modelId: string,
   maxTokens: number,
   fn: () => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const bucket = getOrCreateBucket(providerId, modelId)
   const estimatedInput = Math.ceil(maxTokens * INPUT_TOKEN_ESTIMATE_RATIO)
   const estimatedTotal = estimatedInput + maxTokens
 
-  await bucket.acquire(estimatedTotal)
+  await bucket.acquire(estimatedTotal, signal)
 
   try {
+    // The signal may have fired after acquire resolved; never dispatch then.
+    signal?.throwIfAborted()
     const result = await fn()
     // Vercel AI SDK stream results expose a `usage` Promise<{totalTokens}>
     const r = result as Record<string, unknown>

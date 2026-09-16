@@ -1,5 +1,5 @@
 import { snapshotRuntimeReminder } from "../runtime-request-snapshot.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../context-tokenizer.js", () => ({
   countMessagesTokens: (messages: unknown[]) => JSON.stringify(messages).length,
   countTokens: (text: string) => text.length,
@@ -9,7 +9,11 @@ import { agentRuntimeStore as store } from "../session-store.js";
 import { workRuntime } from "../work-runtime.js";
 import { workStore } from "../work-store.js";
 import { projectWorkContext } from "../context-projection.js";
-import { buildLoopModelMessages } from "../loop-model-messages.js";
+import {
+  buildLoopModelMessages,
+  createLoopHistoryReader,
+} from "../loop-model-messages.js";
+import { sessionContextBoundary } from "../context-epoch-store.js";
 import {
   resetAgentRuntimeFixtures,
   executorInput,
@@ -17,6 +21,9 @@ import {
 import { buildLoopToolSet } from "../loop-ai-tools.js";
 
 beforeEach(resetAgentRuntimeFixtures);
+// Spies wrap store methods; without restoring, a later spyOn captures the
+// previous spy as "original" and recurses.
+afterEach(() => vi.restoreAllMocks());
 const toolSet = buildLoopToolSet([]);
 function fixture() {
   const session = agentSessionRuntime.create(executorInput);
@@ -389,4 +396,115 @@ it("honors explicit queue ownership across mixed legacy and snapshot steps with 
     text.indexOf("second-step-state"),
   );
   expect(text.split("mixed-new-input")).toHaveLength(2);
+});
+
+describe("request-local history snapshot", () => {
+  const historyMethods = [
+    "listMessages",
+    "listRuns",
+    "listRunSteps",
+    "listToolCalls",
+    "listRunToolCalls",
+    "listRunParts",
+  ] as const;
+
+  function countHistoryQueries() {
+    const calls: Record<string, number> = {};
+    for (const method of historyMethods) {
+      const original = store[method].bind(store);
+      vi.spyOn(store, method).mockImplementation(((...args: unknown[]) => {
+        calls[method] = (calls[method] ?? 0) + 1;
+        return (original as (...inner: unknown[]) => unknown)(...args);
+      }) as never);
+    }
+    return calls;
+  }
+
+  it("reads each row category once per compaction request instead of per candidate", () => {
+    const sessionId = fixture();
+    const calls = countHistoryQueries();
+    const result = projectWorkContext({
+      sessionId,
+      toolSet,
+      contextLimit: 12000,
+      outputReserve: 2000,
+      systemTokens: 100,
+    });
+    expect(result.compacted).toBe(true);
+    // Baseline re-read history per candidate cut and per run grouping.
+    expect(calls.listMessages).toBe(1);
+    expect(calls.listRuns).toBe(1);
+    expect(calls.listToolCalls).toBe(1);
+    expect(calls.listRunSteps).toBe(1);
+    expect(calls.listRunToolCalls ?? 0).toBe(0);
+    // One parts read per distinct step, never per candidate.
+    expect(calls.listRunParts).toBe(6);
+  });
+
+  it("produces byte-identical messages with a shared snapshot and without one", () => {
+    const sessionId = fixture();
+    const reader = createLoopHistoryReader(store, sessionId);
+    const options = {
+      excludedStepIds: new Set(["step-1", "step-2"]),
+      compactionSummary: "Earlier findings",
+      initialUserMessage: undefined,
+    };
+    const direct = buildLoopModelMessages(store, sessionId, toolSet, options);
+    const shared = buildLoopModelMessages(store, sessionId, toolSet, {
+      ...options,
+      snapshot: reader,
+    });
+    expect(shared).toEqual(direct);
+    expect(JSON.stringify(shared)).toBe(JSON.stringify(direct));
+
+    const calls = countHistoryQueries();
+    const again = buildLoopModelMessages(store, sessionId, toolSet, {
+      ...options,
+      snapshot: reader,
+    });
+    expect(again).toEqual(direct);
+    // The snapshot is already warm: a repeat projection performs no new reads.
+    for (const method of historyMethods)
+      expect(calls[method] ?? 0).toBe(0);
+  });
+
+  it("groups tool calls by run from one session-wide read without mutating cache order", () => {
+    const sessionId = fixture();
+    const reader = createLoopHistoryReader(store, sessionId);
+    const runs = reader.listRuns();
+    const before = runs.map((run) => run.id);
+    const expected = new Map(
+      before.map((id) => [id, store.listRunToolCalls(id).map((c) => c.id)]),
+    );
+    const calls = countHistoryQueries();
+    for (const run of runs) {
+      // Bucketed order must match the store's per-run query exactly.
+      expect(reader.listRunToolCalls(run.id).map((c) => c.id)).toEqual(
+        expected.get(run.id),
+      );
+    }
+    expect(calls.listToolCalls).toBe(1);
+    expect(calls.listRunToolCalls ?? 0).toBe(0);
+    expect(reader.listRuns().map((run) => run.id)).toEqual(before);
+    // Repeated grouping does not rescan the session-wide snapshot.
+    for (let i = 0; i < 5; i++)
+      for (const run of runs) reader.listRunToolCalls(run.id);
+    expect(calls.listToolCalls).toBe(1);
+    // Sorting for replay must not reorder the reader's cached run array.
+    buildLoopModelMessages(store, sessionId, toolSet, { snapshot: reader });
+    expect(reader.listRuns().map((run) => run.id)).toEqual(before);
+  });
+
+  it("reuses the boundary snapshot for the session-wide reader", () => {
+    const sessionId = fixture();
+    const expectedSteps = store.listRunSteps("run").map((step) => step.id);
+    const reader = createLoopHistoryReader(store, sessionId);
+    const calls = countHistoryQueries();
+    const boundary = sessionContextBoundary(sessionId, reader);
+    expect(boundary.steps.map((step) => step.id)).toEqual(expectedSteps);
+    // A second call reuses the reader instead of re-querying runs and steps.
+    sessionContextBoundary(sessionId, reader);
+    expect(calls.listRuns).toBe(1);
+    expect(calls.listRunSteps).toBe(1);
+  });
 });

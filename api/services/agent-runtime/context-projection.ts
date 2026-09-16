@@ -28,7 +28,10 @@ import type { RegisteredTool } from "./contracts.js";
 import type { LoopToolSet } from "./loop-ai-tools.js";
 import { agentRuntimeStore as store } from "./session-store.js";
 import { workStore } from "./work-store.js";
-import { buildLoopModelMessages } from "./loop-model-messages.js";
+import {
+  buildLoopModelMessages,
+  createLoopHistoryReader,
+} from "./loop-model-messages.js";
 import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { AgentValidationError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
@@ -44,6 +47,8 @@ export interface ContextProjectionInput {
   configurationFingerprint?: string;
 }
 
+/** Shared empty result so the hot projection path never allocates one. */
+const EMPTY_ID_SET: Set<string> = new Set();
 export interface ContextCompactionDiagnostic {
   version: 1;
   epoch: number;
@@ -71,6 +76,8 @@ export function projectWorkContext(input: ContextProjectionInput): {
   const session = store.getSession(input.sessionId);
   const work = workStore.current(input.sessionId);
   const initialUserMessage = initialSessionMessageProjection(session);
+  // One read-only snapshot per request; the candidate loop only reads history.
+  const history = createLoopHistoryReader(store, input.sessionId);
   const count = (messages: ModelMessage[]) =>
     countMessagesTokens(messages as never, input.model) + input.systemTokens;
   if (!work) {
@@ -78,20 +85,25 @@ export function projectWorkContext(input: ContextProjectionInput): {
       store,
       input.sessionId,
       input.toolSet,
-      { initialUserMessage, currentStepId: input.currentStepId },
+      {
+        initialUserMessage,
+        currentStepId: input.currentStepId,
+        snapshot: history,
+      },
     );
-    if (count(messages) > input.contextLimit - input.outputReserve)
+    const tokens = count(messages);
+    if (tokens > input.contextLimit - input.outputReserve)
       throw new AgentValidationError(
         "context_blocked: required context exceeds the model window.",
       );
     return {
       messages,
       compacted: false,
-      originalTokens: count(messages),
-      tokens: count(messages),
+      originalTokens: tokens,
+      tokens,
     };
   }
-  const boundaryState = sessionContextBoundary(input.sessionId);
+  const boundaryState = sessionContextBoundary(input.sessionId, history);
   const { steps, boundary } = boundaryState;
   const policy = resolveContextCompactionPolicy(
     session.sessionMetadata?.contextCompactionPolicy,
@@ -137,35 +149,56 @@ export function projectWorkContext(input: ContextProjectionInput): {
     input.outputReserve,
     contextGrowthP95(sent, epochState.epoch),
   );
-  const users = store
-    .listMessages(input.sessionId)
+  const users = history
+    .listMessages()
     .filter((message) => message.role === "user");
+  // Memoized per candidate snapshot to avoid rescanning memory entries.
+  const summarizedByMemory = new WeakMap<ContextMemorySnapshot, Set<string>>();
+  const summarizedInputIds = (memory?: ContextMemorySnapshot) => {
+    if (!memory) return EMPTY_ID_SET;
+    const cached = summarizedByMemory.get(memory);
+    if (cached) return cached;
+    const covered = new Set<string>();
+    for (const entry of memory.entries)
+      if (
+        entry.required &&
+        entry.source.kind === "message" &&
+        entry.source.field === "content"
+      )
+        covered.add(`${entry.source.id}\u0000${entry.text}`);
+    const ids = new Set(
+      users
+        .filter(
+          (message) =>
+            !message.contentParts?.some((part) => part.type !== "text") &&
+            covered.has(`${message.id}\u0000${message.content}`),
+        )
+        .map((message) => message.id),
+    );
+    summarizedByMemory.set(memory, ids);
+    return ids;
+  };
+  // Cuts repeat across candidates; build each excluded-step set once.
+  const excludedByThrough = new Map<number, Set<string>>();
+  const excludedThrough = (through: number) => {
+    const cached = excludedByThrough.get(through);
+    if (cached) return cached;
+    const excluded = new Set(
+      steps.slice(0, through + 1).map((step) => step.id),
+    );
+    excludedByThrough.set(through, excluded);
+    return excluded;
+  };
   const build = (
     through = boundary,
     summary = boundaryState.summary,
     memory = boundaryState.memory,
   ) =>
     buildLoopModelMessages(store, input.sessionId, input.toolSet, {
-      excludedStepIds: new Set(
-        steps.slice(0, through + 1).map((step) => step.id),
-      ),
+      snapshot: history,
+      excludedStepIds: excludedThrough(through),
       compactionSummary: summary,
-      summarizedInputIds: new Set(
-        users
-          .filter(
-            (message) =>
-              !message.contentParts?.some((part) => part.type !== "text") &&
-              memory?.entries.some(
-                (entry) =>
-                  entry.required &&
-                  entry.source.kind === "message" &&
-                  entry.source.id === message.id &&
-                  entry.source.field === "content" &&
-                  entry.text === message.content,
-              ),
-          )
-          .map((message) => message.id),
-      ),
+      summarizedInputIds: summarizedInputIds(memory),
       initialUserMessage,
       currentStepId: input.currentStepId,
     });
@@ -238,28 +271,40 @@ export function projectWorkContext(input: ContextProjectionInput): {
         )
       : [],
   );
-  const allCalls = store.listToolCalls(input.sessionId);
+  const allCalls = history.listToolCalls();
   const byStep = new Map<string, typeof allCalls>();
-  for (const call of allCalls)
-    if (call.stepId)
-      byStep.set(call.stepId, [...(byStep.get(call.stepId) ?? []), call]);
+  for (const call of allCalls) {
+    if (!call.stepId) continue;
+    const bucket = byStep.get(call.stepId);
+    if (bucket) bucket.push(call);
+    else byStep.set(call.stepId, [call]);
+  }
 
+  const runs = history.listRuns();
   const triggers = new Map(
-    store
-      .listRuns(input.sessionId)
-      .map((run) => [run.id, run.triggerMessageId]),
+    runs.map((run) => [run.id, run.triggerMessageId]),
   );
+  const stepsByRun = new Map<string, typeof steps>();
+  for (const step of steps) {
+    const bucket = stepsByRun.get(step.runId);
+    if (bucket) bucket.push(step);
+    else stepsByRun.set(step.runId, [step]);
+  }
+  const queuedByRun = new Map<string, typeof users>();
+  for (const message of users) {
+    if (!message.runId || message.metadata.source !== "input_queue") continue;
+    const bucket = queuedByRun.get(message.runId);
+    if (bucket) bucket.push(message);
+    else queuedByRun.set(message.runId, [message]);
+  }
   const queueOwners = new Map<
     string,
     { stepId: string; placement: "before" | "after" }
   >();
-  for (const run of store.listRuns(input.sessionId)) {
+  for (const run of runs) {
     const owned = resolveContextInputOwners(
-      steps.filter((step) => step.runId === run.id),
-      users.filter(
-        (message) =>
-          message.runId === run.id && message.metadata.source === "input_queue",
-      ),
+      stepsByRun.get(run.id) ?? [],
+      queuedByRun.get(run.id) ?? [],
     );
     for (const [id, owner] of owned) queueOwners.set(id, owner);
   }
@@ -290,7 +335,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
           message.id === triggers.get(step.runId)) ||
         queueOwners.get(message.id)?.stepId === step.id,
     );
-    const parts = store.listRunParts(step.id);
+    const parts = history.listRunParts(step.id);
     const sourceFingerprint = createHash("sha256")
       .update(
         JSON.stringify({
@@ -603,11 +648,12 @@ export const contextReferenceTool: RegisteredTool = {
 export function evictedContextToolIds(sessionId: string): Set<string> {
   const work = workStore.current(sessionId);
   if (!work) return new Set();
-  const { steps, boundary } = sessionContextBoundary(sessionId);
+  const history = createLoopHistoryReader(store, sessionId);
+  const { steps, boundary } = sessionContextBoundary(sessionId, history);
   const excluded = new Set(steps.slice(0, boundary + 1).map((s) => s.id));
   return new Set(
-    store
-      .listToolCalls(sessionId)
+    history
+      .listToolCalls()
       .filter((c) => c.stepId && excluded.has(c.stepId))
       .map((c) => c.id),
   );

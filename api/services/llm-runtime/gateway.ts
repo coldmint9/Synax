@@ -53,7 +53,7 @@ export async function createGatewayStream(
     activeTools: request.activeTools,
     repairToolCall: request.repairToolCall,
     maxRetries: request.maxRetries,
-  }, abortSignal)), { maxRetries: request.maxRetries ?? 5, signal: abortSignal })
+  }, abortSignal), abortSignal), { maxRetries: request.maxRetries ?? 5, signal: abortSignal })
 }
 
 export async function generateGatewayTextResult(
@@ -61,7 +61,7 @@ export async function generateGatewayTextResult(
   abortSignal?: AbortSignal,
 ): Promise<AnyGenerateTextResult> {
   const selection = await resolveGatewaySelection(request)
-  return withRetry(() => withRateLimit(selection.providerId, selection.modelId, request.maxTokens ?? 4096, () => executePipeline(request, selection, { kind: 'text' }, abortSignal)), { signal: abortSignal }) as Promise<AnyGenerateTextResult>
+  return withRetry(() => withRateLimit(selection.providerId, selection.modelId, request.maxTokens ?? 4096, () => executePipeline(request, selection, { kind: 'text' }, abortSignal), abortSignal), { signal: abortSignal }) as Promise<AnyGenerateTextResult>
 }
 
 export async function generateGatewayObjectResult<T>(
@@ -70,7 +70,7 @@ export async function generateGatewayObjectResult<T>(
   abortSignal?: AbortSignal,
 ): Promise<GatewayObjectResult<T>> {
   const selection = await resolveGatewaySelection(request)
-  const result = await withRetry(() => withRateLimit(selection.providerId, selection.modelId, request.maxTokens ?? 4096, () => executePipeline(request, selection, { kind: 'object', schema }, abortSignal)), { signal: abortSignal }) as AnyGenerateTextResult
+  const result = await withRetry(() => withRateLimit(selection.providerId, selection.modelId, request.maxTokens ?? 4096, () => executePipeline(request, selection, { kind: 'object', schema }, abortSignal), abortSignal), { signal: abortSignal }) as AnyGenerateTextResult
   return {
     object: (result as unknown as { output: T }).output,
     result,
