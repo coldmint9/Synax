@@ -6,6 +6,7 @@ import { useLocale } from '../../../../hooks/useLocale'
 import { isElectron, openDirectoryPicker } from '../../../../lib/open-directory-picker'
 import type { ProjectSummary } from '../../../state/shellStore'
 import { SettingsCard } from './SettingsCard'
+import { DirectoryPickerDialog } from '../../../components/directory-picker/DirectoryPickerDialog'
 
 const zh = {
   title: '项目目录与引用',
@@ -26,7 +27,7 @@ const zh = {
   path: '目录绝对路径',
   name: '引用名称（可选）',
   browse: '选择目录',
-  browserHint: '浏览器版请输入服务端可访问的目录绝对路径；桌面版也可使用目录选择器。',
+  browserHint: '点击“选择目录”可浏览运行 Synax 机器的目录，桌面版使用系统目录选择器。',
   project: '选择项目',
   chooseProject: '请选择项目',
   noProjects: '没有其他已配置本地目录的项目。',
@@ -41,6 +42,20 @@ const zh = {
   removeError: '解除引用失败',
   browseError: '选择目录失败',
   unknownError: '未知错误，请重试。',
+  pickerTitle: '选择目录',
+  pickerHint: '以下目录位于运行 Synax 的机器上，文件内容不会被读取。',
+  pickerPath: '目录路径',
+  pickerUp: '上级目录',
+  pickerHome: '主目录',
+  pickerRefresh: '刷新',
+  pickerCancel: '取消',
+  pickerConfirm: '选择此目录',
+  pickerEmpty: '该目录下没有子目录。',
+  pickerTruncated: '目录过多，仅显示前 2000 项。',
+  pickerShowHidden: '显示隐藏目录',
+  pickerShowIgnored: '显示构建目录',
+  pickerLoading: '正在读取目录…',
+  pickerClose: '关闭',
 }
 
 type MessageKey = keyof typeof zh
@@ -63,7 +78,7 @@ const en: Record<MessageKey, string> = {
   path: 'Absolute directory path',
   name: 'Reference name (optional)',
   browse: 'Choose directory',
-  browserHint: 'In the browser, enter an absolute directory path accessible to the server. The desktop app also supports the directory picker.',
+  browserHint: '“Choose directory” browses directories on the machine running Synax. The desktop app uses the native picker.',
   project: 'Select project',
   chooseProject: 'Choose a project',
   noProjects: 'No other projects with a local directory are available.',
@@ -78,6 +93,20 @@ const en: Record<MessageKey, string> = {
   removeError: 'Failed to remove reference',
   browseError: 'Failed to choose directory',
   unknownError: 'Unknown error. Please retry.',
+  pickerTitle: 'Choose directory',
+  pickerHint: 'These directories live on the machine running Synax. File contents are never read.',
+  pickerPath: 'Directory path',
+  pickerUp: 'Parent directory',
+  pickerHome: 'Home',
+  pickerRefresh: 'Refresh',
+  pickerCancel: 'Cancel',
+  pickerConfirm: 'Choose this directory',
+  pickerEmpty: 'No subdirectories here.',
+  pickerTruncated: 'Too many entries; showing the first 2000.',
+  pickerShowHidden: 'Show hidden directories',
+  pickerShowIgnored: 'Show build directories',
+  pickerLoading: 'Reading directory…',
+  pickerClose: 'Close',
 }
 
 type Busy = 'reload' | 'add' | 'browse' | `remove:${string}`
@@ -103,6 +132,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
   const [error, setError] = useState<Failure | null>(null)
   const [projectsError, setProjectsError] = useState<Failure | null>(null)
   const [notice, setNotice] = useState<MessageKey | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const locked = useRef(false)
   const generation = useRef(0)
 
@@ -189,6 +219,14 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
   }
 
   const browse = () => {
+    // Browsers cannot read a local absolute path from the renderer, so the web
+    // build browses the runtime host instead of the native dialog.
+    if (!isElectron) {
+      setError(null)
+      setNotice(null)
+      setPickerOpen(true)
+      return
+    }
     void run('browse', 'browseError', async isCurrent => {
       const result = await openDirectoryPicker()
       if (!isCurrent() || !result) return
@@ -202,6 +240,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
   const roots = workspace?.roots ?? []
 
   return (
+    <>
     <SettingsCard
       title={t('title')}
       description={t('description')}
@@ -261,7 +300,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
                       <span className="mb-1.5 block">{t('path')}</span>
                       <input className={inputClass} value={localPath} onChange={event => setLocalPath(event.target.value)} disabled={disabled} placeholder="/path/to/directory" required />
                     </label>
-                    <Button type="button" size="sm" variant="outline" isDisabled={disabled || !isElectron} isPending={busy === 'browse'} onPress={browse}>
+                    <Button type="button" size="sm" variant="outline" isDisabled={disabled} isPending={busy === 'browse'} onPress={browse}>
                       {({ isPending }) => <>{!isPending && <FolderOpen size={13} />}{t('browse')}</>}
                     </Button>
                   </div>
@@ -294,5 +333,34 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
         )}
       </div>
     </SettingsCard>
+    <DirectoryPickerDialog
+      open={pickerOpen}
+      initialPath={localPath.trim() || workspace?.roots[0]?.path}
+      labels={{
+        title: t('pickerTitle'),
+        hint: t('pickerHint'),
+        path: t('pickerPath'),
+        up: t('pickerUp'),
+        home: t('pickerHome'),
+        refresh: t('pickerRefresh'),
+        cancel: t('pickerCancel'),
+        confirm: t('pickerConfirm'),
+        empty: t('pickerEmpty'),
+        truncated: t('pickerTruncated'),
+        showHidden: t('pickerShowHidden'),
+        showIgnored: t('pickerShowIgnored'),
+        loading: t('pickerLoading'),
+        close: t('pickerClose'),
+      }}
+      onClose={() => setPickerOpen(false)}
+      onSelect={selection => {
+        setLocalPath(selection.path)
+        setName(current => current || selection.name)
+        setNotice(null)
+        setError(null)
+        setPickerOpen(false)
+      }}
+    />
+    </>
   )
 }

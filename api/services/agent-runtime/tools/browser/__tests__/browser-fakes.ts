@@ -32,7 +32,8 @@ export interface FakePageConfig {
 }
 
 /** Minimal Page stand-in covering everything browser-tools touches. */
-export function fakePage(config: FakePageConfig = {}) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- stand-in for playwright's Page, intentionally loose
+export function fakePage(config: FakePageConfig = {}): any {
   const emitter = new EventEmitter() as EventEmitter & Record<string, any>;
   const calls = { clicks: [] as any[], fills: [] as string[], presses: [] as string[], closed: false };
   const page = Object.assign(emitter, {
@@ -99,21 +100,23 @@ export function fakePage(config: FakePageConfig = {}) {
 }
 
 export interface FakeBrowserConfig {
+  /** Pages to hand out from newPage() in order; extra calls create fresh fakes. */
   pages?: ReturnType<typeof fakePage>[];
 }
 
-/** Minimal Browser/Context stand-in: one context, preloaded pages. */
-export function fakeBrowser(config: FakeBrowserConfig = {}) {
+/** Minimal Browser/Context stand-in: one empty context; newPage fires "page". */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- stand-in for playwright's Browser, intentionally loose
+export function fakeBrowser(config: FakeBrowserConfig = {}): { browser: any; context: any } {
   const emitter = new EventEmitter() as EventEmitter & Record<string, any>;
+  const queue = [...(config.pages ?? [])];
   const context = Object.assign(new EventEmitter() as EventEmitter & Record<string, any>, {
     newPage: async () => {
-      const page = fakePage();
+      const page = queue.shift() ?? fakePage();
       context.emit("page", page);
       return page;
     },
     close: async () => undefined,
   });
-  for (const page of config.pages ?? []) context.emit("page", page);
   const browser = Object.assign(emitter, {
     contexts: () => [context],
     isConnected: () => true,

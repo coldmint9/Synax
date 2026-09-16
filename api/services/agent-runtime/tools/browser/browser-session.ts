@@ -204,10 +204,15 @@ export class BrowserSession {
         return any;
       }
     }
-    const context = this.context!;
-    const meta = this.registerPage(await context.newPage());
-    this.wirePage(meta);
-    return meta;
+    // newPage() also fires the context "page" event, which registers the tab;
+    // fall back to explicit registration only if the event never reached us.
+    const page = await this.context!.newPage();
+    const existing = [...this.pages.values()].find((meta) => meta.page === page);
+    if (existing) {
+      this.activePageSeq = existing.seq;
+      return existing;
+    }
+    return this.registerPage(page);
   }
 
   describeTabs(): string {
