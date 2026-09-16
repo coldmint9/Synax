@@ -48,7 +48,7 @@ export interface WorkRecord {
   parentWorkId: string | null;
   objective: string;
   requirements: Array<{ messageId: string; text: string; contentParts?: RuntimeContentPart[] }>;
-  status: 'active' | 'waiting' | 'closing' | 'completed' | 'blocked' | 'cancelled';
+  status: 'active' | 'waiting' | 'closing' | 'completed' | 'cancelled';
   planRevision: number | null;
   planSnapshot?: Record<string, unknown>;
   acceptanceCriteria: string[];
@@ -82,6 +82,8 @@ export const workStore = {
     if (!Array.isArray(work.ledger)) work.ledger = [];
     if (typeof work.noProgressSteps !== 'number') work.noProgressSteps = 0;
     if (typeof work.decisionFailures !== 'number') work.decisionFailures = 0;
+    // The self-dead 'blocked' status was replaced by waiting + an interaction.
+    if ((work.status as string) === 'blocked') work.status = 'waiting';
     return work;
   },
   current(sessionId: string): WorkRecord | null {

@@ -27,6 +27,12 @@ function makeDeps(behaviors: Record<string, {
       const s = sessions.get(id);
       return s ? ({ ...s } as never) : undefined;
     },
+    updateSession: (id: string, patch: { status?: string; blockedReason?: string | null }) => {
+      const s = sessions.get(id);
+      if (!s) throw new Error(`no session ${id}`);
+      Object.assign(s, patch);
+      return { id, projectId: 'p', status: s.status } as never;
+    },
   };
 
   const sessionsRuntime = {

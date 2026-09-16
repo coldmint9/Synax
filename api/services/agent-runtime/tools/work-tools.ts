@@ -29,8 +29,8 @@ export const workCheckpointTool: RegisteredTool = {
     const work = workStore.current(input.sessionId);
     if (!work || !input.runId || !input.stepId || store.getSession(input.sessionId).activeRunId !== input.runId)
       throw new AgentValidationError('A work checkpoint requires the active run step.');
-    if (args.action === 'complete' || args.action === 'blocked')
-      return workRuntime.complete(input, args.summary, args.evidence, args.action === 'blocked');
+    if (args.action === 'complete') return workRuntime.complete(input, args.summary, args.evidence);
+    if (args.action === 'blocked') return workRuntime.reportBlocker(input, args.summary);
     if (args.action === 'yield') return workRuntime.yieldRound(input, args.summary, args.nextAction);
     if (args.action === 'start') {
       const user = getUserInstructionText(input.sessionId, input.runId);

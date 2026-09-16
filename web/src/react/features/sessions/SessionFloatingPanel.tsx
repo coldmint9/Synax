@@ -1,6 +1,7 @@
 import { X, Loader2 } from 'lucide-react'
 import { useAgentSessionStore } from './agentSessionStore'
 import { AgentConversationView } from './AgentConversationView'
+import { TranscriptSessionProvider } from './SessionTranscriptContext'
 
 interface Props {
   sessionId: string
@@ -33,13 +34,17 @@ export function SessionFloatingPanel({ sessionId }: Props) {
       </div>
 
       <div className="max-h-[55vh] overflow-y-auto">
-        <AgentConversationView
-          session={session}
-          runs={runs}
-          steps={steps}
-          toolCalls={toolCalls}
-          messages={messages}
-        />
+        {/* The panel shows its own session, which is not the one the outer
+            workspace poller tracks. */}
+        <TranscriptSessionProvider sessionId={sessionId}>
+          <AgentConversationView
+            session={session}
+            runs={runs}
+            steps={steps}
+            toolCalls={toolCalls}
+            messages={messages}
+          />
+        </TranscriptSessionProvider>
       </div>
     </div>
   )

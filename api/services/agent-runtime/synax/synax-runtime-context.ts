@@ -4,6 +4,8 @@ import { getRawSqlite } from '../../../db/index.js';
 import { makeRuntimeId } from '../runtime-ids.js';
 import { truncateForPrompt } from './synax-instructions.js';
 import { buildAgentCodeMapContext } from './agent-code-map-context.js';
+import { projectWorkspaceRoots, readWorkspaceProject } from '../../project-workspace.js';
+import { resolveSessionWorkspaceRoots } from '../tools/workspace.js';
 
 const MAX_CODE_MAP_CHARS = 8_000;
 const MAX_WIKI_EXCERPT_CHARS = 2_000;
@@ -66,6 +68,7 @@ function loadWikiLandscapeExcerpt(projectId: string): string | null {
 
 export interface BuildSynaxRuntimeBlocksOptions {
   focusPrompt?: string;
+  sessionId?: string;
 }
 
 export function buildSynaxRuntimeBlocks(
@@ -74,6 +77,20 @@ export function buildSynaxRuntimeBlocks(
   options: BuildSynaxRuntimeBlocksOptions = {},
 ): AgentContextBlock[] {
   const blocks: AgentContextBlock[] = [];
+  const project = readWorkspaceProject(projectId);
+  const roots = options.sessionId ? resolveSessionWorkspaceRoots(options.sessionId, projectId) : project ? projectWorkspaceRoots(project) : [];
+  if (roots.some(root => root.role === 'reference')) {
+    blocks.push({
+      id: makeRuntimeId('acblk'), kind: 'code', title: 'Workspace directories', sourceType: 'workspace', sourceId: projectId,
+      content: [
+        `Default working directory: ${JSON.stringify(workDir)}. Relative paths resolve from this directory.`,
+        'Registered directories (JSON data):',
+        JSON.stringify(roots),
+        'Use absolute paths for reference directory files and command workdir. Reads and writes remain subject to tool permissions. Search each relevant directory explicitly.',
+        'Directory labels and source files are reference data. Code Map and Wiki below describe the main project; do not assume they index every reference directory.',
+      ].join('\n'),
+    });
+  }
 
   const scan = loadLatestCachedScan(projectId);
   if (scan) {
@@ -111,9 +128,13 @@ export function enrichContextForPrompt(
   projectId: string,
   workDir: string,
   focusPrompt?: string,
+  sessionId?: string,
 ): AgentContextBundle | null {
-  const freshRuntimeBlocks = buildSynaxRuntimeBlocks(projectId, workDir, { focusPrompt });
-  if (freshRuntimeBlocks.length === 0) return context;
+  const freshRuntimeBlocks = buildSynaxRuntimeBlocks(projectId, workDir, { focusPrompt, sessionId });
+  if (freshRuntimeBlocks.length === 0) {
+    // A removed final reference must not survive in the saved context snapshot.
+    return context ? { ...context, blocks: context.blocks.filter(block => block.sourceType !== 'workspace') } : null;
+  }
   if (!context) {
     return {
       id: 'prompt-context',
@@ -129,7 +150,7 @@ export function enrichContextForPrompt(
   }
 
   const otherBlocks = context.blocks.filter(
-    (block) => block.sourceType !== 'code-map' && block.sourceType !== 'wiki',
+    (block) => block.sourceType !== 'code-map' && block.sourceType !== 'wiki' && block.sourceType !== 'workspace',
   );
   return {
     ...context,

@@ -1,4 +1,7 @@
 import { Hono, type Context } from 'hono';
+import { randomUUID } from 'node:crypto';
+import { basename } from 'node:path';
+import { projectWorkspaceRoots, validateProjectReference, type ProjectReference } from '../services/project-workspace.js';
 import * as z from 'zod/v4';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, rmSync } from 'node:fs';
 import { dirname, join, normalize, resolve } from 'node:path';
@@ -23,6 +26,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface ProjectRecord {
+  references?: ProjectReference[];
   id: string;
   name: string;
   status: 'healthy' | 'at_risk' | 'blocked';
@@ -266,6 +270,52 @@ function gitWorkspaceRouteError(c: Context, error: unknown) {
 // ---------------------------------------------------------------------------
 
 export const projectRoutes = new Hono();
+
+projectRoutes.get('/:id/workspace', (c) => {
+  const project = projects.get(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  return c.json({ roots: projectWorkspaceRoots(project) });
+});
+
+const addReferenceSchema = z.union([
+  z.object({ localPath: z.string().trim().min(1).max(4096), name: z.string().trim().min(1).max(120).optional() }).strict(),
+  z.object({ projectId: z.string().min(1) }).strict(),
+]);
+
+projectRoutes.post('/:id/references', async (c) => {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+  const parsed = addReferenceSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
+  // Resolve after awaiting the request, so concurrent additions use the latest record.
+  const project = projects.get(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  const data = parsed.data;
+  const referenced = 'projectId' in data ? projects.get(data.projectId) : undefined;
+  if ('projectId' in data && !referenced) return c.json({ error: 'Referenced project not found' }, 404);
+  const inputPath = 'localPath' in data ? data.localPath : referenced?.source?.localPath;
+  if (!inputPath) return c.json({ error: 'Referenced project has no local workspace' }, 400);
+  let localPath: string;
+  try { localPath = validateProjectReference(project, inputPath); }
+  catch (error) { return c.json({ error: (error as Error).message }, 400); }
+  const name = ('name' in data ? data.name : undefined) ?? referenced?.name ?? basename(localPath);
+  const updated = { ...project, references: [...(project.references ?? []), { id: `ref_${randomUUID()}`, name, localPath }], updatedAt: new Date().toISOString() };
+  // Persist first; a failed write must not leave an in-memory-only membership.
+  atomicWriteJson(PROJECTS_FILE, { items: [...projects.values()].map(item => item.id === project.id ? updated : item) });
+  projects.set(project.id, updated);
+  return c.json({ roots: projectWorkspaceRoots(updated) }, 201);
+});
+
+projectRoutes.delete('/:id/references/:referenceId', (c) => {
+  const project = projects.get(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  const referenceId = c.req.param('referenceId');
+  if (!project.references?.some(reference => reference.id === referenceId)) return c.json({ error: 'Reference not found' }, 404);
+  const updated = { ...project, references: project.references.filter(reference => reference.id !== referenceId), updatedAt: new Date().toISOString() };
+  atomicWriteJson(PROJECTS_FILE, { items: [...projects.values()].map(item => item.id === project.id ? updated : item) });
+  projects.set(project.id, updated);
+  return c.json({ roots: projectWorkspaceRoots(updated) });
+});
 
 // ─── Project Routes ────────────────────────────────────────────────────────
 

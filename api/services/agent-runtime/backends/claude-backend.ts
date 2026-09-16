@@ -49,6 +49,10 @@ export class ClaudeBackend implements BackendAdapter {
     const { turn } = entry; await turn.captureBaseline();
     const session = store.getSession(turn.sessionId); const native = object(session.sessionMetadata?.nativeBackend);
     const { options, context } = claudeOptions(turn.workDir, process => { entry.process = process; });
+    options.additionalDirectories = turn.workspace.additionalDirectories;
+    options.sandbox = { ...options.sandbox,
+      filesystem: { ...options.sandbox?.filesystem, allowWrite: turn.workspace.writableRoots } };
+    options.systemPrompt = { type: 'preset', preset: 'claude_code', append: turn.workspace.prompt };
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     if (entry.controller.signal.aborted) throw new Error('Claude execution interrupted.');
     const model = input.model && input.model !== 'default' ? input.model : context.model;

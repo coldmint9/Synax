@@ -8,6 +8,7 @@ import { McpServersSection } from './components/McpServersSection'
 import type { I18nKey } from '../../../lib/i18n'
 import { SettingsCard } from './components/SettingsCard'
 import { GitWorktreesSection } from './components/GitWorktreesSection'
+import { ProjectReferencesSection } from './components/ProjectReferencesSection'
 
 function ComingSoon({ titleKey }: { titleKey: I18nKey }) {
   const { t } = useLocale()
@@ -32,11 +33,24 @@ function ComplianceTab(_props: { settings: any; onSave: (data: any) => void }) {
 
 export default function ProjectSettingsPage() {
   const { projectId = '' } = useParams()
+  return <ProjectSettingsContent key={projectId} projectId={projectId} />
+}
+
+function ProjectSettingsContent({ projectId }: { projectId: string }) {
   const { settings, loading, error, reload, patchSection } = useProjectSettings(projectId)
   const { globalConfig, providers } = useConfig(projectId)
   const { t } = useLocale()
 
   if (!projectId) return <div className="p-6 text-sm text-destructive">{t('settingsMissingProjectId')}</div>
+
+  if (error) {
+    return (
+      <div className="space-y-3 p-6">
+        <p role="alert" className="text-sm text-destructive">{error}</p>
+        <Button size="sm" variant="outline" onPress={reload}>{t('settingsRefresh')}</Button>
+      </div>
+    )
+  }
 
   if (loading || !settings) {
     return (
@@ -44,10 +58,6 @@ export default function ProjectSettingsPage() {
         <Spinner size="sm" />
       </div>
     )
-  }
-
-  if (error) {
-    return <div className="p-6 text-sm text-destructive">{error}</div>
   }
 
   return (
@@ -67,6 +77,7 @@ export default function ProjectSettingsPage() {
           </div>
 
           <div className="space-y-8">
+            <ProjectReferencesSection projectId={projectId} />
             <ProviderTab settings={settings} globalConfig={globalConfig} providers={providers} onSave={(data) => patchSection('provider', data)} />
             <McpServersSection
               servers={settings.mcpServers}

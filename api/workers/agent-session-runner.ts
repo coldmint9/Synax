@@ -1,5 +1,6 @@
 import { withinExecutionContext } from "../lib/execution-context.js";
 import { terminateOwnedCommands } from "../services/agent-runtime/tools/exec-async.js";
+import { closeAllBrowserSessions } from "../services/agent-runtime/tools/browser/browser-manager.js";
 import { logger } from "../lib/logger.js";
 import {
   isAgentSessionParentMessage,
@@ -105,6 +106,7 @@ function main(): void {
     for (const controller of activeStreams.values())
       if (!controller.signal.aborted) controller.abort(new Error(reason));
     await terminateOwnedCommands();
+    await closeAllBrowserSessions(reason);
     await Promise.allSettled([...runningTasks]);
     process.exit(0);
   };

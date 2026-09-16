@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { bindSessionWorkDir, clearSessionWorkspaceRoot, resolveSessionWorkspaceRoots, resolveWorkspacePath } from '../tools/workspace.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { toolRegistry } from '../tool-registry.js';
@@ -50,6 +54,50 @@ describe('agentSessionRuntime', () => {
     expect(call.record.status).toBe('pending');
     expect(agentRuntimeStore.getSession(session.id).status).toBe('waiting_permission');
     expect(agentRuntimeStore.listPermissions(session.id)[0].action).toBe('ask');
+  });
+
+  it('freezes reference access for a run and its children, then revokes it on the next parent execution', () => {
+    const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'synax-root-snapshot-')));
+    const main = path.join(temp, 'main');
+    const reference = path.join(temp, 'reference');
+    const outside = path.join(temp, 'outside');
+    for (const root of [main, reference, outside]) fs.mkdirSync(root);
+    fs.writeFileSync(path.join(reference, 'entry.txt'), 'reference file');
+    fs.symlinkSync(outside, path.join(reference, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+    const sessions: string[] = [];
+    try {
+      const parent = agentSessionRuntime.create({ ...plannerSessionInput, workDir: main });
+      sessions.push(parent.id);
+      const roots = [
+        { id: parent.projectId, name: 'Main', path: main, role: 'primary', status: 'available' },
+        { id: 'ref', name: 'Reference', path: reference, role: 'reference', status: 'available' },
+      ];
+      agentRuntimeStore.updateSessionMetadata(parent.id, { backend: {
+        ...(parent.sessionMetadata!.backend as object), workspaceRoots: roots,
+      } });
+      agentRuntimeStore.updateSession(parent.id, { activeRunId: 'snapshot-run' });
+      bindSessionWorkDir(parent.id);
+      expect(resolveSessionWorkspaceRoots(parent.id, parent.projectId)).toEqual(roots);
+      const child = agentSessionRuntime.create({ ...explorerSessionInput, parentSessionId: parent.id });
+      sessions.push(child.id);
+      bindSessionWorkDir(child.id);
+      expect(resolveSessionWorkspaceRoots(child.id, child.projectId)).toEqual(roots);
+      expect(resolveWorkspacePath('relative.txt', child.id)).toBe(path.join(main, 'relative.txt'));
+      expect(resolveWorkspacePath(path.join(reference, 'new.txt'), child.id)).toBe(path.join(reference, 'new.txt'));
+      expect(fs.readFileSync(resolveWorkspacePath(path.join(reference, 'entry.txt'), child.id), 'utf8')).toBe('reference file');
+      expect(() => resolveWorkspacePath(path.join(outside, 'new.txt'), child.id)).toThrow();
+      expect(() => resolveWorkspacePath(path.join(reference, 'escape', 'new.txt'), child.id)).toThrow();
+      expect(() => resolveWorkspacePath(path.join(reference, 'secret.pem'), child.id)).toThrow();
+      // No references exist in this project's registry. Refresh only the parent.
+      agentRuntimeStore.updateSession(parent.id, { activeRunId: null });
+      bindSessionWorkDir(parent.id);
+      expect(resolveSessionWorkspaceRoots(parent.id, parent.projectId)).toHaveLength(1);
+      expect(() => resolveWorkspacePath(path.join(reference, 'entry.txt'), parent.id)).toThrow();
+      expect(resolveSessionWorkspaceRoots(child.id, child.projectId)).toEqual(roots);
+    } finally {
+      for (const id of sessions) clearSessionWorkspaceRoot(id);
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
   });
 
   it('stops a session and leaves it resumable', () => {

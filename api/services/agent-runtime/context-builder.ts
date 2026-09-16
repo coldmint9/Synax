@@ -16,7 +16,7 @@ export class AgentContextBuilder {
     if (input.sessionId) {
       try {
         const workDir = resolveSessionWorkDir(input.sessionId, projectId);
-        blocks.push(...buildSynaxRuntimeBlocks(projectId, workDir));
+        blocks.push(...buildSynaxRuntimeBlocks(projectId, workDir, { sessionId: input.sessionId }));
       } catch (error) {
         warnings.push(`Synax runtime context unavailable: ${error instanceof Error ? error.message : String(error)}`);
       }

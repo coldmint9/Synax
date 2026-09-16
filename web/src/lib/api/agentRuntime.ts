@@ -501,7 +501,8 @@ export interface SessionGitCommitResult {
   message: string;
   /** True when the message was generated because the user left the input empty. */
   messageGenerated: boolean;
-  pushed: boolean;
+  /** `null` for a commit-only run, where no push was attempted. */
+  pushed: boolean | null;
   upstream: string | null;
   committedFiles: number;
 }
@@ -763,7 +764,7 @@ export const agentRuntimeApi = {
     ),
   commitSessionWorkspace: (
     sessionId: string,
-    body: { message?: string; model?: string } = {},
+    body: { message?: string; model?: string; push?: boolean } = {},
   ) =>
     request<SessionGitCommitResult>(
       `/sessions/${encodeURIComponent(sessionId)}/git/commit`,

@@ -11,6 +11,8 @@ export interface WorkspaceTab {
   path?: string
   /** Child session id for subagent tabs. */
   sessionId?: string
+  /** 1-based line a transcript link jumped to; viewers highlight it. */
+  line?: number | null
 }
 
 export interface WorkspaceSessionState {
@@ -74,7 +76,13 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>((set)
         const existing = current.tabs.some(item => item.id === id)
         return {
           ...current,
-          tabs: existing ? current.tabs : [...current.tabs, { ...tab, id }],
+          // Re-opening the same file must move the line cursor, otherwise a
+          // link to a different line of an already open tab would do nothing.
+          tabs: existing
+            ? current.tabs.map(item => (
+              item.id === id && tab.line != null ? { ...item, line: tab.line } : item
+            ))
+            : [...current.tabs, { ...tab, id }],
           activeTabId: id,
         }
       }),
@@ -183,9 +191,9 @@ export function activateWorkspaceTab(sessionId: string, tabId: string): void {
   store.activateTab(sessionId, tabId)
 }
 
-export function openWorkspaceFile(sessionId: string, path: string): void {
+export function openWorkspaceFile(sessionId: string, path: string, line: number | null = null): void {
   const name = path.split(/[\\/]/).pop() || path
-  openWorkspaceTab(sessionId, { kind: 'file', title: name, path })
+  openWorkspaceTab(sessionId, { kind: 'file', title: name, path, line })
 }
 
 export function openWorkspaceDiff(sessionId: string, path: string): void {

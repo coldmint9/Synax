@@ -11,6 +11,13 @@ export const backendBindingSchema = z.object({
   id: backendIdSchema,
   model: z.string().nullable(),
   workDir: z.string().nullable(),
+  workspaceRoots: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    path: z.string(),
+    role: z.enum(['primary', 'reference']),
+    status: z.enum(['available', 'missing']),
+  })).optional(),
 });
 export type BackendBinding = z.infer<typeof backendBindingSchema>;
 export type CapabilitySupport = 'supported' | 'unsupported' | 'unverified';

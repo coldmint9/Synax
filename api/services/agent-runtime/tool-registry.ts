@@ -75,6 +75,7 @@ import {
   taskGetTool,
   taskListTool,
 } from "./tools/task-tools.js";
+import { browserTools } from "./tools/browser/browser-tools.js";
 
 const SUMMARY_LIMIT = 1_000;
 
@@ -133,6 +134,7 @@ export class ToolRegistry {
       taskUpdateTool,
       taskGetTool,
       taskListTool,
+      ...browserTools,
       INVALID_TOOL,
     ].forEach((tool) => this.register(tool));
     this.registerProvider(mcpSessionToolProvider);

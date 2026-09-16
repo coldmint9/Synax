@@ -9,6 +9,7 @@ import {
   type ToolCallRecord,
 } from '../../../lib/api/agentRuntime'
 import { AgentConversationView } from './AgentConversationView'
+import { TranscriptSessionProvider } from './SessionTranscriptContext'
 
 const REFRESH_MS = 4000
 
@@ -61,14 +62,16 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({ session
         <span className="truncate font-mono text-[9px] text-muted-foreground">{detail.session.id}</span>
         <span className="ml-auto rounded bg-secondary/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">只读</span>
       </div>
-      <AgentConversationView
-        session={detail.session}
-        runs={detail.runs}
-        steps={detail.steps}
-        toolCalls={detail.toolCalls}
-        messages={detail.messages}
-        childSessions={[]}
-      />
+      <TranscriptSessionProvider sessionId={sessionId}>
+        <AgentConversationView
+          session={detail.session}
+          runs={detail.runs}
+          steps={detail.steps}
+          toolCalls={detail.toolCalls}
+          messages={detail.messages}
+          childSessions={[]}
+        />
+      </TranscriptSessionProvider>
     </div>
   )
 })

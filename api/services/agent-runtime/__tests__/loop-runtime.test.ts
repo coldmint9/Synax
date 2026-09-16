@@ -1423,14 +1423,20 @@ describe("agentLoopRuntime", () => {
       }),
     );
     await agentLoopRuntime.resumeRun(session.id);
+    // A declared blocker no longer dead-ends the session: it parks on an
+    // interaction checkpoint (waiting_input) with the goal marked blocked,
+    // so answering the interaction resumes the same run.
     expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
-      status: "blocked",
+      status: "waiting_input",
       sessionMetadata: {
         mode: "goal",
         goal: { status: "blocked" },
         plan: { status: "approved", revision: 1 },
       },
     });
+    const blocker = interactionService.pending(session.id)!;
+    expect(blocker.kind).toBe("clarification");
+    expect(blocker.request.title).toContain("Blocked:");
     expect(
       agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
     ).toEqual(["plan.propose", "goal.finish"]);

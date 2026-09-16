@@ -18,10 +18,8 @@
 // ---------------------------------------------------------------------------
 
 import type { Client } from '@agentclientprotocol/sdk'
-import { readFile, realpath, stat } from 'node:fs/promises'
-import path from 'node:path'
-import { isWorkspaceRelativePathBlocked } from '../../agent-runtime/tools/workspace.js'
-import { isUnrestrictedSession } from '../../agent-runtime/sandbox/index.js'
+import { readFile, stat } from 'node:fs/promises'
+import { sandboxPolicy } from '../../agent-runtime/sandbox/index.js'
 import { logger } from '../../../lib/logger.js'
 
 /** Partial override map. All fields optional; undefined falls back to default. */
@@ -75,14 +73,7 @@ export function createWorkspaceClientHandlerForSession(
 ): Client {
   return createClientHandler({
     async readTextFile(params) {
-      const unrestricted = isUnrestrictedSession(sessionId)
-      const root = await realpath(workDir)
-      const target = await realpath(path.resolve(root, params.path))
-      const relative = path.relative(root, target)
-      if (!unrestricted && (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))) {
-        throw new Error('The requested file is outside the bound workspace.')
-      }
-      if (!unrestricted && isWorkspaceRelativePathBlocked(relative, sessionId)) throw new Error('This workspace path is protected.')
+      const target = sandboxPolicy.resolve(params.path, workDir, sessionId ?? '__default__', 'acp.readTextFile')
       const info = await stat(target)
       if (!info.isFile() || info.size > 2 * 1024 * 1024) throw new Error('Requested file is not a supported text file (maximum 2 MiB).')
       const content = await readFile(target, 'utf8')

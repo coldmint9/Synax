@@ -7,6 +7,8 @@ export interface SandboxConfig {
   maxDepth: number;
   /** Unrestricted sessions release every remaining sandbox rule. */
   unrestricted: boolean;
+  /** Explicit directory membership captured at run admission. */
+  workspaceRoots?: string[];
 }
 
 export function defaultSandboxConfig(): SandboxConfig {
@@ -33,15 +35,18 @@ export function unrestrictedSandboxConfig(): SandboxConfig {
  * every other session (and any unknown/missing session) keeps the default.
  */
 export function sandboxConfigForSession(sessionId: string): SandboxConfig {
+  const config = defaultSandboxConfig();
   try {
     const session = agentRuntimeStore.tryGetSession(sessionId);
     if (session && isUnrestrictedPermissionRules(session.permissionRules)) {
       return unrestrictedSandboxConfig();
     }
+    const binding = session?.sessionMetadata?.backend as { workspaceRoots?: Array<{ path: string }> } | undefined;
+    if (binding?.workspaceRoots) config.workspaceRoots = binding.workspaceRoots.map(root => root.path);
   } catch {
     // Unavailable session state falls back to the restrictive default.
   }
-  return defaultSandboxConfig();
+  return config;
 }
 
 /** True when the session's effective rules release every sandbox rule. */

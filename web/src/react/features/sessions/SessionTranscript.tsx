@@ -17,7 +17,6 @@ function useSessionTranscriptStatic() {
       messages: s.messages,
       childSessions: id ? s.childSessions[id] : undefined,
       streamingStepId: s.streamingStepId,
-      resumeSession: s.resumeSession,
     }
   }))
 }
@@ -34,7 +33,6 @@ export function SessionTranscript({ onReadingHistoryChange }: { onReadingHistory
     messages,
     childSessions,
     streamingStepId,
-    resumeSession,
   } = useSessionTranscriptStatic()
 
   const streamingStep = streamingStepId ? steps.find(s => s.id === streamingStepId) : undefined
@@ -53,7 +51,6 @@ export function SessionTranscript({ onReadingHistoryChange }: { onReadingHistory
             toolCalls={toolCalls}
             messages={messages}
             childSessions={childSessions}
-            onResume={(id) => resumeSession(id)}
             excludeStepId={showLiveBlock ? streamingStepId : null}
             unifiedLive
             scrollRootRef={scrollRef}

@@ -38,6 +38,22 @@ export interface ProjectListParams {
   order?: 'asc' | 'desc'
 }
 
+export interface ProjectWorkspaceRoot {
+  id: string
+  name: string
+  path: string
+  role: 'primary' | 'reference'
+  status: 'available' | 'missing'
+}
+
+export interface ProjectWorkspace {
+  roots: ProjectWorkspaceRoot[]
+}
+
+export type AddProjectReferenceRequest =
+  | { name?: string; localPath: string; projectId?: never }
+  | { projectId: string; name?: never; localPath?: never }
+
 export interface GitBranchSummary {
   name: string
   head: string
@@ -75,6 +91,24 @@ async function projectRequest<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const projectApi = {
+  getWorkspace(id: string): Promise<ProjectWorkspace> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/workspace`)
+  },
+
+  addReference(id: string, body: AddProjectReferenceRequest): Promise<ProjectWorkspace> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/references`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  removeReference(id: string, referenceId: string): Promise<ProjectWorkspace> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/references/${encodeURIComponent(referenceId)}`, {
+      method: 'DELETE',
+    })
+  },
+
   listGitWorkspaces(id: string): Promise<GitWorkspaceSummary> {
     return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/workspaces`)
   },
@@ -103,7 +137,7 @@ export const projectApi = {
   },
 
   /** List all projects from backend with optional search/filter/sort */
-  async listProjects(params?: ProjectListParams): Promise<{ items: ProjectSummary[]; total: number }> {
+  async listProjects(params?: ProjectListParams, options?: { throwOnError?: boolean }): Promise<{ items: ProjectSummary[]; total: number }> {
     try {
       const qs = new URLSearchParams()
       if (params?.search) qs.set('search', params.search)
@@ -118,7 +152,8 @@ export const projectApi = {
       const data = await resp.json()
       const items = (data.items ?? []).map((p: Record<string, unknown>) => mapToProjectSummary(p))
       return { items, total: (data.total as number) ?? items.length }
-    } catch {
+    } catch (error) {
+      if (options?.throwOnError) throw error
       return { items: [], total: 0 }
     }
   },
@@ -264,7 +299,7 @@ function mapProjectSource(raw: unknown): ProjectSummary['source'] | undefined {
   const branch = s.branch as string | undefined
   const localPath = s.localPath as string | undefined
 
-  if (kindRaw === 'scratch') return { kind: 'scratch' }
+  if (kindRaw === 'scratch') return { kind: 'scratch', localPath }
   if (kindRaw === 'git') return { kind: 'github', repo, branch, localPath }
   if (kindRaw === 'localPath') return { kind: 'localPath', localPath, repo, branch }
   if (kindRaw === 'gitlab') return { kind: 'gitlab', repo, branch, localPath }

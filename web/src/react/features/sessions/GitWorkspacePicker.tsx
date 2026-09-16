@@ -48,9 +48,13 @@ export function GitWorkspacePicker({ projectId, value, disabled, onChange }: Pro
     const worktrees = summary.worktrees.map(item => ({
       id: `worktree:${item.path}`,
       label: item.branch ?? item.head.slice(0, 8),
-      detail: item.primary
-        ? (zh ? '主工作树' : 'Primary worktree')
-        : item.path,
+      detail: item.path,
+      meta: [
+        item.primary ? (zh ? '主工作树' : 'Primary worktree') : (zh ? '工作树' : 'Worktree'),
+        item.detached ? (zh ? '分离 HEAD' : 'Detached HEAD') : null,
+        `HEAD ${item.head.slice(0, 12)}`,
+        item.dirty ? (zh ? '有未提交修改' : 'Dirty') : null,
+      ].filter(Boolean).join(' · '),
     }))
     const branches = summary.branches
       .filter(item => !item.checkedOutPath)
@@ -58,9 +62,19 @@ export function GitWorkspacePicker({ projectId, value, disabled, onChange }: Pro
         id: `branch:${item.name}`,
         label: item.name,
         detail: zh ? '创建托管工作树' : 'Create managed worktree',
+        meta: [
+          zh ? '分支' : 'Branch',
+          `HEAD ${item.head.slice(0, 12)}`,
+          item.upstream ? `${zh ? '上游' : 'Upstream'} ${item.upstream}` : null,
+        ].filter(Boolean).join(' · '),
       }))
     return [
-      { id: 'default', label: zh ? '项目默认工作区' : 'Project default', detail: summary.defaultPath },
+      {
+        id: 'default',
+        label: zh ? '项目默认工作区' : 'Project default',
+        detail: summary.defaultPath,
+        meta: zh ? '项目配置的默认目录' : 'Project configured default',
+      },
       ...worktrees,
       ...branches,
     ]
@@ -86,7 +100,7 @@ export function GitWorkspacePicker({ projectId, value, disabled, onChange }: Pro
         </Popover.Trigger>
         <Tooltip.Content>{zh ? '选择新会话使用的分支或工作树' : 'Choose the branch or worktree for this session'}</Tooltip.Content>
       </Tooltip>
-      <Popover.Content placement="top end" offset={8} className="agent-mode-popover max-w-[28rem]">
+      <Popover.Content placement="top end" offset={8} className="agent-mode-popover git-workspace-popover">
         <ListBox
           aria-label={zh ? 'Git 工作区' : 'Git workspace'}
           selectionMode="single"
@@ -99,10 +113,11 @@ export function GitWorkspacePicker({ projectId, value, disabled, onChange }: Pro
           }}
         >
           {options.map(option => (
-            <ListBox.Item key={option.id} id={option.id} textValue={option.label} className="agent-mode-option">
-              <div className="min-w-0">
-                <div className="truncate">{option.label}</div>
-                <div className="max-w-[22rem] truncate text-[10px] text-muted-foreground">{option.detail}</div>
+            <ListBox.Item key={option.id} id={option.id} textValue={option.label} className="agent-mode-option git-workspace-option">
+              <div className="git-workspace-option-copy">
+                <div className="git-workspace-option-label">{option.label}</div>
+                <div className="git-workspace-option-meta">{option.meta}</div>
+                <div className="git-workspace-option-detail" title={option.detail}>{option.detail}</div>
               </div>
               <ListBox.ItemIndicator />
             </ListBox.Item>

@@ -69,11 +69,11 @@ class WorkRuntime {
       if (fresh) work.requirements.push({ messageId: trigger.id, text, ...(trigger.contentParts ? { contentParts: trigger.contentParts } : {}) });
       // A user turn is also the human decision a blocked work was waiting for, so plain
       // continuations reopen it instead of bouncing off the status checks below.
-      if (fresh || work.status === 'blocked') {
+      if (fresh) {
         work.progressVersion++;
         work.noProgressSteps = 0;
         work.decisionFailures = 0;
-        if (['blocked', 'waiting'].includes(work.status)) work.status = 'active';
+        if (work.status === 'waiting') work.status = 'active';
         const goal = getGoalState(session.sessionMetadata);
         if (goal?.status === 'blocked') store.updateSessionMetadata(sessionId, { goal: { ...goal, status: (session.sessionMetadata?.plan as { status?: string } | undefined)?.status === 'approved' ? 'executing' : 'planning', reason: undefined } });
       }
@@ -118,7 +118,7 @@ class WorkRuntime {
     if (toolId === 'bash' && command && /\bgit\s+(?:stash|reset|clean|restore)\b/i.test(command) &&
       !work.requirements.some(r => /\bgit\s+(?:stash|reset|clean|restore)\b/i.test(r.text)))
       return 'Do not stash/reset/restore user changes for automatic baseline comparisons. An explicit user instruction is required.';
-    if (TERMINAL.has(work.status) || work.status === 'blocked') return `Work ${work.id} is ${work.status}; do not perform more operations.`;
+    if (TERMINAL.has(work.status)) return `Work ${work.id} is ${work.status}; do not perform more operations.`;
     return null;
   }
 
@@ -161,7 +161,7 @@ class WorkRuntime {
 
   afterStep(sessionId: string, stepId: string, previousVersion: number): WorkRecord | null {
     const work = workStore.current(sessionId);
-    if (!work || TERMINAL.has(work.status) || work.status === 'blocked' || work.observedSteps.includes(stepId)) return work;
+    if (!work || TERMINAL.has(work.status) || work.observedSteps.includes(stepId)) return work;
     work.observedSteps.push(stepId);
     const stepCalls = store.listRunToolCalls(store.getRunStep(stepId).runId).filter(c => c.stepId === stepId);
     if (stepCalls.length && stepCalls.every(c => c.toolId === 'work.checkpoint' && ['completed', 'compacted'].includes(c.status) && ['start', 'continue'].includes((c.inputRef as { action?: string } | null)?.action ?? '')))
@@ -202,7 +202,7 @@ class WorkRuntime {
   /** A rejected final answer is a correction signal, not a reason to end the run. */
   rejectedCompletion(sessionId: string, message: string): WorkRecord | null {
     const work = workStore.current(sessionId);
-    if (!work || TERMINAL.has(work.status) || work.status === 'blocked') return work;
+    if (!work || TERMINAL.has(work.status)) return work;
     work.noProgressSteps += 1;
     if (work.noProgressSteps >= CLOSING_AFTER_STALE_STEPS) { work.status = 'closing'; work.decisionFailures = 0; }
     else work.status = 'active';
@@ -215,7 +215,7 @@ class WorkRuntime {
     const session = store.getSession(input.sessionId);
     if (!work || !input.runId || !input.stepId || session.activeRunId !== input.runId || session.status !== 'running')
       throw new AgentValidationError('A round handoff requires the active run checkpoint.');
-    if (TERMINAL.has(work.status) || work.status === 'blocked')
+    if (TERMINAL.has(work.status))
       throw new AgentValidationError('A terminal work cannot yield another round.');
     if (!summary.trim()) throw new AgentValidationError('Report completed work, remaining work and the next action before yielding.');
     if (inputQueueService.hasPending(input.sessionId))
@@ -234,13 +234,16 @@ class WorkRuntime {
     return { result: { workId: work.id, status: work.status, round: 'yielded', summary }, displaySummary: summary, artifacts: [] };
   }
 
+  /** Only in-flight children are unresolved. Resting outcomes (paused/interrupted/waiting_*)
+   *  already travelled back to the parent as the delegate tool result; waiting children with a
+   *  live interaction are the user's to answer, not acceptance blockers. */
   pendingChildren(work: WorkRecord): number {
     return store.listSessionTree(work.sessionId).filter(s => s.id !== work.sessionId &&
-      ['queued', 'running', 'waiting_input', 'waiting_permission', 'paused', 'interrupted'].includes(s.status) &&
+      ['queued', 'running'].includes(s.status) &&
       (!workStore.current(s.id) || !TERMINAL.has(workStore.current(s.id)!.status))).length;
   }
 
-  async complete(input: ToolExecutionInput, summary: string, evidence: WorkEvidence[] = [], blocked = false): Promise<ToolExecutionResult> {
+  async complete(input: ToolExecutionInput, summary: string, evidence: WorkEvidence[] = []): Promise<ToolExecutionResult> {
     const work = workStore.current(input.sessionId);
     if (!work) throw new AgentValidationError('No active work checkpoint.');
     const session = store.getSession(input.sessionId);
@@ -248,64 +251,85 @@ class WorkRuntime {
       throw new AgentValidationError('Completion requires the active run checkpoint.');
     this.syncPlan(work);
     if (!summary.trim()) throw new AgentValidationError('A final summary or concrete blocker is required.');
-    if (!blocked) {
-      if (getGoalState(session.sessionMetadata) && !session.parentSessionId && !input.toolCallId)
-        throw new AgentValidationError('Approved-plan acceptance requires goal.finish or work.checkpoint with criterion evidence; plain text cannot bypass it.');
-      const tasks = TaskStore.fromEvents(work.sessionId).list().filter(t => t.status !== 'completed');
-      if (tasks.length || this.pendingChildren(work) || interactionService.pending(work.sessionId))
-        throw new AgentValidationError(`Unfinished work: ${tasks.map(t => t.subject).join(', ') || 'child task or user interaction'}.`);
-      const calls = this.calls(work);
-      const proof = calls.filter(successfulEvidence);
-      const ids = new Set(proof.map(c => c.id));
-      const artifacts = store.listSessionTree(work.sessionId).flatMap(s => store.listArtifacts(s.id))
-        .filter(a => a.sourceRefs.some(r => r.type === 'tool_call' && !!r.id && ids.has(r.id)));
-      for (const item of evidence) {
-        if (item.toolCallIds?.some(id => !ids.has(id)) || item.artifactIds?.some(id => !artifacts.some(a => a.id === id)))
-          throw new AgentValidationError('Evidence must be successful and belong to this work and its children.');
-      }
-      const ownedIds = new Set(calls.map(c => c.stepId ? store.getRunStep(c.stepId).metadata.workId ?? (c.runId ? store.getRun(c.runId).metadata.workId : null) : null).filter((id): id is string => typeof id === 'string'));
-      const owners = [work, ...[...ownedIds].filter(id => id !== work.id).map(id => workStore.get(id)).filter((w): w is WorkRecord => w !== null)];
-      const checks = owners.flatMap(owner => owner.verifications.map(record => ({ owner, record })));
-      const currentChecks = new Set<string>();
-      for (const { owner, record } of checks) {
-        if (record.status === 'success' && record.changeVersion === owner.changeVersion && (!record.external || record.runId === input.runId) &&
-          record.fingerprint === await workspaceFingerprint(owner.sessionId, record.scope)) currentChecks.add(record.toolCallId);
-      }
-      const citedIds = new Set(evidence.flatMap(e => [
-        ...e.toolCallIds ?? [],
-        ...artifacts.filter(a => e.artifactIds?.includes(a.id)).flatMap(a => a.sourceRefs.filter(r => r.type === 'tool_call').map(r => r.id)),
-      ]));
-      for (const { record } of checks) if (citedIds.has(record.toolCallId) && !currentChecks.has(record.toolCallId))
-        throw new AgentValidationError(`Stale or unsuccessful verification evidence: ${record.toolCallId}.`);
-      if ((owners.some(w => w.hasChanges) || work.legacyEvidenceIncomplete && calls.some(c => c.mutability === 'write')) && !currentChecks.size)
-        throw new AgentValidationError('Missing current-version verification. Use verification.run for the changed scope; TODO completion and arbitrary shell exit 0 are not verification.');
-
+    if (getGoalState(session.sessionMetadata) && !session.parentSessionId && !input.toolCallId)
+      throw new AgentValidationError('Approved-plan acceptance requires goal.finish or work.checkpoint with criterion evidence; plain text cannot bypass it.');
+    const tasks = TaskStore.fromEvents(work.sessionId).list().filter(t => t.status !== 'completed');
+    if (tasks.length || this.pendingChildren(work) || interactionService.pending(work.sessionId))
+      throw new AgentValidationError(`Unfinished work: ${tasks.map(t => t.subject).join(', ') || 'child task or user interaction'}.`);
+    const calls = this.calls(work);
+    const proof = calls.filter(successfulEvidence);
+    const ids = new Set(proof.map(c => c.id));
+    const artifacts = store.listSessionTree(work.sessionId).flatMap(s => store.listArtifacts(s.id))
+      .filter(a => a.sourceRefs.some(r => r.type === 'tool_call' && !!r.id && ids.has(r.id)));
+    for (const item of evidence) {
+      if (item.toolCallIds?.some(id => !ids.has(id)) || item.artifactIds?.some(id => !artifacts.some(a => a.id === id)))
+        throw new AgentValidationError('Evidence must be successful and belong to this work and its children.');
     }
+    const ownedIds = new Set(calls.map(c => c.stepId ? store.getRunStep(c.stepId).metadata.workId ?? (c.runId ? store.getRun(c.runId).metadata.workId : null) : null).filter((id): id is string => typeof id === 'string'));
+    const owners = [work, ...[...ownedIds].filter(id => id !== work.id).map(id => workStore.get(id)).filter((w): w is WorkRecord => w !== null)];
+    const checks = owners.flatMap(owner => owner.verifications.map(record => ({ owner, record })));
+    const currentChecks = new Set<string>();
+    for (const { owner, record } of checks) {
+      if (record.status === 'success' && record.changeVersion === owner.changeVersion && (!record.external || record.runId === input.runId) &&
+        record.fingerprint === await workspaceFingerprint(owner.sessionId, record.scope)) currentChecks.add(record.toolCallId);
+    }
+    const citedIds = new Set(evidence.flatMap(e => [
+      ...e.toolCallIds ?? [],
+      ...artifacts.filter(a => e.artifactIds?.includes(a.id)).flatMap(a => a.sourceRefs.filter(r => r.type === 'tool_call').map(r => r.id)),
+    ]));
+    for (const { record } of checks) if (citedIds.has(record.toolCallId) && !currentChecks.has(record.toolCallId))
+      throw new AgentValidationError(`Stale or unsuccessful verification evidence: ${record.toolCallId}.`);
+    if ((owners.some(w => w.hasChanges) || work.legacyEvidenceIncomplete && calls.some(c => c.mutability === 'write')) && !currentChecks.size)
+      throw new AgentValidationError('Missing current-version verification. Use verification.run for the changed scope; TODO completion and arbitrary shell exit 0 are not verification.');
+
     let result: ToolExecutionResult | undefined;
     getRawSqlite().transaction(() => {
       if (getGoalState(session.sessionMetadata) && !session.parentSessionId) {
-        result = completeGoalCheckpoint({ ...input, args: { status: blocked ? 'blocked' : 'completed', reason: summary, evidence } });
+        result = completeGoalCheckpoint({ ...input, args: { reason: summary, evidence } });
         if (result.suspend) return;
       }
-      work.status = blocked ? 'blocked' : 'completed';
-      work.reason = blocked ? summary : null; work.result = summary; work.evidence = evidence;
-      work.remaining = blocked ? work.remaining : [];
+      work.status = 'completed';
+      work.reason = null; work.result = summary; work.evidence = evidence;
+      work.remaining = [];
       workStore.save(work);
       this.persistTerminal(work, input.runId!);
     })();
     return result?.suspend ? result : { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [] };
   }
 
+  /** A declared blocker parks the work on the human through the ordinary interaction
+   *  checkpoint (waiting + suspend), replacing the old self-dead 'blocked' status. */
+  reportBlocker(input: ToolExecutionInput, summary: string): ToolExecutionResult {
+    const work = workStore.current(input.sessionId);
+    if (!work) throw new AgentValidationError('No active work checkpoint.');
+    const session = store.getSession(input.sessionId);
+    if (!input.runId || !input.stepId || session.activeRunId !== input.runId || session.status !== 'running')
+      throw new AgentValidationError('A blocker report requires the active run checkpoint.');
+    this.syncPlan(work);
+    if (!summary.trim()) throw new AgentValidationError('A concrete blocker is required.');
+    const goal = getGoalState(session.sessionMetadata);
+    if (goal && !session.parentSessionId)
+      store.updateSessionMetadata(work.sessionId, { goal: { ...goal, status: 'blocked', reason: summary } });
+    const interaction = interactionService.request({
+      ...input,
+      runId: input.runId,
+      stepId: input.stepId,
+      kind: 'clarification',
+      request: {
+        title: `Blocked: ${summary.slice(0, 180)}`,
+        questions: [{ id: 'unblock', type: 'textarea', label: summary.slice(0, 4000), required: true }],
+      },
+    });
+    return { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [], suspend: { interactionId: interaction.id } };
+  }
+
   persistTerminal(work: WorkRecord, runId: string): void {
-    const status = work.status === 'completed' ? 'completed' : work.status === 'cancelled' ? 'interrupted' : 'blocked';
+    const status = work.status === 'completed' ? 'completed' : 'interrupted';
     const summary = work.result ?? work.reason ?? `Work ${status}.`;
     const at = nowIso();
-    const goal = getGoalState(store.getSession(work.sessionId).sessionMetadata);
-    if (status === 'blocked' && goal && !['completed', 'cancelled'].includes(goal.status))
-      store.updateSessionMetadata(work.sessionId, { goal: { ...goal, status: 'blocked', reason: summary } });
     store.updateRun(runId, { status, completedAt: at, stopReason: status === 'completed' ? 'work_completed' : summary });
-    store.updateSession(work.sessionId, { status, completedAt: at, updatedAt: at, activeRunId: null, pendingResumeToken: null,
-      resultSummary: summary, blockedReason: status === 'blocked' ? summary : null });
+    store.updateSession(work.sessionId, { status, completedAt: status === 'completed' ? at : null, updatedAt: at, activeRunId: null, pendingResumeToken: null,
+      resultSummary: summary, blockedReason: null });
   }
 
   prompt(sessionId: string): string {

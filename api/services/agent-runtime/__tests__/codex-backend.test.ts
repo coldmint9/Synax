@@ -1,5 +1,9 @@
 import os from 'node:os';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as workspace from '../tools/workspace.js';
+import { backendBindingSchema } from '../backends/backend-contracts.js';
 import { CodexBackend } from '../backends/codex-backend.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { agentRuntimeStore as store } from '../session-store.js';
@@ -29,6 +33,7 @@ class FakeRpc {
   });
 }
 let rpc: FakeRpc;
+afterEach(() => { vi.restoreAllMocks(); });
 beforeEach(() => {
   resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); rpc = new FakeRpc();
   mock.open.mockResolvedValue({ rpc, config: {}, version: 'fixture', isolated: true });
@@ -41,6 +46,29 @@ async function start(sessionId: string) {
   return { backend, chunks, task };
 }
 describe('Codex native protocol mapping', () => {
+  it.each([false, true])('uses the same roots for thread and turn policies (resume=%s)', async resume => {
+    const session = create();
+    if (resume) store.updateSessionMetadata(session.id, { nativeBackend: { id: 'codex', sessionId: 'native-thread' } });
+    const primary = fs.realpathSync(os.tmpdir());
+    const references = [path.join(primary, 'reference-a'), path.join(primary, 'reference-b')];
+    const roots = [
+      { id: 'main', name: 'Main', path: primary, role: 'primary' as const, status: 'available' as const },
+      ...references.map((root, index) => ({ id: `ref-${index}`, name: `Reference ${index}`, path: root, role: 'reference' as const, status: 'available' as const })),
+    ];
+    vi.spyOn(workspace, 'resolveSessionWorkspaceRoots').mockReturnValue(roots);
+    const binding = { version: 1, id: 'codex', model: null, workDir: primary };
+    expect(backendBindingSchema.parse(binding)).toEqual(binding);
+    expect(backendBindingSchema.parse({ ...binding, workspaceRoots: roots }).workspaceRoots).toEqual(roots);
+    const { task } = await start(session.id);
+    expect(rpc.request).toHaveBeenCalledWith(resume ? 'thread/resume' : 'thread/start', expect.objectContaining({
+      cwd: primary, approvalPolicy: 'untrusted', developerInstructions: expect.stringContaining('not instruction sources'),
+      config: { sandbox_workspace_write: { writable_roots: [primary, ...references], network_access: false, exclude_tmpdir_env_var: true, exclude_slash_tmp: true } },
+    }));
+    expect(rpc.request).toHaveBeenCalledWith('turn/start', expect.objectContaining({
+      sandboxPolicy: { type: 'workspaceWrite', writableRoots: [primary, ...references], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true },
+    }));
+    rpc.emit('turn/completed', { turn: { id: 'new-turn', status: 'completed' } }); await task;
+  });
   it('cleans native background terminals before closing the protocol on an interrupt', async () => {
     const session = create(); const { task, backend } = await start(session.id);
     await backend.interrupt(session.id); await task;

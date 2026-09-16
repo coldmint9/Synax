@@ -102,14 +102,15 @@ export function GitWorktreesSection({ projectId }: { projectId: string }) {
               <div key={worktree.path} className="flex min-w-0 items-center gap-3 py-3">
                 <GitBranch size={14} className="shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-sm text-foreground">
-                    <span className="font-medium">{worktree.branch ?? (zh ? '分离 HEAD' : 'Detached HEAD')}</span>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-foreground">
+                    <span className="break-all font-medium">{worktree.branch ?? (zh ? '分离 HEAD' : 'Detached HEAD')}</span>
                     {worktree.primary && <span className="text-xs text-muted-foreground">{zh ? '主工作树' : 'Primary'}</span>}
                     {worktree.managed && <span className="text-xs text-muted-foreground">Synax</span>}
                     {worktree.dirty && <span className="text-xs text-warning">{zh ? '有未提交修改' : 'Dirty'}</span>}
                     {worktree.sessionCount > 0 && <span className="text-xs text-primary">{worktree.sessionCount} {zh ? '个会话' : 'sessions'}</span>}
                   </div>
-                  <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground" title={worktree.path}>{worktree.path}</p>
+                  <p className="mt-1 break-all font-mono text-xs text-muted-foreground" title={worktree.path}>{worktree.path}</p>
+                  <p className="mt-0.5 font-mono text-[10px] text-muted-foreground/80">HEAD {worktree.head}</p>
                 </div>
                 {!worktree.primary && worktree.sessionCount === 0 && (
                   <Button

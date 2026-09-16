@@ -23,16 +23,10 @@ export function completeGoalCheckpoint(input: ToolExecutionInput): ToolExecution
     if (!goal)
       throw new AgentValidationError("This session has no active goal.");
     const args = input.args as {
-      status: "completed" | "blocked";
       reason: string;
       evidence: WorkEvidence[];
     };
-    if (args.status === "blocked") {
-      store.updateSessionMetadata(session.id, {
-        goal: { ...goal, status: "blocked", reason: args.reason },
-      });
-    } else {
-      const plan = session.sessionMetadata?.plan as
+    const plan = session.sessionMetadata?.plan as
         | (AgentPlan &
             PlanExecutionBoundary & {
               revision: number;
@@ -90,14 +84,9 @@ export function completeGoalCheckpoint(input: ToolExecutionInput): ToolExecution
         activeChildCount: sessions.filter(
           (s) =>
             s.id !== session.id &&
-            [
-              "queued",
-              "running",
-              "waiting_permission",
-              "waiting_input",
-              "interrupted",
-              "paused",
-            ].includes(s.status),
+            // Only in-flight children are unresolved; resting outcomes already
+            // returned to the parent as the delegate tool result.
+            ["queued", "running"].includes(s.status),
         ).length,
         pendingInteractionCount: interactionService.pending(session.id) ? 1 : 0,
         validToolCallIds: proof.map((c) => c.id),
@@ -113,9 +102,8 @@ export function completeGoalCheckpoint(input: ToolExecutionInput): ToolExecution
       store.updateSessionMetadata(session.id, {
         goal: { ...next, reason: args.reason },
       });
-    }
     return {
-      result: { status: args.status, reason: args.reason },
+      result: { status: "completed", reason: args.reason },
       displaySummary: args.reason,
       artifacts: [],
     };

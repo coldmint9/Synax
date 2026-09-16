@@ -24,6 +24,8 @@ export interface SessionGitCommitInput {
   message?: string | null;
   /** Explicit model override for generation; defaults to the session's model. */
   model?: string | null;
+  /** Defaults to `true`. `false` commits locally without touching the remote. */
+  push?: boolean | null;
 }
 
 export interface SessionGitCommitResult {
@@ -31,7 +33,9 @@ export interface SessionGitCommitResult {
   commitSha: string;
   message: string;
   messageGenerated: boolean;
-  pushed: boolean;
+  /** `null` when the caller asked for a commit only, so no push was attempted. */
+  pushed: boolean | null;
+  /** Upstream branch the commit was pushed to; `null` for a commit-only run. */
   upstream: string | null;
   committedFiles: number;
 }
@@ -185,12 +189,13 @@ async function generateCommitMessage(input: {
 }
 
 /**
- * Commit everything in the session workspace on its current branch, then push.
+ * Commit everything in the session workspace on its current branch.
  *
  * Explicit user action from the workspace panel: the commit message is either
  * supplied by the user or generated with the session's current model.
+ * `push: false` stops after the local commit so the user can inspect it first.
  */
-export async function commitAndPushSessionWorkspace(
+export async function commitSessionWorkspace(
   sessionId: string,
   input: SessionGitCommitInput = {},
 ): Promise<SessionGitCommitResult> {
@@ -279,30 +284,36 @@ export async function commitAndPushSessionWorkspace(
   const commitSha = (
     await runGit(workspacePath, ["rev-parse", "HEAD"])
   ).stdout.trim();
-  const upstreamRef = (
-    await runGit(
-      workspacePath,
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-      true,
-    )
-  ).stdout.trim();
 
-  let pushed = false;
-  let upstream: string | null = upstreamRef || null;
-  const pushArgs = upstream
-    ? ["push"]
-    : ["push", "--set-upstream", "origin", branch];
-  const push = await runGit(workspacePath, pushArgs, true);
-  if (push.ok) {
-    pushed = true;
-    if (!upstream) upstream = `origin/${branch}`;
-  } else {
-    const detail = formatGitFailure(push);
-    throw new AgentRuntimeError(
-      `Committed ${commitSha.slice(0, 8)} locally, but the push failed.${detail ? ` ${detail}` : ""}`,
-      "GIT_PUSH_FAILED",
-      502,
-    );
+  const shouldPush = input.push !== false;
+  let pushed: boolean | null = null;
+  let upstream: string | null = null;
+  if (shouldPush) {
+    const upstreamRef = (
+      await runGit(
+        workspacePath,
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        true,
+      )
+    ).stdout.trim();
+
+    pushed = false;
+    upstream = upstreamRef || null;
+    const pushArgs = upstream
+      ? ["push"]
+      : ["push", "--set-upstream", "origin", branch];
+    const push = await runGit(workspacePath, pushArgs, true);
+    if (push.ok) {
+      pushed = true;
+      if (!upstream) upstream = `origin/${branch}`;
+    } else {
+      const detail = formatGitFailure(push);
+      throw new AgentRuntimeError(
+        `Committed ${commitSha.slice(0, 8)} locally, but the push failed.${detail ? ` ${detail}` : ""}`,
+        "GIT_PUSH_FAILED",
+        502,
+      );
+    }
   }
 
   invalidateSessionEnvironment(sessionId);
@@ -313,8 +324,11 @@ export async function commitAndPushSessionWorkspace(
       commitSha,
       messageGenerated,
       files: changedFiles.length,
+      pushed,
     },
-    "[git-commit] committed and pushed session workspace",
+    shouldPush
+      ? "[git-commit] committed and pushed session workspace"
+      : "[git-commit] committed session workspace",
   );
 
   return {
