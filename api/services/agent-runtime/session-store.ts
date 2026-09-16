@@ -222,6 +222,38 @@ const RUNTIME_TABLES = [
   'agent_runtime_sessions',
 ] as const;
 
+// Mirrors projectSessionState(): runtimeControl.state overrides the stored status.
+// json_valid() keeps a malformed session_metadata_json from making json_extract
+// raise; a NULL/invalid path falls through to the persisted status, exactly like
+// the JS `sessionMetadata?.runtimeControl?.state` optional chain.
+const PROJECTED_STATUS_SQL = `CASE
+      WHEN json_valid(session_metadata_json) AND json_extract(session_metadata_json, '$.runtimeControl.state') = 'stopping' THEN 'stopping'
+      WHEN json_valid(session_metadata_json) AND json_extract(session_metadata_json, '$.runtimeControl.state') = 'unconfirmed' THEN 'blocked'
+      ELSE status
+    END`;
+
+// Recursive lineage walk; `?` is the root id. UNION (not UNION ALL) is required
+// for cycle safety, and both parent pointer and legacy child_session_ids_json
+// edges must be followed to match the previous in-memory traversal.
+// Non-array/invalid JSON degrades to an empty list like parseArray().
+const SESSION_TREE_CTE = `WITH RECURSIVE session_tree(id, child_ids_json) AS (
+    SELECT id, child_session_ids_json FROM agent_runtime_sessions WHERE id = ?
+    UNION
+    SELECT child.id, child.child_session_ids_json
+      FROM agent_runtime_sessions child
+      JOIN session_tree parent ON child.parent_session_id = parent.id
+    UNION
+    SELECT child.id, child.child_session_ids_json
+      FROM agent_runtime_sessions child
+      JOIN session_tree parent ON child.id IN (
+        SELECT value FROM json_each(
+          CASE WHEN json_valid(parent.child_ids_json)
+               THEN CASE WHEN json_type(parent.child_ids_json) = 'array'
+                         THEN parent.child_ids_json ELSE '[]' END
+               ELSE '[]' END)
+      )
+  )`;
+
 function stringify(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
@@ -523,20 +555,114 @@ export class AgentRuntimeStore {
     });
   }
 
+  // Filters and limit are pushed into SQL; only mapSession() passthrough columns
+  // (project_id, node_id, status) may be filtered here, and truthiness must match
+  // the previous JS guards. Ordering stays updated_at DESC.
   listSessions(filter: { projectId?: string; nodeId?: string; status?: string; limit?: number } = {}): AgentSession[] {
-    const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_sessions ORDER BY updated_at DESC')
-      .all() as SessionRow[];
-    return rows
-      .map(mapSession)
-      .filter((session) => !filter.projectId || session.projectId === filter.projectId)
-      .filter((session) => !filter.nodeId || session.nodeId === filter.nodeId)
-      .filter((session) => !filter.status || session.status === filter.status)
-      .slice(0, filter.limit ?? 50);
+    const db = getRawSqlite();
+    const conditions: string[] = [];
+    const params: string[] = [];
+    // Truthiness matches the previous `!filter.x || ...` JS guards, which also
+    // skipped empty-string filters.
+    if (filter.projectId) {
+      conditions.push('project_id = ?');
+      params.push(filter.projectId);
+    }
+    if (filter.nodeId) {
+      conditions.push('node_id = ?');
+      params.push(filter.nodeId);
+    }
+    if (filter.status) {
+      conditions.push('status = ?');
+      params.push(filter.status);
+    }
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const baseQuery = `SELECT * FROM agent_runtime_sessions${where} ORDER BY updated_at DESC`;
+
+    const limit = filter.limit ?? 50;
+    // Mirror Array#slice(0, limit): NaN/-Infinity clamp to 0, +Infinity means
+    // "no bound", and a negative bound keeps all but the last |limit| rows.
+    if (Number.isNaN(limit) || limit === Number.NEGATIVE_INFINITY) return [];
+    if (!Number.isFinite(limit)) {
+      return (db.prepare(baseQuery).all(...params) as SessionRow[]).map(mapSession);
+    }
+    const bounded = Math.trunc(limit);
+    if (bounded === 0) return [];
+    if (bounded < 0) {
+      const rows = db.prepare(baseQuery).all(...params) as SessionRow[];
+      return rows.map(mapSession).slice(0, bounded);
+    }
+    const rows = db.prepare(`${baseQuery} LIMIT ?`).all(...params, bounded) as SessionRow[];
+    return rows.map(mapSession);
   }
 
+  // status filter/order/paging run in SQL over PROJECTED_STATUS_SQL. `items` stay
+  // unprojected so the caller still applies projectSessionState (which also sets
+  // blockedReason); countByStatus partitions the filtered set, so totalCount is exact.
+  listSessionsPage(
+    filter: { projectId?: string; nodeId?: string; status?: string } = {},
+    page: { limit: number; offset: number } = { limit: 50, offset: 0 },
+  ): { items: AgentSession[]; totalCount: number; countByStatus: Record<string, number> } {
+    const db = getRawSqlite();
+    const conditions: string[] = [];
+    const baseParams: string[] = [];
+    if (filter.projectId) {
+      conditions.push('project_id = ?');
+      baseParams.push(filter.projectId);
+    }
+    if (filter.nodeId) {
+      conditions.push('node_id = ?');
+      baseParams.push(filter.nodeId);
+    }
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const projected = `SELECT *, ${PROJECTED_STATUS_SQL} AS projected_status FROM agent_runtime_sessions${where}`;
+    const statusFilter = filter.status ? ' WHERE projected_status = ?' : '';
+    const statusParams = filter.status ? [filter.status] : [];
+
+    const countRows = db
+      .prepare(
+        `SELECT projected_status, COUNT(*) AS count, MAX(updated_at) AS latest_at
+           FROM (${projected})${statusFilter}
+          GROUP BY projected_status
+          ORDER BY latest_at DESC, projected_status`,
+      )
+      .all(...baseParams, ...statusParams) as Array<{ projected_status: string; count: number; latest_at: string }>;
+    const countByStatus: Record<string, number> = {};
+    let totalCount = 0;
+    for (const row of countRows) {
+      countByStatus[row.projected_status] = row.count;
+      totalCount += row.count;
+    }
+
+    // Mirror slice(offset, offset + limit): a non-positive window yields no rows
+    // (SQLite treats LIMIT -1 as "unbounded", so guard before it reaches SQL).
+    const offset = Number.isFinite(page.offset) ? Math.max(0, Math.trunc(page.offset)) : 0;
+    const limit = Number.isFinite(page.limit) ? Math.trunc(page.limit) : 0;
+    const items = limit > 0
+      ? (db
+          .prepare(`SELECT * FROM (${projected})${statusFilter} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
+          .all(...baseParams, ...statusParams, limit, offset) as SessionRow[]).map(mapSession)
+      : [];
+    return { items, totalCount, countByStatus };
+  }
+
+  // Root first, then descendants in the previous walk's pre-order. Descendants come
+  // from SESSION_TREE_CTE so unrelated sessions are never read; children are ordered
+  // by the same updated_at DESC stream the old full-table query used, then the
+  // in-memory visit() replays the exact child ordering.
   listSessionTree(sessionId: string): AgentSession[] {
-    const sessions = this.listSessions({ limit: Number.MAX_SAFE_INTEGER });
+    const rows = getRawSqlite()
+      .prepare(
+        `${SESSION_TREE_CTE}
+         SELECT s.* FROM session_tree t CROSS JOIN agent_runtime_sessions s
+         WHERE s.id = t.id
+         ORDER BY s.updated_at DESC`,
+      )
+      .all(sessionId) as SessionRow[];
+    // The anchor row is the root, so an empty result means the root is absent.
+    if (rows.length === 0) throw new AgentNotFoundError(sessionId);
+
+    const sessions = rows.map(mapSession);
     const byId = new Map(sessions.map((session) => [session.id, session]));
     const childrenByParent = new Map<string, Set<string>>();
     for (const session of sessions) {
@@ -1195,11 +1321,24 @@ export class AgentRuntimeStore {
 
     let activeSubAgentCount = 0;
     if (session.childSessionIds.length > 0) {
+      // One indexed status lookup instead of a full session read per child.
+      // Missing ids are simply absent from the result, matching the previous
+      // try/catch on getSession(); duplicates in childSessionIds still count
+      // once per entry because we iterate the original list below.
+      const childIds = [...new Set(session.childSessionIds)];
+      const placeholders = childIds.map(() => '?').join(', ');
+      const running = new Set(
+        (
+          db
+            .prepare(
+              `SELECT id FROM agent_runtime_sessions
+               WHERE status = 'running' AND id IN (${placeholders})`,
+            )
+            .all(...childIds) as Array<{ id: string }>
+        ).map((row) => row.id),
+      );
       for (const childId of session.childSessionIds) {
-        try {
-          const child = this.getSession(childId);
-          if (child.status === 'running') activeSubAgentCount++;
-        } catch { /* deleted or missing */ }
+        if (running.has(childId)) activeSubAgentCount++;
       }
     }
 

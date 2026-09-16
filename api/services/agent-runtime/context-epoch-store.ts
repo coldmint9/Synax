@@ -1,8 +1,14 @@
-import type { AgentRunStep } from "./contracts.js";
+import type { AgentRun, AgentRunStep } from "./contracts.js";
 import type { ContextMemorySnapshot } from "./context-memory.js";
 import { agentRuntimeStore as store } from "./session-store.js";
 import { workStore, type WorkRecord } from "./work-store.js";
 import { AgentValidationError } from "./runtime-errors.js";
+
+/** Minimal read-only history view for request-local snapshot reuse. */
+export interface ContextHistoryReader {
+  listRuns(): AgentRun[];
+  listRunSteps(runId: string): AgentRunStep[];
+}
 
 export interface ContextEpochDraft {
   version: 1;
@@ -40,7 +46,10 @@ export function readContextEpochState(value: unknown): ContextEpochState {
 }
 
 /** The furthest durable boundary applies across Works. Never reconstruct evicted steps. */
-export function sessionContextBoundary(sessionId: string): {
+export function sessionContextBoundary(
+  sessionId: string,
+  history?: ContextHistoryReader,
+): {
   steps: AgentRunStep[];
   boundary: number;
   summary: string | null;
@@ -48,29 +57,31 @@ export function sessionContextBoundary(sessionId: string): {
   checkpointWork: WorkRecord | null;
 } {
   // Legacy stores used REPLACE for metadata updates, so rowid is not a reliable clock.
-  const runs = store
-    .listRuns(sessionId)
-    .sort(
-      (a, b) =>
-        a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id),
-    );
-  const steps = runs.flatMap((run) => store.listRunSteps(run.id));
+  const runs = history ? history.listRuns() : store.listRuns(sessionId);
+  const orderedRuns = runs.toSorted(
+    (a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id),
+  );
+  const steps = orderedRuns.flatMap((run) =>
+    history ? history.listRunSteps(run.id) : store.listRunSteps(run.id),
+  );
   let boundary = -1;
   let summary: string | null = null;
   let checkpointWork: WorkRecord | null = null;
   const ids = new Set<string>();
-  for (const run of store.listRuns(sessionId))
+  // One pass over the materialized runs; no second listRuns query.
+  for (const run of runs)
     if (typeof run.metadata.workId === "string") ids.add(run.metadata.workId);
   for (const step of steps)
     if (typeof step.metadata.workId === "string") ids.add(step.metadata.workId);
   const current = workStore.current(sessionId);
   if (current) ids.add(current.id);
+  const stepIndexById = new Map(
+    steps.map((step, index) => [step.id, index] as const),
+  );
   for (const id of ids) {
     const work = workStore.get(id);
     if (work?.sessionId !== sessionId || !work.checkpoint) continue;
-    const index = steps.findIndex(
-      (step) => step.id === work.checkpoint!.throughStepId,
-    );
+    const index = stepIndexById.get(work.checkpoint.throughStepId) ?? -1;
     if (index < 0)
       throw new AgentValidationError(
         "context_blocked: the persisted context boundary is missing.",

@@ -17,6 +17,7 @@ function createMockStore(data: {
     listMessages: (sessionId: string) => data.messages ?? [],
     listRuns: (sessionId: string) => data.runs ?? [],
     listRunSteps: (runId: string) => (data.steps ?? []).filter(s => s.runId === runId),
+    listToolCalls: (sessionId: string) => data.toolCalls ?? [],
     listRunToolCalls: (runId: string) => (data.toolCalls ?? []).filter(tc => tc.runId === runId),
     listRunParts: (stepId: string) => (data.parts ?? []).filter(p => p.stepId === stepId),
   } as any;

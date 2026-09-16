@@ -3,7 +3,13 @@ import { readRuntimeReminder } from "./runtime-request-snapshot.js";
 import type { RuntimeContentPart } from "./content-parts.js";
 import { modelContentParts } from "./media-assets.js";
 import type { ModelMessage, ToolResultOutput } from "@ai-sdk/provider-utils";
-import type { AgentRuntimeMessage, ToolCallRecord } from "./contracts.js";
+import type {
+  AgentRun,
+  AgentRunPart,
+  AgentRunStep,
+  AgentRuntimeMessage,
+  ToolCallRecord,
+} from "./contracts.js";
 import type { LoopToolSet } from "./loop-ai-tools.js";
 import type { AgentRuntimeStore } from "./session-store.js";
 import { makeRuntimeId } from "./runtime-ids.js";
@@ -11,6 +17,79 @@ import { makeRuntimeId } from "./runtime-ids.js";
 const MAX_TOOL_OUTPUT_TEXT = 12_000;
 const MAX_TOOL_OUTPUT_JSON = 12_000;
 const MAX_TOOL_INPUT_JSON = 4_000;
+
+/**
+ * Request-local read-only view of one session's history. Reused across the
+ * repeated projection rebuilds of a single compaction request; nothing is
+ * cached across requests.
+ */
+export interface LoopHistoryReader {
+  listMessages(): AgentRuntimeMessage[];
+  listRuns(): AgentRun[];
+  listRunSteps(runId: string): AgentRunStep[];
+  listToolCalls(): ToolCallRecord[];
+  listRunToolCalls(runId: string): ToolCallRecord[];
+  listRunParts(stepId: string): AgentRunPart[];
+  /** Per-request memo for pure derivations. */
+  memo<T>(key: string, compute: () => T): T;
+}
+
+export function createLoopHistoryReader(
+  store: AgentRuntimeStore,
+  sessionId: string,
+): LoopHistoryReader {
+  let messages: AgentRuntimeMessage[] | undefined;
+  let runs: AgentRun[] | undefined;
+  let toolCalls: ToolCallRecord[] | undefined;
+  let callsByRun: Map<string, ToolCallRecord[]> | undefined;
+  const stepsByRun = new Map<string, AgentRunStep[]>();
+  const partsByStep = new Map<string, AgentRunPart[]>();
+  const memoized = new Map<string, unknown>();
+  const memo = <T>(key: string, compute: () => T): T => {
+    if (memoized.has(key)) return memoized.get(key) as T;
+    const value = compute();
+    memoized.set(key, value);
+    return value;
+  };
+  return {
+    listMessages: () => (messages ??= store.listMessages(sessionId)),
+    listRuns: () => (runs ??= store.listRuns(sessionId)),
+    listRunSteps: (runId) => {
+      const cached = stepsByRun.get(runId);
+      if (cached) return cached;
+      const steps = store.listRunSteps(runId);
+      stepsByRun.set(runId, steps);
+      return steps;
+    },
+    listToolCalls: () => (toolCalls ??= store.listToolCalls(sessionId)),
+    listRunToolCalls: (runId) => {
+      const cached = callsByRun?.get(runId);
+      if (cached) return cached;
+      // Group once from the session-wide rowid-ordered snapshot instead of
+      // rescanning it per run.
+      if (!callsByRun) {
+        callsByRun = new Map();
+        for (const call of (toolCalls ??= store.listToolCalls(sessionId))) {
+          if (!call.runId) continue;
+          const grouped = callsByRun.get(call.runId);
+          if (grouped) grouped.push(call);
+          else callsByRun.set(call.runId, [call]);
+        }
+      }
+      const calls = callsByRun.get(runId) ?? [];
+      callsByRun.set(runId, calls);
+      return calls;
+    },
+    listRunParts: (stepId) => {
+      const cached = partsByStep.get(stepId);
+      if (cached) return cached;
+      const parts = store.listRunParts(stepId);
+      partsByStep.set(stepId, parts);
+      return parts;
+    },
+    memo,
+  };
+}
 
 export interface ClearingOptions {
   priorInputTokens: number | null;
@@ -31,6 +110,8 @@ export interface BuildMessagesOptions {
   /** Do not replay the in-flight request twice when resuming its snapshot. */
   currentStepId?: string;
   clearing?: ClearingOptions;
+  /** Reuse one read-only history snapshot across repeated projections. */
+  snapshot?: LoopHistoryReader;
 }
 
 export function buildLoopModelMessages(
@@ -44,17 +125,20 @@ export function buildLoopModelMessages(
       ? { compactionSummary: opts ?? undefined }
       : opts;
 
-  const userMessages = store
-    .listMessages(sessionId)
+  const history =
+    options.snapshot ?? createLoopHistoryReader(store, sessionId);
+  const userMessages = history
+    .listMessages()
     .filter((message) => message.role === "user");
+  // `toSorted` leaves the reader's cached array (and store order) untouched.
   const runsByTrigger = new Map(
-    store
-      .listRuns(sessionId)
-      .sort((left, right) => left.startedAt.localeCompare(right.startedAt))
+    history
+      .listRuns()
+      .toSorted((left, right) => left.startedAt.localeCompare(right.startedAt))
       .map((run) => [run.triggerMessageId, run] as const),
   );
 
-  const clearSet = buildClearSet(store, sessionId, options.clearing);
+  const clearSet = buildClearSet(history, options.clearing);
 
   const messages: ModelMessage[] = [];
 
@@ -78,13 +162,13 @@ export function buildLoopModelMessages(
       run?.metadata.workId !== options.workId &&
       !(
         run &&
-        store
+        history
           .listRunSteps(run.id)
           .some((s) => s.metadata?.workId === options.workId)
       )
     )
       continue;
-    const steps = run ? store.listRunSteps(run.id) : [];
+    const steps = run ? history.listRunSteps(run.id) : [];
     if (
       steps.length &&
       steps.every((step) => options.excludedStepIds?.has(step.id))
@@ -114,7 +198,7 @@ export function buildLoopModelMessages(
     if (!run) continue;
     messages.push(
       ...buildRunMessages(
-        store,
+        history,
         run.id,
         toolSet,
         clearSet,
@@ -130,7 +214,7 @@ export function buildLoopModelMessages(
 }
 
 function buildRunMessages(
-  store: AgentRuntimeStore,
+  history: LoopHistoryReader,
   runId: string,
   toolSet: Pick<LoopToolSet, "resolveModelToolName">,
   clearSet: Set<string> | null,
@@ -139,14 +223,16 @@ function buildRunMessages(
   currentStepId?: string,
   summarizedInputIds?: Set<string>,
 ): ModelMessage[] {
-  const steps = store.listRunSteps(runId);
-  const toolCalls = store.listRunToolCalls(runId);
+  const steps = history.listRunSteps(runId);
+  const toolCalls = history.listRunToolCalls(runId);
   const toolCallsById = new Map(
     toolCalls.map((toolCall) => [toolCall.id, toolCall] as const),
   );
   const messages: ModelMessage[] = [];
 
-  const inputOwners = resolveContextInputOwners(steps, injected);
+  const inputOwners = history.memo(`inputOwners:${runId}`, () =>
+    resolveContextInputOwners(steps, injected),
+  );
   const stepOrder = new Map(steps.map((step, index) => [step.id, index]));
   const pending = injected.filter(
     (message) =>
@@ -193,7 +279,7 @@ function buildRunMessages(
     inputs.forEach(appendInput);
     if (step.id === currentStepId) continue;
     if (reminder) messages.push({ role: "user", content: reminder.content });
-    const stepParts = store.listRunParts(step.id);
+    const stepParts = history.listRunParts(step.id);
     const assistantContent: NonNullable<
       Extract<ModelMessage, { role: "assistant" }>["content"]
     > = [];
@@ -501,13 +587,12 @@ export function computeClearedToolCallIds(
   sessionId: string,
   clearing?: ClearingOptions,
 ): Set<string> | null {
-  return buildClearSet(store, sessionId, clearing);
+  return buildClearSet(createLoopHistoryReader(store, sessionId), clearing);
 }
 
 function buildClearSet(
-  store: AgentRuntimeStore,
-  sessionId: string,
-  clearing?: ClearingOptions,
+  history: LoopHistoryReader,
+  clearing: ClearingOptions | undefined,
 ): Set<string> | null {
   if (!clearing) return null;
   const activated =
@@ -518,10 +603,8 @@ function buildClearSet(
 
   const excludeSet = new Set(clearing.excludeTools);
   const allToolCalls: ToolCallRecord[] = [];
-  const runs = store.listRuns(sessionId);
-  for (const run of runs) {
-    const calls = store.listRunToolCalls(run.id);
-    allToolCalls.push(...calls);
+  for (const run of history.listRuns()) {
+    allToolCalls.push(...history.listRunToolCalls(run.id));
   }
 
   const clearable = allToolCalls
