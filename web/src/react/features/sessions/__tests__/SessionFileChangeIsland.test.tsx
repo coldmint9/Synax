@@ -89,6 +89,7 @@ describe('SessionFileChangeIsland', () => {
     fireEvent.click(screen.getByRole('button', { name: '1 个文件已更改' }))
 
     const row = screen.getByRole('menuitem')
+    expect(screen.getByRole('menu').parentElement).toBe(document.body)
     expect(row.textContent).toContain('src/app.ts')
     expect(row.textContent).toContain('+6')
 

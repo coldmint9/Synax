@@ -4520,14 +4520,12 @@
 }
 
 .session-file-island-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
+  position: fixed;
+  z-index: 50;
   width: min(30rem, calc(100vw - 3rem));
   max-height: 16rem;
   overflow-y: auto;
+  pointer-events: auto;
   padding: 4px;
   border-radius: 12px;
   border: 1px solid hsl(var(--border-hsl) / 0.9);

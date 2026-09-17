@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { FileDiff } from 'lucide-react'
 import { agentRuntimeApi, type SessionEnvironmentFile } from '../../../lib/api/agentRuntime'
 import { useAgentSessionStore } from './agentSessionStore'
@@ -37,6 +38,8 @@ export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
   const [files, setFiles] = useState<SessionEnvironmentFile[]>([])
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  const pillRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   // Tool call count is a live signal from the session stream; a completed edit
   // bumps it and we refresh immediately instead of waiting for the poll.
   const toolCallCount = useAgentSessionStore(state => state.toolCalls.length)
@@ -67,13 +70,45 @@ export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
     }
   }, [sessionId, isRunning, toolCallCount])
 
+  useLayoutEffect(() => {
+    if (!open) return
+    const positionMenu = () => {
+      const pill = pillRef.current?.getBoundingClientRect()
+      const menu = menuRef.current
+      if (!pill || !menu) return
+
+      const gap = 6
+      const edge = 12
+      const above = Math.max(0, pill.top - gap - edge)
+      const below = Math.max(0, window.innerHeight - pill.bottom - gap - edge)
+      const placeAbove = above >= Math.min(menu.scrollHeight, 256) || above >= below
+      const available = placeAbove ? above : below
+      const height = Math.min(menu.scrollHeight, 256, available)
+      const width = menu.getBoundingClientRect().width
+      menu.style.maxHeight = `${Math.min(256, available)}px`
+      menu.style.top = `${placeAbove ? pill.top - gap - height : pill.bottom + gap}px`
+      menu.style.left = `${Math.max(edge, Math.min(pill.left + pill.width / 2 - width / 2, window.innerWidth - edge - width))}px`
+    }
+
+    positionMenu()
+    window.addEventListener('resize', positionMenu)
+    window.addEventListener('scroll', positionMenu, true)
+    return () => {
+      window.removeEventListener('resize', positionMenu)
+      window.removeEventListener('scroll', positionMenu, true)
+    }
+  }, [open, files])
+
   useEffect(() => {
     if (!open) return
     const handlePointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+      if (!rootRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false)
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') {
+        setOpen(false)
+        pillRef.current?.focus()
+      }
     }
     document.addEventListener('mousedown', handlePointerDown)
     document.addEventListener('keydown', handleKeyDown)
@@ -91,9 +126,11 @@ export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
   return (
     <div ref={rootRef} className="session-file-island">
       <button
+        ref={pillRef}
         type="button"
         className="session-file-island-pill"
         aria-expanded={open}
+        aria-haspopup="menu"
         aria-label={`${files.length} 个文件已更改`}
         title={files.map(file => file.path).join('\n')}
         onClick={() => setOpen(value => !value)}
@@ -104,8 +141,8 @@ export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
         {deletions > 0 ? <span className="session-file-island-del">-{deletions}</span> : null}
       </button>
 
-      {open ? (
-        <div className="session-file-island-menu" role="menu">
+      {open ? createPortal(
+        <div ref={menuRef} className="session-file-island-menu" role="menu">
           {files.map(file => (
             <button
               key={file.path}
@@ -126,7 +163,8 @@ export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
               </span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   )
