@@ -41,6 +41,27 @@ export function activityPreview(content: string, max = 90): string {
 }
 
 /**
+ * One-line teaser for a row that folds records: the newest one, not the oldest.
+ *
+ * `activityPreview` reports where the text started, which is the oldest thing
+ * the model said. A folded row is read as "where is this now", so the newest
+ * non-empty record is previewed instead, and an over-long record keeps its tail
+ * so the freshest part stays visible.
+ */
+export function latestActivityPreview(content: string, max = 90): string {
+  const lines = content
+    .split('\n')
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(line => line !== '')
+  const latest = lines[lines.length - 1] ?? ''
+  if (latest.length <= max) return latest
+  const tail = latest.slice(-max)
+  // Never open the teaser in the middle of a word.
+  const boundary = tail.search(/\s/)
+  return `…${boundary > 0 && boundary < 12 ? tail.slice(boundary + 1) : tail}`
+}
+
+/**
  * Longest `**phrase**` payload still treated as a reasoning headline.
  *
  * Real reasoning text is written in paragraphs; a model that only emits a

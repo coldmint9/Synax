@@ -119,13 +119,6 @@ function isExpectedMissingRuntimeResource(err: AppError): boolean {
 function routeError(err: AppError): void {
   if (err.level === 'system') {
     console.error('[system]', err.message, err.code ?? '', err.statusCode ?? '')
-    if (isExpectedMissingRuntimeResource(err)) return
-    useNotificationStore.getState().pushAggregated({
-      id: `sys-${err.code ?? 'unknown'}`,
-      type: 'warning',
-      message: err.message,
-      duration: 3000,
-    })
     return
   }
   console.warn('[business]', err.message, err.code ?? '', err.statusCode ?? '')

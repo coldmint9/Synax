@@ -127,6 +127,19 @@ function fallbackTitleFromUserInput(userInput: string): string | null {
   return truncateInitialTitle(trimmed);
 }
 
+/** Short requests already make useful titles; never spend an LLM call on them. */
+export function shortSessionTitle(userInput: string): string | null {
+  const text = userInput.trim();
+  return text &&
+    text.length <= 80 &&
+    [...text].length <= 40 &&
+    !/[\r\n]/.test(text) &&
+    !looksLikeSystemPrompt(text) &&
+    !isPlaceholderSessionTitle(text)
+    ? text
+    : null;
+}
+
 const MAX_GENERATED_CJK_CHARS = 10;
 const MAX_GENERATED_ENGLISH_WORDS = 6;
 const MAX_GENERATED_TITLE_LEN = 50;
@@ -183,13 +196,20 @@ async function applyGeneratedSessionTitle(
   trigger: "run_started" | "stream_done",
   runId?: string,
 ): Promise<void> {
-  const llmTitle = await resolveSessionTitleText(
-    session.id,
-    session.projectId,
-    session.profileId,
-    userInput,
-  );
-  if (llmTitle && !isValidGeneratedSessionTitle(llmTitle.trim())) {
+  const directTitle = shortSessionTitle(userInput);
+  const llmTitle =
+    directTitle ??
+    (await resolveSessionTitleText(
+      session.id,
+      session.projectId,
+      session.profileId,
+      userInput,
+    ));
+  if (
+    !directTitle &&
+    llmTitle &&
+    !isValidGeneratedSessionTitle(llmTitle.trim())
+  ) {
     logger.warn(
       {
         sessionId: session.id,
@@ -201,7 +221,9 @@ async function applyGeneratedSessionTitle(
     );
   }
 
-  const resolved = resolveFinalSessionTitle(llmTitle, userInput);
+  const resolved = directTitle
+    ? { title: directTitle, usedFallback: false }
+    : resolveFinalSessionTitle(llmTitle, userInput);
   if (!resolved) {
     logger.warn(
       { sessionId: session.id, runId: runId ?? null, trigger },
@@ -211,7 +233,12 @@ async function applyGeneratedSessionTitle(
   }
 
   const current = agentRuntimeStore.tryGetSession(session.id);
-  if (!current || current.title !== session.title) return;
+  if (
+    !current ||
+    current.title !== session.title ||
+    resolveUserTitleInput(current.id, current.prompt) !== userInput
+  )
+    return;
   agentRuntimeStore.updateSession(session.id, {
     title: resolved.title,
     updatedAt: nowIso(),
@@ -237,7 +264,11 @@ export function resolveInitialSessionTitle(input: {
   prompt: string;
 }): string | null {
   const meta = input.sessionMetadata;
-  if (meta?.source === "session-page") {
+  const direct = shortSessionTitle(
+    resolveGoalTitleSource(input) ?? input.prompt,
+  );
+  if (direct) return direct;
+  if (meta?.source === "session-page" || meta?.source === "goal-dock") {
     return DEFAULT_NEW_SESSION_TITLE;
   }
 
@@ -255,7 +286,6 @@ export function resolveInitialSessionTitle(input: {
 export function needsGeneratedSessionTitle(session: AgentSession): boolean {
   if (session.sessionMetadata?.titleSummarized === true) return false;
   if (isPlaceholderSessionTitle(session.title)) return true;
-  if (session.sessionMetadata?.source === "session-page") return true;
   return !session.title?.trim();
 }
 
@@ -345,6 +375,8 @@ export async function resolveSessionTitleText(
   profileId: string,
   userInput: string,
 ): Promise<string | null> {
+  const direct = shortSessionTitle(userInput);
+  if (direct && profileId === "synax") return direct;
   const ctx: TitleGeneratorContext = {
     sessionId,
     projectId,
@@ -385,13 +417,16 @@ export async function generateSessionTitle(
   profileId: string,
   prompt: string,
 ): Promise<boolean> {
+  const before = agentRuntimeStore.tryGetSession(sessionId);
+  if (!before) return false;
   const title = await resolveSessionTitleText(
     sessionId,
     projectId,
     profileId,
     prompt,
   );
-  if (!title) return false;
+  const current = agentRuntimeStore.tryGetSession(sessionId);
+  if (!title || !current || current.title !== before.title) return false;
   agentRuntimeStore.updateSession(sessionId, { title, updatedAt: nowIso() });
   return true;
 }

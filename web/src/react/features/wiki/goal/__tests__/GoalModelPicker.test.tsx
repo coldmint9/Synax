@@ -75,6 +75,22 @@ describe('GoalModelPicker', () => {
     useShellStore.setState(state => ({ preferences: { ...state.preferences, locale: 'zh' } }))
   })
 
+  it('shows the provider name and model name in the trigger', () => {
+    render(
+      <GoalModelPicker
+        globalConfig={globalConfig}
+        providers={providers}
+        providerId="openai"
+        modelId="gpt-5"
+        onSelect={vi.fn()}
+      />,
+    )
+
+    const trigger = screen.getByRole('button', { name: '选择模型' })
+    expect(trigger).toHaveTextContent('OpenAI · gpt-5')
+    expect(trigger).toHaveAttribute('title', 'OpenAI · gpt-5')
+  })
+
   it('lists API models and ACP endpoints together in one list separated by a divider', async () => {
     await openPicker()
 

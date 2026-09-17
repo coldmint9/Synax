@@ -15,7 +15,7 @@ const props = {
   providerId: null, modelId: null, onModelSelect: vi.fn(), providers: [], globalConfig: null,
   documentId: null, onDocumentChange: vi.fn(), wikiAttachMode: 'auto' as const, onWikiAttachModeChange: vi.fn(),
   documents: [], skillIds: [], onSkillIdsChange: vi.fn(), reasoningEffort: 'high' as const,
-  onReasoningEffortChange: vi.fn(), permissionTier: 'readonly' as const, onPermissionTierChange: vi.fn(),
+  onReasoningEffortChange: vi.fn(), permissionTier: 'boundary' as const, onPermissionTierChange: vi.fn(),
 }
 
 describe('compact session mode control', () => {

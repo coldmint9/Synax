@@ -43,7 +43,7 @@ import {
   AgentPermissionError,
   AgentValidationError,
 } from "./runtime-errors.js";
-import { sandboxPolicy } from "./sandbox/index.js";
+import { sandboxPolicy, withSandboxApproval } from "./sandbox/index.js";
 import { workspaceRoot } from "./tools/workspace.js";
 import { invalidateSessionEnvironment } from "./session-environment.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
@@ -850,11 +850,29 @@ export class ToolRegistry {
         result: null!,
       };
       void sessionHooks.emit({ type: "tool:before", ctx: hookCtx });
-      sandboxPolicy.validateToolArgs(
-        running.toolId,
-        args,
-        workspaceRoot(sessionId),
-        sessionId,
+      const approvalPaths = permission?.metadata?.approvalPaths;
+      const approved =
+        permission?.action === "allow" &&
+        permission.sessionId === sessionId &&
+        permission.toolCallId === running.id &&
+        Array.isArray(approvalPaths);
+      const inApprovalScope = <T>(action: () => T): T =>
+        approved
+          ? withSandboxApproval(
+              sessionId,
+              approvalPaths.filter(
+                (value): value is string => typeof value === "string",
+              ),
+              action,
+            )
+          : action();
+      inApprovalScope(() =>
+        sandboxPolicy.validateToolArgs(
+          running.toolId,
+          args,
+          workspaceRoot(sessionId),
+          sessionId,
+        ),
       );
       const trackChanges =
         workStore.current(sessionId) &&
@@ -873,8 +891,8 @@ export class ToolRegistry {
         : undefined;
       abortSignal?.throwIfAborted();
       assertRuntimeExecutionCurrent();
-      const result = await withCommandSignal(abortSignal, () =>
-        tool.execute(input),
+      const result = await inApprovalScope(() =>
+        withCommandSignal(abortSignal, () => tool.execute(input)),
       );
       const after = trackChanges
         ? await workspaceFingerprint(sessionId, fingerprintScope).catch(

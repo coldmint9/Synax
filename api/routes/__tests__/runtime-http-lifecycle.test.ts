@@ -9,6 +9,7 @@ import { agentRuntimeStore } from '../../services/agent-runtime/session-store.js
 import { activateAcceptedRun } from '../../services/agent-runtime/run-admission.js';
 import { resetAgentRuntimeFixtures } from '../../services/agent-runtime/__tests__/agent-runtime-fixtures.js';
 import { runCoordinator } from '../../services/agent-runtime/run-coordinator.js';
+import { normalizeAgentSessionStatus } from '../../services/agent-runtime/session-projection.js';
 import { agentRuntimeRoutes } from '../agent-runtime.js';
 const mock = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('../../services/agent-runtime/backend-execution.js', () => ({ executeBackendSession: mock.execute }));
@@ -44,7 +45,7 @@ beforeEach(async () => {
     const completedAt = new Date().toISOString();
     agentRuntimeStore.updateRunStep(step.id, { status: 'completed', completedAt });
     const finished = agentRuntimeStore.updateRun(run.id, { status: signal.aborted ? 'interrupted' : 'completed', completedAt });
-    agentRuntimeStore.updateSession(sessionId, { status: finished.status, activeRunId: null });
+    agentRuntimeStore.updateSession(sessionId, { status: normalizeAgentSessionStatus(finished.status), activeRunId: null });
     yield { type: 'run_completed', run: finished }; yield { type: 'done', sessionId, runId: run.id };
   });
   server = serve({ fetch: agentRuntimeRoutes.fetch, port: 0, hostname: '127.0.0.1' }) as Server;
@@ -61,7 +62,7 @@ async function createSession(profileId = 'explorer'): Promise<string> {
 }
 
 describe('actual HTTP observation lifecycle with an isolated controlled backend', () => {
-  it('shows stopping and refuses policy changes until cleanup is confirmed', async () => {
+  it('keeps the public session running while shutdown is pending and refuses policy changes', async () => {
     const id = await createSession('synax');
     await request('POST', `/sessions/${id}/runs`, { message: 'Run', requestId: 'stopping-policy' });
     let confirm!: () => void;
@@ -71,13 +72,13 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
     try {
       await vi.waitFor(async () => {
         const state = JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body);
-        expect(state.session.status).toBe('stopping');
+        expect(state.session.status).toBe('running');
       });
       expect((await request('PATCH', `/sessions/${id}/mode`, { mode: 'plan' })).status).toBe(409);
       expect((await request('PATCH', `/sessions/${id}/permissions`, { permissionTier: 'unrestricted' })).status).toBe(409);
       expect((await request('POST', `/sessions/${id}/interactions/pending/reply`, { revision: 1, action: 'submit', answers: {} })).status).toBe(409);
     } finally { confirm(); await stopping; interrupt.mockRestore(); }
-    expect(JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body).session.status).toBe('interrupted');
+    expect(JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body).session.status).toBe('completed');
   });
 
   it('continues work after the TCP observer disconnects and replays output on reconnect', async () => {

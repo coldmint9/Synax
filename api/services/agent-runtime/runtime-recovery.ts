@@ -1,6 +1,7 @@
 import { hasInput } from './content-parts.js';
 import { getRawSqlite } from '../../db/index.js';
 import { agentRuntimeStore } from './session-store.js';
+import { normalizeAgentSessionStatus } from './session-projection.js';
 import { profileService } from './profile-service.js';
 import { recoverOwnedProcesses, stopRecordedProcess, type OwnedProcessRecord } from './process-ownership.js';
 import { runtimeTransaction } from './runtime-transaction.js';
@@ -28,7 +29,7 @@ export async function recoverRuntime(hostId: string): Promise<{ reviewed: number
       const safeCheckpoint = run && native && !embedded && !session.parentSessionId && !session.sessionMetadata?.runtimeControl && !unknownProcesses.length
         && ['waiting_permission', 'waiting_input'].includes(run.status);
       if (safeCheckpoint) {
-        agentRuntimeStore.updateSession(session.id, { status: run.status, activeRunId: run.id });
+        agentRuntimeStore.updateSession(session.id, { status: normalizeAgentSessionStatus(run.status), activeRunId: run.id });
         const answeredPermission = db.prepare("SELECT p.id FROM agent_runtime_permissions p JOIN agent_runtime_tool_calls t ON t.id=p.tool_call_id WHERE p.run_id=? AND p.user_reply IS NOT NULL AND t.status='pending' LIMIT 1").get(run.id);
         const answeredInput = db.prepare("SELECT id FROM agent_runtime_interactions WHERE run_id=? AND consumed_at IS NULL AND response_json IS NOT NULL LIMIT 1").get(run.id);
         if (answeredPermission || answeredInput) resumable.push(session.id);
@@ -45,8 +46,16 @@ export async function recoverRuntime(hostId: string): Promise<{ reviewed: number
         db.prepare("UPDATE agent_runtime_permissions SET action='deny', user_reply='reject', resolved_at=?, reason='Native request expired on restart.' WHERE run_id=? AND resolved_at IS NULL").run(nowIso(), run.id);
         db.prepare("UPDATE agent_runtime_interactions SET status='cancelled', consumed_at=? WHERE run_id=? AND consumed_at IS NULL").run(nowIso(), run.id);
       }
+      const recoveredAt = nowIso();
       agentRuntimeStore.updateSessionMetadata(session.id, { runtimeControl: requiresReview ? { state: 'unconfirmed', source: 'restart', reason } : null });
-      agentRuntimeStore.updateSession(session.id, { status: requiresReview ? 'blocked' : 'interrupted', activeRunId: null, pendingResumeToken: null, blockedReason: reason, updatedAt: nowIso() });
+      agentRuntimeStore.updateSession(session.id, {
+        status: requiresReview ? 'completed' : 'interrupted',
+        activeRunId: null,
+        pendingResumeToken: null,
+        blockedReason: reason,
+        updatedAt: recoveredAt,
+        completedAt: requiresReview ? recoveredAt : session.completedAt,
+      });
       reviewed++;
     }
   });

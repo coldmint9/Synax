@@ -2,7 +2,10 @@ import { useSessionComposerSelection } from "./useSessionComposerSelection";
 import { useMediaDraft } from "../media/useMediaDraft";
 import { ComposerIsland } from "./ComposerIsland";
 import { useComposerCommands } from "./useComposerCommands";
-import type { GitWorkspaceSelection, TurnReference } from "../../../lib/api/agentRuntime";
+import type {
+  GitWorkspaceSelection,
+  TurnReference,
+} from "../../../lib/api/agentRuntime";
 import { NativeBackendModelPicker } from "./NativeBackendModelPicker";
 import { RuntimeRecoveryPanel } from "./RuntimeRecoveryPanel";
 import { agentRuntimeApi, type BackendId } from "../../../lib/api/agentRuntime";
@@ -10,9 +13,10 @@ import { SessionBackendPicker } from "./SessionBackendPicker";
 import { GitWorkspacePicker } from "./GitWorkspacePicker";
 import { readSessionBackendId } from "./synaxSessionTypes";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from "./agentSessionStore";
 import { useConfig } from "../settings/useConfig";
+import { useNotificationStore } from "../../state/notificationStore";
 import { useWikiStore } from "../../state/wikiStore";
 import { useLocale } from "../../../hooks/useLocale";
 import { GoalComposerPill } from "../wiki/goal/GoalComposerPill";
@@ -65,6 +69,7 @@ export function SessionComposer({
   const { t, locale } = useLocale();
   const zh = locale === "zh";
   const navigate = useNavigate();
+  const location = useLocation();
   const [content, setContent] = useState("");
   const [gitWorkspace, setGitWorkspace] = useState<GitWorkspaceSelection>();
   const [skillIds, setSkillIds] = useState<string[]>([]);
@@ -84,6 +89,17 @@ export function SessionComposer({
   const removeQueuedInput = useAgentSessionStore((s) => s.removeQueuedInput);
   const forceQueuedInput = useAgentSessionStore((s) => s.forceQueuedInput);
   const sessionId = session?.id;
+  const viewKey = `${projectId}:${sessionId ?? `draft:${location.key}`}`;
+  const viewScope = useRef({ key: viewKey });
+  if (viewScope.current.key !== viewKey) viewScope.current = { key: viewKey };
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const queuedInputs = useAgentSessionStore((s) =>
     sessionId
       ? (s.inputQueues[sessionId] ?? EMPTY_INPUT_QUEUE)
@@ -104,7 +120,9 @@ export function SessionComposer({
     setReferences([]);
     setGitWorkspace(undefined);
     createdDraftRef.current = null;
-  }, [sessionId, projectId]);
+    setSubmitting(false);
+    setError(null);
+  }, [sessionId, projectId, viewKey]);
   const isDraft = !session;
   const currentInteractions =
     interactionState?.sessionId === sessionId ? interactionState : null;
@@ -157,8 +175,10 @@ export function SessionComposer({
     return previous?.endsWith("-acp") ? (previous as BackendId) : "native";
   });
   const backendId = session ? readSessionBackendId(session) : draftBackendId;
-  const unavailableDraftAcp = isDraft && backendId.endsWith("-acp")
-    && !availableAcp.some(provider => provider.id === backendId);
+  const unavailableDraftAcp =
+    isDraft &&
+    backendId.endsWith("-acp") &&
+    !availableAcp.some((provider) => provider.id === backendId);
   const [backendCatalog, setBackendCatalog] = useState<
     Array<{
       id: BackendId;
@@ -177,11 +197,10 @@ export function SessionComposer({
         id: backend.id,
         label: `${backend.label}${backend.experimental ? " · Preview" : ""}`,
       })),
-    ...availableAcp
-      .map((provider) => ({
-        id: provider.id as BackendId,
-        label: provider.label ?? provider.id,
-      })),
+    ...availableAcp.map((provider) => ({
+      id: provider.id as BackendId,
+      label: provider.label ?? provider.id,
+    })),
   ];
   useEffect(() => {
     let active = true;
@@ -206,11 +225,23 @@ export function SessionComposer({
     setCliEfforts(undefined);
   }, [session?.id, backendId]);
 
-  const { providerId, modelId, cliModel, reasoningEffort, setSelection } = useSessionComposerSelection(
-    projectId, session, backendId, globalConfig, providers, effectiveConfig,
+  const { providerId, modelId, cliModel, reasoningEffort, setSelection } =
+    useSessionComposerSelection(
+      projectId,
+      session,
+      backendId,
+      globalConfig,
+      providers,
+      effectiveConfig,
+    );
+  const setCliModel = useCallback(
+    (cliModel: string) => setSelection({ cliModel }),
+    [setSelection],
   );
-  const setCliModel = useCallback((cliModel: string) => setSelection({ cliModel }), [setSelection]);
-  const setReasoningEffort = useCallback((reasoningEffort: ReasoningEffort) => setSelection({ reasoningEffort }), [setSelection]);
+  const setReasoningEffort = useCallback(
+    (reasoningEffort: ReasoningEffort) => setSelection({ reasoningEffort }),
+    [setSelection],
+  );
   const permissionTier = useWikiStore((s) => s.goalComposerPermissionTier);
   const wikiAttachMode = useWikiStore((s) => s.goalComposerWikiAttachMode);
   const setWikiAttachMode = useWikiStore(
@@ -282,12 +313,14 @@ export function SessionComposer({
   }, [session?.id, session?.sessionMetadata]);
 
   const handlePermissionTierChange = useCallback(
-    (tier: SynaxPermissionTier) => {
-      if (useWikiStore.getState().goalComposerPermissionTier !== tier) {
+    async (tier: SynaxPermissionTier) => {
+      if (sessionId)
+        await updateSessionPermissions(sessionId, { permissionTier: tier });
+      if (
+        !sessionId ||
+        useAgentSessionStore.getState().selectedSessionId === sessionId
+      ) {
         useWikiStore.setState({ goalComposerPermissionTier: tier });
-      }
-      if (sessionId) {
-        void updateSessionPermissions(sessionId, { permissionTier: tier });
       }
     },
     [sessionId, updateSessionPermissions],
@@ -317,6 +350,10 @@ export function SessionComposer({
       (isGenerating && !queueWhileGenerating)
     )
       return;
+    const submittedScope = viewScope.current;
+    if (submittedScope.key !== viewKey) return;
+    const isCurrent = () =>
+      mounted.current && viewScope.current === submittedScope;
     setError(null);
     setSubmitting(true);
     const model =
@@ -337,7 +374,6 @@ export function SessionComposer({
         : undefined,
       model,
       reasoningEffort,
-      permissionTier: cliBackend ? undefined : permissionTier,
       references,
     };
     try {
@@ -347,27 +383,40 @@ export function SessionComposer({
           (await submitSessionDraft(projectId, {
             ...body,
             backendId,
+            permissionTier: cliBackend ? undefined : permissionTier,
             mode: acp ? "chat" : draftMode,
             prompt: message,
             gitWorkspace,
           }));
-        createdDraftRef.current = created;
+        if (isCurrent()) createdDraftRef.current = created;
         await sendSessionMessage(created.id, body);
-        createdDraftRef.current = null;
-        navigate(sessionPath(projectId, created.id));
+        if (isCurrent()) {
+          createdDraftRef.current = null;
+          navigate(sessionPath(projectId, created.id));
+        }
       } else {
         await submitOrEnqueueSessionInput(session.id, body);
       }
-      setContent("");
-      media.clear();
-      setReferences([]);
+      if (isCurrent()) {
+        setContent("");
+        media.clear();
+        setReferences([]);
+      }
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (isCurrent()) setError(message);
+      else
+        useNotificationStore.getState().push({
+          type: "error",
+          message: `${zh ? "后台会话提交失败" : "Background session submission failed"}: ${message}`,
+        });
     } finally {
-      setSubmitting(false);
+      if (isCurrent()) setSubmitting(false);
     }
   }, [
     media,
+    zh,
+    viewKey,
     content,
     submitting,
     changingMode,
@@ -473,7 +522,9 @@ export function SessionComposer({
           <SessionBackendPicker
             value={backendId}
             options={backendOptions}
-            disabled={!isDraft || submitting || Boolean(createdDraftRef.current)}
+            disabled={
+              !isDraft || submitting || Boolean(createdDraftRef.current)
+            }
             onChange={(id) => {
               setDraftBackendId(id);
               setError(null);
@@ -512,7 +563,10 @@ export function SessionComposer({
           );
           return;
         }
-        setSelection({ providerId: selection.providerId, modelId: selection.modelId });
+        setSelection({
+          providerId: selection.providerId,
+          modelId: selection.modelId,
+        });
       }}
       providers={providers}
       globalConfig={globalConfig}
@@ -529,7 +583,10 @@ export function SessionComposer({
       permissionTier={permissionTier}
       onPermissionTierChange={handlePermissionTierChange}
       disabled={
-        submitting || changingMode || unavailableDraftAcp || (isGenerating && !queueWhileGenerating)
+        submitting ||
+        changingMode ||
+        unavailableDraftAcp ||
+        (isGenerating && !queueWhileGenerating)
       }
       wikiAttachDisabled={!isDraft}
       queueWhileGenerating={
@@ -567,6 +624,13 @@ export function SessionComposer({
       )}
       {session && <AgentInteractionPanel key={session.id} session={session} />}
       {commands.menu}
+      {sessionId && (
+        <InputQueueStrip
+          items={queuedInputs}
+          onRemove={(itemId) => void removeQueuedInput(sessionId, itemId)}
+          onForce={(itemId) => void forceQueuedInput(sessionId, itemId)}
+        />
+      )}
       <ComposerIsland
         key={`composer-${sessionId ?? "draft"}`}
         sessionId={sessionId}
@@ -588,13 +652,6 @@ export function SessionComposer({
           data-has-media={hasMediaInput ? "true" : "false"}
           data-multiline="true"
         >
-          {sessionId && (
-            <InputQueueStrip
-              items={queuedInputs}
-              onRemove={(itemId) => void removeQueuedInput(sessionId, itemId)}
-              onForce={(itemId) => void forceQueuedInput(sessionId, itemId)}
-            />
-          )}
           <div className="goal-dock-shell-content">{composer}</div>
         </div>
       </ComposerIsland>

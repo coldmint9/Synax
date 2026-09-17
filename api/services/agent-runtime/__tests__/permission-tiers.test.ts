@@ -4,8 +4,8 @@ import { permissionRulesForTier, resolveSessionPermissionRules } from '../permis
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
 describe('permissionRulesForTier', () => {
-  it('readonly asks for writes, deletes, and read shell; denies mutating shell', () => {
-    const rules = permissionRulesForTier('readonly');
+  it('boundary mode allows workspace reads/edits and reviews commands', () => {
+    const rules = permissionRulesForTier('boundary');
 
     expect(permissionPolicy.evaluate({
       sessionId: 's1',
@@ -18,7 +18,7 @@ describe('permissionRulesForTier', () => {
       category: 'write',
       internalGate: 'write',
       rules,
-    }).action).toBe('ask');
+    }).action).toBe('allow');
 
     expect(permissionPolicy.evaluateShellCommand({
       sessionId: 's1',
@@ -26,7 +26,7 @@ describe('permissionRulesForTier', () => {
       internalGate: 'shell',
       command: 'rg foo',
       rules,
-    }).action).toBe('ask');
+    }).action).toBe('allow');
 
     expect(permissionPolicy.evaluateShellCommand({
       sessionId: 's1',
@@ -34,7 +34,7 @@ describe('permissionRulesForTier', () => {
       internalGate: 'shell',
       command: 'npm test',
       rules,
-    }).action).toBe('deny');
+    }).action).toBe('ask');
 
     expect(permissionPolicy.evaluate({
       sessionId: 's1',
@@ -44,14 +44,14 @@ describe('permissionRulesForTier', () => {
     }).action).toBe('allow');
   });
 
-  it('readwrite allows read/write/delete and read shell; asks for mutating shell', () => {
-    const rules = permissionRulesForTier('readwrite');
+  it('auto mode approves known local reads and asks for uncertain commands', () => {
+    const rules = permissionRulesForTier('auto');
 
     expect(permissionPolicy.evaluateShellCommand({
       sessionId: 's1',
       category: 'shell',
       internalGate: 'shell',
-      command: 'git diff',
+      command: 'ls src',
       rules,
     }).action).toBe('allow');
 
@@ -83,7 +83,7 @@ describe('resolveSessionPermissionRules', () => {
   it('prefers permissionTier over profile defaults', () => {
     const rules = resolveSessionPermissionRules(
       [{ gate: 'write', pattern: '*', action: 'ask', reason: 'profile default' }],
-      { permissionTier: 'readwrite' },
+      { permissionTier: 'auto' },
     );
 
     expect(permissionPolicy.evaluate({

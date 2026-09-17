@@ -32,7 +32,7 @@ export function ToastContainer() {
 
   return (
     <div
-      className="fixed top-16 right-4 z-[100] w-[340px] max-sm:right-3 max-sm:top-[4.5rem]"
+      className="fixed left-1/2 top-14 z-[100] w-[280px] max-w-[calc(100vw-24px)] -translate-x-1/2"
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
     >
@@ -69,7 +69,7 @@ function ToastItem({ notification, index, total, expanded }: {
 
   const hidden = !expanded && index >= MAX_VISIBLE_STACK
   const scale = expanded ? 1 : 1 - index * 0.05
-  const translateY = expanded ? index * 52 : index * 8
+  const translateY = expanded ? index * 44 : index * 7
   const opacity = hidden ? 0 : 1
 
   return (
@@ -86,11 +86,11 @@ function ToastItem({ notification, index, total, expanded }: {
         pointerEvents: hidden ? 'none' : 'auto',
         transition: 'transform 0.3s ease, opacity 0.3s ease',
       }}
-      className={`flex items-start gap-2.5 rounded-3xl bg-surface px-4 py-3 shadow-overlay ${index === 0 ? 'animate-in slide-in-from-right-5 fade-in duration-300' : ''}`}
+      className={`flex items-start gap-2 rounded-xl bg-surface px-3 py-2 shadow-overlay ${index === 0 ? 'animate-in slide-in-from-top-2 fade-in duration-300' : ''}`}
     >
-      <Icon size={15} className={`shrink-0 mt-0.5 ${ICON_STYLES[notification.type]}`} />
+      <Icon size={14} className={`mt-0.5 shrink-0 ${ICON_STYLES[notification.type]}`} />
       <div className="flex-1 min-w-0">
-        <p className="text-sm leading-relaxed text-overlay-foreground">
+        <p className="text-xs leading-5 text-overlay-foreground">
           {notification.message}
         </p>
         {notification.actions && notification.actions.length > 0 && (

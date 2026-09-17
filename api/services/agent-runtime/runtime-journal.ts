@@ -1,4 +1,4 @@
-import { projectSessionState } from './session-projection.js';
+import { normalizeAgentSessionStatus, projectSessionState } from './session-projection.js';
 import { getRawSqlite } from '../../db/index.js';
 import type { AgentRunStreamChunk, AgentSession } from './contracts.js';
 import { agentRuntimeStore } from './session-store.js';
@@ -14,8 +14,14 @@ export interface RuntimeStreamRecord {
 }
 interface JournalRow { sequence: number; session_id: string; run_id: string; chunk_json: string }
 const mapRow = (row: JournalRow): RuntimeStreamRecord => {
-  const payload = JSON.parse(row.chunk_json) as { chunk: AgentRunStreamChunk; state: RuntimeStreamRecord['state'] };
-  return { sequence: row.sequence, sessionId: row.session_id, runId: row.run_id, ...payload };
+  const payload = JSON.parse(row.chunk_json) as { chunk: AgentRunStreamChunk; state: RuntimeStreamRecord['state'] & { status: unknown } };
+  return {
+    sequence: row.sequence,
+    sessionId: row.session_id,
+    runId: row.run_id,
+    ...payload,
+    state: { ...payload.state, status: normalizeAgentSessionStatus(payload.state.status) },
+  };
 };
 
 class RuntimeJournal {

@@ -22,9 +22,19 @@ describe('ThinkingBlock', () => {
     const { container } = render(<ThinkingBlock content={content} />)
 
     expect(container.querySelector('[data-activity-body]')).toBeNull()
-    // The compact title exposes a bounded preview without mounting the body.
-    expect(screen.getByRole('button').getAttribute('title')).toContain('reasoning-')
+    // The compact title exposes a bounded tail preview without mounting the
+    // body: the row reports where the reasoning ended, not where it started.
+    const title = screen.getByRole('button').getAttribute('title') ?? ''
+    expect(title.startsWith('…')).toBe(true)
+    expect(title.length).toBeLessThanOrEqual(401)
+    expect(title).not.toContain('reasoning-')
     expect((container.textContent ?? '').length).toBeLessThan(300)
+  })
+
+  it('previews the newest reasoning line on a collapsed row', () => {
+    render(<ThinkingBlock content={'first line of reasoning\n\nlatest line of reasoning'} />)
+
+    expect(screen.getByRole('button').getAttribute('title')).toBe('latest line of reasoning')
   })
 
   it('mounts the body on expand and releases it after the closing transition', () => {

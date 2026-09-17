@@ -31,8 +31,8 @@ describe('parseBashInvocations', () => {
 });
 
 describe('evaluateShellCommand', () => {
-  it('readonly denies mutating shell and asks for read shell', () => {
-    const rules = permissionRulesForTier('readonly');
+  it('boundary mode asks for uncertain commands and permits known reads', () => {
+    const rules = permissionRulesForTier('boundary');
 
     expect(permissionPolicy.evaluateShellCommand({
       sessionId: 's1',
@@ -40,7 +40,7 @@ describe('evaluateShellCommand', () => {
       internalGate: 'shell',
       command: 'npm test',
       rules,
-    }).action).toBe('deny');
+    }).action).toBe('ask');
 
     expect(permissionPolicy.evaluateShellCommand({
       sessionId: 's1',
@@ -48,17 +48,17 @@ describe('evaluateShellCommand', () => {
       internalGate: 'shell',
       command: 'rg foo',
       rules,
-    }).action).toBe('ask');
+    }).action).toBe('allow');
   });
 
-  it('readwrite allows read shell and asks for mutating shell', () => {
-    const rules = permissionRulesForTier('readwrite');
+  it('auto review permits known reads and asks for uncertain commands', () => {
+    const rules = permissionRulesForTier('auto');
 
     expect(permissionPolicy.evaluateShellCommand({
       sessionId: 's1',
       category: 'shell',
       internalGate: 'shell',
-      command: 'git diff',
+      command: 'ls .',
       rules,
     }).action).toBe('allow');
 
@@ -73,7 +73,7 @@ describe('evaluateShellCommand', () => {
 
   it('matches command-specific shell rules before risk class', () => {
     const rules = [
-      ...permissionRulesForTier('readwrite'),
+      ...permissionRulesForTier('auto'),
       { gate: 'shell' as const, pattern: 'git:push', action: 'deny' as const, reason: 'No pushing.' },
     ];
 

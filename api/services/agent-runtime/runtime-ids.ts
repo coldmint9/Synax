@@ -1,15 +1,13 @@
-const counters = new Map<string, number>();
+import { randomUUID } from "node:crypto";
 
 export function nowIso(date = new Date()): string {
   return date.toISOString();
 }
 
+/** Opaque IDs must remain unique across the API process and all session workers. */
 export function makeRuntimeId(prefix: string): string {
-  const next = (counters.get(prefix) ?? 0) + 1;
-  counters.set(prefix, next);
-  return `${prefix}_${Date.now().toString(36)}_${next.toString(36)}`;
+  return `${prefix}_${randomUUID().replaceAll("-", "")}`;
 }
 
-export function resetRuntimeIdsForTests(): void {
-  counters.clear();
-}
+/** Kept for fixture callers; UUIDs have no process-local sequence to reset. */
+export function resetRuntimeIdsForTests(): void {}

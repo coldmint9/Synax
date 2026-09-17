@@ -27,7 +27,6 @@ export interface BackendCapabilities {
   resume: CapabilitySupport;
   permissions: CapabilitySupport;
   interactions: CapabilitySupport;
-  pause: CapabilitySupport;
   cancel: CapabilitySupport;
   chat: CapabilitySupport;
   plan: CapabilitySupport;
@@ -56,23 +55,23 @@ export interface BackendAdapter {
 export const BACKENDS: readonly BackendDescription[] = [
   { id: 'native', label: 'Synax', kind: 'native', capabilities: {
     nativeControls: 'supported', resume: 'supported', permissions: 'supported', interactions: 'supported',
-    pause: 'supported', cancel: 'supported', chat: 'supported', plan: 'supported', goal: 'supported',
+    cancel: 'supported', chat: 'supported', plan: 'supported', goal: 'supported',
     nativeSessionResume: 'supported', jsonlEvents: 'supported',
   } },
   { id: 'codex', label: 'Codex CLI', kind: 'cli', experimental: true, capabilities: {
     nativeControls: 'unsupported', resume: 'supported', permissions: 'supported', interactions: 'supported',
-    pause: 'supported', cancel: 'supported', chat: 'supported', plan: 'unsupported', goal: 'unsupported',
+    cancel: 'supported', chat: 'supported', plan: 'unsupported', goal: 'unsupported',
     nativeSessionResume: 'supported', jsonlEvents: 'supported',
   } },
   { id: 'claude-code', label: 'Claude Code CLI', kind: 'cli', experimental: true, capabilities: {
     nativeControls: 'unsupported', resume: 'supported', permissions: 'supported', interactions: 'supported',
-    pause: 'supported', cancel: 'supported', chat: 'supported', plan: 'unsupported', goal: 'unsupported',
+    cancel: 'supported', chat: 'supported', plan: 'unsupported', goal: 'unsupported',
     nativeSessionResume: 'supported', jsonlEvents: 'supported',
   } },
   ...ACP_PROVIDER_IDS.map((id): BackendDescription => ({
     id, label: id, kind: 'acp', capabilities: {
       nativeControls: 'unsupported', resume: 'unverified', permissions: 'supported', interactions: 'unverified',
-      pause: 'unverified', cancel: 'supported', chat: 'supported', plan: 'unsupported', goal: 'unsupported',
+      cancel: 'supported', chat: 'supported', plan: 'unsupported', goal: 'unsupported',
       nativeSessionResume: 'unverified', jsonlEvents: 'supported',
     },
   })),

@@ -1,12 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useNotificationStore } from '../../react/state/notificationStore'
 import {
   API_CONNECTIVITY_NOTIFICATION_ID,
   notifyConnectivityFailure,
+  probeApiHealth,
+  startApiConnectivityMonitor,
   useApiConnectivityStore,
 } from '../apiConnectivity'
 import { handleError } from '../errors'
 import { createOfflineError } from '../appError'
+
+vi.mock('../api/runtimeEventBus', () => ({ resumeRuntimeEventBus: vi.fn() }))
 
 describe('notifyConnectivityFailure', () => {
   beforeEach(() => {
@@ -97,5 +101,90 @@ describe('useApiConnectivityStore', () => {
   it('blocks requests while unreachable', () => {
     useApiConnectivityStore.setState({ apiReachable: 'unreachable' })
     expect(useApiConnectivityStore.getState().shouldSkipRequest()).toBe(true)
+  })
+})
+
+describe('connectivity monitor wake recovery', () => {
+  let stop: (() => void) | undefined
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
+    useApiConnectivityStore.setState({ browserOnline: true, apiReachable: 'reachable', recoveryVersion: 0 })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
+  })
+
+  afterEach(async () => {
+    stop?.()
+    await vi.advanceTimersByTimeAsync(0)
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('probes and publishes one recovery for a burst of visible/focus/online events', async () => {
+    stop = startApiConnectivityMonitor()
+    await vi.advanceTimersByTimeAsync(0)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('focus'))
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(1)
+  })
+
+  it('detects timer suspension even without browser lifecycle events', async () => {
+    stop = startApiConnectivityMonitor()
+    await vi.advanceTimersByTimeAsync(0)
+    vi.setSystemTime(Date.now() + 60_000)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(1)
+  })
+
+  it('keeps retrying when the network is not ready at wake time', async () => {
+    stop = startApiConnectivityMonitor()
+    await vi.advanceTimersByTimeAsync(0)
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    window.dispatchEvent(new Event('focus'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useApiConnectivityStore.getState().apiReachable).toBe('unreachable')
+    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(0)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(useApiConnectivityStore.getState().apiReachable).toBe('reachable')
+    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(1)
+  })
+
+  it('resynchronizes a stale browser offline flag on focus', async () => {
+    stop = startApiConnectivityMonitor()
+    await vi.advanceTimersByTimeAsync(0)
+    useApiConnectivityStore.getState().setBrowserOnline(false)
+    window.dispatchEvent(new Event('focus'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useApiConnectivityStore.getState().shouldSkipRequest()).toBe(false)
+  })
+
+  it('coalesces health probes and retains a wake request while a probe is pending', async () => {
+    let resolve!: (response: Response) => void
+    vi.mocked(fetch).mockImplementation(() => new Promise<Response>(r => { resolve = r }))
+    const first = probeApiHealth()
+    const resumed = probeApiHealth(true)
+    expect(resumed).toBe(first)
+    resolve(new Response(null, { status: 200 }))
+    await resumed
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(1)
+  })
+
+  it('removes lifecycle listeners and timers on stop', async () => {
+    stop = startApiConnectivityMonitor()
+    await vi.advanceTimersByTimeAsync(0)
+    stop()
+    window.dispatchEvent(new Event('focus'))
+    window.dispatchEvent(new Event('pageshow'))
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 })

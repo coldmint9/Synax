@@ -96,7 +96,13 @@ export function GoalModelPicker({
   )
 
   const currentKey = selected ? selectionKey(selected) : null
-  const triggerLabel = selected?.label ?? modelId ?? t('goalModelSelect')
+  const selectedProviderLabel = providerId
+    ? providers.find(provider => provider.id === providerId)?.label ?? providerId
+    : null
+  const selectedModelLabel = selected?.label ?? modelId
+  const triggerLabel = selectedProviderLabel && selectedModelLabel
+    ? `${selectedProviderLabel} · ${selectedModelLabel}`
+    : selectedModelLabel ?? t('goalModelSelect')
 
   const query = searchQuery.trim().toLowerCase()
   const filteredApi = useMemo(
@@ -131,7 +137,8 @@ export function GoalModelPicker({
       <Popover.Trigger
         aria-label={t('goalModelSelect')}
         aria-disabled={triggerDisabled}
-        className={`button button--sm button--tertiary goal-dock-composer-chip inline-flex h-7 max-w-[9.5rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${triggerDisabled ? ' pointer-events-none opacity-50' : ''}`}
+        title={triggerLabel}
+        className={`button button--sm button--tertiary goal-dock-composer-chip goal-model-picker-trigger inline-flex h-7 max-w-[18rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${triggerDisabled ? ' pointer-events-none opacity-50' : ''}`}
       >
         <span className="truncate">{triggerLabel}</span>
       </Popover.Trigger>

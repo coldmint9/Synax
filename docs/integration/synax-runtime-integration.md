@@ -461,9 +461,23 @@ Content-Type: application/json
   "workDir": "/absolute/path/to/repository",
   "prompt": "分析这个项目的认证流程并给出一个可执行计划。",
   "reasoningEffort": "high",
-  "permissionTier": "readonly"
+  "permissionTier": "boundary"
 }
 ```
+
+Native 审批模式（`PATCH /sessions/:sessionId/permissions` 可在运行中修改，下一 step 读取新设置）：
+
+- `boundary`：工作区外文件与网络操作每次审批，历史“始终允许”不能绕过边界。
+- `auto`：保守的系统风险检查；已知只读命令、公开搜索和可验证的公开系统参考文件可自动通过，危险、敏感或不确定操作仍请求批准。
+- `unrestricted`：跳过权限审批，但不取消模式、Work 和子代理能力限制。
+
+旧 `readonly` / `readwrite` 请求及存储值仅作兼容输入，保守映射为 `boundary`；UI 不再提供这两档。
+
+后台服务通过 bash 工具的 `background: true` 启动，返回 `processId` 和 `pid`。带实际 `&` 后台操作符的命令也会登记；不需要使用 `nohup` / `disown`。服务保留到退出或用户终止，不因单轮结束消失。
+
+- `GET /sessions/:sessionId/processes`：该会话的全部活动后台进程和最近退出的进程。
+- `POST /sessions/:sessionId/processes/:processId/stop`：核验归属后终止进程树。使用登记的 `processId`，不接受任意 PID。
+- `session_process_changed` SSE 事件用于刷新侧栏；不可确认进程归属或终止结果时返回 409，不冒险终止其他进程。
 
 创建成功响应包含：
 
