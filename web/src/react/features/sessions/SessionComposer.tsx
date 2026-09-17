@@ -1,4 +1,7 @@
-import { useSessionComposerSelection } from "./useSessionComposerSelection";
+import {
+  useSessionComposerSelection,
+  useSessionComposerSelections,
+} from "./useSessionComposerSelection";
 import { useMediaDraft } from "../media/useMediaDraft";
 import { ComposerIsland } from "./ComposerIsland";
 import { useComposerCommands } from "./useComposerCommands";
@@ -171,6 +174,9 @@ export function SessionComposer({
   const acpDiscovery = useAcpDiscovery({ enabled: isDraft });
   const availableAcp = discoveredAcpProviders(providers, acpDiscovery);
   const [draftBackendId, setDraftBackendId] = useState<BackendId>(() => {
+    const lastSubmitted =
+      useSessionComposerSelections.getState().lastSubmittedByProject[projectId];
+    if (lastSubmitted) return lastSubmitted.backendId;
     const previous = useWikiStore.getState().goalComposerProviderId;
     return previous?.endsWith("-acp") ? (previous as BackendId) : "native";
   });
@@ -225,8 +231,14 @@ export function SessionComposer({
     setCliEfforts(undefined);
   }, [session?.id, backendId]);
 
-  const { providerId, modelId, cliModel, reasoningEffort, setSelection } =
-    useSessionComposerSelection(
+  const {
+    providerId,
+    modelId,
+    cliModel,
+    reasoningEffort,
+    setSelection,
+    markSubmitted,
+  } = useSessionComposerSelection(
       projectId,
       session,
       backendId,
@@ -390,12 +402,14 @@ export function SessionComposer({
           }));
         if (isCurrent()) createdDraftRef.current = created;
         await sendSessionMessage(created.id, body);
+        markSubmitted(created.id);
         if (isCurrent()) {
           createdDraftRef.current = null;
           navigate(sessionPath(projectId, created.id));
         }
       } else {
         await submitOrEnqueueSessionInput(session.id, body);
+        markSubmitted(session.id);
       }
       if (isCurrent()) {
         setContent("");
@@ -439,6 +453,7 @@ export function SessionComposer({
     gitWorkspace,
     submitSessionDraft,
     sendSessionMessage,
+    markSubmitted,
     navigate,
     submitOrEnqueueSessionInput,
     session,

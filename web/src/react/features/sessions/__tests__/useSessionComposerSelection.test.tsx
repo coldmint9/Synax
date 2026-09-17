@@ -12,7 +12,7 @@ const a = { id: 'a', projectId: 'p', model: 'model-a', reasoningEffort: 'low', s
 const b = { ...a, id: 'b', model: 'model-b', reasoningEffort: 'high' } as AgentSession
 
 beforeEach(() => {
-  useSessionComposerSelections.setState({ selections: {} })
+  useSessionComposerSelections.setState({ selections: {}, lastSubmittedByProject: {} })
   useAgentSessionStore.setState({ ...useAgentSessionStore.getInitialState() })
   useWikiStore.setState({ goalComposerProviderId: 'api', goalComposerModelId: 'draft', goalComposerReasoningEffort: 'high' })
 })
@@ -43,6 +43,54 @@ describe('session composer selection', () => {
     act(() => useAgentSessionStore.setState({ runs: [{ ...run, model: 'updated-runtime' }] }))
     expect(hook.result.current).toMatchObject({ modelId: 'future-model', reasoningEffort: 'xhigh' })
     expect(useWikiStore.getState().goalComposerModelId).toBe('draft')
+  })
+
+  it.each(['native', 'codex', 'codex-acp'] as const)(
+    'uses the last submitted selection as the next-session default: %s',
+    backend => {
+      const hook = renderHook(() => useSessionComposerSelection('p', undefined, backend, null, [], null))
+      act(() => hook.result.current.setSelection({
+        providerId: backend === 'native' ? 'api' : backend,
+        modelId: 'last-model',
+        cliModel: 'last-cli-model',
+        reasoningEffort: 'xhigh',
+      }))
+      act(() => hook.result.current.markSubmitted('created-session'))
+
+      const remembered = useSessionComposerSelections.getState()
+      expect(remembered.lastSubmittedByProject.p).toMatchObject({
+        backendId: backend,
+        modelId: 'last-model',
+        cliModel: 'last-cli-model',
+        reasoningEffort: 'xhigh',
+      })
+
+      // A fresh mount must be able to initialize from the submitted value,
+      // independently of the transient draft entry.
+      act(() => useSessionComposerSelections.setState({ selections: {} }))
+      hook.unmount()
+      const next = renderHook(() => useSessionComposerSelection('p', undefined, backend, null, [], null))
+      expect(next.result.current).toMatchObject({
+        modelId: 'last-model',
+        cliModel: 'last-cli-model',
+        reasoningEffort: 'xhigh',
+      })
+    },
+  )
+
+  it('does not apply a submitted model to a different project or backend', () => {
+    const submitted = {
+      providerId: 'codex-acp',
+      modelId: 'gpt-last',
+      cliModel: 'default',
+      reasoningEffort: 'high' as const,
+    }
+    act(() => useSessionComposerSelections.getState().rememberSubmission('p', 's', 'codex-acp', submitted))
+
+    const otherBackend = renderHook(() => useSessionComposerSelection('p', undefined, 'native', null, [], null))
+    expect(otherBackend.result.current.modelId).toBe('draft')
+    const otherProject = renderHook(() => useSessionComposerSelection('other', undefined, 'codex-acp', null, [], null))
+    expect(otherProject.result.current.modelId).toBe('default')
   })
 
   it('preserves unknown runtime effort and ignores other sessions', () => {
