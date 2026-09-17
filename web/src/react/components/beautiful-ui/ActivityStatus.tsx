@@ -1,7 +1,7 @@
 // Adapted from Beautiful UI TaskRows (MIT, copyright 2026 Shane Levine).
 // Source: slev12397/beautiful-ui @ ff0f74d. License: web/public/licenses/beautiful-ui.txt.
 // Only the presentation is reused; status always comes from Synax.
-import { Archive, Ban, Check, Circle, Clock3, LoaderCircle, Pause, ShieldAlert, X } from 'lucide-react'
+import { Archive, Ban, Check, Circle, Clock3, LoaderCircle, ShieldAlert, X } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { I18nKey } from '../../../lib/i18n'
 
@@ -12,11 +12,9 @@ const STATES: Record<string, { icon: typeof Check; label: I18nKey; tone: string 
   denied: { icon: ShieldAlert, label: 'activityStatusDenied', tone: 'warning' },
   waiting_permission: { icon: ShieldAlert, label: 'activityStatusPermission', tone: 'warning' },
   waiting_input: { icon: Clock3, label: 'activityStatusInput', tone: 'warning' },
-  blocked: { icon: ShieldAlert, label: 'activityStatusBlocked', tone: 'warning' },
   interrupted: { icon: Ban, label: 'activityStatusInterrupted', tone: 'warning' },
   cancelled: { icon: Ban, label: 'activityStatusCancelled', tone: 'muted' },
   compacted: { icon: Archive, label: 'activityStatusCompacted', tone: 'muted' },
-  paused: { icon: Pause, label: 'activityStatusPaused', tone: 'muted' },
   queued: { icon: Clock3, label: 'activityStatusQueued', tone: 'muted' },
   pending: { icon: Circle, label: 'activityStatusPending', tone: 'muted' },
   idle: { icon: Circle, label: 'activityStatusIdle', tone: 'muted' },

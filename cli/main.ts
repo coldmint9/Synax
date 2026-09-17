@@ -276,7 +276,7 @@ async function interactiveSession(client: RuntimeClient, options: CliOptions, in
   let closing = false;
   let finalCode: number = EXIT.completed;
   const start = async (message: string | undefined, mode: 'turn' | 'continue'): Promise<void> => {
-    if (active) { io.err.write('A Run is active. Use /approve, /answer, /pause, /cancel, or /exit.\n'); return; }
+    if (active) { io.err.write('A Run is active. Use /approve, /answer, /cancel, or /exit.\n'); return; }
     if (!sessionId) sessionId = await ensureSession(client, options, message ?? 'Interactive Synax session');
     const activeSessionId = sessionId;
     const accepted = await client.submitRun(activeSessionId, await turnInput(client, options, activeSessionId, message), { requestId: options.requestId ?? `synax-cli-${randomUUID()}`, mode });
@@ -315,11 +315,10 @@ async function interactiveSession(client: RuntimeClient, options: CliOptions, in
         if (command === '/approve') { if (!sessionId) throw new Error('No active session.'); await replyPermission(client, sessionId, args); }
         else if (command === '/answer') { if (!sessionId) throw new Error('No active session.'); await replyInteraction(client, sessionId, args); }
         else if (command === '/cancel') { await stop(true); }
-        else if (command === '/pause') { if (!sessionId) throw new Error('No active session.'); await requireCapability(client, sessionId, 'pause'); await client.pauseSession(sessionId, active?.runId); }
         else if (command === '/new') { if (active) throw new Error('Stop the active Run first.'); sessionId = undefined; }
         else if (command === '/resume') { if (active) throw new Error('Stop the active Run first.'); sessionId = args[0] ?? sessionId; if (!sessionId) throw new Error('/resume requires a session ID.'); }
         else if (command === '/sessions') printItems(options, 'sessions', (await client.listSessions()).items as unknown as Array<Record<string, unknown>>);
-        else if (command === '/help') io.err.write('/new /sessions /resume <id> /approve <id> [reply] /answer <id> <json> /pause /cancel /exit\n');
+        else if (command === '/help') io.err.write('/new /sessions /resume <id> /approve <id> [reply] /answer <id> <json> /cancel /exit\n');
         else io.err.write('Unknown command. Use /help.\n');
       } catch (error) { io.err.write(`${error instanceof Error ? error.message : String(error)}\n`); }
       if (!closing) rl.prompt();
@@ -371,7 +370,6 @@ async function runRpc(client: RuntimeClient): Promise<number> {
       case 'permissions.reply': result = await client.replyPermission(required(params, 'sessionId'), required(params, 'permissionId'), params.reply as PermissionReply, typeof params.message === 'string' ? params.message : undefined); break;
       case 'interactions.reply': result = await client.replyInteraction(required(params, 'sessionId'), required(params, 'interactionId'), params.reply as RuntimeInteractionReply); break;
       case 'sessions.cancel': result = await client.cancelSession(required(params, 'sessionId'), typeof params.runId === 'string' ? params.runId : undefined); break;
-      case 'sessions.pause': result = await client.pauseSession(required(params, 'sessionId'), typeof params.runId === 'string' ? params.runId : undefined); break;
       default: throw new Error(`Unknown RPC method: ${request.method}`);
     }
     send({ id, ok: true, result });
@@ -449,7 +447,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       const parsed = options.answers ? JSON.parse(options.answers) as RuntimeInteractionReply['answers'] : {};
       const result = await client.replyInteraction(sessionId, id, { revision: current.revision, action: (options.action as RuntimeInteractionReply['action']) ?? 'submit', answers: parsed }); writeJson(io.out, result); return EXIT.completed;
     }
-    case 'pause': if (!options.session) throw new Error('pause requires --session <session-id>.'); await requireCapability(client, options.session, 'pause'); writeJson(io.out, await client.pauseSession(options.session, options.run)); return EXIT.completed;
     case 'cancel': if (!options.session) throw new Error('cancel requires --session <session-id>.'); writeJson(io.out, await client.cancelSession(options.session, options.run)); return EXIT.completed;
     case 'rpc': return runRpc(client);
     case 'chat': return isTty(options) ? interactiveSession(client, options) : runExec(client, options, await messageFrom(options));

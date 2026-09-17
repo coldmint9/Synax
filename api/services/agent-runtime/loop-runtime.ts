@@ -86,6 +86,7 @@ import { profileService, type ProfileService } from "./profile-service.js";
 import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
+import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
 import { profileCanUseTool } from "./tool-mount-policy.js";
@@ -187,15 +188,13 @@ export class AgentLoopRuntime {
         throw new AgentValidationError("Invalid accepted Run.");
       session = {
         ...session,
-        status: runtime.previousSessionStatus as AgentSession["status"],
+        status: normalizeAgentSessionStatus(runtime.previousSessionStatus),
       };
     }
 
-    const RESUMABLE: string[] = [
+    const RESUMABLE: AgentSession["status"][] = [
       "interrupted",
-      "paused",
       "completed",
-      "blocked",
       "failed",
       "cancelled",
     ];
@@ -337,8 +336,8 @@ export class AgentLoopRuntime {
         );
     }
     if (
-      input.permissionTier !== undefined ||
-      input.permissionOverrides !== undefined
+      !input.acceptedRunId &&
+      (input.permissionTier !== undefined || input.permissionOverrides !== undefined)
     ) {
       applySessionPermissionUpdate(sessionId, {
         permissionTier: input.permissionTier,
@@ -346,6 +345,16 @@ export class AgentLoopRuntime {
       });
     }
     let session = this.store.getSession(sessionId);
+    const storedTier = session.sessionMetadata?.permissionTier;
+    if (session.profileId === "synax" && (storedTier === "readonly" || storedTier === "readwrite")) {
+      session = applySessionPermissionUpdate(sessionId, { permissionTier: "boundary" });
+    } else if (session.profileId === "synax" && storedTier === undefined) {
+      // Old sessions without a mode keep explicit restrictions, with mandatory boundary review added.
+      session = this.store.updateSession(sessionId, {
+        permissionRules: [{ gate: "approval_mode", pattern: "boundary", action: "ask" }, ...session.permissionRules],
+        sessionMetadata: { ...session.sessionMetadata, permissionTier: "boundary" },
+      });
+    }
     if (input.reasoningEffort) {
       session = this.store.updateSession(sessionId, {
         reasoningEffort: input.reasoningEffort,
@@ -411,7 +420,7 @@ export class AgentLoopRuntime {
             stopReason: reason,
           });
           this.store.updateSession(sessionId, {
-            status: completed ? "completed" : "blocked",
+            status: "completed",
             activeRunId: null,
             pendingResumeToken: null,
             completedAt: nowIso(),
@@ -690,9 +699,7 @@ export class AgentLoopRuntime {
             return;
           }
           const liveSession = this.store.getSession(sessionId);
-          if (
-            ["paused", "interrupted", "cancelled"].includes(liveSession.status)
-          ) {
+          if (["interrupted", "cancelled"].includes(liveSession.status)) {
             this.interruptSessions([sessionId], "Session stopped by user.");
             throw new Error("Session stopped by user.");
           }
@@ -1084,7 +1091,7 @@ export class AgentLoopRuntime {
               stopReason: pendingPermission.reason,
             });
             this.store.updateSession(sessionId, {
-              status: "blocked",
+              status: "completed",
               updatedAt: nowIso(),
               completedAt: nowIso(),
               resultSummary: blockedSummary,
@@ -1115,7 +1122,7 @@ export class AgentLoopRuntime {
 
           if (
             modelResult.step.toolCalls.length === 0 &&
-            inputQueueService.hasPending(sessionId)
+            inputQueueService.getForceInjectId(sessionId)
           ) {
             const injected = await this.injectQueuedInput(sessionId, run);
             if (injected) {
@@ -1795,7 +1802,7 @@ export class AgentLoopRuntime {
           currentPrompt = prompt;
           pendingPermission = null;
 
-          if (inputQueueService.hasPending(sessionId)) {
+          if (inputQueueService.getForceInjectId(sessionId)) {
             const injected = await this.injectQueuedInput(sessionId, run);
             if (injected) {
               yield {
@@ -1840,10 +1847,15 @@ export class AgentLoopRuntime {
             completedAt: nowIso(),
             stopReason: message,
           });
+          const completedAt = nowIso();
           this.store.updateSession(sessionId, {
-            status: "blocked",
+            status: "completed",
+            updatedAt: completedAt,
+            completedAt,
+            resultSummary: message,
             blockedReason: message,
             activeRunId: null,
+            pendingResumeToken: null,
           });
           yield {
             type: "run_failed",
@@ -1909,14 +1921,9 @@ export class AgentLoopRuntime {
           stopReason: message,
         });
 
-        // If session was already set to 'paused' (by pause()), don't overwrite
-        const currentSession = this.store.getSession(sessionId);
-        const sessionStatus =
-          currentSession.status === "paused"
-            ? "paused"
-            : isAbort
-              ? "interrupted"
-              : "failed";
+        const sessionStatus: AgentSession["status"] = isAbort
+          ? "interrupted"
+          : "failed";
 
         this.store.updateSession(sessionId, {
           status: sessionStatus,
@@ -2047,13 +2054,10 @@ export class AgentLoopRuntime {
         completedAt: nowIso(),
         stopReason: "round_yielded",
       });
-      // A yielded round is a clean stop. Only a parent session rests in 'paused'
-      // (waiting for its next round); a child has no next round — its delegate
-      // call is ending right now, so it must land terminal or the parent's
-      // pending-children acceptance check would count it forever.
-      const childDone = Boolean(this.store.getSession(sessionId).parentSessionId);
+      // A yielded round is terminal at the Session layer. The latest Run's
+      // round_yielded stop reason carries the continuation contract.
       this.store.updateSession(sessionId, {
-        status: childDone ? "completed" : "paused",
+        status: "completed",
         activeRunId: null,
         pendingResumeToken: null,
         completedAt: nowIso(),
@@ -2093,7 +2097,7 @@ export class AgentLoopRuntime {
       stopReason: reason,
     });
     this.store.updateSession(sessionId, {
-      status: completed ? "completed" : "blocked",
+      status: "completed",
       completedAt: nowIso(),
       resultSummary: reason,
       blockedReason: completed ? null : reason,
@@ -2188,7 +2192,7 @@ export class AgentLoopRuntime {
     queueItemId: string;
   } | null> {
     const injected = runtimeTransaction(() => {
-      const item = inputQueueService.consumeNext(sessionId);
+      const item = inputQueueService.consumeForced(sessionId);
       if (!item) return null;
 
       this.store.updateRun(run.id, {
@@ -2718,7 +2722,9 @@ export class AgentLoopRuntime {
       metadata: {
         ...this.store.getRunStep(input.stepId).metadata,
         runtimeReminder: reminder,
-        contextReceiptEnabled: allowedTools.some(tool => tool.id === 'context.read'),
+        contextReceiptEnabled: allowedTools.some(
+          (tool) => tool.id === "context.read",
+        ),
         ...(projection.compaction
           ? { contextCompaction: projection.compaction }
           : {}),
@@ -3021,8 +3027,7 @@ export class AgentLoopRuntime {
 
   /**
    * On session resume, scan for incomplete subagent.delegate tool calls
-   * and attempt to recover child sessions. Child sessions that are
-   * interrupted/paused are resumed to completion; unrecoverable children
+   * and attempt to recover interrupted child sessions. Unrecoverable children
    * are marked as failed so the model can re-delegate if needed.
    */
   private async recoverIncompleteSubtasks(
@@ -3060,7 +3065,7 @@ export class AgentLoopRuntime {
 
         try {
           const child = this.store.getSession(childId);
-          if (child.status === "interrupted" || child.status === "paused") {
+          if (child.status === "interrupted") {
             logger.info(
               { sessionId, childSessionId: childId, childStatus: child.status },
               "[agent-runtime] recovering interrupted child session",
@@ -3160,9 +3165,6 @@ export class AgentLoopRuntime {
   }
 
   private buildContinuationPrompt(sessionId: string, status: string): string {
-    if (status === "paused") {
-      return "Session was paused by user. Continue from where you left off.";
-    }
     if (status === "failed") {
       return "Session previously failed. Review the error and previous context, then retry the task from where it left off.";
     }

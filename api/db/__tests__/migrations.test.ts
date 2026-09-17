@@ -63,8 +63,8 @@ describe('runMigrations ledger', () => {
       sqlite.exec(fs.readFileSync(path.join(migrations, file), 'utf8'));
     }
     sqlite.exec(`INSERT INTO agent_runtime_sessions (id, project_id, profile_id, status, prompt, thinking_mode, created_at, updated_at)
-      VALUES ('historical-session', 'project', 'explorer', 'completed', 'Preserve this request', 'standard', 'old', 'old');
-      INSERT INTO agent_runtime_runs (id, session_id, status, started_at) VALUES ('historical-run', 'historical-session', 'completed', 'old');
+      VALUES ('historical-session', 'project', 'explorer', 'paused', 'Preserve this request', 'standard', 'old', 'old');
+      INSERT INTO agent_runtime_runs (id, session_id, status, started_at) VALUES ('historical-run', 'historical-session', 'blocked', 'old');
       INSERT INTO agent_runtime_messages (id, session_id, project_id, role, content, created_at) VALUES ('historical-message', 'historical-session', 'project', 'assistant', 'Preserve this answer', 'old');`);
     sqlite.close();
 
@@ -83,6 +83,8 @@ describe('runMigrations ledger', () => {
     expect(blocks).toBeUndefined();
     const db = getRawSqlite();
     expect(db.prepare("SELECT content FROM agent_runtime_messages WHERE id='historical-message'").get()).toMatchObject({ content: 'Preserve this answer' });
+    expect(db.prepare("SELECT status FROM agent_runtime_sessions WHERE id='historical-session'").get()).toMatchObject({ status: 'completed' });
+    expect(db.prepare("SELECT status FROM agent_runtime_runs WHERE id='historical-run'").get()).toMatchObject({ status: 'blocked' });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='agent_runtime_stream_records'").get()).toBeTruthy();
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='idx_arr_runtime_request'").get()).toBeTruthy();
     expect(ledger.some(row => row.file === '0029_runtime_stream_journal.sql')).toBe(true);

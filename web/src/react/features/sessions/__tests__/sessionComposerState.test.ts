@@ -95,6 +95,19 @@ describe('sessionComposerState', () => {
     })
   })
 
+  it.each([
+    ['waiting_permission', 'waiting_permission'],
+    ['failed', 'completed'],
+  ] as const)('projects Synax %s patches as %s', (status, expected) => {
+    expect(patchAgentSession(makeSession(), { status }).status).toBe(expected)
+  })
+
+  it.each(['blocked', 'paused'] as const)('normalizes legacy %s patches for every profile', status => {
+    const legacyPatch = { status } as unknown as Partial<AgentSession>
+    expect(patchAgentSession(makeSession({ profileId: 'explorer' }), legacyPatch).status)
+      .toBe('completed')
+  })
+
   it('detects pending permissions only for the selected session', () => {
     const permissions = [makePermission()]
     expect(sessionHasPendingPermissions('sess-1', 'sess-1', permissions)).toBe(true)

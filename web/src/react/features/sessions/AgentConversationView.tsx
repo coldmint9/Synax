@@ -44,9 +44,7 @@ export const AgentConversationView = memo(function AgentConversationView({
 
   const isRunning = session?.status === 'running' && Boolean(session.activeRunId)
   const isResumable = session?.status === 'interrupted'
-    || session?.status === 'paused'
     || session?.status === 'failed'
-    || session?.status === 'blocked'
   const cat = session ? getSessionCategory(session.profileId) : null
   const routeReason = session ? resolveSynaxRouteReason(session) : null
   const showHeader = Boolean(routeReason || cat?.isBuiltin || isRunning || isResumable)
@@ -103,25 +101,21 @@ export const AgentConversationView = memo(function AgentConversationView({
       />
       {liveTurn}
 
-      {session?.status === 'failed' ? (
-        <Card className="border-destructive/15 bg-destructive/[0.03] shadow-none">
-          <div className="px-3.5 py-2.5">
-            <Chip size="sm" color="danger" variant="soft" className="mb-1 text-[10px]">Failed</Chip>
-            <div className="text-[13px] leading-relaxed text-muted-foreground">
-              {session.blockedReason ?? 'Agent execution failed'}
-            </div>
-          </div>
-        </Card>
-      ) : null}
-
       {isResumable ? (
-        <Card className="border-run/15 bg-run/[0.03] shadow-none">
+        <Card className={session?.status === 'failed'
+          ? 'border-destructive/15 bg-destructive/[0.03] shadow-none'
+          : 'border-run/15 bg-run/[0.03] shadow-none'}>
           <div className="px-3.5 py-2.5">
-            <Chip size="sm" color="default" variant="soft" className="mb-1 text-[10px]">
-              {session?.status === 'paused' ? 'Paused' : session?.status === 'blocked' ? 'Blocked' : 'Interrupted'}
+            <Chip
+              size="sm"
+              color={session?.status === 'failed' ? 'danger' : 'default'}
+              variant="soft"
+              className="mb-1 text-[10px]"
+            >
+              {session?.status === 'failed' ? t('activityStatusFailed') : t('activityStatusInterrupted')}
             </Chip>
             <div className="text-[13px] leading-relaxed text-muted-foreground">
-              {session?.blockedReason ?? t('sessionPausedHint')}
+              {session?.blockedReason ?? t('sessionResumeHint')}
             </div>
           </div>
         </Card>

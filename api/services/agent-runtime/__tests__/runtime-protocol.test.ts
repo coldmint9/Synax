@@ -11,7 +11,6 @@ describe('runtime protocol v1', () => {
         chat: expect.any(String),
         plan: expect.any(String),
         goal: expect.any(String),
-        pause: expect.any(String),
         cancel: expect.any(String),
         interactions: expect.any(String),
         nativeSessionResume: expect.any(String),

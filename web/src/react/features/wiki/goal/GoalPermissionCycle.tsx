@@ -1,49 +1,90 @@
-import { useLocale } from '../../../../hooks/useLocale'
-import { Shield } from 'lucide-react'
-import type { GoalPermissionTier } from './goalAttachTypes'
+import { useState } from "react";
+import { LoaderCircle, Shield } from "lucide-react";
+import { useLocale } from "../../../../hooks/useLocale";
+import { SYNAX_PERMISSION_TIER_LABELS } from "../../sessions/synaxSessionTypes";
+import type { GoalPermissionTier } from "./goalAttachTypes";
 
-const ORDER: GoalPermissionTier[] = ['readonly', 'readwrite', 'unrestricted']
-
+const ORDER: GoalPermissionTier[] = ["boundary", "auto", "unrestricted"];
 interface Props {
-  value: GoalPermissionTier
-  onChange: (value: GoalPermissionTier) => void
-  disabled?: boolean
-  backendId?: string
+  value: GoalPermissionTier;
+  onChange: (value: GoalPermissionTier) => void | Promise<void>;
+  disabled?: boolean;
+  backendId?: string;
 }
 
-/** Inline permission control: one click cycles readonly -> readwrite -> unrestricted. */
-export function GoalPermissionCycle({ value, onChange, disabled, backendId }: Props) {
-  const { locale } = useLocale()
-  if (backendId === 'codex' || backendId === 'claude-code') {
-    const label = locale === 'zh' ? 'CLI 原生审批' : 'Native CLI approvals'
-    return <span role="note" aria-label={label} data-native-policy="true"
-      title={locale === 'zh' ? '由 CLI 沙箱及原生审批控制，不使用 Synax 权限档位。' : 'Controlled by the CLI sandbox and native approval prompts, not Synax permission tiers.'}
-      className="goal-permission-cycle goal-dock-composer-chip inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-normal">
-      <Shield size={12} aria-hidden /><span>{label}</span>
-    </span>
+export function GoalPermissionCycle({
+  value,
+  onChange,
+  disabled,
+  backendId,
+}: Props) {
+  const { locale, t } = useLocale();
+  const zh = locale === "zh";
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (backendId === "codex" || backendId === "claude-code") {
+    const label = zh ? "CLI 原生审批" : "Native CLI approvals";
+    return (
+      <span
+        role="note"
+        aria-label={label}
+        data-native-policy="true"
+        className="goal-permission-cycle goal-dock-composer-chip inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px]"
+      >
+        <Shield size={12} aria-hidden />
+        <span>{label}</span>
+      </span>
+    );
   }
-  const labelMap: Record<GoalPermissionTier, string> = {
-    readonly: '只读',
-    readwrite: '读写',
-    unrestricted: '无限制',
-  }
-  const currentLabel = labelMap[value]
-  const index = ORDER.indexOf(value)
-  const next = ORDER[(index + 1) % ORDER.length]
-
+  const description = `${t(SYNAX_PERMISSION_TIER_LABELS[value].descKey as Parameters<typeof t>[0])} · ${zh ? "下一步生效" : "Applies from the next step"}`;
   return (
-    <button
-      type="button"
-      aria-label={`${currentLabel}，点击切换为${labelMap[next]}`}
-      title={`${currentLabel} · 点击切换为${labelMap[next]}`}
-      disabled={disabled}
-      onClick={() => onChange(next)}
-      data-tier={value}
-      className="goal-permission-cycle goal-dock-composer-chip inline-flex h-7 max-w-[7.5rem] shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-normal"
-    >
-      <Shield size={12} className="goal-permission-cycle-icon shrink-0" />
-      {/* Keyed so the swap replays the roll animation on every tier change. */}
-      <span key={value} className="goal-permission-cycle-label truncate">{currentLabel}</span>
-    </button>
-  )
+    <div className="relative">
+      <label
+        data-tier={value}
+        className="goal-permission-cycle goal-dock-composer-chip inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px]"
+        title={description}
+      >
+        {pending ? (
+          <LoaderCircle size={12} className="bui-status-spinner" aria-hidden />
+        ) : (
+          <Shield size={12} aria-hidden />
+        )}
+        <select
+          aria-label={zh ? "审批模式" : "Approval mode"}
+          value={value}
+          disabled={disabled || pending}
+          className="max-w-36 cursor-pointer bg-transparent text-inherit outline-offset-2"
+          onChange={async (event) => {
+            setPending(true);
+            setError(null);
+            try {
+              await onChange(event.target.value as GoalPermissionTier);
+            } catch (err) {
+              setError(err instanceof Error ? err.message : String(err));
+            } finally {
+              setPending(false);
+            }
+          }}
+        >
+          {ORDER.map((tier) => (
+            <option key={tier} value={tier}>
+              {t(
+                SYNAX_PERMISSION_TIER_LABELS[tier].titleKey as Parameters<
+                  typeof t
+                >[0],
+              )}
+            </option>
+          ))}
+        </select>
+      </label>
+      {error && (
+        <span
+          role="alert"
+          className="absolute bottom-full right-0 mb-2 w-64 rounded-lg border border-border bg-surface p-2 text-xs text-danger shadow-sm"
+        >
+          {error}
+        </span>
+      )}
+    </div>
+  );
 }

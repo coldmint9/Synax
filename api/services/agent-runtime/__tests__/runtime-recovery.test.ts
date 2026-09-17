@@ -20,7 +20,7 @@ describe('restart recovery decisions', () => {
     const { run } = acceptRuntimeRun(session.id, { message: 'Write something' }, 'running');
     agentRuntimeStore.updateRun(run.id, { status: 'running' });
     await recoverRuntime('new-host');
-    expect(agentRuntimeStore.getSession(session.id).status).toBe('blocked');
+    expect(agentRuntimeStore.getSession(session.id).status).toBe('completed');
     expect(() => acceptRuntimeRun(session.id, { message: 'Next' }, 'next')).toThrow(/shutdown|recovery/i);
     await acknowledgeRuntimeRecovery(session.id);
     expect(agentRuntimeStore.getSession(session.id).status).toBe('interrupted');

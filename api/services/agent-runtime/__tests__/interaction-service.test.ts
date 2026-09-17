@@ -1,4 +1,3 @@
-import { agentLoopRuntime } from "../loop-runtime.js";
 import { closeDb } from "../../../db/index.js";
 import { agentRuntimeRoutes } from "../../../routes/agent-runtime.js";
 vi.mock("../agent-stream-proxy.js", () => ({
@@ -314,19 +313,12 @@ describe("persistent human input", () => {
     expect((await accepted.json()).interaction.status).toBe("answered");
     expect(interactionService.ready(session.id)?.toolCallId).toBe(call.id);
   });
-  it("forwards an explicit pause to the native producer instead of just updating the UI", async () => {
+  it("does not expose a session pause control", async () => {
     const { session } = setup();
-    const interruptProducer = vi.spyOn(agentLoopRuntime, "interruptAndWaitForSessions");
     const response = await agentRuntimeRoutes.request(
       `http://local/sessions/${session.id}/pause`,
       { method: "POST" },
     );
-    expect(response.status).toBe(200);
-    expect((await response.json()).status).toBe("paused");
-    expect(interruptProducer).toHaveBeenCalledWith(
-      [session.id],
-      "User requested pause.",
-    );
-    interruptProducer.mockRestore();
+    expect(response.status).toBe(404);
   });
 });

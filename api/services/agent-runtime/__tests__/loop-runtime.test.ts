@@ -1,3 +1,5 @@
+import os from "node:os";
+import { applySessionPermissionUpdate } from "../session-permissions.js";
 import { inspectHistoryCacheAnchor } from "../../llm-runtime/cache-policy.js";
 import { asSchema } from "@ai-sdk/provider-utils";
 import { resolveGatewaySelection } from "../../llm-runtime/gateway.js";
@@ -348,6 +350,7 @@ import { ensureSynaxAgentRegistered } from "../synax/index.js";
 import { interactionService } from "../interaction-service.js";
 import { agentLoopRuntime } from "../loop-runtime.js";
 import { inputQueueService } from "../input-queue-service.js";
+import type { AgentRunStreamChunk } from "../contracts.js";
 import { permissionPolicy } from "../permission-policy.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore } from "../session-store.js";
@@ -1104,43 +1107,52 @@ describe("agentLoopRuntime", () => {
     expect(agentRuntimeStore.getSession(session.id).status).toBe("completed");
   });
 
-  it("injects queued user input between steps", async () => {
-    const readPath = "tmp/agent-loop-runtime-read.txt";
-    fs.mkdirSync(path.dirname(path.resolve(readPath)), { recursive: true });
-    fs.writeFileSync(path.resolve(readPath), "queued inject file", "utf8");
+  it.each([false, true])(
+    "only injects explicitly forced input between steps (forced: %s)",
+    async (forced) => {
+      const readPath = "tmp/agent-loop-runtime-read.txt";
+      fs.mkdirSync(path.dirname(path.resolve(readPath)), { recursive: true });
+      fs.writeFileSync(path.resolve(readPath), "queued inject file", "utf8");
 
-    const session = agentSessionRuntime.create(executorInput);
-    inputQueueService.enqueue(session.id, {
-      message: "Please summarize after reading.",
-    });
+      const session = agentSessionRuntime.create(executorInput);
+      const items = inputQueueService.enqueue(session.id, {
+        message: "Please summarize after reading.",
+      });
 
-    queueMockStep(
-      makeToolStep({
-        message: "Reading file first.",
-        toolName: "file_read",
-        toolCallId: "call-read",
-        args: { path: readPath },
-      }),
-    );
-    queueMockStep(makeTextStep("Summary after queued input."));
+      queueMockStep(
+        makeToolStep({
+          message: "Reading file first.",
+          toolName: "file_read",
+          toolCallId: "call-read",
+          args: { path: readPath },
+        }),
+      );
+      queueMockStep(makeTextStep("Summary after queued input."));
 
-    const chunks = await collectChunks(
-      agentLoopRuntime.streamRun(session.id, {
+      const chunks: AgentRunStreamChunk[] = [];
+      for await (const chunk of agentLoopRuntime.streamRun(session.id, {
         message: "Start by reading the file.",
-      }),
-    );
+      })) {
+        chunks.push(chunk);
+        if (forced && chunk.type === "tool_result")
+          inputQueueService.markForceInject(session.id, items[0].id);
+      }
 
-    expect(chunks.some((chunk) => chunk.type === "input_injected")).toBe(true);
-    expect(inputQueueService.list(session.id)).toHaveLength(0);
-    const userMessages = agentRuntimeStore
-      .listMessages(session.id)
-      .filter((m) => m.role === "user");
-    expect(
-      userMessages.some((m) =>
-        m.content.includes("Please summarize after reading."),
-      ),
-    ).toBe(true);
-  });
+      expect(chunks.some((chunk) => chunk.type === "input_injected")).toBe(
+        forced,
+      );
+      expect(inputQueueService.list(session.id)).toHaveLength(forced ? 0 : 1);
+      expect(agentRuntimeStore.getSession(session.id).status).toBe("completed");
+      const userMessages = agentRuntimeStore
+        .listMessages(session.id)
+        .filter((m) => m.role === "user");
+      expect(
+        userMessages.some((m) =>
+          m.content.includes("Please summarize after reading."),
+        ),
+      ).toBe(forced);
+    },
+  );
   it("suspends for a form, resumes, then offers a one-time execute-or-cancel plan choice", async () => {
     ensureSynaxAgentRegistered();
     const questions = [
@@ -1810,21 +1822,65 @@ describe("provider-bound session initialization prompt", () => {
   });
 
   it("freezes compact first-emission tool receipts without rewriting raw results or later prefixes", async () => {
-    const session=agentSessionRuntime.create({projectId:'receipt-fixture',profileId:'synax',prompt:'Inspect the diagnostic log',permissionTier:'unrestricted'});
-    queueMockStep(makeToolStep({toolName:'bash',toolCallId:'large-log',args:{command:`node -e "console.log('noise line\\n'.repeat(2200)); console.error('Error: LATE_RECEIPT_PROBE'); process.exitCode=1"`}}));
-    queueMockStep(makeToolStep({toolName:'file_read',toolCallId:'read-after-log',args:{path:'package.json'}}));
-    queueMockStep(makeTextStep('The stored log contains a late failure.'));
-    await collectChunks(agentLoopRuntime.streamRun(session.id,{message:'Inspect the diagnostic log'}));
+    const session = agentSessionRuntime.create({
+      projectId: "receipt-fixture",
+      profileId: "synax",
+      prompt: "Inspect the diagnostic log",
+      permissionTier: "unrestricted",
+    });
+    queueMockStep(
+      makeToolStep({
+        toolName: "bash",
+        toolCallId: "large-log",
+        args: {
+          command: `node -e "console.log('noise line\\n'.repeat(2200)); console.error('Error: LATE_RECEIPT_PROBE'); process.exitCode=1"`,
+        },
+      }),
+    );
+    queueMockStep(
+      makeToolStep({
+        toolName: "file_read",
+        toolCallId: "read-after-log",
+        args: { path: "package.json" },
+      }),
+    );
+    queueMockStep(makeTextStep("The stored log contains a late failure."));
+    await collectChunks(
+      agentLoopRuntime.streamRun(session.id, {
+        message: "Inspect the diagnostic log",
+      }),
+    );
     expect(capturedRequests).toHaveLength(3);
-    const call=agentRuntimeStore.listToolCalls(session.id).find(record=>record.modelToolCallId==='large-log')!;
-    expect((call.outputRef as {stdout:string}).stdout.length).toBeGreaterThan(12000);
-    const step=agentRuntimeStore.getRunStep(call.stepId!);
-    const receipt=(step.metadata.toolContextReceipts as Record<string,{text:string;originalChars:number;projectedChars:number}>)[call.id];
-    expect(receipt.text).toContain('LATE_RECEIPT_PROBE');
+    const call = agentRuntimeStore
+      .listToolCalls(session.id)
+      .find((record) => record.modelToolCallId === "large-log")!;
+    expect(
+      (call.outputRef as { stdout: string }).stdout.length,
+    ).toBeGreaterThan(12000);
+    const step = agentRuntimeStore.getRunStep(call.stepId!);
+    const receipt = (
+      step.metadata.toolContextReceipts as Record<
+        string,
+        { text: string; originalChars: number; projectedChars: number }
+      >
+    )[call.id];
+    expect(receipt.text).toContain("LATE_RECEIPT_PROBE");
     expect(receipt.projectedChars).toBeLessThan(receipt.originalChars);
-    expect(JSON.stringify(capturedRequests[1].messages)).toContain('Tool context receipt');
-    expect(capturedRequests[2].messages.slice(0,capturedRequests[1].messages.length)).toEqual(capturedRequests[1].messages);
-    expect((agentRuntimeStore.getRunStep(call.stepId!).metadata.toolContextReceipts as Record<string,unknown>)[call.id]).toEqual(receipt);
+    expect(JSON.stringify(capturedRequests[1].messages)).toContain(
+      "Tool context receipt",
+    );
+    expect(
+      capturedRequests[2].messages.slice(
+        0,
+        capturedRequests[1].messages.length,
+      ),
+    ).toEqual(capturedRequests[1].messages);
+    expect(
+      (
+        agentRuntimeStore.getRunStep(call.stepId!).metadata
+          .toolContextReceipts as Record<string, unknown>
+      )[call.id],
+    ).toEqual(receipt);
   });
 
   it.each(["你好", "plan 模式真的有效吗？", "请调查会话列表的过滤机制"])(
@@ -1922,6 +1978,81 @@ describe("provider-bound session initialization prompt", () => {
       agentRuntimeStore.listMessages(session.id).find((m) => m.role === "user")
         ?.content,
     ).toBe(prompt);
+  });
+
+  it("keeps a newer mode when an accepted run starts after a setting change", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-queued-mode-'));
+    const outside = path.join(dir, 'outside.txt');
+    fs.writeFileSync(outside, 'not silently readable');
+    const session = agentSessionRuntime.create({ projectId: 'prompt-fixture', profileId: 'synax', prompt: 'Inspect queued mode', workDir: process.cwd(), permissionTier: 'boundary', sessionMetadata: { mode: 'chat' } });
+    const accepted = acceptRuntimeRun(session.id, { message: 'Inspect queued mode', permissionTier: 'unrestricted' }, 'queued-policy');
+    expect(agentRuntimeStore.getSession(session.id).sessionMetadata?.permissionTier).toBe('unrestricted');
+    applySessionPermissionUpdate(session.id, { permissionTier: 'boundary' });
+    queueMockStep(makeToolStep({ toolName: 'file_read', toolCallId: 'queued-external', args: { path: outside } }));
+    try {
+      await collectChunks(agentLoopRuntime.streamRun(session.id, { message: 'Inspect queued mode', permissionTier: 'unrestricted', acceptedRunId: accepted.run.id }));
+      expect(agentRuntimeStore.getSession(session.id).sessionMetadata?.permissionTier).toBe('boundary');
+      expect(JSON.stringify(capturedRequests[0].messages)).toContain('Boundary approval');
+      expect(agentRuntimeStore.listPermissions(session.id).some(item => item.action === 'ask' && item.internalGate === 'external_path')).toBe(true);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("applies a running session's new permission mode in the next step and prompt", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "synax-next-step-"));
+    const outside = path.join(dir, "outside.txt");
+    fs.writeFileSync(outside, "requires a new approval");
+    const session = agentSessionRuntime.create({
+      projectId: "prompt-fixture",
+      profileId: "synax",
+      prompt: "Inspect the files",
+      permissionTier: "unrestricted",
+      sessionMetadata: { mode: "chat" },
+    });
+    queueMockStep(
+      makeToolStep({
+        toolName: "file_read",
+        toolCallId: "first-local",
+        args: { path: "package.json" },
+      }),
+    );
+    queueMockStep(
+      makeToolStep({
+        toolName: "file_read",
+        toolCallId: "second-external",
+        args: { path: outside },
+      }),
+    );
+    let changed = false;
+    try {
+      for await (const chunk of agentLoopRuntime.streamRun(session.id, {
+        message: "Inspect the files",
+      })) {
+        if (chunk.type === "tool_result" && !changed) {
+          changed = true;
+          applySessionPermissionUpdate(session.id, {
+            permissionTier: "boundary",
+          });
+        }
+      }
+      expect(changed).toBe(true);
+      expect(capturedRequests).toHaveLength(2);
+      expect(JSON.stringify(capturedRequests[0].messages)).toContain(
+        "Unrestricted tool permissions",
+      );
+      expect(JSON.stringify(capturedRequests[1].messages)).toContain(
+        "Boundary approval",
+      );
+      expect(
+        agentRuntimeStore
+          .listPermissions(session.id)
+          .some(
+            (item) =>
+              item.action === "ask" && item.internalGate === "external_path",
+          ),
+      ).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("keeps three Native requests prefix-identical as tool evidence and step state grow", async () => {

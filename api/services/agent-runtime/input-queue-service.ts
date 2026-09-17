@@ -109,6 +109,7 @@ export const inputQueueService = {
     if (next.length === queue.length) {
       throw new AgentValidationError('Queued input not found.');
     }
+    if (readForceInjectId(session.sessionMetadata) === itemId) this.clearForceInject(sessionId);
     return writeQueue(sessionId, next);
 
     });
@@ -181,16 +182,17 @@ export const inputQueueService = {
     });
   },
 
-  consumeNext(sessionId: string): QueuedInput | null {
+  consumeForced(sessionId: string): QueuedInput | null {
     return runtimeTransaction(() => {
     const forceId = this.getForceInjectId(sessionId);
-    if (forceId) {
-      this.clearForceInject(sessionId);
-      return this.take(sessionId, forceId);
-    }
-    return this.drainNext(sessionId);
-
+    if (!forceId) return null;
+    this.clearForceInject(sessionId);
+    return this.take(sessionId, forceId);
     });
+  },
+
+  consumeNext(sessionId: string): QueuedInput | null {
+    return runtimeTransaction(() => this.consumeForced(sessionId) ?? this.drainNext(sessionId));
   },
 
   hasPending(sessionId: string): boolean {

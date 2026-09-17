@@ -10,13 +10,18 @@ interface Props {
 
 export function ThinkingBanner({ phrases, isStreaming }: Props) {
   const { t } = useLocale()
-  const [active, setActive] = useState(phrases.length - 1)
+  // Untouched carousels follow the newest headline; an explicit step away is
+  // the reader's business until the next headline arrives.
+  const [active, setActive] = useState<number | null>(null)
+  const [seen, setSeen] = useState(phrases.length)
 
   useEffect(() => {
-    setActive(phrases.length - 1)
-  }, [phrases.length])
+    if (phrases.length <= seen) return
+    setSeen(phrases.length)
+    setActive(null)
+  }, [phrases.length, seen])
 
-  const index = Math.min(active, phrases.length - 1)
+  const index = Math.min(active ?? phrases.length - 1, phrases.length - 1)
   const phrase = phrases[index]
   const hasMultiple = phrases.length > 1
 
@@ -37,7 +42,7 @@ export function ThinkingBanner({ phrases, isStreaming }: Props) {
           className="bui-thinking-banner-nav"
           aria-label={t('sessionThinkingPrevious')}
           disabled={index === 0}
-          onClick={() => setActive(current => Math.max(0, current - 1))}
+          onClick={() => setActive(Math.max(0, index - 1))}
         >
           <ChevronLeft size={13} aria-hidden="true" />
         </button>
@@ -52,7 +57,7 @@ export function ThinkingBanner({ phrases, isStreaming }: Props) {
           className="bui-thinking-banner-nav"
           aria-label={t('sessionThinkingNext')}
           disabled={index === phrases.length - 1}
-          onClick={() => setActive(current => Math.min(phrases.length - 1, current + 1))}
+          onClick={() => setActive(Math.min(phrases.length - 1, index + 1))}
         >
           <ChevronRight size={13} aria-hidden="true" />
         </button>

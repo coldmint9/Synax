@@ -17,14 +17,14 @@ describe('session-permissions', () => {
       projectId: 'proj-perm',
       profileId: synaxAgentProfile.id,
       prompt: 'Test permissions',
-      permissionTier: 'readonly',
+      permissionTier: 'boundary',
     });
 
-    expect(session.permissionRules.some((rule) => rule.gate === 'shell' && rule.pattern === 'write' && rule.action === 'deny')).toBe(true);
+    expect(session.permissionRules.some((rule) => rule.gate === 'shell' && rule.pattern === 'write' && rule.action === 'ask')).toBe(true);
 
-    const updated = applySessionPermissionUpdate(session.id, { permissionTier: 'readwrite' });
+    const updated = applySessionPermissionUpdate(session.id, { permissionTier: 'auto' });
     expect(updated.permissionRules.some((rule) => rule.gate === 'write' && rule.action === 'allow')).toBe(true);
-    expect(readSessionPermissionConfig(updated.sessionMetadata).permissionTier).toBe('readwrite');
+    expect(readSessionPermissionConfig(updated.sessionMetadata).permissionTier).toBe('auto');
   });
 
   it('preserves always-granted rules after tier change', () => {
@@ -33,7 +33,7 @@ describe('session-permissions', () => {
       projectId: 'proj-perm-always',
       profileId: synaxAgentProfile.id,
       prompt: 'Always allow test',
-      permissionTier: 'readonly',
+      permissionTier: 'boundary',
     });
 
     agentRuntimeStore.updateSessionMetadata(session.id, {
@@ -46,8 +46,8 @@ describe('session-permissions', () => {
       ),
     });
 
-    const updated = applySessionPermissionUpdate(withAlways.id, { permissionTier: 'readonly' });
+    const updated = applySessionPermissionUpdate(withAlways.id, { permissionTier: 'boundary' });
     expect(updated.permissionRules.some((rule) => rule.pattern === 'src/*' && rule.action === 'allow')).toBe(true);
-    expect(updated.sessionMetadata?.[SESSION_PERMISSION_TIER_KEY]).toBe('readonly');
+    expect(updated.sessionMetadata?.[SESSION_PERMISSION_TIER_KEY]).toBe('boundary');
   });
 });

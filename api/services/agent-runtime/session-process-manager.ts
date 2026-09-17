@@ -1,36 +1,44 @@
-import { prepareOwnedProcess, recordOwnedPid, releaseOwnedProcess } from './process-ownership.js';
-import { fork, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { runtimeAsset } from '../../lib/runtime-paths.js';
+import {
+  prepareOwnedProcess,
+  recordOwnedPid,
+  releaseOwnedProcess,
+  hasBackgroundProcesses,
+} from "./process-ownership.js";
+import { fork, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { runtimeAsset } from "../../lib/runtime-paths.js";
 import {
   isAgentSessionChildMessage,
   forwardChunkToLiveBus,
   type AgentSessionChildInit,
   type AgentSessionStreamMode,
-} from '../../lib/ipc/agent-session-protocol.js';
-import { MAX_AGENT_SESSION_PROCESSES, AGENT_SESSION_CHILD_READY_TIMEOUT_MS } from '../../lib/env.js';
-import { resolveSessionWorkDir } from './tools/workspace.js';
-import { logger } from '../../lib/logger.js';
-import type { AgentRunStreamChunk, StreamTurnRequest } from './contracts.js';
-import { AgentRuntimeError } from './runtime-errors.js';
-import { agentRuntimeStore } from './session-store.js';
-import { sessionLiveBus } from './session-live-bus.js';
-import { runtimeBus } from './runtime-bus.js';
+} from "../../lib/ipc/agent-session-protocol.js";
+import {
+  MAX_AGENT_SESSION_PROCESSES,
+  AGENT_SESSION_CHILD_READY_TIMEOUT_MS,
+} from "../../lib/env.js";
+import { resolveSessionWorkDir } from "./tools/workspace.js";
+import { logger } from "../../lib/logger.js";
+import type { AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
+import { AgentRuntimeError } from "./runtime-errors.js";
+import { agentRuntimeStore } from "./session-store.js";
+import { sessionLiveBus } from "./session-live-bus.js";
+import { runtimeBus } from "./runtime-bus.js";
 import {
   ensureSessionTitleGenerated,
   maybeScheduleSessionTitleFromStreamChunk,
-} from './session-title-service.js';
+} from "./session-title-service.js";
 
 const ACTIVE_SESSION_WAIT_MS = 25;
 const ACTIVE_SESSION_TIMEOUT_MS = 5_000;
 const CHILD_READY_TIMEOUT_MS = AGENT_SESSION_CHILD_READY_TIMEOUT_MS;
 
 type StreamQueueItem =
-  | { kind: 'chunk'; chunk: AgentRunStreamChunk }
-  | { kind: 'done' }
-  | { kind: 'error'; error: string };
+  | { kind: "chunk"; chunk: AgentRunStreamChunk }
+  | { kind: "done" }
+  | { kind: "error"; error: string };
 
 class StreamQueue {
   private readonly pending: StreamQueueItem[] = [];
@@ -49,7 +57,7 @@ class StreamQueue {
   async next(): Promise<StreamQueueItem> {
     const pending = this.pending.shift();
     if (pending) return pending;
-    if (this.closed) return { kind: 'done' };
+    if (this.closed) return { kind: "done" };
     return new Promise<StreamQueueItem>((resolve) => {
       this.resolvers.push(resolve);
     });
@@ -58,7 +66,7 @@ class StreamQueue {
   close(): void {
     this.closed = true;
     for (const resolve of this.resolvers) {
-      resolve({ kind: 'done' });
+      resolve({ kind: "done" });
     }
     this.resolvers = [];
   }
@@ -76,8 +84,15 @@ interface SessionChildState {
 }
 
 function resolveAgentSessionRunnerPath(): string {
-  const runner = runtimeAsset(import.meta.url, '../../workers/agent-session-runner.ts', 'workers/agent-session-runner.cjs');
-  if (!fs.existsSync(runner)) throw new Error('The agent-session-runner executable is missing from this Runtime build.');
+  const runner = runtimeAsset(
+    import.meta.url,
+    "../../workers/agent-session-runner.ts",
+    "workers/agent-session-runner.cjs",
+  );
+  if (!fs.existsSync(runner))
+    throw new Error(
+      "The agent-session-runner executable is missing from this Runtime build.",
+    );
   return runner;
 }
 
@@ -93,7 +108,8 @@ class SessionProcessManager {
   }
 
   canSpawnChild(sessionId?: string): boolean {
-    if (sessionId && [...this.terminatingChildren.values()].includes(sessionId)) return false;
+    if (sessionId && [...this.terminatingChildren.values()].includes(sessionId))
+      return false;
     if (sessionId) {
       const existing = this.children.get(sessionId);
       if (existing?.child.connected) return true;
@@ -105,7 +121,7 @@ class SessionProcessManager {
     if (this.canSpawnChild(sessionId)) return;
     throw new AgentRuntimeError(
       `Too many active agent session processes (max ${MAX_AGENT_SESSION_PROCESSES}).`,
-      'SESSION_LIMIT',
+      "SESSION_LIMIT",
       429,
     );
   }
@@ -118,8 +134,8 @@ class SessionProcessManager {
   ): AsyncGenerator<AgentRunStreamChunk> {
     if (this.activeMainStreams.has(sessionId)) {
       throw new AgentRuntimeError(
-        'Session already has an active run.',
-        'SESSION_BUSY',
+        "Session already has an active run.",
+        "SESSION_BUSY",
         409,
       );
     }
@@ -138,9 +154,9 @@ class SessionProcessManager {
 
       onAbort = () => {
         childState.child.send?.({
-          type: 'stream:cancel',
+          type: "stream:cancel",
           streamId,
-          reason: 'Client disconnected.',
+          reason: "Client disconnected.",
         });
         queue.close();
       };
@@ -148,11 +164,11 @@ class SessionProcessManager {
       if (abortSignal?.aborted) {
         onAbort();
       } else {
-        abortSignal?.addEventListener('abort', onAbort, { once: true });
+        abortSignal?.addEventListener("abort", onAbort, { once: true });
       }
 
       childState.child.send?.({
-        type: 'stream:start',
+        type: "stream:start",
         streamId,
         mode,
         input,
@@ -160,33 +176,38 @@ class SessionProcessManager {
 
       while (true) {
         const item = await queue.next();
-        if (item.kind === 'chunk') {
+        if (item.kind === "chunk") {
           yield item.chunk;
           continue;
         }
-        if (item.kind === 'error') {
-          throw new AgentRuntimeError(item.error, 'STREAM_ERROR', 500);
+        if (item.kind === "error") {
+          throw new AgentRuntimeError(item.error, "STREAM_ERROR", 500);
         }
         break;
       }
     } finally {
       if (onAbort) {
-        abortSignal?.removeEventListener('abort', onAbort);
+        abortSignal?.removeEventListener("abort", onAbort);
       }
       const state = this.children.get(sessionId);
       state?.streams.delete(streamId);
       this.activeMainStreams.delete(sessionId);
+      // ponytail: services retain one worker/session; use a host supervisor if the existing process cap becomes limiting.
       // One-shot wiki/agent runs must free the process slot; otherwise idle
       // children accumulate up to MAX_AGENT_SESSION_PROCESSES and block dispatch.
-      if (state && state.streams.size === 0) {
-        this.releaseChild(sessionId, 'Agent session stream finished.');
+      if (
+        state &&
+        state.streams.size === 0 &&
+        !hasBackgroundProcesses(sessionId)
+      ) {
+        this.releaseChild(sessionId, "Agent session stream finished.");
       }
     }
   }
 
   interruptSessions(
     sessionIds: Iterable<string>,
-    reason = 'Agent runtime session deleted by user.',
+    reason = "Agent runtime session deleted by user.",
   ): void {
     for (const sessionId of sessionIds) {
       this.releaseChild(sessionId, reason, { pushStreamError: true });
@@ -202,24 +223,29 @@ class SessionProcessManager {
     if (!state) return;
 
     this.releasingChildren.add(sessionId);
-    if(state.child.exitCode == null && state.child.signalCode == null){
-      this.terminatingChildren.set(state.child,sessionId);
-      const force=setTimeout(()=>{if(this.terminatingChildren.has(state.child))state.child.kill('SIGKILL');},3000);
+    if (state.child.exitCode == null && state.child.signalCode == null) {
+      this.terminatingChildren.set(state.child, sessionId);
+      const force = setTimeout(() => {
+        if (this.terminatingChildren.has(state.child))
+          state.child.kill("SIGKILL");
+      }, 3000);
       force.unref();
-      state.child.once('exit',()=>{clearTimeout(force);this.terminatingChildren.delete(state.child);});
+      state.child.once("exit", () => {
+        clearTimeout(force);
+        this.terminatingChildren.delete(state.child);
+      });
     }
-
 
     if (options?.pushStreamError) {
       for (const stream of state.streams.values()) {
-        stream.queue.push({ kind: 'error', error: reason });
+        stream.queue.push({ kind: "error", error: reason });
         stream.queue.close();
       }
       state.streams.clear();
     }
 
     if (state.child.connected) {
-      state.child.send?.({ type: 'session:interrupt', reason });
+      state.child.send?.({ type: "session:interrupt", reason });
     }
 
     // Free the slot immediately so wiki write-queue can dispatch the next doc.
@@ -227,7 +253,7 @@ class SessionProcessManager {
     this.activeMainStreams.delete(sessionId);
 
     if (!state.child.killed) {
-      state.child.kill('SIGTERM');
+      state.child.kill("SIGTERM");
     }
   }
 
@@ -237,21 +263,30 @@ class SessionProcessManager {
   ): Promise<void> {
     const ids = [...new Set(sessionIds)];
     const deadline = Date.now() + timeoutMs;
-    while (ids.some((sessionId) => this.activeMainStreams.has(sessionId) || this.children.has(sessionId) || [...this.terminatingChildren.values()].includes(sessionId))) {
+    while (
+      ids.some(
+        (sessionId) =>
+          this.activeMainStreams.has(sessionId) ||
+          this.children.has(sessionId) ||
+          [...this.terminatingChildren.values()].includes(sessionId),
+      )
+    ) {
       if (Date.now() >= deadline) {
         throw new AgentRuntimeError(
-          'Timed out while waiting for active agent runtime sessions to stop.',
-          'DELETE_TIMEOUT',
+          "Timed out while waiting for active agent runtime sessions to stop.",
+          "DELETE_TIMEOUT",
           409,
         );
       }
-      await new Promise((resolve) => setTimeout(resolve, ACTIVE_SESSION_WAIT_MS));
+      await new Promise((resolve) =>
+        setTimeout(resolve, ACTIVE_SESSION_WAIT_MS),
+      );
     }
   }
 
   async interruptAndWaitForSessions(
     sessionIds: Iterable<string>,
-    reason = 'Agent runtime session deleted by user.',
+    reason = "Agent runtime session deleted by user.",
     timeoutMs = ACTIVE_SESSION_TIMEOUT_MS,
   ): Promise<void> {
     const ids = [...sessionIds];
@@ -282,24 +317,24 @@ class SessionProcessManager {
     };
 
     const runnerPath = resolveAgentSessionRunnerPath();
-    const isTs = runnerPath.endsWith('.ts');
-    const processTicket = prepareOwnedProcess('native-agent-worker', true);
+    const isTs = runnerPath.endsWith(".ts");
+    const processTicket = prepareOwnedProcess("native-agent-worker", true);
     const child = fork(runnerPath, [], {
-      detached: process.platform !== 'win32',
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
-        SYNAX_AGENT_SESSION_CHILD: '1',
+        SYNAX_AGENT_SESSION_CHILD: "1",
         SYNAX_PROCESS_OWNER: processTicket.id,
-        SYNAX_RECORDED_START: '1',
+        SYNAX_RECORDED_START: "1",
         AGENT_SESSION_INIT: JSON.stringify(init),
       },
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      execArgv: isTs ? ['--import', 'tsx/esm'] : [],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+      execArgv: isTs ? ["--import", "tsx/esm"] : [],
     });
 
     recordOwnedPid(processTicket.id, child.pid);
-    child.once('close', () => releaseOwnedProcess(processTicket.id));
-    child.once('error', () => releaseOwnedProcess(processTicket.id));
+    child.once("close", () => releaseOwnedProcess(processTicket.id));
+    child.once("error", () => releaseOwnedProcess(processTicket.id));
     const state: SessionChildState = {
       sessionId,
       child,
@@ -307,32 +342,50 @@ class SessionProcessManager {
     };
     this.children.set(sessionId, state);
 
-    child.stdout?.on('data', (chunk: Buffer) => {
-      logger.debug({ sessionId, chunk: chunk.toString().trimEnd() }, '[agent-session] child stdout');
+    child.stdout?.on("data", (chunk: Buffer) => {
+      logger.debug(
+        { sessionId, chunk: chunk.toString().trimEnd() },
+        "[agent-session] child stdout",
+      );
     });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      logger.warn({ sessionId, chunk: chunk.toString().trimEnd() }, '[agent-session] child stderr');
+    child.stderr?.on("data", (chunk: Buffer) => {
+      logger.warn(
+        { sessionId, chunk: chunk.toString().trimEnd() },
+        "[agent-session] child stderr",
+      );
     });
 
-    child.on('message', (message: unknown) => {
-      if (isAgentSessionChildMessage(message) && message.type === 'session:booted') {
-        child.send?.({ type: 'session:initialize' });
+    child.on("message", (message: unknown) => {
+      if (
+        isAgentSessionChildMessage(message) &&
+        message.type === "session:booted"
+      ) {
+        child.send?.({ type: "session:initialize" });
         return;
       }
       this.handleChildMessage(sessionId, message);
     });
 
-    child.on('exit', (code, signal) => {
+    child.on("exit", (code, signal) => {
       const intentional = this.releasingChildren.delete(sessionId);
       if (!intentional && code !== 0 && code !== null) {
-        logger.error({ sessionId, code, signal }, '[agent-session] child exited abnormally');
+        logger.error(
+          { sessionId, code, signal },
+          "[agent-session] child exited abnormally",
+        );
       } else if (!intentional && signal) {
-        logger.warn({ sessionId, code, signal }, '[agent-session] child exited by signal');
+        logger.warn(
+          { sessionId, code, signal },
+          "[agent-session] child exited by signal",
+        );
       }
       const current = this.children.get(sessionId);
       if (current?.child === child) {
         for (const stream of current.streams.values()) {
-          stream.queue.push({ kind: 'error', error: 'Agent session child process exited.' });
+          stream.queue.push({
+            kind: "error",
+            error: "Agent session child process exited.",
+          });
           stream.queue.close();
         }
         this.children.delete(sessionId);
@@ -341,9 +394,9 @@ class SessionProcessManager {
     });
 
     const ready = this.waitForChildReady(sessionId);
-    child.send?.({ type: 'session:initialize' });
+    child.send?.({ type: "session:initialize" });
     await ready;
-    logger.info({ sessionId, pid: child.pid }, '[agent-session] child started');
+    logger.info({ sessionId, pid: child.pid }, "[agent-session] child started");
     return state;
   }
 
@@ -351,12 +404,21 @@ class SessionProcessManager {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         cleanup();
-        reject(new AgentRuntimeError('Agent session child failed to become ready.', 'CHILD_READY_TIMEOUT', 500));
+        reject(
+          new AgentRuntimeError(
+            "Agent session child failed to become ready.",
+            "CHILD_READY_TIMEOUT",
+            500,
+          ),
+        );
       }, CHILD_READY_TIMEOUT_MS);
 
       const onMessage = (message: unknown) => {
         if (!isAgentSessionChildMessage(message)) return;
-        if (message.type === 'session:ready' && message.sessionId === sessionId) {
+        if (
+          message.type === "session:ready" &&
+          message.sessionId === sessionId
+        ) {
           cleanup();
           resolve();
         }
@@ -366,36 +428,56 @@ class SessionProcessManager {
       const child = state?.child;
       if (!child) {
         clearTimeout(timeout);
-        reject(new AgentRuntimeError('Agent session child missing during ready wait.', 'CHILD_MISSING', 500));
+        reject(
+          new AgentRuntimeError(
+            "Agent session child missing during ready wait.",
+            "CHILD_MISSING",
+            500,
+          ),
+        );
         return;
       }
 
       const onExit = () => {
         cleanup();
-        reject(new AgentRuntimeError('Agent session child exited before ready.', 'CHILD_EXITED', 500));
+        reject(
+          new AgentRuntimeError(
+            "Agent session child exited before ready.",
+            "CHILD_EXITED",
+            500,
+          ),
+        );
       };
 
       const cleanup = () => {
         clearTimeout(timeout);
-        child.off('message', onMessage);
-        child.off('exit', onExit);
+        child.off("message", onMessage);
+        child.off("exit", onExit);
       };
 
-      child.on('message', onMessage);
-      child.once('exit', onExit);
+      child.on("message", onMessage);
+      child.once("exit", onExit);
     });
   }
 
   private handleChildMessage(sessionId: string, message: unknown): void {
     if (!isAgentSessionChildMessage(message)) return;
 
-    if (message.type === 'session:live') {
+    if (message.type === "session:live") {
       sessionLiveBus.emit(message.sessionId, message.event);
       return;
     }
 
-    if (message.type === 'runtime:event') {
+    if (message.type === "runtime:event") {
       runtimeBus.emit(message.event);
+      const owner = this.children.get(sessionId);
+      if (
+        message.event.type === "session_process_changed" &&
+        owner?.streams.size === 0 &&
+        !hasBackgroundProcesses(sessionId)
+      ) {
+        this.releaseChild(sessionId, "All background services have exited.");
+      }
       return;
     }
 
@@ -404,25 +486,25 @@ class SessionProcessManager {
     const state = this.children.get(sessionId);
     if (!state) return;
 
-    if (message.type === 'stream:chunk') {
+    if (message.type === "stream:chunk") {
       maybeScheduleSessionTitleFromStreamChunk(sessionId, message.chunk);
       forwardChunkToLiveBus(sessionId, message.chunk);
       const stream = state.streams.get(message.streamId);
-      stream?.queue.push({ kind: 'chunk', chunk: message.chunk });
+      stream?.queue.push({ kind: "chunk", chunk: message.chunk });
       return;
     }
 
-    if (message.type === 'stream:done') {
+    if (message.type === "stream:done") {
       ensureSessionTitleGenerated(sessionId);
       const stream = state.streams.get(message.streamId);
-      stream?.queue.push({ kind: 'done' });
+      stream?.queue.push({ kind: "done" });
       stream?.queue.close();
       return;
     }
 
-    if (message.type === 'stream:error') {
+    if (message.type === "stream:error") {
       const stream = state.streams.get(message.streamId);
-      stream?.queue.push({ kind: 'error', error: message.error });
+      stream?.queue.push({ kind: "error", error: message.error });
       stream?.queue.close();
     }
   }

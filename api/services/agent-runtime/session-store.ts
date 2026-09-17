@@ -1,19 +1,22 @@
-import type { ContextComposition } from './context-composition.js';
-import { bindAssets } from './media-assets.js';
-import { runtimeTransaction } from './runtime-transaction.js';
-import { logger } from '../../lib/logger.js';
-import type { WorkRecord } from './work-store.js';
-import { projectSessionUsage, type SessionUsageProjection } from './usage-projection.js';
-import { createHash } from 'node:crypto';
-import { getRawSqlite } from '../../db/index.js';
+import type { ContextComposition } from "./context-composition.js";
+import { bindAssets } from "./media-assets.js";
+import { runtimeTransaction } from "./runtime-transaction.js";
+import { logger } from "../../lib/logger.js";
+import type { WorkRecord } from "./work-store.js";
+import {
+  projectSessionUsage,
+  type SessionUsageProjection,
+} from "./usage-projection.js";
+import { createHash } from "node:crypto";
+import { getRawSqlite } from "../../db/index.js";
 import {
   readUsageContextWindowSize,
   readUsageInputTokens,
   readUsageOutputTokens,
-} from './acp-engine/acp-usage.js';
-import { nowIso } from './runtime-ids.js';
-import { emitRuntimeBusEvent } from './runtime-bus-bridge.js';
-import { sessionHooks } from './session-hooks.js';
+} from "./acp-engine/acp-usage.js";
+import { nowIso } from "./runtime-ids.js";
+import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
+import { sessionHooks } from "./session-hooks.js";
 import type {
   AgentContextBundle,
   AgentRun,
@@ -27,8 +30,9 @@ import type {
   RuntimeEvent,
   ThinkingSummary,
   ToolCallRecord,
-} from './contracts.js';
-import { AgentNotFoundError } from './runtime-errors.js';
+} from "./contracts.js";
+import { AgentNotFoundError } from "./runtime-errors.js";
+import { normalizeAgentSessionStatus } from "./session-projection.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -39,11 +43,11 @@ interface SessionRow {
   child_session_ids_json: string;
   node_id: string | null;
   profile_id: string;
-  status: AgentSession['status'];
+  status: string;
   title: string | null;
   prompt: string;
   context_snapshot_id: string | null;
-  thinking_mode: AgentSession['thinkingMode'];
+  thinking_mode: AgentSession["thinkingMode"];
   reasoning_effort: string | null;
   permission_rules_json: string;
   created_at: string;
@@ -67,7 +71,7 @@ interface MessageRow {
   turn_id: string | null;
   run_id: string | null;
   step_id: string | null;
-  role: AgentRuntimeMessage['role'];
+  role: AgentRuntimeMessage["role"];
   content: string;
   provider_id: string | null;
   model_id: string | null;
@@ -80,9 +84,9 @@ interface MessageRow {
 interface EventRow {
   id: string;
   session_id: string;
-  type: RuntimeEvent['type'];
+  type: string;
   timestamp: string;
-  visibility: RuntimeEvent['visibility'];
+  visibility: RuntimeEvent["visibility"];
   summary: string;
   payload_json: string;
 }
@@ -95,14 +99,14 @@ interface ToolCallRow {
   step_id: string | null;
   model_tool_call_id: string | null;
   tool_id: string;
-  category: ToolCallRecord['category'];
-  mutability: ToolCallRecord['mutability'];
+  category: ToolCallRecord["category"];
+  mutability: ToolCallRecord["mutability"];
   args_hash: string;
   input_summary: string;
   input_ref_json: string | null;
   output_summary: string | null;
   output_ref_json: string | null;
-  status: ToolCallRecord['status'];
+  status: ToolCallRecord["status"];
   permission_decision_id: string | null;
   started_at: string;
   ended_at: string | null;
@@ -115,12 +119,12 @@ interface PermissionRow {
   run_id: string | null;
   step_id: string | null;
   tool_call_id: string | null;
-  coarse_category: PermissionDecision['coarseCategory'];
-  internal_gate: PermissionDecision['internalGate'];
-  action: PermissionDecision['action'];
+  coarse_category: PermissionDecision["coarseCategory"];
+  internal_gate: PermissionDecision["internalGate"];
+  action: PermissionDecision["action"];
   reason: string;
   patterns_json: string;
-  user_reply: PermissionDecision['userReply'];
+  user_reply: PermissionDecision["userReply"];
   created_at: string;
   resolved_at: string | null;
   resume_token: string | null;
@@ -130,11 +134,11 @@ interface PermissionRow {
 interface ArtifactRow {
   id: string;
   session_id: string;
-  kind: EvidenceArtifact['kind'];
+  kind: EvidenceArtifact["kind"];
   title: string;
   summary: string;
   source_refs_json: string;
-  risk: EvidenceArtifact['risk'];
+  risk: EvidenceArtifact["risk"];
   metadata_json: string;
   created_at: string;
 }
@@ -154,7 +158,7 @@ interface ContextBundleRow {
 interface ThinkingSummaryRow {
   id: string;
   session_id: string;
-  mode: ThinkingSummary['mode'];
+  mode: ThinkingSummary["mode"];
   framing: string;
   evidence_used_json: string;
   decision: string;
@@ -166,7 +170,7 @@ interface ThinkingSummaryRow {
 interface RunRow {
   id: string;
   session_id: string;
-  status: AgentRun['status'];
+  status: AgentRun["status"];
   started_at: string;
   completed_at: string | null;
   trigger_message_id: string | null;
@@ -181,7 +185,7 @@ interface RunStepRow {
   run_id: string;
   session_id: string;
   step_index: number;
-  status: AgentRunStep['status'];
+  status: AgentRunStep["status"];
   model: string | null;
   started_at: string;
   completed_at: string | null;
@@ -194,7 +198,7 @@ interface RunPartRow {
   run_id: string;
   step_id: string;
   session_id: string;
-  kind: AgentRunPart['kind'];
+  kind: AgentRunPart["kind"];
   sequence: number;
   content: string;
   tool_call_id: string | null;
@@ -203,32 +207,39 @@ interface RunPartRow {
 }
 
 const RUNTIME_TABLES = [
-  'agent_runtime_processes',
-  'agent_runtime_stream_records',
-  'agent_runtime_work',
-  'agent_runtime_aux_usage',
-  'agent_runtime_interactions',
-  'agent_runtime_run_parts',
-  'agent_runtime_run_steps',
-  'agent_runtime_runs',
-  'agent_runtime_thinking_summaries',
-  'agent_runtime_compaction_summaries',
-  'agent_runtime_context_bundles',
-  'agent_runtime_artifacts',
-  'agent_runtime_permissions',
-  'agent_runtime_tool_calls',
-  'agent_runtime_events',
-  'agent_runtime_messages',
-  'agent_runtime_sessions',
+  "agent_runtime_processes",
+  "agent_runtime_stream_records",
+  "agent_runtime_work",
+  "agent_runtime_aux_usage",
+  "agent_runtime_interactions",
+  "agent_runtime_run_parts",
+  "agent_runtime_run_steps",
+  "agent_runtime_runs",
+  "agent_runtime_thinking_summaries",
+  "agent_runtime_compaction_summaries",
+  "agent_runtime_context_bundles",
+  "agent_runtime_artifacts",
+  "agent_runtime_permissions",
+  "agent_runtime_tool_calls",
+  "agent_runtime_events",
+  "agent_runtime_messages",
+  "agent_runtime_sessions",
 ] as const;
 
-// Mirrors projectSessionState(): runtimeControl.state overrides the stored status.
-// json_valid() keeps a malformed session_metadata_json from making json_extract
-// raise; a NULL/invalid path falls through to the persisted status, exactly like
-// the JS `sessionMetadata?.runtimeControl?.state` optional chain.
+// Mirrors projectSessionState(): runtimeControl.state overrides the stored status,
+// while legacy blocked/paused rows are always materialized as completed.
+// json_valid() keeps malformed session metadata from breaking list queries.
 const PROJECTED_STATUS_SQL = `CASE
+      WHEN json_valid(session_metadata_json) AND json_extract(session_metadata_json, '$.runtimeControl.state') = 'unconfirmed' THEN 'completed'
+      WHEN profile_id IN ('synax', 'goal') AND status IN ('waiting_permission', 'waiting_input') THEN status
+      WHEN profile_id IN ('synax', 'goal') AND (
+        status IN ('running', 'stopping')
+        OR (json_valid(session_metadata_json) AND json_extract(session_metadata_json, '$.runtimeControl.state') = 'stopping')
+      ) THEN 'running'
+      WHEN profile_id IN ('synax', 'goal') AND status = 'queued' THEN 'queued'
+      WHEN profile_id IN ('synax', 'goal') THEN 'completed'
       WHEN json_valid(session_metadata_json) AND json_extract(session_metadata_json, '$.runtimeControl.state') = 'stopping' THEN 'stopping'
-      WHEN json_valid(session_metadata_json) AND json_extract(session_metadata_json, '$.runtimeControl.state') = 'unconfirmed' THEN 'blocked'
+      WHEN status IN ('blocked', 'paused') THEN 'completed'
       ELSE status
     END`;
 
@@ -272,13 +283,23 @@ function parseArray<T>(raw: string | null | undefined): T[] {
   return Array.isArray(parsed) ? (parsed as T[]) : [];
 }
 
-function isReasoningEffort(value: string | null | undefined): value is AgentSession['reasoningEffort'] {
-  return value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh' || value === 'max';
+function isReasoningEffort(
+  value: string | null | undefined,
+): value is AgentSession["reasoningEffort"] {
+  return (
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "max"
+  );
 }
 
 function parseObject(raw: string | null | undefined): JsonObject {
   const parsed = parseJson<unknown>(raw, {});
-  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as JsonObject) : {};
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as JsonObject)
+    : {};
 }
 
 function mapSession(row: SessionRow): AgentSession {
@@ -289,12 +310,14 @@ function mapSession(row: SessionRow): AgentSession {
     childSessionIds: parseArray<string>(row.child_session_ids_json),
     nodeId: row.node_id,
     profileId: row.profile_id,
-    status: row.status,
+    status: normalizeAgentSessionStatus(row.status),
     title: row.title,
     prompt: row.prompt,
     contextSnapshotId: row.context_snapshot_id,
     thinkingMode: row.thinking_mode,
-    reasoningEffort: isReasoningEffort(row.reasoning_effort) ? row.reasoning_effort : null,
+    reasoningEffort: isReasoningEffort(row.reasoning_effort)
+      ? row.reasoning_effort
+      : null,
     permissionRules: parseArray(row.permission_rules_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -326,7 +349,9 @@ function mapMessage(row: MessageRow): AgentRuntimeMessage {
 const DEFAULT_CONTEXT_WINDOW_SIZE = 200_000;
 
 function normalizeContextLimit(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
 /** Provider-configured window recorded on the session's most recent run. */
@@ -344,7 +369,9 @@ function readLatestRunContextLimit(
     .get(sessionId) as { metadata_json: string | null } | undefined;
   if (!row?.metadata_json) return null;
   try {
-    const metadata = JSON.parse(row.metadata_json) as { contextLimit?: unknown };
+    const metadata = JSON.parse(row.metadata_json) as {
+      contextLimit?: unknown;
+    };
     return normalizeContextLimit(metadata.contextLimit);
   } catch {
     return null;
@@ -355,7 +382,9 @@ function mapEvent(row: EventRow): RuntimeEvent {
   return {
     id: row.id,
     sessionId: row.session_id,
-    type: row.type,
+    type: row.type === "session_blocked"
+      ? "session_completed"
+      : row.type as RuntimeEvent["type"],
     timestamp: row.timestamp,
     visibility: row.visibility,
     summary: row.summary,
@@ -511,7 +540,7 @@ export class AgentRuntimeStore {
 
   getSession(id: string): AgentSession {
     const row = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_sessions WHERE id = ?')
+      .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ?")
       .get(id) as SessionRow | undefined;
     if (!row) throw new AgentNotFoundError(id);
     return mapSession(row);
@@ -519,7 +548,7 @@ export class AgentRuntimeStore {
 
   tryGetSession(id: string): AgentSession | undefined {
     const row = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_sessions WHERE id = ?')
+      .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ?")
       .get(id) as SessionRow | undefined;
     return row ? mapSession(row) : undefined;
   }
@@ -534,20 +563,50 @@ export class AgentRuntimeStore {
     const notify = () => {
       const actual = this.tryGetSession(id);
       if (!actual) return;
-      const currentPatch = Object.fromEntries(Object.keys(patch).map(key => [key, actual[key as keyof AgentSession]]));
-      emitRuntimeBusEvent({ type: 'session_changed', sessionId: id, patch: currentPatch });
-      if (patch.status && patch.status !== current.status && actual.status === patch.status) {
-        void sessionHooks.emit({ type: 'session:status_changed', sessionId: id, from: current.status, to: actual.status, patch: currentPatch });
+      const currentPatch = Object.fromEntries(
+        Object.keys(patch).map((key) => [
+          key,
+          actual[key as keyof AgentSession],
+        ]),
+      );
+      emitRuntimeBusEvent({
+        type: "session_changed",
+        sessionId: id,
+        patch: currentPatch,
+      });
+      if (
+        patch.status &&
+        patch.status !== current.status &&
+        actual.status === patch.status
+      ) {
+        void sessionHooks.emit({
+          type: "session:status_changed",
+          sessionId: id,
+          from: current.status,
+          to: actual.status,
+          patch: currentPatch,
+        });
       }
     };
-    if (getRawSqlite().inTransaction) queueMicrotask(() => {
-      try { notify(); } catch (error) { logger.debug({ id, error }, '[session-store] deferred notification unavailable'); }
-    });
+    if (getRawSqlite().inTransaction)
+      queueMicrotask(() => {
+        try {
+          notify();
+        } catch (error) {
+          logger.debug(
+            { id, error },
+            "[session-store] deferred notification unavailable",
+          );
+        }
+      });
     else notify();
     return next;
   }
 
-  updateSessionMetadata(sessionId: string, patch: Record<string, unknown>): AgentSession {
+  updateSessionMetadata(
+    sessionId: string,
+    patch: Record<string, unknown>,
+  ): AgentSession {
     return runtimeTransaction(() => {
       const current = this.getSession(sessionId);
       const next = { ...(current.sessionMetadata ?? {}), ...patch };
@@ -558,25 +617,33 @@ export class AgentRuntimeStore {
   // Filters and limit are pushed into SQL; only mapSession() passthrough columns
   // (project_id, node_id, status) may be filtered here, and truthiness must match
   // the previous JS guards. Ordering stays updated_at DESC.
-  listSessions(filter: { projectId?: string; nodeId?: string; status?: string; limit?: number } = {}): AgentSession[] {
+  listSessions(
+    filter: {
+      projectId?: string;
+      nodeId?: string;
+      status?: string;
+      limit?: number;
+    } = {},
+  ): AgentSession[] {
     const db = getRawSqlite();
     const conditions: string[] = [];
     const params: string[] = [];
     // Truthiness matches the previous `!filter.x || ...` JS guards, which also
     // skipped empty-string filters.
     if (filter.projectId) {
-      conditions.push('project_id = ?');
+      conditions.push("project_id = ?");
       params.push(filter.projectId);
     }
     if (filter.nodeId) {
-      conditions.push('node_id = ?');
+      conditions.push("node_id = ?");
       params.push(filter.nodeId);
     }
     if (filter.status) {
-      conditions.push('status = ?');
+      conditions.push("status = ?");
       params.push(filter.status);
     }
-    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const where =
+      conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
     const baseQuery = `SELECT * FROM agent_runtime_sessions${where} ORDER BY updated_at DESC`;
 
     const limit = filter.limit ?? 50;
@@ -584,7 +651,9 @@ export class AgentRuntimeStore {
     // "no bound", and a negative bound keeps all but the last |limit| rows.
     if (Number.isNaN(limit) || limit === Number.NEGATIVE_INFINITY) return [];
     if (!Number.isFinite(limit)) {
-      return (db.prepare(baseQuery).all(...params) as SessionRow[]).map(mapSession);
+      return (db.prepare(baseQuery).all(...params) as SessionRow[]).map(
+        mapSession,
+      );
     }
     const bounded = Math.trunc(limit);
     if (bounded === 0) return [];
@@ -592,7 +661,9 @@ export class AgentRuntimeStore {
       const rows = db.prepare(baseQuery).all(...params) as SessionRow[];
       return rows.map(mapSession).slice(0, bounded);
     }
-    const rows = db.prepare(`${baseQuery} LIMIT ?`).all(...params, bounded) as SessionRow[];
+    const rows = db
+      .prepare(`${baseQuery} LIMIT ?`)
+      .all(...params, bounded) as SessionRow[];
     return rows.map(mapSession);
   }
 
@@ -602,21 +673,26 @@ export class AgentRuntimeStore {
   listSessionsPage(
     filter: { projectId?: string; nodeId?: string; status?: string } = {},
     page: { limit: number; offset: number } = { limit: 50, offset: 0 },
-  ): { items: AgentSession[]; totalCount: number; countByStatus: Record<string, number> } {
+  ): {
+    items: AgentSession[];
+    totalCount: number;
+    countByStatus: Record<string, number>;
+  } {
     const db = getRawSqlite();
     const conditions: string[] = [];
     const baseParams: string[] = [];
     if (filter.projectId) {
-      conditions.push('project_id = ?');
+      conditions.push("project_id = ?");
       baseParams.push(filter.projectId);
     }
     if (filter.nodeId) {
-      conditions.push('node_id = ?');
+      conditions.push("node_id = ?");
       baseParams.push(filter.nodeId);
     }
-    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const where =
+      conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
     const projected = `SELECT *, ${PROJECTED_STATUS_SQL} AS projected_status FROM agent_runtime_sessions${where}`;
-    const statusFilter = filter.status ? ' WHERE projected_status = ?' : '';
+    const statusFilter = filter.status ? " WHERE projected_status = ?" : "";
     const statusParams = filter.status ? [filter.status] : [];
 
     const countRows = db
@@ -626,7 +702,11 @@ export class AgentRuntimeStore {
           GROUP BY projected_status
           ORDER BY latest_at DESC, projected_status`,
       )
-      .all(...baseParams, ...statusParams) as Array<{ projected_status: string; count: number; latest_at: string }>;
+      .all(...baseParams, ...statusParams) as Array<{
+      projected_status: string;
+      count: number;
+      latest_at: string;
+    }>;
     const countByStatus: Record<string, number> = {};
     let totalCount = 0;
     for (const row of countRows) {
@@ -636,13 +716,25 @@ export class AgentRuntimeStore {
 
     // Mirror slice(offset, offset + limit): a non-positive window yields no rows
     // (SQLite treats LIMIT -1 as "unbounded", so guard before it reaches SQL).
-    const offset = Number.isFinite(page.offset) ? Math.max(0, Math.trunc(page.offset)) : 0;
+    const offset = Number.isFinite(page.offset)
+      ? Math.max(0, Math.trunc(page.offset))
+      : 0;
     const limit = Number.isFinite(page.limit) ? Math.trunc(page.limit) : 0;
-    const items = limit > 0
-      ? (db
-          .prepare(`SELECT * FROM (${projected})${statusFilter} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
-          .all(...baseParams, ...statusParams, limit, offset) as SessionRow[]).map(mapSession)
-      : [];
+    const items =
+      limit > 0
+        ? (
+            db
+              .prepare(
+                `SELECT * FROM (${projected})${statusFilter} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+              )
+              .all(
+                ...baseParams,
+                ...statusParams,
+                limit,
+                offset,
+              ) as SessionRow[]
+          ).map(mapSession)
+        : [];
     return { items, totalCount, countByStatus };
   }
 
@@ -667,7 +759,8 @@ export class AgentRuntimeStore {
     const childrenByParent = new Map<string, Set<string>>();
     for (const session of sessions) {
       if (!session.parentSessionId) continue;
-      const childIds = childrenByParent.get(session.parentSessionId) ?? new Set<string>();
+      const childIds =
+        childrenByParent.get(session.parentSessionId) ?? new Set<string>();
       childIds.add(session.id);
       childrenByParent.set(session.parentSessionId, childIds);
     }
@@ -684,7 +777,8 @@ export class AgentRuntimeStore {
       seen.add(id);
       ordered.push(session);
       const childIds = new Set<string>(session.childSessionIds);
-      for (const childId of childrenByParent.get(id) ?? []) childIds.add(childId);
+      for (const childId of childrenByParent.get(id) ?? [])
+        childIds.add(childId);
       for (const childId of childIds) visit(childId);
     };
 
@@ -701,9 +795,9 @@ export class AgentRuntimeStore {
         .map((session) => session.contextSnapshotId)
         .filter((id): id is string => Boolean(id)),
     );
-    const survivors = this.listSessions({ limit: Number.MAX_SAFE_INTEGER }).filter(
-      (session) => !deleteSet.has(session.id),
-    );
+    const survivors = this.listSessions({
+      limit: Number.MAX_SAFE_INTEGER,
+    }).filter((session) => !deleteSet.has(session.id));
     const db = getRawSqlite();
     const tx = db.transaction(() => {
       const deletedAt = nowIso();
@@ -712,7 +806,9 @@ export class AgentRuntimeStore {
           survivor.parentSessionId && deleteSet.has(survivor.parentSessionId)
             ? null
             : survivor.parentSessionId;
-        const nextChildSessionIds = survivor.childSessionIds.filter((childId) => !deleteSet.has(childId));
+        const nextChildSessionIds = survivor.childSessionIds.filter(
+          (childId) => !deleteSet.has(childId),
+        );
         if (
           nextParentSessionId === survivor.parentSessionId &&
           nextChildSessionIds.length === survivor.childSessionIds.length
@@ -727,27 +823,67 @@ export class AgentRuntimeStore {
         });
       }
 
-      for (const id of deleteIds) db.prepare('UPDATE agent_runtime_processes SET session_id = NULL WHERE session_id = ?').run(id);
-      for (const id of deleteIds) db.prepare('DELETE FROM agent_runtime_asset_sessions WHERE session_id=?').run(id);
-      const deleteStream = db.prepare('DELETE FROM agent_runtime_stream_records WHERE session_id = ?');
+      for (const id of deleteIds)
+        db.prepare(
+          "UPDATE agent_runtime_processes SET session_id = NULL WHERE session_id = ?",
+        ).run(id);
+      for (const id of deleteIds)
+        db.prepare(
+          "DELETE FROM agent_runtime_asset_sessions WHERE session_id=?",
+        ).run(id);
+      const deleteStream = db.prepare(
+        "DELETE FROM agent_runtime_stream_records WHERE session_id = ?",
+      );
       for (const id of deleteIds) deleteStream.run(id);
-      const deleteWork = db.prepare('DELETE FROM agent_runtime_work WHERE session_id = ?');
-      const deleteAuxUsage = db.prepare('DELETE FROM agent_runtime_aux_usage WHERE session_id = ?');
-      const deleteInteractions = db.prepare('DELETE FROM agent_runtime_interactions WHERE session_id = ?');
+      const deleteWork = db.prepare(
+        "DELETE FROM agent_runtime_work WHERE session_id = ?",
+      );
+      const deleteAuxUsage = db.prepare(
+        "DELETE FROM agent_runtime_aux_usage WHERE session_id = ?",
+      );
+      const deleteInteractions = db.prepare(
+        "DELETE FROM agent_runtime_interactions WHERE session_id = ?",
+      );
       for (const id of deleteIds) deleteInteractions.run(id);
-      const deleteRunPartsBySession = db.prepare('DELETE FROM agent_runtime_run_parts WHERE session_id = ?');
-      const deleteRunStepsBySession = db.prepare('DELETE FROM agent_runtime_run_steps WHERE session_id = ?');
-      const deleteRunsBySession = db.prepare('DELETE FROM agent_runtime_runs WHERE session_id = ?');
-      const deleteThinkingBySession = db.prepare('DELETE FROM agent_runtime_thinking_summaries WHERE session_id = ?');
-      const deleteCompactionBySession = db.prepare('DELETE FROM agent_runtime_compaction_summaries WHERE session_id = ?');
-      const deleteContextBundlesBySession = db.prepare('DELETE FROM agent_runtime_context_bundles WHERE session_id = ?');
-      const deleteArtifactsBySession = db.prepare('DELETE FROM agent_runtime_artifacts WHERE session_id = ?');
-      const deletePermissionsBySession = db.prepare('DELETE FROM agent_runtime_permissions WHERE session_id = ?');
-      const deleteToolCallsBySession = db.prepare('DELETE FROM agent_runtime_tool_calls WHERE session_id = ?');
-      const deleteEventsBySession = db.prepare('DELETE FROM agent_runtime_events WHERE session_id = ?');
-      const deleteMessagesBySession = db.prepare('DELETE FROM agent_runtime_messages WHERE session_id = ?');
-      const deleteSessionById = db.prepare('DELETE FROM agent_runtime_sessions WHERE id = ?');
-      const deleteContextBundleById = db.prepare('DELETE FROM agent_runtime_context_bundles WHERE id = ?');
+      const deleteRunPartsBySession = db.prepare(
+        "DELETE FROM agent_runtime_run_parts WHERE session_id = ?",
+      );
+      const deleteRunStepsBySession = db.prepare(
+        "DELETE FROM agent_runtime_run_steps WHERE session_id = ?",
+      );
+      const deleteRunsBySession = db.prepare(
+        "DELETE FROM agent_runtime_runs WHERE session_id = ?",
+      );
+      const deleteThinkingBySession = db.prepare(
+        "DELETE FROM agent_runtime_thinking_summaries WHERE session_id = ?",
+      );
+      const deleteCompactionBySession = db.prepare(
+        "DELETE FROM agent_runtime_compaction_summaries WHERE session_id = ?",
+      );
+      const deleteContextBundlesBySession = db.prepare(
+        "DELETE FROM agent_runtime_context_bundles WHERE session_id = ?",
+      );
+      const deleteArtifactsBySession = db.prepare(
+        "DELETE FROM agent_runtime_artifacts WHERE session_id = ?",
+      );
+      const deletePermissionsBySession = db.prepare(
+        "DELETE FROM agent_runtime_permissions WHERE session_id = ?",
+      );
+      const deleteToolCallsBySession = db.prepare(
+        "DELETE FROM agent_runtime_tool_calls WHERE session_id = ?",
+      );
+      const deleteEventsBySession = db.prepare(
+        "DELETE FROM agent_runtime_events WHERE session_id = ?",
+      );
+      const deleteMessagesBySession = db.prepare(
+        "DELETE FROM agent_runtime_messages WHERE session_id = ?",
+      );
+      const deleteSessionById = db.prepare(
+        "DELETE FROM agent_runtime_sessions WHERE id = ?",
+      );
+      const deleteContextBundleById = db.prepare(
+        "DELETE FROM agent_runtime_context_bundles WHERE id = ?",
+      );
 
       for (const id of deleteIds) {
         deleteRunPartsBySession.run(id);
@@ -772,7 +908,7 @@ export class AgentRuntimeStore {
     });
     tx();
     for (const id of deleteIds) {
-      emitRuntimeBusEvent({ type: 'session_deleted', sessionId: id });
+      emitRuntimeBusEvent({ type: "session_deleted", sessionId: id });
     }
     return deleteIds;
   }
@@ -780,7 +916,8 @@ export class AgentRuntimeStore {
   appendMessage(message: AgentRuntimeMessage): AgentRuntimeMessage {
     const session = this.getSession(message.sessionId);
     const nextSequence = this.nextMessageSequence(message.sessionId);
-    if (message.contentParts) bindAssets(message.sessionId, message.contentParts);
+    if (message.contentParts)
+      bindAssets(message.sessionId, message.contentParts);
     getRawSqlite()
       .prepare(
         `INSERT OR REPLACE INTO agent_runtime_messages
@@ -810,7 +947,9 @@ export class AgentRuntimeStore {
 
   listMessages(sessionId: string): AgentRuntimeMessage[] {
     const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_messages WHERE session_id = ? ORDER BY sequence, created_at, rowid')
+      .prepare(
+        "SELECT * FROM agent_runtime_messages WHERE session_id = ? ORDER BY sequence, created_at, rowid",
+      )
       .all(sessionId) as MessageRow[];
     return rows.map(mapMessage);
   }
@@ -850,20 +989,28 @@ export class AgentRuntimeStore {
       return rows.map(mapEvent);
     }
     const rows = db
-      .prepare('SELECT * FROM agent_runtime_events WHERE session_id = ? ORDER BY rowid')
+      .prepare(
+        "SELECT * FROM agent_runtime_events WHERE session_id = ? ORDER BY rowid",
+      )
       .all(sessionId) as EventRow[];
     return rows.map(mapEvent);
   }
 
   /** Latest event of a given type, without loading the whole event log. */
-  getLatestEventByType(sessionId: string, type: RuntimeEvent['type']): RuntimeEvent | null {
+  getLatestEventByType(
+    sessionId: string,
+    type: RuntimeEvent["type"],
+  ): RuntimeEvent | null {
     return this.getLatestEventOfTypes(sessionId, [type]);
   }
 
   /** Latest event matching any of the given types. */
-  getLatestEventOfTypes(sessionId: string, types: RuntimeEvent['type'][]): RuntimeEvent | null {
+  getLatestEventOfTypes(
+    sessionId: string,
+    types: RuntimeEvent["type"][],
+  ): RuntimeEvent | null {
     if (types.length === 0) return null;
-    const placeholders = types.map(() => '?').join(', ');
+    const placeholders = types.map(() => "?").join(", ");
     const row = getRawSqlite()
       .prepare(
         `SELECT * FROM agent_runtime_events
@@ -876,7 +1023,11 @@ export class AgentRuntimeStore {
   }
 
   /** Count events of `type` recorded after `eventId` (rowid ordered). */
-  countEventsAfter(sessionId: string, eventId: string, type: RuntimeEvent['type']): number {
+  countEventsAfter(
+    sessionId: string,
+    eventId: string,
+    type: RuntimeEvent["type"],
+  ): number {
     const row = getRawSqlite()
       .prepare(
         `SELECT COUNT(*) AS count FROM agent_runtime_events
@@ -911,7 +1062,7 @@ export class AgentRuntimeStore {
 
   getRun(runId: string): AgentRun {
     const row = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_runs WHERE id = ?')
+      .prepare("SELECT * FROM agent_runtime_runs WHERE id = ?")
       .get(runId) as RunRow | undefined;
     if (!row) throw new AgentNotFoundError(runId);
     return mapRun(row);
@@ -925,7 +1076,9 @@ export class AgentRuntimeStore {
 
   listRuns(sessionId: string): AgentRun[] {
     const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_runs WHERE session_id = ? ORDER BY started_at DESC, rowid DESC')
+      .prepare(
+        "SELECT * FROM agent_runtime_runs WHERE session_id = ? ORDER BY started_at DESC, rowid DESC",
+      )
       .all(sessionId) as RunRow[];
     return rows.map(mapRun);
   }
@@ -958,7 +1111,7 @@ export class AgentRuntimeStore {
 
   getRunStep(stepId: string): AgentRunStep {
     const row = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_run_steps WHERE id = ?')
+      .prepare("SELECT * FROM agent_runtime_run_steps WHERE id = ?")
       .get(stepId) as RunStepRow | undefined;
     if (!row) throw new AgentNotFoundError(stepId);
     return mapRunStep(row);
@@ -972,14 +1125,18 @@ export class AgentRuntimeStore {
 
   listRunSteps(runId: string): AgentRunStep[] {
     const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_run_steps WHERE run_id = ? ORDER BY step_index, rowid')
+      .prepare(
+        "SELECT * FROM agent_runtime_run_steps WHERE run_id = ? ORDER BY step_index, rowid",
+      )
       .all(runId) as RunStepRow[];
     return rows.map(mapRunStep);
   }
 
   listSessionSteps(sessionId: string): AgentRunStep[] {
     const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_run_steps WHERE session_id = ? ORDER BY rowid')
+      .prepare(
+        "SELECT * FROM agent_runtime_run_steps WHERE session_id = ? ORDER BY rowid",
+      )
       .all(sessionId) as RunStepRow[];
     return rows.map(mapRunStep);
   }
@@ -1008,14 +1165,18 @@ export class AgentRuntimeStore {
 
   listRunParts(stepId: string): AgentRunPart[] {
     const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_run_parts WHERE step_id = ? ORDER BY sequence, rowid')
+      .prepare(
+        "SELECT * FROM agent_runtime_run_parts WHERE step_id = ? ORDER BY sequence, rowid",
+      )
       .all(stepId) as RunPartRow[];
     return rows.map(mapRunPart);
   }
 
   nextRunPartSequence(stepId: string): number {
     const row = getRawSqlite()
-      .prepare('SELECT MAX(sequence) AS max_sequence FROM agent_runtime_run_parts WHERE step_id = ?')
+      .prepare(
+        "SELECT MAX(sequence) AS max_sequence FROM agent_runtime_run_parts WHERE step_id = ?",
+      )
       .get(stepId) as { max_sequence: number | null } | undefined;
     return (row?.max_sequence ?? 0) + 1;
   }
@@ -1053,7 +1214,11 @@ export class AgentRuntimeStore {
     return record;
   }
 
-  updateToolCall(sessionId: string, toolCallId: string, patch: Partial<ToolCallRecord>): ToolCallRecord {
+  updateToolCall(
+    sessionId: string,
+    toolCallId: string,
+    patch: Partial<ToolCallRecord>,
+  ): ToolCallRecord {
     const current = this.getToolCall(sessionId, toolCallId);
     const next = { ...current, ...patch };
     return this.appendToolCall(next);
@@ -1061,7 +1226,9 @@ export class AgentRuntimeStore {
 
   getToolCall(sessionId: string, toolCallId: string): ToolCallRecord {
     const row = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_tool_calls WHERE session_id = ? AND id = ? LIMIT 1')
+      .prepare(
+        "SELECT * FROM agent_runtime_tool_calls WHERE session_id = ? AND id = ? LIMIT 1",
+      )
       .get(sessionId, toolCallId) as ToolCallRow | undefined;
     if (!row) throw new AgentNotFoundError(toolCallId);
     return mapToolCall(row);
@@ -1069,14 +1236,18 @@ export class AgentRuntimeStore {
 
   listToolCalls(sessionId: string): ToolCallRecord[] {
     const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_tool_calls WHERE session_id = ? ORDER BY rowid')
+      .prepare(
+        "SELECT * FROM agent_runtime_tool_calls WHERE session_id = ? ORDER BY rowid",
+      )
       .all(sessionId) as ToolCallRow[];
     return rows.map(mapToolCall);
   }
 
   listRunToolCalls(runId: string): ToolCallRecord[] {
     const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_tool_calls WHERE run_id = ? ORDER BY rowid')
+      .prepare(
+        "SELECT * FROM agent_runtime_tool_calls WHERE run_id = ? ORDER BY rowid",
+      )
       .all(runId) as ToolCallRow[];
     return rows.map(mapToolCall);
   }
@@ -1109,8 +1280,14 @@ export class AgentRuntimeStore {
     return decision;
   }
 
-  updatePermission(sessionId: string, permissionId: string, patch: Partial<PermissionDecision>): PermissionDecision {
-    const current = this.listPermissions(sessionId).find((item) => item.id === permissionId);
+  updatePermission(
+    sessionId: string,
+    permissionId: string,
+    patch: Partial<PermissionDecision>,
+  ): PermissionDecision {
+    const current = this.listPermissions(sessionId).find(
+      (item) => item.id === permissionId,
+    );
     if (!current) throw new AgentNotFoundError(permissionId);
     const next = { ...current, ...patch };
     return this.appendPermission(next);
@@ -1118,14 +1295,21 @@ export class AgentRuntimeStore {
 
   listPermissions(sessionId: string): PermissionDecision[] {
     const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_permissions WHERE session_id = ? ORDER BY rowid')
+      .prepare(
+        "SELECT * FROM agent_runtime_permissions WHERE session_id = ? ORDER BY rowid",
+      )
       .all(sessionId) as PermissionRow[];
     return rows.map(mapPermission);
   }
 
-  findPermissionByResumeToken(sessionId: string, resumeToken: string): PermissionDecision | undefined {
+  findPermissionByResumeToken(
+    sessionId: string,
+    resumeToken: string,
+  ): PermissionDecision | undefined {
     const row = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_permissions WHERE session_id = ? AND resume_token = ? ORDER BY rowid DESC LIMIT 1')
+      .prepare(
+        "SELECT * FROM agent_runtime_permissions WHERE session_id = ? AND resume_token = ? ORDER BY rowid DESC LIMIT 1",
+      )
       .get(sessionId, resumeToken) as PermissionRow | undefined;
     return row ? mapPermission(row) : undefined;
   }
@@ -1153,7 +1337,9 @@ export class AgentRuntimeStore {
 
   listArtifacts(sessionId: string): EvidenceArtifact[] {
     const rows = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_artifacts WHERE session_id = ? ORDER BY rowid')
+      .prepare(
+        "SELECT * FROM agent_runtime_artifacts WHERE session_id = ? ORDER BY rowid",
+      )
       .all(sessionId) as ArtifactRow[];
     return rows.map(mapArtifact);
   }
@@ -1181,7 +1367,7 @@ export class AgentRuntimeStore {
 
   getContextBundle(id: string): AgentContextBundle {
     const row = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_context_bundles WHERE id = ?')
+      .prepare("SELECT * FROM agent_runtime_context_bundles WHERE id = ?")
       .get(id) as ContextBundleRow | undefined;
     if (!row) throw new AgentNotFoundError(id);
     return mapContextBundle(row);
@@ -1210,7 +1396,7 @@ export class AgentRuntimeStore {
 
   getThinkingSummary(id: string): ThinkingSummary {
     const row = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_thinking_summaries WHERE id = ?')
+      .prepare("SELECT * FROM agent_runtime_thinking_summaries WHERE id = ?")
       .get(id) as ThinkingSummaryRow | undefined;
     if (!row) throw new AgentNotFoundError(id);
     return mapThinkingSummary(row);
@@ -1238,17 +1424,21 @@ export class AgentRuntimeStore {
 
   getLatestCompactionRecord(sessionId: string): CompactionRecord | null {
     const row = getRawSqlite()
-      .prepare('SELECT * FROM agent_runtime_compaction_summaries WHERE session_id = ? ORDER BY created_at DESC LIMIT 1')
-      .get(sessionId) as {
-        id: string;
-        session_id: string;
-        run_id: string | null;
-        summary_text: string;
-        compressed_message_count: number;
-        original_token_count: number;
-        compressed_token_count: number;
-        created_at: string;
-      } | undefined;
+      .prepare(
+        "SELECT * FROM agent_runtime_compaction_summaries WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(sessionId) as
+      | {
+          id: string;
+          session_id: string;
+          run_id: string | null;
+          summary_text: string;
+          compressed_message_count: number;
+          original_token_count: number;
+          compressed_token_count: number;
+          created_at: string;
+        }
+      | undefined;
     if (!row) return null;
     return {
       id: row.id,
@@ -1266,12 +1456,12 @@ export class AgentRuntimeStore {
     sessionId: string,
     options: { configuredContextLimit?: number | null } = {},
   ): {
-    work: Pick<WorkRecord, 'id' | 'status' | 'remaining' | 'reason'> | null;
+    work: Pick<WorkRecord, "id" | "status" | "remaining" | "reason"> | null;
     roundCount: number;
     contextComposition: ContextComposition | null;
-    context: SessionUsageProjection['context'];
-    usage: SessionUsageProjection['usage'];
-    coverage: SessionUsageProjection['coverage'];
+    context: SessionUsageProjection["context"];
+    usage: SessionUsageProjection["usage"];
+    coverage: SessionUsageProjection["coverage"];
     tokenUsage: { input: number; output: number; total: number };
     contextLimit: number;
     contextLimitKnown: boolean;
@@ -1284,40 +1474,69 @@ export class AgentRuntimeStore {
     const session = this.getSession(sessionId);
     const db = getRawSqlite();
 
-    const workRow = typeof session.sessionMetadata?.activeWorkId === 'string'
-      ? db.prepare('SELECT payload_json FROM agent_runtime_work WHERE id = ? AND session_id = ?').get(session.sessionMetadata.activeWorkId, sessionId) as { payload_json: string } | undefined
-      : undefined;
-    const currentWork = workRow ? JSON.parse(workRow.payload_json) as WorkRecord : null;
-    const projected = projectSessionUsage(sessionId, this.listSessionTree(sessionId).map(s => s.id));
+    const workRow =
+      typeof session.sessionMetadata?.activeWorkId === "string"
+        ? (db
+            .prepare(
+              "SELECT payload_json FROM agent_runtime_work WHERE id = ? AND session_id = ?",
+            )
+            .get(session.sessionMetadata.activeWorkId, sessionId) as
+            | { payload_json: string }
+            | undefined)
+        : undefined;
+    const currentWork = workRow
+      ? (JSON.parse(workRow.payload_json) as WorkRecord)
+      : null;
+    const projected = projectSessionUsage(
+      sessionId,
+      this.listSessionTree(sessionId).map((s) => s.id),
+    );
     const input = projected.context.inputTokens ?? 0;
     const output = projected.usage.self.output;
     const total = input;
     const latestContextWindowSize = projected.reportedWindow;
-    const backendId = (session.sessionMetadata?.backend as { id?: string } | undefined)?.id;
-    const cli = backendId === 'codex' || backendId === 'claude-code';
+    const backendId = (
+      session.sessionMetadata?.backend as { id?: string } | undefined
+    )?.id;
+    const cli = backendId === "codex" || backendId === "claude-code";
     // Native API sessions honor configured windows; CLI sessions report their own, independent policy.
-    const knownWindow = cli ? latestContextWindowSize : normalizeContextLimit(options.configuredContextLimit)
-      ?? readLatestRunContextLimit(db, sessionId) ?? latestContextWindowSize;
+    const knownWindow = cli
+      ? latestContextWindowSize
+      : (normalizeContextLimit(options.configuredContextLimit) ??
+        readLatestRunContextLimit(db, sessionId) ??
+        latestContextWindowSize);
     const contextLimitKnown = !cli || knownWindow !== null;
     const contextLimit = knownWindow ?? DEFAULT_CONTEXT_WINDOW_SIZE;
-    const contextUsedPercent = contextLimit > 0
-      ? Math.min(Math.round((input / contextLimit) * 100), 100)
-      : 0;
+    const contextUsedPercent =
+      contextLimit > 0
+        ? Math.min(Math.round((input / contextLimit) * 100), 100)
+        : 0;
 
-    const roundCount = (db.prepare('SELECT COUNT(*) as count FROM agent_runtime_run_steps WHERE session_id = ?')
-      .get(sessionId) as { count: number }).count;
+    const roundCount = (
+      db
+        .prepare(
+          "SELECT COUNT(*) as count FROM agent_runtime_run_steps WHERE session_id = ?",
+        )
+        .get(sessionId) as { count: number }
+    ).count;
     // Step updates replace rows, so rowid alone is not the request order.
-    const compositionRow = db.prepare(
-      "SELECT json_extract(metadata_json, '$.contextComposition') AS composition FROM agent_runtime_run_steps WHERE session_id = ? AND json_type(metadata_json, '$.contextComposition') = 'object' ORDER BY json_extract(metadata_json, '$.contextComposition.measuredAt') DESC, started_at DESC, step_index DESC, rowid DESC LIMIT 1",
-    ).get(sessionId) as { composition: string } | undefined;
-    const contextComposition = compositionRow ? JSON.parse(compositionRow.composition) as ContextComposition : null;
+    const compositionRow = db
+      .prepare(
+        "SELECT json_extract(metadata_json, '$.contextComposition') AS composition FROM agent_runtime_run_steps WHERE session_id = ? AND json_type(metadata_json, '$.contextComposition') = 'object' ORDER BY json_extract(metadata_json, '$.contextComposition.measuredAt') DESC, started_at DESC, step_index DESC, rowid DESC LIMIT 1",
+      )
+      .get(sessionId) as { composition: string } | undefined;
+    const contextComposition = compositionRow
+      ? (JSON.parse(compositionRow.composition) as ContextComposition)
+      : null;
 
     const toolCountRow = db
-      .prepare('SELECT COUNT(*) as cnt FROM agent_runtime_tool_calls WHERE session_id = ?')
+      .prepare(
+        "SELECT COUNT(*) as cnt FROM agent_runtime_tool_calls WHERE session_id = ?",
+      )
       .get(sessionId) as { cnt: number };
     const toolCallCount = toolCountRow?.cnt ?? 0;
 
-    const runningDuration = projected.durationMs
+    const runningDuration = projected.durationMs;
 
     let activeSubAgentCount = 0;
     if (session.childSessionIds.length > 0) {
@@ -1326,7 +1545,7 @@ export class AgentRuntimeStore {
       // try/catch on getSession(); duplicates in childSessionIds still count
       // once per entry because we iterate the original list below.
       const childIds = [...new Set(session.childSessionIds)];
-      const placeholders = childIds.map(() => '?').join(', ');
+      const placeholders = childIds.map(() => "?").join(", ");
       const running = new Set(
         (
           db
@@ -1343,9 +1562,19 @@ export class AgentRuntimeStore {
     }
 
     return {
-      work: currentWork ? { id: currentWork.id, status: currentWork.status, remaining: currentWork.remaining, reason: currentWork.reason } : null,
-      roundCount, contextComposition,
-      context: projected.context, usage: projected.usage, coverage: projected.coverage,
+      work: currentWork
+        ? {
+            id: currentWork.id,
+            status: currentWork.status,
+            remaining: currentWork.remaining,
+            reason: currentWork.reason,
+          }
+        : null,
+      roundCount,
+      contextComposition,
+      context: projected.context,
+      usage: projected.usage,
+      coverage: projected.coverage,
       tokenUsage: { input, output, total },
       contextLimit,
       contextLimitKnown,
@@ -1360,7 +1589,7 @@ export class AgentRuntimeStore {
   recoverOrphanedSessions(): number {
     const db = getRawSqlite();
     const now = nowIso();
-    const reason = 'Server restarted.';
+    const reason = "Server restarted.";
     db.prepare(
       `UPDATE agent_runtime_run_steps
        SET status = 'interrupted', completed_at = ?, finish_reason = 'server_restarted'
@@ -1392,7 +1621,7 @@ export class AgentRuntimeStore {
   }
 
   hashArgs(args: unknown): string {
-    return createHash('sha256').update(stringify(args)).digest('hex');
+    return createHash("sha256").update(stringify(args)).digest("hex");
   }
 
   private upsertSession(session: AgentSession): void {
@@ -1411,7 +1640,7 @@ export class AgentRuntimeStore {
         stringify(session.childSessionIds),
         session.nodeId,
         session.profileId,
-        session.status,
+        normalizeAgentSessionStatus(session.status),
         session.title,
         session.prompt,
         session.contextSnapshotId,
@@ -1433,7 +1662,9 @@ export class AgentRuntimeStore {
 
   private nextMessageSequence(sessionId: string): number {
     const row = getRawSqlite()
-      .prepare('SELECT MAX(sequence) AS max_sequence FROM agent_runtime_messages WHERE session_id = ?')
+      .prepare(
+        "SELECT MAX(sequence) AS max_sequence FROM agent_runtime_messages WHERE session_id = ?",
+      )
       .get(sessionId) as { max_sequence: number | null } | undefined;
     return (row?.max_sequence ?? 0) + 1;
   }

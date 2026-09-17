@@ -9,11 +9,9 @@ const STATUS_DOT: Record<AgentSessionStatus, string> = {
   running: 'bg-[var(--color-run)] animate-pulse',
   waiting_permission: 'bg-warning',
   waiting_input: 'bg-warning',
-  blocked: 'bg-warning',
   completed: 'bg-success',
   failed: 'bg-danger',
   interrupted: 'bg-warning/60',
-  paused: 'bg-run',
   queued: 'bg-muted-foreground/50',
   cancelled: 'bg-muted-foreground/30',
 }

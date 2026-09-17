@@ -94,7 +94,7 @@ describe('buildLoopSystemPrompt synax mode section', () => {
       maxSteps: 10,
       stepIndex: 1,
       locale: 'zh',
-      permissionTier: 'readonly',
+      permissionTier: 'boundary',
     });
     expect(prompt.indexOf('## Response language')).toBeLessThan(prompt.indexOf('## Permission gates'));
     expect(prompt).toContain('## Permission gates');

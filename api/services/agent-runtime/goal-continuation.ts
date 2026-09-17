@@ -4,7 +4,6 @@ import { agentRuntimeStore as store } from './session-store.js';
 import { getGoalState } from './goal-control.js';
 import { getStoredPlan } from './plan-execution.js';
 import { interactionService } from './interaction-service.js';
-import { inputQueueService } from './input-queue-service.js';
 import { workStore } from './work-store.js';
 
 /** Only an explicit, settled round handoff can continue an already approved root goal. */
@@ -12,7 +11,7 @@ export function goalContinuationInput(sessionId: string, runId: string): StreamT
   const session = store.getSession(sessionId);
   const run = store.getRun(runId);
   if (session.parentSessionId || session.sessionMetadata?.mode !== 'goal' || session.sessionMetadata?.runtimeControl ||
-      session.status !== 'paused' || session.activeRunId || run.sessionId !== sessionId ||
+      session.status !== 'completed' || session.activeRunId || run.sessionId !== sessionId ||
       run.status !== 'completed' || run.stopReason !== 'round_yielded' || store.listRuns(sessionId)[0]?.id !== runId)
     return null;
   const goal = getGoalState(session.sessionMetadata);
@@ -20,7 +19,7 @@ export function goalContinuationInput(sessionId: string, runId: string): StreamT
   const work = workStore.current(sessionId);
   if (goal?.status !== 'executing' || plan?.status !== 'approved' || !plan.executionId ||
       run.metadata.goalExecutionId !== plan.executionId || work?.status !== 'active' || run.metadata.workId !== work.id ||
-      interactionService.pending(sessionId) || inputQueueService.hasPending(sessionId))
+      interactionService.pending(sessionId))
     return null;
   const previous = (run.metadata.runtime as AcceptedRuntimeInput | undefined)?.input;
   return {
