@@ -1,4 +1,4 @@
-import { ChevronRight, History, MessageCircle, Loader2 } from 'lucide-react'
+import { Check, ChevronRight, History, Loader2, PenLine, X } from 'lucide-react'
 import { SessionModeSummary } from './SessionWorkspace'
 import './agentControls.css'
 import { useEffect, useId, useRef, useState } from 'react'
@@ -149,31 +149,41 @@ function InteractionForm({ interaction, disabled }: {
       const multiple = question.type === 'multi_select'
       const selected = Array.isArray(value) ? value : []
       return (
-        <div className="space-y-1">
-          {(question.options ?? []).map(option => (
-            <label key={option.value} className="agent-request-choice">
-              <input
-                type={multiple ? 'checkbox' : 'radio'}
-                name={id}
-                checked={multiple ? selected.includes(option.value) : !otherEnabled[question.id] && value === option.value}
-                aria-describedby={common['aria-describedby']}
-                onChange={event => {
-                  if (multiple) update(question.id, event.target.checked ? [...selected, option.value] : selected.filter(item => item !== option.value))
-                  else {
-                    update(question.id, option.value)
-                    setOtherEnabled(current => ({ ...current, [question.id]: false }))
-                  }
-                }}
-              />
-              {option.label}
-            </label>
-          ))}
+        <div className="agent-request-choices">
+          {(question.options ?? []).map((option, index) => {
+            const checked = multiple ? selected.includes(option.value) : !otherEnabled[question.id] && value === option.value
+            return (
+              <label key={option.value} className="agent-request-choice" data-selected={checked || undefined}>
+                <input
+                  className="sr-only"
+                  type={multiple ? 'checkbox' : 'radio'}
+                  name={id}
+                  checked={checked}
+                  aria-label={option.label}
+                  aria-describedby={common['aria-describedby']}
+                  onChange={event => {
+                    if (multiple) update(question.id, event.target.checked ? [...selected, option.value] : selected.filter(item => item !== option.value))
+                    else {
+                      update(question.id, option.value)
+                      setOtherEnabled(current => ({ ...current, [question.id]: false }))
+                    }
+                  }}
+                />
+                <span className="agent-request-choice-index" aria-hidden="true">{checked ? <Check size={15} /> : index + 1}</span>
+                <span className="agent-request-choice-copy">{option.label}</span>
+                <ChevronRight size={18} aria-hidden="true" className="agent-request-choice-arrow" />
+              </label>
+            )
+          })}
           {question.allowOther && (
             <>
-              <label className="agent-request-choice">
-                <input type={multiple ? 'checkbox' : 'radio'} name={id} checked={Boolean(otherEnabled[question.id])}
+              <label className="agent-request-choice agent-request-choice--other" data-selected={otherEnabled[question.id] || undefined}>
+                <input className="sr-only" type={multiple ? 'checkbox' : 'radio'} name={id} checked={Boolean(otherEnabled[question.id])}
+                  aria-label={zh ? '其他' : 'Other'}
                   onChange={event => setOtherEnabled(current => ({ ...current, [question.id]: event.target.checked }))} />
-                {zh ? '其他' : 'Other'}
+                <span className="agent-request-choice-index" aria-hidden="true"><PenLine size={14} /></span>
+                <span className="agent-request-choice-copy">{zh ? '其他' : 'Other'}</span>
+                <ChevronRight size={18} aria-hidden="true" className="agent-request-choice-arrow" />
               </label>
               {otherEnabled[question.id] && (
                 <input {...common} aria-label={`${question.label} — ${zh ? '其他' : 'Other'}`}
@@ -186,11 +196,20 @@ function InteractionForm({ interaction, disabled }: {
       )
     }
     if (question.type === 'boolean') {
-      return <select {...common} value={typeof value === 'boolean' ? String(value) : ''} onChange={event => update(question.id, event.target.value === '' ? '' : event.target.value === 'true')}>
-        <option value="">{zh ? '请选择' : 'Choose…'}</option>
-        <option value="true">{zh ? '是' : 'Yes'}</option>
-        <option value="false">{zh ? '否' : 'No'}</option>
-      </select>
+      return (
+        <div className="agent-request-choices agent-request-choices--compact">
+          {[['true', zh ? '是' : 'Yes'], ['false', zh ? '否' : 'No']].map(([choice, label], index) => {
+            const checked = typeof value === 'boolean' && String(value) === choice
+            return <label key={choice} className="agent-request-choice" data-selected={checked || undefined}>
+              <input className="sr-only" type="radio" name={id} value={choice} checked={checked} aria-label={label}
+                onChange={() => update(question.id, choice === 'true')} />
+              <span className="agent-request-choice-index" aria-hidden="true">{checked ? <Check size={15} /> : index + 1}</span>
+              <span className="agent-request-choice-copy">{label}</span>
+              <ChevronRight size={18} aria-hidden="true" className="agent-request-choice-arrow" />
+            </label>
+          })}
+        </div>
+      )
     }
     if (question.type === 'textarea') {
       return <textarea {...common} rows={3} minLength={question.min} maxLength={question.max} value={typeof value === 'string' ? value : ''} onChange={event => update(question.id, event.target.value)} />
@@ -206,10 +225,14 @@ function InteractionForm({ interaction, disabled }: {
       onSubmit={event => { event.preventDefault(); if (!isPlan) void reply('submit') }}
       className="agent-request-surface">
       <header className="agent-request-header">
-        {submitting ? <Loader2 size={13} className="shrink-0 animate-spin motion-reduce:animate-none text-muted-foreground" aria-hidden /> : <MessageCircle size={13} className="shrink-0 text-muted-foreground" aria-hidden />}
-        <h3 id={`${formId}-title`} className="min-w-0 flex-1 text-[12px] font-medium">{interaction.request.title}</h3>
-        <span className="shrink-0 text-[10px] text-muted-foreground">v{interaction.revision}</span>
-        <span role="status" className="shrink-0 text-[10px] text-muted-foreground">{submitting ? (zh ? '正在提交' : 'Submitting…') : (zh ? '等待确认' : 'Needs your input')}</span>
+        <h3 id={`${formId}-title`} className="agent-request-title">{interaction.request.title}</h3>
+        {submitting && <Loader2 size={18} className="shrink-0 animate-spin motion-reduce:animate-none text-muted-foreground" aria-hidden />}
+        <button type="button" className="agent-request-close" aria-label={isPlan ? (zh ? '取消' : 'Cancel') : (zh ? '取消请求' : 'Cancel request')}
+          title={isPlan ? (zh ? '取消' : 'Cancel') : (zh ? '取消请求' : 'Cancel request')} disabled={disabled || submitting}
+          onClick={() => void reply('cancel')}>
+          <X size={19} aria-hidden="true" />
+        </button>
+        <span role="status" className="sr-only">{submitting ? (zh ? '正在提交' : 'Submitting…') : (zh ? '等待确认' : 'Needs your input')}</span>
       </header>
       <fieldset disabled={disabled || submitting} className="agent-request-fields">
         <div className="agent-request-body space-y-3">
@@ -224,15 +247,13 @@ function InteractionForm({ interaction, disabled }: {
         </div>
         <footer className="agent-request-footer">
           {isPlan && <p className="text-[11px] leading-relaxed text-muted-foreground">{zh ? '执行当前计划，或取消这次快捷确认。取消不会删除计划。' : 'Execute this plan now, or cancel this shortcut. Cancelling keeps the plan.'}</p>}
-          <div className="flex flex-wrap items-center gap-1">
-            {!isPlan && <button type="button" className={buttonClass} onClick={() => void reply('decline')}>{zh ? '拒绝回答' : 'Decline'}</button>}
-            <button type="button" className={buttonClass} onClick={() => void reply('cancel')}>{isPlan ? (zh ? '取消' : 'Cancel') : (zh ? '取消请求' : 'Cancel request')}</button>
-            <button type={isPlan ? 'button' : 'submit'} className={`${buttonClass} agent-request-primary ml-auto`}
+          <div className="agent-request-footer-actions">
+            {!isPlan && <button type="button" className={`${buttonClass} agent-request-skip`} onClick={() => void reply('decline')}>{zh ? '跳过' : 'Skip'}</button>}
+            <button type={isPlan ? 'button' : 'submit'} className={`${buttonClass} agent-request-primary`}
               onClick={isPlan ? () => void reply('execute') : undefined}>
               {isPlan ? (zh ? '执行' : 'Execute') : (zh ? '提交回答' : 'Submit answers')}
             </button>
           </div>
-          <p className="text-[10px] leading-relaxed text-muted-foreground">{isPlan ? (zh ? '也可以忽略此确认，直接在输入框中发送后续执行指令。' : 'You may ignore this confirmation and send a later execution instruction instead.') : (zh ? '拒绝或取消将停止本轮执行，不会使用默认答案。' : 'Declining or cancelling stops this round; no default answers are assumed.')}</p>
           {Object.keys(errors).length > 0 && <p role="alert" className="text-xs text-danger">{zh ? '请检查上方标记的字段。' : 'Check the highlighted fields above.'}</p>}
           {serverError && <div role="alert" className="space-y-1 text-xs text-danger">
             <p className="break-words">{serverError}</p>

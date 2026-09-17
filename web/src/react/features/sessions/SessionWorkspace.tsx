@@ -136,9 +136,9 @@ export function SessionModeSummary({ session }: { session: AgentSession }) {
     <details key={session.id} className="agent-summary" aria-label={zh ? '会话目标和角色' : 'Session goal and specialist'}>
       <summary>
         <ChevronRight size={11} aria-hidden className="agent-disclosure-arrow" />
-        <Target size={11} aria-hidden className="shrink-0 opacity-65" />
-        <span className="min-w-0 flex-1 truncate" title={title ?? undefined}>{title}</span>
-        {status && <span role="status" className="shrink-0 text-[10px] opacity-80">{status}</span>}
+        <span className="agent-summary-icon" aria-hidden="true"><Target size={15} /></span>
+        {status && <span role="status" className="agent-summary-status">{status}</span>}
+        <span className="agent-summary-title" title={title ?? undefined}>{title}</span>
       </summary>
       <div className="agent-context-body space-y-2">
         {(name || role) && <p><strong className="font-medium">{zh ? '专家：' : 'Specialist: '}{name}</strong>{role && <span> — {role}</span>}</p>}

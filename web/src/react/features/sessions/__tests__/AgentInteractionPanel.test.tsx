@@ -57,7 +57,7 @@ async function fillForm() {
   await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Synax')
   await user.type(screen.getByRole('textbox', { name: 'Notes' }), 'Keep inputs')
   await user.type(screen.getByRole('spinbutton', { name: 'Count' }), '2')
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Confirmed' }), 'false')
+  await user.click(within(screen.getByRole('group', { name: 'Confirmed *' })).getByRole('radio', { name: 'No' }))
   await user.click(screen.getByRole('radio', { name: 'Web' }))
   await user.click(screen.getByRole('checkbox', { name: 'Unit' }))
   return user
@@ -118,12 +118,12 @@ describe('AgentInteractionPanel', () => {
     act(() => bus.subscription?.events?.session_changed?.({ data: JSON.stringify({ sessionId: 's1' }) } as MessageEvent))
     await waitFor(() => expect(agentRuntimeApi.listInteractions).toHaveBeenCalledTimes(2))
     expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Synax')
-    expect(screen.getByRole('combobox', { name: 'Confirmed' })).toHaveValue('false')
+    expect(within(screen.getByRole('group', { name: 'Confirmed *' })).getByRole('radio', { name: 'No' })).toBeChecked()
     await user.click(screen.getByRole('button', { name: 'Submit answers' }))
     await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledTimes(2))
   })
 
-  it.each([['Decline', 'decline'], ['Cancel request', 'cancel']])('supports %s without filling required answers', async (label, action) => {
+  it.each([['Skip', 'decline'], ['Cancel request', 'cancel']])('supports %s without filling required answers', async (label, action) => {
     render(<AgentInteractionPanel session={session} />)
     fireEvent.click(await screen.findByRole('button', { name: label }))
     await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith('s1', 'i1', { revision: 3, action }))
@@ -184,7 +184,7 @@ describe('AgentInteractionPanel', () => {
     ] } }] })
     render(<AgentInteractionPanel session={session} />)
     fireEvent.change(await screen.findByRole('spinbutton', { name: 'Count' }), { target: { value: '0' } })
-    fireEvent.change(screen.getByRole('combobox', { name: 'Confirmed' }), { target: { value: 'false' } })
+    fireEvent.click(within(screen.getByRole('group', { name: 'Confirmed *' })).getByRole('radio', { name: 'No' }))
     fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }))
     await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith('s1', 'i1', { revision: 3, action: 'submit', answers: { count: 0, confirm: false } }))
   })
