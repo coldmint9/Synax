@@ -1,17 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAgentSessionStore } from './agentSessionStore'
-import {
-  sessionPath,
-  isBareSessionsPath,
-  isNewSessionPath,
-  newSessionPath,
-} from './sessionRoutes'
-import {
-  clearSessionLastVisit,
-  loadSessionLastVisit,
-  saveSessionLastVisit,
-} from './sessionLastVisit'
+import { sessionPath, isBareSessionsPath, isNewSessionPath, newSessionPath } from './sessionRoutes'
+import { clearSessionLastVisit, loadSessionLastVisit, saveSessionLastVisit } from './sessionLastVisit'
 import type { SessionListView } from './sessionBuckets'
 
 /** Keep agent session detail in sync with sessions URL. */
@@ -19,11 +10,12 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const openPanel = useAgentSessionStore(s => s.openPanel)
-  const resetForDraft = useAgentSessionStore(s => s.resetSessionDetailForDraft)
-  const closePanel = useAgentSessionStore(s => s.closePanel)
-  const storeProjectId = useAgentSessionStore(s => s.projectId)
-  const sessions = useAgentSessionStore(s => s.sessions)
+  const openPanel = useAgentSessionStore((s) => s.openPanel)
+  const resetForDraft = useAgentSessionStore((s) => s.resetSessionDetailForDraft)
+  const closePanel = useAgentSessionStore((s) => s.closePanel)
+  const storeProjectId = useAgentSessionStore((s) => s.projectId)
+  const sessions = useAgentSessionStore((s) => s.sessions)
+  const total = useAgentSessionStore((s) => s.sessionListTotal)
   const sessionIdFromUrl = searchParams.get('session')
   const isProjectReady = Boolean(projectId) && storeProjectId === projectId
 
@@ -40,8 +32,8 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
       return
     }
 
-    if (sessions.length > 0) {
-      const exists = sessions.some(s => s.id === last.sessionId)
+    if (total !== null && sessions.length >= total) {
+      const exists = sessions.some((s) => s.id === last.sessionId)
       if (!exists) {
         clearSessionLastVisit(projectId)
         return
@@ -49,17 +41,9 @@ export function useSessionRouteSync(listView: SessionListView, projectId: string
     }
 
     navigate(sessionPath(projectId, last.sessionId), { replace: true })
-  }, [
-    isProjectReady,
-    listView,
-    location.pathname,
-    projectId,
-    sessionIdFromUrl,
-    sessions,
-    navigate,
-  ])
+  }, [isProjectReady, listView, location.pathname, projectId, sessionIdFromUrl, sessions, total, navigate])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Child effects run before the layout's, which is what binds `projectId`
     // into the store. Right after a project switch the store therefore still
     // holds the previous project, so opening the panel here would select a

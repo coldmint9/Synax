@@ -42,3 +42,9 @@ describe('SessionListHeader', () => {
     expect(screen.getAllByRole('button')).toHaveLength(2)
   })
 })
+
+
+it('keeps workflows reachable while their rows may be on a later page', () => {
+  renderHeader({ workflowCount: 0, hasMoreSessions: true, onOpenWorkflows: noop })
+  expect(screen.getByRole('button', { name: /Workflow/ })).toBeTruthy()
+})

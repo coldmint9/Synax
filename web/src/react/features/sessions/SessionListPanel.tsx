@@ -45,6 +45,9 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
   const sessionCardRef = useRef<HTMLDivElement>(null)
   const splitDragRef = useRef<{ startY: number; startSplit: number; height: number } | null>(null)
 
+  const cleanupRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => cleanupRef.current?.(), [])
+
   const startListSplitDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const root = rootRef.current
     const sessionCard = sessionCardRef.current
@@ -53,6 +56,9 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
     if (height <= 0) return
     event.preventDefault()
     event.currentTarget.setPointerCapture?.(event.pointerId)
+    cleanupRef.current?.()
+    let frame = 0
+    let pendingSplit = sessionCard.getBoundingClientRect().height / height
     splitDragRef.current = {
       startY: event.clientY,
       startSplit: sessionCard.getBoundingClientRect().height / height,
@@ -63,25 +69,40 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
       if (!drag) return
       const next = drag.startSplit + (move.clientY - drag.startY) / drag.height
       const clamped = Math.min(SESSION_LIST_SPLIT_MAX, Math.max(SESSION_LIST_SPLIT_MIN, next))
-      setListSplit(clamped)
-      window.localStorage.setItem(SESSION_LIST_SPLIT_KEY, String(clamped))
+      pendingSplit = clamped
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0
+          setListSplit(pendingSplit)
+        })
     }
     const handleUp = () => {
+      if (frame) cancelAnimationFrame(frame)
+      setListSplit(pendingSplit)
+      try {
+        window.localStorage.setItem(SESSION_LIST_SPLIT_KEY, String(pendingSplit))
+      } catch {
+        /* storage may be unavailable */
+      }
       splitDragRef.current = null
+      cleanupRef.current = null
+      window.removeEventListener('pointercancel', handleUp)
       window.removeEventListener('pointermove', handleMove)
       window.removeEventListener('pointerup', handleUp)
     }
+    cleanupRef.current = handleUp
+    window.addEventListener('pointercancel', handleUp)
     window.addEventListener('pointermove', handleMove)
     window.addEventListener('pointerup', handleUp)
   }, [])
 
   useEffect(() => {
     if (!projectId || !list.isProjectReady) return
-    void refresh()
+    void refresh({ joinPending: true })
   }, [projectId, listView, list.isProjectReady, refresh])
 
   const deleteSession = deleteId
-    ? list.groups.flatMap(g => g.sessions).find(n => n.session.id === deleteId)?.session
+    ? list.groups.flatMap((g) => g.sessions).find((n) => n.session.id === deleteId)?.session
     : undefined
   const deleteTitle = deleteSession ? getSessionDisplayTitle(deleteSession, '', locale) : ''
 
@@ -99,6 +120,7 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
         <SessionListHeader
           listView={listView}
           workflowCount={list.viewCounts.workflow}
+          hasMoreSessions={list.hasMore}
           searchQuery={list.searchQuery}
           onSearchChange={list.setSearchQuery}
           onClearInactive={() => setShowClear(true)}
@@ -109,7 +131,11 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
         />
         <div className="session-list-session-area min-h-0">
           <SessionTimeGroups
+            key={`${projectId}:${listView}:${list.searchQuery}`}
             groups={list.groups}
+            isLoading={list.isRefreshing || !list.isProjectReady}
+            error={list.error}
+            onRetry={() => void list.refresh()}
             selectedId={list.selectedId}
             isLoadingMore={list.isLoadingMore}
             hasMore={list.hasMore}
@@ -118,8 +144,10 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
             onSelect={list.select}
             onToggleGroup={list.toggleGroup}
             onToggleExpand={list.toggleExpand}
-            onLoadMore={() => { void list.loadMore() }}
-            onDelete={id => setDeleteId(id)}
+            onLoadMore={() => {
+              void list.loadMore()
+            }}
+            onDelete={setDeleteId}
           />
         </div>
       </div>
@@ -153,20 +181,25 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
             }
             setDeleteId(null)
             void list.refresh()
+          } catch (err) {
+            console.error('[DeleteSession]', err)
+          } finally {
+            setDeleting(false)
           }
-          catch (err) { console.error('[DeleteSession]', err) }
-          finally { setDeleting(false) }
         }}
-        onClose={() => { if (!deleting) setDeleteId(null) }}
+        onClose={() => {
+          if (!deleting) setDeleteId(null)
+        }}
       />
 
       <SessionClearInactiveDialog
         isOpen={showClear}
         projectId={projectId}
         onClose={() => setShowClear(false)}
-        onCleared={() => { void list.refresh() }}
+        onCleared={() => {
+          void list.refresh()
+        }}
       />
-
     </div>
   )
 }

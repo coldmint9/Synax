@@ -76,7 +76,7 @@ describe('useAgentSessionStore.setProjectId', () => {
     expect(state.panelOpen).toBe(false)
     expect(state.messages).toEqual([])
     expect(state.steps).toEqual([])
-    expect(agentRuntimeApi.listSessions).toHaveBeenCalledWith({ projectId: 'project-b', limit: 200 })
+    expect(agentRuntimeApi.listSessions).toHaveBeenCalledWith({ projectId: 'project-b', limit: 30 })
   })
 
   it('is a no-op when projectId is unchanged', () => {

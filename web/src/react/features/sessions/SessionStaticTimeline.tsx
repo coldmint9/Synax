@@ -1,14 +1,19 @@
 import { memo, useMemo, type RefObject } from 'react'
 import { Skeleton } from '@heroui/react'
 import { useLocale } from '../../../hooks/useLocale'
-import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
-import { buildConversationTimeline } from './buildConversationTimeline'
+import type {
+  AgentRun,
+  AgentRunStep,
+  AgentRuntimeMessage,
+  AgentSession,
+  ToolCallRecord,
+} from '../../../lib/api/agentRuntime'
+import { buildConversationTimeline, type ConversationTimelineEntry } from './buildConversationTimeline'
 import { TimelineEntryView } from './TimelineEntryView'
 import { TimelineLazyEntry, estimateEntryHeight } from './TimelineLazyEntry'
 import { groupActivityEntries } from './groupActivityEntries'
 import { materializeLiveBlocks } from './streamingLiveBlocks'
 import { useAgentSessionStore } from './agentSessionStore'
-import type { ConversationTimelineEntry } from './buildConversationTimeline'
 import { useShellStore } from '../../state/shellStore'
 
 interface Props {
@@ -22,8 +27,80 @@ interface Props {
   excludeStepId?: string | null
   isRunning?: boolean
   onExpandChild?: (sessionId: string) => void
-  /** Scroll container used as the IntersectionObserver root for lazy entries. */
   scrollRootRef?: RefObject<HTMLElement | null>
+}
+
+type RowsProps = Pick<Props, 'onExpandChild' | 'scrollRootRef'> & {
+  entries: ConversationTimelineEntry[]
+  sessionId?: string
+  streaming?: boolean
+}
+
+const TimelineRows = memo(function TimelineRows({
+  entries,
+  sessionId,
+  streaming,
+  onExpandChild,
+  scrollRootRef,
+}: RowsProps) {
+  return (
+    <>
+      {entries.map((entry, index) => {
+        const key = `${sessionId ?? 'standalone'}:${entry.kind}-${entry.id}`
+        return (
+          <TimelineLazyEntry
+            key={key}
+            entryId={entry.id}
+            cacheKey={key}
+            estimate={estimateEntryHeight(entry)}
+            scrollRootRef={scrollRootRef}
+          >
+            <TimelineEntryView
+              entry={entry}
+              onExpandChild={onExpandChild}
+              isStreaming={Boolean(
+                streaming &&
+                entry.kind === 'agent' &&
+                entry.turn.status === 'running' &&
+                index === entries.length - 1,
+              )}
+            />
+          </TimelineLazyEntry>
+        )
+      })}
+    </>
+  )
+})
+
+/** Only the unfinished activity group subscribes to token deltas. */
+function LiveTimelineTail({ entries, ...props }: RowsProps) {
+  const live = useAgentSessionStore((s) => s.streamingLive)
+  const liveId = useAgentSessionStore((s) => s.streamingStepId)
+  const combined = useMemo(
+    () =>
+      groupActivityEntries(
+        liveId
+          ? [
+              ...entries,
+              {
+                id: liveId,
+                kind: 'agent',
+                createdAt: '',
+                label: '',
+                turn: {
+                  stepId: liveId,
+                  index: 0,
+                  status: 'running',
+                  duration: null,
+                  blocks: materializeLiveBlocks(live),
+                },
+              } as ConversationTimelineEntry,
+            ]
+          : entries,
+      ),
+    [entries, live, liveId],
+  )
+  return <TimelineRows {...props} entries={combined} streaming />
 }
 
 export const SessionStaticTimeline = memo(function SessionStaticTimeline({
@@ -40,47 +117,42 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   scrollRootRef,
 }: Props) {
   const { t } = useLocale()
-  const foldWorkRuns = useShellStore(s => s.preferences.sessionFoldWorkRuns)
-
-  const live = useAgentSessionStore(s => unifiedLive ? s.streamingLive : null)
-  const snapshots = useAgentSessionStore(s => unifiedLive ? s.streamingCompletedSteps : null)
-  const liveId = useAgentSessionStore(s => unifiedLive ? s.streamingStepId : null)
-  const timeline = useMemo(
-    () => buildConversationTimeline(
-      runs,
-      steps,
-      messages,
-      toolCalls,
-      childSessions,
-      { excludeStepId, session, foldWorkRuns },
-    ),
-    [runs, steps, messages, toolCalls, childSessions, excludeStepId, session, foldWorkRuns],
-  )
-
-  const combined = useMemo(() => {
-    const entries: ConversationTimelineEntry[] = [...timeline]
-    const add = (id: string, blocks: import('./buildInterleavedTurns').TurnContentBlock[], index: number, status: string) => {
-      entries.push({ id, kind: 'agent', createdAt: '', label: '', turn: { stepId: id, index, status, duration: null, blocks } })
-    }
+  const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns)
+  const snapshots = useAgentSessionStore((s) => (unifiedLive ? s.streamingCompletedSteps : null))
+  const liveId = useAgentSessionStore((s) => (unifiedLive ? s.streamingStepId : null))
+  const showLive = Boolean(liveId && excludeStepId === liveId)
+  const timeline = useMemo(() => {
+    const entries = buildConversationTimeline(runs, steps, messages, toolCalls, childSessions, {
+      excludeStepId,
+      session,
+      foldWorkRuns,
+    })
+    const stepIds = new Set(steps.map((step) => step.id))
     for (const snapshot of snapshots ?? []) {
-      if (!steps.some(step => step.id === snapshot.stepId)) add(snapshot.stepId, snapshot.blocks, snapshot.stepIndex, 'completed')
+      if (!stepIds.has(snapshot.stepId))
+        entries.push({
+          id: snapshot.stepId,
+          kind: 'agent',
+          createdAt: '',
+          label: '',
+          turn: {
+            stepId: snapshot.stepId,
+            index: snapshot.stepIndex,
+            status: 'completed',
+            duration: null,
+            blocks: snapshot.blocks,
+          },
+        })
     }
-    if (live && liveId && excludeStepId === liveId) add(liveId, materializeLiveBlocks(live), 0, 'running')
-    return groupActivityEntries(entries)
-  }, [timeline, snapshots, steps, live, liveId, excludeStepId])
+    return entries
+  }, [runs, steps, messages, toolCalls, childSessions, excludeStepId, session, foldWorkRuns, snapshots])
+  const { history, tail } = useMemo(() => {
+    let boundary = timeline.length
+    if (showLive) while (boundary > 0 && timeline[boundary - 1].kind === 'agent') boundary--
+    return { history: groupActivityEntries(timeline.slice(0, boundary)), tail: timeline.slice(boundary) }
+  }, [timeline, showLive])
 
-  // Pair every entry with its height estimate once per timeline, instead of
-  // re-deriving it on each render of the list.
-  const rows = useMemo(
-    () => combined.map(entry => ({
-      entry,
-      key: `${entry.kind}-${entry.id}`,
-      estimate: estimateEntryHeight(entry),
-    })),
-    [combined],
-  )
-
-  if (combined.length === 0) {
+  if (timeline.length === 0 && !showLive)
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-8">
         {isRunning ? (
@@ -94,21 +166,22 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
         )}
       </div>
     )
-  }
-
   return (
     <div className="flex flex-col gap-5">
-      {rows.map(({ entry, key, estimate }) => (
-        <TimelineLazyEntry
-          key={key}
-          entryId={entry.id}
-          cacheKey={key}
-          estimate={estimate}
+      <TimelineRows
+        entries={history}
+        sessionId={session?.id}
+        onExpandChild={onExpandChild}
+        scrollRootRef={scrollRootRef}
+      />
+      {showLive && (
+        <LiveTimelineTail
+          entries={tail}
+          sessionId={session?.id}
+          onExpandChild={onExpandChild}
           scrollRootRef={scrollRootRef}
-        >
-          <TimelineEntryView isStreaming={entry.kind === 'agent' && entry.turn.status === 'running' && entry === combined[combined.length - 1]} entry={entry} onExpandChild={onExpandChild} />
-        </TimelineLazyEntry>
-      ))}
+        />
+      )}
     </div>
   )
 })

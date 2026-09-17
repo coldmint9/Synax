@@ -20,6 +20,10 @@ class FakeIntersectionObserver {
     this.targets.push(target)
   }
 
+  unobserve(target: Element) {
+    this.targets = this.targets.filter(item => item !== target)
+  }
+
   disconnect() {
     this.disconnected = true
   }
@@ -92,4 +96,19 @@ describe('TimelineLazyEntry', () => {
     expect(screen.getByText('eager body')).toBeTruthy()
     expect(userEntry('e3', 'eager body').kind).toBe('user')
   })
+})
+
+
+it('shares a viewport observer between entries and releases it on unmount', () => {
+  FakeIntersectionObserver.instances = []
+  vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+  const { unmount } = render(<>
+    <TimelineLazyEntry entryId="shared-a" cacheKey="shared-a" estimate={100}>A</TimelineLazyEntry>
+    <TimelineLazyEntry entryId="shared-b" cacheKey="shared-b" estimate={100}>B</TimelineLazyEntry>
+  </>)
+  expect(FakeIntersectionObserver.instances).toHaveLength(1)
+  expect(FakeIntersectionObserver.instances[0].targets).toHaveLength(2)
+  unmount()
+  expect(FakeIntersectionObserver.instances[0].disconnected).toBe(true)
+  vi.unstubAllGlobals()
 })

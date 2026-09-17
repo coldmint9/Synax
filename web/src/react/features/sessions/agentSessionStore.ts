@@ -148,6 +148,7 @@ export function isSessionUnread(
   );
 }
 
+const SESSION_PAGE_SIZE = 30;
 const SESSION_DETAIL_CACHE_LIMIT = 16;
 const SESSION_DETAIL_CACHE_TTL_MS = 45_000;
 
@@ -170,10 +171,17 @@ let activeSessionsRefresh: {
   promise: Promise<void>;
 } | null = null;
 
+let activeSessionsPage: { projectId: string; promise: Promise<void> } | null =
+  null;
+
 let activeDetailRefresh: {
   sessionId: string;
   promise: Promise<void>;
   again: boolean;
+} | null = null;
+let activeTranscriptRefresh: {
+  sessionId: string;
+  promise: Promise<void>;
 } | null = null;
 let detailRefreshEpoch = 0;
 let interactionRefreshVersion = 0;
@@ -320,12 +328,13 @@ function patchSessionDetailCache(
     sessionStats: state.sessionStats,
     sessionTodos: state.sessionTodos,
     sessionCapabilities: state.sessionCapabilities,
-    cachedAt: Date.now(),
+    cachedAt: 0,
   };
   useAgentSessionStore.setState((s) => ({
     sessionDetailCache: trimSessionDetailCache({
       ...s.sessionDetailCache,
-      [sessionId]: { ...existing, ...patch, cachedAt: Date.now() },
+      // Profile responses do not make an unfinished transcript fresh.
+      [sessionId]: { ...existing, ...patch },
     }),
   }));
 }
@@ -437,6 +446,12 @@ export interface AgentSessionStoreState {
     error: string | null;
   } | null;
   sessions: AgentSession[];
+  sessionListTotal: number | null;
+  sessionListOffset: number;
+  sessionListLoading: boolean;
+  sessionListError: string | null;
+  detailLoading: boolean;
+  detailError: string | null;
   selectedSessionId: string | null;
   panelOpen: boolean;
   runs: AgentRun[];
@@ -476,7 +491,8 @@ export interface AgentSessionStoreState {
     sessionId: string,
     mode: AgentSessionMode,
   ) => Promise<void>;
-  refreshSessions: () => Promise<void>;
+  refreshSessions: (options?: { joinPending?: boolean }) => Promise<void>;
+  loadMoreSessions: () => Promise<void>;
   resetSessionDetailForDraft: () => void;
   submitSessionDraft: (
     projectId: string,
@@ -485,7 +501,7 @@ export interface AgentSessionStoreState {
   deleteSession: (sessionId: string) => Promise<string[]>;
   openPanel: (sessionId: string) => void;
   closePanel: () => void;
-  refreshDetail: () => Promise<void>;
+  refreshDetail: (options?: { joinPending?: boolean }) => Promise<void>;
   fetchChildSessions: (parentId: string) => Promise<void>;
   resumeSession: (sessionId: string, message?: string) => Promise<void>;
   fetchSessionStats: () => Promise<void>;
@@ -575,6 +591,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     draftMode: "chat",
     interactionState: null,
     sessions: [],
+    sessionListTotal: null,
+    sessionListOffset: 0,
+    sessionListLoading: false,
+    sessionListError: null,
+    detailLoading: false,
+    detailError: null,
     selectedSessionId: null,
     panelOpen: false,
     runs: [],
@@ -696,12 +718,22 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     setProjectId: (projectId) => {
       if (projectId === get().projectId) return;
       activeSessionsRefresh = null;
+      activeSessionsPage = null;
+      activeDetailRefresh = null;
+      activeTranscriptRefresh = null;
+      ++detailRefreshEpoch;
       releaseSessionLiveSubscription();
       clearStreamingBuffers();
       set({
         projectId,
         draftMode: "chat",
         sessions: [],
+        sessionListTotal: null,
+        sessionListOffset: 0,
+        sessionListLoading: false,
+        sessionListError: null,
+        detailLoading: false,
+        detailError: null,
         readSessionMarkers: loadReadMarkers(projectId),
         sessionDetailCache: {},
         ...emptySessionDetailState(),
@@ -709,15 +741,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       void get().refreshSessions();
     },
 
-    refreshSessions: async () => {
+    refreshSessions: async (options) => {
       const { projectId } = get();
       if (!projectId) return;
       if (activeSessionsRefresh?.projectId === projectId) {
-        activeSessionsRefresh.again = true;
+        if (!options?.joinPending) activeSessionsRefresh.again = true;
         return activeSessionsRefresh.promise;
       }
       const refresh = { projectId, again: false, promise: Promise.resolve() };
       activeSessionsRefresh = refresh;
+      set({ sessionListLoading: true, sessionListError: null });
       refresh.promise = (async () => {
         try {
           do {
@@ -725,9 +758,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             const before = new Map(
               get().sessions.map((session) => [session.id, session]),
             );
-            const { items } = await agentRuntimeApi.listSessions({
+            const { items, totalCount } = await agentRuntimeApi.listSessions({
               projectId,
-              limit: 200,
+              limit: SESSION_PAGE_SIZE,
             });
             if (
               activeSessionsRefresh !== refresh ||
@@ -741,7 +774,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               const ids = new Set(items.map((session) => session.id));
               const added = state.sessions.filter(
                 (session) =>
-                  !before.has(session.id) &&
+                  (!before.has(session.id) ||
+                    session.id === state.selectedSessionId ||
+                    (items.length === SESSION_PAGE_SIZE &&
+                      session.updatedAt <=
+                        items[items.length - 1].updatedAt)) &&
                   !ids.has(session.id) &&
                   !isRuntimeResourceGone(session.id),
               );
@@ -755,25 +792,100 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                       (live !== before.get(session.id) &&
                         live.updatedAt === session.updatedAt))
                     ? live
-                    : session;
+                    : live && JSON.stringify(live) === JSON.stringify(session)
+                      ? live
+                      : session;
                 });
-              return { sessions: [...added, ...rows] };
+              const sessions = [...rows, ...added];
+              return {
+                sessionListTotal: totalCount,
+                sessionListOffset:
+                  items.length < SESSION_PAGE_SIZE ||
+                  state.sessionListOffset === 0
+                    ? items.length
+                    : state.sessionListOffset +
+                      items.filter((item) => !before.has(item.id)).length,
+                sessions:
+                  sessions.length === state.sessions.length &&
+                  sessions.every((row, i) => row === state.sessions[i])
+                    ? state.sessions
+                    : sessions,
+              };
             });
           } while (refresh.again);
-        } catch {
-          /* API not available; keep the last usable list. */
+        } catch (error) {
+          if (activeSessionsRefresh === refresh)
+            set({ sessionListError: String(error) });
         } finally {
-          if (activeSessionsRefresh === refresh) activeSessionsRefresh = null;
+          if (activeSessionsRefresh === refresh) {
+            activeSessionsRefresh = null;
+            set({ sessionListLoading: false });
+          }
         }
       })();
       return refresh.promise;
     },
 
+    loadMoreSessions: async () => {
+      const { projectId } = get();
+      if (!projectId) return;
+      if (activeSessionsPage?.projectId === projectId)
+        return activeSessionsPage.promise;
+      const page = { projectId, promise: Promise.resolve() };
+      activeSessionsPage = page;
+      page.promise = (async () => {
+        try {
+          if (activeSessionsRefresh?.projectId === projectId)
+            await activeSessionsRefresh.promise;
+          if (activeSessionsPage !== page || get().projectId !== projectId)
+            return;
+          const offset = get().sessionListOffset;
+          if (
+            get().sessionListTotal !== null &&
+            offset >= get().sessionListTotal!
+          )
+            return;
+          set({ sessionListError: null });
+          const { items, totalCount } = await agentRuntimeApi.listSessions({
+            projectId,
+            limit: SESSION_PAGE_SIZE,
+            offset,
+          });
+          if (activeSessionsPage !== page || get().projectId !== projectId)
+            return;
+          set((state) => {
+            const ids = new Set(state.sessions.map((session) => session.id));
+            return {
+              sessions: [
+                ...state.sessions,
+                ...items.filter(
+                  (session) =>
+                    !ids.has(session.id) && !isRuntimeResourceGone(session.id),
+                ),
+              ],
+              sessionListTotal: totalCount,
+              sessionListOffset: state.sessionListOffset + items.length,
+            };
+          });
+        } catch (error) {
+          if (activeSessionsPage === page)
+            set({ sessionListError: String(error) });
+        } finally {
+          if (activeSessionsPage === page) activeSessionsPage = null;
+        }
+      })();
+      return page.promise;
+    },
+
     resetSessionDetailForDraft: () => {
+      ++detailRefreshEpoch;
+      activeDetailRefresh = null;
       releaseSessionLiveSubscription();
       clearStreamingBuffers();
       set({
         panelOpen: false,
+        detailLoading: false,
+        detailError: null,
         selectedSessionId: null,
         interactionState: null,
         runs: [],
@@ -865,6 +977,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       set({
         sessions: get().sessions.filter((session) => !deleted.has(session.id)),
         sessionDetailCache: nextCache,
+        sessionListTotal:
+          get().sessionListTotal === null
+            ? null
+            : Math.max(0, get().sessionListTotal! - deleted.size),
+        sessionListOffset: Math.max(
+          0,
+          get().sessionListOffset -
+            get().sessions.filter((session) => deleted.has(session.id)).length,
+        ),
         selectedSessionId: shouldClosePanel ? null : get().selectedSessionId,
         panelOpen: shouldClosePanel ? false : get().panelOpen,
         interactionState: shouldClosePanel ? null : get().interactionState,
@@ -882,15 +1003,24 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       if (panelOpen && prev === sessionId) return;
 
       const isSwitch = prev !== sessionId;
+      if (isSwitch) {
+        ++detailRefreshEpoch;
+        activeDetailRefresh = null;
+        activeTranscriptRefresh = null;
+      }
       get().markSessionRead(sessionId);
       const session = get().sessions.find((s) => s.id === sessionId);
-      const cached = isSwitch ? get().sessionDetailCache[sessionId] : null;
+      const cached = get().sessionDetailCache[sessionId];
       const cacheFresh = Boolean(
-        cached && Date.now() - cached.cachedAt < SESSION_DETAIL_CACHE_TTL_MS,
+        cached &&
+        cached.cachedAt > 0 &&
+        Date.now() - cached.cachedAt < SESSION_DETAIL_CACHE_TTL_MS,
       );
 
       set({
         panelOpen: true,
+        detailLoading: !cached?.cachedAt,
+        detailError: null,
         selectedSessionId: sessionId,
         ...(isSwitch ? { interactionState: null } : {}),
         streamingRetry: null,
@@ -936,18 +1066,28 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
      * was committed in a single batch, so one slow query (the event log can take
      * seconds on long runs) froze the whole side panel.
      */
-    refreshDetail: async () => {
+    refreshDetail: async (options) => {
       const targetSessionId = get().selectedSessionId;
+      const targetProjectId = get().projectId;
       if (!targetSessionId) return;
       // A deleted session has nothing left to refresh; without this every poll
       // tick would re-issue the full nine-request burst against a dead id.
       if (isRuntimeResourceGone(targetSessionId)) return;
 
       if (activeDetailRefresh?.sessionId === targetSessionId) {
-        activeDetailRefresh.again = true;
+        if (!options?.joinPending) activeDetailRefresh.again = true;
         return activeDetailRefresh.promise;
       }
 
+      if (
+        options?.joinPending &&
+        activeTranscriptRefresh?.sessionId === targetSessionId
+      )
+        return activeTranscriptRefresh.promise;
+      set({
+        detailLoading: !get().sessionDetailCache[targetSessionId]?.cachedAt,
+        detailError: null,
+      });
       const refresh = {
         sessionId: targetSessionId,
         again: false,
@@ -960,6 +1100,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           try {
             const isCurrent = () =>
               get().selectedSessionId === targetSessionId &&
+              get().projectId === targetProjectId &&
+              !isRuntimeResourceGone(targetSessionId) &&
               detailRefreshEpoch === epoch &&
               !refresh.again;
             const cachedEntry = get().sessionDetailCache[targetSessionId];
@@ -968,6 +1110,31 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               : undefined;
 
             const profileUpdates = [
+              ...(!get().sessions.some(
+                (session) => session.id === targetSessionId,
+              )
+                ? [
+                    agentRuntimeApi
+                      .getSession(targetSessionId)
+                      .then(({ session }) => {
+                        if (
+                          !isCurrent() ||
+                          session.projectId !== targetProjectId
+                        )
+                          return;
+                        set((state) => ({
+                          sessions: state.sessions.some(
+                            (item) => item.id === session.id,
+                          )
+                            ? state.sessions
+                            : [...state.sessions, session],
+                        }));
+                      })
+                      .catch(() => {
+                        /* transcript errors provide the retry UI */
+                      }),
+                  ]
+                : []),
               agentRuntimeApi
                 .getSessionStats(targetSessionId)
                 .then((stats) => {
@@ -1055,6 +1222,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                   };
 
                   set((s) => ({
+                    detailLoading: false,
+                    detailError: null,
                     runs: cacheEntry.runs,
                     events: cacheEntry.events,
                     messages: cacheEntry.messages,
@@ -1082,10 +1251,19 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                   }
                 },
               )
-              .catch(() => {
-                /* silent */
+              .catch((error) => {
+                if (isCurrent())
+                  set({ detailLoading: false, detailError: String(error) });
               });
 
+            activeTranscriptRefresh = {
+              sessionId: targetSessionId,
+              promise: transcriptTask,
+            };
+            void transcriptTask.finally(() => {
+              if (activeTranscriptRefresh?.promise === transcriptTask)
+                activeTranscriptRefresh = null;
+            });
             await Promise.all(profileUpdates);
             // The transcript refresh keeps running without holding the poll loop.
             void transcriptTask;

@@ -6,6 +6,7 @@ import type { SessionListView } from './sessionBuckets'
 interface Props {
   listView: SessionListView
   workflowCount: number
+  hasMoreSessions?: boolean
   searchQuery: string
   onSearchChange: (q: string) => void
   onClearInactive: () => void
@@ -19,6 +20,7 @@ interface Props {
 export function SessionListHeader({
   listView,
   workflowCount,
+  hasMoreSessions = false,
   searchQuery,
   onSearchChange,
   onClearInactive,
@@ -98,13 +100,13 @@ export function SessionListHeader({
         />
       </div>
 
-      {!isWorkflowView && workflowCount > 0 ? (
+      {!isWorkflowView && (workflowCount > 0 || hasMoreSessions) ? (
         <button
           type="button"
           onClick={onOpenWorkflows}
           className="w-full rounded-md border border-border/30 bg-secondary/20 px-2.5 py-1.5 text-left text-[10px] text-muted-foreground transition-colors hover:border-border/50 hover:bg-secondary/40 hover:text-foreground"
         >
-          {t('sessionOpenWorkflows', { count: workflowCount })}
+          {hasMoreSessions ? t('sessionWorkflowTitle') : t('sessionOpenWorkflows', { count: workflowCount })}
         </button>
       ) : null}
     </div>

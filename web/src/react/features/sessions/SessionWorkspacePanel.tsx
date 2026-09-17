@@ -22,8 +22,10 @@ export const SessionWorkspacePanel = memo(function SessionWorkspacePanel({
   mode?: 'auto' | 'dashboard' | 'content'
 }) {
   const { tabs, activeTabId, presentation } = useSessionWorkspace(sessionId)
-  const { environment, loading, reload } = useSessionWorkspaceEnvironment(sessionId)
-  const activeTab = tabs.find(tab => tab.id === activeTabId) ?? null
+  const { environment, loading, reload } = useSessionWorkspaceEnvironment(
+    mode === 'content' ? null : sessionId,
+  )
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
 
   if (!sessionId) {
     return (
