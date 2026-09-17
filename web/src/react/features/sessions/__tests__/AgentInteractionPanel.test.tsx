@@ -129,11 +129,13 @@ describe('AgentInteractionPanel', () => {
     await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith('s1', 'i1', { revision: 3, action }))
   })
 
-  it.each([['Execute', 'execute'], ['Cancel', 'cancel']])('keeps %s as a one-time plan action', async (label, action) => {
+  it.each([['Start execution', 'execute'], ['Cancel', 'cancel']])('keeps %s as a one-time plan action', async (label, action) => {
     vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({ interactions: [plan] })
     render(<AgentInteractionPanel session={session} />)
     expect(await screen.findByText('Durable answers')).toBeVisible()
+    fireEvent.click(screen.getByText('Implement UI'))
     expect(screen.getByText('form.tsx')).toBeVisible()
+    fireEvent.click(screen.getByText('Acceptance criteria'))
     expect(screen.getByText('Reload retains requests')).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Save plan' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Request revision' })).not.toBeInTheDocument()
@@ -197,8 +199,8 @@ describe('AgentInteractionPanel', () => {
       clarification,
     ] })
     const { unmount } = render(<AgentInteractionPanel session={session} />)
-    fireEvent.click(await screen.findByText('Interaction history'))
-    fireEvent.click(screen.getByLabelText('Clarify scope v1 — Answered'))
+    await screen.findByLabelText('Clarify scope v1 — Answered')
+    expect(screen.queryByText('Interaction history')).not.toBeInTheDocument()
     expect(screen.getByText('Earlier answer')).toBeVisible()
     expect(screen.getByLabelText('Approve plan v3 — Saved for later execution')).toBeVisible()
     expect(screen.getByLabelText('Clarify scope v2 — Declined')).toBeVisible()
@@ -206,9 +208,20 @@ describe('AgentInteractionPanel', () => {
     unmount()
     useAgentSessionStore.setState({ interactionState: null })
     render(<AgentInteractionPanel session={session} />)
-    expect(await screen.findByLabelText('Approve plan v3 — Saved for later execution')).not.toBeVisible()
-    fireEvent.click(screen.getByText('Interaction history'))
+    await screen.findByLabelText('Approve plan v3 — Saved for later execution')
     expect(screen.getByLabelText('Approve plan v3 — Saved for later execution')).toBeVisible()
+  })
+
+  it('keeps the composer compact while resolved answers stay in the transcript', async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({ interactions: [
+      { ...clarification, id: 'old', status: 'answered', response: { revision: 3, action: 'submit', answers: { name: 'Earlier answer' } } },
+      clarification,
+    ] })
+    render(<AgentInteractionPanel session={session} compact />)
+    expect(await screen.findByRole('button', { name: 'Your input is needed' })).toBeVisible()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryByText('Earlier answer')).not.toBeInTheDocument()
+    expect(screen.queryByText('Interaction history')).not.toBeInTheDocument()
   })
 
   it('refreshes on reconnect and same-session events, not another session’s events', async () => {
@@ -251,9 +264,9 @@ describe('AgentInteractionPanel', () => {
   it('keeps the execute-or-cancel plan actions outside the scrolling body', async () => {
     vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({ interactions: [plan] })
     render(<AgentInteractionPanel session={session} />)
-    const execute = await screen.findByRole('button', { name: 'Execute' })
+    const execute = await screen.findByRole('button', { name: 'Start execution' })
     expect(execute.closest('.agent-request-body')).toBeNull()
-    expect(execute.closest('footer')).toHaveTextContent('cancel this shortcut')
+    expect(execute.closest('footer')).toHaveTextContent('write your changes in the composer')
     expect(execute.closest('form')).not.toHaveClass('border-warning/40')
   })
 
@@ -262,8 +275,9 @@ describe('AgentInteractionPanel', () => {
       ...plan.request.plan!, humanAcceptanceCriteria: ['Reload retains requests'],
     } } }] })
     render(<AgentInteractionPanel session={session} />)
-    expect(await screen.findByText('(user confirmation)')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: 'Execute' }))
+    fireEvent.click(await screen.findByText('Acceptance criteria'))
+    expect(screen.getByText('(user confirmation)')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Start execution' }))
     await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith('s1', 'plan1', { revision: 3, action: 'execute' }))
   })
 

@@ -1,4 +1,4 @@
-import { encodingForModel, type TiktokenModel } from "js-tiktoken";
+import { getEncoding as createEncoding, getEncodingNameForModel, type TiktokenEncoding, type TiktokenModel } from "js-tiktoken";
 import type { LlmGatewayMessage } from "../llm-runtime/types.js";
 
 const MESSAGE_OVERHEAD_TOKENS = 4;
@@ -18,7 +18,7 @@ interface TokenCacheEntry {
   chars: number;
 }
 
-let cachedEncoding: ReturnType<typeof encodingForModel> | null = null;
+let cachedEncoding: ReturnType<typeof createEncoding> | null = null;
 let cachedModelKey: string | null = null;
 
 let encodeCount = 0;
@@ -30,17 +30,21 @@ let tokenCacheChars = 0;
 
 function getEncoding(modelKey: string) {
   if (cachedEncoding && cachedModelKey === modelKey) return cachedEncoding;
-  cachedEncoding = encodingForModel(modelKey as TiktokenModel);
+  cachedEncoding = createEncoding(modelKey as TiktokenEncoding);
   cachedModelKey = modelKey;
   encodingCreations++;
   return cachedEncoding;
 }
 
 function resolveEncodingModel(model?: string): string {
-  if (!model) return "gpt-4o";
-  if (model.includes("claude")) return "gpt-4o";
-  if (model.includes("gpt-4")) return "gpt-4o";
-  return "gpt-4o";
+  // Provider-qualified OpenAI model IDs still have a known tokenizer. Other
+  // families use an explicitly approximate o200k fallback until usage arrives.
+  const name = model?.split("/").pop();
+  try {
+    return getEncodingNameForModel(name as TiktokenModel);
+  } catch {
+    return "o200k_base";
+  }
 }
 
 function encode(modelKey: string, text: string): number {

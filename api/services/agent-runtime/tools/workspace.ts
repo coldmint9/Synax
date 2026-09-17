@@ -76,7 +76,7 @@ export function resolveSessionWorkspaceRoots(sessionId: string, projectId: strin
   const project = readWorkspaceProject(projectId);
   const primary = resolveSessionWorkDir(sessionId, projectId);
   return [
-    { id: projectId, name: project?.name ?? projectId, path: primary, role: 'primary', status: 'available' },
+    { id: projectId, name: project?.primaryName ?? project?.name ?? projectId, path: primary, role: 'primary', status: 'available' },
     ...(project ? projectWorkspaceRoots(project).filter(root => root.role === 'reference') : []),
   ];
 }
@@ -95,7 +95,7 @@ export function bindSessionWorkDir(sessionId: string): string {
   const roots = (session.activeRunId || session.parentSessionId) && previous?.workspaceRoots
     ? previous.workspaceRoots
     : [
-        { id: session.projectId, name: project?.name ?? session.projectId, path: root, role: 'primary' as const, status: 'available' as const },
+        { id: session.projectId, name: project?.primaryName ?? project?.name ?? session.projectId, path: root, role: 'primary' as const, status: 'available' as const },
         ...(project ? projectWorkspaceRoots(project).filter(item => item.role === 'reference') : []),
       ];
   const workspaceRoots = roots.map(item => ({ ...item, path: canonicalWorkspaceDirectory(item.path), status: 'available' as const }));

@@ -77,6 +77,7 @@ const globalConfigPatchSchema = z
             command: z.string().min(1).max(1024),
             args: z.array(z.string().min(1).max(1024)).max(64).optional(),
             env: z.record(z.string(), z.string()).optional(),
+            cwd: z.string().min(1).max(4096).optional(),
             enabled: z.boolean().optional(),
           })
           .strict(),

@@ -3,9 +3,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { logger } from "../../lib/logger.js";
 import { generateGatewayTextResult } from "../llm-runtime/gateway.js";
-import { invalidateSessionEnvironment } from "./session-environment.js";
+import { invalidateSessionEnvironment, resolveSessionRepository } from "./session-environment.js";
 import { agentRuntimeStore } from "./session-store.js";
-import { resolveSessionWorkDir } from "./tools/workspace.js";
+import { canonicalWorkspaceDirectory } from "../project-workspace.js";
 import {
   AgentNotFoundError,
   AgentRuntimeError,
@@ -20,6 +20,7 @@ const MAX_COMMIT_MESSAGE_LEN = 200;
 const MAX_DIFF_CHARS = 6_000;
 
 export interface SessionGitCommitInput {
+  rootId?: string;
   /** User supplied commit message. Empty/absent means "generate one". */
   message?: string | null;
   /** Explicit model override for generation; defaults to the session's model. */
@@ -29,6 +30,7 @@ export interface SessionGitCommitInput {
 }
 
 export interface SessionGitCommitResult {
+  rootId: string;
   branch: string;
   commitSha: string;
   message: string;
@@ -208,7 +210,12 @@ export async function commitSessionWorkspace(
     );
   }
 
-  const workspacePath = resolveSessionWorkDir(sessionId, session.projectId);
+  const root = resolveSessionRepository(sessionId, session.projectId, input.rootId, true);
+  const workspacePath = root.path;
+  const topLevel = (await runGit(workspacePath, ["rev-parse", "--show-toplevel"], true)).stdout.trim();
+  if (!topLevel || canonicalWorkspaceDirectory(topLevel) !== workspacePath) {
+    throw new AgentValidationError("The selected project must be a Git repository root.");
+  }
   const branch = (
     await runGit(workspacePath, ["branch", "--show-current"])
   ).stdout.trim();
@@ -284,6 +291,8 @@ export async function commitSessionWorkspace(
   const commitSha = (
     await runGit(workspacePath, ["rev-parse", "HEAD"])
   ).stdout.trim();
+  // A failed push still leaves a successful local commit.
+  invalidateSessionEnvironment(sessionId);
 
   const shouldPush = input.push !== false;
   let pushed: boolean | null = null;
@@ -332,6 +341,7 @@ export async function commitSessionWorkspace(
   );
 
   return {
+    rootId: root.id,
     branch,
     commitSha,
     message,

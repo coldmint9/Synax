@@ -7,11 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   listToolCalls: vi.fn(),
-  resolveSessionWorkDir: vi.fn(),
+  resolveSessionWorkspaceRoots: vi.fn(),
 }))
 
 vi.mock('../session-store.js', () => ({ agentRuntimeStore: mocks }))
-vi.mock('../tools/workspace.js', () => ({ resolveSessionWorkDir: mocks.resolveSessionWorkDir }))
+vi.mock('../tools/workspace.js', () => ({ resolveSessionWorkspaceRoots: mocks.resolveSessionWorkspaceRoots }))
 
 import { getSessionEnvironment, invalidateSessionEnvironment } from '../session-environment.js'
 
@@ -45,7 +45,9 @@ beforeEach(() => {
   git('add', '--force', '.')
   git('commit', '--quiet', '-m', 'fixture')
   mocks.getSession.mockReturnValue({ id: sessionId, projectId: 'project', childSessionIds: [] })
-  mocks.resolveSessionWorkDir.mockReturnValue(workspace)
+  mocks.resolveSessionWorkspaceRoots.mockReturnValue([
+    { id: 'project', name: 'Project', path: fs.realpathSync(workspace), role: 'primary', status: 'available' },
+  ])
   mocks.listToolCalls.mockReturnValue([])
   invalidateSessionEnvironment(sessionId)
 })

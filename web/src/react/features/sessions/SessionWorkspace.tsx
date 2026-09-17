@@ -1,5 +1,6 @@
 import './agentControls.css'
 import { memo, useEffect, useMemo, useState } from 'react'
+import { SessionCacheCard } from './SessionCacheCard'
 import { ContextCompositionBar } from './ContextCompositionBar'
 import { ChevronRight, Target, CheckCircle2, Circle, Clock, FileEdit, FilePlus, FileX, File, Loader2, Users } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
@@ -91,9 +92,11 @@ export function SessionStatusCard({
       </div>
       <ContextCompositionBar
         composition={stats.contextComposition}
+        context={stats.context}
         contextLimit={stats.contextLimit}
         contextLimitKnown={stats.contextLimitKnown !== false}
       />
+      <SessionCacheCard cache={stats.cache} />
       <dl className="space-y-1 text-[9px] text-muted-foreground">
         <div className="flex items-center justify-between gap-2">
           <dt>LLM</dt><dd className="truncate text-foreground/80" title={runtime.model ?? undefined}>{runtime.model ?? '—'}</dd>

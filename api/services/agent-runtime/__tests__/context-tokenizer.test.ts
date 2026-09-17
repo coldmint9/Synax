@@ -137,3 +137,15 @@ describe("bounded token count cache", () => {
     expect(tokenCacheStats().hits).toBeGreaterThan(0);
   });
 });
+
+describe("model-specific tokenizer selection", () => {
+  it("uses the model encoding and resolves provider-qualified IDs", () => {
+    const text = "你好，这是包含中文和代码的上下文。";
+    const older = countTokens(text, "gpt-4");
+    const newer = countTokens(text, "gpt-4o");
+    expect(older).not.toBe(newer);
+    expect(countTokens(text, "openai/gpt-4")).toBe(older);
+    expect(countTokens(text, "unknown-model")).toBe(newer);
+    expect(countTokens(text)).toBe(newer);
+  });
+});

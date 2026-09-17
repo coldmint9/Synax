@@ -418,11 +418,11 @@ describe("SessionComposer mode controls", () => {
       ],
     });
     renderComposer(session);
-    await screen.findByRole("textbox", { name: "Answer" });
+    await screen.findByRole("button", { name: "Your input is needed" });
     await expectModeUnavailable();
     expect(screen.getByRole("textbox", { name: "Message" })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Submit answers" }),
+      screen.getByRole("button", { name: "Your input is needed" }),
     ).toBeEnabled();
   });
 
@@ -443,7 +443,7 @@ describe("SessionComposer mode controls", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Run started");
     expect(
       screen.queryByRole("button", { name: "Session mode" }),
-    ).not.toBeInTheDocument();
+    ).toBeEnabled();
     expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
       "Keep my draft /plan",
     );
@@ -487,7 +487,7 @@ describe("SessionComposer mode controls", () => {
       ],
     });
     renderComposer({ ...session, status: "waiting_input", activeRunId: "r1" });
-    await screen.findByRole("button", { name: "Execute" });
+    await screen.findByRole("button", { name: "Plan ready for review" });
     await expectModeUnavailable();
     expect(screen.getByRole("textbox", { name: "Message" })).toBeEnabled();
   });

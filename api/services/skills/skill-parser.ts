@@ -12,7 +12,9 @@ function parseSimpleYamlBlock(block: string): Record<string, unknown> {
   let currentKey: string | null = null;
   let nested: Record<string, unknown> | null = null;
 
-  for (const rawLine of block.split('\n')) {
+  const lines = block.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    const rawLine = lines[index]!;
     const line = rawLine.trimEnd();
     if (!line.trim() || line.trim().startsWith('#')) continue;
 
@@ -27,6 +29,15 @@ function parseSimpleYamlBlock(block: string): Record<string, unknown> {
 
     const key = topMatch[1]!;
     const value = topMatch[2] ?? '';
+    if (/^[>|][-+]?$/.test(value.trim())) {
+      const content: string[] = [];
+      while (index + 1 < lines.length && (/^\s/.test(lines[index + 1]!) || !lines[index + 1]!.trim())) {
+        content.push(lines[++index]!.trim());
+      }
+      result[key] = content.join(value.trim().startsWith('>') ? ' ' : '\n').trim();
+      nested = null;
+      continue;
+    }
     if (!value.trim()) {
       currentKey = key;
       nested = {};

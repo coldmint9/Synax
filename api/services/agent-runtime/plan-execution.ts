@@ -64,9 +64,10 @@ export function executeStoredPlan(input: {
     throw new AgentRuntimeError('The plan revision changed.', 'PLAN_REVISION_CONFLICT', 409);
 
   const goal = getGoalState(session.sessionMetadata);
+  // Executing a proposal ends planning. Goal persistence is an explicit user choice.
+  const goalMode = session.sessionMetadata?.mode === 'goal';
   if (stored.status === 'approved' && stored.executionId) {
-    if (goal && ['planning', 'executing'].includes(goal.status)) {
-      store.updateSessionMetadata(input.sessionId, { mode: 'goal' });
+    if (goalMode && goal && ['planning', 'executing'].includes(goal.status)) {
       return stored;
     }
     throw new AgentValidationError('This plan revision has already been executed. Propose a new revision before executing again.');
@@ -85,9 +86,9 @@ export function executeStoredPlan(input: {
     metadata: { ...run.metadata, goalExecutionId: approved.executionId },
   });
   store.updateSessionMetadata(input.sessionId, {
-    mode: 'goal',
+    mode: goalMode ? 'goal' : 'chat',
     plan: approved,
-    goal: { ...initializeGoal(approved.objective), status: 'executing' },
+    goal: goalMode ? { ...initializeGoal(approved.objective), status: 'executing' } : null,
   });
 
   const tasks = new TaskStore();

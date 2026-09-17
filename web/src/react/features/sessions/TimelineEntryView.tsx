@@ -1,3 +1,4 @@
+import { InteractionCard } from './AgentInteractionPanel'
 import { MediaParts } from '../media/MediaParts'
 import { memo } from 'react'
 import { ChevronRight, ShieldPlus } from 'lucide-react'
@@ -37,6 +38,7 @@ export const TimelineEntryView = memo(function TimelineEntryView({
   isStreaming?: boolean
   isWorking?: boolean
 }) {
+  if (entry.kind === 'interaction') return <InteractionCard interaction={entry.interaction} disabled={entry.disabled} />
   if (entry.kind === 'user') {
     // App-composed prompts (language directive + wiki context + instructions)
     // are scaffolding, not conversation: collapse them into an indicator the

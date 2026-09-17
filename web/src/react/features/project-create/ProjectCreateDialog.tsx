@@ -1,186 +1,359 @@
-import { useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, Loader2, X } from 'lucide-react'
-import { useShellStore, type ProjectSummary } from '../../state/shellStore'
-import { apiFetch } from '../../../lib/api/origin'
-import { openDirectoryPicker, isElectron } from '../../../lib/open-directory-picker'
+import { Button, Input, Label, TextField, Tooltip } from '@heroui/react'
+import { ArrowRight, FolderCode, Layers2, Pin, X } from 'lucide-react'
+import { WorkspaceProjectSources } from '../workspace/WorkspaceProjectSources'
+import { WorkspaceProjectRow } from '../workspace/WorkspaceProjectRow'
+import { useWorkspaceCopy, workspacePathKey } from '../workspace/workspaceCopy'
+import { projectApi } from '../../../lib/api/project'
 import { resolveSessionsEntryPath } from '../sessions/sessionLastVisit'
 import { DirectoryPickerDialog } from '../../components/directory-picker/DirectoryPickerDialog'
+import { useDialogFocus } from '../../components/directory-picker/useDialogFocus'
+import { useShellStore, type ProjectSummary } from '../../state/shellStore'
 
+type Member = { localPath: string; name: string; projectId?: string }
 interface ProjectCreateDialogProps {
   open: boolean
   onClose: () => void
 }
 
-export function ProjectCreateDialog({ open, onClose }: ProjectCreateDialogProps) {
+export function ProjectCreateDialog({
+  open,
+  onClose
+}: ProjectCreateDialogProps) {
+  // A new form instance isolates selections and in-flight callbacks on every opening.
+  return open ? <ProjectCreateForm onClose={onClose} /> : null
+}
+
+function ProjectCreateForm({
+  onClose
+}: Pick<ProjectCreateDialogProps, 'onClose'>) {
   const navigate = useNavigate()
-  const addProject = useShellStore(s => s.addProject)
+  const c = useWorkspaceCopy()
+  const [mode, setMode] = useState<'local' | 'existing'>('local')
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [name, setName] = useState('')
   const [pathInput, setPathInput] = useState('')
+  const [members, setMembers] = useState<Member[]>([])
+  const [existing, setExisting] = useState<ProjectSummary[]>([])
+  const [loadingExisting, setLoadingExisting] = useState(true)
+  const [existingError, setExistingError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const locked = useRef(false)
+  const active = useRef(true)
+  const browseRef = useRef<HTMLButtonElement>(null)
+  const pickerWasOpen = useRef(false)
 
-  const reset = () => {
-    setPathInput('')
-    setError(null)
-    setSubmitting(false)
-    setPickerOpen(false)
-  }
+  useLayoutEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    // Making the parent inert can blur its trigger before the child captures it.
+    if (!pickerOpen && pickerWasOpen.current) browseRef.current?.focus()
+    pickerWasOpen.current = pickerOpen
+  }, [pickerOpen])
+
+  useEffect(() => {
+    let current = true
+    setLoadingExisting(true)
+    setExistingError(null)
+    void projectApi
+      .listProjects(undefined, { throwOnError: true })
+      .then((result) => {
+        if (current && active.current)
+          setExisting(
+            result.items.filter((item) => item.source?.localPath?.trim())
+          )
+      })
+      .catch((cause) => {
+        if (current && active.current)
+          setExistingError(
+            cause instanceof Error ? cause.message : String(cause)
+          )
+      })
+      .finally(() => {
+        if (current && active.current) setLoadingExisting(false)
+      })
+    return () => {
+      current = false
+    }
+  }, [loadAttempt])
 
   const handleClose = () => {
-    if (submitting) return
-    reset()
+    if (locked.current || !active.current) return
+    active.current = false
     onClose()
   }
-
-  const createProject = useCallback(async (dirPath: string, dirName: string) => {
+  const dialogRef = useDialogFocus(handleClose, pickerOpen)
+  const addMembers = (items: Member[]) => {
+    if (locked.current || !active.current) return
+    const additions = items.filter(
+      (item, index) =>
+        !members.some(
+          (member) =>
+            workspacePathKey(member.localPath) ===
+            workspacePathKey(item.localPath)
+        ) &&
+        items.findIndex(
+          (other) =>
+            workspacePathKey(other.localPath) ===
+            workspacePathKey(item.localPath)
+        ) === index
+    )
+    if (members.length + additions.length > 50) {
+      setError(c.limit)
+      return
+    }
+    setMembers((current) => [...current, ...additions])
+    setName((current) => current || items[0]?.name || '')
+    setError(null)
+  }
+  const addPath = () => {
+    const localPath = pathInput.trim()
+    if (!localPath) return
+    addMembers([
+      {
+        localPath,
+        name:
+          localPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() ||
+          localPath
+      }
+    ])
+    setPathInput('')
+  }
+  const createWorkspace = async () => {
+    if (locked.current || !active.current || !members.length || !name.trim())
+      return
+    locked.current = true
     setSubmitting(true)
     setError(null)
     try {
-      const resp = await apiFetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: dirName,
-          environment: 'development',
-          source: { kind: 'localPath', localPath: dirPath },
-        }),
+      const { project } = await projectApi.createWorkspace({
+        name: name.trim(),
+        roots: members.map((item) =>
+          item.projectId
+            ? { projectId: item.projectId }
+            : { localPath: item.localPath, name: item.name }
+        )
       })
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({ error: resp.statusText }))
-        throw new Error(body.error || `HTTP ${resp.status}`)
-      }
-      const { project } = (await resp.json()) as {
-        project: ProjectSummary & { source?: { kind: string; localPath?: string } }
-      }
-      const apiSource = project.source as { kind: string; localPath?: string } | undefined
-      addProject({
-        id: project.id,
-        name: project.name,
-        status: project.status ?? 'healthy',
-        environment: project.environment ?? 'development',
-        healthScore: project.healthScore ?? 0,
-        activeAgents: 0,
-        activeHumans: 1,
-        openRisks: 0,
-        updatedAt: 'just now',
-        source: { kind: 'localPath', localPath: apiSource?.localPath },
-        importState: 'syncing',
-      })
-      reset()
+      if (!active.current) return
+      active.current = false
+      useShellStore.getState().addProject(project)
       onClose()
       navigate(resolveSessionsEntryPath(project.id))
-    } catch (err) {
-      setError((err as Error).message || String(err))
-      setSubmitting(false)
-    }
-  }, [addProject, navigate, onClose])
-
-  const handleWebSubmit = () => {
-    const p = pathInput.trim()
-    if (!p) return
-    const segments = p.replace(/\\/g, '/').split('/').filter(Boolean)
-    const name = segments[segments.length - 1] || 'Project'
-    void createProject(p, name)
-  }
-
-
-  if (!open) return null
-
-  const handleBrowse = async () => {
-    // The desktop build keeps the native OS dialog. Browsers cannot read a local
-    // absolute path from the renderer, so they browse the runtime host instead.
-    if (!isElectron) {
-      setError(null)
-      setPickerOpen(true)
-      return
-    }
-    try {
-      const result = await openDirectoryPicker()
-      if (!result) return
-      setPathInput(result.path)
-      setError(null)
-    } catch (err) {
-      setError((err as Error).message || String(err))
+    } catch (cause) {
+      if (active.current)
+        setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (active.current) {
+        locked.current = false
+        setSubmitting(false)
+      }
     }
   }
-
   return (
     <>
-    <div className="dialog-overlay" onClick={handleClose}>
-      <div className="dialog-content w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-foreground">导入项目</h2>
-          <button type="button" className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors" onClick={handleClose}>
-            <X size={16} />
-          </button>
-        </div>
-        <div className="space-y-3">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-foreground">
-              项目目录路径
+      <div
+        className="dialog-overlay"
+        inert={pickerOpen}
+        aria-hidden={pickerOpen || undefined}
+        onClick={handleClose}
+      >
+        <div
+          ref={dialogRef}
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="workspace-create-title"
+          aria-describedby="workspace-create-intro"
+          className="dialog-content workspace-create"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <header className="workspace-create-header">
+            <span className="workspace-project-icon workspace-project-icon--large">
+              <Layers2 size={22} strokeWidth={1.5} />
             </span>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                className="import-input flex-1"
-                placeholder="/path/to/project"
-                value={pathInput}
-                onChange={e => { setPathInput(e.target.value); setError(null) }}
-                onKeyDown={e => { if (e.key === 'Enter') handleWebSubmit() }}
-                autoFocus
+            <div>
+              <h2 id="workspace-create-title">{c.title}</h2>
+              <p id="workspace-create-intro">{c.intro}</p>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              isIconOnly
+              aria-label={c.close}
+              isDisabled={submitting}
+              onPress={handleClose}
+            >
+              <X size={17} />
+            </Button>
+          </header>
+          <div className="workspace-create-name">
+            <TextField value={name} onChange={setName} isDisabled={submitting}>
+              <Label>{c.workspaceName}</Label>
+              <Input
+                maxLength={120}
+                placeholder={c.namePlaceholder}
+                data-dialog-autofocus
               />
-              <button
-                type="button"
-                onClick={handleBrowse}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/50 px-3 py-2 text-xs font-medium text-foreground transition hover:bg-muted/40"
+            </TextField>
+          </div>
+          <div className="workspace-create-body">
+            <section
+              className="workspace-create-sources"
+              aria-label={c.sources}
+            >
+              <WorkspaceProjectSources
+                mode={mode}
+                onModeChange={setMode}
+                projects={existing}
+                loading={loadingExisting}
+                error={existingError}
+                onRetry={() => setLoadAttempt((value) => value + 1)}
+                disabled={submitting}
+                paths={members.map((item) => item.localPath)}
+                path={pathInput}
+                onPathChange={setPathInput}
+                onAddPath={addPath}
+                browseRef={browseRef}
+                onBrowse={() => setPickerOpen(true)}
+                onChoose={(item) => {
+                  if (item.source?.localPath)
+                    addMembers([
+                      {
+                        projectId: item.id,
+                        name: item.name,
+                        localPath: item.source.localPath
+                      }
+                    ])
+                }}
+              />
+            </section>
+            <section className="workspace-create-members">
+              <div className="workspace-section-label">
+                <span>{c.members}</span>
+                <span className="workspace-count">
+                  {members.length.toString().padStart(2, '0')}
+                </span>
+              </div>
+              <div
+                className="workspace-member-list overflow-y-auto"
+                role="list"
+                aria-label={c.members}
               >
-                <FolderOpen size={12} />
-                打开
-              </button>
-            </div>
-            <span className="mt-1 block text-[11px] text-muted-foreground/60">
-              {isElectron
-                ? '点击“打开”选择本地目录，或直接输入本地代码目录的绝对路径'
-                : '浏览器版点击“打开”浏览运行 Synax 机器的目录，也可直接输入绝对路径'}
-            </span>
-          </label>
+                {members.length === 0 && (
+                  <div className="workspace-members-empty">
+                    <span className="workspace-empty-glyph">
+                      <FolderCode size={28} strokeWidth={1.2} />
+                    </span>
+                    <strong>{c.emptyTitle}</strong>
+                    <p>{c.emptyHint}</p>
+                  </div>
+                )}
+                {members.map((item, index) => (
+                  <WorkspaceProjectRow
+                    key={item.localPath}
+                    name={item.name}
+                    path={item.localPath}
+                    primary={index === 0}
+                  >
+                    {index > 0 && (
+                      <Tooltip delay={300}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          isIconOnly
+                          aria-label={`${c.makePrimary}: ${item.name}`}
+                          isDisabled={submitting}
+                          onPress={() =>
+                            setMembers((items) => [
+                              item,
+                              ...items.filter((member) => member !== item)
+                            ])
+                          }
+                        >
+                          <Pin size={13} />
+                        </Button>
+                        <Tooltip.Content>{c.makePrimary}</Tooltip.Content>
+                      </Tooltip>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      isIconOnly
+                      aria-label={`${c.remove} ${item.name}`}
+                      isDisabled={submitting}
+                      onPress={() =>
+                        setMembers((items) =>
+                          items.filter((member) => member !== item)
+                        )
+                      }
+                    >
+                      <X size={14} />
+                    </Button>
+                  </WorkspaceProjectRow>
+                ))}
+              </div>
+              <p className="workspace-primary-note">
+                <Pin size={12} />
+                {c.primaryHint}
+              </p>
+            </section>
+          </div>
           {error && (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>
-          )}
-          {submitting && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 size={14} className="animate-spin" />
-              正在创建项目…
+            <div
+              role="alert"
+              className="workspace-feedback workspace-create-error"
+            >
+              {error}
             </div>
           )}
-        </div>
-        <div className="mt-4 flex justify-end">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40"
-            onClick={handleWebSubmit}
-            disabled={submitting || !pathInput.trim()}
-          >
-            {submitting ? (
-              <><Loader2 size={12} className="animate-spin" /> 创建中…</>
-            ) : (
-              <><FolderOpen size={12} /> 导入</>
-            )}
-          </button>
+          <footer className="workspace-create-footer">
+            <span role="status" className="workspace-hint">
+              {c.count.replace('{count}', String(members.length))}
+            </span>
+            <div>
+              <Button
+                variant="ghost"
+                size="sm"
+                isDisabled={submitting}
+                onPress={handleClose}
+              >
+                {c.cancel}
+              </Button>
+              <Button
+                size="sm"
+                isDisabled={submitting || !members.length || !name.trim()}
+                isPending={submitting}
+                onPress={() => void createWorkspace()}
+              >
+                {submitting ? c.creating : c.title}
+                {!submitting && <ArrowRight size={14} />}
+              </Button>
+            </div>
+          </footer>
         </div>
       </div>
-    </div>
-    <DirectoryPickerDialog
-      open={pickerOpen}
-      initialPath={pathInput.trim() || undefined}
-      onClose={() => setPickerOpen(false)}
-      onSelect={({ path }) => {
-        setPathInput(path)
-        setError(null)
-        setPickerOpen(false)
-      }}
-    />
+      <DirectoryPickerDialog
+        open={pickerOpen}
+        multiple
+        initialPath={pathInput.trim() || undefined}
+        labels={{ title: c.pickerTitle, confirm: c.pickerConfirm }}
+        onClose={() => setPickerOpen(false)}
+        onSelect={() => {}}
+        onSelectMultiple={(items) => {
+          addMembers(
+            items.map((item) => ({ localPath: item.path, name: item.name }))
+          )
+          setPickerOpen(false)
+        }}
+      />
     </>
   )
 }

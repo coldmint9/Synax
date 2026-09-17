@@ -43,7 +43,26 @@ export interface McpServerConfig {
   command: string
   args?: string[]
   env?: Record<string, string>
+  cwd?: string
   enabled?: boolean
+}
+
+export interface McpDiscoverySource {
+  client: string
+  path: string
+  scope: 'project' | 'user'
+}
+
+export interface DiscoveredMcpServer {
+  fingerprint: string
+  server: McpServerConfig
+  sources: McpDiscoverySource[]
+}
+
+export interface McpDiscoveryResponse {
+  servers: DiscoveredMcpServer[]
+  scannedFiles: number
+  warnings: Array<{ client: string; path: string; message: string }>
 }
 
 export interface GlobalConfig {

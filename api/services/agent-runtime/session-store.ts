@@ -1484,6 +1484,7 @@ export class AgentRuntimeStore {
     roundCount: number;
     contextComposition: ContextComposition | null;
     context: SessionUsageProjection["context"];
+    cache: SessionUsageProjection["cache"];
     usage: SessionUsageProjection["usage"];
     coverage: SessionUsageProjection["coverage"];
     tokenUsage: { input: number; output: number; total: number };
@@ -1529,7 +1530,7 @@ export class AgentRuntimeStore {
       : (normalizeContextLimit(options.configuredContextLimit) ??
         readLatestRunContextLimit(db, sessionId) ??
         latestContextWindowSize);
-    const contextLimitKnown = !cli || knownWindow !== null;
+    const contextLimitKnown = knownWindow !== null;
     const contextLimit = knownWindow ?? DEFAULT_CONTEXT_WINDOW_SIZE;
     const contextUsedPercent =
       contextLimit > 0
@@ -1543,15 +1544,7 @@ export class AgentRuntimeStore {
         )
         .get(sessionId) as { count: number }
     ).count;
-    // Step updates replace rows, so rowid alone is not the request order.
-    const compositionRow = db
-      .prepare(
-        "SELECT json_extract(metadata_json, '$.contextComposition') AS composition FROM agent_runtime_run_steps WHERE session_id = ? AND json_type(metadata_json, '$.contextComposition') = 'object' ORDER BY json_extract(metadata_json, '$.contextComposition.measuredAt') DESC, started_at DESC, step_index DESC, rowid DESC LIMIT 1",
-      )
-      .get(sessionId) as { composition: string } | undefined;
-    const contextComposition = compositionRow
-      ? (JSON.parse(compositionRow.composition) as ContextComposition)
-      : null;
+    const contextComposition = projected.contextComposition;
 
     const toolCountRow = db
       .prepare(
@@ -1597,6 +1590,7 @@ export class AgentRuntimeStore {
       roundCount,
       contextComposition,
       context: projected.context,
+      cache: projected.cache,
       usage: projected.usage,
       coverage: projected.coverage,
       tokenUsage: { input, output, total },

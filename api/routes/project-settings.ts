@@ -12,6 +12,9 @@ import {
 import { getEffectiveConfigForDisplay } from '../lib/config/config-store.js'
 import { syncProjectBasics } from './projects.js'
 import { logger } from '../lib/logger.js'
+import { readWorkspaceProject } from '../services/project-workspace.js'
+import { discoverLocalIntegrations, importDiscoveredSkill } from '../services/integrations/local-discovery.js'
+import { discoverLocalMcpServers } from '../services/mcp/mcp-discovery.js'
 
 export const projectSettingsRoutes = new Hono()
 
@@ -46,6 +49,39 @@ projectSettingsRoutes.get('/:projectId/settings/effective', (c) => {
     logger.error({ projectId, err: msg }, '[project-settings] get effective failed')
     return c.json({ error: msg }, 500)
   }
+})
+
+projectSettingsRoutes.get('/:projectId/settings/mcp/discovery', (c) => {
+  const projectId = c.req.param('projectId')
+  try {
+    const project = readWorkspaceProject(projectId)
+    return c.json(discoverLocalMcpServers(project?.source?.localPath))
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.error({ projectId, err: msg }, '[project-settings] MCP discovery failed')
+    return c.json({ error: msg }, 500)
+  }
+})
+
+const discoveryInput = z.object({ directories: z.array(z.string().min(1).max(4096)).max(8).default([]) })
+
+projectSettingsRoutes.post('/:projectId/settings/integrations/discovery', async (c) => {
+  const parsed = discoveryInput.safeParse(await c.req.json().catch(() => ({})))
+  if (!parsed.success) return c.json({ error: 'Invalid discovery directories' }, 400)
+  const project = readWorkspaceProject(c.req.param('projectId'))
+  if (!project?.source?.localPath) return c.json({ error: 'A local project directory is required' }, 404)
+  const { paths: _paths, ...result } = discoverLocalIntegrations(project.source.localPath, { extraDirectories: parsed.data.directories })
+  return c.json(result)
+})
+
+projectSettingsRoutes.post('/:projectId/settings/integrations/skills/import', async (c) => {
+  const parsed = discoveryInput.extend({ id: z.string().regex(/^[a-f0-9]{24}$/) }).safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) return c.json({ error: 'Invalid skill import' }, 400)
+  const project = readWorkspaceProject(c.req.param('projectId'))
+  if (!project?.source?.localPath) return c.json({ error: 'A local project directory is required' }, 404)
+  try {
+    return c.json(importDiscoveredSkill(project.source.localPath, parsed.data.id, { extraDirectories: parsed.data.directories }), 201)
+  } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 409) }
 })
 
 projectSettingsRoutes.put('/:projectId/settings', async (c) => {

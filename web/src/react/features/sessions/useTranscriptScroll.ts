@@ -37,6 +37,17 @@ export function useTranscriptScroll(
     const handleKeyDown = (event: KeyboardEvent) => {
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) markManual()
     }
+    const inspectDisclosure = (event: Event) => {
+      if (!(event.target instanceof Element)) return
+      if (!event.target.closest('summary, [aria-expanded]')) return
+      // Expanding a plan or an answer is reading, not new streamed output.
+      // Release the bottom pin before ResizeObserver sees the expanded card.
+      pinned = false
+      publish(true)
+    }
+    const handleDisclosureKey = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' || event.key === ' ') inspectDisclosure(event)
+    }
     const handleScroll = () => {
       const top = element.scrollTop
       const distance = element.scrollHeight - top - element.clientHeight
@@ -46,6 +57,8 @@ export function useTranscriptScroll(
         publish(true)
       lastTop = top
     }
+    element.addEventListener('click', inspectDisclosure, true)
+    element.addEventListener('keydown', handleDisclosureKey, true)
     element.addEventListener('scroll', handleScroll, { passive: true })
     element.addEventListener('wheel', markManual, { passive: true })
     element.addEventListener('touchmove', markManual, { passive: true })
@@ -74,6 +87,8 @@ export function useTranscriptScroll(
         reading: readingHistory,
       })
       if (positions.size > 32) positions.delete(positions.keys().next().value!)
+      element.removeEventListener('click', inspectDisclosure, true)
+      element.removeEventListener('keydown', handleDisclosureKey, true)
       element.removeEventListener('scroll', handleScroll)
       element.removeEventListener('wheel', markManual)
       element.removeEventListener('touchmove', markManual)

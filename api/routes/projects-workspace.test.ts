@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectRecord } from './projects.js';
 import type { ProjectWorkspaceRoot } from '../services/project-workspace.js';
 
-const isolation = vi.hoisted(() => ({ dataRoot: '' }));
+const isolation = vi.hoisted(() => ({
+  dataRoot: '', listSessions: vi.fn(), listGitWorkspaces: vi.fn(),
+  createGitWorktree: vi.fn(), removeGitWorktree: vi.fn(), pruneGitWorktrees: vi.fn(),
+}));
 
 // Keep the real route, directory validation and JSON store; isolate unrelated services.
 vi.mock('../lib/env.js', () => ({
@@ -17,13 +20,13 @@ vi.mock('../lib/env.js', () => ({
 vi.mock('../lib/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../services/context/context-service.js', () => ({ contextService: {} }));
 vi.mock('../db/index.js', () => ({ getRawSqlite: vi.fn() }));
-vi.mock('../services/agent-runtime/session-store.js', () => ({ agentRuntimeStore: {} }));
+vi.mock('../services/agent-runtime/session-store.js', () => ({ agentRuntimeStore: { listSessions: isolation.listSessions } }));
 vi.mock('../services/git-workspaces.js', () => ({
-  GitWorkspaceError: class extends Error {},
-  createGitWorktree: vi.fn(),
-  listGitWorkspaces: vi.fn(),
-  pruneGitWorktrees: vi.fn(),
-  removeGitWorktree: vi.fn(),
+  GitWorkspaceError: class extends Error { constructor(message: string, public status: number) { super(message); } },
+  createGitWorktree: isolation.createGitWorktree,
+  listGitWorkspaces: isolation.listGitWorkspaces,
+  pruneGitWorktrees: isolation.pruneGitWorktrees,
+  removeGitWorktree: isolation.removeGitWorktree,
 }));
 
 let tempDir = '';
@@ -96,6 +99,10 @@ async function expectRejected(body: unknown, status = 400, id = 'main') {
 }
 
 beforeEach(async () => {
+  vi.clearAllMocks();
+  isolation.listSessions.mockReturnValue([]);
+  isolation.listGitWorkspaces.mockResolvedValue({ branches: [], worktrees: [] });
+  isolation.createGitWorktree.mockResolvedValue({ path: '/test/worktree' });
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-projects-workspace-'));
   isolation.dataRoot = path.join(tempDir, 'data');
   fs.mkdirSync(isolation.dataRoot);
@@ -124,6 +131,116 @@ afterEach(() => {
   isolation.dataRoot = '';
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   tempDir = '';
+});
+
+describe('workspace creation and repository selection API', () => {
+  function createWorkspace(body: unknown) {
+    return routes.request('/workspaces', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+  }
+
+  it('creates and reloads a named workspace from local and registered projects in selection order', async () => {
+    const existingBefore = diskProject('existing');
+    const response = await createWorkspace({ name: 'Team workspace', roots: [
+      { localPath, name: 'API' }, { projectId: 'existing' }, { localPath: secondPath, name: 'Web' },
+    ] });
+    expect(response.status).toBe(201);
+    const body = await response.json() as { project: ProjectRecord; roots: ProjectWorkspaceRoot[] };
+    expect(body.project).toMatchObject({ name: 'Team workspace', primaryName: 'API', source: { localPath } });
+    expect(body.roots.map(({ name, path: rootPath, role }) => ({ name, path: rootPath, role }))).toEqual([
+      { name: 'API', path: localPath, role: 'primary' },
+      { name: 'Project existing', path: existingPath, role: 'reference' },
+      { name: 'Web', path: secondPath, role: 'reference' },
+    ]);
+    expect(new Set(body.roots.map(root => root.id)).size).toBe(3);
+    expect(diskProject('existing')).toEqual(existingBefore);
+    expect(diskProject(body.project.id)).toEqual(body.project);
+    vi.resetModules();
+    ({ projectRoutes: routes } = await import('./projects.js'));
+    expect(await workspace(body.project.id)).toEqual(body.roots);
+  });
+
+  it.each(['duplicate', 'overlap', 'symlink', 'missing', 'unknown project', 'no directory', 'empty', 'mixed selector'])(
+    'rejects %s selections without publishing a partial workspace', async kind => {
+      const alias = path.join(tempDir, 'local-alias');
+      fs.symlinkSync(localPath, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      const invalidRoots: Record<string, unknown[]> = {
+        duplicate: [{ localPath }, { localPath }],
+        overlap: [{ localPath }, { localPath: path.dirname(localPath) }],
+        symlink: [{ localPath }, { localPath: alias }],
+        missing: [{ localPath }, { localPath: path.join(tempDir, 'missing') }],
+        'unknown project': [{ localPath }, { projectId: 'unknown' }],
+        'no directory': [{ localPath }, { projectId: 'without-workspace' }],
+        empty: [],
+        'mixed selector': [{ localPath, projectId: 'existing' }],
+      };
+      const diskBefore = fs.readFileSync(projectsFile, 'utf8');
+      const listBefore = await (await routes.request('/')).json();
+      const response = await createWorkspace({ name: 'Invalid', roots: invalidRoots[kind] });
+      expect(response.status).toBe(kind === 'unknown project' ? 404 : 400);
+      expect(fs.readFileSync(projectsFile, 'utf8')).toBe(diskBefore);
+      expect(await (await routes.request('/')).json()).toEqual(listBefore);
+    },
+  );
+
+  it('routes worktree reads and mutations to the selected member and counts sessions from every workspace', async () => {
+    const roots = await addReference({ localPath });
+    const rootId = roots[1].id;
+    const worktreePath = directory('linked-worktree');
+    const binding = { id: rootId, name: 'Linked', role: 'reference', status: 'available', path: worktreePath };
+    isolation.listSessions.mockReturnValue([
+      { projectId: 'another-workspace', sessionMetadata: { backend: { workDir: worktreePath, workspaceRoots: [binding] } } },
+      { projectId: 'main', sessionMetadata: { backend: { workDir: mainPath, workspaceRoots: [binding] } } },
+    ]);
+    expect((await routes.request(`/main/git/workspaces?rootId=${rootId}`)).status).toBe(200);
+    expect(isolation.listSessions).toHaveBeenCalledWith({ limit: Number.MAX_SAFE_INTEGER });
+    expect(isolation.listGitWorkspaces).toHaveBeenLastCalledWith(localPath, `main/${rootId}`, new Map([[worktreePath, 2], [mainPath, 1]]));
+
+    const create = await routes.request('/main/git/worktrees', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootId, branch: 'feature', createBranch: true }),
+    });
+    expect(create.status).toBe(201);
+    expect(isolation.createGitWorktree).toHaveBeenCalledWith(localPath, `main/${rootId}`, { rootId, branch: 'feature', createBranch: true });
+
+    expect((await routes.request(`/main/git/worktrees/prune?rootId=${rootId}`, { method: 'POST' })).status).toBe(200);
+    expect(isolation.pruneGitWorktrees).toHaveBeenCalledWith(localPath);
+    const remove = await routes.request('/main/git/worktrees', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootId, path: worktreePath, force: true }),
+    });
+    expect(remove.status).toBe(200);
+    expect(isolation.removeGitWorktree).toHaveBeenCalledWith(localPath, `main/${rootId}`, worktreePath, {
+      force: true, inUsePaths: new Set([worktreePath, mainPath]),
+    });
+  });
+
+  it.each(['omitted', 'unknown'])('rejects an %s member before any worktree mutation', async kind => {
+    await addReference({ localPath });
+    const selector = kind === 'unknown' ? { rootId: 'unknown' } : {};
+    const status = kind === 'unknown' ? 404 : 400;
+    for (const method of ['POST', 'DELETE']) {
+      const response = await routes.request('/main/git/worktrees', {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...selector, ...(method === 'POST' ? { branch: 'feature' } : { path: secondPath }) }),
+      });
+      expect(response.status).toBe(status);
+    }
+    expect((await routes.request(`/main/git/worktrees/prune${kind === 'unknown' ? '?rootId=unknown' : ''}`, { method: 'POST' })).status).toBe(status);
+    expect(isolation.createGitWorktree).not.toHaveBeenCalled();
+    expect(isolation.removeGitWorktree).not.toHaveBeenCalled();
+    expect(isolation.pruneGitWorktrees).not.toHaveBeenCalled();
+  });
+
+  it('keeps single-member creation and implicit Git selection compatible', async () => {
+    const response = await createWorkspace({ name: 'Solo', roots: [{ localPath }] });
+    expect(response.status).toBe(201);
+    const body = await response.json() as { project: ProjectRecord; roots: ProjectWorkspaceRoot[] };
+    expect(body.roots).toHaveLength(1);
+    expect((await routes.request(`/${body.project.id}/git/worktrees/prune`, { method: 'POST' })).status).toBe(200);
+    expect(isolation.pruneGitWorktrees).toHaveBeenCalledWith(localPath);
+  });
 });
 
 describe('project workspace references API', () => {

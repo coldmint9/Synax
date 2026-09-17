@@ -390,7 +390,40 @@ export interface ContextComposition {
   total: number;
   measuredAt: string;
 }
+export interface CacheUsageSample {
+  stepId: string;
+  measuredAt: string;
+  model: string | null;
+  unit: "request" | "external-turn";
+  inputTokens: number | null;
+  cacheReadTokens: number | null;
+  ratio: number | null;
+  status: "reported" | "missing" | "invalid" | "empty";
+  inputSource: string;
+  cacheSource: string;
+}
+export interface CacheUsageSummary {
+  inputTokens: number;
+  cacheReadTokens: number;
+  ratio: number | null;
+  weightedRatio: number | null;
+  empty: number;
+  aggregated: number;
+  samples: number;
+  matched: number;
+  missing: number;
+  invalid: number;
+}
+export interface SessionCacheUsage {
+  latest: CacheUsageSample | null;
+  recent: CacheUsageSummary;
+  session: CacheUsageSummary;
+  recentSamples: CacheUsageSample[];
+  pending: number;
+}
+
 export interface SessionStats {
+  cache?: SessionCacheUsage;
   roundCount?: number;
   contextComposition?: ContextComposition | null;
   work?: {
@@ -407,6 +440,8 @@ export interface SessionStats {
   } | null;
   context?: {
     inputTokens: number | null;
+    source?: "provider" | "estimate" | null;
+    stale?: boolean;
     requestId: string | null;
     measuredAt: string | null;
     latestRequestUsageAvailable: boolean;
@@ -487,6 +522,7 @@ export interface SessionBackgroundProcess {
 }
 
 export interface SessionEnvironment {
+  repositories?: SessionEnvironmentRepository[];
   sessionId: string;
   projectId: string;
   workspacePath: string;
@@ -501,6 +537,22 @@ export interface SessionEnvironment {
   inputFiles: string[];
   subagents: SessionEnvironmentSubagent[];
   refreshedAt: string;
+}
+
+export interface SessionEnvironmentRepository {
+  rootId: string;
+  name: string;
+  role: "primary" | "reference";
+  status: "ready" | "missing" | "not_repository" | "error";
+  workspacePath: string;
+  branch: string;
+  headCommitSha: string;
+  dirty: boolean;
+  additions: number;
+  deletions: number;
+  changedFiles: SessionEnvironmentFile[];
+  agentChangedFiles: SessionEnvironmentFile[];
+  inputFiles: string[];
 }
 
 export interface SessionEnvironmentFileView {
@@ -788,13 +840,14 @@ export const agentRuntimeApi = {
     sessionId: string,
     path: string,
     kind: "diff" | "input",
+    rootId?: string,
   ) =>
     request<SessionEnvironmentFileView>(
-      `/sessions/${encodeURIComponent(sessionId)}/environment/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}`,
+      `/sessions/${encodeURIComponent(sessionId)}/environment/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}${rootId ? `&rootId=${encodeURIComponent(rootId)}` : ""}`,
     ),
   commitSessionWorkspace: (
     sessionId: string,
-    body: { message?: string; model?: string; push?: boolean } = {},
+    body: { message?: string; model?: string; push?: boolean; rootId?: string } = {},
   ) =>
     request<SessionGitCommitResult>(
       `/sessions/${encodeURIComponent(sessionId)}/git/commit`,

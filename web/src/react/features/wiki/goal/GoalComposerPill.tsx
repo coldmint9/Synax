@@ -46,6 +46,7 @@ interface Props {
   backendId?: string;
   modelControl?: ReactNode;
   modeControl?: ReactNode;
+  placeholder?: string;
   projectId: string;
   content: string;
   onContentChange: (value: string) => void;
@@ -87,6 +88,7 @@ export function GoalComposerPill({
   modelControl,
   backendId,
   modeControl,
+  placeholder,
   projectId,
   media,
   sessionId,
@@ -380,7 +382,7 @@ export function GoalComposerPill({
             }
             onKeyDown={handleKeyDown}
             {...compositionProps}
-            placeholder={t("goalPlaceholder")}
+            placeholder={placeholder ?? t("goalPlaceholder")}
             aria-label={t("goalPlaceholder")}
             disabled={disabled && !queueWhileGenerating}
             rows={
@@ -439,7 +441,7 @@ export function GoalComposerPill({
             }
             onKeyDown={handleKeyDown}
             {...compositionProps}
-            placeholder={t("goalPlaceholder")}
+            placeholder={placeholder ?? t("goalPlaceholder")}
             aria-label={t("goalPlaceholder")}
             disabled={disabled && !queueWhileGenerating}
             rows={1}

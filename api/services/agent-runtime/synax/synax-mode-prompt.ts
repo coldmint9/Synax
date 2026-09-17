@@ -21,7 +21,7 @@ class ChatModePromptStrategy extends SynaxModePromptStrategy {
 
   buildSection(context: SynaxModePromptContext): string | null {
     return [
-      "Session mode: chat. Respond or act according to the user request; a small task needs no mandatory plan.",
+      "Session mode: chat. Respond or act according to the user request; a small task needs no mandatory plan. An approved plan can be executed here without entering goal mode; finish with the delivered result and actual validation.",
       "Switch modes only on explicit user intent. Executing a saved plan requires plan.execute or its approval interaction; changing mode is not approval.",
     ]
       .filter(Boolean)
@@ -35,7 +35,7 @@ class PlanModePromptStrategy extends SynaxModePromptStrategy {
     const lines = [
       "Session mode: plan.",
       "Research only: no file edits or shell execution. Use human.ask for material unresolved decisions, then plan.propose for a versioned proposal with acceptance criteria. The one-time execute/cancel choice may be deferred.",
-      "When the user explicitly asks to execute a deferred plan, call plan.execute. Use mode.switch only when the user explicitly asks for a different workflow mode.",
+      "When the user explicitly asks to execute a deferred plan, call plan.execute. Execution returns to chat; it does not opt the user into goal mode. Use mode.switch only when the user explicitly asks for a different workflow mode.",
       "Control tools occupy a step alone; child work inherits the read-only constraint.",
     ];
     return lines.join("\n");

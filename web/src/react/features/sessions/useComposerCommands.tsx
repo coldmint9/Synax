@@ -1,5 +1,8 @@
+import { composerMenuPosition } from './composerMenuPosition'
+import { createPortal } from 'react-dom'
+import { SessionModePicker } from './SessionModePicker'
 import { ComposerContextPicker } from './ComposerContextPicker'
-import { useEffect, useLayoutEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useId, useRef, useState, type KeyboardEvent, type CSSProperties } from 'react'
 import { BookOpen, FileText, ListTodo, Plug, Sparkles, Target, X } from 'lucide-react'
 import { agentRuntimeApi, type AgentSessionMode, type TurnReference } from '../../../lib/api/agentRuntime'
 import { useLocale } from '../../../hooks/useLocale'
@@ -39,7 +42,7 @@ export function useComposerCommands({ projectId, sessionId, backendId, content, 
   const [active, setActive] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [menuHeight, setMenuHeight] = useState(288)
+  const [menuPosition, setMenuPosition] = useState<CSSProperties>({ left: 16, bottom: 16, width: 360, maxHeight: 320 })
   const native = backendId === 'native'
   useEffect(() => { setQuery(null); setError('') }, [sessionId, projectId, backendId, disabled])
   useEffect(() => {
@@ -67,12 +70,30 @@ export function useComposerCommands({ projectId, sessionId, backendId, content, 
   useLayoutEffect(() => {
     if (!query) return
     const measure = () => {
-      const top = inputRef.current?.closest('.agent-session-controls')?.getBoundingClientRect().top
-      if (top !== undefined) setMenuHeight(Math.min(320, Math.max(120, top - 64)))
+      const rect = (inputRef.current?.closest('.goal-dock-composer') ?? inputRef.current)?.getBoundingClientRect()
+      if (!rect) return
+      const viewport = window.visualViewport
+      setMenuPosition(composerMenuPosition(rect, {
+        width: viewport?.width ?? window.innerWidth,
+        height: viewport?.height ?? window.innerHeight,
+        layoutHeight: window.innerHeight,
+        top: viewport?.offsetTop, left: viewport?.offsetLeft,
+      }))
     }
     measure()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    if (inputRef.current) observer?.observe(inputRef.current)
     window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
+    window.addEventListener('scroll', measure, true)
+    window.visualViewport?.addEventListener('resize', measure)
+    window.visualViewport?.addEventListener('scroll', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', measure, true)
+      window.visualViewport?.removeEventListener('resize', measure)
+      window.visualViewport?.removeEventListener('scroll', measure)
+    }
   }, [Boolean(query), references.length, mode])
 
   const unavailable = (id: CommandId) => {
@@ -121,13 +142,16 @@ export function useComposerCommands({ projectId, sessionId, backendId, content, 
     }
     return false
   }
-  const trigger = <ComposerContextPicker projectId={projectId} sessionId={sessionId} backendId={backendId}
+  const trigger = <><ComposerContextPicker projectId={projectId} sessionId={sessionId} backendId={backendId}
     references={references} onChange={setReferences} disabled={disabled} onOpenChange={setContextOpen} onOpen={() => setQuery(null)} />
-  const header = (mode !== 'chat' || references.length > 0) && <div className="session-composer-reference-tags" aria-label={zh ? '当前模式与本条消息引用' : 'Mode and references for this message'}>
-    {mode !== 'chat' && <span className="session-composer-reference-tag" data-kind="mode"><ListTodo size={12} /><span>{mode === 'goal' ? (zh ? '目标模式' : 'Goal mode') : mode === 'plan' ? (zh ? '计划模式' : 'Plan mode') : (zh ? '计划节点' : 'Plan node')}</span><button type="button" disabled={!modeEnabled || disabled} aria-label={zh ? '回到普通对话' : 'Return to chat'} onClick={() => { void onModeChange('chat').catch(err => setError(String(err))) }}><X size={12}/></button></span>}
+    {native && <SessionModePicker mode={mode} disabled={!modeEnabled || disabled}
+      description={zh ? '选择工作方式' : 'Choose how to work'}
+      onChange={value => { void onModeChange(value).catch(err => setError(String(err))) }} onOpenChange={setContextOpen} />}
+  </>
+  const header = references.length > 0 && <div className="session-composer-reference-tags" aria-label={zh ? '本条消息引用' : 'References for this message'}>
     {references.map(ref => { const Icon = commands.find(cmd => cmd.id === ref.kind)!.Icon; return <span key={`${ref.kind}:${ref.id}`} className="session-composer-reference-tag" data-kind={ref.kind} title={ref.id}><Icon size={12}/><span>{ref.kind} · {ref.label ?? ref.id}</span><button type="button" disabled={disabled} aria-label={`${zh ? '移除' : 'Remove'} ${ref.label ?? ref.id}`} onClick={() => setReferences(references.filter(item => item !== ref))}><X size={12}/></button></span> })}
   </div>
-  const menu = query && !disabled && <div ref={menuRef} className="session-composer-command-menu" style={{ maxHeight: menuHeight }} onMouseDown={event => event.preventDefault()}>
+  const menu = query && !disabled && createPortal(<div ref={menuRef} className="session-composer-command-menu" style={menuPosition} onMouseDown={event => event.preventDefault()}>
     <div className="session-composer-command-heading">{query.command ? `/${query.command} · ${zh ? '输入名称搜索' : 'Search by name'}` : (zh ? '选择命令' : 'Choose a command')}</div>
     <div id={listId} role="listbox" aria-label={zh ? '斜杠命令' : 'Slash commands'}>
       {rows.map((row, index) => { const Icon = commands.find(cmd => cmd.id === row.command)!.Icon; return <div key={row.id} id={`${listId}-${index}`} role="option" aria-selected={index === active} aria-disabled={Boolean(row.disabled)} className="session-composer-command-option" onMouseEnter={() => setActive(index)} onClick={() => void select(index)}><Icon size={15}/><span><strong>{row.title}</strong><small>{row.disabled || row.detail}</small></span></div> })}
@@ -135,6 +159,7 @@ export function useComposerCommands({ projectId, sessionId, backendId, content, 
     {loading && <p role="status">{zh ? '正在加载…' : 'Loading…'}</p>}
     {!loading && rows.length === 0 && <p role={error ? "alert" : "status"}>{error || (zh ? '没有匹配项' : 'No matches')}</p>}
     {error && rows.length > 0 && <p role="alert">{error}</p>}
-  </div>
+    <div className="session-composer-command-help"><span>↑ ↓ {zh ? '选择' : 'navigate'}</span><span>↵ {zh ? '确认' : 'select'}</span><span>esc {zh ? '关闭' : 'close'}</span></div>
+  </div>, document.body)
   return { overlayOpen: contextOpen || Boolean(query), inputRef, onInput: updateQuery, onKeyDown, header, trigger, menu, open: Boolean(query) && !disabled, listId, activeId: rows.length ? `${listId}-${Math.min(active, rows.length - 1)}` : undefined }
 }

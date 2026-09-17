@@ -24,3 +24,26 @@ it('restores reading position across session switches and does not restore into 
   expect(onReading).toHaveBeenLastCalledWith(true)
   unmount()
 })
+
+
+it('does not jump to the bottom when the reader expands a plan or question', () => {
+  let onResize!: ResizeObserverCallback
+  vi.stubGlobal('ResizeObserver', class { constructor(callback: ResizeObserverCallback) { onResize = callback } observe() {} disconnect() {} })
+  const element = document.createElement('div')
+  const content = document.createElement('div')
+  content.innerHTML = '<details><summary>Plan details</summary><div>Steps</div></details>'
+  element.appendChild(content)
+  Object.defineProperties(element, { scrollHeight: { value: 1200, configurable: true }, clientHeight: { value: 500 } })
+  const onReading = vi.fn()
+  const { unmount } = renderHook(() => useTranscriptScroll({ current: element }, 'disclosure-scroll', onReading))
+  element.scrollTop = 700
+  act(() => {
+    content.querySelector('summary')!.click()
+    Object.defineProperty(element, 'scrollHeight', { value: 2000 })
+    onResize([], {} as ResizeObserver)
+  })
+  expect(element.scrollTop).toBe(700)
+  expect(onReading).toHaveBeenLastCalledWith(true)
+  unmount()
+  vi.unstubAllGlobals()
+})

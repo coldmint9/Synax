@@ -125,7 +125,7 @@ export const planExecuteTool: RegisteredTool = {
   id: "plan.execute",
   label: "Execute saved plan",
   description:
-    "Start executing the current deferred plan in goal mode. Call only when the user explicitly instructs execution in the current turn instead of using the one-time execute shortcut. Must be the only call in a step.",
+    "Start executing the current deferred plan. Planning returns to chat execution; only an explicitly chosen goal session remains in goal mode. Call only when the user explicitly instructs execution in the current turn instead of using the one-time execute shortcut. Must be the only call in a step.",
   category: "task",
   internalGate: "none",
   mutability: "task",
@@ -148,7 +148,7 @@ export const planExecuteTool: RegisteredTool = {
     });
     return {
       result: plan,
-      displaySummary: `Started plan revision ${plan.revision} in goal mode.`,
+      displaySummary: `Started plan revision ${plan.revision}.`,
       artifacts: [{
         kind: "decision",
         title: "Plan execution started",

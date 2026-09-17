@@ -7,8 +7,8 @@ import { DiffViewer } from './DiffViewer'
 import { SubagentReadonlyView } from './SubagentReadonlyView'
 
 function ActiveTabContent({ tab, sessionId }: { tab: WorkspaceTab; sessionId: string }) {
-  if (tab.kind === 'file' && tab.path) return <CodeViewer sessionId={sessionId} path={tab.path} />
-  if (tab.kind === 'diff' && tab.path) return <DiffViewer sessionId={sessionId} path={tab.path} />
+  if (tab.kind === 'file' && tab.path) return <CodeViewer sessionId={sessionId} path={tab.path} rootId={tab.rootId} />
+  if (tab.kind === 'diff' && tab.path) return <DiffViewer sessionId={sessionId} path={tab.path} rootId={tab.rootId} />
   if (tab.kind === 'subagent' && tab.sessionId) return <SubagentReadonlyView sessionId={tab.sessionId} />
   return null
 }
