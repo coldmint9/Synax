@@ -51,3 +51,14 @@ export function projectSessionState(session: AgentSession): AgentSession {
   }
   return normalized;
 }
+
+/**
+ * Wire projection for session list rows. The system-prompt preview is a debug
+ * artifact written per step (tens of KB per row); it dominated list payloads
+ * and has no list consumer, so it never leaves the server in list responses.
+ */
+export function projectSessionSummary(session: AgentSession): AgentSession {
+  if (!session.sessionMetadata || !('latestSystemPrompt' in session.sessionMetadata)) return session;
+  const { latestSystemPrompt: _omitted, ...sessionMetadata } = session.sessionMetadata;
+  return { ...session, sessionMetadata };
+}

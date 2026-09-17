@@ -5,7 +5,8 @@ import { ThinkingTrace } from './ThinkingTrace'
 import type { TurnContentBlock } from './buildInterleavedTurns'
 import { toolBlocksToBatches } from './toolCallUtils'
 import { ThinkingBlock } from './ThinkingBlock'
-import { activityPreview, latestActivityPreview } from './activityText'
+import { ThinkingIndicator } from './ThinkingIndicator'
+import { latestActivityPreview } from './activityText'
 import { ToolCallBatchSummaryLine } from './ToolCallBatchSummaryLine'
 
 interface Props {
@@ -55,6 +56,7 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
         variant="coding"
         icon={calls.length ? <Wrench size={16} aria-hidden="true" /> : undefined}
         maxHeight={maxHeight}
+        footer={isStreaming ? <ThinkingIndicator /> : undefined}
       >
         <div className="bui-tool-list">
           {toolBlocks.map((block, index) => block.type === 'thinking'

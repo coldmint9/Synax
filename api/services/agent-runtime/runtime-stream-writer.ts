@@ -4,6 +4,7 @@ import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { runtimeTransaction } from './runtime-transaction.js';
 import type { AgentRunStreamChunk } from './contracts.js';
 import { runtimeJournal } from './runtime-journal.js';
+import { invalidateSessionEnvironment } from './session-environment.js';
 
 /** Shared by background runs and embedded hosts; it never moves a host or takes ownership of its tools. */
 export class RuntimeStreamWriter {
@@ -33,6 +34,11 @@ export class RuntimeStreamWriter {
       commit.push(chunk);
     }
     this.commit(commit);
+    // A completed write-class tool call invalidates the cached workspace
+    // snapshot so the next environment poll reflects the edit immediately.
+    if (chunk.type === 'tool_result' && chunk.toolCall && (chunk.toolCall as { mutability?: string }).mutability === 'write') {
+      invalidateSessionEnvironment(this.sessionId);
+    }
   }
 
   /** Move the buffered delta into the pending burst, clearing its pending timer. */

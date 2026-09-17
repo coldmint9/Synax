@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { agentRuntimeStore } from "./session-store.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
+import { patchFilePaths } from "./tools/patch-format.js";
 import { AgentNotFoundError, AgentValidationError } from "./runtime-errors.js";
 import type { AgentSessionStatus } from "./contracts.js";
 
@@ -178,7 +179,12 @@ function readInputFiles(sessionId: string): string[] {
 }
 
 /** Tools whose execution means "this session wrote to that path". */
-const AGENT_WRITE_TOOL_IDS = new Set(["edit", "file.write", "file.delete"]);
+const AGENT_WRITE_TOOL_IDS = new Set([
+  "edit",
+  "file.write",
+  "file.delete",
+  "file.patch",
+]);
 
 function readAgentEditedPaths(sessionId: string): Set<string> {
   const paths = new Set<string>();
@@ -186,6 +192,16 @@ function readAgentEditedPaths(sessionId: string): Set<string> {
     if (!AGENT_WRITE_TOOL_IDS.has(call.toolId)) continue;
     const input = call.inputRef;
     if (!input || typeof input !== "object") continue;
+    if (call.toolId === "file.patch") {
+      for (const path of patchFilePaths((input as { patch?: unknown }).patch)) {
+        try {
+          paths.add(assertRelativePath(path));
+        } catch {
+          // Ignore malformed/blocked historical paths.
+        }
+      }
+      continue;
+    }
     const candidate = (input as { path?: unknown }).path;
     if (typeof candidate !== "string" || !candidate.trim()) continue;
     try {

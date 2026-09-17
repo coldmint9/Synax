@@ -58,7 +58,9 @@ vi.mock('@heroui/react', () => {
     }, Prefix: Passthrough, Suffix: Passthrough,
   })
   const dialog = (role: string) => ({
-    Backdrop: ({ children, isOpen = true }: any) => isOpen ? <>{children}</> : null,
+    Backdrop: ({ children, isOpen = true, isDismissable = true }: any) => isOpen
+      ? <div data-dismissable={String(isDismissable)}>{children}</div>
+      : null,
     Container: Passthrough, Dialog: ({ children }: any) => <div role={role}>{children}</div>,
     Header: Passthrough, Body: Passthrough, Footer: Passthrough,
     Heading: ({ children }: any) => <h2>{children}</h2>, Icon: () => null, CloseTrigger: () => null,
@@ -132,6 +134,7 @@ const mocks = vi.hoisted(() => ({
   reload: vi.fn(),
   updateGlobalConfig: vi.fn(),
   state: {
+    loading: false,
     globalConfig: null as GlobalConfig | null,
     providers: [] as ProviderDef[],
   },
@@ -232,6 +235,7 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     mocks.reload.mockResolvedValue(undefined)
     mocks.updateGlobalConfig.mockResolvedValue(undefined)
     mocks.state.globalConfig = createGlobalConfig()
+    mocks.state.loading = false
     mocks.state.providers = mocks.state.globalConfig.providers
 
     const configModule = await import('../../../lib/api/config.ts')
@@ -246,7 +250,7 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
       effectiveConfig: null,
       providers: mocks.state.providers,
       llmProviders: mocks.state.providers,
-      loading: false,
+      loading: mocks.state.loading,
       reload: mocks.reload,
       updateGlobalConfig: mocks.updateGlobalConfig,
       updateProjectConfig: vi.fn(),
@@ -304,34 +308,49 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     expect(screen.getByText('claude-3-5-sonnet-latest')).toBeInTheDocument()
   })
 
-  it('opens the custom configuration path and saves through global config', async () => {
+  it('automatically saves a custom model and keeps the dialog open for further edits', async () => {
     const user = userEvent.setup()
     await renderPage()
 
     await user.click(screen.getByRole('button', { name: /添加/ }))
     await user.click(screen.getByRole('button', { name: /^自定义/ }))
 
+    expect(screen.getByRole('dialog').closest('[data-dismissable]')).toHaveAttribute('data-dismissable', 'false')
+
     const baseUrlInput = screen.getByPlaceholderText('https://api.example.com')
     const modelInput = within(screen.getByRole('dialog')).getByText('模型', { selector: 'span' }).parentElement!.querySelector('input')!
 
     await user.clear(baseUrlInput)
     await user.type(baseUrlInput, 'https://llm.internal/v1')
-    await user.clear(modelInput)
+    expect(modelInput).toHaveValue('')
     await user.type(modelInput, 'local-model')
 
     const apiKeyInput = screen.getByPlaceholderText('输入 API Key')
     await user.type(apiKeyInput, 'sk-local')
-    await user.click(screen.getByRole('button', { name: /保存 Provider/ }))
-
     await waitFor(() => expect(mocks.validateAiApi).toHaveBeenCalled())
     await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled())
 
     const payload = mocks.updateGlobalConfig.mock.calls[0][0]
     const customProvider = payload.providers.find((p: ProviderDef) => p.label.startsWith('Custom'))
-    expect(customProvider).toEqual(expect.objectContaining({ kind: 'api' }))
+    expect(customProvider).toEqual(expect.objectContaining({
+      kind: 'api',
+      models: [expect.objectContaining({ id: 'local-model', isDefault: true })],
+    }))
     expect(payload.providerConnections[customProvider.id]).toEqual(
-      expect.objectContaining({ baseUrl: 'https://llm.internal/v1', apiKey: 'sk-local' }),
+      expect.objectContaining({
+        baseUrl: 'https://llm.internal/v1',
+        apiKey: 'sk-local',
+        extra: expect.objectContaining({ model: 'local-model' }),
+      }),
     )
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await user.clear(modelInput)
+    await user.type(modelInput, 'another-model')
+    await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalledTimes(2))
+    expect(mocks.updateGlobalConfig.mock.calls[1][0].providerConnections[customProvider.id].extra.model).toBe('another-model')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '关闭', exact: true }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
   it('discovers models as candidates and only configures the selected ones', async () => {
@@ -359,8 +378,6 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     await user.click(screen.getByRole('button', { name: 'gpt-4o', exact: true }))
     expect(screen.getByRole('button', { name: 'gpt-4o', exact: true })).toHaveAttribute('aria-pressed', 'true')
     await user.click(screen.getByRole('button', { name: '完成' }))
-    await user.click(screen.getByRole('button', { name: /保存 Provider/ }))
-
     await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled())
 
     const payload = mocks.updateGlobalConfig.mock.calls[0][0]
@@ -397,7 +414,6 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
     expect(reasonerWindow).toBeChecked()
     expect(chatWindow).not.toBeChecked()
 
-    await user.click(screen.getByRole('button', { name: /保存 Provider/ }))
     await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled())
 
     const payload = mocks.updateGlobalConfig.mock.calls[0][0]
@@ -406,6 +422,44 @@ describe('GlobalSettingsPage LLM provider redesign', () => {
       expect.objectContaining({ contextLimit: 1_000_000 }),
     )
     expect(provider.models.find((m: { id: string }) => m.id === 'deepseek-chat')?.contextLimit).toBeUndefined()
+  })
+
+  it('preserves an incomplete draft during a visibility-triggered background reload', async () => {
+    const user = userEvent.setup()
+    const view = await renderPage()
+    await user.click(screen.getByRole('button', { name: /添加/ }))
+    await user.click(screen.getByRole('button', { name: /^自定义/ }))
+    await user.type(screen.getByPlaceholderText('https://api.example.com'), 'https://unfinished.example')
+    fireEvent(document, new Event('visibilitychange'))
+    expect(mocks.reload).toHaveBeenCalled()
+
+    const { default: Page } = await import('./GlobalSettingsPage')
+    mocks.state.loading = true
+    view.rerender(<MemoryRouter><Page /></MemoryRouter>)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('https://api.example.com')).toHaveValue('https://unfinished.example')
+    mocks.state.loading = false
+    mocks.state.globalConfig = createGlobalConfig()
+    view.rerender(<MemoryRouter><Page /></MemoryRouter>)
+    expect(screen.getByPlaceholderText('https://api.example.com')).toHaveValue('https://unfinished.example')
+    expect(mocks.updateGlobalConfig).not.toHaveBeenCalled()
+  })
+
+  it('flushes edits on explicit close and preserves the dialog on save failure for retry', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    await user.click(screen.getByRole('button', { name: /添加/ }))
+    await user.click(screen.getByRole('button', { name: /^OpenAI$/ }))
+    const input = screen.getByPlaceholderText('输入模型 ID')
+    fireEvent.change(input, { target: { value: 'changed-model' } })
+    mocks.updateGlobalConfig.mockRejectedValueOnce(new Error('写入失败'))
+    await user.click(screen.getByRole('button', { name: '关闭', exact: true }))
+    expect(await screen.findByText('写入失败', { selector: 'div' })).toBeInTheDocument()
+    expect(input).toHaveValue('changed-model')
+    await user.click(screen.getByRole('button', { name: '重试保存' }))
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('status')).toHaveTextContent('已保存'))
+    expect(mocks.updateGlobalConfig).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   it('removes a configured provider card', async () => {

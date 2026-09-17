@@ -2,7 +2,10 @@ import { useEffect } from 'react'
 import { useApiConnectivityStore } from '../../../lib/apiConnectivity'
 import { useAgentSessionStore } from './agentSessionStore'
 
-const ACTIVE_SESSION_POLL_MS = 4_000
+// Low-frequency safety net only: live stream events drive the fast path
+// (coalesced in agentSessionStore), so this poll just catches anything the
+// stream missed (missed events, server-side drift).
+export const ACTIVE_SESSION_POLL_MS = 30_000
 const pollers = new Map<string, { users: number; stop: () => void }>()
 
 function isDocumentHidden(): boolean {

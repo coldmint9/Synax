@@ -54,7 +54,8 @@ export function SessionBackgroundProcesses({
       }
     };
     void reload();
-    const timer = window.setInterval(() => void reload(), 3000);
+    // session_process_changed SSE drives the fast path; this is a slow drift net.
+    const timer = window.setInterval(() => void reload(), 30_000);
     const unsubscribe = subscribe({
       events: {
         session_process_changed: (event) => {

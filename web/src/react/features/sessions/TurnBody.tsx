@@ -7,7 +7,7 @@ import { SubSessionCard } from './SubSessionCard'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { buildTurnRenderSegments } from './toolCallUtils'
 
-function renderTurnBlocks(blocks: TurnContentBlock[], onExpandChild?: (sessionId: string) => void, rowKeyPrefix = '', isStreaming = false) {
+function renderTurnBlocks(blocks: TurnContentBlock[], onExpandChild?: (sessionId: string) => void, rowKeyPrefix = '', isStreaming = false, isWorking = isStreaming) {
   const segments = buildTurnRenderSegments(blocks)
   const toolBlocks = blocks.filter(block => block.type === 'thinking' || block.type === 'tool_call' || block.type === 'tool_call_group')
   const answers = segments.filter(segment => segment.type !== 'tool_round' && (toolBlocks.length === 0 || segment.type !== 'thinking'))
@@ -19,7 +19,7 @@ function renderTurnBlocks(blocks: TurnContentBlock[], onExpandChild?: (sessionId
     if (segment.type === 'context_compacted') return <div key={i} className="flex items-center gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-1.5 text-[11px] text-warning"><Zap size={12} /><span>上下文压缩: {segment.originalTokens.toLocaleString()} → {segment.compressedTokens.toLocaleString()} tokens ({segment.messageCount} 条消息被摘要)</span></div>
     return null
   }
-  return <><div className="session-tool-region">{toolBlocks.length > 0 && <ToolCallRoundPanel toolBlocks={toolBlocks} maxHeight="420px" isStreaming={isStreaming} />}</div><div className="session-answer-region">{answers.map(render)}</div></>
+  return <><div className="session-tool-region">{toolBlocks.length > 0 && <ToolCallRoundPanel toolBlocks={toolBlocks} maxHeight="420px" isStreaming={isWorking} />}</div><div className="session-answer-region">{answers.map(render)}</div></>
 }
 /** One agent turn. Turn duration separators are intentionally omitted from the transcript. */
 export function TurnBody({
@@ -27,17 +27,19 @@ export function TurnBody({
   entryId,
   onExpandChild,
   isStreaming = false,
+  isWorking = isStreaming,
 }: {
   turn: InterleavedTurn
   entryId: string
   onExpandChild?: (sessionId: string) => void
   isStreaming?: boolean
+  isWorking?: boolean
 }) {
   return (
     <div className="session-turn-content flex min-w-0 flex-1 flex-col gap-1">
       {isStreaming && turn.blocks.length === 0
         ? <ThinkingIndicator />
-        : renderTurnBlocks(turn.blocks, onExpandChild, entryId, isStreaming)}
+        : renderTurnBlocks(turn.blocks, onExpandChild, entryId, isStreaming, isWorking)}
     </div>
   )
 }

@@ -1,6 +1,8 @@
-import { MediaParts } from '../media/MediaParts'
-import { ListStart, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ListStart, Paperclip, X } from 'lucide-react'
 import type { QueuedInput } from '../../../lib/api/agentRuntime'
+import type { RuntimeContentPart } from '../../../lib/api/runtimeMedia'
+import { runtimeMedia } from '../../../lib/api/runtimeMedia'
 import { useLocale } from '../../../hooks/useLocale'
 
 interface Props {
@@ -13,6 +15,66 @@ function previewMessage(message: string, max = 56): string {
   const trimmed = message.trim().replace(/\s+/g, ' ')
   if (trimmed.length <= max) return trimmed
   return `${trimmed.slice(0, max - 1)}…`
+}
+
+const MAX_VISIBLE_THUMBS = 3
+
+function QueueMediaThumb({ assetId }: { assetId: string }) {
+  const [url, setUrl] = useState<string>()
+  useEffect(() => {
+    const controller = new AbortController()
+    let objectUrl: string | undefined
+    void runtimeMedia
+      .blob(assetId, controller.signal)
+      .then((blob) => {
+        if (controller.signal.aborted) return
+        objectUrl = URL.createObjectURL(blob)
+        setUrl(objectUrl)
+      })
+      .catch(() => {})
+    return () => {
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [assetId])
+  if (!url)
+    return (
+      <span className="queue-media-thumb inline-flex size-5 shrink-0 items-center justify-center rounded bg-muted/70 text-muted-foreground">
+        <Paperclip size={10} aria-hidden />
+      </span>
+    )
+  return (
+    <img
+      src={url}
+      alt=""
+      className="queue-media-thumb size-5 shrink-0 rounded object-cover ring-1 ring-border/50"
+    />
+  )
+}
+
+function QueueMediaIndicators({ parts }: { parts?: RuntimeContentPart[] }) {
+  const media = parts?.filter((p) => p.type !== 'text')
+  if (!media?.length) return null
+  const images = media.filter((p) => p.type === 'image')
+  const files = media.length - images.length
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {images.slice(0, MAX_VISIBLE_THUMBS).map((p, i) => (
+        <QueueMediaThumb key={`${p.assetId}-${i}`} assetId={p.assetId} />
+      ))}
+      {images.length > MAX_VISIBLE_THUMBS && (
+        <span className="text-[10px] tabular-nums text-muted-foreground">
+          +{images.length - MAX_VISIBLE_THUMBS}
+        </span>
+      )}
+      {files > 0 && (
+        <span className="inline-flex h-5 items-center gap-0.5 rounded-full bg-muted/70 px-1.5 text-[10px] tabular-nums text-muted-foreground">
+          <Paperclip size={10} aria-hidden />
+          {files}
+        </span>
+      )}
+    </span>
+  )
 }
 
 export function InputQueueStrip({ items, onRemove, onForce }: Props) {
@@ -32,8 +94,8 @@ export function InputQueueStrip({ items, onRemove, onForce }: Props) {
           >
             <span className="min-w-0 flex-1 truncate" title={item.message}>
               {previewMessage(item.message)}
-              <MediaParts parts={item.contentParts}/>
             </span>
+            <QueueMediaIndicators parts={item.contentParts} />
             <button
               type="button"
               aria-label={t('inputQueueForce')}

@@ -191,7 +191,6 @@ button.bui-activity-trigger:focus-visible,
    block sitting between the prompt and the answer, rather than more noise. */
 .bui-activity[data-variant="work-log"] {
   margin: 2px 0;
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
   border-radius: 10px;
   padding: 1px 4px;
   background: linear-gradient(
@@ -386,7 +385,46 @@ button.bui-thinking-trigger:hover { background: var(--bui-hover); }
 .bui-thinking-body .bui-tool-trigger { min-height: 28px; padding: 2px 6px; }
 @keyframes bui-thinking-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @keyframes bui-thinking-fade { from { opacity: 0; } to { opacity: 1; } }
+/* One shared gradient crosses the entire tool-round heading from left to right,
+   including its call count. Hover must not replace the text's background. */
+.bui-thinking[data-live="true"][data-variant="coding"] > .bui-thinking-trigger {
+  --bui-sweep-base: color-mix(in srgb, var(--bui-muted) 75%, var(--background));
+  --bui-sweep-peak: #111;
+  /* A solid high-contrast core and short shoulders make the moving band
+     visible even on short headings, rather than a subtle grey fade. */
+  background-image: linear-gradient(90deg,
+    var(--bui-sweep-base) 40%,
+    var(--bui-sweep-peak) 47%,
+    var(--bui-sweep-peak) 53%,
+    var(--bui-sweep-base) 60%);
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: bui-tool-heading-sweep 1.6s linear infinite;
+}
+.dark .bui-thinking[data-live="true"][data-variant="coding"] > .bui-thinking-trigger {
+  --bui-sweep-peak: #fff;
+}
+.bui-thinking[data-live="true"][data-variant="coding"] > .bui-thinking-trigger > .bui-thinking-label {
+  font-weight: 600;
+}
+.bui-thinking[data-live="true"][data-variant="coding"] > .bui-thinking-trigger > .bui-thinking-label,
+.bui-thinking[data-live="true"][data-variant="coding"] > .bui-thinking-trigger > .bui-thinking-meta {
+  background: none;
+  color: inherit;
+  animation: none;
+}
+@keyframes bui-tool-heading-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
 @media (prefers-reduced-motion: reduce) {
+  .bui-thinking[data-live="true"][data-variant="coding"] > .bui-thinking-trigger {
+    animation: none; color: var(--bui-muted); background: none;
+  }
+  .bui-thinking-trace [data-thinking-dot] { animation: none; }
   .bui-thinking[data-live] .bui-thinking-label,
   .bui-thinking:not([data-live="true"]) .bui-thinking-label { animation: none; color: var(--bui-muted); background: none; }
   .bui-thinking-trigger, .bui-thinking-reveal, .bui-thinking-chevron { transition: none; }

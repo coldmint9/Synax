@@ -5,7 +5,6 @@ import { useShellStore, type ProjectSummary } from '../state/shellStore'
 import { useWikiStore, type WikiViewMode } from '../state/wikiStore'
 import { useLocale } from '../../hooks/useLocale'
 import { wikiApi } from '../../lib/api/wiki'
-import { NotificationBell } from '../components/notifications/NotificationBell'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
 import {
   useProjectSessionBadges,
@@ -502,7 +501,6 @@ function WorkspaceGlobalControls({
       />
       <div className="wh-divider" />
       <div className="wh-actions">
-        <NotificationBell />
         <button
           type="button"
           className="wh-btn"
@@ -629,7 +627,6 @@ export function WorkbenchHeader({
             <div className="wh-divider" />
 
             <div className="wh-actions">
-              <NotificationBell />
               <button type="button" className="wh-btn" title={t('appSettings')} onClick={() => onPanelToggle('settings')}>
                 <Settings2 size={15} />
               </button>

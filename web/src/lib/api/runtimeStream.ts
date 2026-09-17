@@ -25,6 +25,16 @@ export interface RuntimeSnapshot {
   completedStepIds: string[]
 }
 
+/** Chunks the store consumes locally by upserting the payload they carry; they must not trigger a full detail refresh. */
+const LOCAL_CHUNK_TYPES = new Set([
+  'message_delta',
+  'thought_delta',
+  'tool_call',
+  'tool_result',
+  'step_started',
+  'retry_status',
+])
+
 /** Cursors order transport; authoritative state in the same record prevents stale chunks reopening old Runs. */
 export class RuntimeStreamProjector {
   private cursor = 0
@@ -47,9 +57,12 @@ export class RuntimeStreamProjector {
     const key = this.key(value.state)
     const terminal = !['running', 'queued', 'waiting_permission', 'waiting_input'].includes(value.state.status)
     const reset = terminal && this.stepId !== null
-    const refresh = !['message_delta', 'thought_delta'].includes(value.chunk.type)
+    // Status/run transitions still refresh (permissions, stats); payload-bearing
+    // chunks are applied locally and must not re-fetch the whole detail.
+    const stateChanged = key !== this.stateKey
+    const refresh = stateChanged || !LOCAL_CHUNK_TYPES.has(value.chunk.type)
     const output: SessionLiveEvent[] = []
-    if (key !== this.stateKey || refresh || reset) {
+    if (stateChanged || refresh || reset) {
       output.push({ type: 'runtime_state', sessionId: value.sessionId, patch: value.state, reset, refresh })
       this.stateKey = key
     }
@@ -66,7 +79,7 @@ export class RuntimeStreamProjector {
     if (chunk.type === 'step_started' && chunk.step) {
       if (this.completedSteps.has(chunk.step.id)) return []
       this.stepId = chunk.step.id
-      return [{ type: 'step_started', stepId: chunk.step.id, stepIndex: chunk.step.index }]
+      return [{ type: 'step_started', stepId: chunk.step.id, stepIndex: chunk.step.index, step: chunk.step }]
     }
     if (!chunk.stepId || chunk.stepId !== this.stepId) return []
     if (chunk.type === 'retry_status' && chunk.retry) {

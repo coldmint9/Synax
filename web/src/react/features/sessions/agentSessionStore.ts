@@ -346,6 +346,29 @@ function ensureLiveStream(sessionId: string): void {
   });
 }
 
+// --- Live-event refresh coalescing -----------------------------------------
+// Stream events arrive in bursts; each burst needs one trailing detail
+// refresh, not one per event. Polling stays as a low-frequency fallback.
+const LIVE_REFRESH_DEBOUNCE_MS = 1200;
+let liveDetailRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleLiveRefreshDetail(): void {
+  if (liveDetailRefreshTimer) return;
+  liveDetailRefreshTimer = setTimeout(() => {
+    liveDetailRefreshTimer = null;
+    void useAgentSessionStore.getState().refreshDetail();
+  }, LIVE_REFRESH_DEBOUNCE_MS);
+}
+
+function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
+  const index = items.findIndex((item) => item.id === next.id);
+  if (index === -1) return [...items, next];
+  if (items[index] === next) return items;
+  const replaced = [...items];
+  replaced[index] = next;
+  return replaced;
+}
+
 // --- Delta backpressure: drain buffered text at a controlled rate per frame ---
 let _textBuffer = "";
 let _thinkingBuffer = "";
@@ -1159,18 +1182,24 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .catch(() => {
                   /* todos are optional */
                 }),
-              agentRuntimeApi
-                .getSessionCapabilities(targetSessionId)
-                .then((capabilities) => {
-                  if (!isCurrent()) return;
-                  set({ sessionCapabilities: capabilities });
-                  patchSessionDetailCache(targetSessionId, {
-                    sessionCapabilities: capabilities,
-                  });
-                })
-                .catch(() => {
-                  /* capabilities are optional */
-                }),
+              // Capabilities change rarely (profile / permission tier); skip
+              // the refetch while a cached snapshot exists for this session.
+              ...(cachedEntry?.sessionCapabilities
+                ? []
+                : [
+                    agentRuntimeApi
+                      .getSessionCapabilities(targetSessionId)
+                      .then((capabilities) => {
+                        if (!isCurrent()) return;
+                        set({ sessionCapabilities: capabilities });
+                        patchSessionDetailCache(targetSessionId, {
+                          sessionCapabilities: capabilities,
+                        });
+                      })
+                      .catch(() => {
+                        /* capabilities are optional */
+                      }),
+                  ]),
               agentRuntimeApi
                 .listSessionSteps(targetSessionId)
                 .then((stepsRes) => {
@@ -1185,11 +1214,26 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 }),
             ];
 
+            // While a run streams, tool calls stay current through live
+            // upserts; refetch only on first load or once the run settles.
+            const polledStatus = get().sessions.find(
+              (session) => session.id === targetSessionId,
+            )?.status;
+            const sessionActive = [
+              "running",
+              "queued",
+              "waiting_permission",
+              "waiting_input",
+            ].includes(polledStatus ?? "");
+            const toolCallsSource =
+              sessionActive && cachedEntry?.cachedAt
+                ? Promise.resolve({ items: get().toolCalls })
+                : agentRuntimeApi.listToolCalls(targetSessionId);
             const transcriptTask = Promise.all([
               agentRuntimeApi.listRuns(targetSessionId),
               agentRuntimeApi.listEvents(targetSessionId, knownEventId),
               agentRuntimeApi.listMessages(targetSessionId),
-              agentRuntimeApi.listToolCalls(targetSessionId),
+              toolCallsSource,
               agentRuntimeApi.listPermissions(targetSessionId),
             ])
               .then(
@@ -1391,6 +1435,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         sessionMetadata: payload.session.sessionMetadata,
         updatedAt: payload.session.updatedAt,
       });
+      // Tier changes remount the tool set; drop the cached capability snapshot
+      // so the next refresh fetches it again.
+      patchSessionDetailCache(sessionId, { sessionCapabilities: null });
+      if (get().selectedSessionId === sessionId) set({ sessionCapabilities: null });
     },
 
     sendSessionMessage: async (sessionId, body) => {
@@ -1494,7 +1542,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               streamingCompletedSteps: [],
             });
           }
-          if (event.refresh) void get().refreshDetail();
+          if (event.refresh) scheduleLiveRefreshDetail();
           break;
         }
         case "step_started": {
@@ -1519,6 +1567,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             streamingLive: EMPTY_STREAMING_BUFFERS,
             streamingCompletedSteps: completedSteps,
           });
+          const streamedStep = event.step;
+          if (streamedStep) {
+            set((state) => ({ steps: upsertById(state.steps, streamedStep) }));
+          }
           break;
         }
         case "retry_status": {
@@ -1545,13 +1597,14 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         case "tool_call":
           set((s) => ({
             streamingLive: applyToolCall(s.streamingLive, event.toolCall),
+            toolCalls: upsertById(s.toolCalls, event.toolCall),
           }));
           break;
         case "tool_result":
           set((s) => ({
             streamingLive: applyToolResult(s.streamingLive, event.toolCall),
+            toolCalls: upsertById(s.toolCalls, event.toolCall),
           }));
-          void get().fetchSessionCapabilities();
           break;
       }
     },

@@ -1,5 +1,12 @@
 import { useMediaDraft } from "../../media/useMediaDraft";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { useLocale } from "../../../../hooks/useLocale";
 import { useConfig } from "../../settings/useConfig";
@@ -97,6 +104,32 @@ export function GoalPillDock({ projectId }: Props) {
   const [miniHovered, setMiniHovered] = useState(false);
   const dockOverlayRef = useRef(false);
   const hitRef = useRef<HTMLDivElement>(null);
+  const composeLayerRef = useRef<HTMLDivElement>(null);
+  const [composeHeight, setComposeHeight] = useState<number | null>(null);
+
+  // The shell morphs between the fixed pill height and the composer height, so
+  // `height: auto` cannot be used as a transition endpoint. Keep the composer
+  // mounted at all times and publish its natural height as a CSS variable; the
+  // layer is clamped to max-height: 0 while hidden, which leaves scrollHeight
+  // intact, and the composer child keeps its natural box so the observer still
+  // fires while the layer itself is collapsed.
+  useLayoutEffect(() => {
+    const layer = composeLayerRef.current;
+    if (!layer) return;
+    const measure = () => {
+      const height = layer.scrollHeight;
+      setComposeHeight((previous) => (previous === height ? previous : height));
+    };
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(measure);
+    observer?.observe(layer);
+    const composer = layer.firstElementChild;
+    if (composer) observer?.observe(composer);
+    return () => observer?.disconnect();
+  }, []);
 
   const morph = goalDockStateToMorph(goalDockState);
   const isBar = goalDockState === "idle";
@@ -322,6 +355,11 @@ export function GoalPillDock({ projectId }: Props) {
             className="goal-dock-morph flex flex-col items-center"
             data-morph={morph}
             data-awaiting-permission={hasPendingApproval ? "true" : undefined}
+            style={
+              composeHeight
+                ? ({ "--goal-compose-h": `${composeHeight}px` } as CSSProperties)
+                : undefined
+            }
           >
             {showContextDialog && (
               <div className="goal-dock-dialog-slot mb-2.5 w-full">
@@ -372,34 +410,45 @@ export function GoalPillDock({ projectId }: Props) {
                     : undefined
                 }
               >
-                {isPrompt && (
-                  <GoalPromptPill
-                    label={t("goalSoulPrompt")}
-                    hovered={miniHovered}
-                    onClick={() => setGoalDockState("input")}
-                    onMouseEnter={() => setMiniHovered(true)}
-                    onMouseLeave={() => setMiniHovered(false)}
-                  />
-                )}
+                <div
+                  className="goal-dock-mini-layer"
+                  aria-hidden={!isPrompt && !isMini ? true : undefined}
+                  inert={!isPrompt && !isMini}
+                >
+                  {isPrompt && (
+                    <GoalPromptPill
+                      label={t("goalSoulPrompt")}
+                      hovered={miniHovered}
+                      onClick={() => setGoalDockState("input")}
+                      onMouseEnter={() => setMiniHovered(true)}
+                      onMouseLeave={() => setMiniHovered(false)}
+                    />
+                  )}
 
-                {isMini && (
-                  <GoalMiniPill
-                    status={goalSession.status}
-                    toolCalls={goalSession.toolCalls}
-                    thinking={goalSession.streamingThinking}
-                    sessionTitle={sessionDisplayTitle}
-                    permissions={goalSession.permissions}
-                    onReplyPermission={handleReplyPermission}
-                    hovered={miniHovered}
-                    onClick={() => setGoalDockState("expanded")}
-                    onMouseEnter={() => setMiniHovered(true)}
-                    onMouseLeave={() => setMiniHovered(false)}
-                  />
-                )}
+                  {isMini && (
+                    <GoalMiniPill
+                      status={goalSession.status}
+                      toolCalls={goalSession.toolCalls}
+                      thinking={goalSession.streamingThinking}
+                      sessionTitle={sessionDisplayTitle}
+                      permissions={goalSession.permissions}
+                      onReplyPermission={handleReplyPermission}
+                      hovered={miniHovered}
+                      onClick={() => setGoalDockState("expanded")}
+                      onMouseEnter={() => setMiniHovered(true)}
+                      onMouseLeave={() => setMiniHovered(false)}
+                    />
+                  )}
+                </div>
 
-                {(isCompose || isChat) && (
-                  <div className="goal-dock-shell-content">{composer}</div>
-                )}
+                <div
+                  ref={composeLayerRef}
+                  className="goal-dock-shell-content"
+                  aria-hidden={!(isCompose || isChat) ? true : undefined}
+                  inert={!(isCompose || isChat)}
+                >
+                  {composer}
+                </div>
               </div>
             </div>
           </div>

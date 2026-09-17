@@ -21,7 +21,7 @@ function renderLiveSegments(blocks: TurnContentBlock[], isStreaming: boolean, ro
     if (segment.type === 'text') return <StreamingTextBlock key={i} text={segment.content} isStreaming={live} markdown={segment.markdown && !live} />
     return null
   }
-  return <><div className="session-tool-region">{toolBlocks.length > 0 && <ToolCallRoundPanel toolBlocks={toolBlocks} maxHeight="none" />}</div><div className="session-answer-region">{answers.map(render)}</div></>
+  return <><div className="session-tool-region">{toolBlocks.length > 0 && <ToolCallRoundPanel toolBlocks={toolBlocks} maxHeight="none" isStreaming={isStreaming} />}</div><div className="session-answer-region">{answers.map(render)}</div></>
 }
 const CompletedStepView = memo(function CompletedStepView({
   blocks,

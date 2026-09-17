@@ -90,6 +90,7 @@ describe('SessionFileChangeIsland', () => {
 
     const row = screen.getByRole('menuitem')
     expect(screen.getByRole('menu').parentElement).toBe(document.body)
+    expect(row.querySelector('[data-file-type-icon="app.ts"]')).not.toBeNull()
     expect(row.textContent).toContain('src/app.ts')
     expect(row.textContent).toContain('+6')
 

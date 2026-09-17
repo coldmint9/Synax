@@ -614,6 +614,30 @@ export class AgentRuntimeStore {
     });
   }
 
+  /** Minimal projection for badge counts: three columns per row, no metadata. */
+  listSessionBadges(
+    projectIds: string[],
+  ): Array<{ id: string; projectId: string; status: AgentSession["status"]; updatedAt: string }> {
+    if (projectIds.length === 0) return [];
+    const placeholders = projectIds.map(() => "?").join(",");
+    const rows = getRawSqlite()
+      .prepare(
+        `SELECT id, project_id, status, updated_at FROM agent_runtime_sessions WHERE project_id IN (${placeholders})`,
+      )
+      .all(...projectIds) as Array<{
+      id: string;
+      project_id: string;
+      status: string;
+      updated_at: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      projectId: row.project_id,
+      status: normalizeAgentSessionStatus(row.status),
+      updatedAt: row.updated_at,
+    }));
+  }
+
   // Filters and limit are pushed into SQL; only mapSession() passthrough columns
   // (project_id, node_id, status) may be filtered here, and truthiness must match
   // the previous JS guards. Ordering stays updated_at DESC.

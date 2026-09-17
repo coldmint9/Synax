@@ -177,9 +177,11 @@ export function applyProtocolDefaults(draft: ApiProviderDraft, next: ApiFormat):
   const baseUrl = !draft.baseUrl.trim() || draft.baseUrl.trim() === defaultBaseUrl(draft.format)
     ? defaultBaseUrl(next)
     : draft.baseUrl
-  const model = !draft.model.trim() || draft.model.trim() === defaultModel(draft.format)
-    ? defaultModel(next)
-    : draft.model
+  const model = draft.custom
+    ? draft.model
+    : !draft.model.trim() || draft.model.trim() === defaultModel(draft.format)
+      ? defaultModel(next)
+      : draft.model
   return { ...draft, format: next, baseUrl, model }
 }
 
@@ -286,7 +288,8 @@ export function resolveModel(provider: ProviderDef, connection: ProviderConnecti
   const presetModel = PRESET_BY_PROVIDER_ID.get(provider.id)?.defaultModel
   if (presetModel) return presetModel
   const defaultProviderModel = provider.models.find(m => m.isDefault)?.id ?? provider.models[0]?.id
-  return defaultProviderModel ?? defaultModel(format)
+  if (defaultProviderModel) return defaultProviderModel
+  return isBuiltinApiProviderId(provider.id) ? defaultModel(format) : ''
 }
 
 export function fallbackBuiltinApiProvider(providerId: 'openai' | 'anthropic'): ProviderDef {
@@ -386,9 +389,9 @@ export function createCustomDraft(existing: ApiProviderDraft[]): ApiProviderDraf
     baseUrl: '',
     apiKey: '',
     apiKeyMasked: '',
-    model: defaultModel('openai'),
-    models: [defaultModel('openai')],
-    modelOptions: [defaultModel('openai')],
+    model: '',
+    models: [],
+    modelOptions: [],
     modelMeta: {},
     reasoningEfforts: [],
     custom: true,

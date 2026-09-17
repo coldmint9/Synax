@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertDialog, Button, Dropdown, Label } from '@heroui/react'
+import { AlertDialog, Button } from '@heroui/react'
 import { KeyRound, Plus } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { SaveIndicator } from './SaveIndicator'
@@ -8,9 +8,7 @@ import { LlmProviderModal } from './LlmProviderModal'
 import { useLocale } from '../../../../hooks/useLocale'
 import {
   type ApiProviderDraft,
-  API_PROVIDER_PRESETS,
   buildApiDrafts,
-  createDraftFromPreset,
   createCustomDraft,
   draftToProviderDef,
   draftToConnection,
@@ -210,8 +208,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       providerIdsToPersist.add(draft.id)
       await saveProviderPatch({ drafts: next, defaultId, providerIdsToPersist })
       setDrafts(next)
-      setEditingDraft(null)
-      // Re-read authoritative config so cards and the next edit dialog show saved model metadata.
+      // Refresh cards without replacing the modal's in-progress draft.
       await onReload()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : t('llmProviderSaveFailed'))
@@ -240,12 +237,6 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
     return result.models
   }
 
-  const handleAddPreset = (preset: typeof API_PROVIDER_PRESETS[number]) => {
-    const existing = drafts.find(d => d.id === preset.providerId)
-    if (existing) { setEditingDraft(existing); return }
-    setEditingDraft(createDraftFromPreset(preset))
-  }
-
   const handleAddCustom = () => {
     setEditingDraft(createCustomDraft(drafts))
   }
@@ -257,33 +248,10 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       trailing={
         <div className="flex items-center gap-2">
           <SaveIndicator saving={Boolean(savingId)} saved={saved} error={saveError} />
-          <Dropdown>
-            <Button size="sm" variant="secondary" className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm">
-              <Plus size={12} />
-              {t('llmProviderAdd')}
-            </Button>
-            <Dropdown.Popover>
-              <Dropdown.Menu
-                aria-label="Add provider"
-                onAction={(key) => {
-                  if (key === '__custom__') handleAddCustom()
-                  else {
-                    const preset = API_PROVIDER_PRESETS.find(p => p.providerId === key)
-                    if (preset) handleAddPreset(preset)
-                  }
-                }}
-              >
-                {API_PROVIDER_PRESETS.map(preset => (
-                  <Dropdown.Item key={preset.providerId} id={preset.providerId} textValue={preset.label}>
-                    {preset.label}
-                  </Dropdown.Item>
-                ))}
-                <Dropdown.Item key="__custom__" id="__custom__" textValue={t('llmProviderCustom')}>
-                  {t('llmProviderCustom')}
-                </Dropdown.Item>
-              </Dropdown.Menu>
-            </Dropdown.Popover>
-          </Dropdown>
+          <Button size="sm" variant="secondary" className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm" onPress={handleAddCustom}>
+            <Plus size={12} />
+            {t('llmProviderAdd')}
+          </Button>
         </div>
       }
     >
@@ -310,6 +278,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       {editingDraft && (
         <LlmProviderModal
           draft={editingDraft}
+          isNew={!hasStoredApiKey(config, editingDraft.id)}
           onClose={() => setEditingDraft(null)}
           onSave={handleModalSave}
           onValidate={handleModalValidate}

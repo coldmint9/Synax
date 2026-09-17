@@ -11,10 +11,15 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronRight,
   FileCode2,
   FileDiff,
+  Folder,
+  FolderOpen,
+  FolderTree,
   GitBranch,
   GitCommit,
+  List,
   RefreshCw,
 } from "lucide-react";
 import type {
@@ -26,6 +31,7 @@ import type {
 import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useLocale } from "../../../hooks/useLocale";
 import type { I18nKey } from "../../../lib/i18n";
+import { FileTypeIcon } from "./FileTypeIcon";
 import {
   openWorkspaceDiff,
   openWorkspaceFile,
@@ -35,20 +41,58 @@ import { SessionBackgroundProcesses } from "./SessionBackgroundProcesses";
 import { SessionCommitDialog } from "./SessionCommitDialog";
 import { useSessionEnvironment } from "./useSessionEnvironment";
 
-/** Split a workspace path so the panel can keep the file name readable while
- *  the directory prefix truncates first. */
-function splitPath(filePath: string): { dir: string; name: string } {
-  const parts = filePath.split(/[\\/]/);
-  const name = parts.pop() || filePath;
-  return { dir: shortenDir(parts.join("/")), name };
+function fileName(filePath: string): string {
+  return filePath.split(/[\\/]/).pop() || filePath;
 }
 
-/** Keep the two deepest segments: the tail says more than the repo prefix. */
-function shortenDir(dir: string): string {
-  const segments = dir.split("/").filter(Boolean);
-  if (segments.length === 0) return "";
-  const tail = segments.slice(-2).join("/");
-  return segments.length > 2 ? `…/${tail}/` : `${tail}/`;
+interface ChangedFileDirectory {
+  name: string;
+  path: string;
+  directories: ChangedFileDirectory[];
+  files: SessionEnvironmentFile[];
+}
+
+/** Build a display-only directory tree without changing the environment API. */
+function buildChangedFileTree(files: SessionEnvironmentFile[]): ChangedFileDirectory {
+  const root: ChangedFileDirectory = {
+    name: "",
+    path: "",
+    directories: [],
+    files: [],
+  };
+  const directories = new Map<string, ChangedFileDirectory>([["", root]]);
+
+  for (const file of files) {
+    const segments = file.path.split(/[\\/]/).filter(Boolean);
+    segments.pop();
+    let parent = root;
+    let currentPath = "";
+
+    for (const segment of segments) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      let directory = directories.get(currentPath);
+      if (!directory) {
+        directory = {
+          name: segment,
+          path: currentPath,
+          directories: [],
+          files: [],
+        };
+        directories.set(currentPath, directory);
+        parent.directories.push(directory);
+      }
+      parent = directory;
+    }
+    parent.files.push(file);
+  }
+
+  const sort = (directory: ChangedFileDirectory) => {
+    directory.directories.sort((a, b) => a.name.localeCompare(b.name));
+    directory.files.sort((a, b) => fileName(a.path).localeCompare(fileName(b.path)));
+    directory.directories.forEach(sort);
+  };
+  sort(root);
+  return root;
 }
 
 const STATUS_KEY: Record<string, I18nKey> = {
@@ -163,6 +207,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   const loading = providedLoading ?? owned.loading;
   const reload = providedReload ?? owned.reload;
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const [changedFilesView, setChangedFilesView] = useState<"tree" | "flat">("tree");
   const copiedTimer = useRef<number | null>(null);
 
   const copyPath = useCallback(async (filePath: string) => {
@@ -185,6 +230,10 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
     [environment?.inputFiles],
   );
   const changedFiles = environment?.changedFiles ?? [];
+  const changedFileTree = useMemo(
+    () => buildChangedFileTree(changedFiles),
+    [changedFiles],
+  );
   const subagents = environment?.subagents ?? [];
   const runningSubagents = subagents.filter(
     (sub) => sub.status === "running",
@@ -239,6 +288,28 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             icon={<FileDiff size={11} />}
             title={t("workspaceCardGitChanges")}
             count={changedFiles.length}
+            actions={(
+              <div className="ws-view-toggle" role="group" aria-label={t("workspaceChangeView")}>
+                <button
+                  type="button"
+                  aria-label={t("workspaceTreeView")}
+                  title={t("workspaceTreeView")}
+                  aria-pressed={changedFilesView === "tree"}
+                  onClick={() => setChangedFilesView("tree")}
+                >
+                  <FolderTree size={11} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={t("workspaceFlatView")}
+                  title={t("workspaceFlatView")}
+                  aria-pressed={changedFilesView === "flat"}
+                  onClick={() => setChangedFilesView("flat")}
+                >
+                  <List size={11} />
+                </button>
+              </div>
+            )}
             summary={
               stagedFiles > 0
                 ? t("workspaceStagedCount", { count: stagedFiles })
@@ -247,6 +318,11 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
           >
             {changedFiles.length === 0 ? (
               <div className="ws-empty">{t("workspaceNoChanges")}</div>
+            ) : changedFilesView === "tree" ? (
+              <ChangedFileTree
+                directory={changedFileTree}
+                sessionId={sessionId}
+              />
             ) : (
               changedFiles.map((file) => (
                 <ChangedFileRow
@@ -291,34 +367,115 @@ function WorkspaceCard({
   title,
   count,
   summary,
+  actions,
   children,
 }: {
   icon: ReactNode;
   title: string;
   count: number;
   summary?: string | null;
+  actions?: ReactNode;
   children: ReactNode;
 }) {
+  const { t } = useLocale();
   const [open, setOpen] = useState(true);
 
   return (
     <section className="ws-card" data-open={open ? "true" : "false"}>
-      <button
-        type="button"
-        className="ws-card-head"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="ws-card-icon">{icon}</span>
-        <span className="ws-card-title">{title}</span>
-        <span className="ws-card-count">{count}</span>
+      <div className="ws-card-head">
+        <button
+          type="button"
+          className="ws-card-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span className="ws-card-icon">{icon}</span>
+          <span className="ws-card-title">{title}</span>
+          <span className="ws-card-count">{count}</span>
+        </button>
         <span className="ws-card-tail">
           {summary ? <span className="ws-card-summary">{summary}</span> : null}
-          <ChevronDown size={11} className="ws-card-chevron" />
+          {actions}
+          <button
+            type="button"
+            className="ws-card-collapse"
+            aria-label={open ? t("sessionCollapse") : t("sessionExpand")}
+            onClick={() => setOpen((value) => !value)}
+          >
+            <ChevronDown size={11} className="ws-card-chevron" />
+          </button>
         </span>
-      </button>
+      </div>
       {open ? <div className="ws-card-body">{children}</div> : null}
     </section>
+  );
+}
+
+function ChangedFileTree({
+  directory,
+  sessionId,
+  depth = 0,
+}: {
+  directory: ChangedFileDirectory;
+  sessionId: string;
+  depth?: number;
+}) {
+  return (
+    <>
+      {directory.directories.map(child => (
+        <ChangedFileFolder
+          key={child.path}
+          directory={child}
+          sessionId={sessionId}
+          depth={depth}
+        />
+      ))}
+      {directory.files.map(file => (
+        <ChangedFileRow
+          key={`${file.status}:${file.path}`}
+          file={file}
+          depth={depth}
+          onOpen={() => openWorkspaceDiff(sessionId, file.path)}
+        />
+      ))}
+    </>
+  );
+}
+
+function ChangedFileFolder({
+  directory,
+  sessionId,
+  depth,
+}: {
+  directory: ChangedFileDirectory;
+  sessionId: string;
+  depth: number;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const FolderIcon = expanded ? FolderOpen : Folder;
+
+  return (
+    <div className="ws-tree-directory" data-directory-path={directory.path}>
+      <button
+        type="button"
+        className="ws-tree-folder"
+        style={{ paddingLeft: `${6 + depth * 14}px` }}
+        title={directory.path}
+        aria-expanded={expanded}
+        onClick={() => setExpanded(value => !value)}
+      >
+        <ChevronRight size={10} className="ws-tree-chevron" />
+        <FolderIcon size={12} className="ws-tree-folder-icon" />
+        <span>{directory.name}</span>
+      </button>
+      {expanded ? (
+        <ChangedFileTree
+          directory={directory}
+          sessionId={sessionId}
+          depth={depth + 1}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -424,22 +581,30 @@ function SubagentRow({
 function ChangedFileRow({
   file,
   onOpen,
+  depth = 0,
 }: {
   file: SessionEnvironmentFile;
   onOpen: () => void;
+  depth?: number;
 }) {
   const { t } = useLocale();
   const meta = CHANGE_META[file.status] ?? CHANGE_META.unknown;
-  const { dir, name } = splitPath(file.path);
+  const name = fileName(file.path);
   const hasStats = file.additions > 0 || file.deletions > 0;
 
   return (
-    <button type="button" className="ws-row" title={file.path} onClick={onOpen}>
+    <button
+      type="button"
+      className="ws-row"
+      style={{ paddingLeft: `${6 + depth * 14}px` }}
+      title={file.path}
+      onClick={onOpen}
+    >
+      <FileTypeIcon path={file.path} size={11} />
       <span className={`ws-badge ${meta.tone}`} title={t(meta.labelKey)}>
         {meta.letter}
       </span>
       <span className="ws-row-main ws-row-main--file">
-        {dir ? <span className="ws-row-dir">{dir}</span> : null}
         <span className="ws-row-file">{name}</span>
       </span>
       {hasStats ? (
@@ -467,7 +632,7 @@ function InputFileRow({
   onOpen: () => void;
   onCopy: () => void;
 }) {
-  const { dir, name } = splitPath(path);
+  const name = fileName(path);
 
   return (
     <button
@@ -480,15 +645,11 @@ function InputFileRow({
         onCopy();
       }}
     >
-      {copied ? (
-        <Check size={11} className="ws-row-icon text-success" />
-      ) : (
-        <FileCode2 size={11} className="ws-row-icon" />
-      )}
+      <FileTypeIcon path={path} size={11} />
       <span className="ws-row-main ws-row-main--file">
-        {dir ? <span className="ws-row-dir">{dir}</span> : null}
         <span className="ws-row-file">{name}</span>
       </span>
+      {copied ? <Check size={11} className="ws-row-icon text-success" /> : null}
     </button>
   );
 }

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import type { ToolCallRecord } from "./contracts.js";
 import { resolveWorkspacePath } from "./tools/workspace.js";
+import { parseApplyPatchEnvelope } from "./tools/patch-format.js";
 
 interface ReadRecord {
   mtimeMs: number;
@@ -280,6 +281,26 @@ export function rebuildSessionFileReads(
     if (call.toolId === "file.delete") {
       const path = (call.inputRef as { path?: string } | null)?.path;
       if (path) clearSessionFileRead(sessionId, path);
+      continue;
+    }
+
+    if (call.toolId === "file.patch") {
+      const patch = (call.inputRef as { patch?: string } | null)?.patch;
+      if (patch) {
+        try {
+          for (const hunk of parseApplyPatchEnvelope(patch)) {
+            if (hunk.type === "delete") {
+              clearSessionFileRead(sessionId, hunk.path);
+              continue;
+            }
+            const moves = hunk.type === "update" && hunk.movePath;
+            if (moves) clearSessionFileRead(sessionId, hunk.path);
+            recordSessionFileMutation(sessionId, moves ? hunk.movePath! : hunk.path);
+          }
+        } catch {
+          // Failed or unparseable historical patch: nothing was written.
+        }
+      }
     }
   }
 }

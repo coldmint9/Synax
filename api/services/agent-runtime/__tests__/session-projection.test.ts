@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentSession } from '../contracts.js'
-import { projectSessionState } from '../session-projection.js'
+import { projectSessionState, projectSessionSummary } from '../session-projection.js'
 
 type LegacySessionStatus = AgentSession['status'] | 'blocked' | 'paused'
 
@@ -46,4 +46,21 @@ describe('projectSessionState', () => {
     'normalizes legacy %s sessions as completed for every profile',
     (status) => expect(projectSessionState(session(status, 'explorer')).status).toBe('completed'),
   )
+})
+
+describe('projectSessionSummary', () => {
+  it('drops the per-step system-prompt preview from list rows', () => {
+    const row = {
+      ...session('running'),
+      sessionMetadata: { mode: 'chat', latestSystemPrompt: 'x'.repeat(4096) },
+    }
+    const projected = projectSessionSummary(row)
+    expect(projected.sessionMetadata).toEqual({ mode: 'chat' })
+    expect(JSON.stringify(projected)).not.toContain('x'.repeat(64))
+  })
+
+  it('returns the row untouched when no preview is present', () => {
+    const row = session('running')
+    expect(projectSessionSummary(row)).toBe(row)
+  })
 })

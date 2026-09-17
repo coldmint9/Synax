@@ -5,6 +5,7 @@ import { DATA_ROOT } from '../env.js'
 import { logger } from '../logger.js'
 import { BUILTIN_PROVIDERS, createDefaultGlobalConfig, createDefaultUserGlobalConfig } from './config-defaults.js'
 import { isAcpProviderId } from './acp-provider-ids.js'
+import { normalizeLegacyProviders } from './normalize-legacy-providers.js'
 import { decryptSecret, encryptSecret, isEncryptedSecret, maskSecret } from './config-secret.js'
 import type {
   AnalyzerLlmConfig,
@@ -244,6 +245,13 @@ function ensureConfigStoreReady(): void {
     }
   }
 
+  // Repair stored display names without decrypting or rewriting connection secrets.
+  for (const filePath of [templateConfigPath(), globalConfigPath()]) {
+    const stored = readJsonFile<GlobalConfig>(filePath)
+    if (!stored) continue
+    const normalized = normalizeLegacyProviders(stored)
+    if (normalized !== stored) writeJsonAtomic(filePath, normalized)
+  }
   configStoreReady = true
 }
 

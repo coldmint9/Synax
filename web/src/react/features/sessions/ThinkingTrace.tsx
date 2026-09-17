@@ -16,6 +16,7 @@ interface Props {
   working?: boolean
   icon?: ReactNode
   children?: ReactNode
+  footer?: ReactNode
   rememberKey?: string
   title?: string
   meta?: string | null
@@ -25,7 +26,7 @@ interface Props {
 
 /** A real-event-driven ThinkingState: animation never decides whether work is done. */
 export function ThinkingTrace({
-  label, working = false, icon, children, rememberKey, title, meta,
+  label, working = false, icon, children, footer, rememberKey, title, meta,
   maxHeight = 140, variant = 'reasoning',
 }: Props) {
   const [manual, setManual] = useState<boolean | null>(() =>
@@ -85,6 +86,7 @@ export function ThinkingTrace({
           <div ref={bodyRef} data-activity-body="" className="bui-thinking-body session-work-log-body" style={{ maxHeight }}>
             {children}
           </div>
+          {expanded && footer}
         </div>}
       </div>
     </div>}

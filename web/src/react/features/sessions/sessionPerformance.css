@@ -1,7 +1,14 @@
 /* Stable scroll gutters prevent text reflow as loading placeholders resolve. */
-.session-chat-scroll,
-.session-list-groups {
+.session-chat-scroll {
   scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.session-list-groups,
+.session-profile-panel > .overflow-y-auto {
+  /* Mirror the vertical scrollbar gutter on the left to center card content. */
+  scrollbar-gutter: stable both-edges;
+}
+.session-list-groups {
   overscroll-behavior: contain;
 }
 .session-transcript-body {

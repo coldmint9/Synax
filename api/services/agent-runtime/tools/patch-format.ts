@@ -126,6 +126,20 @@ export function parseApplyPatchEnvelope(patchText: string): PatchHunk[] {
   return hunks;
 }
 
+/** Best-effort path list for approval review and change tracking; [] if unparseable. */
+export function patchFilePaths(patchText: unknown): string[] {
+  if (typeof patchText !== 'string') return [];
+  try {
+    return parseApplyPatchEnvelope(patchText).flatMap((hunk) =>
+      hunk.type === 'update' && hunk.movePath
+        ? [hunk.path, hunk.movePath]
+        : [hunk.path],
+    );
+  } catch {
+    return [];
+  }
+}
+
 function normalizeUnicode(value: string): string {
   return value
     .replace(/[‘’‚‛]/g, "'")

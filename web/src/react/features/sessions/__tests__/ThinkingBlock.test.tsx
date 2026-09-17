@@ -60,24 +60,31 @@ describe('ThinkingBlock', () => {
   it('renders a streaming row expanded and scrollable', () => {
     vi.useFakeTimers()
     const { container } = render(<ThinkingBlock content="live reasoning" isStreaming />)
-    act(() => { vi.advanceTimersByTime(12 * 14) })
+    // No local typing interval: the body renders the stream buffer as-is.
+    expect(vi.getTimerCount()).toBe(0)
     expect(container.querySelector('[data-activity-body]')?.textContent).toContain('live reasoning')
   })
 
-  it('prints appended Unicode characters without restarting the timer and flushes on completion', () => {
+  it('shows each delta at the rate the backend emits it instead of re-typing it locally', () => {
     vi.useFakeTimers()
     const { container, rerender, unmount } = render(<ThinkingBlock content="你" isStreaming />)
-    act(() => { vi.advanceTimersByTime(6) })
+    const body = () => container.querySelector('[data-activity-body]')?.textContent
+
+    // Every appended delta lands immediately: no interval gates the reveal, so
+    // the visible text already ends where the stream ends.
+    expect(body()).toBe('你')
+    rerender(<ThinkingBlock content="你好" isStreaming />)
+    expect(body()).toBe('你好')
     rerender(<ThinkingBlock content="你好😀" isStreaming />)
-    act(() => { vi.advanceTimersByTime(6) })
-    expect(container.querySelector('[data-activity-body]')?.textContent).toBe('你')
-    act(() => { vi.advanceTimersByTime(12) })
-    expect(container.querySelector('[data-activity-body]')?.textContent).toBe('你好')
-    act(() => { vi.advanceTimersByTime(12) })
-    expect(container.querySelector('[data-activity-body]')?.textContent).toBe('你好😀')
+    expect(body()).toBe('你好😀')
+    // Completion keeps the last streamed text, emoji intact, and the collapsed
+    // row can still be reopened to read it.
     rerender(<ThinkingBlock content="你好😀完成" isStreaming={false} />)
+    // The only pending timer is the closing transition that releases the body;
+    // nothing paces the text itself.
+    expect(vi.getTimerCount()).toBe(1)
     act(() => { screen.getByRole('button').click() })
-    expect(container.querySelector('[data-activity-body]')?.textContent).toBe('你好😀完成')
+    expect(body()).toBe('你好😀完成')
     unmount()
     expect(vi.getTimerCount()).toBe(0)
   })

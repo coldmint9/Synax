@@ -81,6 +81,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
       "diff.read",
       "file.write",
       "edit",
+      "file.patch",
       "file.delete",
       "wiki.search_content",
       "wiki.search_batch",

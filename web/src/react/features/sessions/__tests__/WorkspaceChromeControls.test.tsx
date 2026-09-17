@@ -65,6 +65,7 @@ describe('WorkspaceTabStrip', () => {
 
     expect(screen.getAllByRole('tab')).toHaveLength(4)
     expect(container.querySelector('.workspace-tab-rail')).toBeTruthy()
+    expect(container.querySelectorAll('[data-file-type-icon$=".ts"]')).toHaveLength(4)
     expect(screen.queryByLabelText('还有 1 个标签')).toBeNull()
     expect(screen.getByRole('tab', { name: 'd.ts' }).getAttribute('aria-selected')).toBe('true')
     expect(scrollIntoView).toHaveBeenCalled()

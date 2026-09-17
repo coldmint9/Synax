@@ -8,9 +8,7 @@ import {
   type SessionStats,
 } from '../../../../lib/api/agentRuntime'
 import { useAgentSessionStore as store } from '../agentSessionStore'
-import { useSessionDetailPolling } from '../useSessionDetailPolling'
-
-const POLL_MS = 4_000
+import { useSessionDetailPolling, ACTIVE_SESSION_POLL_MS as POLL_MS } from '../useSessionDetailPolling'
 
 function makeSession(id: string, status: AgentSessionStatus): AgentSession {
   return {
@@ -270,9 +268,9 @@ it('shares one poller between consumers and keeps it alive until the last unmoun
   await flush()
   expect(api.getSessionStats).toHaveBeenCalledTimes(1)
   first.unmount()
-  await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS) })
   expect(api.getSessionStats).toHaveBeenCalledTimes(2)
   second.unmount()
-  await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS * 2) })
   expect(api.getSessionStats).toHaveBeenCalledTimes(2)
 })

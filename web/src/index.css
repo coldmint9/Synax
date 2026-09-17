@@ -1065,36 +1065,21 @@
     padding: 0 10px;
     height: 36px;
     border-radius: 999px;
-    -webkit-backdrop-filter: blur(28px) saturate(1.8) brightness(1.06);
-    border: 1px solid hsl(0deg 0% 100% / 10%);
-    background: hsl(0deg 0% 100% / 5%);
-    backdrop-filter: blur(28px) saturate(2) brightness(1);
-    box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.7) inset,
-      0 -1px 0 hsl(0 0% 0% / 0.06) inset,
-      0 4px 24px hsl(0 0% 0% / 0.1),
-      0 1px 4px hsl(0 0% 0% / 0.06),
-      0 0 0 0.5px hsl(0 0% 0% / 0.06);
+    /* Flat surface: a solid fill, one hairline edge and a whisper of ambient
+       shadow. No inset highlights, bevels or ring shadows — the pill reads as
+       a plane, not as a raised glass slab. */
+    -webkit-backdrop-filter: blur(12px) saturate(1.3);
+    border: 1px solid hsl(var(--border-hsl) / 0.6);
+    background: hsl(0 0% 100% / 0.92);
+    backdrop-filter: blur(12px) saturate(1.3);
+    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.05);
   }
   .dark .wh-pill {
-    border-color: hsl(0 0% 100% / 0.14);
-    background:
-      linear-gradient(
-        180deg,
-        hsl(0 0% 100% / 0.07),
-        hsl(0 0% 100% / 0.015) 42%,
-        transparent
-      ),
-      hsl(var(--card) / 0.55);
-    backdrop-filter: blur(32px) saturate(1.9) brightness(1.08);
-    -webkit-backdrop-filter: blur(32px) saturate(1.9) brightness(1.08);
-    box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.18) inset,
-      0 0 0 0.5px hsl(0 0% 100% / 0.04) inset,
-      0 -1px 0 hsl(0 0% 0% / 0.3) inset,
-      0 8px 32px hsl(0 0% 0% / 0.45),
-      0 2px 8px hsl(0 0% 0% / 0.25),
-      0 0 0 0.5px hsl(0 0% 0% / 0.35);
+    border-color: hsl(0 0% 100% / 0.12);
+    background: hsl(var(--card) / 0.94);
+    backdrop-filter: blur(12px) saturate(1.3);
+    -webkit-backdrop-filter: blur(12px) saturate(1.3);
+    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.28);
   }
 
   /* Wiki toolbar cell-division animation — grid slot for layout-space animation */
@@ -3282,6 +3267,8 @@
 .goal-dock-shell {
   position: relative;
   display: flex;
+  flex-direction: column;
+  justify-content: center;
   flex-shrink: 0;
   align-items: center;
   width: var(--goal-bar-width);
@@ -3344,6 +3331,7 @@
 }
 
 .goal-dock-shell-content,
+.goal-dock-mini-layer,
 .goal-dock-mini-inner {
   width: 100%;
   transition:
@@ -3363,7 +3351,7 @@
   min-height: var(--goal-bar-height);
 }
 .goal-dock-morph[data-morph="bar"] .goal-dock-shell-content,
-.goal-dock-morph[data-morph="bar"] .goal-dock-mini-inner,
+.goal-dock-morph[data-morph="bar"] .goal-dock-mini-layer,
 .goal-dock-morph[data-morph="bar"] .goal-dock-dialog-slot {
   max-height: 0;
   opacity: 0;
@@ -3384,17 +3372,22 @@
 .goal-dock-morph[data-morph="pill-input"] .goal-dock-shell {
   transform: translateY(-4px);
   width: 100%;
-  height: auto;
+  /* Measured composer height (see GoalPillDock): keeps the morph interpolable
+     instead of snapping from height: auto. */
+  height: var(--goal-compose-h, auto);
   min-height: 2.75rem;
   overflow: hidden;
 }
+.goal-dock-morph[data-morph="pill-input"]
+  .goal-dock-shell:not([data-multiline="true"]) {
+  max-height: 4rem;
+}
 .goal-dock-morph[data-morph="pill-input"] .goal-dock-shell-content {
   opacity: 1;
-  max-height: 4rem;
   transform: scale(1);
 }
 .goal-dock-morph[data-morph="pill-input"] .goal-dock-dialog-slot,
-.goal-dock-morph[data-morph="pill-input"] .goal-dock-mini-inner {
+.goal-dock-morph[data-morph="pill-input"] .goal-dock-mini-layer {
   max-height: 0;
   opacity: 0;
   overflow: hidden;
@@ -3543,7 +3536,7 @@
   min-height: 1.75rem;
   overflow: hidden;
 }
-.goal-dock-morph[data-morph="mini"] .goal-dock-mini-inner {
+.goal-dock-morph[data-morph="mini"] .goal-dock-mini-layer {
   border-radius: inherit;
   opacity: 1;
   max-height: 2rem;
@@ -3568,15 +3561,18 @@
 .goal-dock-morph[data-morph="pill-expanded"] .goal-dock-shell {
   transform: translateY(-5px);
   width: 100%;
-  height: auto;
+  height: var(--goal-compose-h, auto);
   min-height: 2.75rem;
   overflow: hidden;
 }
-.goal-dock-morph[data-morph="pill-expanded"] .goal-dock-shell-content {
-  opacity: 1;
+.goal-dock-morph[data-morph="pill-expanded"]
+  .goal-dock-shell:not([data-multiline="true"]) {
   max-height: 4rem;
 }
-.goal-dock-morph[data-morph="pill-expanded"] .goal-dock-mini-inner {
+.goal-dock-morph[data-morph="pill-expanded"] .goal-dock-shell-content {
+  opacity: 1;
+}
+.goal-dock-morph[data-morph="pill-expanded"] .goal-dock-mini-layer {
   max-height: 0;
   opacity: 0;
   overflow: hidden;
@@ -3634,7 +3630,7 @@
 .goal-dock-shell[data-multiline="true"],
 .goal-session-composer-shell[data-multiline="true"] {
   border-radius: 1rem;
-  height: auto;
+  height: var(--goal-compose-h, auto);
   min-height: 2.75rem;
 }
 .goal-dock-morph[data-morph="pill-input"]
@@ -3663,6 +3659,7 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  justify-content: flex-start;
   width: 100%;
   height: auto;
   min-height: 2.75rem;
@@ -4547,6 +4544,17 @@
 .session-file-island-row:hover {
   background: hsl(var(--secondary) / 0.7);
 }
+
+.file-type-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: -0.15em;
+}
+
+.transcript-file-link-icon {
+  margin-right: 0.28em;
+}
+
 .session-file-island-status {
   flex-shrink: 0;
   font-size: 10px;
@@ -5710,12 +5718,74 @@
   border: 0;
   background: transparent;
   color: hsl(var(--muted-foreground));
+  text-align: left;
+}
+
+.ws-card-head:has(.ws-card-toggle:hover) {
+  background: hsl(var(--secondary) / 0.45);
+}
+
+.ws-card-toggle {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
   text-align: left;
 }
 
-.ws-card-head:hover {
-  background: hsl(var(--secondary) / 0.45);
+.ws-card-collapse {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.ws-card-collapse:hover {
+  background: hsl(var(--secondary) / 0.7);
+}
+
+.ws-view-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 1px;
+  border: 1px solid hsl(var(--border-hsl) / 0.55);
+  border-radius: 5px;
+  padding: 1px;
+}
+
+.ws-view-toggle button {
+  display: inline-flex;
+  width: 20px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.ws-view-toggle button[aria-pressed="true"] {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground-hsl));
+}
+
+.ws-view-toggle button:hover {
+  color: hsl(var(--primary));
 }
 
 .ws-card-icon {
@@ -5752,6 +5822,43 @@
   margin-left: auto;
   align-items: center;
   gap: 6px;
+}
+
+.ws-tree-folder {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  padding-top: 5px;
+  padding-right: 6px;
+  padding-bottom: 5px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  text-align: left;
+}
+
+.ws-tree-folder:hover {
+  background: hsl(var(--secondary) / 0.5);
+}
+
+.ws-tree-folder span {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-tree-chevron,
+.ws-tree-folder-icon {
+  flex: 0 0 auto;
+}
+
+.ws-tree-folder[aria-expanded="true"] .ws-tree-chevron {
+  transform: rotate(90deg);
 }
 
 .ws-card-summary {
@@ -5950,7 +6057,8 @@
 
 .ws-row-file {
   max-width: 100%;
-  flex: 0 0 auto;
+  min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   font-size: 10px;
   color: hsl(var(--foreground-hsl) / 0.88);

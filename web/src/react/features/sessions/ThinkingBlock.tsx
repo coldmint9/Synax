@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react'
 import { useLocale } from '../../../hooks/useLocale'
 import { ThinkingTrace } from './ThinkingTrace'
 import { ThinkingBanner } from './ThinkingBanner'
@@ -10,27 +9,18 @@ interface Props {
   rememberKey?: string
 }
 
-/** Displays model supplied reasoning incrementally as it arrives. */
+/**
+ * Displays model supplied reasoning as it arrives.
+ *
+ * The text comes straight from the stream buffers: thought deltas are applied
+ * at the rate the backend emits them, so revealing them a second time here
+ * would only hold the transcript back from the real token rate.
+ */
 export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
   const { t } = useLocale()
-  const [visible, setVisible] = useState(isStreaming ? '' : content)
-  const target = useRef(content)
-  useEffect(() => { target.current = content }, [content])
-  useEffect(() => {
-    if (!isStreaming) return
-    const timer = window.setInterval(() => {
-      setVisible(previous => {
-        const next = target.current
-        const prefix = next.startsWith(previous) ? previous : ''
-        // Advance by a Unicode code point so emoji are never split in half.
-        return prefix + (Array.from(next.slice(prefix.length))[0] ?? '')
-      })
-    }, 12)
-    return () => window.clearInterval(timer)
-  }, [isStreaming])
   const bannerPhrases = thinkingBannerPhrases(content)
   if (bannerPhrases) return <ThinkingBanner phrases={bannerPhrases} isStreaming={isStreaming} />
-  const { text, hidden } = tailForDisplay(isStreaming ? visible : content)
+  const { text, hidden } = tailForDisplay(content)
   return <ThinkingTrace
     label={isStreaming ? t('sessionActivityThinking') : t('sessionActivityThought')}
     meta={isStreaming ? null : t('sessionActivityChars', { count: formatCharCount(content.length) })}

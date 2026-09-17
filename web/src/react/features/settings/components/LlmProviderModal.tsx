@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Button, Description, FieldError, InputGroup, Label, Modal, TextField } from '@heroui/react'
-import { Check, ChevronDown, Eye, EyeOff, Plus, RefreshCw, Save, Search, Wifi, X } from 'lucide-react'
+import { Check, ChevronDown, Eye, EyeOff, Plus, RefreshCw, Search, Wifi, X } from 'lucide-react'
 import {
   ALL_REASONING_EFFORTS,
   API_FORMAT_OPTIONS,
@@ -17,6 +17,8 @@ import { validateProviderDraft } from '../lib/validation'
 import { formatContextLimit } from '../../../../lib/formatTokens'
 import { useLocale } from '../../../../hooks/useLocale'
 import { SettingsSelect } from './SettingsSelect'
+import { SaveIndicator } from './SaveIndicator'
+import { useProviderAutoSave } from '../useProviderAutoSave'
 import type { ApiFormat, ReasoningEffort } from '../../../../lib/contracts/config'
 
 const INPUT_MODALITY_OPTIONS = [
@@ -31,6 +33,7 @@ type InputModality = typeof INPUT_MODALITY_OPTIONS[number]['id']
 
 interface LlmProviderModalProps {
   draft: ApiProviderDraft
+  isNew?: boolean
   onClose: () => void
   onSave: (draft: ApiProviderDraft) => Promise<void>
   onValidate: (draft: ApiProviderDraft) => Promise<void>
@@ -39,6 +42,7 @@ interface LlmProviderModalProps {
 
 export function LlmProviderModal({
   draft: initialDraft,
+  isNew = false,
   onClose,
   onSave,
   onValidate,
@@ -47,8 +51,7 @@ export function LlmProviderModal({
   const { t, locale } = useLocale()
   const zh = locale === 'zh'
   const [draft, setDraft] = useState<ApiProviderDraft>({ ...initialDraft })
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
+  const { saving, saved, error: saveError, flush, valid } = useProviderAutoSave(draft, onSave)
   const [showApiKey, setShowApiKey] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [modelQuery, setModelQuery] = useState('')
@@ -66,17 +69,9 @@ export function LlmProviderModal({
     : candidateModels
   const hasExactCandidate = candidateModels.some(m => m.toLowerCase() === normalizedQuery)
 
-  async function handleSave() {
-    if (errors.length > 0) return
-    setSaving(true)
-    setSaveError(null)
-    try {
-      await onSave(draft)
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : '保存失败')
-    } finally {
-      setSaving(false)
-    }
+  async function handleClose() {
+    if (saving) return
+    if (!valid || await flush()) onClose()
   }
 
   async function handleValidate() {
@@ -203,20 +198,24 @@ export function LlmProviderModal({
   }
 
   return (
-    <Modal.Backdrop isOpen onOpenChange={(open) => { if (!open) onClose() }}>
+    <Modal.Backdrop
+      isOpen
+      isDismissable={false}
+      onOpenChange={(open) => { if (!open) void handleClose() }}
+    >
       <Modal.Container size="lg">
         <Modal.Dialog>
           <Modal.Header>
-            <Modal.Heading>{draft.custom ? draft.label : `${draft.label} 配置`}</Modal.Heading>
+            <Modal.Heading>{isNew ? (zh ? '新增供应商' : 'Add provider') : `${draft.label} 配置`}</Modal.Heading>
           </Modal.Header>
           <Modal.Body className="px-6">
             <div className="space-y-4">
-              {draft.custom && (
+              {(
                 <TextField
                   value={draft.label}
                   onChange={(val) => setDraft(d => ({ ...d, label: val }))}
                 >
-                  <Label className="text-xs">Provider 名称</Label>
+                  <Label className="text-xs">供应商名称</Label>
                   <InputGroup>
                     <InputGroup.Input placeholder="My Provider" />
                   </InputGroup>
@@ -282,7 +281,7 @@ export function LlmProviderModal({
                       <input
                         value={draft.model}
                         onChange={(e) => setDraft(d => ({ ...d, model: e.target.value }))}
-                        placeholder="模型 ID"
+                        placeholder="输入模型 ID"
                         aria-label={t('llmCardModel')}
                         className="h-full w-full bg-transparent font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
                       />
@@ -542,20 +541,18 @@ export function LlmProviderModal({
               )}
             </Button>
             <div className="flex-1" />
-            <Button variant="ghost" size="sm" onPress={onClose}>取消</Button>
-            <Button
-              size="sm"
-              isPending={saving}
-              isDisabled={errors.length > 0}
-              onPress={handleSave}
-            >
-              {({ isPending }) => (
-                <>
-                  {isPending ? null : <Save size={12} />}
-                  {t('llmCardSave')}
-                </>
-              )}
-            </Button>
+            <span role="status" className="text-[11px] text-muted-foreground">
+              {saving ? (zh ? '正在保存…' : 'Saving…')
+                : saved ? <SaveIndicator saving={false} saved />
+                  : saveError ? (zh ? '未保存' : 'Not saved')
+                    : (zh ? '填写完整后自动保存' : 'Changes save automatically when complete')}
+            </span>
+            {saveError && (
+              <Button size="sm" variant="secondary" isDisabled={saving || !valid} onPress={() => { void flush() }}>
+                {zh ? '重试保存' : 'Retry save'}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" isDisabled={saving} onPress={handleClose}>{zh ? '关闭' : 'Close'}</Button>
           </Modal.Footer>
         </Modal.Dialog>
       </Modal.Container>

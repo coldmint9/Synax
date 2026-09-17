@@ -1,13 +1,15 @@
 import { useEffect, useRef } from 'react'
-import { Bot, FileCode2, FileDiff, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
+import { Bot, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
+import { FileTypeIcon } from './FileTypeIcon'
 import { useSessionWorkspaceEnvironment } from './SessionEnvironmentContext'
 import { useSessionWorkspace, useSessionWorkspaceStore, type WorkspaceTab } from './sessionWorkspaceStore'
 
-function tabIcon(kind: WorkspaceTab['kind']) {
-  switch (kind) {
-    case 'file': return <FileCode2 size={11} className="shrink-0 text-run/80" />
-    case 'diff': return <FileDiff size={11} className="shrink-0 text-success/80" />
+function tabIcon(tab: WorkspaceTab) {
+  switch (tab.kind) {
+    case 'file':
+    case 'diff':
+      return <FileTypeIcon path={tab.path ?? tab.title} size={11} />
     case 'subagent': return <Bot size={11} className="shrink-0 text-[var(--color-run)]/80" />
   }
 }
@@ -48,7 +50,7 @@ export function WorkspaceTabStrip({ sessionId }: { sessionId: string | null }) {
                 title={tab.path ?? tab.title}
                 onClick={() => activateTab(sessionId, tab.id)}
               >
-                {tabIcon(tab.kind)}
+                {tabIcon(tab)}
                 <span>{tab.title}</span>
               </button>
               <button

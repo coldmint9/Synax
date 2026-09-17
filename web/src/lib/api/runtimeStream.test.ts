@@ -28,4 +28,29 @@ describe('runtime stream projection', () => {
     const output = projector.record({ ...record, state: { ...session, activeRunId: 'new-run' } })
     expect(output.some(event => event.type === 'message_delta')).toBe(false)
   })
+
+  it('projects tool-call chunks locally without requesting a detail refresh', () => {
+    const projector = new RuntimeStreamProjector()
+    projector.snapshot(snapshot)
+    const toolCall = { id: 'call', sessionId: 'session', runId: 'run', stepId: 'step', toolId: 'edit_file', category: 'write', mutability: 'write', inputSummary: 'x', outputSummary: null, status: 'running', startedAt: '', endedAt: null, error: null } as never
+    const output = projector.record({ ...record, chunk: { type: 'tool_call', stepId: 'step', toolCall } })
+    // No runtime_state refresh event for a payload-bearing chunk on an unchanged state key.
+    expect(output).toEqual([{ type: 'tool_call', stepId: 'step', toolCall }])
+  })
+
+  it('carries the full step object on step_started events', () => {
+    const projector = new RuntimeStreamProjector()
+    projector.snapshot({ ...snapshot, liveChunks: [] })
+    const output = projector.record({ ...record, chunk: { type: 'step_started', step } })
+    expect(output).toEqual([{ type: 'step_started', stepId: 'step', stepIndex: 1, step }])
+  })
+
+  it('still refreshes when the session state key changes (permissions, run transitions)', () => {
+    const projector = new RuntimeStreamProjector()
+    projector.snapshot(snapshot)
+    const output = projector.record({ ...record, state: { ...session, status: 'waiting_permission' },
+      chunk: { type: 'tool_call', stepId: 'step', toolCall: { id: 'call' } as never } })
+    const stateEvent = output.find(event => event.type === 'runtime_state')
+    expect(stateEvent).toMatchObject({ refresh: true, patch: { status: 'waiting_permission' } })
+  })
 })
