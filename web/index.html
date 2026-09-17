@@ -8,6 +8,16 @@
     <script>if(navigator.userAgent.includes('Electron'))document.documentElement.classList.add('electron')</script>
   </head>
   <body>
+    <!-- Liquid-glass displacement filter referenced by .wh-pill via
+         backdrop-filter: url(). Zero-sized but rendered — display:none would
+         break filter references in some engines. -->
+    <svg aria-hidden="true" style="position: fixed; width: 0; height: 0; overflow: hidden">
+      <defs>
+        <filter id="liquid_glass_filter" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox">
+          <feDisplacementMap in="SourceGraphic" in2="SourceGraphic" scale="200" />
+        </filter>
+      </defs>
+    </svg>
     <div id="app"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
