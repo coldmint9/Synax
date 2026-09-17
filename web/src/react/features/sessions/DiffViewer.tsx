@@ -175,7 +175,7 @@ function DiffRow({ line, html }: { line: DiffLine; html?: string }) {
   )
 }
 
-export const DiffViewer = memo(function DiffViewer({ sessionId, path }: { sessionId: string; path: string }) {
+export const DiffViewer = memo(function DiffViewer({ sessionId, path, rootId }: { sessionId: string; path: string; rootId?: string }) {
   const [parsed, setParsed] = useState<ParsedDiff>({ lines: [], hunks: [] })
   const [lineHtml, setLineHtml] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -189,7 +189,9 @@ export const DiffViewer = memo(function DiffViewer({ sessionId, path }: { sessio
     setLoading(true)
     setError(null)
     try {
-      const result = await agentRuntimeApi.getSessionEnvironmentFile(sessionId, path, 'diff')
+      const result = await (rootId
+        ? agentRuntimeApi.getSessionEnvironmentFile(sessionId, path, 'diff', rootId)
+        : agentRuntimeApi.getSessionEnvironmentFile(sessionId, path, 'diff'))
       if (requestRef.current !== requestId) return
       const next = renderLines(result.content ?? '')
       setParsed(next)
@@ -205,7 +207,7 @@ export const DiffViewer = memo(function DiffViewer({ sessionId, path }: { sessio
       setError(err instanceof Error ? err.message : '读取 diff 失败')
       setLoading(false)
     }
-  }, [path, sessionId])
+  }, [path, sessionId, rootId])
 
   useEffect(() => {
     void load()

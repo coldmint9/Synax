@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { SessionGitCommitResult } from '../../../../lib/api/agentRuntime'
 import { useShellStore } from '../../../state/shellStore'
 
@@ -119,5 +119,31 @@ describe('SessionCommitDialog', () => {
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toContain('remote rejected the push')
     expect(screen.getByLabelText('提交信息')).toBeTruthy()
+  })
+
+  it.each(['success', 'failure'])('ignores a stale %s after switching repositories and only submits once', async outcome => {
+    let finish!: (value: SessionGitCommitResult) => void
+    let fail!: (error: Error) => void
+    commitSessionWorkspace.mockReturnValueOnce(new Promise<SessionGitCommitResult>((resolve, reject) => { finish = resolve; fail = reject }))
+    const props = { isOpen: true, sessionId: 'session-1', branch: 'main', changedFiles: 3, onClose: vi.fn(), onCommitted: vi.fn() }
+    const { rerender } = render(<SessionCommitDialog {...props} rootId="primary" rootName="API" />)
+    const submit = screen.getByRole('button', { name: '仅提交' })
+    act(() => { fireEvent.click(submit); fireEvent.click(submit) })
+    expect(commitSessionWorkspace).toHaveBeenCalledTimes(1)
+    expect(commitSessionWorkspace).toHaveBeenCalledWith('session-1', { rootId: 'primary', push: false })
+
+    rerender(<SessionCommitDialog {...props} rootId="secondary" rootName="Web" />)
+    expect(screen.getByText('Web')).toBeInTheDocument()
+    await act(async () => {
+      if (outcome === 'success') finish(committed)
+      else fail(new Error('old repository failure'))
+    })
+    expect(props.onCommitted).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    commitSessionWorkspace.mockResolvedValueOnce({ ...committed, rootId: 'secondary' })
+    fireEvent.click(screen.getByRole('button', { name: '仅提交' }))
+    await waitFor(() => expect(props.onCommitted).toHaveBeenCalledWith({ ...committed, rootId: 'secondary' }))
+    expect(commitSessionWorkspace).toHaveBeenLastCalledWith('session-1', { rootId: 'secondary', push: false })
   })
 })

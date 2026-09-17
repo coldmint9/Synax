@@ -1,3 +1,5 @@
+import { cacheUsageSample, projectCacheUsage, type CacheUsageSample, type SessionCacheUsage } from "./cache-usage.js";
+import type { ContextComposition } from "./context-composition.js";
 import { getRawSqlite } from "../../db/index.js";
 import { readUsageContextWindowSize } from "./acp-engine/acp-usage.js";
 import {
@@ -34,10 +36,14 @@ type Groups<T> = { self: T; tree: T };
 export interface SessionUsageProjection {
   context: {
     inputTokens: number | null;
+    source: "provider" | "estimate" | null;
+    stale: boolean;
     requestId: string | null;
     measuredAt: string | null;
     latestRequestUsageAvailable: boolean;
   };
+  contextComposition: ContextComposition | null;
+  cache: SessionCacheUsage;
   // self/tree retain cumulative compatibility, including auxiliary calls. The
   // explicit subgroups distinguish model steps from non-step auxiliary calls.
   usage: Groups<UsageTotals> & {
@@ -96,6 +102,15 @@ function hasUsage(u: NormalizedUsage | undefined): boolean {
       ).some((key) => u.normalization[key].status === "known"))
   );
 }
+function readComposition(value: unknown): ContextComposition | null {
+  if (!value || typeof value !== "object") return null;
+  const c = value as ContextComposition;
+  const values = [c.tools, c.mcp, c.skills, c.messages];
+  if (!values.every(isTokenCount) || typeof c.measuredAt !== "string") return null;
+  const total = values.reduce((sum, tokens) => sum + tokens, 0);
+  return isTokenCount(total) ? { ...c, total } : null;
+}
+
 export function projectSessionUsage(
   sessionId: string,
   treeIds: string[],
@@ -105,10 +120,11 @@ export function projectSessionUsage(
   const slots = ids.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT s.rowid AS sequence, s.id, s.session_id, s.started_at, s.completed_at, s.status, s.metadata_json, r.completed_at AS run_ended_at FROM agent_runtime_run_steps s JOIN agent_runtime_runs r ON r.id=s.run_id WHERE s.session_id IN (${slots}) ORDER BY s.started_at, s.rowid`,
+      `SELECT s.rowid AS sequence, s.id, s.model, s.session_id, s.started_at, s.completed_at, s.status, s.metadata_json, r.completed_at AS run_ended_at FROM agent_runtime_run_steps s JOIN agent_runtime_runs r ON r.id=s.run_id WHERE s.session_id IN (${slots}) ORDER BY s.started_at, r.started_at, s.step_index, s.rowid`,
     )
     .all(...ids) as Array<{
     sequence: number;
+    model: string | null;
     id: string;
     session_id: string;
     started_at: string;
@@ -125,10 +141,14 @@ export function projectSessionUsage(
   const result: SessionUsageProjection = {
     context: {
       inputTokens: null,
+      source: null,
+      stale: false,
       requestId: null,
       measuredAt: null,
       latestRequestUsageAvailable: false,
     },
+    contextComposition: null,
+    cache: projectCacheUsage([]),
     usage: { ...groups(zero), steps: groups(zero), auxiliary: groups(zero) },
     coverage: {
       ...groups(emptyCoverage),
@@ -169,7 +189,11 @@ export function projectSessionUsage(
         total.reasoning += n!.reasoning.value ?? 0;
         total.cacheRead += n!.cacheRead.value ?? 0;
         total.cacheWrite += n!.cacheWrite.value ?? 0;
-        if (n!.cacheRead.status === "known" && n!.input.status === "known") {
+        if (
+          n!.cacheRead.status === "known" &&
+          n!.input.status === "known" &&
+          n!.cacheRead.value! <= n!.input.value!
+        ) {
           coverage.cacheMatched++;
           total.cacheReadMatched += n!.cacheRead.value!;
           total.cacheInputMatched += n!.input.value!;
@@ -182,6 +206,8 @@ export function projectSessionUsage(
       }
     }
   };
+  const cacheSamples: CacheUsageSample[] = [];
+  let pendingCacheSamples = 0;
   for (const row of rows) {
     const metadata = parse(row.metadata_json);
     const context: UsageContext = {
@@ -199,6 +225,18 @@ export function projectSessionUsage(
       : u;
     add(row.session_id, u, "steps");
     if (row.session_id !== sessionId) continue;
+    // Running requests without final usage are pending, not zero-hit samples.
+    if (!hasUsage(u) && !row.completed_at && !row.run_ended_at &&
+        ["running", "waiting_permission", "waiting_input"].includes(row.status)) {
+      pendingCacheSamples++;
+    } else {
+      cacheSamples.push(cacheUsageSample({
+        stepId: row.id,
+        measuredAt: row.completed_at ?? row.started_at,
+        model: row.model,
+        unit: metadata?.externalTurn ? "external-turn" : "request",
+      }, metadata?.usage, context));
+    }
     const start = Date.parse(row.started_at);
     const end = row.completed_at ?? row.run_ended_at;
     result.durationMs +=
@@ -212,9 +250,16 @@ export function projectSessionUsage(
             ? Date.now()
             : start) - start,
       ) || 0;
+    // Keep totals and category estimates on the same request. A new request's
+    // estimate supersedes old provider usage, including after compaction.
+    const composition = readComposition(metadata?.contextComposition);
+    result.context.stale = result.context.inputTokens !== null;
     result.context.latestRequestUsageAvailable =
       contextUsage?.normalization.input.status === "known";
     if (result.context.latestRequestUsageAvailable) {
+      result.context.source = "provider";
+      result.context.stale = false;
+      result.contextComposition = composition;
       result.context.inputTokens = contextUsage!.normalization.input.value!;
       result.context.requestId =
         typeof contextUsage!.requestId === "string"
@@ -224,11 +269,22 @@ export function projectSessionUsage(
         typeof contextUsage!.measuredAt === "string"
           ? contextUsage!.measuredAt
           : (row.completed_at ?? row.started_at);
+    } else if (composition) {
+      result.context = {
+        inputTokens: composition.total,
+        source: "estimate",
+        stale: false,
+        requestId: row.id,
+        measuredAt: composition.measuredAt,
+        latestRequestUsageAvailable: false,
+      };
+      result.contextComposition = composition;
     }
     if (contextUsage)
       result.reportedWindow =
         readUsageContextWindowSize(contextUsage) ?? result.reportedWindow;
   }
+  result.cache = projectCacheUsage(cacheSamples, pendingCacheSamples);
   for (const row of auxiliary)
     add(row.session_id, normalizeUsage(parse(row.usage_json)), "auxiliary");
   return result;

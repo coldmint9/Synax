@@ -356,7 +356,7 @@ class WorkRuntime {
         ? `Consider closing this round: complete with evidence, yield an honest handoff, or change approach for a concrete remaining requirement. This is advisory; tools remain available.${work.reason ? ` ${work.reason}` : ''}`
         : work.noProgressSteps >= NUDGE_AFTER_STALE_STEPS
           ? `Stall notice: ${work.reason ?? `no new information in ${work.noProgressSteps} steps`} Do something different, or report the blocker with work.checkpoint; repeating the same calls will not be counted as progress.`
-          : work.planRevision ? 'Submit criterion evidence through goal.finish or work.checkpoint; pending work or approvals prevent acceptance.'
+          : work.planRevision && session.sessionMetadata?.mode === 'goal' ? 'Submit criterion evidence through goal.finish or work.checkpoint; pending work or approvals prevent acceptance.'
             : 'When done, give the final answer or use work.checkpoint with evidence. Missing verification will be reported by the runtime; do not pre-emptively expand the task.',
     ].filter(Boolean).join('\n');
   }

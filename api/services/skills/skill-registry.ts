@@ -139,6 +139,14 @@ function collectLocalSummaries(input: SkillListQuery = {}): SkillSummary[] {
     }
   }
 
+  // Project skills imported from local tools are immediately available to the runtime.
+  if (input.projectId && !sources.some(source => source.type === 'project')) {
+    const projectSource = { id: 'project', type: 'project', readOnly: false } as SkillSourceRecord;
+    for (const parsed of scanSource(projectSource, input.projectId)) {
+      collected.push({ priority: 110, skill: toSummaryFromParsed(projectSource, parsed) });
+    }
+  }
+
   for (const install of skillInstallService.listInstalls()) {
     if (install.status === 'disabled') continue;
     if (!fs.existsSync(install.installPath)) continue;

@@ -91,6 +91,14 @@ async function projectRequest<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const projectApi = {
+  async createWorkspace(body: { name: string; roots: ({ localPath: string; name?: string } | { projectId: string })[] }): Promise<{ project: ProjectSummary }> {
+    const result = await projectRequest<{ project: Record<string, unknown> }>(`${API_BASE}/workspaces`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    const project = mapToProjectSummary(result.project)
+    addProject(project)
+    return { project }
+  },
   getWorkspace(id: string): Promise<ProjectWorkspace> {
     return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/workspace`)
   },
@@ -109,13 +117,13 @@ export const projectApi = {
     })
   },
 
-  listGitWorkspaces(id: string): Promise<GitWorkspaceSummary> {
-    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/workspaces`)
+  listGitWorkspaces(id: string, rootId?: string): Promise<GitWorkspaceSummary> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/workspaces${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ''}`)
   },
 
   createGitWorktree(
     id: string,
-    body: { branch: string; createBranch?: boolean; startPoint?: string },
+    body: { branch: string; createBranch?: boolean; startPoint?: string; rootId?: string },
   ): Promise<{ worktree: GitWorktreeSummary }> {
     return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees`, {
       method: 'POST',
@@ -124,7 +132,7 @@ export const projectApi = {
     })
   },
 
-  removeGitWorktree(id: string, body: { path: string; force?: boolean }): Promise<{ removed: true }> {
+  removeGitWorktree(id: string, body: { path: string; force?: boolean; rootId?: string }): Promise<{ removed: true }> {
     return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
@@ -132,8 +140,8 @@ export const projectApi = {
     })
   },
 
-  pruneGitWorktrees(id: string): Promise<GitWorkspaceSummary> {
-    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees/prune`, { method: 'POST' })
+  pruneGitWorktrees(id: string, rootId?: string): Promise<GitWorkspaceSummary> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees/prune${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ''}`, { method: 'POST' })
   },
 
   /** List all projects from backend with optional search/filter/sort */

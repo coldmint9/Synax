@@ -1,8 +1,9 @@
 import type { RuntimeContentPart } from '../../../lib/api/runtimeMedia'
-import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
+import type { AgentInteraction, AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../lib/api/agentRuntime'
 import { buildInterleavedTurns, type InterleavedTurn, type TurnContentBlock } from './buildInterleavedTurns'
 
 export type ConversationTimelineEntry =
+  | { id: string; kind: 'interaction'; createdAt: string; label: string; interaction: AgentInteraction; disabled?: boolean }
   | {
       id: string
       kind: 'user'
@@ -386,7 +387,7 @@ export function buildConversationTimeline(
   messages: AgentRuntimeMessage[],
   toolCalls: ToolCallRecord[],
   childSessions?: AgentSession[],
-  options?: { excludeStepId?: string | null; session?: AgentSession; foldWorkRuns?: boolean },
+  options?: { excludeStepId?: string | null; session?: AgentSession; foldWorkRuns?: boolean; interactions?: AgentInteraction[] },
 ): ConversationTimelineEntry[] {
   const filteredSteps = options?.excludeStepId
     ? steps.filter(step => step.id !== options.excludeStepId)
@@ -395,9 +396,24 @@ export function buildConversationTimeline(
   const agentTurns = buildInterleavedTurns(filteredSteps, toolCalls, messages, childSessions)
   const userEntries = buildUserMessageEntries(messages, options?.session)
 
-  if (userEntries.length === 0 && agentTurns.length === 0) return []
+  if (userEntries.length === 0 && agentTurns.length === 0 && !options?.interactions?.length) return []
 
   const items = buildTimelineItems(filteredSteps, agentTurns, userEntries)
+  // Interactions are first-class transcript rows, so folding can never hide a question
+  // or separate its eventual answer from the original request.
+  for (const interaction of options?.interactions ?? []) {
+    if (options?.session && interaction.sessionId !== options.session.id) continue
+    const anchor = items.findIndex(item => item.entry.kind === 'agent' && item.entry.turn.stepId === interaction.stepId)
+    const row: TimelineItem = { timestamp: toTimestamp(interaction.createdAt), entry: {
+      id: `interaction-${interaction.id}`, kind: 'interaction', createdAt: interaction.createdAt,
+      label: interaction.request.title, interaction, disabled: options?.session?.status === 'cancelled',
+    } }
+    if (anchor >= 0) items.splice(anchor + 1, 0, row)
+    else {
+      const next = items.findIndex(item => item.timestamp > row.timestamp)
+      items.splice(next < 0 ? items.length : next, 0, row)
+    }
+  }
   if (options?.foldWorkRuns === false) return items.map(item => item.entry)
 
   const stepById = new Map(filteredSteps.map(step => [step.id, step]))

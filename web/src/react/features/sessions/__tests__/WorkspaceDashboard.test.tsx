@@ -4,6 +4,8 @@ import type { SessionEnvironment } from '../../../../lib/api/agentRuntime'
 import { WorkspaceDashboard } from '../WorkspaceDashboard'
 import { useSessionWorkspaceStore } from '../sessionWorkspaceStore'
 
+vi.mock('../SessionBackgroundProcesses', () => ({ SessionBackgroundProcesses: () => null }))
+
 const environment: SessionEnvironment = {
   sessionId: 'session-1',
   projectId: 'proj-1',
@@ -197,4 +199,46 @@ describe('WorkspaceDashboard', () => {
     fireEvent.click(screen.getByLabelText('刷新工作区'))
     expect(reload).toHaveBeenCalledTimes(1)
   })
+
+  it('switches repositories and keeps same-path diffs and input files isolated', () => {
+    renderDashboard({ repositories: [
+      { ...environment, rootId: 'primary', name: 'API', role: 'primary', status: 'ready' },
+      { ...environment, rootId: 'secondary', name: 'Web', role: 'reference', status: 'ready', branch: 'web-branch', workspacePath: '/repos/web' },
+      { ...environment, rootId: 'missing', name: 'Gone', role: 'reference', status: 'missing', changedFiles: [], inputFiles: [] },
+    ] })
+    fireEvent.click(screen.getByText('BlockAsk.vue'))
+    fireEvent.click(screen.getByText('toolDisplay.js'))
+    fireEvent.click(screen.getByRole('button', { name: 'Web', exact: true }))
+    expect(screen.getByRole('button', { name: 'Web', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByText('web-branch')[0]).toBeInTheDocument()
+    expect(screen.getByText('/repos/web')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('BlockAsk.vue'))
+    fireEvent.click(screen.getByText('toolDisplay.js'))
+    const tabs = useSessionWorkspaceStore.getState().sessions['session-1'].tabs
+    expect(tabs).toHaveLength(4)
+    expect(new Set(tabs.map(tab => tab.id)).size).toBe(4)
+    expect(tabs.map(tab => tab.rootId)).toEqual(['primary', 'primary', 'secondary', 'secondary'])
+    expect(tabs[2].title).toBe('Web / BlockAsk.vue')
+    fireEvent.click(screen.getByRole('button', { name: 'Gone', exact: true }))
+    expect(screen.getAllByText('目录缺失')[0]).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '提交并推送' })).toBeDisabled()
+    expect(screen.queryByText('无变更')).not.toBeInTheDocument()
+  })
+  it('remembers the inspected repository after returning from a viewer and isolates sessions', () => {
+    const snapshot: SessionEnvironment = { ...environment, repositories: [
+      { ...environment, rootId: 'primary', name: 'API', role: 'primary', status: 'ready' },
+      { ...environment, rootId: 'web', name: 'Web', role: 'reference', status: 'ready' },
+    ] }
+    const view = render(<WorkspaceDashboard sessionId="session-1" environment={snapshot} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Web', exact: true }))
+    view.unmount()
+    const reopened = render(<WorkspaceDashboard sessionId="session-1" environment={snapshot} />)
+    expect(screen.getByRole('button', { name: 'Web', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    reopened.rerender(<WorkspaceDashboard sessionId="session-2" environment={snapshot} />)
+    expect(screen.getByRole('button', { name: 'API', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    reopened.rerender(<WorkspaceDashboard sessionId="session-1" environment={{ ...snapshot, repositories: snapshot.repositories!.slice(0, 1) }} />)
+    expect(screen.queryByRole('button', { name: 'Web', exact: true })).not.toBeInTheDocument()
+    expect(screen.getByText('API')).toBeInTheDocument()
+  })
+
 })

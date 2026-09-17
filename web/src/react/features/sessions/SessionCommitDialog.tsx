@@ -1,12 +1,14 @@
 import { Button, Modal, TextArea } from '@heroui/react'
 import { AlertCircle, CheckCircle2, GitBranch, GitCommit, Sparkles } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { agentRuntimeApi, type SessionGitCommitResult } from '../../../lib/api/agentRuntime'
 import { useLocale } from '../../../hooks/useLocale'
 
 interface Props {
   isOpen: boolean
   sessionId: string | null
+  rootId?: string
+  rootName?: string
   branch: string
   changedFiles: number
   onClose: () => void
@@ -22,6 +24,8 @@ interface Props {
 export function SessionCommitDialog({
   isOpen,
   sessionId,
+  rootId,
+  rootName,
   branch,
   changedFiles,
   onClose,
@@ -32,29 +36,38 @@ export function SessionCommitDialog({
   const [submitting, setSubmitting] = useState<'commit' | 'push' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<SessionGitCommitResult | null>(null)
+  const generation = useRef(0)
+  const locked = useRef(false)
 
   // Each open starts from a clean form instead of replaying the last attempt.
   useEffect(() => {
-    if (!isOpen) return
+    generation.current += 1
+    locked.current = false
     setMessage('')
     setError(null)
     setResult(null)
     setSubmitting(null)
-  }, [isOpen])
+    return () => { generation.current += 1; locked.current = false }
+  }, [isOpen, sessionId, rootId])
 
   const run = async (push: boolean) => {
-    if (!sessionId || submitting) return
+    if (!sessionId || !isOpen || locked.current) return
+    locked.current = true
+    const request = generation.current
     setSubmitting(push ? 'push' : 'commit')
     setError(null)
     try {
       const trimmed = message.trim()
       const committed = await agentRuntimeApi.commitSessionWorkspace(sessionId, {
+        ...(rootId ? { rootId } : {}),
         ...(trimmed ? { message: trimmed } : {}),
         ...(push ? {} : { push: false }),
       })
+      if (generation.current !== request) return
       setResult(committed)
       onCommitted(committed)
     } catch (err) {
+      if (generation.current !== request) return
       setError(
         err instanceof Error && err.message
           ? err.message
@@ -63,7 +76,10 @@ export function SessionCommitDialog({
             : t('workspaceCommitOnly'),
       )
     } finally {
-      setSubmitting(null)
+      if (generation.current === request) {
+        locked.current = false
+        setSubmitting(null)
+      }
     }
   }
 
@@ -87,6 +103,7 @@ export function SessionCommitDialog({
             <Modal.Heading>{t('workspaceCommitTitle')}</Modal.Heading>
           </Modal.Header>
           <Modal.Body className="space-y-4">
+            {rootName && <p className="text-xs font-medium" title={rootName}>{rootName}</p>}
             {result ? (
               <div
                 role="status"

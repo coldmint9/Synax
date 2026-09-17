@@ -55,3 +55,30 @@ describe('SessionStatusCard usage boundaries', () => {
     expect(screen.getByText('0:05')).toBeTruthy()
   })
 })
+
+describe('measured context and cache hit rate', () => {
+  it('uses measured total and labels proportional categories as approximate', () => {
+    const { container } = render(<SessionStatusCard stats={{ ...stats, context: { ...stats.context!, inputTokens: 500000, source: 'provider', stale: false, latestRequestUsageAvailable: true } }} steps={[]} todos={[]} />)
+    expect(screen.getByText(/服务商实测 · 500\.0K \/ 1M/)).toBeTruthy()
+    expect(Array.from(container.querySelectorAll<HTMLElement>('[data-context-category]')).map(bar => bar.style.width)).toEqual(['10%', '15%', '5%', '20%'])
+    expect(screen.getByText('≈100.0K')).toBeTruthy()
+  })
+
+  it('shows CLI totals even without a composition snapshot', () => {
+    render(<SessionStatusCard stats={{ ...stats, contextComposition: null, context: { ...stats.context!, inputTokens: 500000, source: 'provider', latestRequestUsageAvailable: true } }} steps={[]} todos={[]} />)
+    expect(screen.getByText(/服务商实测 · 500\.0K/)).toBeTruthy()
+    expect(screen.getByRole('img').getAttribute('aria-label')).toContain('50%')
+  })
+
+  it('marks stale measurements visibly', () => {
+    render(<SessionStatusCard stats={{ ...stats, context: { ...stats.context!, source: 'provider', stale: true } }} steps={[]} todos={[]} />)
+    expect(screen.getByText('最近一次可用记录；当前请求暂无数据')).toBeTruthy()
+  })
+
+  it('does not present legacy totals as a verified cache measurement', () => {
+    render(<SessionStatusCard stats={stats} steps={[]} todos={[]} />)
+    expect(screen.getByText('最近一次缓存率')).toBeTruthy()
+    expect(screen.getByText('平均缓存率（逐轮）')).toBeTruthy()
+    expect(screen.queryByText('18.6%')).toBeNull()
+  })
+})

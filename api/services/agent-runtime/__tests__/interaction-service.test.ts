@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentRuntimeStore as store } from "../session-store.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { ensureSynaxAgentRegistered } from "../synax/index.js";
+import { executeStoredPlan } from "../plan-execution.js";
 import { interactionService } from "../interaction-service.js";
 import { validateControlBatch, controlToolError } from "../control-policy.js";
 import { toolRegistry } from "../tool-registry.js";
@@ -230,6 +231,38 @@ describe("persistent human input", () => {
     });
     expect(store.getSession(session.id).sessionMetadata?.plan).toMatchObject({ status: "saved", revision: 1 });
   });
+  it.each(["chat", "plan", "goal"] as const)("executes a %s proposal without implicitly opting into goal mode", mode => {
+    const { session, run, step, call } = setup();
+    store.updateSessionMetadata(session.id, { mode });
+    const interaction = interactionService.request({ sessionId: session.id, runId: run.id, stepId: step.id, toolCallId: call.id,
+      kind: "plan_approval", request: { plan: { title: "Plan", objective: "Deliver work", steps: [{ id: "one", title: "Work", description: "Do it" }], acceptanceCriteria: ["Verified"] } },
+    });
+    interactionService.reply(session.id, interaction.id, { revision: interaction.revision, action: "execute" });
+    const updated = store.getSession(session.id);
+    expect(updated.sessionMetadata?.mode).toBe(mode === "goal" ? "goal" : "chat");
+    expect(updated.sessionMetadata?.plan).toMatchObject({ status: "approved", revision: 1 });
+    if (mode === "goal") expect(updated.sessionMetadata?.goal).toMatchObject({ status: "executing" });
+    else expect(updated.sessionMetadata?.goal).toBeNull();
+    // Read-only planning ends, but the approved task structure remains protected.
+    store.updateSession(session.id, { status: "running" });
+    expect(controlToolError(store.getSession(session.id), { id: "file.write" })).toBeNull();
+    expect(controlToolError(store.getSession(session.id), { id: "task.create" })).toBeTruthy();
+  });
+
+  it.each(["plan", "goal"] as const)("preserves explicit %s intent when deferring and later executing", mode => {
+    const { session, run, step, call } = setup();
+    store.updateSessionMetadata(session.id, { mode });
+    const interaction = interactionService.request({ sessionId: session.id, runId: run.id, stepId: step.id, toolCallId: call.id,
+      kind: "plan_approval", request: { plan: { title: "Plan", objective: "Deliver work", steps: [{ id: "one", title: "Work", description: "Do it" }], acceptanceCriteria: ["Verified"] } },
+    });
+    interactionService.deferPlan(session.id, interaction.id);
+    expect(store.getSession(session.id).sessionMetadata?.mode).toBe(mode);
+    store.updateSession(session.id, { status: "running" });
+    executeStoredPlan({ sessionId: session.id, runId: run.id, stepId: step.id, expectedRevision: 1 });
+    expect(store.getSession(session.id).sessionMetadata?.mode).toBe(mode === "goal" ? "goal" : "chat");
+    expect(() => executeStoredPlan({ sessionId: session.id, runId: run.id, stepId: step.id, expectedRevision: 2 })).toThrow(/revision changed/);
+  });
+
   it("keeps pending forms and acknowledged replies through a database reopen", () => {
     const { session, run, step, call } = setup();
     const i = interactionService.request({

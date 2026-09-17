@@ -47,3 +47,9 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: vi.fn(),
   }),
 })
+
+// React Aria tabs inspect running animations when moving their indicator.
+// happy-dom has no Web Animations implementation.
+if (!Element.prototype.getAnimations) {
+  Object.defineProperty(Element.prototype, 'getAnimations', { configurable: true, value: () => [] })
+}

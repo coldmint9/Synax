@@ -4,7 +4,7 @@ import { RefreshCw } from 'lucide-react'
 import { useProjectSettings } from './useProjectSettings'
 import { useConfig } from './useConfig'
 import { useLocale } from '../../../hooks/useLocale'
-import { McpServersSection } from './components/McpServersSection'
+import { ProjectCapabilitiesSection } from './integrations/ProjectCapabilitiesSection'
 import type { I18nKey } from '../../../lib/i18n'
 import { SettingsCard } from './components/SettingsCard'
 import { GitWorktreesSection } from './components/GitWorktreesSection'
@@ -79,11 +79,10 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
           <div className="space-y-8">
             <ProjectReferencesSection projectId={projectId} />
             <ProviderTab settings={settings} globalConfig={globalConfig} providers={providers} onSave={(data) => patchSection('provider', data)} />
-            <McpServersSection
+            <ProjectCapabilitiesSection
+              projectId={projectId}
               servers={settings.mcpServers}
               onSave={async (servers) => { await patchSection('mcp', { mcpServers: servers }) }}
-              title={t('settingsMcpTitle')}
-              description={t('settingsMcpDesc')}
             />
             <GitWorktreesSection projectId={projectId} />
             <BasicsTab settings={settings} onSave={(data) => patchSection('basics', data)} />

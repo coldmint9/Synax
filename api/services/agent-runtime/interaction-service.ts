@@ -290,7 +290,7 @@ export const interactionService = {
           });
         } else if (reply.action === "cancel")
           store.updateSessionMetadata(sessionId, {
-            mode: "plan",
+            mode: session.sessionMetadata?.mode === "goal" ? "goal" : "plan",
             plan: { ...i.request.plan!, revision: i.revision, status: "saved" },
           });
       }
@@ -333,7 +333,7 @@ export const interactionService = {
       if (plan?.revision !== i.revision)
         conflict("The plan revision changed.");
       store.updateSessionMetadata(sessionId, {
-        mode: "plan",
+        mode: session.sessionMetadata?.mode === "goal" ? "goal" : "plan",
         plan: { ...i.request.plan!, revision: i.revision, status: "saved" },
       });
       const reply: InteractionReply = { revision: i.revision, action: "save" };

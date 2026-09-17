@@ -4,6 +4,7 @@ import type {
   UpdateProjectSettingsRequest,
   HighRiskAuthEnvelope,
 } from '../contracts/project-settings'
+import type { McpDiscoveryResponse } from '../contracts/config'
 
 export interface ProjectSettingsResponse {
   settings: ProjectSettings
@@ -12,6 +13,10 @@ export interface ProjectSettingsResponse {
 export const projectSettingsApi = {
   async get(projectId: string): Promise<ProjectSettingsResponse> {
     return apiRequest<ProjectSettingsResponse>(`/api/projects/${encodeURIComponent(projectId)}/settings`)
+  },
+
+  async discoverMcp(projectId: string): Promise<McpDiscoveryResponse> {
+    return apiRequest<McpDiscoveryResponse>(`/api/projects/${encodeURIComponent(projectId)}/settings/mcp/discovery`)
   },
 
   async update(projectId: string, payload: UpdateProjectSettingsRequest): Promise<ProjectSettingsResponse> {

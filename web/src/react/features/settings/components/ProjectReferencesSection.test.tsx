@@ -1,4 +1,3 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,23 +5,6 @@ import { projectApi, type ProjectWorkspace, type ProjectWorkspaceRoot } from '..
 import { openDirectoryPicker } from '../../../../lib/open-directory-picker'
 import type { ProjectSummary } from '../../../state/shellStore'
 import { ProjectReferencesSection } from './ProjectReferencesSection'
-
-type MockButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
-  children: ReactNode | ((state: { isPending: boolean }) => ReactNode)
-  onPress?: () => void
-  isDisabled?: boolean
-  isPending?: boolean
-}
-
-// Match the settings page convention: preserve native submit/disabled behavior
-// and HeroUI's onPress and render-function children.
-vi.mock('@heroui/react', () => ({
-  Button: ({ children, onPress, isDisabled, isPending = false, type = 'button', 'aria-label': ariaLabel }: MockButtonProps) => (
-    <button type={type} aria-label={ariaLabel} onClick={onPress} disabled={isDisabled || isPending}>
-      {typeof children === 'function' ? children({ isPending }) : children}
-    </button>
-  ),
-}))
 
 vi.mock('../../../../hooks/useLocale', () => ({
   useLocale: () => ({ locale: 'en' }),
@@ -73,14 +55,15 @@ const reference: ProjectWorkspaceRoot = {
   id: 'ref-independent-id', name: 'Shared library', path: '/work/shared', role: 'reference', status: 'available',
 }
 
-const pathInput = () => screen.getByRole('textbox', { name: 'Absolute directory path' })
-const nameInput = () => screen.getByRole('textbox', { name: 'Reference name (optional)' })
-const addButton = () => screen.getByRole('button', { name: 'Add reference' })
-const removeButton = () => screen.getByRole('button', { name: 'Remove reference: Shared library (/work/shared)' })
+const pathInput = () => screen.getByRole('textbox', { name: 'Project directory path' })
+const nameInput = () => screen.getByRole('textbox', { name: 'Project name (optional)' })
+const addButton = () => screen.getByRole('button', { name: 'Add to workspace' })
+const removeButton = () => screen.getByRole('button', { name: 'Remove: Shared library (/work/shared)' })
 
 async function ready(projectId = 'project-a') {
   await screen.findByText(`/work/${projectId}`)
-  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Add from' })).toBeEnabled())
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Add project', exact: true })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Add project', exact: true }))
 }
 
 describe('ProjectReferencesSection', () => {
@@ -108,7 +91,9 @@ describe('ProjectReferencesSection', () => {
 
     expect(projectApi.addReference).toHaveBeenCalledExactlyOnceWith('project-a', expected)
     expect(await screen.findByText('/work/shared')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('Reference added.')
+    expect(screen.getByRole('status')).toHaveTextContent('Project added to the workspace.')
+    expect(screen.queryByRole('textbox', { name: 'Project directory path' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add project', exact: true }))
     expect(pathInput()).toHaveValue('')
     expect(nameInput()).toHaveValue('')
     expect(addButton()).toBeDisabled()
@@ -122,18 +107,18 @@ describe('ProjectReferencesSection', () => {
     render(<ProjectReferencesSection projectId="project-a" />)
     await ready()
 
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Add from' }), 'existing')
-    const select = screen.getByRole('combobox', { name: 'Select project' })
-    expect(screen.getAllByRole('option').map(option => option.getAttribute('value'))).toEqual(['local', 'existing', '', 'project-b'])
+    await user.click(screen.getByRole('tab', { name: 'Existing projects' }))
+    const select = screen.getByRole('button', { name: /project-b.*work/ })
+    expect(screen.queryByRole('button', { name: /project-a.*work/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /remote-only/ })).not.toBeInTheDocument()
     expect(addButton()).toBeDisabled()
-    await user.selectOptions(select, 'project-b')
+    await user.click(select)
     await user.click(addButton())
 
     expect(projectApi.addReference).toHaveBeenCalledExactlyOnceWith('project-a', { projectId: 'project-b' })
-    expect(await screen.findByRole('status')).toHaveTextContent('Reference added.')
+    expect(await screen.findByRole('status')).toHaveTextContent('Project added to the workspace.')
     expect(screen.getByText('/work/project-b')).toBeInTheDocument()
-    expect(select).toHaveValue('')
-    expect(addButton()).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add to workspace' })).not.toBeInTheDocument()
   })
 
   it('unlinks using the independent reference ID and preserves the primary directory', async () => {
@@ -142,11 +127,11 @@ describe('ProjectReferencesSection', () => {
     render(<ProjectReferencesSection projectId="project-a" />)
     await ready()
 
-    expect(screen.getAllByRole('button', { name: /^Remove reference:/ })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /^Remove:/ })).toHaveLength(1)
     await user.click(removeButton())
 
     expect(projectApi.removeReference).toHaveBeenCalledExactlyOnceWith('project-a', 'ref-independent-id')
-    expect(await screen.findByRole('status')).toHaveTextContent('Reference removed and files preserved.')
+    expect(await screen.findByRole('status')).toHaveTextContent('Project removed. Files on disk are preserved.')
     expect(screen.queryByText('/work/shared')).not.toBeInTheDocument()
     expect(screen.getByText('/work/project-a')).toBeInTheDocument()
   })
@@ -157,8 +142,8 @@ describe('ProjectReferencesSection', () => {
     render(<ProjectReferencesSection projectId="project-a" />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load project directories: Workspace unavailable')
-    expect(screen.queryByRole('button', { name: 'Add reference' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Refresh directories and projects' }))
+    expect(screen.queryByRole('button', { name: 'Add to workspace' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Refresh project directories and workspaces' }))
     await ready()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -169,11 +154,11 @@ describe('ProjectReferencesSection', () => {
     render(<ProjectReferencesSection projectId="project-a" />)
     await ready()
 
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Add from' }), 'existing')
+    await user.click(screen.getByRole('tab', { name: 'Existing projects' }))
 
     expect(projectApi.listProjects).toHaveBeenCalledWith(undefined, { throwOnError: true })
-    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load existing projects. Refresh to retry: Projects unavailable')
-    expect(screen.getByRole('combobox', { name: 'Select project' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load existing projects: Projects unavailable')
+    expect(screen.queryByRole('button', { name: /project-b.*work/ })).not.toBeInTheDocument()
     expect(addButton()).toBeDisabled()
   })
 
@@ -187,7 +172,7 @@ describe('ProjectReferencesSection', () => {
     await user.type(nameInput(), 'Missing')
     await user.click(addButton())
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to add reference: Directory does not exist')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to add project: Directory does not exist')
     expect(pathInput()).toHaveValue('/work/missing')
     expect(nameInput()).toHaveValue('Missing')
     expect(addButton()).toBeEnabled()
@@ -203,7 +188,7 @@ describe('ProjectReferencesSection', () => {
 
     await user.click(removeButton())
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to remove reference: Reference is locked')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to remove project: Reference is locked')
     expect(screen.getByText('/work/shared')).toBeInTheDocument()
     expect(removeButton()).toBeEnabled()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
@@ -221,8 +206,8 @@ describe('ProjectReferencesSection', () => {
 
     view.rerender(<ProjectReferencesSection projectId="project-b" />)
     await ready('project-b')
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Add from' }), 'existing')
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Select project' }), 'b-choice')
+    await user.click(screen.getByRole('tab', { name: 'Existing projects' }))
+    await user.click(screen.getByRole('button', { name: /b-choice.*work/ }))
 
     await act(async () => {
       slowWorkspace.resolve(workspace('project-a', [reference]))
@@ -233,8 +218,8 @@ describe('ProjectReferencesSection', () => {
     expect(screen.getByText('/work/project-b')).toBeInTheDocument()
     expect(screen.queryByText('/work/project-a')).not.toBeInTheDocument()
     expect(screen.queryByText('/work/shared')).not.toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: 'Select project' })).toHaveValue('b-choice')
-    expect(screen.queryByRole('option', { name: /a-choice/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /b-choice.*work/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('button', { name: /a-choice.*work/ })).not.toBeInTheDocument()
     expect(addButton()).toBeEnabled()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
@@ -278,7 +263,7 @@ describe('ProjectReferencesSection', () => {
     vi.mocked(openDirectoryPicker).mockReturnValueOnce(picker.promise)
     const view = render(<ProjectReferencesSection projectId="project-a" />)
     await ready()
-    await user.click(screen.getByRole('button', { name: 'Choose directory' }))
+    await user.click(screen.getByRole('button', { name: 'Browse' }))
     expect(openDirectoryPicker).toHaveBeenCalledTimes(1)
 
     view.rerender(<ProjectReferencesSection projectId="project-b" />)
@@ -297,7 +282,7 @@ describe('ProjectReferencesSection', () => {
     expect(pathInput()).toHaveValue('/work/b-draft')
     expect(nameInput()).toHaveValue('')
     expect(addButton()).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Choose directory' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Browse' })).toBeEnabled()
     expect(projectApi.addReference).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()

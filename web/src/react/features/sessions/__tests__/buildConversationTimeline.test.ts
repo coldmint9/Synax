@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildConversationTimeline, buildUserMessageEntries } from '../buildConversationTimeline'
-import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../../lib/api/agentRuntime'
+import type { AgentInteraction, AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, ToolCallRecord } from '../../../../lib/api/agentRuntime'
 
 const SESSION_ID = 'sess-1'
 const RUN_ID = 'run-1'
@@ -202,5 +202,32 @@ describe('buildUserMessageEntries', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0]?.content).toBe('你好')
     expect(entries[0]?.id).toBe('user-input-sess-1')
+  })
+})
+
+
+describe('inline interactions', () => {
+  const interaction: AgentInteraction = {
+    id: 'ask-1', sessionId: SESSION_ID, runId: RUN_ID, stepId: STEP_ID, toolCallId: 'ask-call',
+    kind: 'clarification', revision: 1, status: 'answered',
+    request: { title: 'Which scope?', questions: [{ id: 'scope', type: 'text', label: 'Scope' }] },
+    response: { action: 'submit', revision: 1, answers: { scope: 'Frontend' } },
+    createdAt: '2026-01-01T00:00:03.000Z', resolvedAt: '2026-01-01T00:00:04.000Z',
+  }
+  it.each([true, false])('keeps a question and its answer at the original step with foldWorkRuns=%s', foldWorkRuns => {
+    const entries = buildConversationTimeline([makeRun()], [makeStep(), makeStep({ id: 'step-2', index: 2, startedAt: '2026-01-01T00:00:04.000Z' })], [
+      makeMessage({ id: 'ask', role: 'assistant', stepId: STEP_ID, content: 'Let us choose the scope.' }),
+      makeMessage({ id: 'next', role: 'assistant', stepId: 'step-2', content: 'Proceeding with frontend.' }),
+    ], [], [], { foldWorkRuns, interactions: [interaction] })
+    const index = entries.findIndex(entry => entry.kind === 'interaction')
+    expect(index).toBeGreaterThan(0)
+    expect(entries[index]).toMatchObject({ interaction: { response: { answers: { scope: 'Frontend' } } } })
+    expect(entries.slice(index + 1).some(entry => entry.kind === 'agent' && entry.turn.stepId === 'step-2')).toBe(true)
+    expect(entries.filter(entry => entry.kind === 'interaction')).toHaveLength(1)
+  })
+  it('renders a durable pending question even before the step snapshot arrives', () => {
+    const entries = buildConversationTimeline([], [], [], [], [], { interactions: [{ ...interaction, status: 'pending', response: null }] })
+    expect(entries).toHaveLength(1)
+    expect(entries[0].kind).toBe('interaction')
   })
 })

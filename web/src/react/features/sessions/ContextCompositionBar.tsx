@@ -1,4 +1,4 @@
-import type { ContextComposition } from "../../../lib/api/agentRuntime";
+import type { ContextComposition, SessionStats } from "../../../lib/api/agentRuntime";
 import { formatContextLimit, formatTokenCount } from "../../../lib/formatTokens";
 import { useLocale } from "../../../hooks/useLocale";
 
@@ -37,17 +37,27 @@ export function ContextCompositionBar({
   composition,
   contextLimit,
   contextLimitKnown = true,
+  context,
 }: {
   composition?: ContextComposition | null;
+  context?: SessionStats["context"];
   contextLimit?: number;
   contextLimitKnown?: boolean;
 }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
   const heading = zh ? "上下文组成" : "Context composition";
-  const total = composition
+  const estimatedTotal = composition
     ? CATEGORIES.reduce((sum, item) => sum + composition[item.key], 0)
     : 0;
+  const reported = context?.source === "provider" ||
+    (context?.latestRequestUsageAvailable === true && context.inputTokens !== null);
+  const total = (reported || context?.source === "estimate") && context?.inputTokens != null
+    ? context.inputTokens : estimatedTotal;
+  const available = composition != null || (context?.inputTokens != null && (reported || context.source === "estimate"));
+  const sourceLabel = reported
+    ? (zh ? "服务商实测" : "Provider reported")
+    : (zh ? "Token 估算" : "Estimated tokens");
   // The track spans the whole model context window. Only the tokens used by the
   // current context fill it; the rest stays empty. The four categories divide
   // that filled share, so their widths sum to the window usage, not to 100%.
@@ -69,7 +79,8 @@ export function ContextCompositionBar({
       ? `${Number(((tokens / trackSize) * overflowScale * 100).toFixed(4))}%`
       : "0%";
   const items = CATEGORIES.map((item) => {
-    const tokens = composition?.[item.key] ?? 0;
+    const tokens = estimatedTotal > 0
+      ? (composition?.[item.key] ?? 0) / estimatedTotal * total : 0;
     const percent = total > 0 ? (tokens / total) * 100 : 0;
     return {
       ...item,
@@ -90,19 +101,20 @@ export function ContextCompositionBar({
         <span
           className="text-muted-foreground/60"
           title={
-            zh
-              ? "按本轮请求的文本和工具 Schema 估算，不是累计用量；不含图片、音视频等非文本 Token。条形按模型上下文窗口铺满，仅已用部分按四类划分。"
-              : "Estimated from this request’s text and tool schemas, not cumulative usage. Non-text image/audio/video tokens are excluded. The bar spans the model context window; only the used share is split by category."
+            reported
+              ? (zh ? "最近请求的完整输入 Token（含缓存），来自服务商 usage；不是会话累计量或下一轮精确用量。分类按同一请求的本地估算比例分配，不代表服务商分类计量。"
+                : "Full input tokens including cache from the latest request's provider usage, not cumulative or exact next-turn usage. Categories are estimated proportions of the same request.")
+              : (zh ? "按本轮文本和工具 Schema 本地估算；非原生 tokenizer、消息封装及图片等非文本输入可能造成误差。"
+                : "Local text and tool-schema estimate. Tokenizer differences, message framing and non-text inputs can cause errors.")
           }
         >
-          {total > 0
-            ? `${zh ? "Token 估算" : "Estimated tokens"} · ${formatTokenCount(total)}${knownWindow !== null ? ` / ${formatContextLimit(knownWindow)}` : ""}`
-            : zh
-              ? "Token 估算"
-              : "Estimated tokens"}
+          {available
+            ? `${sourceLabel} · ${formatTokenCount(total)}${knownWindow !== null ? ` / ${formatContextLimit(knownWindow)}` : ""}`
+            : sourceLabel}
         </span>
       </div>
-      {composition ? (
+      {context?.stale && <p className="text-[9px] text-muted-foreground/60">{zh ? "最近一次可用记录；当前请求暂无数据" : "Last available sample; current request has no data"}</p>}
+      {composition && estimatedTotal > 0 ? (
         <>
           <div
             role="img"
@@ -149,7 +161,7 @@ export function ContextCompositionBar({
                   {item.label}
                 </dt>
                 <dd className="text-right tabular-nums">
-                  {formatTokenCount(item.tokens)}
+                  {reported ? "≈" : ""}{formatTokenCount(Math.round(item.tokens))}
                 </dd>
                 <dd className="text-right tabular-nums text-muted-foreground/70">
                   {item.ratio}
@@ -158,6 +170,10 @@ export function ContextCompositionBar({
             ))}
           </dl>
         </>
+      ) : available ? (
+        <div role="img" aria-label={`${zh ? "窗口占用" : "Window used"} ${windowUsage ?? "—"}%`} className="h-2 overflow-hidden rounded-full bg-secondary/60">
+          <div className="h-full bg-emerald-500" style={{ width: toWidth(total) }} />
+        </div>
       ) : (
         <p className="text-[9px] text-muted-foreground/60">
           {zh ? "暂无上下文组成记录" : "No context composition recorded yet"}

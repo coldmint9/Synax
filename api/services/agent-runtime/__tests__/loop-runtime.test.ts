@@ -1436,13 +1436,13 @@ describe("agentLoopRuntime", () => {
     );
     await agentLoopRuntime.resumeRun(session.id);
     // A declared blocker no longer dead-ends the session: it parks on an
-    // interaction checkpoint (waiting_input) with the goal marked blocked,
+    // interaction checkpoint (waiting_input) without creating a goal,
     // so answering the interaction resumes the same run.
     expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
       status: "waiting_input",
       sessionMetadata: {
-        mode: "goal",
-        goal: { status: "blocked" },
+        mode: "chat",
+        goal: null,
         plan: { status: "approved", revision: 1 },
       },
     });
@@ -1454,7 +1454,7 @@ describe("agentLoopRuntime", () => {
     ).toEqual(["plan.propose", "goal.finish"]);
   });
 
-  it("executes a deferred plan from a later user instruction and completes with evidence", async () => {
+  it("executes a deferred plan from a later user instruction and finishes in chat without a goal acceptance loop", async () => {
     ensureSynaxAgentRegistered();
     const criterion = "Package metadata was inspected";
     const plan = {
@@ -1510,34 +1510,7 @@ describe("agentLoopRuntime", () => {
         args: { taskId: "1", status: "completed" },
       }),
     );
-    mockStepResults.push({
-      fullStream: (async function* () {
-        const proof = agentRuntimeStore
-          .listToolCalls(session.id)
-          .find((c) => c.modelToolCallId === "proof-read")!;
-        yield {
-          type: "tool-call" as const,
-          toolCallId: "goal-done",
-          toolName: "goal_finish",
-          input: {
-            status: "completed",
-            reason: "Package metadata verified",
-            evidence: [
-              {
-                criterion,
-                summary: "Read package.json successfully",
-                toolCallIds: [proof.id],
-              },
-            ],
-          },
-        };
-        yield {
-          type: "finish-step" as const,
-          finishReason: "tool-calls",
-          usage: {},
-        };
-      })(),
-    });
+    queueMockStep(makeTextStep("Package metadata verified."));
     await collectChunks(
       agentLoopRuntime.streamRun(session.id, {
         message: "执行这个计划，完成验收后结束。",
@@ -1546,8 +1519,8 @@ describe("agentLoopRuntime", () => {
     expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
       status: "completed",
       sessionMetadata: {
-        mode: "goal",
-        goal: { status: "completed" },
+        mode: "chat",
+        goal: null,
         plan: { status: "approved", revision: 1 },
       },
     });

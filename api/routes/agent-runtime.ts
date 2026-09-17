@@ -780,7 +780,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
   if (!filePath) return c.json({ error: "Missing path" }, 400);
   try {
     return c.json(
-      await getSessionEnvironmentFile(c.req.param("sessionId"), filePath, kind),
+      await getSessionEnvironmentFile(c.req.param("sessionId"), filePath, kind, c.req.query("rootId")),
     );
   } catch (error) {
     return runtimeError(c, error);
@@ -788,6 +788,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
 });
 
 const commitSessionWorkspaceSchema = z.object({
+  rootId: z.string().min(1).optional(),
   // Empty message = generate one with the session's current model.
   message: z.string().max(2000).optional(),
   model: z.string().max(256).optional(),

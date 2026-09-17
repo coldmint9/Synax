@@ -1,5 +1,4 @@
-import { Check, ChevronRight, History, Loader2, PenLine, X } from 'lucide-react'
-import { SessionModeSummary } from './SessionWorkspace'
+import { ArrowDown, ArrowUpRight, Check, ChevronRight, ListTodo, MessageCircle, Loader2, PenLine, X } from 'lucide-react'
 import './agentControls.css'
 import { useEffect, useId, useRef, useState } from 'react'
 import {
@@ -24,32 +23,30 @@ function PlanDetails({ plan, zh, showTitle = true }: { plan: AgentPlan; zh: bool
     [zh ? '假设' : 'Assumptions', plan.assumptions],
     [zh ? '风险' : 'Risks', plan.risks],
   ]
-  return (
-    <div className="agent-plan-details space-y-3">
-      {showTitle && <h4 className="font-medium">{plan.title}</h4>}
-      <p className="whitespace-pre-wrap">{plan.objective}</p>
-      <ol className="list-decimal space-y-2 pl-5">
-        {plan.steps.map(step => (
-          <li key={step.id}>
-            <strong>{step.title}</strong> <span className="text-muted-foreground">({step.id})</span>
-            <p className="whitespace-pre-wrap">{step.description}</p>
-            {step.dependsOn.length > 0 && <p>{zh ? '依赖：' : 'Depends on: '}{step.dependsOn.join(', ')}</p>}
-            {step.expectedFiles.length > 0 && <ul className="font-mono text-xs">{step.expectedFiles.map(file => <li key={file}>{file}</li>)}</ul>}
-          </li>
-        ))}
-      </ol>
-      {sections.map(([title, entries]) => entries.length > 0 && (
-        <div key={title}>
-          <h5 className="font-medium">{title}</h5>
-          <ul className="list-disc pl-5">{entries.map((item, index) => <li key={index}>{item}
-            {entries === plan.acceptanceCriteria && plan.humanAcceptanceCriteria?.includes(item) && (
-              <span className="ml-1 text-warning">{zh ? '（需用户确认）' : '(user confirmation)'}</span>
-            )}
-          </li>)}</ul>
-        </div>
-      ))}
+  return <div className="agent-plan-details">
+    {showTitle && <h4>{plan.title}</h4>}
+    <p className="agent-plan-objective">{plan.objective}</p>
+    <ol className="agent-plan-steps">
+      {plan.steps.map((step, index) => <li key={step.id}>
+        <span className="agent-plan-step-number">{String(index + 1).padStart(2, '0')}</span>
+        <details className="agent-plan-step">
+          <summary>{step.title}<ChevronRight size={13} aria-hidden /></summary>
+          <div><p>{step.description}</p>
+            {step.dependsOn.length > 0 && <p className="agent-plan-meta">{zh ? '依赖：' : 'Depends on: '}{step.dependsOn.join(', ')}</p>}
+            {step.expectedFiles.length > 0 && <ul className="agent-plan-files">{step.expectedFiles.map(file => <li key={file}>{file}</li>)}</ul>}
+          </div>
+        </details>
+      </li>)}
+    </ol>
+    <div className="agent-plan-supplement">
+      {sections.map(([title, entries]) => entries.length > 0 && <details key={title}>
+        <summary>{title}<span>{entries.length}</span><ChevronRight size={12} aria-hidden /></summary>
+        <ul>{entries.map((item, index) => <li key={index}>{item}
+          {entries === plan.acceptanceCriteria && plan.humanAcceptanceCriteria?.includes(item) && <span className="text-warning">{zh ? '（需用户确认）' : ' (user confirmation)'}</span>}
+        </li>)}</ul>
+      </details>)}
     </div>
-  )
+  </div>
 }
 
 function InteractionForm({ interaction, disabled }: {
@@ -225,7 +222,9 @@ function InteractionForm({ interaction, disabled }: {
       onSubmit={event => { event.preventDefault(); if (!isPlan) void reply('submit') }}
       className="agent-request-surface">
       <header className="agent-request-header">
-        <h3 id={`${formId}-title`} className="agent-request-title">{interaction.request.title}</h3>
+        <span className="agent-interaction-icon" aria-hidden>{isPlan ? <ListTodo size={18} /> : <MessageCircle size={18} />}</span>
+        <div className="agent-request-heading"><span className="agent-interaction-eyebrow">{isPlan ? (zh ? '计划 · 待确认' : 'PLAN · READY FOR REVIEW') : (zh ? '需要你的意见' : 'YOUR INPUT')}<span>v{interaction.revision}</span></span>
+        <h3 id={`${formId}-title`} className="agent-request-title">{interaction.request.title}</h3></div>
         {submitting && <Loader2 size={18} className="shrink-0 animate-spin motion-reduce:animate-none text-muted-foreground" aria-hidden />}
         <button type="button" className="agent-request-close" aria-label={isPlan ? (zh ? '取消' : 'Cancel') : (zh ? '取消请求' : 'Cancel request')}
           title={isPlan ? (zh ? '取消' : 'Cancel') : (zh ? '取消请求' : 'Cancel request')} disabled={disabled || submitting}
@@ -246,12 +245,13 @@ function InteractionForm({ interaction, disabled }: {
           ))}
         </div>
         <footer className="agent-request-footer">
-          {isPlan && <p className="text-[11px] leading-relaxed text-muted-foreground">{zh ? '执行当前计划，或取消这次快捷确认。取消不会删除计划。' : 'Execute this plan now, or cancel this shortcut. Cancelling keeps the plan.'}</p>}
+          {isPlan && <p className="text-[11px] leading-relaxed text-muted-foreground">{zh ? '确认后按计划开始工作。你也可以在下方输入修改意见。' : 'Start working from this plan, or write your changes in the composer.'}</p>}
           <div className="agent-request-footer-actions">
+            {isPlan && <button type="button" className={buttonClass} onClick={() => void reply('cancel')}>{zh ? '暂不执行' : 'Not now'}</button>}
             {!isPlan && <button type="button" className={`${buttonClass} agent-request-skip`} onClick={() => void reply('decline')}>{zh ? '跳过' : 'Skip'}</button>}
             <button type={isPlan ? 'button' : 'submit'} className={`${buttonClass} agent-request-primary`}
               onClick={isPlan ? () => void reply('execute') : undefined}>
-              {isPlan ? (zh ? '执行' : 'Execute') : (zh ? '提交回答' : 'Submit answers')}
+              {isPlan ? (zh ? '开始执行' : 'Start execution') : (zh ? '提交回答' : 'Submit answers')}{isPlan && <ArrowUpRight size={14} aria-hidden />}
             </button>
           </div>
           {Object.keys(errors).length > 0 && <p role="alert" className="text-xs text-danger">{zh ? '请检查上方标记的字段。' : 'Check the highlighted fields above.'}</p>}
@@ -266,6 +266,23 @@ function InteractionForm({ interaction, disabled }: {
 }
 
 function InteractionHistory({ interaction, zh }: { interaction: AgentInteraction; zh: boolean }) {
+  const session = useAgentSessionStore(s => s.sessions.find(item => item.id === interaction.sessionId))
+  const sendSessionMessage = useAgentSessionStore(s => s.sendSessionMessage)
+  const [starting, setStarting] = useState(false)
+  const startingRef = useRef(false)
+  const [startError, setStartError] = useState('')
+  const currentPlan = session?.sessionMetadata?.plan
+  const canExecute = Boolean(interaction.request.plan && currentPlan?.revision === interaction.revision && currentPlan.status === 'saved'
+    && session && ['completed', 'interrupted', 'failed', 'idle'].includes(session.status))
+  const execute = async () => {
+    if (!canExecute || startingRef.current) return
+    startingRef.current = true
+    setStarting(true); setStartError('')
+    try {
+      await sendSessionMessage(interaction.sessionId, { message: zh ? `执行已保存的计划 v${interaction.revision}：${interaction.request.title}。` : `Execute saved plan v${interaction.revision}: ${interaction.request.title}.` })
+    } catch (error) { setStartError(error instanceof Error ? error.message : String(error)) }
+    finally { startingRef.current = false; setStarting(false) }
+  }
   const reply = interaction.response
   const action = reply?.action
   const tone = action === 'save' ? 'saved'
@@ -277,35 +294,46 @@ function InteractionHistory({ interaction, zh }: { interaction: AgentInteraction
     : action === 'revise' ? (zh ? '已请求修改' : 'Revision requested')
       : action === 'execute' ? (zh ? '已开始执行' : 'Execution started')
         : interaction.status === 'declined' ? (zh ? '已拒绝' : 'Declined')
-          : interaction.status === 'cancelled' ? (interaction.request.plan ? (zh ? '已取消快捷执行' : 'Shortcut execution cancelled') : (zh ? '已取消' : 'Cancelled')) : (zh ? '已回答' : 'Answered')
+          : interaction.status === 'cancelled' ? (interaction.request.plan ? (zh ? '暂不执行' : 'Deferred') : (zh ? '已取消' : 'Cancelled')) : (zh ? '已回答' : 'Answered')
   const summaryLabel = `${interaction.request.title} v${interaction.revision} — ${status}`
-  return <details className="agent-history-item" data-tone={tone}>
+  return <details className="agent-history-item agent-interaction-record" data-tone={tone} open={interaction.kind === 'clarification' ? true : undefined}>
     <summary aria-label={summaryLabel}>
-      <ChevronRight size={12} aria-hidden className="agent-history-item-arrow" />
+      <span className="agent-interaction-icon" aria-hidden>{interaction.kind === 'plan_approval' ? <ListTodo size={16} /> : <MessageCircle size={16} />}</span>
       <span className="agent-history-item-title">{interaction.request.title}</span>
-      <span className="agent-history-version">v{interaction.revision}</span>
+      <span className="agent-history-version">v{interaction.revision}</span><ChevronRight size={12} aria-hidden className="agent-history-item-arrow" />
       <span className="agent-history-status" data-tone={tone}>
         <span className="agent-history-status-dot" aria-hidden />
         {status}
       </span>
     </summary>
     <div className="agent-history-detail">
-      {interaction.request.plan && <PlanDetails plan={interaction.request.plan} zh={zh} />}
+      {interaction.request.plan && <PlanDetails plan={interaction.request.plan} zh={zh} showTitle={false} />}
       <dl className="agent-history-answers">
         {interaction.request.questions?.map(question => {
           const value = reply?.answers?.[question.id]
           return <div key={question.id} className="agent-history-answer">
             <dt>{question.label}</dt>
-            <dd>{value === undefined ? '—' : Array.isArray(value) ? value.join(', ') : typeof value === 'boolean' ? (value ? (zh ? '是' : 'Yes') : (zh ? '否' : 'No')) : String(value)}</dd>
+            <dd>{value === undefined ? '—' : Array.isArray(value) ? value.map(item => question.options?.find(option => option.value === item)?.label ?? item).join(', ') : typeof value === 'boolean' ? (value ? (zh ? '是' : 'Yes') : (zh ? '否' : 'No')) : question.options?.find(option => option.value === value)?.label ?? String(value)}</dd>
           </div>
         })}
       </dl>
+      {canExecute && <div className="agent-saved-plan-actions"><span>{zh ? '准备好后，随时开始。' : 'Ready when you are.'}</span><button type="button" className={`${buttonClass} agent-request-primary`} disabled={starting} onClick={() => void execute()}>{starting && <Loader2 size={13} className="animate-spin" />}{zh ? '开始执行' : 'Start execution'}<ArrowUpRight size={14}/></button></div>}
+      {startError && <p role="alert" className="text-xs text-danger">{startError}</p>}
       {reply?.message && <p className="agent-history-message">{reply.message}</p>}
     </div>
   </details>
 }
 
-export function AgentInteractionPanel({ session }: { session: AgentSession }) {
+export function InteractionCard({ interaction, disabled = false }: { interaction: AgentInteraction; disabled?: boolean }) {
+  const { locale } = useLocale()
+  return <article className="session-inline-interaction" id={`interaction-${interaction.id}`} tabIndex={-1}>
+    {interaction.status === 'pending'
+      ? <InteractionForm key={`${interaction.id}:${interaction.revision}`} interaction={interaction} disabled={disabled} />
+      : <InteractionHistory interaction={interaction} zh={locale === 'zh'} />}
+  </article>
+}
+
+export function AgentInteractionPanel({ session, compact = false }: { session: AgentSession; compact?: boolean }) {
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const state = useAgentSessionStore(s => s.interactionState)
@@ -336,32 +364,19 @@ export function AgentInteractionPanel({ session }: { session: AgentSession }) {
   const current = state?.sessionId === session.id ? state : null
   const pending = current?.items.filter(item => item.status === 'pending') ?? []
   const waiting = session.status === 'waiting_input' || pending.length > 0
-  const history = current?.items.filter(item => item.status !== 'pending') ?? []
-  const metadata = session.sessionMetadata
-  const hasSummary = Boolean(metadata?.goal || metadata?.plan || metadata?.specialist)
-  if (!waiting && !history.length && !hasSummary && !current?.error) return null
-
-  return (
-    <section aria-label={zh ? '待处理请求' : 'Agent requests'} className="agent-controls-stack">
-      {(hasSummary || history.length > 0) && <div className="agent-context-row">
-        {hasSummary && <SessionModeSummary session={session} />}
-        {history.length > 0 && <details key={session.id} className="agent-history">
-          <summary><ChevronRight size={11} aria-hidden className="agent-disclosure-arrow" /><History size={12} aria-hidden />
-            <span className="agent-history-label">{zh ? '交互记录' : 'Interaction history'}</span>
-            <span className="agent-history-count" aria-label={zh ? `${history.length} 条记录` : `${history.length} records`}>{history.length}</span>
-          </summary>
-          <div className="agent-context-body agent-history-body">
-            {history.map(interaction => <InteractionHistory key={`${interaction.id}:${interaction.revision}`} interaction={interaction} zh={zh} />)}
-          </div>
-        </details>}
-      </div>}
-      {waiting && pending.length === 0 && <p role="status" className="px-2 text-xs text-muted-foreground">{zh ? '等待你的输入，正在加载请求…' : 'Waiting for your input. Loading requests…'}</p>}
-      {current?.error && <div role="alert" className="px-2 text-xs text-danger">
-        <p className="break-words">{current.error}</p>
-        <button type="button" className={buttonClass} onClick={() => void refreshInteractions(session.id)}>{zh ? '重新加载' : 'Retry loading'}</button>
-      </div>}
-      {pending.map(interaction => <InteractionForm key={`${session.id}:${interaction.id}:${interaction.revision}`} interaction={interaction}
-        disabled={session.status === 'cancelled'} />)}
-    </section>
-  )
+  const items = current?.items ?? []
+  if (!waiting && !current?.error && (compact || !items.length)) return null
+  return <section aria-label={zh ? '待处理请求' : 'Agent requests'} className="agent-controls-stack">
+    {current?.error && <div role="alert" className="agent-interaction-error"><p>{current.error}</p>
+      <button type="button" className={buttonClass} onClick={() => void refreshInteractions(session.id)}>{zh ? '重新加载' : 'Retry loading'}</button>
+    </div>}
+    {waiting && pending.length === 0 && <p role="status" className="px-2 text-xs text-muted-foreground">{zh ? '正在加载提问…' : 'Loading requests…'}</p>}
+    {compact ? pending.map(item => <button key={item.id} type="button" className="agent-pending-jump" onClick={() => {
+      const card = document.getElementById(`interaction-${item.id}`)
+      const anchor = card ?? document.getElementById(`session-entry-interaction-${item.id}`)
+      anchor?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      card?.focus({ preventScroll: true })
+    }}><MessageCircle size={14}/><span>{item.kind === 'plan_approval' ? (zh ? '计划待确认' : 'Plan ready for review') : (zh ? '有问题需要你回答' : 'Your input is needed')}</span><ArrowDown size={14}/></button>)
+      : items.map(item => <InteractionCard key={`${item.id}:${item.revision}`} interaction={item} disabled={session.status === 'cancelled'} />)}
+  </section>
 }

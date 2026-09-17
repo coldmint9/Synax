@@ -15,7 +15,7 @@ function LineNumbers({ count }: { count: number }) {
   )
 }
 
-export const CodeViewer = memo(function CodeViewer({ sessionId, path }: { sessionId: string; path: string }) {
+export const CodeViewer = memo(function CodeViewer({ sessionId, path, rootId }: { sessionId: string; path: string; rootId?: string }) {
   const [view, setView] = useState<'preview' | 'source'>('preview')
   const [content, setContent] = useState('')
   const [html, setHtml] = useState('')
@@ -30,7 +30,9 @@ export const CodeViewer = memo(function CodeViewer({ sessionId, path }: { sessio
     setLoading(true)
     setError(null)
     try {
-      const result = await agentRuntimeApi.getSessionEnvironmentFile(sessionId, path, 'input')
+      const result = await (rootId
+        ? agentRuntimeApi.getSessionEnvironmentFile(sessionId, path, 'input', rootId)
+        : agentRuntimeApi.getSessionEnvironmentFile(sessionId, path, 'input'))
       const text = result.content ?? ''
       const nextHtml = await highlightCode(text, path)
       if (requestRef.current !== requestId) return
@@ -42,14 +44,14 @@ export const CodeViewer = memo(function CodeViewer({ sessionId, path }: { sessio
     } finally {
       if (requestRef.current === requestId) setLoading(false)
     }
-  }, [path, sessionId])
+  }, [path, sessionId, rootId])
 
   useEffect(() => {
     void load()
     return () => { requestRef.current += 1 }
   }, [load])
 
-  useEffect(() => { setView('preview') }, [sessionId, path])
+  useEffect(() => { setView('preview') }, [sessionId, path, rootId])
 
   const lineCount = useMemo(() => (content ? content.split('\n').length : 0), [content])
   const language = languageForPath(path)

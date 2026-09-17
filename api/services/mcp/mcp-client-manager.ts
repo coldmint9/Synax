@@ -2,6 +2,7 @@ import { hasInlineMedia, importToolContent } from '../agent-runtime/media-tool-c
 import type { RuntimeContentPart } from '../agent-runtime/content-parts.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import os from 'node:os'
 import type { McpServerConfig } from '../../lib/config/config-types.js'
 import { getGlobalConfigForRuntime } from '../../lib/config/config-store.js'
 import { getProjectSettings } from '../../lib/config/project-settings-store.js'
@@ -11,6 +12,32 @@ function baseEnv(): Record<string, string> {
   return Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   ) as Record<string, string>
+}
+
+function expandConfigValue(value: string, cwd: string, env: Record<string, string>): string {
+  return value
+    .replace(/\$\{(?:workspaceFolder|workspaceRoot)\}/g, cwd)
+    .replace(/\$\{userHome\}/g, os.homedir())
+    .replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name: string) => env[name] ?? match)
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name: string) => env[name] ?? match)
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (match, name: string) => env[name] ?? match)
+    .replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (match, name: string) => env[name] ?? match)
+}
+
+function transportConfig(config: McpServerConfig) {
+  const inheritedEnv = baseEnv()
+  const rawCwd = config.cwd ?? process.cwd()
+  const cwd = expandConfigValue(rawCwd, process.cwd(), inheritedEnv)
+  const configuredEnv = Object.fromEntries(
+    Object.entries(config.env ?? {}).map(([name, value]) => [name, expandConfigValue(value, cwd, inheritedEnv)]),
+  )
+  const env = { ...inheritedEnv, ...configuredEnv }
+  return {
+    command: expandConfigValue(config.command, cwd, env),
+    args: (config.args ?? []).map(value => expandConfigValue(value, cwd, env)),
+    ...(config.env && Object.keys(config.env).length > 0 ? { env } : {}),
+    cwd,
+  }
 }
 
 export interface McpRuntimeToolDef {
@@ -88,10 +115,7 @@ export class McpClientManager {
 
     const promise = (async (): Promise<ServerState> => {
       const transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args ?? [],
-        ...(config.env && Object.keys(config.env).length > 0 ? { env: { ...baseEnv(), ...config.env } } : {}),
-        cwd: process.cwd(),
+        ...transportConfig(config),
         stderr: 'pipe',
       })
       const client = new Client(
@@ -200,10 +224,7 @@ export class McpClientManager {
   /** Spawn an ephemeral server, list its tools, then shut it down. Used by "test connection". */
   async probe(config: McpServerConfig): Promise<{ ok: boolean; tools: McpRuntimeToolDef[]; error?: string }> {
     const transport = new StdioClientTransport({
-      command: config.command,
-      args: config.args ?? [],
-      ...(config.env && Object.keys(config.env).length > 0 ? { env: { ...baseEnv(), ...config.env } } : {}),
-      cwd: process.cwd(),
+      ...transportConfig(config),
     })
     const client = new Client({ name: 'synax-host-probe', version: '0.1.0' }, { capabilities: {} })
     try {

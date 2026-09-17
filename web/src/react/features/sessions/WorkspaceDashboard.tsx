@@ -17,6 +17,8 @@ import {
   Folder,
   FolderOpen,
   FolderTree,
+  Layers2,
+  Pin,
   GitBranch,
   GitCommit,
   List,
@@ -26,8 +28,11 @@ import type {
   EnvironmentChangeStatus,
   SessionEnvironment,
   SessionEnvironmentFile,
+  SessionEnvironmentRepository,
   SessionEnvironmentSubagent,
 } from "../../../lib/api/agentRuntime";
+import { useWorkspaceCopy } from "../workspace/workspaceCopy";
+import "../workspace/workspaceProjects.css";
 import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useLocale } from "../../../hooks/useLocale";
 import type { I18nKey } from "../../../lib/i18n";
@@ -36,6 +41,7 @@ import {
   openWorkspaceDiff,
   openWorkspaceFile,
   openWorkspaceSubagent,
+  useSessionWorkspaceStore,
 } from "./sessionWorkspaceStore";
 import { SessionBackgroundProcesses } from "./SessionBackgroundProcesses";
 import { SessionCommitDialog } from "./SessionCommitDialog";
@@ -197,6 +203,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   reload?: () => void | Promise<void>;
 }) {
   const { t } = useLocale();
+  const c = useWorkspaceCopy();
   // The workspace panel already polls this snapshot; only fall back to owning
   // the request when rendered standalone.
   const owned = useSessionEnvironment(
@@ -208,6 +215,18 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   const reload = providedReload ?? owned.reload;
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [changedFilesView, setChangedFilesView] = useState<"tree" | "flat">("tree");
+  const selectedRootId = useSessionWorkspaceStore(state => sessionId ? state.sessions[sessionId]?.selectedRootId : undefined);
+  const selectRepository = useSessionWorkspaceStore(state => state.selectRepository);
+  const repositories = environment?.repositories ?? [];
+  const repository = repositories.find(root => root.rootId === selectedRootId)
+    ?? repositories.find(root => root.role === "primary")
+    ?? repositories[0];
+  const repositoryEnvironment = environment && repository ? { ...environment, ...repository } : environment;
+  const openDiff = (filePath: string) => {
+    if (!sessionId) return;
+    if (repository) openWorkspaceDiff(sessionId, filePath, repository.rootId, repository.name);
+    else openWorkspaceDiff(sessionId, filePath);
+  };
   const copiedTimer = useRef<number | null>(null);
 
   const copyPath = useCallback(async (filePath: string) => {
@@ -226,10 +245,10 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   );
 
   const recentFiles = useMemo(
-    () => (environment?.inputFiles ?? []).slice(-8).reverse(),
-    [environment?.inputFiles],
+    () => (repositoryEnvironment?.inputFiles ?? []).slice(-8).reverse(),
+    [repositoryEnvironment?.inputFiles],
   );
-  const changedFiles = environment?.changedFiles ?? [];
+  const changedFiles = repositoryEnvironment?.changedFiles ?? [];
   const changedFileTree = useMemo(
     () => buildChangedFileTree(changedFiles),
     [changedFiles],
@@ -247,10 +266,30 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       )}
       {!sessionId ? (
         <div className="ws-placeholder">{t("workspaceSelectSession")}</div>
-      ) : environment ? (
+      ) : environment && repositoryEnvironment ? (
         <>
+          {repositories.length > 1 && (
+            <section className="ws-project-switcher" aria-label={c.members}>
+              <div className="workspace-section-label"><span className="flex items-center gap-1.5"><Layers2 size={12} />{c.members}</span><span className="workspace-count">{repositories.length}</span></div>
+              <div className="ws-project-options" role="group" aria-label={t("workspaceRepositorySelect")}>
+                {repositories.map(root => (
+                  <button key={root.rootId} type="button" className="ws-project-option"
+                    aria-pressed={repository?.rootId === root.rootId}
+                    aria-label={root.name}
+                    onClick={() => selectRepository(sessionId, root.rootId)}>
+                    <span className="ws-project-option-top"><Folder size={13} /><strong title={root.name}>{root.name}</strong>{root.role === "primary" && <Pin size={10} aria-label={c.primary} />}
+                      <span className="ws-project-change-count" data-dirty={root.changedFiles.length > 0 || undefined}>{root.status === "ready" ? root.changedFiles.length || <Check size={10} /> : "!"}</span>
+                    </span>
+                    <span className="ws-project-option-meta">{root.status === "ready" ? <><GitBranch size={10} /><span>{root.branch}</span></> : <span className="text-warning">{t(root.status === "missing" ? "workspaceRepositoryMissing" : root.status === "not_repository" ? "workspaceRepositoryNotGit" : "workspaceRepositoryError")}</span>}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
           <RepositoryCard
-            environment={environment}
+            key={`${sessionId}:${repository?.rootId ?? "primary"}`}
+            environment={repositoryEnvironment}
+            repository={repository}
             loading={loading}
             reload={reload}
           />
@@ -284,7 +323,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             </WorkspaceCard>
           ) : null}
 
-          <WorkspaceCard
+          {(!repository || repository.status === "ready") && <WorkspaceCard
             icon={<FileDiff size={11} />}
             title={t("workspaceCardGitChanges")}
             count={changedFiles.length}
@@ -320,19 +359,20 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               <div className="ws-empty">{t("workspaceNoChanges")}</div>
             ) : changedFilesView === "tree" ? (
               <ChangedFileTree
+                key={repository?.rootId}
                 directory={changedFileTree}
-                sessionId={sessionId}
+                onOpen={openDiff}
               />
             ) : (
               changedFiles.map((file) => (
                 <ChangedFileRow
                   key={`${file.status}:${file.path}`}
                   file={file}
-                  onOpen={() => openWorkspaceDiff(sessionId, file.path)}
+                  onOpen={() => openDiff(file.path)}
                 />
               ))
             )}
-          </WorkspaceCard>
+          </WorkspaceCard>}
 
           <WorkspaceCard
             icon={<FileCode2 size={11} />}
@@ -347,7 +387,9 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                   key={path}
                   path={path}
                   copied={copiedPath === path}
-                  onOpen={() => openWorkspaceFile(sessionId, path)}
+                  onOpen={() => repository
+                    ? openWorkspaceFile(sessionId, path, null, repository.rootId, repository.name)
+                    : openWorkspaceFile(sessionId, path)}
                   onCopy={() => void copyPath(path)}
                 />
               ))
@@ -413,11 +455,11 @@ function WorkspaceCard({
 
 function ChangedFileTree({
   directory,
-  sessionId,
+  onOpen,
   depth = 0,
 }: {
   directory: ChangedFileDirectory;
-  sessionId: string;
+  onOpen: (path: string) => void;
   depth?: number;
 }) {
   return (
@@ -426,7 +468,7 @@ function ChangedFileTree({
         <ChangedFileFolder
           key={child.path}
           directory={child}
-          sessionId={sessionId}
+          onOpen={onOpen}
           depth={depth}
         />
       ))}
@@ -435,7 +477,7 @@ function ChangedFileTree({
           key={`${file.status}:${file.path}`}
           file={file}
           depth={depth}
-          onOpen={() => openWorkspaceDiff(sessionId, file.path)}
+          onOpen={() => onOpen(file.path)}
         />
       ))}
     </>
@@ -444,11 +486,11 @@ function ChangedFileTree({
 
 function ChangedFileFolder({
   directory,
-  sessionId,
+  onOpen,
   depth,
 }: {
   directory: ChangedFileDirectory;
-  sessionId: string;
+  onOpen: (path: string) => void;
   depth: number;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -471,7 +513,7 @@ function ChangedFileFolder({
       {expanded ? (
         <ChangedFileTree
           directory={directory}
-          sessionId={sessionId}
+          onOpen={onOpen}
           depth={depth + 1}
         />
       ) : null}
@@ -481,33 +523,39 @@ function ChangedFileFolder({
 
 function RepositoryCard({
   environment,
+  repository,
   loading,
   reload,
 }: {
   environment: SessionEnvironment;
+  repository?: SessionEnvironmentRepository;
   loading: boolean;
   reload: () => void | Promise<void>;
 }) {
   const { t } = useLocale();
   const [commitOpen, setCommitOpen] = useState(false);
   const changedCount = environment.changedFiles.length;
+  const unavailable = repository && repository.status !== "ready";
   return (
     <section className="ws-card ws-card--repo">
+      {repository && <div className="ws-repo-project"><Folder size={12} /><strong>{repository.name}</strong></div>}
       <div className="ws-repo-head">
         <GitBranch size={11} className="ws-repo-icon" />
         <span className="ws-repo-branch" title={environment.branch}>
           {environment.branch}
         </span>
         <span
-          className={`ws-repo-state ${environment.dirty ? "bg-warning/15 text-warning" : "bg-success/15 text-success"}`}
+          className={`ws-repo-state ${unavailable ? "bg-warning/15 text-warning" : environment.dirty ? "bg-warning/15 text-warning" : "bg-success/15 text-success"}`}
         >
-          {environment.dirty ? "dirty" : "clean"}
+          {unavailable
+            ? t(repository.status === "missing" ? "workspaceRepositoryMissing" : repository.status === "not_repository" ? "workspaceRepositoryNotGit" : "workspaceRepositoryError")
+            : environment.dirty ? "dirty" : "clean"}
         </span>
         <button
           type="button"
           className="ws-repo-action"
           onClick={() => setCommitOpen(true)}
-          disabled={loading || changedCount === 0}
+          disabled={loading || unavailable || changedCount === 0}
           title={t("workspaceCommitPush")}
         >
           <GitCommit size={10} />
@@ -524,7 +572,7 @@ function RepositoryCard({
           <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
-      <div className="ws-repo-meta">
+      {!unavailable && <div className="ws-repo-meta">
         <span className="ws-repo-meta-item">
           <GitCommit size={10} />
           <span className="ws-mono">
@@ -536,7 +584,7 @@ function RepositoryCard({
           <span className="ws-repo-sep">/</span>
           <span className="text-danger">-{environment.deletions}</span>
         </span>
-      </div>
+      </div>}
       {environment.workspacePath ? (
         <div className="ws-repo-path" title={environment.workspacePath}>
           {environment.workspacePath}
@@ -545,6 +593,8 @@ function RepositoryCard({
       <SessionCommitDialog
         isOpen={commitOpen}
         sessionId={environment.sessionId}
+        rootId={repository?.rootId}
+        rootName={repository?.name}
         branch={environment.branch}
         changedFiles={changedCount}
         onClose={() => setCommitOpen(false)}

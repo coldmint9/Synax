@@ -509,6 +509,7 @@ export function SessionComposer({
         cliBackend ? (cliModel === "default" ? undefined : cliModel) : undefined
       }
       commands={commands}
+      placeholder={mode === 'plan' ? (zh ? '描述你想做的事，一起理清方案…' : 'What would you like to plan?') : mode === 'goal' ? (zh ? '描述目标，以及怎样才算完成…' : 'Describe your goal and what success looks like…') : (zh ? '告诉 Synax 你想做什么…' : 'Ask Synax to do something…')}
       onOverlayOpenChange={setOverlayOpen}
       modelControl={
         backendId === "codex" || backendId === "claude-code" ? (
@@ -534,7 +535,7 @@ export function SessionComposer({
               onChange={setGitWorkspace}
             />
           )}
-          <SessionBackendPicker
+          {(isDraft || backendId !== "native") && <SessionBackendPicker
             value={backendId}
             options={backendOptions}
             disabled={
@@ -552,7 +553,7 @@ export function SessionComposer({
                 setSkillIds([]);
               }
             }}
-          />
+          />}
         </div>
       }
       projectId={projectId}
@@ -637,7 +638,7 @@ export function SessionComposer({
           session={session}
         />
       )}
-      {session && <AgentInteractionPanel key={session.id} session={session} />}
+      {session && <AgentInteractionPanel key={session.id} session={session} compact />}
       {commands.menu}
       {sessionId && (
         <InputQueueStrip

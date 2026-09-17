@@ -1,25 +1,9 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { projectApi, type ProjectWorkspace } from '../../../../lib/api/project'
 import { listRemoteDirectories } from '../../../../lib/api/fs'
 import { ProjectReferencesSection } from './ProjectReferencesSection'
-
-type MockButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
-  children: ReactNode | ((state: { isPending: boolean }) => ReactNode)
-  onPress?: () => void
-  isDisabled?: boolean
-  isPending?: boolean
-}
-
-vi.mock('@heroui/react', () => ({
-  Button: ({ children, onPress, isDisabled, isPending = false, type = 'button', 'aria-label': ariaLabel }: MockButtonProps) => (
-    <button type={type} aria-label={ariaLabel} onClick={onPress} disabled={isDisabled || isPending}>
-      {typeof children === 'function' ? children({ isPending }) : children}
-    </button>
-  ),
-}))
 
 vi.mock('../../../../hooks/useLocale', () => ({
   useLocale: () => ({ locale: 'en' }),
@@ -51,8 +35,8 @@ function workspace(projectId: string): ProjectWorkspace {
   }
 }
 
-const pathInput = () => screen.getByRole('textbox', { name: 'Absolute directory path' })
-const nameInput = () => screen.getByRole('textbox', { name: 'Reference name (optional)' })
+const pathInput = () => screen.getByRole('textbox', { name: 'Project directory path' })
+const nameInput = () => screen.getByRole('textbox', { name: 'Project name (optional)' })
 
 describe('ProjectReferencesSection in the browser build', () => {
   beforeEach(() => {
@@ -74,12 +58,13 @@ describe('ProjectReferencesSection in the browser build', () => {
     const user = userEvent.setup()
     render(<ProjectReferencesSection projectId="project-a" />)
     await screen.findByText('/work/project-a')
+    await user.click(screen.getByRole('button', { name: 'Add project', exact: true }))
 
-    const browse = screen.getByRole('button', { name: 'Choose directory' })
+    const browse = screen.getByRole('button', { name: 'Browse' })
     expect(browse).toBeEnabled()
     await user.click(browse)
 
-    const dialog = await screen.findByRole('dialog', { name: 'Choose directory' })
+    const dialog = await screen.findByRole('dialog', { name: 'Choose project directory' })
     expect(dialog).toBeInTheDocument()
     // The picker seeds from the primary root when no path has been typed yet.
     expect(listRemoteDirectories).toHaveBeenCalledWith('/work/project-a', expect.anything())
@@ -96,8 +81,9 @@ describe('ProjectReferencesSection in the browser build', () => {
     vi.mocked(listRemoteDirectories).mockRejectedValueOnce(new Error('Directory is not readable: /root'))
     render(<ProjectReferencesSection projectId="project-a" />)
     await screen.findByText('/work/project-a')
+    await user.click(screen.getByRole('button', { name: 'Add project', exact: true }))
 
-    await user.click(screen.getByRole('button', { name: 'Choose directory' }))
+    await user.click(screen.getByRole('button', { name: 'Browse' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Directory is not readable: /root')
     expect(pathInput()).toHaveValue('')

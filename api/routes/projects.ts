@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
-import { projectWorkspaceRoots, validateProjectReference, type ProjectReference } from '../services/project-workspace.js';
+import { canonicalWorkspaceDirectory, projectWorkspaceRoots, validateProjectReference, type ProjectReference, type ProjectWorkspaceRoot } from '../services/project-workspace.js';
 import * as z from 'zod/v4';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, rmSync } from 'node:fs';
 import { dirname, join, normalize, resolve } from 'node:path';
@@ -26,6 +26,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface ProjectRecord {
+  primaryName?: string;
   references?: ProjectReference[];
   id: string;
   name: string;
@@ -178,12 +179,14 @@ const updateProjectSchema = z.object({
 });
 
 const createWorktreeSchema = z.object({
+  rootId: z.string().min(1).optional(),
   branch: z.string().min(1).max(1024),
   createBranch: z.boolean().optional().default(false),
   startPoint: z.string().min(1).max(1024).optional(),
 });
 
 const removeWorktreeSchema = z.object({
+  rootId: z.string().min(1).optional(),
   path: z.string().min(1).max(4096),
   force: z.boolean().optional().default(false),
 });
@@ -239,20 +242,24 @@ function cleanupGitWorkDir(projectId: string): { cleaned: boolean; error?: strin
   }
 }
 
-function projectGitPath(project: ProjectRecord): string {
-  const workspace = project.source?.localPath;
-  if (!workspace) throw new GitWorkspaceError('This project has no local Git workspace.', 409);
-  return workspace;
+function projectGitRoot(project: ProjectRecord, rootId?: string, requireSelection = false) {
+  const roots = projectWorkspaceRoots(project);
+  if (requireSelection && roots.length > 1 && !rootId) throw new GitWorkspaceError('Select a workspace project before changing Git state.', 400);
+  const root = roots.find(item => item.id === (rootId ?? project.id));
+  if (!root) throw new GitWorkspaceError('Workspace project not found.', 404);
+  if (root.status !== 'available') throw new GitWorkspaceError('Workspace directory is unavailable.', 409);
+  return { path: root.path, scope: root.role === 'primary' ? project.id : `${project.id}/${root.id}` };
 }
 
-function sessionWorktreeUsage(projectId: string): Map<string, number> {
+function sessionWorktreeUsage(): Map<string, number> {
   const counts = new Map<string, number>();
-  const sessions = agentRuntimeStore.listSessions({ projectId, limit: Number.MAX_SAFE_INTEGER });
+  const sessions = agentRuntimeStore.listSessions({ limit: Number.MAX_SAFE_INTEGER });
   for (const session of sessions) {
-    const backend = session.sessionMetadata?.backend as { workDir?: string | null } | undefined;
-    if (!backend?.workDir) continue;
-    const key = normalize(backend.workDir);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    const backend = session.sessionMetadata?.backend as { workDir?: string | null; workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
+    const paths = new Set([backend?.workDir, ...(backend?.workspaceRoots ?? []).map(root => root.path)].filter((value): value is string => Boolean(value)).map(value => {
+      try { return canonicalWorkspaceDirectory(value); } catch { return normalize(value); }
+    }));
+    for (const key of paths) counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
 }
@@ -270,6 +277,47 @@ function gitWorkspaceRouteError(c: Context, error: unknown) {
 // ---------------------------------------------------------------------------
 
 export const projectRoutes = new Hono();
+
+const createWorkspaceSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  roots: z.array(z.union([
+    z.object({ localPath: z.string().trim().min(1).max(4096), name: z.string().trim().min(1).max(120).optional() }).strict(),
+    z.object({ projectId: z.string().min(1) }).strict(),
+  ])).min(1).max(50),
+}).strict();
+
+// Validate every membership before publishing the workspace in memory or on disk.
+projectRoutes.post('/workspaces', async (c) => {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+  const parsed = createWorkspaceSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
+  const now = new Date().toISOString();
+  const project: ProjectRecord = {
+    id: `ws_${randomUUID()}`, name: parsed.data.name, references: [],
+    status: 'healthy', environment: 'development', healthScore: 0,
+    activeAgents: 0, activeHumans: 1, openRisks: 0,
+    updatedAt: now, createdAt: now, createdBy: 'current-user', importState: 'ready',
+  };
+  try {
+    for (const input of parsed.data.roots) {
+      const existing = 'projectId' in input ? projects.get(input.projectId) : undefined;
+      if ('projectId' in input && !existing) return c.json({ error: 'Selected project not found' }, 404);
+      const inputPath = 'localPath' in input ? input.localPath : existing?.source?.localPath;
+      if (!inputPath) return c.json({ error: 'Selected project has no local directory' }, 400);
+      const localPath = project.source ? validateProjectReference(project, inputPath) : canonicalWorkspaceDirectory(inputPath);
+      const name = ('name' in input ? input.name : undefined) ?? existing?.primaryName ?? existing?.name ?? basename(localPath);
+      if (!project.source) {
+        project.source = { kind: 'localPath', localPath };
+        project.primaryName = name;
+      } else project.references!.push({ id: `ref_${randomUUID()}`, name, localPath });
+    }
+  } catch (error) { return c.json({ error: (error as Error).message }, 400); }
+  projects.set(project.id, project);
+  try { saveProjectsToDisk(); }
+  catch (error) { projects.delete(project.id); throw error; }
+  return c.json({ project, roots: projectWorkspaceRoots(project) }, 201);
+});
 
 projectRoutes.get('/:id/workspace', (c) => {
   const project = projects.get(c.req.param('id'));
@@ -403,7 +451,8 @@ projectRoutes.get('/:id/git/workspaces', async (c) => {
   const project = projects.get(c.req.param('id'));
   if (!project) return c.json({ error: 'Project not found' }, 404);
   try {
-    return c.json(await listGitWorkspaces(projectGitPath(project), project.id, sessionWorktreeUsage(project.id)));
+    const root = projectGitRoot(project, c.req.query('rootId'));
+    return c.json(await listGitWorkspaces(root.path, root.scope, sessionWorktreeUsage()));
   } catch (error) {
     return gitWorkspaceRouteError(c, error);
   }
@@ -418,7 +467,8 @@ projectRoutes.post('/:id/git/worktrees', async (c) => {
   const parsed = createWorktreeSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
   try {
-    const worktree = await createGitWorktree(projectGitPath(project), project.id, parsed.data);
+    const root = projectGitRoot(project, parsed.data.rootId, true);
+    const worktree = await createGitWorktree(root.path, root.scope, parsed.data);
     return c.json({ worktree }, 201);
   } catch (error) {
     return gitWorkspaceRouteError(c, error);
@@ -434,8 +484,9 @@ projectRoutes.delete('/:id/git/worktrees', async (c) => {
   const parsed = removeWorktreeSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
   try {
-    const usage = sessionWorktreeUsage(project.id);
-    await removeGitWorktree(projectGitPath(project), project.id, parsed.data.path, {
+    const usage = sessionWorktreeUsage();
+    const root = projectGitRoot(project, parsed.data.rootId, true);
+    await removeGitWorktree(root.path, root.scope, parsed.data.path, {
       force: parsed.data.force,
       inUsePaths: new Set(usage.keys()),
     });
@@ -450,8 +501,9 @@ projectRoutes.post('/:id/git/worktrees/prune', async (c) => {
   const project = projects.get(c.req.param('id'));
   if (!project) return c.json({ error: 'Project not found' }, 404);
   try {
-    await pruneGitWorktrees(projectGitPath(project));
-    return c.json(await listGitWorkspaces(projectGitPath(project), project.id, sessionWorktreeUsage(project.id)));
+    const root = projectGitRoot(project, c.req.query('rootId'), true);
+    await pruneGitWorktrees(root.path);
+    return c.json(await listGitWorkspaces(root.path, root.scope, sessionWorktreeUsage()));
   } catch (error) {
     return gitWorkspaceRouteError(c, error);
   }

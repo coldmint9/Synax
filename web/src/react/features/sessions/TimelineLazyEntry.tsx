@@ -28,6 +28,7 @@ const FALLBACK_ENTRY_HEIGHT = 180
  * keeps the scrollbar from lurching while the transcript settles.
  */
 export function estimateEntryHeight(entry: ConversationTimelineEntry): number {
+  if (entry.kind === 'interaction') return entry.interaction.status === 'pending' ? 320 : 100
   if (entry.kind === 'user') {
     return Math.min(600, 72 + Math.ceil(entry.content.length / 80) * 20)
   }

@@ -1,9 +1,9 @@
-import { Loader2, Sparkles } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { useShellStore } from '../../../state/shellStore'
 import { useLocale } from '../../../../hooks/useLocale'
-import { SkillMarketplacePanel } from '../../skills/SkillMarketplacePanel'
 import { useProjectSettings } from '../useProjectSettings'
-import { McpServersSection } from './McpServersSection'
+import { ProjectCapabilitiesSection } from '../integrations/ProjectCapabilitiesSection'
 import { SettingsCard } from './SettingsCard'
 
 function ProjectIntegrations({ projectId }: { projectId: string }) {
@@ -29,29 +29,26 @@ function ProjectIntegrations({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="space-y-6">
-      <McpServersSection
-        servers={settings.mcpServers}
-        onSave={async (servers) => { await patchSection('mcp', { mcpServers: servers }) }}
-        title={t('settingsMcpTitle')}
-        description={t('settingsMcpDesc')}
-      />
-
-      <SettingsCard title={t('settingsSkillsTitle')} description={t('settingsSkillsDesc')} icon={Sparkles}>
-        <div className="settings-inset h-[560px] overflow-hidden rounded-xl border border-border/40">
-          <SkillMarketplacePanel projectId={projectId} />
-        </div>
-      </SettingsCard>
-    </div>
+    <ProjectCapabilitiesSection
+      projectId={projectId}
+      servers={settings.mcpServers}
+      onSave={async (servers) => { await patchSection('mcp', { mcpServers: servers }) }}
+    />
   )
 }
 
 export function ProjectIntegrationsSection() {
+  const { t } = useLocale()
   const projectId = useShellStore(s => s.currentProjectId)
   if (!projectId) return null
   return (
     <div className="mt-8">
-      <ProjectIntegrations projectId={projectId} />
+      <div className="mb-4 flex justify-end">
+        <Link className="text-sm text-primary hover:underline" to={`/projects/${encodeURIComponent(projectId)}/settings`}>
+          {t('settingsProjectTitle')}
+        </Link>
+      </div>
+      <ProjectIntegrations key={projectId} projectId={projectId} />
     </div>
   )
 }

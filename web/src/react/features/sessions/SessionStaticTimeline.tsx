@@ -128,6 +128,7 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   scrollRootRef,
 }: Props) {
   const { t } = useLocale()
+  const interactions = useAgentSessionStore(s => s.interactionState?.sessionId === session?.id ? s.interactionState?.items : undefined)
   const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns)
   const snapshots = useAgentSessionStore((s) => (unifiedLive ? s.streamingCompletedSteps : null))
   const liveId = useAgentSessionStore((s) => (unifiedLive ? s.streamingStepId : null))
@@ -137,6 +138,7 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
       excludeStepId,
       session,
       foldWorkRuns,
+      interactions,
     })
     const stepIds = new Set(steps.map((step) => step.id))
     for (const snapshot of snapshots ?? []) {
@@ -156,7 +158,7 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
         })
     }
     return entries
-  }, [runs, steps, messages, toolCalls, childSessions, excludeStepId, session, foldWorkRuns, snapshots])
+  }, [runs, steps, messages, toolCalls, childSessions, excludeStepId, session, foldWorkRuns, snapshots, interactions])
   const { history, tail } = useMemo(() => {
     let boundary = timeline.length
     if (showLive) while (boundary > 0 && timeline[boundary - 1].kind === 'agent') boundary--

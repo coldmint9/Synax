@@ -11,6 +11,7 @@ export interface ProjectReference {
 export interface WorkspaceProject {
   id: string;
   name?: string;
+  primaryName?: string;
   source?: { localPath?: string };
   references?: ProjectReference[];
 }
@@ -41,7 +42,7 @@ export function isWithinWorkspace(root: string, target: string): boolean {
 
 export function projectWorkspaceRoots(project: WorkspaceProject): ProjectWorkspaceRoot[] {
   const roots: Omit<ProjectWorkspaceRoot, 'status'>[] = [];
-  if (project.source?.localPath) roots.push({ id: project.id, name: project.name ?? project.id, path: project.source.localPath, role: 'primary' });
+  if (project.source?.localPath) roots.push({ id: project.id, name: project.primaryName ?? project.name ?? project.id, path: project.source.localPath, role: 'primary' });
   for (const reference of project.references ?? []) {
     roots.push({ id: reference.id, name: reference.name, path: reference.localPath, role: 'reference' });
   }

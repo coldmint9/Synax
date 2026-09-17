@@ -9,6 +9,8 @@ export interface WorkspaceTab {
   title: string
   /** File path for file/diff tabs. */
   path?: string
+  /** Workspace member owning this file; omitted by legacy primary-root links. */
+  rootId?: string
   /** Child session id for subagent tabs. */
   sessionId?: string
   /** 1-based line a transcript link jumped to; viewers highlight it. */
@@ -19,6 +21,8 @@ export interface WorkspaceSessionState {
   tabs: WorkspaceTab[]
   activeTabId: string | null
   presentation: WorkspacePresentation
+  /** Keep the inspected project when a file viewer temporarily replaces the dashboard. */
+  selectedRootId?: string
 }
 
 type SessionWorkspaceRecord = Record<string, WorkspaceSessionState>
@@ -27,6 +31,7 @@ interface SessionWorkspaceStoreState {
   sessions: SessionWorkspaceRecord
   openTab: (sessionId: string, tab: Omit<WorkspaceTab, 'id'>) => void
   activateTab: (sessionId: string, id: string) => void
+  selectRepository: (sessionId: string, rootId: string) => void
   /** Show the dashboard without discarding the open tabs. */
   showDashboard: (sessionId: string) => void
   closeTab: (sessionId: string, id: string) => void
@@ -48,7 +53,7 @@ export const EMPTY_SESSION_WORKSPACE: WorkspaceSessionState = Object.freeze({
 function tabIdentity(tab: Omit<WorkspaceTab, 'id'>): string {
   return tab.kind === 'subagent'
     ? `subagent:${tab.sessionId ?? ''}`
-    : `${tab.kind}:${tab.path ?? ''}`
+    : `${tab.kind}${tab.rootId ? `@${encodeURIComponent(tab.rootId)}` : ''}:${tab.path ?? ''}`
 }
 
 function workspaceState(value: WorkspaceSessionState | undefined): WorkspaceSessionState {
@@ -88,6 +93,10 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>((set)
       }),
     }
   }),
+
+  selectRepository: (sessionId, selectedRootId) => set(state => ({
+    sessions: patchSession(state.sessions, sessionId, current => ({ ...current, selectedRootId })),
+  })),
 
   activateTab: (sessionId, id) => set((state) => ({
     sessions: patchSession(state.sessions, sessionId, current => ({
@@ -191,14 +200,14 @@ export function activateWorkspaceTab(sessionId: string, tabId: string): void {
   store.activateTab(sessionId, tabId)
 }
 
-export function openWorkspaceFile(sessionId: string, path: string, line: number | null = null): void {
+export function openWorkspaceFile(sessionId: string, path: string, line: number | null = null, rootId?: string, rootName?: string): void {
   const name = path.split(/[\\/]/).pop() || path
-  openWorkspaceTab(sessionId, { kind: 'file', title: name, path, line })
+  openWorkspaceTab(sessionId, { kind: 'file', title: rootName ? `${rootName} / ${name}` : name, path, line, ...(rootId ? { rootId } : {}) })
 }
 
-export function openWorkspaceDiff(sessionId: string, path: string): void {
+export function openWorkspaceDiff(sessionId: string, path: string, rootId?: string, rootName?: string): void {
   const name = path.split(/[\\/]/).pop() || path
-  openWorkspaceTab(sessionId, { kind: 'diff', title: name, path })
+  openWorkspaceTab(sessionId, { kind: 'diff', title: rootName ? `${rootName} / ${name}` : name, path, ...(rootId ? { rootId } : {}) })
 }
 
 export function openWorkspaceSubagent(ownerSessionId: string, subagentSessionId: string, title: string): void {
