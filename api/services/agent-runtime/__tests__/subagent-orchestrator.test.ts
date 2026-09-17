@@ -8,6 +8,7 @@ import {
 /** Build injectable deps backed by an in-memory session map. */
 function makeDeps(behaviors: Record<string, {
   endStatus?: string;
+  runStatus?: string;
   resultSummary?: string | null;
   /** ms the stream stays open; if it exceeds the timeout, abort wins. */
   durationMs?: number;
@@ -33,6 +34,10 @@ function makeDeps(behaviors: Record<string, {
       Object.assign(s, patch);
       return { id, projectId: 'p', status: s.status } as never;
     },
+    listRuns: (id: string) => [{
+      status: behaviors[id]?.runStatus ?? 'completed',
+      stopReason: behaviors[id]?.runStatus === 'blocked' ? 'Blocked.' : null,
+    }],
   };
 
   const sessionsRuntime = {
@@ -89,7 +94,7 @@ describe('subagent-orchestrator', () => {
     const deps = makeDeps({
       'child-1': { endStatus: 'completed', resultSummary: 'ok' },
       'child-2': { throwError: 'boom' },
-      'child-3': { endStatus: 'blocked', resultSummary: null },
+      'child-3': { endStatus: 'completed', runStatus: 'blocked', resultSummary: null },
     });
     const results = await runBatch('parent', [spec('a'), spec('b'), spec('c')], {}, deps);
     expect(results).toHaveLength(3);

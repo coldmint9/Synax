@@ -60,7 +60,7 @@ beforeEach(() => {
     createdAt: '2026-09-10T00:00:00Z', updatedAt: '2026-09-10T00:00:00Z',
     completedAt: null, resultSummary: null, blockedReason: null,
     skillIds: ['security-review'], mcpServerIds: ['external'], activeRunId: null, pendingResumeToken: null,
-    sessionMetadata: { mode: 'chat', permissionTier: 'readonly', engine: 'external', goal: { status: 'executing' } },
+    sessionMetadata: { mode: 'chat', permissionTier: 'boundary', engine: 'external', goal: { status: 'executing' } },
   };
   setSessionWorkspaceRoot(parent.id, root);
 });
@@ -100,7 +100,7 @@ describe('specialist configuration', () => {
     expect(createSessionRequestSchema.safeParse(input).success).toBe(true);
     expect(input).toMatchObject({
       projectId: parent.projectId, nodeId: parent.nodeId, parentSessionId: parent.id, profileId: 'specialist',
-      thinkingMode: 'deep', reasoningEffort: 'high', permissionTier: 'readonly', mcpServerIds: [],
+      thinkingMode: 'deep', reasoningEffort: 'high', permissionTier: 'boundary', mcpServerIds: [],
       permissionOverrides: { shell: 'deny', write: 'deny', delete: 'deny' },
       sessionMetadata: {
         mode: 'chat', workspaceRoot: root,
@@ -184,7 +184,7 @@ describe('specialist configuration', () => {
       { gate: 'write', pattern: 'src/private/*', action: 'deny' },
     ];
     const input = buildSpecialistChildInput(parent, { specialist: spec({ capabilities: ['file.write'], writeScope: ['src'] }), prompt: 'Update' }, parentProfile);
-    expect(input.permissionTier).toBe('readwrite');
+    expect(input.permissionTier).toBe('auto');
     expect(input.permissionOverrides).toMatchObject({ read: 'ask', write: 'ask', delete: 'deny', shell: 'deny' });
     expect((input.sessionMetadata!.alwaysPermissionRules as PermissionRule[]).slice(0, 3)).toEqual(parent.permissionRules);
     const session = child({ capabilities: ['file.write'], writeScope: ['src'] });
@@ -254,7 +254,7 @@ describe('persisted specialist resolution and execution boundary', () => {
     parent.sessionMetadata!.permissionTier = 'unrestricted';
     parent.permissionRules = [{ gate: '*', pattern: '*', action: 'allow' }];
     const session = child({ capabilities: ['file.read'], skillIds: [] });
-    expect(session.sessionMetadata!.permissionTier).toBe('readonly');
+    expect(session.sessionMetadata!.permissionTier).toBe('boundary');
     expect(session.permissionRules.at(-2)).toMatchObject({ gate: 'write', action: 'deny' });
     expect(session.permissionRules.at(-1)).toMatchObject({ gate: 'delete', action: 'deny' });
     expect(() => assertSpecialistToolAllowed(session, 'file.write', { path: 'src/x' })).toThrow(/not assigned/);

@@ -1,5 +1,5 @@
 import { MediaParts } from '../media/MediaParts'
-import { ArrowUp, X } from 'lucide-react'
+import { ListStart, X } from 'lucide-react'
 import type { QueuedInput } from '../../../lib/api/agentRuntime'
 import { useLocale } from '../../../hooks/useLocale'
 
@@ -20,15 +20,15 @@ export function InputQueueStrip({ items, onRemove, onForce }: Props) {
   if (items.length === 0) return null
 
   return (
-    <div className="input-queue-strip mb-1.5 w-[min(100%,20rem)] self-center">
+    <div className="input-queue-strip pointer-events-auto mb-1.5 w-full min-w-0">
       <div className="input-queue-strip-header mb-1 flex items-center justify-between px-1 text-[10px] text-muted-foreground/70">
         <span>{t('inputQueueTitle', { count: items.length })}</span>
       </div>
-      <ul className="input-queue-strip-list flex flex-col gap-1">
+      <ul className="input-queue-strip-list flex max-h-32 flex-col gap-1 overflow-y-auto overscroll-contain">
         {items.map((item) => (
           <li
             key={item.id}
-            className="input-queue-strip-item flex items-center gap-1.5 rounded-full border border-border/50 bg-surface/80 px-2.5 py-1 text-[11px] text-foreground/85 backdrop-blur-sm"
+            className="input-queue-strip-item flex shrink-0 items-center gap-1.5 rounded-full border border-border/50 bg-surface/80 px-2.5 py-1 text-[11px] text-foreground/85 backdrop-blur-sm"
           >
             <span className="min-w-0 flex-1 truncate" title={item.message}>
               {previewMessage(item.message)}
@@ -37,10 +37,11 @@ export function InputQueueStrip({ items, onRemove, onForce }: Props) {
             <button
               type="button"
               aria-label={t('inputQueueForce')}
+              title={t('inputQueueForce')}
               className="input-queue-strip-btn inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
               onClick={() => onForce(item.id)}
             >
-              <ArrowUp size={12} />
+              <ListStart size={12} aria-hidden />
             </button>
             <button
               type="button"

@@ -1,4 +1,5 @@
 import { apiFetch } from './origin'
+import { useApiConnectivityStore } from '../apiConnectivity'
 
 /** Fetch-based SSE works with desktop bearer credentials without putting secrets in URLs. */
 export class AuthenticatedEventSource {
@@ -15,7 +16,15 @@ export class AuthenticatedEventSource {
   private stopped = false
   private attempts = 0
   private lastId = ''
-  constructor(readonly url: string) { queueMicrotask(() => { void this.connect() }) }
+  private readonly unsubscribeRecovery: () => void
+  constructor(readonly url: string) {
+    this.unsubscribeRecovery = useApiConnectivityStore.subscribe((state, previous) => {
+      if (state.recoveryVersion !== previous.recoveryVersion && !state.shouldSkipRequest()) {
+        this.reconnect()
+      }
+    })
+    queueMicrotask(() => { if (!this.controller) void this.connect() })
+  }
   addEventListener(type: string, listener: (event: MessageEvent) => void): void {
     const listeners = this.listeners.get(type) ?? new Set()
     listeners.add(listener); this.listeners.set(type, listeners)
@@ -24,7 +33,16 @@ export class AuthenticatedEventSource {
   close(): void {
     this.stopped = true; this.readyState = AuthenticatedEventSource.CLOSED
     if (this.timer) clearTimeout(this.timer)
+    this.unsubscribeRecovery()
     this.controller?.abort()
+  }
+  private reconnect(): void {
+    if (this.stopped) return
+    if (this.timer) clearTimeout(this.timer)
+    this.controller?.abort()
+    this.readyState = AuthenticatedEventSource.CONNECTING
+    this.attempts = 0
+    void this.connect()
   }
   private frame(text: string): void {
     let type = 'message'; const data: string[] = []
@@ -43,11 +61,13 @@ export class AuthenticatedEventSource {
   }
   private async connect(): Promise<void> {
     if (this.stopped) return
-    this.controller = new AbortController()
+    const controller = new AbortController()
+    this.controller = controller
+    const isCurrent = () => !this.stopped && this.controller === controller && !controller.signal.aborted
     try {
-      const response = await apiFetch(this.url, { signal: this.controller.signal,
+      const response = await apiFetch(this.url, { signal: controller.signal,
         headers: { Accept: 'text/event-stream', ...(this.lastId ? { 'Last-Event-ID': this.lastId } : {}) } })
-      if (this.stopped) { await response.body?.cancel(); return }
+      if (!isCurrent()) { await response.body?.cancel(); return }
       if (!response.ok || !response.body) {
         if ([401, 403, 404].includes(response.status)) { this.close(); this.onerror?.(new Event('error')); return }
         throw new Error(`Runtime event stream failed (${response.status}).`)
@@ -55,17 +75,18 @@ export class AuthenticatedEventSource {
       this.readyState = AuthenticatedEventSource.OPEN; this.attempts = 0; this.onopen?.(new Event('open'))
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''
       try {
-        while (!this.stopped) {
+        while (isCurrent()) {
           const { value, done } = await reader.read(); if (done) break
+          if (!isCurrent()) return
           buffer += decoder.decode(value, { stream: true })
           let match = /\r?\n\r?\n/.exec(buffer)
           while (match) { this.frame(buffer.slice(0, match.index)); buffer = buffer.slice(match.index + match[0].length); match = /\r?\n\r?\n/.exec(buffer) }
           if (buffer.length > 8 * 1024 * 1024) throw new Error('Runtime event frame exceeds the supported size.')
         }
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
-      if (!this.stopped) throw new Error('Runtime event stream disconnected.')
+      if (isCurrent()) throw new Error('Runtime event stream disconnected.')
     } catch {
-      if (this.stopped) return
+      if (!isCurrent()) return
       this.readyState = AuthenticatedEventSource.CONNECTING; this.onerror?.(new Event('error'))
       if (!this.stopped) this.timer = setTimeout(() => { void this.connect() }, Math.min(1000 * 2 ** this.attempts++, 15_000))
     }

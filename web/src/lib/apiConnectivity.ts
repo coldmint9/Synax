@@ -16,10 +16,11 @@ interface ApiConnectivityState {
   apiReachable: ApiReachability
   failureCount: number
   lastCheckedAt: number | null
+  recoveryVersion: number
 
   setBrowserOnline: (online: boolean) => void
   markFailure: () => void
-  markSuccess: () => void
+  markSuccess: (resumed?: boolean) => void
   shouldSkipRequest: () => boolean
 }
 
@@ -28,6 +29,7 @@ export const useApiConnectivityStore = create<ApiConnectivityState>((set, get) =
   apiReachable: 'unknown',
   failureCount: 0,
   lastCheckedAt: null,
+  recoveryVersion: 0,
 
   setBrowserOnline: (online) => {
     set({ browserOnline: online })
@@ -42,13 +44,14 @@ export const useApiConnectivityStore = create<ApiConnectivityState>((set, get) =
     }))
   },
 
-  markSuccess: () => {
+  markSuccess: (resumed = false) => {
     const wasUnreachable = get().apiReachable === 'unreachable'
-    set({
+    set(s => ({
       apiReachable: 'reachable',
       failureCount: 0,
       lastCheckedAt: Date.now(),
-    })
+      recoveryVersion: s.recoveryVersion + (wasUnreachable || resumed ? 1 : 0),
+    }))
     if (wasUnreachable) {
       useNotificationStore.getState().dismiss(API_CONNECTIVITY_NOTIFICATION_ID)
       void import('./api/runtimeEventBus').then(m => m.resumeRuntimeEventBus())
@@ -73,7 +76,21 @@ export function notifyConnectivityFailure(message: string, bump = true): void {
   })
 }
 
-export async function probeApiHealth(): Promise<boolean> {
+let pendingProbe: Promise<boolean> | null = null
+let resumeRequested = false
+
+export function probeApiHealth(resumed = false): Promise<boolean> {
+  resumeRequested ||= resumed
+  if (!pendingProbe) {
+    pendingProbe = runHealthProbe().finally(() => {
+      pendingProbe = null
+      resumeRequested = false
+    })
+  }
+  return pendingProbe
+}
+
+async function runHealthProbe(): Promise<boolean> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   try {
@@ -83,7 +100,7 @@ export async function probeApiHealth(): Promise<boolean> {
       cache: 'no-store',
     })
     if (resp.ok) {
-      useApiConnectivityStore.getState().markSuccess()
+      useApiConnectivityStore.getState().markSuccess(resumeRequested)
       return true
     }
     useApiConnectivityStore.getState().markFailure()
@@ -104,30 +121,50 @@ export function startApiConnectivityMonitor(): () => void {
   monitorStarted = true
 
   const store = useApiConnectivityStore.getState()
+  let lastTickAt = Date.now()
+  let lastResumeAt = -Infinity
 
-  const onOnline = () => {
-    store.setBrowserOnline(true)
-    void probeApiHealth()
+  const onResume = () => {
+    store.setBrowserOnline(navigator.onLine)
+    if (!navigator.onLine || Date.now() - lastResumeAt < 1000) return
+    lastResumeAt = Date.now()
+    void probeApiHealth(true)
+  }
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') onResume()
   }
   const onOffline = () => {
     store.setBrowserOnline(false)
     notifyConnectivityFailure('网络已断开，请检查连接')
   }
 
-  window.addEventListener('online', onOnline)
+  window.addEventListener('online', onResume)
   window.addEventListener('offline', onOffline)
+  window.addEventListener('focus', onResume)
+  window.addEventListener('pageshow', onResume)
+  document.addEventListener('visibilitychange', onVisibility)
 
   void probeApiHealth()
 
   probeTimer = setInterval(() => {
-    if (useApiConnectivityStore.getState().apiReachable === 'unreachable') {
+    const now = Date.now()
+    // Sleep may suspend timers without producing online or visibility events.
+    const wasSuspended = now - lastTickAt > PROBE_INTERVAL_MS * 2
+    lastTickAt = now
+    if (wasSuspended) {
+      onResume()
+    } else if (useApiConnectivityStore.getState().apiReachable === 'unreachable') {
+      store.setBrowserOnline(navigator.onLine)
       void probeApiHealth()
     }
   }, PROBE_INTERVAL_MS)
 
   return () => {
-    window.removeEventListener('online', onOnline)
+    window.removeEventListener('online', onResume)
     window.removeEventListener('offline', onOffline)
+    window.removeEventListener('focus', onResume)
+    window.removeEventListener('pageshow', onResume)
+    document.removeEventListener('visibilitychange', onVisibility)
     if (probeTimer) clearInterval(probeTimer)
     probeTimer = null
     monitorStarted = false

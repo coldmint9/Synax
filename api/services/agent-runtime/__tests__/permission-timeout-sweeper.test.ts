@@ -1,11 +1,29 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
-const { allMock, replyMock, updateSessionMock, appendEventMock, tryGetSessionMock } = vi.hoisted(() => ({
+const {
+  allMock,
+  replyMock,
+  updateSessionMock,
+  appendEventMock,
+  tryGetSessionMock,
+  getRunMock,
+  updateRunMock,
+  getRunStepMock,
+  updateRunStepMock,
+  getToolCallMock,
+  updateToolCallMock,
+} = vi.hoisted(() => ({
   allMock: vi.fn(),
   replyMock: vi.fn(),
   updateSessionMock: vi.fn(),
   appendEventMock: vi.fn(),
   tryGetSessionMock: vi.fn(),
+  getRunMock: vi.fn(),
+  updateRunMock: vi.fn(),
+  getRunStepMock: vi.fn(),
+  updateRunStepMock: vi.fn(),
+  getToolCallMock: vi.fn(),
+  updateToolCallMock: vi.fn(),
 }));
 
 vi.mock('../permission-policy.js', () => ({
@@ -18,6 +36,12 @@ vi.mock('../session-store.js', () => ({
   agentRuntimeStore: {
     tryGetSession: (...args: unknown[]) => tryGetSessionMock(...args),
     updateSession: (...args: unknown[]) => updateSessionMock(...args),
+    getRun: (...args: unknown[]) => getRunMock(...args),
+    updateRun: (...args: unknown[]) => updateRunMock(...args),
+    getRunStep: (...args: unknown[]) => getRunStepMock(...args),
+    updateRunStep: (...args: unknown[]) => updateRunStepMock(...args),
+    getToolCall: (...args: unknown[]) => getToolCallMock(...args),
+    updateToolCall: (...args: unknown[]) => updateToolCallMock(...args),
   },
 }));
 
@@ -36,6 +60,7 @@ vi.mock('../../../db/index.js', () => ({
     prepare: () => ({
       all: (...args: unknown[]) => allMock(...args),
     }),
+    transaction: (fn: (...args: unknown[]) => unknown) => (...args: unknown[]) => fn(...args),
   }),
 }));
 
@@ -45,6 +70,9 @@ describe('sweepExpiredPermissions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     tryGetSessionMock.mockReturnValue({ id: 'sess-1', status: 'waiting_permission' });
+    getRunMock.mockReturnValue({ id: 'run-1', status: 'waiting_permission' });
+    getRunStepMock.mockReturnValue({ id: 'step-1', status: 'waiting_permission' });
+    getToolCallMock.mockReturnValue({ id: 'tool-1', status: 'pending' });
     replyMock.mockReturnValue({
       id: 'perm-1',
       action: 'deny',
@@ -57,11 +85,14 @@ describe('sweepExpiredPermissions', () => {
     vi.useRealTimers();
   });
 
-  it('auto-rejects expired pending permissions and blocks the session', () => {
+  it('auto-rejects expired pending permissions and completes the execution lineage', () => {
     allMock.mockReturnValue([
       {
         id: 'perm-1',
         session_id: 'sess-1',
+        run_id: 'run-1',
+        step_id: 'step-1',
+        tool_call_id: 'tool-1',
         action: 'ask',
         user_reply: null,
         resolved_at: null,
@@ -74,9 +105,21 @@ describe('sweepExpiredPermissions', () => {
     expect(allMock).toHaveBeenCalled();
     expect(swept).toBe(1);
     expect(replyMock).toHaveBeenCalledWith('sess-1', 'perm-1', 'reject', 'Permission timed out.');
-    expect(updateSessionMock).toHaveBeenCalledWith('sess-1', expect.objectContaining({
+    expect(updateRunStepMock).toHaveBeenCalledWith('step-1', expect.objectContaining({
       status: 'blocked',
+      finishReason: 'permission_timeout',
+    }));
+    expect(updateToolCallMock).toHaveBeenCalledWith('sess-1', 'tool-1', expect.objectContaining({
+      status: 'denied',
+    }));
+    expect(updateRunMock).toHaveBeenCalledWith('run-1', expect.objectContaining({
+      status: 'blocked',
+      stopReason: 'Permission request timed out.',
+    }));
+    expect(updateSessionMock).toHaveBeenCalledWith('sess-1', expect.objectContaining({
+      status: 'completed',
       blockedReason: 'Permission request timed out.',
+      activeRunId: null,
     }));
     expect(appendEventMock).toHaveBeenCalled();
   });
@@ -86,6 +129,9 @@ describe('sweepExpiredPermissions', () => {
       {
         id: 'perm-2',
         session_id: 'sess-missing',
+        run_id: null,
+        step_id: null,
+        tool_call_id: null,
         action: 'ask',
         user_reply: null,
         resolved_at: null,

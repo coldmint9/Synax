@@ -175,7 +175,6 @@ export interface RuntimeClient {
   listInteractions(sessionId: string): Promise<{ interactions: RuntimeInteraction[] }>;
   replyInteraction(sessionId: string, interactionId: string, reply: RuntimeInteractionReply): Promise<{ interaction: RuntimeInteraction }>;
   cancelSession(sessionId: string, runId?: string): Promise<AgentSession>;
-  pauseSession(sessionId: string, runId?: string): Promise<AgentSession>;
   continueSession(sessionId: string, input: StreamTurnRequest, options: SubmitRunOptions): Promise<{ run: AgentRun; reused: boolean }>;
   health(): Promise<unknown>;
 }

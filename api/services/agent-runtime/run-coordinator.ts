@@ -1,3 +1,4 @@
+import { applySessionPermissionUpdate } from './session-permissions.js';
 import { withDeadline } from './managed-process.js';
 import { restoreUnlaunchedInput } from './runtime-recovery.js';
 import { profileService } from './profile-service.js';
@@ -11,12 +12,16 @@ import { getRawSqlite } from '../../db/index.js';
 import { acceptRuntimeRun, type AcceptedRuntimeInput } from './run-admission.js';
 import { executeBackendSession } from './backend-execution.js';
 import { getBackendAdapter } from './backends/backend-registry.js';
-import { resolveSessionBackend } from './backends/backend-binding.js';
+import { resolveSessionBackend, validateBackendTurnInput } from './backends/backend-binding.js';
 import { agentRuntimeStore } from './session-store.js';
+import { normalizeAgentSessionStatus } from './session-projection.js';
 import { runtimeJournal, type RuntimeStreamRecord } from './runtime-journal.js';
 import { AgentRuntimeError } from './runtime-errors.js';
 import { nowIso } from './runtime-ids.js';
 import { goalContinuationInput } from './goal-continuation.js';
+import { inputQueueService } from './input-queue-service.js';
+import { interactionService } from './interaction-service.js';
+import { workStore } from './work-store.js';
 import { logger } from '../../lib/logger.js';
 
 interface Owner { context?: RuntimeExecutionContext; runId: string; controller: AbortController; task: Promise<void>; stopping: boolean; stopTask?: Promise<void>; stopFailed?: boolean; finalizers?: Array<() => void> }
@@ -41,33 +46,103 @@ export class RunCoordinator {
   isActive(sessionId: string): boolean { return this.owners.has(sessionId); }
   isStopping(sessionId: string): boolean { return Boolean(this.owners.get(sessionId)?.stopping); }
 
-  submit(sessionId: string, input: StreamTurnRequest, requestId: string, mode: AgentSessionStreamMode = 'turn') {
+  private acceptRun(
+    sessionId: string,
+    input: StreamTurnRequest,
+    requestId: string,
+    mode: AgentSessionStreamMode,
+  ): ReturnType<typeof acceptRuntimeRun> {
     if (this.isActive(sessionId)) {
       const previous = getRawSqlite().prepare(`SELECT id FROM agent_runtime_runs WHERE session_id = ?
         AND json_extract(metadata_json, '$.runtime.requestId') = ?`).get(sessionId, requestId);
       if (!previous) throw new AgentRuntimeError('The previous execution has not released this session.', 'SESSION_BUSY', 409);
     }
-    if (mode === 'continue') input = restoreUnlaunchedInput(sessionId, input);
-    const accepted = acceptRuntimeRun(sessionId, input, requestId, mode);
-    if (!accepted.reused) {
-      const runtime = accepted.run.metadata.runtime as AcceptedRuntimeInput;
-      this.launch(sessionId, accepted.run.id, mode, { ...runtime.input, acceptedRunId: accepted.run.id });
-    }
+    const restored = mode === 'continue'
+      ? restoreUnlaunchedInput(sessionId, input)
+      : input;
+    return acceptRuntimeRun(sessionId, restored, requestId, mode);
+  }
+
+  private launchAccepted(
+    sessionId: string,
+    accepted: ReturnType<typeof acceptRuntimeRun>,
+    mode: AgentSessionStreamMode,
+  ): void {
+    if (accepted.reused && this.isActive(sessionId)) return;
+    const run = agentRuntimeStore.getRun(accepted.run.id);
+    if (run.status !== 'queued') return;
+    const runtime = run.metadata.runtime as AcceptedRuntimeInput;
+    this.launch(sessionId, run.id, mode, {
+      ...runtime.input,
+      acceptedRunId: run.id,
+    });
+  }
+
+  submit(sessionId: string, input: StreamTurnRequest, requestId: string, mode: AgentSessionStreamMode = 'turn') {
+    const accepted = this.acceptRun(sessionId, input, requestId, mode);
+    this.launchAccepted(sessionId, accepted, mode);
     return accepted;
   }
 
   resume(sessionId: string, input: StreamTurnRequest = {}): void {
     const owner = this.owners.get(sessionId);
     if (owner?.stopping) return;
-    if (owner) { this.pendingResumes.set(sessionId, input); return; }
     const session = agentRuntimeStore.getSession(sessionId);
     if (session.sessionMetadata?.runtimeControl || profileService.getForSession(session).executionHost === 'embedded') {
       throw new AgentRuntimeError('This session requires recovery through its owning host.', 'RECOVERY_REQUIRED', 409);
     }
-    const runId = session.activeRunId ?? agentRuntimeStore.listRuns(sessionId)
+    const runId = owner?.runId ?? session.activeRunId ?? agentRuntimeStore.listRuns(sessionId)
       .find(run => ['waiting_permission', 'waiting_input'].includes(run.status))?.id;
     if (!runId) throw new AgentRuntimeError('There is no pending Run to resume.', 'NOT_RESUMABLE', 409);
-    this.launch(sessionId, runId, 'resume', input);
+    const { permissionTier, permissionOverrides, ...resumeInput } = input;
+    if (permissionTier !== undefined || permissionOverrides !== undefined) {
+      validateBackendTurnInput(resolveSessionBackend(sessionId).id, input);
+      applySessionPermissionUpdate(sessionId, { permissionTier, permissionOverrides });
+    }
+    // A delayed resume must not replay an older mode over a newer session setting.
+    if (owner) { this.pendingResumes.set(sessionId, resumeInput); return; }
+    this.launch(sessionId, runId, 'resume', resumeInput);
+  }
+
+  /** Start one queued turn only after the previous conversation work has settled. */
+  dispatchQueuedInput(sessionId: string): boolean {
+    if (this.isActive(sessionId)) return false;
+    try {
+      const accepted = getRawSqlite().transaction(() => {
+        const session = agentRuntimeStore.getSession(sessionId);
+        const work = workStore.current(sessionId);
+        const latestRun = agentRuntimeStore.listRuns(sessionId)[0];
+        if (session.status !== 'completed' || session.activeRunId || session.parentSessionId ||
+            session.sessionMetadata?.runtimeControl || latestRun?.status !== 'completed' ||
+            latestRun.stopReason === 'round_yielded' || (work && work.status !== 'completed') ||
+            interactionService.pending(sessionId)) return null;
+        const forcedId = inputQueueService.getForceInjectId(sessionId);
+        const item = inputQueueService.list(sessionId).find(item => item.id === forcedId)
+          ?? inputQueueService.peek(sessionId);
+        if (!item) return null;
+        const accepted = acceptRuntimeRun(sessionId, {
+          message: item.message,
+          contentParts: item.contentParts,
+          references: item.references,
+          referenceContext: item.referenceContext,
+          model: item.model ?? undefined,
+          reasoningEffort: item.reasoningEffort,
+        }, `input-queue:${item.id}`);
+        inputQueueService.take(sessionId, item.id);
+        if (forcedId) inputQueueService.clearForceInject(sessionId);
+        return accepted;
+      })();
+      if (!accepted) return false;
+      if (!accepted.reused) {
+        const runtime = accepted.run.metadata.runtime as AcceptedRuntimeInput;
+        this.launch(sessionId, accepted.run.id, 'turn', { ...runtime.input, acceptedRunId: accepted.run.id });
+      }
+      return true;
+    } catch (error) {
+      // Admission and removal share a transaction: a rejected turn stays queued.
+      logger.warn({ sessionId, error }, '[run-coordinator] queued input could not be started');
+      return false;
+    }
   }
 
   private launch(sessionId: string, runId: string, mode: AgentSessionStreamMode, input: StreamTurnRequest): void {
@@ -98,6 +173,51 @@ export class RunCoordinator {
     catch (stopError) { reason += ` ${stopError instanceof Error ? stopError.message : String(stopError)}`; markUnconfirmed(); }
   }
 
+  private submitGoalContinuation(
+    sessionId: string,
+    previousRunId: string,
+    continuation: StreamTurnRequest,
+  ): void {
+    const forceId = inputQueueService.getForceInjectId(sessionId);
+    const forced = forceId
+      ? inputQueueService.list(sessionId).find((item) => item.id === forceId)
+      : undefined;
+    if (forceId && !forced) inputQueueService.clearForceInject(sessionId);
+
+    const input: StreamTurnRequest = forced
+      ? {
+          ...continuation,
+          message: forced.message,
+          messageSource: undefined,
+          contentParts: forced.contentParts,
+          references: forced.references,
+          referenceContext: forced.referenceContext,
+          model: forced.model ?? continuation.model,
+          reasoningEffort: forced.reasoningEffort ?? continuation.reasoningEffort,
+        }
+      : continuation;
+    const requestId = forced
+      ? `goal-force-input:${forced.id}`
+      : `goal-continuation:${previousRunId}`;
+
+    const accepted = forced
+      ? getRawSqlite().transaction(() => {
+          const next = this.acceptRun(sessionId, input, requestId, 'continue');
+          const taken = inputQueueService.take(sessionId, forced.id);
+          if (!taken) {
+            throw new AgentRuntimeError(
+              'The forced input changed before it could be continued.',
+              'INPUT_QUEUE_CHANGED',
+              409,
+            );
+          }
+          inputQueueService.clearForceInject(sessionId);
+          return next;
+        })()
+      : this.acceptRun(sessionId, input, requestId, 'continue');
+    this.launchAccepted(sessionId, accepted, 'continue');
+  }
+
   private async drive(sessionId: string, owner: Owner, mode: AgentSessionStreamMode, input: StreamTurnRequest): Promise<void> {
     const writer = new RuntimeStreamWriter(sessionId, owner.runId, () => this.ownsLease(owner));
     const record = (chunk: AgentRunStreamChunk) => writer.write(chunk);
@@ -123,7 +243,7 @@ export class RunCoordinator {
           completedAt: nowIso(), stopReason: message });
         const session = agentRuntimeStore.getSession(sessionId);
         if (session.activeRunId === run.id) agentRuntimeStore.updateSession(sessionId, {
-          status: failed.status, activeRunId: null, blockedReason: message, updatedAt: nowIso(),
+          status: normalizeAgentSessionStatus(failed.status), activeRunId: null, blockedReason: message, updatedAt: nowIso(),
         });
         record({ type: 'run_failed', run: failed, error: message });
       }
@@ -145,7 +265,8 @@ export class RunCoordinator {
       } else if (settledNormally && ownsLease && !owner.stopping && !owner.controller.signal.aborted && !this.isActive(sessionId)) {
         try {
           const continuation = goalContinuationInput(sessionId, owner.runId);
-          if (continuation) this.submit(sessionId, continuation, `goal-continuation:${owner.runId}`, 'continue');
+          if (continuation) this.submitGoalContinuation(sessionId, owner.runId, continuation);
+          else this.dispatchQueuedInput(sessionId);
         } catch (error) {
           logger.warn({ sessionId, runId: owner.runId, error }, '[run-coordinator] goal handoff could not be continued');
         }

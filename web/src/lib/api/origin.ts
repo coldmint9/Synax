@@ -1,7 +1,6 @@
 import { ensureRuntimeAuthentication, runtimeAuthHeaders, runtimeAuthEnabled, resetRuntimeAuthentication, notifyRuntimeAuthenticationRequired } from './runtimeAuth'
 import {
   createOfflineError,
-  probeApiHealth,
   useApiConnectivityStore,
 } from '../apiConnectivity'
 import { createAppError, handleError } from '../errors'
@@ -18,14 +17,10 @@ export function applyConnectivityFromResponse(resp: Response): void {
     useApiConnectivityStore.getState().markSuccess()
     return
   }
-  if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
-    useApiConnectivityStore.getState().markFailure()
-    return
-  }
   if (resp.status >= 500) {
-    // Ambiguous API 500 vs vite proxy 500 — fail closed, health probe recovers if API is up.
+    // Let the periodic monitor probe with backoff. An immediate probe can loop
+    // when /health is healthy but a recovery-triggered data request returns 500.
     useApiConnectivityStore.getState().markFailure()
-    void probeApiHealth()
   }
 }
 
@@ -39,6 +34,7 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
     url = input
   } else if (!input.startsWith('/api/') && input !== '/api') throw new Error('Runtime requests must target the API.')
   await ensureRuntimeAuthentication()
+  init?.signal?.throwIfAborted()
   const send = () => {
     const headers = new Headers(init?.headers)
     for (const [name, value] of Object.entries(runtimeAuthHeaders())) headers.set(name, value)
@@ -51,9 +47,14 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
       try { await ensureRuntimeAuthentication(); response = await send() }
       catch { notifyRuntimeAuthenticationRequired() }
     }
+    init?.signal?.throwIfAborted()
     applyConnectivityFromResponse(response)
     return response
-  } catch (error) { useApiConnectivityStore.getState().markFailure(); throw error }
+  } catch (error) {
+    // Closing or replacing an observation stream is not a network outage.
+    if (!init?.signal?.aborted) useApiConnectivityStore.getState().markFailure()
+    throw error
+  }
 }
 
 export interface ApiRequestOptions extends RequestInit {

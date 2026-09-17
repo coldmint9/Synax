@@ -3,14 +3,14 @@ import { buildPermissionSection } from '../prompt-permission-section.js';
 import { synaxAgentProfile } from '../synax/synax-agent-profile.js';
 
 describe('buildPermissionSection', () => {
-  it('summarizes readonly tier gates', () => {
+  it('summarizes boundary approval gates', () => {
     const section = buildPermissionSection({
-      permissionTier: 'readonly',
+      permissionTier: 'boundary',
       profileDefaults: synaxAgentProfile.permissionDefaults,
     });
     expect(section).toContain('## Permission gates');
-    expect(section).toContain('requires user approval');
-    expect(section).toContain('mutating denied');
+    expect(section).toContain('ALWAYS require user approval');
+    expect(section).toContain('cannot bypass');
   });
 
   it('summarizes unrestricted tier', () => {

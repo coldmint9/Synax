@@ -7,6 +7,10 @@ import { useLocale } from '../../hooks/useLocale'
 import { wikiApi } from '../../lib/api/wiki'
 import { NotificationBell } from '../components/notifications/NotificationBell'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
+import {
+  useProjectSessionBadges,
+  type ProjectSessionBadge,
+} from '../features/sessions/projectSessionBadges'
 import { useSessionWorkspaceStore } from '../features/sessions/sessionWorkspaceStore'
 import { WorkspaceTabStrip } from '../features/sessions/WorkspaceChromeControls'
 import WikiSearchPanel from '../features/wiki/WikiSearchPanel'
@@ -33,6 +37,46 @@ const navTabs: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
   { id: 'wiki', icon: BookOpen, label: 'Wiki' },
 ]
 
+function ProjectSessionBadgeMark({
+  badge,
+  showCount = false,
+  className,
+}: {
+  badge?: ProjectSessionBadge
+  showCount?: boolean
+  className?: string
+}) {
+  const { t } = useLocale()
+  if (!badge?.total) return null
+
+  const label = [
+    badge.running > 0 ? t('projectBadgeRunning', { count: badge.running }) : '',
+    badge.unreadCompleted > 0
+      ? t('projectBadgeUnread', { count: badge.unreadCompleted })
+      : '',
+  ].filter(Boolean).join(' · ')
+
+  return (
+    <span
+      role="img"
+      className={['project-session-badge', className].filter(Boolean).join(' ')}
+      title={label}
+      aria-label={label}
+    >
+      <span
+        className="project-session-badge__dot"
+        data-status={badge.running > 0 ? 'running' : 'unread'}
+        aria-hidden="true"
+      />
+      {showCount && badge.running > 0 && (
+        <span className="project-session-badge__count" aria-hidden="true">
+          {badge.running}
+        </span>
+      )}
+    </span>
+  )
+}
+
 function ProjectSwitcher({
   hasProject,
   projectName,
@@ -55,9 +99,15 @@ function ProjectSwitcher({
   const { t } = useLocale()
   const labelRef = useRef<HTMLSpanElement>(null)
   const displayName = hasProject ? projectName : 'Synax'
+  const { badges, refresh: refreshBadges } = useProjectSessionBadges(
+    projects.map(project => project.id),
+  )
+  const currentBadge = badges[currentProjectId]
 
   return (
-    <Dropdown>
+    <Dropdown onOpenChange={(isOpen) => {
+      if (isOpen) void refreshBadges()
+    }}>
       <Dropdown.Trigger>
         <div
           role="button"
@@ -67,16 +117,25 @@ function ProjectSwitcher({
           aria-label={t('appSwitchProject')}
         >
           {iconOnly ? (
-            <Folder size={14} />
+            <>
+              <Folder size={14} />
+              <ProjectSessionBadgeMark
+                badge={currentBadge}
+                className="project-session-badge--icon-trigger"
+              />
+            </>
           ) : (
-            <span
-              ref={labelRef}
-              className="wh-project-label text-xs font-medium"
-              onMouseEnter={() => labelRef.current?.scrollTo({ left: labelRef.current.scrollWidth, behavior: 'smooth' })}
-              onMouseLeave={() => labelRef.current?.scrollTo({ left: 0, behavior: 'smooth' })}
-            >
-              {displayName}
-            </span>
+            <>
+              <ProjectSessionBadgeMark badge={currentBadge} />
+              <span
+                ref={labelRef}
+                className="wh-project-label text-xs font-medium"
+                onMouseEnter={() => labelRef.current?.scrollTo({ left: labelRef.current.scrollWidth, behavior: 'smooth' })}
+                onMouseLeave={() => labelRef.current?.scrollTo({ left: 0, behavior: 'smooth' })}
+              >
+                {displayName}
+              </span>
+            </>
           )}
         </div>
       </Dropdown.Trigger>
@@ -91,7 +150,10 @@ function ProjectSwitcher({
           {projects.map(project => (
             <Dropdown.Item key={project.id} id={project.id} textValue={project.name}>
               <div className="flex items-center justify-between w-full gap-2">
-                <span className="text-xs truncate">{project.name}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="text-xs truncate min-w-0">{project.name}</span>
+                  <ProjectSessionBadgeMark badge={badges[project.id]} showCount />
+                </span>
                 <span
                   role="button"
                   tabIndex={-1}

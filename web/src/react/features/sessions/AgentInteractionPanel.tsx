@@ -247,25 +247,39 @@ function InteractionForm({ interaction, disabled }: {
 function InteractionHistory({ interaction, zh }: { interaction: AgentInteraction; zh: boolean }) {
   const reply = interaction.response
   const action = reply?.action
+  const tone = action === 'save' ? 'saved'
+    : action === 'revise' ? 'revision'
+      : action === 'execute' ? 'executing'
+        : interaction.status === 'declined' ? 'declined'
+          : interaction.status === 'cancelled' ? 'cancelled' : 'answered'
   const status = action === 'save' ? (zh ? '已保存，可稍后执行' : 'Saved for later execution')
     : action === 'revise' ? (zh ? '已请求修改' : 'Revision requested')
       : action === 'execute' ? (zh ? '已开始执行' : 'Execution started')
         : interaction.status === 'declined' ? (zh ? '已拒绝' : 'Declined')
           : interaction.status === 'cancelled' ? (interaction.request.plan ? (zh ? '已取消快捷执行' : 'Shortcut execution cancelled') : (zh ? '已取消' : 'Cancelled')) : (zh ? '已回答' : 'Answered')
-  return <details className="agent-history-item">
-    <summary className="cursor-pointer">{interaction.request.title} v{interaction.revision} — {status}</summary>
-    <div className="mt-2 space-y-2">
+  const summaryLabel = `${interaction.request.title} v${interaction.revision} — ${status}`
+  return <details className="agent-history-item" data-tone={tone}>
+    <summary aria-label={summaryLabel}>
+      <ChevronRight size={12} aria-hidden className="agent-history-item-arrow" />
+      <span className="agent-history-item-title">{interaction.request.title}</span>
+      <span className="agent-history-version">v{interaction.revision}</span>
+      <span className="agent-history-status" data-tone={tone}>
+        <span className="agent-history-status-dot" aria-hidden />
+        {status}
+      </span>
+    </summary>
+    <div className="agent-history-detail">
       {interaction.request.plan && <PlanDetails plan={interaction.request.plan} zh={zh} />}
-      <dl className="space-y-1">
+      <dl className="agent-history-answers">
         {interaction.request.questions?.map(question => {
           const value = reply?.answers?.[question.id]
-          return <div key={question.id}>
-            <dt className="font-medium">{question.label}</dt>
-            <dd className="whitespace-pre-wrap">{value === undefined ? '—' : Array.isArray(value) ? value.join(', ') : typeof value === 'boolean' ? (value ? (zh ? '是' : 'Yes') : (zh ? '否' : 'No')) : String(value)}</dd>
+          return <div key={question.id} className="agent-history-answer">
+            <dt>{question.label}</dt>
+            <dd>{value === undefined ? '—' : Array.isArray(value) ? value.join(', ') : typeof value === 'boolean' ? (value ? (zh ? '是' : 'Yes') : (zh ? '否' : 'No')) : String(value)}</dd>
           </div>
         })}
       </dl>
-      {reply?.message && <p className="whitespace-pre-wrap">{reply.message}</p>}
+      {reply?.message && <p className="agent-history-message">{reply.message}</p>}
     </div>
   </details>
 }
@@ -311,8 +325,9 @@ export function AgentInteractionPanel({ session }: { session: AgentSession }) {
       {(hasSummary || history.length > 0) && <div className="agent-context-row">
         {hasSummary && <SessionModeSummary session={session} />}
         {history.length > 0 && <details key={session.id} className="agent-history">
-          <summary><ChevronRight size={11} aria-hidden className="agent-disclosure-arrow" /><History size={11} aria-hidden />
-            <span>{zh ? '交互记录' : 'Interaction history'}</span><span className="agent-history-count">{history.length}</span>
+          <summary><ChevronRight size={11} aria-hidden className="agent-disclosure-arrow" /><History size={12} aria-hidden />
+            <span className="agent-history-label">{zh ? '交互记录' : 'Interaction history'}</span>
+            <span className="agent-history-count" aria-label={zh ? `${history.length} 条记录` : `${history.length} records`}>{history.length}</span>
           </summary>
           <div className="agent-context-body agent-history-body">
             {history.map(interaction => <InteractionHistory key={`${interaction.id}:${interaction.revision}`} interaction={interaction} zh={zh} />)}

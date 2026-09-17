@@ -5,12 +5,16 @@ import { agentEventService } from './event-service.js';
 import { permissionPolicy } from './permission-policy.js';
 import { agentRuntimeStore } from './session-store.js';
 import { nowIso } from './runtime-ids.js';
+import { runtimeTransaction } from './runtime-transaction.js';
 
 const SWEEP_INTERVAL_MS = 30_000;
 
 type PermissionRow = {
   id: string;
   session_id: string;
+  run_id: string | null;
+  step_id: string | null;
+  tool_call_id: string | null;
   action: string;
   user_reply: string | null;
   resolved_at: string | null;
@@ -20,7 +24,7 @@ type PermissionRow = {
 function listExpiredPendingPermissions(cutoffIso: string): PermissionRow[] {
   return getRawSqlite()
     .prepare(
-      `SELECT id, session_id, action, user_reply, resolved_at, created_at
+      `SELECT id, session_id, run_id, step_id, tool_call_id, action, user_reply, resolved_at, created_at
        FROM agent_runtime_permissions
        WHERE action = 'ask'
          AND user_reply IS NULL
@@ -37,15 +41,60 @@ export function sweepExpiredPermissions(): number {
 
   for (const row of expired) {
     try {
-      const session = agentRuntimeStore.tryGetSession(row.session_id);
-      if (!session) continue;
+      const completedAt = nowIso();
+      const timeoutReason = 'Permission request timed out.';
+      const decision = runtimeTransaction(() => {
+        const session = agentRuntimeStore.tryGetSession(row.session_id);
+        if (!session) return null;
 
-      const decision = permissionPolicy.reply(
-        row.session_id,
-        row.id,
-        'reject',
-        'Permission timed out.',
-      );
+        const resolved = permissionPolicy.reply(
+          row.session_id,
+          row.id,
+          'reject',
+          'Permission timed out.',
+        );
+        if (row.step_id) {
+          const step = agentRuntimeStore.getRunStep(row.step_id);
+          if (step.status === 'waiting_permission') {
+            agentRuntimeStore.updateRunStep(row.step_id, {
+              status: 'blocked',
+              completedAt,
+              finishReason: 'permission_timeout',
+            });
+          }
+        }
+        if (row.tool_call_id) {
+          const toolCall = agentRuntimeStore.getToolCall(row.session_id, row.tool_call_id);
+          if (toolCall.status === 'pending' || toolCall.status === 'running') {
+            agentRuntimeStore.updateToolCall(row.session_id, row.tool_call_id, {
+              status: 'denied',
+              endedAt: completedAt,
+              error: timeoutReason,
+            });
+          }
+        }
+        if (row.run_id) {
+          const run = agentRuntimeStore.getRun(row.run_id);
+          if (run.status === 'waiting_permission') {
+            agentRuntimeStore.updateRun(row.run_id, {
+              status: 'blocked',
+              completedAt,
+              stopReason: timeoutReason,
+            });
+          }
+        }
+        agentRuntimeStore.updateSession(row.session_id, {
+          status: 'completed',
+          updatedAt: completedAt,
+          completedAt,
+          resultSummary: timeoutReason,
+          blockedReason: timeoutReason,
+          activeRunId: null,
+          pendingResumeToken: null,
+        });
+        return resolved;
+      });
+      if (!decision) continue;
 
       agentEventService.append({
         sessionId: row.session_id,
@@ -57,13 +106,6 @@ export function sweepExpiredPermissions(): number {
           userReply: decision.userReply,
           source: 'permission_timeout',
         },
-      });
-
-      agentRuntimeStore.updateSession(row.session_id, {
-        status: 'blocked',
-        updatedAt: nowIso(),
-        blockedReason: 'Permission request timed out.',
-        pendingResumeToken: null,
       });
 
       swept++;

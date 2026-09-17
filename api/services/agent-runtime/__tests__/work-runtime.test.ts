@@ -7,6 +7,8 @@ import { agentRuntimeStore as store } from '../session-store.js';
 import { toolRegistry as agentToolRegistry } from '../tool-registry.js';
 import { workRuntime } from '../work-runtime.js';
 import { workStore } from '../work-store.js';
+import { inputQueueService } from '../input-queue-service.js';
+import { goalContinuationInput } from '../goal-continuation.js';
 import { workCheckpointTool } from '../tools/work-tools.js';
 import { TaskStore } from '../tools/task-tools.js';
 import { setSessionWorkspaceRoot } from '../tools/workspace.js';
@@ -42,6 +44,35 @@ function input(sessionId: string, runId: string, args: unknown): ToolExecutionIn
 }
 
 describe('durable cooperative work runtime', () => {
+  it('keeps ordinary queued input waiting across an approved goal round handoff', () => {
+    const { session, run } = setup();
+    const items = inputQueueService.enqueue(session.id, { message: 'Next independent task' });
+    expect(() => workRuntime.yieldRound(input(session.id, run.id, {}), 'Continue the current task', 'Finish remaining work')).not.toThrow();
+    store.updateSessionMetadata(session.id, {
+      mode: 'goal',
+      goal: { objective: 'Finish current task', status: 'executing' },
+      plan: {
+        title: 'Current plan', objective: 'Finish current task', revision: 1,
+        status: 'approved', executionId: 'execution-1', acceptanceCriteria: ['Done'],
+        steps: [{ id: 's1', title: 'Finish', description: 'Finish current task', dependsOn: [], expectedFiles: [] }],
+      },
+    });
+    store.updateRun(run.id, { status: 'completed', stopReason: 'round_yielded',
+      metadata: { ...store.getRun(run.id).metadata, goalExecutionId: 'execution-1' } });
+    store.updateSession(session.id, { status: 'completed', activeRunId: null });
+    expect(goalContinuationInput(session.id, run.id)?.messageSource).toBe('system_injection');
+    expect(inputQueueService.list(session.id)).toEqual(items);
+    inputQueueService.markForceInject(session.id, items[0].id);
+    expect(goalContinuationInput(session.id, run.id)?.messageSource).toBe('system_injection');
+  });
+
+  it('requires a forced steering message to be processed before yielding', () => {
+    const { session, run } = setup();
+    const items = inputQueueService.enqueue(session.id, { message: 'Change current direction' });
+    inputQueueService.markForceInject(session.id, items[0].id);
+    expect(() => workRuntime.yieldRound(input(session.id, run.id, {}), 'Pause')).toThrow(/user input is waiting/i);
+  });
+
   it('reuses work and stall state across continue runs', () => {
     const { session } = setup();
     const original = workStore.current(session.id)!;

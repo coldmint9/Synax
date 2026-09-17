@@ -1,3 +1,4 @@
+import { runtimeTransaction } from './runtime-transaction.js';
 import { z } from 'zod';
 import type {
   AgentSession,
@@ -78,9 +79,9 @@ export function applySessionPermissionUpdate(
     return agentRuntimeStore.getSession(sessionId);
   }
 
+  return runtimeTransaction(() => {
   const session = agentRuntimeStore.getSession(sessionId);
   const profile = profileService.getForSession(session);
-  const current = readSessionPermissionConfig(session.sessionMetadata);
 
   const metadataPatch: Record<string, unknown> = {};
   if (input.permissionTier !== undefined) {
@@ -91,16 +92,31 @@ export function applySessionPermissionUpdate(
   }
 
   const nextMetadata = { ...(session.sessionMetadata ?? {}), ...metadataPatch };
-  const nextConfig = readSessionPermissionConfig(nextMetadata);
   const permissionRules = rebuildSessionPermissionRules(
     { ...session, sessionMetadata: nextMetadata },
     profile.permissionDefaults,
   );
 
-  agentRuntimeStore.updateSessionMetadata(sessionId, metadataPatch);
-  return agentRuntimeStore.updateSession(sessionId, {
+  const updated = agentRuntimeStore.updateSession(sessionId, {
+    sessionMetadata: nextMetadata,
     permissionRules,
     updatedAt: nowIso(),
+  });
+  // Refresh inherited restrictions too; a running child must not retain an old unrestricted grant.
+  const pending = [...updated.childSessionIds];
+  const seen = new Set([sessionId]);
+  for (const childId of pending) {
+    if (seen.has(childId)) continue;
+    seen.add(childId);
+    const child = agentRuntimeStore.tryGetSession(childId);
+    if (!child) continue;
+    agentRuntimeStore.updateSession(childId, {
+      permissionRules: rebuildSessionPermissionRules(child, profileService.getForSession(child).permissionDefaults),
+      updatedAt: nowIso(),
+    });
+    pending.push(...child.childSessionIds);
+  }
+  return updated;
   });
 }
 

@@ -400,12 +400,6 @@ export class HttpRuntimeClient implements RuntimeClient {
       method: 'POST', body: JSON.stringify(runId ? { runId } : {}),
     }, { retry: false });
   }
-
-  pauseSession(sessionId: string, runId?: string): Promise<AgentSession> {
-    return this.request(`/api/agent-runtime/sessions/${encodeId(sessionId)}/pause`, {
-      method: 'POST', body: JSON.stringify(runId ? { runId } : {}),
-    }, { retry: false });
-  }
 }
 
 export function createSynaxClient(options: RuntimeClientOptions = {}): RuntimeClient {

@@ -78,7 +78,7 @@ Usage:
   synax sessions [--json]                List persisted sessions
   synax approve <permission-id> --session <id> [--reply once|always|reject]
   synax answer <interaction-id> --session <id> [--answers <json>] [--action <action>]
-  synax pause|cancel --session <id> [--run <id>]
+  synax cancel --session <id> [--run <id>]
   synax rpc                              Concurrent JSONL request/event protocol
 
 Options:
@@ -99,7 +99,7 @@ Options:
 
 Interactive controls:
   /new /sessions /resume <id> /approve <id> [once|always|reject]
-  /answer <id> <answers JSON or {"action":"execute"}> /pause /cancel /exit
+  /answer <id> <answers JSON or {"action":"execute"}> /cancel /exit
   Control commands remain available while a Run is active. /exit detaches;
   Ctrl-C requests cancellation and waits for Runtime shutdown confirmation.
 
