@@ -4,6 +4,7 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { ToolCallRoundPanel } from './ToolCallRoundPanel'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { SubSessionCard } from './SubSessionCard'
+import { ThinkingIndicator } from './ThinkingIndicator'
 import { buildTurnRenderSegments } from './toolCallUtils'
 
 function renderTurnBlocks(blocks: TurnContentBlock[], onExpandChild?: (sessionId: string) => void, rowKeyPrefix = '', isStreaming = false) {
@@ -34,7 +35,9 @@ export function TurnBody({
 }) {
   return (
     <div className="session-turn-content flex min-w-0 flex-1 flex-col gap-1">
-      {renderTurnBlocks(turn.blocks, onExpandChild, entryId, isStreaming)}
+      {isStreaming && turn.blocks.length === 0
+        ? <ThinkingIndicator />
+        : renderTurnBlocks(turn.blocks, onExpandChild, entryId, isStreaming)}
     </div>
   )
 }

@@ -21,6 +21,7 @@ import { useWikiStore } from "../../../state/wikiStore";
 import { useAcpDiscovery } from "../../wiki/goal/useAcpDiscovery";
 import { SessionComposer } from "../SessionComposer";
 import { SessionModeSummary } from "../SessionWorkspace";
+import { useSessionComposerSelections } from "../useSessionComposerSelection";
 
 vi.mock("../../../../hooks/useLocale", () => ({
   useLocale: () => ({ locale: "en", t: (key: string) => key }),
@@ -110,6 +111,10 @@ const session: AgentSession = {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  useSessionComposerSelections.setState({
+    selections: {},
+    lastSubmittedByProject: {},
+  });
   vi.mocked(useAcpDiscovery).mockReturnValue([
     {
       id: "codex-acp",
@@ -357,6 +362,14 @@ describe("SessionComposer mode controls", () => {
         expect.objectContaining({ message: "你好", references: [] }),
       ),
     );
+    expect(
+      useSessionComposerSelections.getState().lastSubmittedByProject.p1,
+    ).toMatchObject({
+      backendId: "native",
+      providerId: "api",
+      modelId: "test-model",
+      reasoningEffort: "high",
+    });
     expect(goalApi.buildSessionPrompt).not.toHaveBeenCalled();
   });
 
