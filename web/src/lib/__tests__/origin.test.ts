@@ -81,4 +81,18 @@ describe('apiFetch gateway failure', () => {
     await expect(apiFetch('/api/agent-runtime/sessions')).rejects.toThrow('网络连接失败')
     expect(fetch).toHaveBeenCalledTimes(1)
   })
+
+  it('does not mark the API offline when a superseded request is aborted', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+    })))
+    const request = apiFetch('/api/events', { signal: controller.signal })
+    const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    controller.abort()
+    await rejected
+    expect(useApiConnectivityStore.getState().apiReachable).toBe('unknown')
+    expect(useApiConnectivityStore.getState().failureCount).toBe(0)
+  })
 })

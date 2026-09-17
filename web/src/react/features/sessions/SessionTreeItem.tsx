@@ -1,36 +1,29 @@
-import { memo, useRef } from 'react'
-import { Loader2, Trash2 } from 'lucide-react'
+import { memo } from 'react'
+import { ChevronDown, ChevronRight, Loader2, Trash2 } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import type { SessionTreeNode } from './useSessionList'
 import { isSessionUnread, useAgentSessionStore } from './agentSessionStore'
-import { useSessionDisplayTitle } from './useSessionDisplayTitle'
-import { isSynaxSession, resolveSynaxAgentLabel } from './synaxDisplay'
+import { resolveSessionUserInput, useSessionDisplayTitle } from './useSessionDisplayTitle'
+import { isSessionPromptUserMessage, isSystemInjectedMessage } from './buildConversationTimeline'
 
 const DOT: Record<string, string> = {
-  running: 'bg-run shadow-[0_0_6px_color-mix(in_srgb,var(--run)_50%,transparent)]',
-  completed: 'bg-success shadow-[0_0_6px_color-mix(in_srgb,var(--success)_40%,transparent)]',
+  running: 'bg-run',
+  stopping: 'bg-run',
+  completed: 'bg-success',
   failed: 'bg-destructive',
   waiting_permission: 'bg-warning',
-  blocked: 'bg-warning',
+  waiting_input: 'bg-warning',
   interrupted: 'bg-warning/60',
-  paused: 'bg-muted-foreground',
   queued: 'bg-muted-foreground/60',
   cancelled: 'bg-muted-foreground/40',
-}
-
-const PROFILES: Record<string, string> = {
-  'wiki-planner': 'Planner',
-  'wiki-writer': 'Writer',
-  'wiki-explorer': 'Explorer',
-  'wiki-generator': 'Generator',
-  explorer: 'Explorer',
-  reviewer: 'Reviewer',
 }
 
 type Translator = ReturnType<typeof useLocale>['t']
 
 function relTime(iso: string, t: Translator): string {
-  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+  const elapsed = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(elapsed)) return ''
+  const m = Math.max(0, Math.floor(elapsed / 60000))
   if (m < 60) return t('timeMinutesAgo', { count: m })
   if (m < 1440) return t('timeHoursAgo', { count: Math.floor(m / 60) })
   return t('timeDaysAgo', { count: Math.floor(m / 1440) })
@@ -42,121 +35,89 @@ interface Props {
   onSelect: (id: string) => void
   onToggleExpand: (id: string) => void
   onDelete?: (id: string) => void
-  onPause?: (id: string) => void
   onCancel?: (id: string) => void
 }
 
-function DeleteButton({ sessionId, onDelete }: { sessionId: string; onDelete?: (id: string) => void }) {
-  const { t } = useLocale()
-  return (
-    <span
-      role="button"
-      tabIndex={0}
-      className="session-list-delete inline-flex items-center justify-center h-5 w-5 min-w-0 rounded-md opacity-0 group-hover:opacity-100 transition-opacity text-danger/70 hover:text-danger hover:bg-danger/10 cursor-pointer"
-      aria-label={t('sessionDelete')}
-      onClick={(e) => { e.stopPropagation(); onDelete?.(sessionId) }}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onDelete?.(sessionId) } }}
-    >
-      <Trash2 size={13} />
-    </span>
-  )
-}
+function SessionPreview({ session }: { session: SessionTreeNode['session'] }) {
+  // Reuse already loaded messages; list rows must not fetch session transcripts.
+  const latestMessage = useAgentSessionStore(state => {
+    const messages = state.selectedSessionId === session.id
+      ? state.messages
+      : state.sessionDetailCache[session.id]?.messages
+    for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
+      const message = messages![i]
+      if (message.sessionId !== session.id || !message.content.trim()) continue
+      if (message.role === 'assistant' || (
+        message.role === 'user' && !isSessionPromptUserMessage(message) && !isSystemInjectedMessage(message)
+      )) return message.content
+    }
+    return ''
+  })
+  const preview = (
+    latestMessage || session.resultSummary?.trim() || session.blockedReason?.trim()
+    || resolveSessionUserInput(session) || session.prompt
+  ).replace(/\s+/g, ' ').trim()
 
-function SessionTitle({ session }: { session: SessionTreeNode['session'] }) {
-  const title = useSessionDisplayTitle(session)
-  const ref = useRef<HTMLSpanElement>(null)
-  return (
-    <span
-      ref={ref}
-      title={title}
-      className="session-list-title min-w-0 flex-1 overflow-hidden whitespace-nowrap text-left text-[13px] font-medium text-foreground"
-      onMouseEnter={() => ref.current?.scrollTo({ left: ref.current.scrollWidth, behavior: 'smooth' })}
-      onMouseLeave={() => ref.current?.scrollTo({ left: 0, behavior: 'smooth' })}
-    >
-      {title}
-    </span>
-  )
-}
-
-function SessionChildTitle({ session }: { session: SessionTreeNode['session'] }) {
-  const title = useSessionDisplayTitle(session)
-  return (
-    <span className="min-w-0 flex-1 truncate text-[11px]">
-      {title}
-    </span>
-  )
+  return <span className="session-list-preview" title={preview}>{preview || '\u00a0'}</span>
 }
 
 export const SessionTreeItem = memo(function SessionTreeItem({
-  node, isSelected, onSelect, onToggleExpand, onDelete, onPause, onCancel,
+  node, isSelected, onSelect, onToggleExpand, onDelete,
 }: Props) {
   const { t } = useLocale()
   const { session, depth, children } = node
+  const title = useSessionDisplayTitle(session)
   const hasKids = children.length > 0
-  const isParent = depth === 0
-  const isRunning = session.status === 'running'
-  const readMarkers = useAgentSessionStore(s => s.readSessionMarkers)
-  const showStatusDot = isSessionUnread(session, readMarkers)
-
-  const shellClass = isParent
-    ? `list-card group ${isSelected ? 'list-card--active' : ''}`
-    : `list-row group ${isSelected ? 'list-row--active' : ''}`
+  const isRunning = session.status === 'running' || session.status === 'stopping'
+  const unread = useAgentSessionStore(state => isSessionUnread(session, state.readSessionMarkers))
+  const hasReadMarker = useAgentSessionStore(state => Boolean(state.readSessionMarkers[session.id]))
+  const showStatusDot = session.status !== 'completed' || !hasReadMarker || unread
 
   return (
     <div
-      className={shellClass}
-      style={{ marginLeft: `${depth * 12}px`, marginRight: 6 }}
-      onClick={() => onSelect(session.id)}
+      className={`session-list-item${isSelected ? ' session-list-item--active' : ''}${depth > 0 ? ' session-list-item--child' : ''}`}
+      style={{ marginLeft: `${Math.min(depth, 4) * 12}px` }}
+      data-unread={unread || undefined}
     >
-      {isParent ? (
-        <>
-          <div className="flex items-center gap-0.5">
-            <button
-              className="shrink-0 w-4 h-4 flex items-center justify-center text-[10px] text-muted-foreground hover:text-foreground"
-              onClick={e => { e.stopPropagation(); onToggleExpand(session.id) }}
-              aria-label={t(node.expanded ? 'sessionCollapse' : 'sessionExpand')}
-            >
-              {hasKids ? (node.expanded ? '\u25BE' : '\u25B8') : <span className="w-3" />}
-            </button>
-            {isRunning ? (
-              <Loader2
-                size={10}
-                className="shrink-0 animate-spin text-[var(--color-run)]"
-                aria-hidden
-              />
-            ) : showStatusDot ? (
-              <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-muted-foreground/50'}`} />
-            ) : null}
-            <SessionTitle session={session} />
-            <span className="session-list-hover-actions inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] text-muted-foreground/70 opacity-0 transition-opacity">
-              <span>{relTime(session.updatedAt, t)}</span>
-              <DeleteButton sessionId={session.id} onDelete={onDelete} />
-            </span>
-          </div>
-        </>
-      ) : (
-        <>
-          {/* Spinner while running; dot only when selected */}
+      {hasKids && (
+        <button
+          type="button"
+          className="session-list-expand"
+          onClick={() => onToggleExpand(session.id)}
+          aria-label={t(node.expanded ? 'sessionCollapse' : 'sessionExpand')}
+          aria-expanded={node.expanded}
+        >
+          {node.expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </button>
+      )}
+      <button
+        type="button"
+        className="session-list-select"
+        onClick={() => onSelect(session.id)}
+        aria-current={isSelected ? 'true' : undefined}
+      >
+        <span className="session-list-indicator" aria-hidden="true">
           {isRunning ? (
-            <Loader2
-              size={10}
-              className="shrink-0 animate-spin text-[var(--color-run)]"
-              aria-hidden
-            />
-          ) : isSelected ? (
-            <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT[session.status] ?? 'bg-muted-foreground/50'}`} />
+            <Loader2 size={12} className="shrink-0 animate-spin text-run" />
+          ) : showStatusDot ? (
+            <span className={`session-list-dot ${DOT[session.status] ?? 'bg-muted-foreground/50'}`} />
           ) : null}
-          <SessionChildTitle session={session} />
-          {isSelected && session.profileId && !isSynaxSession(session) && PROFILES[session.profileId] && (
-            <span className="list-badge">{PROFILES[session.profileId]}</span>
-          )}
-          {isSelected && isSynaxSession(session) ? (
-            <span className="list-badge">{resolveSynaxAgentLabel(session)}</span>
-          ) : null}
-          <span className="shrink-0 text-[9px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
-            {relTime(session.updatedAt, t)}
-          </span>
-        </>
+        </span>
+        <span className="session-list-title" title={title}>{title}</span>
+        <time className="session-list-time" dateTime={session.updatedAt} title={new Date(session.updatedAt).toLocaleString()}>
+          {relTime(session.updatedAt, t)}
+        </time>
+        <SessionPreview session={session} />
+      </button>
+      {onDelete && (
+        <button
+          type="button"
+          className="session-list-delete"
+          aria-label={t('sessionDelete')}
+          onClick={() => onDelete(session.id)}
+        >
+          <Trash2 size={13} />
+        </button>
       )}
     </div>
   )

@@ -1,3 +1,4 @@
+import { applySessionPermissionUpdate } from './session-permissions.js';
 import { normalizeInput, hasInput, inputParts } from './content-parts.js';
 import { bindAssets } from './media-assets.js';
 import { prepareTurnReferences } from './turn-references.js';
@@ -46,7 +47,7 @@ export function acceptRuntimeRun(
   const inputHash = createHash('sha256').update(JSON.stringify(stable({ input, mode }))).digest('hex');
   const db = getRawSqlite();
   return db.transaction(() => {
-    const session = agentRuntimeStore.getSession(sessionId);
+    let session = agentRuntimeStore.getSession(sessionId);
     const previous = db.prepare(`SELECT id FROM agent_runtime_runs WHERE session_id = ?
       AND json_extract(metadata_json, '$.runtime.requestId') = ?`).get(sessionId, requestId) as { id: string } | undefined;
     if (previous) {
@@ -88,6 +89,9 @@ export function acceptRuntimeRun(
     let workDir: string;
     try { workDir = bindSessionWorkDir(sessionId); }
     catch (error) { throw new AgentValidationError(error instanceof Error ? error.message : 'Invalid execution workspace.'); }
+    if (input.permissionTier !== undefined || input.permissionOverrides !== undefined) {
+      session = applySessionPermissionUpdate(sessionId, input);
+    }
     const runtime: AcceptedRuntimeInput = {
       version: 1, requestId, inputHash, mode, input: { ...input, referenceContext: prepareTurnReferences(sessionId, input.references), ...(model ? { model } : {}) },
       backendId: binding.id, workDir, previousSessionStatus: session.status,

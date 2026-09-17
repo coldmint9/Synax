@@ -58,11 +58,11 @@ describe('explicit execution backend binding', () => {
 
 describe('native CLI capability boundaries', () => {
   it('rejects unsupported Synax permission controls rather than recording a misleading tier', () => {
-    expect(() => agentSessionRuntime.create({ ...plannerSessionInput, backendId: 'codex', permissionTier: 'readonly' })).toThrow(/own sandbox and approvals/);
+    expect(() => agentSessionRuntime.create({ ...plannerSessionInput, backendId: 'codex', permissionTier: 'boundary' })).toThrow(/own sandbox and approvals/);
     for (const backendId of ['codex', 'claude-code']) {
       expect(() => validateBackendTurnInput(backendId, { permissionTier: 'unrestricted' })).toThrow(/permission tiers/);
       expect(() => validateBackendTurnInput(backendId, { maxSteps: 5 })).toThrow(/own agent loop/);
     }
-    expect(() => validateBackendTurnInput('native', { permissionTier: 'readonly', maxSteps: 5 })).not.toThrow();
+    expect(() => validateBackendTurnInput('native', { permissionTier: 'boundary', maxSteps: 5 })).not.toThrow();
   });
 });

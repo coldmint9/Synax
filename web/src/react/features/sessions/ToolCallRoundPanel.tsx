@@ -5,7 +5,7 @@ import { ThinkingTrace } from './ThinkingTrace'
 import type { TurnContentBlock } from './buildInterleavedTurns'
 import { toolBlocksToBatches } from './toolCallUtils'
 import { ThinkingBlock } from './ThinkingBlock'
-import { activityPreview } from './activityText'
+import { activityPreview, latestActivityPreview } from './activityText'
 import { ToolCallBatchSummaryLine } from './ToolCallBatchSummaryLine'
 
 interface Props {
@@ -21,9 +21,11 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
 }: Props) {
   const { t } = useLocale()
   const previews = toolBlocks.flatMap((block, index) => {
-    if (block.type === 'thinking') return [{ id: `thinking-${index}`, text: activityPreview(block.content.replace(/\*\*/g, ''), 160) }]
+    // Each record previews its latest line: a row reports where the round is
+    // now, not the first thing it said.
+    if (block.type === 'thinking') return [{ id: `thinking-${index}`, text: latestActivityPreview(block.content.replace(/\*\*/g, ''), 160) }]
     const calls = block.type === 'tool_call' ? [block.call] : block.type === 'tool_call_group' ? block.calls : []
-    return calls.map(call => ({ id: call.id, text: `${call.toolId} · ${activityPreview(call.inputSummary || call.outputSummary, 140)}` }))
+    return calls.map(call => ({ id: call.id, text: `${call.toolId} · ${latestActivityPreview(call.inputSummary || call.outputSummary, 140)}` }))
   }).filter(item => item.text).slice(-4)
   const latestId = previews[previews.length - 1]?.id
   const [cursor, setCursor] = useState<string | undefined>(undefined)
@@ -34,7 +36,10 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
     const timer = window.setInterval(() => setCursor(current => ids[(ids.indexOf(current ?? '') + 1) % ids.length]), 2800)
     return () => window.clearInterval(timer)
   }, [isStreaming, latestId, previews.length])
-  const preview = (isStreaming ? previews.find(item => item.id === cursor) : undefined) ?? previews[previews.length - 1]
+  const latest = previews[previews.length - 1]
+  // A live round cycles through the records it produced; a settled one only
+  // reports the newest record, so a card left on screen never reads as stale.
+  const preview = (isStreaming ? previews.find(item => item.id === cursor) : undefined) ?? latest
   if (toolBlocks.length === 0) return null
   const batches = toolBlocksToBatches(toolBlocks)
   const calls = batches.flatMap(batch => batch.calls)

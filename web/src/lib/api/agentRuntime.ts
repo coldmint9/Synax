@@ -25,12 +25,10 @@ export type AgentSessionStatus =
   | "running"
   | "waiting_permission"
   | "waiting_input"
-  | "blocked"
   | "completed"
   | "failed"
   | "cancelled"
-  | "interrupted"
-  | "paused";
+  | "interrupted";
 
 export type AgentRunStatus =
   | "queued"
@@ -333,7 +331,7 @@ export interface CreateSessionRequest {
   skillIds?: string[];
   mcpServerIds?: string[];
   sessionMetadata?: Record<string, unknown> | null;
-  permissionTier?: "readonly" | "readwrite" | "unrestricted";
+  permissionTier?: "boundary" | "auto" | "unrestricted";
   gitWorkspace?: GitWorkspaceSelection;
   permissionOverrides?: Partial<
     Record<
@@ -462,12 +460,22 @@ export interface SessionEnvironmentSubagent {
   id: string;
   parentSessionId: string | null;
   profileId: string;
-  status: string;
+  status: AgentSessionStatus;
   title: string | null;
   prompt: string;
   updatedAt: string;
   completedAt: string | null;
   resultSummary: string | null;
+}
+
+export interface SessionBackgroundProcess {
+  id: string;
+  command: string;
+  pid: number | null;
+  state: string;
+  exitCode: number | null;
+  startedAt: string;
+  endedAt: string | null;
 }
 
 export interface SessionEnvironment {
@@ -555,7 +563,7 @@ export interface StreamTurnRequest {
   maxSteps?: number;
   locale?: "zh" | "en";
   reasoningEffort?: ReasoningEffort;
-  permissionTier?: "readonly" | "readwrite" | "unrestricted";
+  permissionTier?: "boundary" | "auto" | "unrestricted";
   permissionOverrides?: Partial<
     Record<
       "read" | "write" | "delete" | "shell" | "task",
@@ -750,6 +758,15 @@ export const agentRuntimeApi = {
     request<{ items: ToolCallRecord[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/tool-calls`,
     ),
+  listSessionProcesses: (sessionId: string) =>
+    request<{ items: SessionBackgroundProcess[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/processes`,
+    ),
+  stopSessionProcess: (sessionId: string, processId: string) =>
+    request<{ items: SessionBackgroundProcess[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}/stop`,
+      { method: "POST" },
+    ),
   getSessionEnvironment: (sessionId: string) =>
     request<SessionEnvironment>(
       `/sessions/${encodeURIComponent(sessionId)}/environment`,
@@ -783,11 +800,6 @@ export const agentRuntimeApi = {
     request<SessionCapabilities>(
       `/sessions/${encodeURIComponent(sessionId)}/capabilities`,
     ),
-  pauseSession: (sessionId: string, runId?: string | null) =>
-    request<AgentSession>(`/sessions/${encodeURIComponent(sessionId)}/pause`, {
-      method: "POST",
-      body: JSON.stringify({ runId: runId ?? undefined }),
-    }),
   resumeStream: async (
     sessionId: string,
     body: StreamTurnRequest,

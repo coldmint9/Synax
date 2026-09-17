@@ -247,7 +247,7 @@ it("keeps mode rules identical when only saved plan and goal status change", () 
     ...context,
     metadata: {
       mode: "goal",
-      goal: { objective: "Feature", status: "paused" },
+      goal: { objective: "Feature", status: "executing" },
       plan: {
         title: "Feature",
         objective: "Feature",

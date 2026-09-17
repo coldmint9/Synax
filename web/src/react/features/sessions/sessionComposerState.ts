@@ -7,7 +7,17 @@ export function patchAgentSession(
   session: AgentSession,
   patch: Partial<AgentSession>,
 ): AgentSession {
-  return { ...session, ...patch }
+  const merged = { ...session, ...patch }
+  const legacyStatus = (merged as { status: string }).status
+  const next: AgentSession = legacyStatus === 'blocked' || legacyStatus === 'paused'
+    ? { ...merged, status: 'completed' }
+    : merged
+  if (next.profileId !== 'synax' && next.profileId !== 'goal') return next
+  if (next.status === 'stopping') return { ...next, status: 'running' }
+  if (['failed', 'cancelled', 'interrupted'].includes(next.status)) {
+    return { ...next, status: 'completed' }
+  }
+  return next
 }
 
 export function isSessionComposerLocked(
@@ -53,7 +63,7 @@ export function canEnqueueSessionInput(session: AgentSession | undefined): boole
 
 /** Statuses where the send key becomes a resume (play) control. */
 export function isSessionResumable(session: AgentSession | undefined): boolean {
-  return Boolean(session && ['paused', 'interrupted', 'failed', 'blocked'].includes(session.status))
+  return Boolean(session && ['interrupted', 'failed'].includes(session.status))
 }
 
 export function sessionHasPendingPermissions(

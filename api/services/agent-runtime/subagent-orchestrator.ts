@@ -81,7 +81,7 @@ const defaultDeps: OrchestratorDeps = {
 /** Child statuses the delegating parent can never resolve in-run: nothing drives
  *  another round or a resume while the delegate call is returning. Left alone they
  *  would register the child as pending forever and block parent acceptance. */
-const UNRESOLVABLE_CHILD_STATUSES = new Set(['queued', 'running', 'paused', 'interrupted']);
+const UNRESOLVABLE_CHILD_STATUSES = new Set(['queued', 'running', 'interrupted']);
 
 /** Finalize a child that ended in a non-terminal, non-waiting status. Waiting
  *  children (permission/form) stay untouched — the user can still answer them. */
@@ -163,14 +163,15 @@ function mapChildToResult(
     return { spec, childSessionId, status: 'failed', summary: null, error: 'Child session not found.' };
   }
   const summary = child.resultSummary ?? null;
+  const latestRun = deps.store.listRuns(childSessionId)[0];
   if (timedOut && child.status !== 'completed') {
     return { spec, childSessionId, status: 'timeout', summary, error: child.blockedReason ?? 'Timed out.' };
   }
   if (child.status === 'completed') {
+    if (latestRun?.status === 'blocked') {
+      return { spec, childSessionId, status: 'blocked', summary, error: child.blockedReason ?? latestRun.stopReason ?? 'Blocked.' };
+    }
     return { spec, childSessionId, status: 'completed', summary, error: null };
-  }
-  if (child.status === 'blocked') {
-    return { spec, childSessionId, status: 'blocked', summary, error: child.blockedReason ?? 'Blocked.' };
   }
   return { spec, childSessionId, status: 'failed', summary, error: child.blockedReason ?? `Ended as ${child.status}.` };
 }

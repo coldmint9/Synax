@@ -96,6 +96,7 @@ export class AcpPermissionBridge {
       resumeToken: makeRuntimeId('acp_perm'),
       metadata: {
         source: 'acp',
+        allowedReplies: ['reject', ...(params.options.some(option => option.kind === 'allow_once') ? ['once'] : []), ...(params.options.some(option => option.kind === 'allow_always') ? ['always'] : [])],
         acpToolCallId: params.toolCall.toolCallId,
         acpTitle: params.toolCall.title ?? null,
         acpKind: params.toolCall.kind ?? null,
@@ -141,6 +142,8 @@ export class AcpPermissionBridge {
   resolve(sessionId: string, permissionId: string, reply: PermissionReply): boolean {
     const pending = this.pending.get(permissionId);
     if (!pending || pending.sessionId !== sessionId) return false;
+    const choices = agentRuntimeStore.listPermissions(sessionId).find(item => item.id === permissionId)?.metadata?.allowedReplies;
+    if (Array.isArray(choices) && !choices.includes(reply)) return false;
     this.pending.delete(permissionId);
     pending.resolve(toAcpResponse(pending.options, reply));
     return true;

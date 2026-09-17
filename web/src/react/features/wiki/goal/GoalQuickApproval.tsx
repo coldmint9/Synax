@@ -1,103 +1,293 @@
-import { useLocale } from '../../../../hooks/useLocale'
-import type { PermissionDecision } from '../../../../lib/api/agentRuntime'
-import { AgentWorkingIndicator } from './AgentWorkingIndicator'
+import { useRef, useState } from "react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  LoaderCircle,
+  ShieldCheck,
+  X,
+} from "lucide-react";
+import { useLocale } from "../../../../hooks/useLocale";
+import type { PermissionDecision } from "../../../../lib/api/agentRuntime";
+import { ActivityStatus } from "../../../components/beautiful-ui/ActivityStatus";
 
-export function listPendingGoalPermissions(permissions: PermissionDecision[]): PermissionDecision[] {
-  return permissions.filter(p => p.action === 'ask' && !p.resolvedAt)
+export function listPendingGoalPermissions(
+  permissions: PermissionDecision[],
+): PermissionDecision[] {
+  return permissions.filter((p) => p.action === "ask" && !p.resolvedAt);
 }
 
+type Reply = "once" | "always" | "reject";
+type ReplyHandler = (
+  permissionId: string,
+  reply: Reply,
+) => void | Promise<void>;
 interface ActionsProps {
-  permissionId: string
-  onReply: (permissionId: string, reply: 'once' | 'always' | 'reject') => void
-  size?: 'mini' | 'strip'
-  allowedReplies?: unknown
+  permissionId: string;
+  onReply: ReplyHandler;
+  size?: "mini" | "strip";
+  allowedReplies?: unknown;
 }
 
-export function GoalQuickApprovalActions({ permissionId, onReply, size = 'mini', allowedReplies }: ActionsProps) {
-  const { t } = useLocale()
-  const isMini = size === 'mini'
-  const supports = (reply: string) => !Array.isArray(allowedReplies) || allowedReplies.includes(reply)
+export function GoalQuickApprovalActions({
+  permissionId,
+  onReply,
+  size = "mini",
+  allowedReplies,
+}: ActionsProps) {
+  const { t, locale } = useLocale();
+  const [pending, setPending] = useState<Reply | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const locked = useRef(false);
+  const isMini = size === "mini";
+  const supports = (reply: Reply) =>
+    !Array.isArray(allowedReplies) || allowedReplies.includes(reply);
+
+  async function reply(choice: Reply) {
+    if (locked.current || !supports(choice)) return;
+    locked.current = true;
+    setPending(choice);
+    setError(null);
+    try {
+      await onReply(permissionId, choice);
+      // Keep the resolved request locked until its replacement arrives from the server.
+    } catch (err) {
+      locked.current = false;
+      setPending(null);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   return (
     <div
-      className="goal-dock-approval-actions"
-      data-size={size}
-      onClick={e => e.stopPropagation()}
-      onKeyDown={e => e.stopPropagation()}
+      className="bui-approval-action-area"
+      onClick={(event) => event.stopPropagation()}
     >
-      {supports('once') && <button
-        type="button"
-        className="goal-dock-approval-btn goal-dock-approval-btn--allow"
-        aria-label={t('permAllowOnce')}
-        onClick={() => onReply(permissionId, 'once')}
+      <div
+        className="bui-approval-actions"
+        data-size={size}
+        aria-busy={pending !== null}
       >
-        {isMini ? '✓' : t('goalPermAllowShort')}
-      </button>}
-      {!isMini && supports('always') && (
-        <button
-          type="button"
-          className="goal-dock-approval-btn goal-dock-approval-btn--muted"
-          aria-label={t('permAlwaysAllow')}
-          title={t('permAlwaysAllowHint')}
-          onClick={() => onReply(permissionId, 'always')}
-        >
-          {t('goalPermAlwaysShort')}
-        </button>
+        {supports("once") && (
+          <button
+            type="button"
+            className="bui-approval-button bui-approval-button--primary"
+            disabled={pending !== null}
+            aria-label={t("permAllowOnce")}
+            onClick={() => void reply("once")}
+          >
+            {pending === "once" ? (
+              <LoaderCircle
+                size={14}
+                className="bui-status-spinner"
+                aria-hidden
+              />
+            ) : (
+              <Check size={14} aria-hidden />
+            )}
+            {!isMini && t("permAllowOnce")}
+          </button>
+        )}
+        {!isMini && supports("always") && (
+          <button
+            type="button"
+            className="bui-approval-button"
+            disabled={pending !== null}
+            aria-label={t("permAlwaysAllow")}
+            title={t("permAlwaysAllowHint")}
+            onClick={() => void reply("always")}
+          >
+            {pending === "always" && (
+              <LoaderCircle
+                size={14}
+                className="bui-status-spinner"
+                aria-hidden
+              />
+            )}
+            {t("permAlwaysAllow")}
+          </button>
+        )}
+        {supports("reject") && (
+          <button
+            type="button"
+            className="bui-approval-button bui-approval-button--reject"
+            disabled={pending !== null}
+            aria-label={t("permReject")}
+            onClick={() => void reply("reject")}
+          >
+            {pending === "reject" ? (
+              <LoaderCircle
+                size={14}
+                className="bui-status-spinner"
+                aria-hidden
+              />
+            ) : (
+              <X size={14} aria-hidden />
+            )}
+            {!isMini && t("permReject")}
+          </button>
+        )}
+      </div>
+      {pending && (
+        <span role="status" className="bui-approval-feedback">
+          {locale === "zh" ? "正在提交决定…" : "Submitting decision…"}
+        </span>
       )}
-      {supports('reject') && <button
-        type="button"
-        className="goal-dock-approval-btn goal-dock-approval-btn--deny"
-        aria-label={t('permReject')}
-        onClick={() => onReply(permissionId, 'reject')}
-      >
-        {isMini ? '×' : t('goalPermDenyShort')}
-      </button>}
+      {error && (
+        <p role="alert" className="bui-approval-error">
+          {error}
+        </p>
+      )}
     </div>
-  )
+  );
 }
 
 interface Props {
-  permissions: PermissionDecision[]
-  onReply: (permissionId: string, reply: 'once' | 'always' | 'reject') => void
-  /** mini = icon chips inside mini pill; strip = text row above composer */
-  variant?: 'mini' | 'strip'
-  showIndicator?: boolean
-  onLabelClick?: () => void
-  className?: string
+  permissions: PermissionDecision[];
+  onReply: ReplyHandler;
+  variant?: "mini" | "strip";
+  showIndicator?: boolean;
+  onLabelClick?: () => void;
+  className?: string;
 }
 
 export function GoalQuickApproval({
   permissions,
   onReply,
-  variant = 'strip',
+  variant = "strip",
   showIndicator = false,
   onLabelClick,
-  className = '',
+  className = "",
 }: Props) {
-  const pending = listPendingGoalPermissions(permissions)
-  if (pending.length === 0) return null
-
-  const permission = pending[0]!
-  const label = permission.patterns[0] ?? permission.reason
-  const isMini = variant === 'mini'
-
-  const labelNode = (
-    <span className="goal-dock-approval-label truncate">
-      {label}
-    </span>
-  )
+  const { locale } = useLocale();
+  const zh = locale === "zh";
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const pending = listPendingGoalPermissions(permissions);
+  if (!pending.length) return null;
+  const index = Math.max(
+    0,
+    pending.findIndex((item) => item.id === selectedId),
+  );
+  const permission = pending[index];
+  const args = permission.metadata?.args as Record<string, unknown> | undefined;
+  const command = permission.metadata?.command ?? args?.command;
+  const approvalPaths = Array.isArray(permission.metadata?.approvalPaths)
+    ? permission.metadata.approvalPaths.filter((value): value is string => typeof value === "string") : [];
+  const targets = approvalPaths.length ? approvalPaths : permission.patterns;
+  const nativeTitle = permission.metadata?.acpTitle;
+  const label =
+    typeof command === "string"
+      ? command
+      : typeof nativeTitle === "string" ? nativeTitle : typeof args?.url === "string" ? args.url : targets.join(", ") || permission.reason;
+  const workdir = args?.workdir;
+  const isMini = variant === "mini";
+  const scope =
+    permission.internalGate === "external_path"
+      ? zh
+        ? "工作区外文件"
+        : "External files"
+      : permission.internalGate === "network"
+        ? zh
+          ? "网络访问"
+          : "Network access"
+        : typeof command === "string"
+          ? zh
+            ? "运行命令"
+            : "Run command"
+          : String(
+              permission.metadata?.toolId ??
+                (zh ? "工具操作" : "Tool operation"),
+            );
 
   return (
-    <div
-      className={`goal-dock-approval ${isMini ? 'goal-dock-approval--mini' : 'goal-dock-approval--strip'} ${className}`}
+    <section
+      className={`bui-approval ${className}`}
+      data-variant={variant}
+      aria-label={zh ? "操作审批" : "Operation approval"}
     >
-      {showIndicator && <AgentWorkingIndicator status="waiting_permission" />}
-      {onLabelClick ? (
-        <button type="button" className="goal-dock-approval-label-btn min-w-0 flex-1 truncate" onClick={onLabelClick}>
-          {label}
-        </button>
-      ) : labelNode}
-      <GoalQuickApprovalActions allowedReplies={permission.metadata?.allowedReplies} permissionId={permission.id} onReply={onReply} size={isMini ? 'mini' : 'strip'} />
-    </div>
-  )
+      {!isMini && (
+        <header className="bui-approval-heading">
+          <span className="bui-approval-heading-icon">
+            <ShieldCheck size={16} aria-hidden />
+          </span>
+          <div>
+            <strong>{zh ? "需要你的批准" : "Your approval is needed"}</strong>
+            <span>{scope}</span>
+          </div>
+          {pending.length > 1 && (
+            <nav
+              className="bui-approval-queue"
+              aria-label={zh ? "待审批队列" : "Approval queue"}
+            >
+              <button
+                type="button"
+                aria-label={zh ? "上一项审批" : "Previous approval"}
+                disabled={index === 0}
+                onClick={() => setSelectedId(pending[index - 1].id)}
+              >
+                <ChevronLeft size={14} aria-hidden />
+              </button>
+              <span aria-live="polite">
+                {index + 1} / {pending.length}
+              </span>
+              <button
+                type="button"
+                aria-label={zh ? "下一项审批" : "Next approval"}
+                disabled={index === pending.length - 1}
+                onClick={() => setSelectedId(pending[index + 1].id)}
+              >
+                <ChevronRight size={14} aria-hidden />
+              </button>
+            </nav>
+          )}
+        </header>
+      )}
+      {isMini && showIndicator && (
+        <ActivityStatus status="waiting_permission" compact />
+      )}
+      <div className="bui-approval-operation">
+        {onLabelClick ? (
+          <button
+            type="button"
+            className="bui-approval-command"
+            onClick={onLabelClick}
+          >
+            {label}
+          </button>
+        ) : (
+          <pre className="bui-approval-command">{label}</pre>
+        )}
+        {!isMini && typeof workdir === "string" && (
+          <p className="bui-approval-scope">{workdir}</p>
+        )}
+      </div>
+      {!isMini && (
+        <div className="bui-approval-context">
+          <p>{permission.reason}</p>
+          <details key={permission.id} className="bui-approval-details">
+            <summary>{zh ? "查看操作详情" : "View operation details"}</summary>
+            <pre>
+              {JSON.stringify(
+                {
+                  tool: permission.metadata?.toolId,
+                  targets: permission.patterns,
+                  ...(approvalPaths.length ? { resolvedTargets: approvalPaths } : {}),
+                  ...(args ?? {}),
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </details>
+        </div>
+      )}
+      <GoalQuickApprovalActions
+        key={permission.id}
+        permissionId={permission.id}
+        onReply={onReply}
+        allowedReplies={permission.metadata?.allowedReplies}
+        size={isMini ? "mini" : "strip"}
+      />
+    </section>
+  );
 }

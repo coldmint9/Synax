@@ -1,111 +1,147 @@
-import { useEffect, useState, useCallback } from 'react'
-import { Outlet, useNavigate, useParams, useLocation } from 'react-router-dom'
-import { projectApi } from '../../lib/api/project'
-import { addProject, useShellStore } from '../state/shellStore'
-import { useContextStore } from '../state/contextStore'
-import { useContextStream } from '../../hooks/useContextStream'
-import { useAgentPermissionNotifier } from '../../hooks/useAgentPermissionNotifier'
-import { useDesktopNotification } from '../../hooks/useDesktopNotification'
-import { useTaskNotificationListener } from '../../hooks/useTaskNotificationListener'
-import { useRuntimeSSE } from '../features/sessions/useRuntimeSSE'
-import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
-import { useSessionWorkspace } from '../features/sessions/sessionWorkspaceStore'
-import { sessionPath } from '../features/sessions/sessionRoutes'
-import { resolveSessionsEntryPath } from '../features/sessions/sessionLastVisit'
-import type { ActivityPanel } from './ActivityBar'
-import { WorkbenchHeader, type ChromeMode } from './WorkbenchHeader'
-import { ProjectCreateDialog } from '../features/project-create/ProjectCreateDialog'
-import { ToastContainer } from '../components/ToastContainer'
-import WikiPage from '../pages/WikiPage'
-import SessionsPage from '../pages/SessionsPage'
-import { SessionEnvironmentProvider } from '../features/sessions/SessionEnvironmentContext'
+import { useEffect, useState, useCallback } from "react";
+import { Outlet, useNavigate, useParams, useLocation } from "react-router-dom";
+import { agentRuntimeApi } from "../../lib/api/agentRuntime";
+import { projectApi } from "../../lib/api/project";
+import { addProject, useShellStore } from "../state/shellStore";
+import { useWikiStore } from "../state/wikiStore";
+import { useContextStore } from "../state/contextStore";
+import { useContextStream } from "../../hooks/useContextStream";
+import { useAgentPermissionNotifier } from "../../hooks/useAgentPermissionNotifier";
+import { useDesktopNotification } from "../../hooks/useDesktopNotification";
+import { useTaskNotificationListener } from "../../hooks/useTaskNotificationListener";
+import { useRuntimeSSE } from "../features/sessions/useRuntimeSSE";
+import { useAgentSessionStore } from "../features/sessions/agentSessionStore";
+import { useSessionWorkspace } from "../features/sessions/sessionWorkspaceStore";
+import { sessionPath } from "../features/sessions/sessionRoutes";
+import { resolveSessionsEntryPath } from "../features/sessions/sessionLastVisit";
+import type { ActivityPanel } from "./ActivityBar";
+import { WorkbenchHeader, type ChromeMode } from "./WorkbenchHeader";
+import { ProjectCreateDialog } from "../features/project-create/ProjectCreateDialog";
+import { ToastContainer } from "../components/ToastContainer";
+import WikiPage from "../pages/WikiPage";
+import SessionsPage from "../pages/SessionsPage";
+import { SessionEnvironmentProvider } from "../features/sessions/SessionEnvironmentContext";
 
 export default function WorkbenchLayout() {
-  const { projectId: routeProjectId = '' } = useParams()
-  const currentProjectId = useShellStore(s => s.currentProjectId)
-  const setCurrentProjectId = useShellStore(s => s.setCurrentProjectId)
+  const { projectId: routeProjectId = "" } = useParams();
+  const currentProjectId = useShellStore((s) => s.currentProjectId);
+  const setCurrentProjectId = useShellStore((s) => s.setCurrentProjectId);
 
-  const effectiveProjectId = routeProjectId || currentProjectId || ''
+  const effectiveProjectId = routeProjectId || currentProjectId || "";
 
   useEffect(() => {
     if (routeProjectId && routeProjectId !== currentProjectId) {
-      setCurrentProjectId(routeProjectId)
+      setCurrentProjectId(routeProjectId);
     }
-  }, [routeProjectId, currentProjectId, setCurrentProjectId])
+  }, [routeProjectId, currentProjectId, setCurrentProjectId]);
 
-  const projects = useShellStore(s => s.projects)
-  const projectsLoaded = useShellStore(s => s.projectsLoaded)
-  const fetchProjects = useShellStore(s => s.fetchProjects)
-  const project = projects.find(p => p.id === effectiveProjectId) ?? null
-  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const projects = useShellStore((s) => s.projects);
+  const projectsLoaded = useShellStore((s) => s.projectsLoaded);
+  const fetchProjects = useShellStore((s) => s.fetchProjects);
+  const project = projects.find((p) => p.id === effectiveProjectId) ?? null;
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   useEffect(() => {
-    if (!projectsLoaded) void fetchProjects()
-  }, [projectsLoaded, fetchProjects])
+    if (!projectsLoaded) void fetchProjects();
+  }, [projectsLoaded, fetchProjects]);
 
-  const bindContext = useContextStore(s => s.bind)
-  const boundProjectId = useContextStore(s => s.projectId)
+  const bindContext = useContextStore((s) => s.bind);
+  const boundProjectId = useContextStore((s) => s.projectId);
   useEffect(() => {
-    if (!effectiveProjectId) return
+    if (!effectiveProjectId) return;
     if (boundProjectId !== effectiveProjectId) {
-      bindContext(effectiveProjectId, 'local-user')
+      bindContext(effectiveProjectId, "local-user");
     }
-  }, [effectiveProjectId, boundProjectId, bindContext])
-  useContextStream()
+  }, [effectiveProjectId, boundProjectId, bindContext]);
+  useContextStream();
 
   // 单例 SSE 订阅 + 绑定 projectId 到 agentSessionStore
-  const setSessionProjectId = useAgentSessionStore(s => s.setProjectId)
+  const setSessionProjectId = useAgentSessionStore((s) => s.setProjectId);
   useEffect(() => {
-    setSessionProjectId(effectiveProjectId || null)
-  }, [effectiveProjectId, setSessionProjectId])
-  useRuntimeSSE()
+    setSessionProjectId(effectiveProjectId || null);
+  }, [effectiveProjectId, setSessionProjectId]);
+  useRuntimeSSE();
 
-  const navigate = useNavigate()
-  const location = useLocation()
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  const navigateToSession = useCallback((sessionId: string) => {
-    if (effectiveProjectId) {
-      navigate(sessionPath(effectiveProjectId, sessionId))
-    }
-  }, [effectiveProjectId, navigate])
-  useAgentPermissionNotifier(effectiveProjectId || null, navigateToSession)
-  useDesktopNotification(effectiveProjectId || null)
-  useTaskNotificationListener(effectiveProjectId || null)
+  const navigateToSession = useCallback(
+    (sessionId: string) => {
+      const session = useAgentSessionStore
+        .getState()
+        .sessions.find((item) => item.id === sessionId);
+      if (session) navigate(sessionPath(session.projectId, sessionId));
+      else
+        void agentRuntimeApi
+          .getSession(sessionId)
+          .then(({ session }) =>
+            navigate(sessionPath(session.projectId, session.id)),
+          )
+          .catch(() => {});
+    },
+    [navigate],
+  );
+  const goalSessionId = useWikiStore((s) => s.goalSession.sessionId);
+  const goalDockState = useWikiStore((s) => s.goalDockState);
+  const visibleSessionId =
+    location.pathname.includes("/sessions") &&
+    !location.pathname.endsWith("/new")
+      ? new URLSearchParams(location.search).get("session")
+      : location.pathname.includes("/wiki") &&
+          (goalDockState === "expanded" || goalDockState === "working")
+        ? goalSessionId
+        : null;
+  useAgentPermissionNotifier(
+    effectiveProjectId || null,
+    navigateToSession,
+    visibleSessionId,
+  );
+  useDesktopNotification(effectiveProjectId || null);
+  useTaskNotificationListener(effectiveProjectId || null);
 
   useEffect(() => {
-    if (!effectiveProjectId) return
-    const inStore = useShellStore.getState().projects.some(p => p.id === effectiveProjectId)
-    if (inStore) return
-    let cancelled = false
+    if (!effectiveProjectId) return;
+    const inStore = useShellStore
+      .getState()
+      .projects.some((p) => p.id === effectiveProjectId);
+    if (inStore) return;
+    let cancelled = false;
     void projectApi.getProject(effectiveProjectId).then((p) => {
-      if (cancelled) return
-      if (p) addProject(p)
-    })
-    return () => { cancelled = true }
-  }, [effectiveProjectId])
+      if (cancelled) return;
+      if (p) addProject(p);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveProjectId]);
 
-  const projectName = project?.name ?? (effectiveProjectId || 'Synax')
+  const projectName = project?.name ?? (effectiveProjectId || "Synax");
 
   // Derive activePanel from current route
   const activePanel: ActivityPanel | null = (() => {
-    const path = location.pathname
-    if (path.includes('/sessions')) return 'sessions'
-    if (path.includes('/wiki')) return 'wiki'
-    if (path === '/settings' || path.includes('/settings')) return 'settings'
-    return null
-  })()
+    const path = location.pathname;
+    if (path.includes("/sessions")) return "sessions";
+    if (path.includes("/wiki")) return "wiki";
+    if (path === "/settings" || path.includes("/settings")) return "settings";
+    return null;
+  })();
 
-  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
-  const agentPanelOpen = useAgentSessionStore(s => s.panelOpen)
-  const workspaceState = useSessionWorkspace(selectedSessionId)
+  const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
+  const agentPanelOpen = useAgentSessionStore((s) => s.panelOpen);
+  const workspaceState = useSessionWorkspace(selectedSessionId);
   const workspaceViewerOpen = Boolean(
-    activePanel === 'sessions' && agentPanelOpen && selectedSessionId && workspaceState.activeTabId,
-  )
+    activePanel === "sessions" &&
+    agentPanelOpen &&
+    selectedSessionId &&
+    workspaceState.activeTabId,
+  );
   const chromeMode: ChromeMode = workspaceViewerOpen
-    ? (workspaceState.presentation === 'focus' ? 'workspaceFocus' : 'workspaceDock')
-    : activePanel === 'sessions' && agentPanelOpen && selectedSessionId
-      ? 'agentDock'
-      : 'global'
+    ? workspaceState.presentation === "focus"
+      ? "workspaceFocus"
+      : "workspaceDock"
+    : activePanel === "sessions" && agentPanelOpen && selectedSessionId
+      ? "agentDock"
+      : "global";
 
   const panelRoutes: Record<ActivityPanel, string> = {
     wiki: `/projects/${effectiveProjectId}/wiki`,
@@ -113,44 +149,57 @@ export default function WorkbenchLayout() {
     search: `/projects/${effectiveProjectId}/wiki`,
     settings: `/projects/${effectiveProjectId}/settings`,
     projects: `/projects/${effectiveProjectId}`,
-  }
+  };
 
   const handlePanelToggle = (panel: ActivityPanel) => {
-    if (panel === 'settings') {
-      navigate('/settings')
-      return
+    if (panel === "settings") {
+      navigate("/settings");
+      return;
     }
     if (effectiveProjectId) {
-      navigate(panelRoutes[panel])
+      navigate(panelRoutes[panel]);
     }
-  }
+  };
 
-  const isCachedPanel = effectiveProjectId && (activePanel === 'wiki' || activePanel === 'sessions')
+  const isCachedPanel =
+    effectiveProjectId &&
+    (activePanel === "wiki" || activePanel === "sessions");
 
-  const unbindContext = useContextStore(s => s.unbind)
-  const removeFromStore = useShellStore(s => s.removeProject)
+  const unbindContext = useContextStore((s) => s.unbind);
+  const removeFromStore = useShellStore((s) => s.removeProject);
 
-  const handleRemoveProject = useCallback(async (projectId: string) => {
-    const isCurrentProject = projectId === effectiveProjectId
-    if (isCurrentProject) {
-      unbindContext()
-      setCurrentProjectId(null)
-    }
-    await projectApi.deleteProject(projectId)
-    removeFromStore(projectId)
-    if (isCurrentProject) {
-      const remaining = useShellStore.getState().projects
-      if (remaining.length > 0) {
-        navigate(resolveSessionsEntryPath(remaining[0].id), { replace: true })
-      } else {
-        navigate('/', { replace: true })
+  const handleRemoveProject = useCallback(
+    async (projectId: string) => {
+      const isCurrentProject = projectId === effectiveProjectId;
+      if (isCurrentProject) {
+        unbindContext();
+        setCurrentProjectId(null);
       }
-    }
-  }, [effectiveProjectId, unbindContext, setCurrentProjectId, removeFromStore, navigate])
+      await projectApi.deleteProject(projectId);
+      removeFromStore(projectId);
+      if (isCurrentProject) {
+        const remaining = useShellStore.getState().projects;
+        if (remaining.length > 0) {
+          navigate(resolveSessionsEntryPath(remaining[0].id), {
+            replace: true,
+          });
+        } else {
+          navigate("/", { replace: true });
+        }
+      }
+    },
+    [
+      effectiveProjectId,
+      unbindContext,
+      setCurrentProjectId,
+      removeFromStore,
+      navigate,
+    ],
+  );
 
   return (
     <SessionEnvironmentProvider
-      sessionId={chromeMode === 'global' ? null : selectedSessionId}
+      sessionId={chromeMode === "global" ? null : selectedSessionId}
     >
       <div className="workbench-shell" data-chrome-mode={chromeMode}>
         <WorkbenchHeader
@@ -172,27 +221,43 @@ export default function WorkbenchLayout() {
               <>
                 <div
                   className="absolute inset-0 flex flex-col"
-                  style={{ visibility: activePanel === 'wiki' ? 'visible' : 'hidden', zIndex: activePanel === 'wiki' ? 1 : 0 }}
+                  style={{
+                    visibility: activePanel === "wiki" ? "visible" : "hidden",
+                    zIndex: activePanel === "wiki" ? 1 : 0,
+                  }}
                 >
                   <WikiPage projectId={effectiveProjectId} />
                 </div>
                 <div
                   className="absolute inset-0 flex flex-col"
-                  style={{ visibility: activePanel === 'sessions' ? 'visible' : 'hidden', zIndex: activePanel === 'sessions' ? 1 : 0 }}
+                  style={{
+                    visibility:
+                      activePanel === "sessions" ? "visible" : "hidden",
+                    zIndex: activePanel === "sessions" ? 1 : 0,
+                  }}
                 >
                   <SessionsPage />
                 </div>
               </>
             )}
             {/* Outlet for non-cached routes (welcome, settings) */}
-            <div className={isCachedPanel ? 'hidden' : 'flex-1 min-h-0 flex flex-col'}>
-              <Outlet context={{ onCreateProject: () => setCreateDialogOpen(true) }} />
+            <div
+              className={
+                isCachedPanel ? "hidden" : "flex-1 min-h-0 flex flex-col"
+              }
+            >
+              <Outlet
+                context={{ onCreateProject: () => setCreateDialogOpen(true) }}
+              />
             </div>
           </div>
         </div>
-        <ProjectCreateDialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} />
+        <ProjectCreateDialog
+          open={createDialogOpen}
+          onClose={() => setCreateDialogOpen(false)}
+        />
         <ToastContainer />
       </div>
     </SessionEnvironmentProvider>
-  )
+  );
 }

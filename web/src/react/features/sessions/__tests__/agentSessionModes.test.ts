@@ -12,7 +12,7 @@ const session: AgentSession = {
   id: 's1', projectId: 'p1', parentSessionId: null, childSessionIds: [], nodeId: null, profileId: 'synax',
   status: 'completed', title: null, prompt: 'Task', contextSnapshotId: null, thinkingMode: 'standard',
   createdAt: '', updatedAt: '', completedAt: null, resultSummary: null, blockedReason: null, skillIds: [],
-  activeRunId: null, pendingResumeToken: null, model: null, sessionMetadata: { mode: 'chat', permissionTier: 'readonly' },
+  activeRunId: null, pendingResumeToken: null, model: null, sessionMetadata: { mode: 'chat', permissionTier: 'boundary' },
 }
 const interaction: AgentInteraction = {
   id: 'i1', sessionId: 's1', runId: 'r1', stepId: 'step1', toolCallId: 'tool1', kind: 'clarification',
@@ -68,9 +68,9 @@ describe('session mode boundaries', () => {
   it.each(['chat', 'plan', 'goal'] as const)('creates %s mode in metadata without changing permissions', async mode => {
     vi.spyOn(agentRuntimeApi, 'createSession').mockResolvedValue({ session, profile: {} as never, context: null })
     useAgentSessionStore.getState().setDraftMode(mode)
-    await useAgentSessionStore.getState().submitSessionDraft('p1', { message: 'Task', permissionTier: 'readonly' })
+    await useAgentSessionStore.getState().submitSessionDraft('p1', { message: 'Task', permissionTier: 'boundary' })
     expect(agentRuntimeApi.createSession).toHaveBeenCalledWith(expect.objectContaining({
-      permissionTier: 'readonly', sessionMetadata: expect.objectContaining({ mode }),
+      permissionTier: 'boundary', sessionMetadata: expect.objectContaining({ mode }),
     }))
   })
   it('rejects non-chat ACP drafts before creating a session', async () => {
@@ -83,7 +83,7 @@ describe('session mode boundaries', () => {
       objective: 'Task', status: 'planning',
     }, plan: null } } }).mockRejectedValueOnce(new Error('Run started'))
     await useAgentSessionStore.getState().updateSessionMode('s1', 'goal')
-    expect(useAgentSessionStore.getState().sessions[0].sessionMetadata).toMatchObject({ mode: 'goal', permissionTier: 'readonly', goal: { status: 'planning' }, plan: null })
+    expect(useAgentSessionStore.getState().sessions[0].sessionMetadata).toMatchObject({ mode: 'goal', permissionTier: 'boundary', goal: { status: 'planning' }, plan: null })
     await expect(useAgentSessionStore.getState().updateSessionMode('s1', 'plan')).rejects.toThrow('Run started')
     expect(useAgentSessionStore.getState().sessions[0].sessionMetadata?.mode).toBe('goal')
   })
@@ -99,11 +99,11 @@ describe('session mode boundaries', () => {
     await useAgentSessionStore.getState().sendSessionMessage('s1', { message: 'Task' })
     expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({ status: 'waiting_input', activeRunId: 'r1' })
   })
-  it('keeps a declined round blocked when the failed/blocked event is followed by stream done', async () => {
+  it('keeps a declined round completed when the terminal event is followed by stream done', async () => {
     useAgentSessionStore.setState({ sessions: [{ ...session, status: 'created', activeRunId: null }], refreshDetail: vi.fn(async () => {}), refreshSessions: vi.fn(async () => {}) })
-    mockRunTransport({ status: 'blocked', activeRunId: null, pendingResumeToken: null, blockedReason: 'User declined the requested input.', updatedAt: '' })
+    mockRunTransport({ status: 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: 'User declined the requested input.', updatedAt: '' })
     await useAgentSessionStore.getState().sendSessionMessage('s1', { message: 'Task' })
-    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({ status: 'blocked', activeRunId: null, blockedReason: 'User declined the requested input.' })
+    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({ status: 'completed', activeRunId: null, blockedReason: 'User declined the requested input.' })
   })
 })
 

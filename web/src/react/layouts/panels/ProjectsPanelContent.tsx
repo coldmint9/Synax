@@ -20,7 +20,7 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
   const navigate = useNavigate()
   const { t } = useLocale()
   const projects = useShellStore(s => s.projects)
-  const setProjects = useShellStore(s => s.setProjects)
+  const fetchProjects = useShellStore(s => s.fetchProjects)
   const removeFromStore = useShellStore(s => s.removeProject)
   const filter = useShellStore(s => s.projectFilter)
   const setFilter = useShellStore(s => s.setProjectFilter)
@@ -33,17 +33,13 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
     let cancelled = false
     void (async () => {
       try {
-        const { items } = await projectApi.listProjects()
-        if (!cancelled) {
-          setProjects(items)
-          setLoading(false)
-        }
-      } catch {
+        await fetchProjects()
+      } finally {
         if (!cancelled) setLoading(false)
       }
     })()
     return () => { cancelled = true }
-  }, [setProjects])
+  }, [fetchProjects])
 
   const filteredProjects = useMemo(() => {
     let result = [...projects]

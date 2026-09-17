@@ -218,7 +218,7 @@ class WorkRuntime {
     if (TERMINAL.has(work.status))
       throw new AgentValidationError('A terminal work cannot yield another round.');
     if (!summary.trim()) throw new AgentValidationError('Report completed work, remaining work and the next action before yielding.');
-    if (inputQueueService.hasPending(input.sessionId))
+    if (inputQueueService.getForceInjectId(input.sessionId))
       throw new AgentValidationError('New user input is waiting. Process it before yielding this round.');
     if (this.pendingChildren(work) || interactionService.pending(input.sessionId))
       throw new AgentValidationError('Resolve active children and pending interactions before yielding the round.');

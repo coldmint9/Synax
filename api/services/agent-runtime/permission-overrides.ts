@@ -1,4 +1,8 @@
-import type { PermissionAction, PermissionOverrides, PermissionRule } from './contracts.js';
+import type {
+  PermissionAction,
+  PermissionOverrides,
+  PermissionRule,
+} from "./contracts.js";
 
 export function applyPermissionOverrides(
   defaults: PermissionRule[],
@@ -7,9 +11,20 @@ export function applyPermissionOverrides(
   if (!overrides || Object.keys(overrides).length === 0) return defaults;
   return defaults.map((rule) => {
     const gate = rule.gate;
-    if (gate === 'read' || gate === 'write' || gate === 'delete' || gate === 'shell' || gate === 'task') {
+    if (
+      gate === "read" ||
+      gate === "write" ||
+      gate === "delete" ||
+      gate === "shell" ||
+      gate === "task"
+    ) {
       const action = overrides[gate];
-      if (action) return { ...rule, action: action as PermissionAction };
+      if (action)
+        return {
+          ...rule,
+          action: action as PermissionAction,
+          reason: `Session override: ${gate} ${action === "allow" ? "is allowed" : action === "deny" ? "is denied" : "requires approval"}.`,
+        };
     }
     return rule;
   });

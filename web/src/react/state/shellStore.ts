@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useApiConnectivityStore } from '../../lib/apiConnectivity'
 
 export interface ProjectSummary {
   id: string
@@ -74,6 +75,8 @@ const storageKey = 'rumbling-shell-preferences'
 const DEFAULT_UI_FONT_SIZE = 14
 const MIN_UI_FONT_SIZE = 12
 const MAX_UI_FONT_SIZE = 20
+let projectFetchVersion = 0
+let projectMutationVersion = 0
 
 function applyUiFontSize(fontSize: number): void {
   const normalized = Math.min(MAX_UI_FONT_SIZE, Math.max(MIN_UI_FONT_SIZE, Math.round(fontSize)))
@@ -81,7 +84,7 @@ function applyUiFontSize(fontSize: number): void {
   document.documentElement.style.setProperty('--ui-font-scale', String(normalized / DEFAULT_UI_FONT_SIZE))
 }
 
-export const useShellStore = create<ShellState>((set) => ({
+export const useShellStore = create<ShellState>((set, get) => ({
   projects: [],
   projectsLoaded: false,
   preferences: {
@@ -139,21 +142,25 @@ export const useShellStore = create<ShellState>((set) => ({
     localStorage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences))
   },
   addProject: (project) => {
+    projectMutationVersion++
     set((state) => ({
       projects: [project, ...state.projects.filter(p => p.id !== project.id)],
       currentProjectId: project.id,
     }))
   },
   setProjects: (list) => {
+    projectMutationVersion++
     set(() => ({ projects: list }))
   },
   removeProject: (projectId) => {
+    projectMutationVersion++
     set((state) => ({
       projects: state.projects.filter(p => p.id !== projectId),
       currentProjectId: state.currentProjectId === projectId ? null : state.currentProjectId,
     }))
   },
   updateProject: (projectId, updates) => {
+    projectMutationVersion++
     set((state) => ({
       projects: state.projects.map(p => (p.id === projectId ? { ...p, ...updates } : p)),
     }))
@@ -167,15 +174,47 @@ export const useShellStore = create<ShellState>((set) => ({
     set(() => ({ currentProjectId: projectId }))
   },
   fetchProjects: async () => {
+    const version = ++projectFetchVersion
+    const mutationVersion = projectMutationVersion
     try {
       const { projectApi } = await import('../../lib/api/project')
-      const { items } = await projectApi.listProjects()
-      set(() => ({ projects: items, projectsLoaded: true }))
+      const { items } = await projectApi.listProjects(undefined, { throwOnError: true })
+      if (version !== projectFetchVersion) return
+      if (mutationVersion !== projectMutationVersion) {
+        // A project was changed while this snapshot was in flight. Fetch a fresh
+        // snapshot without briefly restoring removed projects or losing new ones.
+        await get().fetchProjects()
+        return
+      }
+      set({ projects: items, projectsLoaded: true })
     } catch {
-      set(() => ({ projectsLoaded: true }))
+      // A failed request is not an empty project list. Retry on connectivity recovery.
     }
   },
 }))
+
+export function startProjectRecovery(): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let lastRefreshAt = -Infinity
+  const refresh = () => {
+    timer = undefined
+    if (useApiConnectivityStore.getState().shouldSkipRequest()) return
+    lastRefreshAt = Date.now()
+    void useShellStore.getState().fetchProjects()
+  }
+  const unsubscribe = useApiConnectivityStore.subscribe((state, previous) => {
+    if (state.recoveryVersion === previous.recoveryVersion || state.shouldSkipRequest() || timer) return
+    // A healthy /health endpoint must not create an immediate retry loop when
+    // /projects itself fails. Coalesce recoveries and retry at most every 10s.
+    const delay = Math.max(0, lastRefreshAt + 10_000 - Date.now())
+    if (delay > 0) timer = setTimeout(refresh, delay)
+    else refresh()
+  })
+  return () => {
+    unsubscribe()
+    if (timer) clearTimeout(timer)
+  }
+}
 
 export function hydrateShellPreferences() {
   const raw = localStorage.getItem(storageKey)

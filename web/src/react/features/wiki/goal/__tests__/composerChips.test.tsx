@@ -1,49 +1,43 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { GoalPermissionCycle } from '../GoalPermissionCycle'
 import { GoalEffortPicker } from '../GoalEffortPicker'
 import { REASONING_EFFORT_LABELS } from '../../../settings/lib/providerPresets'
-import type { GoalPermissionTier } from '../goalAttachTypes'
+import userEvent from '@testing-library/user-event'
 
 afterEach(cleanup)
 
 describe('GoalPermissionCycle', () => {
   it('does not present Synax tiers as if they controlled native CLI execution', () => {
     const change = vi.fn()
-    render(<GoalPermissionCycle backendId="codex" value="readonly" onChange={change} />)
+    render(<GoalPermissionCycle backendId="codex" value="boundary" onChange={change} />)
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
     expect(screen.getByRole('note')).toHaveAttribute('data-native-policy', 'true')
     expect(change).not.toHaveBeenCalled()
   })
 
-  it('exposes the active tier so each level can be colour-coded', () => {
-    const { rerender } = render(
-      <GoalPermissionCycle value="readonly" onChange={() => {}} />,
-    )
-    const button = screen.getByRole('button')
-    expect(button.getAttribute('data-tier')).toBe('readonly')
-    expect(button.textContent).toContain('只读')
-
-    rerender(<GoalPermissionCycle value="readwrite" onChange={() => {}} />)
-    expect(screen.getByRole('button').getAttribute('data-tier')).toBe('readwrite')
-
-    rerender(<GoalPermissionCycle value="unrestricted" onChange={() => {}} />)
-    expect(screen.getByRole('button').getAttribute('data-tier')).toBe('unrestricted')
-  })
-
-  it('cycles readonly -> readwrite -> unrestricted -> readonly', () => {
+  it('exposes only the three new approval modes with explicit selection', async () => {
     const onChange = vi.fn()
-    const order: GoalPermissionTier[] = ['readonly', 'readwrite', 'unrestricted']
-    const expected: GoalPermissionTier[] = ['readwrite', 'unrestricted', 'readonly']
-
-    order.forEach((tier, index) => {
-      cleanup()
-      onChange.mockReset()
-      render(<GoalPermissionCycle value={tier} onChange={onChange} />)
-      fireEvent.click(screen.getByRole('button'))
-      expect(onChange).toHaveBeenCalledWith(expected[index])
-    })
+    const view = render(<GoalPermissionCycle value="boundary" onChange={onChange} />)
+    const select = screen.getByRole('combobox')
+    expect(select.closest('label')).toHaveAttribute('data-tier', 'boundary')
+    expect(screen.getAllByRole('option').map(option => option.getAttribute('value'))).toEqual(['boundary', 'auto', 'unrestricted'])
+    expect(select.closest('label')?.title).toContain('下一步生效')
+    await userEvent.selectOptions(select, 'auto')
+    expect(onChange).toHaveBeenCalledWith('auto')
+    view.rerender(<GoalPermissionCycle value="auto" onChange={onChange} />)
+    expect(screen.getByRole('combobox')).toHaveValue('auto')
   })
+
+  it('does not claim a mode switch succeeded when the server rejects it', async () => {
+    const onChange = vi.fn().mockRejectedValue(new Error('Permission update failed'))
+    render(<GoalPermissionCycle value="boundary" onChange={onChange} />)
+    await userEvent.selectOptions(screen.getByRole('combobox'), 'unrestricted')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Permission update failed')
+    expect(screen.getByRole('combobox')).toHaveValue('boundary')
+    expect(screen.getByRole('combobox')).toBeEnabled()
+  })
+
 })
 
 describe('GoalEffortPicker', () => {

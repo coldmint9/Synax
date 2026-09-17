@@ -28,7 +28,7 @@ describe('real host crash recovery', () => {
       const { recoverRuntime } = await import('../runtime-recovery.js');
       const { agentRuntimeStore } = await import('../session-store.js');
       await recoverRuntime(lease.hostId);
-      expect(agentRuntimeStore.getSession(info.sessionId).status).toBe('blocked');
+      expect(agentRuntimeStore.getSession(info.sessionId).status).toBe('completed');
       expect(agentRuntimeStore.getRun('crash-run').status).toBe('interrupted');
       expect(() => process.kill(info.pid, 0)).toThrow();
       expect(fs.existsSync(path.join(root, 'workspace', 'must-not-finish.txt'))).toBe(false);

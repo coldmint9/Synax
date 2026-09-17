@@ -118,7 +118,7 @@ const taskSchema = z
   .strict();
 const modeSchema = z.enum(["chat", "plan", "goal", "plan_node"]);
 const permissionRuleSchema = z.object({
-  gate: z.union([capabilityCategorySchema, internalGateSchema, z.literal("*")]),
+  gate: z.union([capabilityCategorySchema, internalGateSchema, z.literal("*"), z.literal("approval_mode")]),
   pattern: z.string().min(1).max(1024),
   action: z.enum(["allow", "ask", "deny"]),
   reason: z.string().max(2_000).optional(),
@@ -358,9 +358,9 @@ export function buildSpecialistChildInput(
   );
   const permissionTier = writes
     ? tier === "unrestricted"
-      ? "readwrite"
-      : (tier ?? "readonly")
-    : "readonly";
+      ? "auto"
+      : (tier ?? "boundary")
+    : "boundary";
   const permissionOverrides = {
     ...parse(
       permissionOverridesSchema.optional(),
@@ -475,7 +475,7 @@ export function resolveSpecialistProfile(
 }
 
 /** Call before execution AND permission resume. Ordinary permission approval,
- * terminal/pause guards, and writer serialization remain the runtime's job. */
+ * terminal guards, and writer serialization remain the runtime's job. */
 export function assertSpecialistToolAllowed(
   session: AgentSession,
   toolId: string,

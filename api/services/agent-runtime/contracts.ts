@@ -1,4 +1,4 @@
-import type { ContextComposition } from './context-composition.js';
+import type { ContextComposition } from "./context-composition.js";
 import type { LlmRetryState } from "../llm-runtime/retry-state.js";
 import {
   contentPartsSchema,
@@ -36,12 +36,10 @@ export const sessionStatusSchema = z.enum([
   "running",
   "waiting_permission",
   "waiting_input",
-  "blocked",
   "completed",
   "failed",
   "cancelled",
   "interrupted",
-  "paused",
 ]);
 export type AgentSessionStatus = z.infer<typeof sessionStatusSchema>;
 
@@ -84,11 +82,12 @@ export type PermissionOverrideGate = z.infer<
   typeof permissionOverrideGateSchema
 >;
 
-export const permissionTierSchema = z.enum([
-  "readonly",
-  "readwrite",
-  "unrestricted",
-]);
+// Old stored/API values are accepted only as conservative aliases, never exposed as modes.
+export const permissionTierSchema = z
+  .enum(["boundary", "auto", "unrestricted", "readonly", "readwrite"])
+  .transform((tier) =>
+    tier === "readonly" || tier === "readwrite" ? ("boundary" as const) : tier,
+  );
 export type PermissionTier = z.infer<typeof permissionTierSchema>;
 
 export const permissionOverridesSchema = z.partialRecord(
@@ -118,6 +117,7 @@ export const internalGateSchema = z.enum([
   "task",
   "skill",
   "external_path",
+  "network",
   "write",
   "delete",
   "shell",
@@ -137,7 +137,6 @@ export type ToolResumeBehavior = z.infer<typeof toolResumeBehaviorSchema>;
 
 export const runtimeEventTypeSchema = z.enum([
   "session_started",
-  "session_blocked",
   "session_completed",
   "session_failed",
   "run_started",
@@ -205,7 +204,7 @@ export const riskLevelSchema = z.enum(["low", "medium", "high", "unknown"]);
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 
 export interface PermissionRule {
-  gate: InternalGate | CapabilityCategory | "*";
+  gate: InternalGate | CapabilityCategory | "*" | "approval_mode";
   pattern: string;
   action: PermissionAction;
   reason?: string;
@@ -243,7 +242,7 @@ export interface AgentProfile {
   consecutiveFailureReminderThreshold?: number;
   /** ID of a SessionToolProvider that supplies tools/hooks for this profile's sessions.
    *  The provider is consulted on every tool listing and execution so that
-   *  paused/interrupted sessions recover their tool set on resume. */
+   *  interrupted sessions recover their tool set on resume. */
   toolProviderId?: string;
   /** Mount every registered tool for this profile instead of filtering by
    *  `allowedCapabilities`. Used by the primary Synax agent, which mounts its
@@ -447,36 +446,46 @@ export interface ThinkingSummary {
   nextSteps: string[];
 }
 
-export const createSessionRequestSchema = z.object({
-  backendId: backendIdSchema.optional(),
-  model: z.string().min(1).max(256).optional(),
-  workDir: z.string().min(1).max(4096).optional(),
-  projectId: z.string().min(1).max(128),
-  nodeId: z.string().min(1).max(256).nullable().optional(),
-  profileId: z.string().min(1).max(64),
-  parentSessionId: z.string().min(1).max(64).nullable().optional(),
-  prompt: z.string().min(1).max(100_000),
-  thinkingMode: thinkingModeSchema.optional(),
-  reasoningEffort: reasoningEffortSchema.optional(),
-  skillIds: z.array(z.string().min(1).max(128)).max(20).optional(),
-  mcpServerIds: z.array(z.string().min(1).max(128)).max(32).optional(),
-  sessionMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
-  permissionTier: permissionTierSchema.optional(),
-  permissionOverrides: permissionOverridesSchema.optional(),
-  gitWorkspace: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('default') }),
-    z.object({ kind: z.literal('worktree'), path: z.string().min(1).max(4096) }),
-    z.object({ kind: z.literal('branch'), branch: z.string().min(1).max(1024) }),
-  ]).optional(),
-}).superRefine((value, context) => {
-  if (value.workDir && value.gitWorkspace) {
-    context.addIssue({
-      code: 'custom',
-      path: ['gitWorkspace'],
-      message: 'workDir and gitWorkspace cannot be selected together.',
-    });
-  }
-});
+export const createSessionRequestSchema = z
+  .object({
+    backendId: backendIdSchema.optional(),
+    model: z.string().min(1).max(256).optional(),
+    workDir: z.string().min(1).max(4096).optional(),
+    projectId: z.string().min(1).max(128),
+    nodeId: z.string().min(1).max(256).nullable().optional(),
+    profileId: z.string().min(1).max(64),
+    parentSessionId: z.string().min(1).max(64).nullable().optional(),
+    prompt: z.string().min(1).max(100_000),
+    thinkingMode: thinkingModeSchema.optional(),
+    reasoningEffort: reasoningEffortSchema.optional(),
+    skillIds: z.array(z.string().min(1).max(128)).max(20).optional(),
+    mcpServerIds: z.array(z.string().min(1).max(128)).max(32).optional(),
+    sessionMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
+    permissionTier: permissionTierSchema.optional(),
+    permissionOverrides: permissionOverridesSchema.optional(),
+    gitWorkspace: z
+      .discriminatedUnion("kind", [
+        z.object({ kind: z.literal("default") }),
+        z.object({
+          kind: z.literal("worktree"),
+          path: z.string().min(1).max(4096),
+        }),
+        z.object({
+          kind: z.literal("branch"),
+          branch: z.string().min(1).max(1024),
+        }),
+      ])
+      .optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.workDir && value.gitWorkspace) {
+      context.addIssue({
+        code: "custom",
+        path: ["gitWorkspace"],
+        message: "workDir and gitWorkspace cannot be selected together.",
+      });
+    }
+  });
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
 export const listSessionsQuerySchema = z.object({
@@ -632,7 +641,7 @@ export interface ToolHook {
 /**
  * A provider that supplies session-scoped tools and hooks.
  * Implementations reconstruct tools/hooks from persisted state (e.g., wiki DB)
- * so that paused/interrupted sessions can resume without losing access to
+ * so that interrupted sessions can resume without losing access to
  * their profile-specific tools.
  */
 export interface SessionToolProvider {

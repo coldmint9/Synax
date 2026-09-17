@@ -51,8 +51,10 @@ export function ThinkingTrace({
     return () => window.clearTimeout(timer)
   }, [expanded, retained])
 
+  // Reasoning is read newest-first: opening a row lands on the latest record
+  // instead of the oldest one, and a live row keeps following as it grows.
   useEffect(() => {
-    if (working && expanded && variant === 'reasoning' && bodyRef.current) {
+    if (expanded && variant === 'reasoning' && bodyRef.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight
     }
   }, [children, working, expanded, variant])

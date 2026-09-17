@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocale } from '../../../hooks/useLocale'
 import { ThinkingTrace } from './ThinkingTrace'
 import { ThinkingBanner } from './ThinkingBanner'
-import { ACTIVITY_BODY_LIMIT, activityPreview, formatCharCount, tailForDisplay, thinkingBannerPhrases } from './activityText'
+import { ACTIVITY_BODY_LIMIT, formatCharCount, latestActivityPreview, tailForDisplay, thinkingBannerPhrases } from './activityText'
 
 interface Props {
   content: string
@@ -34,9 +34,10 @@ export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
   return <ThinkingTrace
     label={isStreaming ? t('sessionActivityThinking') : t('sessionActivityThought')}
     meta={isStreaming ? null : t('sessionActivityChars', { count: formatCharCount(content.length) })}
-    title={activityPreview(content)}
+    title={latestActivityPreview(content, 400)}
     working={isStreaming}
     rememberKey={rememberKey}
+    variant="reasoning"
   >
     <div className="bui-thinking-prose">{text}</div>
     {hidden > 0 && <div className="bui-activity-footnote">{t('sessionActivityTruncated', { hidden: formatCharCount(hidden), shown: formatCharCount(ACTIVITY_BODY_LIMIT) })}</div>}

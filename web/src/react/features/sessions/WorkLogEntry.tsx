@@ -4,7 +4,7 @@ import { useLocale } from '../../../hooks/useLocale'
 import type { ConversationTimelineEntry } from './buildConversationTimeline'
 import { ActivityRow } from './ActivityRow'
 import { TurnBody } from './TurnBody'
-import { activityPreview, formatCharCount, formatDurationMs, thinkingBannerPhrase } from './activityText'
+import { formatCharCount, formatDurationMs, latestActivityPreview, thinkingBannerPhrase } from './activityText'
 
 type WorkLogEntryData = Extract<ConversationTimelineEntry, { kind: 'work_log' }>
 
@@ -13,9 +13,15 @@ interface Props {
   onExpandChild?: (sessionId: string) => void
 }
 
-function firstThinking(entry: WorkLogEntryData): string | null {
-  for (const turn of entry.turns) {
-    for (const block of turn.blocks) {
+/**
+ * The newest reasoning the round emitted. A folded round is read as "where did
+ * this end up", so the row previews the last record instead of the first one.
+ */
+function latestThinking(entry: WorkLogEntryData): string | null {
+  for (let turnIndex = entry.turns.length - 1; turnIndex >= 0; turnIndex--) {
+    const blocks = entry.turns[turnIndex].blocks
+    for (let blockIndex = blocks.length - 1; blockIndex >= 0; blockIndex--) {
+      const block = blocks[blockIndex]
       if (block.type === 'thinking' && block.content.trim()) return block.content
     }
   }
@@ -32,10 +38,10 @@ function workDuration(elapsedMs: number): string {
 export const WorkLogEntry = memo(function WorkLogEntry({ entry, onExpandChild }: Props) {
   const { t, locale } = useLocale()
   const { stepCount, toolCallCount, thinkingChars, elapsedMs } = entry.stats
-  const thinking = firstThinking(entry)
+  const thinking = latestThinking(entry)
   // A headline-style reasoning block renders as a banner in the turn body; its
   // row preview must not leak the markdown markers that the banner strips.
-  const preview = thinking ? thinkingBannerPhrase(thinking) ?? activityPreview(thinking) : null
+  const preview = thinking ? thinkingBannerPhrase(thinking) ?? latestActivityPreview(thinking) : null
   const meta = [
     t('sessionWorkLogSteps', { count: stepCount }),
     t('sessionWorkLogCalls', { count: toolCallCount }),

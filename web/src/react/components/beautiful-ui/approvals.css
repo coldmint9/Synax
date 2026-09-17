@@ -1,0 +1,290 @@
+/* Shared with the Beautiful UI activity surfaces; uses Synax theme tokens. */
+.bui-approval {
+  --bui-approval-line: color-mix(in srgb, var(--border) 70%, transparent);
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--bui-approval-line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--foreground);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 5%);
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.bui-approval-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 10px;
+}
+.bui-approval-heading-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+.bui-approval-heading strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.bui-approval-heading div > span {
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+}
+.bui-approval-queue {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.bui-approval-queue button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+.bui-approval-operation {
+  padding: 0 16px;
+  min-width: 0;
+}
+.bui-approval-command {
+  display: block;
+  width: 100%;
+  max-height: 128px;
+  overflow: auto;
+  border: 1px solid var(--bui-approval-line);
+  border-radius: 8px;
+  padding: 9px 11px;
+  background: color-mix(in srgb, var(--foreground) 3%, transparent);
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bui-approval-scope {
+  margin-top: 5px;
+  color: hsl(var(--muted-foreground));
+  font: 10px/1.5 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.bui-approval-context {
+  padding: 10px 16px;
+  color: hsl(var(--muted-foreground));
+  overflow-wrap: anywhere;
+}
+.bui-approval-context > p {
+  margin: 0 0 6px;
+}
+.bui-approval-details summary {
+  width: fit-content;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 0;
+}
+.bui-approval-details pre {
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  margin-top: 6px;
+  border-left: 2px solid var(--bui-approval-line);
+  font: 11px/1.6 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bui-approval-action-area {
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--bui-approval-line);
+}
+.bui-approval-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.bui-approval-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--bui-approval-line);
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+.bui-approval-button--primary {
+  background: var(--foreground);
+  color: var(--background);
+  border-color: var(--foreground);
+}
+.bui-approval-button--reject {
+  margin-left: auto;
+}
+.bui-approval-button:not(.bui-approval-button--primary):hover,
+.bui-approval-queue button:hover {
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+.bui-approval button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.bui-approval :is(button, summary):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.bui-approval-error {
+  margin: 7px 0 0;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+.bui-approval-feedback {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+.bui-approval[data-variant="mini"] {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.bui-approval[data-variant="mini"] .bui-approval-operation {
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
+}
+.bui-approval[data-variant="mini"] .bui-approval-command {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bui-approval[data-variant="mini"] .bui-approval-action-area {
+  padding: 0;
+  border: 0;
+}
+.bui-approval-actions[data-size="mini"] .bui-approval-button {
+  min-height: 28px;
+  width: 28px;
+  padding: 4px;
+}
+@media (max-width: 480px) {
+  .bui-approval-heading {
+    padding: 12px;
+    gap: 7px;
+  }
+  .bui-approval-operation {
+    padding: 0 12px;
+  }
+  .bui-approval-context,
+  .bui-approval-action-area {
+    padding: 10px 12px;
+  }
+  .bui-approval-actions {
+    gap: 5px;
+  }
+  .bui-approval-button {
+    flex: 1 1 auto;
+    min-height: 38px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bui-approval * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.bui-approval[data-variant="strip"] {
+  max-height: min(65dvh, 520px);
+  overflow: auto;
+}
+
+.bui-processes {
+  margin: 0 0 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+.bui-processes > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 7px;
+}
+.bui-processes > header > span {
+  margin-left: auto;
+  color: hsl(var(--muted-foreground));
+}
+.bui-process-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+}
+.bui-process-row + .bui-process-row {
+  border-top: 1px solid var(--border);
+}
+.bui-process-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.bui-process-row pre {
+  font: 11px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 72px;
+  overflow: auto;
+}
+.bui-process-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+.bui-process-stop {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px;
+  font-size: 10px;
+}
+.bui-process-stop:hover {
+  color: var(--danger);
+}
+.bui-process-stop:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.bui-process-stop:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

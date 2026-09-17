@@ -1,85 +1,86 @@
-import { AuthenticatedEventSource } from './authenticatedEventSource'
-import { useApiConnectivityStore } from '../apiConnectivity'
+import { AuthenticatedEventSource } from "./authenticatedEventSource";
+import { useApiConnectivityStore } from "../apiConnectivity";
 
-type EventHandler = (e: MessageEvent) => void
-type ConnectHandler = () => void
+type EventHandler = (e: MessageEvent) => void;
+type ConnectHandler = () => void;
 
 interface Subscription {
-  events?: Partial<Record<string, EventHandler>>
-  onConnect?: ConnectHandler
+  events?: Partial<Record<string, EventHandler>>;
+  onConnect?: ConnectHandler;
 }
 
-const RECONNECT_BASE_MS = 2000
-const RECONNECT_MAX_MS = 30_000
+const RECONNECT_BASE_MS = 2000;
+const RECONNECT_MAX_MS = 30_000;
 
-let es: AuthenticatedEventSource | null = null
-let retries = 0
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let subscribers = new Set<Subscription>()
+let es: AuthenticatedEventSource | null = null;
+let retries = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let subscribers = new Set<Subscription>();
 
 function connect() {
-  if (useApiConnectivityStore.getState().shouldSkipRequest()) return
-  if (es && es.readyState !== AuthenticatedEventSource.CLOSED) return
-  es = new AuthenticatedEventSource('/api/agent-runtime/events/stream')
+  if (useApiConnectivityStore.getState().shouldSkipRequest()) return;
+  if (es && es.readyState !== AuthenticatedEventSource.CLOSED) return;
+  es = new AuthenticatedEventSource("/api/agent-runtime/events/stream");
 
-  es.addEventListener('connected', () => {
-    retries = 0
-    for (const sub of subscribers) sub.onConnect?.()
-  })
+  es.addEventListener("connected", () => {
+    retries = 0;
+    for (const sub of subscribers) sub.onConnect?.();
+  });
 
   const eventTypes = [
-    'session_changed',
-    'session_step_completed',
-    'session_input_queue_changed',
-    'session_created',
-    'session_deleted',
-  ]
+    "session_changed",
+    "session_process_changed",
+    "session_step_completed",
+    "session_input_queue_changed",
+    "session_created",
+    "session_deleted",
+  ];
 
   for (const type of eventTypes) {
     es.addEventListener(type, (e: MessageEvent) => {
-      for (const sub of subscribers) sub.events?.[type]?.(e)
-    })
+      for (const sub of subscribers) sub.events?.[type]?.(e);
+    });
   }
 
   es.onerror = () => {
-    es?.close()
-    es = null
-    useApiConnectivityStore.getState().markFailure()
-    scheduleReconnect()
-  }
+    es?.close();
+    es = null;
+    useApiConnectivityStore.getState().markFailure();
+    scheduleReconnect();
+  };
 }
 
 function scheduleReconnect() {
-  if (reconnectTimer) return
-  if (useApiConnectivityStore.getState().shouldSkipRequest()) return
-  const delay = Math.min(RECONNECT_BASE_MS * 2 ** retries, RECONNECT_MAX_MS)
-  retries++
+  if (reconnectTimer) return;
+  if (useApiConnectivityStore.getState().shouldSkipRequest()) return;
+  const delay = Math.min(RECONNECT_BASE_MS * 2 ** retries, RECONNECT_MAX_MS);
+  retries++;
   reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    if (subscribers.size > 0) connect()
-  }, delay)
+    reconnectTimer = null;
+    if (subscribers.size > 0) connect();
+  }, delay);
 }
 
 export function subscribe(sub: Subscription): () => void {
-  subscribers.add(sub)
-  if (subscribers.size === 1) connect()
+  subscribers.add(sub);
+  if (subscribers.size === 1) connect();
   return () => {
-    subscribers.delete(sub)
+    subscribers.delete(sub);
     if (subscribers.size === 0) {
-      es?.close()
-      es = null
+      es?.close();
+      es = null;
       if (reconnectTimer) {
-        clearTimeout(reconnectTimer)
-        reconnectTimer = null
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
       }
-      retries = 0
+      retries = 0;
     }
-  }
+  };
 }
 
 /** Resume SSE after backend connectivity is restored. */
 export function resumeRuntimeEventBus(): void {
-  if (subscribers.size > 0) connect()
+  if (subscribers.size > 0) connect();
 }
 
-export type { Subscription }
+export type { Subscription };

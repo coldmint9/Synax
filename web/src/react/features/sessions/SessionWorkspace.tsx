@@ -24,10 +24,8 @@ const STATUS_BADGE: Record<string, string> = {
   running: 'bg-[var(--color-run)]/15 text-[var(--color-run)]',
   waiting_permission: 'bg-warning/15 text-warning',
   waiting_input: 'bg-warning/15 text-warning',
-  blocked: 'bg-warning/15 text-warning',
   completed: 'bg-success/15 text-success',
   failed: 'bg-danger/15 text-danger',
-  paused: 'bg-run/15 text-run',
   interrupted: 'bg-warning/15 text-warning',
   cancelled: 'bg-foreground/10 text-foreground/70',
 }
