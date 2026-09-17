@@ -214,6 +214,14 @@ export interface ToolCallRecord {
   error: string | null;
 }
 
+/** Sparse session projection served by GET /sessions/badges. */
+export interface SessionBadgeRow {
+  id: string;
+  projectId: string;
+  status: AgentSession["status"];
+  updatedAt: string;
+}
+
 export interface RuntimeEvent {
   id: string;
   sessionId: string;
@@ -757,6 +765,11 @@ export const agentRuntimeApi = {
   listToolCalls: (sessionId: string) =>
     request<{ items: ToolCallRecord[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/tool-calls`,
+    ),
+  /** Sparse id/status/updatedAt rows for badge counts; avoids full list payloads. */
+  listSessionBadges: (projectIds: string[]) =>
+    request<{ items: SessionBadgeRow[] }>(
+      `/sessions/badges?${new URLSearchParams({ projectIds: projectIds.join(",") })}`,
     ),
   listSessionProcesses: (sessionId: string) =>
     request<{ items: SessionBackgroundProcess[] }>(

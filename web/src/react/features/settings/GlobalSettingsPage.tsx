@@ -9,7 +9,7 @@ import { AdvancedSection } from './components/AdvancedSection'
 import { ProjectIntegrationsSection } from './components/ProjectIntegrationsSection'
 
 export default function GlobalSettingsPage() {
-  const { globalConfig, providers, loading, reload, updateGlobalConfig } = useConfig()
+  const { globalConfig, providers, reload, updateGlobalConfig } = useConfig()
   const { t } = useLocale()
 
   useEffect(() => {
@@ -20,7 +20,8 @@ export default function GlobalSettingsPage() {
     return () => document.removeEventListener('visibilitychange', handler)
   }, [reload])
 
-  if (loading || !globalConfig) {
+  // Background refreshes must preserve open dialogs and their unsaved input.
+  if (!globalConfig) {
     return (
       <div className="flex h-full items-center justify-center">
         <Spinner size="sm" />

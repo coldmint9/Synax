@@ -20,6 +20,7 @@ export const synaxAgentProfile: AgentProfile = {
     "diff.read",
     "file.write",
     "edit",
+    "file.patch",
     "file.delete",
     "wiki.get_snapshot",
     "wiki.get_tree",

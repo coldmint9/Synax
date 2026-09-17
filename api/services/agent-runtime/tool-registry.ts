@@ -58,6 +58,7 @@ import { diffReadTool } from "./tools/diff-read.js";
 import { fileGlobTool } from "./tools/file-glob.js";
 import { fileListTool } from "./tools/file-list.js";
 import { editTool } from "./tools/edit.js";
+import { patchTool } from "./tools/patch.js";
 import { bashTool } from "./tools/bash.js";
 import { fileReadTool } from "./tools/file-read.js";
 import { fileDeleteTool } from "./tools/file-delete.js";
@@ -129,6 +130,7 @@ export class ToolRegistry {
       diffReadTool,
       fileWriteTool,
       editTool,
+      patchTool,
       fileDeleteTool,
       taskCreateTool,
       taskUpdateTool,

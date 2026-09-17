@@ -43,7 +43,7 @@ export function MediaDraftPreview({ media }: { media: MediaDraft }) {
           {media.error}
         </p>
       )}
-      {media.items.map((item) => (
+      {media.items.filter((item) => item.error).map((item) => (
         <div
           key={item.id}
           className="my-1 flex items-center gap-2 rounded-lg bg-surface/60 px-2 py-1"
@@ -52,31 +52,33 @@ export function MediaDraftPreview({ media }: { media: MediaDraft }) {
             {item.file.name}
           </span>
           <span
-            className={item.error ? "text-danger" : "text-muted-foreground"}
+            className="text-danger"
           >
-            {item.uploading
-              ? "上传中… / Uploading…"
-              : (item.error ?? "已就绪 / Ready")}
+            {item.error}
           </span>
-          {item.error && (
-            <button
-              type="button"
-              aria-label={`重试 ${item.file.name}`}
-              onClick={() => media.retry(item.id)}
-            >
-              <RotateCcw size={12} />
-            </button>
-          )}
           <button
             type="button"
-            aria-label={`${item.uploading ? "取消上传" : "移除"} ${item.file.name}`}
+            aria-label={`重试 ${item.file.name}`}
+            onClick={() => media.retry(item.id)}
+          >
+            <RotateCcw size={12} />
+          </button>
+          <button
+            type="button"
+            aria-label={`移除 ${item.file.name}`}
             onClick={() => media.remove(item.id)}
           >
             <X size={12} />
           </button>
         </div>
       ))}
-      <MediaParts parts={media.parts} />
+      <MediaParts
+        parts={media.parts}
+        onRemove={(assetId) => {
+          const item = media.items.find((entry) => entry.asset?.id === assetId);
+          if (item) media.remove(item.id);
+        }}
+      />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import type { Components } from 'react-markdown'
 import { memo, useCallback, useMemo } from 'react'
 import remarkGfm from 'remark-gfm'
 import { parseFileLink, type FileLinkTarget } from './fileLink'
+import { FileTypeIcon } from './FileTypeIcon'
 import { openWorkspaceFile } from './sessionWorkspaceStore'
 import { useTranscriptSession } from './SessionTranscriptContext'
 
@@ -55,6 +56,7 @@ function useMarkdownComponents(): Components {
           className="transcript-file-link"
           onClick={event => openTarget(event, target)}
         >
+          <FileTypeIcon path={target.path} className="transcript-file-link-icon" />
           {children}
         </a>
       )

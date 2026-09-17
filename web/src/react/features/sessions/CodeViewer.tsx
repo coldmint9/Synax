@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FileCode2, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { agentRuntimeApi } from '../../../lib/api/agentRuntime'
 import { highlightCode, languageForPath } from './codeHighlight'
+import { FileTypeIcon } from './FileTypeIcon'
 import { WikiMarkdown } from '../wiki/WikiMarkdown'
 import '../wiki/wiki-theme.css'
 
@@ -58,7 +59,7 @@ export const CodeViewer = memo(function CodeViewer({ sessionId, path }: { sessio
   return (
     <div className="code-viewer flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-border/30 bg-secondary/20 px-2.5 py-1.5">
-        <FileCode2 size={12} className="text-primary" />
+        <FileTypeIcon path={path} />
         <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-foreground" title={path}>{path}</span>
         <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">{language}</span>
         {canPreview && (

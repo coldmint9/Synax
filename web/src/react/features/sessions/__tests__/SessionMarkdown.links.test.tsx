@@ -25,9 +25,10 @@ describe('SessionMarkdown file links', () => {
   afterEach(cleanup)
 
   it('opens the file viewer for a workspace path instead of navigating away', () => {
-    renderMarkdown('见 [web/src/index.css](web/src/index.css)。')
+    const { container } = renderMarkdown('见 [web/src/index.css](web/src/index.css)。')
 
     const link = screen.getByRole('link', { name: 'web/src/index.css' })
+    expect(container.querySelector('[data-file-type-icon="index.css"]')).not.toBeNull()
     const event = new MouseEvent('click', { bubbles: true, cancelable: true })
     fireEvent(link, event)
 

@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useRuntimeSSE } from "../useRuntimeSSE";
 import { useAgentSessionStore } from "../agentSessionStore";
 import type { AgentSession } from "../../../../lib/api/agentRuntime";
@@ -15,7 +15,14 @@ vi.mock("../../../../lib/api/runtimeEventBus", () => ({
   },
 }));
 
-it("patches generated titles in place without reloading the list/transcript, but reconciles real status changes", () => {
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+it("patches generated titles in place without reloading the list/transcript, but reconciles real status changes with one trailing refresh", async () => {
   const session = {
     id: "s1",
     projectId: "one",
@@ -59,12 +66,15 @@ it("patches generated titles in place without reloading the list/transcript, but
     "Current title",
     "Other title",
   ]);
-  expect(refreshSessions).not.toHaveBeenCalled();
-  expect(refreshDetail).not.toHaveBeenCalled();
   emit("s1", {
     title: "Current title",
     status: "completed",
     activeRunId: null,
+  });
+  // Title-only patches stay quiet; the real status change coalesces into one
+  // trailing refresh per target after the debounce window.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1200);
   });
   expect(refreshSessions).toHaveBeenCalledTimes(1);
   expect(refreshDetail).toHaveBeenCalledTimes(1);

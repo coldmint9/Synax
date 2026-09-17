@@ -7,7 +7,7 @@ import { listTurnReferenceOptions } from "../services/agent-runtime/turn-referen
 import { backendIdSchema } from "../services/agent-runtime/backends/backend-contracts.js";
 import { acknowledgeRuntimeRecovery } from "../services/agent-runtime/runtime-recovery.js";
 import { AgentValidationError } from "../services/agent-runtime/runtime-errors.js";
-import { projectSessionState } from "../services/agent-runtime/session-projection.js";
+import { projectSessionState, projectSessionSummary } from "../services/agent-runtime/session-projection.js";
 import { randomUUID } from "node:crypto";
 import { runCoordinator } from "../services/agent-runtime/run-coordinator.js";
 import { runtimeJournal } from "../services/agent-runtime/runtime-journal.js";
@@ -117,6 +117,43 @@ function withSessionPayload(sessionId: string) {
       ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
       : null,
   };
+}
+
+// Provider-pipeline metadata kept in step rows for debugging; none of it has a
+// timeline consumer (the UI reads reasoningEffort and ids/status fields only).
+const STEP_METADATA_WIRE_OMISSIONS = [
+  "$.protocol",
+  "$.usage",
+  "$.contextMemorySegment",
+  "$.reasoningParts",
+  "$.providerMetadata",
+  "$.toolCallProviderMetadata",
+  "$.runtimeReminder",
+] as const;
+
+function projectRunStepForWire<
+  T extends { metadata: Record<string, unknown> | null },
+>(step: T): T {
+  if (!step.metadata) return step;
+  let omitted = false;
+  const metadata: Record<string, unknown> = { ...step.metadata };
+  for (const key of STEP_METADATA_WIRE_OMISSIONS) {
+    const name = key.slice(2);
+    if (name in metadata) {
+      delete metadata[name];
+      omitted = true;
+    }
+  }
+  return omitted ? { ...step, metadata } : step;
+}
+
+/** Full tool outputs are debug data; only webSearch renders them inline. */
+function projectToolCallForWire<T extends { toolId: string; outputRef?: unknown }>(
+  toolCall: T,
+): T {
+  if (toolCall.toolId === "webSearch" || toolCall.outputRef === undefined) return toolCall;
+  const { outputRef: _omitted, ...rest } = toolCall;
+  return rest as T;
 }
 
 agentRuntimeRoutes.get("/protocol", (c) =>
@@ -256,12 +293,30 @@ agentRuntimeRoutes.get("/sessions", (c) => {
     { ...filter, status },
     { limit, offset },
   );
-  const items = page.items.map(projectSessionState);
+  const items = page.items
+    .map(projectSessionState)
+    .map(projectSessionSummary);
   return c.json({
     items,
     totalCount: page.totalCount,
     countByStatus: page.countByStatus,
   });
+});
+
+/** Badge counts only need id/status/updatedAt; a dedicated sparse projection
+ *  keeps per-project polling payloads at bytes-per-row instead of kilobytes. */
+agentRuntimeRoutes.get("/sessions/badges", (c) => {
+  const projectIds = (c.req.query("projectIds") ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 50);
+  if (projectIds.length === 0) return c.json({ items: [] });
+  try {
+    return c.json({ items: agentRuntimeStore.listSessionBadges(projectIds) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
 
 agentRuntimeRoutes.get("/sessions/:sessionId", (c) => {
@@ -416,10 +471,9 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId", (c) => {
 agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/steps", (c) => {
   try {
     return c.json({
-      items: agentLoopRuntime.listRunSteps(
-        c.req.param("sessionId"),
-        c.req.param("runId"),
-      ),
+      items: agentLoopRuntime
+        .listRunSteps(c.req.param("sessionId"), c.req.param("runId"))
+        .map(projectRunStepForWire),
     });
   } catch (error) {
     return runtimeError(c, error);
@@ -429,7 +483,9 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/steps", (c) => {
 agentRuntimeRoutes.get("/sessions/:sessionId/steps", (c) => {
   try {
     return c.json({
-      items: agentRuntimeStore.listSessionSteps(c.req.param("sessionId")),
+      items: agentRuntimeStore
+        .listSessionSteps(c.req.param("sessionId"))
+        .map(projectRunStepForWire),
     });
   } catch (error) {
     return runtimeError(c, error);
@@ -675,7 +731,9 @@ agentRuntimeRoutes.get("/sessions/:sessionId/tool-calls", (c) => {
   try {
     agentSessionRuntime.get(c.req.param("sessionId"));
     return c.json({
-      items: agentRuntimeStore.listToolCalls(c.req.param("sessionId")),
+      items: agentRuntimeStore
+        .listToolCalls(c.req.param("sessionId"))
+        .map(projectToolCallForWire),
     });
   } catch (error) {
     return runtimeError(c, error);

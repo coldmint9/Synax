@@ -91,18 +91,19 @@ describe('GoalModelPicker', () => {
     expect(trigger).toHaveAttribute('title', 'OpenAI · gpt-5')
   })
 
-  it('lists API models and ACP endpoints together in one list separated by a divider', async () => {
+  it('groups models by provider name without provider ID suffixes', async () => {
     await openPicker()
 
     const listbox = screen.getByRole('listbox', { name: '选择模型' })
     const options = within(listbox).getAllByRole('option')
     expect(options.map(option => option.textContent)).toEqual([
-      'gpt-5openai',
-      'Cursor Defaultcursor-acp',
+      'gpt-5',
+      'Cursor Default',
     ])
 
-    // The ACP group follows the API group behind a plain divider, not a second column.
-    expect(within(listbox).getAllByRole('separator')).toHaveLength(1)
+    expect(within(listbox).getAllByRole('group')).toHaveLength(2)
+    expect(within(listbox).getByRole('group', { name: 'OpenAI' })).toContainElement(options[0])
+    expect(within(listbox).getByRole('group', { name: 'Cursor ACP' })).toContainElement(options[1])
     expect(screen.queryByText('API 模型')).toBeNull()
     expect(screen.queryByText('ACP 端点')).toBeNull()
   })

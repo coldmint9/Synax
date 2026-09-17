@@ -3,11 +3,13 @@ import { createPortal } from 'react-dom'
 import { FileDiff } from 'lucide-react'
 import { agentRuntimeApi, type SessionEnvironmentFile } from '../../../lib/api/agentRuntime'
 import { useAgentSessionStore } from './agentSessionStore'
+import { FileTypeIcon } from './FileTypeIcon'
 import { openWorkspaceDiff } from './sessionWorkspaceStore'
 
-/** Poll cadence while the agent is working; slower once it has stopped. */
-const RUNNING_REFRESH_MS = 3000
-const IDLE_REFRESH_MS = 12000
+/** Poll cadence is a drift safety net only: write tool results invalidate the
+ *  server cache, and the toolCalls upsert retriggers an immediate reload below. */
+const RUNNING_REFRESH_MS = 30_000
+const IDLE_REFRESH_MS = 30_000
 
 function statusLabel(status: SessionEnvironmentFile['status']): string {
   switch (status) {
@@ -155,6 +157,7 @@ export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
                 setOpen(false)
               }}
             >
+              <FileTypeIcon path={file.path} />
               <span className="session-file-island-status">{statusLabel(file.status)}</span>
               <span className="session-file-island-path">{file.path}</span>
               <span className="session-file-island-stats">

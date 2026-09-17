@@ -2475,10 +2475,17 @@ export class AgentLoopRuntime {
     });
 
     // Static instructions/reference preview; the complete request also contains historical and latest reminders
+    // Writing this every step churned session_metadata (12+ KB rows) and emitted
+    // a session_changed event per step; only persist when the preview changed.
     try {
-      this.store.updateSessionMetadata(input.sessionId, {
-        latestSystemPrompt: systemPromptContent,
-      });
+      const previousPrompt = this.store
+        .getSession(input.sessionId)
+        .sessionMetadata?.latestSystemPrompt;
+      if (previousPrompt !== systemPromptContent) {
+        this.store.updateSessionMetadata(input.sessionId, {
+          latestSystemPrompt: systemPromptContent,
+        });
+      }
     } catch {
       // Non-critical: metadata write failure should not block the step
     }

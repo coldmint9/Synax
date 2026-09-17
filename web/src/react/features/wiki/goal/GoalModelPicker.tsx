@@ -24,12 +24,12 @@ interface Props {
   onOverlayOpenChange?: (open: boolean) => void
 }
 
-function matchesQuery(option: GoalModelSelection, query: string): boolean {
+function matchesQuery(option: GoalModelSelection, query: string, providerLabel: string): boolean {
   if (!query) return true
-  return option.label.toLowerCase().includes(query) || option.providerId.toLowerCase().includes(query)
+  return option.label.toLowerCase().includes(query) || providerLabel.toLowerCase().includes(query)
 }
 
-/** One flat row per model — API models and ACP endpoints share the same shape. */
+/** Provider names live in group headings; each option only displays its model. */
 function ModelOption({
   option,
   selected,
@@ -52,9 +52,6 @@ function ModelOption({
       }`}
     >
       <span className="min-w-0 flex-1 truncate text-[11px] font-medium">{option.label}</span>
-      <span className="max-w-[45%] shrink-0 truncate text-[9px] text-muted-foreground/60">
-        {option.providerId}
-      </span>
     </button>
   )
 }
@@ -105,17 +102,21 @@ export function GoalModelPicker({
     : selectedModelLabel ?? t('goalModelSelect')
 
   const query = searchQuery.trim().toLowerCase()
-  const filteredApi = useMemo(
-    () => apiModels.filter(option => matchesQuery(option, query)),
-    [apiModels, query],
-  )
-  const filteredAcp = useMemo(
-    () => acpEndpoints.filter(option => matchesQuery(option, query)),
-    [acpEndpoints, query],
-  )
-  const hasResults = filteredApi.length > 0 || filteredAcp.length > 0
-  // ACP endpoints follow the API models in the same list; a hairline separates them.
-  const showDivider = filteredApi.length > 0 && filteredAcp.length > 0
+  const groups = useMemo(() => {
+    const labels = new Map(providers.map(provider => [provider.id, provider.label]))
+    const grouped = new Map<string, { label: string; options: GoalModelSelection[] }>()
+    for (const option of allOptions) {
+      const label = labels.get(option.providerId) || option.providerId
+      if (!matchesQuery(option, query, label)) continue
+      let group = grouped.get(option.providerId)
+      if (!group) {
+        group = { label, options: [] }
+        grouped.set(option.providerId, group)
+      }
+      group.options.push(option)
+    }
+    return Array.from(grouped, ([id, group]) => ({ id, ...group }))
+  }, [allOptions, providers, query])
 
   function handlePick(option: GoalModelSelection) {
     onSelect(option)
@@ -159,24 +160,22 @@ export function GoalModelPicker({
           aria-label={t('goalModelSelect')}
           className="max-h-64 overflow-y-auto p-1.5"
         >
-          {filteredApi.map(option => (
-            <ModelOption
-              key={selectionKey(option)}
-              option={option}
-              selected={currentKey === selectionKey(option)}
-              onPick={() => handlePick(option)}
-            />
+          {groups.map(group => (
+            <div key={group.id} role="group" aria-label={group.label} className="mb-1 last:mb-0">
+              <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
+                {group.label}
+              </div>
+              {group.options.map(option => (
+                <ModelOption
+                  key={selectionKey(option)}
+                  option={option}
+                  selected={currentKey === selectionKey(option)}
+                  onPick={() => handlePick(option)}
+                />
+              ))}
+            </div>
           ))}
-          {showDivider && <div role="separator" className="my-1 h-px bg-border/40" />}
-          {filteredAcp.map(option => (
-            <ModelOption
-              key={selectionKey(option)}
-              option={option}
-              selected={currentKey === selectionKey(option)}
-              onPick={() => handlePick(option)}
-            />
-          ))}
-          {!hasResults && (
+          {groups.length === 0 && (
             <p className="px-2 py-3 text-center text-[10px] text-muted-foreground/50">
               {query ? t('goalModelNoMatch') : t('goalModelEmpty')}
             </p>

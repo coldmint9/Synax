@@ -3,6 +3,7 @@ import { FileDiff, RefreshCw } from 'lucide-react'
 import { parsePatch } from 'diff'
 import { agentRuntimeApi } from '../../../lib/api/agentRuntime'
 import { highlightLines } from './codeHighlight'
+import { FileTypeIcon } from './FileTypeIcon'
 
 type DiffLineType = 'file' | 'hunk' | 'add' | 'del' | 'ctx' | 'meta' | 'raw'
 
@@ -224,7 +225,7 @@ export const DiffViewer = memo(function DiffViewer({ sessionId, path }: { sessio
   return (
     <div className="diff-viewer flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-border/30 bg-secondary/20 px-2.5 py-1.5">
-        <FileDiff size={12} className="text-primary" />
+        <FileTypeIcon path={path} />
         <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-foreground" title={path}>{path}</span>
         {stats.added > 0 || stats.removed > 0 ? (
           <span className="diff-stats font-mono text-[10px]">

@@ -90,7 +90,7 @@ describe('WorkspaceDashboard', () => {
   afterEach(() => cleanup())
 
   it('divides the snapshot into one card per component group', () => {
-    renderDashboard()
+    const { container } = renderDashboard()
 
     expect(screen.getByText('feature/dynamic-workflow-refactor')).toBeTruthy()
     expect(screen.getByText('5e5727b0')).toBeTruthy()
@@ -102,6 +102,9 @@ describe('WorkspaceDashboard', () => {
     expect(screen.getByRole('button', { name: /输入文件/ })).toBeTruthy()
     expect(screen.getByText('运行中 1')).toBeTruthy()
     expect(screen.getByText('已暂存 1')).toBeTruthy()
+    expect(container.querySelectorAll('[data-file-type-icon]')).toHaveLength(5)
+    expect(container.querySelector('[data-file-type-icon="index.vue"]')).not.toBeNull()
+    expect(container.querySelector('[data-file-type-icon="notes.md"]')).not.toBeNull()
   })
 
   it('falls back to the prompt headline for untitled subagents', () => {
@@ -132,6 +135,27 @@ describe('WorkspaceDashboard', () => {
       { id: 'file:src/views/cli_chat/utils/toolDisplay.js', kind: 'file' },
       { id: 'subagent:sub-1', kind: 'subagent' },
     ])
+  })
+
+  it('switches git changes between tree and flat views while input files stay flat', () => {
+    const { container } = renderDashboard()
+
+    const gitCard = screen.getByRole('button', { name: /Git 变更/ }).closest('.ws-card')
+    const inputCard = screen.getByRole('button', { name: /输入文件/ }).closest('.ws-card')
+
+    expect(gitCard?.querySelector('[data-directory-path="src/views"]')).not.toBeNull()
+    expect(inputCard?.querySelector('.ws-tree-folder')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'blocks' }))
+    expect(screen.queryByText('BlockAsk.vue')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '平铺视图' }))
+    expect(screen.getByText('BlockAsk.vue')).toBeTruthy()
+    expect(gitCard?.querySelector('.ws-tree-folder')).toBeNull()
+    expect(screen.getByRole('button', { name: /Git 变更/ }).getAttribute('aria-expanded')).toBe('true')
+
+    expect(container.querySelector('.ws-row-dir')).toBeNull()
+    expect(screen.queryByText('src/views/chat-cli')).toBeNull()
   })
 
   it('collapses a card body from its header', () => {

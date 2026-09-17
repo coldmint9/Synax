@@ -62,6 +62,7 @@ describe('DiffViewer', () => {
     const added = container.querySelectorAll('.diff-row--add')
     const removed = container.querySelectorAll('.diff-row--del')
     const context = container.querySelectorAll('.diff-row--ctx')
+    expect(container.querySelector('[data-file-type-icon="app.ts"]')).not.toBeNull()
     expect(added).toHaveLength(2)
     expect(removed).toHaveLength(1)
     expect(context).toHaveLength(3)

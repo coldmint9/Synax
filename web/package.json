@@ -13,6 +13,7 @@
     "@dagrejs/dagre": "^3.0.0",
     "@heroui/react": "^3.1.0",
     "@heroui/styles": "^3.1.0",
+    "@react-symbols/icons": "^1.4.1",
     "@tailwindcss/postcss": "^4.3.0",
     "@xyflow/react": "^12.10.2",
     "beautiful-mermaid": "^1.1.3",

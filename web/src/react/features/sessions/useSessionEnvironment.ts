@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { agentRuntimeApi, type SessionEnvironment } from '../../../lib/api/agentRuntime'
 
-const REFRESH_MS = 8000
+// Write tool results invalidate the server cache immediately (see
+// RuntimeStreamWriter); this slow poll is only a drift safety net.
+const REFRESH_MS = 30_000
 const cache = new Map<string, SessionEnvironment>()
 const pending = new Map<string, Promise<SessionEnvironment>>()
 

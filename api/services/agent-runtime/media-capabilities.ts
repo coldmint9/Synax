@@ -367,12 +367,13 @@ export async function resolveMediaMessages(
       if (part.type === "text") value.push({ type: "text", text: part.text });
       else if (part.type === "file")
         value.push({
-          type: part.mediaType.startsWith("image/")
-            ? "image-data"
-            : "file-data",
+          type: "file",
           mediaType: part.mediaType,
           filename: part.filename,
-          data: Buffer.from(part.data as Uint8Array).toString("base64"),
+          data: {
+            type: "data",
+            data: Buffer.from(part.data as Uint8Array).toString("base64"),
+          },
         });
     }
     const existing = "value" in target.output ? target.output.value : "";

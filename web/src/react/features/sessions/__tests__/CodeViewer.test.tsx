@@ -61,9 +61,10 @@ describe('CodeViewer', () => {
 
   it('shows the detected language in the header', async () => {
     getSessionEnvironmentFile.mockResolvedValue(fileView(SOURCE))
-    await renderViewer()
+    const { container } = await renderViewer()
 
     expect(screen.getByText('typescript')).toBeTruthy()
+    expect(container.querySelector('[data-file-type-icon="app.ts"]')).not.toBeNull()
   })
 
   it('surfaces read failures', async () => {

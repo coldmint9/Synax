@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { agentRuntimeApi, type AgentSession } from '../../../lib/api/agentRuntime'
+import { agentRuntimeApi, type SessionBadgeRow } from '../../../lib/api/agentRuntime'
 import { subscribe } from '../../../lib/api/runtimeEventBus'
 import { useAgentSessionStore } from './agentSessionStore'
 
-const RUNNING_SESSION_STATUS: AgentSession['status'] = 'running'
+const RUNNING_SESSION_STATUS = 'running'
 
 const COMPLETED_SESSION_STATUSES = new Set<string>([
   'completed',
@@ -22,7 +22,7 @@ export interface ProjectSessionBadge {
 }
 
 interface ProjectSessionBadgeInput {
-  sessions: readonly AgentSession[]
+  sessions: readonly SessionBadgeRow[]
   readMarkers: Readonly<Record<string, string>>
   now: number
 }
@@ -73,7 +73,7 @@ export function useProjectSessionBadges(
   const projectKey = JSON.stringify([...new Set(projectIds.filter(Boolean))].sort())
   const stableProjectIds = useMemo<string[]>(() => JSON.parse(projectKey), [projectKey])
   const readMarkers = useAgentSessionStore(state => state.readSessionMarkers)
-  const [sessionsByProject, setSessionsByProject] = useState<Record<string, AgentSession[]>>({})
+  const [sessionsByProject, setSessionsByProject] = useState<Record<string, SessionBadgeRow[]>>({})
   const [now, setNow] = useState(() => Date.now())
   const requestVersion = useRef(0)
   const eventRefreshTimer = useRef<number | null>(null)
@@ -91,15 +91,16 @@ export function useProjectSessionBadges(
     const version = ++requestVersion.current
     setNow(Date.now())
     try {
-      const responses = await Promise.all(
-        stableProjectIds.map(projectId => agentRuntimeApi.listSessions({ projectId, limit: 200 })),
-      )
+      // One sparse badges query replaces per-project full list fetches: badge
+      // math needs only id/status/updatedAt.
+      const { items } = await agentRuntimeApi.listSessionBadges(stableProjectIds)
       if (requestVersion.current !== version) return
 
-      const nextSessionsByProject: Record<string, AgentSession[]> = {}
-      stableProjectIds.forEach((projectId, index) => {
-        nextSessionsByProject[projectId] = responses[index].items
-      })
+      const nextSessionsByProject: Record<string, SessionBadgeRow[]> = {}
+      for (const projectId of stableProjectIds) nextSessionsByProject[projectId] = []
+      for (const row of items) {
+        if (row.projectId in nextSessionsByProject) nextSessionsByProject[row.projectId].push(row)
+      }
       setSessionsByProject(nextSessionsByProject)
     } catch {
       // Project badges are best-effort; retain the last successful snapshot.

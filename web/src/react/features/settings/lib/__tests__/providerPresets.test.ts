@@ -7,6 +7,7 @@ import {
   applyProtocolDefaults,
   buildApiDrafts,
   configuredModelList,
+  createCustomDraft,
   createDraftFromPreset,
   draftToConnection,
   draftToProviderDef,
@@ -208,6 +209,32 @@ describe('provider protocol selection', () => {
     const provider = makeProvider()
     const customDraft = buildApiDrafts(makeConfig(provider, {}), [provider]).find(d => d.id === provider.id)!
     expect(applyProtocolDefaults(customDraft, 'anthropic').model).toBe('deepseek-chat')
+  })
+
+  it('starts a custom endpoint without an assumed model', () => {
+    const draft = createCustomDraft([])
+
+    expect(draft.model).toBe('')
+    expect(draft.models).toEqual([])
+    expect(draft.modelOptions).toEqual([])
+    expect(applyProtocolDefaults(draft, 'anthropic').model).toBe('')
+  })
+
+  it('does not synthesize a model when loading an empty custom endpoint', () => {
+    const provider: ProviderDef = {
+      id: 'custom-api:empty',
+      label: 'Empty custom endpoint',
+      status: 'live',
+      kind: 'api',
+      caps: { canFollowUp: true, canCancel: true },
+      models: [],
+    }
+    const config = makeConfig(provider)
+    config.providerConnections[provider.id]!.extra = { kind: 'api', apiFormat: 'openai' }
+
+    const draft = buildApiDrafts(config, [provider]).find(item => item.id === provider.id)!
+    expect(draft.model).toBe('')
+    expect(draft.models).toEqual([])
   })
 
   it('persists the selected protocol in the connection extra', () => {

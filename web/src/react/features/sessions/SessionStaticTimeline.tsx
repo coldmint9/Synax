@@ -43,6 +43,16 @@ const TimelineRows = memo(function TimelineRows({
   onExpandChild,
   scrollRootRef,
 }: RowsProps) {
+  let latestActivityIndex = -1
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]
+    if (entry.kind === 'user') break
+    if (entry.kind === 'agent' && entry.turn.blocks.some(block =>
+      block.type === 'thinking' || block.type === 'tool_call' || block.type === 'tool_call_group')) {
+      latestActivityIndex = index
+      break
+    }
+  }
   return (
     <>
       {entries.map((entry, index) => {
@@ -58,6 +68,7 @@ const TimelineRows = memo(function TimelineRows({
             <TimelineEntryView
               entry={entry}
               onExpandChild={onExpandChild}
+              isWorking={Boolean(streaming && index === latestActivityIndex)}
               isStreaming={Boolean(
                 streaming &&
                 entry.kind === 'agent' &&
@@ -100,7 +111,7 @@ function LiveTimelineTail({ entries, ...props }: RowsProps) {
       ),
     [entries, live, liveId],
   )
-  return <TimelineRows {...props} entries={combined} streaming />
+  return <TimelineRows {...props} entries={combined} />
 }
 
 export const SessionStaticTimeline = memo(function SessionStaticTimeline({
@@ -170,6 +181,7 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
     <div className="flex flex-col gap-5">
       <TimelineRows
         entries={history}
+        streaming={isRunning && !showLive}
         sessionId={session?.id}
         onExpandChild={onExpandChild}
         scrollRootRef={scrollRootRef}
@@ -177,6 +189,7 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
       {showLive && (
         <LiveTimelineTail
           entries={tail}
+          streaming={isRunning}
           sessionId={session?.id}
           onExpandChild={onExpandChild}
           scrollRootRef={scrollRootRef}

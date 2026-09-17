@@ -5,7 +5,13 @@ import {
   type RuntimeAsset,
   type RuntimeContentPart,
 } from "../../../lib/api/runtimeMedia";
-function MediaAsset({ id }: { id: string }) {
+function MediaAsset({
+  id,
+  onRemove,
+}: {
+  id: string;
+  onRemove?: (id: string) => void;
+}) {
   const [asset, setAsset] = useState<RuntimeAsset>();
   const [url, setUrl] = useState<string>();
   const [error, setError] = useState("");
@@ -50,7 +56,18 @@ function MediaAsset({ id }: { id: string }) {
     );
   const image = /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(asset.mediaType);
   return (
-    <div className="max-w-full rounded-xl border border-border/50 bg-surface/60 p-2 text-xs">
+    <div className="relative max-w-full rounded-xl border border-border/50 bg-surface/60 p-2 text-xs">
+      {onRemove && (
+        <button
+          type="button"
+          aria-label={`移除 ${asset.filename}`}
+          title="移除附件 / Remove attachment"
+          className="absolute right-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-full border border-border/70 bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
+          onClick={() => onRemove(id)}
+        >
+          <X size={13} />
+        </button>
+      )}
       {image && url && (
         <button
           type="button"
@@ -147,13 +164,23 @@ function MediaAsset({ id }: { id: string }) {
     </div>
   );
 }
-export function MediaParts({ parts }: { parts?: RuntimeContentPart[] }) {
+export function MediaParts({
+  parts,
+  onRemove,
+}: {
+  parts?: RuntimeContentPart[];
+  onRemove?: (id: string) => void;
+}) {
   const media = parts?.filter((p) => p.type !== "text");
   if (!media?.length) return null;
   return (
     <div className="my-1 flex max-w-full flex-wrap gap-2">
       {media.map((p, i) => (
-        <MediaAsset key={`${p.assetId}-${i}`} id={p.assetId} />
+        <MediaAsset
+          key={`${p.assetId}-${i}`}
+          id={p.assetId}
+          onRemove={onRemove}
+        />
       ))}
     </div>
   );

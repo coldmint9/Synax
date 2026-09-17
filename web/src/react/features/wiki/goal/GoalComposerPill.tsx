@@ -349,10 +349,10 @@ export function GoalComposerPill({
       data-expanded={defaultExpanded ? "true" : undefined}
     >
       {media && <MediaDraftPreview media={media} />}
-      {inputCapability.text && (
+      {inputCapability.error && inputCapability.text && (
         <p
-          role={inputCapability.error ? "alert" : "status"}
-          className={`w-full break-words px-1 py-1 text-[10px] ${inputCapability.error ? "text-danger" : "text-muted-foreground"}`}
+          role="alert"
+          className="w-full break-words px-1 py-1 text-[10px] text-danger"
         >
           {inputCapability.text}
         </p>
