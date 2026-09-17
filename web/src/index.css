@@ -1059,26 +1059,60 @@
   }
 
   .wh-pill {
+    position: relative;
+    isolation: isolate;
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 0 10px;
     height: 36px;
     border-radius: 999px;
-    /* Flat surface: a solid fill, one hairline edge and a whisper of ambient
-       shadow. No inset highlights, bevels or ring shadows — the pill reads as
-       a plane, not as a raised glass slab. */
-    -webkit-backdrop-filter: blur(12px) saturate(1.3);
-    border: 1px solid hsl(var(--border-hsl) / 0.6);
-    background: hsl(0 0% 100% / 0.92);
-    backdrop-filter: blur(12px) saturate(1.3);
-    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.05);
+    /* Liquid glass ported from the "liquid glass" reference: the pill itself
+       must not carry a backdrop-filter — it would become a backdrop root and
+       the glass layers below would only see the pill's own paint instead of
+       the page behind it. ::before refracts the backdrop through an SVG
+       displacement filter; ::after is the frosted cover with the sharp + soft
+       inset highlights above it. Chromium drops an element's backdrop-filter
+       when the element also has a mask, so the reference's masked edge ring
+       is replaced by a full-surface refraction. */
+    background: transparent;
+    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.06);
+  }
+
+  /* Refraction: backdrop displaced by #liquid_glass_filter. Declared after
+     the plain-blur fallback so engines without SVG backdrop filters keep a
+     soft frosted edge. */
+  .wh-pill::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    border-radius: inherit;
+    backdrop-filter: blur(8px) saturate(1.4);
+    backdrop-filter: url(#liquid_glass_filter);
+  }
+
+  /* Cover: light frost + theme tint + inset highlights, matching the
+     reference's cover/sharp/reflect trio. */
+  .wh-pill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: hsl(var(--card) / 0.5);
+    backdrop-filter: blur(2px) saturate(1.3);
+    -webkit-backdrop-filter: blur(2px) saturate(1.3);
+    box-shadow:
+      inset 1px 1px 0px 0px rgba(255, 255, 255, 0.5),
+      inset -1px -1px 0px 0px rgba(255, 255, 255, 0.6),
+      inset 2px 2px 6px 2px rgba(255, 255, 255, 0.2),
+      inset -2px -2px 4px -1px rgba(255, 255, 255, 0.2);
+  }
+  .dark .wh-pill::after {
+    background: hsl(var(--card) / 0.45);
   }
   .dark .wh-pill {
-    border-color: hsl(0 0% 100% / 0.12);
-    background: hsl(var(--card) / 0.94);
-    backdrop-filter: blur(12px) saturate(1.3);
-    -webkit-backdrop-filter: blur(12px) saturate(1.3);
     box-shadow: 0 1px 2px hsl(0 0% 0% / 0.28);
   }
 
