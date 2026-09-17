@@ -15,6 +15,10 @@ const measuredEntryHeights = new Map<string, number>()
  * of slack, so flick-scrolling does not run into empty reservations.
  */
 const PRELOAD_MARGIN = '1200px 0px'
+const viewportObservers = new Map<Element | null, {
+  observer: IntersectionObserver
+  callbacks: Map<Element, () => void>
+}>()
 
 const FALLBACK_ENTRY_HEIGHT = 180
 
@@ -80,13 +84,7 @@ interface Props {
  * Bodies are never unmounted again once shown: that rendered subtree, plus the
  * `measuredEntryHeights` map, is the cache.
  */
-export function TimelineLazyEntry({
-  entryId,
-  cacheKey,
-  estimate,
-  scrollRootRef,
-  children,
-}: Props) {
+export function TimelineLazyEntry({ entryId, cacheKey, estimate, scrollRootRef, children }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   // Without IntersectionObserver (unit tests, older runtimes) render eagerly
   // rather than leaving the transcript permanently blank.
@@ -101,16 +99,28 @@ export function TimelineLazyEntry({
       return
     }
 
-    const observer = new IntersectionObserver(
-      records => {
-        if (!records.some(record => record.isIntersecting)) return
-        setMounted(true)
-        observer.disconnect()
-      },
-      { root: scrollRootRef?.current ?? null, rootMargin: PRELOAD_MARGIN },
-    )
-    observer.observe(element)
-    return () => observer.disconnect()
+    const root = scrollRootRef?.current ?? null
+    let shared = viewportObservers.get(root)
+    if (!shared) {
+      const callbacks = new Map<Element, () => void>()
+      const observer = new IntersectionObserver(records => {
+        for (const record of records) {
+          if (record.isIntersecting) callbacks.get(record.target)?.()
+        }
+      }, { root, rootMargin: PRELOAD_MARGIN })
+      shared = { observer, callbacks }
+      viewportObservers.set(root, shared)
+    }
+    shared.callbacks.set(element, () => setMounted(true))
+    shared.observer.observe(element)
+    return () => {
+      shared.callbacks.delete(element)
+      shared.observer.unobserve(element)
+      if (shared.callbacks.size === 0) {
+        shared.observer.disconnect()
+        viewportObservers.delete(root)
+      }
+    }
   }, [mounted, scrollRootRef])
 
   useEffect(() => {
@@ -120,7 +130,12 @@ export function TimelineLazyEntry({
 
     const observer = new ResizeObserver(() => {
       const height = element.getBoundingClientRect().height
-      if (height > 0) measuredEntryHeights.set(cacheKey, height)
+      if (height > 0) {
+        measuredEntryHeights.delete(cacheKey)
+        measuredEntryHeights.set(cacheKey, height)
+        if (measuredEntryHeights.size > 2000)
+          measuredEntryHeights.delete(measuredEntryHeights.keys().next().value!)
+      }
     })
     observer.observe(element)
     return () => observer.disconnect()

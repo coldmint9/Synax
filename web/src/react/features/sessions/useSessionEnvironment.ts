@@ -2,44 +2,80 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { agentRuntimeApi, type SessionEnvironment } from '../../../lib/api/agentRuntime'
 
 const REFRESH_MS = 8000
+const cache = new Map<string, SessionEnvironment>()
+const pending = new Map<string, Promise<SessionEnvironment>>()
 
-/**
- * Polls the session workspace snapshot (branch, diffs, input files, subagents).
- *
- * Shared by the workspace dashboard and the tab bar's "open a tab" menu so the
- * panel keeps a single poller instead of one per consumer.
- */
+/** Shared in-flight requests and a bounded stale-while-revalidate workspace cache. */
 export function useSessionEnvironment(sessionId: string | null) {
-  const [environment, setEnvironment] = useState<SessionEnvironment | null>(null)
-  const [loading, setLoading] = useState(false)
-  const activeId = useRef(sessionId)
+  const [snapshot, setSnapshot] = useState<{ id: string; value: SessionEnvironment } | null>(null)
+  const [loadingId, setLoadingId] = useState<string | null>(null)
+  const generation = useRef(0)
 
   const reload = useCallback(async () => {
+    if (!sessionId) return
     const id = sessionId
-    if (!id) return
-    setLoading(true)
+    const version = generation.current
+    setLoadingId(id)
     try {
-      const next = await agentRuntimeApi.getSessionEnvironment(id)
-      // Ignore a response that arrived after the session switched.
-      if (activeId.current === id) setEnvironment(next)
+      let request = pending.get(id)
+      if (!request) {
+        request = agentRuntimeApi
+          .getSessionEnvironment(id)
+          .then((next) => {
+            const previous = cache.get(id)
+            const value = previous && JSON.stringify(previous) === JSON.stringify(next) ? previous : next
+            cache.delete(id)
+            cache.set(id, value)
+            if (cache.size > 16) cache.delete(cache.keys().next().value!)
+            return value
+          })
+          .finally(() => pending.delete(id))
+        pending.set(id, request)
+      }
+      const value = await request
+      if (generation.current === version)
+        setSnapshot((previous) =>
+          previous?.id === id && previous.value === value ? previous : { id, value },
+        )
     } catch {
-      if (activeId.current === id) setEnvironment(null)
+      // A transient poll failure must not clear the last usable workspace.
     } finally {
-      if (activeId.current === id) setLoading(false)
+      if (generation.current === version) setLoadingId(null)
     }
   }, [sessionId])
 
   useEffect(() => {
-    activeId.current = sessionId
-    setEnvironment(null)
+    ++generation.current
     if (!sessionId) return
-    void reload()
-    const timer = window.setInterval(() => void reload(), REFRESH_MS)
-    return () => window.clearInterval(timer)
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let inFlight = false
+    const tick = async () => {
+      if (cancelled || document.hidden || inFlight) return
+      clearTimeout(timer)
+      inFlight = true
+      await reload()
+      inFlight = false
+      if (!cancelled && !document.hidden) timer = setTimeout(tick, REFRESH_MS)
+    }
+    const onVisibility = () => {
+      clearTimeout(timer)
+      if (!document.hidden) void tick()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    void tick()
+    return () => {
+      cancelled = true
+      ++generation.current
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [sessionId, reload])
 
-  // The session id is part of the snapshot so consumers (for example
-  // transcript links) can act without a second, possibly divergent, source of
-  // truth for "which session am I inside".
-  return { sessionId, environment, loading, reload }
+  const environment = sessionId
+    ? snapshot?.id === sessionId
+      ? snapshot.value
+      : (cache.get(sessionId) ?? null)
+    : null
+  return { sessionId, environment, loading: sessionId !== null && loadingId === sessionId, reload }
 }

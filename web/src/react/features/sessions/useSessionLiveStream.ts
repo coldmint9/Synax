@@ -1,12 +1,19 @@
-import { useEffect } from 'react'
-import { ensureSessionLiveSubscription, releaseSessionLiveSubscription } from '../../../lib/api/sessionLiveClient'
+import { useEffect, useRef } from 'react'
+import {
+  ensureSessionLiveSubscription,
+  releaseSessionLiveSubscription,
+} from '../../../lib/api/sessionLiveClient'
 import { useApiConnectivityStore } from '../../../lib/apiConnectivity'
 import { useAgentSessionStore } from './agentSessionStore'
 
 export function useSessionLiveStream(sessionId: string | null) {
-  const apiReachable = useApiConnectivityStore(s => s.apiReachable)
+  const apiReachable = useApiConnectivityStore((s) => s.apiReachable)
 
+  const previous = useRef<{ sessionId: string | null; reachable: typeof apiReachable } | null>(null)
   useEffect(() => {
+    const reconnecting =
+      previous.current?.sessionId === sessionId && previous.current?.reachable === 'unreachable'
+    previous.current = { sessionId, reachable: apiReachable }
     if (!sessionId) return
     if (apiReachable === 'unreachable') return
 
@@ -14,11 +21,12 @@ export function useSessionLiveStream(sessionId: string | null) {
       useAgentSessionStore.getState().applyLiveEvent(event)
     })
 
-    // Reconcile immediately on (re)connect so any run progress or terminal
-    // status missed while the stream was down is corrected, instead of the
-    // session staying stuck in a stale `running` state.
-    void useAgentSessionStore.getState().refreshSessions()
-    void useAgentSessionStore.getState().refreshDetail()
+    // openPanel owns initial loading and cache freshness. Revalidating on every
+    // selection defeats the cache and queues a duplicate transcript request.
+    if (reconnecting) {
+      void useAgentSessionStore.getState().refreshSessions({ joinPending: true })
+      void useAgentSessionStore.getState().refreshDetail()
+    }
 
     return () => {
       releaseSessionLiveSubscription()

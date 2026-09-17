@@ -243,11 +243,9 @@ describe('useSessionDetailPolling', () => {
   })
 
   /**
-   * Characterization: `refreshDetail` resolves after its profile fetches and
-   * detaches the transcript fan-out, so transcript requests are outside this
-   * hook's in-flight gate and can overlap across cycles.
+   * Polling must join unfinished transcripts without starving slow responses.
    */
-  it('leaves the detached transcript fan-out outside the overlap gate', async () => {
+  it('joins the detached transcript instead of issuing an overlapping request', async () => {
     let resolveRuns!: (value: { items: never[] }) => void
     vi.mocked(api.listRuns).mockReturnValueOnce(new Promise(r => { resolveRuns = r }))
 
@@ -255,14 +253,26 @@ describe('useSessionDetailPolling', () => {
     await flush()
     expect(api.listRuns).toHaveBeenCalledTimes(1)
 
-    // Profile fetches settle, so the next interval starts a fresh cycle even
-    // though the first transcript request is still unresolved.
+    // The list may refresh again, but the slow transcript stays in flight.
     await act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS) })
     await flush()
     expect(api.listSessions).toHaveBeenCalledTimes(2)
-    expect(api.listRuns).toHaveBeenCalledTimes(2)
+    expect(api.listRuns).toHaveBeenCalledTimes(1)
 
     resolveRuns({ items: [] })
     await flush()
   })
+})
+
+it('shares one poller between consumers and keeps it alive until the last unmount', async () => {
+  const first = renderHook(() => useSessionDetailPolling())
+  const second = renderHook(() => useSessionDetailPolling())
+  await flush()
+  expect(api.getSessionStats).toHaveBeenCalledTimes(1)
+  first.unmount()
+  await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+  expect(api.getSessionStats).toHaveBeenCalledTimes(2)
+  second.unmount()
+  await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
+  expect(api.getSessionStats).toHaveBeenCalledTimes(2)
 })

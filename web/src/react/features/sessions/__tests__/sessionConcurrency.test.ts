@@ -128,3 +128,38 @@ it("does not let a background send steal the visible session live subscription",
     expect.any(Function),
   );
 });
+
+it('merges and deduplicates subsequent pages, preserving old pages across head refreshes', async () => {
+  const first = Array.from({ length: 30 }, (_, i) => row(`s${i}`))
+  vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({ ...page(first), totalCount: 32 })
+  await useAgentSessionStore.getState().refreshSessions()
+  const original = useAgentSessionStore.getState().sessions[0]
+  vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({ ...page([row('s30'), row('s31')]), totalCount: 32 })
+  await Promise.all([useAgentSessionStore.getState().loadMoreSessions(), useAgentSessionStore.getState().loadMoreSessions()])
+  expect(useAgentSessionStore.getState().sessions).toHaveLength(32)
+  expect(agentRuntimeApi.listSessions).toHaveBeenCalledTimes(2)
+  expect(agentRuntimeApi.listSessions).toHaveBeenLastCalledWith({ projectId: 'one', limit: 30, offset: 30 })
+  vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({ ...page(first.map(item => ({ ...item }))), totalCount: 32 })
+  await useAgentSessionStore.getState().refreshSessions()
+  expect(useAgentSessionStore.getState().sessions).toHaveLength(32)
+  expect(useAgentSessionStore.getState().sessions[0]).toBe(original)
+})
+
+it('discards a next-page response after changing projects', async () => {
+  let resolve!: (value: ReturnType<typeof page>) => void
+  vi.mocked(agentRuntimeApi.listSessions).mockReturnValueOnce(new Promise(r => { resolve = r }))
+  const pending = useAgentSessionStore.getState().loadMoreSessions()
+  vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue(page([row('new', 'two')]))
+  useAgentSessionStore.getState().setProjectId('two')
+  resolve(page([row('old')]))
+  await pending
+  await vi.waitFor(() => expect(useAgentSessionStore.getState().sessions.map(item => item.id)).toEqual(['new']))
+})
+
+it('does not count a deep-linked session as a paginated row', async () => {
+  useAgentSessionStore.setState({ sessions: [row('linked')], sessionListOffset: 0 })
+  vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({ ...page([row('s1')]), totalCount: 31 })
+  await useAgentSessionStore.getState().loadMoreSessions()
+  expect(agentRuntimeApi.listSessions).toHaveBeenCalledWith({ projectId: 'one', limit: 30, offset: 0 })
+  expect(useAgentSessionStore.getState().sessionListOffset).toBe(1)
+})

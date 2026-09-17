@@ -3,6 +3,7 @@ import { useApiConnectivityStore } from '../../../lib/apiConnectivity'
 import { useAgentSessionStore } from './agentSessionStore'
 
 const ACTIVE_SESSION_POLL_MS = 4_000
+const pollers = new Map<string, { users: number; stop: () => void }>()
 
 function isDocumentHidden(): boolean {
   return typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -10,24 +11,42 @@ function isDocumentHidden(): boolean {
 
 /**
  * Poll session list + detail while the selected session is actively running.
- * Non-overlapping: the next cycle starts only after the awaited `refreshDetail` settles, which resolves before the detached transcript task.
+ * A shared poller joins pending profile/transcript requests rather than restarting them.
  */
 export function useSessionDetailPolling() {
-  const apiReachable = useApiConnectivityStore(s => s.apiReachable)
-  const refreshDetail = useAgentSessionStore(s => s.refreshDetail)
-  const refreshSessions = useAgentSessionStore(s => s.refreshSessions)
-  const panelOpen = useAgentSessionStore(s => s.panelOpen)
-  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
-  const selectedStatus = useAgentSessionStore(s => {
+  const projectId = useAgentSessionStore((s) => s.projectId)
+  const apiReachable = useApiConnectivityStore((s) => s.apiReachable)
+  const refreshDetail = useAgentSessionStore((s) => s.refreshDetail)
+  const refreshSessions = useAgentSessionStore((s) => s.refreshSessions)
+  const panelOpen = useAgentSessionStore((s) => s.panelOpen)
+  const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId)
+  const selectedStatus = useAgentSessionStore((s) => {
     const id = s.selectedSessionId
-    return id ? s.sessions.find(sess => sess.id === id)?.status : undefined
+    return id ? s.sessions.find((sess) => sess.id === id)?.status : undefined
   })
 
   useEffect(() => {
     if (apiReachable === 'unreachable') return
     if (!panelOpen || !selectedSessionId) return
-    const isActive = selectedStatus === 'running' || selectedStatus === 'waiting_permission' || selectedStatus === 'waiting_input'
+    const isActive =
+      selectedStatus === 'running' ||
+      selectedStatus === 'waiting_permission' ||
+      selectedStatus === 'waiting_input'
     if (!isActive) return
+
+    const key = JSON.stringify([projectId, selectedSessionId, selectedStatus])
+    const existing = pollers.get(key)
+    const release = () => {
+      const poller = pollers.get(key)
+      if (poller && --poller.users === 0) {
+        poller.stop()
+        pollers.delete(key)
+      }
+    }
+    if (existing) {
+      existing.users++
+      return release
+    }
 
     let cancelled = false
     let inFlight = false
@@ -47,7 +66,10 @@ export function useSessionDetailPolling() {
 
     function startRefresh() {
       inFlight = true
-      void Promise.allSettled([refreshSessions(), refreshDetail()]).finally(() => {
+      void Promise.allSettled([
+        refreshSessions({ joinPending: true }),
+        refreshDetail({ joinPending: true }),
+      ]).finally(() => {
         inFlight = false
         schedule()
       })
@@ -77,12 +99,14 @@ export function useSessionDetailPolling() {
     }
     if (!isDocumentHidden()) startRefresh()
 
-    return () => {
+    const stop = () => {
       cancelled = true
       clearTimer()
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibilityChange)
       }
     }
-  }, [apiReachable, panelOpen, selectedSessionId, selectedStatus, refreshDetail, refreshSessions])
+    pollers.set(key, { users: 1, stop })
+    return release
+  }, [projectId, apiReachable, panelOpen, selectedSessionId, selectedStatus, refreshDetail, refreshSessions])
 }
