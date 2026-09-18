@@ -22,17 +22,6 @@ export function buildPermissionSection(
       permissionTier: input.permissionTier,
     });
   const tier = permissionTierFromRules(rules) ?? input.permissionTier;
-  if (tier === "boundary" || tier === "auto")
-    return [
-      "## Permission gates",
-      tier === "boundary"
-        ? "Boundary approval: external files and network access ALWAYS require user approval for each operation. Remembered allow rules cannot bypass this."
-        : "Automatic risk review: proven low-risk operations are approved automatically. Dangerous or uncertain operations require user approval.",
-      "Ordinary workspace reads and edits are allowed; credential/control files, deletes and uncertain commands require approval. Mode, Work and profile restrictions still apply.",
-      `Effective rules: ${JSON.stringify(rules.map(({ gate, pattern, action }) => ({ gate, pattern, action }))).replace(/</g, "\\u003c")}`,
-      "Use bash background:true for long-lived services; the user can stop them in the session sidebar.",
-      "The current mode is reloaded every step. Runtime decisions and explicit deny overrides are authoritative; never route around an approval or denial.",
-    ].join("\n");
   const labels = {
     allow: "allowed",
     ask: "requires user approval",
@@ -42,14 +31,17 @@ export function buildPermissionSection(
     category: "read" | "write" | "delete" | "shell",
     pattern = "*",
   ) =>
-    resolvePermissionDecision({
-      sessionId: "prompt-preview",
-      category: category === "delete" ? "write" : category,
-      pattern,
-      rules,
-      isSubSession: input.isSubSession,
-      ...(category !== "read" ? { internalGate: category } : {}),
-    }).action;
+    resolvePermissionDecision(
+      {
+        sessionId: "prompt-preview",
+        category: category === "delete" ? "write" : category,
+        pattern,
+        rules,
+        isSubSession: input.isSubSession,
+        ...(category !== "read" ? { internalGate: category } : {}),
+      },
+      null,
+    ).action;
   const unscoped = rules.filter((r) => r.pattern === "*");
   const scoped = rules.filter(
     (r) =>
@@ -57,6 +49,14 @@ export function buildPermissionSection(
       !(r.gate === "shell" && ["read", "write"].includes(r.pattern)),
   );
   const lines = ["## Permission gates"];
+  if (tier === "boundary" || tier === "auto") {
+    lines.push(
+      tier === "boundary"
+        ? "Boundary approval: external files and network access ALWAYS require user approval per operation unless denied. Remembered allow rules cannot bypass this."
+        : "Automatic risk review: low-risk operations may be approved automatically; dangerous or uncertain operations require approval unless denied.",
+      "Defaults below describe base rules, not final approval. Per-operation risk review and mode/Work restrictions still apply; explicit deny rules remain authoritative.",
+    );
+  }
   if (
     rules.length === 1 &&
     rules[0].gate === "*" &&

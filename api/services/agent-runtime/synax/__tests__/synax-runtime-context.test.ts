@@ -1,19 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ProjectWorkspaceRoot } from '../../../project-workspace.js';
 const fixture = vi.hoisted(() => ({
   scan: { scanId: "stable-scan", text: "auth module" },
   wiki: "Architecture summary",
   empty: false,
-  roots: [] as ProjectWorkspaceRoot[],
 }));
-vi.mock('../../tools/workspace.js', () => ({ resolveSessionWorkspaceRoots: () => fixture.roots }));
 vi.mock("../../../../db/index.js", () => ({
   getRawSqlite: () => ({
     prepare: (sql: string) => ({
-      get: () => fixture.empty ? undefined :
-        sql.includes("wiki_scan_git_cache")
-          ? { resultJson: JSON.stringify(fixture.scan) }
-          : { title: "Landscape", contentMd: fixture.wiki },
+      get: () =>
+        fixture.empty
+          ? undefined
+          : sql.includes("wiki_scan_git_cache")
+            ? { resultJson: JSON.stringify(fixture.scan) }
+            : { title: "Landscape", contentMd: fixture.wiki },
     }),
   }),
 }));
@@ -35,12 +34,6 @@ it("re-enriches Code Map/Wiki with fresh storage IDs but stable model-visible co
     buildLoopSystemPrompt({
       profile: synaxAgentProfile,
       context,
-      history: [],
-      previousParts: [],
-      previousToolCalls: [],
-      currentPrompt: "Investigate auth",
-      maxSteps: 10,
-      stepIndex: 1,
     });
   expect(new Set(contexts.map(prompt)).size).toBe(1);
   fixture.wiki = "Updated architecture summary";
@@ -51,21 +44,38 @@ it("re-enriches Code Map/Wiki with fresh storage IDs but stable model-visible co
   ).not.toBe(prompt(contexts[0]));
 });
 
-it('removes the final reference block even when there is no Code Map or Wiki', () => {
+it("removes the final reference block even when there is no Code Map or Wiki", () => {
   fixture.empty = true;
-  fixture.roots = [
-    { id: 'main', name: 'Main', path: '/main', role: 'primary', status: 'available' },
-    { id: 'ref', name: 'Reference', path: '/ref', role: 'reference', status: 'available' },
-  ];
   try {
-    const previous = enrichContextForPrompt(null, 'project', '/main', undefined, 'session');
-    expect(previous!.blocks[0].content).toContain('/ref');
-    fixture.roots = fixture.roots.slice(0, 1);
-    const next = enrichContextForPrompt(previous, 'project', '/main', undefined, 'session');
+    const previous = {
+      id: "saved",
+      projectId: "project",
+      sessionId: "session",
+      nodeId: null,
+      profileId: "synax",
+      createdAt: "",
+      citations: [],
+      warnings: [],
+      blocks: [
+        {
+          id: "old-roots",
+          kind: "code" as const,
+          title: "Workspace directories",
+          sourceType: "workspace",
+          content: "/ref",
+        },
+      ],
+    };
+    const next = enrichContextForPrompt(
+      previous,
+      "project",
+      "/main",
+      undefined,
+      "session",
+    );
     expect(next!.blocks).toEqual([]);
     expect(previous!.blocks).toHaveLength(1);
   } finally {
     fixture.empty = false;
-    fixture.roots = [];
   }
 });

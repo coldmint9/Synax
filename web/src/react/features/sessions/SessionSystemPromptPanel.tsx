@@ -1,49 +1,33 @@
-import { memo, useEffect, useState } from 'react'
-import { useShallow } from 'zustand/react/shallow'
-import { ChevronDown, ChevronUp, ScrollText } from 'lucide-react'
-import { useLocale } from '../../../hooks/useLocale'
-import { useAgentSessionStore } from './agentSessionStore'
+import { memo } from "react";
+import { ScrollText } from "lucide-react";
+import type { AgentSession } from "../../../lib/api/agentRuntime";
+import { useLocale } from "../../../hooks/useLocale";
+import { readSessionBackendId } from "./synaxSessionTypes";
+import { WorkspaceSection } from "./WorkspaceSection";
 
-export const SessionSystemPromptPanel = memo(function SessionSystemPromptPanel() {
-  const { t } = useLocale()
-  const session = useAgentSessionStore(useShallow(s => {
-    const id = s.selectedSessionId
-    return id ? s.sessions.find(item => item.id === id) : undefined
-  }))
-  const [open, setOpen] = useState(false)
-  // Prefer the dynamically built system prompt, fall back to the initial session prompt
-  const latestPrompt = session?.sessionMetadata?.latestSystemPrompt
-  const prompt = typeof latestPrompt === 'string' ? latestPrompt : session?.prompt ?? ''
-
-  useEffect(() => {
-    setOpen(false)
-  }, [session?.id])
-
-  if (!prompt) return null
+export const SessionSystemPromptPanel = memo(function SessionSystemPromptPanel({
+  session,
+}: {
+  session: AgentSession;
+}) {
+  const { t } = useLocale();
+  if (readSessionBackendId(session) !== "native") return null;
+  const latestPrompt = session.sessionMetadata?.latestSystemPrompt;
+  const prompt = typeof latestPrompt === "string" ? latestPrompt : "";
 
   return (
-    <div className="border-b border-border/40 px-2 py-2">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen(value => !value)}
-        className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors ${
-          open ? 'bg-accent/10 text-foreground' : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground/85'
-        }`}
-      >
-        <ScrollText size={11} className="shrink-0 opacity-75" />
-        <span className="min-w-0 flex-1 truncate text-[10px] font-medium">
-          {t('sessionSystemPrompt')}
-        </span>
-        {open
-          ? <ChevronUp size={11} className="shrink-0 opacity-60" />
-          : <ChevronDown size={11} className="shrink-0 opacity-60" />}
-      </button>
-      {open && (
-        <div className="mt-1.5 max-h-56 overflow-y-auto rounded-md border border-border/40 bg-secondary/20 px-2 py-2 text-[10px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
-          {prompt}
-        </div>
-      )}
-    </div>
-  )
-})
+    <WorkspaceSection
+      key={session.id}
+      icon={<ScrollText size={13} />}
+      title={t("sessionSystemPrompt")}
+      defaultOpen={false}
+    >
+      <p className="px-2 py-2 text-[10px] text-muted-foreground">
+        {t("sessionSystemPromptDescription")}
+      </p>
+      <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words px-2 pb-2 text-[10px] leading-relaxed text-muted-foreground">
+        {prompt.trim() ? prompt : t("sessionSystemPromptEmpty")}
+      </pre>
+    </WorkspaceSection>
+  );
+});

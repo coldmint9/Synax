@@ -313,7 +313,8 @@ const messages = {
     settingsMcpEnv: "环境变量（KEY=VALUE，每行一个）",
     settingsMcpEnable: "启用该服务器（可在 agent 输入框按会话选择）",
     settingsMcpSave: "保存",
-    settingsMcpDesc: "MCP 服务器仅属于当前工作区，并会自动提供给该工作区的 Agent。",
+    settingsMcpDesc:
+      "MCP 服务器仅属于当前工作区，并会自动提供给该工作区的 Agent。",
     settingsMcpDiscoveryTitle: "发现的本机服务",
     settingsMcpDiscoveryRefresh: "重新扫描本机 MCP 配置",
     settingsMcpDiscoveryLoading: "正在扫描本机 MCP 配置…",
@@ -623,6 +624,9 @@ const messages = {
     workspaceRepositoryNotGit: "非 Git 仓库",
     workspaceRepositoryError: "仓库不可用",
     workspaceCardInputSources: "输入源",
+    workspaceCardOutputs: "产出文件",
+    workspaceNoOutputs: "还没有产出物",
+    workspaceRootDirectory: "工作目录",
     workspaceChangeView: "Git 变更视图",
     workspaceTreeView: "目录视图",
     workspaceFlatView: "平铺视图",
@@ -679,7 +683,10 @@ const messages = {
     effortReset: "恢复默认",
     effortAllowedHint: "仅可在此供应商允许的档位中选择",
     effortUnrestrictedHint: "未限制思考档位，可选择全部强度",
-    sessionSystemPrompt: "系统提示",
+    sessionSystemPrompt: "最近组装的系统提示词",
+    sessionSystemPromptDescription:
+      "此预览不包含完整对话、工具定义和尾部运行状态。",
+    sessionSystemPromptEmpty: "尚未生成",
     subSessionDetails: "详情",
     subSessionRunning: "执行中...",
     subSessionNoResult: "暂无结果",
@@ -726,8 +733,7 @@ const messages = {
     homeNoPriorityBlockers: "Nothing needs your decision right now.",
     homeRecentEvents: "Reality Stream",
     homeCreateProject: "Create workspace",
-    homeCreateProjectHint:
-      "Choose one or more projects to form a workspace.",
+    homeCreateProjectHint: "Choose one or more projects to form a workspace.",
     homeNoProjectsYet: "No workspaces yet. Create one to get started.",
     homeIntentDiff: "Intent vs Reality",
     homeIntentDiffHint:
@@ -754,9 +760,9 @@ const messages = {
     settingsMemberStatus: "Member status",
     settingsGoTeam: "Go to Team Management",
     projectCreateTitle: "Create Workspace",
-    projectCreateIntro:
-      "Choose one or more projects to form a workspace.",
-    projectCreateNoPermission: "You do not have permission to create workspaces.",
+    projectCreateIntro: "Choose one or more projects to form a workspace.",
+    projectCreateNoPermission:
+      "You do not have permission to create workspaces.",
     projectCreateStepSource: "Source",
     projectCreateStepRepo: "Repository",
     projectCreateStepBasics: "Basics",
@@ -766,7 +772,8 @@ const messages = {
       "Create an empty workspace and configure context manually.",
     projectCreateSourceGithubHint: "Import metadata from a GitHub repository.",
     projectCreateSourceGitlabHint: "Import metadata from a GitLab repository.",
-    projectCreateScratchSkipRepo: "No repository is needed for blank workspaces.",
+    projectCreateScratchSkipRepo:
+      "No repository is needed for blank workspaces.",
     projectCreateSelectConnection: "Select connection",
     projectCreateSearchRepo: "Search repository",
     projectCreateLoadingRepos: "Loading repositories...",
@@ -1039,9 +1046,12 @@ const messages = {
     settingsMcpDiscoveryTitle: "Discovered local services",
     settingsMcpDiscoveryRefresh: "Rescan local MCP configuration",
     settingsMcpDiscoveryLoading: "Scanning local MCP configuration…",
-    settingsMcpDiscoveryEmpty: "No importable stdio services were found in common configuration locations.",
-    settingsMcpDiscoveryFailed: "Failed to scan local MCP configuration: {error}",
-    settingsMcpDiscoveryWarnings: "{count} configuration files could not be read.",
+    settingsMcpDiscoveryEmpty:
+      "No importable stdio services were found in common configuration locations.",
+    settingsMcpDiscoveryFailed:
+      "Failed to scan local MCP configuration: {error}",
+    settingsMcpDiscoveryWarnings:
+      "{count} configuration files could not be read.",
     settingsMcpEnableDiscovered: "Enable discovered MCP server {name}",
     settingsMcpDiscoveryEnabledLabel: "{name} is enabled",
     settingsMcpDiscoveryAvailable: "Available",
@@ -1354,6 +1364,9 @@ const messages = {
     workspaceRepositoryNotGit: "Not a Git repository",
     workspaceRepositoryError: "Repository unavailable",
     workspaceCardInputSources: "Input Sources",
+    workspaceCardOutputs: "Output files",
+    workspaceNoOutputs: "No outputs yet",
+    workspaceRootDirectory: "Workspace root",
     workspaceChangeView: "Git changes view",
     workspaceTreeView: "Tree view",
     workspaceFlatView: "Flat view",
@@ -1403,8 +1416,7 @@ const messages = {
     sessionFallbackTitle: "Session",
     settingsProjectIntegrationsTitle: "Workspace Settings",
     settingsProjectIntegrationsDesc: "Skills and MCP",
-    settingsProjectIntegrationsLoadFailed:
-      "Failed to load workspace settings",
+    settingsProjectIntegrationsLoadFailed: "Failed to load workspace settings",
     settingsSkillsTitle: "Skills",
     settingsSkillsDesc: "Skill sources, installation, and removal",
     effortCurrentModel: "Current model",
@@ -1414,7 +1426,10 @@ const messages = {
     effortAllowedHint: "Only levels allowed by this provider are available",
     effortUnrestrictedHint:
       "Reasoning effort is unrestricted; all levels are available",
-    sessionSystemPrompt: "System Prompt",
+    sessionSystemPrompt: "Latest assembled system prompt",
+    sessionSystemPromptDescription:
+      "This preview excludes conversation history, tool definitions and the trailing runtime state.",
+    sessionSystemPromptEmpty: "Not generated yet",
     subSessionDetails: "Details",
     subSessionRunning: "Running...",
     subSessionNoResult: "No result",

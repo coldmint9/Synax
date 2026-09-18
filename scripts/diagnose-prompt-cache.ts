@@ -399,12 +399,6 @@ try {
           profile: synaxAgentProfile,
           availableToolIds: [],
           context,
-          history: [],
-          previousParts: [],
-          previousToolCalls: [],
-          currentPrompt: "Compare",
-          maxSteps: 10,
-          stepIndex: step,
           modePromptSection: synaxModePromptRegistry.buildSection(
             modeContext as never,
           ),

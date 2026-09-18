@@ -4,7 +4,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { agentRuntimeStore } from "./session-store.js";
 import { resolveSessionWorkspaceRoots } from "./tools/workspace.js";
-import { canonicalWorkspaceDirectory, isWithinWorkspace, type ProjectWorkspaceRoot } from "../project-workspace.js";
+import {
+  canonicalWorkspaceDirectory,
+  isWithinWorkspace,
+  type ProjectWorkspaceRoot,
+} from "../project-workspace.js";
 import { patchFilePaths } from "./tools/patch-format.js";
 import { AgentNotFoundError, AgentValidationError } from "./runtime-errors.js";
 import type { AgentSessionStatus } from "./contracts.js";
@@ -42,7 +46,12 @@ export interface SessionEnvironmentSubagent {
   resultSummary: string | null;
 }
 
-export type SessionEnvironmentInputSourceKind = "file" | "search" | "command" | "url" | "tool";
+export type SessionEnvironmentInputSourceKind =
+  | "file"
+  | "search"
+  | "command"
+  | "url"
+  | "tool";
 
 export interface SessionEnvironmentInputSource {
   kind: SessionEnvironmentInputSourceKind;
@@ -67,6 +76,8 @@ export interface SessionEnvironment {
    * uncommitted work the user did by hand is not counted here.
    */
   agentChangedFiles: SessionEnvironmentFile[];
+  /** Existing files written by this session, including already committed outputs. */
+  outputFiles: string[];
   inputSources: SessionEnvironmentInputSource[];
   subagents: SessionEnvironmentSubagent[];
   refreshedAt: string;
@@ -85,19 +96,39 @@ export interface SessionEnvironmentRepository {
   deletions: number;
   changedFiles: SessionEnvironmentFile[];
   agentChangedFiles: SessionEnvironmentFile[];
+  outputFiles: string[];
   inputSources: SessionEnvironmentInputSource[];
 }
 
 /** An explicit member never falls back to the primary repository. */
-export function resolveSessionRepository(sessionId: string, projectId: string, rootId?: string, requireSelection = false): ProjectWorkspaceRoot {
+export function resolveSessionRepository(
+  sessionId: string,
+  projectId: string,
+  rootId?: string,
+  requireSelection = false,
+): ProjectWorkspaceRoot {
   const roots = resolveSessionWorkspaceRoots(sessionId, projectId);
-  if (requireSelection && roots.length > 1 && !rootId) throw new AgentValidationError("Select a workspace project before committing.");
-  const root = rootId ? roots.find(item => item.id === rootId) : roots.find(item => item.role === "primary");
-  if (!root) throw new AgentValidationError("The selected project is not in this workspace.");
+  if (requireSelection && roots.length > 1 && !rootId)
+    throw new AgentValidationError(
+      "Select a workspace project before committing.",
+    );
+  const root = rootId
+    ? roots.find((item) => item.id === rootId)
+    : roots.find((item) => item.role === "primary");
+  if (!root)
+    throw new AgentValidationError(
+      "The selected project is not in this workspace.",
+    );
   try {
-    return { ...root, path: canonicalWorkspaceDirectory(root.path), status: "available" };
+    return {
+      ...root,
+      path: canonicalWorkspaceDirectory(root.path),
+      status: "available",
+    };
   } catch {
-    throw new AgentValidationError(`Project directory is unavailable: ${root.name}`);
+    throw new AgentValidationError(
+      `Project directory is unavailable: ${root.name}`,
+    );
   }
 }
 
@@ -158,7 +189,10 @@ function resolveSafeFile(workspacePath: string, relativePath: string): string {
   if (absolute !== root && !absolute.startsWith(`${root}${path.sep}`)) {
     throw new AgentValidationError("File path is outside the workspace.");
   }
-  if (fs.existsSync(absolute) && !isWithinWorkspace(fs.realpathSync(root), fs.realpathSync(absolute))) {
+  if (
+    fs.existsSync(absolute) &&
+    !isWithinWorkspace(fs.realpathSync(root), fs.realpathSync(absolute))
+  ) {
     throw new AgentValidationError("File path is outside the workspace.");
   }
   return absolute;
@@ -203,31 +237,58 @@ function parseNumstat(
   return result;
 }
 
-function memberRelativePath(candidate: string, workspacePath: string, primaryPath: string): string {
+function memberRelativePath(
+  candidate: string,
+  workspacePath: string,
+  primaryPath: string,
+): string {
   const resolved = path.resolve(primaryPath, candidate);
-  const absolute = fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
-  if (!isWithinWorkspace(workspacePath, absolute)) throw new Error("Another project");
+  const absolute = fs.existsSync(resolved)
+    ? fs.realpathSync(resolved)
+    : resolved;
+  if (!isWithinWorkspace(workspacePath, absolute))
+    throw new Error("Another project");
   return assertRelativePath(path.relative(workspacePath, absolute));
 }
 
-function readInputSources(sessionId: string, workspacePath: string, primaryPath: string): SessionEnvironmentInputSource[] {
+function readInputSources(
+  sessionId: string,
+  workspacePath: string,
+  primaryPath: string,
+): SessionEnvironmentInputSource[] {
   const sources = new Map<string, SessionEnvironmentInputSource>();
   for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
     if (call.status !== "completed" || call.mutability !== "read") continue;
-    const input = call.inputRef && typeof call.inputRef === "object"
-      ? call.inputRef as Record<string, unknown> : {};
+    const input =
+      call.inputRef && typeof call.inputRef === "object"
+        ? (call.inputRef as Record<string, unknown>)
+        : {};
     const candidate = input.path ?? input.file_path ?? input.notebook_path;
     if (typeof candidate === "string" && candidate.trim()) {
       try {
-        const relativePath = memberRelativePath(candidate, workspacePath, primaryPath);
-        sources.set(`file:${relativePath}`, { kind: "file", label: relativePath, path: relativePath });
+        const relativePath = memberRelativePath(
+          candidate,
+          workspacePath,
+          primaryPath,
+        );
+        sources.set(`file:${relativePath}`, {
+          kind: "file",
+          label: relativePath,
+          path: relativePath,
+        });
         continue;
       } catch {
         // Ignore paths outside this workspace member, but retain the read tool below.
       }
     }
-    const kind: SessionEnvironmentInputSourceKind = /search|grep|glob|list/i.test(call.toolId)
-      ? "search" : /shell|command|exec/i.test(call.toolId) ? "command" : /url|web|http/i.test(call.toolId) ? "url" : "tool";
+    const kind: SessionEnvironmentInputSourceKind =
+      /search|grep|glob|list/i.test(call.toolId)
+        ? "search"
+        : /shell|command|exec/i.test(call.toolId)
+          ? "command"
+          : /url|web|http/i.test(call.toolId)
+            ? "url"
+            : "tool";
     const label = call.inputSummary?.trim() || call.toolId;
     sources.set(`${kind}:${call.toolId}:${label}`, { kind, label });
   }
@@ -242,26 +303,39 @@ const AGENT_WRITE_TOOL_IDS = new Set([
   "file.patch",
 ]);
 
-function readAgentEditedPaths(sessionId: string, workspacePath: string, primaryPath: string): Set<string> {
+function readAgentEditedPaths(
+  sessionId: string,
+  workspacePath: string,
+  primaryPath: string,
+): Set<string> {
   const paths = new Set<string>();
   const add = (candidate: unknown) => {
     if (typeof candidate !== "string" || !candidate.trim()) return;
-    try { paths.add(memberRelativePath(candidate, workspacePath, primaryPath)); }
-    catch { /* Ignore paths outside this workspace member. */ }
+    try {
+      paths.add(memberRelativePath(candidate, workspacePath, primaryPath));
+    } catch {
+      /* Ignore paths outside this workspace member. */
+    }
   };
   for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
     if (call.status !== "completed") continue;
     const raw = call.inputRef;
     if (!raw || typeof raw !== "object") continue;
     const envelope = raw as Record<string, unknown>;
-    const input = envelope.nativeTool && typeof envelope.nativeTool === "object"
-      ? envelope.nativeTool as Record<string, unknown> : envelope;
+    const input =
+      envelope.nativeTool && typeof envelope.nativeTool === "object"
+        ? (envelope.nativeTool as Record<string, unknown>)
+        : envelope;
     if (call.toolId === "codex.fileChange") {
       // Codex sends the definitive changed paths with the completed result.
-      const changes = Array.isArray(call.outputRef) ? call.outputRef : input.changes;
-      if (Array.isArray(changes)) for (const change of changes) {
-        if (change && typeof change === "object") add((change as { path?: unknown }).path);
-      }
+      const changes = Array.isArray(call.outputRef)
+        ? call.outputRef
+        : input.changes;
+      if (Array.isArray(changes))
+        for (const change of changes) {
+          if (change && typeof change === "object")
+            add((change as { path?: unknown }).path);
+        }
     } else if (/^claude-code\.(Write|Edit|NotebookEdit)$/.test(call.toolId)) {
       add(input.file_path ?? input.notebook_path);
     } else if (call.toolId === "file.patch") {
@@ -342,20 +416,51 @@ export function invalidateSessionEnvironment(sessionId: string): void {
 }
 
 async function computeRepository(
-  sessionId: string, root: ProjectWorkspaceRoot, primaryPath: string,
+  sessionId: string,
+  root: ProjectWorkspaceRoot,
+  primaryPath: string,
 ): Promise<SessionEnvironmentRepository> {
   const empty: SessionEnvironmentRepository = {
-    rootId: root.id, name: root.name, role: root.role, status: "ready",
-    workspacePath: root.path, branch: "", headCommitSha: "", dirty: false,
-    additions: 0, deletions: 0, changedFiles: [], agentChangedFiles: [], inputSources: [],
+    rootId: root.id,
+    name: root.name,
+    role: root.role,
+    status: "ready",
+    workspacePath: root.path,
+    branch: "",
+    headCommitSha: "",
+    dirty: false,
+    additions: 0,
+    deletions: 0,
+    changedFiles: [],
+    agentChangedFiles: [],
+    outputFiles: [],
+    inputSources: [],
   };
   let workspacePath: string;
-  try { workspacePath = canonicalWorkspaceDirectory(root.path); }
-  catch { return { ...empty, status: "missing" }; }
+  try {
+    workspacePath = canonicalWorkspaceDirectory(root.path);
+  } catch {
+    return { ...empty, status: "missing" };
+  }
   const edited = readAgentEditedPaths(sessionId, workspacePath, primaryPath);
-  const repoRoot = (await git(workspacePath, ["rev-parse", "--show-toplevel"])).trim();
+  const outputFiles = [...edited].filter((relativePath) => {
+    try {
+      return fs.statSync(resolveSafeFile(workspacePath, relativePath)).isFile();
+    } catch {
+      return false;
+    }
+  });
+  const repoRoot = (
+    await git(workspacePath, ["rev-parse", "--show-toplevel"])
+  ).trim();
   if (!repoRoot || canonicalWorkspaceDirectory(repoRoot) !== workspacePath) {
-    return { ...empty, inputSources: readInputSources(sessionId, workspacePath, primaryPath), status: "not_repository" };
+    return {
+      ...empty,
+      workspacePath,
+      outputFiles,
+      inputSources: readInputSources(sessionId, workspacePath, primaryPath),
+      status: "not_repository",
+    };
   }
   const [branchRaw, headCommitShaRaw, statusRaw, numstatRaw] =
     await Promise.all([
@@ -365,8 +470,12 @@ async function computeRepository(
       git(workspacePath, ["diff", "HEAD", "--numstat", "-z"]),
     ]);
 
-  const numstat = parseNumstat(numstatRaw || (!headCommitShaRaw.trim()
-    ? await git(workspacePath, ["diff", "--cached", "--numstat", "-z"]) : ""));
+  const numstat = parseNumstat(
+    numstatRaw ||
+      (!headCommitShaRaw.trim()
+        ? await git(workspacePath, ["diff", "--cached", "--numstat", "-z"])
+        : ""),
+  );
   const statusEntries = parseStatus(statusRaw);
   // Status already excludes ignored untracked files. Check without the index
   // so tracked files (including staged deletions) also respect ignore rules.
@@ -415,25 +524,32 @@ async function computeRepository(
   }
 
   return {
-    ...empty, workspacePath,
+    ...empty,
+    workspacePath,
     branch: branchRaw.trim() || "HEAD",
     headCommitSha: headCommitShaRaw.trim(),
     dirty: changedFiles.length > 0,
     additions: changedFiles.reduce((sum, file) => sum + file.additions, 0),
     deletions: changedFiles.reduce((sum, file) => sum + file.deletions, 0),
     changedFiles,
-    agentChangedFiles: changedFiles.filter(file => edited.has(file.path)),
+    agentChangedFiles: changedFiles.filter((file) => edited.has(file.path)),
+    outputFiles,
     inputSources: readInputSources(sessionId, workspacePath, primaryPath),
   };
 }
 
-async function computeSessionEnvironment(sessionId: string): Promise<SessionEnvironment> {
+async function computeSessionEnvironment(
+  sessionId: string,
+): Promise<SessionEnvironment> {
   const session = getSession(sessionId);
   const roots = resolveSessionWorkspaceRoots(sessionId, session.projectId);
-  const primary = roots.find(root => root.role === "primary");
-  if (!primary) throw new AgentValidationError("The session has no workspace projects.");
-  const repositories = await Promise.all(roots.map(root => computeRepository(sessionId, root, primary.path)));
-  const main = repositories.find(root => root.role === "primary")!;
+  const primary = roots.find((root) => root.role === "primary");
+  if (!primary)
+    throw new AgentValidationError("The session has no workspace projects.");
+  const repositories = await Promise.all(
+    roots.map((root) => computeRepository(sessionId, root, primary.path)),
+  );
+  const main = repositories.find((root) => root.role === "primary")!;
   const subagents: SessionEnvironmentSubagent[] = [];
   for (const childId of session.childSessionIds ?? []) {
     try {
@@ -471,7 +587,11 @@ export async function getSessionEnvironmentFile(
   rootId?: string,
 ): Promise<SessionEnvironmentFileView> {
   const session = getSession(sessionId);
-  const workspacePath = resolveSessionRepository(sessionId, session.projectId, rootId).path;
+  const workspacePath = resolveSessionRepository(
+    sessionId,
+    session.projectId,
+    rootId,
+  ).path;
   const cleanPath = assertRelativePath(relativePath);
   const absolutePath = resolveSafeFile(workspacePath, cleanPath);
   let content = "";
@@ -485,7 +605,10 @@ export async function getSessionEnvironmentFile(
     ]);
     if (trackedDiff.trim()) {
       content = trackedDiff;
-    } else if (fs.existsSync(absolutePath) && !(await git(workspacePath, ["ls-files", "--", cleanPath])).trim()) {
+    } else if (
+      fs.existsSync(absolutePath) &&
+      !(await git(workspacePath, ["ls-files", "--", cleanPath])).trim()
+    ) {
       // `git diff HEAD` does not include untracked files; render them as a new-file diff.
       content = await git(workspacePath, [
         "diff",
