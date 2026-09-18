@@ -511,7 +511,12 @@ export interface SessionEnvironmentSubagent {
   resultSummary: string | null;
 }
 
-export type SessionEnvironmentInputSourceKind = "file" | "search" | "command" | "url" | "tool";
+export type SessionEnvironmentInputSourceKind =
+  | "file"
+  | "search"
+  | "command"
+  | "url"
+  | "tool";
 
 export interface SessionEnvironmentInputSource {
   kind: SessionEnvironmentInputSourceKind;
@@ -542,6 +547,8 @@ export interface SessionEnvironment {
   changedFiles: SessionEnvironmentFile[];
   /** Files this session's agent wrote/edited/deleted (still uncommitted). */
   agentChangedFiles: SessionEnvironmentFile[];
+  /** Optional for historical snapshots; independent of uncommitted Git changes. */
+  outputFiles?: string[];
   inputSources: SessionEnvironmentInputSource[];
   subagents: SessionEnvironmentSubagent[];
   refreshedAt: string;
@@ -560,6 +567,7 @@ export interface SessionEnvironmentRepository {
   deletions: number;
   changedFiles: SessionEnvironmentFile[];
   agentChangedFiles: SessionEnvironmentFile[];
+  outputFiles?: string[];
   inputSources: SessionEnvironmentInputSource[];
 }
 
@@ -855,7 +863,12 @@ export const agentRuntimeApi = {
     ),
   commitSessionWorkspace: (
     sessionId: string,
-    body: { message?: string; model?: string; push?: boolean; rootId?: string } = {},
+    body: {
+      message?: string;
+      model?: string;
+      push?: boolean;
+      rootId?: string;
+    } = {},
   ) =>
     request<SessionGitCommitResult>(
       `/sessions/${encodeURIComponent(sessionId)}/git/commit`,

@@ -70,6 +70,7 @@ import {
 import { buildLoopToolSet } from "./loop-ai-tools.js";
 import { streamLoopModelStep } from "./loop-model-stream.js";
 import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
+import { buildRuntimeEnvironment } from "./prompt-environment.js";
 import { synaxAgent } from "./synax/index.js";
 import { loadProjectRulesSection } from "./synax/synax-instructions.js";
 import { enrichContextForPrompt } from "./synax/synax-runtime-context.js";
@@ -337,7 +338,8 @@ export class AgentLoopRuntime {
     }
     if (
       !input.acceptedRunId &&
-      (input.permissionTier !== undefined || input.permissionOverrides !== undefined)
+      (input.permissionTier !== undefined ||
+        input.permissionOverrides !== undefined)
     ) {
       applySessionPermissionUpdate(sessionId, {
         permissionTier: input.permissionTier,
@@ -346,13 +348,24 @@ export class AgentLoopRuntime {
     }
     let session = this.store.getSession(sessionId);
     const storedTier = session.sessionMetadata?.permissionTier;
-    if (session.profileId === "synax" && (storedTier === "readonly" || storedTier === "readwrite")) {
-      session = applySessionPermissionUpdate(sessionId, { permissionTier: "boundary" });
+    if (
+      session.profileId === "synax" &&
+      (storedTier === "readonly" || storedTier === "readwrite")
+    ) {
+      session = applySessionPermissionUpdate(sessionId, {
+        permissionTier: "boundary",
+      });
     } else if (session.profileId === "synax" && storedTier === undefined) {
       // Old sessions without a mode keep explicit restrictions, with mandatory boundary review added.
       session = this.store.updateSession(sessionId, {
-        permissionRules: [{ gate: "approval_mode", pattern: "boundary", action: "ask" }, ...session.permissionRules],
-        sessionMetadata: { ...session.sessionMetadata, permissionTier: "boundary" },
+        permissionRules: [
+          { gate: "approval_mode", pattern: "boundary", action: "ask" },
+          ...session.permissionRules,
+        ],
+        sessionMetadata: {
+          ...session.sessionMetadata,
+          permissionTier: "boundary",
+        },
       });
     }
     if (input.reasoningEffort) {
@@ -2411,10 +2424,17 @@ export class AgentLoopRuntime {
       skillCandidates.length > 0
         ? [
             "## Available skills",
-            "Call skill.load with skillId when a skill description matches the task. Full instructions load on demand.",
+            "Prioritize explicitly selected skills; otherwise call skill.load when a description matches the task. Full instructions load on demand. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
             ...skillCandidates.map((skill) => {
-              const active = activeSkillIds.has(skill.id) ? " [active]" : "";
-              return `- ${skill.id}: ${skill.label} — ${skill.description}${active}`;
+              return JSON.stringify({
+                id: skill.id,
+                name: skill.label,
+                description: skill.description,
+                ...(activeSkillIds.has(skill.id) ? { selected: true } : {}),
+                ...(selectedReferences?.skillIds.includes(skill.id)
+                  ? { instructionsIncluded: true }
+                  : {}),
+              }).replace(/</g, "\\u003c");
             }),
           ].join("\n")
         : null;
@@ -2432,6 +2452,7 @@ export class AgentLoopRuntime {
         session.projectId,
         workDir,
         userRequest,
+        input.sessionId,
       );
     } catch {
       contextForPrompt = input.context;
@@ -2440,20 +2461,12 @@ export class AgentLoopRuntime {
     const systemPromptContent = buildLoopSystemPrompt({
       profile: input.profile,
       context: contextForPrompt,
-      history: input.history,
-      previousParts: input.previousParts,
-      previousToolCalls: input.previousToolCalls,
-      currentPrompt: userRequest,
-      maxSteps: input.maxSteps,
-      stepIndex: input.stepIndex,
-      converging: input.converging,
       locale,
       permissionTier: permissionConfig.permissionTier,
       effectivePermissionRules: session.permissionRules,
       isSubSession: Boolean(session.parentSessionId),
       availableToolIds: allowedTools.map((tool) => tool.id),
       specializedOutput: isWikiAgentProfile(input.profile.id),
-      includeToolCallFallback: false,
       modePromptSection: synaxAgent.buildModePromptSection(session),
       variantPromptSection: synaxAgent.buildVariantPromptSection(session),
       intentPromptSection: synaxAgent.isSynaxSession(session)
@@ -2468,18 +2481,15 @@ export class AgentLoopRuntime {
         : null,
       projectMemoriesSection,
       projectRulesSection,
-      skillsSection:
-        [skillsSection, selectedReferences?.content]
-          .filter(Boolean)
-          .join("\n\n") || null,
+      skillsSection,
+      selectedReferencesSection: selectedReferences?.content,
     });
 
     // Static instructions/reference preview; the complete request also contains historical and latest reminders
     // Writing this every step churned session_metadata (12+ KB rows) and emitted
     // a session_changed event per step; only persist when the preview changed.
     try {
-      const previousPrompt = this.store
-        .getSession(input.sessionId)
+      const previousPrompt = this.store.getSession(input.sessionId)
         .sessionMetadata?.latestSystemPrompt;
       if (previousPrompt !== systemPromptContent) {
         this.store.updateSessionMetadata(input.sessionId, {
@@ -2506,6 +2516,7 @@ export class AgentLoopRuntime {
 
     const stepNote = buildLoopStepNote(input);
     const tailReminders = [
+      buildRuntimeEnvironment(input.sessionId, session.projectId),
       workRuntime.prompt(input.sessionId) ?? "",
       synaxAgent.buildRuntimeStateSection(session) ?? "",
       goalEvidenceSection(session, input.previousToolCalls) ?? "",

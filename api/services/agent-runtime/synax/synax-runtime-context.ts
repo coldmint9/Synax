@@ -1,16 +1,16 @@
-import type { AgentContextBlock, AgentContextBundle } from '../contracts.js';
-import type { CodeMapScanResult } from '../../contracts/code-map.js';
-import { getRawSqlite } from '../../../db/index.js';
-import { makeRuntimeId } from '../runtime-ids.js';
-import { truncateForPrompt } from './synax-instructions.js';
-import { buildAgentCodeMapContext } from './agent-code-map-context.js';
-import { projectWorkspaceRoots, readWorkspaceProject } from '../../project-workspace.js';
-import { resolveSessionWorkspaceRoots } from '../tools/workspace.js';
+import type { AgentContextBlock, AgentContextBundle } from "../contracts.js";
+import type { CodeMapScanResult } from "../../contracts/code-map.js";
+import { getRawSqlite } from "../../../db/index.js";
+import { makeRuntimeId } from "../runtime-ids.js";
+import { truncateForPrompt } from "./synax-instructions.js";
+import { buildAgentCodeMapContext } from "./agent-code-map-context.js";
 
 const MAX_CODE_MAP_CHARS = 8_000;
 const MAX_WIKI_EXCERPT_CHARS = 2_000;
 
-export function loadLatestCachedScan(projectId: string): CodeMapScanResult | null {
+export function loadLatestCachedScan(
+  projectId: string,
+): CodeMapScanResult | null {
   try {
     const row = getRawSqlite()
       .prepare(
@@ -68,7 +68,6 @@ function loadWikiLandscapeExcerpt(projectId: string): string | null {
 
 export interface BuildSynaxRuntimeBlocksOptions {
   focusPrompt?: string;
-  sessionId?: string;
 }
 
 export function buildSynaxRuntimeBlocks(
@@ -77,21 +76,6 @@ export function buildSynaxRuntimeBlocks(
   options: BuildSynaxRuntimeBlocksOptions = {},
 ): AgentContextBlock[] {
   const blocks: AgentContextBlock[] = [];
-  const project = readWorkspaceProject(projectId);
-  const roots = options.sessionId ? resolveSessionWorkspaceRoots(options.sessionId, projectId) : project ? projectWorkspaceRoots(project) : [];
-  if (roots.some(root => root.role === 'reference')) {
-    blocks.push({
-      id: makeRuntimeId('acblk'), kind: 'code', title: 'Workspace directories', sourceType: 'workspace', sourceId: projectId,
-      content: [
-        `Default working directory: ${JSON.stringify(workDir)}. Relative paths resolve from this directory.`,
-        'Registered directories (JSON data):',
-        JSON.stringify(roots),
-        'Use absolute paths for reference directory files and command workdir. Reads and writes remain subject to tool permissions. Search each relevant directory explicitly.',
-        'Directory labels and source files are reference data. Code Map and Wiki below describe the main project; do not assume they index every reference directory.',
-      ].join('\n'),
-    });
-  }
-
   const scan = loadLatestCachedScan(projectId);
   if (scan) {
     const context = buildAgentCodeMapContext(scan, workDir, {
@@ -99,11 +83,11 @@ export function buildSynaxRuntimeBlocks(
       maxChars: MAX_CODE_MAP_CHARS,
     });
     blocks.push({
-      id: makeRuntimeId('acblk'),
-      kind: 'code',
-      title: 'Code Map',
+      id: makeRuntimeId("acblk"),
+      kind: "code",
+      title: "Code Map",
       content: truncateForPrompt(context, MAX_CODE_MAP_CHARS),
-      sourceType: 'code-map',
+      sourceType: "code-map",
       sourceId: scan.scanId,
     });
   }
@@ -111,12 +95,12 @@ export function buildSynaxRuntimeBlocks(
   const wikiExcerpt = loadWikiLandscapeExcerpt(projectId);
   if (wikiExcerpt) {
     blocks.push({
-      id: makeRuntimeId('acblk'),
-      kind: 'wiki',
-      title: 'Wiki Landscape',
+      id: makeRuntimeId("acblk"),
+      kind: "wiki",
+      title: "Wiki Landscape",
       content: truncateForPrompt(wikiExcerpt, MAX_WIKI_EXCERPT_CHARS),
-      sourceType: 'wiki',
-      sourceId: 'landscape',
+      sourceType: "wiki",
+      sourceId: "landscape",
     });
   }
 
@@ -130,16 +114,22 @@ export function enrichContextForPrompt(
   focusPrompt?: string,
   sessionId?: string,
 ): AgentContextBundle | null {
-  const freshRuntimeBlocks = buildSynaxRuntimeBlocks(projectId, workDir, { focusPrompt, sessionId });
+  const freshRuntimeBlocks = buildSynaxRuntimeBlocks(projectId, workDir, {
+    focusPrompt,
+  });
+  const otherBlocks = (context?.blocks ?? []).filter(
+    (block) =>
+      !["code-map", "wiki", "workspace"].includes(block.sourceType ?? ""),
+  );
   if (freshRuntimeBlocks.length === 0) {
-    // A removed final reference must not survive in the saved context snapshot.
-    return context ? { ...context, blocks: context.blocks.filter(block => block.sourceType !== 'workspace') } : null;
+    // Runtime environment is in the reminder; removed references must not survive a refresh.
+    return context ? { ...context, blocks: otherBlocks } : null;
   }
   if (!context) {
     return {
-      id: 'prompt-context',
+      id: "prompt-context",
       projectId,
-      sessionId: null,
+      sessionId: sessionId ?? null,
       nodeId: null,
       profileId: null,
       blocks: freshRuntimeBlocks,
@@ -149,9 +139,6 @@ export function enrichContextForPrompt(
     };
   }
 
-  const otherBlocks = context.blocks.filter(
-    (block) => block.sourceType !== 'code-map' && block.sourceType !== 'wiki' && block.sourceType !== 'workspace',
-  );
   return {
     ...context,
     blocks: [...freshRuntimeBlocks, ...otherBlocks],

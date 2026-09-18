@@ -9,20 +9,14 @@ import {
 const base = {
   profile: synaxAgentProfile,
   context: null,
-  history: [],
-  previousParts: [],
-  previousToolCalls: [],
-  currentPrompt: "你好",
-  maxSteps: 64,
-  stepIndex: 1,
   loopHintsOverride: [],
 };
 describe("layered prompt composition", () => {
   it("does not advertise or teach tools absent from the actual request", () => {
-    const prompt = buildCoreLoopSection(synaxAgentProfile, [
-      "context.read",
-      "work.checkpoint",
-    ]);
+    const prompt = buildLoopSystemPrompt({
+      ...base,
+      availableToolIds: ["context.read", "work.checkpoint"],
+    });
     expect(prompt).toContain("supplied tool schemas");
     expect(prompt).toContain("context.read");
     expect(prompt).not.toContain("Use bash");
@@ -38,9 +32,25 @@ describe("layered prompt composition", () => {
     expect(prompt).not.toContain("Thinking mode:");
   });
   it("preserves the specialized Wiki language protocol", () => {
-    expect(
-      buildLoopSystemPrompt({ ...base, locale: "en", specializedOutput: true }),
-    ).toContain("## Language Output Directive");
+    const prompt = buildLoopSystemPrompt({
+      ...base,
+      locale: "en",
+      specializedOutput: true,
+    });
+    expect(prompt).toContain("## Language Output Directive");
+    expect(prompt).not.toContain("## Result presentation");
+  });
+  it("keeps authorization and completion explicit, with only supported presentation guidance", () => {
+    const core = buildCoreLoopSection(synaxAgentProfile);
+    expect(core).toContain("Finish authorized work through verification");
+    expect(core).toContain("without repeated confirmation");
+    expect(core).toContain("Do not turn an explanation request into an edit");
+    expect(core).toContain("ending a round does not complete a goal");
+    const prompt = buildLoopSystemPrompt({ ...base, availableToolIds: [] });
+    expect(prompt).toContain("[path:line](path#Lline)");
+    expect(prompt).not.toMatch(
+      /codex:\/\/|::code-comment|::created-thread|browser\.navigate/,
+    );
   });
   it("omits empty context and placeholder scan instructions, but retains sourced reference data", () => {
     const prompt = buildLoopSystemPrompt({
@@ -73,7 +83,6 @@ describe("layered prompt composition", () => {
       },
       projectRulesSection: "### AGENTS.md\nKeep existing changes.",
       projectMemoriesSection: "Past observation",
-      workPromptSection: "## Current work\nClosing decision required",
     });
     expect(prompt).not.toContain("run a code-map scan");
     expect(prompt).not.toContain("No context bundle");
@@ -194,9 +203,7 @@ describe("cache-stable reference projection", () => {
         .toReversed()
         .map((block, i) => ({ ...block, id: `new-${i}` })),
     };
-    expect(
-      buildLoopSystemPrompt({ ...base, context: refreshed, stepIndex: 3 }),
-    ).toBe(first);
+    expect(buildLoopSystemPrompt({ ...base, context: refreshed })).toBe(first);
     expect(first).not.toContain("acblk-");
     expect(
       buildLoopSystemPrompt({
@@ -216,14 +223,6 @@ describe("cache-stable reference projection", () => {
         },
       }),
     ).not.toBe(first);
-  });
-  it("does not put mutable Work state in system", () => {
-    expect(
-      buildLoopSystemPrompt({
-        ...base,
-        workPromptSection: "private-work-snapshot",
-      }),
-    ).not.toContain("private-work-snapshot");
   });
 });
 
