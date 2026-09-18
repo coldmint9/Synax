@@ -24,10 +24,10 @@ describe('SessionListHeader', () => {
     useShellStore.setState(state => ({ preferences: { ...state.preferences, locale: 'zh' } }))
   })
 
-  it('shows the SynaxCode heading without a session counter', () => {
+  it('shows the 任务 heading without a session counter', () => {
     const { container } = renderHeader()
 
-    expect(container.textContent).toContain('SynaxCode')
+    expect(container.textContent).toContain('任务')
     expect(container.textContent).not.toMatch(/\(\d+\)/)
   })
 
@@ -35,10 +35,10 @@ describe('SessionListHeader', () => {
     const onNewSession = vi.fn()
     renderHeader({ onNewSession })
 
-    const newChat = screen.getByRole('button', { name: /新对话/ })
+    const newChat = screen.getByRole('button', { name: /新任务/ })
     expect(newChat.firstElementChild?.tagName.toLowerCase()).toBe('svg')
     expect(screen.queryByRole('button', { name: /refresh|刷新/i })).toBeNull()
-    // Only "新对话" and the clear-inactive action remain in the header actions.
+    // Only "新任务" and the clear-inactive action remain in the header actions.
     expect(screen.getAllByRole('button')).toHaveLength(2)
   })
 })

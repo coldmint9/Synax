@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { SessionEnvironment } from '../../../../lib/api/agentRuntime'
 import { WorkspaceDashboard } from '../WorkspaceDashboard'
+import { useAgentSessionStore } from '../agentSessionStore'
 import { useSessionWorkspaceStore } from '../sessionWorkspaceStore'
 
 vi.mock('../SessionBackgroundProcesses', () => ({ SessionBackgroundProcesses: () => null }))
@@ -87,6 +88,7 @@ function renderDashboard(overrides: Partial<SessionEnvironment> = {}) {
 describe('WorkspaceDashboard', () => {
   beforeEach(() => {
     useSessionWorkspaceStore.setState({ sessions: {} })
+    useAgentSessionStore.setState({ selectedSessionId: 'session-1', sessionTodos: [] })
   })
 
   afterEach(() => cleanup())
@@ -95,16 +97,13 @@ describe('WorkspaceDashboard', () => {
     const { container } = renderDashboard()
 
     expect(screen.getByText('feature/dynamic-workflow-refactor')).toBeTruthy()
-    expect(screen.getByText('5e5727b0')).toBeTruthy()
-    expect(screen.getByText('+585')).toBeTruthy()
-    expect(screen.getByText('-138')).toBeTruthy()
 
     expect(screen.getByRole('button', { name: /Subagents/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Git 变更/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /输入文件/ })).toBeTruthy()
     expect(screen.getByText('运行中 1')).toBeTruthy()
     expect(screen.getByText('已暂存 1')).toBeTruthy()
-    expect(container.querySelectorAll('[data-file-type-icon]')).toHaveLength(5)
+    expect(container.querySelectorAll('[data-file-type-icon]')).toHaveLength(3)
     expect(container.querySelector('[data-file-type-icon="index.vue"]')).not.toBeNull()
     expect(container.querySelector('[data-file-type-icon="notes.md"]')).not.toBeNull()
   })
@@ -125,6 +124,7 @@ describe('WorkspaceDashboard', () => {
       { id: 'diff:src/views/cli_chat/components/blocks/BlockAsk.vue', kind: 'diff' },
     ])
 
+    if (!screen.queryByText('toolDisplay.js')) fireEvent.click(screen.getByRole('button', { name: /输入文件/ }))
     fireEvent.click(screen.getByText('toolDisplay.js'))
     expect(useSessionWorkspaceStore.getState().sessions['session-1'].tabs).toMatchObject([
       { id: 'diff:src/views/cli_chat/components/blocks/BlockAsk.vue', kind: 'diff' },
@@ -145,6 +145,7 @@ describe('WorkspaceDashboard', () => {
     const gitCard = screen.getByRole('button', { name: /Git 变更/ }).closest('.ws-card')
     const inputCard = screen.getByRole('button', { name: /输入文件/ }).closest('.ws-card')
 
+    fireEvent.click(screen.getByRole('button', { name: '目录视图' }))
     expect(gitCard?.querySelector('[data-directory-path="src/views"]')).not.toBeNull()
     expect(inputCard?.querySelector('.ws-tree-folder')).toBeNull()
 
@@ -171,16 +172,16 @@ describe('WorkspaceDashboard', () => {
 
     expect(header.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByText('notes.md')).toBeNull()
-    // Other cards keep their content.
-    expect(screen.getByText('toolDisplay.js')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /输入文件/ })).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('keeps the three list cards with empty states', () => {
+  it('hides empty input and subagent sections while keeping outputs discoverable', () => {
     renderDashboard({ changedFiles: [], inputFiles: [], subagents: [] })
 
     expect(screen.queryByRole('button', { name: /Subagents/ })).toBeNull()
-    expect(screen.getByText('无变更')).toBeTruthy()
-    expect(screen.getByText('暂无读取文件')).toBeTruthy()
+    expect(screen.getAllByText('无变更').length).toBeGreaterThan(0)
+    expect(screen.queryByText('暂无读取文件')).toBeNull()
+    expect(screen.getByText('还没有产出物')).toBeTruthy()
   })
 
   it('reflects the agent change status on each row', () => {
@@ -200,45 +201,80 @@ describe('WorkspaceDashboard', () => {
     expect(reload).toHaveBeenCalledTimes(1)
   })
 
-  it('switches repositories and keeps same-path diffs and input files isolated', () => {
+  it('gives each repository its own collapsible project and keeps file tabs isolated', () => {
     renderDashboard({ repositories: [
       { ...environment, rootId: 'primary', name: 'API', role: 'primary', status: 'ready' },
       { ...environment, rootId: 'secondary', name: 'Web', role: 'reference', status: 'ready', branch: 'web-branch', workspacePath: '/repos/web' },
       { ...environment, rootId: 'missing', name: 'Gone', role: 'reference', status: 'missing', changedFiles: [], inputFiles: [] },
     ] })
-    fireEvent.click(screen.getByText('BlockAsk.vue'))
-    fireEvent.click(screen.getByText('toolDisplay.js'))
-    fireEvent.click(screen.getByRole('button', { name: 'Web', exact: true }))
-    expect(screen.getByRole('button', { name: 'Web', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getAllByText('web-branch')[0]).toBeInTheDocument()
-    expect(screen.getByText('/repos/web')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('BlockAsk.vue'))
-    fireEvent.click(screen.getByText('toolDisplay.js'))
+    const apiHeader = screen.getByRole('button', { name: /^API/ })
+    const webHeader = screen.getByRole('button', { name: /^Web/ })
+    const goneHeader = screen.getByRole('button', { name: /^Gone/ })
+    const apiCard = apiHeader.closest('.ws-project-card')!
+    const webCard = webHeader.closest('.ws-project-card')!
+    const goneCard = goneHeader.closest('.ws-project-card')!
+
+    expect(apiHeader).toHaveAttribute('aria-expanded', 'true')
+    expect(webHeader).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(webHeader)
+    expect(webHeader).toHaveAttribute('aria-expanded', 'false')
+    expect(within(webCard).queryByText('BlockAsk.vue')).toBeNull()
+    expect(within(apiCard).getByText('BlockAsk.vue')).toBeInTheDocument()
+    fireEvent.click(webHeader)
+
+    fireEvent.click(within(apiCard).getByText('BlockAsk.vue'))
+    fireEvent.click(within(apiCard).getByText('toolDisplay.js'))
+    fireEvent.click(within(webCard).getByText('BlockAsk.vue'))
+    fireEvent.click(within(webCard).getByText('toolDisplay.js'))
     const tabs = useSessionWorkspaceStore.getState().sessions['session-1'].tabs
     expect(tabs).toHaveLength(4)
     expect(new Set(tabs.map(tab => tab.id)).size).toBe(4)
     expect(tabs.map(tab => tab.rootId)).toEqual(['primary', 'primary', 'secondary', 'secondary'])
     expect(tabs[2].title).toBe('Web / BlockAsk.vue')
-    fireEvent.click(screen.getByRole('button', { name: 'Gone', exact: true }))
-    expect(screen.getAllByText('目录缺失')[0]).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '提交并推送' })).toBeDisabled()
-    expect(screen.queryByText('无变更')).not.toBeInTheDocument()
+    expect(within(goneCard).getByText('目录缺失')).toBeInTheDocument()
+    expect(within(goneCard).getByRole('button', { name: '提交并推送' })).toBeDisabled()
   })
-  it('remembers the inspected repository after returning from a viewer and isolates sessions', () => {
+
+  it('resets project folds after the workspace is reopened', () => {
     const snapshot: SessionEnvironment = { ...environment, repositories: [
       { ...environment, rootId: 'primary', name: 'API', role: 'primary', status: 'ready' },
       { ...environment, rootId: 'web', name: 'Web', role: 'reference', status: 'ready' },
     ] }
     const view = render(<WorkspaceDashboard sessionId="session-1" environment={snapshot} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Web', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: /^Web/ }))
     view.unmount()
-    const reopened = render(<WorkspaceDashboard sessionId="session-1" environment={snapshot} />)
-    expect(screen.getByRole('button', { name: 'Web', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    reopened.rerender(<WorkspaceDashboard sessionId="session-2" environment={snapshot} />)
-    expect(screen.getByRole('button', { name: 'API', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    reopened.rerender(<WorkspaceDashboard sessionId="session-1" environment={{ ...snapshot, repositories: snapshot.repositories!.slice(0, 1) }} />)
-    expect(screen.queryByRole('button', { name: 'Web', exact: true })).not.toBeInTheDocument()
-    expect(screen.getByText('API')).toBeInTheDocument()
+    render(<WorkspaceDashboard sessionId="session-1" environment={snapshot} />)
+    expect(screen.getByRole('button', { name: /^Web/ })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('opens a committed output in its owning repository without treating hand edits as outputs', () => {
+    renderDashboard({ outputFiles: ['docs/deliverable.md'], agentChangedFiles: [] })
+    expect(screen.queryByRole('button', { name: /notes.md.*工作目录/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'deliverable.md docs' }))
+    expect(useSessionWorkspaceStore.getState().sessions['session-1'].tabs).toMatchObject([
+      { kind: 'file', path: 'docs/deliverable.md' },
+    ])
+  })
+
+  it('keeps same-name outputs scoped to their owning repository', () => {
+    renderDashboard({ repositories: [
+      { ...environment, rootId: 'api', name: 'API', role: 'primary', status: 'ready', outputFiles: ['result.md'] },
+      { ...environment, rootId: 'web', name: 'Web', role: 'reference', status: 'ready', outputFiles: ['result.md'] },
+    ] })
+    const apiCard = screen.getByRole('button', { name: /^API/ }).closest('.ws-project-card')!
+    const webCard = screen.getByRole('button', { name: /^Web/ }).closest('.ws-project-card')!
+    fireEvent.click(within(apiCard).getByRole('button', { name: 'result.md 工作目录' }))
+    fireEvent.click(within(webCard).getByRole('button', { name: 'result.md 工作目录' }))
+    expect(useSessionWorkspaceStore.getState().sessions['session-1'].tabs.map(tab => tab.rootId)).toEqual(['api', 'web'])
+  })
+
+  it('shows todos for the selected session and never leaks them into another session', () => {
+    useAgentSessionStore.setState({ selectedSessionId: 'session-1', sessionTodos: [{ id: 'todo-1', label: 'Review outputs', status: 'in_progress' }] })
+    const view = renderDashboard()
+    expect(screen.getByText('Review outputs')).toBeTruthy()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0')
+    view.rerender(<WorkspaceDashboard sessionId="session-2" environment={{ ...environment, sessionId: 'session-2' }} />)
+    expect(screen.queryByText('Review outputs')).toBeNull()
   })
 
 })

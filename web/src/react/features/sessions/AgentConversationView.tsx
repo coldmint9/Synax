@@ -47,7 +47,7 @@ export const AgentConversationView = memo(function AgentConversationView({
     || session?.status === 'failed'
   const cat = session ? getSessionCategory(session.profileId) : null
   const routeReason = session ? resolveSynaxRouteReason(session) : null
-  const showHeader = Boolean(routeReason || cat?.isBuiltin || isRunning || isResumable)
+  const showHeader = Boolean(isRunning && onCancel)
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-[1.2rem] py-4">

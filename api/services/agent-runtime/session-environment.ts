@@ -42,6 +42,14 @@ export interface SessionEnvironmentSubagent {
   resultSummary: string | null;
 }
 
+export type SessionEnvironmentInputSourceKind = "file" | "search" | "command" | "url" | "tool";
+
+export interface SessionEnvironmentInputSource {
+  kind: SessionEnvironmentInputSourceKind;
+  label: string;
+  path?: string;
+}
+
 export interface SessionEnvironment {
   repositories: SessionEnvironmentRepository[];
   sessionId: string;
@@ -59,7 +67,7 @@ export interface SessionEnvironment {
    * uncommitted work the user did by hand is not counted here.
    */
   agentChangedFiles: SessionEnvironmentFile[];
-  inputFiles: string[];
+  inputSources: SessionEnvironmentInputSource[];
   subagents: SessionEnvironmentSubagent[];
   refreshedAt: string;
 }
@@ -77,7 +85,7 @@ export interface SessionEnvironmentRepository {
   deletions: number;
   changedFiles: SessionEnvironmentFile[];
   agentChangedFiles: SessionEnvironmentFile[];
-  inputFiles: string[];
+  inputSources: SessionEnvironmentInputSource[];
 }
 
 /** An explicit member never falls back to the primary repository. */
@@ -196,26 +204,34 @@ function parseNumstat(
 }
 
 function memberRelativePath(candidate: string, workspacePath: string, primaryPath: string): string {
-  const absolute = path.resolve(primaryPath, candidate);
+  const resolved = path.resolve(primaryPath, candidate);
+  const absolute = fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
   if (!isWithinWorkspace(workspacePath, absolute)) throw new Error("Another project");
   return assertRelativePath(path.relative(workspacePath, absolute));
 }
 
-function readInputFiles(sessionId: string, workspacePath: string, primaryPath: string): string[] {
-  const paths = new Set<string>();
+function readInputSources(sessionId: string, workspacePath: string, primaryPath: string): SessionEnvironmentInputSource[] {
+  const sources = new Map<string, SessionEnvironmentInputSource>();
   for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
-    if (call.toolId !== "file.read") continue;
-    const input = call.inputRef;
-    if (!input || typeof input !== "object") continue;
-    const candidate = (input as { path?: unknown }).path;
-    if (typeof candidate !== "string" || !candidate.trim()) continue;
-    try {
-      paths.add(memberRelativePath(candidate, workspacePath, primaryPath));
-    } catch {
-      // Ignore malformed/blocked historical paths.
+    if (call.status !== "completed" || call.mutability !== "read") continue;
+    const input = call.inputRef && typeof call.inputRef === "object"
+      ? call.inputRef as Record<string, unknown> : {};
+    const candidate = input.path ?? input.file_path ?? input.notebook_path;
+    if (typeof candidate === "string" && candidate.trim()) {
+      try {
+        const relativePath = memberRelativePath(candidate, workspacePath, primaryPath);
+        sources.set(`file:${relativePath}`, { kind: "file", label: relativePath, path: relativePath });
+        continue;
+      } catch {
+        // Ignore paths outside this workspace member, but retain the read tool below.
+      }
     }
+    const kind: SessionEnvironmentInputSourceKind = /search|grep|glob|list/i.test(call.toolId)
+      ? "search" : /shell|command|exec/i.test(call.toolId) ? "command" : /url|web|http/i.test(call.toolId) ? "url" : "tool";
+    const label = call.inputSummary?.trim() || call.toolId;
+    sources.set(`${kind}:${call.toolId}:${label}`, { kind, label });
   }
-  return [...paths];
+  return [...sources.values()];
 }
 
 /** Tools whose execution means "this session wrote to that path". */
@@ -228,26 +244,30 @@ const AGENT_WRITE_TOOL_IDS = new Set([
 
 function readAgentEditedPaths(sessionId: string, workspacePath: string, primaryPath: string): Set<string> {
   const paths = new Set<string>();
+  const add = (candidate: unknown) => {
+    if (typeof candidate !== "string" || !candidate.trim()) return;
+    try { paths.add(memberRelativePath(candidate, workspacePath, primaryPath)); }
+    catch { /* Ignore paths outside this workspace member. */ }
+  };
   for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
-    if (!AGENT_WRITE_TOOL_IDS.has(call.toolId)) continue;
-    const input = call.inputRef;
-    if (!input || typeof input !== "object") continue;
-    if (call.toolId === "file.patch") {
-      for (const path of patchFilePaths((input as { patch?: unknown }).patch)) {
-        try {
-          paths.add(memberRelativePath(path, workspacePath, primaryPath));
-        } catch {
-          // Ignore malformed/blocked historical paths.
-        }
+    if (call.status !== "completed") continue;
+    const raw = call.inputRef;
+    if (!raw || typeof raw !== "object") continue;
+    const envelope = raw as Record<string, unknown>;
+    const input = envelope.nativeTool && typeof envelope.nativeTool === "object"
+      ? envelope.nativeTool as Record<string, unknown> : envelope;
+    if (call.toolId === "codex.fileChange") {
+      // Codex sends the definitive changed paths with the completed result.
+      const changes = Array.isArray(call.outputRef) ? call.outputRef : input.changes;
+      if (Array.isArray(changes)) for (const change of changes) {
+        if (change && typeof change === "object") add((change as { path?: unknown }).path);
       }
-      continue;
-    }
-    const candidate = (input as { path?: unknown }).path;
-    if (typeof candidate !== "string" || !candidate.trim()) continue;
-    try {
-      paths.add(memberRelativePath(candidate, workspacePath, primaryPath));
-    } catch {
-      // Ignore malformed/blocked historical paths.
+    } else if (/^claude-code\.(Write|Edit|NotebookEdit)$/.test(call.toolId)) {
+      add(input.file_path ?? input.notebook_path);
+    } else if (call.toolId === "file.patch") {
+      for (const candidate of patchFilePaths(input.patch)) add(candidate);
+    } else if (AGENT_WRITE_TOOL_IDS.has(call.toolId)) {
+      add(input.path);
     }
   }
   return paths;
@@ -327,14 +347,15 @@ async function computeRepository(
   const empty: SessionEnvironmentRepository = {
     rootId: root.id, name: root.name, role: root.role, status: "ready",
     workspacePath: root.path, branch: "", headCommitSha: "", dirty: false,
-    additions: 0, deletions: 0, changedFiles: [], agentChangedFiles: [], inputFiles: [],
+    additions: 0, deletions: 0, changedFiles: [], agentChangedFiles: [], inputSources: [],
   };
   let workspacePath: string;
   try { workspacePath = canonicalWorkspaceDirectory(root.path); }
   catch { return { ...empty, status: "missing" }; }
+  const edited = readAgentEditedPaths(sessionId, workspacePath, primaryPath);
   const repoRoot = (await git(workspacePath, ["rev-parse", "--show-toplevel"])).trim();
   if (!repoRoot || canonicalWorkspaceDirectory(repoRoot) !== workspacePath) {
-    return { ...empty, status: "not_repository" };
+    return { ...empty, inputSources: readInputSources(sessionId, workspacePath, primaryPath), status: "not_repository" };
   }
   const [branchRaw, headCommitShaRaw, statusRaw, numstatRaw] =
     await Promise.all([
@@ -393,7 +414,6 @@ async function computeRepository(
     });
   }
 
-  const edited = readAgentEditedPaths(sessionId, workspacePath, primaryPath);
   return {
     ...empty, workspacePath,
     branch: branchRaw.trim() || "HEAD",
@@ -403,7 +423,7 @@ async function computeRepository(
     deletions: changedFiles.reduce((sum, file) => sum + file.deletions, 0),
     changedFiles,
     agentChangedFiles: changedFiles.filter(file => edited.has(file.path)),
-    inputFiles: readInputFiles(sessionId, workspacePath, primaryPath),
+    inputSources: readInputSources(sessionId, workspacePath, primaryPath),
   };
 }
 

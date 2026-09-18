@@ -281,6 +281,21 @@ describe('AgentInteractionPanel', () => {
     await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith('s1', 'plan1', { revision: 3, action: 'execute' }))
   })
 
+  it('lets the user execute the current saved plan from its original card', async () => {
+    const saved = { ...session, status: 'completed' as const, sessionMetadata: { mode: 'plan', plan: { ...plan.request.plan!, status: 'saved' as const, revision: 3 } } }
+    useAgentSessionStore.setState({ sessions: [saved] })
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({ interactions: [{ ...plan, status: 'cancelled', response: { revision: 3, action: 'cancel' } }] })
+    const original = useAgentSessionStore.getState().sendSessionMessage
+    const send = vi.fn(async () => {})
+    useAgentSessionStore.setState({ sendSessionMessage: send })
+    try {
+      render(<AgentInteractionPanel session={saved} />)
+      fireEvent.click(await screen.findByLabelText('Approve plan v3 — Deferred'))
+      fireEvent.click(screen.getByRole('button', { name: 'Start execution' }))
+      await waitFor(() => expect(send).toHaveBeenCalledWith('s1', { message: 'Execute saved plan v3: Approve plan.' }))
+    } finally { useAgentSessionStore.setState({ sendSessionMessage: original }) }
+  })
+
   it('loads after the parent selects the session, even if the panel mounted before selection', async () => {
     useAgentSessionStore.setState({ selectedSessionId: null })
     render(<AgentInteractionPanel session={session} />)

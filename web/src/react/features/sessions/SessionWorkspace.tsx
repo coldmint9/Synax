@@ -1,8 +1,9 @@
 import './agentControls.css'
 import { memo, useEffect, useMemo, useState } from 'react'
+import { SessionTodoPanel } from './SessionTodoPanel'
 import { SessionCacheCard } from './SessionCacheCard'
 import { ContextCompositionBar } from './ContextCompositionBar'
-import { ChevronRight, Target, CheckCircle2, Circle, Clock, FileEdit, FilePlus, FileX, File, Loader2, Users } from 'lucide-react'
+import { ChevronRight, Target, Clock, FileEdit, FilePlus, FileX, File, Users } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAgentSessionStore } from './agentSessionStore'
 import type { AgentSession, SessionStats, TodoItem, AgentRunStep } from '../../../lib/api/agentRuntime'
@@ -49,7 +50,6 @@ export function SessionStatusCard({
   session,
   runs = [],
   steps,
-  todos,
   status,
 }: {
   stats: SessionStats
@@ -57,7 +57,7 @@ export function SessionStatusCard({
   runs?: AgentRun[]
   status?: AgentSession['status']
   steps: AgentRunStep[]
-  todos: TodoItem[]
+  todos?: TodoItem[]
 }) {
   const { locale } = useLocale()
   const [tick, setTick] = useState(0)
@@ -105,7 +105,6 @@ export function SessionStatusCard({
           <dt>Effort</dt><dd className="text-foreground/80">{runtime.reasoningEffort ?? '—'}</dd>
         </div>
       </dl>
-      <TodoCard items={todos} />
       <div className="flex items-center gap-3 text-[9px] text-muted-foreground">
         {stats.activeSubAgentCount > 0 && (
           <span className="flex items-center gap-1"><Users size={9} />{stats.activeSubAgentCount} active</span>
@@ -152,56 +151,6 @@ export function SessionModeSummary({ session }: { session: AgentSession }) {
       </div>
       {goal?.reason && <p className="pb-1 text-[11px] leading-relaxed text-warning">{goal.reason}</p>}
     </details>
-  )
-}
-
-function TodoCard({ items }: { items: TodoItem[] }) {
-  const hasItems = items.length > 0
-  const [open, setOpen] = useState(false)
-
-  useEffect(() => {
-    if (!hasItems) {
-      setOpen(false)
-      return
-    }
-    const id = requestAnimationFrame(() => setOpen(true))
-    return () => cancelAnimationFrame(id)
-  }, [hasItems])
-
-  if (!hasItems) return null
-
-  const done = items.filter(i => i.status === 'done').length
-
-  return (
-    <div
-      className="grid transition-[grid-template-rows] duration-300 ease-out"
-      style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
-    >
-      <div className="overflow-hidden">
-        <div
-          className={`rounded-md border border-border/40 bg-muted/20 px-1.5 py-1.5 transition-opacity duration-300 ${
-            open ? 'opacity-100' : 'opacity-0'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">TODO</span>
-            <span className="text-[9px] text-muted-foreground/60">{done}/{items.length}</span>
-          </div>
-          <ul className="mt-1 space-y-0.5">
-            {items.map(item => (
-              <li key={item.id} className="flex items-center gap-1.5 text-[10px]">
-                {item.status === 'done' && <CheckCircle2 size={10} className="shrink-0 text-success" />}
-                {item.status === 'in_progress' && <Loader2 size={10} className="shrink-0 animate-spin text-warning" />}
-                {item.status === 'pending' && <Circle size={10} className="shrink-0 text-muted-foreground/40" />}
-                <span className={item.status === 'done' ? 'line-through text-muted-foreground/60' : 'text-foreground/80'}>
-                  {item.label}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -255,13 +204,8 @@ export const SessionWorkspace = memo(function SessionWorkspace() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto text-[10px]">
       {session && <SessionModeSummary session={session} />}
-      {sessionStats ? (
-        <SessionStatusCard stats={sessionStats} session={session} runs={runs} steps={steps} todos={sessionTodos} />
-      ) : sessionTodos.length > 0 ? (
-        <div className="border-b border-border/40 px-2 py-2">
-          <TodoCard items={sessionTodos} />
-        </div>
-      ) : null}
+      <SessionTodoPanel items={sessionTodos} />
+      {sessionStats && <SessionStatusCard stats={sessionStats} session={session} runs={runs} steps={steps} />}
       {sessionCapabilities && <SessionCapabilitiesPanel capabilities={sessionCapabilities} />}
       <FilesCard files={fileChanges} />
     </div>
