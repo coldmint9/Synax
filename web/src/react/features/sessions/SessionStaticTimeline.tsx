@@ -87,30 +87,16 @@ const TimelineRows = memo(function TimelineRows({
 function LiveTimelineTail({ entries, ...props }: RowsProps) {
   const live = useAgentSessionStore((s) => s.streamingLive)
   const liveId = useAgentSessionStore((s) => s.streamingStepId)
-  const combined = useMemo(
-    () =>
-      groupActivityEntries(
-        liveId
-          ? [
-              ...entries,
-              {
-                id: liveId,
-                kind: 'agent',
-                createdAt: '',
-                label: '',
-                turn: {
-                  stepId: liveId,
-                  index: 0,
-                  status: 'running',
-                  duration: null,
-                  blocks: materializeLiveBlocks(live),
-                },
-              } as ConversationTimelineEntry,
-            ]
-          : entries,
-      ),
-    [entries, live, liveId],
-  )
+  const combined = useMemo(() => {
+    if (!liveId) return groupActivityEntries(entries)
+    const rows = [...entries]
+    const interactionIndex = rows.findIndex(entry => entry.kind === 'interaction' && entry.interaction.stepId === liveId)
+    rows.splice(interactionIndex < 0 ? rows.length : interactionIndex, 0, {
+      id: liveId, kind: 'agent', createdAt: '', label: '',
+      turn: { stepId: liveId, index: 0, status: 'running', duration: null, blocks: materializeLiveBlocks(live) },
+    })
+    return groupActivityEntries(rows)
+  }, [entries, live, liveId])
   return <TimelineRows {...props} entries={combined} />
 }
 
@@ -142,8 +128,9 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
     })
     const stepIds = new Set(steps.map((step) => step.id))
     for (const snapshot of snapshots ?? []) {
-      if (!stepIds.has(snapshot.stepId))
-        entries.push({
+      if (!stepIds.has(snapshot.stepId)) {
+        const interactionIndex = entries.findIndex(entry => entry.kind === 'interaction' && entry.interaction.stepId === snapshot.stepId)
+        entries.splice(interactionIndex < 0 ? entries.length : interactionIndex, 0, {
           id: snapshot.stepId,
           kind: 'agent',
           createdAt: '',
@@ -156,14 +143,19 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
             blocks: snapshot.blocks,
           },
         })
+      }
     }
     return entries
   }, [runs, steps, messages, toolCalls, childSessions, excludeStepId, session, foldWorkRuns, snapshots, interactions])
   const { history, tail } = useMemo(() => {
     let boundary = timeline.length
-    if (showLive) while (boundary > 0 && timeline[boundary - 1].kind === 'agent') boundary--
+    if (showLive) while (boundary > 0) {
+      const entry = timeline[boundary - 1]
+      if (entry.kind !== 'agent' && !(entry.kind === 'interaction' && entry.interaction.stepId === liveId)) break
+      boundary--
+    }
     return { history: groupActivityEntries(timeline.slice(0, boundary)), tail: timeline.slice(boundary) }
-  }, [timeline, showLive])
+  }, [timeline, showLive, liveId])
 
   if (timeline.length === 0 && !showLive)
     return (

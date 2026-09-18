@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useSessionList } from './useSessionList'
 import { SessionListHeader } from './SessionListHeader'
@@ -10,24 +10,11 @@ import type { SessionListView } from './sessionBuckets'
 import { getSessionDisplayTitle } from './useSessionDisplayTitle'
 import { sessionsPath, workflowSessionsPath } from './sessionRoutes'
 import { clearSessionLastVisit, loadSessionLastVisit } from './sessionLastVisit'
-import { SessionProfilePanel } from './SessionProfilePanel'
 
 interface Props {
   listView?: SessionListView
   projectId: string
   onCollapsePanel?: () => void
-}
-
-const SESSION_LIST_SPLIT_KEY = 'synax-sessions-list-split'
-const SESSION_LIST_SPLIT_MIN = 0.25
-const SESSION_LIST_SPLIT_MAX = 0.85
-
-/** Ratio of the panel height given to the session list; null = built-in ratio. */
-function readStoredListSplit(): number | null {
-  if (typeof window === 'undefined') return null
-  const value = Number(window.localStorage.getItem(SESSION_LIST_SPLIT_KEY))
-  if (!Number.isFinite(value) || value <= 0) return null
-  return Math.min(SESSION_LIST_SPLIT_MAX, Math.max(SESSION_LIST_SPLIT_MIN, value))
 }
 
 export function SessionListPanel({ listView = 'sessions', projectId, onCollapsePanel }: Props) {
@@ -40,62 +27,6 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [showClear, setShowClear] = useState(false)
-  const [listSplit, setListSplit] = useState<number | null>(readStoredListSplit)
-  const rootRef = useRef<HTMLDivElement>(null)
-  const sessionCardRef = useRef<HTMLDivElement>(null)
-  const splitDragRef = useRef<{ startY: number; startSplit: number; height: number } | null>(null)
-
-  const cleanupRef = useRef<(() => void) | null>(null)
-  useEffect(() => () => cleanupRef.current?.(), [])
-
-  const startListSplitDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const root = rootRef.current
-    const sessionCard = sessionCardRef.current
-    if (!root || !sessionCard) return
-    const height = root.getBoundingClientRect().height
-    if (height <= 0) return
-    event.preventDefault()
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-    cleanupRef.current?.()
-    let frame = 0
-    let pendingSplit = sessionCard.getBoundingClientRect().height / height
-    splitDragRef.current = {
-      startY: event.clientY,
-      startSplit: sessionCard.getBoundingClientRect().height / height,
-      height,
-    }
-    const handleMove = (move: PointerEvent) => {
-      const drag = splitDragRef.current
-      if (!drag) return
-      const next = drag.startSplit + (move.clientY - drag.startY) / drag.height
-      const clamped = Math.min(SESSION_LIST_SPLIT_MAX, Math.max(SESSION_LIST_SPLIT_MIN, next))
-      pendingSplit = clamped
-      if (!frame)
-        frame = requestAnimationFrame(() => {
-          frame = 0
-          setListSplit(pendingSplit)
-        })
-    }
-    const handleUp = () => {
-      if (frame) cancelAnimationFrame(frame)
-      setListSplit(pendingSplit)
-      try {
-        window.localStorage.setItem(SESSION_LIST_SPLIT_KEY, String(pendingSplit))
-      } catch {
-        /* storage may be unavailable */
-      }
-      splitDragRef.current = null
-      cleanupRef.current = null
-      window.removeEventListener('pointercancel', handleUp)
-      window.removeEventListener('pointermove', handleMove)
-      window.removeEventListener('pointerup', handleUp)
-    }
-    cleanupRef.current = handleUp
-    window.addEventListener('pointercancel', handleUp)
-    window.addEventListener('pointermove', handleMove)
-    window.addEventListener('pointerup', handleUp)
-  }, [])
-
   useEffect(() => {
     if (!projectId || !list.isProjectReady) return
     void refresh({ joinPending: true })
@@ -111,11 +42,9 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
   }
 
   return (
-    <div ref={rootRef} className="session-list-panel flex h-full min-h-0 flex-col">
+    <div className="session-list-panel flex h-full min-h-0 flex-col">
       <div
-        ref={sessionCardRef}
         className="session-list-card session-list-card--sessions min-h-0"
-        style={listSplit === null ? undefined : { flexBasis: `${(listSplit * 100).toFixed(2)}%` }}
       >
         <SessionListHeader
           listView={listView}
@@ -151,17 +80,6 @@ export function SessionListPanel({ listView = 'sessions', projectId, onCollapseP
           />
         </div>
       </div>
-      <div
-        className="session-list-resizer-h"
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label={t('sessionListSplitResize')}
-        onPointerDown={startListSplitDrag}
-      />
-      <div className="session-list-card session-list-card--profile min-h-0">
-        <SessionProfilePanel sessionId={list.selectedId} />
-      </div>
-
       <SessionDeleteDialog
         isOpen={deleteId !== null}
         sessionTitle={deleteTitle}

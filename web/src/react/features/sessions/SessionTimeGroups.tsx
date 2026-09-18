@@ -78,7 +78,6 @@ export function SessionTimeGroups({
     )
   }
 
-  const totalItems = nonEmptyGroups.reduce((sum, g) => sum + g.sessions.length, 0)
 
   let remaining = visibleCount
   return (
@@ -137,9 +136,7 @@ export function SessionTimeGroups({
           {locale === 'zh' ? '加载更多' : 'Load more'}
         </button>
       )}
-      {!hasMore && visibleCount >= totalRows && totalItems > 0 && (
-        <div className="py-2.5 text-center text-[9px] text-muted-foreground/40">All loaded</div>
-      )}
+
     </div>
   )
 }

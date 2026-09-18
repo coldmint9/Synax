@@ -73,8 +73,8 @@ describe('session environment Git ignore filtering', () => {
     git('add', '--force', 'generated/staged.js')
     git('rm', '--quiet', 'generated/deleted.js')
     mocks.listToolCalls.mockReturnValue([
-      { toolId: 'edit', inputRef: { path: 'src/main.ts' } },
-      { toolId: 'edit', inputRef: { path: 'generated/build.js' } },
+      { toolId: 'edit', status: 'completed', inputRef: { path: 'src/main.ts' } },
+      { toolId: 'edit', status: 'completed', inputRef: { path: 'generated/build.js' } },
     ])
 
     const environment = await getSessionEnvironment(sessionId)
@@ -134,3 +134,44 @@ describe('session environment Git ignore filtering', () => {
     expect(environment.deletions).toBe(0)
   })
 })
+
+describe('session output files', () => {
+  it('keeps committed outputs and excludes failed writes, deleted files and other repositories', async () => {
+    write('docs/output.md', '# Result\n')
+    write('docs/failed.md', 'existing content\n')
+    git('add', 'docs')
+    git('commit', '--quiet', '-m', 'save output')
+    mocks.listToolCalls.mockReturnValue([
+      { toolId: 'file.write', status: 'completed', inputRef: { path: 'docs/output.md' } },
+      { toolId: 'edit', status: 'completed', inputRef: { path: 'docs/output.md' } },
+      { toolId: 'file.write', status: 'failed', inputRef: { path: 'docs/failed.md' } },
+      { toolId: 'file.delete', status: 'completed', inputRef: { path: 'docs/deleted.md' } },
+      { toolId: 'file.write', status: 'completed', inputRef: { path: '../outside.md' } },
+    ])
+    const environment = await getSessionEnvironment(sessionId)
+    expect(environment.changedFiles).toEqual([])
+    expect(environment.outputFiles).toEqual(['docs/output.md'])
+    expect(environment.repositories[0].outputFiles).toEqual(['docs/output.md'])
+  })
+
+  it('lists outputs from a workspace without a Git repository', async () => {
+    fs.rmSync(path.join(workspace, '.git'), { recursive: true, force: true })
+    write('result.md', 'Result\n')
+    mocks.listToolCalls.mockReturnValue([{ toolId: 'file.write', status: 'completed', inputRef: { path: 'result.md' } }])
+    const environment = await getSessionEnvironment(sessionId)
+    expect(environment.repositories[0].status).toBe('not_repository')
+    expect(environment.outputFiles).toEqual(['result.md'])
+  })
+})
+
+ it('attributes Codex and Claude file outputs from successful structured tool records', async () => {
+    write('docs/codex.md', 'codex output')
+    write('docs/claude.md', 'claude output')
+    mocks.listToolCalls.mockReturnValue([
+      { toolId: 'codex.fileChange', status: 'completed', inputRef: {}, outputRef: [{ path: path.join(workspace, 'docs/codex.md') }] },
+      { toolId: 'claude-code.Write', status: 'completed', inputRef: { nativeTool: { file_path: path.join(workspace, 'docs/claude.md') }, approvalRequest: {} } },
+      { toolId: 'claude-code.Read', status: 'completed', inputRef: { file_path: 'src/main.ts' } },
+    ])
+    const environment = await getSessionEnvironment(sessionId)
+    expect(environment.outputFiles).toEqual(['docs/codex.md', 'docs/claude.md'])
+  })

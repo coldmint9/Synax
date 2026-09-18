@@ -1,16 +1,7 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   Check,
-  ChevronDown,
   ChevronRight,
   FileCode2,
   FileDiff,
@@ -28,9 +19,14 @@ import type {
   EnvironmentChangeStatus,
   SessionEnvironment,
   SessionEnvironmentFile,
+  SessionEnvironmentInputSource,
   SessionEnvironmentRepository,
   SessionEnvironmentSubagent,
 } from "../../../lib/api/agentRuntime";
+import { WorkspaceSection as WorkspaceCard } from "./WorkspaceSection";
+import { SessionTodoPanel } from "./SessionTodoPanel";
+import { SessionProfilePanel } from "./SessionProfilePanel";
+import { useAgentSessionStore } from "./agentSessionStore";
 import { useWorkspaceCopy } from "../workspace/workspaceCopy";
 import "../workspace/workspaceProjects.css";
 import { copyTextToClipboard } from "../../../lib/clipboard";
@@ -47,6 +43,8 @@ import { SessionBackgroundProcesses } from "./SessionBackgroundProcesses";
 import { SessionCommitDialog } from "./SessionCommitDialog";
 import { useSessionEnvironment } from "./useSessionEnvironment";
 
+const EMPTY_TODOS: import("../../../lib/api/agentRuntime").TodoItem[] = [];
+
 function fileName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath;
 }
@@ -59,7 +57,9 @@ interface ChangedFileDirectory {
 }
 
 /** Build a display-only directory tree without changing the environment API. */
-function buildChangedFileTree(files: SessionEnvironmentFile[]): ChangedFileDirectory {
+function buildChangedFileTree(
+  files: SessionEnvironmentFile[],
+): ChangedFileDirectory {
   const root: ChangedFileDirectory = {
     name: "",
     path: "",
@@ -94,7 +94,9 @@ function buildChangedFileTree(files: SessionEnvironmentFile[]): ChangedFileDirec
 
   const sort = (directory: ChangedFileDirectory) => {
     directory.directories.sort((a, b) => a.name.localeCompare(b.name));
-    directory.files.sort((a, b) => fileName(a.path).localeCompare(fileName(b.path)));
+    directory.files.sort((a, b) =>
+      fileName(a.path).localeCompare(fileName(b.path)),
+    );
     directory.directories.forEach(sort);
   };
   sort(root);
@@ -191,6 +193,181 @@ function subagentPreview(sub: SessionEnvironmentSubagent): string {
   return body || sub.prompt.trim();
 }
 
+function ProjectSection({
+  icon,
+  title,
+  count,
+  actions,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  count: number;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="ws-project-section">
+      <div className="ws-project-section-head">
+        <span className="ws-card-icon">{icon}</span>
+        <span>{title}</span>
+        <span className="ws-card-count">{count}</span>
+        {actions && (
+          <span className="ws-project-section-actions">{actions}</span>
+        )}
+      </div>
+      <div className="ws-project-section-body">{children}</div>
+    </section>
+  );
+}
+
+function RepositoryProjectCard({
+  sessionId,
+  environment,
+  repository,
+  loading,
+  reload,
+  changedFilesView,
+  onChangedFilesView,
+  copiedPath,
+  onCopyPath,
+}: {
+  sessionId: string;
+  environment: SessionEnvironment;
+  repository: SessionEnvironmentRepository;
+  loading: boolean;
+  reload: () => void | Promise<void>;
+  changedFilesView: "tree" | "flat";
+  onChangedFilesView: (view: "tree" | "flat") => void;
+  copiedPath: string | null;
+  onCopyPath: (path: string) => void;
+}) {
+  const { t, locale } = useLocale();
+  const [commitOpen, setCommitOpen] = useState(false);
+  const changedFiles = repository.changedFiles;
+  const changedFileTree = useMemo(
+    () => buildChangedFileTree(changedFiles),
+    [changedFiles],
+  );
+  const recentSources = (repository.inputSources ?? []).slice(-8).reverse();
+  const stagedFiles = changedFiles.filter((file) => file.staged).length;
+  const openDiff = (filePath: string) => {
+    openWorkspaceDiff(sessionId, filePath, repository.rootId, repository.name);
+  };
+
+  return (
+    <WorkspaceCard
+      className="ws-project-card"
+      icon={<Folder size={13} />}
+      title={repository.name}
+      count={changedFiles.length || undefined}
+      summary={repository.branch || null}
+    >
+      {changedFiles.length > 0 && (
+        <ProjectSection
+          icon={<FileDiff size={13} />}
+          title={t("workspaceCardGitChanges")}
+          count={changedFiles.length}
+          actions={
+            <div className="ws-project-section-actions-group">
+              <div
+                className="ws-view-toggle"
+                role="group"
+                aria-label={t("workspaceChangeView")}
+              >
+                <button
+                  type="button"
+                  aria-label={t("workspaceTreeView")}
+                  title={t("workspaceTreeView")}
+                  aria-pressed={changedFilesView === "tree"}
+                  onClick={() => onChangedFilesView("tree")}
+                >
+                  <FolderTree size={11} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={t("workspaceFlatView")}
+                  title={t("workspaceFlatView")}
+                  aria-pressed={changedFilesView === "flat"}
+                  onClick={() => onChangedFilesView("flat")}
+                >
+                  <List size={11} />
+                </button>
+              </div>
+              <button
+                type="button"
+                className="ws-repo-action"
+                onClick={() => setCommitOpen(true)}
+                title={t("workspaceCommitPush")}
+              >
+                <GitCommit size={10} />
+                <span>{t("workspaceCommitPush")}</span>
+              </button>
+            </div>
+          }
+        >
+          {stagedFiles > 0 && (
+            <div className="ws-project-section-summary">
+              {t("workspaceStagedCount", { count: stagedFiles })}
+            </div>
+          )}
+          {changedFiles.length === 0 ? (
+            <div className="ws-empty">{t("workspaceNoChanges")}</div>
+          ) : changedFilesView === "tree" ? (
+            <ChangedFileTree directory={changedFileTree} onOpen={openDiff} />
+          ) : (
+            changedFiles.map((file) => (
+              <ChangedFileRow
+                key={`${file.status}:${file.path}`}
+                file={file}
+                onOpen={() => openDiff(file.path)}
+              />
+            ))
+          )}
+        </ProjectSection>
+      )}
+      {recentSources.length > 0 && (
+        <ProjectSection
+          icon={<FileCode2 size={13} />}
+          title={t("workspaceCardInputSources")}
+          count={recentSources.length}
+        >
+          {recentSources.map((source) => (
+            <InputSourceRow
+              key={`${source.kind}:${source.label}`}
+              source={source}
+              copied={copiedPath === source.label}
+              onOpen={
+                source.path
+                  ? () =>
+                      openWorkspaceFile(
+                        sessionId,
+                        source.path!,
+                        null,
+                        repository.rootId,
+                        repository.name,
+                      )
+                  : undefined
+              }
+              onCopy={() => onCopyPath(source.label)}
+            />
+          ))}
+        </ProjectSection>
+      )}
+      <SessionCommitDialog
+        isOpen={commitOpen}
+        sessionId={environment.sessionId}
+        rootId={repository.rootId}
+        rootName={repository.name}
+        branch={repository.branch}
+        changedFiles={changedFiles.length}
+        onClose={() => setCommitOpen(false)}
+        onCommitted={() => void reload()}
+      />
+    </WorkspaceCard>
+  );
+}
+
 export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   sessionId,
   environment: providedEnvironment,
@@ -202,7 +379,10 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   loading?: boolean;
   reload?: () => void | Promise<void>;
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const todos = useAgentSessionStore((state) =>
+    state.selectedSessionId === sessionId ? state.sessionTodos : EMPTY_TODOS,
+  );
   const c = useWorkspaceCopy();
   // The workspace panel already polls this snapshot; only fall back to owning
   // the request when rendered standalone.
@@ -214,17 +394,31 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   const loading = providedLoading ?? owned.loading;
   const reload = providedReload ?? owned.reload;
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
-  const [changedFilesView, setChangedFilesView] = useState<"tree" | "flat">("tree");
-  const selectedRootId = useSessionWorkspaceStore(state => sessionId ? state.sessions[sessionId]?.selectedRootId : undefined);
-  const selectRepository = useSessionWorkspaceStore(state => state.selectRepository);
+  const [changedFilesView, setChangedFilesView] = useState<"tree" | "flat">(
+    "flat",
+  );
+  const selectedRootId = useSessionWorkspaceStore((state) =>
+    sessionId ? state.sessions[sessionId]?.selectedRootId : undefined,
+  );
+  const selectRepository = useSessionWorkspaceStore(
+    (state) => state.selectRepository,
+  );
   const repositories = environment?.repositories ?? [];
-  const repository = repositories.find(root => root.rootId === selectedRootId)
-    ?? repositories.find(root => root.role === "primary")
-    ?? repositories[0];
-  const repositoryEnvironment = environment && repository ? { ...environment, ...repository } : environment;
+  const repository =
+    repositories.find((root) => root.rootId === selectedRootId) ??
+    repositories.find((root) => root.role === "primary") ??
+    repositories[0];
+  const repositoryEnvironment =
+    environment && repository ? { ...environment, ...repository } : environment;
   const openDiff = (filePath: string) => {
     if (!sessionId) return;
-    if (repository) openWorkspaceDiff(sessionId, filePath, repository.rootId, repository.name);
+    if (repository)
+      openWorkspaceDiff(
+        sessionId,
+        filePath,
+        repository.rootId,
+        repository.name,
+      );
     else openWorkspaceDiff(sessionId, filePath);
   };
   const copiedTimer = useRef<number | null>(null);
@@ -244,9 +438,9 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
     [],
   );
 
-  const recentFiles = useMemo(
-    () => (repositoryEnvironment?.inputFiles ?? []).slice(-8).reverse(),
-    [repositoryEnvironment?.inputFiles],
+  const recentSources = useMemo(
+    () => (repositoryEnvironment?.inputSources ?? []).slice(-8).reverse(),
+    [repositoryEnvironment?.inputSources],
   );
   const changedFiles = repositoryEnvironment?.changedFiles ?? [];
   const changedFileTree = useMemo(
@@ -259,46 +453,227 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   ).length;
   const stagedFiles = changedFiles.filter((file) => file.staged).length;
 
+  if (sessionId && environment && repositories.length > 0) {
+    return (
+      <div className="workspace-dashboard session-workspace-scroll min-h-0 flex-1 overflow-y-auto">
+        <SessionTodoPanel key={sessionId} items={todos} />
+        {repositories.map((root) => (
+          <RepositoryProjectCard
+            key={root.rootId}
+            sessionId={sessionId}
+            environment={environment}
+            repository={root}
+            loading={loading}
+            reload={reload}
+            changedFilesView={changedFilesView}
+            onChangedFilesView={setChangedFilesView}
+            copiedPath={copiedPath}
+            onCopyPath={(path) => void copyPath(path)}
+          />
+        ))}
+        {subagents.length > 0 && (
+          <WorkspaceCard
+            icon={<Bot size={13} />}
+            title={t("workspaceCardSubagents")}
+            count={subagents.length}
+            summary={
+              runningSubagents > 0
+                ? t("workspaceRunningCount", { count: runningSubagents })
+                : null
+            }
+          >
+            {subagents.map((sub) => (
+              <SubagentRow
+                key={sub.id}
+                sub={sub}
+                onOpen={() =>
+                  openWorkspaceSubagent(
+                    sessionId,
+                    sub.id,
+                    subagentHeadline(sub),
+                  )
+                }
+              />
+            ))}
+          </WorkspaceCard>
+        )}
+        <SessionBackgroundProcesses sessionId={sessionId} />
+        <SessionProfilePanel sessionId={sessionId} />
+      </div>
+    );
+  }
+
   return (
     <div className="workspace-dashboard session-workspace-scroll min-h-0 flex-1 overflow-y-auto">
-      {sessionId && (
-        <SessionBackgroundProcesses key={sessionId} sessionId={sessionId} />
-      )}
+      {sessionId && <SessionTodoPanel items={todos} />}
       {!sessionId ? (
         <div className="ws-placeholder">{t("workspaceSelectSession")}</div>
       ) : environment && repositoryEnvironment ? (
         <>
           {repositories.length > 1 && (
             <section className="ws-project-switcher" aria-label={c.members}>
-              <div className="workspace-section-label"><span className="flex items-center gap-1.5"><Layers2 size={12} />{c.members}</span><span className="workspace-count">{repositories.length}</span></div>
-              <div className="ws-project-options" role="group" aria-label={t("workspaceRepositorySelect")}>
-                {repositories.map(root => (
-                  <button key={root.rootId} type="button" className="ws-project-option"
+              <div className="workspace-section-label">
+                <span className="flex items-center gap-1.5">
+                  <Layers2 size={12} />
+                  {c.members}
+                </span>
+                <span className="workspace-count">{repositories.length}</span>
+              </div>
+              <div
+                className="ws-project-options"
+                role="group"
+                aria-label={t("workspaceRepositorySelect")}
+              >
+                {repositories.map((root) => (
+                  <button
+                    key={root.rootId}
+                    type="button"
+                    className="ws-project-option"
                     aria-pressed={repository?.rootId === root.rootId}
                     aria-label={root.name}
-                    onClick={() => selectRepository(sessionId, root.rootId)}>
-                    <span className="ws-project-option-top"><Folder size={13} /><strong title={root.name}>{root.name}</strong>{root.role === "primary" && <Pin size={10} aria-label={c.primary} />}
-                      <span className="ws-project-change-count" data-dirty={root.changedFiles.length > 0 || undefined}>{root.status === "ready" ? root.changedFiles.length || <Check size={10} /> : "!"}</span>
+                    onClick={() => selectRepository(sessionId, root.rootId)}
+                  >
+                    <span className="ws-project-option-top">
+                      <Folder size={13} />
+                      <strong title={root.name}>{root.name}</strong>
+                      {root.role === "primary" && (
+                        <Pin size={10} aria-label={c.primary} />
+                      )}
+                      <span
+                        className="ws-project-change-count"
+                        data-dirty={root.changedFiles.length > 0 || undefined}
+                      >
+                        {root.status === "ready"
+                          ? root.changedFiles.length || <Check size={10} />
+                          : "!"}
+                      </span>
                     </span>
-                    <span className="ws-project-option-meta">{root.status === "ready" ? <><GitBranch size={10} /><span>{root.branch}</span></> : <span className="text-warning">{t(root.status === "missing" ? "workspaceRepositoryMissing" : root.status === "not_repository" ? "workspaceRepositoryNotGit" : "workspaceRepositoryError")}</span>}</span>
+                    <span className="ws-project-option-meta">
+                      {root.status === "ready" ? (
+                        <>
+                          <GitBranch size={10} />
+                          <span>{root.branch}</span>
+                        </>
+                      ) : (
+                        <span className="text-warning">
+                          {t(
+                            root.status === "missing"
+                              ? "workspaceRepositoryMissing"
+                              : root.status === "not_repository"
+                                ? "workspaceRepositoryNotGit"
+                                : "workspaceRepositoryError",
+                          )}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 ))}
               </div>
             </section>
           )}
-          <RepositoryCard
-            key={`${sessionId}:${repository?.rootId ?? "primary"}`}
-            environment={repositoryEnvironment}
-            repository={repository}
-            loading={loading}
-            reload={reload}
-          />
+          {repository && repository.status !== "ready" && (
+            <RepositoryCard
+              key={`${sessionId}:${repository?.rootId ?? "primary"}`}
+              environment={repositoryEnvironment}
+              repository={repository}
+              loading={loading}
+              reload={reload}
+            />
+          )}
+          {(!repository || repository.status === "ready") &&
+            changedFiles.length > 0 && (
+              <WorkspaceCard
+                icon={<FileDiff size={13} />}
+                title={t("workspaceCardGitChanges")}
+                count={changedFiles.length}
+                actions={
+                  <div
+                    className="ws-view-toggle"
+                    role="group"
+                    aria-label={t("workspaceChangeView")}
+                  >
+                    <button
+                      type="button"
+                      aria-label={t("workspaceTreeView")}
+                      title={t("workspaceTreeView")}
+                      aria-pressed={changedFilesView === "tree"}
+                      onClick={() => setChangedFilesView("tree")}
+                    >
+                      <FolderTree size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t("workspaceFlatView")}
+                      title={t("workspaceFlatView")}
+                      aria-pressed={changedFilesView === "flat"}
+                      onClick={() => setChangedFilesView("flat")}
+                    >
+                      <List size={11} />
+                    </button>
+                  </div>
+                }
+                summary={
+                  stagedFiles > 0
+                    ? t("workspaceStagedCount", { count: stagedFiles })
+                    : null
+                }
+              >
+                {changedFiles.length === 0 ? (
+                  <div className="ws-empty">{t("workspaceNoChanges")}</div>
+                ) : changedFilesView === "tree" ? (
+                  <ChangedFileTree
+                    key={repository?.rootId}
+                    directory={changedFileTree}
+                    onOpen={openDiff}
+                  />
+                ) : (
+                  changedFiles.map((file) => (
+                    <ChangedFileRow
+                      key={`${file.status}:${file.path}`}
+                      file={file}
+                      onOpen={() => openDiff(file.path)}
+                    />
+                  ))
+                )}
+              </WorkspaceCard>
+            )}
 
+          {recentSources.length > 0 && (
+            <WorkspaceCard
+              defaultOpen={false}
+              icon={<FileCode2 size={13} />}
+              title={t("workspaceCardInputSources")}
+              count={recentSources.length}
+            >
+              {recentSources.map((source) => (
+                <InputSourceRow
+                  key={`${source.kind}:${source.label}`}
+                  source={source}
+                  copied={copiedPath === source.label}
+                  onOpen={
+                    source.path
+                      ? () =>
+                          repository
+                            ? openWorkspaceFile(
+                                sessionId,
+                                source.path!,
+                                null,
+                                repository.rootId,
+                                repository.name,
+                              )
+                            : openWorkspaceFile(sessionId, source.path!)
+                      : undefined
+                  }
+                  onCopy={() => void copyPath(source.label)}
+                />
+              ))}
+            </WorkspaceCard>
+          )}
           {/* Only meaningful once the session actually spawned subagents — an
               empty placeholder here is pure noise. */}
           {subagents.length > 0 ? (
             <WorkspaceCard
-              icon={<Bot size={11} />}
+              icon={<Bot size={13} />}
               title={t("workspaceCardSubagents")}
               count={subagents.length}
               summary={
@@ -322,136 +697,19 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               ))}
             </WorkspaceCard>
           ) : null}
-
-          {(!repository || repository.status === "ready") && <WorkspaceCard
-            icon={<FileDiff size={11} />}
-            title={t("workspaceCardGitChanges")}
-            count={changedFiles.length}
-            actions={(
-              <div className="ws-view-toggle" role="group" aria-label={t("workspaceChangeView")}>
-                <button
-                  type="button"
-                  aria-label={t("workspaceTreeView")}
-                  title={t("workspaceTreeView")}
-                  aria-pressed={changedFilesView === "tree"}
-                  onClick={() => setChangedFilesView("tree")}
-                >
-                  <FolderTree size={11} />
-                </button>
-                <button
-                  type="button"
-                  aria-label={t("workspaceFlatView")}
-                  title={t("workspaceFlatView")}
-                  aria-pressed={changedFilesView === "flat"}
-                  onClick={() => setChangedFilesView("flat")}
-                >
-                  <List size={11} />
-                </button>
-              </div>
-            )}
-            summary={
-              stagedFiles > 0
-                ? t("workspaceStagedCount", { count: stagedFiles })
-                : null
-            }
-          >
-            {changedFiles.length === 0 ? (
-              <div className="ws-empty">{t("workspaceNoChanges")}</div>
-            ) : changedFilesView === "tree" ? (
-              <ChangedFileTree
-                key={repository?.rootId}
-                directory={changedFileTree}
-                onOpen={openDiff}
-              />
-            ) : (
-              changedFiles.map((file) => (
-                <ChangedFileRow
-                  key={`${file.status}:${file.path}`}
-                  file={file}
-                  onOpen={() => openDiff(file.path)}
-                />
-              ))
-            )}
-          </WorkspaceCard>}
-
-          <WorkspaceCard
-            icon={<FileCode2 size={11} />}
-            title={t("workspaceCardInputFiles")}
-            count={recentFiles.length}
-          >
-            {recentFiles.length === 0 ? (
-              <div className="ws-empty">{t("workspaceNoInputFiles")}</div>
-            ) : (
-              recentFiles.map((path) => (
-                <InputFileRow
-                  key={path}
-                  path={path}
-                  copied={copiedPath === path}
-                  onOpen={() => repository
-                    ? openWorkspaceFile(sessionId, path, null, repository.rootId, repository.name)
-                    : openWorkspaceFile(sessionId, path)}
-                  onCopy={() => void copyPath(path)}
-                />
-              ))
-            )}
-          </WorkspaceCard>
         </>
       ) : loading ? (
         <div className="ws-placeholder">{t("workspaceLoading")}</div>
       ) : null}
+      {sessionId && (
+        <>
+          <SessionBackgroundProcesses key={sessionId} sessionId={sessionId} />
+          <SessionProfilePanel sessionId={sessionId} />
+        </>
+      )}
     </div>
   );
 });
-
-/** Collapsible card: header stays visible, the list scrolls inside the body. */
-function WorkspaceCard({
-  icon,
-  title,
-  count,
-  summary,
-  actions,
-  children,
-}: {
-  icon: ReactNode;
-  title: string;
-  count: number;
-  summary?: string | null;
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
-  const { t } = useLocale();
-  const [open, setOpen] = useState(true);
-
-  return (
-    <section className="ws-card" data-open={open ? "true" : "false"}>
-      <div className="ws-card-head">
-        <button
-          type="button"
-          className="ws-card-toggle"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
-        >
-          <span className="ws-card-icon">{icon}</span>
-          <span className="ws-card-title">{title}</span>
-          <span className="ws-card-count">{count}</span>
-        </button>
-        <span className="ws-card-tail">
-          {summary ? <span className="ws-card-summary">{summary}</span> : null}
-          {actions}
-          <button
-            type="button"
-            className="ws-card-collapse"
-            aria-label={open ? t("sessionCollapse") : t("sessionExpand")}
-            onClick={() => setOpen((value) => !value)}
-          >
-            <ChevronDown size={11} className="ws-card-chevron" />
-          </button>
-        </span>
-      </div>
-      {open ? <div className="ws-card-body">{children}</div> : null}
-    </section>
-  );
-}
 
 function ChangedFileTree({
   directory,
@@ -464,7 +722,7 @@ function ChangedFileTree({
 }) {
   return (
     <>
-      {directory.directories.map(child => (
+      {directory.directories.map((child) => (
         <ChangedFileFolder
           key={child.path}
           directory={child}
@@ -472,7 +730,7 @@ function ChangedFileTree({
           depth={depth}
         />
       ))}
-      {directory.files.map(file => (
+      {directory.files.map((file) => (
         <ChangedFileRow
           key={`${file.status}:${file.path}`}
           file={file}
@@ -504,7 +762,7 @@ function ChangedFileFolder({
         style={{ paddingLeft: `${6 + depth * 14}px` }}
         title={directory.path}
         aria-expanded={expanded}
-        onClick={() => setExpanded(value => !value)}
+        onClick={() => setExpanded((value) => !value)}
       >
         <ChevronRight size={10} className="ws-tree-chevron" />
         <FolderIcon size={12} className="ws-tree-folder-icon" />
@@ -526,30 +784,47 @@ function RepositoryCard({
   repository,
   loading,
   reload,
+  embedded = false,
 }: {
   environment: SessionEnvironment;
   repository?: SessionEnvironmentRepository;
   loading: boolean;
   reload: () => void | Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useLocale();
   const [commitOpen, setCommitOpen] = useState(false);
   const changedCount = environment.changedFiles.length;
   const unavailable = repository && repository.status !== "ready";
   return (
-    <section className="ws-card ws-card--repo">
-      {repository && <div className="ws-repo-project"><Folder size={12} /><strong>{repository.name}</strong></div>}
+    <section
+      className={embedded ? "ws-project-repository" : "ws-card ws-card--repo"}
+    >
+      {repository && !embedded && (
+        <div className="ws-repo-project">
+          <Folder size={12} />
+          <strong>{repository.name}</strong>
+        </div>
+      )}
       <div className="ws-repo-head">
         <GitBranch size={11} className="ws-repo-icon" />
         <span className="ws-repo-branch" title={environment.branch}>
-          {environment.branch}
+          {environment.branch || "—"}
         </span>
         <span
           className={`ws-repo-state ${unavailable ? "bg-warning/15 text-warning" : environment.dirty ? "bg-warning/15 text-warning" : "bg-success/15 text-success"}`}
         >
           {unavailable
-            ? t(repository.status === "missing" ? "workspaceRepositoryMissing" : repository.status === "not_repository" ? "workspaceRepositoryNotGit" : "workspaceRepositoryError")
-            : environment.dirty ? "dirty" : "clean"}
+            ? t(
+                repository.status === "missing"
+                  ? "workspaceRepositoryMissing"
+                  : repository.status === "not_repository"
+                    ? "workspaceRepositoryNotGit"
+                    : "workspaceRepositoryError",
+              )
+            : environment.dirty
+              ? t("workspaceChangeModified")
+              : t("workspaceNoChanges")}
         </span>
         <button
           type="button"
@@ -572,24 +847,6 @@ function RepositoryCard({
           <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
-      {!unavailable && <div className="ws-repo-meta">
-        <span className="ws-repo-meta-item">
-          <GitCommit size={10} />
-          <span className="ws-mono">
-            {environment.headCommitSha.slice(0, 8)}
-          </span>
-        </span>
-        <span className="ws-repo-meta-item ws-mono">
-          <span className="text-success">+{environment.additions}</span>
-          <span className="ws-repo-sep">/</span>
-          <span className="text-danger">-{environment.deletions}</span>
-        </span>
-      </div>}
-      {environment.workspacePath ? (
-        <div className="ws-repo-path" title={environment.workspacePath}>
-          {environment.workspacePath}
-        </div>
-      ) : null}
       <SessionCommitDialog
         isOpen={commitOpen}
         sessionId={environment.sessionId}
@@ -671,33 +928,35 @@ function ChangedFileRow({
   );
 }
 
-function InputFileRow({
-  path,
+function InputSourceRow({
+  source,
   copied,
   onOpen,
   onCopy,
 }: {
-  path: string;
+  source: SessionEnvironmentInputSource;
   copied: boolean;
-  onOpen: () => void;
+  onOpen?: () => void;
   onCopy: () => void;
 }) {
-  const name = fileName(path);
+  const label = source.path ? fileName(source.path) : source.label;
 
   return (
     <button
       type="button"
       className="ws-row"
-      title={path}
+      title={source.label}
       onClick={onOpen}
+      disabled={!onOpen}
       onContextMenu={(event) => {
         event.preventDefault();
         onCopy();
       }}
     >
-      <FileTypeIcon path={path} size={11} />
+      <FileTypeIcon path={source.path ?? "source"} size={11} />
       <span className="ws-row-main ws-row-main--file">
-        <span className="ws-row-file">{name}</span>
+        <span className="ws-row-file">{label}</span>
+        <span className="ws-row-sub">{source.kind}</span>
       </span>
       {copied ? <Check size={11} className="ws-row-icon text-success" /> : null}
     </button>

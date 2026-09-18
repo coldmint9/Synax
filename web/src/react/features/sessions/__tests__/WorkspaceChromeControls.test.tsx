@@ -74,6 +74,14 @@ describe('WorkspaceTabStrip', () => {
     expect(useSessionWorkspaceStore.getState().sessions['session-1'].activeTabId).toBe('diff:b.ts')
   })
 
+  it('returns to the conversation without discarding output tabs', () => {
+    render(<WorkspaceTabStrip sessionId="session-1" />)
+    fireEvent.click(screen.getByRole('button', { name: '返回对话' }))
+    const workspace = useSessionWorkspaceStore.getState().sessions['session-1']
+    expect(workspace.activeTabId).toBeNull()
+    expect(workspace.tabs).toHaveLength(4)
+  })
+
   it('closes a tab and selects the remaining tab', () => {
     render(<WorkspaceTabStrip sessionId="session-1" />)
 

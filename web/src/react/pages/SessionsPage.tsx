@@ -1,12 +1,14 @@
 import '../features/sessions/sessionPerformance.css'
+import '../features/sessions/workPage.css'
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
-import { Button } from '@heroui/react'
+import { Button, Modal } from '@heroui/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
 import { useSessionDetailPolling } from '../features/sessions/useSessionDetailPolling'
 import { useSessionLiveStream } from '../features/sessions/useSessionLiveStream'
 import { useLocale } from '../../hooks/useLocale'
+import { WorkQuickActions } from '../features/sessions/WorkQuickActions'
 import { SessionTranscript } from '../features/sessions/SessionTranscript'
 import { AgentCommandRail } from '../features/sessions/AgentCommandRail'
 
@@ -23,7 +25,7 @@ import { useMediaQuery } from '../../hooks/useMediaQuery'
 const LEFT_PANEL_DEFAULT = 260
 const LEFT_PANEL_MIN = 210
 const LEFT_PANEL_MAX = 420
-const RIGHT_PANEL_DEFAULT = 320
+const RIGHT_PANEL_DEFAULT = 300
 const RIGHT_PANEL_MIN = 280
 const RIGHT_PANEL_MAX = 420
 const LEFT_PANEL_STORAGE_KEY = 'synax-sessions-left-panel'
@@ -123,7 +125,8 @@ const SessionDetailSidebar = memo(function SessionDetailSidebar({
 
 export default memo(function SessionsPage() {
   useSessionDetailPolling()
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const navigate = useNavigate()
   const { projectId = '' } = useParams()
   const leftPanel = useResizablePanel('left', LEFT_PANEL_DEFAULT, LEFT_PANEL_MIN, LEFT_PANEL_MAX)
@@ -146,6 +149,8 @@ export default memo(function SessionsPage() {
     if (narrowWorkspace) leftPanel.setCollapsed(true)
   }, [narrowWorkspace, leftPanel.setCollapsed])
 
+  useEffect(() => setDetailsOpen(false), [agentSessionId, workspaceState.activeTabId, workspaceState.tabs, wideWorkspace])
+
   useSessionLiveStream(agentPanelOpen ? agentSessionId : null)
 
   const isNewDraft = listView === 'sessions' && isNewSessionPath(location.pathname)
@@ -160,8 +165,8 @@ export default memo(function SessionsPage() {
   // of centering it against the viewport and letting it overlap the right rail.
   useLayoutEffect(() => {
     const root = document.documentElement
-    const leftInset = leftPanel.collapsed ? 0 : leftPanel.width + 8
-    const rightInset = showTranscript && wideWorkspace ? rightPanel.width + 18 : 0
+    const leftInset = workspaceFullscreen || leftPanel.collapsed ? 0 : leftPanel.width + 8
+    const rightInset = showTranscript && wideWorkspace && !workspaceFullscreen ? rightPanel.width + 18 : 0
     root.style.setProperty('--agent-header-shift', `${(leftInset - rightInset) / 2}px`)
     root.style.setProperty('--agent-header-left-inset', `${leftInset}px`)
     root.style.setProperty('--agent-header-right-inset', `${rightInset}px`)
@@ -170,10 +175,10 @@ export default memo(function SessionsPage() {
       root.style.removeProperty('--agent-header-left-inset')
       root.style.removeProperty('--agent-header-right-inset')
     }
-  }, [leftPanel.collapsed, leftPanel.width, rightPanel.width, showTranscript, wideWorkspace])
+  }, [leftPanel.collapsed, leftPanel.width, rightPanel.width, showTranscript, wideWorkspace, workspaceFullscreen])
 
   return (
-    <div className="agent-page-shell relative flex h-full min-h-0">
+    <div className="agent-page-shell work-page relative flex h-full min-h-0">
       <>
         <aside
           className={`session-panel-host session-panel-host--left relative shrink-0 ${leftPanel.collapsed ? 'overflow-visible' : 'overflow-hidden'}`}
@@ -207,7 +212,8 @@ export default memo(function SessionsPage() {
 
         {showTranscript ? (
           <>
-            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="work-conversation flex min-w-0 flex-1 flex-col overflow-hidden">
+              {agentSessionId && <WorkQuickActions showDetailsButton={!wideWorkspace || workspaceFullscreen} onShowDetails={() => setDetailsOpen(true)} />}
               <div
                 hidden={hasWorkspaceContent}
                 className={hasWorkspaceContent ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}
@@ -243,6 +249,15 @@ export default memo(function SessionsPage() {
           </div>
         )}
       </>
+      <Modal.Backdrop isOpen={detailsOpen} onOpenChange={setDetailsOpen}>
+        <Modal.Container size="sm">
+          <Modal.Dialog className="work-details-dialog">
+            <Modal.CloseTrigger />
+            <Modal.Header><Modal.Heading>{locale === 'zh' ? '任务详情' : 'Task details'}</Modal.Heading></Modal.Header>
+            <Modal.Body><SessionWorkspacePanel sessionId={agentSessionId} mode="dashboard" /></Modal.Body>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
       {showTranscript && agentSessionId && !hasWorkspaceContent ? (
         <AgentCommandRail
           sessionId={agentSessionId}
@@ -251,6 +266,7 @@ export default memo(function SessionsPage() {
           focus={false}
           insetLeft={commandRailLeft}
           insetRight={commandRailRight}
+          showFileSummary={!wideWorkspace}
         />
       ) : null}
     </div>

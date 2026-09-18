@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { SessionStaticTimeline } from '../SessionStaticTimeline'
 import { useAgentSessionStore as store } from '../agentSessionStore'
 import { EMPTY_STREAMING_BUFFERS } from '../streamingLiveBlocks'
-import type { AgentRuntimeMessage } from '../../../../lib/api/agentRuntime'
+import type { AgentRuntimeMessage, AgentSession } from '../../../../lib/api/agentRuntime'
 
 const renders = vi.hoisted(() => vi.fn())
 vi.mock('../TimelineEntryView', () => ({ TimelineEntryView: ({ entry, isWorking }: { entry: { id: string }; isWorking?: boolean }) => { renders(entry.id); return <div data-working={isWorking || undefined}>{entry.id}</div> } }))
@@ -47,4 +47,20 @@ it('does not rerender historical message bodies for streaming token deltas', () 
   expect(historicalCalls).toBeGreaterThan(0)
   act(() => store.setState({ streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: 'new tokens' } }))
   expect(renders.mock.calls.filter(([id]) => id.includes('history'))).toHaveLength(historicalCalls)
+})
+
+
+it.each(['live', 'snapshot'])('keeps a durable question after its %s tool activity before HTTP steps arrive', stage => {
+  store.setState({ ...store.getInitialState(), interactionState: {
+    sessionId: 's', loading: false, error: null, items: [{
+      id: 'question', sessionId: 's', stepId: 'ask-step', runId: 'r', toolCallId: 'ask-call',
+      kind: 'clarification', revision: 1, status: 'pending', createdAt: '2026-01-01T00:00:00Z', resolvedAt: null, response: null,
+      request: { title: 'Scope?', questions: [] },
+    }],
+  }, ...(stage === 'live' ? { streamingStepId: 'ask-step', streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: 'Need your input' } }
+    : { streamingCompletedSteps: [{ stepId: 'ask-step', stepIndex: 1, blocks: [{ type: 'text', content: 'Need your input' }] }] }) })
+  const { container } = render(<SessionStaticTimeline unifiedLive session={{ id: 's' } as AgentSession} runs={[]} steps={[]} messages={[]} toolCalls={[]} excludeStepId={stage === 'live' ? 'ask-step' : undefined} />)
+  const text = container.textContent!
+  expect(text.indexOf('ask-step')).toBeLessThan(text.indexOf('interaction-question'))
+  expect(text.indexOf('ask-step')).toBeGreaterThanOrEqual(0)
 })

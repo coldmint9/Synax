@@ -30,7 +30,7 @@ export function SessionListHeader({
   onBackToSessions,
   onCollapsePanel,
 }: Props) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const isWorkflowView = listView === 'workflow'
 
   return (
@@ -49,7 +49,7 @@ export function SessionListHeader({
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-0.5">
           <span className="min-w-0 truncate text-sm font-bold tracking-tight text-foreground">
-            {isWorkflowView ? t('sessionWorkflowTitle') : 'SynaxCode'}
+            {isWorkflowView ? t('sessionWorkflowTitle') : (locale === 'zh' ? '任务' : 'Tasks')}
           </span>
           {onCollapsePanel ? (
             <button
@@ -73,7 +73,7 @@ export function SessionListHeader({
               isDisabled={isCreatingSession}
             >
               <Plus size={13} className={isCreatingSession ? 'animate-pulse' : ''} />
-              {t('sessionNewChat')}
+              {locale === 'zh' ? '新任务' : 'New task'}
             </Button>
           ) : null}
           <Button
@@ -95,7 +95,7 @@ export function SessionListHeader({
           type="text"
           value={searchQuery}
           onChange={e => onSearchChange(e.target.value)}
-          placeholder={t('sessionSearch')}
+          placeholder={locale === 'zh' ? '搜索任务…' : 'Search tasks…'}
           className="w-full h-7 pl-7 pr-2.5 text-[11px] bg-secondary/40 border border-border/30 rounded-md text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-accent/40 focus:bg-secondary/60 transition-colors"
         />
       </div>

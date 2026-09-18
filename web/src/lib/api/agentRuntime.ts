@@ -511,6 +511,14 @@ export interface SessionEnvironmentSubagent {
   resultSummary: string | null;
 }
 
+export type SessionEnvironmentInputSourceKind = "file" | "search" | "command" | "url" | "tool";
+
+export interface SessionEnvironmentInputSource {
+  kind: SessionEnvironmentInputSourceKind;
+  label: string;
+  path?: string;
+}
+
 export interface SessionBackgroundProcess {
   id: string;
   command: string;
@@ -534,7 +542,7 @@ export interface SessionEnvironment {
   changedFiles: SessionEnvironmentFile[];
   /** Files this session's agent wrote/edited/deleted (still uncommitted). */
   agentChangedFiles: SessionEnvironmentFile[];
-  inputFiles: string[];
+  inputSources: SessionEnvironmentInputSource[];
   subagents: SessionEnvironmentSubagent[];
   refreshedAt: string;
 }
@@ -552,7 +560,7 @@ export interface SessionEnvironmentRepository {
   deletions: number;
   changedFiles: SessionEnvironmentFile[];
   agentChangedFiles: SessionEnvironmentFile[];
-  inputFiles: string[];
+  inputSources: SessionEnvironmentInputSource[];
 }
 
 export interface SessionEnvironmentFileView {

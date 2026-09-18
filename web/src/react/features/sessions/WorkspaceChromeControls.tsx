@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Bot, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
+import { Bot, MessageSquare, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 import { FileTypeIcon } from './FileTypeIcon'
 import { useSessionWorkspaceEnvironment } from './SessionEnvironmentContext'
@@ -15,7 +15,7 @@ function tabIcon(tab: WorkspaceTab) {
 }
 
 export function WorkspaceTabStrip({ sessionId }: { sessionId: string | null }) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const { tabs, activeTabId, presentation } = useSessionWorkspace(sessionId)
   const { loading, reload } = useSessionWorkspaceEnvironment(sessionId)
   const activateTab = useSessionWorkspaceStore(state => state.activateTab)
@@ -33,6 +33,12 @@ export function WorkspaceTabStrip({ sessionId }: { sessionId: string | null }) {
 
   return (
     <div className="workspace-tab-chrome">
+      <button type="button" className="workspace-chrome-icon"
+        aria-label={locale === 'zh' ? '返回对话' : 'Back to conversation'}
+        title={locale === 'zh' ? '返回对话' : 'Back to conversation'}
+        onClick={() => useSessionWorkspaceStore.getState().showDashboard(sessionId)}>
+        <MessageSquare size={12} />
+      </button>
       <div className="workspace-tab-rail" role="tablist" aria-label={t('workspaceTabsLabel')}>
         {tabs.map((tab) => {
           const active = tab.id === activeTabId
