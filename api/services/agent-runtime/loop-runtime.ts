@@ -2572,11 +2572,15 @@ export class AgentLoopRuntime {
           [{ role: "system", content: systemPromptContent }],
           input.input.model ?? undefined,
         ) +
-        toolComposition.tools +
-        toolComposition.mcp,
+        toolComposition.total,
       model: input.input.model ?? undefined,
     });
     conversationMessages = projection.messages;
+    projection.systemMessageContents.add(reminder.content);
+    const compositionSources = {
+      systemMessageContents: projection.systemMessageContents,
+      toolCalls: this.store.listToolCalls(input.sessionId),
+    };
     if (projection.compacted)
       yield {
         type: "context_compacted" as const,
@@ -2627,6 +2631,7 @@ export class AgentLoopRuntime {
             "request_snapshot_changed: media or history changed during retry; start a new request.",
           );
         const preparedComposition = await measureContextComposition({
+          ...compositionSources,
           messages: prepared.messages,
           tools: toolSet,
           model: input.input.model,
@@ -2694,6 +2699,7 @@ export class AgentLoopRuntime {
       maxTokens: input.input.maxTokens,
     };
     const composition = await measureContextComposition({
+      ...compositionSources,
       messages: request.messages,
       tools: toolSet,
       model: input.input.model,

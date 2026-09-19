@@ -1,30 +1,34 @@
-import { defineConfig, type Plugin } from 'vite'
-import react from '@vitejs/plugin-react'
-import path from 'path'
+import { defineConfig, type Plugin } from "vite";
+import react from "@vitejs/plugin-react";
+import path from "path";
 
 function removeCrossOrigin(): Plugin {
   return {
-    name: 'remove-crossorigin',
-    enforce: 'post',
+    name: "remove-crossorigin",
+    enforce: "post",
     transformIndexHtml(html) {
-      return html.replace(/ crossorigin/g, '')
+      return html.replace(/ crossorigin/g, "");
     },
-  }
+  };
 }
 
-const apiTarget = `http://127.0.0.1:${process.env.PORT ?? '3210'}`
+const apiTarget = `http://127.0.0.1:${process.env.PORT ?? "3210"}`;
 
-const localNoProxyHosts = ['localhost', '127.0.0.1', '::1']
-const noProxy = `${process.env.NO_PROXY ?? ''},${process.env.no_proxy ?? ''}`
-  .split(',')
-  .map(value => value.trim())
-  .filter(Boolean)
+const localNoProxyHosts = ["localhost", "127.0.0.1", "::1"];
+const noProxy = `${process.env.NO_PROXY ?? ""},${process.env.no_proxy ?? ""}`
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 
-process.env.NO_PROXY = [...new Set([...noProxy, ...localNoProxyHosts])].join(',')
-process.env.no_proxy = process.env.NO_PROXY
+process.env.NO_PROXY = [...new Set([...noProxy, ...localNoProxyHosts])].join(
+  ",",
+);
+process.env.no_proxy = process.env.NO_PROXY;
 
 export default defineConfig({
-  base: './',
+  // Both the web server and Electron's standard app:// origin serve assets at the root.
+  // Relative assets break when reloading a nested Work/Wiki route.
+  base: "/",
   plugins: [react(), removeCrossOrigin()],
   build: {
     chunkSizeWarningLimit: 1000,
@@ -32,21 +36,24 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      "@": path.resolve(__dirname, "./src"),
     },
   },
   server: {
     port: 5173,
     proxy: {
-      '/api': {
+      "/api": {
         target: apiTarget,
         changeOrigin: true,
         configure(proxy) {
-          proxy.on('error', (err) => {
-            console.error(`[vite proxy] /api -> ${apiTarget} failed:`, err.message)
-          })
+          proxy.on("error", (err) => {
+            console.error(
+              `[vite proxy] /api -> ${apiTarget} failed:`,
+              err.message,
+            );
+          });
         },
       },
     },
   },
-})
+});

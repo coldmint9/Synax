@@ -470,16 +470,62 @@ describe("cache usage projection", () => {
 
 describe("status context measurement selection", () => {
   beforeEach(resetAgentRuntimeFixtures);
-  const composition = { tools: 100, mcp: 200, skills: 300, messages: 400, total: 1000, measuredAt: "2026-09-15T10:00:00Z" };
+  const composition = {
+    tools: 100,
+    mcp: 200,
+    skills: 300,
+    messages: 400,
+    total: 1000,
+    measuredAt: "2026-09-15T10:00:00Z",
+  };
+  it("preserves the new system category and includes it in the request total", () => {
+    const session = agentSessionRuntime.create(explorerSessionInput);
+    addUsageStep(session.id, "new-categories", undefined, {
+      contextComposition: {
+        ...composition,
+        version: 2,
+        system: 500,
+        usage: { tools: 40, mcp: 100, skills: 200 },
+        total: 1500,
+      },
+    });
+    const stats = agentRuntimeStore.getSessionStats(session.id);
+    expect(stats.contextComposition).toMatchObject({
+      version: 2,
+      messages: 400,
+      system: 500,
+      total: 1500,
+      usage: { tools: 40, mcp: 100, skills: 200 },
+    });
+    expect(stats.context).toMatchObject({
+      inputTokens: 1500,
+      source: "estimate",
+    });
+  });
 
   it("uses inclusive provider input rather than text estimates or cumulative usage", () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
     addUsageStep(session.id, "before", { inputTokens: 100000 });
-    addUsageStep(session.id, "compacted", { raw: {
-      input_tokens: 100, cache_read_input_tokens: 600, cache_creation_input_tokens: 300,
-    } }, { contextComposition: composition });
-    const stats = agentRuntimeStore.getSessionStats(session.id, { configuredContextLimit: 10000 });
-    expect(stats.context).toMatchObject({ inputTokens: 1000, source: "provider", stale: false });
+    addUsageStep(
+      session.id,
+      "compacted",
+      {
+        raw: {
+          input_tokens: 100,
+          cache_read_input_tokens: 600,
+          cache_creation_input_tokens: 300,
+        },
+      },
+      { contextComposition: composition },
+    );
+    const stats = agentRuntimeStore.getSessionStats(session.id, {
+      configuredContextLimit: 10000,
+    });
+    expect(stats.context).toMatchObject({
+      inputTokens: 1000,
+      source: "provider",
+      stale: false,
+    });
     expect(stats.contextComposition).toEqual(composition);
     expect(stats.contextUsedPercent).toBe(10);
     expect(stats.usage.steps.self.cacheReadRatio).toBe(0.6);
@@ -488,32 +534,62 @@ describe("status context measurement selection", () => {
   it("uses the new request estimate until usage arrives, then replaces it", () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
     addUsageStep(session.id, "old", { inputTokens: 90000 });
-    addUsageStep(session.id, "pending", undefined, { contextComposition: composition });
-    expect(agentRuntimeStore.getSessionStats(session.id).context).toMatchObject({
-      inputTokens: 1000, source: "estimate", stale: false, latestRequestUsageAvailable: false,
+    addUsageStep(session.id, "pending", undefined, {
+      contextComposition: composition,
     });
-    agentRuntimeStore.updateRunStep("step-pending", { metadata: { contextComposition: composition, usage: { inputTokens: 1200 } } });
-    expect(agentRuntimeStore.getSessionStats(session.id).context).toMatchObject({
-      inputTokens: 1200, source: "provider", stale: false, latestRequestUsageAvailable: true,
+    expect(agentRuntimeStore.getSessionStats(session.id).context).toMatchObject(
+      {
+        inputTokens: 1000,
+        source: "estimate",
+        stale: false,
+        latestRequestUsageAvailable: false,
+      },
+    );
+    agentRuntimeStore.updateRunStep("step-pending", {
+      metadata: {
+        contextComposition: composition,
+        usage: { inputTokens: 1200 },
+      },
     });
+    expect(agentRuntimeStore.getSessionStats(session.id).context).toMatchObject(
+      {
+        inputTokens: 1200,
+        source: "provider",
+        stale: false,
+        latestRequestUsageAvailable: true,
+      },
+    );
   });
 
   it("keeps stale records explicit and never pairs a newer total with old categories", () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
-    addUsageStep(session.id, "old", { inputTokens: 1000 }, { contextComposition: composition });
+    addUsageStep(
+      session.id,
+      "old",
+      { inputTokens: 1000 },
+      { contextComposition: composition },
+    );
     addUsageStep(session.id, "new", { inputTokens: 2000 });
     let stats = agentRuntimeStore.getSessionStats(session.id);
     expect(stats.contextComposition).toBeNull();
     expect(stats.context.inputTokens).toBe(2000);
     addUsageStep(session.id, "missing", undefined);
     stats = agentRuntimeStore.getSessionStats(session.id);
-    expect(stats.context).toMatchObject({ inputTokens: 2000, source: "provider", stale: true });
+    expect(stats.context).toMatchObject({
+      inputTokens: 2000,
+      source: "provider",
+      stale: true,
+    });
   });
 
   it("rejects inconsistent cache samples but includes explicit zero hits", () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
-    addUsageStep(session.id, "invalid", { raw: { prompt_tokens: 100, prompt_cache_hit_tokens: 200 } });
-    addUsageStep(session.id, "zero", { raw: { prompt_tokens: 100, prompt_cache_hit_tokens: 0 } });
+    addUsageStep(session.id, "invalid", {
+      raw: { prompt_tokens: 100, prompt_cache_hit_tokens: 200 },
+    });
+    addUsageStep(session.id, "zero", {
+      raw: { prompt_tokens: 100, prompt_cache_hit_tokens: 0 },
+    });
     const stats = agentRuntimeStore.getSessionStats(session.id);
     expect(stats.usage.steps.self.cacheReadRatio).toBe(0);
     expect(stats.coverage.steps.self.cacheMatched).toBe(1);
@@ -521,7 +597,9 @@ describe("status context measurement selection", () => {
 
   it("does not imply that the default context window is measured", () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
-    expect(agentRuntimeStore.getSessionStats(session.id).contextLimitKnown).toBe(false);
+    expect(
+      agentRuntimeStore.getSessionStats(session.id).contextLimitKnown,
+    ).toBe(false);
   });
 });
 
@@ -529,18 +607,43 @@ describe("cache statistics API projection", () => {
   beforeEach(resetAgentRuntimeFixtures);
   it("projects raw API evidence and excludes auxiliary samples", () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
-    addUsageStep(session.id, "cached", { raw: { prompt_tokens: 100, prompt_tokens_details: { cached_tokens: 80 } } });
-    addUsageStep(session.id, "miss", { raw: { prompt_tokens: 1000, prompt_tokens_details: { cached_tokens: 0 } } });
-    finishAuxUsage(startAuxUsage(session.id, "test"), { raw: { prompt_tokens: 10000, prompt_tokens_details: { cached_tokens: 10000 } } });
+    addUsageStep(session.id, "cached", {
+      raw: { prompt_tokens: 100, prompt_tokens_details: { cached_tokens: 80 } },
+    });
+    addUsageStep(session.id, "miss", {
+      raw: { prompt_tokens: 1000, prompt_tokens_details: { cached_tokens: 0 } },
+    });
+    finishAuxUsage(startAuxUsage(session.id, "test"), {
+      raw: {
+        prompt_tokens: 10000,
+        prompt_tokens_details: { cached_tokens: 10000 },
+      },
+    });
     const cache = agentRuntimeStore.getSessionStats(session.id).cache;
-    expect(cache.latest).toMatchObject({ stepId: "step-miss", ratio: 0, inputTokens: 1000, cacheReadTokens: 0 });
-    expect(cache.session).toMatchObject({ samples: 2, matched: 2, ratio: 0.4, weightedRatio: 80 / 1100 });
+    expect(cache.latest).toMatchObject({
+      stepId: "step-miss",
+      ratio: 0,
+      inputTokens: 1000,
+      cacheReadTokens: 0,
+    });
+    expect(cache.session).toMatchObject({
+      samples: 2,
+      matched: 2,
+      ratio: 0.4,
+      weightedRatio: 80 / 1100,
+    });
   });
   it("keeps in-flight requests out of the missing sample denominator", () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
     addUsageStep(session.id, "pending-cache", undefined);
-    agentRuntimeStore.updateRun("run-pending-cache", { status: "running", completedAt: null });
-    agentRuntimeStore.updateRunStep("step-pending-cache", { status: "running", completedAt: null });
+    agentRuntimeStore.updateRun("run-pending-cache", {
+      status: "running",
+      completedAt: null,
+    });
+    agentRuntimeStore.updateRunStep("step-pending-cache", {
+      status: "running",
+      completedAt: null,
+    });
     const cache = agentRuntimeStore.getSessionStats(session.id).cache;
     expect(cache.pending).toBe(1);
     expect(cache.session.samples).toBe(0);

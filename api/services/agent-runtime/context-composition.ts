@@ -2,12 +2,18 @@ import { asSchema } from "@ai-sdk/provider-utils";
 import type { LlmGatewayMessage } from "../llm-runtime/types.js";
 import type { LoopToolSet } from "./loop-ai-tools.js";
 import { countTokens } from "./context-tokenizer.js";
+import type { ToolCallRecord } from "./contracts.js";
 
 export interface ContextComposition {
+  /** v2 separates retained call context from conversational text. */
+  version?: 2;
   tools: number;
   mcp: number;
   skills: number;
   messages: number;
+  system?: number;
+  /** Retained call/loaded content, a subset of each category's total. */
+  usage?: { tools: number; mcp: number; skills: number };
   total: number;
   measuredAt: string;
 }
@@ -19,16 +25,62 @@ export async function measureContextComposition(input: {
   model?: string;
   skillsSection?: string | null;
   selectedReferences?: string;
+  systemMessageContents?: ReadonlySet<string>;
+  toolCalls?: ReadonlyArray<
+    Pick<ToolCallRecord, "id" | "modelToolCallId" | "toolId" | "category">
+  >;
 }): Promise<ContextComposition> {
   const count = (text: string) => countTokens(text, input.model);
-  const result: ContextComposition = {
+  const result = {
+    version: 2 as const,
     tools: 0,
     mcp: 0,
     skills: 0,
     messages: 0,
+    system: 0,
+    usage: { tools: 0, mcp: 0, skills: 0 },
     total: 0,
     measuredAt: new Date().toISOString(),
   };
+  const addContent = (
+    category: "tools" | "mcp" | "skills" | "messages" | "system",
+    tokens: number,
+  ) => {
+    result[category] += tokens;
+    if (category === "tools" || category === "mcp" || category === "skills")
+      result.usage[category] += tokens;
+  };
+  const bucket = (category: unknown, toolId: string) =>
+    category === "mcp" || /^mcp[._]/.test(toolId)
+      ? ("mcp" as const)
+      : category === "skill" ||
+          toolId === "skill.load" ||
+          toolId === "skill_load"
+        ? ("skills" as const)
+        : ("tools" as const);
+  const callCategories = new Map(
+    (input.toolCalls ?? []).map((call) => [
+      String(call.modelToolCallId ?? call.id),
+      bucket(call.category, call.toolId),
+    ]),
+  );
+  const toolCategory = (name: string, callId?: string) => {
+    const recorded = callId ? callCategories.get(callId) : undefined;
+    if (recorded) return recorded;
+    const id = input.tools.resolveToolId(name) ?? name;
+    const modelName = input.tools.resolveModelToolName(id) ?? name;
+    return bucket(input.tools.tools[modelName]?.metadata?.category, id);
+  };
+  for (const message of input.messages) {
+    if (Array.isArray(message.content))
+      for (const part of message.content) {
+        if (part.type === "tool-call" || part.type === "tool-result")
+          callCategories.set(
+            part.toolCallId,
+            toolCategory(part.toolName, part.toolCallId),
+          );
+      }
+  }
   for (const name of input.tools.activeTools) {
     const tool = input.tools.tools[name];
     const definition = {
@@ -37,59 +89,73 @@ export async function measureContextComposition(input: {
       description: tool.description,
       inputSchema: await asSchema(tool.inputSchema).jsonSchema,
     };
-    const category = tool.metadata?.category === "mcp" ? "mcp" : "tools";
+    const category = toolCategory(name);
     result[category] += count(JSON.stringify(definition));
   }
 
   // Selected references share a prompt section with files/wiki. Only skill entries
   // belong to Skills; the JSON-quoted lines are the actual injected text.
-  const skillSections = input.skillsSection ? [input.skillsSection] : [];
+  const skillSections = input.skillsSection
+    ? [{ text: input.skillsSection, used: false }]
+    : [];
   for (const line of input.selectedReferences?.split("\n") ?? []) {
     try {
-      if (JSON.parse(line)?.kind === "skill") skillSections.push(line);
+      if (JSON.parse(line)?.kind === "skill")
+        skillSections.push({ text: line, used: true });
     } catch {
       /* section heading */
     }
   }
   for (const message of input.messages) {
-    result.messages += 4;
+    // Role/message envelopes are protocol overhead, not conversational text.
+    result.system += 4;
+    const mediaCallId = message.providerOptions?.synax?.toolCallId;
+    const mediaCategory =
+      typeof mediaCallId === "string"
+        ? callCategories.get(mediaCallId)
+        : undefined;
+    const textCategory = (text: string) =>
+      mediaCategory ??
+      (message.role === "system" || input.systemMessageContents?.has(text)
+        ? "system"
+        : "messages");
     if (typeof message.content === "string") {
       let text = message.content;
       if (message.role === "system") {
         for (const section of skillSections) {
-          const index = text.indexOf(section);
+          const index = text.indexOf(section.text);
           if (index < 0) continue;
-          result.skills += count(section);
-          text = text.slice(0, index) + text.slice(index + section.length);
+          const tokens = count(section.text);
+          result.skills += tokens;
+          if (section.used) result.usage.skills += tokens;
+          text = text.slice(0, index) + text.slice(index + section.text.length);
         }
       }
-      result.messages += count(text);
+      addContent(textCategory(text), count(text));
       continue;
     }
     for (const part of message.content) {
       if (part.type === "text" || part.type === "reasoning") {
-        result.messages += count(part.text);
+        addContent(textCategory(part.text), count(part.text));
       } else if (part.type === "tool-call") {
-        result.messages +=
-          8 + count(part.toolName) + count(JSON.stringify(part.input));
+        addContent(
+          toolCategory(part.toolName, part.toolCallId),
+          8 + count(part.toolName) + count(JSON.stringify(part.input ?? {})),
+        );
       } else if (part.type === "tool-result") {
         const output = part.output;
         const text = outputText(output);
-        const skill =
-          (input.tools.resolveToolId(part.toolName) ?? part.toolName) ===
-            "skill.load" || part.toolName === "skill_load";
-        const loaded =
-          skill &&
-          (output.type === "text" || output.type === "json") &&
-          !text.startsWith("[Earlier skill.load result cleared");
-        result.messages += 8 + count(part.toolName);
-        result[loaded ? "skills" : "messages"] += count(text);
+        addContent(
+          toolCategory(part.toolName, part.toolCallId),
+          8 + count(part.toolName) + count(text),
+        );
       }
       // Image/audio/file payloads are not text tokens. Do not tokenize base64 bytes
       // as if they were prompt text; provider-specific media billing is unavailable.
     }
   }
-  result.total = result.tools + result.mcp + result.skills + result.messages;
+  result.total =
+    result.tools + result.mcp + result.skills + result.messages + result.system;
   return result;
 }
 

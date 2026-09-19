@@ -230,7 +230,7 @@ describe("WorkspaceDashboard", () => {
     );
   });
 
-  it("hides empty input and subagent sections while keeping outputs discoverable", () => {
+  it("hides empty input, output and subagent sections while keeping Git controls", () => {
     renderDashboard({
       changedFiles: [],
       dirty: false,
@@ -242,7 +242,67 @@ describe("WorkspaceDashboard", () => {
     expect(screen.queryByRole("button", { name: /Subagents/ })).toBeNull();
     expect(screen.getAllByText("无变更").length).toBeGreaterThan(0);
     expect(screen.queryByText("暂无读取文件")).toBeNull();
-    expect(screen.getByText("还没有产出物")).toBeTruthy();
+    expect(screen.queryByText("还没有产出物")).toBeNull();
+    expect(screen.queryByText("产出文件")).toBeNull();
+    expect(screen.getByRole("button", { name: "提交并推送" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "刷新工作区" })).toBeEnabled();
+  });
+
+  it("keeps project Git controls in the header when clean or collapsed", () => {
+    const reload = vi.fn();
+    const repository = {
+      ...environment,
+      rootId: "primary",
+      name: "Synax",
+      role: "primary" as const,
+      status: "ready" as const,
+      branch: "main",
+      dirty: false,
+      changedFiles: [],
+      inputSources: [],
+      outputFiles: [],
+    };
+    const view = render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{ ...environment, repositories: [repository] }}
+        reload={reload}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: "Synax" });
+    const header = toggle.closest(".ws-card-head")!;
+    expect(within(header).getByText("main")).toBeInTheDocument();
+    expect(
+      within(header).getByRole("button", { name: "提交并推送" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("产出文件")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(within(header).getByRole("button", { name: "刷新工作区" }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    view.rerender(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{
+          ...environment,
+          repositories: [
+            {
+              ...repository,
+              dirty: true,
+              changedFiles: environment.changedFiles,
+            },
+          ],
+        }}
+        reload={reload}
+      />,
+    );
+    expect(screen.getAllByRole("button", { name: "提交并推送" })).toHaveLength(
+      1,
+    );
+    expect(
+      within(header).getByRole("button", { name: "提交并推送" }),
+    ).toBeEnabled();
+    expect(screen.queryByText("BlockAsk.vue")).toBeNull();
   });
 
   it("reflects the agent change status on each row", () => {

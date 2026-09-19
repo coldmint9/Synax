@@ -242,8 +242,8 @@ function RepositoryProjectCard({
   copiedPath: string | null;
   onCopyPath: (path: string) => void;
 }) {
-  const { t, locale } = useLocale();
-  const [commitOpen, setCommitOpen] = useState(false);
+  const { t } = useLocale();
+  const outputFiles = repository.outputFiles ?? [];
   const changedFiles = repository.changedFiles;
   const changedFileTree = useMemo(
     () => buildChangedFileTree(changedFiles),
@@ -261,9 +261,7 @@ function RepositoryProjectCard({
       icon={<Folder size={13} />}
       title={repository.name}
       count={changedFiles.length || undefined}
-      summary={repository.branch || null}
-    >
-      {repository.status !== "ready" && (
+      toolbar={
         <RepositoryCard
           environment={{ ...environment, ...repository }}
           repository={repository}
@@ -271,7 +269,8 @@ function RepositoryProjectCard({
           reload={reload}
           embedded
         />
-      )}
+      }
+    >
       {changedFiles.length > 0 && (
         <ProjectSection
           icon={<FileDiff size={13} />}
@@ -303,15 +302,6 @@ function RepositoryProjectCard({
                   <List size={11} />
                 </button>
               </div>
-              <button
-                type="button"
-                className="ws-repo-action"
-                onClick={() => setCommitOpen(true)}
-                title={t("workspaceCommitPush")}
-              >
-                <GitCommit size={10} />
-                <span>{t("workspaceCommitPush")}</span>
-              </button>
             </div>
           }
         >
@@ -363,34 +353,26 @@ function RepositoryProjectCard({
           ))}
         </ProjectSection>
       )}
-      <ProjectSection
-        icon={<FileCode2 size={13} />}
-        title={t("workspaceCardOutputs")}
-        count={repository.outputFiles?.length ?? 0}
-      >
-        <OutputFiles
-          files={repository.outputFiles ?? []}
-          onOpen={(filePath) =>
-            openWorkspaceFile(
-              sessionId,
-              filePath,
-              null,
-              repository.rootId,
-              repository.name,
-            )
-          }
-        />
-      </ProjectSection>
-      <SessionCommitDialog
-        isOpen={commitOpen}
-        sessionId={environment.sessionId}
-        rootId={repository.rootId}
-        rootName={repository.name}
-        branch={repository.branch}
-        changedFiles={changedFiles.length}
-        onClose={() => setCommitOpen(false)}
-        onCommitted={() => void reload()}
-      />
+      {outputFiles.length > 0 && (
+        <ProjectSection
+          icon={<FileCode2 size={13} />}
+          title={t("workspaceCardOutputs")}
+          count={outputFiles.length}
+        >
+          <OutputFiles
+            files={outputFiles}
+            onOpen={(filePath) =>
+              openWorkspaceFile(
+                sessionId,
+                filePath,
+                null,
+                repository.rootId,
+                repository.name,
+              )
+            }
+          />
+        </ProjectSection>
+      )}
     </WorkspaceCard>
   );
 }
@@ -470,6 +452,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
     [repositoryEnvironment?.inputSources],
   );
   const changedFiles = repositoryEnvironment?.changedFiles ?? [];
+  const outputFiles = repositoryEnvironment?.outputFiles ?? [];
   const changedFileTree = useMemo(
     () => buildChangedFileTree(changedFiles),
     [changedFiles],
@@ -696,24 +679,26 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               ))}
             </WorkspaceCard>
           )}
-          <WorkspaceCard
-            icon={<FileCode2 size={13} />}
-            title={t("workspaceCardOutputs")}
-            count={repositoryEnvironment.outputFiles?.length ?? 0}
-          >
-            <OutputFiles
-              files={repositoryEnvironment.outputFiles ?? []}
-              onOpen={(filePath) =>
-                openWorkspaceFile(
-                  sessionId,
-                  filePath,
-                  null,
-                  repository?.rootId,
-                  repository?.name,
-                )
-              }
-            />
-          </WorkspaceCard>
+          {outputFiles.length > 0 && (
+            <WorkspaceCard
+              icon={<FileCode2 size={13} />}
+              title={t("workspaceCardOutputs")}
+              count={outputFiles.length}
+            >
+              <OutputFiles
+                files={outputFiles}
+                onOpen={(filePath) =>
+                  openWorkspaceFile(
+                    sessionId,
+                    filePath,
+                    null,
+                    repository?.rootId,
+                    repository?.name,
+                  )
+                }
+              />
+            </WorkspaceCard>
+          )}
           {/* Only meaningful once the session actually spawned subagents — an
               empty placeholder here is pure noise. */}
           {subagents.length > 0 ? (
@@ -981,8 +966,7 @@ function OutputFiles({
   onOpen: (path: string) => void;
 }) {
   const { t } = useLocale();
-  if (!files.length)
-    return <div className="ws-empty">{t("workspaceNoOutputs")}</div>;
+  if (!files.length) return null;
   return files.map((filePath) => (
     <button
       key={filePath}

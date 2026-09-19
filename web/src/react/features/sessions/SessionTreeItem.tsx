@@ -70,8 +70,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   const hasKids = children.length > 0
   const isRunning = session.status === 'running' || session.status === 'stopping'
   const unread = useAgentSessionStore(state => isSessionUnread(session, state.readSessionMarkers))
-  const hasReadMarker = useAgentSessionStore(state => Boolean(state.readSessionMarkers[session.id]))
-  const showStatusDot = session.status !== 'completed' || !hasReadMarker || unread
+  const showStatusDot = session.status !== 'completed' || unread
 
   return (
     <div

@@ -1870,8 +1870,8 @@ describe("provider-bound session initialization prompt", () => {
       expect(spies[2]).toHaveBeenCalledTimes(1);
       const composition = agentRuntimeStore.listSessionSteps(session.id)[0]
         .metadata.contextComposition as { skills: number };
-      // The mocked tokenizer returns 100 per string: catalogue + selected skill, excluding file evidence.
-      expect(composition.skills).toBe(200);
+      // Catalogue + selected instructions + skill.load schema, excluding file evidence.
+      expect(composition.skills).toBe(300);
       const reminder = String(capturedRequests[0].messages.at(-1)!.content);
       const environmentLine = reminder
         .split("\n")
@@ -2209,6 +2209,23 @@ describe("provider-bound session initialization prompt", () => {
     );
     const steps = agentRuntimeStore.listSessionSteps(session.id);
     expect(steps).toHaveLength(3);
+    const categories = steps.map(
+      (step) =>
+        step.metadata.contextComposition as {
+          tools: number;
+          messages: number;
+          system: number;
+          version: number;
+        },
+    );
+    expect(categories[1].tools).toBeGreaterThan(categories[0].tools);
+    expect(categories[2].tools).toBeGreaterThan(categories[1].tools);
+    expect(categories.map((c) => c.messages)).toEqual([
+      categories[0].messages,
+      categories[0].messages,
+      categories[0].messages,
+    ]);
+    expect(categories.every((c) => c.system > 0 && c.version === 2)).toBe(true);
     for (const [i, step] of steps.entries()) {
       expect(
         (step.metadata.runtimeReminder as { content: string }).content,

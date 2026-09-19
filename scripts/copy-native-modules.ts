@@ -30,22 +30,14 @@ const libsqlPlatforms = readdirSync(src).filter((d) => d.startsWith("@libsql"));
 for (const scope of libsqlPlatforms) {
   const scopeSrc = join(src, scope);
   const scopeDest = join(dest, scope);
-  try {
-    cpSync(scopeSrc, scopeDest, { recursive: true });
-    console.log(`  copied ${scope}`);
-  } catch (e: any) {
-    console.warn(`  skip ${scope}: ${e.message}`);
-  }
+  cpSync(scopeSrc, scopeDest, { recursive: true });
+  console.log(`  copied ${scope}`);
 }
 
 // Copy libsql main package
 for (const pkg of libsqlPackages) {
-  try {
-    cpSync(join(src, pkg), join(dest, pkg), { recursive: true });
-    console.log(`  copied ${pkg}`);
-  } catch (e: any) {
-    console.warn(`  skip ${pkg}: ${e.message}`);
-  }
+  cpSync(join(src, pkg), join(dest, pkg), { recursive: true });
+  console.log(`  copied ${pkg}`);
 }
 
 // tree-sitter packages use dynamic import() at runtime
@@ -62,12 +54,8 @@ const treeSitterLangs = readdirSync(src).filter(
 );
 
 for (const pkg of [...dynamicPackages, ...treeSitterLangs]) {
-  try {
-    cpSync(join(src, pkg), join(dest, pkg), { recursive: true });
-    console.log(`  copied ${pkg}`);
-  } catch (e: any) {
-    console.warn(`  skip ${pkg}: ${e.message}`);
-  }
+  cpSync(join(src, pkg), join(dest, pkg), { recursive: true });
+  console.log(`  copied ${pkg}`);
 }
 
 cpSync(join(root, "api/skills/builtin"), join(serverDist, "skills/builtin"), {

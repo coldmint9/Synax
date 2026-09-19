@@ -16,6 +16,198 @@ const MAX_TEXT_CHARS = 8192;
 beforeEach(clearTokenCache);
 
 describe("complete text/schema request budgets", () => {
+  it("attributes retained definitions, calls and results without adding them to messages", async () => {
+    const tools = buildLoopToolSet(
+      [
+        { id: "file.read", label: "Read", category: "read" as const },
+        { id: "mcp.docs.search", label: "Search", category: "mcp" as const },
+        { id: "skill.load", label: "Load", category: "skill" as const },
+      ].map((tool) => ({
+        ...tool,
+        description: tool.label,
+        mutability: "read" as const,
+        resumeBehavior: "auto" as const,
+        inputSchema: z.object({ query: z.string() }),
+      })),
+    );
+    const catalog = "Skill directory";
+    const selectedSkill = JSON.stringify({
+      kind: "skill",
+      content: "Selected instructions",
+    });
+    const system = `Core instructions\n${catalog}\n${selectedSkill}`;
+    const reminder = "<system-reminder>runtime state</system-reminder>";
+    const quote = "<system-reminder>user-quoted text</system-reminder>";
+    const conversation: LlmGatewayMessage[] = [
+      { role: "system", content: system },
+      { role: "user", content: quote },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "Think through the evidence" },
+          { type: "text", text: "Checking now" },
+        ],
+      },
+      { role: "user", content: reminder },
+    ];
+    const options = {
+      tools,
+      skillsSection: catalog,
+      selectedReferences: selectedSkill,
+      systemMessageContents: new Set([reminder]),
+    };
+    const before = await measureContextComposition({
+      ...options,
+      messages: conversation,
+    });
+    const history: LlmGatewayMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "read",
+            toolName: "file_read",
+            input: { query: "file" },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "search",
+            toolName: "mcp_docs_search",
+            input: { query: "docs" },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "skill",
+            toolName: "skill_load",
+            input: { query: "skill" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "read",
+            toolName: "file_read",
+            output: {
+              type: "json",
+              value: { text: "File result ".repeat(100) },
+            },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "search",
+            toolName: "mcp_docs_search",
+            output: { type: "error-text", value: "MCP error details" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "skill",
+            toolName: "skill_load",
+            output: {
+              type: "text",
+              value: "Loaded skill instructions ".repeat(100),
+            },
+          },
+        ],
+      },
+      {
+        role: "user",
+        providerOptions: { synax: { toolCallId: "search" } },
+        content: [{ type: "text", text: "Tool media description" }],
+      },
+    ];
+    const after = await measureContextComposition({
+      ...options,
+      messages: [...conversation, ...history],
+    });
+    expect(after.messages).toBe(
+      countTokens(quote) +
+        countTokens("Think through the evidence") +
+        countTokens("Checking now"),
+    );
+    expect(after.messages).toBe(before.messages);
+    expect(before.usage).toEqual({
+      tools: 0,
+      mcp: 0,
+      skills: countTokens(selectedSkill),
+    });
+    for (const key of ["tools", "mcp", "skills"] as const)
+      expect(after[key]).toBeGreaterThan(before[key]);
+    for (const key of ["tools", "mcp", "skills"] as const) {
+      expect(after.usage![key] - before.usage![key]).toBe(
+        after[key] - before[key],
+      );
+      expect(after[key] - after.usage![key]).toBe(
+        before[key] - before.usage![key],
+      );
+    }
+    expect(after.system).toBe(before.system! + 4 * history.length);
+    expect(after.total).toBe(
+      after.tools + after.mcp + after.skills + after.messages + after.system!,
+    );
+    expect(after.version).toBe(2);
+  });
+
+  it("counts only retained output for retired tools and cleared skills, not the session ledger", async () => {
+    const tools = buildLoopToolSet([]);
+    const toolCalls = [
+      {
+        id: "record",
+        modelToolCallId: "retired",
+        toolId: "retired-server-tool",
+        category: "mcp" as const,
+      },
+      {
+        id: "not-in-context",
+        modelToolCallId: "removed",
+        toolId: "file.read",
+        category: "read" as const,
+      },
+    ];
+    const measure = (text: string) =>
+      measureContextComposition({
+        tools,
+        toolCalls,
+        messages: [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "retired",
+                toolName: "old_alias",
+                output: { type: "text", value: text },
+              },
+              {
+                type: "tool-result",
+                toolCallId: "skill",
+                toolName: "skill_load",
+                output: {
+                  type: "text",
+                  value: "[Earlier skill.load result cleared]",
+                },
+              },
+            ],
+          },
+        ],
+      });
+    const full = await measure("Retained results ".repeat(200));
+    const compact = await measure(
+      "Tool context receipt: evidence retained by reference",
+    );
+    expect(compact.mcp).toBeLessThan(full.mcp);
+    expect(compact.mcp).toBeGreaterThan(0);
+    expect(compact.usage!.mcp).toBe(compact.mcp);
+    expect(compact.usage!.skills).toBe(compact.skills);
+    expect(compact.skills).toBeGreaterThan(0);
+    expect(compact.tools).toBe(0);
+    expect(compact.messages).toBe(0);
+    expect(compact.system).toBe(4);
+  });
+
   it("counts JSON tool outputs as serialized JSON and reasoning exactly once", async () => {
     const messages: LlmGatewayMessage[] = [
       {

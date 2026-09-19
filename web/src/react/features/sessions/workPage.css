@@ -1,24 +1,36 @@
 /* Compact floating glass, continuous canvas. The transcript scrollport starts
    at y=0 so its content can pass behind the existing refractive header pill. */
 :is(.work-page, .work-details-dialog) {
-  --work-line: hsl(var(--border-hsl) / .38);
+  --work-line: hsl(var(--border-hsl) / 0.38);
   --work-muted: hsl(var(--muted-foreground));
-  --work-glass: hsl(var(--card) / .48);
-  --work-glass-edge: hsl(0 0% 100% / .48);
-  --work-shadow: 0 1px 0 hsl(0 0% 100% / .4) inset;
+  --work-glass: hsl(var(--card) / 0.48);
+  --work-glass-edge: hsl(0 0% 100% / 0.48);
+  --work-shadow: 0 1px 0 hsl(0 0% 100% / 0.4) inset;
   font-size: 11px;
 }
 .dark :is(.work-page, .work-details-dialog) {
-  --work-glass: hsl(210 4% 13% / .64);
-  --work-glass-edge: hsl(0 0% 100% / .075);
-  --work-shadow: 0 1px 0 hsl(0 0% 100% / .045) inset;
+  --work-glass: hsl(210 4% 13% / 0.64);
+  --work-glass-edge: hsl(0 0% 100% / 0.075);
+  --work-shadow: 0 1px 0 hsl(0 0% 100% / 0.045) inset;
 }
-.work-page { gap: 0; padding: 0; }
-.dark .work-page { background: #0f1011; }
-.work-conversation { position: relative; margin: 0; }
-.work-page .session-chat-scroll { padding-top: 56px; }
+.work-page {
+  gap: 0;
+  padding: 0;
+}
+.dark .work-page {
+  background: #0f1011;
+}
+.work-conversation {
+  position: relative;
+  margin: 0;
+}
+.work-page .session-chat-scroll {
+  padding-top: 56px;
+}
 /* Native titlebar already supplies the top inset in Electron. */
-.electron .work-page .session-chat-scroll { padding-top: 0; }
+.electron-macos .work-page .session-chat-scroll {
+  padding-top: 0;
+}
 .work-quick-actions.wh-pill {
   position: absolute;
   top: 14px;
@@ -29,11 +41,23 @@
   gap: 0;
   padding: 2px;
 }
-.work-quick-actions .button { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 0; border-radius: 50%; }
-.workbench-shell:has(.work-details-trigger) .workbench-header--agent-dock {
-  max-width: calc(100% - var(--agent-header-left-inset, 0px) - var(--agent-header-right-inset, 0px) - 88px);
+.work-quick-actions .button {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 50%;
 }
-.work-page .session-list-panel { padding: 6px; }
+.workbench-shell:has(.work-details-trigger) .workbench-header--agent-dock {
+  max-width: calc(
+    100% - var(--agent-header-left-inset, 0px) -
+      var(--agent-header-right-inset, 0px) - 88px
+  );
+}
+.work-page .session-list-panel {
+  padding: 6px;
+}
 .work-page .session-list-card--sessions {
   flex: 1 1 auto;
   background: var(--work-glass);
@@ -43,21 +67,91 @@
   backdrop-filter: blur(20px) saturate(1.35);
   -webkit-backdrop-filter: blur(20px) saturate(1.35);
 }
-.work-page .session-list-card--sessions .session-list-header { padding: 10px 9px 8px; background: transparent; border-bottom: 1px solid var(--work-line); }
-.work-page .session-list-header input { height: 26px; font-size: 11px; border-radius: 7px; background: hsl(var(--secondary) / .28); }
-.work-page .session-list-header button { min-height: 24px; height: 24px; font-size: 11px; }
-.work-page .session-list-header .text-sm { font-size: 12px; font-weight: 600; }
-.work-page .session-list-card--sessions .session-list-session-area > .session-list-groups { padding: 6px; }
-.work-page .session-list-item { margin-bottom: 3px; border-radius: 9px; background: transparent; }
-.work-page .session-list-item:hover { background: hsl(var(--secondary) / .45); }
-.work-page .session-list-item--active { background: hsl(var(--secondary) / .58); border-color: hsl(var(--foreground-hsl) / .08); box-shadow: 0 1px 0 hsl(0 0% 100% / .12) inset; }
-.work-page .session-list-select { min-height: 46px; padding: 6px 8px; gap: 1px 6px; }
-.work-page .session-list-title { font-size: 11.5px; font-weight: 500; line-height: 18px; }
-.work-page .session-list-preview { color: var(--work-muted); font-size: 10.5px; line-height: 16px; }
-.work-page .session-list-time { font-size: 10px; font-weight: 400; }
-.work-page .session-list-delete { width: 22px; height: 22px; }
-.work-page .session-workspace-sidebar--dock { align-self: stretch; height: auto; margin: 0 6px 0 0; border: 0; background: transparent; }
-:is(.work-page, .work-details-dialog) .workspace-dashboard { gap: 8px; padding: 6px; }
+.work-page .session-list-card--sessions .session-list-header {
+  padding: 10px 9px 8px;
+  background: transparent;
+  border-bottom: 1px solid var(--work-line);
+}
+/* Keep the first header row beside the macOS window controls. This preserves
+   the compact titlebar instead of pushing the search and list content down. */
+.electron-macos
+  .work-page
+  .session-list-header[data-list-view="sessions"]
+  .session-list-titlebar-row,
+.electron-macos
+  .work-page
+  .session-list-header[data-list-view="workflow"]
+  .session-list-back {
+  padding-left: 60px;
+}
+.work-page .session-list-header input {
+  height: 26px;
+  font-size: 11px;
+  border-radius: 7px;
+  background: hsl(var(--secondary) / 0.28);
+}
+.work-page .session-list-header button {
+  min-height: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+.work-page .session-list-header .text-sm {
+  font-size: 12px;
+  font-weight: 600;
+}
+.work-page
+  .session-list-card--sessions
+  .session-list-session-area
+  > .session-list-groups {
+  padding: 6px;
+}
+.work-page .session-list-item {
+  margin-bottom: 3px;
+  border-radius: 9px;
+  background: transparent;
+}
+.work-page .session-list-item:hover {
+  background: hsl(var(--secondary) / 0.45);
+}
+.work-page .session-list-item--active {
+  background: hsl(var(--secondary) / 0.58);
+  border-color: hsl(var(--foreground-hsl) / 0.08);
+  box-shadow: 0 1px 0 hsl(0 0% 100% / 0.12) inset;
+}
+.work-page .session-list-select {
+  min-height: 46px;
+  padding: 6px 8px;
+  gap: 1px 6px;
+}
+.work-page .session-list-title {
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 18px;
+}
+.work-page .session-list-preview {
+  color: var(--work-muted);
+  font-size: 10.5px;
+  line-height: 16px;
+}
+.work-page .session-list-time {
+  font-size: 10px;
+  font-weight: 400;
+}
+.work-page .session-list-delete {
+  width: 22px;
+  height: 22px;
+}
+.work-page .session-workspace-sidebar--dock {
+  align-self: stretch;
+  height: auto;
+  margin: 0 6px 0 0;
+  border: 0;
+  background: transparent;
+}
+:is(.work-page, .work-details-dialog) .workspace-dashboard {
+  gap: 8px;
+  padding: 6px;
+}
 :is(.work-page, .work-details-dialog) .ws-card {
   flex: 0 0 auto;
   border: 1px solid var(--work-glass-edge);
@@ -68,8 +162,14 @@
   -webkit-backdrop-filter: blur(20px) saturate(1.35);
   overflow: hidden;
 }
-:is(.work-page, .work-details-dialog) .ws-card-head { min-height: 30px; padding: 3px 7px; gap: 4px; }
-:is(.work-page, .work-details-dialog) .ws-card-head:has(.ws-card-toggle:hover) { background: transparent; }
+:is(.work-page, .work-details-dialog) .ws-card-head {
+  min-height: 30px;
+  padding: 3px 7px;
+  gap: 4px;
+}
+:is(.work-page, .work-details-dialog) .ws-card-head:has(.ws-card-toggle:hover) {
+  background: transparent;
+}
 :is(.work-page, .work-details-dialog) .ws-card-toggle {
   display: flex;
   flex: 1;
@@ -84,87 +184,395 @@
   font-weight: 500;
   background: transparent;
 }
-:is(.work-page, .work-details-dialog) .ws-card-icon { color: var(--work-muted); }
-:is(.work-page, .work-details-dialog) .ws-card-title { font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0; }
-:is(.work-page, .work-details-dialog) .ws-card-count { min-width: 16px; height: 16px; font-size: 10px; font-weight: 400; background: hsl(var(--foreground-hsl) / .05); }
-:is(.work-page, .work-details-dialog) .ws-card-chevron { margin-left: auto; opacity: .65; }
-:is(.work-page, .work-details-dialog) .ws-card-summary { font-size: 10px; white-space: nowrap; }
-:is(.work-page, .work-details-dialog) .ws-card-body { max-height: 260px; overflow-y: auto; padding: 4px 6px 6px; border-top: 1px solid var(--work-line); scrollbar-width: thin; }
-:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-body { max-height: none; overflow: visible; padding: 0 6px 6px; }
-:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-head { min-height: 34px; }
-:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-head .ws-card-title { font-weight: 600; }
-:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-head .ws-card-toggle { min-width: 0; }
-:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-head .ws-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-head .ws-card-tail { min-width: 0; max-width: 42%; }
-:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-head .ws-card-summary { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:is(.work-page, .work-details-dialog) .ws-project-repository { padding: 5px 2px 6px; }
-:is(.work-page, .work-details-dialog) .ws-project-section { border-top: 1px solid var(--work-line); }
-:is(.work-page, .work-details-dialog) .ws-project-section-head { display: flex; align-items: center; min-height: 28px; gap: 6px; padding: 3px 2px; font-size: 10px; font-weight: 500; }
-:is(.work-page, .work-details-dialog) .ws-project-section-actions { margin-left: auto; }
-:is(.work-page, .work-details-dialog) .ws-project-section-actions-group { display: inline-flex; align-items: center; gap: 4px; }
-:is(.work-page, .work-details-dialog) .ws-project-section-body { padding: 0 2px 4px; }
-:is(.work-page, .work-details-dialog) .ws-project-section-summary { padding: 1px 4px 3px; color: var(--work-muted); font-size: 10px; }
-:is(.work-page, .work-details-dialog) .ws-row { min-height: 26px; padding-block: 4px; gap: 6px; border-radius: 6px; }
-:is(.work-page, .work-details-dialog) .ws-row-file { font-size: 11px; line-height: 17px; }
-:is(.work-page, .work-details-dialog) .ws-row-sub { font-size: 10px; line-height: 15px; color: var(--work-muted); }
-:is(.work-page, .work-details-dialog) :is(.ws-row-diff, .ws-chip) { font-size: 10px; }
-:is(.work-page, .work-details-dialog) .ws-badge { width: 15px; height: 15px; font-size: 9px; border-radius: 4px; }
-:is(.work-page, .work-details-dialog) .ws-tree-folder { min-height: 25px; padding-block: 4px; }
-:is(.work-page, .work-details-dialog) .ws-tree-folder span { font-size: 11px; }
-:is(.work-page, .work-details-dialog) .ws-view-toggle { border: 0; border-radius: 99px; padding: 1px; background: hsl(var(--secondary) / .3); }
-:is(.work-page, .work-details-dialog) .ws-view-toggle button { width: 22px; height: 20px; border-radius: 99px; }
-:is(.work-page, .work-details-dialog) .ws-card--repo { padding: 4px 4px 6px; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
-:is(.work-page, .work-details-dialog) .ws-repo-project { font-size: 11px; margin-bottom: 4px; }
-:is(.work-page, .work-details-dialog) .ws-repo-head { gap: 5px; }
-:is(.work-page, .work-details-dialog) .ws-repo-branch { flex: 1; font-size: 10px; }
-:is(.work-page, .work-details-dialog) .ws-repo-state { font-size: 9px; height: 16px; padding: 0 4px; }
-:is(.work-page, .work-details-dialog) .ws-repo-action { height: 22px; font-size: 10px; padding: 0 6px; border-radius: 99px; background: hsl(var(--card) / .22); }
-:is(.work-page, .work-details-dialog) .ws-icon-button { width: 22px; height: 22px; border-radius: 99px; }
-:is(.work-page, .work-details-dialog) :is(.ws-repo-meta, .ws-repo-path) { font-size: 10px; }
-.work-progress-track { height: 2px; border-radius: 99px; overflow: hidden; background: hsl(var(--secondary)); margin: 3px 4px 5px; }
-.work-progress-track span { display: block; height: 100%; border-radius: inherit; background: hsl(var(--primary) / .65); transition: width 200ms ease; }
-.work-todos { list-style: none; padding: 0; margin: 0; }
-.work-todos li { display: flex; align-items: flex-start; gap: 7px; padding: 4px; font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
-.work-todos svg { margin-top: 3px; flex-shrink: 0; color: hsl(var(--muted-foreground)); }
-.work-todos [data-status="done"] { color: hsl(var(--muted-foreground)); }
-.work-todos [data-status="done"] svg { color: var(--color-success); }
-.work-todos [data-status="in_progress"] { color: var(--foreground); }
-.work-todos [data-status="in_progress"] svg { color: hsl(var(--primary)); }
-.work-output-row { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 28px; padding: 5px 4px; border-radius: 6px; text-align: left; cursor: pointer; }
-.work-output-row:hover { background: hsl(var(--secondary) / .4); }
-.work-output-icon { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 18px; height: 18px; }
-.work-output-row .ws-row-main { flex-direction: row; align-items: baseline; gap: 8px; }
-.work-output-dir { flex: 1; min-width: 0; opacity: .75; }
-.work-output-arrow { flex-shrink: 0; width: 11px; height: 11px; color: hsl(var(--muted-foreground) / .6); }
-.work-output-empty { display: flex; align-items: center; gap: 7px; padding: 9px 4px; color: hsl(var(--muted-foreground)); font-size: 11px; }
-:is(.work-page, .work-details-dialog) :is(.ws-empty, .ws-placeholder) { font-size: 11px; padding: 8px 4px; text-align: left; }
-.work-runtime-details { margin-top: 0; }
-.work-runtime-details [class*="text-[9px]"], .work-runtime-details [class*="text-[10px]"], .work-runtime-details [class*="text-[8px]"] { font-size: 10px; }
-.work-details-dialog { padding: 10px; gap: 6px; max-height: min(90dvh, 760px); border: 1px solid var(--work-glass-edge); background: hsl(var(--card) / .88); backdrop-filter: blur(28px) saturate(1.4); }
-.work-details-dialog .modal__header { padding: 12px 14px 6px; }
-.work-details-dialog .modal__heading { font-size: 12px; }
-.work-details-dialog .modal__body { min-height: 0; overflow-y: auto; padding: 4px 8px 8px; }
-.work-page button:focus-visible, .work-page summary:focus-visible, .work-output-row:focus-visible { outline: 2px solid hsl(var(--primary) / .6); outline-offset: 2px; }
-.work-page .ws-project-option { min-height: 42px; padding: 6px 8px; }
-.work-page .ws-project-option-top strong { font-size: 11px; }
-.work-page .ws-project-option-meta { font-size: 10px; }
+:is(.work-page, .work-details-dialog) .ws-card-icon {
+  color: var(--work-muted);
+}
+:is(.work-page, .work-details-dialog) .ws-card-title {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+:is(.work-page, .work-details-dialog) .ws-card-count {
+  min-width: 16px;
+  height: 16px;
+  font-size: 10px;
+  font-weight: 400;
+  background: hsl(var(--foreground-hsl) / 0.05);
+}
+:is(.work-page, .work-details-dialog) .ws-card-chevron {
+  margin-left: auto;
+  opacity: 0.65;
+}
+:is(.work-page, .work-details-dialog) .ws-card-summary {
+  font-size: 10px;
+  white-space: nowrap;
+}
+:is(.work-page, .work-details-dialog) .ws-card-body {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px 6px 6px;
+  border-top: 1px solid var(--work-line);
+  scrollbar-width: thin;
+}
+:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-body {
+  max-height: none;
+  overflow: visible;
+  padding: 0 6px 6px;
+}
+:is(.work-page, .work-details-dialog) .ws-project-card {
+  overflow: visible;
+}
+:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-body:empty {
+  display: none;
+}
+:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-head,
+:is(.work-page, .work-details-dialog)
+  .ws-project-card
+  > .ws-card-head:has(.ws-card-toggle:hover) {
+  min-height: 34px;
+  position: sticky;
+  /* Cover the dashboard's 6px top gutter when content scrolls behind it. */
+  top: -6px;
+  z-index: 2;
+  flex-wrap: wrap;
+  border-radius: 11px;
+  background: hsl(var(--card));
+}
+.ws-card-toolbar {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+:is(.work-page, .work-details-dialog)
+  .ws-project-card
+  > .ws-card-head
+  .ws-card-title {
+  font-weight: 600;
+}
+:is(.work-page, .work-details-dialog)
+  .ws-project-card
+  > .ws-card-head
+  .ws-card-toggle {
+  min-width: 0;
+}
+:is(.work-page, .work-details-dialog)
+  .ws-project-card
+  > .ws-card-head
+  .ws-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is(.work-page, .work-details-dialog)
+  .ws-project-card
+  > .ws-card-head
+  .ws-card-tail {
+  min-width: 0;
+  max-width: 42%;
+}
+:is(.work-page, .work-details-dialog)
+  .ws-project-card
+  > .ws-card-head
+  .ws-card-summary {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is(.work-page, .work-details-dialog) .ws-project-repository {
+  padding: 5px 2px 6px;
+}
+:is(.work-page, .work-details-dialog) .ws-project-section {
+  border-top: 1px solid var(--work-line);
+}
+:is(.work-page, .work-details-dialog) .ws-project-section-head {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  gap: 6px;
+  padding: 3px 2px;
+  font-size: 10px;
+  font-weight: 500;
+}
+:is(.work-page, .work-details-dialog) .ws-project-section-actions {
+  margin-left: auto;
+}
+:is(.work-page, .work-details-dialog) .ws-project-section-actions-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+:is(.work-page, .work-details-dialog) .ws-project-section-body {
+  padding: 0 2px 4px;
+}
+:is(.work-page, .work-details-dialog) .ws-project-section-summary {
+  padding: 1px 4px 3px;
+  color: var(--work-muted);
+  font-size: 10px;
+}
+:is(.work-page, .work-details-dialog) .ws-row {
+  min-height: 26px;
+  padding-block: 4px;
+  gap: 6px;
+  border-radius: 6px;
+}
+:is(.work-page, .work-details-dialog) .ws-row-file {
+  font-size: 11px;
+  line-height: 17px;
+}
+:is(.work-page, .work-details-dialog) .ws-row-sub {
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--work-muted);
+}
+:is(.work-page, .work-details-dialog) :is(.ws-row-diff, .ws-chip) {
+  font-size: 10px;
+}
+:is(.work-page, .work-details-dialog) .ws-badge {
+  width: 15px;
+  height: 15px;
+  font-size: 9px;
+  border-radius: 4px;
+}
+:is(.work-page, .work-details-dialog) .ws-tree-folder {
+  min-height: 25px;
+  padding-block: 4px;
+}
+:is(.work-page, .work-details-dialog) .ws-tree-folder span {
+  font-size: 11px;
+}
+:is(.work-page, .work-details-dialog) .ws-view-toggle {
+  border: 0;
+  border-radius: 99px;
+  padding: 1px;
+  background: hsl(var(--secondary) / 0.3);
+}
+:is(.work-page, .work-details-dialog) .ws-view-toggle button {
+  width: 22px;
+  height: 20px;
+  border-radius: 99px;
+}
+:is(.work-page, .work-details-dialog) .ws-card--repo {
+  position: sticky;
+  top: -6px;
+  z-index: 2;
+  padding: 4px 4px 6px;
+  border: 0;
+  border-radius: 0;
+  background: hsl(var(--card));
+  box-shadow: none;
+  backdrop-filter: none;
+}
+:is(.work-page, .work-details-dialog) .ws-repo-project {
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+:is(.work-page, .work-details-dialog) .ws-repo-head {
+  gap: 5px;
+}
+:is(.work-page, .work-details-dialog) .ws-repo-branch {
+  flex: 1;
+  font-size: 10px;
+}
+:is(.work-page, .work-details-dialog) .ws-repo-state {
+  font-size: 9px;
+  height: 16px;
+  padding: 0 4px;
+}
+:is(.work-page, .work-details-dialog) .ws-repo-action {
+  height: 22px;
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 99px;
+  background: hsl(var(--card) / 0.22);
+}
+:is(.work-page, .work-details-dialog) .ws-icon-button {
+  width: 22px;
+  height: 22px;
+  border-radius: 99px;
+}
+:is(.work-page, .work-details-dialog) :is(.ws-repo-meta, .ws-repo-path) {
+  font-size: 10px;
+}
+.work-progress-track {
+  height: 2px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: hsl(var(--secondary));
+  margin: 3px 4px 5px;
+}
+.work-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: hsl(var(--primary) / 0.65);
+  transition: width 200ms ease;
+}
+.work-todos {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.work-todos li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 4px;
+  font-size: 11px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.work-todos svg {
+  margin-top: 3px;
+  flex-shrink: 0;
+  color: hsl(var(--muted-foreground));
+}
+.work-todos [data-status="done"] {
+  color: hsl(var(--muted-foreground));
+}
+.work-todos [data-status="done"] svg {
+  color: var(--color-success);
+}
+.work-todos [data-status="in_progress"] {
+  color: var(--foreground);
+}
+.work-todos [data-status="in_progress"] svg {
+  color: hsl(var(--primary));
+}
+.work-output-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 5px 4px;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.work-output-row:hover {
+  background: hsl(var(--secondary) / 0.4);
+}
+.work-output-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+.work-output-row .ws-row-main {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+}
+.work-output-dir {
+  flex: 1;
+  min-width: 0;
+  opacity: 0.75;
+}
+.work-output-arrow {
+  flex-shrink: 0;
+  width: 11px;
+  height: 11px;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+.work-output-empty {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 4px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+}
+:is(.work-page, .work-details-dialog) :is(.ws-empty, .ws-placeholder) {
+  font-size: 11px;
+  padding: 8px 4px;
+  text-align: left;
+}
+.work-runtime-details {
+  margin-top: 0;
+}
+.work-runtime-details [class*="text-[9px]"],
+.work-runtime-details [class*="text-[10px]"],
+.work-runtime-details [class*="text-[8px]"] {
+  font-size: 10px;
+}
+.work-details-dialog {
+  padding: 10px;
+  gap: 6px;
+  max-height: min(90dvh, 760px);
+  border: 1px solid var(--work-glass-edge);
+  background: hsl(var(--card) / 0.88);
+  backdrop-filter: blur(28px) saturate(1.4);
+}
+.work-details-dialog .modal__header {
+  padding: 12px 14px 6px;
+}
+.work-details-dialog .modal__heading {
+  font-size: 12px;
+}
+.work-details-dialog .modal__body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 8px 8px;
+}
+.work-page button:focus-visible,
+.work-page summary:focus-visible,
+.work-output-row:focus-visible {
+  outline: 2px solid hsl(var(--primary) / 0.6);
+  outline-offset: 2px;
+}
+.work-page .ws-project-option {
+  min-height: 42px;
+  padding: 6px 8px;
+}
+.work-page .ws-project-option-top strong {
+  font-size: 11px;
+}
+.work-page .ws-project-option-meta {
+  font-size: 10px;
+}
 @media (max-width: 767px) {
-  .work-page .session-panel-host--left:not([data-collapsed]) { position: absolute; inset: 0 auto 0 0; z-index: 35; }
-  .work-page .session-list-card--sessions { background: hsl(var(--card) / .84); }
+  .work-page .session-panel-host--left:not([data-collapsed]) {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 35;
+  }
+  .work-page .session-list-card--sessions {
+    background: hsl(var(--card) / 0.84);
+  }
 }
 @media (pointer: coarse) {
-  .work-details-dialog .ws-card-toggle { min-height: 30px; }
-  .work-details-dialog :is(.work-output-row, .ws-row) { min-height: 32px; }
+  .work-details-dialog .ws-card-toggle {
+    min-height: 30px;
+  }
+  .work-details-dialog :is(.work-output-row, .ws-row) {
+    min-height: 32px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .work-progress-track span { transition: none; }
-  .work-todos .animate-spin { animation: none; }
+  .work-progress-track span {
+    transition: none;
+  }
+  .work-todos .animate-spin {
+    animation: none;
+  }
 }
-.workbench-shell:has(.work-details-trigger) .workbench-header:is(.workbench-header--workspace-dock, .workbench-header--workspace-focus) {
+.workbench-shell:has(.work-details-trigger)
+  .workbench-header:is(
+    .workbench-header--workspace-dock,
+    .workbench-header--workspace-focus
+  ) {
   right: calc(var(--agent-header-right-inset, 0px) + 46px);
 }
-.work-page .agent-session-controls .goal-session-composer-shell.goal-dock-shell {
-  background: hsl(var(--card) / .54);
+.work-page
+  .agent-session-controls
+  .goal-session-composer-shell.goal-dock-shell {
+  background: hsl(var(--card) / 0.54);
   border-color: var(--work-glass-edge);
   box-shadow: var(--work-shadow);
   backdrop-filter: blur(24px) saturate(1.35);
