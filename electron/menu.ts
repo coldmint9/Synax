@@ -6,6 +6,12 @@ interface Project {
 }
 
 let currentProjects: Project[] = [];
+let checkUiUpdates: (() => void) | null = null;
+
+export function setUiUpdateAction(action: (() => void) | null): void {
+  checkUiUpdates = action;
+  buildAppMenu();
+}
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
   const win =
@@ -120,6 +126,9 @@ export function buildAppMenu(projects?: Project[]): void {
       label: "帮助",
       submenu: [
         ...(!isMac ? [{ role: "about" as const, label: "关于 Synax" }] : []),
+        ...(app.isPackaged && (isMac || process.platform === "win32")
+          ? [{ label: "检查界面更新…", id: "ui:check-updates", enabled: Boolean(checkUiUpdates), click: () => checkUiUpdates?.() }, { type: "separator" as const }]
+          : []),
         {
           label: "文档",
           click: () => shell.openExternal("https://github.com"),

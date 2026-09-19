@@ -9,14 +9,17 @@ import {
 } from "./lib/node-sidecar.js";
 import { getDataRoot, getResourcePath } from "./lib/data-paths.js";
 import { loadWindowState, saveWindowState } from "./lib/window-state.js";
-import { buildAppMenu, updateProjectsMenu } from "./menu.js";
+import { buildAppMenu, setUiUpdateAction, updateProjectsMenu } from "./menu.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
+import { UiUpdates } from "./lib/ui-updates.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
+let uiUpdates: UiUpdates | null = null;
+let uiReadyTimer: NodeJS.Timeout | null = null;
 
 // Register custom protocol scheme before app is ready
 protocol.registerSchemesAsPrivileged([
@@ -82,11 +85,13 @@ function createWindow(): BrowserWindow {
         validatedURL,
       });
       showWindow();
+      void recoverUi(win);
     },
   );
   win.webContents.on("render-process-gone", (_event, details) => {
     console.error("[electron] renderer process gone", details);
     showWindow();
+    void recoverUi(win);
   });
 
   const fallbackTimer = setTimeout(showWindow, 5000);
@@ -101,6 +106,20 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+let recoveringUi = false;
+async function recoverUi(win: BrowserWindow): Promise<void> {
+  if (recoveringUi || !uiUpdates || !mainWindow || win.isDestroyed()) return;
+  recoveringUi = true;
+  try {
+    if (await uiUpdates.rollback()) {
+      if (uiReadyTimer) clearTimeout(uiReadyTimer);
+      console.warn("[ui-update] reverting failed interface to the last known good version");
+      await win.loadURL("app://./index.html");
+    }
+  } catch (error) { console.error("[ui-update] rollback failed", error); }
+  finally { recoveringUi = false; }
+}
+
 let protocolRegistered = false;
 let ipcRegistered = false;
 function registerIPC(): void {
@@ -113,6 +132,13 @@ function registerIPC(): void {
     dialog.showSaveDialog(options),
   );
   ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.on("app:ui-ready", (event) => {
+    if (!uiUpdates || event.sender !== mainWindow?.webContents ||
+        !event.senderFrame?.url.startsWith("app://./")) return;
+    if (uiReadyTimer) clearTimeout(uiReadyTimer);
+    uiReadyTimer = null;
+    void uiUpdates.markHealthy().catch((error) => console.error("[ui-update] health check failed", error));
+  });
   ipcMain.handle("app:api-port", () => getSidecarPort());
   ipcMain.handle("app:runtime-token", async (event) => {
     const url = event.senderFrame?.url ?? "";
@@ -135,14 +161,26 @@ function registerIPC(): void {
 
 async function bootstrap(): Promise<void> {
   registerIPC();
-  buildAppMenu();
+  if (!uiUpdates && app.isPackaged && (process.platform === "darwin" || process.platform === "win32")) {
+    try {
+      const updates = new UiUpdates();
+      await updates.initialize();
+      uiUpdates = updates;
+      setUiUpdateAction(() => void uiUpdates?.check(true));
+    } catch (error) {
+      // A broken update cache must never prevent the bundled app from opening.
+      console.error("[ui-update] updater unavailable; using bundled interface", error);
+      uiUpdates = null;
+      setUiUpdateAction(null);
+    }
+  } else buildAppMenu();
 
   // Register custom protocol to serve frontend assets over app:// scheme.
   // This is required because <script type="module"> does not work with file:// protocol.
   if (!protocolRegistered) {
     protocol.handle("app", async (request) => {
       const url = new URL(request.url);
-      const root = path.resolve(getResourcePath("dist"));
+      const root = path.resolve(uiUpdates?.root ?? getResourcePath("dist"));
       const filePath = path.resolve(
         root,
         decodeURIComponent(url.pathname).replace(/^\/+/, ""),
@@ -179,7 +217,17 @@ async function bootstrap(): Promise<void> {
     mainWindow.loadURL(`http://localhost:${webPort}`);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
-    await mainWindow.loadURL("app://./index.html");
+    if (uiUpdates?.store.needsHealthCheck) {
+      uiReadyTimer = setTimeout(() => { if (mainWindow) void recoverUi(mainWindow); }, 30_000);
+      uiReadyTimer.unref?.();
+    }
+    try { await mainWindow.loadURL("app://./index.html"); }
+    catch (error) {
+      if (!(await uiUpdates?.rollback())) throw error;
+      if (uiReadyTimer) clearTimeout(uiReadyTimer);
+      await mainWindow.loadURL("app://./index.html");
+    }
+    uiUpdates?.start(mainWindow);
   }
 }
 
@@ -207,5 +255,6 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
+  uiUpdates?.stop();
   stopSidecar();
 });

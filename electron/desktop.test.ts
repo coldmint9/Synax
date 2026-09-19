@@ -28,7 +28,7 @@ const spawn = vi.hoisted(() => vi.fn());
 vi.mock("electron", () => electron);
 vi.mock("node:child_process", () => ({ spawn }));
 
-import { buildAppMenu } from "./menu.js";
+import { buildAppMenu, setUiUpdateAction } from "./menu.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 import { startSidecar, stopSidecar } from "./lib/node-sidecar.js";
 import { spawnProcess, waitForExit } from "../scripts/_shared.js";
@@ -72,6 +72,22 @@ function menuRoles(items: any[]): string[] {
     .flatMap((item) => [item.role, ...menuRoles(item.submenu ?? [])])
     .filter(Boolean);
 }
+
+describe("desktop UI update menu", () => {
+  it.each(["darwin", "win32"] as const)("exposes a manual check on packaged %s", (platformName) => {
+    onPlatform(platformName);
+    electron.app.isPackaged = true;
+    const check = vi.fn();
+    setUiUpdateAction(check);
+    const items = electron.Menu.buildFromTemplate.mock.lastCall![0] as any[];
+    const help = items.find((item) => item.label === "帮助");
+    const command = help.submenu.find((item: any) => item.id === "ui:check-updates");
+    expect(command).toBeTruthy();
+    command.click();
+    expect(check).toHaveBeenCalledOnce();
+    setUiUpdateAction(null);
+  });
+});
 
 describe("desktop platform contract", () => {
   it.each(["darwin", "win32"] as const)("uses native menus on %s", (target) => {

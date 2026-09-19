@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   showSaveDialog: (options: Electron.SaveDialogOptions) =>
     ipcRenderer.invoke("dialog:save", options),
   getAppVersion: () => ipcRenderer.invoke("app:version"),
+  reportUIReady: () => ipcRenderer.send("app:ui-ready"),
   getApiPort: () => ipcRenderer.invoke("app:api-port"),
   getRuntimeToken: () => ipcRenderer.invoke("app:runtime-token"),
   onDeepLink: (callback: (url: string) => void) => {

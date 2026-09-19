@@ -274,7 +274,15 @@ libSQL 和 tree-sitter 包含原生二进制，必须在目标**系统和架构*
 
 macOS 保留融合式红绿灯标题栏和应用菜单；Windows 保留原生窗口控件并使用 Ctrl 快捷键。运行数据仍位于 `~/.synax`（Windows 为 `%USERPROFILE%\.synax`），可通过 `DATA_ROOT` 覆盖。安装包使用 Electron 内嵌运行时，不要求另行安装 Node.js。
 
-最终图标可放入 `electron/resources/icon.icns`（macOS）和 `electron/resources/icon.ico`（Windows），未提供时使用 Electron 默认图标。本轮未配置签名、公证和自动更新；未签名产物用于测试，可能触发系统安全提示。
+最终图标可放入 `electron/resources/icon.icns`（macOS）和 `electron/resources/icon.ico`（Windows），未提供时使用 Electron 默认图标。未配置签名和公证；未签名产物用于测试，可能触发系统安全提示。Electron、本地 API、原生模块仍需通过新版桌面安装包更新。
+
+### 从 GitHub 更新界面资源
+
+已打包的 macOS、Windows 客户端会在启动后以及每 12 小时检查公开仓库 `coldmint9/Synax` 的 GitHub Releases，也可从**帮助 → 检查界面更新**手动检查。只下载 `web/dist` 的资源：相邻界面版本优先使用差量包，否则下载完整**界面**包，而不是整个桌面安装包。校验哈希后暂存于 Electron 用户数据目录；选择“立即重启”或稍后重新启动时才切换。启动失败或文件损坏时回退到上个正常界面，最后回退到安装包内置界面。Linux 暂不支持。
+
+发布时，先将包含此更新器的 `v<package.json version>` 桌面版本发布到 GitHub；不具备更新器的旧客户端必须手工安装这版一次。兼容的纯界面变更保持 `package.json` 版本不变，推送递增的 `ui-vMAJOR.MINOR.PATCH` tag。独立的 `.github/workflows/build-ui-release.yml` 要求对应桌面 Release 已发布，并检查自该 tag 起没有修改后端/桌面代码；测试与构建通过后，在草稿 Release 中上传完整界面包、相邻版本差量包和清单，再公开发布。依赖新 API 或 IPC 的界面功能必须随新版桌面安装包发布。
+
+**安全取舍：**按约定不使用独立内容签名。HTTPS 与 SHA-256 只能发现传输损坏，**不能阻止 GitHub 仓库或 Release 发布权限失陷后投递恶意界面 JS**；恶意代码可能访问桌面桥接和本地 API。请保护 GitHub 发布权限。界面资源更新并非绕过 macOS 整个 App 更新的签名要求。
 
 ## 参与贡献
 

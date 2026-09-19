@@ -13,6 +13,7 @@ export default function App() {
   useEffect(() => {
     if (navigator.userAgent.includes("Electron")) {
       document.documentElement.classList.add("electron");
+      (window as any).electronAPI?.reportUIReady?.();
       if ((window as any).electronAPI?.platform === "darwin") {
         document.documentElement.classList.add("electron-macos");
       } else if ((window as any).electronAPI?.platform === "win32") {
