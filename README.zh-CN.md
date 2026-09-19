@@ -140,39 +140,39 @@ Synax 基于几个很朴素的判断：
 
 Synax 会通过 `dotenv/config` 自动读取 `.env`，但项目不要求必须提供模板文件。只有在需要覆盖默认值时才需要手动创建 `.env`。
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `PORT` | `3210` | API 服务端口。 |
-| `WEB_PORT` | `5173` | Vite 开发服务端口。 |
-| `WEB_HOST` | `0.0.0.0` | 开发脚本使用的 Vite host。 |
-| `DATA_ROOT` | `.data` | 本地数据目录，用于 libSQL、项目元数据、配置、日志和模型目录缓存。 |
-| `LOG_LEVEL` | `info` | API 日志级别。 |
-| `CONFIG_ENCRYPTION_KEY` | 未设置 | 用于加密本地保存的 Provider key。 |
-| `Synax_CONFIG_SECRET` | 未设置 | 配置加密的备用密钥。 |
-| `CONTEXT_SESSION_TTL_HOURS` | `72` | Context session 过期时间。 |
-| `CONTEXT_TOKEN_WARNING_THRESHOLD` | `32000` | Context session 的 token 预警阈值。 |
-| `CONTEXT_MEMORY_MAX_PER_PROJECT` | `500` | 单项目最大记忆条目数。 |
+| 变量                              | 默认值    | 说明                                                              |
+| --------------------------------- | --------- | ----------------------------------------------------------------- |
+| `PORT`                            | `3210`    | API 服务端口。                                                    |
+| `WEB_PORT`                        | `5173`    | Vite 开发服务端口。                                               |
+| `WEB_HOST`                        | `0.0.0.0` | 开发脚本使用的 Vite host。                                        |
+| `DATA_ROOT`                       | `.data`   | 本地数据目录，用于 libSQL、项目元数据、配置、日志和模型目录缓存。 |
+| `LOG_LEVEL`                       | `info`    | API 日志级别。                                                    |
+| `CONFIG_ENCRYPTION_KEY`           | 未设置    | 用于加密本地保存的 Provider key。                                 |
+| `Synax_CONFIG_SECRET`             | 未设置    | 配置加密的备用密钥。                                              |
+| `CONTEXT_SESSION_TTL_HOURS`       | `72`      | Context session 过期时间。                                        |
+| `CONTEXT_TOKEN_WARNING_THRESHOLD` | `32000`   | Context session 的 token 预警阈值。                               |
+| `CONTEXT_MEMORY_MAX_PER_PROJECT`  | `500`     | 单项目最大记忆条目数。                                            |
 
 运行数据默认保存在本地，并且不会提交到 Git。如果你希望长期保存或跨环境迁移 Provider 凭据，请在写入凭据前设置稳定的 `CONFIG_ENCRYPTION_KEY` 或 `Synax_CONFIG_SECRET`。
 
 ## 常用脚本
 
-| 命令 | 说明 |
-| --- | --- |
-| `npm run dev` | 同时启动 API 和 Web 开发服务。 |
-| `npm run dev:api` | 仅启动 Hono API 服务。 |
-| `npm run dev:web` | 仅启动 Vite Web 应用。 |
-| `npm run dev:desktop` | 启动 API、Web、Electron 编译监听和 Electron。 |
-| `npm run build` | 将 API 服务打包到 `server-dist/`。 |
-| `npm run start` | 运行已打包的 API 服务。 |
-| `npm run cli -- --help` | 通过 TypeScript 直接运行 Synax CLI。 |
-| `node server-dist/cli.cjs --help` | 运行编译后的 `synax` CLI。 |
-| `npm run web:build` | 将 Web 应用构建到 `web/dist/`。 |
-| `npm run typecheck` | 运行根项目 TypeScript 检查。 |
-| `npm run lint` | 检查 API 代码。 |
-| `npm run test` | 运行 Vitest 测试。 |
-| `npm run build:desktop` | 打包本地 Electron 应用。 |
-| `npm run make:desktop` | 使用 Electron Forge 生成可分发产物。 |
+| 命令                              | 说明                                          |
+| --------------------------------- | --------------------------------------------- |
+| `npm run dev`                     | 同时启动 API 和 Web 开发服务。                |
+| `npm run dev:api`                 | 仅启动 Hono API 服务。                        |
+| `npm run dev:web`                 | 仅启动 Vite Web 应用。                        |
+| `npm run dev:desktop`             | 启动 API、Web、Electron 编译监听和 Electron。 |
+| `npm run build`                   | 将 API 服务打包到 `server-dist/`。            |
+| `npm run start`                   | 运行已打包的 API 服务。                       |
+| `npm run cli -- --help`           | 通过 TypeScript 直接运行 Synax CLI。          |
+| `node server-dist/cli.cjs --help` | 运行编译后的 `synax` CLI。                    |
+| `npm run web:build`               | 将 Web 应用构建到 `web/dist/`。               |
+| `npm run typecheck`               | 运行根项目 TypeScript 检查。                  |
+| `npm run lint`                    | 检查 API 代码。                               |
+| `npm run test`                    | 运行 Vitest 测试。                            |
+| `npm run build:desktop`           | 打包本地 Electron 应用。                      |
+| `npm run make:desktop`            | 使用 Electron Forge 生成可分发产物。          |
 
 ## 项目结构
 
@@ -261,6 +261,20 @@ npm run make:desktop
 ```
 
 打包产物会把 `server-dist`、`web/dist` 和数据库迁移文件作为 Electron resources 一起带上。
+
+libSQL 和 tree-sitter 包含原生二进制，必须在目标**系统和架构**上安装依赖并构建。使用 `npm ci --include=dev`，仅安装生产依赖无法执行桌面构建。
+
+| 目标                | 构建机器 / CI runner           | 产物                     |
+| ------------------- | ------------------------------ | ------------------------ |
+| macOS Apple Silicon | arm64 Mac / `macos-15`         | DMG + ZIP                |
+| macOS Intel         | x64 Mac / `macos-15-intel`     | DMG + ZIP                |
+| Windows x64         | x64 Windows / `windows-latest` | Squirrel Setup.exe + ZIP |
+
+依次运行 `npm run test:desktop`、`npm run make:desktop`、`npm run test:desktop:smoke`。冒烟测试使用隔离的临时数据（含带空格路径），启动真正打包的应用，检查前端/preload、API 和随包原生模块；诊断输出位于 `out/desktop-smoke.*`。现有桌面 CI 按平台运行这些检查；修改 CI 配置不代表已经通过 Windows 实测。
+
+macOS 保留融合式红绿灯标题栏和应用菜单；Windows 保留原生窗口控件并使用 Ctrl 快捷键。运行数据仍位于 `~/.synax`（Windows 为 `%USERPROFILE%\.synax`），可通过 `DATA_ROOT` 覆盖。安装包使用 Electron 内嵌运行时，不要求另行安装 Node.js。
+
+最终图标可放入 `electron/resources/icon.icns`（macOS）和 `electron/resources/icon.ico`（Windows），未提供时使用 Electron 默认图标。本轮未配置签名、公证和自动更新；未签名产物用于测试，可能触发系统安全提示。
 
 ## 参与贡献
 

@@ -112,6 +112,13 @@ export interface BuildMessagesOptions {
   clearing?: ClearingOptions;
   /** Reuse one read-only history snapshot across repeated projections. */
   snapshot?: LoopHistoryReader;
+  /** Accounting only; never added to provider messages or cache fingerprints. */
+  systemMessageContents?: Set<string>;
+}
+
+function systemMessage(content: string, contents?: Set<string>): ModelMessage {
+  contents?.add(content);
+  return { role: "user", content };
 }
 
 export function buildLoopModelMessages(
@@ -125,8 +132,7 @@ export function buildLoopModelMessages(
       ? { compactionSummary: opts ?? undefined }
       : opts;
 
-  const history =
-    options.snapshot ?? createLoopHistoryReader(store, sessionId);
+  const history = options.snapshot ?? createLoopHistoryReader(store, sessionId);
   const userMessages = history
     .listMessages()
     .filter((message) => message.role === "user");
@@ -143,10 +149,12 @@ export function buildLoopModelMessages(
   const messages: ModelMessage[] = [];
 
   if (options.compactionSummary) {
-    messages.push({
-      role: "user",
-      content: `<context-summary>\n[Previous conversation summary - compressed to save context]\n${options.compactionSummary}\n</context-summary>`,
-    });
+    messages.push(
+      systemMessage(
+        `<context-summary>\n[Previous conversation summary - compressed to save context]\n${options.compactionSummary}\n</context-summary>`,
+        options.systemMessageContents,
+      ),
+    );
   }
 
   const injected = new Set(
@@ -180,10 +188,12 @@ export function buildLoopModelMessages(
         ),
       ].flatMap((m) => m.contentParts?.filter((p) => p.type !== "text") ?? []);
       if (retained.length)
-        messages.push({
-          role: "user",
-          content: `Earlier media retained; use media.read to inspect: ${JSON.stringify(retained)}`,
-        });
+        messages.push(
+          systemMessage(
+            `Earlier media retained; use media.read to inspect: ${JSON.stringify(retained)}`,
+            options.systemMessageContents,
+          ),
+        );
       continue;
     }
     messages.push({
@@ -195,6 +205,18 @@ export function buildLoopModelMessages(
           ? options.initialUserMessage.content
           : userMessage.content,
     });
+    if (
+      userMessage.metadata?.source === "system_injection" &&
+      userMessage.content !== options.initialUserMessage?.original
+    ) {
+      const content = messages.at(-1)!.content;
+      if (typeof content === "string")
+        options.systemMessageContents?.add(content);
+      else
+        for (const part of content)
+          if (part.type === "text")
+            options.systemMessageContents?.add(part.text);
+    }
     if (!run) continue;
     messages.push(
       ...buildRunMessages(
@@ -206,6 +228,7 @@ export function buildLoopModelMessages(
         userMessages.filter((m) => m.runId === run.id && injected.has(m.id)),
         options.currentStepId,
         options.summarizedInputIds,
+        options.systemMessageContents,
       ),
     );
   }
@@ -222,6 +245,7 @@ function buildRunMessages(
   injected: AgentRuntimeMessage[] = [],
   currentStepId?: string,
   summarizedInputIds?: Set<string>,
+  systemMessageContents?: Set<string>,
 ): ModelMessage[] {
   const steps = history.listRunSteps(runId);
   const toolCalls = history.listRunToolCalls(runId);
@@ -270,15 +294,18 @@ function buildRunMessages(
           message.contentParts?.filter((part) => part.type !== "text") ?? [],
       );
       if (media.length)
-        messages.push({
-          role: "user",
-          content: `Earlier media retained; use media.read to inspect: ${JSON.stringify(media)}\nOriginal queued inputs: ${JSON.stringify(inputs.filter((message) => message.contentParts?.some((part) => part.type !== "text")).map((message) => ({ kind: "message", id: message.id })))}; use context.read for their original text.`,
-        });
+        messages.push(
+          systemMessage(
+            `Earlier media retained; use media.read to inspect: ${JSON.stringify(media)}\nOriginal queued inputs: ${JSON.stringify(inputs.filter((message) => message.contentParts?.some((part) => part.type !== "text")).map((message) => ({ kind: "message", id: message.id })))}; use context.read for their original text.`,
+            systemMessageContents,
+          ),
+        );
       continue;
     }
     inputs.forEach(appendInput);
     if (step.id === currentStepId) continue;
-    if (reminder) messages.push({ role: "user", content: reminder.content });
+    if (reminder)
+      messages.push(systemMessage(reminder.content, systemMessageContents));
     const stepParts = history.listRunParts(step.id);
     const assistantContent: NonNullable<
       Extract<ModelMessage, { role: "assistant" }>["content"]

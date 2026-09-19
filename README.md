@@ -1,10 +1,8 @@
 <div align="center">
 
 # Synax
+
 <img width="898" height="80" alt="image" src="https://github.com/user-attachments/assets/ba60d60b-ee63-4409-b158-33754f4efe80" />
-
-
-
 
 Turn a local codebase into a source-linked, refreshable design wiki that becomes the context layer for agent-assisted development.
 
@@ -138,46 +136,45 @@ Known incomplete or unstable areas:
 
 ## Architecture
 
-
 This diagram is the lobby map, not the full tour. For the real architecture walkthrough, install Synax, import this repository, and generate the Wiki. The project is built to explain codebases, so yes, it can explain itself. Very polite of it.😄
 
 ## Configuration
 
 Synax reads `.env` automatically through `dotenv/config`, but no template file is required. Create `.env` only when you need to override defaults.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `PORT` | `3210` | API server port. |
-| `WEB_PORT` | `5173` | Vite development server port. |
-| `WEB_HOST` | `0.0.0.0` | Vite development server host used by dev scripts. |
-| `DATA_ROOT` | `.data` | Local data directory for libSQL, project metadata, config, logs, and model catalog cache. |
-| `LOG_LEVEL` | `info` | API log level. |
-| `CONFIG_ENCRYPTION_KEY` | unset | Secret used to encrypt stored provider keys. |
-| `Synax_CONFIG_SECRET` | unset | Alternative secret used for config encryption. |
-| `CONTEXT_SESSION_TTL_HOURS` | `72` | Context session expiration window. |
-| `CONTEXT_TOKEN_WARNING_THRESHOLD` | `32000` | Token warning threshold for context sessions. |
-| `CONTEXT_MEMORY_MAX_PER_PROJECT` | `500` | Maximum stored memory entries per project. |
+| Variable                          | Default   | Description                                                                               |
+| --------------------------------- | --------- | ----------------------------------------------------------------------------------------- |
+| `PORT`                            | `3210`    | API server port.                                                                          |
+| `WEB_PORT`                        | `5173`    | Vite development server port.                                                             |
+| `WEB_HOST`                        | `0.0.0.0` | Vite development server host used by dev scripts.                                         |
+| `DATA_ROOT`                       | `.data`   | Local data directory for libSQL, project metadata, config, logs, and model catalog cache. |
+| `LOG_LEVEL`                       | `info`    | API log level.                                                                            |
+| `CONFIG_ENCRYPTION_KEY`           | unset     | Secret used to encrypt stored provider keys.                                              |
+| `Synax_CONFIG_SECRET`             | unset     | Alternative secret used for config encryption.                                            |
+| `CONTEXT_SESSION_TTL_HOURS`       | `72`      | Context session expiration window.                                                        |
+| `CONTEXT_TOKEN_WARNING_THRESHOLD` | `32000`   | Token warning threshold for context sessions.                                             |
+| `CONTEXT_MEMORY_MAX_PER_PROJECT`  | `500`     | Maximum stored memory entries per project.                                                |
 
 Runtime data is local by default and is ignored by Git. Use a stable `CONFIG_ENCRYPTION_KEY` or `Synax_CONFIG_SECRET` before storing provider credentials you intend to keep across machines or environments.
 
 ## Scripts
 
-| Command | Description |
-| --- | --- |
-| `npm run dev` | Start API and web dev servers together. |
-| `npm run dev:api` | Start only the Hono API server. |
-| `npm run dev:web` | Start only the Vite web app. |
-| `npm run dev:desktop` | Start API, web, Electron compiler watch, and Electron. |
-| `npm run build` | Bundle the API server into `server-dist/`. |
-| `npm run start` | Run the bundled API server. |
-| `npm run cli -- --help` | Run the Synax CLI directly through TypeScript. |
-| `node server-dist/cli.cjs --help` | Run the compiled `synax` CLI. |
-| `npm run web:build` | Build the web app into `web/dist/`. |
-| `npm run typecheck` | Run TypeScript checks for the root project. |
-| `npm run lint` | Lint API code. |
-| `npm run test` | Run Vitest tests. |
-| `npm run build:desktop` | Package a local Electron app. |
-| `npm run make:desktop` | Create distributable Electron artifacts. |
+| Command                           | Description                                            |
+| --------------------------------- | ------------------------------------------------------ |
+| `npm run dev`                     | Start API and web dev servers together.                |
+| `npm run dev:api`                 | Start only the Hono API server.                        |
+| `npm run dev:web`                 | Start only the Vite web app.                           |
+| `npm run dev:desktop`             | Start API, web, Electron compiler watch, and Electron. |
+| `npm run build`                   | Bundle the API server into `server-dist/`.             |
+| `npm run start`                   | Run the bundled API server.                            |
+| `npm run cli -- --help`           | Run the Synax CLI directly through TypeScript.         |
+| `node server-dist/cli.cjs --help` | Run the compiled `synax` CLI.                          |
+| `npm run web:build`               | Build the web app into `web/dist/`.                    |
+| `npm run typecheck`               | Run TypeScript checks for the root project.            |
+| `npm run lint`                    | Lint API code.                                         |
+| `npm run test`                    | Run Vitest tests.                                      |
+| `npm run build:desktop`           | Package a local Electron app.                          |
+| `npm run make:desktop`            | Create distributable Electron artifacts.               |
 
 ## Project Layout
 
@@ -268,6 +265,20 @@ npm run make:desktop
 ```
 
 Packaged builds include `server-dist`, `web/dist`, and database migrations as Electron resources.
+
+Desktop builds must run on the target OS **and architecture** because libSQL and tree-sitter include native binaries. Install build dependencies with `npm ci --include=dev`; a production-only install cannot build the app.
+
+| Target              | Build host / CI runner         | Artifacts                |
+| ------------------- | ------------------------------ | ------------------------ |
+| macOS Apple Silicon | arm64 Mac / `macos-15`         | DMG + ZIP                |
+| macOS Intel         | x64 Mac / `macos-15-intel`     | DMG + ZIP                |
+| Windows x64         | x64 Windows / `windows-latest` | Squirrel Setup.exe + ZIP |
+
+Run `npm run test:desktop`, then `npm run make:desktop`, then `npm run test:desktop:smoke`. The smoke test uses isolated temporary data (including a path with spaces), launches the packaged app, checks the renderer/preload and API, and loads bundled native modules. Diagnostics are written under `out/desktop-smoke.*`. The existing desktop CI executes these checks per platform; changing the workflow alone is not a Windows test result.
+
+macOS uses the integrated traffic-light titlebar and application menu; Windows retains native window controls and uses Ctrl shortcuts. Runtime data remains in `~/.synax` (or `%USERPROFILE%\.synax` on Windows), overridable with `DATA_ROOT`. Installed builds use Electron's embedded runtime rather than requiring a separate Node.js installation.
+
+Final icons can be supplied as `electron/resources/icon.icns` (macOS) and `electron/resources/icon.ico` (Windows). Without them, packaging uses the default Electron icon. Signing, notarization, and automatic updates are not configured; unsigned builds are intended for testing and may trigger OS warnings.
 
 ## Contributing
 

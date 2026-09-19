@@ -867,30 +867,38 @@
     position: relative;
   }
 
-  .electron .workbench-shell {
-    padding-top: 52px;
+  .electron-macos .workbench-shell {
+    /* macOS traffic lights sit at y=18 with a 14px diameter. A 40px
+       overlay leaves a small breathing room below them without reserving a
+       full toolbar row in the page layout. */
+    --desktop-titlebar-height: 40px;
     background: var(--background);
   }
 
-  .electron .workbench-shell::before {
+  .electron-macos .workbench-shell::before {
     content: "";
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    height: 52px;
+    height: var(--desktop-titlebar-height);
     z-index: 9990;
     -webkit-app-region: drag;
     pointer-events: none;
   }
 
-  .electron .workbench-header {
+  .electron-macos .workbench-header {
     position: fixed;
-    top: 10px;
+    top: 4px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 9998;
     -webkit-app-region: no-drag;
+  }
+
+  .electron-macos .wiki-panel:first-child .wiki-panel-header {
+    height: var(--desktop-titlebar-height);
+    padding-top: 18px;
   }
 
   .activity-bar {
@@ -1111,6 +1119,15 @@
   }
   .dark .wh-pill::after {
     background: hsl(var(--card) / 0.45);
+  }
+  /* The floating header needs a denser frost when content scrolls behind it. */
+  .workbench-header .wh-pill::after {
+    background: hsl(var(--card) / 0.88);
+    backdrop-filter: blur(18px) saturate(1.25);
+    -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  }
+  .dark .workbench-header .wh-pill::after {
+    background: hsl(var(--card) / 0.86);
   }
   .dark .wh-pill {
     box-shadow: 0 1px 2px hsl(0 0% 0% / 0.28);
@@ -3276,6 +3293,18 @@
     0 8px 28px hsl(0 0% 0% / 0.42);
 }
 
+/* Keep the composer legible above the transcript without losing its glass rim. */
+.goal-session-composer-shell {
+  background: hsl(var(--card) / 0.88);
+  -webkit-backdrop-filter: blur(28px) saturate(1.25);
+  backdrop-filter: blur(28px) saturate(1.25);
+}
+.dark .goal-session-composer-shell {
+  background:
+    linear-gradient(180deg, hsl(0 0% 100% / 0.07), transparent 45%),
+    hsl(var(--card) / 0.88);
+}
+
 .goal-dock-dialog-scroll {
   scrollbar-width: thin;
   scrollbar-color: hsl(var(--foreground-hsl) / 0.12) transparent;
@@ -5417,7 +5446,7 @@
   transition: padding-top 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.electron
+.electron-macos
   .workbench-shell[data-chrome-mode="workspaceFocus"]
   .workbench-island {
   padding-top: 0;
@@ -5440,7 +5469,7 @@
   gap: 0;
 }
 
-.electron
+.electron-macos
   .workbench-header:is(
     .workbench-header--workspace-dock,
     .workbench-header--workspace-focus
@@ -5452,7 +5481,7 @@
 .wh-pill--workspace-chrome {
   width: 100%;
   max-width: 100%;
-  height: 48px;
+  height: var(--desktop-titlebar-height, 48px);
   min-width: 0;
   padding: 0 8px;
   gap: 6px;
@@ -5709,7 +5738,7 @@
   flex: 1 1 auto;
 }
 
-.electron .session-workspace-panel--content {
+.electron-macos .session-workspace-panel--content {
   margin-top: 8px;
 }
 
@@ -6294,7 +6323,7 @@
   scroll-padding-bottom: max(7.25rem, var(--agent-command-rail-height, 0px));
 }
 
-.electron .session-chat-scroll {
+.electron-macos .session-chat-scroll {
   padding-top: 0;
 }
 
@@ -6374,7 +6403,7 @@
     margin-top: 56px;
   }
 
-  .electron .session-chat-scroll {
+  .electron-macos .session-chat-scroll {
     padding-top: 48px;
   }
 }

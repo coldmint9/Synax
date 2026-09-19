@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useShellStore } from '../react/state/shellStore';
-import { resolveSessionsEntryPath } from '../react/features/sessions/sessionLastVisit';
+import { useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useShellStore } from "../react/state/shellStore";
+import { resolveSessionsEntryPath } from "../react/features/sessions/sessionLastVisit";
 
 const api = (window as any).electronAPI;
 
@@ -13,26 +13,30 @@ export function useElectronMenu() {
   useEffect(() => {
     if (!api) return;
 
-    api.onMenuNavigate((path: string) => {
+    const offNavigate = api.onMenuNavigate((path: string) => {
       navigate(path);
     });
 
-    api.onMenuAction((action: string) => {
+    const offAction = api.onMenuAction((action: string) => {
       const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/);
       const projectId = projectMatch?.[1];
 
       switch (action) {
-        case 'view:wiki':
+        case "view:wiki":
           if (projectId) navigate(`/projects/${projectId}/wiki`);
           break;
-        case 'view:sessions':
+        case "view:sessions":
           if (projectId) navigate(resolveSessionsEntryPath(projectId));
           break;
-        case 'toggle:sidebar':
-          document.dispatchEvent(new CustomEvent('menu:toggle-sidebar'));
+        case "toggle:sidebar":
+          document.dispatchEvent(new CustomEvent("menu:toggle-sidebar"));
           break;
       }
     });
+    return () => {
+      offNavigate?.();
+      offAction?.();
+    };
   }, [navigate, location.pathname]);
 
   useEffect(() => {

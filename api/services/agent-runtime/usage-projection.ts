@@ -1,4 +1,9 @@
-import { cacheUsageSample, projectCacheUsage, type CacheUsageSample, type SessionCacheUsage } from "./cache-usage.js";
+import {
+  cacheUsageSample,
+  projectCacheUsage,
+  type CacheUsageSample,
+  type SessionCacheUsage,
+} from "./cache-usage.js";
 import type { ContextComposition } from "./context-composition.js";
 import { getRawSqlite } from "../../db/index.js";
 import { readUsageContextWindowSize } from "./acp-engine/acp-usage.js";
@@ -105,10 +110,22 @@ function hasUsage(u: NormalizedUsage | undefined): boolean {
 function readComposition(value: unknown): ContextComposition | null {
   if (!value || typeof value !== "object") return null;
   const c = value as ContextComposition;
-  const values = [c.tools, c.mcp, c.skills, c.messages];
-  if (!values.every(isTokenCount) || typeof c.measuredAt !== "string") return null;
+  const values = [c.tools, c.mcp, c.skills, c.messages, c.system ?? 0];
+  if (c.version === 2 && !isTokenCount(c.system)) return null;
+  if (!values.every(isTokenCount) || typeof c.measuredAt !== "string")
+    return null;
   const total = values.reduce((sum, tokens) => sum + tokens, 0);
-  return isTokenCount(total) ? { ...c, total } : null;
+  if (!isTokenCount(total)) return null;
+  if (
+    c.usage &&
+    !(["tools", "mcp", "skills"] as const).every(
+      (key) => isTokenCount(c.usage![key]) && c.usage![key] <= c[key],
+    )
+  ) {
+    const { usage: _invalid, ...rest } = c;
+    return { ...rest, total };
+  }
+  return { ...c, total };
 }
 
 export function projectSessionUsage(
@@ -226,16 +243,26 @@ export function projectSessionUsage(
     add(row.session_id, u, "steps");
     if (row.session_id !== sessionId) continue;
     // Running requests without final usage are pending, not zero-hit samples.
-    if (!hasUsage(u) && !row.completed_at && !row.run_ended_at &&
-        ["running", "waiting_permission", "waiting_input"].includes(row.status)) {
+    if (
+      !hasUsage(u) &&
+      !row.completed_at &&
+      !row.run_ended_at &&
+      ["running", "waiting_permission", "waiting_input"].includes(row.status)
+    ) {
       pendingCacheSamples++;
     } else {
-      cacheSamples.push(cacheUsageSample({
-        stepId: row.id,
-        measuredAt: row.completed_at ?? row.started_at,
-        model: row.model,
-        unit: metadata?.externalTurn ? "external-turn" : "request",
-      }, metadata?.usage, context));
+      cacheSamples.push(
+        cacheUsageSample(
+          {
+            stepId: row.id,
+            measuredAt: row.completed_at ?? row.started_at,
+            model: row.model,
+            unit: metadata?.externalTurn ? "external-turn" : "request",
+          },
+          metadata?.usage,
+          context,
+        ),
+      );
     }
     const start = Date.parse(row.started_at);
     const end = row.completed_at ?? row.run_ended_at;

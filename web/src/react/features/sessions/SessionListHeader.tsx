@@ -34,19 +34,22 @@ export function SessionListHeader({
   const isWorkflowView = listView === 'workflow'
 
   return (
-    <div className="session-list-header px-3 pt-3 pb-2 border-b border-border/20 space-y-2">
+    <div
+      className="session-list-header px-3 pt-3 pb-2 border-b border-border/20 space-y-2"
+      data-list-view={listView}
+    >
       {isWorkflowView ? (
         <button
           type="button"
           onClick={onBackToSessions}
-          className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+          className="session-list-back flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft size={12} />
           {t('sessionBackToList')}
         </button>
       ) : null}
 
-      <div className="flex items-center justify-between gap-2">
+      <div className="session-list-titlebar-row flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-0.5">
           <span className="min-w-0 truncate text-sm font-bold tracking-tight text-foreground">
             {isWorkflowView ? t('sessionWorkflowTitle') : (locale === 'zh' ? '任务' : 'Tasks')}

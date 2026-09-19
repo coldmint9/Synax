@@ -91,14 +91,14 @@ describe('SessionTreeItem', () => {
     expect(spinner?.classList.contains('shrink-0')).toBe(true)
   })
 
-  it('dismisses the completed dot on selection and shows it again after a new update', () => {
+  it('keeps completed sessions quiet by default and shows a dot after a new update', () => {
     const session = makeSession({ status: 'completed' })
     useAgentSessionStore.setState({ sessions: [session] })
     const onSelect = (id: string) => useAgentSessionStore.getState().markSessionRead(id)
     const { container, rerender } = render(
       <SessionTreeItem node={makeNode(session)} isSelected={false} onSelect={onSelect} onToggleExpand={noop} />,
     )
-    expect(container.querySelector('.session-list-dot')).not.toBeNull()
+    expect(container.querySelector('.session-list-dot')).toBeNull()
     fireEvent.click(container.querySelector('.session-list-select')!)
     expect(container.querySelector('.session-list-dot')).toBeNull()
     expect(container.querySelector('.session-list-indicator')).not.toBeNull()

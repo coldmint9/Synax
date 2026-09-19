@@ -68,6 +68,7 @@ export interface ContextCompactionDiagnostic {
 
 export function projectWorkContext(input: ContextProjectionInput): {
   messages: ModelMessage[];
+  systemMessageContents: Set<string>;
   compacted: boolean;
   originalTokens: number;
   tokens: number;
@@ -78,6 +79,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
   const initialUserMessage = initialSessionMessageProjection(session);
   // One read-only snapshot per request; the candidate loop only reads history.
   const history = createLoopHistoryReader(store, input.sessionId);
+  const systemMessageContents = new Set<string>();
   const count = (messages: ModelMessage[]) =>
     countMessagesTokens(messages as never, input.model) + input.systemTokens;
   if (!work) {
@@ -89,6 +91,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
         initialUserMessage,
         currentStepId: input.currentStepId,
         snapshot: history,
+        systemMessageContents,
       },
     );
     const tokens = count(messages);
@@ -98,6 +101,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
       );
     return {
       messages,
+      systemMessageContents,
       compacted: false,
       originalTokens: tokens,
       tokens,
@@ -196,6 +200,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
   ) =>
     buildLoopModelMessages(store, input.sessionId, input.toolSet, {
       snapshot: history,
+      systemMessageContents,
       excludedStepIds: excludedThrough(through),
       compactionSummary: summary,
       summarizedInputIds: summarizedInputIds(memory),
@@ -245,6 +250,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
     });
     return {
       messages,
+      systemMessageContents,
       compacted: false,
       originalTokens,
       tokens: originalTokens,
@@ -281,9 +287,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
   }
 
   const runs = history.listRuns();
-  const triggers = new Map(
-    runs.map((run) => [run.id, run.triggerMessageId]),
-  );
+  const triggers = new Map(runs.map((run) => [run.id, run.triggerMessageId]));
   const stepsByRun = new Map<string, typeof steps>();
   for (const step of steps) {
     const bucket = stepsByRun.get(step.runId);
@@ -552,6 +556,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
   });
   return {
     messages: candidate.messages,
+    systemMessageContents,
     compacted: true,
     originalTokens,
     tokens: candidate.tokens,

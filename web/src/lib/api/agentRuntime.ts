@@ -383,10 +383,13 @@ export interface SessionUsageCoverage {
   cacheMatched?: number;
 }
 export interface ContextComposition {
+  version?: 2;
   tools: number;
   mcp: number;
   skills: number;
   messages: number;
+  system?: number;
+  usage?: { tools: number; mcp: number; skills: number };
   total: number;
   measuredAt: string;
 }
