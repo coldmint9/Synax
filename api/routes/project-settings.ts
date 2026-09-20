@@ -13,10 +13,26 @@ import { getEffectiveConfigForDisplay } from '../lib/config/config-store.js'
 import { syncProjectBasics } from './projects.js'
 import { logger } from '../lib/logger.js'
 import { readWorkspaceProject } from '../services/project-workspace.js'
+import { workspaceLocationHostPath, type WorkspaceLocation } from '../services/workspace-location.js'
 import { discoverLocalIntegrations, importDiscoveredSkill } from '../services/integrations/local-discovery.js'
 import { discoverLocalMcpServers } from '../services/mcp/mcp-discovery.js'
 
 export const projectSettingsRoutes = new Hono()
+
+function projectDiscoveryPath(projectId: string): { root: string; location: WorkspaceLocation } | null {
+  const project = readWorkspaceProject(projectId)
+  const source = project?.source
+  const location: WorkspaceLocation | undefined = source?.kind === 'wsl' && source.distribution && source.path
+    ? { kind: 'wsl', distribution: source.distribution, path: source.path }
+    : source?.localPath ? { kind: 'host', path: source.localPath } : undefined
+  return location ? { root: workspaceLocationHostPath(location), location } : null
+}
+
+function discoveryDirectories(location: WorkspaceLocation, directories: string[]): string[] {
+  return directories.map(directory => location.kind === 'wsl'
+    ? workspaceLocationHostPath({ ...location, path: directory })
+    : directory)
+}
 
 const sectionSchema = z.enum(['basics', 'provider', 'mcp', 'collaboration', 'notifications', 'compliance'])
 
@@ -54,8 +70,8 @@ projectSettingsRoutes.get('/:projectId/settings/effective', (c) => {
 projectSettingsRoutes.get('/:projectId/settings/mcp/discovery', (c) => {
   const projectId = c.req.param('projectId')
   try {
-    const project = readWorkspaceProject(projectId)
-    return c.json(discoverLocalMcpServers(project?.source?.localPath))
+    const workspace = projectDiscoveryPath(projectId)
+    return c.json(discoverLocalMcpServers(workspace?.root))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     logger.error({ projectId, err: msg }, '[project-settings] MCP discovery failed')
@@ -68,19 +84,19 @@ const discoveryInput = z.object({ directories: z.array(z.string().min(1).max(409
 projectSettingsRoutes.post('/:projectId/settings/integrations/discovery', async (c) => {
   const parsed = discoveryInput.safeParse(await c.req.json().catch(() => ({})))
   if (!parsed.success) return c.json({ error: 'Invalid discovery directories' }, 400)
-  const project = readWorkspaceProject(c.req.param('projectId'))
-  if (!project?.source?.localPath) return c.json({ error: 'A local project directory is required' }, 404)
-  const { paths: _paths, ...result } = discoverLocalIntegrations(project.source.localPath, { extraDirectories: parsed.data.directories })
+  const workspace = projectDiscoveryPath(c.req.param('projectId'))
+  if (!workspace) return c.json({ error: 'A local project directory is required' }, 404)
+  const { paths: _paths, ...result } = discoverLocalIntegrations(workspace.root, { extraDirectories: discoveryDirectories(workspace.location, parsed.data.directories) })
   return c.json(result)
 })
 
 projectSettingsRoutes.post('/:projectId/settings/integrations/skills/import', async (c) => {
   const parsed = discoveryInput.extend({ id: z.string().regex(/^[a-f0-9]{24}$/) }).safeParse(await c.req.json().catch(() => null))
   if (!parsed.success) return c.json({ error: 'Invalid skill import' }, 400)
-  const project = readWorkspaceProject(c.req.param('projectId'))
-  if (!project?.source?.localPath) return c.json({ error: 'A local project directory is required' }, 404)
+  const workspace = projectDiscoveryPath(c.req.param('projectId'))
+  if (!workspace) return c.json({ error: 'A local project directory is required' }, 404)
   try {
-    return c.json(importDiscoveredSkill(project.source.localPath, parsed.data.id, { extraDirectories: parsed.data.directories }), 201)
+    return c.json(importDiscoveredSkill(workspace.root, parsed.data.id, { extraDirectories: discoveryDirectories(workspace.location, parsed.data.directories) }), 201)
   } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 409) }
 })
 

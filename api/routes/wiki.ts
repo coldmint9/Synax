@@ -16,9 +16,14 @@ import { WikiManualProtectionError } from '../services/wiki/contracts.js';
 import { assertLlmProviderConfigured } from '../services/llm-runtime/provider-check.js';
 import { AgentProviderNotConfiguredError } from '../services/agent-runtime/runtime-errors.js';
 import { logger } from '../lib/logger.js';
+import { resolveProjectWorkDir, resolveProjectWorkspaceLocation } from '../services/agent-runtime/tools/workspace.js';
 import { SseEventType } from '../lib/sse-events.js';
 
 export const wikiRoutes = new Hono();
+
+function projectWorkDir(projectId: string, requested?: string): string {
+  return resolveProjectWorkspaceLocation(projectId) ? resolveProjectWorkDir(projectId) : (requested ?? '');
+}
 
 // ── Input schemas ────────────────────────────────────────────────────────────
 
@@ -215,7 +220,7 @@ wikiRoutes.post('/projects/:projectId/generate', async (c) => {
     }, 409);
   }
 
-  const workDir = parsed.data.workDir;
+  const workDir = projectWorkDir(projectId, parsed.data.workDir);
   const locale = parsed.data.locale ?? 'zh';
 
   if (wikiJobProcess.isRunning()) {
@@ -268,7 +273,7 @@ wikiRoutes.post('/projects/:projectId/reinitialize', async (c) => {
 
   const queued = queueReinitialize({
     projectId,
-    workDir: parsed.data.workDir,
+    workDir: projectWorkDir(projectId, parsed.data.workDir),
     locale: parsed.data.locale ?? 'zh',
   });
   if (!queued) {
@@ -301,7 +306,7 @@ wikiRoutes.post('/snapshots/:snapshotId/continue', async (c) => {
 
   void wikiLoopService.continueGeneration({
     snapshotId,
-    workDir: parsed.data.workDir,
+    workDir: projectWorkDir(snapshot.projectId, parsed.data.workDir),
     locale: parsed.data.locale ?? 'zh',
   }).catch((err) => {
     logger.error({ err, snapshotId }, '[wiki] continue generation failed');
@@ -333,7 +338,7 @@ wikiRoutes.post('/snapshots/:snapshotId/approve', async (c) => {
 
   void wikiLoopService.approveOutline({
     snapshotId,
-    workDir: parsed.data.workDir,
+    workDir: projectWorkDir(snapshot.projectId, parsed.data.workDir),
     locale: parsed.data.locale ?? 'zh',
   }).catch((err: unknown) => {
     logger.error({ err, snapshotId }, '[wiki] approve outline failed');
@@ -389,7 +394,7 @@ wikiRoutes.post('/snapshots/:snapshotId/refresh', async (c) => {
   }
 
   try {
-    const task = await wikiRefreshService.triggerRefresh(snapshot.projectId, snapshotId, parsed.data.workDir, parsed.data.locale);
+    const task = await wikiRefreshService.triggerRefresh(snapshot.projectId, snapshotId, projectWorkDir(snapshot.projectId, parsed.data.workDir), parsed.data.locale);
     return c.json({ task });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'refresh failed' }, 400);
@@ -621,7 +626,7 @@ wikiRoutes.post('/projects/:projectId/plans/:planId/confirm', async (c) => {
   }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   await goalService.confirmPlan(planId);
-  const workDir = parsed.data.workDir;
+  const workDir = projectWorkDir(c.req.param('projectId'), parsed.data.workDir);
   const locale = parsed.data.locale ?? 'zh';
   void planExecutor.startExecution(planId, workDir, locale);
   return c.json({ ok: true });
@@ -841,7 +846,9 @@ wikiRoutes.post('/plans/:planId/nodes/:nodeId/accept', async (c) => {
   const { planId, nodeId } = c.req.param();
   const parsed = await parseBody(c, z.object({ workDir: z.string().min(1) }));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-  await planExecutor.acceptPlanNode(planId, nodeId, parsed.data.workDir);
+  const plan = await goalService.getPlan(planId);
+  if (!plan) return c.json({ error: 'Plan not found' }, 404);
+  await planExecutor.acceptPlanNode(planId, nodeId, projectWorkDir(plan.projectId, parsed.data.workDir));
   return c.json({ ok: true });
 });
 

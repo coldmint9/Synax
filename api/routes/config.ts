@@ -13,6 +13,7 @@ import {
   upsertProjectConfig,
 } from '../lib/config/config-store.js'
 import { logger } from '../lib/logger.js'
+import { workspaceLocationHostPath, type WorkspaceLocation } from '../services/workspace-location.js'
 import type {
   AiApiModelsDiscoverResponse,
   ApiFormat,
@@ -287,17 +288,20 @@ configRoutes.post('/open-file', async (c) => {
     return c.json({ error: 'Missing filePath' }, 400)
   }
 
-  const { filePath, line } = body as { filePath: string; line?: number }
-  if (!existsSync(filePath)) {
+  const { filePath, line, location } = body as { filePath: string; line?: number; location?: WorkspaceLocation }
+  const editorPath = location?.kind === 'wsl'
+    ? workspaceLocationHostPath({ ...location, path: filePath })
+    : filePath
+  if (!existsSync(editorPath)) {
     return c.json({ error: 'File not found' }, 404)
   }
 
-  const cmd = buildOpenFileCommand(filePath, line ?? undefined)
+  const cmd = buildOpenFileCommand(editorPath, line ?? undefined)
 
   return new Promise<Response>((resolve) => {
     execFile(cmd.bin, cmd.args, (err) => {
       if (err) {
-        logger.error({ err: err.message, filePath, line }, '[config] open-file failed')
+        logger.error({ err: err.message, filePath: editorPath, line }, '[config] open-file failed')
         resolve(c.json({ error: err.message }, 500))
       } else {
         resolve(c.json({ ok: true }))

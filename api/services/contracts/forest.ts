@@ -93,11 +93,13 @@ export interface CoordEdge {
 }
 
 export interface SourceBinding {
-  kind: 'git' | 'localPath' | 'scratch';
+  kind: 'git' | 'localPath' | 'wsl' | 'scratch';
   repoUrl?: string;
   branch?: string;
   commitSha?: string;
   localPath?: string;
+  distribution?: string;
+  path?: string;
   lastSyncedAt?: number;
 }
 

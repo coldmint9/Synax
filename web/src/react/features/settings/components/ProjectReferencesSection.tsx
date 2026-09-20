@@ -128,6 +128,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
   }, [reload])
 
   const selected = projects.find((project) => project.id === selectedProject)
+  const primaryLocation = workspace?.roots.find(root => root.role === 'primary')?.location
   const candidatePath =
     mode === 'local' ? localPath : (selected?.source?.localPath ?? '')
   const duplicate = workspace?.roots.some(
@@ -142,10 +143,9 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
       const result = await projectApi.addReference(
         projectId,
         mode === 'local'
-          ? {
-              localPath: localPath.trim(),
-              ...(name.trim() ? { name: name.trim() } : {})
-            }
+          ? primaryLocation?.kind === 'wsl'
+            ? { location: { kind: 'wsl' as const, distribution: primaryLocation.distribution, path: localPath.trim() }, ...(name.trim() ? { name: name.trim() } : {}) }
+            : { localPath: localPath.trim(), ...(name.trim() ? { name: name.trim() } : {}) }
           : { projectId: selectedProject }
       )
       if (!isCurrent()) return
@@ -170,7 +170,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
   const browse = () => {
     // Browsers cannot read a local absolute path from the renderer, so the web
     // build browses the runtime host instead of the native dialog.
-    if (!isElectron) {
+    if (!isElectron || primaryLocation?.kind === 'wsl') {
       setError(null)
       setNotice(null)
       setPickerOpen(true)
@@ -268,7 +268,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
                 <WorkspaceProjectRow
                   key={root.id}
                   name={root.name}
-                  path={root.path}
+                  path={root.location?.kind === 'wsl' ? `${root.location.distribution} · ${root.path}` : root.path}
                   primary={root.role === 'primary'}
                   missing={root.status === 'missing'}
                 >
@@ -385,6 +385,8 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
       <DirectoryPickerDialog
         open={pickerOpen}
         initialPath={localPath.trim() || workspace?.roots[0]?.path}
+        locationKind={primaryLocation?.kind ?? 'host'}
+        distribution={primaryLocation?.kind === 'wsl' ? primaryLocation.distribution : undefined}
         onClose={() => setPickerOpen(false)}
         onSelect={(selection) => {
           setLocalPath(selection.path)

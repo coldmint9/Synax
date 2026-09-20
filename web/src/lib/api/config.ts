@@ -111,10 +111,10 @@ export const configApi = {
     return body as { ok: boolean; tools: Array<{ name: string; description?: string }>; error?: string }
   },
 
-  async openFile(filePath: string, line?: number): Promise<void> {
+  async openFile(filePath: string, line?: number, location?: { kind: 'host'; path: string } | { kind: 'wsl'; distribution: string; path: string }): Promise<void> {
     await request<{ ok: true }>(`${BASE}/open-file`, {
       method: 'POST',
-      body: JSON.stringify({ filePath, ...(line != null ? { line } : {}) }),
+      body: JSON.stringify({ filePath, ...(line != null ? { line } : {}), ...(location ? { location } : {}) }),
     })
   },
 }

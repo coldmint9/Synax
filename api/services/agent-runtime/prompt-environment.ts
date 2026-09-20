@@ -2,6 +2,7 @@ import {
   resolveSessionWorkDir,
   resolveSessionWorkspaceRoots,
 } from "./tools/workspace.js";
+import { parseWslUncPath } from "../workspace-location.js";
 
 /** Host facts belong to the persisted runtime reminder, not the stable system prefix. */
 export function buildRuntimeEnvironment(
@@ -10,15 +11,21 @@ export function buildRuntimeEnvironment(
   now = new Date(),
 ): string {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const hostCwd = resolveSessionWorkDir(sessionId, projectId);
+  const roots = resolveSessionWorkspaceRoots(sessionId, projectId);
+  const primary = roots.find(root => root.role === "primary");
+  const location = primary?.location ?? parseWslUncPath(hostCwd) ?? { kind: "host" as const, path: hostCwd };
   const environment = {
-    cwd: resolveSessionWorkDir(sessionId, projectId),
-    workspaceRoots: resolveSessionWorkspaceRoots(sessionId, projectId).map(
+    cwd: location.path,
+    workspaceRoots: roots.map(
       ({ id, name, path, role, status }) => ({ id, name, path, role, status }),
     ),
-    platform: process.platform,
-    // runShellCommand and runBackgroundShellCommand use Node's shell:true default.
-    executionShell:
-      process.platform === "win32"
+    platform: location.kind === "wsl" ? "linux" : process.platform,
+    executionHost: location.kind,
+    distribution: location.kind === "wsl" ? location.distribution : undefined,
+    executionShell: location.kind === "wsl"
+      ? "/bin/sh"
+      : process.platform === "win32"
         ? process.env.ComSpec || "cmd.exe"
         : "/bin/sh",
     hostDate: new Intl.DateTimeFormat("en-CA", {

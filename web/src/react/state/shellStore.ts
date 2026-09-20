@@ -12,11 +12,13 @@ export interface ProjectSummary {
   openRisks: number
   updatedAt: string
   source?: {
-    kind: 'scratch' | 'github' | 'gitlab' | 'localPath'
+    kind: 'scratch' | 'github' | 'gitlab' | 'localPath' | 'wsl'
     repo?: string
     branch?: string
     /** 本地目录导入时的绝对或相对路径（与后端 `source.localPath` 对应） */
     localPath?: string
+    distribution?: string
+    wslPath?: string
   }
   importState?: 'idle' | 'syncing' | 'ready' | 'failed'
   importError?: string

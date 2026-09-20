@@ -76,6 +76,10 @@ npm run dev:desktop
 
 开发模式下，Electron 会连接本地 Web 和 API 服务。打包后，Electron 会启动内置的 API sidecar。
 
+### Windows WSL2 项目
+
+截至 2026 年 9 月 19 日，Windows 桌面版可以导入现代 WSL2 发行版内的项目。在创建项目时选择 **WSL2**，选择已安装的 Version 2 发行版，然后浏览或输入 `/home/user/project` 之类的 Linux 绝对路径。Synax 通过 WSL 文件系统桥接在内部访问文件，而 Bash、Git、worktree 和后台命令均在所选发行版中运行。一个工作区不能混合 Windows 与 WSL 目录，也不能混用不同发行版。WSL 项目目前仅支持 Synax 内置 Agent，外部 CLI/ACP 后端暂不可用。
+
 ## 项目概览
 
 Synax 围绕一个核心闭环构建：导入本地代码库，分析文件与符号，生成带源码绑定的 Codebase Design Wiki，并在代码变化后持续刷新这份 Wiki。

@@ -21,6 +21,7 @@ import {
   hasBackgroundBashOperator,
 } from "./bash-command-policy.js";
 import { resolveWorkspacePath, workspaceRoot } from "./workspace.js";
+import { parseWslUncPath } from "../../workspace-location.js";
 
 const SAFE_REDIRECT_TARGETS = new Set([
   "/dev/null",
@@ -326,8 +327,8 @@ async function executeBashCommand(
   });
 
   // 4. Syntax validation (bash -n on non-Windows)
-  const isWindows = process.platform === "win32";
-  if (!isWindows) {
+  const isWindowsHostShell = process.platform === "win32" && !parseWslUncPath(cwd);
+  if (!isWindowsHostShell) {
     const syntaxCheck = await runCommand("/bin/sh", ["-n", "-c", command], {
       cwd,
       maxBufferBytes: MAX_OUTPUT_BYTES,

@@ -8,6 +8,10 @@ import { apiFetch } from './origin'
 
 const API_BASE = '/api/projects'
 
+export type WorkspaceLocation =
+  | { kind: 'host'; path: string }
+  | { kind: 'wsl'; distribution: string; path: string }
+
 export interface DuplicateCheckResult {
   exists: boolean
   existingId?: string
@@ -44,6 +48,7 @@ export interface ProjectWorkspaceRoot {
   path: string
   role: 'primary' | 'reference'
   status: 'available' | 'missing'
+  location?: WorkspaceLocation
 }
 
 export interface ProjectWorkspace {
@@ -51,8 +56,9 @@ export interface ProjectWorkspace {
 }
 
 export type AddProjectReferenceRequest =
-  | { name?: string; localPath: string; projectId?: never }
-  | { projectId: string; name?: never; localPath?: never }
+  | { name?: string; location: WorkspaceLocation; projectId?: never; localPath?: never }
+  | { name?: string; localPath: string; projectId?: never; location?: never }
+  | { projectId: string; name?: never; localPath?: never; location?: never }
 
 export interface GitBranchSummary {
   name: string
@@ -91,7 +97,7 @@ async function projectRequest<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const projectApi = {
-  async createWorkspace(body: { name: string; roots: ({ localPath: string; name?: string } | { projectId: string })[] }): Promise<{ project: ProjectSummary }> {
+  async createWorkspace(body: { name: string; roots: ({ location: WorkspaceLocation; name?: string } | { localPath: string; name?: string } | { projectId: string })[] }): Promise<{ project: ProjectSummary }> {
     const result = await projectRequest<{ project: Record<string, unknown> }>(`${API_BASE}/workspaces`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     })
@@ -306,10 +312,13 @@ function mapProjectSource(raw: unknown): ProjectSummary['source'] | undefined {
   const repo = s.repoUrl as string | undefined
   const branch = s.branch as string | undefined
   const localPath = s.localPath as string | undefined
+  const distribution = s.distribution as string | undefined
+  const wslPath = s.path as string | undefined
 
   if (kindRaw === 'scratch') return { kind: 'scratch', localPath }
   if (kindRaw === 'git') return { kind: 'github', repo, branch, localPath }
   if (kindRaw === 'localPath') return { kind: 'localPath', localPath, repo, branch }
+  if (kindRaw === 'wsl' && distribution && wslPath) return { kind: 'wsl', distribution, wslPath, localPath: wslPath }
   if (kindRaw === 'gitlab') return { kind: 'gitlab', repo, branch, localPath }
   return undefined
 }

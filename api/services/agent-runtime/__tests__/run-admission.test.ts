@@ -65,6 +65,18 @@ describe('durable Run admission', () => {
     });
   });
 
+
+  it('rejects non-native execution backends for WSL2 workspaces', () => {
+    const session = agentSessionRuntime.create({
+      ...plannerSessionInput,
+      backendId: 'codex',
+      workDir: os.tmpdir(),
+      sessionMetadata: { workspaceLocation: { kind: 'wsl', distribution: 'Ubuntu', path: '/home/dev/project' } },
+    });
+    expect(() => acceptRuntimeRun(session.id, { message: 'Read' }, 'wsl-external'))
+      .toThrow(/WSL2 projects currently support only the Synax native backend/i);
+  });
+
   it('does not fall back to the server cwd when the execution workspace is missing', () => {
     const session = agentSessionRuntime.create(plannerSessionInput);
     expect(() => acceptRuntimeRun(session.id, { message: 'Read' }, 'root')).toThrow(/workspace|directory/i);

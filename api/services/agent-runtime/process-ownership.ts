@@ -10,6 +10,7 @@ import {
 } from "../../lib/execution-context.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { nowIso } from "./runtime-ids.js";
+import { stopWslOwnedProcess } from "../wsl.js";
 
 export interface OwnedProcessRecord {
   id: string;
@@ -24,6 +25,10 @@ export interface OwnedProcessRecord {
   started_at?: string;
   ended_at?: string | null;
   exit_code?: number | null;
+  runtime_kind?: "host" | "wsl";
+  runtime_distribution?: string | null;
+  runtime_pid?: number | null;
+  runtime_pgid?: number | null;
 }
 const INTERNAL_ENV = [
   "AGENT_SESSION_INIT",
@@ -92,6 +97,22 @@ export function recordOwnedPid(id: string, pid: number | undefined): void {
     .run(pid, id);
   emitProcessChange(id);
 }
+export function recordOwnedRuntimeTarget(id: string, distribution: string): void {
+  getRawSqlite()
+    .prepare("UPDATE agent_runtime_processes SET runtime_kind='wsl', runtime_distribution=? WHERE id=?")
+    .run(distribution, id);
+}
+
+export function recordOwnedRuntime(
+  id: string,
+  runtime: { kind: "wsl"; distribution: string; pid: number; pgid: number },
+): void {
+  getRawSqlite()
+    .prepare("UPDATE agent_runtime_processes SET runtime_kind='wsl', runtime_distribution=?, runtime_pid=?, runtime_pgid=? WHERE id=?")
+    .run(runtime.distribution, runtime.pid, runtime.pgid, id);
+  emitProcessChange(id);
+}
+
 export function releaseOwnedProcess(
   id: string,
   exitCode: number | null = null,
@@ -210,6 +231,20 @@ async function hasOwnedGroupMember(
 export async function stopRecordedProcess(
   record: OwnedProcessRecord,
 ): Promise<boolean> {
+  if (record.runtime_kind === "wsl" && record.runtime_distribution) {
+    const stopped = await stopWslOwnedProcess(
+      record.runtime_distribution,
+      record.id,
+      record.runtime_pid,
+      record.runtime_pgid,
+    );
+    if (!stopped) return false;
+    try {
+      if (record.pid) process.kill(record.pid, "SIGKILL");
+    } catch {}
+    releaseOwnedProcess(record.id);
+    return true;
+  }
   let status = await markerStatus(record);
   if (status === "different") {
     releaseOwnedProcess(record.id);

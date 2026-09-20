@@ -5,6 +5,10 @@ import type { ProjectSummary } from '../../state/shellStore'
 import { useWorkspaceCopy, workspacePathKey } from './workspaceCopy'
 import './workspaceProjects.css'
 
+const sourcePath = (project: ProjectSummary) => project.source?.kind === 'wsl'
+  ? `${project.source.distribution ?? 'WSL'} · ${project.source.wslPath ?? ''}`
+  : project.source?.localPath ?? ''
+
 export function WorkspaceProjectSources({
   projects,
   loading,
@@ -42,7 +46,7 @@ export function WorkspaceProjectSources({
   const [search, setSearch] = useState('')
   const query = search.trim().toLowerCase()
   const filtered = projects.filter((project) =>
-    `${project.name} ${project.source?.localPath ?? ''}`
+    `${project.name} ${sourcePath(project)}`
       .toLowerCase()
       .includes(query)
   )
@@ -164,7 +168,7 @@ export function WorkspaceProjectSources({
             )}
             {filtered.map((project) => {
               const added = included.has(
-                workspacePathKey(project.source?.localPath ?? '')
+                workspacePathKey(sourcePath(project))
               )
               return (
                 <Button
@@ -181,8 +185,8 @@ export function WorkspaceProjectSources({
                   />
                   <span className="workspace-project-text">
                     <strong>{project.name}</strong>
-                    <span title={project.source?.localPath}>
-                      {project.source?.localPath}
+                    <span title={sourcePath(project)}>
+                      {sourcePath(project)}
                     </span>
                   </span>
                   {added ? (

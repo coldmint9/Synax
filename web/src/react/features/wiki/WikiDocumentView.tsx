@@ -142,9 +142,11 @@ function resolveProjectFilePath(projectRoot: string, filePath: string): string {
 function ReferencesSection({
   references,
   projectRoot,
+  projectLocation,
 }: {
   references: WikiDocument['references']
   projectRoot?: string
+  projectLocation?: { kind: 'wsl'; distribution: string; path: string }
 }) {
   if (references.length === 0) return null
 
@@ -158,6 +160,7 @@ function ReferencesSection({
       await configApi.openFile(
         resolveProjectFilePath(projectRoot, ref.filePath),
         ref.startLine,
+        projectLocation,
       )
     } catch (err) {
       handleError(err)
@@ -214,7 +217,11 @@ export default function WikiDocumentView({
   projectId: string
 }) {
   const { t } = useLocale()
-  const projectRoot = useShellStore(s => s.projects.find(p => p.id === projectId)?.source?.localPath)
+  const projectSource = useShellStore(s => s.projects.find(p => p.id === projectId)?.source)
+  const projectRoot = projectSource?.localPath
+  const projectLocation = projectSource?.kind === 'wsl' && projectSource.distribution && projectSource.wslPath
+    ? { kind: 'wsl' as const, distribution: projectSource.distribution, path: projectSource.wslPath }
+    : undefined
   const snapshot = useWikiStore(s => s.snapshot)
   const searchHighlightQuery = useWikiStore(s => s.searchHighlightQuery)
   const draftPreviewActive = useWikiStore(s => s.draftPreviewActive)
@@ -272,7 +279,7 @@ export default function WikiDocumentView({
         <GoalSelectionToolbar documentId={document.id} contentMd={contentMd} containerClass="wiki-markdown" />
       </div>
 
-      <ReferencesSection references={document.references} projectRoot={projectRoot} />
+      <ReferencesSection references={document.references} projectRoot={projectRoot} projectLocation={projectLocation} />
     </article>
   )
 }

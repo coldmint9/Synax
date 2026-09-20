@@ -6,7 +6,7 @@ import {
 import { listTurnReferenceOptions } from "../services/agent-runtime/turn-references.js";
 import { backendIdSchema } from "../services/agent-runtime/backends/backend-contracts.js";
 import { acknowledgeRuntimeRecovery } from "../services/agent-runtime/runtime-recovery.js";
-import { AgentValidationError } from "../services/agent-runtime/runtime-errors.js";
+import { AgentRuntimeError, AgentValidationError } from "../services/agent-runtime/runtime-errors.js";
 import { projectSessionState, projectSessionSummary } from "../services/agent-runtime/session-projection.js";
 import { randomUUID } from "node:crypto";
 import { runCoordinator } from "../services/agent-runtime/run-coordinator.js";
@@ -77,7 +77,8 @@ import {
   RUNTIME_PROTOCOL_SCHEMA,
   RUNTIME_PROTOCOL_VERSION,
 } from "../services/agent-runtime/runtime-protocol.js";
-import { resolveRegisteredProjectWorkDir } from "../services/agent-runtime/tools/workspace.js";
+import { resolveProjectWorkspaceLocation, resolveRegisteredProjectWorkDir } from "../services/agent-runtime/tools/workspace.js";
+import { workspaceLocationHostPath } from "../services/workspace-location.js";
 import {
   GitWorkspaceError,
   resolveGitWorkspaceSelection,
@@ -246,20 +247,25 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
   const parsed = createSessionRequestSchema.safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
+    const projectLocation = resolveProjectWorkspaceLocation(parsed.data.projectId);
+    if (projectLocation?.kind === "wsl" && parsed.data.backendId && parsed.data.backendId !== "native") {
+      throw new AgentRuntimeError("WSL2 projects currently support only the Synax native backend.", "WSL_BACKEND_UNSUPPORTED", 409);
+    }
     if (!parsed.data.backendId || parsed.data.backendId === "native")
       assertLlmProviderConfigured(parsed.data.projectId);
     let createInput = parsed.data;
     if (parsed.data.gitWorkspace) {
       const selected = await resolveGitWorkspaceSelection(
-        resolveRegisteredProjectWorkDir(parsed.data.projectId),
+        projectLocation ?? resolveRegisteredProjectWorkDir(parsed.data.projectId),
         parsed.data.projectId,
         parsed.data.gitWorkspace,
       );
       createInput = {
         ...parsed.data,
-        workDir: selected.workDir,
+        workDir: selected.location ? workspaceLocationHostPath(selected.location) : selected.workDir,
         sessionMetadata: {
           ...(parsed.data.sessionMetadata ?? {}),
+          ...(selected.location ? { workspaceLocation: selected.location } : {}),
           gitWorkspace: {
             kind: selected.kind,
             branch: selected.branch,

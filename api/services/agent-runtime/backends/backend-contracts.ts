@@ -4,6 +4,10 @@ import { ACP_PROVIDER_IDS } from '../../../lib/config/acp-provider-ids.js';
 import type { AgentRunStreamChunk, StreamTurnRequest } from '../contracts.js';
 import type { AgentSessionStreamMode } from '../../../lib/ipc/agent-session-protocol.js';
 
+const workspaceLocationSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('host'), path: z.string() }),
+  z.object({ kind: z.literal('wsl'), distribution: z.string(), path: z.string() }),
+]);
 export const backendIdSchema = z.enum(['native', 'codex', 'claude-code', ...ACP_PROVIDER_IDS]);
 export type BackendId = z.infer<typeof backendIdSchema>;
 export const backendBindingSchema = z.object({
@@ -11,12 +15,14 @@ export const backendBindingSchema = z.object({
   id: backendIdSchema,
   model: z.string().nullable(),
   workDir: z.string().nullable(),
+  workspaceLocation: workspaceLocationSchema.optional(),
   workspaceRoots: z.array(z.object({
     id: z.string(),
     name: z.string(),
     path: z.string(),
     role: z.enum(['primary', 'reference']),
     status: z.enum(['available', 'missing']),
+    location: workspaceLocationSchema.optional(),
   })).optional(),
 });
 export type BackendBinding = z.infer<typeof backendBindingSchema>;

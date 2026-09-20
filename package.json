@@ -52,7 +52,8 @@
     "make:desktop": "npm run build && npm run web:build && npm run build:electron && electron-forge make",
     "start:desktop": "electron-forge start",
     "test:desktop": "vitest run electron/desktop.test.ts",
-    "test:desktop:smoke": "tsx scripts/desktop-smoke.ts"
+    "test:desktop:smoke": "tsx scripts/desktop-smoke.ts",
+    "test:wsl:smoke": "tsx scripts/wsl-smoke.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",

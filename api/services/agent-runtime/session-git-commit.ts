@@ -1,11 +1,11 @@
 import { normalizeResultUsage } from "../llm-runtime/usage.js";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import path from "node:path";
 import { logger } from "../../lib/logger.js";
 import { generateGatewayTextResult } from "../llm-runtime/gateway.js";
 import { invalidateSessionEnvironment, resolveSessionRepository } from "./session-environment.js";
 import { agentRuntimeStore } from "./session-store.js";
-import { canonicalWorkspaceDirectory } from "../project-workspace.js";
+import { canonicalWorkspaceDirectory, workspaceRootLocation } from "../project-workspace.js";
+import { runCommand } from "./tools/exec-async.js";
 import {
   AgentNotFoundError,
   AgentRuntimeError,
@@ -13,7 +13,6 @@ import {
 } from "./runtime-errors.js";
 import { finishAuxUsage, startAuxUsage } from "./usage-projection.js";
 
-const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 8 * 1024 * 1024;
 const COMMIT_TIMEOUT_MS = 120_000;
 const MAX_COMMIT_MESSAGE_LEN = 200;
@@ -63,27 +62,18 @@ async function runGit(
   args: string[],
   allowFailure = false,
 ): Promise<GitResult> {
-  try {
-    const result = await execFileAsync("git", args, {
-      cwd: workspacePath,
-      maxBuffer: MAX_BUFFER,
-      encoding: "utf8",
-      timeout: COMMIT_TIMEOUT_MS,
-      // Never let a credential prompt turn an HTTP request into a hang.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    });
-    return {
-      ok: true,
-      stdout: String(result.stdout ?? ""),
-      stderr: String(result.stderr ?? ""),
-    };
-  } catch (error) {
-    const failure = error as { stdout?: string; stderr?: string };
-    const result: GitResult = {
-      ok: false,
-      stdout: String(failure.stdout ?? ""),
-      stderr: String(failure.stderr ?? ""),
-    };
+  const command = await runCommand("git", args, {
+    cwd: workspacePath,
+    maxBufferBytes: MAX_BUFFER,
+    timeoutMs: COMMIT_TIMEOUT_MS,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  });
+  const result: GitResult = {
+    ok: command.status === 0 && !command.error && !command.timedOut,
+    stdout: command.stdout,
+    stderr: command.stderr || command.error?.message || (command.timedOut ? "Command timed out." : ""),
+  };
+  if (!result.ok) {
     if (allowFailure) return result;
     const detail = formatGitFailure(result);
     throw new AgentRuntimeError(
@@ -92,6 +82,7 @@ async function runGit(
       502,
     );
   }
+  return result;
 }
 
 function getSession(sessionId: string) {
@@ -213,9 +204,11 @@ export async function commitSessionWorkspace(
   const root = resolveSessionRepository(sessionId, session.projectId, input.rootId, true);
   const workspacePath = root.path;
   const topLevel = (await runGit(workspacePath, ["rev-parse", "--show-toplevel"], true)).stdout.trim();
-  if (!topLevel || canonicalWorkspaceDirectory(topLevel) !== workspacePath) {
-    throw new AgentValidationError("The selected project must be a Git repository root.");
-  }
+  const rootLocation = workspaceRootLocation(root);
+  const matchesRoot = rootLocation.kind === "wsl"
+    ? path.posix.normalize(topLevel) === path.posix.normalize(rootLocation.path)
+    : Boolean(topLevel) && canonicalWorkspaceDirectory(topLevel) === workspacePath;
+  if (!matchesRoot) throw new AgentValidationError("The selected project must be a Git repository root.");
   const branch = (
     await runGit(workspacePath, ["branch", "--show-current"])
   ).stdout.trim();

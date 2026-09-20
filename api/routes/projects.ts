@@ -1,7 +1,17 @@
 import { Hono, type Context } from 'hono';
 import { randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
-import { canonicalWorkspaceDirectory, projectWorkspaceRoots, validateProjectReference, type ProjectReference, type ProjectWorkspaceRoot } from '../services/project-workspace.js';
+import path, { basename } from 'node:path';
+import {
+  canonicalWorkspaceDirectory,
+  projectSourceLocation,
+  projectWorkspaceRoots,
+  validateProjectReferenceLocation,
+  workspaceRootHostPath,
+  workspaceRootLocation,
+  type ProjectReference,
+  type ProjectWorkspaceRoot,
+} from '../services/project-workspace.js';
+import { canonicalizeWorkspaceLocation, locationKey, physicalLocationKey, type WorkspaceLocation } from '../services/workspace-location.js';
 import * as z from 'zod/v4';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, rmSync } from 'node:fs';
 import { dirname, join, normalize, resolve } from 'node:path';
@@ -38,10 +48,12 @@ export interface ProjectRecord {
   openRisks: number;
   updatedAt: string;
   source?: {
-    kind: 'scratch' | 'git' | 'localPath';
+    kind: 'scratch' | 'git' | 'localPath' | 'wsl';
     repoUrl?: string;
     branch?: string;
     localPath?: string;
+    distribution?: string;
+    path?: string;
   };
   importState?: 'idle' | 'syncing' | 'ready' | 'failed';
   importError?: string;
@@ -50,6 +62,7 @@ export interface ProjectRecord {
 }
 
 const projects = new Map<string, ProjectRecord>();
+const projectMutationQueues = new Map<string, Promise<void>>();
 
 const PROJECTS_FILE = resolve(join(DATA_ROOT, 'projects.json'));
 
@@ -155,11 +168,13 @@ const createProjectSchema = z.object({
   name: z.string().min(1).max(120),
   environment: z.enum(['production', 'staging', 'development']).default('development'),
   source: z.object({
-    kind: z.enum(['scratch', 'git', 'localPath']),
+    kind: z.enum(['scratch', 'git', 'localPath', 'wsl']),
     repoUrl: z.string().optional(),
     branch: z.string().optional(),
     commitSha: z.string().optional(),
     localPath: z.string().optional(),
+    distribution: z.string().optional(),
+    path: z.string().optional(),
     provider: z.enum(['github', 'gitlab']).optional(),
   }),
   description: z.string().optional(),
@@ -202,7 +217,7 @@ interface DuplicateCheck {
   reason?: string;
 }
 
-function checkDuplicate(source: { kind: string; repoUrl?: string; localPath?: string }): DuplicateCheck {
+function checkDuplicate(source: { kind: string; repoUrl?: string; localPath?: string; distribution?: string; path?: string }): DuplicateCheck {
   for (const p of projects.values()) {
     if (source.kind === 'git' && source.repoUrl && p.source?.repoUrl) {
       const existing = p.source.repoUrl.toLowerCase().replace(/\.git$/, '');
@@ -211,13 +226,16 @@ function checkDuplicate(source: { kind: string; repoUrl?: string; localPath?: st
         return { exists: true, existingId: p.id, existingName: p.name, reason: `已存在相同 Git 仓库的项目「${p.name}」` };
       }
     }
-    if (source.kind === 'localPath' && source.localPath && p.source?.localPath) {
-      const existing = p.source.localPath.toLowerCase().replace(/\\/g, '/');
-      const incoming = source.localPath.toLowerCase().replace(/\\/g, '/');
-      if (existing === incoming) {
-        return { exists: true, existingId: p.id, existingName: p.name, reason: `已存在相同本地路径的项目「${p.name}」` };
-      }
+    const incomingLocation: WorkspaceLocation | undefined = source.kind === 'localPath' && source.localPath
+      ? { kind: 'host', path: source.localPath }
+      : source.kind === 'wsl' && source.distribution && source.path
+        ? { kind: 'wsl', distribution: source.distribution, path: source.path }
+        : undefined;
+    const existingLocation = projectSourceLocation(p);
+    if (incomingLocation && existingLocation && physicalLocationKey(existingLocation) === physicalLocationKey(incomingLocation)) {
+      return { exists: true, existingId: p.id, existingName: p.name, reason: `已存在相同工作区路径的项目「${p.name}」` };
     }
+
   }
   return { exists: false };
 }
@@ -248,7 +266,8 @@ function projectGitRoot(project: ProjectRecord, rootId?: string, requireSelectio
   const root = roots.find(item => item.id === (rootId ?? project.id));
   if (!root) throw new GitWorkspaceError('Workspace project not found.', 404);
   if (root.status !== 'available') throw new GitWorkspaceError('Workspace directory is unavailable.', 409);
-  return { path: root.path, scope: root.role === 'primary' ? project.id : `${project.id}/${root.id}` };
+  const location = workspaceRootLocation(root);
+  return { path: root.path, location, repository: location.kind === 'host' ? location.path : location, hostPath: workspaceRootHostPath(root), scope: root.role === 'primary' ? project.id : `${project.id}/${root.id}` };
 }
 
 function sessionWorktreeUsage(): Map<string, number> {
@@ -278,13 +297,65 @@ function gitWorkspaceRouteError(c: Context, error: unknown) {
 
 export const projectRoutes = new Hono();
 
+const workspaceLocationSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('host'), path: z.string().trim().min(1).max(4096) }).strict(),
+  z.object({ kind: z.literal('wsl'), distribution: z.string().trim().min(1).max(256), path: z.string().trim().min(1).max(4096) }).strict(),
+]);
+
+const workspaceRootInputSchema = z.union([
+  z.object({ location: workspaceLocationSchema, name: z.string().trim().min(1).max(120).optional() }).strict(),
+  z.object({ localPath: z.string().trim().min(1).max(4096), name: z.string().trim().min(1).max(120).optional() }).strict(),
+  z.object({ projectId: z.string().min(1) }).strict(),
+]);
+
 const createWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  roots: z.array(z.union([
-    z.object({ localPath: z.string().trim().min(1).max(4096), name: z.string().trim().min(1).max(120).optional() }).strict(),
-    z.object({ projectId: z.string().min(1) }).strict(),
-  ])).min(1).max(50),
+  roots: z.array(workspaceRootInputSchema).min(1).max(50),
 }).strict();
+
+async function withProjectMutation<T>(projectId: string, action: () => Promise<T>): Promise<T> {
+  const previous = projectMutationQueues.get(projectId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  const queued = previous.then(() => current);
+  projectMutationQueues.set(projectId, queued);
+  await previous;
+  try { return await action(); }
+  finally {
+    release();
+    if (projectMutationQueues.get(projectId) === queued) projectMutationQueues.delete(projectId);
+  }
+}
+
+function locationName(location: WorkspaceLocation): string {
+  return location.kind === 'wsl'
+    ? path.posix.basename(location.path) || location.path
+    : basename(location.path);
+}
+
+function sourceFromLocation(location: WorkspaceLocation): ProjectRecord['source'] {
+  return location.kind === 'wsl'
+    ? { kind: 'wsl', distribution: location.distribution, path: location.path }
+    : { kind: 'localPath', localPath: location.path };
+}
+
+function referenceFromLocation(id: string, name: string, location: WorkspaceLocation): ProjectReference {
+  return location.kind === 'wsl' ? { id, name, location } : { id, name, localPath: location.path };
+}
+
+async function resolveRootInput(
+  input: z.infer<typeof workspaceRootInputSchema>,
+): Promise<{ location: WorkspaceLocation; name?: string; existing?: ProjectRecord }> {
+  if ('projectId' in input) {
+    const existing = projects.get(input.projectId);
+    if (!existing) throw Object.assign(new Error('Selected project not found'), { status: 404 });
+    const location = projectSourceLocation(existing);
+    if (!location) throw new Error('Selected project has no local workspace');
+    return { location, name: existing.primaryName ?? existing.name, existing };
+  }
+  const location = 'location' in input ? input.location : { kind: 'host' as const, path: input.localPath };
+  return { location, name: input.name };
+}
 
 // Validate every membership before publishing the workspace in memory or on disk.
 projectRoutes.post('/workspaces', async (c) => {
@@ -301,18 +372,22 @@ projectRoutes.post('/workspaces', async (c) => {
   };
   try {
     for (const input of parsed.data.roots) {
-      const existing = 'projectId' in input ? projects.get(input.projectId) : undefined;
-      if ('projectId' in input && !existing) return c.json({ error: 'Selected project not found' }, 404);
-      const inputPath = 'localPath' in input ? input.localPath : existing?.source?.localPath;
-      if (!inputPath) return c.json({ error: 'Selected project has no local directory' }, 400);
-      const localPath = project.source ? validateProjectReference(project, inputPath) : canonicalWorkspaceDirectory(inputPath);
-      const name = ('name' in input ? input.name : undefined) ?? existing?.primaryName ?? existing?.name ?? basename(localPath);
+      const resolved = await resolveRootInput(input);
+      const location = project.source
+        ? await validateProjectReferenceLocation(project, resolved.location)
+        : await canonicalizeWorkspaceLocation(resolved.location);
+      const name = resolved.name ?? locationName(location);
       if (!project.source) {
-        project.source = { kind: 'localPath', localPath };
+        project.source = sourceFromLocation(location);
         project.primaryName = name;
-      } else project.references!.push({ id: `ref_${randomUUID()}`, name, localPath });
+      } else {
+        project.references!.push(referenceFromLocation(`ref_${randomUUID()}`, name, location));
+      }
     }
-  } catch (error) { return c.json({ error: (error as Error).message }, 400); }
+  } catch (error) {
+    const status = (error as { status?: number }).status === 404 ? 404 : 400;
+    return c.json({ error: (error as Error).message }, status);
+  }
   projects.set(project.id, project);
   try { saveProjectsToDisk(); }
   catch (error) { projects.delete(project.id); throw error; }
@@ -325,33 +400,37 @@ projectRoutes.get('/:id/workspace', (c) => {
   return c.json({ roots: projectWorkspaceRoots(project) });
 });
 
-const addReferenceSchema = z.union([
-  z.object({ localPath: z.string().trim().min(1).max(4096), name: z.string().trim().min(1).max(120).optional() }).strict(),
-  z.object({ projectId: z.string().min(1) }).strict(),
-]);
+const addReferenceSchema = workspaceRootInputSchema;
 
 projectRoutes.post('/:id/references', async (c) => {
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
   const parsed = addReferenceSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
-  // Resolve after awaiting the request, so concurrent additions use the latest record.
-  const project = projects.get(c.req.param('id'));
-  if (!project) return c.json({ error: 'Project not found' }, 404);
-  const data = parsed.data;
-  const referenced = 'projectId' in data ? projects.get(data.projectId) : undefined;
-  if ('projectId' in data && !referenced) return c.json({ error: 'Referenced project not found' }, 404);
-  const inputPath = 'localPath' in data ? data.localPath : referenced?.source?.localPath;
-  if (!inputPath) return c.json({ error: 'Referenced project has no local workspace' }, 400);
-  let localPath: string;
-  try { localPath = validateProjectReference(project, inputPath); }
-  catch (error) { return c.json({ error: (error as Error).message }, 400); }
-  const name = ('name' in data ? data.name : undefined) ?? referenced?.name ?? basename(localPath);
-  const updated = { ...project, references: [...(project.references ?? []), { id: `ref_${randomUUID()}`, name, localPath }], updatedAt: new Date().toISOString() };
-  // Persist first; a failed write must not leave an in-memory-only membership.
-  atomicWriteJson(PROJECTS_FILE, { items: [...projects.values()].map(item => item.id === project.id ? updated : item) });
-  projects.set(project.id, updated);
-  return c.json({ roots: projectWorkspaceRoots(updated) }, 201);
+  const projectId = c.req.param('id');
+  try {
+    const roots = await withProjectMutation(projectId, async () => {
+      const project = projects.get(projectId);
+      if (!project) throw Object.assign(new Error('Project not found'), { status: 404 });
+      const resolved = await resolveRootInput(parsed.data);
+      // Validation occurs inside the project queue so concurrent writes see every prior membership.
+      const latest = projects.get(projectId)!;
+      const location = await validateProjectReferenceLocation(latest, resolved.location);
+      const name = resolved.name ?? locationName(location);
+      const updated = {
+        ...latest,
+        references: [...(latest.references ?? []), referenceFromLocation(`ref_${randomUUID()}`, name, location)],
+        updatedAt: new Date().toISOString(),
+      };
+      atomicWriteJson(PROJECTS_FILE, { items: [...projects.values()].map(item => item.id === latest.id ? updated : item) });
+      projects.set(latest.id, updated);
+      return projectWorkspaceRoots(updated);
+    });
+    return c.json({ roots }, 201);
+  } catch (error) {
+    const status = (error as { status?: number }).status === 404 ? 404 : 400;
+    return c.json({ error: (error as Error).message }, status);
+  }
 });
 
 projectRoutes.delete('/:id/references/:referenceId', (c) => {
@@ -379,7 +458,8 @@ projectRoutes.get('/', (c) => {
         p.name.toLowerCase().includes(search) ||
         p.id.toLowerCase().includes(search) ||
         (p.source?.repoUrl && p.source.repoUrl.toLowerCase().includes(search)) ||
-        (p.source?.localPath && p.source.localPath.toLowerCase().includes(search)),
+        (p.source?.localPath && p.source.localPath.toLowerCase().includes(search)) ||
+        (p.source?.kind === 'wsl' && `${p.source.distribution ?? ''} ${p.source.path ?? ''}`.toLowerCase().includes(search)),
     );
   }
 
@@ -452,7 +532,7 @@ projectRoutes.get('/:id/git/workspaces', async (c) => {
   if (!project) return c.json({ error: 'Project not found' }, 404);
   try {
     const root = projectGitRoot(project, c.req.query('rootId'));
-    return c.json(await listGitWorkspaces(root.path, root.scope, sessionWorktreeUsage()));
+    return c.json(await listGitWorkspaces(root.repository, root.scope, sessionWorktreeUsage()));
   } catch (error) {
     return gitWorkspaceRouteError(c, error);
   }
@@ -468,7 +548,7 @@ projectRoutes.post('/:id/git/worktrees', async (c) => {
   if (!parsed.success) return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
   try {
     const root = projectGitRoot(project, parsed.data.rootId, true);
-    const worktree = await createGitWorktree(root.path, root.scope, parsed.data);
+    const worktree = await createGitWorktree(root.repository, root.scope, parsed.data);
     return c.json({ worktree }, 201);
   } catch (error) {
     return gitWorkspaceRouteError(c, error);
@@ -486,7 +566,7 @@ projectRoutes.delete('/:id/git/worktrees', async (c) => {
   try {
     const usage = sessionWorktreeUsage();
     const root = projectGitRoot(project, parsed.data.rootId, true);
-    await removeGitWorktree(root.path, root.scope, parsed.data.path, {
+    await removeGitWorktree(root.repository, root.scope, parsed.data.path, {
       force: parsed.data.force,
       inUsePaths: new Set(usage.keys()),
     });
@@ -502,8 +582,8 @@ projectRoutes.post('/:id/git/worktrees/prune', async (c) => {
   if (!project) return c.json({ error: 'Project not found' }, 404);
   try {
     const root = projectGitRoot(project, c.req.query('rootId'), true);
-    await pruneGitWorktrees(root.path);
-    return c.json(await listGitWorkspaces(root.path, root.scope, sessionWorktreeUsage()));
+    await pruneGitWorktrees(root.repository);
+    return c.json(await listGitWorkspaces(root.repository, root.scope, sessionWorktreeUsage()));
   } catch (error) {
     return gitWorkspaceRouteError(c, error);
   }
@@ -554,11 +634,13 @@ projectRoutes.post('/check-duplicate', async (c) => {
   } catch {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
-  const { kind, repoUrl, localPath } = body as Record<string, unknown>;
+  const { kind, repoUrl, localPath, distribution, path: wslPath } = body as Record<string, unknown>;
   const result = checkDuplicate({
     kind: (kind as string) ?? '',
     repoUrl: repoUrl as string | undefined,
     localPath: localPath as string | undefined,
+    distribution: distribution as string | undefined,
+    path: wslPath as string | undefined,
   });
   return c.json(result);
 });
@@ -578,6 +660,17 @@ projectRoutes.post('/', async (c) => {
   }
 
   const { name, environment, source, description, overwriteExisting } = parsed.data;
+  if (source.kind === 'wsl') {
+    if (!source.distribution || !source.path) return c.json({ error: 'WSL source requires distribution and path' }, 400);
+    try {
+      const canonical = await canonicalizeWorkspaceLocation({ kind: 'wsl', distribution: source.distribution, path: source.path });
+      if (canonical.kind !== 'wsl') throw new Error('WSL workspace normalization returned the wrong runtime.');
+      source.distribution = canonical.distribution;
+      source.path = canonical.path;
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'WSL workspace is unavailable' }, 400);
+    }
+  }
 
   // Check duplicates for git and localPath sources
   if (source.kind !== 'scratch' && !overwriteExisting) {
@@ -585,6 +678,8 @@ projectRoutes.post('/', async (c) => {
       kind: source.kind,
       repoUrl: source.repoUrl,
       localPath: source.localPath,
+      distribution: source.distribution,
+      path: source.path,
     });
     if (dup.exists) {
       return c.json(
@@ -604,6 +699,8 @@ projectRoutes.post('/', async (c) => {
       kind: source.kind,
       repoUrl: source.repoUrl,
       localPath: source.localPath,
+      distribution: source.distribution,
+      path: source.path,
     });
     if (dup.exists && dup.existingId) {
       cleanupGitWorkDir(dup.existingId);
@@ -628,6 +725,8 @@ projectRoutes.post('/', async (c) => {
       repoUrl: source.repoUrl,
       branch: source.branch || (source.kind === 'git' ? 'main' : undefined),
       localPath: source.localPath,
+      distribution: source.distribution,
+      path: source.path,
     },
     importState: source.kind === 'scratch' ? 'ready' : 'syncing',
     createdBy: 'current-user',

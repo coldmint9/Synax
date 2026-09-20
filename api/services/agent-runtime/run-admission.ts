@@ -8,7 +8,7 @@ import { getRawSqlite } from '../../db/index.js';
 import type { AgentSessionStreamMode } from '../../lib/ipc/agent-session-protocol.js';
 import type { AgentRun, StreamTurnRequest } from './contracts.js';
 import { resolveBackendModel, resolveSessionBackend, validateBackendTurnInput } from './backends/backend-binding.js';
-import { bindSessionWorkDir } from './tools/workspace.js';
+import { bindSessionWorkDir, tryResolveSessionWorkspaceLocation } from './tools/workspace.js';
 import { interactionService } from './interaction-service.js';
 import { agentRuntimeStore } from './session-store.js';
 import { AgentRuntimeError, AgentValidationError } from './runtime-errors.js';
@@ -83,6 +83,9 @@ export function acceptRuntimeRun(
       throw new AgentValidationError('Completed sessions require a new message to continue.');
     }
     const binding = resolveSessionBackend(sessionId);
+    if (tryResolveSessionWorkspaceLocation(sessionId, session.projectId)?.kind === 'wsl' && binding.id !== 'native') {
+      throw new AgentRuntimeError('WSL2 projects currently support only the Synax native backend.', 'WSL_BACKEND_UNSUPPORTED', 409);
+    }
     validateBackendTurnInput(binding.id, input);
     bindAssets(sessionId, inputParts(input));
     const model = resolveBackendModel(sessionId, input);

@@ -3,7 +3,19 @@ import path from 'node:path';
 import { DATA_ROOT } from '../../../lib/env.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { sandboxConfigForSession, sandboxPolicy } from '../sandbox/index.js';
-import { canonicalWorkspaceDirectory, projectWorkspaceRoots, readWorkspaceProject, type ProjectWorkspaceRoot } from '../../project-workspace.js';
+import {
+  projectSourceLocation,
+  projectWorkspaceRoots,
+  readWorkspaceProject,
+  workspaceRootHostPath,
+  type ProjectWorkspaceRoot,
+} from '../../project-workspace.js';
+import {
+  canonicalizeWorkspaceLocationSync,
+  parseWslUncPath,
+  workspaceLocationHostPath,
+  type WorkspaceLocation,
+} from '../../workspace-location.js';
 
 const sessionWorkspaceRoots = new Map<string, string>();
 
@@ -30,7 +42,9 @@ export function tryGetSessionWorkspaceRoot(sessionId: string): string | undefine
 
 interface ProjectWorkDirEntry {
   id: string;
-  source?: { localPath?: string };
+  name?: string;
+  primaryName?: string;
+  source?: { kind?: string; localPath?: string; distribution?: string; path?: string };
 }
 
 function readProjectWorkDirEntries(): ProjectWorkDirEntry[] {
@@ -43,30 +57,53 @@ function readProjectWorkDirEntries(): ProjectWorkDirEntry[] {
   return [];
 }
 
-/** Resolve a project's workspace root from the on-disk project registry. */
+function entryLocation(entry: ProjectWorkDirEntry | undefined): WorkspaceLocation | undefined {
+  return entry ? projectSourceLocation(entry) : undefined;
+}
+
+/** Resolve a project's host-accessible workspace root from the on-disk registry. */
 export function resolveProjectWorkDir(projectId: string): string {
   try {
-    const project = readProjectWorkDirEntries().find((entry) => entry.id === projectId);
-    if (project?.source?.localPath) {
-      return path.resolve(project.source.localPath);
-    }
-  } catch {
-    // fall through
-  }
+    const location = entryLocation(readProjectWorkDirEntries().find(entry => entry.id === projectId));
+    if (location) return workspaceLocationHostPath(location);
+  } catch { /* fall through */ }
   return path.resolve(process.cwd());
+}
+
+export function resolveProjectWorkspaceLocation(projectId: string): WorkspaceLocation | undefined {
+  return entryLocation(readProjectWorkDirEntriesSafely().find(entry => entry.id === projectId));
 }
 
 /** A reference picker must not silently fall back to the server workspace. */
 export function resolveRegisteredProjectWorkDir(projectId: string): string {
-  const registered = readProjectWorkDirEntriesSafely().find(entry => entry.id === projectId)?.source?.localPath;
-  if (!registered) throw new Error('The project has no registered workspace.');
-  return fs.realpathSync(resolveWorkspaceRoot(registered));
+  const location = resolveProjectWorkspaceLocation(projectId);
+  if (!location) throw new Error('The project has no registered workspace.');
+  return workspaceLocationHostPath(canonicalizeWorkspaceLocationSync(location));
+}
+
+export function tryResolveSessionWorkspaceLocation(sessionId: string, projectId: string): WorkspaceLocation | undefined {
+  const binding = agentRuntimeStore.tryGetSession(sessionId)?.sessionMetadata?.backend as {
+    workspaceLocation?: WorkspaceLocation; workDir?: string | null;
+  } | undefined;
+  if (binding?.workspaceLocation) return binding.workspaceLocation;
+  if (binding?.workDir) return parseWslUncPath(binding.workDir) ?? { kind: 'host', path: binding.workDir };
+  const transient = tryGetSessionWorkspaceRoot(sessionId);
+  if (transient) return parseWslUncPath(transient) ?? { kind: 'host', path: transient };
+  return resolveProjectWorkspaceLocation(projectId);
+}
+
+export function resolveSessionWorkspaceLocation(sessionId: string, projectId: string): WorkspaceLocation {
+  const location = tryResolveSessionWorkspaceLocation(sessionId, projectId);
+  if (location) return location;
+  throw new Error('The session has no registered workspace. Select an existing working directory before executing.');
 }
 
 /** Prefer an explicit session workspace root, then the project's registered path. */
 export function resolveSessionWorkDir(sessionId: string, projectId: string): string {
-  const binding = agentRuntimeStore.tryGetSession(sessionId)?.sessionMetadata?.backend as { workDir?: string | null } | undefined;
-  return binding?.workDir ?? tryGetSessionWorkspaceRoot(sessionId) ?? resolveProjectWorkDir(projectId);
+  const bound = tryGetSessionWorkspaceRoot(sessionId);
+  if (bound) return bound;
+  try { return workspaceLocationHostPath(resolveSessionWorkspaceLocation(sessionId, projectId)); }
+  catch { return resolveProjectWorkDir(projectId); }
 }
 
 /** A persisted membership snapshot also works in session worker processes. */
@@ -74,33 +111,34 @@ export function resolveSessionWorkspaceRoots(sessionId: string, projectId: strin
   const binding = agentRuntimeStore.tryGetSession(sessionId)?.sessionMetadata?.backend as { workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
   if (binding?.workspaceRoots) return binding.workspaceRoots;
   const project = readWorkspaceProject(projectId);
-  const primary = resolveSessionWorkDir(sessionId, projectId);
-  return [
-    { id: projectId, name: project?.primaryName ?? project?.name ?? projectId, path: primary, role: 'primary', status: 'available' },
-    ...(project ? projectWorkspaceRoots(project).filter(root => root.role === 'reference') : []),
-  ];
+  if (project) return projectWorkspaceRoots(project);
+  const location = tryResolveSessionWorkspaceLocation(sessionId, projectId) ?? { kind: 'host' as const, path: resolveProjectWorkDir(projectId) };
+  return [{ id: projectId, name: projectId, path: location.path, location, role: 'primary', status: 'available' }];
 }
 
 /** Freeze the real execution root before accepting work; never infer it from server cwd. */
 export function bindSessionWorkDir(sessionId: string): string {
   const session = agentRuntimeStore.getSession(sessionId);
-  const binding = session.sessionMetadata?.backend as { workDir?: string | null } | undefined;
-  const registered = readProjectWorkDirEntriesSafely().find((entry) => entry.id === session.projectId)?.source?.localPath;
-  const requested = binding?.workDir ?? tryGetSessionWorkspaceRoot(sessionId) ?? registered;
-  if (!requested) throw new Error('The session has no registered workspace. Select an existing working directory before executing.');
-  const root = fs.realpathSync(resolveWorkspaceRoot(requested));
-  // Refresh between executions. Never change the directory set during an active run.
-  const previous = binding as { workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
+  const binding = session.sessionMetadata?.backend as {
+    workDir?: string | null; workspaceLocation?: WorkspaceLocation; workspaceRoots?: ProjectWorkspaceRoot[];
+  } | undefined;
+  const location = canonicalizeWorkspaceLocationSync(resolveSessionWorkspaceLocation(sessionId, session.projectId));
+  const root = workspaceLocationHostPath(location);
+  const previous = binding?.workspaceRoots;
   const project = readWorkspaceProject(session.projectId);
-  const roots = (session.activeRunId || session.parentSessionId) && previous?.workspaceRoots
-    ? previous.workspaceRoots
-    : [
-        { id: session.projectId, name: project?.primaryName ?? project?.name ?? session.projectId, path: root, role: 'primary' as const, status: 'available' as const },
-        ...(project ? projectWorkspaceRoots(project).filter(item => item.role === 'reference') : []),
+  const roots = (session.activeRunId || session.parentSessionId) && previous
+    ? previous
+    : project ? projectWorkspaceRoots(project) : [
+        { id: session.projectId, name: session.projectId, path: location.path, location, role: 'primary' as const, status: 'available' as const },
       ];
-  const workspaceRoots = roots.map(item => ({ ...item, path: canonicalWorkspaceDirectory(item.path), status: 'available' as const }));
+  const workspaceRoots = roots.map(item => {
+    const canonical = canonicalizeWorkspaceLocationSync(item.location ?? { kind: 'host', path: item.path });
+    const normalized: ProjectWorkspaceRoot = { ...item, path: canonical.path, location: canonical, status: 'available' as const };
+    if (canonical.kind === 'host') Object.defineProperty(normalized, 'location', { configurable: true, enumerable: false, value: canonical });
+    return normalized;
+  });
   setSessionWorkspaceRoot(sessionId, root);
-  agentRuntimeStore.updateSessionMetadata(sessionId, { backend: { ...binding, workDir: root, workspaceRoots } });
+  agentRuntimeStore.updateSessionMetadata(sessionId, { backend: { ...binding, workDir: root, workspaceLocation: location, workspaceRoots } });
   return root;
 }
 

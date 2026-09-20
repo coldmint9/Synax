@@ -4,9 +4,12 @@ export const ProjectEnvironmentSchema = z.enum(['production', 'staging', 'develo
 export type ProjectEnvironment = z.infer<typeof ProjectEnvironmentSchema>
 
 export const ProjectSourceSchema = z.object({
-  kind: z.enum(['scratch', 'github', 'gitlab']),
+  kind: z.enum(['scratch', 'github', 'gitlab', 'localPath', 'wsl']),
   repo: z.string().min(1).optional(),
   branch: z.string().min(1).optional(),
+  localPath: z.string().min(1).optional(),
+  distribution: z.string().min(1).optional(),
+  wslPath: z.string().min(1).optional(),
 })
 export type ProjectSource = z.infer<typeof ProjectSourceSchema>
 

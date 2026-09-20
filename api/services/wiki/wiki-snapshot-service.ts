@@ -6,14 +6,13 @@ import { runCodeMapScan } from '../analyzer/scan.js';
 // 首次生成 WikiSnapshot：Git 状态 + analyzer scan + Agent 生成 + 落库
 // ---------------------------------------------------------------------------
 
-import { exec } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { promisify } from 'node:util';
 import { wikiStore } from './wiki-store.js';
 import { wikiAgentService } from './wiki-agent-service.js';
 import { logger } from '../../lib/logger.js';
 import { fallbackGitState } from './wiki-scan-cache.js';
 import type { WikiSnapshot } from './contracts.js';
+import { runShellCommand } from '../agent-runtime/tools/exec-async.js';
 
 export interface WikiGitState {
   branch: string;
@@ -35,14 +34,13 @@ export interface GenerateWikiResult {
   docCount?: number;
 }
 
-const execAsync = promisify(exec);
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 
 export async function readGitState(workDir: string): Promise<WikiGitState> {
   const run = async (cmd: string): Promise<string> => {
     try {
-      const { stdout } = await execAsync(cmd, { cwd: workDir, maxBuffer: GIT_MAX_BUFFER });
-      return stdout.trim();
+      const result = await runShellCommand(cmd, { cwd: workDir, maxBufferBytes: GIT_MAX_BUFFER, timeoutMs: 30_000 });
+      return result.status === 0 ? result.stdout.trim() : '';
     } catch {
       return '';
     }

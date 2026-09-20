@@ -20,6 +20,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from "./agentSessionStore";
 import { useConfig } from "../settings/useConfig";
 import { useNotificationStore } from "../../state/notificationStore";
+import { useShellStore } from "../../state/shellStore";
 import { useWikiStore } from "../../state/wikiStore";
 import { useLocale } from "../../../hooks/useLocale";
 import { GoalComposerPill } from "../wiki/goal/GoalComposerPill";
@@ -171,6 +172,7 @@ export function SessionComposer({
   ]);
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId);
+  const wslProject = useShellStore(state => state.projects.find(project => project.id === projectId)?.source?.kind === "wsl");
   const acpDiscovery = useAcpDiscovery({ enabled: isDraft });
   const availableAcp = discoveredAcpProviders(providers, acpDiscovery);
   const [draftBackendId, setDraftBackendId] = useState<BackendId>(() => {
@@ -195,7 +197,9 @@ export function SessionComposer({
   >([]);
   const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>();
   const cliBackend = backendId === "codex" || backendId === "claude-code";
-  const backendOptions = [
+  const backendOptions = wslProject ? [
+    { id: "native" as BackendId, label: zh ? "Synax · WSL2" : "Synax · WSL2" },
+  ] : [
     { id: "native" as BackendId, label: "Synax" },
     ...backendCatalog
       .filter((backend) => backend.kind === "cli")
@@ -208,6 +212,9 @@ export function SessionComposer({
       label: provider.label ?? provider.id,
     })),
   ];
+  useEffect(() => {
+    if (isDraft && wslProject && draftBackendId !== "native") setDraftBackendId("native");
+  }, [isDraft, wslProject, draftBackendId]);
   useEffect(() => {
     let active = true;
     void agentRuntimeApi

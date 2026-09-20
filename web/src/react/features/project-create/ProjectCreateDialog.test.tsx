@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { projectApi } from '../../../lib/api/project'
 import { listRemoteDirectories, type RemoteDirectoryListing } from '../../../lib/api/fs'
+import { listWslDistributions } from '../../../lib/api/wsl'
 import type { ProjectSummary } from '../../state/shellStore'
 import { resolveSessionsEntryPath } from '../sessions/sessionLastVisit'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
@@ -15,6 +16,7 @@ vi.mock('../../../lib/api/project', () => ({
   projectApi: { listProjects: vi.fn(), createWorkspace: vi.fn(), createProject: vi.fn() },
 }))
 vi.mock('../../../lib/api/fs', () => ({ listRemoteDirectories: vi.fn() }))
+vi.mock('../../../lib/api/wsl', () => ({ listWslDistributions: vi.fn() }))
 // Exercise the Electron branch too: its native helper only returns one directory.
 vi.mock('../../../lib/open-directory-picker', () => ({ isElectron: true, openDirectoryPicker: nativePicker }))
 
@@ -62,6 +64,26 @@ describe('ProjectCreateDialog', () => {
     vi.mocked(projectApi.listProjects).mockReset().mockResolvedValue({ items: [project()], total: 1 })
     vi.mocked(projectApi.createWorkspace).mockReset()
     vi.mocked(listRemoteDirectories).mockReset().mockResolvedValue(directoryListing())
+    vi.mocked(listWslDistributions).mockReset().mockResolvedValue({ available: true, items: [{ name: 'Ubuntu', version: 2, default: true }] })
+  })
+
+
+  it('creates a WSL2 workspace with distribution plus Linux path', async () => {
+    const userAgent = vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+    vi.mocked(projectApi.createWorkspace).mockResolvedValueOnce({ project: project({ id: 'wsl' }) })
+    const { onClose } = await renderDialog()
+    await waitFor(() => expect(listWslDistributions).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: 'WSL2' }))
+    const pathInput = screen.getByRole('textbox', { name: '项目目录路径' })
+    fireEvent.change(pathInput, { target: { value: '/home/dev/app' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+    fireEvent.click(screen.getByRole('button', { name: '创建工作区' }))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(projectApi.createWorkspace).toHaveBeenCalledWith({
+      name: 'app',
+      roots: [{ location: { kind: 'wsl', distribution: 'Ubuntu', path: '/home/dev/app' }, name: 'app' }],
+    })
+    userAgent.mockRestore()
   })
 
   it('browses multiple directories on Electron and submits all roots in one request despite repeated clicks', async () => {

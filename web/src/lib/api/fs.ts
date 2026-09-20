@@ -24,6 +24,8 @@ export interface ListDirectoryOptions {
   /** Include build/VCS directories such as `node_modules` or `dist`. */
   showIgnored?: boolean
   signal?: AbortSignal
+  locationKind?: 'host' | 'wsl'
+  distribution?: string
 }
 
 /**
@@ -40,6 +42,8 @@ export async function listRemoteDirectories(
 ): Promise<RemoteDirectoryListing> {
   const query = new URLSearchParams()
   if (path) query.set('path', path)
+  if (options.locationKind) query.set('locationKind', options.locationKind)
+  if (options.distribution) query.set('distribution', options.distribution)
   if (options.showHidden) query.set('showHidden', '1')
   if (options.showIgnored) query.set('showIgnored', '1')
   const suffix = query.toString()

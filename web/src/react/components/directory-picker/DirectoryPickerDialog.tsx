@@ -17,6 +17,8 @@ export interface DirectoryPickerDialogProps {
   open: boolean
   /** Directory to start from; falls back to the host home directory. */
   initialPath?: string
+  locationKind?: 'host' | 'wsl'
+  distribution?: string
   onClose: () => void
   onSelect: (selection: { path: string; name: string }) => void
   multiple?: boolean
@@ -80,7 +82,7 @@ export function DirectoryPickerDialog({ open, ...props }: DirectoryPickerDialogP
   return open ? <DirectoryPickerContent key={props.initialPath} {...props} /> : null
 }
 
-function DirectoryPickerContent({ initialPath, onClose, onSelect, labels, multiple = false, onSelectMultiple }: Omit<DirectoryPickerDialogProps, 'open'>) {
+function DirectoryPickerContent({ initialPath, locationKind = 'host', distribution, onClose, onSelect, labels, multiple = false, onSelectMultiple }: Omit<DirectoryPickerDialogProps, 'open'>) {
   // Shadow the module default so every string below can be localized by the caller.
   const { locale } = useLocale()
   const label = { ...(locale === 'en' ? englishLabels : defaultLabels), ...labels }
@@ -110,6 +112,8 @@ function DirectoryPickerContent({ initialPath, onClose, onSelect, labels, multip
         showHidden,
         showIgnored,
         signal: controller.signal,
+        locationKind,
+        distribution,
       })
       if (controller.signal.aborted) return
       setListing(next)
@@ -121,7 +125,7 @@ function DirectoryPickerContent({ initialPath, onClose, onSelect, labels, multip
     } finally {
       if (!controller.signal.aborted) setLoading(false)
     }
-  }, [showHidden, showIgnored])
+  }, [showHidden, showIgnored, locationKind, distribution])
 
   useEffect(() => {
     void load(lastPath.current)

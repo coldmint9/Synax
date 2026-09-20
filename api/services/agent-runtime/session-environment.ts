@@ -1,19 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { agentRuntimeStore } from "./session-store.js";
 import { resolveSessionWorkspaceRoots } from "./tools/workspace.js";
 import {
   canonicalWorkspaceDirectory,
   isWithinWorkspace,
+  workspaceRootHostPath,
+  workspaceRootLocation,
   type ProjectWorkspaceRoot,
 } from "../project-workspace.js";
 import { patchFilePaths } from "./tools/patch-format.js";
 import { AgentNotFoundError, AgentValidationError } from "./runtime-errors.js";
 import type { AgentSessionStatus } from "./contracts.js";
+import { runCommand } from "./tools/exec-async.js";
 
-const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 8 * 1024 * 1024;
 const MAX_FILE_BYTES = 1024 * 1024;
 
@@ -122,7 +122,7 @@ export function resolveSessionRepository(
   try {
     return {
       ...root,
-      path: canonicalWorkspaceDirectory(root.path),
+      path: canonicalWorkspaceDirectory(workspaceRootHostPath(root)),
       status: "available",
     };
   } catch {
@@ -145,19 +145,13 @@ async function git(
   args: string[],
   input?: string,
 ): Promise<string> {
-  try {
-    const pending = execFileAsync("git", args, {
-      cwd: workspacePath,
-      maxBuffer: MAX_BUFFER,
-      encoding: "utf8",
-    });
-    if (input !== undefined) pending.child.stdin?.end(input);
-    const result = await pending;
-    return String(result.stdout ?? "");
-  } catch (error) {
-    const output = error as { stdout?: string };
-    return String(output.stdout ?? "");
-  }
+  const result = await runCommand("git", args, {
+    cwd: workspacePath,
+    maxBufferBytes: MAX_BUFFER,
+    stdin: input,
+    timeoutMs: 30_000,
+  });
+  return result.stdout;
 }
 
 function assertRelativePath(relativePath: string): string {
@@ -438,7 +432,7 @@ async function computeRepository(
   };
   let workspacePath: string;
   try {
-    workspacePath = canonicalWorkspaceDirectory(root.path);
+    workspacePath = canonicalWorkspaceDirectory(workspaceRootHostPath(root));
   } catch {
     return { ...empty, status: "missing" };
   }
@@ -453,10 +447,13 @@ async function computeRepository(
   const repoRoot = (
     await git(workspacePath, ["rev-parse", "--show-toplevel"])
   ).trim();
-  if (!repoRoot || canonicalWorkspaceDirectory(repoRoot) !== workspacePath) {
+  const rootLocation = workspaceRootLocation(root);
+  const repositoryMatches = rootLocation.kind === "wsl"
+    ? path.posix.normalize(repoRoot) === path.posix.normalize(rootLocation.path)
+    : Boolean(repoRoot) && canonicalWorkspaceDirectory(repoRoot) === workspacePath;
+  if (!repositoryMatches) {
     return {
       ...empty,
-      workspacePath,
       outputFiles,
       inputSources: readInputSources(sessionId, workspacePath, primaryPath),
       status: "not_repository",
@@ -525,7 +522,6 @@ async function computeRepository(
 
   return {
     ...empty,
-    workspacePath,
     branch: branchRaw.trim() || "HEAD",
     headCommitSha: headCommitShaRaw.trim(),
     dirty: changedFiles.length > 0,
@@ -547,7 +543,7 @@ async function computeSessionEnvironment(
   if (!primary)
     throw new AgentValidationError("The session has no workspace projects.");
   const repositories = await Promise.all(
-    roots.map((root) => computeRepository(sessionId, root, primary.path)),
+    roots.map((root) => computeRepository(sessionId, root, workspaceRootHostPath(primary))),
   );
   const main = repositories.find((root) => root.role === "primary")!;
   const subagents: SessionEnvironmentSubagent[] = [];

@@ -1,6 +1,8 @@
 import { spawnOwnedProcess } from "../owned-process.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
+import { parseWslUncPath } from "../../workspace-location.js";
+import { stopWslOwnedProcess } from "../../wsl.js";
 
 /**
  * Async process execution helpers for agent tools.
@@ -142,17 +144,20 @@ export function runCommand(
       stdin: options.stdin === undefined ? "ignore" : "pipe",
     });
 
+    const wsl = options.cwd ? parseWslUncPath(options.cwd) : null;
     const killTree = (signal: NodeJS.Signals): void => {
       if (child.pid === undefined) return;
+      if (wsl) {
+        void stopWslOwnedProcess(wsl.distribution, child.ownedProcessId).finally(() => {
+          try { child.kill(signal); } catch { /* already gone */ }
+        });
+        return;
+      }
       try {
         if (useProcessGroup) process.kill(-child.pid, signal);
         else child.kill(signal);
       } catch {
-        try {
-          child.kill(signal);
-        } catch {
-          /* already gone */
-        }
+        try { child.kill(signal); } catch { /* already gone */ }
       }
     };
 
@@ -255,7 +260,7 @@ export async function runBackgroundShellCommand(
   const signal = options.signal ?? commandSignal.getStore();
   if (signal?.aborted) throw abortError();
   const child = spawnOwnedProcess(
-    options.waitForJobs && process.platform !== "win32"
+    options.waitForJobs && (process.platform !== "win32" || Boolean(options.cwd && parseWslUncPath(options.cwd)))
       ? `${command}\nwait`
       : command,
     [],
@@ -269,8 +274,15 @@ export async function runBackgroundShellCommand(
       stdin: options.stdin === undefined ? "ignore" : "pipe",
     },
   );
+  const backgroundWsl = options.cwd ? parseWslUncPath(options.cwd) : null;
   const kill = (kind: NodeJS.Signals) => {
     if (!child.pid) return;
+    if (backgroundWsl) {
+      void stopWslOwnedProcess(backgroundWsl.distribution, child.ownedProcessId).finally(() => {
+        try { child.kill(kind); } catch { /* already gone */ }
+      });
+      return;
+    }
     try {
       process.kill(process.platform === "win32" ? child.pid : -child.pid, kind);
     } catch (error) {

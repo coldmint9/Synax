@@ -791,3 +791,21 @@
 .workspace-browse-action {
   color: color-mix(in srgb, hsl(var(--primary)) 60%, var(--foreground));
 }
+
+.workspace-runtime-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+.workspace-runtime-picker select {
+  min-height: 2rem;
+  max-width: 14rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  padding: 0 0.65rem;
+  font-size: 0.75rem;
+}
