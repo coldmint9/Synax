@@ -10,6 +10,7 @@ import {
 } from "../../lib/execution-context.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { nowIso } from "./runtime-ids.js";
+import { stopWslOwnedProcess } from "../wsl.js";
 
 export interface OwnedProcessRecord {
   id: string;
@@ -24,6 +25,10 @@ export interface OwnedProcessRecord {
   started_at?: string;
   ended_at?: string | null;
   exit_code?: number | null;
+  runtime_kind?: "host" | "wsl";
+  runtime_distribution?: string | null;
+  runtime_pid?: number | null;
+  runtime_pgid?: number | null;
 }
 const INTERNAL_ENV = [
   "AGENT_SESSION_INIT",
@@ -93,6 +98,29 @@ export function recordOwnedPid(id: string, pid: number | undefined): void {
     .run(pid, id);
   emitProcessChange(id);
 }
+export function recordOwnedRuntimeTarget(
+  id: string,
+  distribution: string,
+): void {
+  getRawSqlite()
+    .prepare(
+      "UPDATE agent_runtime_processes SET runtime_kind='wsl', runtime_distribution=? WHERE id=?",
+    )
+    .run(distribution, id);
+}
+
+export function recordOwnedRuntime(
+  id: string,
+  runtime: { kind: "wsl"; distribution: string; pid: number; pgid: number },
+): void {
+  getRawSqlite()
+    .prepare(
+      "UPDATE agent_runtime_processes SET runtime_kind='wsl', runtime_distribution=?, runtime_pid=?, runtime_pgid=? WHERE id=?",
+    )
+    .run(runtime.distribution, runtime.pid, runtime.pgid, id);
+  emitProcessChange(id);
+}
+
 export function releaseOwnedProcess(
   id: string,
   exitCode: number | null = null,
@@ -127,7 +155,10 @@ function emitProcessChange(id: string): void {
   }
 }
 
-export function hasBackgroundProcesses(sessionId: string, workerOwnedOnly = false): boolean {
+export function hasBackgroundProcesses(
+  sessionId: string,
+  workerOwnedOnly = false,
+): boolean {
   return Boolean(
     getRawSqlite()
       .prepare(
@@ -147,37 +178,71 @@ function alive(pid: number): boolean {
 }
 /** Interactive shells can rewrite the environment block that macOS ps reads.
  * Bind managed PTYs to PID + kernel birth time + controlling TTY instead. */
-export async function readProcessIdentity(pid: number, expectedTty?: string): Promise<string | null> {
+export async function readProcessIdentity(
+  pid: number,
+  expectedTty?: string,
+): Promise<string | null> {
   try {
     if (process.platform === "linux") {
       const stat = await fs.readFile(`/proc/${pid}/stat`, "utf8");
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+      const fields = stat
+        .slice(stat.lastIndexOf(")") + 2)
+        .trim()
+        .split(/\s+/);
       const tty = Number(fields[4]) >>> 0;
       if (!tty || !fields[19]) return null;
-      if (expectedTty && Number((await fs.stat(expectedTty)).rdev) !== tty) return null;
+      if (expectedTty && Number((await fs.stat(expectedTty)).rdev) !== tty)
+        return null;
       return `linux:${pid}:${fields[19]}:${tty}`;
     }
     if (process.platform === "darwin") {
-      const text = await new Promise<string>((resolve, reject) => execFile("/bin/ps", ["-p", String(pid), "-o", "lstart=,tty="],
-        { timeout: 2000, encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC" } },
-        (error, stdout) => error ? reject(error) : resolve(stdout)));
+      const text = await new Promise<string>((resolve, reject) =>
+        execFile(
+          "/bin/ps",
+          ["-p", String(pid), "-o", "lstart=,tty="],
+          {
+            timeout: 2000,
+            encoding: "utf8",
+            env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+          },
+          (error, stdout) => (error ? reject(error) : resolve(stdout)),
+        ),
+      );
       const fields = text.trim().split(/\s+/);
       const tty = fields[fields.length - 1];
-      if (fields.length < 6 || !tty || tty === "??" || (expectedTty && path.basename(expectedTty) !== tty)) return null;
+      if (
+        fields.length < 6 ||
+        !tty ||
+        tty === "??" ||
+        (expectedTty && path.basename(expectedTty) !== tty)
+      )
+        return null;
       return `darwin:${pid}:${fields.join(" ")}`;
     }
-  } catch { /* A missing or uninspectable process does not authorize a signal. */ }
+  } catch {
+    /* A missing or uninspectable process does not authorize a signal. */
+  }
   return null;
 }
-async function terminalIdentityStatus(record: OwnedProcessRecord): Promise<"owned" | "different" | "unknown" | undefined> {
+async function terminalIdentityStatus(
+  record: OwnedProcessRecord,
+): Promise<"owned" | "different" | "unknown" | undefined> {
   if (!record.pid) return undefined;
   try {
-    const row = tryGetRawSqlite()?.prepare("SELECT process_identity FROM terminal_sessions WHERE id=?").get(record.id) as { process_identity: string | null } | undefined;
+    const row = tryGetRawSqlite()
+      ?.prepare("SELECT process_identity FROM terminal_sessions WHERE id=?")
+      .get(record.id) as { process_identity: string | null } | undefined;
     if (!row) return undefined;
     if (!row.process_identity) return "unknown";
     const actual = await readProcessIdentity(record.pid);
-    return actual ? actual === row.process_identity ? "owned" : "different" : "unknown";
-  } catch { return undefined; }
+    return actual
+      ? actual === row.process_identity
+        ? "owned"
+        : "different"
+      : "unknown";
+  } catch {
+    return undefined;
+  }
 }
 async function markerStatus(
   record: OwnedProcessRecord,
@@ -188,7 +253,9 @@ async function markerStatus(
       const entries = (
         await fs.readFile(`/proc/${record.pid}/environ`, "utf8")
       ).split("\0");
-      return entries.includes(`SYNAX_PROCESS_OWNER=${record.id}`) ? "owned" : (await terminalIdentityStatus(record)) ?? "different";
+      return entries.includes(`SYNAX_PROCESS_OWNER=${record.id}`)
+        ? "owned"
+        : ((await terminalIdentityStatus(record)) ?? "different");
     }
     if (process.platform === "darwin") {
       const text = await new Promise<string>((resolve, reject) =>
@@ -202,11 +269,15 @@ async function markerStatus(
       // Process environments may contain credentials: inspect the nonce only, never return or log this text.
       return new RegExp(
         `(?:^|\\s)SYNAX_PROCESS_OWNER=${record.id}(?:\\s|$)`,
-      ).test(text) ? "owned" : (await terminalIdentityStatus(record)) ?? "different";
+      ).test(text)
+        ? "owned"
+        : ((await terminalIdentityStatus(record)) ?? "different");
     }
     return "unknown";
   } catch {
-    return alive(record.pid) ? (await terminalIdentityStatus(record)) ?? "unknown" : "gone";
+    return alive(record.pid)
+      ? ((await terminalIdentityStatus(record)) ?? "unknown")
+      : "gone";
   }
 }
 
@@ -241,6 +312,20 @@ async function hasOwnedGroupMember(
 export async function stopRecordedProcess(
   record: OwnedProcessRecord,
 ): Promise<boolean> {
+  if (record.runtime_kind === "wsl" && record.runtime_distribution) {
+    const stopped = await stopWslOwnedProcess(
+      record.runtime_distribution,
+      record.id,
+      record.runtime_pid,
+      record.runtime_pgid,
+    );
+    if (!stopped) return false;
+    try {
+      if (record.pid) process.kill(record.pid, "SIGKILL");
+    } catch {}
+    releaseOwnedProcess(record.id);
+    return true;
+  }
   let status = await markerStatus(record);
   if (status === "different") {
     releaseOwnedProcess(record.id);

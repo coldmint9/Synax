@@ -6,8 +6,16 @@ import {
   externalCommandEnvironment,
   prepareOwnedProcess,
   recordOwnedPid,
+  recordOwnedRuntime,
+  recordOwnedRuntimeTarget,
   releaseOwnedProcess,
 } from "./process-ownership.js";
+import { parseWslUncPath } from "../workspace-location.js";
+import {
+  findWslOwnedProcess,
+  wslCommandSpec,
+  wslLauncherEnvironment,
+} from "../wsl.js";
 
 function launcherPath(): string {
   const candidates: string[] = [];
@@ -58,11 +66,24 @@ export function spawnOwnedProcess(
     grouped,
     options,
   );
+  const wsl = options.cwd ? parseWslUncPath(options.cwd) : null;
+  if (wsl) recordOwnedRuntimeTarget(ticket.id, wsl.distribution);
+  const target = wsl
+    ? wslCommandSpec(wsl.distribution, wsl.path, command, args, {
+        shell: options.shell,
+        ownerId: ticket.id,
+      })
+    : { command, args };
   const child = fork(launcherPath(), [], {
-    cwd: options.cwd,
+    cwd: wsl ? undefined : options.cwd,
     detached: grouped,
     env: {
-      ...externalCommandEnvironment(options.env, options.inheritEnv !== false),
+      ...(wsl
+        ? wslLauncherEnvironment(options.env)
+        : externalCommandEnvironment(
+            options.env,
+            options.inheritEnv !== false,
+          )),
       SYNAX_PROCESS_OWNER: ticket.id,
       ELECTRON_RUN_AS_NODE: "1",
     },
@@ -82,12 +103,28 @@ export function spawnOwnedProcess(
     child.once("error", () => releaseOwnedProcess(ticket.id));
     child.send({
       type: "start",
-      command,
-      args,
-      cwd: options.cwd,
-      shell: options.shell === true,
+      command: target.command,
+      args: target.args,
+      cwd: wsl ? undefined : options.cwd,
+      shell: wsl ? false : options.shell === true,
       background: options.background === true,
     });
+    if (wsl) {
+      void (async () => {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const owned = await findWslOwnedProcess(wsl.distribution, ticket.id);
+          if (owned) {
+            recordOwnedRuntime(ticket.id, {
+              kind: "wsl",
+              distribution: wsl.distribution,
+              ...owned,
+            });
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      })();
+    }
   } catch (error) {
     child.kill("SIGKILL");
     releaseOwnedProcess(ticket.id);

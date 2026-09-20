@@ -5,6 +5,7 @@ import {
 } from "./backends/backend-binding.js";
 import { resolveWorkspaceRoot } from "./tools/workspace.js";
 import type { ProjectWorkspaceRoot } from "../project-workspace.js";
+import type { WorkspaceLocation } from "../workspace-location.js";
 import { workStore } from "./work-store.js";
 import { interactionService } from "./interaction-service.js";
 import { initializeGoal } from "./goal-control.js";
@@ -90,7 +91,11 @@ export class AgentSessionRuntime {
       },
     );
     const parentBackend = parent?.sessionMetadata?.backend as
-      | { workDir?: string | null; workspaceRoots?: ProjectWorkspaceRoot[] }
+      | {
+          workDir?: string | null;
+          workspaceLocation?: WorkspaceLocation;
+          workspaceRoots?: ProjectWorkspaceRoot[];
+        }
       | undefined;
     const requestedWorkDir = input.workDir ?? parentBackend?.workDir ?? null;
     if (
@@ -106,11 +111,21 @@ export class AgentSessionRuntime {
       input.model,
       requestedWorkDir ? resolveWorkspaceRoot(requestedWorkDir) : null,
     );
+    const requestedLocation =
+      (input.sessionMetadata?.workspaceLocation as
+        | WorkspaceLocation
+        | undefined) ?? parentBackend?.workspaceLocation;
+    if (requestedLocation) backend.workspaceLocation = requestedLocation;
     if (parentBackend?.workspaceRoots) {
       backend.workspaceRoots = parentBackend.workspaceRoots.map((root) => ({
         ...root,
         ...(root.role === "primary" && backend.workDir
-          ? { path: backend.workDir }
+          ? {
+              path: backend.workspaceLocation?.path ?? backend.workDir,
+              ...(backend.workspaceLocation
+                ? { location: backend.workspaceLocation }
+                : {}),
+            }
           : {}),
       }));
     }

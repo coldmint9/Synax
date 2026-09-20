@@ -1,5 +1,9 @@
-import { agentRuntimeStore } from '../session-store.js';
-import { isUnrestrictedPermissionRules } from '../permission-tiers.js';
+import { agentRuntimeStore } from "../session-store.js";
+import { isUnrestrictedPermissionRules } from "../permission-tiers.js";
+import {
+  workspaceRootHostPath,
+  type ProjectWorkspaceRoot,
+} from "../../project-workspace.js";
 
 export interface SandboxConfig {
   blockedExtensions: Set<string>;
@@ -13,7 +17,7 @@ export interface SandboxConfig {
 
 export function defaultSandboxConfig(): SandboxConfig {
   return {
-    blockedExtensions: new Set(['.key', '.pem', '.p12', '.pfx']),
+    blockedExtensions: new Set([".key", ".pem", ".p12", ".pfx"]),
     resolveSymlinks: true,
     maxDepth: 30,
     unrestricted: false,
@@ -41,8 +45,11 @@ export function sandboxConfigForSession(sessionId: string): SandboxConfig {
     if (session && isUnrestrictedPermissionRules(session.permissionRules)) {
       return unrestrictedSandboxConfig();
     }
-    const binding = session?.sessionMetadata?.backend as { workspaceRoots?: Array<{ path: string }> } | undefined;
-    if (binding?.workspaceRoots) config.workspaceRoots = binding.workspaceRoots.map(root => root.path);
+    const binding = session?.sessionMetadata?.backend as
+      | { workspaceRoots?: ProjectWorkspaceRoot[] }
+      | undefined;
+    if (binding?.workspaceRoots)
+      config.workspaceRoots = binding.workspaceRoots.map(workspaceRootHostPath);
   } catch {
     // Unavailable session state falls back to the restrictive default.
   }
@@ -50,7 +57,9 @@ export function sandboxConfigForSession(sessionId: string): SandboxConfig {
 }
 
 /** True when the session's effective rules release every sandbox rule. */
-export function isUnrestrictedSession(sessionId: string | null | undefined): boolean {
+export function isUnrestrictedSession(
+  sessionId: string | null | undefined,
+): boolean {
   if (!sessionId) return false;
   return sandboxConfigForSession(sessionId).unrestricted;
 }

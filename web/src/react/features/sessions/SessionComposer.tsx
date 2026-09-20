@@ -20,6 +20,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { EMPTY_INPUT_QUEUE, useAgentSessionStore } from "./agentSessionStore";
 import { useConfig } from "../settings/useConfig";
 import { useNotificationStore } from "../../state/notificationStore";
+import { useShellStore } from "../../state/shellStore";
 import { useWikiStore } from "../../state/wikiStore";
 import { useLocale } from "../../../hooks/useLocale";
 import { GoalComposerPill } from "../wiki/goal/GoalComposerPill";
@@ -171,6 +172,11 @@ export function SessionComposer({
   ]);
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId);
+  const wslProject = useShellStore(
+    (state) =>
+      state.projects.find((project) => project.id === projectId)?.source
+        ?.kind === "wsl",
+  );
   const acpDiscovery = useAcpDiscovery({ enabled: isDraft });
   const availableAcp = discoveredAcpProviders(providers, acpDiscovery);
   const [draftBackendId, setDraftBackendId] = useState<BackendId>(() => {
@@ -195,19 +201,30 @@ export function SessionComposer({
   >([]);
   const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>();
   const cliBackend = backendId === "codex" || backendId === "claude-code";
-  const backendOptions = [
-    { id: "native" as BackendId, label: "Synax" },
-    ...backendCatalog
-      .filter((backend) => backend.kind === "cli")
-      .map((backend) => ({
-        id: backend.id,
-        label: `${backend.label}${backend.experimental ? " · Preview" : ""}`,
-      })),
-    ...availableAcp.map((provider) => ({
-      id: provider.id as BackendId,
-      label: provider.label ?? provider.id,
-    })),
-  ];
+  const backendOptions = wslProject
+    ? [
+        {
+          id: "native" as BackendId,
+          label: zh ? "Synax · WSL2" : "Synax · WSL2",
+        },
+      ]
+    : [
+        { id: "native" as BackendId, label: "Synax" },
+        ...backendCatalog
+          .filter((backend) => backend.kind === "cli")
+          .map((backend) => ({
+            id: backend.id,
+            label: `${backend.label}${backend.experimental ? " · Preview" : ""}`,
+          })),
+        ...availableAcp.map((provider) => ({
+          id: provider.id as BackendId,
+          label: provider.label ?? provider.id,
+        })),
+      ];
+  useEffect(() => {
+    if (isDraft && wslProject && draftBackendId !== "native")
+      setDraftBackendId("native");
+  }, [isDraft, wslProject, draftBackendId]);
   useEffect(() => {
     let active = true;
     void agentRuntimeApi
@@ -239,13 +256,13 @@ export function SessionComposer({
     setSelection,
     markSubmitted,
   } = useSessionComposerSelection(
-      projectId,
-      session,
-      backendId,
-      globalConfig,
-      providers,
-      effectiveConfig,
-    );
+    projectId,
+    session,
+    backendId,
+    globalConfig,
+    providers,
+    effectiveConfig,
+  );
   const setCliModel = useCallback(
     (cliModel: string) => setSelection({ cliModel }),
     [setSelection],
@@ -509,7 +526,19 @@ export function SessionComposer({
         cliBackend ? (cliModel === "default" ? undefined : cliModel) : undefined
       }
       commands={commands}
-      placeholder={mode === 'plan' ? (zh ? '描述你想做的事，一起理清方案…' : 'What would you like to plan?') : mode === 'goal' ? (zh ? '描述目标，以及怎样才算完成…' : 'Describe your goal and what success looks like…') : (zh ? '告诉 Synax 你想做什么…' : 'Ask Synax to do something…')}
+      placeholder={
+        mode === "plan"
+          ? zh
+            ? "描述你想做的事，一起理清方案…"
+            : "What would you like to plan?"
+          : mode === "goal"
+            ? zh
+              ? "描述目标，以及怎样才算完成…"
+              : "Describe your goal and what success looks like…"
+            : zh
+              ? "告诉 Synax 你想做什么…"
+              : "Ask Synax to do something…"
+      }
       onOverlayOpenChange={setOverlayOpen}
       modelControl={
         backendId === "codex" || backendId === "claude-code" ? (
@@ -535,25 +564,27 @@ export function SessionComposer({
               onChange={setGitWorkspace}
             />
           )}
-          {(isDraft || backendId !== "native") && <SessionBackendPicker
-            value={backendId}
-            options={backendOptions}
-            disabled={
-              !isDraft || submitting || Boolean(createdDraftRef.current)
-            }
-            onChange={(id) => {
-              setDraftBackendId(id);
-              setError(null);
-              if (id !== "native") {
-                setReferences((items) =>
-                  items.filter(
-                    (item) => item.kind === "file" || item.kind === "wiki",
-                  ),
-                );
-                setSkillIds([]);
+          {(isDraft || backendId !== "native") && (
+            <SessionBackendPicker
+              value={backendId}
+              options={backendOptions}
+              disabled={
+                !isDraft || submitting || Boolean(createdDraftRef.current)
               }
-            }}
-          />}
+              onChange={(id) => {
+                setDraftBackendId(id);
+                setError(null);
+                if (id !== "native") {
+                  setReferences((items) =>
+                    items.filter(
+                      (item) => item.kind === "file" || item.kind === "wiki",
+                    ),
+                  );
+                  setSkillIds([]);
+                }
+              }}
+            />
+          )}
         </div>
       }
       projectId={projectId}
@@ -638,7 +669,9 @@ export function SessionComposer({
           session={session}
         />
       )}
-      {session && <AgentInteractionPanel key={session.id} session={session} compact />}
+      {session && (
+        <AgentInteractionPanel key={session.id} session={session} compact />
+      )}
       {commands.menu}
       {sessionId && (
         <InputQueueStrip

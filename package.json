@@ -57,7 +57,8 @@
     "test:desktop:workbench": "tsx scripts/desktop-workbench-e2e.ts",
     "test:desktop:terminal": "cross-env SYNAX_E2E_TERMINAL=1 tsx scripts/desktop-workbench-e2e.ts",
     "test:ui-updates": "vitest run electron/lib/ui-update-format.test.ts electron/lib/ui-update-store.test.ts electron/lib/ui-update-feed.test.ts electron/lib/ui-updates.test.ts scripts/ui-release-artifacts.test.ts",
-    "test:desktop:ui-update-smoke": "tsx scripts/ui-update-smoke.ts"
+    "test:desktop:ui-update-smoke": "tsx scripts/ui-update-smoke.ts",
+    "test:wsl:smoke": "tsx scripts/wsl-smoke.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",

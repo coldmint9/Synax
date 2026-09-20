@@ -1,19 +1,18 @@
-import { resolveWorkspaceRoot } from '../agent-runtime/tools/workspace.js';
-import { runCodeMapScan } from '../analyzer/scan.js';
+import { resolveWorkspaceRoot } from "../agent-runtime/tools/workspace.js";
+import { runCodeMapScan } from "../analyzer/scan.js";
 // ---------------------------------------------------------------------------
 // api/services/wiki/wiki-snapshot-service.ts
 //
 // 首次生成 WikiSnapshot：Git 状态 + analyzer scan + Agent 生成 + 落库
 // ---------------------------------------------------------------------------
 
-import { exec } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { promisify } from 'node:util';
-import { wikiStore } from './wiki-store.js';
-import { wikiAgentService } from './wiki-agent-service.js';
-import { logger } from '../../lib/logger.js';
-import { fallbackGitState } from './wiki-scan-cache.js';
-import type { WikiSnapshot } from './contracts.js';
+import { createHash } from "node:crypto";
+import { wikiStore } from "./wiki-store.js";
+import { wikiAgentService } from "./wiki-agent-service.js";
+import { logger } from "../../lib/logger.js";
+import { fallbackGitState } from "./wiki-scan-cache.js";
+import type { WikiSnapshot } from "./contracts.js";
+import { runShellCommand } from "../agent-runtime/tools/exec-async.js";
 
 export interface WikiGitState {
   branch: string;
@@ -25,48 +24,52 @@ export interface WikiGitState {
 export interface GenerateWikiInput {
   projectId: string;
   workDir: string;
-  locale?: 'zh' | 'en';
+  locale?: "zh" | "en";
 }
 
 export interface GenerateWikiResult {
   snapshotId: string;
-  status: 'completed' | 'failed' | 'outline_ready' | 'writing';
+  status: "completed" | "failed" | "outline_ready" | "writing";
   error?: string;
   docCount?: number;
 }
 
-const execAsync = promisify(exec);
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 
 export async function readGitState(workDir: string): Promise<WikiGitState> {
   const run = async (cmd: string): Promise<string> => {
     try {
-      const { stdout } = await execAsync(cmd, { cwd: workDir, maxBuffer: GIT_MAX_BUFFER });
-      return stdout.trim();
+      const result = await runShellCommand(cmd, {
+        cwd: workDir,
+        maxBufferBytes: GIT_MAX_BUFFER,
+        timeoutMs: 30_000,
+      });
+      return result.status === 0 ? result.stdout.trim() : "";
     } catch {
-      return '';
+      return "";
     }
   };
 
-  const [branchRaw, headCommitSha, statusOutput, diffOutput, cachedOutput] = await Promise.all([
-    run('git rev-parse --abbrev-ref HEAD'),
-    run('git rev-parse HEAD'),
-    run('git status --porcelain'),
-    run('git diff --binary'),
-    run('git diff --cached --binary'),
-  ]);
+  const [branchRaw, headCommitSha, statusOutput, diffOutput, cachedOutput] =
+    await Promise.all([
+      run("git rev-parse --abbrev-ref HEAD"),
+      run("git rev-parse HEAD"),
+      run("git status --porcelain"),
+      run("git diff --binary"),
+      run("git diff --cached --binary"),
+    ]);
 
-  const branch = branchRaw || 'unknown';
+  const branch = branchRaw || "unknown";
   const dirty = statusOutput.length > 0;
 
-  const workingTreeHash = createHash('sha256')
+  const workingTreeHash = createHash("sha256")
     .update(statusOutput + diffOutput + cachedOutput)
-    .digest('hex')
+    .digest("hex")
     .slice(0, 16);
 
   return {
     branch,
-    headCommitSha: headCommitSha || '0000000000000000000000000000000000000000',
+    headCommitSha: headCommitSha || "0000000000000000000000000000000000000000",
     workingTreeHash,
     dirty,
   };
@@ -74,7 +77,7 @@ export async function readGitState(workDir: string): Promise<WikiGitState> {
 
 export const wikiSnapshotService = {
   async generate(input: GenerateWikiInput): Promise<GenerateWikiResult> {
-    const { projectId, locale = 'zh' } = input;
+    const { projectId, locale = "zh" } = input;
 
     const workDir = resolveWorkspaceRoot(input.workDir);
 
@@ -82,7 +85,10 @@ export const wikiSnapshotService = {
     try {
       gitState = await readGitState(workDir);
     } catch (err) {
-      logger.warn({ err, workDir }, 'wiki: failed to read git state, using defaults');
+      logger.warn(
+        { err, workDir },
+        "wiki: failed to read git state, using defaults",
+      );
       gitState = fallbackGitState();
     }
 
@@ -91,20 +97,26 @@ export const wikiSnapshotService = {
       branch: gitState.branch,
       headCommitSha: gitState.headCommitSha,
       workingTreeHash: gitState.workingTreeHash,
-      createdBy: 'system',
+      createdBy: "system",
     });
 
     try {
-      logger.info({ projectId, workDir }, 'wiki: running code map scan');
+      logger.info({ projectId, workDir }, "wiki: running code map scan");
       const scan = await runCodeMapScan({
         projectId,
         workDir,
-        include: ['all'],
+        include: ["all"],
       });
 
-      await wikiStore.updateSnapshotStatus(snapshot.id, 'writing', []);
-      logger.info({ projectId, snapshotId: snapshot.id }, 'wiki: calling generator agent');
-      const agentOutput = await wikiAgentService.generateWiki(scan, { locale, projectId });
+      await wikiStore.updateSnapshotStatus(snapshot.id, "writing", []);
+      logger.info(
+        { projectId, snapshotId: snapshot.id },
+        "wiki: calling generator agent",
+      );
+      const agentOutput = await wikiAgentService.generateWiki(scan, {
+        locale,
+        projectId,
+      });
 
       const documentIds: string[] = [];
 
@@ -121,16 +133,26 @@ export const wikiSnapshotService = {
         documentIds.push(doc.id);
       }
 
-      await wikiStore.updateSnapshotStatus(snapshot.id, 'ready', documentIds);
-      logger.info({ projectId, snapshotId: snapshot.id, docCount: documentIds.length }, 'wiki: generation complete');
+      await wikiStore.updateSnapshotStatus(snapshot.id, "ready", documentIds);
+      logger.info(
+        { projectId, snapshotId: snapshot.id, docCount: documentIds.length },
+        "wiki: generation complete",
+      );
 
-      return { snapshotId: snapshot.id, status: 'completed', docCount: documentIds.length };
-    } catch (err) {
-      logger.error({ err, projectId, snapshotId: snapshot.id }, 'wiki: generation failed');
-      await wikiStore.updateSnapshotStatus(snapshot.id, 'failed');
       return {
         snapshotId: snapshot.id,
-        status: 'failed',
+        status: "completed",
+        docCount: documentIds.length,
+      };
+    } catch (err) {
+      logger.error(
+        { err, projectId, snapshotId: snapshot.id },
+        "wiki: generation failed",
+      );
+      await wikiStore.updateSnapshotStatus(snapshot.id, "failed");
+      return {
+        snapshotId: snapshot.id,
+        status: "failed",
         error: err instanceof Error ? err.message : String(err),
       };
     }

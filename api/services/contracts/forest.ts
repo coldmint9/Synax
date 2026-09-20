@@ -4,31 +4,39 @@
 // 若字段发生演进，请同步修改两侧。
 // ---------------------------------------------------------------------------
 
-export type CoordNodeType = 'project' | 'feature' | 'goal' | 'action';
+export type CoordNodeType = "project" | "feature" | "goal" | "action";
 
-import type { NodeReviewState } from './review.js';
-import type { AgentRunChangeSummary, AgentRunFileChange } from '../acp/contracts.js';
+import type { NodeReviewState } from "./review.js";
+import type {
+  AgentRunChangeSummary,
+  AgentRunFileChange,
+} from "../acp/contracts.js";
 
 export type CoordNodeStatus =
-  | 'pending'
-  | 'draft'
-  | 'active'
-  | 'done'
-  | 'rejection'
-  | 'cancel'
-  | 'review'
-  | 'testing';
+  | "pending"
+  | "draft"
+  | "active"
+  | "done"
+  | "rejection"
+  | "cancel"
+  | "review"
+  | "testing";
 
 export interface CoordExecutor {
-  type: 'agent' | 'human';
+  type: "agent" | "human";
   name: string;
   provider?: string;
 }
 
-export type CorrectionReason = 'arch' | 'logic' | 'perf' | 'maintain';
+export type CorrectionReason = "arch" | "logic" | "perf" | "maintain";
 
-export type AgentRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-export type AgentRunVerdict = 'accepted' | 'rejected';
+export type AgentRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+export type AgentRunVerdict = "accepted" | "rejected";
 
 export interface AgentRun {
   runId: string;
@@ -74,7 +82,7 @@ export interface CoordNode {
   updatedAt: number;
   // v3
   linkIds?: string[];
-  origin?: 'manual' | 'analyzed' | 'agent';
+  origin?: "manual" | "analyzed" | "agent";
   tags?: string[];
   runs?: AgentRun[];
   review?: NodeReviewState;
@@ -86,18 +94,20 @@ export interface CoordEdge {
   source: string;
   target: string;
   strength: number;
-  type: 'hierarchy' | 'dependency' | 'related';
+  type: "hierarchy" | "dependency" | "related";
   label?: string;
-  origin?: 'manual' | 'analyzed';
+  origin?: "manual" | "analyzed";
   semanticEdgeId?: string;
 }
 
 export interface SourceBinding {
-  kind: 'git' | 'localPath' | 'scratch';
+  kind: "git" | "localPath" | "wsl" | "scratch";
   repoUrl?: string;
   branch?: string;
   commitSha?: string;
   localPath?: string;
+  distribution?: string;
+  path?: string;
   lastSyncedAt?: number;
 }
 
@@ -113,19 +123,19 @@ export interface SymbolEntry {
   id: string;
   fileId: string;
   kind:
-    | 'function'
-    | 'class'
-    | 'method'
-    | 'interface'
-    | 'const'
-    | 'type'
-    | 'module'
-    | 'struct'
-    | 'enum'
-    | 'namespace'
-    | 'field'
-    | 'variable'
-    | 'macro';
+    | "function"
+    | "class"
+    | "method"
+    | "interface"
+    | "const"
+    | "type"
+    | "module"
+    | "struct"
+    | "enum"
+    | "namespace"
+    | "field"
+    | "variable"
+    | "macro";
   name: string;
   qualifiedName: string;
   range: { startLine: number; endLine: number };
@@ -151,7 +161,7 @@ export interface CodeIndex {
 
 export interface SemanticNode {
   id: string;
-  kind: 'module' | 'package' | 'boundary' | 'concept';
+  kind: "module" | "package" | "boundary" | "concept";
   label: string;
   summary?: string;
   evidence: { fileIds: string[]; symbolIds: string[] };
@@ -162,7 +172,7 @@ export interface SemanticEdge {
   id: string;
   source: string;
   target: string;
-  kind: 'imports' | 'calls' | 'contains' | 'co-change';
+  kind: "imports" | "calls" | "contains" | "co-change";
   weight: number;
 }
 
@@ -172,17 +182,17 @@ export interface SemanticGraph {
 }
 
 export type SourceLinkAnchor =
-  | { kind: 'file'; fileId: string }
-  | { kind: 'symbol'; symbolId: string }
-  | { kind: 'chunk'; chunkId: string }
-  | { kind: 'concept'; semanticNodeId: string };
+  | { kind: "file"; fileId: string }
+  | { kind: "symbol"; symbolId: string }
+  | { kind: "chunk"; chunkId: string }
+  | { kind: "concept"; semanticNodeId: string };
 
 export interface SourceLink {
   id: string;
   nodeId: string;
   anchor: SourceLinkAnchor;
   confidence: number;
-  createdBy: 'analyzer' | 'agent' | 'human';
+  createdBy: "analyzer" | "agent" | "human";
 }
 
 export interface AnalysisReport {
@@ -199,22 +209,22 @@ export interface AnalysisSnapshot {
   startedAt?: number;
   completedAt?: number;
   phase:
-    | 'idle'
-    | 'cloning'
-    | 'parsing'
-    | 'graph_build'
-    | 'semantic'
-    | 'indexing'
-    | 'mapping'
-    | 'ready'
-    | 'failed';
+    | "idle"
+    | "cloning"
+    | "parsing"
+    | "graph_build"
+    | "semantic"
+    | "indexing"
+    | "mapping"
+    | "ready"
+    | "failed";
   progress: number;
   message?: string;
   report?: AnalysisReport;
 }
 
 export interface LifecycleState {
-  initState: 'idle' | 'analyzing' | 'building' | 'ready' | 'failed';
+  initState: "idle" | "analyzing" | "building" | "ready" | "failed";
   autoSync: boolean;
   nextSyncAt?: number;
 }

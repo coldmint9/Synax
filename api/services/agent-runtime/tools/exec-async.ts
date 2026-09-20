@@ -1,6 +1,8 @@
 import { spawnOwnedProcess } from "../owned-process.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
+import { parseWslUncPath } from "../../workspace-location.js";
+import { stopWslOwnedProcess } from "../../wsl.js";
 
 /**
  * Async process execution helpers for agent tools.
@@ -142,8 +144,22 @@ export function runCommand(
       stdin: options.stdin === undefined ? "ignore" : "pipe",
     });
 
+    const wsl = options.cwd ? parseWslUncPath(options.cwd) : null;
     const killTree = (signal: NodeJS.Signals): void => {
       if (child.pid === undefined) return;
+      if (wsl) {
+        void stopWslOwnedProcess(
+          wsl.distribution,
+          child.ownedProcessId,
+        ).finally(() => {
+          try {
+            child.kill(signal);
+          } catch {
+            /* already gone */
+          }
+        });
+        return;
+      }
       try {
         if (useProcessGroup) process.kill(-child.pid, signal);
         else child.kill(signal);
@@ -252,6 +268,10 @@ export async function runBackgroundShellCommand(
   command: string,
   options: AsyncCommandOptions & { waitForJobs?: boolean } = {},
 ): Promise<{ processId: string; pid: number }> {
-  const { startBackgroundTerminal } = await import("../../terminals/terminal-service.js");
-  return startBackgroundTerminal(sessionId, command, { ...options, signal: options.signal ?? commandSignal.getStore() });
+  const { startBackgroundTerminal } =
+    await import("../../terminals/terminal-service.js");
+  return startBackgroundTerminal(sessionId, command, {
+    ...options,
+    signal: options.signal ?? commandSignal.getStore(),
+  });
 }

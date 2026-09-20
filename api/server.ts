@@ -31,6 +31,7 @@ import { notificationRoutes } from "./routes/notifications.js";
 import { projectSettingsRoutes } from "./routes/project-settings.js";
 import { treeEmbeddingBenchRoutes } from "./routes/tree-embedding-bench.js";
 import { fsRoutes } from "./routes/fs.js";
+import { wslRoutes } from "./routes/wsl.js";
 import { getDb } from "./db/index.js";
 import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
 import { wikiStore } from "./services/wiki/wiki-store.js";
@@ -92,6 +93,7 @@ app.route("/api/prototypes/tree-embedding-bench", treeEmbeddingBenchRoutes);
 app.route("/api/fs", fsRoutes);
 app.route("/api/terminals", terminalRoutes);
 process.env.SYNAX_TERMINAL_HOST_ORIGIN = `http://127.0.0.1:${PORT}`;
+app.route("/api/wsl", wslRoutes);
 
 const runtimeHost = acquireRuntimeHost(DATA_ROOT);
 void sweepAssets().catch((error) =>

@@ -1,9 +1,14 @@
-import { useState, type Ref } from 'react'
-import { Button, Input, Label, Tabs, TextField } from '@heroui/react'
-import { Check, FolderOpen, Layers2, Plus, Search } from 'lucide-react'
-import type { ProjectSummary } from '../../state/shellStore'
-import { useWorkspaceCopy, workspacePathKey } from './workspaceCopy'
-import './workspaceProjects.css'
+import { useState, type Ref } from "react";
+import { Button, Input, Label, Tabs, TextField } from "@heroui/react";
+import { Check, FolderOpen, Layers2, Plus, Search } from "lucide-react";
+import type { ProjectSummary } from "../../state/shellStore";
+import { useWorkspaceCopy, workspacePathKey } from "./workspaceCopy";
+import "./workspaceProjects.css";
+
+const sourcePath = (project: ProjectSummary) =>
+  project.source?.kind === "wsl"
+    ? `${project.source.distribution ?? "WSL"} · ${project.source.wslPath ?? ""}`
+    : (project.source?.localPath ?? "");
 
 export function WorkspaceProjectSources({
   projects,
@@ -20,38 +25,37 @@ export function WorkspaceProjectSources({
   onChoose,
   selectedId,
   mode,
-  onModeChange
+  onModeChange,
 }: {
-  projects: ProjectSummary[]
-  loading: boolean
-  error?: string | null
-  onRetry: () => void
-  disabled?: boolean
-  paths: string[]
-  path: string
-  onPathChange: (path: string) => void
-  onBrowse: () => void
-  browseRef?: Ref<HTMLButtonElement>
-  onAddPath?: () => void
-  onChoose: (project: ProjectSummary) => void
-  selectedId?: string
-  mode: 'local' | 'existing'
-  onModeChange: (mode: 'local' | 'existing') => void
+  projects: ProjectSummary[];
+  loading: boolean;
+  error?: string | null;
+  onRetry: () => void;
+  disabled?: boolean;
+  paths: string[];
+  path: string;
+  onPathChange: (path: string) => void;
+  onBrowse: () => void;
+  browseRef?: Ref<HTMLButtonElement>;
+  onAddPath?: () => void;
+  onChoose: (project: ProjectSummary) => void;
+  selectedId?: string;
+  mode: "local" | "existing";
+  onModeChange: (mode: "local" | "existing") => void;
 }) {
-  const c = useWorkspaceCopy()
-  const [search, setSearch] = useState('')
-  const query = search.trim().toLowerCase()
+  const c = useWorkspaceCopy();
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
   const filtered = projects.filter((project) =>
-    `${project.name} ${project.source?.localPath ?? ''}`
-      .toLowerCase()
-      .includes(query)
-  )
-  const included = new Set(paths.map(workspacePathKey))
-  const duplicate = Boolean(path.trim()) && included.has(workspacePathKey(path))
+    `${project.name} ${sourcePath(project)}`.toLowerCase().includes(query),
+  );
+  const included = new Set(paths.map(workspacePathKey));
+  const duplicate =
+    Boolean(path.trim()) && included.has(workspacePathKey(path));
   return (
     <Tabs
       selectedKey={mode}
-      onSelectionChange={(key) => onModeChange(key as 'local' | 'existing')}
+      onSelectionChange={(key) => onModeChange(key as "local" | "existing")}
       className="workspace-sources"
     >
       <Tabs.ListContainer className="workspace-source-tabs">
@@ -102,12 +106,12 @@ export function WorkspaceProjectSources({
               spellCheck={false}
               onKeyDown={(event) => {
                 if (
-                  event.key === 'Enter' &&
+                  event.key === "Enter" &&
                   onAddPath &&
                   !event.nativeEvent.isComposing
                 ) {
-                  event.preventDefault()
-                  if (!duplicate) onAddPath()
+                  event.preventDefault();
+                  if (!duplicate) onAddPath();
                 }
               }}
             />
@@ -163,9 +167,7 @@ export function WorkspaceProjectSources({
               </div>
             )}
             {filtered.map((project) => {
-              const added = included.has(
-                workspacePathKey(project.source?.localPath ?? '')
-              )
+              const added = included.has(workspacePathKey(sourcePath(project)));
               return (
                 <Button
                   key={project.id}
@@ -181,8 +183,8 @@ export function WorkspaceProjectSources({
                   />
                   <span className="workspace-project-text">
                     <strong>{project.name}</strong>
-                    <span title={project.source?.localPath}>
-                      {project.source?.localPath}
+                    <span title={sourcePath(project)}>
+                      {sourcePath(project)}
                     </span>
                   </span>
                   {added ? (
@@ -199,11 +201,11 @@ export function WorkspaceProjectSources({
                     />
                   )}
                 </Button>
-              )
+              );
             })}
           </div>
         )}
       </Tabs.Panel>
     </Tabs>
-  )
+  );
 }

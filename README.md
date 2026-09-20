@@ -78,6 +78,10 @@ npm run dev:desktop
 
 In development, Electron uses the local web and API servers. In packaged builds, Electron starts the bundled API sidecar.
 
+### Windows WSL2 Projects
+
+As of September 19, 2026, the Windows desktop build can import projects stored inside a modern WSL2 distribution. In the project dialog, select **WSL2**, choose an installed Version 2 distribution, and browse or enter a Linux absolute path such as `/home/user/project`. Synax keeps file access internal through the WSL filesystem bridge while Bash, Git, worktrees, and background commands execute inside the selected distribution. A workspace cannot mix Windows directories with WSL directories or combine different distributions. WSL projects currently support the Synax native agent backend; external CLI/ACP backends remain unavailable for these projects.
+
 ## Overview
 
 Synax is built around one core loop: import a local codebase, analyze its files and symbols, generate a Codebase Design Wiki with source bindings, then keep that wiki refreshed as the code changes.

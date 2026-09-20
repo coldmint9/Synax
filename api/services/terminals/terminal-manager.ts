@@ -11,12 +11,20 @@ import {
   externalCommandEnvironment,
   prepareOwnedProcess,
   recordOwnedPid,
+  recordOwnedRuntime,
+  recordOwnedRuntimeTarget,
   readProcessIdentity,
   releaseOwnedProcess,
   stopRecordedProcess,
   type OwnedProcessRecord,
 } from "../agent-runtime/process-ownership.js";
 import { AgentRuntimeError } from "../agent-runtime/runtime-errors.js";
+import { parseWslUncPath } from "../workspace-location.js";
+import {
+  findWslOwnedProcess,
+  wslCommandSpec,
+  wslLauncherEnvironment,
+} from "../wsl.js";
 
 const MAX_OUTPUT = 2 * 1024 * 1024;
 const MAX_LIVE = 16;
@@ -186,7 +194,8 @@ class TerminalManager {
     const cols = input.cols ?? 100,
       rows = input.rows ?? 30;
     dimensions(cols, rows);
-    const shell = input.shell ?? defaultShell();
+    const wsl = parseWslUncPath(cwd);
+    const shell = wsl ? "/bin/sh" : (input.shell ?? defaultShell());
     const { spawn } = await import("node-pty");
     // Recheck after loading the native module; no process is spawned before the record is committed.
     if (input.requestKey) {
@@ -202,9 +211,10 @@ class TerminalManager {
       failure("Too many running terminals.", 429);
     const ticket = prepareOwnedProcess(
       input.command ?? input.title,
-      process.platform !== "win32",
+      process.platform !== "win32" || Boolean(wsl),
       { sessionId: input.ownerSessionId, background: input.kind === "service" },
     );
+    if (wsl) recordOwnedRuntimeTarget(ticket.id, wsl.distribution);
     const db = getRawSqlite();
     let identityReadyResolve: (() => void) | undefined;
     try {
@@ -228,7 +238,7 @@ class TerminalManager {
         rows,
         input.requestKey ?? null,
       );
-      const args =
+      const localArgs =
         input.shellArgs ??
         (input.kind === "service"
           ? process.platform === "win32"
@@ -237,8 +247,19 @@ class TerminalManager {
           : process.platform === "win32"
             ? []
             : ["-l"]);
+      const target = wsl
+        ? wslCommandSpec(
+            wsl.distribution,
+            wsl.path,
+            input.kind === "service" ? (input.command ?? "") : shell,
+            input.kind === "service" ? [] : ["-l"],
+            { shell: input.kind === "service", ownerId: ticket.id },
+          )
+        : { command: shell, args: localArgs };
       const env: NodeJS.ProcessEnv = {
-        ...externalCommandEnvironment(input.env),
+        ...(wsl
+          ? wslLauncherEnvironment(input.env)
+          : externalCommandEnvironment(input.env)),
         SYNAX_PROCESS_OWNER: ticket.id,
         TERM: "xterm-256color",
         COLORTERM: "truecolor",
@@ -248,8 +269,8 @@ class TerminalManager {
       // API listener/runtime flags are not a user's shell environment.
       for (const key of ["PORT", "NODE_ENV"])
         if (input.env?.[key] === undefined) delete env[key];
-      const pty = spawn(shell, args, {
-        cwd,
+      const pty = spawn(target.command, target.args, {
+        cwd: wsl ? undefined : cwd,
         env: Object.fromEntries(
           Object.entries(env).filter(
             (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -283,6 +304,25 @@ class TerminalManager {
       };
       this.live.set(ticket.id, entry);
       recordOwnedPid(ticket.id, pty.pid);
+      if (wsl) {
+        void (async () => {
+          for (let attempt = 0; attempt < 20 && !entry.closed; attempt += 1) {
+            const owned = await findWslOwnedProcess(
+              wsl.distribution,
+              ticket.id,
+            );
+            if (owned) {
+              recordOwnedRuntime(ticket.id, {
+                kind: "wsl",
+                distribution: wsl.distribution,
+                ...owned,
+              });
+              return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+        })();
+      }
       pty.onData((data) =>
         withoutExecutionContext(() => {
           const frame = {
@@ -515,6 +555,16 @@ class TerminalManager {
       await entry.identityReady;
     }
     const record = this.row(id);
+    if (record.runtime_kind === "wsl") {
+      if (!(await stopRecordedProcess(record))) {
+        entry && (entry.stopping = false);
+        failure(
+          "Unable to confirm WSL terminal shutdown. Retry before deleting the record.",
+        );
+      }
+      if (entry && !entry.closed) entry.pty.kill();
+      return;
+    }
     if (process.platform === "win32" && entry && !entry.closed) {
       // ConPTY owns native process handles; never guess ownership from a reused PID.
       entry.pty.kill();

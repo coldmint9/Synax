@@ -1,57 +1,57 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Input, Label, TextField, Tooltip } from '@heroui/react'
-import { Loader2, Plus, RefreshCw, Unlink, X, Layers2 } from 'lucide-react'
-import { projectApi, type ProjectWorkspace } from '../../../../lib/api/project'
-import { WorkspaceProjectSources } from '../../workspace/WorkspaceProjectSources'
-import { WorkspaceProjectRow } from '../../workspace/WorkspaceProjectRow'
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button, Input, Label, TextField, Tooltip } from "@heroui/react";
+import { Loader2, Plus, RefreshCw, Unlink, X, Layers2 } from "lucide-react";
+import { projectApi, type ProjectWorkspace } from "../../../../lib/api/project";
+import { WorkspaceProjectSources } from "../../workspace/WorkspaceProjectSources";
+import { WorkspaceProjectRow } from "../../workspace/WorkspaceProjectRow";
 import {
   useWorkspaceCopy,
   workspacePathKey,
-  type WorkspaceCopy
-} from '../../workspace/workspaceCopy'
+  type WorkspaceCopy,
+} from "../../workspace/workspaceCopy";
 import {
   isElectron,
-  openDirectoryPicker
-} from '../../../../lib/open-directory-picker'
-import type { ProjectSummary } from '../../../state/shellStore'
-import { SettingsCard } from './SettingsCard'
-import { DirectoryPickerDialog } from '../../../components/directory-picker/DirectoryPickerDialog'
+  openDirectoryPicker,
+} from "../../../../lib/open-directory-picker";
+import type { ProjectSummary } from "../../../state/shellStore";
+import { SettingsCard } from "./SettingsCard";
+import { DirectoryPickerDialog } from "../../../components/directory-picker/DirectoryPickerDialog";
 
-type Busy = 'reload' | 'add' | 'browse' | `remove:${string}`
-type MessageKey = keyof WorkspaceCopy
-type Failure = { key: MessageKey; detail: string }
+type Busy = "reload" | "add" | "browse" | `remove:${string}`;
+type MessageKey = keyof WorkspaceCopy;
+type Failure = { key: MessageKey; detail: string };
 const errorDetail = (cause: unknown) =>
-  cause instanceof Error ? cause.message : String(cause ?? '')
+  cause instanceof Error ? cause.message : String(cause ?? "");
 
 // A new instance for each project also resets form input and directory picker results.
 export function ProjectReferencesSection({ projectId }: { projectId: string }) {
-  return <ProjectReferencesContent key={projectId} projectId={projectId} />
+  return <ProjectReferencesContent key={projectId} projectId={projectId} />;
 }
 
 function ProjectReferencesContent({ projectId }: { projectId: string }) {
-  const c = useWorkspaceCopy()
-  const t = (key: MessageKey): string => c[key]
-  const [adding, setAdding] = useState(false)
-  const [workspace, setWorkspace] = useState<ProjectWorkspace | null>(null)
-  const [projects, setProjects] = useState<ProjectSummary[]>([])
-  const [mode, setMode] = useState<'local' | 'existing'>('local')
-  const [localPath, setLocalPath] = useState('')
-  const [name, setName] = useState('')
-  const [selectedProject, setSelectedProject] = useState('')
-  const [busy, setBusy] = useState<Busy | null>('reload')
-  const [error, setError] = useState<Failure | null>(null)
-  const [projectsError, setProjectsError] = useState<Failure | null>(null)
-  const [notice, setNotice] = useState<MessageKey | null>(null)
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const addTrigger = useRef<HTMLButtonElement>(null)
-  const wasAdding = useRef(false)
+  const c = useWorkspaceCopy();
+  const t = (key: MessageKey): string => c[key];
+  const [adding, setAdding] = useState(false);
+  const [workspace, setWorkspace] = useState<ProjectWorkspace | null>(null);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [mode, setMode] = useState<"local" | "existing">("local");
+  const [localPath, setLocalPath] = useState("");
+  const [name, setName] = useState("");
+  const [selectedProject, setSelectedProject] = useState("");
+  const [busy, setBusy] = useState<Busy | null>("reload");
+  const [error, setError] = useState<Failure | null>(null);
+  const [projectsError, setProjectsError] = useState<Failure | null>(null);
+  const [notice, setNotice] = useState<MessageKey | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const addTrigger = useRef<HTMLButtonElement>(null);
+  const wasAdding = useRef(false);
   useEffect(() => {
-    if (busy) return
-    if (wasAdding.current && !adding) addTrigger.current?.focus()
-    wasAdding.current = adding
-  }, [adding, busy])
-  const locked = useRef(false)
-  const generation = useRef(0)
+    if (busy) return;
+    if (wasAdding.current && !adding) addTrigger.current?.focus();
+    wasAdding.current = adding;
+  }, [adding, busy]);
+  const locked = useRef(false);
+  const generation = useRef(0);
 
   // The synchronous lock prevents repeated presses before React renders disabled controls.
   // Cleanup invalidates all outstanding requests, including a native directory dialog.
@@ -59,135 +59,147 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
     async (
       action: Busy,
       failureKey: MessageKey,
-      task: (isCurrent: () => boolean) => Promise<void>
+      task: (isCurrent: () => boolean) => Promise<void>,
     ) => {
-      if (locked.current) return
-      locked.current = true
-      const request = ++generation.current
-      const isCurrent = () => generation.current === request
-      setBusy(action)
-      setError(null)
-      setNotice(null)
+      if (locked.current) return;
+      locked.current = true;
+      const request = ++generation.current;
+      const isCurrent = () => generation.current === request;
+      setBusy(action);
+      setError(null);
+      setNotice(null);
       try {
-        await task(isCurrent)
+        await task(isCurrent);
       } catch (cause) {
         if (isCurrent())
-          setError({ key: failureKey, detail: errorDetail(cause) })
+          setError({ key: failureKey, detail: errorDetail(cause) });
       } finally {
         if (isCurrent()) {
-          locked.current = false
-          setBusy(null)
+          locked.current = false;
+          setBusy(null);
         }
       }
     },
-    []
-  )
+    [],
+  );
 
   const reload = useCallback(
     () =>
-      run('reload', 'loadError', async (isCurrent) => {
+      run("reload", "loadError", async (isCurrent) => {
         const [rootsResult, projectsResult] = await Promise.allSettled([
           projectApi.getWorkspace(projectId),
-          projectApi.listProjects(undefined, { throwOnError: true })
-        ])
-        if (!isCurrent()) return
-        if (rootsResult.status === 'fulfilled') {
-          setWorkspace(rootsResult.value)
+          projectApi.listProjects(undefined, { throwOnError: true }),
+        ]);
+        if (!isCurrent()) return;
+        if (rootsResult.status === "fulfilled") {
+          setWorkspace(rootsResult.value);
         } else {
-          setWorkspace(null)
+          setWorkspace(null);
           setError({
-            key: 'loadError',
-            detail: errorDetail(rootsResult.reason)
-          })
+            key: "loadError",
+            detail: errorDetail(rootsResult.reason),
+          });
         }
-        if (projectsResult.status === 'fulfilled') {
+        if (projectsResult.status === "fulfilled") {
           setProjects(
             projectsResult.value.items.filter(
               (project) =>
-                project.id !== projectId && project.source?.localPath?.trim()
-            )
-          )
-          setProjectsError(null)
+                project.id !== projectId && project.source?.localPath?.trim(),
+            ),
+          );
+          setProjectsError(null);
         } else {
-          setProjects([])
+          setProjects([]);
           setProjectsError({
-            key: 'projectsError',
-            detail: errorDetail(projectsResult.reason)
-          })
+            key: "projectsError",
+            detail: errorDetail(projectsResult.reason),
+          });
         }
       }),
-    [projectId, run]
-  )
+    [projectId, run],
+  );
 
   useEffect(() => {
-    void reload()
+    void reload();
     return () => {
-      generation.current += 1
-      locked.current = false
-    }
-  }, [reload])
+      generation.current += 1;
+      locked.current = false;
+    };
+  }, [reload]);
 
-  const selected = projects.find((project) => project.id === selectedProject)
+  const selected = projects.find((project) => project.id === selectedProject);
+  const primaryLocation = workspace?.roots.find(
+    (root) => root.role === "primary",
+  )?.location;
   const candidatePath =
-    mode === 'local' ? localPath : (selected?.source?.localPath ?? '')
+    mode === "local" ? localPath : (selected?.source?.localPath ?? "");
   const duplicate = workspace?.roots.some(
-    (root) => workspacePathKey(root.path) === workspacePathKey(candidatePath)
-  )
+    (root) => workspacePathKey(root.path) === workspacePathKey(candidatePath),
+  );
   const canAdd =
-    Boolean(workspace) && Boolean(candidatePath.trim()) && !duplicate
+    Boolean(workspace) && Boolean(candidatePath.trim()) && !duplicate;
 
   const add = () => {
-    if (!canAdd) return
-    void run('add', 'addError', async (isCurrent) => {
+    if (!canAdd) return;
+    void run("add", "addError", async (isCurrent) => {
       const result = await projectApi.addReference(
         projectId,
-        mode === 'local'
-          ? {
-              localPath: localPath.trim(),
-              ...(name.trim() ? { name: name.trim() } : {})
-            }
-          : { projectId: selectedProject }
-      )
-      if (!isCurrent()) return
-      setWorkspace(result)
-      setLocalPath('')
-      setName('')
-      setSelectedProject('')
-      setNotice('added')
-      setAdding(false)
-    })
-  }
+        mode === "local"
+          ? primaryLocation?.kind === "wsl"
+            ? {
+                location: {
+                  kind: "wsl" as const,
+                  distribution: primaryLocation.distribution,
+                  path: localPath.trim(),
+                },
+                ...(name.trim() ? { name: name.trim() } : {}),
+              }
+            : {
+                localPath: localPath.trim(),
+                ...(name.trim() ? { name: name.trim() } : {}),
+              }
+          : { projectId: selectedProject },
+      );
+      if (!isCurrent()) return;
+      setWorkspace(result);
+      setLocalPath("");
+      setName("");
+      setSelectedProject("");
+      setNotice("added");
+      setAdding(false);
+    });
+  };
 
   const remove = (referenceId: string) => {
-    void run(`remove:${referenceId}`, 'removeError', async (isCurrent) => {
-      const result = await projectApi.removeReference(projectId, referenceId)
-      if (!isCurrent()) return
-      setWorkspace(result)
-      setNotice('removed')
-    })
-  }
+    void run(`remove:${referenceId}`, "removeError", async (isCurrent) => {
+      const result = await projectApi.removeReference(projectId, referenceId);
+      if (!isCurrent()) return;
+      setWorkspace(result);
+      setNotice("removed");
+    });
+  };
 
   const browse = () => {
     // Browsers cannot read a local absolute path from the renderer, so the web
     // build browses the runtime host instead of the native dialog.
-    if (!isElectron) {
-      setError(null)
-      setNotice(null)
-      setPickerOpen(true)
-      return
+    if (!isElectron || primaryLocation?.kind === "wsl") {
+      setError(null);
+      setNotice(null);
+      setPickerOpen(true);
+      return;
     }
-    void run('browse', 'browseError', async (isCurrent) => {
-      const result = await openDirectoryPicker()
-      if (!isCurrent() || !result) return
-      setLocalPath(result.path)
-      setName((current) => current || result.name)
-    })
-  }
+    void run("browse", "browseError", async (isCurrent) => {
+      const result = await openDirectoryPicker();
+      if (!isCurrent() || !result) return;
+      setLocalPath(result.path);
+      setName((current) => current || result.name);
+    });
+  };
 
-  const disabled = Boolean(busy)
+  const disabled = Boolean(busy);
   const failureText = (failure: Failure) =>
-    `${t(failure.key)}: ${failure.detail || t('unknownError')}`
-  const roots = workspace?.roots ?? []
+    `${t(failure.key)}: ${failure.detail || t("unknownError")}`;
+  const roots = workspace?.roots ?? [];
 
   return (
     <SettingsCard
@@ -195,7 +207,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
       icon={Layers2}
       badge={
         <span className="workspace-count">
-          {roots.length.toString().padStart(2, '0')}
+          {roots.length.toString().padStart(2, "0")}
         </span>
       }
       trailing={
@@ -210,7 +222,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
           >
             <RefreshCw
               size={13}
-              className={busy === 'reload' ? 'animate-spin' : ''}
+              className={busy === "reload" ? "animate-spin" : ""}
             />
           </Button>
           <Button
@@ -219,9 +231,9 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
             variant="secondary"
             isDisabled={disabled || !workspace}
             onPress={() => {
-              setAdding(true)
-              setError(null)
-              setNotice(null)
+              setAdding(true);
+              setError(null);
+              setNotice(null);
             }}
           >
             <Plus size={13} />
@@ -235,7 +247,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
           <p>{c.manageHint}</p>
           <span>{c.primaryHint}</span>
         </div>
-        {busy === 'reload' && (
+        {busy === "reload" && (
           <p role="status" className="workspace-management-message">
             <Loader2 size={13} className="animate-spin" />
             {c.loadingWorkspace}
@@ -262,24 +274,28 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
               aria-label={c.members}
             >
               {[
-                ...roots.filter((root) => root.role === 'primary'),
-                ...roots.filter((root) => root.role === 'reference')
+                ...roots.filter((root) => root.role === "primary"),
+                ...roots.filter((root) => root.role === "reference"),
               ].map((root) => (
                 <WorkspaceProjectRow
                   key={root.id}
                   name={root.name}
-                  path={root.path}
-                  primary={root.role === 'primary'}
-                  missing={root.status === 'missing'}
+                  path={
+                    root.location?.kind === "wsl"
+                      ? `${root.location.distribution} · ${root.path}`
+                      : root.path
+                  }
+                  primary={root.role === "primary"}
+                  missing={root.status === "missing"}
                 >
                   <span
                     className="workspace-availability"
-                    data-missing={root.status === 'missing' || undefined}
+                    data-missing={root.status === "missing" || undefined}
                   >
                     <span />
                     {t(root.status)}
                   </span>
-                  {root.role === 'reference' && (
+                  {root.role === "reference" && (
                     <Tooltip delay={300}>
                       <Button
                         size="sm"
@@ -333,7 +349,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
                   mode={mode}
                   onModeChange={setMode}
                   projects={projects}
-                  loading={busy === 'reload'}
+                  loading={busy === "reload"}
                   error={projectsError ? failureText(projectsError) : null}
                   onRetry={() => void reload()}
                   disabled={disabled}
@@ -344,7 +360,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
                   onChoose={(project) => setSelectedProject(project.id)}
                   selectedId={selectedProject}
                 />
-                {mode === 'local' && (
+                {mode === "local" && (
                   <TextField
                     value={name}
                     onChange={setName}
@@ -366,7 +382,7 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
                   <Button
                     size="sm"
                     isDisabled={disabled || !canAdd}
-                    isPending={busy === 'add'}
+                    isPending={busy === "add"}
                     onPress={add}
                   >
                     <Plus size={13} />
@@ -385,15 +401,21 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
       <DirectoryPickerDialog
         open={pickerOpen}
         initialPath={localPath.trim() || workspace?.roots[0]?.path}
+        locationKind={primaryLocation?.kind ?? "host"}
+        distribution={
+          primaryLocation?.kind === "wsl"
+            ? primaryLocation.distribution
+            : undefined
+        }
         onClose={() => setPickerOpen(false)}
         onSelect={(selection) => {
-          setLocalPath(selection.path)
-          setName((current) => current || selection.name)
-          setNotice(null)
-          setError(null)
-          setPickerOpen(false)
+          setLocalPath(selection.path);
+          setName((current) => current || selection.name);
+          setNotice(null);
+          setError(null);
+          setPickerOpen(false);
         }}
       />
     </SettingsCard>
-  )
+  );
 }
