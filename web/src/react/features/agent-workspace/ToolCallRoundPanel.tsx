@@ -6,7 +6,7 @@ import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { toolBlocksToBatches } from "./toolCallUtils";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ThinkingIndicator } from "./ThinkingIndicator";
-import { latestActivityPreview } from "./activityText";
+import { hasDisplayableReasoning, latestActivityPreview } from "./activityText";
 import { ToolCallBatchSummaryLine } from "./ToolCallBatchSummaryLine";
 
 interface Props {
@@ -16,11 +16,15 @@ interface Props {
 }
 
 export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
-  toolBlocks,
+  toolBlocks: rawToolBlocks,
   maxHeight = "160px",
   isStreaming = false,
 }: Props) {
   const { t } = useLocale();
+  const toolBlocks = rawToolBlocks.filter(
+    (block) =>
+      block.type !== "thinking" || hasDisplayableReasoning(block.content),
+  );
   const previews = toolBlocks
     .flatMap((block, index) => {
       // Each record previews its latest line: a row reports where the round is

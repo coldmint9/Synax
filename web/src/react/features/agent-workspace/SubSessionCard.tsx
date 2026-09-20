@@ -4,6 +4,7 @@ import { useLocale } from "../../../hooks/useLocale";
 import { ActivityStatus } from "../../components/beautiful-ui/ActivityStatus";
 import type { AgentSession } from "../../../lib/api/agentRuntime";
 import { activityPreview } from "./activityText";
+import { SubagentControls } from "./SubagentControls";
 
 interface Props {
   session: AgentSession;
@@ -53,6 +54,12 @@ export function SubSessionCard({ session, onExpand }: Props) {
             <ArrowUpRight size={11} aria-hidden="true" />
           </button>
         )}
+        <SubagentControls
+          sessionId={session.id}
+          parentSessionId={session.parentSessionId}
+          status={session.status}
+          title={title}
+        />
       </div>
       {expanded && (
         <div id={resultId} className="bui-task-body">

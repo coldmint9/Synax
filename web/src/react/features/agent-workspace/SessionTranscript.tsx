@@ -84,12 +84,9 @@ export function SessionTranscript({
     }
   }, [pending?.requestId, active]);
 
-  const streamingStep = streamingStepId
-    ? steps.find((s) => s.id === streamingStepId)
-    : undefined;
-  const showLiveBlock =
-    Boolean(streamingStepId) &&
-    (!streamingStep || streamingStep.status === "running");
+  // Live content bridges the gap until a complete persisted transcript arrives.
+  // A step/status response alone does not mean its messages are ready yet.
+  const showLiveBlock = Boolean(streamingStepId);
 
   useTranscriptScroll(
     scrollRef,

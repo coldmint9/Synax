@@ -1,8 +1,14 @@
-import type { AgentRunStreamChunk, StreamTurnRequest } from '../../services/agent-runtime/contracts.js';
-import { sessionLiveBus, type SessionLiveEvent } from '../../services/agent-runtime/session-live-bus.js';
-import { sendToParent } from './child-forward.js';
+import type {
+  AgentRunStreamChunk,
+  StreamTurnRequest,
+} from "../../services/agent-runtime/contracts.js";
+import {
+  sessionLiveBus,
+  type SessionLiveEvent,
+} from "../../services/agent-runtime/session-live-bus.js";
+import { sendToParent } from "./child-forward.js";
 
-export type AgentSessionStreamMode = 'turn' | 'continue' | 'resume';
+export type AgentSessionStreamMode = "turn" | "continue" | "resume";
 
 export interface AgentSessionChildInit {
   sessionId: string;
@@ -11,48 +17,96 @@ export interface AgentSessionChildInit {
 }
 
 export type AgentSessionParentMessage =
-  | { type: 'session:initialize' }
-  | { type: 'stream:start'; streamId: string; mode: AgentSessionStreamMode; input: StreamTurnRequest }
-  | { type: 'stream:cancel'; streamId: string; reason?: string }
-  | { type: 'session:interrupt'; reason: string };
+  | { type: "session:initialize" }
+  | {
+      type: "stream:start";
+      streamId: string;
+      mode: AgentSessionStreamMode;
+      input: StreamTurnRequest;
+    }
+  | { type: "stream:cancel"; streamId: string; reason?: string }
+  | {
+      type: "session:interrupt-subtree";
+      requestId: string;
+      sessionId: string;
+      reason: string;
+    }
+  | { type: "session:interrupt"; reason: string };
 
 export type AgentSessionChildMessage =
-  | { type: 'session:booted'; sessionId: string }
-  | { type: 'session:ready'; sessionId: string }
-  | { type: 'session:live'; sessionId: string; event: SessionLiveEvent }
-  | { type: 'runtime:event'; event: import('../../services/agent-runtime/runtime-bus.js').RuntimeBusEvent }
-  | { type: 'stream:chunk'; sessionId: string; streamId: string; chunk: AgentRunStreamChunk }
-  | { type: 'stream:done'; sessionId: string; streamId: string }
-  | { type: 'stream:error'; sessionId: string; streamId: string; error: string };
+  | {
+      type: "session:subtree-stopped";
+      requestId: string;
+      sessionId: string;
+      error?: string;
+    }
+  | { type: "session:booted"; sessionId: string }
+  | { type: "session:ready"; sessionId: string }
+  | { type: "session:live"; sessionId: string; event: SessionLiveEvent }
+  | {
+      type: "runtime:event";
+      event: import("../../services/agent-runtime/runtime-bus.js").RuntimeBusEvent;
+    }
+  | {
+      type: "stream:chunk";
+      sessionId: string;
+      streamId: string;
+      chunk: AgentRunStreamChunk;
+    }
+  | { type: "stream:done"; sessionId: string; streamId: string }
+  | {
+      type: "stream:error";
+      sessionId: string;
+      streamId: string;
+      error: string;
+    };
 
-export function isAgentSessionChildMessage(value: unknown): value is AgentSessionChildMessage {
-  if (!value || typeof value !== 'object') return false;
+export function isAgentSessionChildMessage(
+  value: unknown,
+): value is AgentSessionChildMessage {
+  if (!value || typeof value !== "object") return false;
   const type = (value as { type?: unknown }).type;
-  return type === 'session:booted' || type === 'session:ready'
-    || type === 'session:live'
-    || type === 'runtime:event'
-    || type === 'stream:chunk'
-    || type === 'stream:done'
-    || type === 'stream:error';
+  return (
+    type === "session:subtree-stopped" ||
+    type === "session:booted" ||
+    type === "session:ready" ||
+    type === "session:live" ||
+    type === "runtime:event" ||
+    type === "stream:chunk" ||
+    type === "stream:done" ||
+    type === "stream:error"
+  );
 }
 
-export function isAgentSessionParentMessage(value: unknown): value is AgentSessionParentMessage {
-  if (!value || typeof value !== 'object') return false;
+export function isAgentSessionParentMessage(
+  value: unknown,
+): value is AgentSessionParentMessage {
+  if (!value || typeof value !== "object") return false;
   const type = (value as { type?: unknown }).type;
-  return type === 'session:initialize' || type === 'stream:start'
-    || type === 'stream:cancel'
-    || type === 'session:interrupt';
+  return (
+    type === "session:interrupt-subtree" ||
+    type === "session:initialize" ||
+    type === "stream:start" ||
+    type === "stream:cancel" ||
+    type === "session:interrupt"
+  );
 }
 
-export function sendAgentSessionToParent(message: AgentSessionChildMessage): boolean {
-  if (process.env.SYNAX_AGENT_SESSION_CHILD !== '1' || typeof process.send !== 'function' || process.connected === false) {
+export function sendAgentSessionToParent(
+  message: AgentSessionChildMessage,
+): boolean {
+  if (
+    process.env.SYNAX_AGENT_SESSION_CHILD !== "1" ||
+    typeof process.send !== "function" ||
+    process.connected === false
+  ) {
     return false;
   }
   process.send(message);
   return true;
 }
 
-type LiveDeltaKind = 'message_delta' | 'thought_delta';
+type LiveDeltaKind = "message_delta" | "thought_delta";
 
 interface PendingLiveDelta {
   type: LiveDeltaKind;
@@ -67,11 +121,15 @@ const WIKI_LIVE_DELTA_FLUSH_MS = 50;
 function flushWikiLiveDeltas(): void {
   wikiLiveFlushTimer = null;
   for (const [key, pending] of pendingWikiLiveDeltas) {
-    const sessionId = key.slice(0, key.indexOf(':'));
+    const sessionId = key.slice(0, key.indexOf(":"));
     sendToParent({
-      type: 'session:live',
+      type: "session:live",
       sessionId,
-      event: { type: pending.type, stepId: pending.stepId, delta: pending.delta },
+      event: {
+        type: pending.type,
+        stepId: pending.stepId,
+        delta: pending.delta,
+      },
     });
   }
   pendingWikiLiveDeltas.clear();
@@ -79,11 +137,17 @@ function flushWikiLiveDeltas(): void {
 
 function scheduleWikiLiveDeltaFlush(): void {
   if (wikiLiveFlushTimer) return;
-  wikiLiveFlushTimer = setTimeout(flushWikiLiveDeltas, WIKI_LIVE_DELTA_FLUSH_MS);
+  wikiLiveFlushTimer = setTimeout(
+    flushWikiLiveDeltas,
+    WIKI_LIVE_DELTA_FLUSH_MS,
+  );
 }
 
-function forwardSessionLiveToWikiParent(sessionId: string, event: SessionLiveEvent): void {
-  if (event.type === 'message_delta' || event.type === 'thought_delta') {
+function forwardSessionLiveToWikiParent(
+  sessionId: string,
+  event: SessionLiveEvent,
+): void {
+  if (event.type === "message_delta" || event.type === "thought_delta") {
     const key = `${sessionId}:${event.type}:${event.stepId}`;
     const pending = pendingWikiLiveDeltas.get(key);
     if (pending) {
@@ -102,50 +166,76 @@ function forwardSessionLiveToWikiParent(sessionId: string, event: SessionLiveEve
     clearTimeout(wikiLiveFlushTimer);
     flushWikiLiveDeltas();
   }
-  sendToParent({ type: 'session:live', sessionId, event });
+  sendToParent({ type: "session:live", sessionId, event });
 }
 
 /** Emit a live session event on the API process, or forward via IPC from a worker child. */
-export function emitSessionLive(sessionId: string, event: SessionLiveEvent): void {
-  if (process.env.SYNAX_AGENT_SESSION_CHILD === '1') {
+export function emitSessionLive(
+  sessionId: string,
+  event: SessionLiveEvent,
+): void {
+  if (process.env.SYNAX_AGENT_SESSION_CHILD === "1") {
     // Live SSE is derived from stream:chunk on the API process (see session-process-manager).
     return;
   }
-  if (process.env.SYNAX_WIKI_JOB_CHILD === '1') {
+  if (process.env.SYNAX_WIKI_JOB_CHILD === "1") {
     forwardSessionLiveToWikiParent(sessionId, event);
     return;
   }
   sessionLiveBus.emit(sessionId, event);
 }
 
-export function forwardChunkToLiveBus(sessionId: string, chunk: AgentRunStreamChunk): void {
+export function forwardChunkToLiveBus(
+  sessionId: string,
+  chunk: AgentRunStreamChunk,
+): void {
   let event: SessionLiveEvent | null = null;
   switch (chunk.type) {
-    case 'step_started':
+    case "step_started":
       event = {
-        type: 'step_started',
+        type: "step_started",
         stepId: chunk.step.id,
         stepIndex: chunk.step.index,
       };
       break;
-    case 'retry_status':
-      event = { type: 'retry_status', stepId: chunk.stepId, retry: chunk.retry };
-      break;
-    case 'message_delta':
-      event = { type: 'message_delta', stepId: chunk.stepId, delta: chunk.delta };
-      break;
-    case 'thought_delta':
-      event = { type: 'thought_delta', stepId: chunk.stepId, delta: chunk.delta };
-      break;
-    case 'tool_call':
-      event = { type: 'tool_call', stepId: chunk.stepId, toolCall: chunk.toolCall };
-      break;
-    case 'tool_result':
-      event = { type: 'tool_result', stepId: chunk.stepId, toolCall: chunk.toolCall };
-      break;
-    case 'context_compacted':
+    case "retry_status":
       event = {
-        type: 'context_compacted',
+        type: "retry_status",
+        stepId: chunk.stepId,
+        retry: chunk.retry,
+      };
+      break;
+    case "message_delta":
+      event = {
+        type: "message_delta",
+        stepId: chunk.stepId,
+        delta: chunk.delta,
+      };
+      break;
+    case "thought_delta":
+      event = {
+        type: "thought_delta",
+        stepId: chunk.stepId,
+        delta: chunk.delta,
+      };
+      break;
+    case "tool_call":
+      event = {
+        type: "tool_call",
+        stepId: chunk.stepId,
+        toolCall: chunk.toolCall,
+      };
+      break;
+    case "tool_result":
+      event = {
+        type: "tool_result",
+        stepId: chunk.stepId,
+        toolCall: chunk.toolCall,
+      };
+      break;
+    case "context_compacted":
+      event = {
+        type: "context_compacted",
         stepId: chunk.stepId,
         originalTokens: chunk.originalTokens,
         compressedTokens: chunk.compressedTokens,

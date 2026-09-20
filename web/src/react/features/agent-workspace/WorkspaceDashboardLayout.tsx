@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { GripVertical, MoveDiagonal2, RotateCcw } from "lucide-react";
+import { GripVertical, RotateCcw } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 import {
   panelOrder,
@@ -44,6 +44,16 @@ function layoutStatus(children: ReactNode): ReactNode[] {
       ? []
       : [child];
   });
+}
+
+function preferredHeight(panel: HTMLElement) {
+  return (
+    parseFloat(panel.style.height) ||
+    parseFloat(
+      panel.style.getPropertyValue("--dashboard-panel-preferred-height"),
+    ) ||
+    panel.offsetHeight
+  );
 }
 
 export function WorkspaceDashboardLayout({
@@ -83,13 +93,11 @@ export function WorkspaceDashboardLayout({
     let active = false;
     const tick = () => {
       if (active) {
-        const bounds = root.getBoundingClientRect();
-        const scale = bounds.height / root.clientHeight || 1;
-        if (y < bounds.top + 32) root.scrollTop -= 8 / scale;
-        else if (y > bounds.bottom - 32) root.scrollTop += 8 / scale;
         const candidates = [
           ...root.querySelectorAll<HTMLElement>("[data-dashboard-panel]"),
-        ].filter((el) => el.dataset.dashboardPanel !== panel.id);
+        ].filter(
+          (el) => el.dataset.dashboardPanel !== panel.id && el.offsetHeight > 0,
+        );
         const closest = candidates.reduce<HTMLElement | null>((best, el) => {
           const rect = el.getBoundingClientRect();
           const b = best?.getBoundingClientRect();
@@ -168,29 +176,19 @@ export function WorkspaceDashboardLayout({
     const panel = event.currentTarget.closest<HTMLElement>(
       "[data-dashboard-panel]",
     )!;
-    const root = viewport.current!;
     const rect = panel.getBoundingClientRect();
-    const scale = rect.width / panel.offsetWidth || 1;
-    const availableWidth =
-      root.clientWidth -
-      parseFloat(getComputedStyle(root).paddingLeft) -
-      parseFloat(getComputedStyle(root).paddingRight);
-    const start = {
-      x: event.clientX,
-      y: event.clientY,
-      width: panel.offsetWidth,
-      height: panel.offsetHeight,
-    };
-    let size = { width: start.width / availableWidth, height: start.height };
+    const scale = rect.height / panel.offsetHeight || 1;
+    const startY = event.clientY;
+    const startHeight = preferredHeight(panel);
+    const heightRatio = startHeight / panel.offsetHeight || 1;
+    let moved = false;
+    let size = { width: 1, height: startHeight };
     const move = (e: PointerEvent) => {
       if (e.pointerId !== event.pointerId) return;
+      moved = true;
       size = normalizePanelSize({
-        width:
-          Math.max(
-            Math.min(220, availableWidth),
-            start.width + (e.clientX - start.x) / scale,
-          ) / availableWidth,
-        height: start.height + (e.clientY - start.y) / scale,
+        width: 1,
+        height: startHeight + ((e.clientY - startY) / scale) * heightRatio,
       });
       setDraft({ id, size });
     };
@@ -212,7 +210,7 @@ export function WorkspaceDashboardLayout({
     };
     const up = (e: PointerEvent) => {
       if (e.pointerId !== event.pointerId) return;
-      useDashboardLayoutStore.getState().resize(scope, id, size);
+      if (moved) useDashboardLayoutStore.getState().resize(scope, id, size);
       release();
     };
     cleanup.current = release;
@@ -226,7 +224,7 @@ export function WorkspaceDashboardLayout({
   return (
     <div
       ref={viewport}
-      className="workspace-dashboard workspace-dashboard--custom session-workspace-scroll min-h-0 flex-1"
+      className="workspace-dashboard workspace-dashboard--custom min-h-0 flex-1"
       data-arranging={Boolean(dragging || draft)}
     >
       {layoutStatus(children)}
@@ -244,7 +242,6 @@ export function WorkspaceDashboardLayout({
             }
             className="dashboard-panel"
             style={{
-              width: size ? `${size.width * 100}%` : undefined,
               height: size?.height,
             }}
           >
@@ -269,7 +266,18 @@ export function WorkspaceDashboardLayout({
                       : 0;
                 if (!step) return;
                 event.preventDefault();
-                const target = order[order.indexOf(id) + step];
+                const visibleOrder = [
+                  ...viewport.current!.querySelectorAll<HTMLElement>(
+                    "[data-dashboard-panel]",
+                  ),
+                ]
+                  .filter((element) =>
+                    element
+                      .querySelector(".dashboard-panel-content")
+                      ?.hasChildNodes(),
+                  )
+                  .map((element) => element.dataset.dashboardPanel!);
+                const target = visibleOrder[visibleOrder.indexOf(id) + step];
                 if (target) {
                   useDashboardLayoutStore
                     .getState()
@@ -288,13 +296,13 @@ export function WorkspaceDashboardLayout({
               className="dashboard-panel-resize"
               aria-label={
                 zh
-                  ? `调整板块宽高：${panel.label}`
-                  : `Resize panel: ${panel.label}`
+                  ? `调整板块高度：${panel.label}`
+                  : `Resize panel height: ${panel.label}`
               }
               title={
                 zh
-                  ? "拖动调整宽高；双击恢复自动尺寸；方向键微调"
-                  : "Drag to resize; double-click to reset; arrow keys to fine-tune"
+                  ? "拖动底边调整高度；双击恢复自动高度；上下方向键微调"
+                  : "Drag the bottom edge to adjust height; double-click to reset; Up/Down to fine-tune"
               }
               onPointerDown={(event) => beginResize(event, id)}
               onDoubleClick={() =>
@@ -306,27 +314,16 @@ export function WorkspaceDashboardLayout({
                   useDashboardLayoutStore.getState().resize(scope, id, null);
                   return;
                 }
-                if (
-                  !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(
-                    event.key,
-                  )
-                )
-                  return;
+                if (!["ArrowUp", "ArrowDown"].includes(event.key)) return;
                 event.preventDefault();
                 const el = event.currentTarget.closest<HTMLElement>(
                   "[data-dashboard-panel]",
                 )!;
                 const amount = event.shiftKey ? 40 : 12;
                 useDashboardLayoutStore.getState().resize(scope, id, {
-                  width:
-                    (size?.width ?? 1) +
-                    (event.key === "ArrowRight"
-                      ? 0.05
-                      : event.key === "ArrowLeft"
-                        ? -0.05
-                        : 0),
+                  width: 1,
                   height:
-                    el.offsetHeight +
+                    preferredHeight(el) +
                     (event.key === "ArrowDown"
                       ? amount
                       : event.key === "ArrowUp"
@@ -334,9 +331,7 @@ export function WorkspaceDashboardLayout({
                         : 0),
                 });
               }}
-            >
-              <MoveDiagonal2 size={12} />
-            </button>
+            />
           </section>
         );
       })}

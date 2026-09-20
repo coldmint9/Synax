@@ -62,6 +62,26 @@ function makeToolCall(partial: Partial<ToolCallRecord>): ToolCallRecord {
 }
 
 describe("buildInterleavedTurns", () => {
+  it.each([{ type: "thinking" }, { kind: "thought" }])(
+    "omits historical placeholder thoughts without hiding short reasoning or answer punctuation (%j)",
+    (metadata) => {
+      const turns = buildInterleavedTurns(
+        [makeStep()],
+        [],
+        [
+          makeMessage({ id: "placeholder", content: "...", metadata }),
+          makeMessage({ id: "ellipsis", content: "……", metadata }),
+          makeMessage({ id: "short", content: "嗯", metadata }),
+          makeMessage({ id: "answer", content: "..." }),
+        ],
+      );
+      expect(turns[0].blocks).toEqual([
+        { type: "thinking", content: "嗯" },
+        { type: "text", content: "..." },
+      ]);
+    },
+  );
+
   it("preserves media-only assistant messages after reloading the timeline", () => {
     const parts = [
       {

@@ -8,8 +8,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     update: (
       patch: import("./appearance-contract.js").DesktopAppearancePatch,
     ) => ipcRenderer.invoke("appearance:update", patch),
-    previewOpacity: (opacity: number) =>
-      ipcRenderer.send("appearance:preview-opacity", opacity),
+    // Compatibility with an older downloaded UI. Never dim the native window.
+    previewOpacity: (_opacity: number) => {},
     chooseBackground: () => ipcRenderer.invoke("appearance:choose-background"),
     removeBackground: () => ipcRenderer.invoke("appearance:remove-background"),
   },

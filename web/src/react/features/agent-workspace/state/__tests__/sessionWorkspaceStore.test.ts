@@ -64,4 +64,33 @@ describe("sessionWorkspaceStore", () => {
     expect(useSessionWorkspaceStore.getState().sessions.delete).toBeUndefined();
     expect(EMPTY_SESSION_WORKSPACE.tabs).toEqual([]);
   });
+
+  it("closes destroyed subagent tabs in surviving parents without closing unrelated tabs", () => {
+    const store = useSessionWorkspaceStore.getState();
+    store.openTab("parent", {
+      kind: "file",
+      path: "keep.ts",
+      title: "keep.ts",
+    });
+    store.openTab("parent", {
+      kind: "subagent",
+      sessionId: "child",
+      title: "Child",
+    });
+    store.enterFocus("parent");
+    store.openTab("other", {
+      kind: "subagent",
+      sessionId: "sibling",
+      title: "Sibling",
+    });
+    store.removeSessions(["child"]);
+    expect(useSessionWorkspaceStore.getState().sessions.parent).toMatchObject({
+      tabs: [{ kind: "file", path: "keep.ts" }],
+      activeTabId: null,
+      presentation: "dock",
+    });
+    expect(
+      useSessionWorkspaceStore.getState().sessions.other.tabs,
+    ).toHaveLength(1);
+  });
 });

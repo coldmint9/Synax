@@ -1,6 +1,7 @@
 import type { ToolCallRecord } from "../../../lib/api/agentRuntime";
 import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { toolCallRecordToView } from "./toolCallUtils";
+import { hasDisplayableReasoning } from "./activityText";
 
 export interface StreamingLiveBuffers {
   blocks: TurnContentBlock[];
@@ -24,7 +25,9 @@ function toolCallsToBlocks(toolCalls: ToolCallRecord[]): TurnContentBlock[] {
 }
 
 function flushThinking(state: StreamingLiveBuffers): StreamingLiveBuffers {
-  if (!state.pendingThinking.trim()) return state;
+  if (!state.pendingThinking) return state;
+  if (!hasDisplayableReasoning(state.pendingThinking))
+    return { ...state, pendingThinking: "" };
   return {
     ...state,
     blocks: [
@@ -58,7 +61,7 @@ export function applyThoughtDelta(
   delta: string,
 ): StreamingLiveBuffers {
   if (!delta) return state;
-  let next = state;
+  let next = flushText(state);
   if (next.pendingToolCalls.length > 0) {
     next = flushToolCalls(next);
   }
@@ -71,9 +74,7 @@ export function applyMessageDelta(
 ): StreamingLiveBuffers {
   if (!delta) return state;
   let next = flushToolCalls(state);
-  if (next.pendingThinking.trim()) {
-    next = flushThinking(next);
-  }
+  next = flushThinking(next);
   return { ...next, pendingText: next.pendingText + delta };
 }
 
@@ -82,7 +83,7 @@ export function applyToolCall(
   toolCall: ToolCallRecord,
 ): StreamingLiveBuffers {
   let next = state;
-  if (next.pendingThinking.trim()) next = flushThinking(next);
+  next = flushThinking(next);
   if (next.pendingText.trim()) next = flushText(next);
   return {
     ...next,
@@ -115,7 +116,7 @@ export function snapshotStreamingBuffers(
 export function hasStreamingContent(state: StreamingLiveBuffers): boolean {
   return (
     state.blocks.length > 0 ||
-    Boolean(state.pendingThinking) ||
+    hasDisplayableReasoning(state.pendingThinking) ||
     Boolean(state.pendingText) ||
     state.pendingToolCalls.length > 0
   );
@@ -125,7 +126,7 @@ export function materializeLiveBlocks(
   state: StreamingLiveBuffers,
 ): TurnContentBlock[] {
   const blocks = [...state.blocks];
-  if (state.pendingThinking.trim()) {
+  if (hasDisplayableReasoning(state.pendingThinking)) {
     blocks.push({ type: "thinking", content: state.pendingThinking });
   }
   if (state.pendingToolCalls.length > 0) {

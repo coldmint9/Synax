@@ -6573,8 +6573,8 @@
   min-height: 26px;
 }
 .electron-macos .work-page .session-list-card--sessions {
-  border-top-color: transparent;
-  background: hsl(var(--card) / 0.82);
+  border-top-color: var(--work-glass-edge);
+  background: var(--work-glass);
 }
 .project-switcher-anchor {
   position: relative;

@@ -1,4 +1,5 @@
 import { memo, useMemo, type RefObject } from "react";
+import { shallow } from "zustand/shallow";
 import { Skeleton } from "@heroui/react";
 import { useLocale } from "../../../hooks/useLocale";
 import type {
@@ -15,7 +16,10 @@ import {
 import { TimelineEntryView } from "./TimelineEntryView";
 import { TimelineLazyEntry, estimateEntryHeight } from "./TimelineLazyEntry";
 import { groupActivityEntries } from "./groupActivityEntries";
-import { materializeLiveBlocks } from "./streamingLiveBlocks";
+import {
+  EMPTY_STREAMING_BUFFERS,
+  materializeLiveBlocks,
+} from "./streamingLiveBlocks";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { useShellStore } from "../../state/shellStore";
 
@@ -37,14 +41,75 @@ type RowsProps = Pick<Props, "onExpandChild" | "scrollRootRef"> & {
   entries: ConversationTimelineEntry[];
   sessionId?: string;
   streaming?: boolean;
+  eager?: boolean;
 };
 
-const TimelineRows = memo(function TimelineRows({
+type RowProps = Omit<RowsProps, "entries" | "streaming"> & {
+  entry: ConversationTimelineEntry;
+  isWorking: boolean;
+  isStreaming: boolean;
+};
+
+const TimelineRow = memo(
+  function TimelineRow({
+    entry,
+    sessionId,
+    onExpandChild,
+    scrollRootRef,
+    isWorking,
+    isStreaming,
+    eager,
+  }: RowProps) {
+    const key = `${sessionId ?? "standalone"}:${entry.kind}-${entry.id}`;
+    return (
+      <TimelineLazyEntry
+        entryId={entry.id}
+        cacheKey={key}
+        estimate={estimateEntryHeight(entry)}
+        scrollRootRef={scrollRootRef}
+        eager={eager}
+      >
+        <TimelineEntryView
+          entry={entry}
+          onExpandChild={onExpandChild}
+          isWorking={isWorking}
+          isStreaming={isStreaming}
+        />
+      </TimelineLazyEntry>
+    );
+  },
+  (previous, next) => {
+    if (
+      previous.sessionId !== next.sessionId ||
+      previous.onExpandChild !== next.onExpandChild ||
+      previous.scrollRootRef !== next.scrollRootRef ||
+      previous.isWorking !== next.isWorking ||
+      previous.isStreaming !== next.isStreaming ||
+      previous.eager !== next.eager
+    )
+      return false;
+    if (previous.entry === next.entry) return true;
+    const a = previous.entry;
+    const b = next.entry;
+    if (a.kind !== "agent" || b.kind !== "agent" || a.id !== b.id) return false;
+    // Grouping creates new arrays, but completed blocks retain their references.
+    // Compare the rendered content so token deltas do not rebuild older answers.
+    return (
+      a.turn.blocks.length === b.turn.blocks.length &&
+      a.turn.blocks.every((block, index) =>
+        shallow(block, b.turn.blocks[index]),
+      )
+    );
+  },
+);
+
+function renderTimelineRows({
   entries,
   sessionId,
   streaming,
   onExpandChild,
   scrollRootRef,
+  eager,
 }: RowsProps) {
   let latestActivityIndex = -1;
   for (let index = entries.length - 1; index >= 0; index--) {
@@ -63,40 +128,52 @@ const TimelineRows = memo(function TimelineRows({
       break;
     }
   }
-  return (
-    <>
-      {entries.map((entry, index) => {
-        const key = `${sessionId ?? "standalone"}:${entry.kind}-${entry.id}`;
-        return (
-          <TimelineLazyEntry
-            key={key}
-            entryId={entry.id}
-            cacheKey={key}
-            estimate={estimateEntryHeight(entry)}
-            scrollRootRef={scrollRootRef}
-          >
-            <TimelineEntryView
-              entry={entry}
-              onExpandChild={onExpandChild}
-              isWorking={Boolean(streaming && index === latestActivityIndex)}
-              isStreaming={Boolean(
-                streaming &&
-                entry.kind === "agent" &&
-                entry.turn.status === "running" &&
-                index === entries.length - 1,
-              )}
-            />
-          </TimelineLazyEntry>
-        );
-      })}
-    </>
-  );
-});
+  return entries.map((entry, index) => (
+    <TimelineRow
+      key={`${sessionId ?? "standalone"}:${entry.kind}-${entry.id}`}
+      entry={entry}
+      sessionId={sessionId}
+      onExpandChild={onExpandChild}
+      scrollRootRef={scrollRootRef}
+      eager={eager}
+      isWorking={Boolean(streaming && index === latestActivityIndex)}
+      isStreaming={Boolean(
+        streaming &&
+        entry.kind === "agent" &&
+        entry.turn.status === "running" &&
+        index === entries.length - 1,
+      )}
+    />
+  ));
+}
 
-/** Only the unfinished activity group subscribes to token deltas. */
-function LiveTimelineTail({ entries, ...props }: RowsProps) {
-  const live = useAgentSessionStore((s) => s.streamingLive);
-  const liveId = useAgentSessionStore((s) => s.streamingStepId);
+/** Only the tail is rebuilt for tokens; all rows share one stable React parent. */
+function TimelineRows({
+  history,
+  entries,
+  liveId,
+  sessionId,
+  streaming,
+  onExpandChild,
+  scrollRootRef,
+}: RowsProps & {
+  history: ConversationTimelineEntry[];
+  liveId: string | null;
+}) {
+  const live = useAgentSessionStore((s) =>
+    liveId ? s.streamingLive : EMPTY_STREAMING_BUFFERS,
+  );
+  const historyRows = useMemo(
+    () =>
+      renderTimelineRows({
+        entries: history,
+        sessionId,
+        streaming: streaming && !liveId,
+        onExpandChild,
+        scrollRootRef,
+      }),
+    [history, sessionId, streaming, liveId, onExpandChild, scrollRootRef],
+  );
   const combined = useMemo(() => {
     if (!liveId) return groupActivityEntries(entries);
     const rows = [...entries];
@@ -119,7 +196,24 @@ function LiveTimelineTail({ entries, ...props }: RowsProps) {
     });
     return groupActivityEntries(rows);
   }, [entries, live, liveId]);
-  return <TimelineRows {...props} entries={combined} />;
+  // Flatten the cached history and live rows into the SAME keyed sibling list.
+  // Separate component/fragment parents remount every row at the live handoff,
+  // resetting disclosure state and lazy height reservations (visible flashes).
+  return (
+    <>
+      {[
+        ...historyRows,
+        ...renderTimelineRows({
+          entries: combined,
+          eager: Boolean(liveId),
+          sessionId,
+          streaming,
+          onExpandChild,
+          scrollRootRef,
+        }),
+      ]}
+    </>
+  );
 }
 
 export const SessionStaticTimeline = memo(function SessionStaticTimeline({
@@ -150,9 +244,18 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   );
   const showLive = Boolean(liveId && excludeStepId === liveId);
   const timeline = useMemo(() => {
+    const persistedStepIds = new Set(
+      steps.filter((step) => step.status !== "running").map((step) => step.id),
+    );
+    const pendingSnapshots = (snapshots ?? []).filter(
+      (snapshot) => !persistedStepIds.has(snapshot.stepId),
+    );
+    const snapshotIds = new Set(
+      pendingSnapshots.map((snapshot) => snapshot.stepId),
+    );
     const entries = buildConversationTimeline(
       runs,
-      steps,
+      steps.filter((step) => !snapshotIds.has(step.id)),
       messages,
       toolCalls,
       childSessions,
@@ -163,32 +266,29 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
         interactions,
       },
     );
-    const stepIds = new Set(steps.map((step) => step.id));
-    for (const snapshot of snapshots ?? []) {
-      if (!stepIds.has(snapshot.stepId)) {
-        const interactionIndex = entries.findIndex(
-          (entry) =>
-            entry.kind === "interaction" &&
-            entry.interaction.stepId === snapshot.stepId,
-        );
-        entries.splice(
-          interactionIndex < 0 ? entries.length : interactionIndex,
-          0,
-          {
-            id: snapshot.stepId,
-            kind: "agent",
-            createdAt: "",
-            label: "",
-            turn: {
-              stepId: snapshot.stepId,
-              index: snapshot.stepIndex,
-              status: "completed",
-              duration: null,
-              blocks: snapshot.blocks,
-            },
+    for (const snapshot of pendingSnapshots) {
+      const interactionIndex = entries.findIndex(
+        (entry) =>
+          entry.kind === "interaction" &&
+          entry.interaction.stepId === snapshot.stepId,
+      );
+      entries.splice(
+        interactionIndex < 0 ? entries.length : interactionIndex,
+        0,
+        {
+          id: snapshot.stepId,
+          kind: "agent",
+          createdAt: "",
+          label: "",
+          turn: {
+            stepId: snapshot.stepId,
+            index: snapshot.stepIndex,
+            status: "completed",
+            duration: null,
+            blocks: snapshot.blocks,
           },
-        );
-      }
+        },
+      );
     }
     return entries;
   }, [
@@ -240,21 +340,14 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   return (
     <div className="flex flex-col gap-5">
       <TimelineRows
-        entries={history}
-        streaming={isRunning && !showLive}
+        history={history}
+        entries={tail}
+        liveId={showLive ? liveId : null}
+        streaming={isRunning}
         sessionId={session?.id}
         onExpandChild={onExpandChild}
         scrollRootRef={scrollRootRef}
       />
-      {showLive && (
-        <LiveTimelineTail
-          entries={tail}
-          streaming={isRunning}
-          sessionId={session?.id}
-          onExpandChild={onExpandChild}
-          scrollRootRef={scrollRootRef}
-        />
-      )}
     </div>
   );
 });

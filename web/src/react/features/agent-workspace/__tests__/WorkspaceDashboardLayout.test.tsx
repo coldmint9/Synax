@@ -84,11 +84,18 @@ describe("custom dashboard layout", () => {
     Object.defineProperty(panel, "offsetHeight", {
       get: () => parseFloat(panel.style.height) || 200,
     });
-    const resize = screen.getByRole("button", { name: "Resize panel: Git" });
+    const resize = screen.getByRole("button", {
+      name: "Resize panel height: Git",
+    });
     fireEvent.keyDown(resize, { key: "ArrowLeft" });
     expect(
       view.container.querySelector('[data-dashboard-panel="git"]'),
-    ).toHaveStyle({ width: "95%" });
+    ).not.toHaveAttribute("style");
+    expect(useDashboardLayoutStore.getState().layouts.project).toBeUndefined();
+    fireEvent.keyDown(resize, { key: "ArrowDown" });
+    expect(
+      useDashboardLayoutStore.getState().layouts.project.sizes.git,
+    ).toEqual({ width: 1, height: 212 });
     for (let i = 0; i < 50; i++)
       fireEvent.keyDown(resize, { key: "ArrowDown", shiftKey: true });
     expect(
@@ -101,9 +108,9 @@ describe("custom dashboard layout", () => {
     view.rerender(<Panels />);
     expect(
       view.container.querySelector('[data-dashboard-panel="git"]'),
-    ).toHaveStyle({ width: "95%", height: "900px" });
+    ).toHaveStyle({ height: "900px" });
     fireEvent.doubleClick(
-      screen.getByRole("button", { name: "Resize panel: Git" }),
+      screen.getByRole("button", { name: "Resize panel height: Git" }),
     );
     expect(
       useDashboardLayoutStore.getState().layouts.project.sizes.git,
@@ -116,7 +123,7 @@ describe("custom dashboard layout", () => {
       { key: "ArrowUp" },
     );
     fireEvent.keyDown(
-      screen.getByRole("button", { name: "Resize panel: Git" }),
+      screen.getByRole("button", { name: "Resize panel height: Git" }),
       { key: "ArrowLeft" },
     );
     fireEvent.click(screen.getByRole("button", { name: "Reset layout" }));

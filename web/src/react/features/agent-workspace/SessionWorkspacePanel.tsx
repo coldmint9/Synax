@@ -1,4 +1,5 @@
 import { WorkspaceTabStrip } from "./WorkspaceChromeControls";
+import { WorkbenchIslandSlot } from "../../layouts/WorkbenchIsland";
 import { memo } from "react";
 import { useSessionWorkspaceEnvironment } from "./SessionEnvironmentContext";
 import {
@@ -81,6 +82,7 @@ export const SessionWorkspacePanel = memo(function SessionWorkspacePanel({
       ) : mode === "content" ? (
         <div className="workspace-viewer-shell">
           <div className="workspace-viewer-header">
+            <WorkbenchIslandSlot />
             <WorkspaceTabStrip sessionId={sessionId} />
           </div>
           <div className="workspace-viewer-body">

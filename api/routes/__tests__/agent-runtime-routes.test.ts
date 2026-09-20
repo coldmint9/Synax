@@ -13,9 +13,21 @@ vi.mock("../../services/llm-runtime/provider-check.js", () => ({
 
 vi.mock("../../services/llm-runtime/gateway.js", () => ({
   createGatewayStream: (...args: unknown[]) => mockCreateGatewayStream(...args),
-  resolveGatewaySelection: vi
-    .fn()
-    .mockRejectedValue(new Error("Mock transport has no live provider.")),
+  createGatewayStreamForSelection: (...args: unknown[]) =>
+    mockCreateGatewayStream(...args),
+  resolveGatewaySelection: vi.fn().mockResolvedValue({
+    providerId: "fixture",
+    modelId: "model",
+    apiFormat: "openai",
+    provider: {
+      id: "fixture",
+      label: "Fixture",
+      models: [],
+      npm: "@ai-sdk/openai-compatible",
+    },
+    modelDef: { id: "model", label: "Model" },
+    config: { providerId: "fixture" },
+  }),
 }));
 
 type MockStreamEvent =

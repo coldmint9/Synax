@@ -33,6 +33,7 @@ import {
 } from "../features/agent-workspace/projectSessionBadges";
 import { useSessionWorkspaceStore } from "../features/agent-workspace/state/sessionWorkspaceStore";
 import { ProjectImportHint } from "./ProjectImportHint";
+import { WorkbenchIsland } from "./WorkbenchIsland";
 import WikiSearchPanel from "../features/wiki/WikiSearchPanel";
 import {
   useWikiSearch,
@@ -619,119 +620,132 @@ export function WorkbenchHeader({
   const headerClass = `workbench-header ${chromeMode === "global" ? "workbench-header--global" : "workbench-header--agent-dock"}`;
 
   return (
-    <div className={headerClass}>
-      <>
-        <div className="wh-pill">
-          <div className="project-switcher-anchor">
-            <ProjectSwitcher
-              hasProject={hasProject}
-              projectName={projectName}
-              currentProjectId={currentProjectId}
-              projects={projects}
-              onProjectSwitch={onProjectSwitch}
-              onCreateProject={onCreateProject}
-              onRemoveRequest={handleRemoveClick}
-              onOpen={() => setProjectSwitcherUsed(true)}
-            />
+    <WorkbenchIsland
+      enabled={
+        chromeMode === "workspaceDock" || chromeMode === "workspaceFocus"
+      }
+    >
+      {(docked) => (
+        <div
+          className={`${headerClass}${docked ? " workbench-header--docked" : ""}`}
+        >
+          <>
+            <div className="wh-pill">
+              <div className="project-switcher-anchor">
+                <ProjectSwitcher
+                  hasProject={hasProject}
+                  projectName={projectName}
+                  currentProjectId={currentProjectId}
+                  projects={projects}
+                  onProjectSwitch={onProjectSwitch}
+                  onCreateProject={onCreateProject}
+                  onRemoveRequest={handleRemoveClick}
+                  onOpen={() => setProjectSwitcherUsed(true)}
+                  iconOnly={docked}
+                />
 
-            <ProjectImportHint
-              hasProject={hasProject}
-              targetActivated={projectSwitcherUsed}
-              onImport={onCreateProject}
-            />
-          </div>
+                <ProjectImportHint
+                  hasProject={hasProject}
+                  targetActivated={projectSwitcherUsed}
+                  onImport={onCreateProject}
+                />
+              </div>
 
-          <div className="wh-divider" />
+              <div className="wh-divider" />
 
-          <MainNavTabs
-            activePanel={activePanel}
-            hasProject={hasProject}
-            onPanelToggle={onPanelToggle}
-          />
+              <MainNavTabs
+                activePanel={activePanel}
+                hasProject={hasProject}
+                onPanelToggle={onPanelToggle}
+                iconOnly={docked}
+              />
 
-          <div className="wh-divider" />
+              <div className="wh-divider" />
 
-          <div className="wh-actions">
-            <button
-              type="button"
-              className="wh-btn"
-              aria-label={
-                useShellStore.getState().preferences.locale === "zh"
-                  ? "终端"
-                  : "Terminal"
-              }
-              title={
-                useShellStore.getState().preferences.locale === "zh"
-                  ? "终端"
-                  : "Terminal"
-              }
-              onClick={() => useTerminalStore.getState().toggle()}
-            >
-              <TerminalIcon size={15} />
-            </button>
-            <button
-              type="button"
-              className="wh-btn"
-              title={t("appSettings")}
-              onClick={() => onPanelToggle("settings")}
-            >
-              <Settings2 size={15} />
-            </button>
-            <ThemeMenu />
-          </div>
+              <div className="wh-actions">
+                <button
+                  type="button"
+                  className="wh-btn"
+                  aria-label={
+                    useShellStore.getState().preferences.locale === "zh"
+                      ? "终端"
+                      : "Terminal"
+                  }
+                  title={
+                    useShellStore.getState().preferences.locale === "zh"
+                      ? "终端"
+                      : "Terminal"
+                  }
+                  onClick={() => useTerminalStore.getState().toggle()}
+                >
+                  <TerminalIcon size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="wh-btn"
+                  title={t("appSettings")}
+                  aria-label={t("appSettings")}
+                  onClick={() => onPanelToggle("settings")}
+                >
+                  <Settings2 size={15} />
+                </button>
+                <ThemeMenu />
+              </div>
+            </div>
+
+            <WikiToolbarPill visible={activePanel === "wiki"} />
+          </>
+
+          {/* Remove project confirmation modal */}
+          <Modal state={confirmState}>
+            <Modal.Backdrop>
+              <Modal.Container size="sm">
+                <Modal.Dialog>
+                  <Modal.Header>
+                    <Modal.Icon className="bg-destructive/10 text-destructive">
+                      <Trash2 size={18} />
+                    </Modal.Icon>
+                    <Modal.Heading>{t("appRemoveProject")}</Modal.Heading>
+                  </Modal.Header>
+                  <Modal.Body>
+                    <p className="text-sm text-muted-foreground">
+                      {t("appRemoveProjectConfirm", {
+                        name: deleteTarget?.name ?? "",
+                      })}
+                    </p>
+                    {deleteTarget?.id === currentProjectId && (
+                      <p className="mt-2 text-xs text-warning">
+                        {t("appRemoveProjectRunning")}
+                      </p>
+                    )}
+                  </Modal.Body>
+                  <Modal.Footer>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      isDisabled={deleting}
+                      onPress={() => {
+                        confirmState.close();
+                        setDeleteTarget(null);
+                      }}
+                    >
+                      {t("appCancel")}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      isDisabled={deleting}
+                      onPress={() => void handleConfirmRemove()}
+                    >
+                      {deleting ? t("appRemoving") : t("appConfirmRemove")}
+                    </Button>
+                  </Modal.Footer>
+                </Modal.Dialog>
+              </Modal.Container>
+            </Modal.Backdrop>
+          </Modal>
         </div>
-
-        <WikiToolbarPill visible={activePanel === "wiki"} />
-      </>
-
-      {/* Remove project confirmation modal */}
-      <Modal state={confirmState}>
-        <Modal.Backdrop>
-          <Modal.Container size="sm">
-            <Modal.Dialog>
-              <Modal.Header>
-                <Modal.Icon className="bg-destructive/10 text-destructive">
-                  <Trash2 size={18} />
-                </Modal.Icon>
-                <Modal.Heading>{t("appRemoveProject")}</Modal.Heading>
-              </Modal.Header>
-              <Modal.Body>
-                <p className="text-sm text-muted-foreground">
-                  {t("appRemoveProjectConfirm", {
-                    name: deleteTarget?.name ?? "",
-                  })}
-                </p>
-                {deleteTarget?.id === currentProjectId && (
-                  <p className="mt-2 text-xs text-warning">
-                    {t("appRemoveProjectRunning")}
-                  </p>
-                )}
-              </Modal.Body>
-              <Modal.Footer>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  isDisabled={deleting}
-                  onPress={() => {
-                    confirmState.close();
-                    setDeleteTarget(null);
-                  }}
-                >
-                  {t("appCancel")}
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  isDisabled={deleting}
-                  onPress={() => void handleConfirmRemove()}
-                >
-                  {deleting ? t("appRemoving") : t("appConfirmRemove")}
-                </Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
-    </div>
+      )}
+    </WorkbenchIsland>
   );
 }

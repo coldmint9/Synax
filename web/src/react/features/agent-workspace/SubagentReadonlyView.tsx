@@ -10,6 +10,8 @@ import {
 } from "../../../lib/api/agentRuntime";
 import { AgentConversationView } from "./AgentConversationView";
 import { TranscriptSessionProvider } from "./SessionTranscriptContext";
+import { SubagentControls } from "./SubagentControls";
+import { useLocale } from "../../../hooks/useLocale";
 
 const REFRESH_MS = 4000;
 
@@ -27,6 +29,8 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
   sessionId: string;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
+  const { t } = useLocale();
+  const [destroyed, setDestroyed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -54,10 +58,18 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
   }, [sessionId]);
 
   useEffect(() => {
+    if (destroyed) return;
     void load();
     const timer = window.setInterval(() => void load(), REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [load]);
+  }, [load, destroyed]);
+
+  if (destroyed)
+    return (
+      <div className="p-4 text-xs text-muted-foreground">
+        {t("subSessionDestroyed")}
+      </div>
+    );
 
   if (error) {
     return (
@@ -87,6 +99,14 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
         <span className="ml-auto rounded bg-secondary/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">
           只读
         </span>
+        <SubagentControls
+          sessionId={sessionId}
+          parentSessionId={detail.session.parentSessionId}
+          status={detail.session.status}
+          title={detail.session.title || detail.session.prompt}
+          onStopped={() => void load()}
+          onDestroyed={() => setDestroyed(true)}
+        />
       </div>
       <TranscriptSessionProvider sessionId={sessionId}>
         <AgentConversationView

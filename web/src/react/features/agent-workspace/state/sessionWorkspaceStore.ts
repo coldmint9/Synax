@@ -194,13 +194,33 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
 
     removeSessions: (sessionIds) =>
       set((state) => {
+        const removed = new Set(sessionIds);
         let changed = false;
         const sessions = { ...state.sessions };
-        for (const sessionId of sessionIds) {
+        for (const sessionId of removed) {
           if (sessionId in sessions) {
             delete sessions[sessionId];
             changed = true;
           }
+        }
+        for (const [ownerId, workspace] of Object.entries(sessions)) {
+          const tabs = workspace.tabs.filter(
+            (tab) =>
+              tab.kind !== "subagent" || !removed.has(tab.sessionId ?? ""),
+          );
+          if (tabs.length === workspace.tabs.length) continue;
+          changed = true;
+          const activeTabId = tabs.some(
+            (tab) => tab.id === workspace.activeTabId,
+          )
+            ? workspace.activeTabId
+            : null;
+          sessions[ownerId] = {
+            ...workspace,
+            tabs,
+            activeTabId,
+            presentation: activeTabId ? workspace.presentation : "dock",
+          };
         }
         return changed ? { sessions } : state;
       }),

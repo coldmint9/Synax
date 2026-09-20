@@ -24,6 +24,7 @@ import {
 } from "../llm-runtime/native-web-search.js";
 import { saveGeneratedMedia } from "./generated-media.js";
 import type { RuntimeContentPart } from "./content-parts.js";
+import { hasDisplayableReasoning } from "./reasoning-display.js";
 
 export interface GenerateLoopModelStepInput {
   request: LlmGatewayRequest;
@@ -129,6 +130,7 @@ async function* streamLoopModelStepOnce(
     text: string;
     providerMetadata?: Record<string, Record<string, unknown>>;
   }> = [];
+  const visibleReasoningIds = new Set<string>();
   const sources: NonNullable<LoopStepModelResult["step"]["sources"]> = [];
   const protocolSnapshot = new ResponsesSnapshotAccumulator();
 
@@ -151,6 +153,7 @@ async function* streamLoopModelStepOnce(
         );
         break;
       case "reasoning-start":
+        visibleReasoningIds.delete(event.id);
         reasoningParts.push({
           id: event.id,
           text: "",
@@ -163,13 +166,24 @@ async function* streamLoopModelStepOnce(
           part.providerMetadata = event.providerMetadata as never;
         break;
       }
-      case "reasoning-delta":
+      case "reasoning-delta": {
         if (!reasoningParts.some((p) => p.id === event.id))
           reasoningParts.push({ id: event.id, text: "" });
-        reasoningParts.findLast((p) => p.id === event.id)!.text += event.text;
-        thought += event.text;
-        yield { type: "thought_delta", delta: event.text };
+        const part = reasoningParts.findLast((p) => p.id === event.id)!;
+        part.text += event.text;
+        // Buffer an ambiguous prefix until this part contains actual text.
+        // Native reasoning and its signatures remain untouched for replay.
+        const delta = visibleReasoningIds.has(event.id)
+          ? event.text
+          : hasDisplayableReasoning(part.text)
+            ? part.text
+            : "";
+        if (!delta) break;
+        visibleReasoningIds.add(event.id);
+        thought += delta;
+        yield { type: "thought_delta", delta };
         break;
+      }
       case "tool-call": {
         if (event.providerExecuted) break;
         if (event.providerMetadata)

@@ -10,6 +10,7 @@ import {
 } from "../lib/ipc/agent-session-protocol.js";
 import type { StreamTurnRequest } from "../services/agent-runtime/contracts.js";
 import { agentLoopRuntime } from "../services/agent-runtime/loop-runtime.js";
+import { agentRuntimeStore } from "../services/agent-runtime/session-store.js";
 import { bootstrapAgentChildForSession } from "../services/agent-runtime/agent-child-bootstrap.js";
 import { setSessionWorkspaceRoot } from "../services/agent-runtime/tools/workspace.js";
 
@@ -41,12 +42,10 @@ async function runStream(
   const abortController = new AbortController();
   activeStreams.set(streamId, abortController);
   try {
-    for await (const chunk of withinExecutionContext(input.executionContext, pickGenerator(
-      mode,
-      sessionId,
-      input,
-      abortController.signal,
-    ))) {
+    for await (const chunk of withinExecutionContext(
+      input.executionContext,
+      pickGenerator(mode, sessionId, input, abortController.signal),
+    )) {
       sendAgentSessionToParent({
         type: "stream:chunk",
         sessionId,
@@ -95,8 +94,14 @@ function main(): void {
     initialized = true;
     setSessionWorkspaceRoot(init.sessionId, init.workDir);
     bootstrapAgentChildForSession(init.sessionId);
-    sendAgentSessionToParent({ type: 'session:ready', sessionId: init.sessionId });
-    logger.info({ sessionId: init.sessionId, pid: process.pid }, '[agent-session-runner] ready');
+    sendAgentSessionToParent({
+      type: "session:ready",
+      sessionId: init.sessionId,
+    });
+    logger.info(
+      { sessionId: init.sessionId, pid: process.pid },
+      "[agent-session-runner] ready",
+    );
   };
 
   let stopping = false;
@@ -123,7 +128,10 @@ function main(): void {
   process.on("message", (message: unknown) => {
     if (stopping || !isAgentSessionParentMessage(message)) return;
 
-    if (message.type === 'session:initialize') { initialize(); return; }
+    if (message.type === "session:initialize") {
+      initialize();
+      return;
+    }
     if (!initialized) return;
     if (message.type === "stream:start") {
       const task = runStream(
@@ -150,12 +158,47 @@ function main(): void {
     if (message.type === "session:interrupt") {
       void shutdown(message.reason);
     }
+    if (message.type === "session:interrupt-subtree") {
+      void (async () => {
+        let error: string | undefined;
+        try {
+          const hosted = agentRuntimeStore.listSessionTree(init.sessionId);
+          if (
+            !hosted.some(
+              (session) =>
+                session.id === message.sessionId &&
+                session.id !== init.sessionId,
+            )
+          )
+            throw new Error(
+              "The requested subagent does not belong to this worker.",
+            );
+          await agentLoopRuntime.interruptAndWaitForSessions(
+            [message.sessionId],
+            message.reason,
+          );
+        } catch (err) {
+          error = err instanceof Error ? err.message : String(err);
+        }
+        sendAgentSessionToParent({
+          type: "session:subtree-stopped",
+          requestId: message.requestId,
+          sessionId: message.sessionId,
+          error,
+        });
+      })();
+    }
   });
 
   // Retain compatibility with an already-running pre-upgrade parent.
-  if (process.env.SYNAX_RECORDED_START !== '1') initialize();
-  else sendAgentSessionToParent({ type: 'session:booted', sessionId: init.sessionId });
-  if (!process.connected) void shutdown('Parent disconnected before initialization.');
+  if (process.env.SYNAX_RECORDED_START !== "1") initialize();
+  else
+    sendAgentSessionToParent({
+      type: "session:booted",
+      sessionId: init.sessionId,
+    });
+  if (!process.connected)
+    void shutdown("Parent disconnected before initialization.");
 }
 
 setImmediate(main);

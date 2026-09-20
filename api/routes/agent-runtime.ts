@@ -411,11 +411,17 @@ async function readControl(c: Context) {
 agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
   try {
     const id = c.req.param("sessionId");
+    const parentId = agentRuntimeStore.getSession(id).parentSessionId;
     const control = await readControl(c);
     await runCoordinator.interrupt(
       id,
       "User requested session stop.",
-      () => agentSessionRuntime.cancel(id),
+      () => {
+        agentSessionRuntime.cancel(id);
+        for (const session of agentRuntimeStore.listSessionTree(id))
+          invalidateSessionEnvironment(session.id);
+        if (parentId) invalidateSessionEnvironment(parentId);
+      },
       control.runId,
     );
     return c.json(projectSessionState(agentRuntimeStore.getSession(id)));
@@ -427,6 +433,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
 agentRuntimeRoutes.delete("/sessions/:sessionId", async (c) => {
   try {
     const id = c.req.param("sessionId");
+    const parentId = agentRuntimeStore.getSession(id).parentSessionId;
     const control = await readControl(c);
     let deletedSessionIds: string[] = [];
     await runCoordinator.interrupt(
@@ -436,6 +443,7 @@ agentRuntimeRoutes.delete("/sessions/:sessionId", async (c) => {
         deletedSessionIds = agentSessionRuntime.delete(id);
         for (const deletedId of deletedSessionIds)
           invalidateSessionEnvironment(deletedId);
+        if (parentId) invalidateSessionEnvironment(parentId);
       },
       control.runId,
     );

@@ -148,9 +148,11 @@ export function SessionBackgroundProcesses({
     }
   }
 
+  if (!items.length) return null;
+
   return (
     <WorkspaceSection
-      className={`bui-processes${items.length ? "" : " bui-processes--empty"}`}
+      className="bui-processes"
       storageKey={`${sessionId}:services`}
       icon={<Terminal size={13} />}
       title={zh ? "后台服务" : "Background services"}
@@ -189,11 +191,6 @@ export function SessionBackgroundProcesses({
       {(error || loadError) && (
         <p role="alert" className="bui-approval-error">
           {error || loadError}
-        </p>
-      )}
-      {!items.length && !loadError && (
-        <p className="ws-empty">
-          {zh ? "暂无后台服务" : "No background services"}
         </p>
       )}
       {items.map((item) => {

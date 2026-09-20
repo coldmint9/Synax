@@ -1,4 +1,5 @@
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
+import { hasDisplayableReasoning } from "./activityText";
 import type {
   AgentRunStep,
   AgentRuntimeMessage,
@@ -156,6 +157,7 @@ export function buildInterleavedTurns(
       if (!msg.content.trim()) continue;
       const isThinking =
         msg.metadata?.type === "thinking" || msg.metadata?.kind === "thought";
+      if (isThinking && !hasDisplayableReasoning(msg.content)) continue;
       items.push({
         timestamp: new Date(msg.createdAt).getTime(),
         block: isThinking

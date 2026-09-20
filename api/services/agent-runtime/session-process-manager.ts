@@ -290,8 +290,87 @@ class SessionProcessManager {
     timeoutMs = ACTIVE_SESSION_TIMEOUT_MS,
   ): Promise<void> {
     const ids = [...sessionIds];
+    // Delegates run inside their ancestor's worker. Interrupt only their local
+    // loop and wait for acknowledgement; killing that worker would kill siblings.
+    for (const id of ids) {
+      if (this.children.has(id)) continue;
+      const seen = new Set([id]);
+      let parentId = agentRuntimeStore.tryGetSession(id)?.parentSessionId;
+      while (parentId && !seen.has(parentId)) {
+        seen.add(parentId);
+        const host = this.children.get(parentId);
+        if (host) {
+          if (!ids.includes(parentId))
+            await this.interruptHostedSubtree(
+              host.child,
+              id,
+              reason,
+              timeoutMs,
+            );
+          break;
+        }
+        parentId = agentRuntimeStore.tryGetSession(parentId)?.parentSessionId;
+      }
+    }
     this.interruptSessions(ids, reason);
     await this.waitForIdleSessions(ids, timeoutMs);
+  }
+
+  private interruptHostedSubtree(
+    child: ChildProcess,
+    sessionId: string,
+    reason: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const requestId = randomUUID();
+      const finish = (error?: Error) => {
+        clearTimeout(timer);
+        child.off("message", onMessage);
+        child.off("exit", onExit);
+        error ? reject(error) : resolve();
+      };
+      const onMessage = (message: unknown) => {
+        if (
+          !isAgentSessionChildMessage(message) ||
+          message.type !== "session:subtree-stopped" ||
+          message.requestId !== requestId ||
+          message.sessionId !== sessionId
+        )
+          return;
+        finish(
+          message.error
+            ? new AgentRuntimeError(message.error, "STOP_UNCONFIRMED", 409)
+            : undefined,
+        );
+      };
+      const onExit = () => finish();
+      const timer = setTimeout(
+        () =>
+          finish(
+            new AgentRuntimeError(
+              "Timed out waiting for the subagent to stop.",
+              "DELETE_TIMEOUT",
+              409,
+            ),
+          ),
+        timeoutMs,
+      );
+      child.on("message", onMessage);
+      child.once("exit", onExit);
+      if (!child.connected) {
+        // A disconnect alone does not confirm termination. A concurrently
+        // stopping host may still exit and satisfy the acknowledgement.
+        if (child.exitCode != null || child.signalCode != null) onExit();
+        return;
+      }
+      child.send(
+        { type: "session:interrupt-subtree", requestId, sessionId, reason },
+        (error) => {
+          if (error) finish(error);
+        },
+      );
+    });
   }
 
   private countChildren(): number {

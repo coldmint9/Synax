@@ -50,6 +50,23 @@ export class AgentSessionRuntime {
     const parent = input.parentSessionId
       ? this.store.getSession(input.parentSessionId)
       : undefined;
+    const seenAncestors = new Set<string>();
+    for (
+      let ancestor = parent;
+      ancestor && !seenAncestors.has(ancestor.id);
+      ancestor = ancestor.parentSessionId
+        ? this.store.getSession(ancestor.parentSessionId)
+        : undefined
+    ) {
+      seenAncestors.add(ancestor.id);
+      if (
+        ancestor.sessionMetadata?.runtimeControl ||
+        ["interrupted", "cancelled"].includes(ancestor.status)
+      )
+        throw new AgentValidationError(
+          "Cannot create a subagent while its ancestor is stopped or stopping.",
+        );
+    }
     validateBackendTurnInput(input.backendId ?? "native", input);
     const profile = this.profiles.assertCanStart(input.profileId, {
       parentSessionId: input.parentSessionId,
@@ -246,6 +263,32 @@ export class AgentSessionRuntime {
   }
 
   cancel(sessionId: string): AgentSession {
+    const tree = this.store.listSessionTree(sessionId);
+    const targets = tree.filter(
+      (session) =>
+        session.id === sessionId ||
+        session.activeRunId ||
+        session.sessionMetadata?.runtimeControl ||
+        [
+          "queued",
+          "running",
+          "waiting_permission",
+          "waiting_input",
+          "interrupted",
+          "cancelled",
+        ].includes(session.status),
+    );
+    const ids = targets.map((session) => session.id);
+    agentLoopRuntime.interruptSessions(ids, "User stopped run.");
+    sessionProcessManager.interruptSessions(ids, "User stopped run.");
+    for (const session of targets) this.cancelOne(session.id);
+    return this.store.getSession(sessionId);
+  }
+
+  private cancelOne(sessionId: string): void {
+    this.store.updateSessionMetadata(sessionId, {
+      manualStop: { at: nowIso(), reason: "Stopped by user." },
+    });
     const work = workStore.current(sessionId);
     if (work && work.status !== "completed") {
       work.status = "cancelled";
@@ -266,11 +309,15 @@ export class AgentSessionRuntime {
     const now = nowIso();
     const reason = "User stopped run.";
 
-    agentLoopRuntime.interruptSessions([sessionId], reason);
-    sessionProcessManager.interruptSessions([sessionId], reason);
-
-    if (current.activeRunId) {
-      const run = this.store.getRun(current.activeRunId);
+    for (const run of this.store
+      .listRuns(sessionId)
+      .filter(
+        (run) =>
+          run.id === current.activeRunId ||
+          ["queued", "running", "waiting_permission", "waiting_input"].includes(
+            run.status,
+          ),
+      )) {
       this.store.updateRun(run.id, {
         status: "interrupted",
         completedAt: now,
@@ -286,7 +333,7 @@ export class AgentSessionRuntime {
         }
       }
     }
-    const session = this.store.updateSession(sessionId, {
+    this.store.updateSession(sessionId, {
       status: "interrupted",
       updatedAt: now,
       completedAt: null,
@@ -301,7 +348,6 @@ export class AgentSessionRuntime {
       summary: "Session stopped",
       payload: { reason, preservedEvents: true, resumable: true },
     });
-    return session;
   }
 
   delete(sessionId: string): string[] {

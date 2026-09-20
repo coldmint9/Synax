@@ -1,9 +1,25 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { SessionProfilePanel } from "../SessionProfilePanel";
 import { SessionSystemPromptPanel } from "../SessionSystemPromptPanel";
-import type { AgentSession } from "../../../../lib/api/agentRuntime";
+import type {
+  AgentSession,
+  SessionStats,
+} from "../../../../lib/api/agentRuntime";
+
+vi.mock("../../../../lib/api/providerMetrics", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../../lib/api/providerMetrics")
+  >()),
+  providerMetricsApi: { list: vi.fn(async () => ({ fields: [] })) },
+}));
 
 function session(
   id: string,
@@ -40,6 +56,37 @@ describe("SessionProfilePanel", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("keeps current context, status and elapsed time in the header without duplicating them on expansion", () => {
+    localStorage.removeItem("synax:workspace:disclosure:metrics:runtime");
+    useAgentSessionStore.setState({
+      selectedSessionId: "metrics",
+      sessions: [{ ...session("metrics"), status: "completed" }],
+      sessionStats: {
+        status: "running",
+        runningDuration: 65000,
+        roundCount: 2,
+        context: {
+          inputTokens: 12500,
+          source: "provider",
+          latestRequestUsageAvailable: true,
+        },
+        contextLimit: 100000,
+        activeSubAgentCount: 0,
+      } as SessionStats,
+    });
+    const { container } = render(<SessionProfilePanel sessionId="metrics" />);
+    const header = within(
+      container.querySelector<HTMLElement>(".ws-card-head")!,
+    );
+    expect(header.getByText("上下文 12.5K")).toBeInTheDocument();
+    expect(header.getByText("completed")).toBeInTheDocument();
+    expect(header.getByText("1:05")).toBeInTheDocument();
+    fireEvent.click(header.getByRole("button", { name: "运行详情" }));
+    expect(screen.getAllByText("completed")).toHaveLength(1);
+    expect(screen.getAllByText("1:05")).toHaveLength(1);
+    expect(header.getByText("上下文 12.5K")).toBeInTheDocument();
   });
 
   it("does not show an inspector without a session", () => {

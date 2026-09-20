@@ -32,6 +32,10 @@ export function DesktopAppearanceSection() {
   if (!desktopAppearanceAPI()) return null;
   const background = settings?.background;
   const opacity = settings ? Math.round((1 - settings.opacity) * 100) : 0;
+  const frost = settings?.frost ?? 50;
+  const backgroundAdjustable = Boolean(
+    settings?.layeredBackground && (settings.opacitySupported || background),
+  );
   const errorText = error?.includes("IMAGE_TOO_LARGE")
     ? zh
       ? "图片过大，请选择 20 MB 以内、4000 万像素以内的图片。"
@@ -64,26 +68,30 @@ export function DesktopAppearanceSection() {
           <div className="desktop-opacity-row">
             <div>
               <div className="appearance-label">
-                {zh ? "窗口透明度" : "Window transparency"}
+                {zh ? "背景透明度" : "Background transparency"}
               </div>
               <p className="appearance-hint">
-                {settings.opacitySupported
+                {backgroundAdjustable
                   ? zh
-                    ? "让桌面轻轻透过窗口。0% 为完全不透明。"
-                    : "Let your desktop show through. 0% is fully opaque."
-                  : zh
-                    ? "当前系统不支持原生窗口透明度，仍可自定义背景。"
-                    : "Native transparency is unavailable on this system. Backgrounds are still supported."}
+                    ? "只调节底层背景，卡片、菜单和文字保持清晰。0% 为不透明。"
+                    : "Adjust the background only. Cards, menus and text stay clear. 0% is opaque."
+                  : !settings.layeredBackground
+                    ? zh
+                      ? "更新并重启桌面应用后，可使用分层背景。"
+                      : "Update and restart the desktop app to use layered backgrounds."
+                    : zh
+                      ? "当前系统不支持桌面磨砂，选择背景图片后可调节图片背景。"
+                      : "Desktop frost is unavailable here. Choose an image to adjust the wallpaper background."}
               </p>
             </div>
             <div className="desktop-opacity-control">
               <Slider
-                aria-label={zh ? "窗口透明度" : "Window transparency"}
+                aria-label={zh ? "背景透明度" : "Background transparency"}
                 minValue={0}
                 maxValue={60}
                 step={1}
                 value={opacity}
-                isDisabled={busy || !settings.opacitySupported}
+                isDisabled={busy || !backgroundAdjustable}
                 onChange={(value) =>
                   preview({ opacity: 1 - Number(value) / 100 })
                 }
@@ -104,12 +112,55 @@ export function DesktopAppearanceSection() {
                 size="sm"
                 variant="ghost"
                 isIconOnly
-                aria-label={zh ? "恢复不透明窗口" : "Reset window opacity"}
+                aria-label={zh ? "恢复不透明背景" : "Reset background opacity"}
                 isDisabled={busy || opacity === 0}
                 onPress={() => {
                   preview({ opacity: 1 });
                   void update({ opacity: 1 });
                 }}
+              >
+                <RotateCcw size={14} />
+              </Button>
+            </div>
+          </div>
+          <div className="desktop-opacity-row">
+            <div>
+              <div className="appearance-label">
+                {zh ? "磨砂强度" : "Frost strength"}
+              </div>
+              <p className="appearance-hint">
+                {zh
+                  ? "调整背景的柔化与雾面浓度，保留上层内容的清晰度。"
+                  : "Soften and tint the background while keeping foreground content sharp."}
+              </p>
+            </div>
+            <div className="desktop-opacity-control">
+              <Slider
+                aria-label={zh ? "磨砂强度" : "Frost strength"}
+                minValue={0}
+                maxValue={100}
+                step={1}
+                value={frost}
+                isDisabled={busy || !backgroundAdjustable}
+                onChange={(value) => preview({ frost: Number(value) })}
+                onChangeEnd={(value) => void update({ frost: Number(value) })}
+              >
+                <div className="desktop-slider-heading">
+                  <span>{zh ? "轻透 → 柔雾" : "Clear → Soft"}</span>
+                  <Slider.Output>{frost}%</Slider.Output>
+                </div>
+                <Slider.Track>
+                  <Slider.Fill />
+                  <Slider.Thumb />
+                </Slider.Track>
+              </Slider>
+              <Button
+                size="sm"
+                variant="ghost"
+                isIconOnly
+                aria-label={zh ? "恢复默认磨砂" : "Reset frost strength"}
+                isDisabled={busy || frost === 50 || !backgroundAdjustable}
+                onPress={() => void update({ frost: 50 })}
               >
                 <RotateCcw size={14} />
               </Button>
@@ -126,7 +177,8 @@ export function DesktopAppearanceSection() {
                   data-fit={settings.fit}
                   style={{
                     backgroundImage: `url("${background.url}")`,
-                    filter: `blur(${settings.blur / 3}px)`,
+                    filter: `blur(${Math.min(48, settings.blur + frost * 0.24) / 3}px)`,
+                    opacity: settings.opacity,
                   }}
                 />
               ) : (
@@ -202,7 +254,7 @@ export function DesktopAppearanceSection() {
               onChangeEnd={(value) => void update({ blur: Number(value) })}
             >
               <div className="desktop-slider-heading">
-                <Label>{zh ? "背景模糊" : "Background blur"}</Label>
+                <Label>{zh ? "图片模糊" : "Image blur"}</Label>
                 <Slider.Output>{settings.blur} px</Slider.Output>
               </div>
               <Slider.Track>

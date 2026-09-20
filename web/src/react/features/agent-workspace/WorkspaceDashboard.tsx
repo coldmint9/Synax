@@ -39,6 +39,7 @@ import { WorkspaceSection as WorkspaceCard } from "./WorkspaceSection";
 import { SessionTodoPanel } from "./SessionTodoPanel";
 import { SessionProfilePanel } from "./SessionProfilePanel";
 import { useAgentSessionStore } from "./state/agentSessionStore";
+import { SubagentControls } from "./SubagentControls";
 import { useWorkspaceCopy } from "../workspace/workspaceCopy";
 import "../workspace/workspaceProjects.css";
 import { copyTextToClipboard } from "../../../lib/clipboard";
@@ -1009,18 +1010,30 @@ function SubagentRow({
 }) {
   const { t } = useLocale();
   return (
-    <button type="button" className="ws-row ws-row--subagent" onClick={onOpen}>
-      <Bot size={11} className="ws-row-icon" />
-      <span className="ws-row-main">
-        <span className="ws-row-file">{subagentHeadline(sub)}</span>
-        <span className="ws-row-sub">{subagentPreview(sub)}</span>
-      </span>
-      <span
-        className={`ws-chip ${STATUS_CHIP[sub.status] ?? "bg-foreground/10 text-foreground/70"}`}
+    <div className="ws-row ws-row--subagent">
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        onClick={onOpen}
       >
-        {statusText(sub.status, t)}
-      </span>
-    </button>
+        <Bot size={11} className="ws-row-icon" />
+        <span className="ws-row-main">
+          <span className="ws-row-file">{subagentHeadline(sub)}</span>
+          <span className="ws-row-sub">{subagentPreview(sub)}</span>
+        </span>
+        <span
+          className={`ws-chip ${STATUS_CHIP[sub.status] ?? "bg-foreground/10 text-foreground/70"}`}
+        >
+          {statusText(sub.status, t)}
+        </span>
+      </button>
+      <SubagentControls
+        sessionId={sub.id}
+        parentSessionId={sub.parentSessionId}
+        status={sub.status}
+        title={subagentHeadline(sub)}
+      />
+    </div>
   );
 }
 

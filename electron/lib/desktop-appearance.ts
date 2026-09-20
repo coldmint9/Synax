@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
@@ -9,6 +10,7 @@ import {
   net,
   protocol,
   type BrowserWindow,
+  type BrowserWindowConstructorOptions,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from "electron";
@@ -22,10 +24,39 @@ export const BACKGROUND_SCHEME = "synax-background";
 const fits: BackgroundFit[] = ["cover", "contain", "fill", "center", "tile"];
 const assetPattern = /^[\da-f-]{36}\.(png|jpg)$/;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_BACKGROUND_PIXELS = 3840 * 2160;
+
+export function supportsBackgroundMaterial(
+  platform: NodeJS.Platform = process.platform,
+  release = os.release(),
+): boolean {
+  return (
+    platform === "darwin" ||
+    (platform === "win32" && Number(release.split(".")[2]) >= 22621)
+  );
+}
+
+/** A system-composited background keeps content opaque and the window resizable. */
+export function desktopBackgroundWindowOptions(
+  platform: NodeJS.Platform = process.platform,
+  release = os.release(),
+): BrowserWindowConstructorOptions {
+  return {
+    opacity: 1,
+    ...(supportsBackgroundMaterial(platform, release)
+      ? {
+          backgroundColor: "#00000000",
+          ...(platform === "darwin"
+            ? { vibrancy: "under-window", visualEffectState: "active" }
+            : { backgroundMaterial: "acrylic" }),
+        }
+      : {}),
+  };
+}
 
 export function normalizeOpacity(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value))
-    throw new Error("Invalid window opacity");
+    throw new Error("Invalid background opacity");
   return Math.round(Math.min(1, Math.max(0.4, value)) * 100) / 100;
 }
 
@@ -40,6 +71,11 @@ export function normalizeDesktopPatch(value: unknown): DesktopAppearancePatch {
       throw new Error("Invalid background blur");
     patch.blur = Math.round(Math.min(40, Math.max(0, raw.blur)));
   }
+  if ("frost" in raw) {
+    if (typeof raw.frost !== "number" || !Number.isFinite(raw.frost))
+      throw new Error("Invalid background frost");
+    patch.frost = Math.round(Math.min(100, Math.max(0, raw.frost)));
+  }
   if ("fit" in raw) {
     if (!fits.includes(raw.fit as BackgroundFit))
       throw new Error("Invalid background fit");
@@ -53,15 +89,21 @@ export class DesktopAppearanceStore {
   private readonly directory: string;
   private readonly stateFile: string;
 
-  constructor(userData: string, platform: NodeJS.Platform = process.platform) {
+  constructor(
+    userData: string,
+    platform: NodeJS.Platform = process.platform,
+    release = os.release(),
+  ) {
     this.directory = path.join(userData, "appearance");
     this.stateFile = path.join(this.directory, "preferences.json");
     this.value = {
       opacity: 1,
       blur: 12,
+      frost: 50,
       fit: "cover",
       background: null,
-      opacitySupported: platform === "darwin" || platform === "win32",
+      opacitySupported: supportsBackgroundMaterial(platform, release),
+      layeredBackground: true,
     };
     try {
       const saved = JSON.parse(fs.readFileSync(this.stateFile, "utf8"));
@@ -90,7 +132,6 @@ export class DesktopAppearanceStore {
     } catch {
       /* Use defaults for missing or damaged preferences. */
     }
-    if (!this.value.opacitySupported) this.value.opacity = 1;
   }
 
   snapshot(): DesktopAppearance {
@@ -112,7 +153,6 @@ export class DesktopAppearanceStore {
 
   update(raw: unknown): DesktopAppearance {
     const patch = normalizeDesktopPatch(raw);
-    if (!this.value.opacitySupported) patch.opacity = 1;
     return this.commit({ ...this.value, ...patch });
   }
 
@@ -136,13 +176,26 @@ export class DesktopAppearanceStore {
     if (!png && !jpeg) throw new Error("INVALID_IMAGE");
     const image = nativeImage.createFromBuffer(bytes);
     if (image.isEmpty()) throw new Error("INVALID_IMAGE");
-    const { width, height } = image.getSize();
+    let { width, height } = image.getSize();
     if (width * height > 40_000_000 || Math.max(width, height) > 16_000)
       throw new Error("IMAGE_TOO_LARGE");
+    // Bound the decoded GPU texture once at import, rather than repeatedly
+    // blurring a 40 MP source during every slider frame and window resize.
+    const scale = Math.min(
+      1,
+      4096 / Math.max(width, height),
+      Math.sqrt(MAX_BACKGROUND_PIXELS / (width * height)),
+    );
+    if (scale < 1) {
+      width = Math.max(1, Math.floor(width * scale));
+      height = Math.max(1, Math.floor(height * scale));
+      const resized = image.resize({ width, height, quality: "best" });
+      bytes = png ? resized.toPNG() : resized.toJPEG(92);
+    }
     const asset = `${randomUUID()}.${png ? "png" : "jpg"}`;
     const target = path.join(this.directory, asset);
     fs.mkdirSync(this.directory, { recursive: true });
-    // Keep the source encoding, including JPEG orientation metadata.
+    // Small images retain their source encoding and orientation metadata.
     await fs.promises.writeFile(target, bytes, { flag: "wx", mode: 0o600 });
     const previous = this.value.background;
     try {
@@ -230,19 +283,8 @@ export function registerDesktopAppearance(
     return store.snapshot();
   });
   ipcMain.handle("appearance:update", (event, patch) => {
-    const win = trustedWindow(event);
-    const next = store.update(patch);
-    if (next.opacitySupported) win.setOpacity(next.opacity);
-    return next;
-  });
-  ipcMain.on("appearance:preview-opacity", (event, opacity) => {
-    if (
-      !isTrustedAppearanceEvent(event, getWindow(), devOrigin) ||
-      !store.snapshot().opacitySupported
-    )
-      return;
-    if (typeof opacity === "number" && Number.isFinite(opacity))
-      getWindow()!.setOpacity(normalizeOpacity(opacity));
+    trustedWindow(event);
+    return store.update(patch);
   });
   let choosing = false;
   ipcMain.handle("appearance:choose-background", async (event) => {

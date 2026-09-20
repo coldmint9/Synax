@@ -20,6 +20,7 @@ vi.mock("electron", () => ({
 }));
 import {
   DesktopAppearanceStore,
+  desktopBackgroundWindowOptions,
   isTrustedAppearanceEvent,
   normalizeDesktopPatch,
   registerDesktopAppearance,
@@ -43,14 +44,17 @@ describe("desktop appearance persistence", () => {
       normalizeDesktopPatch({
         opacity: -10,
         blur: 100,
+        frost: 200,
         fit: "contain",
         path: "/private",
       }),
-    ).toEqual({ opacity: 0.4, blur: 40, fit: "contain" });
+    ).toEqual({ opacity: 0.4, blur: 40, frost: 100, fit: "contain" });
     for (const value of [
       { opacity: NaN },
       { opacity: "0.5" },
       { blur: Infinity },
+      { frost: NaN },
+      { frost: "80" },
       { fit: "url(x)" },
       null,
       [],
@@ -58,25 +62,69 @@ describe("desktop appearance persistence", () => {
       expect(() => normalizeDesktopPatch(value)).toThrow();
   });
 
-  it("restores settings on relaunch and reports unsupported native opacity on Linux", () => {
+  it("restores background settings across platforms without restoring native window opacity", () => {
     const store = new DesktopAppearanceStore(directory, "darwin");
-    store.update({ opacity: 0.75, blur: 22, fit: "tile" });
+    store.update({ opacity: 0.75, blur: 22, frost: 70, fit: "tile" });
     expect(
       new DesktopAppearanceStore(directory, "darwin").snapshot(),
     ).toMatchObject({
       opacity: 0.75,
       blur: 22,
+      frost: 70,
       fit: "tile",
       opacitySupported: true,
     });
     expect(
       new DesktopAppearanceStore(directory, "linux").snapshot(),
     ).toMatchObject({
-      opacity: 1,
+      opacity: 0.75,
       blur: 22,
       fit: "tile",
       opacitySupported: false,
+      layeredBackground: true,
     });
+  });
+
+  it("migrates legacy opacity preferences to the background and initializes frost", () => {
+    fs.mkdirSync(path.join(directory, "appearance"));
+    fs.writeFileSync(
+      path.join(directory, "appearance/preferences.json"),
+      JSON.stringify({ opacity: 0.62, blur: 18, fit: "cover" }),
+    );
+    expect(
+      new DesktopAppearanceStore(directory, "darwin").snapshot(),
+    ).toMatchObject({ opacity: 0.62, frost: 50, layeredBackground: true });
+    expect(desktopBackgroundWindowOptions("darwin")).toMatchObject({
+      opacity: 1,
+      vibrancy: "under-window",
+      backgroundColor: "#00000000",
+    });
+    expect(desktopBackgroundWindowOptions("win32", "10.0.22621")).toMatchObject(
+      { opacity: 1, backgroundMaterial: "acrylic" },
+    );
+    expect(desktopBackgroundWindowOptions("win32", "10.0.19045")).toEqual({
+      opacity: 1,
+    });
+    expect(desktopBackgroundWindowOptions("linux")).toEqual({ opacity: 1 });
+  });
+
+  it("bounds large wallpaper textures at import and keeps their aspect ratio", async () => {
+    const resize = vi.fn().mockReturnValue({ toPNG: () => png });
+    mocks.image.mockReturnValue({
+      isEmpty: () => false,
+      getSize: () => ({ width: 7680, height: 4320 }),
+      resize,
+    });
+    const file = path.join(directory, "large-wallpaper.png");
+    fs.writeFileSync(file, png);
+    const store = new DesktopAppearanceStore(directory);
+    const settings = await store.importBackground(file);
+    expect(resize).toHaveBeenCalledWith({
+      width: 3840,
+      height: 2160,
+      quality: "best",
+    });
+    expect(settings.background).toMatchObject({ width: 3840, height: 2160 });
   });
 
   it("copies images, serves only the active asset, and survives the source being removed", async () => {
@@ -165,20 +213,17 @@ describe("desktop appearance IPC", () => {
     expect(trust(event)).toBe(true);
   });
 
-  it("previews via native setOpacity without writing on every drag; commits persist", async () => {
+  it("only persists background settings; no native opacity or preview IPC is used", async () => {
     const { win, event } = windowAndEvent();
     const store = new DesktopAppearanceStore(directory, "darwin");
     registerDesktopAppearance(store, () => win as any, "http://localhost:5188");
-    const preview = mocks.on.mock.calls.find(
-      ([name]) => name === "appearance:preview-opacity",
-    )![1];
-    preview(event, 0.62);
-    expect(win.setOpacity).toHaveBeenLastCalledWith(0.62);
+    expect(mocks.on).not.toHaveBeenCalled();
     expect(store.snapshot().opacity).toBe(1);
     const update = mocks.handle.mock.calls.find(
       ([name]) => name === "appearance:update",
     )![1];
     expect(update(event, { opacity: 0.62 }).opacity).toBe(0.62);
+    expect(win.setOpacity).not.toHaveBeenCalled();
     expect(
       new DesktopAppearanceStore(directory, "darwin").snapshot().opacity,
     ).toBe(0.62);

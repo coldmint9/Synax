@@ -72,7 +72,11 @@ function useResizablePanel(
     readPanelWidth(storageKey, defaultWidth, min, max),
   );
   const [collapsed, setCollapsed] = useState(false);
-  const dragRef = useRef<{ startX: number; startWidth: number; scale: number } | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startWidth: number;
+    scale: number;
+  } | null>(null);
 
   const cleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => cleanupRef.current?.(), []);
@@ -84,7 +88,8 @@ function useResizablePanel(
       event.currentTarget.setPointerCapture?.(event.pointerId);
       cleanupRef.current?.();
       const panel = event.currentTarget.parentElement!;
-      const scale = panel.getBoundingClientRect().width / panel.offsetWidth || 1;
+      const scale =
+        panel.getBoundingClientRect().width / panel.offsetWidth || 1;
       dragRef.current = { startX: event.clientX, startWidth: width, scale };
       let nextWidth = width;
       let frame = 0;
@@ -96,7 +101,10 @@ function useResizablePanel(
           side === "left"
             ? move.clientX - drag.startX
             : drag.startX - move.clientX;
-        nextWidth = Math.min(max, Math.max(min, drag.startWidth + delta / drag.scale));
+        nextWidth = Math.min(
+          max,
+          Math.max(min, drag.startWidth + delta / drag.scale),
+        );
         if (!frame)
           frame = requestAnimationFrame(() => {
             frame = 0;
@@ -335,11 +343,11 @@ export default memo(function SessionsPage() {
             ) : null}
           </>
         ) : isNewDraft ? (
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="work-conversation flex min-w-0 flex-1 flex-col overflow-hidden">
             <SessionComposer projectId={projectId} layout="centered" />
           </div>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <div className="work-conversation flex min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
             <p className="text-sm text-muted-foreground">
               {canCreateSession
                 ? t("sessionSelectOrCreate")

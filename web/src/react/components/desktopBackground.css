@@ -4,7 +4,14 @@
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
+  contain: strict;
+}
+.desktop-background__paint {
+  position: absolute;
+  inset: 0;
   background: var(--background);
+  opacity: var(--background-opacity, 1);
+  will-change: opacity;
 }
 .desktop-background__image {
   position: absolute;
@@ -31,30 +38,62 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: hsl(var(--background-hsl) / 0.48);
+  background: hsl(var(--background-hsl) / var(--background-frost-tint, 0.4));
 }
-.dark .desktop-background::after {
-  background: hsl(var(--background-hsl) / 0.58);
+:root.has-native-background,
+.has-native-background body {
+  background: transparent;
 }
-.has-desktop-background .app-viewport {
+.has-desktop-surface .app-viewport {
   position: relative;
   z-index: 1;
   background: transparent;
 }
-.has-desktop-background
+.has-desktop-surface
   :is(.workbench-shell, .workbench-island, .settings-scroll-viewport) {
   background: transparent;
 }
-.has-desktop-background .settings-section__body {
+.has-desktop-surface .settings-section__body {
   background: color-mix(in srgb, var(--surface) 90%, transparent);
   backdrop-filter: blur(16px);
 }
 
-/* Keep the work canvas continuous while its floating panels retain their glass. */
-:root.has-desktop-background .work-page {
+/* The wallpaper stays behind the shared glass cards, including the transcript. */
+:root.has-desktop-surface .work-page {
   --work-transcript-surface: transparent;
   background: transparent;
 }
-:root.has-desktop-background .session-chat {
+:root.has-desktop-surface .session-chat {
   background: transparent;
+}
+.has-desktop-surface .workbench-header .wh-pill::after,
+.has-desktop-surface .work-page .agent-session-composer-shell.agent-dock-shell {
+  background: var(--work-glass);
+  border-color: var(--work-glass-edge);
+  box-shadow: var(--work-shadow);
+  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+  backdrop-filter: blur(20px) saturate(1.35);
+}
+.has-desktop-surface .work-page .ws-card-head,
+.has-desktop-surface .work-page .ws-repo-head,
+.has-desktop-surface .work-page .file-viewer-toolbar {
+  background: hsl(var(--card) / 0.18);
+}
+.has-desktop-surface .work-page :is(.code-viewer-body, .diff-viewer-body) {
+  background: transparent;
+}
+.has-desktop-surface .work-page .code-viewer-content {
+  --synax-code-background: transparent;
+}
+.has-desktop-surface .work-page .code-viewer-gutter,
+.has-desktop-surface .work-page .diff-row--ctx > .diff-num {
+  background: color-mix(in srgb, var(--synax-code-background) 65%, transparent);
+}
+
+/* Reduce transparency without introducing another full-viewport blur pass. */
+@media (prefers-reduced-transparency: reduce) {
+  .desktop-background__paint {
+    opacity: 1;
+    will-change: auto;
+  }
 }

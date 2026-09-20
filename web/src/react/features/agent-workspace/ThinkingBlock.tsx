@@ -4,6 +4,7 @@ import { ThinkingBanner } from "./ThinkingBanner";
 import {
   ACTIVITY_BODY_LIMIT,
   formatCharCount,
+  hasDisplayableReasoning,
   latestActivityPreview,
   tailForDisplay,
   thinkingBannerPhrases,
@@ -24,6 +25,7 @@ interface Props {
  */
 export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
   const { t } = useLocale();
+  if (!hasDisplayableReasoning(content)) return null;
   const bannerPhrases = thinkingBannerPhrases(content);
   if (bannerPhrases)
     return <ThinkingBanner phrases={bannerPhrases} isStreaming={isStreaming} />;

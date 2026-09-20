@@ -71,6 +71,31 @@ describe("ThinkingBlock", () => {
     expect(screen.getByText("7.2k chars")).toBeTruthy();
   });
 
+  it.each(["", " \n\t", ".", "..", "...", "……"])(
+    "hides placeholder %j in both streaming and completed views",
+    (content) => {
+      const { container, rerender } = render(
+        <ThinkingBlock content={content} isStreaming />,
+      );
+      expect(container).toBeEmptyDOMElement();
+      rerender(<ThinkingBlock content={content} />);
+      expect(container).toBeEmptyDOMElement();
+    },
+  );
+
+  it("reveals a real short thought immediately after a placeholder prefix", () => {
+    const { container, rerender } = render(
+      <ThinkingBlock content="..." isStreaming />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    rerender(<ThinkingBlock content="...嗯" isStreaming />);
+    expect(container.querySelector("[data-activity-body]")).toHaveTextContent(
+      "...嗯",
+    );
+    rerender(<ThinkingBlock content="嗯" />);
+    expect(screen.getByText("1 chars")).toBeTruthy();
+  });
+
   it("renders a streaming row expanded and scrollable", () => {
     vi.useFakeTimers();
     const { container } = render(

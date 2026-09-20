@@ -86,6 +86,8 @@ interface Props {
   cacheKey: string;
   estimate: number;
   scrollRootRef?: RefObject<HTMLElement | null>;
+  /** Live output must appear in the same paint, without an estimated-height placeholder. */
+  eager?: boolean;
   children: ReactNode;
 }
 
@@ -107,19 +109,25 @@ export function TimelineLazyEntry({
   cacheKey,
   estimate,
   scrollRootRef,
+  eager = false,
   children,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   // Without IntersectionObserver (unit tests, older runtimes) render eagerly
   // rather than leaving the transcript permanently blank.
   const [mounted, setMounted] = useState(
-    () => typeof IntersectionObserver === "undefined",
+    () => eager || typeof IntersectionObserver === "undefined",
   );
+  const visible = mounted || eager;
   const reservedHeight =
     measuredEntryHeights.get(cacheKey) ?? estimate ?? FALLBACK_ENTRY_HEIGHT;
 
   useEffect(() => {
     if (mounted) return;
+    if (eager) {
+      setMounted(true);
+      return;
+    }
     const element = ref.current;
     if (!element || typeof IntersectionObserver === "undefined") {
       setMounted(true);
@@ -151,10 +159,10 @@ export function TimelineLazyEntry({
         viewportObservers.delete(root);
       }
     };
-  }, [mounted, scrollRootRef]);
+  }, [mounted, eager, scrollRootRef]);
 
   useEffect(() => {
-    if (!mounted || typeof ResizeObserver === "undefined") return;
+    if (!visible || typeof ResizeObserver === "undefined") return;
     const element = ref.current;
     if (!element) return;
 
@@ -171,7 +179,7 @@ export function TimelineLazyEntry({
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [mounted, cacheKey]);
+  }, [visible, cacheKey]);
 
   return (
     <div
@@ -179,9 +187,9 @@ export function TimelineLazyEntry({
       id={sessionEntryDomId(entryId)}
       data-session-entry={entryId}
       className="scroll-mt-4"
-      style={mounted ? undefined : { minHeight: Math.round(reservedHeight) }}
+      style={visible ? undefined : { minHeight: Math.round(reservedHeight) }}
     >
-      {mounted ? children : null}
+      {visible ? children : null}
     </div>
   );
 }

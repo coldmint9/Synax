@@ -15,10 +15,7 @@ export function normalizePanelSize(
   size: DashboardPanelSize,
 ): DashboardPanelSize {
   return {
-    width: Math.max(
-      0.4,
-      Math.min(1, Number.isFinite(size.width) ? size.width : 1),
-    ),
+    width: 1,
     height: Math.max(
       100,
       Math.min(900, Number.isFinite(size.height) ? size.height : 280),

@@ -266,6 +266,18 @@ export class AgentLoopRuntime {
     this.assertSessionNotBusy(sessionId);
     const beforeStart = this.store.getSession(sessionId);
     if (
+      beforeStart.sessionMetadata?.runtimeControl ||
+      (beforeStart.parentSessionId &&
+        beforeStart.sessionMetadata?.manualStop &&
+        !hasInput(input))
+    )
+      throw new AgentRuntimeError(
+        "Session has been stopped by user.",
+        "ABORTED",
+        499,
+      );
+    abortSignal?.throwIfAborted();
+    if (
       !resume &&
       input.messageSource !== "system_injection" &&
       hasInput(input) &&
@@ -2145,18 +2157,7 @@ export class AgentLoopRuntime {
     sessionIds: Iterable<string>,
     reason = "Agent runtime session deleted by user.",
   ): void {
-    const ids = new Set(sessionIds);
-    // Cascade to child sessions so sub-agents are interrupted alongside their parent
-    for (const id of [...ids]) {
-      try {
-        const session = this.store.getSession(id);
-        for (const childId of session.childSessionIds) {
-          ids.add(childId);
-        }
-      } catch {
-        // session may not exist (already deleted)
-      }
-    }
+    const ids = this.sessionTreeIds(sessionIds);
     for (const sessionId of ids) {
       for (const controller of this.activeSessionControllers.get(sessionId) ??
         []) {
@@ -2164,8 +2165,21 @@ export class AgentLoopRuntime {
           controller.abort(new Error(reason));
         }
       }
-      this.activeSessionControllers.delete(sessionId);
+      // dispose() releases the controller only after the generator and tools
+      // have actually unwound. An abort request is not shutdown confirmation.
     }
+  }
+
+  private sessionTreeIds(sessionIds: Iterable<string>): string[] {
+    return [
+      ...new Set(
+        [...sessionIds].flatMap((id) =>
+          this.store.tryGetSession(id)
+            ? this.store.listSessionTree(id).map((session) => session.id)
+            : [id],
+        ),
+      ),
+    ];
   }
 
   async waitForIdleSessions(
@@ -2198,8 +2212,9 @@ export class AgentLoopRuntime {
     reason = "Agent runtime session deleted by user.",
     timeoutMs = ACTIVE_SESSION_TIMEOUT_MS,
   ): Promise<void> {
-    this.interruptSessions(sessionIds, reason);
-    await this.waitForIdleSessions(sessionIds, timeoutMs);
+    const ids = this.sessionTreeIds(sessionIds);
+    this.interruptSessions(ids, reason);
+    await this.waitForIdleSessions(ids, timeoutMs);
   }
 
   private async injectQueuedInput(
@@ -3051,17 +3066,18 @@ export class AgentLoopRuntime {
     // LLM call) aborts itself instead of blocking the parent's Promise.all forever.
     // The budget follows the same `limits.agentTimeoutMs` setting as the main
     // agent, so children are no longer capped at a shorter hard-coded ceiling.
-    const childProjectId = this.store.getSession(childSessionId).projectId;
+    const childProjectId = this.store.tryGetSession(childSessionId)?.projectId;
     const childResult = await runChildToCompletion(
       childSessionId,
       { profileId: "subagent", prompt: "" },
       { timeoutMs: resolvePerChildTimeoutMs(childProjectId), abortSignal },
     );
 
-    const childSession = this.store.getSession(childSessionId);
+    const childSession = this.store.tryGetSession(childSessionId);
     const childSummary =
-      childSession.resultSummary ??
-      `Child session ${childSessionId} finished with status ${childSession.status}.`;
+      childSession?.resultSummary ??
+      childResult.error ??
+      `Child session ${childSessionId} finished with status ${childSession?.status ?? "deleted"}.`;
     const status =
       childResult.status === "completed" ? record.status : "failed";
     const outputSummary = truncateSummary(
@@ -3073,7 +3089,7 @@ export class AgentLoopRuntime {
       outputRef: {
         ...(result as Record<string, unknown>),
         childSessionId,
-        childStatus: childSession.status,
+        childStatus: childSession?.status ?? "deleted",
         childSummary,
       },
       endedAt: nowIso(),
@@ -3088,7 +3104,7 @@ export class AgentLoopRuntime {
         stepId: record.stepId,
         toolCallId: record.id,
         childSessionId,
-        childStatus: childSession.status,
+        childStatus: childSession?.status ?? "deleted",
       },
     });
     return updated;
@@ -3134,6 +3150,16 @@ export class AgentLoopRuntime {
 
         try {
           const child = this.store.getSession(childId);
+          if (child.sessionMetadata?.manualStop) {
+            this.store.updateToolCall(sessionId, call.id, {
+              status: "failed",
+              outputSummary: `Subtask ${childId} was stopped by user.`,
+              outputRef: { childSessionId: childId, childStatus: child.status },
+              endedAt: nowIso(),
+              error: "Subagent stopped by user.",
+            });
+            continue;
+          }
           if (child.status === "interrupted") {
             logger.info(
               { sessionId, childSessionId: childId, childStatus: child.status },

@@ -20,6 +20,7 @@ import { sessionPath } from "../features/agent-workspace/sessionRoutes";
 import { resolveSessionsEntryPath } from "../features/agent-workspace/sessionLastVisit";
 import type { ActivityPanel } from "./ActivityBar";
 import { WorkbenchHeader, type ChromeMode } from "./WorkbenchHeader";
+import { WorkbenchIslandProvider } from "./WorkbenchIsland";
 import { ProjectCreateDialog } from "../features/project-create/ProjectCreateDialog";
 import { ToastContainer } from "../components/ToastContainer";
 import WikiPage from "../pages/WikiPage";
@@ -231,69 +232,72 @@ export default function WorkbenchLayout() {
     <SessionEnvironmentProvider
       sessionId={chromeMode === "global" ? null : selectedSessionId}
     >
-      <div className="workbench-shell" data-chrome-mode={chromeMode}>
-        <WorkbenchHeader
-          chromeMode={chromeMode}
-          activePanel={activePanel}
-          onPanelToggle={handlePanelToggle}
-          hasProject={!!effectiveProjectId}
-          projectName={projectName}
-          currentProjectId={effectiveProjectId}
-          projects={projects}
-          onProjectSwitch={(id) => navigate(resolveSessionsEntryPath(id))}
-          onCreateProject={() => setCreateDialogOpen(true)}
-          onRemoveProject={handleRemoveProject}
-        />
-        <div className="workbench-island">
-          <div className="island-body">
-            {/* Cached project pages — always mounted once project exists */}
-            {effectiveProjectId && (
-              <>
-                {wikiEnabled && (
+      <WorkbenchIslandProvider>
+        <div className="workbench-shell" data-chrome-mode={chromeMode}>
+          <WorkbenchHeader
+            chromeMode={chromeMode}
+            activePanel={activePanel}
+            onPanelToggle={handlePanelToggle}
+            hasProject={!!effectiveProjectId}
+            projectName={projectName}
+            currentProjectId={effectiveProjectId}
+            projects={projects}
+            onProjectSwitch={(id) => navigate(resolveSessionsEntryPath(id))}
+            onCreateProject={() => setCreateDialogOpen(true)}
+            onRemoveProject={handleRemoveProject}
+          />
+          <div className="workbench-island">
+            <div className="island-body">
+              {/* Cached project pages — always mounted once project exists */}
+              {effectiveProjectId && (
+                <>
+                  {wikiEnabled && (
+                    <div
+                      className="absolute inset-0 flex flex-col"
+                      style={{
+                        visibility:
+                          activePanel === "wiki" ? "visible" : "hidden",
+                        zIndex: activePanel === "wiki" ? 1 : 0,
+                      }}
+                    >
+                      <WikiPage projectId={effectiveProjectId} />
+                    </div>
+                  )}
                   <div
                     className="absolute inset-0 flex flex-col"
                     style={{
-                      visibility: activePanel === "wiki" ? "visible" : "hidden",
-                      zIndex: activePanel === "wiki" ? 1 : 0,
+                      visibility:
+                        activePanel === "sessions" ? "visible" : "hidden",
+                      zIndex: activePanel === "sessions" ? 1 : 0,
                     }}
                   >
-                    <WikiPage projectId={effectiveProjectId} />
+                    <SessionsPage />
                   </div>
-                )}
-                <div
-                  className="absolute inset-0 flex flex-col"
-                  style={{
-                    visibility:
-                      activePanel === "sessions" ? "visible" : "hidden",
-                    zIndex: activePanel === "sessions" ? 1 : 0,
-                  }}
-                >
-                  <SessionsPage />
-                </div>
-              </>
-            )}
-            {/* Outlet for non-cached routes (welcome, settings) */}
-            <div
-              className={
-                isCachedPanel ? "hidden" : "flex-1 min-h-0 flex flex-col"
-              }
-            >
-              <Outlet
-                context={{ onCreateProject: () => setCreateDialogOpen(true) }}
-              />
+                </>
+              )}
+              {/* Outlet for non-cached routes (welcome, settings) */}
+              <div
+                className={
+                  isCachedPanel ? "hidden" : "flex-1 min-h-0 flex flex-col"
+                }
+              >
+                <Outlet
+                  context={{ onCreateProject: () => setCreateDialogOpen(true) }}
+                />
+              </div>
             </div>
           </div>
+          <TerminalDrawer
+            projectId={effectiveProjectId}
+            sessionId={selectedSessionId}
+          />
+          <ProjectCreateDialog
+            open={createDialogOpen}
+            onClose={() => setCreateDialogOpen(false)}
+          />
+          <ToastContainer />
         </div>
-        <TerminalDrawer
-          projectId={effectiveProjectId}
-          sessionId={selectedSessionId}
-        />
-        <ProjectCreateDialog
-          open={createDialogOpen}
-          onClose={() => setCreateDialogOpen(false)}
-        />
-        <ToastContainer />
-      </div>
+      </WorkbenchIslandProvider>
     </SessionEnvironmentProvider>
   );
 }

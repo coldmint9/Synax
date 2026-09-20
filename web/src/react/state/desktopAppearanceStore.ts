@@ -23,12 +23,23 @@ interface DesktopAppearanceState {
 }
 
 let revision = 0;
+let previewFrame: number | null = null;
+let pendingPreview: DesktopAppearancePatch | null = null;
 export const useDesktopAppearance = create<DesktopAppearanceState>(
   (set, get) => {
+    const flushPreview = () => {
+      if (previewFrame !== null) cancelAnimationFrame(previewFrame);
+      previewFrame = null;
+      const patch = pendingPreview;
+      pendingPreview = null;
+      const settings = get().settings;
+      if (patch && settings) set({ settings: { ...settings, ...patch } });
+    };
     const perform = async (
       action: (api: DesktopAppearanceAPI) => Promise<DesktopAppearance | null>,
       blocking = true,
     ) => {
+      flushPreview();
       const api = desktopAppearanceAPI();
       if (!api) return;
       const current = ++revision;
@@ -39,12 +50,11 @@ export const useDesktopAppearance = create<DesktopAppearanceState>(
       } catch (error) {
         if (current !== revision) return;
         set({ error: error instanceof Error ? error.message : String(error) });
-        // Restore the saved settings and native opacity if a commit failed.
+        // Restore only the background draft; foreground UI is never dimmed.
         try {
           const settings = await api.get();
           if (current === revision) {
             set({ settings });
-            api.previewOpacity(settings.opacity);
           }
         } catch {
           /* Keep the last visible state and expose the error. */
@@ -59,14 +69,16 @@ export const useDesktopAppearance = create<DesktopAppearanceState>(
       busy: false,
       load: () => perform((api) => api.get()),
       preview: (patch) => {
-        const settings = get().settings;
-        if (!settings) return;
+        if (!get().settings) return;
         revision++;
-        set({ settings: { ...settings, ...patch } });
-        if (patch.opacity !== undefined && settings.opacitySupported)
-          desktopAppearanceAPI()?.previewOpacity(patch.opacity);
+        pendingPreview = { ...pendingPreview, ...patch };
+        if (previewFrame === null)
+          previewFrame = requestAnimationFrame(flushPreview);
       },
-      update: (patch) => perform((api) => api.update(patch), false),
+      update: (patch) => {
+        pendingPreview = { ...pendingPreview, ...patch };
+        return perform((api) => api.update(patch), false);
+      },
       chooseBackground: () => perform((api) => api.chooseBackground()),
       removeBackground: () => perform((api) => api.removeBackground()),
     };

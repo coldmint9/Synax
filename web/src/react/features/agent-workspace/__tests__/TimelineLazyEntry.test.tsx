@@ -110,6 +110,25 @@ describe("TimelineLazyEntry", () => {
     expect(screen.getByText("eager body")).toBeTruthy();
     expect(userEntry("e3", "eager body").kind).toBe("user");
   });
+
+  it("never reserves placeholder height for live rows, including after they settle", () => {
+    const { rerender } = render(
+      <TimelineLazyEntry entryId="live" cacheKey="live" estimate={240} eager>
+        <span>live answer</span>
+      </TimelineLazyEntry>,
+    );
+    const original = screen.getByText("live answer");
+    expect(document.getElementById("session-entry-live")?.style.minHeight).toBe(
+      "",
+    );
+    expect(FakeIntersectionObserver.instances).toHaveLength(0);
+    rerender(
+      <TimelineLazyEntry entryId="live" cacheKey="live" estimate={240}>
+        <span>live answer</span>
+      </TimelineLazyEntry>,
+    );
+    expect(screen.getByText("live answer")).toBe(original);
+  });
 });
 
 it("shares a viewport observer between entries and releases it on unmount", () => {

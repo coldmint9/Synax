@@ -1,14 +1,17 @@
-/* Compact floating glass on a continuous canvas. The transcript scrolls behind
-   the floating controls; its content reserves room at both scroll extremes. */
-:is(.work-page, .work-details-dialog) {
+/* One glass material and inset for the list, conversation and detail cards. */
+:is(.workbench-shell, .work-page, .work-details-dialog) {
+  --work-panel-inset: 6px;
+  --work-panel-radius: 12px;
   --work-line: hsl(var(--border-hsl) / 0.38);
   --work-muted: hsl(var(--muted-foreground));
   --work-glass: hsl(var(--card) / 0.48);
   --work-glass-edge: hsl(0 0% 100% / 0.48);
   --work-shadow: 0 1px 0 hsl(0 0% 100% / 0.4) inset;
+}
+:is(.work-page, .work-details-dialog) {
   font-size: 11px;
 }
-.dark :is(.work-page, .work-details-dialog) {
+.dark :is(.workbench-shell, .work-page, .work-details-dialog) {
   --work-glass: hsl(210 4% 13% / 0.64);
   --work-glass-edge: hsl(0 0% 100% / 0.075);
   --work-shadow: 0 1px 0 hsl(0 0% 100% / 0.045) inset;
@@ -31,12 +34,19 @@
 }
 .work-conversation {
   position: relative;
-  margin: 0;
+  margin: var(--work-panel-inset);
+  border: 1px solid var(--work-glass-edge);
+  border-radius: var(--work-panel-radius);
+  background: var(--work-glass);
+  box-shadow: var(--work-shadow);
+  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+  backdrop-filter: blur(20px) saturate(1.35);
 }
 /* Keep the scrollport full-height. These insets belong to its content so
    messages can pass behind the island without hiding the first/last entry. */
-.work-page .session-chat {
+:root .work-page .session-chat {
   padding-top: 0;
+  background: transparent;
 }
 .work-page .session-chat-scroll,
 .electron-macos .work-page .session-chat-scroll {
@@ -112,13 +122,13 @@
   );
 }
 .work-page .session-list-panel {
-  padding: 6px;
+  padding: var(--work-panel-inset);
 }
 .work-page .session-list-card--sessions {
   flex: 1 1 auto;
   background: var(--work-glass);
   border: 1px solid var(--work-glass-edge);
-  border-radius: 14px;
+  border-radius: var(--work-panel-radius);
   box-shadow: var(--work-shadow);
   -webkit-backdrop-filter: blur(20px) saturate(1.35);
   backdrop-filter: blur(20px) saturate(1.35);
@@ -218,7 +228,7 @@
 :is(.work-page, .work-details-dialog) .ws-card {
   flex: 0 0 auto;
   border: 1px solid var(--work-glass-edge);
-  border-radius: 12px;
+  border-radius: var(--work-panel-radius);
   background: var(--work-glass);
   box-shadow: var(--work-shadow);
   -webkit-backdrop-filter: blur(20px) saturate(1.35);
@@ -843,21 +853,25 @@
   background: hsl(var(--card) / 0.94);
 }
 
-/* Viewer navigation is a real content toolbar below the global island. */
+/* The viewer shares the conversation card; its header receives the island. */
 .workbench-shell .workspace-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 0 0 auto;
   min-width: 0;
-  padding: 7px 8px;
+  padding: 5px 6px;
   border-bottom: 1px solid var(--work-line, hsl(var(--border-hsl) / 0.4));
-  background: hsl(var(--card));
+  background: hsl(var(--card) / 0.18);
 }
 .workbench-shell .workspace-back-conversation {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 5px;
+  justify-content: center;
   min-height: 30px;
-  padding: 0 10px;
+  width: 28px;
+  padding: 0;
   border-radius: 8px;
   color: hsl(var(--primary));
   background: hsl(var(--primary) / 0.1);
@@ -867,11 +881,17 @@
 .workbench-shell .workspace-back-conversation:hover {
   background: hsl(var(--primary) / 0.17);
 }
+.workspace-back-conversation > span {
+  display: none;
+}
+.workbench-shell .work-page .session-workspace-panel--content,
 .workbench-shell .session-workspace-panel--content[data-fullscreen="true"] {
   height: auto;
-  margin: 52px 6px 6px;
-  border: 1px solid hsl(var(--border-hsl) / 0.4);
-  border-radius: 12px;
+  margin: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
 }
 .workbench-shell .workspace-tab-chrome {
   min-height: 30px;
@@ -879,6 +899,92 @@
 .workbench-shell .file-viewer-toolbar {
   flex-wrap: wrap;
   min-width: 0;
+}
+
+.workbench-island-anchor,
+.workbench-island-mount {
+  display: contents;
+}
+.workbench-shell .workbench-header--agent-dock {
+  top: 12px;
+}
+.workbench-island-mount > .workbench-header > .wh-pill {
+  transform-origin: top left;
+}
+.workspace-island-slot {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.workbench-shell
+  .workspace-island-slot
+  > .workbench-island-mount
+  > .workbench-header--docked {
+  position: relative;
+  inset: auto;
+  width: max-content;
+  max-width: none;
+  transform: none;
+  flex-wrap: nowrap;
+  gap: 0;
+  z-index: 30;
+}
+.workbench-header--docked > .wh-pill {
+  height: 30px;
+  gap: 2px;
+  padding: 0 4px;
+  border-radius: 9px;
+}
+.workbench-header--docked .wh-divider {
+  margin-inline: 2px;
+}
+.workbench-header--docked .wh-project-trigger,
+.workbench-header--docked .wh-tabs .tabs__tab,
+.workbench-header--docked .wh-actions .wh-btn {
+  width: 24px;
+  min-width: 24px;
+  height: 24px !important;
+  padding: 0 !important;
+  justify-content: center;
+}
+.workbench-header--docked .wh-tabs .tabs__tab svg {
+  display: block;
+}
+.work-conversation:has(.workspace-viewer-header) > .work-quick-actions {
+  top: 8px;
+  right: 6px;
+}
+.work-conversation:has(> .work-quick-actions) .workspace-viewer-header {
+  padding-right: 40px;
+}
+.electron-macos
+  .work-page:has(
+    .session-panel-host--left:is([hidden], [data-collapsed="true"])
+  )
+  .workspace-viewer-header {
+  padding-left: 80px;
+}
+/* A narrow viewer gives tabs their own row instead of hiding menu actions. */
+.work-conversation {
+  container-type: inline-size;
+}
+@container (max-width: 520px) {
+  .workspace-viewer-header {
+    flex-wrap: wrap;
+  }
+  .workspace-viewer-header > .workspace-tab-chrome {
+    flex-basis: 100%;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root :is(.workbench-shell, .work-page, .work-details-dialog) {
+    --work-glass: hsl(var(--card));
+  }
+  .work-conversation,
+  .work-page .session-list-card--sessions,
+  :is(.work-page, .work-details-dialog) .ws-card {
+    backdrop-filter: none;
+  }
 }
 .ws-repo-head {
   flex-wrap: nowrap;

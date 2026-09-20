@@ -1,3 +1,5 @@
+export { hasDisplayableReasoning } from "../../../../../api/services/agent-runtime/reasoning-display";
+
 /**
  * Compact character-count label for activity rows: `812`, `7.2k`, `99k`.
  *

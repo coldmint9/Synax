@@ -67,24 +67,20 @@ const CHANGE_COLOR = {
   unknown: "text-muted-foreground",
 };
 
-export function SessionStatusCard({
+export function SessionRuntimeStatus({
   stats,
   session,
-  runs = [],
   steps,
   status,
 }: {
-  stats: SessionStats;
+  stats?: SessionStats | null;
   session?: AgentSession;
-  runs?: AgentRun[];
-  status?: AgentSession["status"];
   steps: AgentRunStep[];
-  todos?: TodoItem[];
+  status?: AgentSession["status"];
 }) {
   const { locale } = useLocale();
   const [tick, setTick] = useState(0);
-  const currentStatus = status ?? session?.status ?? stats.status;
-  const runtime = sessionRuntimeSelection(session, runs, steps);
+  const currentStatus = status ?? session?.status ?? stats?.status ?? "idle";
   const isLive = currentStatus === "running";
 
   useEffect(() => {
@@ -95,29 +91,62 @@ export function SessionStatusCard({
 
   const elapsed = useMemo(() => {
     if (isLive && steps.length > 0) return sumAgentTurnDurationMs(steps);
-    return stats.runningDuration;
-  }, [steps, stats.runningDuration, tick, isLive]);
+    return stats?.runningDuration ?? 0;
+  }, [steps, stats?.runningDuration, tick, isLive]);
 
   const badgeClass =
     STATUS_BADGE[currentStatus] ?? "bg-secondary/70 text-foreground/80";
 
   return (
-    <div className="border-b border-border/40 px-2 py-2 space-y-2">
-      <div className="flex items-center justify-between">
-        <span
-          className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`}
-        >
-          {currentStatus === "waiting_input"
-            ? locale === "zh"
-              ? "等待输入"
-              : "Waiting for input"
-            : currentStatus}
-        </span>
-        <span className="flex items-center gap-1 text-[9px] text-muted-foreground">
-          <Clock size={9} />
-          {fmtDuration(elapsed)}
-        </span>
-      </div>
+    <span className="runtime-session-status inline-flex items-center gap-1.5">
+      <span
+        className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`}
+      >
+        {currentStatus === "waiting_input"
+          ? locale === "zh"
+            ? "等待输入"
+            : "Waiting for input"
+          : currentStatus}
+      </span>
+      <span className="flex items-center gap-1 text-[9px] text-muted-foreground">
+        <Clock size={9} />
+        {fmtDuration(elapsed)}
+      </span>
+    </span>
+  );
+}
+
+export function SessionStatusCard({
+  stats,
+  session,
+  runs = [],
+  steps,
+  status,
+  showRuntimeStatus = true,
+}: {
+  stats: SessionStats;
+  session?: AgentSession;
+  runs?: AgentRun[];
+  status?: AgentSession["status"];
+  steps: AgentRunStep[];
+  todos?: TodoItem[];
+  showRuntimeStatus?: boolean;
+}) {
+  const { locale } = useLocale();
+  const currentStatus = status ?? session?.status ?? stats.status;
+  const runtime = sessionRuntimeSelection(session, runs, steps);
+  const isLive = currentStatus === "running";
+
+  return (
+    <div className="runtime-status-details border-b border-border/40 px-2 py-2 space-y-2">
+      {showRuntimeStatus && (
+        <SessionRuntimeStatus
+          stats={stats}
+          session={session}
+          steps={steps}
+          status={status}
+        />
+      )}
       <div className="flex items-center justify-between text-[9px] text-muted-foreground">
         <span>{locale === "zh" ? "运行轮次" : "Execution rounds"}</span>
         <span className="tabular-nums text-foreground/80">

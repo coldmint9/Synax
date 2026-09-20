@@ -39,20 +39,10 @@ const CATEGORIES = [
   },
 ] as const;
 
-export function ContextCompositionBar({
-  composition,
-  contextLimit,
-  contextLimitKnown = true,
-  context,
-}: {
-  composition?: ContextComposition | null;
-  context?: SessionStats["context"];
-  contextLimit?: number;
-  contextLimitKnown?: boolean;
-}) {
-  const { locale } = useLocale();
-  const zh = locale === "zh";
-  const heading = zh ? "上下文组成" : "Context composition";
+export function contextUsage(
+  composition?: ContextComposition | null,
+  context?: SessionStats["context"],
+) {
   const estimatedTotal = composition
     ? CATEGORIES.reduce(
         (sum, item) => sum + (composition[item.key] ?? 0),
@@ -71,6 +61,27 @@ export function ContextCompositionBar({
     composition != null ||
     (context?.inputTokens != null &&
       (reported || context.source === "estimate"));
+  return { estimatedTotal, reported, total, available };
+}
+
+export function ContextCompositionBar({
+  composition,
+  contextLimit,
+  contextLimitKnown = true,
+  context,
+}: {
+  composition?: ContextComposition | null;
+  context?: SessionStats["context"];
+  contextLimit?: number;
+  contextLimitKnown?: boolean;
+}) {
+  const { locale } = useLocale();
+  const zh = locale === "zh";
+  const heading = zh ? "上下文组成" : "Context composition";
+  const { estimatedTotal, reported, total, available } = contextUsage(
+    composition,
+    context,
+  );
   const sourceLabel = reported
     ? zh
       ? "服务商实测"

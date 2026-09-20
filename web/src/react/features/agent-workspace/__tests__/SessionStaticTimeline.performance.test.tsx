@@ -138,6 +138,86 @@ it("does not rerender historical message bodies for streaming token deltas", () 
   ).toHaveLength(historicalCalls);
 });
 
+it("keeps completed replies in the live tail from rerendering on every token", () => {
+  store.setState({
+    ...store.getInitialState(),
+    streamingStepId: "live",
+    streamingCompletedSteps: [
+      {
+        stepId: "previous",
+        stepIndex: 1,
+        blocks: [{ type: "text", content: "Already displayed" }],
+      },
+    ],
+  });
+  render(
+    <SessionStaticTimeline
+      unifiedLive
+      runs={[]}
+      steps={[]}
+      messages={[]}
+      toolCalls={[]}
+      excludeStepId="live"
+      isRunning
+    />,
+  );
+  const before = renders.mock.calls.filter(
+    ([id]) => id === "previous:content:0",
+  ).length;
+  expect(before).toBeGreaterThan(0);
+  act(() =>
+    store.setState({
+      streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: "More tokens" },
+    }),
+  );
+  expect(
+    renders.mock.calls.filter(([id]) => id === "previous:content:0"),
+  ).toHaveLength(before);
+});
+
+it("preserves reply DOM nodes when live content settles and another step starts", () => {
+  store.setState({
+    ...store.getInitialState(),
+    streamingStepId: "first",
+    streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: "Answer" },
+  });
+  const props = {
+    unifiedLive: true,
+    runs: [],
+    steps: [],
+    messages: [],
+    toolCalls: [],
+    isRunning: true,
+  };
+  const { container, rerender } = render(
+    <SessionStaticTimeline {...props} excludeStepId="first" />,
+  );
+  const findReply = () =>
+    Array.from(container.querySelectorAll("div")).find(
+      (el) => el.textContent === "first:content:0" && el.children.length === 0,
+    );
+  const original = findReply();
+  expect(original).toBeDefined();
+  act(() =>
+    store.setState({
+      streamingStepId: null,
+      streamingLive: EMPTY_STREAMING_BUFFERS,
+      streamingCompletedSteps: [
+        {
+          stepId: "first",
+          stepIndex: 1,
+          blocks: [{ type: "text", content: "Answer" }],
+        },
+      ],
+    }),
+  );
+  rerender(<SessionStaticTimeline {...props} />);
+  expect(findReply()).toBe(original);
+  act(() => store.setState({ streamingStepId: "second" }));
+  rerender(<SessionStaticTimeline {...props} excludeStepId="second" />);
+  expect(findReply()).toBe(original);
+});
+
 it.each(["live", "snapshot"])(
   "keeps a durable question after its %s tool activity before HTTP steps arrive",
   (stage) => {

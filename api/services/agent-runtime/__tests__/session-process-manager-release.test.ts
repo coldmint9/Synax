@@ -1,9 +1,10 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { forkMock, getSessionMock } = vi.hoisted(() => ({
+const { forkMock, getSessionMock, tryGetSessionMock } = vi.hoisted(() => ({
   forkMock: vi.fn(),
   getSessionMock: vi.fn(),
+  tryGetSessionMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -17,7 +18,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 vi.mock("../session-store.js", () => ({
   agentRuntimeStore: {
     getSession: getSessionMock,
-    tryGetSession: vi.fn(),
+    tryGetSession: tryGetSessionMock,
   },
 }));
 
@@ -92,6 +93,7 @@ describe("sessionProcessManager idle child release", () => {
   beforeEach(() => {
     forkMock.mockReset();
     getSessionMock.mockReset();
+    tryGetSessionMock.mockReset();
     getSessionMock.mockImplementation((sessionId: string) => ({
       id: sessionId,
       projectId: "proj-test",
@@ -105,6 +107,69 @@ describe("sessionProcessManager idle child release", () => {
       "test cleanup",
     );
   });
+
+  it.each([false, true])(
+    "routes child-only stop to its host and requires acknowledgement (timeout: %s)",
+    async (timeout) => {
+      const hostId = "sess-release-a";
+      const child = createMockChild(hostId);
+      let request: { requestId: string; sessionId: string } | undefined;
+      child.send.mockImplementation((message) => {
+        if (message.type === "stream:start")
+          queueMicrotask(() =>
+            child.emit("message", {
+              type: "stream:chunk",
+              sessionId: hostId,
+              streamId: message.streamId,
+              chunk: { type: "done", sessionId: hostId, runId: "test-run" },
+            }),
+          );
+        if (message.type === "session:interrupt-subtree") request = message;
+      });
+      tryGetSessionMock.mockImplementation((id: string) => ({
+        id,
+        parentSessionId: id === "delegate" ? hostId : null,
+      }));
+      forkMock.mockImplementationOnce(() => {
+        queueMicrotask(() =>
+          child.emit("message", { type: "session:ready", sessionId: hostId }),
+        );
+        return child;
+      });
+      const stream = sessionProcessManager.streamSession(hostId, "turn", {});
+      await stream.next();
+      try {
+        let confirmed = false;
+        const stop = sessionProcessManager
+          .interruptAndWaitForSessions(
+            ["delegate"],
+            "Stop child",
+            timeout ? 20 : 1000,
+          )
+          .then(() => {
+            confirmed = true;
+          });
+        expect(request?.sessionId).toBe("delegate");
+        expect(confirmed).toBe(false);
+        expect(child.kill).not.toHaveBeenCalled();
+        if (timeout)
+          await expect(stop).rejects.toMatchObject({ code: "DELETE_TIMEOUT" });
+        else {
+          child.emit("message", {
+            ...request,
+            type: "session:subtree-stopped",
+          });
+          await stop;
+          expect(confirmed).toBe(true);
+        }
+        expect(child.kill).not.toHaveBeenCalled();
+        expect(sessionProcessManager.isSessionStreaming(hostId)).toBe(true);
+      } finally {
+        await stream.return(undefined);
+        await sessionProcessManager.waitForIdleSessions([hostId]);
+      }
+    },
+  );
 
   it("releases the child after stream finishes so capacity is freed", async () => {
     const childA = createMockChild("sess-release-a");

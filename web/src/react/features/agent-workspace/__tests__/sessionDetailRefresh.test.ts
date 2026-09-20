@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { useAgentSessionStore as store } from "../state/agentSessionStore";
+import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
 import {
   agentRuntimeApi as api,
   type AgentSession,
@@ -111,6 +112,64 @@ it("retains existing content and exposes failure instead of permanently loading"
   );
   expect(store.getState().detailLoading).toBe(false);
   expect(store.getState().sessionDetailCache[session.id].cachedAt).toBe(0);
+});
+
+it("replaces live output only when both persisted steps and messages are ready", async () => {
+  const completedStep = { id: "step", status: "completed" } as never;
+  store.setState({
+    sessions: [{ ...session, status: "completed" }],
+    streamingStepId: "step",
+    streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: "Answer" },
+  });
+  let resolve!: (value: Awaited<ReturnType<typeof api.listMessages>>) => void;
+  vi.mocked(api.listSessionSteps).mockResolvedValue({ items: [completedStep] });
+  vi.mocked(api.listMessages).mockReturnValueOnce(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  await store.getState().refreshDetail();
+  expect(store.getState().steps).toEqual([]);
+  expect(store.getState().streamingLive.pendingText).toBe("Answer");
+  const states: Array<{
+    live: string | null;
+    messages: number;
+    steps: number;
+  }> = [];
+  const unsubscribe = store.subscribe((s) =>
+    states.push({
+      live: s.streamingStepId,
+      messages: s.messages.length,
+      steps: s.steps.length,
+    }),
+  );
+  resolve({
+    items: [{ id: "answer", content: "Answer", stepId: "step" } as never],
+  });
+  await vi.waitFor(() => expect(store.getState().streamingStepId).toBeNull());
+  unsubscribe();
+  expect(
+    states.every((s) => s.live !== null || (s.steps === 1 && s.messages === 1)),
+  ).toBe(true);
+});
+
+it("keeps a completed answer when an older in-flight transcript response lands", async () => {
+  store.setState({
+    streamingStepId: "step",
+    streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: "Final answer" },
+  });
+  let resolve!: (value: Awaited<ReturnType<typeof api.listMessages>>) => void;
+  vi.mocked(api.listMessages).mockReturnValueOnce(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  await store.getState().refreshDetail();
+  store.getState().patchSession(session.id, { status: "completed" });
+  resolve({ items: [] });
+  await store.getState().refreshDetail({ joinPending: true });
+  expect(store.getState().streamingStepId).toBe("step");
+  expect(store.getState().streamingLive.pendingText).toBe("Final answer");
 });
 
 it("does not refresh transcript freshness when an optional profile fetch completes later", async () => {

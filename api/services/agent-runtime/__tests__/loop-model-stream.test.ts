@@ -32,6 +32,67 @@ const input = {
   model: "fixture",
 };
 describe("provider protocol preservation", () => {
+  it.each(["", " \n\t", "...", "……"])(
+    "does not publish or persist placeholder reasoning %j, but retains native parts",
+    async (placeholder) => {
+      gateway.createGatewayStreamForSelection.mockResolvedValueOnce({
+        fullStream: (async function* () {
+          yield { type: "reasoning-start", id: "r" };
+          for (const text of placeholder)
+            yield { type: "reasoning-delta", id: "r", text };
+          yield {
+            type: "reasoning-end",
+            id: "r",
+            providerMetadata: { anthropic: { signature: "opaque-signature" } },
+          };
+          yield { type: "text-delta", id: "t", text: "Answer" };
+          yield { type: "finish", finishReason: "stop" };
+        })(),
+      });
+      const events: LoopModelStreamEvent[] = [];
+      for await (const event of streamLoopModelStep(input)) events.push(event);
+      expect(events.some((event) => event.type === "thought_delta")).toBe(
+        false,
+      );
+      expect(events).toContainEqual({ type: "text_delta", delta: "Answer" });
+      const completed = events.find((event) => event.type === "step_complete");
+      expect(completed?.step.thought).toBeUndefined();
+      expect(completed?.step.reasoningParts).toEqual([
+        {
+          text: placeholder,
+          providerMetadata: { anthropic: { signature: "opaque-signature" } },
+        },
+      ]);
+    },
+  );
+
+  it("buffers ambiguous prefixes per part and preserves short thoughts and later punctuation", async () => {
+    const events: LoopModelStreamEvent[] = [];
+    gateway.createGatewayStreamForSelection.mockResolvedValueOnce({
+      fullStream: (async function* () {
+        yield { type: "reasoning-start", id: "placeholder" };
+        yield { type: "reasoning-delta", id: "placeholder", text: "..." };
+        yield { type: "reasoning-end", id: "placeholder" };
+        yield { type: "reasoning-start", id: "real" };
+        yield { type: "reasoning-delta", id: "real", text: ".." };
+        expect(events).toEqual([]);
+        yield { type: "reasoning-delta", id: "real", text: ".嗯" };
+        expect(events).toEqual([{ type: "thought_delta", delta: "...嗯" }]);
+        yield { type: "reasoning-delta", id: "real", text: "..." };
+        yield { type: "reasoning-end", id: "real" };
+        yield { type: "finish", finishReason: "stop" };
+      })(),
+    });
+    for await (const event of streamLoopModelStep(input)) events.push(event);
+    expect(events.filter((event) => event.type === "thought_delta")).toEqual([
+      { type: "thought_delta", delta: "...嗯" },
+      { type: "thought_delta", delta: "..." },
+    ]);
+    expect(
+      events.find((event) => event.type === "step_complete")?.step.thought,
+    ).toBe("...嗯...");
+  });
+
   it("retains native model file outputs and opaque media signatures in the completed step", async () => {
     const bytes = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",

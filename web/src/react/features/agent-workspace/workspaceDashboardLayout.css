@@ -1,34 +1,37 @@
-/* User-sized panels own their content scrollports; the column scrolls only
-   when the chosen panel sizes no longer fit the available sidebar height. */
+/* Cards share a fixed viewport; only their bodies own scrollports. */
 :is(.work-page, .work-details-dialog) .workspace-dashboard--custom,
 .workspace-dashboard--custom {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: stretch;
+  gap: 8px;
   min-height: 0;
   min-width: 0;
-  overflow: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
   padding: 6px;
 }
 .dashboard-panel {
   position: relative;
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  min-width: min(220px, 100%);
+  min-width: 0;
   max-width: 100%;
   min-height: var(--dashboard-panel-min-height, 0px);
-  flex: 0 0 auto;
+  flex: 0 1 var(--dashboard-panel-preferred-height, auto);
+  max-height: 420px;
   border-radius: 12px;
 }
 .dashboard-panel-content {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: var(--dashboard-panel-min-height, 0px);
-  max-height: max(420px, var(--dashboard-panel-min-height, 0px));
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
-.dashboard-panel[data-sized="true"] > .dashboard-panel-content {
+.dashboard-panel[data-sized="true"] {
+  flex-basis: auto;
   max-height: none;
 }
 .dashboard-panel-content > .ws-card,
@@ -48,6 +51,7 @@
     > .work-runtime-details
     > .ws-card[data-open="false"]
 ) {
+  flex: 0 0 auto;
   height: auto !important;
   min-height: 0;
   --dashboard-panel-min-height: 0px !important;
@@ -112,12 +116,12 @@
   cursor: grabbing;
 }
 .dashboard-panel-resize {
-  right: 1px;
-  bottom: 1px;
-  height: 18px;
-  cursor: nwse-resize;
-  background: var(--background);
-  opacity: 0.7;
+  left: 12px;
+  right: 12px;
+  bottom: -4px;
+  width: auto;
+  height: 8px;
+  cursor: ns-resize;
 }
 .dashboard-panel:has(> .dashboard-panel-content > .ws-card[data-open="false"])
   > .dashboard-panel-resize,
@@ -179,4 +183,35 @@
 .dashboard-layout-reset:hover {
   background: hsl(var(--secondary));
   color: hsl(var(--foreground-hsl));
+}
+
+/* A component with no data leaves no card, handle or gap in the layout. */
+.dashboard-panel:has(> .dashboard-panel-content:empty) {
+  display: none;
+}
+.dashboard-panel-content > .work-runtime-details {
+  margin: 0;
+}
+.work-runtime-details .ws-card-head {
+  flex-wrap: wrap;
+}
+.work-runtime-details .ws-card-toggle {
+  flex: 0 0 auto;
+}
+.work-runtime-details .ws-card-tail {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+}
+.runtime-header-metrics,
+.runtime-session-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.runtime-header-metrics {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }

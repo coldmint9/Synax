@@ -23,6 +23,7 @@ import { DesktopUpdates } from "./lib/desktop-updates.js";
 import {
   BACKGROUND_SCHEME,
   DesktopAppearanceStore,
+  desktopBackgroundWindowOptions,
   registerDesktopAppearance,
 } from "./lib/desktop-appearance.js";
 
@@ -89,7 +90,7 @@ function createWindow(): BrowserWindow {
       ? { trafficLightPosition: { x: 14, y: 18 } }
       : {}),
     show: false,
-    opacity: desktopAppearance?.snapshot().opacity ?? 1,
+    ...desktopBackgroundWindowOptions(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

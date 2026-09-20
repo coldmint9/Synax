@@ -81,18 +81,27 @@ it("ignores process lists belonging to the session that was left", async () => {
   expect(screen.queryByText("npm run dev")).not.toBeInTheDocument();
 });
 
-it("keeps the service header visible when empty and supports folding", async () => {
+it("hides the empty card and reveals it when a terminal or service is created", async () => {
   vi.mocked(agentRuntimeApi.listSessionProcesses).mockResolvedValue({
     items: [],
   });
   render(<SessionBackgroundProcesses sessionId="empty" />);
+  await waitFor(() =>
+    expect(agentRuntimeApi.listSessionProcesses).toHaveBeenCalledWith("empty"),
+  );
+  expect(
+    screen.queryByRole("button", { name: /Background services/ }),
+  ).not.toBeInTheDocument();
+  vi.mocked(agentRuntimeApi.listSessionProcesses).mockResolvedValue({
+    items: [process],
+  });
+  act(() => document.dispatchEvent(new Event("terminal:changed")));
   const header = await screen.findByRole("button", {
     name: /Background services/,
   });
   expect(header).toHaveAttribute("aria-expanded", "true");
   await userEvent.click(header);
   expect(header).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByText("No background services")).not.toBeInTheDocument();
 });
 it("deletes closed history directly", async () => {
   vi.mocked(agentRuntimeApi.listSessionProcesses).mockResolvedValue({

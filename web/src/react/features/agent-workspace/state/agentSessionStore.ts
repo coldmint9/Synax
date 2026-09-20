@@ -34,6 +34,7 @@ import { AppError } from "../../../../lib/errors";
 import {
   clearRuntimeResourcePendingRemoval,
   isRuntimeResourceGone,
+  isRuntimeResourceRemoved,
   markRuntimeResourcePendingRemoval,
   markRuntimeResourcesRemoved,
 } from "../../../../lib/runtimeResourceRegistry";
@@ -370,94 +371,40 @@ function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
   return replaced;
 }
 
-// --- Delta backpressure: drain buffered text at a controlled rate per frame ---
-let _textBuffer = "";
-let _thinkingBuffer = "";
-let _rafId: number | null = null;
-let _intervalId: ReturnType<typeof setInterval> | null = null;
+// Batch token bursts at most once every 32 ms, preserving transport order.
+// Flush the whole batch at step/tool boundaries so buffered text never moves
+// behind a tool or disappears when a fast model starts its next step.
+const STREAM_FLUSH_MS = 32;
+let deltaBuffer: Array<{ type: "text" | "thinking"; delta: string }> = [];
+let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
-const CHARS_PER_FRAME_BASE = 80;
-const CHARS_PER_FRAME_MAX = 600;
-const BACKPRESSURE_THRESHOLD = 150;
-
-function _computeChunkSize(bufferLen: number): number {
-  if (bufferLen > BACKPRESSURE_THRESHOLD) {
-    return Math.min(CHARS_PER_FRAME_MAX, Math.ceil(bufferLen / 3));
-  }
-  if (bufferLen > 60) {
-    return Math.min(CHARS_PER_FRAME_MAX, Math.ceil(bufferLen / 2));
-  }
-  return CHARS_PER_FRAME_BASE;
-}
-
-function _drainLoop() {
-  _rafId = null;
-  const textLen = _textBuffer.length;
-  const thinkLen = _thinkingBuffer.length;
-  if (textLen === 0 && thinkLen === 0) return;
-
-  // Text and thinking each get their own independent quota per frame
-  const textChunk = _computeChunkSize(textLen);
-  const thinkChunk = _computeChunkSize(thinkLen);
-
-  let t = "";
-  let th = "";
-  if (textLen > 0) {
-    t = _textBuffer.slice(0, Math.min(textLen, textChunk));
-    _textBuffer = _textBuffer.slice(t.length);
-  }
-  if (thinkLen > 0) {
-    th = _thinkingBuffer.slice(0, Math.min(thinkLen, thinkChunk));
-    _thinkingBuffer = _thinkingBuffer.slice(th.length);
-  }
-
-  if (t || th) {
-    useAgentSessionStore.setState((s) => {
-      let streamingLive = s.streamingLive;
-      if (th) streamingLive = applyThoughtDelta(streamingLive, th);
-      if (t) streamingLive = applyMessageDelta(streamingLive, t);
-      return { streamingLive };
-    });
-  }
-
-  if (_textBuffer.length > 0 || _thinkingBuffer.length > 0) {
-    _rafId = requestAnimationFrame(_drainLoop);
-  } else if (_intervalId !== null) {
-    clearInterval(_intervalId);
-    _intervalId = null;
-  }
-}
-
-function _scheduleFlush() {
-  if (_rafId !== null) return;
-  _rafId = requestAnimationFrame(_drainLoop);
-}
-
-// Keep draining even when tab is hidden (rAF pauses in background)
-if (typeof document !== "undefined") {
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
-      // Switch to setInterval when tab is hidden
-      if (
-        _intervalId === null &&
-        (_textBuffer.length > 0 || _thinkingBuffer.length > 0)
-      ) {
-        _intervalId = setInterval(_drainLoop, 32);
-      }
-    } else {
-      // Switch back to rAF when tab is visible
-      if (_intervalId !== null) {
-        clearInterval(_intervalId);
-        _intervalId = null;
-      }
-      if (
-        _rafId === null &&
-        (_textBuffer.length > 0 || _thinkingBuffer.length > 0)
-      ) {
-        _rafId = requestAnimationFrame(_drainLoop);
-      }
+function flushStreamingDeltas(): void {
+  if (deltaFlushTimer !== null) clearTimeout(deltaFlushTimer);
+  deltaFlushTimer = null;
+  if (deltaBuffer.length === 0) return;
+  const pending = deltaBuffer;
+  deltaBuffer = [];
+  useAgentSessionStore.setState((state) => {
+    let streamingLive = state.streamingLive;
+    for (const item of pending) {
+      streamingLive =
+        item.type === "thinking"
+          ? applyThoughtDelta(streamingLive, item.delta)
+          : applyMessageDelta(streamingLive, item.delta);
     }
+    return { streamingLive };
   });
+}
+
+function bufferStreamingDelta(type: "text" | "thinking", delta: string): void {
+  if (!delta) return;
+  const last = deltaBuffer[deltaBuffer.length - 1];
+  if (last?.type === type) last.delta += delta;
+  else deltaBuffer.push({ type, delta });
+  // Timers also work when an Electron window is hidden; no parallel rAF and
+  // interval loops, artificial typewriter backlog, or permanently idle timers.
+  if (deltaFlushTimer === null)
+    deltaFlushTimer = setTimeout(flushStreamingDeltas, STREAM_FLUSH_MS);
 }
 
 export interface AgentSessionStoreState {
@@ -610,8 +557,9 @@ function emptySessionDetailState(): SessionDetailState {
 }
 
 function clearStreamingBuffers(): void {
-  _textBuffer = "";
-  _thinkingBuffer = "";
+  deltaBuffer = [];
+  if (deltaFlushTimer !== null) clearTimeout(deltaFlushTimer);
+  deltaFlushTimer = null;
 }
 
 export const useAgentSessionStore = create<AgentSessionStoreState>(
@@ -1005,6 +953,14 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       for (const id of deleted) delete nextCache[id];
       set({
         sessions: get().sessions.filter((session) => !deleted.has(session.id)),
+        childSessions: Object.fromEntries(
+          Object.entries(get().childSessions)
+            .filter(([id]) => !deleted.has(id))
+            .map(([id, children]) => [
+              id,
+              children.filter((child) => !deleted.has(child.id)),
+            ]),
+        ),
         sessionDetailCache: nextCache,
         sessionListTotal:
           get().sessionListTotal === null
@@ -1089,7 +1045,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     /**
      * Refresh the selected session's detail.
      *
-     * Profile-critical data (stats, todos, capabilities, steps) is applied as
+     * Profile-critical data (stats, todos, capabilities) is applied as
      * soon as each response lands, and the heavier transcript queries (events,
      * messages, tool calls) are applied in the background. Previously everything
      * was committed in a single batch, so one slow query (the event log can take
@@ -1206,18 +1162,6 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                         /* capabilities are optional */
                       }),
                   ]),
-              agentRuntimeApi
-                .listSessionSteps(targetSessionId)
-                .then((stepsRes) => {
-                  if (!isCurrent()) return;
-                  set({ steps: stepsRes.items });
-                  patchSessionDetailCache(targetSessionId, {
-                    steps: stepsRes.items,
-                  });
-                })
-                .catch(() => {
-                  /* steps are optional */
-                }),
             ];
 
             // While a run streams, tool calls stay current through live
@@ -1236,6 +1180,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 ? Promise.resolve({ items: get().toolCalls })
                 : agentRuntimeApi.listToolCalls(targetSessionId);
             const transcriptTask = Promise.all([
+              // Steps and their messages must become visible together. A
+              // completed step alone would hide its still-visible live answer.
+              agentRuntimeApi.listSessionSteps(targetSessionId),
               agentRuntimeApi.listRuns(targetSessionId),
               agentRuntimeApi.listEvents(targetSessionId, knownEventId),
               agentRuntimeApi.listMessages(targetSessionId),
@@ -1244,6 +1191,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             ])
               .then(
                 ([
+                  stepsRes,
                   runsRes,
                   eventsRes,
                   messagesRes,
@@ -1255,12 +1203,23 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     knownEventId && cachedEntry
                       ? [...cachedEntry.events, ...eventsRes.items]
                       : eventsRes.items;
-                  const sessionStillRunning =
-                    get().sessions.find((s) => s.id === targetSessionId)
-                      ?.status === "running";
+                  // A response requested before completion may lack the final
+                  // message. Only a refresh started after completion can retire
+                  // the live answer; the completion event schedules that refresh.
+                  const preserveLive =
+                    sessionActive ||
+                    [
+                      "running",
+                      "queued",
+                      "waiting_permission",
+                      "waiting_input",
+                    ].includes(
+                      get().sessions.find((s) => s.id === targetSessionId)
+                        ?.status ?? "",
+                    );
                   const cacheEntry: SessionDetailCacheEntry = {
                     runs: runsRes.items,
-                    steps: get().steps,
+                    steps: stepsRes.items,
                     events,
                     messages: messagesRes.items,
                     toolCalls: toolCallsRes.items,
@@ -1275,6 +1234,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     detailLoading: false,
                     detailError: null,
                     runs: cacheEntry.runs,
+                    steps: cacheEntry.steps,
                     events: cacheEntry.events,
                     messages: cacheEntry.messages,
                     toolCalls: cacheEntry.toolCalls,
@@ -1283,7 +1243,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                       ...s.sessionDetailCache,
                       [targetSessionId]: cacheEntry,
                     }),
-                    ...(sessionStillRunning
+                    ...(preserveLive
                       ? {}
                       : {
                           streamingRetry: null,
@@ -1337,7 +1297,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     fetchChildSessions: async (parentId) => {
       try {
         const { items } = await agentRuntimeApi.listSessions();
-        const children = items.filter((s) => s.parentSessionId === parentId);
+        const children = items.filter(
+          (s) =>
+            s.parentSessionId === parentId && !isRuntimeResourceRemoved(s.id),
+        );
         set({
           childSessions: { ...get().childSessions, [parentId]: children },
         });
@@ -1581,18 +1544,32 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           get().patchSession(event.sessionId, event.patch);
           if (get().selectedSessionId !== event.sessionId) break;
           if (event.reset) {
-            clearStreamingBuffers();
-            set({
-              streamingRetry: null,
-              streamingStepId: null,
-              streamingLive: EMPTY_STREAMING_BUFFERS,
-              streamingCompletedSteps: [],
-            });
+            const terminal = [
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted",
+            ].includes(event.patch.status ?? "");
+            if (terminal && get().streamingStepId) {
+              // The persisted transcript arrives later. Keep the visible answer
+              // until refreshDetail replaces it and clears live state together.
+              flushStreamingDeltas();
+              set({ streamingRetry: null });
+            } else {
+              clearStreamingBuffers();
+              set({
+                streamingRetry: null,
+                streamingStepId: null,
+                streamingLive: EMPTY_STREAMING_BUFFERS,
+                streamingCompletedSteps: [],
+              });
+            }
           }
           if (event.refresh) scheduleLiveRefreshDetail();
           break;
         }
         case "step_started": {
+          flushStreamingDeltas();
           const s = get();
           const hasContent =
             s.streamingStepId && hasStreamingContent(s.streamingLive);
@@ -1606,18 +1583,14 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 },
               ]
             : s.streamingCompletedSteps;
-          _textBuffer = "";
-          _thinkingBuffer = "";
+          clearStreamingBuffers();
           set({
             streamingRetry: null,
             streamingStepId: event.stepId,
             streamingLive: EMPTY_STREAMING_BUFFERS,
             streamingCompletedSteps: completedSteps,
+            ...(event.step ? { steps: upsertById(s.steps, event.step) } : {}),
           });
-          const streamedStep = event.step;
-          if (streamedStep) {
-            set((state) => ({ steps: upsertById(state.steps, streamedStep) }));
-          }
           break;
         }
         case "retry_status": {
@@ -1634,20 +1607,24 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           break;
         }
         case "message_delta":
-          _textBuffer += event.delta;
-          _scheduleFlush();
+          if (get().streamingStepId !== event.stepId) break;
+          bufferStreamingDelta("text", event.delta);
           break;
         case "thought_delta":
-          _thinkingBuffer += event.delta;
-          _scheduleFlush();
+          if (get().streamingStepId !== event.stepId) break;
+          bufferStreamingDelta("thinking", event.delta);
           break;
         case "tool_call":
+          if (get().streamingStepId !== event.stepId) break;
+          flushStreamingDeltas();
           set((s) => ({
             streamingLive: applyToolCall(s.streamingLive, event.toolCall),
             toolCalls: upsertById(s.toolCalls, event.toolCall),
           }));
           break;
         case "tool_result":
+          if (get().streamingStepId !== event.stepId) break;
+          flushStreamingDeltas();
           set((s) => ({
             streamingLive: applyToolResult(s.streamingLive, event.toolCall),
             toolCalls: upsertById(s.toolCalls, event.toolCall),
