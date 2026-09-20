@@ -162,9 +162,9 @@ npm run make:desktop
 
 打包后的 macOS 和 Windows 应用会从 GitHub Releases 检查更新，也可以通过**帮助 → 软件更新…**手动检查。兼容的界面更新在重启后生效；加载失败时可以回退到先前的界面。Linux 暂不支持此更新功能。
 
-桌面版本使用 `v*` 标签，纯界面版本使用 `ui-v*` 标签。构建与发布步骤见[桌面工作流](./.github/workflows/build-desktop.yml)和[界面工作流](./.github/workflows/build-ui-release.yml)。界面更新必须对应已发布的桌面版本，不能包含后端或 Electron 代码变更。更新下载使用 HTTPS 和哈希校验，没有独立的内容签名，可信来源取决于仓库的发布权限。
+桌面版本使用 `v*` 标签，纯界面版本使用 `ui-v*` 标签。构建与发布步骤见[桌面工作流](./.github/workflows/build-desktop.yml)和[界面工作流](./.github/workflows/build-ui-release.yml)。桌面发布允许部分平台成功：重跑可给空 Release 上传文件或补齐缺失平台，保留已发布的平台文件，并在安装包上传后再上传更新清单。界面更新必须对应已发布的桌面版本，不能包含后端或 Electron 代码变更。更新下载使用 HTTPS 和哈希校验，没有独立的内容签名，可信来源取决于仓库的发布权限。
 
-每次向 `main` 推送都会构建上述四个平台。全部构建和检查成功后，工作流更新固定 `preview` 标签下的[最新预览版](https://github.com/coldmint9/Synax/releases/tag/preview)，发布说明包含应用基础版本、提交和 Actions 构建记录。预览版供手动下载安装，正式版自动更新不会选择预发布版本。旧构建不会覆盖 main 更新后的预览版；替换下载文件期间，预览发布暂时保持为草稿。发布失败时，可以在 `main` 上手动运行 **Build Desktop** 重试。
+每次向 `main` 推送都会构建上述四个平台。构建结束后，工作流将构建和检查成功的平台产物发布到固定 `preview` 标签下的[最新预览版](https://github.com/coldmint9/Synax/releases/tag/preview)，发布说明包含可用平台、应用基础版本、提交和 Actions 构建记录。某个平台失败不会阻止其他平台发布；全部失败时保留现有预览版。预览版供手动下载安装，正式版自动更新不会选择预发布版本。旧构建不会覆盖 main 更新后的预览版；替换下载文件期间，预览发布暂时保持为草稿。发布失败时，可以在 `main` 上手动运行 **Build Desktop** 重试。
 
 ## 开发
 
