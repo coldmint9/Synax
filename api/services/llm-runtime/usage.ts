@@ -1,4 +1,4 @@
-/** Standard token normalization stays separate from bounded extension metrics. */
+/** Context for standard token usage normalization. */
 export interface UsageContext {
   source?: "sdk" | "raw" | "acp" | "cli" | "legacy";
   protocol?: string;

@@ -345,6 +345,46 @@ function compatible(usage: Record<string, unknown>, streaming = true) {
 }
 
 describe("actual SDK boundary with mocked transports", () => {
+  it.each([true, false])(
+    "discards extension metrics while preserving tokens (streaming=%s)",
+    async (streaming) => {
+      const options = {
+        model: compatible(
+          {
+            prompt_tokens: 10000,
+            prompt_cache_hit_tokens: 8000,
+            credits_used: 1.5,
+            custom_details: { cost: 2 },
+          },
+          streaming,
+        ),
+        prompt: "fixture",
+        maxRetries: 0,
+      };
+      const result = streaming
+        ? streamText(options)
+        : await generateText(options);
+      if (streaming)
+        await (result as ReturnType<typeof streamText>).consumeStream();
+      const metadata = await result.providerMetadata;
+      expect(metadata?.synaxUsage).not.toHaveProperty("extensions");
+      expect(metadata?.synaxUsage?.raw).toEqual({
+        prompt_tokens: 10000,
+        completion_tokens: 20,
+        prompt_cache_hit_tokens: 8000,
+      });
+      expect(
+        normalizeResultUsage({
+          usage: await result.usage,
+          providerMetadata: metadata,
+        }),
+      ).toMatchObject({
+        inputTokens: 10000,
+        outputTokens: 20,
+        cachedInputTokens: 8000,
+      });
+    },
+  );
   it("preserves custom raw usage through streaming SDK normalization and hooks/persistence agree", async () => {
     const events: LlmHookEvent[] = [];
     llmHooks.register({

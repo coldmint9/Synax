@@ -12,17 +12,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig, ProviderDef } from "../../../lib/contracts/config";
 import { useState, type ReactNode } from "react";
 
-vi.mock("../../../lib/api/providerMetrics", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("../../../lib/api/providerMetrics")
-  >()),
-  providerMetricsApi: {
-    list: vi.fn(async () => ({ fields: [] })),
-    discover: vi.fn(async () => ({ ok: true, supported: false, fields: [] })),
-    update: vi.fn(async () => ({ fields: [] })),
-  },
-}));
-
 // Appearance has its own integration tests using real HeroUI color controls.
 vi.mock("./components/AppearanceSection", () => ({
   AppearanceSection: () => <div />,

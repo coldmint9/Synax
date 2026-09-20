@@ -26,7 +26,6 @@ import { sumAgentTurnDurationMs } from "./sumAgentTurnDuration";
 import { sessionRuntimeSelection } from "./sessionRuntimeSelection";
 import type { AgentRun } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
-import { SessionExtensionMetrics } from "./SessionExtensionMetrics";
 
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -133,9 +132,7 @@ export function SessionStatusCard({
   showRuntimeStatus?: boolean;
 }) {
   const { locale } = useLocale();
-  const currentStatus = status ?? session?.status ?? stats.status;
   const runtime = sessionRuntimeSelection(session, runs, steps);
-  const isLive = currentStatus === "running";
 
   return (
     <div className="runtime-status-details border-b border-border/40 px-2 py-2 space-y-2">
@@ -177,14 +174,6 @@ export function SessionStatusCard({
           </dd>
         </div>
       </dl>
-      {session && (
-        <SessionExtensionMetrics
-          key={session.id}
-          sessionId={session.id}
-          isLive={isLive}
-          refreshKey={`${currentStatus}:${stats.roundCount ?? steps.length}:${stats.context?.requestId ?? ""}`}
-        />
-      )}
       <div className="flex items-center gap-3 text-[9px] text-muted-foreground">
         {stats.activeSubAgentCount > 0 && (
           <span className="flex items-center gap-1">

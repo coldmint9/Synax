@@ -37,7 +37,6 @@ import { useLocale } from "../../../../hooks/useLocale";
 import { SettingsSelect } from "./SettingsSelect";
 import { SaveIndicator } from "./SaveIndicator";
 import { useProviderAutoSave } from "../useProviderAutoSave";
-import { ProviderMetricsSettings } from "./ProviderMetricsSettings";
 import type {
   ApiFormat,
   ReasoningEffort,
@@ -73,17 +72,13 @@ export function LlmProviderModal({
   const { t, locale } = useLocale();
   const zh = locale === "zh";
   const [draft, setDraft] = useState<ApiProviderDraft>({ ...initialDraft });
-  const [metricsRevision, setMetricsRevision] = useState(0);
   const {
     saving,
     saved,
     error: saveError,
     flush,
     valid,
-  } = useProviderAutoSave(draft, async (nextDraft) => {
-    await onSave(nextDraft);
-    setMetricsRevision((value) => value + 1);
-  });
+  } = useProviderAutoSave(draft, onSave);
   const [showApiKey, setShowApiKey] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
@@ -116,7 +111,6 @@ export function LlmProviderModal({
     setDraft((d) => ({ ...d, validating: true, validationMessage: null }));
     try {
       await onValidate(draft);
-      setMetricsRevision((value) => value + 1);
       setDraft((d) => ({
         ...d,
         validating: false,
@@ -711,11 +705,6 @@ export function LlmProviderModal({
                     : "未勾选 = 不限制，agent 输入框可选全部档位。"}
                 </p>
               </div>
-
-              <ProviderMetricsSettings
-                draft={draft}
-                revision={metricsRevision}
-              />
 
               {draft.validationMessage && (
                 <div

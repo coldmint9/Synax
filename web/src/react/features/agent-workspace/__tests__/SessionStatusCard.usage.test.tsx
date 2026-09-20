@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-vi.mock("../../../../lib/api/providerMetrics", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("../../../../lib/api/providerMetrics")
-  >()),
-  providerMetricsApi: { list: vi.fn(async () => ({ fields: [] })) },
-}));
 vi.mock("../../../../hooks/useLocale", () => ({
   useLocale: () => ({ locale: "zh" }),
 }));

@@ -18,8 +18,6 @@ import {
 import { ProviderLogo } from "../../../components/ProviderLogo";
 import { IconSurface } from "../../../components/IconSurface";
 import { useLocale } from "../../../../hooks/useLocale";
-import { useProviderMetrics } from "../../../components/extension-metrics/useProviderMetrics";
-import { ProviderMetricsSettings } from "./ProviderMetricsSettings";
 
 interface LlmProviderCardProps {
   draft: ApiProviderDraft;
@@ -44,11 +42,7 @@ export function LlmProviderCard({
   onSetDefault,
   onRemove,
 }: LlmProviderCardProps) {
-  const { t, locale } = useLocale();
-  const metrics = useProviderMetrics(
-    { providerId: draft.id },
-    { enabled: isSaved },
-  );
+  const { t } = useLocale();
   const logo = PROVIDER_LOGO_ASSETS[draft.id];
   /** Models with their own input window: the 1M switch is configured per model. */
   const windowModels = modelsWithContextLimit(draft);
@@ -84,20 +78,6 @@ export function LlmProviderCard({
             </span>
             {isDefault && (
               <span className="settings-chip">{t("llmCardDefault")}</span>
-            )}
-            {metrics.fields.length > 0 && (
-              <span
-                className="settings-chip shrink-0"
-                title={
-                  locale === "zh"
-                    ? "自动发现的扩展参数"
-                    : "Automatically discovered extension metrics"
-                }
-              >
-                {locale === "zh"
-                  ? `扩展参数 ${metrics.fields.length}`
-                  : `${metrics.fields.length} metrics`}
-              </span>
             )}
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground truncate">
@@ -156,7 +136,6 @@ export function LlmProviderCard({
                 : "不限制"}
             </span>
           </div>
-          <ProviderMetricsSettings draft={draft} />
           <div className="flex items-center gap-2 pt-1">
             <Button size="sm" variant="secondary" onPress={onEdit}>
               <Pencil size={12} />

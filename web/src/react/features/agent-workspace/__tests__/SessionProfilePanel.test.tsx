@@ -14,13 +14,6 @@ import type {
   SessionStats,
 } from "../../../../lib/api/agentRuntime";
 
-vi.mock("../../../../lib/api/providerMetrics", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("../../../../lib/api/providerMetrics")
-  >()),
-  providerMetricsApi: { list: vi.fn(async () => ({ fields: [] })) },
-}));
-
 function session(
   id: string,
   prompt?: string,
