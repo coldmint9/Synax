@@ -1,7 +1,7 @@
 const fs = require("node:fs/promises");
-const path = require("node:path");
+const collectDesktopAssets = require("./desktop-publish-assets.cjs");
 
-/** Called by github-script after every platform has uploaded its artifacts. */
+/** Publish the platforms that passed their build and checks. */
 module.exports = async function publishPreview(
   { github, context, core },
   root = process.cwd(),
@@ -18,35 +18,12 @@ module.exports = async function publishPreview(
     return;
   }
 
-  const { version } = JSON.parse(
-    await fs.readFile(path.join(root, "package.json"), "utf8"),
-  );
-  const assets = new Map();
-  async function collect(directory) {
-    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-      const file = path.join(directory, entry.name);
-      if (entry.isDirectory()) await collect(file);
-      else if (entry.isFile()) {
-        if (assets.has(entry.name))
-          throw new Error(`Duplicate preview asset: ${entry.name}`);
-        assets.set(entry.name, file);
-      }
-    }
-  }
-  await collect(path.join(root, "release-assets"));
-  const required = [
-    `Synax-${version}-darwin-x64.dmg`,
-    `Synax-${version}-darwin-arm64.dmg`,
-    `Synax-${version}-win32-x64-Setup.exe`,
-    ...["darwin-x64", "darwin-arm64", "win32-x64", "linux-x64"].map(
-      (target) => `Synax-${version}-${target}.zip`,
-    ),
-    ...["darwin-x64", "darwin-arm64", "win32-x64"].map(
-      (target) => `desktop-${target}.json`,
-    ),
-  ];
-  for (const name of required) {
-    if (!assets.has(name)) throw new Error(`Missing preview asset: ${name}`);
+  const { version, assets, targets } = await collectDesktopAssets(root);
+  if (!targets.length) {
+    core.notice(
+      "No successful desktop artifacts; keeping the existing preview.",
+    );
+    return;
   }
 
   let release;
@@ -72,6 +49,7 @@ module.exports = async function publishPreview(
       `Base version: ${version}`,
       `Commit: ${context.sha}`,
       `Build: [#${context.runNumber}](${runUrl})`,
+      `Available platforms: ${targets.map((target) => target.name).join(", ")}`,
       "",
       "此通道随 main 推送更新，供手动安装测试；正式版自动更新不会选择预发布版本。",
       "This rolling preview is for manual testing. Stable automatic updates exclude prereleases.",
@@ -79,7 +57,7 @@ module.exports = async function publishPreview(
     prerelease: true,
     make_latest: "false",
   };
-  // Hide the release until all platforms belong to the same build. A failed
+  // Hide the release until all available platforms belong to the same build. A failed
   // upload leaves a draft that the next successful run can safely replace.
   if (release) {
     await github.rest.repos.updateRelease({

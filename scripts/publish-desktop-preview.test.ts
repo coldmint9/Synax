@@ -66,7 +66,11 @@ beforeEach(async () => {
     const names = [`Synax-0.2.0-${target}.zip`];
     if (target.startsWith("darwin")) names.push(`Synax-0.2.0-${target}.dmg`);
     if (target.startsWith("win32"))
-      names.push(`Synax-0.2.0-${target}-Setup.exe`);
+      names.push(
+        `Synax-0.2.0-${target}-Setup.exe`,
+        "Synax-0.2.0-full.nupkg",
+        "RELEASES",
+      );
     if (!target.startsWith("linux")) names.push(`desktop-${target}.json`);
     for (const name of names)
       await fs.writeFile(path.join(dir, name), "fixture");
@@ -88,7 +92,7 @@ it("publishes all platforms before exposing a prerelease, without replacing late
       target_commitish: context.sha,
     }),
   );
-  expect(repos.uploadReleaseAsset).toHaveBeenCalledTimes(10);
+  expect(repos.uploadReleaseAsset).toHaveBeenCalledTimes(12);
   expect(git.createRef).toHaveBeenCalledWith(
     expect.objectContaining({ ref: "refs/tags/preview", sha: context.sha }),
   );
@@ -138,10 +142,12 @@ it("skips superseded main builds before modifying a release", async () => {
   expect(input.github.rest.repos.createRelease).not.toHaveBeenCalled();
 });
 
-it("rejects incomplete builds before modifying a release", async () => {
-  await fs.rm(path.join(root, "release-assets/make/Synax-0.2.0-linux-x64.zip"));
+it("rejects incomplete platform assets before modifying a release", async () => {
+  await fs.rm(
+    path.join(root, "release-assets/make/Synax-0.2.0-darwin-x64.dmg"),
+  );
   await expect(publishPreview(input, root)).rejects.toThrow(
-    "Missing preview asset",
+    "Missing desktop asset",
   );
   expect(input.github.rest.repos.createRelease).not.toHaveBeenCalled();
 });
@@ -170,5 +176,55 @@ it("propagates access failures instead of treating them as a missing release", a
     Object.assign(new Error("Forbidden"), { status: 403 }),
   );
   await expect(publishPreview(input, root)).rejects.toThrow("Forbidden");
+  expect(input.github.rest.repos.createRelease).not.toHaveBeenCalled();
+});
+
+it("publishes successful platforms when Windows failed, without retaining stale Windows assets", async () => {
+  for (const name of [
+    "Synax-0.2.0-win32-x64.zip",
+    "Synax-0.2.0-win32-x64-Setup.exe",
+    "Synax-0.2.0-full.nupkg",
+    "RELEASES",
+    "desktop-win32-x64.json",
+  ])
+    await fs.rm(path.join(root, "release-assets/make", name));
+  input.github.rest.repos.getReleaseByTag.mockResolvedValue({
+    data: { id: 42, prerelease: true },
+  });
+  input.github.paginate.mockResolvedValue([
+    { id: 91, name: "desktop-win32-x64.json" },
+  ]);
+  await publishPreview(input, root);
+  const { repos } = input.github.rest;
+  expect(repos.uploadReleaseAsset).toHaveBeenCalledTimes(7);
+  expect(repos.deleteReleaseAsset).toHaveBeenCalledWith(
+    expect.objectContaining({ asset_id: 91 }),
+  );
+  expect(repos.updateRelease).toHaveBeenLastCalledWith(
+    expect.objectContaining({ draft: false }),
+  );
+  expect(repos.updateRelease.mock.calls.at(-1)![0].body).toContain(
+    "Available platforms: darwin-x64, darwin-arm64, linux-x64",
+  );
+});
+
+it("keeps the existing preview when every build failed", async () => {
+  await fs.rm(path.join(root, "release-assets"), { recursive: true });
+  await publishPreview(input, root);
+  expect(input.github.rest.repos.getReleaseByTag).not.toHaveBeenCalled();
+  expect(input.github.rest.repos.createRelease).not.toHaveBeenCalled();
+  expect(input.core.notice).toHaveBeenCalledWith(
+    expect.stringContaining("No successful desktop artifacts"),
+  );
+});
+
+it("rejects duplicate artifact filenames before modifying a release", async () => {
+  await fs.writeFile(
+    path.join(root, "release-assets/Synax-0.2.0-linux-x64.zip"),
+    "duplicate",
+  );
+  await expect(publishPreview(input, root)).rejects.toThrow(
+    "Duplicate desktop asset",
+  );
   expect(input.github.rest.repos.createRelease).not.toHaveBeenCalled();
 });
