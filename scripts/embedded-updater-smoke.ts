@@ -43,7 +43,19 @@ delete env.NODE_OPTIONS;
 let updater: ElectronApplication | undefined;
 let host: ElectronApplication | undefined;
 let detachedPid: number | undefined;
+let stage = "launch standalone updater";
+function checkpoint(message: string): void {
+  stage = message;
+  console.log(`[embedded-updater-smoke] ${message}`);
+}
+// ElectronApplication.close() has no timeout of its own. Keep a stuck process
+// from consuming the entire build job, including during failure cleanup.
+const watchdog = setTimeout(() => {
+  console.error(`[embedded-updater-smoke] Timed out during: ${stage}`);
+  process.exit(1);
+}, 180_000);
 try {
+  checkpoint("launch standalone updater");
   updater = await _electron.launch({
     executablePath: updaterExecutable(path.resolve("out/updater")),
     args: [`--request=${requestFile}`],
@@ -55,9 +67,11 @@ try {
     globalThis.fetch = async () => new Response("[]");
   });
   const page = await updater.firstWindow();
+  page.setDefaultTimeout(30_000);
   await page.locator("#current").filter({ hasText: "0.1.2" }).waitFor();
   await page.waitForFunction(
     () => !(document.getElementById("check") as HTMLButtonElement).disabled,
+    undefined,
     { timeout: 60_000 },
   );
   await page.locator("#check").click();
@@ -81,12 +95,14 @@ try {
     .waitFor();
   await fs.mkdir("out", { recursive: true });
   await page.screenshot({ path: "out/embedded-updater-smoke.png" });
+  checkpoint("close standalone updater");
   await updater.close();
   updater = undefined;
 
   // Exercise the real host bridge inside Electron, including original-fs copying
   // of the opaque app.asar and launching the copied runtime as a detached child.
   const fixture = path.join(root, "host-fixture");
+  checkpoint("copy embedded runtime to host fixture");
   await fs.mkdir(fixture);
   await fs.cp(path.resolve("out/updater"), path.join(fixture, "updater"), {
     recursive: true,
@@ -117,6 +133,7 @@ app.whenReady().then(async () => {
   globalThis.hostReady = true;
 });`,
   );
+  checkpoint("launch host bridge fixture");
   host = await _electron.launch({ args: [fixture], env, timeout: 30_000 });
   const limit = Date.now() + 30_000;
   while (!(await host.evaluate(() => (globalThis as any).hostReady))) {
@@ -137,6 +154,7 @@ app.whenReady().then(async () => {
   );
   detachedPid = result.pid;
   assert(detachedPid);
+  checkpoint("close host and verify detached updater survives");
   await host.close();
   host = undefined;
   await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -145,6 +163,7 @@ app.whenReady().then(async () => {
     "Embedded updater smoke passed: standalone app, version window, raw runtime copy, isolated profile, real host bridge and detached survival after host exit.",
   );
 } finally {
+  checkpoint(`cleanup after: ${stage}`);
   await updater?.close();
   await host?.close();
   if (detachedPid) {
@@ -166,4 +185,5 @@ app.whenReady().then(async () => {
   parent.kill();
   server.close();
   await fs.rm(root, { recursive: true, force: true });
+  clearTimeout(watchdog);
 }
