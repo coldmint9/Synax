@@ -42,6 +42,13 @@ describe("SubagentControls", () => {
       preferences: { ...state.preferences, locale: "en" },
     }));
   });
+  it("renders an icon-only destroy button with an accessible name and tooltip", () => {
+    render(<SubagentControls {...props} />);
+    const button = screen.getByRole("button", { name: "Destroy subagent" });
+    expect(button.textContent).toBe("");
+    expect(button.getAttribute("title")).toBe("Destroy subagent");
+    expect(button.querySelector("svg")).not.toBeNull();
+  });
   it("stops only the chosen subagent and keeps controls pending until the backend confirms", async () => {
     let finish!: () => void;
     actions.cancelSessionRun.mockReturnValue(

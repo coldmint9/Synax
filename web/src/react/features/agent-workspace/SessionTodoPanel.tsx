@@ -14,16 +14,6 @@ export function SessionTodoPanel({ items }: { items: TodoItem[] }) {
       title={zh ? "任务进度" : "Progress"}
       summary={`${done} / ${items.length}`}
     >
-      <div
-        className="work-progress-track"
-        role="progressbar"
-        aria-label={zh ? "任务进度" : "Task progress"}
-        aria-valuemin={0}
-        aria-valuemax={items.length}
-        aria-valuenow={done}
-      >
-        <span style={{ width: `${(done / items.length) * 100}%` }} />
-      </div>
       <ol className="work-todos">
         {items.map((item) => (
           <li key={item.id} data-status={item.status}>

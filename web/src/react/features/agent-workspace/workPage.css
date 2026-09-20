@@ -421,20 +421,6 @@
 :is(.work-page, .work-details-dialog) :is(.ws-repo-meta, .ws-repo-path) {
   font-size: 10px;
 }
-.work-progress-track {
-  height: 2px;
-  border-radius: 99px;
-  overflow: hidden;
-  background: hsl(var(--secondary));
-  margin: 3px 4px 5px;
-}
-.work-progress-track span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: hsl(var(--primary) / 0.65);
-  transition: width 200ms ease;
-}
 .work-todos {
   list-style: none;
   padding: 0;
@@ -582,9 +568,6 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .work-progress-track span {
-    transition: none;
-  }
   .work-todos .animate-spin {
     animation: none;
   }

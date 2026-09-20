@@ -82,10 +82,10 @@ export function SubagentControls({
           className="bui-task-open text-danger"
           disabled={pending !== null || status === "stopping"}
           aria-label={t("subSessionDestroy")}
+          title={t("subSessionDestroy")}
           onClick={() => setConfirmDestroy(true)}
         >
           <Trash2 size={11} aria-hidden="true" />
-          {t("subSessionDestroy")}
         </button>
       </div>
       {error && (
