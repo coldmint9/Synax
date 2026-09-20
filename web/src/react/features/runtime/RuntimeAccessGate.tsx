@@ -12,13 +12,15 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
   const [ready, setReady] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
+  const [needsToken, setNeedsToken] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState("");
   const connect = useCallback(async () => {
     enableRuntimeAuth();
     setBusy(true);
     setError(null);
+    setNeedsToken(false);
     try {
       await ensureRuntimeAuthentication();
       useApiConnectivityStore.getState().markSuccess();
@@ -26,6 +28,17 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
       setToken("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Runtime unavailable.");
+      const desktop = (
+        window as Window & {
+          electronAPI?: { getRuntimeToken?: unknown };
+        }
+      ).electronAPI;
+      setNeedsToken(
+        !desktop?.getRuntimeToken &&
+          cause instanceof Error &&
+          "code" in cause &&
+          cause.code === "AUTH_REQUIRED",
+      );
       setReady(false);
     } finally {
       setBusy(false);
@@ -52,14 +65,18 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
         }}
       >
         <h1 className="text-lg font-semibold">Synax Runtime</h1>
-        <p className="text-sm text-muted-foreground">
+        <p role="status" className="text-sm text-muted-foreground">
           {busy
             ? zh
               ? "正在连接运行服务…"
               : "Connecting to the runtime…"
-            : zh
-              ? "需要连接授权的运行服务。令牌仅保留在本次页面内存中。"
-              : "Connect to an authorized runtime. Tokens are kept only in this page’s memory."}
+            : needsToken
+              ? zh
+                ? "需要连接授权的运行服务。令牌仅保留在本次页面内存中。"
+                : "Connect to an authorized runtime. Tokens are kept only in this page’s memory."
+              : zh
+                ? "暂时无法连接运行服务，请重试。"
+                : "The runtime is unavailable. Please retry."}
         </p>
         {error && (
           <p role="alert" className="text-sm text-danger">
@@ -68,19 +85,21 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
         )}
         {!busy && (
           <>
-            <label className="block text-sm">
-              {zh
-                ? "Runtime 访问令牌（非模型 API Key）"
-                : "Runtime access token (not a model API key)"}
-              <input
-                type="password"
-                autoComplete="off"
-                aria-label="Runtime access token"
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
-                className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3"
-              />
-            </label>
+            {needsToken && (
+              <label className="block text-sm">
+                {zh
+                  ? "Runtime 访问令牌（非模型 API Key）"
+                  : "Runtime access token (not a model API key)"}
+                <input
+                  type="password"
+                  autoComplete="off"
+                  aria-label="Runtime access token"
+                  value={token}
+                  onChange={(event) => setToken(event.target.value)}
+                  className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3"
+                />
+              </label>
+            )}
             <button
               type="submit"
               className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground"

@@ -159,6 +159,30 @@ const renderComposer = (existing?: AgentSession) =>
     </MemoryRouter>,
   );
 
+it("keeps the interaction panel mounted when its state refreshes beside the input queue", async () => {
+  const original = useAgentSessionStore.getState().refreshInteractions;
+  const refresh = vi.fn((id: string) => {
+    // Fail promptly if duplicate sibling keys cause a remount/refresh loop.
+    if (refresh.mock.calls.length > 5)
+      throw new Error("Interaction panel remounted repeatedly");
+    return original(id);
+  });
+  useAgentSessionStore.setState({ refreshInteractions: refresh });
+  const consoleError = vi.spyOn(console, "error");
+  renderComposer(session);
+  await waitFor(() =>
+    expect(useAgentSessionStore.getState().interactionState?.loading).toBe(
+      false,
+    ),
+  );
+  expect(refresh).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await refresh(session.id);
+  });
+  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/);
+});
+
 it("shows an optimistic draft immediately and restores its text if creation fails", async () => {
   let reject!: (error: Error) => void;
   vi.spyOn(agentRuntimeApi, "createSession").mockImplementation(

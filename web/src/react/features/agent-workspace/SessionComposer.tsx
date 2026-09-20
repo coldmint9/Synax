@@ -798,7 +798,11 @@ export function SessionComposer({
         />
       )}
       {session && (
-        <AgentInteractionPanel key={session.id} session={session} compact />
+        <AgentInteractionPanel
+          key={`interactions-${session.id}`}
+          session={session}
+          compact
+        />
       )}
       {commands.menu}
       {isDraft && draftPreview?.scope === viewKey && (
@@ -815,7 +819,7 @@ export function SessionComposer({
       )}
       {sessionId && (
         <InputQueueStrip
-          key={sessionId}
+          key={`input-queue-${sessionId}`}
           items={queuedInputs}
           onEdit={editQueuedInput}
           editDisabledReason={
