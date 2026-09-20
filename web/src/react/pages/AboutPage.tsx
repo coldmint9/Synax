@@ -35,7 +35,7 @@ export default function AboutPage() {
             <div>
               <Typography type="h4">Synax</Typography>
               <Typography type="body-sm" color="muted" className="mt-1">
-                AI-powered codebase design wiki & agent workspace
+                Local-first AI coding workspace
               </Typography>
             </div>
           </div>
@@ -43,9 +43,9 @@ export default function AboutPage() {
           <div className="space-y-6">
             <section>
               <Typography type="body-sm" color="muted">
-                Turn a local codebase into a source-linked, refreshable design
-                wiki that becomes the context layer for agent-assisted
-                development.
+                Work with coding agents, source files, diffs, and terminals in
+                one local workspace. Connect your models, tools, and skills to
+                build, run, and review projects.
               </Typography>
             </section>
 

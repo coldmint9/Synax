@@ -1,12 +1,16 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import path from "node:path";
-import { existsSync } from "node:fs";
 import { buildEmbeddedUpdater } from "./scripts/build-embedded-updater.js";
+import {
+  desktopProduct,
+  desktopIcon,
+  desktopDownloadName,
+  normalizeDesktopArtifacts,
+  windowsMetadata,
+} from "./scripts/desktop-branding.js";
 
-const icon = path.resolve(
-  __dirname,
-  `electron/resources/icon.${process.platform === "darwin" ? "icns" : process.platform === "win32" ? "ico" : "png"}`,
-);
+const icon = desktopIcon(process.platform);
+const windowsIcon = desktopIcon("win32");
 
 const config: ForgeConfig = {
   hooks: {
@@ -21,20 +25,27 @@ const config: ForgeConfig = {
         arch as typeof process.arch,
       );
     },
+    postMake: async (_config, results) => normalizeDesktopArtifacts(results),
   },
   rebuildConfig: {
     onlyModules: [],
   },
   packagerConfig: {
-    name: "Synax",
+    name: desktopProduct.productName,
+    executableName: desktopProduct.productName,
+    appVersion: desktopProduct.version,
+    appCopyright: "Copyright (c) 2026 Synax contributors",
+    appCategoryType: "public.app-category.developer-tools",
+    win32metadata: windowsMetadata(),
     appBundleId: "com.Synax.desktop",
-    ...(existsSync(icon) ? { icon } : {}),
+    icon,
     asar: true,
     extraResource: [
       "./server-dist",
       "./web/dist",
       "./api/db/migrations",
       "./electron/resources/icon.png",
+      "./electron/resources/icon.ico",
       ...(["darwin", "win32"].includes(process.platform)
         ? ["./out/updater"]
         : []),
@@ -50,9 +61,13 @@ const config: ForgeConfig = {
     {
       name: "@electron-forge/maker-dmg",
       platforms: ["darwin"],
-      config: {
+      config: (arch: string) => ({
         format: "ULFO",
-      },
+        name: path.basename(
+          desktopDownloadName(desktopProduct.version, "darwin", arch, "dmg"),
+          ".dmg",
+        ),
+      }),
     },
     {
       name: "@electron-forge/maker-zip",
@@ -62,14 +77,22 @@ const config: ForgeConfig = {
     {
       name: "@electron-forge/maker-squirrel",
       platforms: ["win32"],
-      config: {
+      config: (arch: string) => ({
         name: "Synax",
-        ...(existsSync(icon) && process.platform === "win32"
-          ? { setupIcon: icon }
-          : {}),
-        authors: "Synax",
-        description: "AI-powered code analysis platform",
-      },
+        title: desktopProduct.productName,
+        exe: `${desktopProduct.productName}.exe`,
+        setupExe: desktopDownloadName(
+          desktopProduct.version,
+          "win32",
+          arch,
+          "exe",
+        ),
+        setupIcon: windowsIcon,
+        iconUrl:
+          "https://raw.githubusercontent.com/coldmint9/Synax/main/electron/resources/icon.ico",
+        authors: desktopProduct.author,
+        description: desktopProduct.description,
+      }),
     },
   ],
 };

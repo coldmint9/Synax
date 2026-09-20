@@ -17,10 +17,7 @@ export async function createDesktopReleaseArtifacts(
   platform: DesktopPlatform,
   arch: DesktopArch,
 ): Promise<DesktopManifest> {
-  const sourceName =
-    platform === "darwin"
-      ? `Synax-${version}-${arch}.dmg`
-      : `Synax-${version}-full.nupkg`;
+  const sourceName = desktopArtifactName(version, platform, arch);
   const candidates: string[] = [];
   async function visit(directory: string): Promise<void> {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
@@ -46,9 +43,8 @@ export async function createDesktopReleaseArtifacts(
     },
   });
   await fs.mkdir(output, { recursive: true });
-  // The Windows package is already published by Forge under its required name.
-  if (platform === "darwin")
-    await fs.copyFile(source, path.join(output, manifest.artifact.name));
+  // Forge already emits the canonical artifact name. Publish only metadata here
+  // so GitHub never receives two assets with the same filename.
   await fs.writeFile(
     path.join(output, desktopManifestName(platform, arch)),
     JSON.stringify(manifest, null, 2),

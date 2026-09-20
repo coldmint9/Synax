@@ -2,354 +2,196 @@
 
 # Synax
 
-<img width="898" height="80" alt="image" src="https://github.com/user-attachments/assets/ba60d60b-ee63-4409-b158-33754f4efe80" />
+<img width="898" height="80" alt="Synax" src="https://github.com/user-attachments/assets/ba60d60b-ee63-4409-b158-33754f4efe80" />
 
-Turn a local codebase into a source-linked, refreshable design wiki that becomes the context layer for agent-assisted development.
+A local workspace for coding agents and codebase documentation.
 
-English | [Simplified Chinese](./README.zh-CN.md)
-
-![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
-![Version](https://img.shields.io/badge/version-0.2.0-64748b?style=flat-square)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)
-![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black)
-![Vite](https://img.shields.io/badge/Vite-8-646cff?style=flat-square&logo=vite&logoColor=white)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06b6d4?style=flat-square&logo=tailwindcss&logoColor=white)
-![Electron](https://img.shields.io/badge/Electron-39-47848f?style=flat-square&logo=electron&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-22-339933?style=flat-square&logo=node.js&logoColor=white)
+English | [简体中文](./README.zh-CN.md)
 
 </div>
 
-## Supported LLM Providers
+Synax brings agent conversations, source files, diffs, and a terminal into one app. Import a local project to start working with an agent, or generate a Wiki to read through its architecture and follow references back to the code.
 
-First things first: models. Synax currently exposes provider setup for OpenAI, Anthropic, DeepSeek, Google, Groq, Mistral, xAI, Perplexity, Cerebras, Cohere, DeepInfra, TogetherAI, and OpenRouter.
+The project is in alpha. Wiki and planning are experimental and disabled by default. External agent integrations are still being developed, and data formats may change between versions.
 
-It also supports custom endpoints that speak one of these API formats:
+## Features
 
-- OpenAI Chat Completions compatible
-- OpenAI Responses compatible
-- Anthropic Messages compatible
+### Code, run, and review in one workspace
 
-Author note: Synax is currently developed and dogfooded mostly with DeepSeek V4. If a few paths feel especially friendly to DeepSeek users, that is not a coincidence.
+The built-in agent can search a repository, edit files, apply patches, and run commands. Source files, diffs, terminals, and Git worktrees sit alongside the conversation. Tool calls and command output appear as the task runs, with permission requests for operations that need approval.
 
-Because this is `0.2.0`, provider details are still evolving. Some lower-level runtime adapters exist in code, but they should not be treated as product-ready provider support until they are wired into configuration, validation, and the UI.
+### Choose your model or coding agent
 
-## Quick Start
+Use the Synax agent with your own model API, or connect an external agent such as Codex or Claude Code. Custom endpoints support Chat Completions, Responses, and Anthropic Messages. Model selection and reasoning effort are available in the conversation composer where supported. External agent integrations are still in development.
 
-### Prerequisites
+### Delegate work to subagents
 
-- Node.js 22 (>=22, <23).
-- npm 10 or newer.
-- Git.
-- A native build toolchain for tree-sitter packages. On macOS, install Xcode Command Line Tools; on Windows, install Visual Studio Build Tools (C++ workload); on Linux, install `build-essential` (Debian/Ubuntu) or equivalent (`gcc`, `g++`, `make`).
-- At least one LLM provider key if you want to generate wiki content or run agents.
+The built-in agent can hand code exploration or review to a child agent with its own context. Child sessions keep their own work history and return results to the parent, so a repository search does not fill the main conversation with every intermediate step. Specialized agents can also be given a defined set of tools and a limited file write scope.
 
-### Install
+### Bring your own tools and skills
+
+Connect MCP servers and load Skills for project-specific tasks. The project settings include local discovery, connected MCP tools, and a Skill marketplace. Enable the tools and instructions a project needs without adding them to every conversation manually.
+
+### Search the web and check pages in a browser
+
+Agents can search for documentation and return source links. Search supports provider-native search, DuckDuckGo, Brave, Tavily, and custom JSON APIs, with fallback when a configured channel is unavailable.
+
+Browser tools can open pages, click controls, fill forms, take screenshots, and inspect console messages and network requests. This lets an agent check a running web app as part of a coding task. Browser operations require a supported browser installed locally.
+
+### Work with images, audio, video, and files
+
+Attach a screenshot, document, audio clip, or video to a conversation when the selected model supports it. The built-in agent also has tools for image generation and editing, speech synthesis, audio transcription, and video generation. Generated media can be previewed, downloaded, and reused in later requests. Input formats and generation options depend on the configured provider and model.
+
+### Continue long conversations
+
+Sessions and execution history are saved locally. The runtime can compact older context while retaining recent steps and selected requirements, decisions, and results. The conversation view shows context usage and provider-reported cache statistics when available, so you can see how much context a task is using.
+
+### Generate a Wiki that points back to the code
+
+Synax uses tree-sitter to analyze source files and symbols, then generates project documentation with code references. Read the document tree, search its contents, view diagrams, or export Markdown. When code changes, refresh checks identify affected documents and produce drafts for review.
+
+Wiki also includes experimental planning views that break work into tasks and show their dependencies. Wiki and planning are disabled by default; enable **Wiki (Experimental)** in Settings to try them.
+
+### Work locally, from the interface you prefer
+
+Use the browser app, an Electron desktop build, or the CLI. They share the local API and agent runtime. Desktop builds target macOS, Windows, and Linux; Windows also supports projects inside WSL2. The CLI provides interactive conversations, one-shot commands, and JSONL output for scripts.
+
+Project records, settings, and conversation history are stored locally. When you use a remote model, the prompts and code included in its context are sent to that provider.
+
+## Run from source
+
+You need Node.js **22** (`>=22 <23`), npm 10 or later, and Git. Native dependencies also need Python 3 and a C/C++ build toolchain:
+
+| System  | Build tools                                                                           |
+| ------- | ------------------------------------------------------------------------------------- |
+| macOS   | Xcode Command Line Tools (`xcode-select --install`)                                   |
+| Windows | Visual Studio **2022** Build Tools with the **Desktop development with C++** workload |
+| Linux   | GCC, G++, and Make; on Debian/Ubuntu, install `build-essential`                       |
 
 ```bash
 git clone https://github.com/coldmint9/Synax.git
 cd Synax
-npm install
-```
-
-### Run the Web App
-
-```bash
+npm ci --include=dev
 npm run dev
 ```
 
-The API starts at `http://localhost:3210` and the web app starts at `http://localhost:5173`.
+Open [localhost:5173](http://localhost:5173). The API runs on port `3210`.
 
-Recommended first run:
+1. Open Settings and add a model provider, API key, and model.
+2. Import a local project directory.
+3. Start a conversation with the built-in Synax agent.
 
-1. Open `http://localhost:5173`.
-2. Go to Settings and configure an LLM provider.
-3. Import a local project directory.
-4. Open the Wiki tab and generate the first Codebase Design Wiki.
+To try documentation generation, enable **Wiki (Experimental)** in Settings, configure its models, then open the project's Wiki page.
 
-### Run the Desktop App
+For the desktop app, run this instead of `npm run dev`:
 
 ```bash
 npm run dev:desktop
 ```
 
-In development, Electron uses the local web and API servers. In packaged builds, Electron starts the bundled API sidecar.
+This starts Electron along with the API and web development servers. Packaged desktop builds include their own runtime and do not need a separate Node.js installation.
 
-### Windows WSL2 Projects
+## Models and agents
 
-As of September 19, 2026, the Windows desktop build can import projects stored inside a modern WSL2 distribution. In the project dialog, select **WSL2**, choose an installed Version 2 distribution, and browse or enter a Linux absolute path such as `/home/user/project`. Synax keeps file access internal through the WSL filesystem bridge while Bash, Git, worktrees, and background commands execute inside the selected distribution. A workspace cannot mix Windows directories with WSL directories or combine different distributions. WSL projects currently support the Synax native agent backend; external CLI/ACP backends remain unavailable for these projects.
+The settings page includes presets for OpenAI, Anthropic, DeepSeek, OpenRouter, and xAI. You can also add a custom endpoint using one of these API formats:
 
-## Overview
+- OpenAI Chat Completions
+- OpenAI Responses
+- Anthropic Messages
 
-Synax is built around one core loop: import a local codebase, analyze its files and symbols, generate a Codebase Design Wiki with source bindings, then keep that wiki refreshed as the code changes.
+Choose a provider and model for the built-in agent. Wiki model settings are configured separately. Available features depend on the model and endpoint.
 
-The Wiki is not meant to be decorative documentation. It is the project's structured context layer: a place where architecture, modules, APIs, flows, risks, decisions, source references, refresh drafts, and future agent work can meet without drifting away from the actual code.
+Synax also has integrations for external coding agents, including Codex, Claude Code, and ACP clients. These require the corresponding tool to be installed and configured on your machine. Integration support is still in development.
 
-The project is built as a TypeScript monorepo with a Hono API, React web client, libSQL/Drizzle persistence, tree-sitter based code analysis, a profile-driven agent runtime, and an Electron desktop shell.
+## Windows and WSL2
 
-## Product Goal
+The Windows desktop app can import projects from a WSL2 distribution. Select **WSL2** in the project dialog, choose a distribution, and enter a Linux path such as `/home/user/project`. Shell commands, Git, and worktrees run inside that distribution.
 
-Synax aims to become a local-first AI engineering workspace that turns a codebase into durable, reusable context: source-linked design documents, executable plans, agent run history, implementation evidence, and project memory.
+A workspace must use directories from the same environment: Windows, or one WSL2 distribution. WSL2 projects currently work with the built-in Synax agent only.
 
-The long-term goal is to let humans define intent and boundaries, let agents execute bounded work with clear permissions, and continuously reconcile plans, documentation, and code reality as the product evolves.
+## Command line
 
-## Philosophy
-
-Synax is built around a few practical beliefs:
-
-- The codebase is the source of truth. Documents, plans, and agent memory must point back to real files, symbols, and changes instead of floating above the work.
-- Humans own intent. AI can explore, summarize, draft, and execute, but product direction, tradeoffs, and risk acceptance should remain explicit human decisions.
-- Agents should be bounded collaborators, not mysterious background magic. Every useful agent run needs context, permissions, evidence, and a recoverable history.
-- Documentation should stay alive. A wiki that cannot notice code drift becomes another stale artifact; Synax treats docs as something to refresh, patch, review, and trace.
-- Local-first is a trust feature. Source code, credentials, runtime state, and project memory should stay under the user's control by default.
-- Context is compound interest. Every run, decision, and correction should make the next run cheaper, safer, and less confused.
-
-## Version Status
-
-Current version: `0.2.0`.
-
-This is an early development release, not a stable release. Many product details, interaction flows, runtime boundaries, and engineering hardening work are still incomplete.
-
-Currently available or actively evolving:
-
-- Local project import and project metadata management.
-- Codebase scanning, source indexing, and Wiki generation/refresh foundations.
-- LLM provider configuration and local runtime settings.
-- Agent session runtime foundations, including streamed events, session state, and permission records.
-- Electron desktop packaging foundations.
-
-Known incomplete or unstable areas:
-
-- Plan-related workflows are still experimental and not complete.
-- ACP-related discovery, connection, execution, and end-to-end workflows are not complete.
-- Permission approval UX, error handling, recovery flows, and safety boundaries still need refinement.
-- API contracts, data schemas, prompts, and UI details may change without compatibility guarantees before a stable release.
-- Tests, packaging, documentation, and production readiness still need more hardening.
-
-## Highlights
-
-- Codebase Design Wiki: generate hierarchical documentation from source, bind wiki blocks back to files and symbols, export Markdown, and refresh docs when code changes.
-- Agent Runtime: run planner, executor, reviewer, explorer, and wiki-specific profiles with streaming events, permission gates, pause, resume, cancel, and session history.
-- Context Memory: persist project context, conversations, run evidence, token warnings, compression state, and searchable memory in local libSQL.
-- Code Intelligence: index TypeScript, TSX, JavaScript, JSX, Python, Java, C, C++, C#, Go, Rust, PHP, Ruby, Kotlin, Swift, SQL, and shell files.
-- Provider Flexibility: configure OpenAI, Anthropic, DeepSeek, Google, Groq, Mistral, xAI, Perplexity, Cerebras, Cohere, DeepInfra, TogetherAI, OpenRouter, and custom compatible API endpoints.
-- Web and Desktop: use Synax as a standalone Vite web app or package it as an Electron desktop app with a bundled API sidecar.
-
-## Architecture
-
-This diagram is the lobby map, not the full tour. For the real architecture walkthrough, install Synax, import this repository, and generate the Wiki. The project is built to explain codebases, so yes, it can explain itself. Very polite of it.😄
-
-## Configuration
-
-Synax reads `.env` automatically through `dotenv/config`, but no template file is required. Create `.env` only when you need to override defaults.
-
-| Variable                          | Default   | Description                                                                               |
-| --------------------------------- | --------- | ----------------------------------------------------------------------------------------- |
-| `PORT`                            | `3210`    | API server port.                                                                          |
-| `WEB_PORT`                        | `5173`    | Vite development server port.                                                             |
-| `WEB_HOST`                        | `0.0.0.0` | Vite development server host used by dev scripts.                                         |
-| `DATA_ROOT`                       | `.data`   | Local data directory for libSQL, project metadata, config, logs, and model catalog cache. |
-| `LOG_LEVEL`                       | `info`    | API log level.                                                                            |
-| `CONFIG_ENCRYPTION_KEY`           | unset     | Secret used to encrypt stored provider keys.                                              |
-| `Synax_CONFIG_SECRET`             | unset     | Alternative secret used for config encryption.                                            |
-| `CONTEXT_SESSION_TTL_HOURS`       | `72`      | Context session expiration window.                                                        |
-| `CONTEXT_TOKEN_WARNING_THRESHOLD` | `32000`   | Token warning threshold for context sessions.                                             |
-| `CONTEXT_MEMORY_MAX_PER_PROJECT`  | `500`     | Maximum stored memory entries per project.                                                |
-
-Runtime data is local by default and is ignored by Git. Use a stable `CONFIG_ENCRYPTION_KEY` or `Synax_CONFIG_SECRET` before storing provider credentials you intend to keep across machines or environments.
-
-## Scripts
-
-| Command                           | Description                                            |
-| --------------------------------- | ------------------------------------------------------ |
-| `npm run dev`                     | Start API and web dev servers together.                |
-| `npm run dev:api`                 | Start only the Hono API server.                        |
-| `npm run dev:web`                 | Start only the Vite web app.                           |
-| `npm run dev:desktop`             | Start API, web, Electron compiler watch, and Electron. |
-| `npm run build`                   | Bundle the API server into `server-dist/`.             |
-| `npm run start`                   | Run the bundled API server.                            |
-| `npm run cli -- --help`           | Run the Synax CLI directly through TypeScript.         |
-| `node server-dist/cli.cjs --help` | Run the compiled `synax` CLI.                          |
-| `npm run web:build`               | Build the web app into `web/dist/`.                    |
-| `npm run typecheck`               | Run TypeScript checks for the root project.            |
-| `npm run lint`                    | Lint API code.                                         |
-| `npm run test`                    | Run Vitest tests.                                      |
-| `npm run build:desktop`           | Package a local Electron app.                          |
-| `npm run make:desktop`            | Create distributable Electron artifacts.               |
-
-## Project Layout
-
-```text
-api/        Hono routes, libSQL/Drizzle schema, migrations, analyzer, wiki, context, and agent runtime
-web/        React 19, Vite, HeroUI, Zustand, wiki UI, sessions UI, settings, and API clients
-electron/   Desktop shell, preload bridge, menu integration, window state, and API sidecar launcher
-scripts/    Development bootstrap scripts for API, web, desktop, and combined workflows
-docs/       Design notes and technical plans for the Codebase Design Wiki
-```
-
-## API Surface
-
-The API is mounted under `/api` and organized by domain:
-
-- `/api/projects` for project metadata and local imports.
-- `/api/wiki` for snapshots, documents, blocks, refresh drafts, patches, exports, and design mapping.
-- `/api/agent-runtime` for profiles, skills, contexts, sessions, streamed turns, permissions, and runtime events.
-- `/api/config` and `/api/llm` for provider configuration and model discovery.
-- `/api/context` for memory, coordinates, sessions, and contextual signals.
-- `/api/acp` for Agent Client Protocol discovery and provider integration.
-- `/api/notifications`, `/api/logs`, and `/api/health` for operational support.
-
-## Terminal CLI
-
-The Synax CLI is a headless Runtime API client. It does not access the database directly or implement a second Agent execution loop.
-
-Start the API first:
-
-```bash
-npm run dev:api
-```
-
-Then run the compiled CLI:
+Build the CLI from the repository root:
 
 ```bash
 npm run build
+node server-dist/cli.cjs --help
 node server-dist/cli.cjs backends
-node server-dist/cli.cjs exec --project <project-id> "Inspect this project and summarize the risks"
-node server-dist/cli.cjs watch <run-id> --session <session-id>
+node server-dist/cli.cjs exec --work-dir /path/to/project "Explain how this project starts"
 ```
 
-The CLI reads `${DATA_ROOT}/runtime-access-token` by default. Use `SYNAX_RUNTIME_TOKEN`, `--token`, or `--token-file` for explicit credentials. `--jsonl` emits Runtime events for scripts and other Agent clients; `rpc` uses JSONL over stdin/stdout.
+The CLI connects to a local runtime or starts one if needed. It uses the current directory as its working directory unless you pass `--work-dir`, and registers the project when necessary. Running it without a subcommand starts an interactive conversation.
 
-### Package and install
+Use `--json` for a final result or `--jsonl` for streamed events. The `rpc` command accepts JSONL over stdin and writes responses and events to stdout.
 
-Create an installable npm tarball from the Synax source tree:
+For an existing server, set `SYNAX_API` or pass `--url`. Authentication can be supplied through `SYNAX_RUNTIME_TOKEN`, `--token`, or `--token-file`; the local runtime stores its token in `${DATA_ROOT}/runtime-access-token`.
 
-```bash
-npm run build
-npm pack --pack-destination /tmp
-npm install -g /tmp/synax-0.2.0.tgz
-```
+## Local data and configuration
 
-After installation, enter any code directory and run:
+Data is stored in `~/.synax` by default (`%USERPROFILE%\.synax` on Windows). Set `DATA_ROOT` to use a different directory.
 
-```bash
-cd /path/to/your/project
-synax
-```
+The API reads `.env` during source development. Model connections are configured in the app; no `.env` file is needed for the default setup.
 
-The CLI uses the current directory as the default `workDir`. If the local Runtime is not already running, it starts a local API sidecar; if the directory is not registered as a Project, it creates or reuses the matching `source.localPath` Project. Use `DATA_ROOT` and `PORT` for an isolated local instance.
+| Variable                | Default           | Purpose                                        |
+| ----------------------- | ----------------- | ---------------------------------------------- |
+| `DATA_ROOT`             | `~/.synax`        | Database, settings, and logs                   |
+| `PORT`                  | `3210`            | API port                                       |
+| `WEB_PORT`              | `5173`            | Web development server port                    |
+| `WEB_HOST`              | `0.0.0.0`         | Web development server bind address            |
+| `LOG_LEVEL`             | `info`            | API log level                                  |
+| `CONFIG_ENCRYPTION_KEY` | Built-in fallback | Encryption key for stored provider credentials |
 
-## Development Workflow
+Set `WEB_PORT` and `WEB_HOST` in the shell that launches the development scripts. Before saving provider credentials, set your own `CONFIG_ENCRYPTION_KEY` and keep it when moving your data; changing it prevents existing credentials from being decrypted. `Synax_CONFIG_SECRET` is also accepted as a fallback variable.
 
-1. Keep changes focused and small enough to review.
-2. Add or update tests when touching runtime behavior, persistence, route contracts, or wiki generation.
-3. Run the relevant checks before opening a pull request:
-
-```bash
-npm run typecheck
-npm run test
-npm run lint
-```
-
-## Packaging
-
-Build all runtime assets and package the desktop app:
-
-```bash
-npm run build:desktop
-```
-
-Create distributable artifacts with Electron Forge:
+## Build the desktop app
 
 ```bash
 npm run make:desktop
 ```
 
-Packaged builds include `server-dist`, `web/dist`, and database migrations as Electron resources.
+Install dependencies and build on the target operating system **and CPU architecture**. libSQL, tree-sitter, and node-pty contain native binaries.
 
-Desktop builds must run on the target OS **and architecture** because libSQL and tree-sitter include native binaries. Install build dependencies with `npm ci --include=dev`; a production-only install cannot build the app.
+| Target              | CI runner        | Output                     |
+| ------------------- | ---------------- | -------------------------- |
+| macOS Apple Silicon | `macos-15`       | DMG and ZIP                |
+| macOS Intel         | `macos-15-intel` | DMG and ZIP                |
+| Windows x64         | `windows-2022`   | Squirrel installer and ZIP |
+| Linux x64           | `ubuntu-latest`  | ZIP                        |
 
-| Target              | Build host / CI runner         | Artifacts                |
-| ------------------- | ------------------------------ | ------------------------ |
-| macOS Apple Silicon | arm64 Mac / `macos-15`         | DMG + ZIP                |
-| macOS Intel         | x64 Mac / `macos-15-intel`     | DMG + ZIP                |
-| Windows x64         | x64 Windows / `windows-latest` | Squirrel Setup.exe + ZIP |
+Artifacts are written to `out/make/`. Use `npm run build:desktop` if you only need an unpacked app. Signing and notarization are not configured, so the OS may warn when opening a build.
 
-Run `npm run test:desktop`, then `npm run make:desktop`, then `npm run test:desktop:smoke`. The smoke test uses isolated temporary data (including a path with spaces), launches the packaged app, checks the renderer/preload and API, and loads bundled native modules. Diagnostics are written under `out/desktop-smoke.*`. The existing desktop CI executes these checks per platform; changing the workflow alone is not a Windows test result.
+Packaged macOS and Windows apps check GitHub Releases for updates. Use **Help → Software Update…** (`帮助 → 软件更新…`) to check manually. Compatible UI updates take effect after a restart and can fall back to the previous UI if loading fails. Linux does not currently have this updater.
 
-macOS uses the integrated traffic-light titlebar and application menu; Windows retains native window controls and uses Ctrl shortcuts. Runtime data remains in `~/.synax` (or `%USERPROFILE%\.synax` on Windows), overridable with `DATA_ROOT`. Installed builds use Electron's embedded runtime rather than requiring a separate Node.js installation.
+Desktop releases use `v*` tags; UI-only releases use `ui-v*` tags. The [desktop workflow](./.github/workflows/build-desktop.yml) and [UI workflow](./.github/workflows/build-ui-release.yml) contain the build and release steps. UI releases must match a published desktop version and cannot include backend or Electron changes. Update downloads use HTTPS and hash checks; they rely on the repository's release publishing access rather than an independent content signature.
 
-Desktop and browser icons use the supplied Liquid Glass artwork in `electron/resources/Synax-Liquid-Glass.sketch`. Regenerate ICNS, ICO, PNG and favicons with `python3 scripts/generate-app-icons.py` (requires Pillow). Signing and notarization are not configured; unsigned builds are intended for testing and may trigger OS warnings. Full Electron/API/native-module updates still require a new desktop installer.
+## Development
 
-### UI-only updates from GitHub
+The backend uses Hono, libSQL, and Drizzle. The frontend uses React, Vite, HeroUI, and Zustand. Electron hosts the desktop app; tree-sitter parses source files.
 
-Packaged macOS and Windows clients check the public `coldmint9/Synax` GitHub Releases for compatible `ui-vMAJOR.MINOR.PATCH` releases shortly after startup and every 12 hours; **Help → Check UI updates** checks on demand. They download only `web/dist` resources (a delta from the current UI release when available, otherwise the complete _UI_ archive), validate file hashes, and stage the update under Electron user data. The existing UI continues running until you choose **Restart now** or relaunch later. A broken UI is rolled back to the last healthy UI or the one bundled with the installer. Linux is not included.
+```text
+api/        API routes, database, code analysis, Wiki, and agent runtime
+web/        React app
+electron/   Desktop app and updater
+cli/        Terminal client
+scripts/    Development, build, release, and smoke-test scripts
+```
 
-To publish, first tag and release `v<package.json version>` with the desktop updater; existing installations without this feature must install that release manually once. Keep `package.json` version unchanged for compatible UI-only changes, then push a newer `ui-v*` tag. `.github/workflows/build-ui-release.yml` verifies that the corresponding desktop release exists, refuses backend/desktop source changes since that tag, runs UI tests/build, and publishes a complete archive, the adjacent-version delta, and their manifest as a draft Release that becomes public only when all assets are ready. UI changes requiring new API/IPC behavior need a new desktop version and installer instead.
+| Command                      | Purpose                                   |
+| ---------------------------- | ----------------------------------------- |
+| `npm run dev:api`            | Start the API                             |
+| `npm run dev:web`            | Start the web development server          |
+| `npm run build`              | Build the API and CLI into `server-dist/` |
+| `npm run start`              | Run the built API                         |
+| `npm run web:build`          | Build the frontend into `web/dist/`       |
+| `npm run typecheck`          | Check backend TypeScript                  |
+| `npm run typecheck:cli`      | Check CLI TypeScript                      |
+| `npm run lint`               | Lint API code                             |
+| `npm test`                   | Run backend, CLI, and desktop unit tests  |
+| `npm run --prefix web test`  | Run frontend tests                        |
+| `npm run test:desktop:smoke` | Check a packaged app                      |
 
-**Security tradeoff:** these UI releases have no independent cryptographic signature, by choice. HTTPS and SHA-256 checks detect transport corruption, **not** a compromised GitHub repository or Release publisher: malicious UI JavaScript could access the desktop bridge and local API. Protect GitHub publishing access accordingly. UI updates do not bypass macOS signing rules for replacing an entire app.
-
-## Contributing
-
-Contributions should include a clear problem statement, a focused implementation, and verification notes. For larger changes, open an issue or design discussion first so the runtime, persistence, and UI impact can be reviewed before code lands.
-
-### Branch and Commit
-
-- Branch from `main` with a descriptive name: `feat/xxx`, `fix/xxx`, `refactor/xxx`
-- Use [Conventional Commits](https://www.conventionalcommits.org/):
-
-  ```
-  feat(wiki): add document export to PDF
-  fix(agent-runtime): prevent duplicate tool calls in streaming
-  refactor(api): simplify provider resolution logic
-  ```
-
-- Keep commits small and focused — one PR solves one problem.
-
-### Pull Request Checklist
-
-1. Title under 70 characters.
-2. Description includes:
-   - Summary of what changed and why.
-   - How to verify (test commands or manual steps).
-   - Screenshots if UI changed.
-3. All checks pass:
-
-   ```bash
-   npm run typecheck
-   npm run test
-   npm run lint
-   ```
-
-### Code Style
-
-- TypeScript strict mode; avoid `any` without justification.
-- Backend routes in `api/routes/`, business logic in `api/services/`.
-- Frontend components use [HeroUI](https://heroui.com) v3.
-- State management with Zustand in `web/src/react/state/`.
-- File naming: PascalCase for components, camelCase for utilities.
-- No unnecessary comments — only explain the "why" when non-obvious.
-
-### Testing
-
-- Add or update tests when touching runtime behavior, persistence, route contracts, or wiki generation.
-- API tests: Vitest, `__tests__/` directories or `.test.ts` suffix.
-- Web tests: Vitest + React Testing Library (`web/vitest.config.ts`).
-
-### Database Changes
-
-- Migration files go in `api/db/migrations/` as raw SQL.
-- Must be idempotent (`CREATE TABLE IF NOT EXISTS`, etc.).
-- Executed sequentially on startup — no manual migration step needed.
-
-### Reporting Issues
-
-Please include:
-
-- Description and reproduction steps.
-- Expected vs actual behavior.
-- Environment info (OS, Node version, browser).
-- Relevant logs or screenshots.
+For a bug report, include reproduction steps, your OS and Node.js version, and relevant logs or screenshots. For a pull request, explain the change and how you checked it. Add tests for changes to runtime behavior, persistence, API contracts, or Wiki generation. Discuss larger changes in an issue first.
 
 ## License
 
-Synax is released under the [MIT License](./LICENSE).
+[MIT](./LICENSE)

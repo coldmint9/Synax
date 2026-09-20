@@ -17,7 +17,7 @@ it.each(["darwin", "win32"] as const)(
     await fs.mkdir(make);
     const source =
       platform === "darwin"
-        ? "Synax-0.2.0-arm64.dmg"
+        ? "Synax-0.2.0-darwin-arm64.dmg"
         : "Synax-0.2.0-full.nupkg";
     const bytes = Buffer.from("desktop release package");
     await fs.writeFile(path.join(make, source), bytes);
@@ -38,10 +38,12 @@ it.each(["darwin", "win32"] as const)(
         ),
       ),
     ).toEqual(manifest);
-    if (platform === "darwin")
-      expect(
-        await fs.readFile(path.join(output, manifest.artifact.name)),
-      ).toEqual(bytes);
+    expect(await fs.readFile(path.join(make, manifest.artifact.name))).toEqual(
+      bytes,
+    );
+    expect(await fs.readdir(output)).toEqual([
+      `desktop-${platform}-arm64.json`,
+    ]);
     await expect(
       createDesktopReleaseArtifacts(make, output, "0.3.0", platform, "arm64"),
     ).rejects.toThrow("Expected one");

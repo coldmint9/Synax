@@ -18,6 +18,7 @@ async function boot(): Promise<void> {
   const updaterProfile = path.join(request.profile, "updater-profile");
   await fs.mkdir(updaterProfile, { recursive: true });
   app.setPath("userData", updaterProfile);
+  if (process.platform === "win32") app.setAppUserModelId("com.Synax.updater");
   if (!app.requestSingleInstanceLock()) {
     app.quit();
     return;
@@ -40,6 +41,10 @@ async function boot(): Promise<void> {
     minWidth: 520,
     minHeight: 580,
     title: "Synax Updater",
+    icon: path.join(
+      process.resourcesPath,
+      process.platform === "win32" ? "icon.ico" : "icon.png",
+    ),
     show: !request.background,
     autoHideMenuBar: true,
     backgroundColor: "#101216",

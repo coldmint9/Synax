@@ -1,7 +1,5 @@
-"""Generate app icons from the approved Sketch preview (requires Pillow)."""
-from io import BytesIO
+"""Package the tracked Synax master PNG as desktop/web icons (requires Pillow)."""
 from pathlib import Path
-from zipfile import ZipFile
 
 from PIL import Image
 
@@ -9,14 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 RESOURCES = ROOT / 'electron/resources'
 PUBLIC = ROOT / 'web/public'
 
-with ZipFile(RESOURCES / 'Synax-Liquid-Glass.sketch') as sketch:
-    with Image.open(BytesIO(sketch.read('previews/preview.png'))) as preview:
-        source = preview.convert('RGBA')
+with Image.open(RESOURCES / 'icon.png') as master:
+    source = master.convert('RGBA')
 
 if source.size != (1024, 1024):
-    raise ValueError('Expected the approved 1024×1024 Sketch preview')
+    raise ValueError('Expected the approved 1024×1024 Synax master PNG')
 
-source.save(RESOURCES / 'icon.png')
 source.save(RESOURCES / 'icon.icns')
 source.save(RESOURCES / 'icon.ico', sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)])
 source.save(PUBLIC / 'favicon.ico', sizes=[(n, n) for n in (16, 32, 48)])

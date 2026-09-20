@@ -3,6 +3,12 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { build } from "tsup";
 import packager from "@electron/packager";
+import {
+  desktopProduct,
+  desktopIcon,
+  updaterDescription,
+  windowsMetadata,
+} from "./desktop-branding.js";
 
 const require = createRequire(import.meta.url);
 export async function buildEmbeddedUpdater(
@@ -13,8 +19,7 @@ export async function buildEmbeddedUpdater(
   const payload = path.resolve("out/updater-payload");
   const output = path.resolve("out/updater-package");
   const embedded = path.resolve("out/updater");
-  const version = JSON.parse(await fs.readFile("package.json", "utf8"))
-    .version as string;
+  const { version } = desktopProduct;
   await fs.rm(payload, { recursive: true, force: true });
   await fs.mkdir(payload, { recursive: true });
   await build({
@@ -55,6 +60,7 @@ export async function buildEmbeddedUpdater(
     JSON.stringify({
       name: "synax-updater",
       productName: "Synax Updater",
+      description: updaterDescription,
       version,
       main: "main.cjs",
       author: "Synax",
@@ -68,15 +74,17 @@ export async function buildEmbeddedUpdater(
     executableName: "Synax Updater",
     appBundleId: "com.Synax.updater",
     appVersion: version,
+    appCopyright: "Copyright (c) 2026 Synax contributors",
+    appCategoryType: "public.app-category.developer-tools",
+    win32metadata: windowsMetadata("Synax Updater", updaterDescription),
     platform,
     arch,
     electronVersion: require("electron/package.json").version,
     asar: true,
     overwrite: true,
     prune: false,
-    icon: path.resolve(
-      `electron/resources/icon.${platform === "darwin" ? "icns" : "ico"}`,
-    ),
+    icon: desktopIcon(platform),
+    extraResource: [desktopIcon("win32"), desktopIcon("linux")],
   });
   await fs.rm(embedded, { recursive: true, force: true });
   await fs.mkdir(embedded, { recursive: true });

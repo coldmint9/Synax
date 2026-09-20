@@ -16,9 +16,11 @@ if (
   throw new Error(
     "Desktop online updates support macOS and Windows on arm64/x64",
   );
+const output = path.resolve("out/desktop-release");
+await fs.rm(output, { recursive: true, force: true });
 const manifest = await createDesktopReleaseArtifacts(
   path.resolve("out/make"),
-  path.resolve("out/desktop-release"),
+  output,
   version,
   process.platform,
   process.arch,

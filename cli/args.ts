@@ -1,4 +1,4 @@
-export type OutputMode = 'human' | 'json' | 'jsonl';
+export type OutputMode = "human" | "json" | "jsonl";
 export interface CliOptions {
   command: string;
   positionals: string[];
@@ -11,13 +11,13 @@ export interface CliOptions {
   backend?: string;
   profile?: string;
   model?: string;
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   session?: string;
   run?: string;
   output: OutputMode;
   answers?: string;
   action?: string;
-  reply?: 'once' | 'always' | 'reject';
+  reply?: "once" | "always" | "reject";
   requestId?: string;
   after: number;
   help: boolean;
@@ -25,47 +25,99 @@ export interface CliOptions {
 }
 
 export function parseArgs(argv: string[]): CliOptions {
-  const options: CliOptions = { command: 'chat', positionals: [], output: 'human', after: 0, help: false, version: false };
+  const options: CliOptions = {
+    command: "chat",
+    positionals: [],
+    output: "human",
+    after: 0,
+    help: false,
+    version: false,
+  };
   const stringFlags = new Map<string, keyof CliOptions>([
-    ['--url', 'url'], ['--token', 'token'], ['--token-file', 'tokenFile'], ['--project', 'project'],
-    ['--work-dir', 'workDir'], ['--backend', 'backend'], ['--profile', 'profile'], ['--model', 'model'],
-    ['--reasoning-effort', 'reasoningEffort'], ['--session', 'session'], ['--run', 'run'],
-    ['--answers', 'answers'], ['--action', 'action'], ['--reply', 'reply'], ['--request-id', 'requestId'],
+    ["--url", "url"],
+    ["--token", "token"],
+    ["--token-file", "tokenFile"],
+    ["--project", "project"],
+    ["--work-dir", "workDir"],
+    ["--backend", "backend"],
+    ["--profile", "profile"],
+    ["--model", "model"],
+    ["--reasoning-effort", "reasoningEffort"],
+    ["--session", "session"],
+    ["--run", "run"],
+    ["--answers", "answers"],
+    ["--action", "action"],
+    ["--reply", "reply"],
+    ["--request-id", "requestId"],
   ]);
   let hasCommand = false;
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
-    if (arg === '--') { options.positionals.push(...argv.slice(index + 1)); break; }
-    if (arg === '-h' || arg === '--help') { options.help = true; continue; }
-    if (arg === '-v' || arg === '--version') { options.version = true; continue; }
-    if (arg === '--json' || arg === '--jsonl') {
-      const mode = arg === '--json' ? 'json' : 'jsonl';
-      if (options.output !== 'human' && options.output !== mode) throw new Error('--json and --jsonl are mutually exclusive.');
-      options.output = mode; continue;
+    if (arg === "--") {
+      options.positionals.push(...argv.slice(index + 1));
+      break;
     }
-    if (arg === '--after') {
-      options.after = Number(argv[++index]);
-      if (!Number.isSafeInteger(options.after) || options.after < 0) throw new Error('--after requires a non-negative integer.');
+    if (arg === "-h" || arg === "--help") {
+      options.help = true;
       continue;
     }
-    if (arg === '--file') { const file=argv[++index]; if(!file || file.startsWith('--'))throw new Error('--file requires a path.'); (options.files??=[]).push(file);continue; }
+    if (arg === "-v" || arg === "--version") {
+      options.version = true;
+      continue;
+    }
+    if (arg === "--json" || arg === "--jsonl") {
+      const mode = arg === "--json" ? "json" : "jsonl";
+      if (options.output !== "human" && options.output !== mode)
+        throw new Error("--json and --jsonl are mutually exclusive.");
+      options.output = mode;
+      continue;
+    }
+    if (arg === "--after") {
+      options.after = Number(argv[++index]);
+      if (!Number.isSafeInteger(options.after) || options.after < 0)
+        throw new Error("--after requires a non-negative integer.");
+      continue;
+    }
+    if (arg === "--file") {
+      const file = argv[++index];
+      if (!file || file.startsWith("--"))
+        throw new Error("--file requires a path.");
+      (options.files ??= []).push(file);
+      continue;
+    }
     const key = stringFlags.get(arg);
     if (key) {
       const value = argv[++index];
-      if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value.`);
-      Object.assign(options, { [key]: value }); continue;
+      if (!value || value.startsWith("--"))
+        throw new Error(`${arg} requires a value.`);
+      Object.assign(options, { [key]: value });
+      continue;
     }
-    if (arg.startsWith('-') && arg !== '-') throw new Error(`Unknown option: ${arg}`);
-    if (!hasCommand) { options.command = arg; hasCommand = true; }
-    else options.positionals.push(arg);
+    if (arg.startsWith("-") && arg !== "-")
+      throw new Error(`Unknown option: ${arg}`);
+    if (!hasCommand) {
+      options.command = arg;
+      hasCommand = true;
+    } else options.positionals.push(arg);
   }
-  if (options.reply && !['once', 'always', 'reject'].includes(options.reply)) throw new Error('Invalid permission reply.');
-  if (options.reasoningEffort && !['low', 'medium', 'high', 'xhigh', 'max'].includes(options.reasoningEffort)) throw new Error('Invalid reasoning effort.');
-  if (options.action && !['submit', 'decline', 'cancel', 'save', 'revise', 'execute'].includes(options.action)) throw new Error('Invalid interaction action.');
+  if (options.reply && !["once", "always", "reject"].includes(options.reply))
+    throw new Error("Invalid permission reply.");
+  if (
+    options.reasoningEffort &&
+    !["low", "medium", "high", "xhigh", "max"].includes(options.reasoningEffort)
+  )
+    throw new Error("Invalid reasoning effort.");
+  if (
+    options.action &&
+    !["submit", "decline", "cancel", "save", "revise", "execute"].includes(
+      options.action,
+    )
+  )
+    throw new Error("Invalid interaction action.");
   return options;
 }
 
-export const HELP = `Synax — Runtime client and universal Agent CLI
+export const HELP = `Synax — Local-first AI coding workspace
 
 Usage:
   synax [chat] [options]                  Interactive session (TTY)

@@ -68,6 +68,11 @@ jobs:
       - name: Package desktop app
         run: npx electron-forge make --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
 
+      - name: Verify Windows executable and installer branding
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/verify-windows-branding.ps1
+
       - name: Build desktop update manifest
         if: runner.os != 'Linux'
         run: npx tsx scripts/build-desktop-release.ts
