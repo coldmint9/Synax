@@ -150,7 +150,7 @@ export function isSessionUnread(
   );
 }
 
-const SESSION_PAGE_SIZE = 30;
+const SESSION_PAGE_SIZE = 20;
 const SESSION_DETAIL_CACHE_LIMIT = 16;
 const SESSION_DETAIL_CACHE_TTL_MS = 45_000;
 

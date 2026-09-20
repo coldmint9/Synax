@@ -41,6 +41,10 @@ afterEach(() => {
     projectId: null,
     draftMode: "chat",
     sessions: [],
+    sessionListTotal: null,
+    sessionListOffset: 0,
+    sessionListLoading: false,
+    sessionListError: null,
     selectedSessionId: null,
     panelOpen: false,
     runs: [],
@@ -105,7 +109,7 @@ describe("useAgentSessionStore.setProjectId", () => {
     expect(state.steps).toEqual([]);
     expect(agentRuntimeApi.listSessions).toHaveBeenCalledWith({
       projectId: "project-b",
-      limit: 30,
+      limit: 20,
     });
   });
 
@@ -121,6 +125,24 @@ describe("useAgentSessionStore.setProjectId", () => {
     expect(useAgentSessionStore.getState().selectedSessionId).toBe("session-a");
     expect(useAgentSessionStore.getState().panelOpen).toBe(true);
     expect(agentRuntimeApi.listSessions).not.toHaveBeenCalled();
+  });
+});
+
+describe("useAgentSessionStore.loadMoreSessions", () => {
+  it("requests the next batch of 20 sessions at the current offset", async () => {
+    useAgentSessionStore.setState({
+      projectId: "project-a",
+      sessionListTotal: 40,
+      sessionListOffset: 20,
+    });
+
+    await useAgentSessionStore.getState().loadMoreSessions();
+
+    expect(agentRuntimeApi.listSessions).toHaveBeenCalledWith({
+      projectId: "project-a",
+      limit: 20,
+      offset: 20,
+    });
   });
 });
 

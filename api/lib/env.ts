@@ -51,6 +51,14 @@ export const CONTEXT_TOOL_CLEAR_KEEP_RECENT = Number(env('CONTEXT_TOOL_CLEAR_KEE
 /** 确定性工具结果清除：排除的工具 ID（逗号分隔） */
 export const CONTEXT_TOOL_CLEAR_EXCLUDE = env('CONTEXT_TOOL_CLEAR_EXCLUDE', 'task.create,task.update,task.get,task.list').split(',');
 
+/** 临时开关：屏蔽自动上下文压缩（prepare/high 水位线锯齿剪枝）。
+ *  硬窗口兜底压缩与手动压缩仍可用；会话级 contextCompactionPolicy.disabled 可覆盖此默认值。
+ *  测试进程忽略本地 .env 中的该值，保持测试封闭（与 defaultDataRoot 的 VITEST 守卫一致）。 */
+export const DISABLE_CONTEXT_COMPACTION =
+  !process.env.VITEST_WORKER_ID && !process.env.VITEST
+    ? env('SYNAX_DISABLE_CONTEXT_COMPACTION', '0') === '1'
+    : false;
+
 /** Wiki Phase 2: max document-writer agents in flight (queue worker slots) */
 export const WIKI_WRITE_CONCURRENCY = Number(env('WIKI_WRITE_CONCURRENCY', '2'));
 

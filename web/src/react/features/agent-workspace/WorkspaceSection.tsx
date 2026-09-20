@@ -15,6 +15,7 @@ export function WorkspaceSection({
   defaultOpen = true,
   storageKey,
   className,
+  hideTitle = false,
 }: {
   icon: ReactNode;
   title: string;
@@ -26,6 +27,8 @@ export function WorkspaceSection({
   defaultOpen?: boolean;
   storageKey?: string;
   className?: string;
+  /** Keep the section collapsible but let the row carry only icon and metrics. */
+  hideTitle?: boolean;
 }) {
   const [open, toggle] = useWorkspaceDisclosure(storageKey, defaultOpen);
   const id = useId();
@@ -41,10 +44,11 @@ export function WorkspaceSection({
           className="ws-card-toggle"
           aria-expanded={open}
           aria-controls={id}
+          aria-label={hideTitle ? title : undefined}
           onPress={toggle}
         >
           <span className="ws-card-icon">{icon}</span>
-          <span className="ws-card-title">{title}</span>
+          {!hideTitle && <span className="ws-card-title">{title}</span>}
           {count !== undefined && (
             <span className="ws-card-count">{count}</span>
           )}

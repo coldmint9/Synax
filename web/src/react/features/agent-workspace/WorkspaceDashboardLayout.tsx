@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { GripVertical, RotateCcw } from "lucide-react";
+import { GripVertical } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 import {
   panelOrder,
@@ -335,18 +335,6 @@ export function WorkspaceDashboardLayout({
           </section>
         );
       })}
-      <button
-        type="button"
-        className="dashboard-layout-reset"
-        onClick={() => {
-          cleanup.current?.();
-          useDashboardLayoutStore.getState().reset(scope);
-        }}
-        title={zh ? "恢复默认顺序和尺寸" : "Restore default order and sizes"}
-      >
-        <RotateCcw size={12} />
-        {zh ? "重置布局" : "Reset layout"}
-      </button>
       <span className="sr-only" aria-live="polite">
         {announcement}
       </span>

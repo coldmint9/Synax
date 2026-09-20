@@ -51,7 +51,7 @@ describe("SessionProfilePanel", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("keeps current context, status and elapsed time in the header without duplicating them on expansion", () => {
+  it("keeps status and elapsed time in the header without repeating context there", () => {
     localStorage.removeItem("synax:workspace:disclosure:metrics:runtime");
     useAgentSessionStore.setState({
       selectedSessionId: "metrics",
@@ -73,13 +73,15 @@ describe("SessionProfilePanel", () => {
     const header = within(
       container.querySelector<HTMLElement>(".ws-card-head")!,
     );
-    expect(header.getByText("上下文 12.5K")).toBeInTheDocument();
+    expect(header.queryByText(/上下文/)).toBeNull();
+    expect(container.textContent).not.toContain("≈");
     expect(header.getByText("completed")).toBeInTheDocument();
     expect(header.getByText("1:05")).toBeInTheDocument();
+    expect(header.queryByText("运行详情")).toBeNull();
     fireEvent.click(header.getByRole("button", { name: "运行详情" }));
     expect(screen.getAllByText("completed")).toHaveLength(1);
     expect(screen.getAllByText("1:05")).toHaveLength(1);
-    expect(header.getByText("上下文 12.5K")).toBeInTheDocument();
+    expect(screen.getByText("上下文组成")).toBeInTheDocument();
   });
 
   it("does not show an inspector without a session", () => {

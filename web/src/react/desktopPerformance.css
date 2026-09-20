@@ -20,6 +20,24 @@ html.electron {
   --agent-glass-bg: hsl(var(--card));
 }
 
+/* The blanket rule above also stops progress indicators, which left a running
+   session looking idle. Rotation here is functional feedback rather than
+   decoration, so restore it for the dedicated spinner elements only. These
+   selectors are more specific than `html.electron *`, so they win the cascade.
+   Users who ask for reduced motion keep them static, matching the web build. */
+@media (prefers-reduced-motion: no-preference) {
+  html.electron .animate-spin,
+  html.electron .bui-status-spinner {
+    animation: var(--animate-spin, spin 1s linear infinite) !important;
+  }
+
+  html.electron
+    .session-composer-island[data-collapsed="true"]
+    .session-composer-island-spinner {
+    animation: session-composer-island-spin 1.2s linear infinite !important;
+  }
+}
+
 .electron
   :is(body, .app-viewport, .workbench-shell, .settings-scroll-viewport) {
   background: var(--background);

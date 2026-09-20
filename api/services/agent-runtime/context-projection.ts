@@ -35,6 +35,7 @@ import {
 import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { AgentValidationError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
+import { DISABLE_CONTEXT_COMPACTION } from "../../lib/env.js";
 
 export interface ContextProjectionInput {
   sessionId: string;
@@ -259,6 +260,11 @@ export function projectWorkContext(input: ContextProjectionInput): {
       compaction: diagnostic(),
     };
   };
+  const autoDisabled = policy.disabled ?? DISABLE_CONTEXT_COMPACTION;
+  if (autoDisabled && !input.forceCompact && !decision.urgent) {
+    decision = { ...decision, action: "keep", reason: "auto-compaction-disabled" };
+    return finishUnchanged();
+  }
   if (!input.forceCompact && originalTokens < watermarks.prepare)
     return finishUnchanged();
   // Preparation is not a per-turn summarizer. Keep an existing invisible draft

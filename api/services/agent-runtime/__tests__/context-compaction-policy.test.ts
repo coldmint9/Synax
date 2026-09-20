@@ -651,3 +651,26 @@ describe("optional economic gate", () => {
     });
   });
 });
+
+describe("compaction kill switch", () => {
+  it("parses disabled strictly and leaves documented defaults untouched otherwise", () => {
+    expect(resolveContextCompactionPolicy().disabled).toBeUndefined();
+    expect(resolveContextCompactionPolicy({ disabled: true }).disabled).toBe(
+      true,
+    );
+    expect(() => resolveContextCompactionPolicy({ disabled: "yes" })).toThrow(
+      TypeError,
+    );
+  });
+
+  it("ignores the effective window cap while disabled", () => {
+    const disabled = resolveContextCompactionPolicy({ disabled: true });
+    const enabled = resolveContextCompactionPolicy();
+    expect(contextWatermarks(disabled, 200_000, 8_000).budget).toBeGreaterThan(
+      120_000,
+    );
+    expect(
+      contextWatermarks(enabled, 200_000, 8_000).budget,
+    ).toBeLessThanOrEqual(120_000);
+  });
+});

@@ -166,25 +166,6 @@
 .workspace-dashboard--custom[data-arranging="true"] {
   user-select: none;
 }
-.dashboard-layout-reset {
-  display: inline-flex;
-  align-self: flex-end;
-  align-items: center;
-  gap: 5px;
-  flex: 0 0 auto;
-  padding: 5px 7px;
-  border: 0;
-  border-radius: 6px;
-  color: hsl(var(--muted-foreground));
-  background: transparent;
-  font-size: 10px;
-  cursor: pointer;
-}
-.dashboard-layout-reset:hover {
-  background: hsl(var(--secondary));
-  color: hsl(var(--foreground-hsl));
-}
-
 /* A component with no data leaves no card, handle or gap in the layout. */
 .dashboard-panel:has(> .dashboard-panel-content:empty) {
   display: none;
@@ -193,7 +174,8 @@
   margin: 0;
 }
 .work-runtime-details .ws-card-head {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  gap: 4px;
 }
 .work-runtime-details .ws-card-toggle {
   flex: 0 0 auto;
@@ -201,17 +183,15 @@
 .work-runtime-details .ws-card-tail {
   flex: 1 1 auto;
   justify-content: flex-end;
+  min-width: 0;
 }
 .runtime-header-metrics,
 .runtime-session-status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  white-space: nowrap;
+  flex-wrap: nowrap;
+  min-width: 0;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
-}
-.runtime-header-metrics {
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }

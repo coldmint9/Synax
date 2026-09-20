@@ -187,6 +187,64 @@ describe("persistent work context projection", () => {
       }),
     ).toThrow("context_blocked");
   });
+
+  it("keeps full history while auto compaction is disabled, ignoring the window cap", () => {
+    const sessionId = fixture();
+    store.updateSessionMetadata(sessionId, {
+      contextCompactionPolicy: { disabled: true, effectiveWindowCap: 6000 },
+    });
+    const result = projectWorkContext({
+      sessionId,
+      toolSet,
+      contextLimit: 60000,
+      outputReserve: 2000,
+      systemTokens: 100,
+    });
+    expect(result.compacted).toBe(false);
+    expect(result.compaction?.action).toBe("keep");
+    expect(result.compaction?.reason).toBe("auto-compaction-disabled");
+    expect(result.compaction?.watermarks.budget).toBeGreaterThan(6000);
+    expect(workStore.current(sessionId)?.checkpoint).toBeFalsy();
+    expect(JSON.stringify(result.messages)).toContain("private-thought-1");
+
+    const controlId = fixture();
+    store.updateSessionMetadata(controlId, {
+      contextCompactionPolicy: { effectiveWindowCap: 6000 },
+    });
+    const control = projectWorkContext({
+      sessionId: controlId,
+      toolSet,
+      contextLimit: 60000,
+      outputReserve: 2000,
+      systemTokens: 100,
+    });
+    expect(control.compacted).toBe(true);
+  });
+
+  it("still rescues at the physical hard window and supports manual compaction while disabled", () => {
+    const sessionId = fixture();
+    store.updateSessionMetadata(sessionId, {
+      contextCompactionPolicy: { disabled: true },
+    });
+    const rescued = projectWorkContext({
+      sessionId,
+      toolSet,
+      contextLimit: 12000,
+      outputReserve: 2000,
+      systemTokens: 100,
+    });
+    expect(rescued.compacted).toBe(true);
+
+    const manualId = fixture();
+    store.updateSessionMetadata(manualId, {
+      contextCompactionPolicy: { disabled: true },
+    });
+    store.updateRun("run", { status: "completed" });
+    store.updateSession(manualId, { status: "completed", activeRunId: null });
+    const manual = compactSessionContext(manualId);
+    expect(manual.compacted).toBe(true);
+    expect(manual.reason).toBe("manual-compaction");
+  });
   it("retains signed tool-call metadata and matching results", () => {
     const sessionId = fixture();
     store.updateRunStep("step-6", {

@@ -33,6 +33,7 @@
   border-radius: 8px;
   padding: 5px 6px;
   text-align: left;
+  cursor: pointer;
   transition:
     background-color 150ms ease,
     color 150ms ease;
@@ -563,6 +564,16 @@ button.bui-activity-trigger:focus-visible,
 }
 button.bui-thinking-trigger:hover {
   background: var(--bui-hover);
+}
+/* The live coding heading paints a text-clipped gradient on the trigger itself
+   (`background-image` + `color: transparent`). That rule is more specific than
+   `button.bui-thinking-trigger:hover`, so without an equally specific override
+   the hover pill only ever renders inside the glyphs — a few pixels of tint
+   between letters, which reads as no hover at all. The gradient stays; the
+   hover tint moves to a layer that cannot be clipped by the text. */
+button.bui-thinking[data-live="true"][data-variant="coding"]
+  > .bui-thinking-trigger:hover {
+  background-color: var(--bui-hover);
 }
 .bui-thinking-trigger:focus-visible {
   outline: 2px solid var(--focus);

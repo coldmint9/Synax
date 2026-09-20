@@ -9,6 +9,13 @@ export interface ContextCompactionPolicy {
   keepRecentSteps: number;
   memoryTokenBudget: number;
   safetyTokens: number;
+  /**
+   * Temporary kill switch for the automatic compaction sawtooth: suppress
+   * prepare/high actions and ignore effectiveWindowCap. Hard-window rescue
+   * and explicit manual compaction still apply. Defaults from
+   * SYNAX_DISABLE_CONTEXT_COMPACTION when the session policy omits it.
+   */
+  disabled?: boolean;
   /** Comparison horizon N, including the first request after the cut. */
   expectedRemainingRequests?: number;
   pricing?: {
@@ -131,6 +138,12 @@ export function resolveContextCompactionPolicy(
     ),
     safetyTokens: count(field("safetyTokens"), "safetyTokens"),
   };
+  if (supplied.disabled !== undefined) {
+    if (typeof supplied.disabled !== "boolean") {
+      throw new TypeError("contextCompactionPolicy.disabled must be a boolean");
+    }
+    policy.disabled = supplied.disabled;
+  }
   if (
     !(
       policy.lowRatio < policy.prepareRatio &&
@@ -176,6 +189,8 @@ export function resolveContextCompactionPolicy(
  * Thresholds round down (at least one token for a nonempty budget); tiny windows
  * may necessarily have equal watermarks. Low is a candidate target, not a gate:
  * the caller must preserve whole steps and required evidence over reaching it.
+ * A disabled policy ignores the cap and spans the physical hard window, so
+ * only genuine hard-window pressure remains.
  */
 export function contextWatermarks(
   policy: ContextCompactionPolicy,
@@ -187,7 +202,9 @@ export function contextWatermarks(
   count(outputReserve, "outputReserve");
   const growth = nonnegative(growthP95 ?? 0, "growthP95");
   const hard = Math.max(0, contextLimit - outputReserve);
-  const available = Math.min(hard, policy.effectiveWindowCap);
+  const available = policy.disabled
+    ? hard
+    : Math.min(hard, policy.effectiveWindowCap);
   const marginLimit = Math.floor(available / 10);
   const safety =
     Math.min(policy.safetyTokens, marginLimit) +

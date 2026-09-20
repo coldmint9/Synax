@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import "./agentControls.css";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   type AgentInteraction,
   type AgentInteractionReply,
@@ -796,6 +796,10 @@ export function AgentInteractionPanel({
     (s) => s.refreshInteractions,
   );
   const refreshSessions = useAgentSessionStore((s) => s.refreshSessions);
+  // Compact hosts (the composer dock) render only the jump pill. The full card
+  // lives in the transcript, so the pill keeps tracking the target card after a
+  // click and falls back to reloading requests when the card is not mounted yet.
+  const [jumpTargetId, setJumpTargetId] = useState<string | null>(null);
   const acp = readSessionBackendId(session).endsWith("-acp");
 
   useEffect(() => {
@@ -833,6 +837,75 @@ export function AgentInteractionPanel({
     });
   }, [acp, session.id, refreshInteractions, refreshSessions]);
 
+  const findInteractionTarget = useCallback((itemId: string) => {
+    const card = document.getElementById(`interaction-${itemId}`);
+    return (
+      card ??
+      document.getElementById(`session-entry-interaction-${itemId}`) ??
+      null
+    );
+  }, []);
+
+  // Keep the pill aligned with its card while the reader scrolls, and show that
+  // the interaction is still pending after the click-triggered re-render.
+  useEffect(() => {
+    if (!jumpTargetId) return;
+    const sync = () => {
+      const target = findInteractionTarget(jumpTargetId);
+      setJumpTargetId((previous) =>
+        previous === jumpTargetId
+          ? target && target.isConnected
+            ? jumpTargetId
+            : null
+          : previous,
+      );
+    };
+    const frame = window.requestAnimationFrame(sync);
+    const timer = window.setTimeout(sync, 600);
+    window.addEventListener("scroll", sync, true);
+    window.addEventListener("resize", sync);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      window.removeEventListener("scroll", sync, true);
+      window.removeEventListener("resize", sync);
+    };
+  }, [
+    jumpTargetId,
+    findInteractionTarget,
+    session.id,
+    session.updatedAt,
+    state,
+  ]);
+
+  const revealInteraction = useCallback(
+    (itemId: string) => {
+      setJumpTargetId(itemId);
+      const target = findInteractionTarget(itemId);
+      if (!target) {
+        // The transcript card is not mounted yet; reload so the reader is not
+        // left staring at an empty dock after the click.
+        void refreshInteractions(session.id);
+        return;
+      }
+      try {
+        target.scrollIntoView({
+          block: "center",
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+        });
+      } catch {
+        /* Older engines lack scroll options; an unanimated jump is fine. */
+        target.scrollIntoView();
+      }
+      // Animate only the transcript above the dock, so the pill never leaves the
+      // viewport while the card is being revealed.
+      target.focus?.({ preventScroll: true });
+    },
+    [findInteractionTarget, refreshInteractions, session.id],
+  );
+
   if (acp) return null;
   const current = state?.sessionId === session.id ? state : null;
   const pending =
@@ -863,21 +936,16 @@ export function AgentInteractionPanel({
         </p>
       )}
       {compact
-        ? pending.map((item) => (
+        ? pending.map((item) => {
+            const jumping = jumpTargetId === item.id;
+            return (
             <button
               key={item.id}
               type="button"
               className="agent-pending-jump"
-              onClick={() => {
-                const card = document.getElementById(`interaction-${item.id}`);
-                const anchor =
-                  card ??
-                  document.getElementById(
-                    `session-entry-interaction-${item.id}`,
-                  );
-                anchor?.scrollIntoView({ block: "center", behavior: "smooth" });
-                card?.focus({ preventScroll: true });
-              }}
+              data-jumping={jumping ? "true" : undefined}
+              aria-expanded={jumping}
+              onClick={() => revealInteraction(item.id)}
             >
               <MessageCircle size={14} />
               <span>
@@ -889,9 +957,10 @@ export function AgentInteractionPanel({
                     ? "有问题需要你回答"
                     : "Your input is needed"}
               </span>
-              <ArrowDown size={14} />
+              {jumping ? <ArrowUpRight size={14} /> : <ArrowDown size={14} />}
             </button>
-          ))
+            );
+          })
         : items.map((item) => (
             <InteractionCard
               key={`${item.id}:${item.revision}`}

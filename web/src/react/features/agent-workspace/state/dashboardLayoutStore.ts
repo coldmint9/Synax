@@ -70,7 +70,6 @@ interface State {
     visible: string[],
   ) => void;
   resize: (scope: string, id: string, size: DashboardPanelSize | null) => void;
-  reset: (scope: string) => void;
 }
 export const useDashboardLayoutStore = create<State>((set, get) => {
   const save = (scope: string, layout: DashboardLayout | null) => {
@@ -103,6 +102,5 @@ export const useDashboardLayoutStore = create<State>((set, get) => {
       else delete sizes[id];
       save(scope, { ...layout, sizes });
     },
-    reset: (scope) => save(scope, null),
   };
 });

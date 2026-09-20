@@ -7,10 +7,8 @@ import { useLocale } from "../../../hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { SessionCapabilitiesPanel } from "./SessionCapabilitiesPanel";
 import { SessionRuntimeStatus, SessionStatusCard } from "./SessionWorkspace";
-import { contextUsage } from "./ContextCompositionBar";
-import { formatTokenCount } from "../../../lib/formatTokens";
-import { WorkspaceSection } from "./WorkspaceSection";
 import { SessionSystemPromptPanel } from "./SessionSystemPromptPanel";
+import { WorkspaceSection } from "./WorkspaceSection";
 
 const EMPTY_STEPS: AgentRunStep[] = [];
 const EMPTY_RUNS: AgentRun[] = [];
@@ -34,11 +32,6 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({
       })),
     );
   if (!sessionId) return null;
-  const usage = contextUsage(
-    sessionStats?.contextComposition,
-    sessionStats?.context,
-  );
-  const contextLabel = locale === "zh" ? "已用上下文" : "Context used";
   return (
     <div className="work-runtime-details">
       <WorkspaceSection
@@ -46,17 +39,10 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({
         storageKey={`${sessionId}:runtime`}
         icon={<SlidersHorizontal size={13} />}
         title={locale === "zh" ? "运行详情" : "Runtime details"}
+        hideTitle
         defaultOpen={false}
         actions={
           <span className="runtime-header-metrics">
-            <span
-              title={`${contextLabel}${usage.reported ? "" : locale === "zh" ? "（估算）" : " (estimated)"}${sessionStats?.context?.stale ? (locale === "zh" ? " · 最近可用记录" : " · Last available sample") : ""}`}
-            >
-              {locale === "zh" ? "上下文" : "Context"}{" "}
-              {usage.available
-                ? `${usage.reported ? "" : "≈"}${formatTokenCount(usage.total)}`
-                : "—"}
-            </span>
             <SessionRuntimeStatus
               stats={sessionStats}
               session={session}

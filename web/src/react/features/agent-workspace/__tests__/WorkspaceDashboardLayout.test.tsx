@@ -116,18 +116,4 @@ describe("custom dashboard layout", () => {
       useDashboardLayoutStore.getState().layouts.project.sizes.git,
     ).toBeUndefined();
   });
-  it("restores default order and sizes together", () => {
-    const view = render(<Panels />);
-    fireEvent.keyDown(
-      screen.getByRole("button", { name: "Move panel: Runtime" }),
-      { key: "ArrowUp" },
-    );
-    fireEvent.keyDown(
-      screen.getByRole("button", { name: "Resize panel height: Git" }),
-      { key: "ArrowLeft" },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Reset layout" }));
-    expect(order(view.container)).toEqual(["git", "processes", "runtime"]);
-    expect(useDashboardLayoutStore.getState().layouts.project).toBeUndefined();
-  });
 });
