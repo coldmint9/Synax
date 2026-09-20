@@ -133,16 +133,16 @@
   background: var(--cx-accent-bottom);
 }
 .appearance-mini--dark {
-  background: #252525;
+  background: #0f141d;
 }
 .appearance-mini--dark .appearance-mini__sidebar {
-  background: #191919;
+  background: #171b22;
 }
 .appearance-mini--dark i {
-  background: #555;
+  background: #8c8c89;
 }
 .appearance-mini--system {
-  background: linear-gradient(115deg, #fafafa 50%, #252525 50%);
+  background: linear-gradient(115deg, #fafafa 50%, #0f141d 50%);
 }
 .appearance-colors {
   display: grid;

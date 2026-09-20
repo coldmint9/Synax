@@ -1,6 +1,14 @@
 import { isTerminalSystemShortcut } from "./lib/terminal-shortcuts.js";
 import fs from "node:fs/promises";
-import { app, BrowserWindow, ipcMain, dialog, protocol, net } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  protocol,
+  net,
+  nativeTheme,
+} from "electron";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -20,19 +28,11 @@ import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 import { UiUpdates } from "./lib/ui-updates.js";
 import { DesktopUpdates } from "./lib/desktop-updates.js";
 
-import {
-  BACKGROUND_SCHEME,
-  DesktopAppearanceStore,
-  desktopBackgroundWindowOptions,
-  registerDesktopAppearance,
-} from "./lib/desktop-appearance.js";
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
-let desktopAppearance: DesktopAppearanceStore | null = null;
 let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
 let desktopUpdates: DesktopUpdates | null = null;
@@ -40,10 +40,6 @@ let uiReadyTimer: NodeJS.Timeout | null = null;
 
 // Register custom protocol scheme before app is ready
 protocol.registerSchemesAsPrivileged([
-  {
-    scheme: BACKGROUND_SCHEME,
-    privileges: { standard: true, secure: true, supportFetchAPI: true },
-  },
   {
     scheme: "app",
     privileges: {
@@ -90,7 +86,11 @@ function createWindow(): BrowserWindow {
       ? { trafficLightPosition: { x: 14, y: 18 } }
       : {}),
     show: false,
-    ...desktopBackgroundWindowOptions(),
+    // A solid backing surface avoids native material and transparent-window
+    // composition during streaming, resize, and renderer navigation.
+    transparent: false,
+    opacity: 1,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f141d" : "#f9f9f9",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -231,6 +231,10 @@ function registerIPC(): void {
       typeof state !== "object"
     )
       return;
+    // Keep the native backing color in sync with the renderer's explicit theme.
+    const backgroundColor = state.dark === true ? "#0f141d" : "#f9f9f9";
+    if (mainWindow?.getBackgroundColor().toLowerCase() !== backgroundColor)
+      mainWindow?.setBackgroundColor(backgroundColor);
     updateMenuState({
       projectId: typeof state.projectId === "string" ? state.projectId : null,
       hasSession: state.hasSession === true,
@@ -253,14 +257,6 @@ async function bootstrap(): Promise<void> {
     website: "https://github.com/coldmint9",
   });
   registerIPC();
-  if (!desktopAppearance) {
-    desktopAppearance = new DesktopAppearanceStore(app.getPath("userData"));
-    registerDesktopAppearance(
-      desktopAppearance,
-      () => mainWindow,
-      isDev ? `http://localhost:${process.env.WEB_PORT ?? "5173"}` : null,
-    );
-  }
   if (
     !uiUpdates &&
     app.isPackaged &&

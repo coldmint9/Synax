@@ -25,6 +25,17 @@ delete env.ELECTRON_RUN_AS_NODE;
 delete env.ELECTRON_SKIP_SIDECAR;
 delete env.NODE_OPTIONS;
 await mkdir(output, { recursive: true });
+// Old customization must not reactivate transparent windows after upgrading.
+await mkdir(path.join(temp, "profile", "appearance"), { recursive: true });
+await writeFile(
+  path.join(temp, "profile", "appearance", "preferences.json"),
+  JSON.stringify({
+    opacity: 0.4,
+    blur: 40,
+    frost: 100,
+    layeredBackground: true,
+  }),
+);
 let desktop: ElectronApplication | undefined;
 let logs = "";
 let port = 0;
@@ -161,6 +172,129 @@ try {
     process.platform === "darwin",
     "macOS titlebar insets must not leak into Windows",
   );
+  const assertStaticDesktop = async () => {
+    const renderer = await page.evaluate(() => {
+      const effects = [...document.querySelectorAll("*")].flatMap((element) =>
+        [null, "::before", "::after"].flatMap((pseudo) => {
+          const style = getComputedStyle(element, pseudo);
+          return style.backdropFilter !== "none" ||
+            style.animationName !== "none"
+            ? [
+                `${element.className}${pseudo ?? ""}: ${style.backdropFilter}, ${style.animationName}`,
+              ]
+            : [];
+        }),
+      );
+      return {
+        effects,
+        hasAppearanceAPI: "appearance" in (window as any).electronAPI,
+        backgroundLayers: document.querySelectorAll(
+          ".desktop-background, #liquid_glass_filter",
+        ).length,
+        background: getComputedStyle(document.body).backgroundColor,
+      };
+    });
+    assert.deepEqual(
+      renderer.effects,
+      [],
+      "desktop must not animate or blur the backdrop",
+    );
+    assert.equal(renderer.hasAppearanceAPI, false);
+    assert.equal(renderer.backgroundLayers, 0);
+    assert.match(renderer.background, /^rgb\(/);
+    const nativeSurface = await desktop!.evaluate(
+      async ({ BrowserWindow, protocol }) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        return {
+          opacity: win.getOpacity(),
+          color: win.getBackgroundColor(),
+          backgroundProtocol:
+            await protocol.isProtocolHandled("synax-background"),
+        };
+      },
+    );
+    assert.equal(nativeSurface.opacity, 1);
+    assert.match(nativeSurface.color, /^#(?:ff)?[\da-f]{6}$/i);
+    assert.equal(nativeSurface.backgroundProtocol, false);
+  };
+  await assertStaticDesktop();
+  const island = page.locator(".workbench-header > .wh-pill").first();
+  const islandBounds = await island.boundingBox();
+  assert.ok(islandBounds);
+  await island.evaluate((el) => {
+    (window as any).smokeIsland = el;
+  });
+  const assertIslandPosition = async () => {
+    const bounds = await island.boundingBox();
+    assert.ok(bounds);
+    assert.ok(
+      Math.abs(bounds.x - islandBounds.x) < 1 &&
+        Math.abs(bounds.y - islandBounds.y) < 1,
+      "the island must stay at the same position across routes and themes",
+    );
+    assert.equal(
+      await island.evaluate((el) => el === (window as any).smokeIsland),
+      true,
+      "navigation must retain the same island DOM node",
+    );
+  };
+  for (let i = 0; i < 2; i++) {
+    const wasDark = await page
+      .locator("html")
+      .evaluate((el) => el.classList.contains("dark"));
+    await page
+      .getByRole("button", {
+        name: wasDark ? "切换到浅色模式" : "切换到深色模式",
+        exact: true,
+      })
+      .click();
+    await page.waitForFunction(
+      (previous) =>
+        document.documentElement.classList.contains("dark") !== previous,
+      wasDark,
+    );
+    assert.equal(
+      await page.getByRole("menu").count(),
+      0,
+      "theme toggles directly without a popup",
+    );
+    await assertIslandPosition();
+    await assertStaticDesktop();
+    if (!wasDark) {
+      assert.equal(
+        await page
+          .locator("body")
+          .evaluate((el) => getComputedStyle(el).backgroundColor),
+        "rgb(15, 20, 29)",
+      );
+      await page.screenshot({
+        path: path.join(output, "desktop-dark-work.png"),
+      });
+    }
+  }
+  await desktop.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].webContents.send(
+      "menu:navigate",
+      "/settings",
+    ),
+  );
+  await page.locator(".settings-scroll-content").waitFor();
+  await assertIslandPosition();
+  assert.equal(
+    await page.getByText(/窗口与背景|Window & Background/).count(),
+    0,
+  );
+  await assertStaticDesktop();
+  await desktop.evaluate(
+    ({ BrowserWindow }, id) =>
+      BrowserWindow.getAllWindows()[0].webContents.send(
+        "menu:navigate",
+        `/projects/${id}/sessions`,
+      ),
+    created.id,
+  );
+  await page.locator(".work-page").waitFor();
+  await assertIslandPosition();
   await page.screenshot({ path: path.join(output, "desktop-smoke.png") });
   assert.deepEqual(errors, [], "renderer errors");
 

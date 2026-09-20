@@ -3,16 +3,6 @@ const { contextBridge, ipcRenderer } =
 
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
-  appearance: {
-    get: () => ipcRenderer.invoke("appearance:get"),
-    update: (
-      patch: import("./appearance-contract.js").DesktopAppearancePatch,
-    ) => ipcRenderer.invoke("appearance:update", patch),
-    // Compatibility with an older downloaded UI. Never dim the native window.
-    previewOpacity: (_opacity: number) => {},
-    chooseBackground: () => ipcRenderer.invoke("appearance:choose-background"),
-    removeBackground: () => ipcRenderer.invoke("appearance:remove-background"),
-  },
   setTerminalFocus: (focused: boolean) =>
     ipcRenderer.send("terminal:focus", focused),
   showOpenDialog: (options: Electron.OpenDialogOptions) =>

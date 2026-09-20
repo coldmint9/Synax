@@ -410,11 +410,25 @@ try {
     .locator('.ws-row[title="main.ts"]')
     .click();
   await page.locator(".workspace-viewer-header").waitFor();
+  await page.waitForFunction(() => {
+    const pill = document.querySelector(
+      ".workspace-viewer-header .workbench-header .wh-pill",
+    );
+    return (
+      pill &&
+      pill
+        .getAnimations()
+        .every((animation) => animation.playState !== "running")
+    );
+  });
   const island = await page.locator(".workbench-header").boundingBox();
   const viewer = await page.locator(".workspace-viewer-header").boundingBox();
   assert(
-    island && viewer && viewer.y >= island.y + island.height,
-    "viewer toolbar must be below island",
+    island &&
+      viewer &&
+      island.y >= viewer.y &&
+      island.y + island.height <= viewer.y + viewer.height,
+    "island must dock inside the viewer header",
   );
   await page
     .locator(".code-viewer")
@@ -432,7 +446,7 @@ try {
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
   await page.locator(".workspace-viewer-header").waitFor({ state: "detached" });
   check(
-    "viewer avoids island; Work and explicit Back both return to conversation",
+    "viewer contains the compact island; Work and Back restore the floating island",
   );
 
   await menu("theme:toggle");
@@ -449,23 +463,49 @@ try {
         rail.getBoundingClientRect().right + 1
     );
   });
-  const frost = await page
-    .locator(".agent-session-composer-shell")
-    .evaluate((el) => ({
-      background: getComputedStyle(el).backgroundColor,
-      blur: getComputedStyle(el).backdropFilter,
-    }));
-  assert.match(frost.background, /0\.9[46]/);
-  assert.match(frost.blur, /blur/);
-  const headerFrost = await page
-    .locator(".workbench-header .wh-pill")
-    .first()
-    .evaluate((el) => getComputedStyle(el, "::after").backdropFilter);
-  assert.match(headerFrost, /blur/);
+  const assertOpaqueDesktop = async () => {
+    const surfaces = await page!
+      .locator(
+        ".agent-session-composer-shell, .workbench-header .wh-pill, .work-conversation",
+      )
+      .evaluateAll((elements) =>
+        elements.map((el) => ({
+          background: getComputedStyle(el).backgroundColor,
+          blur: getComputedStyle(el).backdropFilter,
+          animation: getComputedStyle(el).animationName,
+        })),
+      );
+    assert.ok(surfaces.length >= 3);
+    for (const surface of surfaces) {
+      assert.match(
+        surface.background,
+        /^rgb\(/,
+        "desktop surfaces must be opaque",
+      );
+      assert.equal(surface.blur, "none");
+      assert.equal(surface.animation, "none");
+    }
+    assert.equal(
+      await page!.evaluate(() => "appearance" in (window as any).electronAPI),
+      false,
+    );
+    assert.equal(await page!.locator(".desktop-background").count(), 0);
+    const native = await desktop!.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      return {
+        opacity: window.getOpacity(),
+        color: window.getBackgroundColor(),
+      };
+    });
+    assert.equal(native.opacity, 1);
+    assert.match(native.color, /^#(?:ff)?[\da-f]{6}$/i);
+  };
+  await assertOpaqueDesktop();
   await page.screenshot({
     path: path.join(output, dark ? "02-dark.png" : "02-light.png"),
   });
   await menu("theme:toggle");
+  await assertOpaqueDesktop();
   await page.screenshot({
     path: path.join(output, dark ? "03-light.png" : "03-dark.png"),
   });
@@ -478,7 +518,9 @@ try {
   );
   await menu("toggle:sidebar");
   await menu("workspace:refresh");
-  check("native menu actions and dense frosted surfaces in both themes");
+  check(
+    "native menu actions and opaque, static desktop surfaces in both themes",
+  );
 
   // Outline-only Wiki must not expose workflow navigation; generated content must.
   db.prepare(

@@ -79,7 +79,7 @@ export function ThinkingTrace({
   const heading = (
     <>
       <span className="bui-thinking-symbol">{icon ?? <ThinkingGlyph />}</span>
-      <span role="status" className="bui-thinking-label" key={String(working)}>
+      <span role="status" className="bui-thinking-label">
         {label}
       </span>
       {meta && <span className="bui-thinking-meta">{meta}</span>}

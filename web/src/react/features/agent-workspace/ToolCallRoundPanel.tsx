@@ -1,4 +1,4 @@
-import { memo, useState, useEffect } from "react";
+import { memo } from "react";
 import { Wrench } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 import { ThinkingTrace } from "./ThinkingTrace";
@@ -52,29 +52,8 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
     })
     .filter((item) => item.text)
     .slice(-4);
-  const latestId = previews[previews.length - 1]?.id;
-  const [cursor, setCursor] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    setCursor(latestId);
-  }, [latestId]);
-  useEffect(() => {
-    if (!isStreaming || previews.length < 2) return;
-    const ids = previews.map((item) => item.id);
-    const timer = window.setInterval(
-      () =>
-        setCursor(
-          (current) => ids[(ids.indexOf(current ?? "") + 1) % ids.length],
-        ),
-      2800,
-    );
-    return () => window.clearInterval(timer);
-  }, [isStreaming, latestId, previews.length]);
-  const latest = previews[previews.length - 1];
-  // A live round cycles through the records it produced; a settled one only
-  // reports the newest record, so a card left on screen never reads as stale.
-  const preview =
-    (isStreaming ? previews.find((item) => item.id === cursor) : undefined) ??
-    latest;
+  // Only new runtime activity changes the preview; an idle round never cycles.
+  const preview = previews[previews.length - 1];
   if (toolBlocks.length === 0) return null;
   const batches = toolBlocksToBatches(toolBlocks);
   const calls = batches.flatMap((batch) => batch.calls);

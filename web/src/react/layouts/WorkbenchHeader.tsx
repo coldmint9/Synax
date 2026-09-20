@@ -1,5 +1,5 @@
 import { Terminal as TerminalIcon } from "lucide-react";
-import { ThemeMenu } from "../components/ThemeMenu";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { useTerminalStore } from "../features/terminal/terminalStore";
 import {
   useState,
@@ -524,37 +524,10 @@ function ToolbarPill({
   visible: boolean;
   children: ReactNode;
 }) {
-  const [mounted, setMounted] = useState(false);
-  const [phase, setPhase] = useState<"enter" | "exit" | "">("");
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (visible) {
-      setMounted(true);
-      requestAnimationFrame(() => setPhase("enter"));
-    } else if (mounted) {
-      setPhase("exit");
-      const el = ref.current;
-      const onEnd = () => {
-        setMounted(false);
-        setPhase("");
-      };
-      if (el) {
-        el.addEventListener("transitionend", onEnd, { once: true });
-        return () => el.removeEventListener("transitionend", onEnd);
-      }
-      setTimeout(onEnd, 400);
-    }
-  }, [visible]);
-
-  if (!mounted) return null;
-
-  const slotClass = `wh-pill-slot ${phase === "enter" ? "open" : phase === "exit" ? "closing" : ""}`;
-  const pillClass = `wh-pill ${phase === "enter" ? "wh-pill-enter" : phase === "exit" ? "wh-pill-exit" : ""}`;
-
+  if (!visible) return null;
   return (
-    <div ref={ref} className={slotClass}>
-      <div className={pillClass}>{children}</div>
+    <div className="wh-pill-slot open">
+      <div className="wh-pill">{children}</div>
     </div>
   );
 }
@@ -617,17 +590,18 @@ export function WorkbenchHeader({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [chromeMode, selectedSessionId]);
 
-  const headerClass = `workbench-header ${chromeMode === "global" ? "workbench-header--global" : "workbench-header--agent-dock"}`;
+  const placement =
+    chromeMode === "workspaceDock" || chromeMode === "workspaceFocus"
+      ? "viewer"
+      : activePanel === "sessions"
+        ? "conversation"
+        : "global";
 
   return (
-    <WorkbenchIsland
-      enabled={
-        chromeMode === "workspaceDock" || chromeMode === "workspaceFocus"
-      }
-    >
-      {(docked) => (
+    <WorkbenchIsland placement={placement}>
+      {(compact) => (
         <div
-          className={`${headerClass}${docked ? " workbench-header--docked" : ""}`}
+          className={`workbench-header${compact ? " workbench-header--docked" : ""}`}
         >
           <>
             <div className="wh-pill">
@@ -641,7 +615,7 @@ export function WorkbenchHeader({
                   onCreateProject={onCreateProject}
                   onRemoveRequest={handleRemoveClick}
                   onOpen={() => setProjectSwitcherUsed(true)}
-                  iconOnly={docked}
+                  iconOnly={compact}
                 />
 
                 <ProjectImportHint
@@ -657,7 +631,7 @@ export function WorkbenchHeader({
                 activePanel={activePanel}
                 hasProject={hasProject}
                 onPanelToggle={onPanelToggle}
-                iconOnly={docked}
+                iconOnly={compact}
               />
 
               <div className="wh-divider" />
@@ -689,7 +663,7 @@ export function WorkbenchHeader({
                 >
                   <Settings2 size={15} />
                 </button>
-                <ThemeMenu />
+                <ThemeToggle />
               </div>
             </div>
 

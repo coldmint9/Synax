@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "@heroui/styles";
 @import "./react/components/modalViewport.css";
+@import "./react/desktopPerformance.css";
 @import "./react/components/beautiful-ui/activities.css";
 @import "./react/components/beautiful-ui/approvals.css";
 @variant dark (&:where(.dark, .dark *));
@@ -637,70 +638,70 @@
   --icon-border-alpha: 0.18;
 }
 
-/* ── Dark theme (Codex dark neutrals, same accent family) ── */
+/* ── Dark theme: cool ink surfaces and warm gray text from the reference. ── */
 .dark {
   color-scheme: dark;
 
   /* Raw HSL aliases */
-  --background-hsl: var(--cx-gray-900-hsl);
-  --foreground-hsl: var(--cx-gray-150-hsl);
-  --border-hsl: 0 0% 17%;
+  --background-hsl: 218.57 31.82% 8.63%;
+  --foreground-hsl: 46.67 6.57% 73.14%;
+  --border-hsl: 218.18 11.58% 18.63%;
   --accent-hsl: var(--cx-accent-bottom-hsl);
   --accent-foreground-hsl: var(--cx-accent-ink-hsl);
-  --success-hsl: 144 100% 52%;
+  --success-hsl: 104.04 43.43% 50.78%;
   --warning-hsl: 27 100% 64%;
-  --muted-hsl: var(--cx-gray-750-hsl);
+  --muted-hsl: 217.5 8.89% 17.65%;
 
   /* Full colors */
-  --background: var(--cx-gray-900);
-  --foreground: var(--cx-gray-150);
-  --border: #2b2b2b;
+  --background: #0f141d;
+  --foreground: #bfbdb6;
+  --border: #2a2e35;
   --accent: var(--cx-accent-bottom);
   --accent-foreground: var(--cx-accent-ink);
-  --muted: var(--cx-gray-400);
+  --muted: #8c8c89;
   --success: hsl(var(--success-hsl));
   --success-foreground: #0d0d0d;
   --warning: hsl(var(--warning-hsl));
   --warning-foreground: #0d0d0d;
 
   /* HeroUI-specific tokens */
-  --surface: var(--cx-gray-800);
-  --surface-foreground: var(--cx-gray-150);
-  --surface-secondary: var(--cx-gray-750);
-  --overlay: var(--cx-gray-800);
-  --overlay-foreground: var(--cx-gray-150);
-  --default: var(--cx-gray-750);
-  --default-hover: var(--cx-gray-700);
-  --default-foreground: var(--cx-gray-400);
-  --danger: hsl(1 82% 62%);
+  --surface: #1b2027;
+  --surface-foreground: var(--foreground);
+  --surface-secondary: #171b22;
+  --overlay: var(--surface);
+  --overlay-foreground: var(--foreground);
+  --default: #22272f;
+  --default-hover: #292c31;
+  --default-foreground: var(--foreground);
+  --danger: #ef6375;
   --danger-foreground: #0d0d0d;
   --focus: var(--cx-accent-strong);
-  --field-background: var(--cx-gray-800);
-  --field-foreground: var(--cx-gray-150);
-  --field-placeholder: var(--cx-gray-400);
-  --field-border: #2b2b2b;
-  --field-border-hover: var(--cx-gray-650);
+  --field-background: #13181f;
+  --field-foreground: var(--foreground);
+  --field-placeholder: var(--muted);
+  --field-border: var(--border);
+  --field-border-hover: #3b414a;
   --field-border-focus: var(--cx-accent-strong);
-  --field-hover: var(--cx-gray-750);
-  --field-focus: var(--cx-gray-800);
-  --separator: #232323;
-  --segment: var(--cx-gray-750);
-  --segment-foreground: var(--cx-gray-150);
-  --scrollbar: var(--cx-gray-650);
+  --field-hover: #1b2027;
+  --field-focus: #13181f;
+  --separator: var(--border);
+  --segment: #292c31;
+  --segment-foreground: var(--foreground);
+  --scrollbar: #363b43;
 
   /* Project tokens */
-  --card: var(--cx-gray-800-hsl);
-  --card-foreground: var(--cx-gray-150-hsl);
-  --popover: var(--cx-gray-800-hsl);
-  --popover-foreground: var(--cx-gray-150-hsl);
+  --card: 215 18.18% 12.94%;
+  --card-foreground: var(--foreground-hsl);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground-hsl);
   --primary: var(--cx-accent-bottom-hsl);
   --primary-foreground: var(--cx-accent-ink-hsl);
-  --secondary: var(--cx-gray-750-hsl);
-  --secondary-foreground: var(--cx-gray-150-hsl);
-  --muted-foreground: var(--cx-gray-400-hsl);
-  --destructive: 1 82% 62%;
+  --secondary: 217.5 8.89% 17.65%;
+  --secondary-foreground: var(--foreground-hsl);
+  --muted-foreground: 60 1.29% 54.31%;
+  --destructive: 352.29 81.4% 66.27%;
   --destructive-foreground: 0 0% 5.1%;
-  --input: 0 0% 17%;
+  --input: var(--border-hsl);
   --ring: var(--cx-accent-strong-hsl);
   --agent: 144 100% 52%;
   --human: 27 100% 64%;
@@ -723,14 +724,14 @@
   --import-step-done: var(--cx-accent-bottom-hsl);
   --import-step-active: var(--cx-accent-bottom-hsl);
   --import-step-pending: 0 0% 48%;
-  --wiki-surface: var(--cx-gray-900-hsl);
-  --wiki-surface-strong: var(--cx-gray-950-hsl);
-  --wiki-panel: var(--cx-gray-900-hsl);
-  --wiki-panel-foreground: var(--cx-gray-150-hsl);
-  --wiki-panel-muted: var(--cx-gray-800-hsl);
+  --wiki-surface: var(--background-hsl);
+  --wiki-surface-strong: 215 24% 9.8%;
+  --wiki-panel: 218.18 19.3% 11.18%;
+  --wiki-panel-foreground: var(--foreground-hsl);
+  --wiki-panel-muted: var(--card);
   --wiki-accent: var(--cx-accent-soft-hsl);
-  --wiki-accent-foreground: var(--cx-gray-150-hsl);
-  --wiki-warm: var(--cx-gray-750-hsl);
+  --wiki-accent-foreground: var(--foreground-hsl);
+  --wiki-warm: var(--secondary);
   --wiki-shadow: 0 0% 0%;
   --icon-bg-alpha: 0.14;
   --icon-border-alpha: 0.24;
@@ -897,7 +898,7 @@
 
   .electron-macos .workbench-header {
     position: fixed;
-    top: 4px;
+    top: 12px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 9998;
@@ -1038,38 +1039,24 @@
     position: relative;
   }
 
-  /* ── Workbench Header ── */
+  /* The island is anchored to the viewport on every route. Auxiliary Wiki
+     controls sit below it, so they never change the primary pill's position. */
   .workbench-header {
-    position: absolute;
+    position: fixed;
     top: 12px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 30;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    flex-wrap: wrap;
     gap: 8px;
     white-space: nowrap;
-    /* An absolutely positioned box shrink-to-fits against `containing block
-       width - left offset`, so the header used to be capped at half the
-       window: the panel toolbar island (Worker/Skills/MCP, Wiki tools) got
-       squeezed down to a few pixels whenever the window was narrow. Size to
-       the content instead, clamp to the window, and let the island itself
-       wrap onto a second row instead of being clipped. */
     width: max-content;
     max-width: calc(100% - 16px);
   }
-
-  .workbench-header--agent-dock {
-    left: calc(50% + var(--agent-header-shift, 0px));
-    max-width: calc(
-      100% - var(--agent-header-left-inset, 0px) -
-        var(--agent-header-right-inset, 0px) - 16px
-    );
-  }
-
-  .workbench-header--agent-dock > .wh-pill {
+  .workbench-header > .wh-pill {
     min-width: 0;
     max-width: 100%;
   }
@@ -1083,62 +1070,9 @@
     padding: 0 10px;
     height: 36px;
     border-radius: 999px;
-    /* Liquid glass ported from the "liquid glass" reference: the pill itself
-       must not carry a backdrop-filter — it would become a backdrop root and
-       the glass layers below would only see the pill's own paint instead of
-       the page behind it. ::before refracts the backdrop through an SVG
-       displacement filter; ::after is the frosted cover with the sharp + soft
-       inset highlights above it. Chromium drops an element's backdrop-filter
-       when the element also has a mask, so the reference's masked edge ring
-       is replaced by a full-surface refraction. */
-    background: transparent;
+    background: hsl(var(--card));
+    border: 1px solid var(--border);
     box-shadow: 0 1px 2px hsl(0 0% 0% / 0.06);
-  }
-
-  /* Refraction: backdrop displaced by #liquid_glass_filter. Declared after
-     the plain-blur fallback so engines without SVG backdrop filters keep a
-     soft frosted edge. */
-  .wh-pill::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -2;
-    border-radius: inherit;
-    backdrop-filter: blur(8px) saturate(1.4);
-    backdrop-filter: url(#liquid_glass_filter);
-  }
-
-  /* Cover: light frost + theme tint + inset highlights, matching the
-     reference's cover/sharp/reflect trio. */
-  .wh-pill::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    border-radius: inherit;
-    background: hsl(var(--card) / 0.5);
-    -webkit-backdrop-filter: blur(2px) saturate(1.3);
-    backdrop-filter: blur(2px) saturate(1.3);
-    box-shadow:
-      inset 1px 1px 0px 0px rgba(255, 255, 255, 0.5),
-      inset -1px -1px 0px 0px rgba(255, 255, 255, 0.6),
-      inset 2px 2px 6px 2px rgba(255, 255, 255, 0.2),
-      inset -2px -2px 4px -1px rgba(255, 255, 255, 0.2);
-  }
-  .dark .wh-pill::after {
-    background: hsl(var(--card) / 0.45);
-  }
-  .workbench-header .wh-pill::before {
-    display: none;
-  }
-  /* Dense frost; no refractive SVG layer bleeding text through the cover. */
-  .workbench-header .wh-pill::after {
-    background: hsl(var(--card) / 0.96);
-    -webkit-backdrop-filter: blur(24px) saturate(1.25);
-    backdrop-filter: blur(24px) saturate(1.25);
-  }
-  .dark .workbench-header .wh-pill::after {
-    background: hsl(var(--card) / 0.94);
   }
   .dark .wh-pill {
     box-shadow: 0 1px 2px hsl(0 0% 0% / 0.28);
@@ -1454,6 +1388,8 @@
     padding: 0 !important;
   }
   .wh-tabs .tabs__tab {
+    /* Theme and selection change color only, never the island's geometry. */
+    font-weight: 600 !important;
     font-size: 12px !important;
     height: 26px !important;
     padding: 0 10px !important;
@@ -4827,8 +4763,8 @@
 }
 
 .dark {
-  --synax-code-foreground: #e6edf3;
-  --synax-code-background: #181818;
+  --synax-code-foreground: #bfbdb6;
+  --synax-code-background: #13181f;
   --synax-code-line-number: #6e7681;
   --synax-code-gutter-border: rgb(255 255 255 / 0.07);
 
@@ -5504,32 +5440,6 @@
   .workbench-shell[data-chrome-mode="workspaceFocus"]
   .workbench-island {
   padding-top: 0;
-}
-
-.workbench-header:is(
-  .workbench-header--workspace-dock,
-  .workbench-header--workspace-focus
-) {
-  position: absolute;
-  top: 8px;
-  left: calc(var(--agent-header-left-inset, 0px) + 8px);
-  right: calc(var(--agent-header-right-inset, 0px) + 8px);
-  width: auto;
-  max-width: none;
-  transform: none;
-  padding: 0;
-  justify-content: stretch;
-  flex-wrap: nowrap;
-  gap: 0;
-}
-
-.electron-macos
-  .workbench-header:is(
-    .workbench-header--workspace-dock,
-    .workbench-header--workspace-focus
-  ) {
-  position: fixed;
-  top: 2px;
 }
 
 .wh-pill--workspace-chrome {
@@ -6394,24 +6304,24 @@
 }
 
 @media (max-width: 900px) {
-  .workbench-header--agent-dock .wh-pill {
+  .workbench-header .wh-pill {
     gap: 3px;
     padding-inline: 7px;
   }
 
-  .workbench-header--agent-dock .wh-project-trigger > span {
+  .workbench-header .wh-project-trigger > span {
     max-width: 76px;
   }
 
-  .workbench-header--agent-dock .wh-tabs .tabs__tab {
+  .workbench-header .wh-tabs .tabs__tab {
     padding-inline: 7px !important;
   }
 
-  .workbench-header--agent-dock .wh-actions .wh-btn {
+  .workbench-header .wh-actions .wh-btn {
     width: 24px;
   }
 
-  .workbench-header--agent-dock
+  .workbench-header
     .agent-toolbar-mcp-trigger
     > span:not(.agent-toolbar-mcp-count) {
     display: none;
@@ -6573,8 +6483,8 @@
   min-height: 26px;
 }
 .electron-macos .work-page .session-list-card--sessions {
-  border-top-color: var(--work-glass-edge);
-  background: var(--work-glass);
+  border-top-color: var(--work-panel-edge);
+  background: var(--work-surface);
 }
 .project-switcher-anchor {
   position: relative;
@@ -6636,7 +6546,4 @@
     background: hsl(var(--card));
     backdrop-filter: none;
   }
-}
-.electron-macos .workbench-header--agent-dock {
-  left: calc(50% + var(--agent-header-shift, 0px));
 }

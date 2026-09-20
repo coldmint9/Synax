@@ -45,7 +45,7 @@ describe("appearance palette", () => {
         expect(
           contrastRatio(
             palette.strong,
-            theme === "dark" ? "#181818" : "#f9f9f9",
+            theme === "dark" ? "#0f141d" : "#f9f9f9",
           ),
           color,
         ).toBeGreaterThanOrEqual(4.5);

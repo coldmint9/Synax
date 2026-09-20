@@ -35,7 +35,7 @@ export function ThinkingBanner({ phrases, isStreaming }: Props) {
           ? t("sessionActivityThinking")
           : t("sessionActivityThought")}
       </span>
-      <span className="bui-thinking-banner-chunk" key={index}>
+      <span className="bui-thinking-banner-chunk">
         <span role="status" className="bui-thinking-banner-text" title={phrase}>
           {phrase}
         </span>

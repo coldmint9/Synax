@@ -1,14 +1,8 @@
 import "../features/agent-workspace/sessionPerformance.css";
 import "../features/agent-workspace/workPage.css";
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
+import { WorkbenchIslandSlot } from "../layouts/WorkbenchIsland";
 import { Button, Modal } from "@heroui/react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAgentSessionStore } from "../features/agent-workspace/state/agentSessionStore";
@@ -239,36 +233,6 @@ export default memo(function SessionsPage() {
       ? rightPanel.width
       : 0;
 
-  // Keep the island centered in the space between the two side panels instead
-  // of centering it against the viewport and letting it overlap the right rail.
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-    const leftInset =
-      workspaceFullscreen || leftPanel.collapsed ? 0 : leftPanel.width + 8;
-    const rightInset =
-      showTranscript && wideWorkspace && !workspaceFullscreen
-        ? rightPanel.width + 18
-        : 0;
-    root.style.setProperty(
-      "--agent-header-shift",
-      `${(leftInset - rightInset) / 2}px`,
-    );
-    root.style.setProperty("--agent-header-left-inset", `${leftInset}px`);
-    root.style.setProperty("--agent-header-right-inset", `${rightInset}px`);
-    return () => {
-      root.style.removeProperty("--agent-header-shift");
-      root.style.removeProperty("--agent-header-left-inset");
-      root.style.removeProperty("--agent-header-right-inset");
-    };
-  }, [
-    leftPanel.collapsed,
-    leftPanel.width,
-    rightPanel.width,
-    showTranscript,
-    wideWorkspace,
-    workspaceFullscreen,
-  ]);
-
   return (
     <div className="agent-page-shell work-page relative flex h-full min-h-0">
       <>
@@ -309,6 +273,7 @@ export default memo(function SessionsPage() {
         {showTranscript ? (
           <>
             <div className="work-conversation flex min-w-0 flex-1 flex-col overflow-hidden">
+              <WorkbenchIslandSlot placement="conversation" />
               {agentSessionId && (
                 <WorkQuickActions
                   showDetailsButton={!wideWorkspace || workspaceFullscreen}
@@ -344,10 +309,12 @@ export default memo(function SessionsPage() {
           </>
         ) : isNewDraft ? (
           <div className="work-conversation flex min-w-0 flex-1 flex-col overflow-hidden">
+            <WorkbenchIslandSlot placement="conversation" />
             <SessionComposer projectId={projectId} layout="centered" />
           </div>
         ) : (
           <div className="work-conversation flex min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+            <WorkbenchIslandSlot placement="conversation" />
             <p className="text-sm text-muted-foreground">
               {canCreateSession
                 ? t("sessionSelectOrCreate")

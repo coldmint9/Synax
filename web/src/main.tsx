@@ -3,7 +3,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, useNavigate } from "react-router-dom";
 import { RouterProvider } from "@heroui/react";
-import { useDesktopAppearance } from "./react/state/desktopAppearanceStore";
 import App from "./react/App";
 import "./index.css";
 import {
@@ -26,7 +25,7 @@ function HeroUIRouter({ children }: { children: React.ReactNode }) {
 }
 
 async function bootstrap() {
-  await Promise.all([initApiOrigin(), useDesktopAppearance.getState().load()]);
+  await initApiOrigin();
   startProjectRecovery();
   startApiConnectivityMonitor();
   ReactDOM.createRoot(document.getElementById("app")!).render(

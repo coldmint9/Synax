@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { ScrollShadow, Spinner, Typography } from "@heroui/react";
 import { useConfig } from "./useConfig";
 import { useLocale } from "../../../hooks/useLocale";
-import { DesktopAppearanceSection } from "./components/DesktopAppearanceSection";
 import { AppearanceSection } from "./components/AppearanceSection";
 import { LayoutSection } from "./components/LayoutSection";
 import { TerminalSettings } from "./components/TerminalSettings";
@@ -46,7 +45,6 @@ export default function GlobalSettingsPage() {
 
           <div className="space-y-8">
             <AppearanceSection />
-            <DesktopAppearanceSection />
             <LayoutSection />
             <TerminalSettings
               configuredPath={globalConfig.terminalShellPath}

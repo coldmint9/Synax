@@ -1,20 +1,21 @@
-/* One glass material and inset for the list, conversation and detail cards. */
+/* Opaque surfaces avoid re-sampling the conversation behind each panel. */
 :is(.workbench-shell, .work-page, .work-details-dialog) {
   --work-panel-inset: 6px;
   --work-panel-radius: 12px;
   --work-line: hsl(var(--border-hsl) / 0.38);
   --work-muted: hsl(var(--muted-foreground));
-  --work-glass: hsl(var(--card) / 0.48);
-  --work-glass-edge: hsl(0 0% 100% / 0.48);
+  --work-surface: hsl(var(--card));
+  --work-panel-edge: hsl(0 0% 100% / 0.48);
   --work-shadow: 0 1px 0 hsl(0 0% 100% / 0.4) inset;
 }
 :is(.work-page, .work-details-dialog) {
   font-size: 11px;
 }
 .dark :is(.workbench-shell, .work-page, .work-details-dialog) {
-  --work-glass: hsl(210 4% 13% / 0.64);
-  --work-glass-edge: hsl(0 0% 100% / 0.075);
-  --work-shadow: 0 1px 0 hsl(0 0% 100% / 0.045) inset;
+  --work-surface: hsl(var(--card));
+  --work-panel-edge: var(--border);
+  --work-line: var(--border);
+  --work-shadow: none;
 }
 .work-page {
   --work-transcript-top-inset: 56px;
@@ -29,18 +30,16 @@
   --work-transcript-top-inset: calc(var(--desktop-titlebar-height, 40px) + 8px);
 }
 .dark .work-page {
-  --work-transcript-surface: #0f1011;
+  --work-transcript-surface: var(--background);
   background: var(--work-transcript-surface);
 }
 .work-conversation {
   position: relative;
   margin: var(--work-panel-inset);
-  border: 1px solid var(--work-glass-edge);
+  border: 1px solid var(--work-panel-edge);
   border-radius: var(--work-panel-radius);
-  background: var(--work-glass);
+  background: var(--work-surface);
   box-shadow: var(--work-shadow);
-  -webkit-backdrop-filter: blur(20px) saturate(1.35);
-  backdrop-filter: blur(20px) saturate(1.35);
 }
 /* Keep the scrollport full-height. These insets belong to its content so
    messages can pass behind the island without hiding the first/last entry. */
@@ -57,45 +56,6 @@
 .work-page .session-transcript-body {
   padding-top: var(--work-transcript-top-inset);
   padding-bottom: var(--work-transcript-bottom-inset);
-}
-/* Mask the blur as well as the tint, avoiding a hard frosted-glass seam.
-   These overlays never intercept selection, wheel events or navigation. */
-.work-page .session-transcript-viewport::before,
-.work-page .session-transcript-viewport::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  z-index: 2;
-  pointer-events: none;
-  background: color-mix(
-    in srgb,
-    var(--work-transcript-surface) 60%,
-    transparent
-  );
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-}
-.work-page .session-transcript-viewport::before {
-  top: 0;
-  height: var(--work-transcript-top-inset);
-  -webkit-mask-image: linear-gradient(to bottom, #000, #0009 40%, transparent);
-  mask-image: linear-gradient(to bottom, #000, #0009 40%, transparent);
-}
-.work-page .session-transcript-viewport::after {
-  bottom: 0;
-  height: var(--work-transcript-bottom-inset);
-  -webkit-mask-image: linear-gradient(
-    to top,
-    #000,
-    #000 calc(100% - 32px),
-    transparent
-  );
-  mask-image: linear-gradient(
-    to top,
-    #000,
-    #000 calc(100% - 32px),
-    transparent
-  );
 }
 .work-quick-actions.wh-pill {
   position: absolute;
@@ -115,23 +75,15 @@
   padding: 0;
   border-radius: 50%;
 }
-.workbench-shell:has(.work-details-trigger) .workbench-header--agent-dock {
-  max-width: calc(
-    100% - var(--agent-header-left-inset, 0px) -
-      var(--agent-header-right-inset, 0px) - 88px
-  );
-}
 .work-page .session-list-panel {
   padding: var(--work-panel-inset);
 }
 .work-page .session-list-card--sessions {
   flex: 1 1 auto;
-  background: var(--work-glass);
-  border: 1px solid var(--work-glass-edge);
+  background: var(--work-surface);
+  border: 1px solid var(--work-panel-edge);
   border-radius: var(--work-panel-radius);
   box-shadow: var(--work-shadow);
-  -webkit-backdrop-filter: blur(20px) saturate(1.35);
-  backdrop-filter: blur(20px) saturate(1.35);
 }
 .work-page .session-list-card--sessions .session-list-header {
   padding: 10px 9px 8px;
@@ -227,12 +179,11 @@
 }
 :is(.work-page, .work-details-dialog) .ws-card {
   flex: 0 0 auto;
-  border: 1px solid var(--work-glass-edge);
+  border: 1px solid var(--work-panel-edge);
   border-radius: var(--work-panel-radius);
-  background: var(--work-glass);
+  background: var(--work-surface);
   box-shadow: var(--work-shadow);
-  -webkit-backdrop-filter: blur(20px) saturate(1.35);
-  backdrop-filter: blur(20px) saturate(1.35);
+
   overflow: hidden;
 }
 :is(.work-page, .work-details-dialog) .ws-card-head {
@@ -438,7 +389,6 @@
   border-radius: 0;
   background: hsl(var(--card));
   box-shadow: none;
-  backdrop-filter: none;
 }
 :is(.work-page, .work-details-dialog) .ws-repo-project {
   font-size: 11px;
@@ -581,9 +531,8 @@
   gap: 6px;
   height: min(90dvh, 760px);
   max-height: min(90dvh, 760px);
-  border: 1px solid var(--work-glass-edge);
-  background: hsl(var(--card) / 0.88);
-  backdrop-filter: blur(28px) saturate(1.4);
+  border: 1px solid var(--work-panel-edge);
+  background: hsl(var(--card));
 }
 .work-details-dialog .modal__header {
   padding: 12px 14px 6px;
@@ -621,7 +570,7 @@
     z-index: 35;
   }
   .work-page .session-list-card--sessions {
-    background: hsl(var(--card) / 0.84);
+    background: hsl(var(--card));
   }
 }
 @media (pointer: coarse) {
@@ -640,21 +589,12 @@
     animation: none;
   }
 }
-.workbench-shell:has(.work-details-trigger)
-  .workbench-header:is(
-    .workbench-header--workspace-dock,
-    .workbench-header--workspace-focus
-  ) {
-  right: calc(var(--agent-header-right-inset, 0px) + 46px);
-}
 .work-page
   .agent-session-controls
   .agent-session-composer-shell.agent-dock-shell {
-  background: hsl(var(--card) / 0.96);
-  border-color: var(--work-glass-edge);
+  background: hsl(var(--card));
+  border-color: var(--work-panel-edge);
   box-shadow: var(--work-shadow);
-  -webkit-backdrop-filter: blur(24px) saturate(1.35);
-  backdrop-filter: blur(24px) saturate(1.35);
 }
 
 /* Each primary panel owns its scrollport. The three headers never scroll away. */
@@ -743,7 +683,7 @@
   position: relative;
   top: auto;
   flex: 0 0 auto;
-  background: hsl(var(--card) / 0.96);
+  background: hsl(var(--card));
 }
 :is(.work-page, .work-details-dialog)
   .workspace-dashboard--pinned
@@ -853,7 +793,7 @@
   background: hsl(var(--card) / 0.94);
 }
 
-/* The viewer shares the conversation card; its header receives the island. */
+/* The viewer shares the conversation card and receives the compact island. */
 .workbench-shell .workspace-viewer-header {
   display: flex;
   align-items: center;
@@ -901,52 +841,60 @@
   min-width: 0;
 }
 
+/* The conversation slot follows its actual column, including sidebar resizing.
+   6px card inset + 1px border + 8px slot inset puts the island at y=15px. */
 .workbench-island-anchor,
 .workbench-island-mount {
   display: contents;
 }
-.workbench-shell .workbench-header--agent-dock {
-  top: 12px;
+.workspace-island-slot--conversation {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: max-content;
+  max-width: calc(100% - 24px);
+}
+.work-conversation:has(> .work-quick-actions)
+  > .workspace-island-slot--conversation {
+  max-width: calc(100% - 88px);
+}
+.workspace-island-slot--viewer {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.workbench-shell .workspace-island-slot .workbench-header {
+  position: relative;
+  inset: auto;
+  transform: none;
+  width: max-content;
+  max-width: 100%;
+  z-index: 30;
 }
 .workbench-island-mount > .workbench-header > .wh-pill {
   transform-origin: top left;
 }
-.workspace-island-slot {
-  flex: 0 0 auto;
-  min-width: 0;
-}
-.workbench-shell
-  .workspace-island-slot
-  > .workbench-island-mount
-  > .workbench-header--docked {
-  position: relative;
-  inset: auto;
-  width: max-content;
-  max-width: none;
-  transform: none;
-  flex-wrap: nowrap;
-  gap: 0;
-  z-index: 30;
-}
-.workbench-header--docked > .wh-pill {
+.workbench-shell .workbench-header--docked > .wh-pill {
   height: 30px;
-  gap: 2px;
   padding: 0 4px;
+  gap: 2px;
   border-radius: 9px;
 }
 .workbench-header--docked .wh-divider {
   margin-inline: 2px;
 }
-.workbench-header--docked .wh-project-trigger,
-.workbench-header--docked .wh-tabs .tabs__tab,
-.workbench-header--docked .wh-actions .wh-btn {
+.workbench-shell .workbench-header--docked .wh-project-trigger,
+.workbench-shell .workbench-header--docked .wh-tabs .tabs__tab,
+.workbench-shell .workbench-header--docked .wh-actions .wh-btn {
+  flex: 0 0 auto;
   width: 24px;
   min-width: 24px;
   height: 24px !important;
   padding: 0 !important;
   justify-content: center;
 }
-.workbench-header--docked .wh-tabs .tabs__tab svg {
+.workbench-shell .workbench-header--docked .wh-tabs .tabs__tab svg {
   display: block;
 }
 .work-conversation:has(.workspace-viewer-header) > .work-quick-actions {
@@ -976,16 +924,6 @@
   }
 }
 
-@media (prefers-reduced-transparency: reduce) {
-  :root :is(.workbench-shell, .work-page, .work-details-dialog) {
-    --work-glass: hsl(var(--card));
-  }
-  .work-conversation,
-  .work-page .session-list-card--sessions,
-  :is(.work-page, .work-details-dialog) .ws-card {
-    backdrop-filter: none;
-  }
-}
 .ws-repo-head {
   flex-wrap: nowrap;
 }
@@ -1054,4 +992,23 @@
   -webkit-line-clamp: 2;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+/* Separate conversation, sidebar and elevated controls by color, without blur. */
+.dark .work-page .work-conversation {
+  background: var(--background);
+  border-color: transparent;
+}
+.dark .work-page .session-list-card--sessions {
+  --work-surface: var(--surface-secondary);
+  border-color: transparent;
+}
+.dark .work-page .session-list-item:hover,
+.dark .work-page .session-list-item--active {
+  background: hsl(var(--secondary));
+}
+.dark .session-user-message {
+  background: #181c24;
+  border-color: transparent;
+  box-shadow: none;
 }

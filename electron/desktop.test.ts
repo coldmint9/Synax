@@ -231,6 +231,7 @@ describe("desktop platform contract", () => {
       }),
     });
     expect(api.platform).toBe("win32");
+    expect(api).not.toHaveProperty("appearance");
     for (const [method, event] of [
       ["onMenuNavigate", "menu:navigate"],
       ["onMenuAction", "menu:action"],

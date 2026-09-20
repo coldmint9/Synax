@@ -59,7 +59,7 @@ afterEach(async () => {
   await new Promise((resolve) => setTimeout(resolve, 10));
   await fs.rm(root, { recursive: true, force: true });
 });
-it("copies and launches a separate detached app outside the installation", async () => {
+it("copies and launches a detached updater runtime outside the installation", async () => {
   updates = new DesktopUpdates(
     async () => {},
     () => "1.0.0",

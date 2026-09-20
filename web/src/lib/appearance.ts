@@ -96,7 +96,7 @@ export function accentPalette(color: string, theme: ResolvedTheme) {
           : "#000000";
   const strong = readableAccent(
     accent,
-    dark ? "#181818" : "#f9f9f9",
+    dark ? "#0f141d" : "#f9f9f9",
     dark ? "#ffffff" : "#181818",
   );
   let top = accent === DEFAULT_ACCENT ? "#b9cdbf" : mix(accent, "#ffffff", 0.2);
@@ -108,7 +108,7 @@ export function accentPalette(color: string, theme: ResolvedTheme) {
     ink,
     strong,
     muted: strong,
-    soft: mix(accent, dark ? "#181818" : "#ffffff", dark ? 0.8 : 0.87),
+    soft: mix(accent, dark ? "#0f141d" : "#ffffff", dark ? 0.8 : 0.87),
   };
 }
 

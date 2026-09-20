@@ -1,6 +1,5 @@
 import { GlobalSessionSearch } from "./features/agent-workspace/GlobalSessionSearch";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { DesktopBackground } from "./components/DesktopBackground";
 import { useEffect } from "react";
 import WorkbenchLayout from "./layouts/WorkbenchLayout";
 import { WelcomeView } from "./layouts/WelcomeView";
@@ -30,7 +29,6 @@ export default function App() {
 
   return (
     <>
-      <DesktopBackground />
       <GlobalSessionSearch />
       <div className="app-viewport flex flex-col overflow-hidden bg-background text-foreground">
         <div className="min-h-0 flex-1">

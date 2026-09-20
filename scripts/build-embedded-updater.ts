@@ -8,6 +8,7 @@ import {
   desktopIcon,
   updaterDescription,
   windowsMetadata,
+  updaterMacInfo,
 } from "./desktop-branding.js";
 
 const require = createRequire(import.meta.url);
@@ -75,6 +76,7 @@ export async function buildEmbeddedUpdater(
     appBundleId: "com.Synax.updater",
     appVersion: version,
     appCopyright: "Copyright (c) 2026 Synax contributors",
+    extendInfo: updaterMacInfo(platform),
     appCategoryType: "public.app-category.developer-tools",
     win32metadata: windowsMetadata("Synax Updater", updaterDescription),
     platform,
