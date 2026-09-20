@@ -248,6 +248,28 @@ describe("WorkspaceDashboard", () => {
     expect(screen.getByRole("button", { name: "刷新工作区" })).toBeEnabled();
   });
 
+  it("marks repositories with project records as content-sized cards", () => {
+    const repository = {
+      ...environment,
+      rootId: "primary",
+      name: "Synax",
+      role: "primary" as const,
+      status: "ready" as const,
+    };
+    render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{ ...environment, repositories: [repository] }}
+      />,
+    );
+
+    expect(
+      screen
+        .getByRole("button", { name: /^Synax/ })
+        .closest(".ws-project-card"),
+    ).toHaveClass("ws-project-card--with-content");
+  });
+
   it("keeps project Git controls in the header when clean or collapsed", () => {
     const reload = vi.fn();
     const repository = {
@@ -271,6 +293,9 @@ describe("WorkspaceDashboard", () => {
     );
     const toggle = screen.getByRole("button", { name: "Synax" });
     const header = toggle.closest(".ws-card-head")!;
+    expect(toggle.closest(".ws-project-card")).toHaveClass(
+      "ws-project-card--status-only",
+    );
     expect(within(header).getByText("main")).toBeInTheDocument();
     expect(
       within(header).getByRole("button", { name: "提交并推送" }),

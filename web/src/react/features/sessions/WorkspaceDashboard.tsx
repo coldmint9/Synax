@@ -282,13 +282,17 @@ function RepositoryProjectCard({
   );
   const recentSources = (repository.inputSources ?? []).slice(-8).reverse();
   const stagedFiles = changedFiles.filter((file) => file.staged).length;
+  const hasProjectRecords =
+    changedFiles.length > 0 ||
+    recentSources.length > 0 ||
+    outputFiles.length > 0;
   const openDiff = (filePath: string) => {
     openWorkspaceDiff(sessionId, filePath, repository.rootId, repository.name);
   };
 
   return (
     <WorkspaceCard
-      className="ws-project-card"
+      className={`ws-project-card ${hasProjectRecords ? "ws-project-card--with-content" : "ws-project-card--status-only"}`}
       storageKey={`${sessionId}:${repository.rootId}:project`}
       icon={<Folder size={13} />}
       title={repository.name}
@@ -412,11 +416,29 @@ function RepositoryProjectCard({
   );
 }
 
-function WorkspaceProjectsPane({ sessionId, count, children }: { sessionId: string; count: number; children: React.ReactNode }) {
+function WorkspaceProjectsPane({
+  sessionId,
+  count,
+  children,
+}: {
+  sessionId: string;
+  count: number;
+  children: React.ReactNode;
+}) {
   const { locale } = useLocale();
-  if (count === 1) return <div className="workspace-projects-pane">{children}</div>;
-  return <WorkspaceCard className="workspace-projects-group" storageKey={`${sessionId}:projects`}
-    icon={<Folder size={13} />} title={locale === "zh" ? "项目" : "Projects"} count={count}>{children}</WorkspaceCard>;
+  if (count === 1)
+    return <div className="workspace-projects-pane">{children}</div>;
+  return (
+    <WorkspaceCard
+      className="workspace-projects-group"
+      storageKey={`${sessionId}:projects`}
+      icon={<Folder size={13} />}
+      title={locale === "zh" ? "项目" : "Projects"}
+      count={count}
+    >
+      {children}
+    </WorkspaceCard>
+  );
 }
 
 export const WorkspaceDashboard = memo(function WorkspaceDashboard({
@@ -509,7 +531,10 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
     return (
       <div className="workspace-dashboard workspace-dashboard--pinned session-workspace-scroll min-h-0 flex-1">
         <SessionTodoPanel key={sessionId} items={todos} />
-        <WorkspaceProjectsPane sessionId={sessionId} count={repositories.length}>
+        <WorkspaceProjectsPane
+          sessionId={sessionId}
+          count={repositories.length}
+        >
           {repositories.map((root) => (
             <RepositoryProjectCard
               key={root.rootId}
@@ -551,7 +576,10 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             ))}
           </WorkspaceCard>
         )}
-        <SessionBackgroundProcesses sessionId={sessionId} environment={environment} />
+        <SessionBackgroundProcesses
+          sessionId={sessionId}
+          environment={environment}
+        />
         <SessionProfilePanel sessionId={sessionId} />
       </div>
     );
@@ -777,7 +805,11 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       ) : null}
       {sessionId && (
         <>
-          <SessionBackgroundProcesses key={sessionId} sessionId={sessionId} environment={environment} />
+          <SessionBackgroundProcesses
+            key={sessionId}
+            sessionId={sessionId}
+            environment={environment}
+          />
           <SessionProfilePanel sessionId={sessionId} />
         </>
       )}
