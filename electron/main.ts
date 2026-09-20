@@ -1,3 +1,4 @@
+import { isTerminalSystemShortcut } from "./lib/terminal-shortcuts.js";
 import fs from "node:fs/promises";
 import { app, BrowserWindow, ipcMain, dialog, protocol, net } from "electron";
 import path from "node:path";
@@ -9,7 +10,7 @@ import {
 } from "./lib/node-sidecar.js";
 import { getDataRoot, getResourcePath } from "./lib/data-paths.js";
 import { loadWindowState, saveWindowState } from "./lib/window-state.js";
-import { buildAppMenu, updateProjectsMenu } from "./menu.js";
+import { buildAppMenu, updateProjectsMenu, updateMenuState } from "./menu.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,6 +18,7 @@ const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
+let terminalFocused = false;
 
 // Register custom protocol scheme before app is ready
 protocol.registerSchemesAsPrivileged([
@@ -47,6 +49,7 @@ app.on("second-instance", () => {
 });
 
 function createWindow(): BrowserWindow {
+  terminalFocused = false;
   const state = loadWindowState();
 
   const win = new BrowserWindow({
@@ -66,6 +69,9 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  win.webContents.on("before-input-event", (_event, input) => {
+    win.webContents.setIgnoreMenuShortcuts(terminalFocused && !isTerminalSystemShortcut(input));
+  });
   const showWindow = () => {
     if (!win.isDestroyed() && !win.isVisible()) {
       win.show();
@@ -128,8 +134,20 @@ function registerIPC(): void {
       )
     ).trim();
   });
-  ipcMain.on("menu:update-projects", (_e, projects) => {
-    updateProjectsMenu(projects);
+  ipcMain.on("terminal:focus", (event, focused) => {
+    if (event.sender === mainWindow?.webContents) { terminalFocused = focused === true; event.sender.setIgnoreMenuShortcuts(terminalFocused); }
+  });
+  ipcMain.on("menu:update-projects", (event, projects) => {
+    if (event.sender !== mainWindow?.webContents || !Array.isArray(projects)) return;
+    updateProjectsMenu(projects.filter((item) => item && typeof item.id === "string" && typeof item.name === "string").slice(0, 250));
+  });
+  ipcMain.on("menu:update-state", (event, state) => {
+    if (event.sender !== mainWindow?.webContents || !state || typeof state !== "object") return;
+    updateMenuState({
+      projectId: typeof state.projectId === "string" ? state.projectId : null,
+      hasSession: state.hasSession === true, hasViewer: state.hasViewer === true,
+      inWork: state.inWork === true, inWiki: state.inWiki === true, dark: state.dark === true,
+    });
   });
 }
 

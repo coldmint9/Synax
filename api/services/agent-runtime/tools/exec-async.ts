@@ -246,85 +246,12 @@ export function runShellCommand(
   return runCommand(command, [], { ...options, shell: true });
 }
 
-/** Start a tracked service; its worker stays alive until the last service exits. */
+/** Background services are hosted by the API PTY manager, not this model worker. */
 export async function runBackgroundShellCommand(
   sessionId: string,
   command: string,
   options: AsyncCommandOptions & { waitForJobs?: boolean } = {},
 ): Promise<{ processId: string; pid: number }> {
-  const signal = options.signal ?? commandSignal.getStore();
-  if (signal?.aborted) throw abortError();
-  const child = spawnOwnedProcess(
-    options.waitForJobs && process.platform !== "win32"
-      ? `${command}\nwait`
-      : command,
-    [],
-    {
-      cwd: options.cwd,
-      env: options.env,
-      shell: true,
-      background: true,
-      commandLabel: command,
-      sessionId,
-      stdin: options.stdin === undefined ? "ignore" : "pipe",
-    },
-  );
-  const kill = (kind: NodeJS.Signals) => {
-    if (!child.pid) return;
-    try {
-      process.kill(process.platform === "win32" ? child.pid : -child.pid, kind);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-    }
-  };
-  const closed = new Promise<void>((resolve) =>
-    child.once("close", () => {
-      ownedCommands.delete(kill);
-      resolve();
-    }),
-  );
-  ownedCommands.set(kill, closed);
-  // Drain both pipes without retaining an unbounded server log in memory.
-  child.stdout?.resume();
-  let stderr = "";
-  child.stderr?.on("data", (chunk: Buffer) => {
-    stderr = (stderr + chunk.toString()).slice(-4096);
-  });
-  child.stdin?.on("error", () => {});
-  child.stdin?.end(options.stdin);
-  child.on("message", (message: any) => {
-    if (message?.type === "finished") kill("SIGKILL");
-  });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const abort = () => kill("SIGKILL");
-  signal?.addEventListener("abort", abort, { once: true });
-  try {
-    await new Promise<void>((resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error("Background service did not start.")),
-        10_000,
-      );
-      child.on("message", (message: any) => {
-        if (message?.type === "started") resolve();
-      });
-      child.once("error", reject);
-      child.once("close", () =>
-        reject(
-          new Error(stderr || "Background service exited before startup."),
-        ),
-      );
-      if (signal?.aborted) {
-        abort();
-        reject(abortError());
-      }
-    });
-    return { processId: child.ownedProcessId, pid: child.pid! };
-  } catch (error) {
-    kill("SIGKILL");
-    await closed;
-    throw error;
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", abort);
-  }
+  const { startBackgroundTerminal } = await import("../../terminals/terminal-service.js");
+  return startBackgroundTerminal(sessionId, command, { ...options, signal: options.signal ?? commandSignal.getStore() });
 }

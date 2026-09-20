@@ -1,3 +1,4 @@
+import { TerminalDrawer } from "../features/terminal/TerminalDrawer";
 import { useEffect, useState, useCallback } from "react";
 import { Outlet, useNavigate, useParams, useLocation } from "react-router-dom";
 import { agentRuntimeApi } from "../../lib/api/agentRuntime";
@@ -11,7 +12,10 @@ import { useDesktopNotification } from "../../hooks/useDesktopNotification";
 import { useTaskNotificationListener } from "../../hooks/useTaskNotificationListener";
 import { useRuntimeSSE } from "../features/sessions/useRuntimeSSE";
 import { useAgentSessionStore } from "../features/sessions/agentSessionStore";
-import { useSessionWorkspace } from "../features/sessions/sessionWorkspaceStore";
+import {
+  useSessionWorkspace,
+  useSessionWorkspaceStore,
+} from "../features/sessions/sessionWorkspaceStore";
 import { sessionPath } from "../features/sessions/sessionRoutes";
 import { resolveSessionsEntryPath } from "../features/sessions/sessionLastVisit";
 import type { ActivityPanel } from "./ActivityBar";
@@ -40,6 +44,11 @@ export default function WorkbenchLayout() {
   const fetchProjects = useShellStore((s) => s.fetchProjects);
   const project = projects.find((p) => p.id === effectiveProjectId) ?? null;
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  useEffect(() => {
+    const open = () => setCreateDialogOpen(true);
+    document.addEventListener("menu:import-project", open);
+    return () => document.removeEventListener("menu:import-project", open);
+  }, []);
 
   useEffect(() => {
     if (!projectsLoaded) void fetchProjects();
@@ -152,6 +161,9 @@ export default function WorkbenchLayout() {
   };
 
   const handlePanelToggle = (panel: ActivityPanel) => {
+    if (panel === "sessions" && selectedSessionId) {
+      useSessionWorkspaceStore.getState().showDashboard(selectedSessionId);
+    }
     if (panel === "settings") {
       navigate("/settings");
       return;
@@ -252,6 +264,7 @@ export default function WorkbenchLayout() {
             </div>
           </div>
         </div>
+        <TerminalDrawer projectId={effectiveProjectId} sessionId={selectedSessionId} />
         <ProjectCreateDialog
           open={createDialogOpen}
           onClose={() => setCreateDialogOpen(false)}

@@ -1,14 +1,17 @@
-import { runtimeAssetRoutes } from './routes/runtime-assets.js';
-import { sweepAssets } from './services/agent-runtime/media-assets.js';
-import type { Server } from 'node:http';
-import { closeDb } from './db/index.js';
-import { stopHostProcesses } from './services/agent-runtime/process-ownership.js';
-import { acquireRuntimeHost } from './services/agent-runtime/runtime-host.js';
-import { recoverRuntime } from './services/agent-runtime/runtime-recovery.js';
-import { runCoordinator } from './services/agent-runtime/run-coordinator.js';
-import path from 'node:path';
-import { installRuntimeAccess } from './middleware/runtime-access.js';
-import { startInteractionRecovery } from './services/agent-runtime/agent-stream-proxy.js';
+import { attachTerminalSockets } from "./services/terminals/terminal-socket.js";
+import { terminalRoutes } from "./routes/terminals.js";
+import { terminalManager } from "./services/terminals/terminal-manager.js";
+import { runtimeAssetRoutes } from "./routes/runtime-assets.js";
+import { sweepAssets } from "./services/agent-runtime/media-assets.js";
+import type { Server } from "node:http";
+import { closeDb } from "./db/index.js";
+import { stopHostProcesses } from "./services/agent-runtime/process-ownership.js";
+import { acquireRuntimeHost } from "./services/agent-runtime/runtime-host.js";
+import { recoverRuntime } from "./services/agent-runtime/runtime-recovery.js";
+import { runCoordinator } from "./services/agent-runtime/run-coordinator.js";
+import path from "node:path";
+import { installRuntimeAccess } from "./middleware/runtime-access.js";
+import { startInteractionRecovery } from "./services/agent-runtime/agent-stream-proxy.js";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { API_SESSION_LOG_FILE, logger as pinoLogger } from "./lib/logger.js";
@@ -34,7 +37,10 @@ import { wikiStore } from "./services/wiki/wiki-store.js";
 import { ensureWikiProfileRegistered } from "./services/wiki/wiki-loop-profile.js";
 import { ensurePlanProfileRegistered } from "./services/wiki/wiki-plan-profile.js";
 import { ensureRefreshProfileRegistered } from "./services/wiki/wiki-refresh-profile.js";
-import { ensureSynaxAgentRegistered, ensureLegacyGoalProfileRegistered } from "./services/agent-runtime/synax/index.js";
+import {
+  ensureSynaxAgentRegistered,
+  ensureLegacyGoalProfileRegistered,
+} from "./services/agent-runtime/synax/index.js";
 import { registerSessionTitleHooks } from "./services/agent-runtime/session-title-service.js";
 import { wikiWriteQueue } from "./services/wiki/wiki-write-queue-service.js";
 import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
@@ -46,8 +52,13 @@ export const app = new Hono();
 // --- 中间件 ---
 installRuntimeAccess(app, {
   dataRoot: DATA_ROOT,
-  webOrigins: [`http://localhost:${process.env.WEB_PORT ?? '5173'}`, `http://127.0.0.1:${process.env.WEB_PORT ?? '5173'}`],
-  trustedHosts: process.env.SYNAX_TRUSTED_HOSTS?.split(',').map(value => value.trim()).filter(Boolean),
+  webOrigins: [
+    `http://localhost:${process.env.WEB_PORT ?? "5173"}`,
+    `http://127.0.0.1:${process.env.WEB_PORT ?? "5173"}`,
+  ],
+  trustedHosts: process.env.SYNAX_TRUSTED_HOSTS?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
 });
 
 // 请求日志
@@ -79,10 +90,18 @@ app.route("/api/logs", logRoutes);
 app.route("/api/health", healthRoutes);
 app.route("/api/prototypes/tree-embedding-bench", treeEmbeddingBenchRoutes);
 app.route("/api/fs", fsRoutes);
+app.route("/api/terminals", terminalRoutes);
+process.env.SYNAX_TERMINAL_HOST_ORIGIN = `http://127.0.0.1:${PORT}`;
 
 const runtimeHost = acquireRuntimeHost(DATA_ROOT);
-void sweepAssets().catch(error => pinoLogger.warn({ error }, 'Media cleanup failed'));
-setInterval(() => { void sweepAssets().catch(error => pinoLogger.warn({ error }, 'Media cleanup failed')); }, 3_600_000).unref();
+void sweepAssets().catch((error) =>
+  pinoLogger.warn({ error }, "Media cleanup failed"),
+);
+setInterval(() => {
+  void sweepAssets().catch((error) =>
+    pinoLogger.warn({ error }, "Media cleanup failed"),
+  );
+}, 3_600_000).unref();
 process.env.SYNAX_RUNTIME_HOST_ID = runtimeHost.hostId;
 process.env.SYNAX_RUNTIME_DATA_ROOT = path.resolve(DATA_ROOT);
 
@@ -103,46 +122,64 @@ ensureLegacyGoalProfileRegistered();
 registerSessionTitleHooks();
 
 let httpServer: Server | undefined;
+let closeTerminalSockets: (() => void) | undefined;
 let shuttingDown = false;
 
 async function startRuntime(): Promise<void> {
   const recovery = await recoverRuntime(runtimeHost.hostId);
-  if (recovery.reviewed) pinoLogger.warn({ count: recovery.reviewed }, 'interrupted executions require recovery');
-// --- 启动时恢复 wiki 文档写入队列（先于 snapshot 恢复，避免误标记 writing 为 failed）---
-wikiWriteQueue.recoverOrphaned().then(async ({ batches, items, interruptedSnapshotIds }) => {
-  if (items > 0) {
-    const suspended = await wikiWriteQueue.suspendAfterServerRestart(interruptedSnapshotIds);
+  if (recovery.reviewed)
     pinoLogger.warn(
-      { batches, items, suspended, snapshots: interruptedSnapshotIds },
-      "suspended interrupted wiki write queue on startup — continue from Wiki UI",
+      { count: recovery.reviewed },
+      "interrupted executions require recovery",
     );
-    return;
-  }
-  if (batches > 0 || items > 0) {
-    pinoLogger.warn({ batches, items }, "recovered orphaned wiki write queue on startup");
-  }
-  wikiWriteQueue.resume();
-}).catch((err) => {
-  pinoLogger.error({ err }, "failed to recover wiki write queue");
-});
+  // --- 启动时恢复 wiki 文档写入队列（先于 snapshot 恢复，避免误标记 writing 为 failed）---
+  wikiWriteQueue
+    .recoverOrphaned()
+    .then(async ({ batches, items, interruptedSnapshotIds }) => {
+      if (items > 0) {
+        const suspended = await wikiWriteQueue.suspendAfterServerRestart(
+          interruptedSnapshotIds,
+        );
+        pinoLogger.warn(
+          { batches, items, suspended, snapshots: interruptedSnapshotIds },
+          "suspended interrupted wiki write queue on startup — continue from Wiki UI",
+        );
+        return;
+      }
+      if (batches > 0 || items > 0) {
+        pinoLogger.warn(
+          { batches, items },
+          "recovered orphaned wiki write queue on startup",
+        );
+      }
+      wikiWriteQueue.resume();
+    })
+    .catch((err) => {
+      pinoLogger.error({ err }, "failed to recover wiki write queue");
+    });
 
-// --- 启动时恢复孤儿 wiki snapshot（服务器重启后卡在生成中状态）---
-wikiStore.recoverOrphanedSnapshots().then((count) => {
-  if (count > 0) {
-    pinoLogger.warn({ count }, "recovered orphaned wiki snapshots on startup");
-  }
-}).catch((err) => {
-  pinoLogger.error({ err }, "failed to recover orphaned wiki snapshots");
-});
+  // --- 启动时恢复孤儿 wiki snapshot（服务器重启后卡在生成中状态）---
+  wikiStore
+    .recoverOrphanedSnapshots()
+    .then((count) => {
+      if (count > 0) {
+        pinoLogger.warn(
+          { count },
+          "recovered orphaned wiki snapshots on startup",
+        );
+      }
+    })
+    .catch((err) => {
+      pinoLogger.error({ err }, "failed to recover orphaned wiki snapshots");
+    });
 
-// --- 启动时 backfill FTS 索引（对已有 block 建立搜索文本）---
-rebuildWikiFtsIndex().catch((err) => {
-  pinoLogger.error({ err }, "failed to rebuild wiki FTS index on startup");
-});
+  // --- 启动时 backfill FTS 索引（对已有 block 建立搜索文本）---
+  rebuildWikiFtsIndex().catch((err) => {
+    pinoLogger.error({ err }, "failed to rebuild wiki FTS index on startup");
+  });
 
-startPermissionTimeoutSweeper();
-startInteractionRecovery();
-
+  startPermissionTimeoutSweeper();
+  startInteractionRecovery();
 
   for (const sessionId of recovery.resumable) runCoordinator.resume(sessionId);
   if (!shuttingDown) startServer();
@@ -154,6 +191,7 @@ function startServer(): void {
     port: PORT,
     hostname: "127.0.0.1",
   }) as Server;
+  closeTerminalSockets = attachTerminalSockets(httpServer);
 
   pinoLogger.info(
     { logFile: API_SESSION_LOG_FILE },
@@ -164,19 +202,47 @@ function startServer(): void {
 async function shutdownRuntime(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  httpServer?.closeAllConnections(); httpServer?.close();
+  closeTerminalSockets?.();
+  httpServer?.closeAllConnections();
+  httpServer?.close();
   let failed = false;
   for (const id of runCoordinator.activeSessionIds()) {
-    try { await runCoordinator.interrupt(id, 'Runtime host is shutting down.'); }
-    catch (error) { failed = true; pinoLogger.error({ id, error }, 'runtime shutdown unconfirmed'); }
+    try {
+      await runCoordinator.interrupt(id, "Runtime host is shutting down.");
+    } catch (error) {
+      failed = true;
+      pinoLogger.error({ id, error }, "runtime shutdown unconfirmed");
+    }
+  }
+  try {
+    await terminalManager.shutdown();
+  } catch (error) {
+    failed = true;
+    pinoLogger.error({ error }, "terminal shutdown unconfirmed");
   }
   const unresolved = await stopHostProcesses(runtimeHost.hostId);
-  if (unresolved.length) { failed = true; pinoLogger.error({ count: unresolved.length }, 'owned processes require recovery'); }
-  await closeAllBrowserSessions('Runtime host is shutting down.');
-  runtimeHost.release(); closeDb(); process.exit(failed ? 1 : 0);
+  if (unresolved.length) {
+    failed = true;
+    pinoLogger.error(
+      { count: unresolved.length },
+      "owned processes require recovery",
+    );
+  }
+  await closeAllBrowserSessions("Runtime host is shutting down.");
+  runtimeHost.release();
+  closeDb();
+  process.exit(failed ? 1 : 0);
 }
-process.on('SIGINT', () => { void shutdownRuntime(); });
-process.on('SIGTERM', () => { void shutdownRuntime(); });
+process.on("SIGINT", () => {
+  void shutdownRuntime();
+});
+process.on("SIGTERM", () => {
+  void shutdownRuntime();
+});
 
 // --- 启动服务 ---
-void startRuntime().catch(error => { pinoLogger.error({ error }, 'runtime startup failed'); runtimeHost.release(); process.exitCode = 1; });
+void startRuntime().catch((error) => {
+  pinoLogger.error({ error }, "runtime startup failed");
+  runtimeHost.release();
+  process.exitCode = 1;
+});

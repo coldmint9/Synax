@@ -127,11 +127,23 @@ export default memo(function SessionsPage() {
   useSessionDetailPolling()
   const { t, locale } = useLocale()
   const [detailsOpen, setDetailsOpen] = useState(false)
+  useEffect(() => {
+    const close = () => setDetailsOpen(false)
+    document.addEventListener('terminal:open', close)
+    return () => document.removeEventListener('terminal:open', close)
+  }, [])
   const navigate = useNavigate()
   const { projectId = '' } = useParams()
   const leftPanel = useResizablePanel('left', LEFT_PANEL_DEFAULT, LEFT_PANEL_MIN, LEFT_PANEL_MAX)
   const rightPanel = useResizablePanel('right', RIGHT_PANEL_DEFAULT, RIGHT_PANEL_MIN, RIGHT_PANEL_MAX)
   const location = useLocation()
+  useEffect(() => {
+    const toggle = () => {
+      if (location.pathname.includes('/sessions')) leftPanel.setCollapsed(value => !value)
+    }
+    document.addEventListener('menu:toggle-sidebar', toggle)
+    return () => document.removeEventListener('menu:toggle-sidebar', toggle)
+  }, [location.pathname, leftPanel.setCollapsed])
   const listView: SessionListView = location.pathname.includes('/sessions/workflows')
     ? 'workflow'
     : 'sessions'

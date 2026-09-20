@@ -1,5 +1,6 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Button } from "@heroui/react";
+import { useWorkspaceDisclosure } from "./useWorkspaceDisclosure";
 import { ChevronDown } from "lucide-react";
 
 /** Shared compact disclosure for the floating Work cards. */
@@ -12,6 +13,7 @@ export function WorkspaceSection({
   toolbar,
   children,
   defaultOpen = true,
+  storageKey,
   className,
 }: {
   icon: ReactNode;
@@ -22,9 +24,10 @@ export function WorkspaceSection({
   toolbar?: ReactNode;
   children: ReactNode;
   defaultOpen?: boolean;
+  storageKey?: string;
   className?: string;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, toggle] = useWorkspaceDisclosure(storageKey, defaultOpen);
   const id = useId();
   return (
     <section
@@ -38,7 +41,7 @@ export function WorkspaceSection({
           className="ws-card-toggle"
           aria-expanded={open}
           aria-controls={id}
-          onPress={() => setOpen((value) => !value)}
+          onPress={toggle}
         >
           <span className="ws-card-icon">{icon}</span>
           <span className="ws-card-title">{title}</span>

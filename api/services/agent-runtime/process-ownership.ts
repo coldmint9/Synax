@@ -33,6 +33,7 @@ const INTERNAL_ENV = [
   "SYNAX_RUNTIME_HOST_ID",
   "SYNAX_RUNTIME_DATA_ROOT",
   "SYNAX_RECORDED_START",
+  "SYNAX_TERMINAL_HOST_ORIGIN",
 ];
 
 export function externalCommandEnvironment(
@@ -126,11 +127,11 @@ function emitProcessChange(id: string): void {
   }
 }
 
-export function hasBackgroundProcesses(sessionId: string): boolean {
+export function hasBackgroundProcesses(sessionId: string, workerOwnedOnly = false): boolean {
   return Boolean(
     getRawSqlite()
       .prepare(
-        "SELECT 1 FROM agent_runtime_processes WHERE session_id=? AND kind='background' AND state<>'closed' LIMIT 1",
+        `SELECT 1 FROM agent_runtime_processes p WHERE session_id=? AND kind='background' AND state<>'closed' ${workerOwnedOnly ? "AND NOT EXISTS (SELECT 1 FROM terminal_sessions t WHERE t.id=p.id)" : ""} LIMIT 1`,
       )
       .get(sessionId),
   );
@@ -144,6 +145,40 @@ function alive(pid: number): boolean {
     return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
+/** Interactive shells can rewrite the environment block that macOS ps reads.
+ * Bind managed PTYs to PID + kernel birth time + controlling TTY instead. */
+export async function readProcessIdentity(pid: number, expectedTty?: string): Promise<string | null> {
+  try {
+    if (process.platform === "linux") {
+      const stat = await fs.readFile(`/proc/${pid}/stat`, "utf8");
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+      const tty = Number(fields[4]) >>> 0;
+      if (!tty || !fields[19]) return null;
+      if (expectedTty && Number((await fs.stat(expectedTty)).rdev) !== tty) return null;
+      return `linux:${pid}:${fields[19]}:${tty}`;
+    }
+    if (process.platform === "darwin") {
+      const text = await new Promise<string>((resolve, reject) => execFile("/bin/ps", ["-p", String(pid), "-o", "lstart=,tty="],
+        { timeout: 2000, encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC" } },
+        (error, stdout) => error ? reject(error) : resolve(stdout)));
+      const fields = text.trim().split(/\s+/);
+      const tty = fields[fields.length - 1];
+      if (fields.length < 6 || !tty || tty === "??" || (expectedTty && path.basename(expectedTty) !== tty)) return null;
+      return `darwin:${pid}:${fields.join(" ")}`;
+    }
+  } catch { /* A missing or uninspectable process does not authorize a signal. */ }
+  return null;
+}
+async function terminalIdentityStatus(record: OwnedProcessRecord): Promise<"owned" | "different" | "unknown" | undefined> {
+  if (!record.pid) return undefined;
+  try {
+    const row = tryGetRawSqlite()?.prepare("SELECT process_identity FROM terminal_sessions WHERE id=?").get(record.id) as { process_identity: string | null } | undefined;
+    if (!row) return undefined;
+    if (!row.process_identity) return "unknown";
+    const actual = await readProcessIdentity(record.pid);
+    return actual ? actual === row.process_identity ? "owned" : "different" : "unknown";
+  } catch { return undefined; }
+}
 async function markerStatus(
   record: OwnedProcessRecord,
 ): Promise<"owned" | "gone" | "different" | "unknown"> {
@@ -153,9 +188,7 @@ async function markerStatus(
       const entries = (
         await fs.readFile(`/proc/${record.pid}/environ`, "utf8")
       ).split("\0");
-      return entries.includes(`SYNAX_PROCESS_OWNER=${record.id}`)
-        ? "owned"
-        : "different";
+      return entries.includes(`SYNAX_PROCESS_OWNER=${record.id}`) ? "owned" : (await terminalIdentityStatus(record)) ?? "different";
     }
     if (process.platform === "darwin") {
       const text = await new Promise<string>((resolve, reject) =>
@@ -169,13 +202,11 @@ async function markerStatus(
       // Process environments may contain credentials: inspect the nonce only, never return or log this text.
       return new RegExp(
         `(?:^|\\s)SYNAX_PROCESS_OWNER=${record.id}(?:\\s|$)`,
-      ).test(text)
-        ? "owned"
-        : "different";
+      ).test(text) ? "owned" : (await terminalIdentityStatus(record)) ?? "different";
     }
     return "unknown";
   } catch {
-    return alive(record.pid) ? "unknown" : "gone";
+    return alive(record.pid) ? (await terminalIdentityStatus(record)) ?? "unknown" : "gone";
   }
 }
 

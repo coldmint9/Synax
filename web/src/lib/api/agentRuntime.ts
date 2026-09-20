@@ -535,6 +535,10 @@ export interface SessionBackgroundProcess {
   exitCode: number | null;
   startedAt: string;
   endedAt: string | null;
+  terminalId?: string;
+  kind?: "terminal" | "service";
+  cwd?: string;
+  projectId?: string;
 }
 
 export interface SessionEnvironment {
@@ -846,11 +850,22 @@ export const agentRuntimeApi = {
     request<{ items: SessionBackgroundProcess[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/processes`,
     ),
+  deleteSessionProcess: (sessionId: string, processId: string) =>
+    request<{ items: SessionBackgroundProcess[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}`,
+      { method: "DELETE" },
+    ),
   stopSessionProcess: (sessionId: string, processId: string) =>
     request<{ items: SessionBackgroundProcess[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}/stop`,
       { method: "POST" },
     ),
+  listSessionBranches: (sessionId: string, rootId?: string) =>
+    request<SessionGitBranches>(`/sessions/${encodeURIComponent(sessionId)}/git/branches${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`),
+  switchSessionBranch: (sessionId: string, branch: string, rootId?: string) =>
+    request<SessionGitBranches>(`/sessions/${encodeURIComponent(sessionId)}/git/branches/switch`, {
+      method: "POST", body: JSON.stringify({ branch, rootId }),
+    }),
   getSessionEnvironment: (sessionId: string) =>
     request<SessionEnvironment>(
       `/sessions/${encodeURIComponent(sessionId)}/environment`,
@@ -1050,3 +1065,9 @@ export const agentRuntimeApi = {
       { method: "POST" },
     ),
 };
+
+export interface SessionGitBranches {
+  rootId: string;
+  current: string;
+  branches: { name: string; current: boolean; occupied: boolean }[];
+}

@@ -47,6 +47,7 @@ const dynamicPackages = [
   "tree-sitter",
   "node-gyp-build",
   "node-addon-api",
+  "node-pty",
 ];
 
 const treeSitterLangs = readdirSync(src).filter(

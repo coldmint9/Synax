@@ -24,10 +24,10 @@ describe('SessionListHeader', () => {
     useShellStore.setState(state => ({ preferences: { ...state.preferences, locale: 'zh' } }))
   })
 
-  it('shows the 任务 heading without a session counter', () => {
+  it('removes the redundant task heading', () => {
     const { container } = renderHeader()
 
-    expect(container.textContent).toContain('任务')
+    expect(screen.queryByText('任务', { exact: true })).toBeNull()
     expect(container.textContent).not.toMatch(/\(\d+\)/)
   })
 
@@ -44,7 +44,12 @@ describe('SessionListHeader', () => {
 })
 
 
-it('keeps workflows reachable while their rows may be on a later page', () => {
+it('never uses pagination as proof that a Wiki exists', () => {
   renderHeader({ workflowCount: 0, hasMoreSessions: true, onOpenWorkflows: noop })
+  expect(screen.queryByRole('button', { name: /Workflow/ })).toBeNull()
+})
+
+it('shows workflows only after the current project has generated Wiki content', () => {
+  renderHeader({ hasGeneratedWiki: true, workflowCount: 0, onOpenWorkflows: noop })
   expect(screen.getByRole('button', { name: /Workflow/ })).toBeTruthy()
 })

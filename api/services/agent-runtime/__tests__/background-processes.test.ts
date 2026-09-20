@@ -1,3 +1,4 @@
+import { spawnOwnedProcess } from "../owned-process.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -168,10 +169,11 @@ it.skipIf(process.platform === "win32")(
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "synax-service-orphan-"));
     const file = path.join(dir, "pid");
     const program = `require('fs').writeFileSync(${JSON.stringify(file)},String(process.pid));setInterval(()=>{},1000);`;
-    const started = await runBackgroundShellCommand(
-      owner.id,
-      `${quote(process.execPath)} -e ${quote(program)}`,
-    );
+    // An explicitly legacy pipe-based service: new PTYs do not have a separate launcher.
+    const child = spawnOwnedProcess(`${quote(process.execPath)} -e ${quote(program)}`, [], { shell: true, background: true, sessionId: owner.id, stdin: "ignore" });
+    child.stdout?.resume(); child.stderr?.resume();
+    await new Promise<void>((resolve, reject) => { child.on("message", (message: any) => { if (message.type === "started") resolve(); }); child.once("error", reject); });
+    const started = { processId: child.ownedProcessId, pid: child.pid! };
     try {
       await vi.waitFor(() => expect(fs.existsSync(file)).toBe(true));
       const targetPid = Number(fs.readFileSync(file, "utf8"));
@@ -190,3 +192,34 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
+
+it("only deletes closed service records belonging to the requested session", async () => {
+  const owner = session();
+  const other = session();
+  const { agentRuntimeRoutes } =
+    await import("../../../routes/agent-runtime.js");
+  const ticket = prepareOwnedProcess("test service", true, {
+    sessionId: owner.id,
+    background: true,
+  });
+  const remove = (sessionId: string, id = ticket.id) =>
+    agentRuntimeRoutes.request(`/sessions/${sessionId}/processes/${id}`, {
+      method: "DELETE",
+    });
+  expect((await remove(other.id)).status).toBe(404);
+  expect((await remove(owner.id)).status).toBe(409);
+  expect(listSessionBackgroundProcesses(owner.id)).toHaveLength(1);
+  getRawSqlite()
+    .prepare("UPDATE agent_runtime_processes SET state='closed' WHERE id=?")
+    .run(ticket.id);
+  expect((await remove(owner.id)).status).toBe(200);
+  expect(listSessionBackgroundProcesses(owner.id)).toEqual([]);
+  expect((await remove(owner.id)).status).toBe(404);
+  const foreground = prepareOwnedProcess("foreground", true, {
+    sessionId: owner.id,
+  });
+  getRawSqlite()
+    .prepare("UPDATE agent_runtime_processes SET state='closed' WHERE id=?")
+    .run(foreground.id);
+  expect((await remove(owner.id, foreground.id)).status).toBe(404);
+});
