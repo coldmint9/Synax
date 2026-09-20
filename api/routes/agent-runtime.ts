@@ -7,7 +7,10 @@ import { listTurnReferenceOptions } from "../services/agent-runtime/turn-referen
 import { backendIdSchema } from "../services/agent-runtime/backends/backend-contracts.js";
 import { acknowledgeRuntimeRecovery } from "../services/agent-runtime/runtime-recovery.js";
 import { AgentValidationError } from "../services/agent-runtime/runtime-errors.js";
-import { projectSessionState, projectSessionSummary } from "../services/agent-runtime/session-projection.js";
+import {
+  projectSessionState,
+  projectSessionSummary,
+} from "../services/agent-runtime/session-projection.js";
 import { randomUUID } from "node:crypto";
 import { runCoordinator } from "../services/agent-runtime/run-coordinator.js";
 import { runtimeJournal } from "../services/agent-runtime/runtime-journal.js";
@@ -63,6 +66,7 @@ import { logger } from "../lib/logger.js";
 import { SseEventType } from "../lib/sse-events.js";
 import { assertLlmProviderConfigured } from "../services/llm-runtime/provider-check.js";
 import {
+  deleteSessionBackgroundProcess,
   listSessionBackgroundProcesses,
   stopSessionBackgroundProcess,
 } from "../services/agent-runtime/session-background-processes.js";
@@ -71,6 +75,7 @@ import {
   getSessionEnvironmentFile,
   invalidateSessionEnvironment,
 } from "../services/agent-runtime/session-environment.js";
+import { listSessionGitBranches, switchSessionGitBranch } from "../services/agent-runtime/session-git-branches.js";
 import { commitSessionWorkspace } from "../services/agent-runtime/session-git-commit.js";
 import { resolveSessionConfiguredContextLimit } from "../services/agent-runtime/session-context-limit.js";
 import {
@@ -148,10 +153,11 @@ function projectRunStepForWire<
 }
 
 /** Full tool outputs are debug data; only webSearch renders them inline. */
-function projectToolCallForWire<T extends { toolId: string; outputRef?: unknown }>(
-  toolCall: T,
-): T {
-  if (toolCall.toolId === "webSearch" || toolCall.outputRef === undefined) return toolCall;
+function projectToolCallForWire<
+  T extends { toolId: string; outputRef?: unknown },
+>(toolCall: T): T {
+  if (toolCall.toolId === "webSearch" || toolCall.outputRef === undefined)
+    return toolCall;
   const { outputRef: _omitted, ...rest } = toolCall;
   return rest as T;
 }
@@ -293,9 +299,7 @@ agentRuntimeRoutes.get("/sessions", (c) => {
     { ...filter, status },
     { limit, offset },
   );
-  const items = page.items
-    .map(projectSessionState)
-    .map(projectSessionSummary);
+  const items = page.items.map(projectSessionState).map(projectSessionSummary);
   return c.json({
     items,
     totalCount: page.totalCount,
@@ -766,6 +770,20 @@ agentRuntimeRoutes.post(
   },
 );
 
+agentRuntimeRoutes.delete("/sessions/:sessionId/processes/:processId", (c) => {
+  try {
+    deleteSessionBackgroundProcess(
+      c.req.param("sessionId"),
+      c.req.param("processId"),
+    );
+    return c.json({
+      items: listSessionBackgroundProcesses(c.req.param("sessionId")),
+    });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 agentRuntimeRoutes.get("/sessions/:sessionId/environment", async (c) => {
   try {
     return c.json(await getSessionEnvironment(c.req.param("sessionId")));
@@ -780,11 +798,30 @@ agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
   if (!filePath) return c.json({ error: "Missing path" }, 400);
   try {
     return c.json(
-      await getSessionEnvironmentFile(c.req.param("sessionId"), filePath, kind, c.req.query("rootId")),
+      await getSessionEnvironmentFile(
+        c.req.param("sessionId"),
+        filePath,
+        kind,
+        c.req.query("rootId"),
+      ),
     );
   } catch (error) {
     return runtimeError(c, error);
   }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/git/branches", async (c) => {
+  try { return c.json(await listSessionGitBranches(c.req.param("sessionId"), c.req.query("rootId"))); }
+  catch (error) { return runtimeError(c, error); }
+});
+const switchBranchSchema = z.object({ branch: z.string().min(1).max(1024), rootId: z.string().min(1).optional() });
+agentRuntimeRoutes.post("/sessions/:sessionId/git/branches/switch", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = switchBranchSchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try { return c.json(await switchSessionGitBranch(c.req.param("sessionId"), parsed.data.branch, parsed.data.rootId)); }
+  catch (error) { return runtimeError(c, error); }
 });
 
 const commitSessionWorkspaceSchema = z.object({

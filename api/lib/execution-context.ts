@@ -4,6 +4,7 @@ import type NativeDatabase from 'libsql';
 
 export interface RuntimeExecutionContext { sessionId: string; runId: string; epoch: string; hostId: string }
 const contexts = new AsyncLocalStorage<RuntimeExecutionContext | null | undefined>();
+export function runWithExecutionContext<T>(context: RuntimeExecutionContext | undefined, action: () => T): T { return contexts.run(context, action); }
 export function currentExecutionContext(): RuntimeExecutionContext | undefined { return contexts.getStore() ?? undefined; }
 export function outsideExecutionContext<T>(action: () => T): T { return contexts.run(undefined, action); }
 export function withoutExecutionContext<T>(action: () => T): T { return contexts.run(null, action); }

@@ -198,7 +198,7 @@ class SessionProcessManager {
       if (
         state &&
         state.streams.size === 0 &&
-        !hasBackgroundProcesses(sessionId)
+        !hasBackgroundProcesses(sessionId, true)
       ) {
         this.releaseChild(sessionId, "Agent session stream finished.");
       }
@@ -474,7 +474,7 @@ class SessionProcessManager {
       if (
         message.event.type === "session_process_changed" &&
         owner?.streams.size === 0 &&
-        !hasBackgroundProcesses(sessionId)
+        !hasBackgroundProcesses(sessionId, true)
       ) {
         this.releaseChild(sessionId, "All background services have exited.");
       }

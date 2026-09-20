@@ -1,0 +1,291 @@
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import "@xterm/xterm/css/xterm.css";
+import { TerminalConnection } from "../../../lib/api/terminalConnection";
+import { type TerminalSession } from "../../../lib/api/terminal";
+import { useShellStore } from "../../state/shellStore";
+import { useLocale } from "../../../hooks/useLocale";
+import { terminalChanged, useTerminalStore } from "./terminalStore";
+
+const themes = {
+  dark: {
+    background: "#141618",
+    foreground: "#e4e7eb",
+    cursor: "#b9d8c6",
+    selectionBackground: "#40564c",
+    black: "#202226",
+    brightBlack: "#7b818a",
+  },
+  light: {
+    background: "#fafbfc",
+    foreground: "#263238",
+    cursor: "#416454",
+    selectionBackground: "#c6dacc",
+    black: "#263238",
+    brightBlack: "#68737d",
+  },
+};
+export function TerminalViewport({
+  session,
+  visible,
+}: {
+  session: TerminalSession;
+  visible: boolean;
+}) {
+  const { locale } = useLocale();
+  const zh = locale === "zh";
+  const theme = useShellStore((state) => state.preferences.theme);
+  const host = useRef<HTMLDivElement>(null);
+  const instance = useRef<{
+    terminal: Terminal;
+    fit: FitAddon;
+    search: SearchAddon;
+    fitNow: () => void;
+    syncInput: () => void;
+  } | null>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const endedRef = useRef(session.state === "closed");
+  endedRef.current = session.state === "closed";
+  const [connection, setConnection] = useState("connecting");
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!host.current) return;
+    let disposed = false,
+      connected = false,
+      replaying = false,
+      stopped = session.state === "closed";
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    const terminal = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: '"SFMono-Regular", Menlo, Consolas, monospace',
+      scrollback: 5000,
+      screenReaderMode: true,
+      theme: themes[useShellStore.getState().preferences.theme],
+      allowProposedApi: false,
+      disableStdin: true,
+      linkHandler: {
+        activate: (event, uri) => {
+          if (!(event.ctrlKey || event.metaKey)) return;
+          try {
+            const url = new URL(uri);
+            if (["http:", "https:"].includes(url.protocol))
+              window.open(url.href, "_blank", "noopener,noreferrer");
+          } catch {}
+        },
+      },
+    });
+    const fit = new FitAddon(),
+      finder = new SearchAddon();
+    terminal.loadAddon(fit);
+    terminal.loadAddon(finder);
+    terminal.open(host.current);
+    if (terminal.textarea)
+      terminal.textarea.setAttribute(
+        "aria-label",
+        zh ? "终端输入" : "Terminal input",
+      );
+    const syncInput = () => {
+      terminal.options.disableStdin =
+        !connected || stopped || endedRef.current || replaying;
+    };
+    const fitNow = () => {
+      if (disposed || !host.current?.clientWidth || !host.current.clientHeight)
+        return;
+      fit.fit();
+      syncInput();
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (!stopped && !disposed) source.resize(Math.min(500, terminal.cols), Math.min(300, terminal.rows));
+      }, 80);
+    };
+    instance.current = { terminal, fit, search: finder, fitNow, syncInput };
+    let ackTimer: ReturnType<typeof setTimeout> | undefined, ackSequence = 0;
+    const ack = (sequence: number) => {
+      ackSequence = Math.max(ackSequence, sequence);
+      if (ackTimer || disposed || stopped) return;
+      ackTimer = setTimeout(() => { ackTimer = undefined; if (!disposed && !stopped) source.acknowledge(ackSequence); }, 24);
+    };
+    const source = new TerminalConnection(session, {
+      connected: () => { if (!disposed) { connected = true; setConnection("connected"); syncInput(); fitNow(); } },
+      disconnected: () => { if (!disposed) { connected = false; setConnection("reconnecting"); syncInput(); } },
+      error: message => { if (!disposed) setError(message); },
+      reset: (data, sequence, clear) => {
+        if (disposed) return;
+        // Replaying an old vi/SSH query must never send its response into the
+        // current shell. Only live output may generate terminal protocol replies.
+        replaying = true; syncInput(); setConnection("connecting"); if (clear) terminal.reset();
+        terminal.write(data, () => {
+          replaying = false;
+          if (!disposed) { syncInput(); if (!stopped) { setConnection("connected"); source.redraw(); } ack(sequence); }
+        });
+      },
+      data: (data, sequence) => { if (!disposed) terminal.write(data, () => ack(sequence)); },
+      state: item => {
+        if (disposed) return;
+        useTerminalStore.getState().update(item);
+        stopped = item.state === "closed" || item.state === "unconfirmed"; syncInput();
+        if (stopped) { setConnection(item.state === "closed" ? "closed" : "unavailable"); source.close(); terminalChanged(); }
+      },
+    });
+    const input = (data: string, binary = false) => {
+      if (disposed || !connected || stopped || replaying) return;
+      if (data.length > 256 * 1024) { setError(zh ? "粘贴内容过大，请改用文件。" : "Paste is too large; use a file instead."); return; }
+      try {
+        source.prepareInput(data);
+        for (let offset = 0; offset < data.length;) {
+          let end = Math.min(data.length, offset + 16000);
+          const code = data.charCodeAt(end - 1);
+          if (!binary && end < data.length && code >= 0xd800 && code <= 0xdbff) end--;
+          source.write(data.slice(offset, end), binary); offset = end;
+        }
+      } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    };
+    const onData = terminal.onData((data) => input(data));
+    const onBinary = terminal.onBinary((data) => input(data, true));
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      const mac = navigator.platform.includes("Mac");
+      const appShortcut = mac ? event.metaKey : event.ctrlKey && event.shiftKey;
+      const command = mac ? event.metaKey : event.ctrlKey;
+      if (appShortcut && event.key.toLowerCase() === "j") {
+        event.preventDefault(); useTerminalStore.getState().toggle(); return false;
+      }
+      if (command && event.shiftKey && event.key.toLowerCase() === "t") {
+        event.preventDefault(); document.dispatchEvent(new CustomEvent("terminal:new")); return false;
+      }
+      if (appShortcut && event.key.toLowerCase() === "f") {
+        event.preventDefault(); searchRef.current?.focus(); return false;
+      }
+      if (event.metaKey && event.key.toLowerCase() === "w") {
+        event.preventDefault(); useTerminalStore.getState().closeTab(session.id); return false;
+      }
+      if (event.metaKey && event.key.toLowerCase() === "k") {
+        event.preventDefault(); terminal.clear();
+        return false;
+      }
+      if (
+        command &&
+        event.key.toLowerCase() === "c" &&
+        terminal.hasSelection()
+      ) {
+        void navigator.clipboard
+          .writeText(terminal.getSelection())
+          .catch(() =>
+            setError(zh ? "无法复制到剪贴板" : "Clipboard unavailable"),
+          );
+        return false;
+      }
+      if (event.metaKey && event.key.toLowerCase() === "a") {
+        terminal.selectAll();
+        return false;
+      }
+      // Clipboard paste/IME, Ctrl+C/R/Z, arrows and bracketed paste stay with xterm.
+      return true;
+    });
+    const observer = new ResizeObserver(fitNow);
+    observer.observe(host.current);
+    fitNow();
+    if (visibleRef.current) terminal.focus();
+    return () => {
+      disposed = true;
+      clearTimeout(resizeTimer);
+      clearTimeout(ackTimer);
+      source.close();
+      observer.disconnect();
+      onData.dispose();
+      onBinary.dispose();
+      terminal.dispose();
+      instance.current = null;
+    };
+  }, [session.id]);
+  useEffect(() => {
+    if (instance.current)
+      instance.current.terminal.options.theme = themes[theme];
+  }, [theme]);
+  useLayoutEffect(() => {
+    instance.current?.syncInput();
+    if (visible) {
+      instance.current?.fitNow();
+      instance.current?.terminal.focus();
+    }
+    // Hidden views are inert, but VT protocol replies must still reach the PTY.
+  }, [visible, session.state]);
+  return (
+    <div
+      className="terminal-screen"
+      hidden={!visible}
+      inert={!visible}
+      data-terminal-id={session.id}
+    >
+      <div className="terminal-session-tools">
+        <span
+          className={`terminal-connection terminal-connection--${connection}`}
+          role="status"
+        >
+          {connection === "closed"
+            ? zh
+              ? `已结束 · ${session.exitCode ?? "已停止"}`
+              : `Exited · ${session.exitCode ?? "stopped"}`
+            : connection === "connected"
+              ? zh
+                ? "已连接"
+                : "Connected"
+              : connection === "unavailable"
+                ? zh
+                  ? "连接不可用"
+                  : "Unavailable"
+                : zh
+                  ? "连接中…"
+                  : "Connecting…"}
+        </span>
+        <input
+          ref={searchRef}
+          value={search}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            instance.current?.search.findNext(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              if (event.shiftKey) instance.current?.search.findPrevious(search);
+              else instance.current?.search.findNext(search);
+            }
+            if (event.key === "Escape") instance.current?.terminal.focus();
+          }}
+          aria-label={zh ? "搜索终端输出" : "Search terminal output"}
+          placeholder={zh ? "搜索输出" : "Search output"}
+        />
+        <button
+          type="button"
+          onClick={() => instance.current?.terminal.clear()}
+        >
+          {zh ? "清屏" : "Clear"}
+        </button>
+      </div>
+      {error && (
+        <div className="terminal-error" role="alert">
+          {error}
+          <button
+            type="button"
+            aria-label={zh ? "关闭错误" : "Dismiss error"}
+            onClick={() => setError(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      <div
+        ref={host}
+        className="terminal-emulator"
+        aria-label={zh ? "交互式终端" : "Interactive terminal"}
+      />
+    </div>
+  );
+}

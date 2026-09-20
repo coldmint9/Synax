@@ -1,26 +1,28 @@
-import { ArrowLeft, PanelLeftClose, Search, Trash2, Plus } from 'lucide-react'
-import { Button } from '@heroui/react'
-import { useLocale } from '../../../hooks/useLocale'
-import type { SessionListView } from './sessionBuckets'
+import { ArrowLeft, PanelLeftClose, Search, Trash2, Plus } from "lucide-react";
+import { Button } from "@heroui/react";
+import { useLocale } from "../../../hooks/useLocale";
+import type { SessionListView } from "./sessionBuckets";
 
 interface Props {
-  listView: SessionListView
-  workflowCount: number
-  hasMoreSessions?: boolean
-  searchQuery: string
-  onSearchChange: (q: string) => void
-  onClearInactive: () => void
-  onNewSession?: () => void
-  isCreatingSession?: boolean
-  onOpenWorkflows?: () => void
-  onBackToSessions?: () => void
-  onCollapsePanel?: () => void
+  listView: SessionListView;
+  workflowCount: number;
+  hasMoreSessions?: boolean;
+  hasGeneratedWiki?: boolean;
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
+  onClearInactive: () => void;
+  onNewSession?: () => void;
+  isCreatingSession?: boolean;
+  onOpenWorkflows?: () => void;
+  onBackToSessions?: () => void;
+  onCollapsePanel?: () => void;
 }
 
 export function SessionListHeader({
   listView,
   workflowCount,
   hasMoreSessions = false,
+  hasGeneratedWiki = false,
   searchQuery,
   onSearchChange,
   onClearInactive,
@@ -30,8 +32,8 @@ export function SessionListHeader({
   onBackToSessions,
   onCollapsePanel,
 }: Props) {
-  const { t, locale } = useLocale()
-  const isWorkflowView = listView === 'workflow'
+  const { t, locale } = useLocale();
+  const isWorkflowView = listView === "workflow";
 
   return (
     <div
@@ -45,22 +47,24 @@ export function SessionListHeader({
           className="session-list-back flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft size={12} />
-          {t('sessionBackToList')}
+          {t("sessionBackToList")}
         </button>
       ) : null}
 
       <div className="session-list-titlebar-row flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-0.5">
-          <span className="min-w-0 truncate text-sm font-bold tracking-tight text-foreground">
-            {isWorkflowView ? t('sessionWorkflowTitle') : (locale === 'zh' ? '任务' : 'Tasks')}
-          </span>
+          {isWorkflowView && (
+            <span className="min-w-0 truncate text-sm font-bold tracking-tight text-foreground">
+              {t("sessionWorkflowTitle")}
+            </span>
+          )}
           {onCollapsePanel ? (
             <button
               type="button"
               onClick={onCollapsePanel}
               className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
-              aria-label={t('appCollapseSidebar')}
-              title={t('appCollapseSidebar')}
+              aria-label={t("appCollapseSidebar")}
+              title={t("appCollapseSidebar")}
             >
               <PanelLeftClose size={14} />
             </button>
@@ -75,8 +79,11 @@ export function SessionListHeader({
               onPress={onNewSession}
               isDisabled={isCreatingSession}
             >
-              <Plus size={13} className={isCreatingSession ? 'animate-pulse' : ''} />
-              {locale === 'zh' ? '新任务' : 'New task'}
+              <Plus
+                size={13}
+                className={isCreatingSession ? "animate-pulse" : ""}
+              />
+              {locale === "zh" ? "新任务" : "New task"}
             </Button>
           ) : null}
           <Button
@@ -85,7 +92,7 @@ export function SessionListHeader({
             size="sm"
             className="h-7 w-7 min-w-0 text-muted-foreground hover:text-danger"
             onPress={onClearInactive}
-            aria-label={t('sessionClearInactive')}
+            aria-label={t("sessionClearInactive")}
           >
             <Trash2 size={14} />
           </Button>
@@ -93,25 +100,30 @@ export function SessionListHeader({
       </div>
 
       <div className="relative">
-        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none" />
+        <Search
+          size={12}
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none"
+        />
         <input
           type="text"
           value={searchQuery}
-          onChange={e => onSearchChange(e.target.value)}
-          placeholder={locale === 'zh' ? '搜索任务…' : 'Search tasks…'}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder={locale === "zh" ? "搜索任务…" : "Search tasks…"}
           className="w-full h-7 pl-7 pr-2.5 text-[11px] bg-secondary/40 border border-border/30 rounded-md text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-accent/40 focus:bg-secondary/60 transition-colors"
         />
       </div>
 
-      {!isWorkflowView && (workflowCount > 0 || hasMoreSessions) ? (
+      {!isWorkflowView && hasGeneratedWiki ? (
         <button
           type="button"
           onClick={onOpenWorkflows}
           className="w-full rounded-md border border-border/30 bg-secondary/20 px-2.5 py-1.5 text-left text-[10px] text-muted-foreground transition-colors hover:border-border/50 hover:bg-secondary/40 hover:text-foreground"
         >
-          {hasMoreSessions ? t('sessionWorkflowTitle') : t('sessionOpenWorkflows', { count: workflowCount })}
+          {hasMoreSessions
+            ? t("sessionWorkflowTitle")
+            : t("sessionOpenWorkflows", { count: workflowCount })}
         </button>
       ) : null}
     </div>
-  )
+  );
 }

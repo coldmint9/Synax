@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Bot,
   Check,
@@ -40,6 +48,8 @@ import {
   useSessionWorkspaceStore,
 } from "./sessionWorkspaceStore";
 import { SessionBackgroundProcesses } from "./SessionBackgroundProcesses";
+import { useWorkspaceDisclosure } from "./useWorkspaceDisclosure";
+import { RepositoryBranchPicker } from "./RepositoryBranchPicker";
 import { SessionCommitDialog } from "./SessionCommitDialog";
 import { useSessionEnvironment } from "./useSessionEnvironment";
 
@@ -194,29 +204,50 @@ function subagentPreview(sub: SessionEnvironmentSubagent): string {
 }
 
 function ProjectSection({
+  storageKey,
   icon,
   title,
   count,
   actions,
   children,
 }: {
+  storageKey: string;
   icon: React.ReactNode;
   title: string;
   count: number;
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const [open, toggle] = useWorkspaceDisclosure(storageKey);
+  const id = useId();
   return (
-    <section className="ws-project-section">
+    <section className="ws-project-section" data-open={open}>
       <div className="ws-project-section-head">
-        <span className="ws-card-icon">{icon}</span>
-        <span>{title}</span>
-        <span className="ws-card-count">{count}</span>
+        <button
+          type="button"
+          className="ws-project-section-toggle"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={toggle}
+        >
+          <span className="ws-card-icon">{icon}</span>
+          <span>{title}</span>
+          <span className="ws-card-count">{count}</span>
+          <ChevronRight
+            size={11}
+            className="ws-project-section-chevron"
+            aria-hidden
+          />
+        </button>
         {actions && (
           <span className="ws-project-section-actions">{actions}</span>
         )}
       </div>
-      <div className="ws-project-section-body">{children}</div>
+      {open && (
+        <div id={id} className="ws-project-section-body">
+          {children}
+        </div>
+      )}
     </section>
   );
 }
@@ -258,6 +289,7 @@ function RepositoryProjectCard({
   return (
     <WorkspaceCard
       className="ws-project-card"
+      storageKey={`${sessionId}:${repository.rootId}:project`}
       icon={<Folder size={13} />}
       title={repository.name}
       count={changedFiles.length || undefined}
@@ -274,6 +306,7 @@ function RepositoryProjectCard({
       {changedFiles.length > 0 && (
         <ProjectSection
           icon={<FileDiff size={13} />}
+          storageKey={`${sessionId}:${repository.rootId}:changes`}
           title={t("workspaceCardGitChanges")}
           count={changedFiles.length}
           actions={
@@ -328,6 +361,7 @@ function RepositoryProjectCard({
       {recentSources.length > 0 && (
         <ProjectSection
           icon={<FileCode2 size={13} />}
+          storageKey={`${sessionId}:${repository.rootId}:inputs`}
           title={t("workspaceCardInputSources")}
           count={recentSources.length}
         >
@@ -356,6 +390,7 @@ function RepositoryProjectCard({
       {outputFiles.length > 0 && (
         <ProjectSection
           icon={<FileCode2 size={13} />}
+          storageKey={`${sessionId}:${repository.rootId}:outputs`}
           title={t("workspaceCardOutputs")}
           count={outputFiles.length}
         >
@@ -375,6 +410,13 @@ function RepositoryProjectCard({
       )}
     </WorkspaceCard>
   );
+}
+
+function WorkspaceProjectsPane({ sessionId, count, children }: { sessionId: string; count: number; children: React.ReactNode }) {
+  const { locale } = useLocale();
+  if (count === 1) return <div className="workspace-projects-pane">{children}</div>;
+  return <WorkspaceCard className="workspace-projects-group" storageKey={`${sessionId}:projects`}
+    icon={<Folder size={13} />} title={locale === "zh" ? "项目" : "Projects"} count={count}>{children}</WorkspaceCard>;
 }
 
 export const WorkspaceDashboard = memo(function WorkspaceDashboard({
@@ -465,22 +507,24 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
 
   if (sessionId && environment && repositories.length > 0) {
     return (
-      <div className="workspace-dashboard session-workspace-scroll min-h-0 flex-1 overflow-y-auto">
+      <div className="workspace-dashboard workspace-dashboard--pinned session-workspace-scroll min-h-0 flex-1">
         <SessionTodoPanel key={sessionId} items={todos} />
-        {repositories.map((root) => (
-          <RepositoryProjectCard
-            key={root.rootId}
-            sessionId={sessionId}
-            environment={environment}
-            repository={root}
-            loading={loading}
-            reload={reload}
-            changedFilesView={changedFilesView}
-            onChangedFilesView={setChangedFilesView}
-            copiedPath={copiedPath}
-            onCopyPath={(path) => void copyPath(path)}
-          />
-        ))}
+        <WorkspaceProjectsPane sessionId={sessionId} count={repositories.length}>
+          {repositories.map((root) => (
+            <RepositoryProjectCard
+              key={root.rootId}
+              sessionId={sessionId}
+              environment={environment}
+              repository={root}
+              loading={loading}
+              reload={reload}
+              changedFilesView={changedFilesView}
+              onChangedFilesView={setChangedFilesView}
+              copiedPath={copiedPath}
+              onCopyPath={(path) => void copyPath(path)}
+            />
+          ))}
+        </WorkspaceProjectsPane>
         {subagents.length > 0 && (
           <WorkspaceCard
             icon={<Bot size={13} />}
@@ -507,7 +551,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             ))}
           </WorkspaceCard>
         )}
-        <SessionBackgroundProcesses sessionId={sessionId} />
+        <SessionBackgroundProcesses sessionId={sessionId} environment={environment} />
         <SessionProfilePanel sessionId={sessionId} />
       </div>
     );
@@ -733,7 +777,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       ) : null}
       {sessionId && (
         <>
-          <SessionBackgroundProcesses key={sessionId} sessionId={sessionId} />
+          <SessionBackgroundProcesses key={sessionId} sessionId={sessionId} environment={environment} />
           <SessionProfilePanel sessionId={sessionId} />
         </>
       )}
@@ -837,10 +881,14 @@ function RepositoryCard({
         </div>
       )}
       <div className="ws-repo-head">
-        <GitBranch size={11} className="ws-repo-icon" />
-        <span className="ws-repo-branch" title={environment.branch}>
-          {environment.branch || "—"}
-        </span>
+        <RepositoryBranchPicker
+          key={`${environment.sessionId}:${repository?.rootId ?? "primary"}`}
+          sessionId={environment.sessionId}
+          rootId={repository?.rootId}
+          branch={environment.branch}
+          disabled={loading || unavailable}
+          onSwitched={() => void reload()}
+        />
         <span
           className={`ws-repo-state ${unavailable ? "bg-warning/15 text-warning" : environment.dirty ? "bg-warning/15 text-warning" : "bg-success/15 text-success"}`}
         >

@@ -32,6 +32,7 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({
     <div className="work-runtime-details">
       <WorkspaceSection
         key={sessionId}
+        storageKey={`${sessionId}:runtime`}
         icon={<SlidersHorizontal size={13} />}
         title={locale === "zh" ? "运行详情" : "Runtime details"}
         defaultOpen={false}

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, realpath } from 'node:fs/promises';
+import { access, mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { DATA_ROOT } from '../lib/env.js';
@@ -326,4 +326,31 @@ export async function resolveGitWorkspaceSelection(
   }
   const created = await createGitWorktree(root, projectId, { branch: branch.name });
   return { workDir: created.path, branch: created.branch, kind: 'branch' as const };
+}
+
+/** Change this worktree, never discard edits, auto-stash, or guess remote refs. */
+export async function switchGitBranch(
+  repositoryPath: string,
+  branch: string,
+  assertIdle: (root: string) => void = () => {},
+): Promise<string> {
+  const root = await assertRepository(repositoryPath);
+  return withRepositoryLock(root, async () => {
+    await assertBranchName(root, branch);
+    if (!(await branchExists(root, branch))) throw new GitWorkspaceError('Local branch does not exist.', 404);
+    const current = (await git(root, ['branch', '--show-current'])).stdout.trim();
+    if (current === branch) return current;
+    const status = await git(root, ['status', '--porcelain', '--untracked-files=all']);
+    if (status.stdout.trim()) throw new GitWorkspaceError('Commit or stash uncommitted changes before switching branches.', 409);
+    for (const marker of ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply', 'BISECT_LOG', 'sequencer']) {
+      const location = (await git(root, ['rev-parse', '--git-path', marker])).stdout.trim();
+      if (await access(path.resolve(root, location)).then(() => true, () => false))
+        throw new GitWorkspaceError('A Git operation is in progress. Finish it before switching branches.', 409);
+    }
+    const occupied = (await rawWorktrees(root)).find(item => item.branch === branch && !samePath(item.path, root));
+    if (occupied) throw new GitWorkspaceError('This branch is already checked out in another worktree.', 409);
+    assertIdle(root);
+    await git(root, ['switch', '--no-guess', branch]);
+    return (await git(root, ['branch', '--show-current'])).stdout.trim();
+  });
 }

@@ -28,7 +28,7 @@ const spawn = vi.hoisted(() => vi.fn());
 vi.mock("electron", () => electron);
 vi.mock("node:child_process", () => ({ spawn }));
 
-import { buildAppMenu } from "./menu.js";
+import { buildAppMenu, updateMenuState } from "./menu.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 import { startSidecar, stopSidecar } from "./lib/node-sidecar.js";
 import { spawnProcess, waitForExit } from "../scripts/_shared.js";
@@ -240,4 +240,20 @@ describe("desktop platform contract", () => {
       ),
     ).rejects.toThrow("Native dependencies");
   });
+});
+
+it("keeps desktop commands contextual and uses the import dialog instead of a fake project route", () => {
+  updateMenuState({ projectId: null, hasSession: false, hasViewer: false, inWork: false, inWiki: false, dark: false });
+  const get = (id: string): any => {
+    const flatten = (items: any[]): any[] => items.flatMap(item => [item, ...flatten(item.submenu ?? [])]);
+    return flatten(electron.Menu.buildFromTemplate.mock.lastCall![0] as any[]).find(item => item.id === id);
+  };
+  expect(get('session:new').enabled).toBe(false);
+  expect(get('view:conversation').enabled).toBe(false);
+  expect(get('project:import').accelerator).toBe('CmdOrCtrl+O');
+  updateMenuState({ projectId: 'p', hasSession: true, hasViewer: true, inWork: true, inWiki: false, dark: true });
+  expect(get('session:new').enabled).toBe(true);
+  expect(get('view:conversation').enabled).toBe(true);
+  expect(get('workspace:refresh').enabled).toBe(true);
+  expect(get('theme:toggle').checked).toBe(true);
 });

@@ -394,7 +394,7 @@ describe("WorkspaceDashboard", () => {
     ).toBeDisabled();
   });
 
-  it("resets project folds after the workspace is reopened", () => {
+  it("remembers project folds after the workspace is reopened", () => {
     const snapshot: SessionEnvironment = {
       ...environment,
       repositories: [
@@ -422,7 +422,7 @@ describe("WorkspaceDashboard", () => {
     render(<WorkspaceDashboard sessionId="session-1" environment={snapshot} />);
     expect(screen.getByRole("button", { name: /^Web/ })).toHaveAttribute(
       "aria-expanded",
-      "true",
+      "false",
     );
   });
 

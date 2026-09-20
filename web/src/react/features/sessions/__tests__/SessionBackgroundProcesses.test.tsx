@@ -7,6 +7,7 @@ vi.mock("../../../../lib/api/agentRuntime", () => ({
   agentRuntimeApi: {
     listSessionProcesses: vi.fn(),
     stopSessionProcess: vi.fn(),
+    deleteSessionProcess: vi.fn(),
   },
 }));
 vi.mock("../../../../lib/api/runtimeEventBus", () => ({
@@ -78,4 +79,25 @@ it("ignores process lists belonging to the session that was left", async () => {
   view.rerender(<SessionBackgroundProcesses sessionId="two" />);
   await act(async () => resolveOld({ items: [process] }));
   expect(screen.queryByText("npm run dev")).not.toBeInTheDocument();
+});
+
+it("keeps the service header visible when empty and supports folding", async () => {
+  vi.mocked(agentRuntimeApi.listSessionProcesses).mockResolvedValue({ items: [] });
+  render(<SessionBackgroundProcesses sessionId="empty" />);
+  const header = await screen.findByRole('button', { name: /Background services/ });
+  expect(header).toHaveAttribute('aria-expanded', 'true');
+  await userEvent.click(header);
+  expect(header).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByText('No background services')).not.toBeInTheDocument();
+});
+it("requires stopping before deleting, and removes closed history", async () => {
+  vi.mocked(agentRuntimeApi.stopSessionProcess).mockResolvedValue({ items: [{ ...process, state: 'closed' }] });
+  vi.mocked(agentRuntimeApi.deleteSessionProcess).mockResolvedValue({ items: [] });
+  render(<SessionBackgroundProcesses sessionId="one" />);
+  expect(await screen.findByRole('button', { name: 'Delete record npm run dev' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: 'Stop npm run dev' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete record npm run dev' })).toBeEnabled());
+  await userEvent.click(screen.getByRole('button', { name: 'Delete record npm run dev' }));
+  await waitFor(() => expect(screen.queryByText('npm run dev')).not.toBeInTheDocument());
+  expect(agentRuntimeApi.deleteSessionProcess).toHaveBeenCalledWith('one', 'job');
 });
