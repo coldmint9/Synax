@@ -278,7 +278,7 @@ Run `npm run test:desktop`, then `npm run make:desktop`, then `npm run test:desk
 
 macOS uses the integrated traffic-light titlebar and application menu; Windows retains native window controls and uses Ctrl shortcuts. Runtime data remains in `~/.synax` (or `%USERPROFILE%\.synax` on Windows), overridable with `DATA_ROOT`. Installed builds use Electron's embedded runtime rather than requiring a separate Node.js installation.
 
-Final icons can be supplied as `electron/resources/icon.icns` (macOS) and `electron/resources/icon.ico` (Windows). Without them, packaging uses the default Electron icon. Signing and notarization are not configured; unsigned builds are intended for testing and may trigger OS warnings. Full Electron/API/native-module updates still require a new desktop installer.
+Desktop and browser icons use the supplied Liquid Glass artwork in `electron/resources/Synax-Liquid-Glass.sketch`. Regenerate ICNS, ICO, PNG and favicons with `python3 scripts/generate-app-icons.py` (requires Pillow). Signing and notarization are not configured; unsigned builds are intended for testing and may trigger OS warnings. Full Electron/API/native-module updates still require a new desktop installer.
 
 ### UI-only updates from GitHub
 

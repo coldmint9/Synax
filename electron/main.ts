@@ -64,6 +64,9 @@ function createWindow(): BrowserWindow {
     ...state,
     minWidth: 800,
     minHeight: 600,
+    icon: isDev
+      ? getResourcePath("electron", "resources", "icon.png")
+      : getResourcePath("icon.png"),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     ...(process.platform === "darwin"
       ? { trafficLightPosition: { x: 14, y: 18 } }

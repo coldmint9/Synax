@@ -416,31 +416,6 @@ function RepositoryProjectCard({
   );
 }
 
-function WorkspaceProjectsPane({
-  sessionId,
-  count,
-  children,
-}: {
-  sessionId: string;
-  count: number;
-  children: React.ReactNode;
-}) {
-  const { locale } = useLocale();
-  if (count === 1)
-    return <div className="workspace-projects-pane">{children}</div>;
-  return (
-    <WorkspaceCard
-      className="workspace-projects-group"
-      storageKey={`${sessionId}:projects`}
-      icon={<Folder size={13} />}
-      title={locale === "zh" ? "项目" : "Projects"}
-      count={count}
-    >
-      {children}
-    </WorkspaceCard>
-  );
-}
-
 export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   sessionId,
   environment: providedEnvironment,
@@ -531,9 +506,8 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
     return (
       <div className="workspace-dashboard workspace-dashboard--pinned session-workspace-scroll min-h-0 flex-1">
         <SessionTodoPanel key={sessionId} items={todos} />
-        <WorkspaceProjectsPane
-          sessionId={sessionId}
-          count={repositories.length}
+        <div
+          className={`workspace-projects-pane${repositories.length > 1 ? " workspace-projects-pane--multiple" : ""}`}
         >
           {repositories.map((root) => (
             <RepositoryProjectCard
@@ -549,7 +523,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               onCopyPath={(path) => void copyPath(path)}
             />
           ))}
-        </WorkspaceProjectsPane>
+        </div>
         {subagents.length > 0 && (
           <WorkspaceCard
             icon={<Bot size={13} />}

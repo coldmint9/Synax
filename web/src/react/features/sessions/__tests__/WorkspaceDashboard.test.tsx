@@ -390,6 +390,13 @@ describe("WorkspaceDashboard", () => {
     const apiCard = apiHeader.closest(".ws-project-card")!;
     const webCard = webHeader.closest(".ws-project-card")!;
     const goneCard = goneHeader.closest(".ws-project-card")!;
+    const pane = apiCard.parentElement!;
+    expect(pane).toHaveClass("workspace-projects-pane--multiple");
+    expect(webCard.parentElement).toBe(pane);
+    expect(goneCard.parentElement).toBe(pane);
+    expect(pane.querySelectorAll(":scope > .ws-project-card")).toHaveLength(3);
+    expect(pane.closest(".ws-card")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^项目\s*3$/ })).toBeNull();
 
     expect(apiHeader).toHaveAttribute("aria-expanded", "true");
     expect(webHeader).toHaveAttribute("aria-expanded", "true");

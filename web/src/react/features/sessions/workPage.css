@@ -79,6 +79,15 @@
   background: transparent;
   border-bottom: 1px solid var(--work-line);
 }
+/* Native controls: y=18 + 14/2 = 25px. Match the toolbar center:
+   panel inset 6 + card border 1 + header padding 5 + row height 26/2. */
+.electron-macos .work-page .session-list-card--sessions .session-list-header {
+  padding-top: 5px;
+}
+.electron-macos .work-page .session-list-titlebar-row {
+  height: 26px;
+  min-height: 26px;
+}
 /* Keep the first header row beside the macOS window controls. This preserves
    the compact titlebar instead of pushing the search and list content down. */
 .electron-macos
@@ -226,6 +235,8 @@
   max-height: none;
   overflow: visible;
   padding: 0 6px 6px;
+  /* The first project section owns the divider; avoid a doubled 1px rule. */
+  border-top: 0;
 }
 :is(.work-page, .work-details-dialog) .ws-project-card {
   overflow: visible;
@@ -596,7 +607,8 @@
 }
 .workspace-dashboard--pinned .workspace-projects-pane {
   display: flex;
-  flex: 1 1 0;
+  /* Size the outer slot too: shrinking only its card leaves an empty gap. */
+  flex: 0 1 auto;
   min-height: 36px;
   flex-direction: column;
   gap: 8px;
@@ -644,7 +656,7 @@
 :is(.work-page, .work-details-dialog)
   .workspace-dashboard--pinned
   > .bui-processes {
-  flex: 0.55 1 0;
+  flex: 0 1 auto;
   padding: 0;
 }
 :is(.work-page, .work-details-dialog)
@@ -660,7 +672,7 @@
   overflow: hidden;
 }
 .workspace-dashboard--pinned > .work-runtime-details:has(> [data-open="true"]) {
-  flex: 0.7 1 0;
+  flex: 0 1 auto;
 }
 :is(.work-page, .work-details-dialog)
   .workspace-dashboard--pinned
@@ -822,14 +834,28 @@
   min-width: 0;
 }
 .ws-repo-head {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+.ws-repo-head > .ws-icon-button {
+  flex: 0 0 auto;
+}
+.ws-repo-head > .ws-repo-state {
+  min-width: 0;
+  max-width: 30%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ws-repo-head > .ws-repo-action {
+  white-space: nowrap;
 }
 .ws-branch-trigger.button {
   display: inline-flex;
   justify-content: flex-start;
   gap: 4px;
   min-width: 0;
-  max-width: 55%;
+  flex: 1 1 0;
+  max-width: none;
+  overflow: hidden;
   height: 24px;
   min-height: 24px;
   padding: 0 3px;
@@ -862,39 +888,6 @@
   white-space: normal;
   overflow-wrap: anywhere;
   padding: 5px;
-}
-:is(.work-page, .work-details-dialog)
-  .workspace-dashboard--pinned
-  > .workspace-projects-group {
-  display: flex;
-  flex: 1 1 0;
-  flex-direction: column;
-  min-height: 34px;
-}
-:is(.work-page, .work-details-dialog)
-  .workspace-dashboard--pinned
-  > .workspace-projects-group[data-open="false"] {
-  flex: 0 0 auto;
-}
-:is(.work-page, .work-details-dialog)
-  .workspace-projects-group
-  > .ws-card-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: none;
-  overflow: auto;
-}
-:is(.work-page, .work-details-dialog)
-  .workspace-projects-group
-  .ws-project-card {
-  margin-top: 6px;
-}
-:is(.work-page, .work-details-dialog)
-  .workspace-projects-group
-  .ws-project-card
-  > .ws-card-body {
-  flex: none;
-  overflow: visible;
 }
 :is(.work-page, .work-details-dialog)
   .workspace-dashboard--pinned
