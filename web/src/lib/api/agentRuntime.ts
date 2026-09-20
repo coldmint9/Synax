@@ -730,10 +730,7 @@ export const agentRuntimeApi = {
       `/sessions/${encodeURIComponent(sessionId)}/recovery`,
       {
         method: "POST",
-        body: JSON.stringify({
-          reviewedWorkspace: true,
-          confirmedNoRemainingWork: true,
-        }),
+        body: JSON.stringify({}),
       },
     ),
   submitRun: (

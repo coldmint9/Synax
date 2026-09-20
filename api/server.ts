@@ -136,7 +136,7 @@ async function startRuntime(): Promise<void> {
   if (recovery.reviewed)
     pinoLogger.warn(
       { count: recovery.reviewed },
-      "interrupted executions require recovery",
+      "interrupted executions reconciled or isolated to their original sessions",
     );
   // --- 启动时恢复 wiki 文档写入队列（先于 snapshot 恢复，避免误标记 writing 为 failed）---
   wikiWriteQueue

@@ -662,13 +662,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", (c) => {
 agentRuntimeRoutes.post("/sessions/:sessionId/recovery", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
-  const parsed = z
-    .object({
-      reviewedWorkspace: z.literal(true),
-      confirmedNoRemainingWork: z.literal(true),
-    })
-    .safeParse(body.data);
-  if (!parsed.success) return validationError(c, parsed.error);
   try {
     const id = c.req.param("sessionId");
     await runCoordinator.reconcileFailedStop(id);

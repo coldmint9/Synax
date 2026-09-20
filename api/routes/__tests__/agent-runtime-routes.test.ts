@@ -382,6 +382,28 @@ describe("GET /sessions projected-status pagination", () => {
     });
   }
 
+  it("retries cleanup without asking the user to attest to two hidden recovery flags", async () => {
+    seed();
+    const { agentRuntimeRoutes } = await import("../agent-runtime.js");
+    const response = await agentRuntimeRoutes.request(
+      "http://localhost/sessions/unconfirmed/recovery",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      },
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      session: {
+        status: string;
+        sessionMetadata: { runtimeControl?: unknown };
+      };
+    };
+    expect(body.session.status).toBe("interrupted");
+    expect(body.session.sessionMetadata.runtimeControl).toBeNull();
+  });
+
   it("returns projected items with exact totalCount and countByStatus", async () => {
     seed();
     const { agentRuntimeRoutes } = await import("../agent-runtime.js");

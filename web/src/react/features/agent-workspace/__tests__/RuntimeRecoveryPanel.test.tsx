@@ -11,8 +11,8 @@ vi.mock("../../../../hooks/useLocale", () => ({
   useLocale: () => ({ locale: "en" }),
 }));
 
-describe("explicit execution recovery", () => {
-  it("requires both confirmations and does not submit a new run", async () => {
+describe("stale execution cleanup", () => {
+  it("lets the user retry process cleanup in one click without submitting a new run", async () => {
     const session = {
       id: "recovery",
       sessionMetadata: {
@@ -32,11 +32,10 @@ describe("explicit execution recovery", () => {
     });
     render(<RuntimeRecoveryPanel session={session} />);
     const button = screen.getByRole("button", {
-      name: /Release recovery block/,
+      name: /Retry process cleanup/,
     });
-    expect(button).toBeDisabled();
-    for (const checkbox of screen.getAllByRole("checkbox"))
-      await userEvent.click(checkbox);
+    expect(button).toBeEnabled();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     await userEvent.click(button);
     await waitFor(() => expect(recover).toHaveBeenCalledWith("recovery"));
     expect(submit).not.toHaveBeenCalled();

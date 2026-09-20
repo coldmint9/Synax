@@ -91,25 +91,11 @@ export function acceptRuntimeRun(
         409,
       );
     }
-    const recoveringProject = db
-      .prepare(
-        "SELECT id FROM agent_runtime_sessions WHERE project_id=? AND id<>? AND json_extract(session_metadata_json, '$.runtimeControl.state')='unconfirmed' LIMIT 1",
-      )
-      .get(session.projectId, session.id);
-    const globalProcess = db
-      .prepare(
-        "SELECT id FROM agent_runtime_processes WHERE session_id IS NULL AND state='unconfirmed' LIMIT 1",
-      )
-      .get();
-    if (recoveringProject || globalProcess)
-      throw new AgentRuntimeError(
-        "A previous execution requires recovery before this workspace can accept more work.",
-        "RECOVERY_REQUIRED",
-        409,
-      );
+    // An unconfirmed process belongs to its original execution. Keep that
+    // session fenced, but never lock every other session in the project.
     if (session.sessionMetadata?.runtimeControl) {
       throw new AgentRuntimeError(
-        "Execution shutdown is pending or unconfirmed. Inspect the previous execution before resuming.",
+        "Execution shutdown is pending or unconfirmed. Retry stopping recorded processes in this session.",
         "RECOVERY_REQUIRED",
         409,
       );

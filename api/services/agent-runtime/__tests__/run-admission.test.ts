@@ -8,12 +8,38 @@ import {
   plannerSessionInput,
 } from "./agent-runtime-fixtures.js";
 import { acceptRuntimeRun, activateAcceptedRun } from "../run-admission.js";
+import { getRawSqlite } from "../../../db/index.js";
 
 beforeEach(resetAgentRuntimeFixtures);
 const create = () =>
   agentSessionRuntime.create({ ...plannerSessionInput, workDir: os.tmpdir() });
 
 describe("durable Run admission", () => {
+  it("does not block a new session because another session or global process needs cleanup", () => {
+    const old = create();
+    agentRuntimeStore.updateSessionMetadata(old.id, {
+      runtimeControl: { state: "unconfirmed", reason: "Stop pending." },
+    });
+    getRawSqlite()
+      .prepare(
+        `INSERT INTO agent_runtime_processes
+      (id, host_id, session_id, run_id, pid, process_group, command_label, state, started_at, kind)
+      VALUES (?, ?, NULL, NULL, NULL, 0, ?, 'unconfirmed', ?, 'command')`,
+      )
+      .run(
+        "global-unconfirmed",
+        "former-host",
+        "Background cleanup",
+        new Date().toISOString(),
+      );
+    const next = create();
+    expect(
+      acceptRuntimeRun(next.id, { message: "New task" }, "new-task").run.status,
+    ).toBe("queued");
+    expect(() =>
+      acceptRuntimeRun(old.id, { message: "Unsafe retry" }, "unsafe-retry"),
+    ).toThrow(/shutdown|recovery/i);
+  });
   it("does not accept an internal activation token from the public request schema", () => {
     expect(
       streamTurnRequestSchema.parse({

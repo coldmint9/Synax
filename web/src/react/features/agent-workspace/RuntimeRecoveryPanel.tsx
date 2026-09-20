@@ -9,8 +9,6 @@ import { useLocale } from "../../../hooks/useLocale";
 export function RuntimeRecoveryPanel({ session }: { session: AgentSession }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const [reviewed, setReviewed] = useState(false),
-    [stopped, setStopped] = useState(false);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState<string | null>(null);
   const control = session.sessionMetadata?.runtimeControl as
@@ -23,29 +21,14 @@ export function RuntimeRecoveryPanel({ session }: { session: AgentSession }) {
       className="mb-3 space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs"
     >
       <p className="font-medium">
-        {zh ? "恢复前需要检查" : "Review required before recovery"}
+        {zh ? "旧执行未能完全停止" : "Previous execution did not stop cleanly"}
       </p>
       <p className="text-muted-foreground">{control.reason}</p>
-      <label className="flex items-start gap-2">
-        <input
-          type="checkbox"
-          checked={reviewed}
-          onChange={(event) => setReviewed(event.target.checked)}
-        />
+      <p className="text-muted-foreground">
         {zh
-          ? "我已检查中断涉及的文件与 Git 变更。"
-          : "I reviewed the affected files and Git changes."}
-      </label>
-      <label className="flex items-start gap-2">
-        <input
-          type="checkbox"
-          checked={stopped}
-          onChange={(event) => setStopped(event.target.checked)}
-        />
-        {zh
-          ? "确认旧执行已停止；服务仍会核验已登记的进程。"
-          : "The old execution is stopped; recorded processes will still be checked."}
-      </label>
+          ? "可直接重试停止残留进程；其他会话可以继续使用这个工作区。"
+          : "Retry stopping the recorded process. Other sessions can keep using this workspace."}
+      </p>
       {error && (
         <p role="alert" className="text-danger">
           {error}
@@ -53,7 +36,7 @@ export function RuntimeRecoveryPanel({ session }: { session: AgentSession }) {
       )}
       <button
         type="button"
-        disabled={!reviewed || !stopped || busy}
+        disabled={busy}
         className="rounded-md bg-secondary px-3 py-1.5 disabled:opacity-40"
         onClick={() => {
           setBusy(true);
@@ -76,11 +59,11 @@ export function RuntimeRecoveryPanel({ session }: { session: AgentSession }) {
       >
         {busy
           ? zh
-            ? "正在核验…"
-            : "Checking…"
+            ? "正在停止…"
+            : "Stopping…"
           : zh
-            ? "解除恢复阻塞（不自动执行）"
-            : "Release recovery block (does not run work)"}
+            ? "重试停止残留进程"
+            : "Retry process cleanup"}
       </button>
     </section>
   );
