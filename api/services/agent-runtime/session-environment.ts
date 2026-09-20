@@ -54,6 +54,7 @@ export type SessionEnvironmentInputSourceKind =
   | "tool";
 
 export interface SessionEnvironmentInputSource {
+  toolCallId?: string;
   kind: SessionEnvironmentInputSourceKind;
   label: string;
   path?: string;
@@ -253,10 +254,14 @@ function readInputSources(
   const sources = new Map<string, SessionEnvironmentInputSource>();
   for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
     if (call.status !== "completed" || call.mutability !== "read") continue;
-    const input =
+    const envelope =
       call.inputRef && typeof call.inputRef === "object"
         ? (call.inputRef as Record<string, unknown>)
         : {};
+    const input =
+      envelope.nativeTool && typeof envelope.nativeTool === "object"
+        ? (envelope.nativeTool as Record<string, unknown>)
+        : envelope;
     const candidate = input.path ?? input.file_path ?? input.notebook_path;
     if (typeof candidate === "string" && candidate.trim()) {
       try {
@@ -265,7 +270,10 @@ function readInputSources(
           workspacePath,
           primaryPath,
         );
+        if (!fs.statSync(path.join(workspacePath, relativePath)).isFile())
+          throw new Error("Not a file");
         sources.set(`file:${relativePath}`, {
+          toolCallId: call.id,
           kind: "file",
           label: relativePath,
           path: relativePath,
@@ -284,7 +292,11 @@ function readInputSources(
             ? "url"
             : "tool";
     const label = call.inputSummary?.trim() || call.toolId;
-    sources.set(`${kind}:${call.toolId}:${label}`, { kind, label });
+    sources.set(`${kind}:${call.toolId}:${label}`, {
+      kind,
+      label,
+      toolCallId: call.id,
+    });
   }
   return [...sources.values()];
 }
@@ -578,6 +590,31 @@ async function computeSessionEnvironment(
     repositories,
     subagents,
     refreshedAt: new Date().toISOString(),
+  };
+}
+
+export function getSessionInputSourceContent(
+  sessionId: string,
+  toolCallId: string,
+) {
+  getSession(sessionId);
+  const call = agentRuntimeStore.getToolCall(sessionId, toolCallId);
+  if (call.status !== "completed" || call.mutability !== "read") {
+    throw new AgentValidationError(
+      "Only completed input reads can be previewed.",
+    );
+  }
+  const output = call.outputRef ?? call.outputSummary;
+  const content =
+    typeof output === "string"
+      ? output
+      : output == null
+        ? ""
+        : JSON.stringify(output, null, 2);
+  const bytes = Buffer.from(content, "utf8");
+  return {
+    content: bytes.subarray(0, MAX_FILE_BYTES).toString("utf8"),
+    truncated: bytes.length > MAX_FILE_BYTES,
   };
 }
 

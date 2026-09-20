@@ -16,7 +16,7 @@ import {
 import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
 import { terminalApi } from "../../../lib/api/terminal";
 import { useLocale } from "../../../hooks/useLocale";
-import { useSessionWorkspaceStore } from "../sessions/sessionWorkspaceStore";
+import { useSessionWorkspaceStore } from "../agent-workspace/state/sessionWorkspaceStore";
 import { TerminalViewport } from "./TerminalViewport";
 import {
   terminalChanged,
@@ -289,10 +289,10 @@ export function TerminalDrawer({
   };
   return (
     <section
-      className="terminal-drawer"
+      className={`terminal-drawer${maximized ? " terminal-drawer--maximized" : ""}`}
       hidden={!open}
       aria-label={zh ? "终端抽屉" : "Terminal drawer"}
-      style={{ height: maximized ? "calc(100% - 64px)" : height }}
+      style={{ height: maximized ? undefined : height }}
       onFocusCapture={() => setNativeFocus(true)}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget))
@@ -302,6 +302,7 @@ export function TerminalDrawer({
     >
       <div
         className="terminal-drawer-resizer"
+        hidden={maximized}
         role="separator"
         tabIndex={0}
         aria-label={zh ? "调整终端高度" : "Resize terminal"}

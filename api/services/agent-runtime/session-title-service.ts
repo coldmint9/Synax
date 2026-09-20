@@ -4,7 +4,8 @@ import { startAuxUsage, finishAuxUsage } from "./usage-projection.js";
 import { logger } from "../../lib/logger.js";
 import { sessionHooks } from "./session-hooks.js";
 import { generateGatewayTextResult } from "../llm-runtime/gateway.js";
-import { resolveGoalTitleSource } from "../wiki/wiki-goal-title.js";
+import { resolveSessionTitleInput } from "./session-title-input.js";
+import { isSessionComposerSource } from "./session-metadata.js";
 import type { AgentRunStreamChunk, AgentSession } from "./contracts.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { nowIso } from "./runtime-ids.js";
@@ -15,7 +16,7 @@ function resolveUserTitleInput(
 ): string {
   const session = agentRuntimeStore.tryGetSession(sessionId);
   return (
-    resolveGoalTitleSource({
+    resolveSessionTitleInput({
       sessionMetadata: session?.sessionMetadata ?? null,
       prompt: sessionPrompt,
     }) ?? sessionPrompt.trim()
@@ -265,15 +266,15 @@ export function resolveInitialSessionTitle(input: {
 }): string | null {
   const meta = input.sessionMetadata;
   const direct = shortSessionTitle(
-    resolveGoalTitleSource(input) ?? input.prompt,
+    resolveSessionTitleInput(input) ?? input.prompt,
   );
   if (direct) return direct;
-  if (meta?.source === "session-page" || meta?.source === "goal-dock") {
+  if (isSessionComposerSource(meta?.source)) {
     return DEFAULT_NEW_SESSION_TITLE;
   }
 
-  const fromGoal = resolveGoalTitleSource(input);
-  if (fromGoal) return truncateInitialTitle(fromGoal);
+  const userInput = resolveSessionTitleInput(input);
+  if (userInput) return truncateInitialTitle(userInput);
 
   const prompt = input.prompt.trim();
   if (!prompt) return null;

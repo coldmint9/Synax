@@ -27,7 +27,7 @@ export function MediaAttachButton({
         disabled={disabled}
         aria-label="添加附件 / Attach files"
         title="图片、音频、视频、PDF或文件 / Attach files"
-        className="goal-dock-composer-chip inline-flex size-8 items-center justify-center rounded-full disabled:opacity-50"
+        className="agent-dock-composer-chip inline-flex size-8 items-center justify-center rounded-full disabled:opacity-50"
         onClick={() => ref.current?.click()}
       >
         <Paperclip size={15} />
@@ -43,35 +43,33 @@ export function MediaDraftPreview({ media }: { media: MediaDraft }) {
           {media.error}
         </p>
       )}
-      {media.items.filter((item) => item.error).map((item) => (
-        <div
-          key={item.id}
-          className="my-1 flex items-center gap-2 rounded-lg bg-surface/60 px-2 py-1"
-        >
-          <span className="min-w-0 flex-1 truncate" title={item.file.name}>
-            {item.file.name}
-          </span>
-          <span
-            className="text-danger"
+      {media.items
+        .filter((item) => item.error)
+        .map((item) => (
+          <div
+            key={item.id}
+            className="my-1 flex items-center gap-2 rounded-lg bg-surface/60 px-2 py-1"
           >
-            {item.error}
-          </span>
-          <button
-            type="button"
-            aria-label={`重试 ${item.file.name}`}
-            onClick={() => media.retry(item.id)}
-          >
-            <RotateCcw size={12} />
-          </button>
-          <button
-            type="button"
-            aria-label={`移除 ${item.file.name}`}
-            onClick={() => media.remove(item.id)}
-          >
-            <X size={12} />
-          </button>
-        </div>
-      ))}
+            <span className="min-w-0 flex-1 truncate" title={item.file.name}>
+              {item.file.name}
+            </span>
+            <span className="text-danger">{item.error}</span>
+            <button
+              type="button"
+              aria-label={`重试 ${item.file.name}`}
+              onClick={() => media.retry(item.id)}
+            >
+              <RotateCcw size={12} />
+            </button>
+            <button
+              type="button"
+              aria-label={`移除 ${item.file.name}`}
+              onClick={() => media.remove(item.id)}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        ))}
       <MediaParts
         parts={media.parts}
         onRemove={(assetId) => {

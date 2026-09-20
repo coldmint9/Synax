@@ -15,11 +15,11 @@ const allowedHosts = new Set([
   "objects.githubusercontent.com",
 ]);
 
-interface ReleaseAsset {
+export interface ReleaseAsset {
   name: string;
   browser_download_url: string;
 }
-interface Release {
+export interface Release {
   tag_name: string;
   draft: boolean;
   prerelease: boolean;
@@ -30,10 +30,11 @@ export interface UiRelease {
   assets: ReleaseAsset[];
 }
 
-export async function fetchLimited(
+export async function fetchGithubResponse(
   url: string,
-  limit: number,
-): Promise<Buffer> {
+  timeout = 30_000,
+): Promise<Response> {
+  const signal = AbortSignal.timeout(timeout);
   for (let redirect = 0; redirect < 6; redirect++) {
     const parsed = new URL(url);
     if (
@@ -42,42 +43,51 @@ export async function fetchLimited(
       parsed.username ||
       parsed.password
     ) {
-      throw new Error("UI update URL must be hosted by GitHub over HTTPS");
+      throw new Error("Update URL must be hosted by GitHub over HTTPS");
     }
     const response = await fetch(parsed, {
       redirect: "manual",
-      signal: AbortSignal.timeout(30_000),
+      signal,
       headers: {
-        "User-Agent": "Synax-ui-updater",
+        "User-Agent": "Synax-updater",
         Accept: "application/vnd.github+json",
       },
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get("location");
+      await response.body?.cancel();
       if (!location) throw new Error("Missing GitHub redirect location");
       url = new URL(location, parsed).href;
       continue;
     }
     if (!response.ok || !response.body)
       throw new Error(`GitHub update request failed (${response.status})`);
-    const reader = response.body.getReader();
-    const chunks: Buffer[] = [];
-    let size = 0;
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > limit)
-          throw new Error("GitHub update response exceeds size limit");
-        chunks.push(Buffer.from(value));
-      }
-    } finally {
-      await reader.cancel().catch(() => {});
-    }
-    return Buffer.concat(chunks);
+    return response;
   }
   throw new Error("Too many GitHub redirects");
+}
+
+export async function fetchLimited(
+  url: string,
+  limit: number,
+): Promise<Buffer> {
+  const response = await fetchGithubResponse(url);
+  const reader = response.body!.getReader();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit)
+        throw new Error("GitHub update response exceeds size limit");
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return Buffer.concat(chunks);
 }
 
 export async function findUiRelease(

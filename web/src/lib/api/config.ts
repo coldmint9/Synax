@@ -36,6 +36,15 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const configApi = {
+  getTerminalShell: () =>
+    request<{ defaultPath: string }>(`${BASE}/terminal-shell`),
+  async openGlobalFile(): Promise<void> {
+    await request<{ ok: true }>(`${BASE}/open-file`, {
+      method: "POST",
+      body: JSON.stringify({ target: "global" }),
+    });
+  },
+
   async getGlobal(): Promise<GlobalConfigResponse> {
     return request<GlobalConfigResponse>(`${BASE}/global`);
   },
@@ -122,9 +131,7 @@ export const configApi = {
     );
   },
 
-  async testMcpServer(
-    config: McpServerConfig,
-  ): Promise<{
+  async testMcpServer(config: McpServerConfig): Promise<{
     ok: boolean;
     tools: Array<{ name: string; description?: string }>;
     error?: string;
@@ -134,13 +141,11 @@ export const configApi = {
       method: "POST",
       body: JSON.stringify(config),
     });
-    const body = await resp
-      .json()
-      .catch(() => ({
-        ok: false,
-        tools: [],
-        error: `test failed (${resp.status})`,
-      }));
+    const body = await resp.json().catch(() => ({
+      ok: false,
+      tools: [],
+      error: `test failed (${resp.status})`,
+    }));
     return body as {
       ok: boolean;
       tools: Array<{ name: string; description?: string }>;

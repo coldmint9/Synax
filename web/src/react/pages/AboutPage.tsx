@@ -1,20 +1,27 @@
-import { ScrollShadow, Surface, Typography, Chip, Separator } from '@heroui/react'
-import { ExternalLink } from 'lucide-react'
-import { IconSurface } from '../components/IconSurface'
+import {
+  ScrollShadow,
+  Surface,
+  Typography,
+  Chip,
+  Separator,
+} from "@heroui/react";
+import { ExternalLink } from "lucide-react";
+import { IconSurface } from "../components/IconSurface";
 
-const VERSION = '0.1.0-snapshot'
-const REPO_URL = 'https://github.com/coldmint9/Synax'
+const VERSION = "0.1.0-snapshot";
+const REPO_URL = "https://github.com/coldmint9/Synax";
+const AUTHOR_URL = "https://github.com/coldmint9";
 
 const techStack = [
-  { label: 'TypeScript 5.7', color: 'accent' as const },
-  { label: 'React 19', color: 'default' as const },
-  { label: 'Hono', color: 'success' as const },
-  { label: 'SQLite + Drizzle', color: 'warning' as const },
-  { label: 'Electron 42', color: 'default' as const },
-  { label: 'Vite', color: 'default' as const },
-  { label: 'Tree-sitter', color: 'success' as const },
-  { label: 'Vercel AI SDK', color: 'accent' as const },
-]
+  { label: "TypeScript 5.7", color: "accent" as const },
+  { label: "React 19", color: "default" as const },
+  { label: "Hono", color: "success" as const },
+  { label: "SQLite + Drizzle", color: "warning" as const },
+  { label: "Electron 42", color: "default" as const },
+  { label: "Vite", color: "default" as const },
+  { label: "Tree-sitter", color: "success" as const },
+  { label: "Vercel AI SDK", color: "accent" as const },
+];
 
 export default function AboutPage() {
   return (
@@ -45,19 +52,27 @@ export default function AboutPage() {
             <Separator />
 
             <section>
-              <Typography type="h6" className="mb-3">Version</Typography>
+              <Typography type="h6" className="mb-3">
+                Version
+              </Typography>
               <div className="flex items-center gap-2">
-                <Chip size="sm" variant="soft" color="warning">{VERSION}</Chip>
-                <Typography type="body-xs" color="muted">Alpha</Typography>
+                <Chip size="sm" variant="soft" color="warning">
+                  {VERSION}
+                </Chip>
+                <Typography type="body-xs" color="muted">
+                  Alpha
+                </Typography>
               </div>
             </section>
 
             <Separator />
 
             <section>
-              <Typography type="h6" className="mb-3">Tech Stack</Typography>
+              <Typography type="h6" className="mb-3">
+                Tech Stack
+              </Typography>
               <div className="flex flex-wrap gap-2">
-                {techStack.map(t => (
+                {techStack.map((t) => (
                   <Chip key={t.label} size="sm" variant="soft" color={t.color}>
                     {t.label}
                   </Chip>
@@ -68,7 +83,9 @@ export default function AboutPage() {
             <Separator />
 
             <section>
-              <Typography type="h6" className="mb-3">Links</Typography>
+              <Typography type="h6" className="mb-3">
+                Links
+              </Typography>
               <a
                 href={REPO_URL}
                 target="_blank"
@@ -83,7 +100,32 @@ export default function AboutPage() {
             <Separator />
 
             <section>
-              <Typography type="h6" className="mb-3">License</Typography>
+              <Typography type="h6" className="mb-3">
+                Author
+              </Typography>
+              <Typography type="body-sm" color="muted" className="mb-2">
+                coldmint9
+              </Typography>
+              <a
+                href={AUTHOR_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 break-all text-sm text-primary hover:underline"
+              >
+                {AUTHOR_URL}
+                <ExternalLink size={13} className="shrink-0" />
+              </a>
+            </section>
+
+            <Separator />
+
+            <section>
+              <Typography type="h6" className="mb-3">
+                License
+              </Typography>
+              <Typography type="body-sm" color="muted" className="mb-2">
+                Copyright (c) 2026 Synax contributors
+              </Typography>
               <Typography type="body-sm" color="muted">
                 MIT License
               </Typography>
@@ -92,5 +134,5 @@ export default function AboutPage() {
         </div>
       </Surface>
     </ScrollShadow>
-  )
+  );
 }

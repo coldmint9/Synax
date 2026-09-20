@@ -1,41 +1,47 @@
-import { useEffect } from 'react'
-import { useNavigate, useOutletContext } from 'react-router-dom'
-import { Plus, FolderCode } from 'lucide-react'
-import { IconSurface } from '../components/IconSurface'
-import { useShellStore } from '../state/shellStore'
-import { useLocale } from '../../hooks/useLocale'
-import { resolveSessionsEntryPath } from '../features/sessions/sessionLastVisit'
+import { useEffect } from "react";
+import { useNavigate, useOutletContext } from "react-router-dom";
+import { Plus, FolderCode } from "lucide-react";
+import { IconSurface } from "../components/IconSurface";
+import { useShellStore } from "../state/shellStore";
+import { useLocale } from "../../hooks/useLocale";
+import { resolveSessionsEntryPath } from "../features/agent-workspace/sessionLastVisit";
 
 interface WorkbenchContext {
-  onCreateProject: () => void
+  onCreateProject: () => void;
 }
 
 export function WelcomeView() {
-  const { onCreateProject } = useOutletContext<WorkbenchContext>()
-  const { t } = useLocale()
-  const projects = useShellStore(s => s.projects)
-  const projectsLoaded = useShellStore(s => s.projectsLoaded)
-  const defaultHome = useShellStore(s => s.preferences.defaultHome)
-  const fetchProjects = useShellStore(s => s.fetchProjects)
-  const navigate = useNavigate()
+  const { onCreateProject } = useOutletContext<WorkbenchContext>();
+  const { t } = useLocale();
+  const projects = useShellStore((s) => s.projects);
+  const projectsLoaded = useShellStore((s) => s.projectsLoaded);
+  const defaultHome = useShellStore((s) => s.preferences.defaultHome);
+  const fetchProjects = useShellStore((s) => s.fetchProjects);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    if (!projectsLoaded) void fetchProjects()
-  }, [projectsLoaded, fetchProjects])
+    if (!projectsLoaded) void fetchProjects();
+  }, [projectsLoaded, fetchProjects]);
 
   useEffect(() => {
-    if (!projectsLoaded) return
-    if (defaultHome === 'global-home') return
-    if (projects.length === 0) return
+    if (!projectsLoaded) return;
+    if (defaultHome === "global-home") return;
+    if (projects.length === 0) return;
     const sorted = [...projects].sort((a, b) => {
-      const ta = a.updatedAt === 'just now' ? Date.now() : new Date(a.updatedAt).getTime()
-      const tb = b.updatedAt === 'just now' ? Date.now() : new Date(b.updatedAt).getTime()
-      return tb - ta
-    })
-    navigate(resolveSessionsEntryPath(sorted[0].id), { replace: true })
-  }, [projectsLoaded, projects, defaultHome, navigate])
+      const ta =
+        a.updatedAt === "just now"
+          ? Date.now()
+          : new Date(a.updatedAt).getTime();
+      const tb =
+        b.updatedAt === "just now"
+          ? Date.now()
+          : new Date(b.updatedAt).getTime();
+      return tb - ta;
+    });
+    navigate(resolveSessionsEntryPath(sorted[0].id), { replace: true });
+  }, [projectsLoaded, projects, defaultHome, navigate]);
 
-  if (!projectsLoaded) return null
+  if (!projectsLoaded) return null;
 
   return (
     <div className="flex h-full items-center justify-center">
@@ -43,9 +49,11 @@ export function WelcomeView() {
         <IconSurface tone="muted" size="xl" className="mx-auto rounded-2xl">
           <FolderCode size={24} />
         </IconSurface>
-        <p className="mt-4 text-sm font-medium text-foreground">{t('welcomeImportHint')}</p>
+        <p className="mt-4 text-sm font-medium text-foreground">
+          {t("welcomeImportHint")}
+        </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {t('welcomeConnectHint')}
+          {t("welcomeConnectHint")}
         </p>
         <button
           type="button"
@@ -53,9 +61,9 @@ export function WelcomeView() {
           onClick={onCreateProject}
         >
           <Plus size={13} />
-          {t('appImportProject')}
+          {t("appImportProject")}
         </button>
       </div>
     </div>
-  )
+  );
 }

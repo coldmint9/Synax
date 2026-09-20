@@ -1,0 +1,6 @@
+.session-search-highlight {
+  border-radius: 2px;
+  background: hsl(var(--primary) / 0.22);
+  color: inherit;
+  font-weight: 600;
+}

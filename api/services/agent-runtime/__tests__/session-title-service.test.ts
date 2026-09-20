@@ -39,17 +39,20 @@ describe("resolveInitialSessionTitle", () => {
     ).toBe("帮我看看认证模块");
   });
 
-  it("counts short titles by Unicode code points and defers long goal-dock requests", () => {
-    expect(shortSessionTitle("😀".repeat(40))).toBe("😀".repeat(40));
-    expect(shortSessionTitle("😀".repeat(41))).toBeNull();
-    expect(shortSessionTitle("x".repeat(100_000))).toBeNull();
-    expect(
-      resolveInitialSessionTitle({
-        sessionMetadata: { source: "goal-dock", goalContent: LONG_INPUT },
-        prompt: LONG_INPUT,
-      }),
-    ).toBe("new session");
-  });
+  it.each(["agent-dock", "goal-dock"])(
+    "counts short titles by Unicode code points and defers long %s requests",
+    (source) => {
+      expect(shortSessionTitle("😀".repeat(40))).toBe("😀".repeat(40));
+      expect(shortSessionTitle("😀".repeat(41))).toBeNull();
+      expect(shortSessionTitle("x".repeat(100_000))).toBeNull();
+      expect(
+        resolveInitialSessionTitle({
+          sessionMetadata: { source, userPrompt: LONG_INPUT },
+          prompt: LONG_INPUT,
+        }),
+      ).toBe("new session");
+    },
+  );
 
   it("uses goalContent from session metadata", () => {
     expect(

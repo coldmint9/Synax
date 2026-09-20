@@ -1,34 +1,36 @@
-import { Select, ListBox } from '@heroui/react'
-import type { ReactNode, Key } from 'react'
+import { Select, ListBox } from "@heroui/react";
+import type { ReactNode, Key } from "react";
 
 export interface SelectOption {
-  key: string
-  label: ReactNode
+  key: string;
+  label: ReactNode;
 }
 
 interface SettingsSelectProps {
-  label?: string
-  size?: 'sm' | 'md' | 'lg'
-  variant?: 'primary' | 'secondary'
-  className?: string
-  fullWidth?: boolean
-  selectedKey: string | null
-  onSelectionChange: (key: string | null) => void
-  disallowEmptySelection?: boolean
-  'aria-label'?: string
-  options: SelectOption[]
+  label?: string;
+  size?: "sm" | "md" | "lg";
+  variant?: "primary" | "secondary";
+  className?: string;
+  fullWidth?: boolean;
+  selectedKey: string | null;
+  onSelectionChange: (key: string | null) => void;
+  isDisabled?: boolean;
+  disallowEmptySelection?: boolean;
+  "aria-label"?: string;
+  options: SelectOption[];
 }
 
 export function SettingsSelect({
   label,
-  size = 'sm',
-  variant = 'secondary',
+  size = "sm",
+  variant = "secondary",
   className,
   fullWidth,
   selectedKey,
   onSelectionChange,
+  isDisabled,
   disallowEmptySelection,
-  'aria-label': ariaLabel,
+  "aria-label": ariaLabel,
   options,
 }: SettingsSelectProps) {
   return (
@@ -37,11 +39,12 @@ export function SettingsSelect({
         <span className="block text-xs text-foreground pb-1.5">{label}</span>
       )}
       <Select
+        isDisabled={isDisabled}
         variant={variant}
         fullWidth={fullWidth}
         value={selectedKey}
         onChange={(value: Key | null) => {
-          onSelectionChange(value ? String(value) : null)
+          onSelectionChange(value ? String(value) : null);
         }}
         aria-label={ariaLabel ?? label}
       >
@@ -49,9 +52,13 @@ export function SettingsSelect({
           <Select.Value />
         </Select.Trigger>
         <Select.Popover>
-          <ListBox aria-label={ariaLabel ?? label ?? 'Options'}>
-            {options.map(opt => (
-              <ListBox.Item key={opt.key} id={opt.key} textValue={typeof opt.label === 'string' ? opt.label : opt.key}>
+          <ListBox aria-label={ariaLabel ?? label ?? "Options"}>
+            {options.map((opt) => (
+              <ListBox.Item
+                key={opt.key}
+                id={opt.key}
+                textValue={typeof opt.label === "string" ? opt.label : opt.key}
+              >
                 {opt.label}
                 <ListBox.ItemIndicator />
               </ListBox.Item>
@@ -60,5 +67,5 @@ export function SettingsSelect({
         </Select.Popover>
       </Select>
     </div>
-  )
+  );
 }

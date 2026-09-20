@@ -108,10 +108,16 @@ try {
   await page.getByRole("dialog").waitFor({ state: "detached" });
   await page.reload();
   await page.locator(".wh-project-trigger").waitFor();
-  assert.equal(await page.locator(".project-import-hint").count(), 0, "cancelling import must not restore the guide");
+  assert.equal(
+    await page.locator(".project-import-hint").count(),
+    0,
+    "cancelling import must not restore the guide",
+  );
 
   // Reset only this disposable profile's guide flag to test the other entry point.
-  await page.evaluate(() => localStorage.removeItem("synax:project-import-hint-dismissed"));
+  await page.evaluate(() =>
+    localStorage.removeItem("synax:project-import-hint-dismissed"),
+  );
   await page.reload();
   await page.locator(".project-import-hint").waitFor();
   await page.locator(".wh-project-trigger").click();
@@ -120,9 +126,14 @@ try {
   await page.keyboard.press("Escape");
   await page.reload();
   await page.locator(".wh-project-trigger").waitFor();
-  assert.equal(await page.locator(".project-import-hint").count(), 0, "using the switcher must permanently dismiss the guide");
-  check("import guide closes on either entry point and stays closed after cancellation and reload");
-
+  assert.equal(
+    await page.locator(".project-import-hint").count(),
+    0,
+    "using the switcher must permanently dismiss the guide",
+  );
+  check(
+    "import guide closes on either entry point and stays closed after cancellation and reload",
+  );
 
   const menu = async (id: string) => {
     await desktop!.evaluate(({ Menu }, id) => {
@@ -265,7 +276,9 @@ try {
     if (resetScroll) {
       await page!
         .locator(".session-chat-scroll")
-        .evaluate((element) => element.scrollTo({ top: 0, behavior: "instant" }));
+        .evaluate((element) =>
+          element.scrollTo({ top: 0, behavior: "instant" }),
+        );
     }
     const positions = await page!.evaluate(() => {
       const island = document
@@ -427,7 +440,7 @@ try {
     .locator("html")
     .evaluate((el) => el.classList.contains("dark"));
   await page.waitForFunction(() => {
-    const input = document.querySelector(".goal-session-composer-shell");
+    const input = document.querySelector(".agent-session-composer-shell");
     const rail = document.querySelector(".agent-command-rail-inner");
     return (
       input &&
@@ -437,7 +450,7 @@ try {
     );
   });
   const frost = await page
-    .locator(".goal-session-composer-shell")
+    .locator(".agent-session-composer-shell")
     .evaluate((el) => ({
       background: getComputedStyle(el).backgroundColor,
       blur: getComputedStyle(el).backdropFilter,
@@ -548,7 +561,15 @@ try {
   }
   if (process.env.SYNAX_E2E_TERMINAL === "1") {
     const { terminalE2E } = await import("./terminal-e2e-checks");
-    await terminalE2E({ desktop, page, repository, sessionId: session.id, projectId, output, check });
+    await terminalE2E({
+      desktop,
+      page,
+      repository,
+      sessionId: session.id,
+      projectId,
+      output,
+      check,
+    });
   }
   if (process.env.SYNAX_E2E_NATIVE_CHECK === "1") {
     await desktop.evaluate(({ BrowserWindow }) => {

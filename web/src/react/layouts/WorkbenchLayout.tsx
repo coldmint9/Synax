@@ -1,37 +1,45 @@
 import { TerminalDrawer } from "../features/terminal/TerminalDrawer";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Outlet, useNavigate, useParams, useLocation } from "react-router-dom";
 import { agentRuntimeApi } from "../../lib/api/agentRuntime";
 import { projectApi } from "../../lib/api/project";
 import { addProject, useShellStore } from "../state/shellStore";
-import { useWikiStore } from "../state/wikiStore";
+import { useAgentDockStore } from "../features/agent-workspace/state/agentDockStore";
 import { useContextStore } from "../state/contextStore";
 import { useContextStream } from "../../hooks/useContextStream";
 import { useAgentPermissionNotifier } from "../../hooks/useAgentPermissionNotifier";
 import { useDesktopNotification } from "../../hooks/useDesktopNotification";
 import { useTaskNotificationListener } from "../../hooks/useTaskNotificationListener";
-import { useRuntimeSSE } from "../features/sessions/useRuntimeSSE";
-import { useAgentSessionStore } from "../features/sessions/agentSessionStore";
+import { useRuntimeSSE } from "../features/agent-workspace/useRuntimeSSE";
+import { useAgentSessionStore } from "../features/agent-workspace/state/agentSessionStore";
 import {
   useSessionWorkspace,
   useSessionWorkspaceStore,
-} from "../features/sessions/sessionWorkspaceStore";
-import { sessionPath } from "../features/sessions/sessionRoutes";
-import { resolveSessionsEntryPath } from "../features/sessions/sessionLastVisit";
+} from "../features/agent-workspace/state/sessionWorkspaceStore";
+import { sessionPath } from "../features/agent-workspace/sessionRoutes";
+import { resolveSessionsEntryPath } from "../features/agent-workspace/sessionLastVisit";
 import type { ActivityPanel } from "./ActivityBar";
 import { WorkbenchHeader, type ChromeMode } from "./WorkbenchHeader";
 import { ProjectCreateDialog } from "../features/project-create/ProjectCreateDialog";
 import { ToastContainer } from "../components/ToastContainer";
 import WikiPage from "../pages/WikiPage";
 import SessionsPage from "../pages/SessionsPage";
-import { SessionEnvironmentProvider } from "../features/sessions/SessionEnvironmentContext";
+import { SessionEnvironmentProvider } from "../features/agent-workspace/SessionEnvironmentContext";
 
 export default function WorkbenchLayout() {
   const { projectId: routeProjectId = "" } = useParams();
+  const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
   const currentProjectId = useShellStore((s) => s.currentProjectId);
   const setCurrentProjectId = useShellStore((s) => s.setCurrentProjectId);
 
   const effectiveProjectId = routeProjectId || currentProjectId || "";
+  const dockProjectRef = useRef(effectiveProjectId);
+  useEffect(() => {
+    if (dockProjectRef.current !== effectiveProjectId) {
+      useAgentDockStore.getState().reset();
+      dockProjectRef.current = effectiveProjectId;
+    }
+  }, [effectiveProjectId]);
 
   useEffect(() => {
     if (routeProjectId && routeProjectId !== currentProjectId) {
@@ -74,6 +82,15 @@ export default function WorkbenchLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  useEffect(() => {
+    if (!wikiEnabled && location.pathname.includes("/wiki")) {
+      navigate(
+        effectiveProjectId ? resolveSessionsEntryPath(effectiveProjectId) : "/",
+        { replace: true },
+      );
+    }
+  }, [wikiEnabled, location.pathname, effectiveProjectId, navigate]);
+
   const navigateToSession = useCallback(
     (sessionId: string) => {
       const session = useAgentSessionStore
@@ -90,15 +107,15 @@ export default function WorkbenchLayout() {
     },
     [navigate],
   );
-  const goalSessionId = useWikiStore((s) => s.goalSession.sessionId);
-  const goalDockState = useWikiStore((s) => s.goalDockState);
+  const dockSessionId = useAgentDockStore((s) => s.session.sessionId);
+  const dockState = useAgentDockStore((s) => s.dockState);
   const visibleSessionId =
     location.pathname.includes("/sessions") &&
     !location.pathname.endsWith("/new")
       ? new URLSearchParams(location.search).get("session")
       : location.pathname.includes("/wiki") &&
-          (goalDockState === "expanded" || goalDockState === "working")
-        ? goalSessionId
+          (dockState === "expanded" || dockState === "working")
+        ? dockSessionId
         : null;
   useAgentPermissionNotifier(
     effectiveProjectId || null,
@@ -161,6 +178,7 @@ export default function WorkbenchLayout() {
   };
 
   const handlePanelToggle = (panel: ActivityPanel) => {
+    if (!wikiEnabled && (panel === "wiki" || panel === "search")) return;
     if (panel === "sessions" && selectedSessionId) {
       useSessionWorkspaceStore.getState().showDashboard(selectedSessionId);
     }
@@ -231,15 +249,17 @@ export default function WorkbenchLayout() {
             {/* Cached project pages — always mounted once project exists */}
             {effectiveProjectId && (
               <>
-                <div
-                  className="absolute inset-0 flex flex-col"
-                  style={{
-                    visibility: activePanel === "wiki" ? "visible" : "hidden",
-                    zIndex: activePanel === "wiki" ? 1 : 0,
-                  }}
-                >
-                  <WikiPage projectId={effectiveProjectId} />
-                </div>
+                {wikiEnabled && (
+                  <div
+                    className="absolute inset-0 flex flex-col"
+                    style={{
+                      visibility: activePanel === "wiki" ? "visible" : "hidden",
+                      zIndex: activePanel === "wiki" ? 1 : 0,
+                    }}
+                  >
+                    <WikiPage projectId={effectiveProjectId} />
+                  </div>
+                )}
                 <div
                   className="absolute inset-0 flex flex-col"
                   style={{
@@ -264,7 +284,10 @@ export default function WorkbenchLayout() {
             </div>
           </div>
         </div>
-        <TerminalDrawer projectId={effectiveProjectId} sessionId={selectedSessionId} />
+        <TerminalDrawer
+          projectId={effectiveProjectId}
+          sessionId={selectedSessionId}
+        />
         <ProjectCreateDialog
           open={createDialogOpen}
           onClose={() => setCreateDialogOpen(false)}

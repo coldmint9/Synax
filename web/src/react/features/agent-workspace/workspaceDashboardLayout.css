@@ -1,0 +1,182 @@
+/* User-sized panels own their content scrollports; the column scrolls only
+   when the chosen panel sizes no longer fit the available sidebar height. */
+:is(.work-page, .work-details-dialog) .workspace-dashboard--custom,
+.workspace-dashboard--custom {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+.dashboard-panel {
+  position: relative;
+  width: 100%;
+  min-width: min(220px, 100%);
+  max-width: 100%;
+  min-height: var(--dashboard-panel-min-height, 0px);
+  flex: 0 0 auto;
+  border-radius: 12px;
+}
+.dashboard-panel-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: var(--dashboard-panel-min-height, 0px);
+  max-height: max(420px, var(--dashboard-panel-min-height, 0px));
+}
+.dashboard-panel[data-sized="true"] > .dashboard-panel-content {
+  max-height: none;
+}
+.dashboard-panel-content > .ws-card,
+.dashboard-panel-content > .work-runtime-details,
+.dashboard-panel-content > .work-runtime-details > .ws-card {
+  display: flex;
+  flex: 1 1 auto !important;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+/* Resizing an expanded panel must not leave a blank slot after collapsing. */
+.dashboard-panel:has(> .dashboard-panel-content > .ws-card[data-open="false"]),
+.dashboard-panel:has(
+  > .dashboard-panel-content
+    > .work-runtime-details
+    > .ws-card[data-open="false"]
+) {
+  height: auto !important;
+  min-height: 0;
+  --dashboard-panel-min-height: 0px !important;
+}
+:is(.work-page, .work-details-dialog)
+  .dashboard-panel-content
+  > .ws-card
+  > .ws-card-head,
+:is(.work-page, .work-details-dialog)
+  .dashboard-panel-content
+  > .work-runtime-details
+  > .ws-card
+  > .ws-card-head,
+.dashboard-panel-content > .ws-card > .ws-card-head,
+.dashboard-panel-content > .work-runtime-details > .ws-card > .ws-card-head {
+  position: relative;
+  padding-left: 25px;
+  flex: 0 0 auto;
+}
+:is(.work-page, .work-details-dialog)
+  .dashboard-panel-content
+  > .ws-card
+  > .ws-card-body,
+:is(.work-page, .work-details-dialog)
+  .dashboard-panel-content
+  > .work-runtime-details
+  > .ws-card
+  > .ws-card-body,
+.dashboard-panel-content > .ws-card > .ws-card-body,
+.dashboard-panel-content > .work-runtime-details > .ws-card > .ws-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.dashboard-panel .work-todos {
+  max-height: none;
+}
+.dashboard-panel-grip,
+.dashboard-panel-resize {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+  width: 20px;
+  height: 24px;
+  border: 0;
+  padding: 0;
+  border-radius: 5px;
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  touch-action: none;
+}
+.dashboard-panel-grip {
+  top: 4px;
+  left: 3px;
+  cursor: grab;
+}
+.dashboard-panel-grip:active {
+  cursor: grabbing;
+}
+.dashboard-panel-resize {
+  right: 1px;
+  bottom: 1px;
+  height: 18px;
+  cursor: nwse-resize;
+  background: var(--background);
+  opacity: 0.7;
+}
+.dashboard-panel:has(> .dashboard-panel-content > .ws-card[data-open="false"])
+  > .dashboard-panel-resize,
+.dashboard-panel:has(
+    > .dashboard-panel-content
+      > .work-runtime-details
+      > .ws-card[data-open="false"]
+  )
+  > .dashboard-panel-resize {
+  display: none;
+}
+.dashboard-panel-grip:hover,
+.dashboard-panel-resize:hover {
+  color: hsl(var(--primary));
+  background: hsl(var(--secondary));
+  opacity: 1;
+}
+.dashboard-panel-grip:focus-visible,
+.dashboard-panel-resize:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.dashboard-panel[data-dragging="true"] {
+  opacity: 0.45;
+}
+.dashboard-panel[data-drop]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 4px;
+  background: hsl(var(--primary));
+  pointer-events: none;
+}
+.dashboard-panel[data-drop="before"]::after {
+  top: -6px;
+}
+.dashboard-panel[data-drop="after"]::after {
+  bottom: -6px;
+}
+.workspace-dashboard--custom[data-arranging="true"] {
+  user-select: none;
+}
+.dashboard-layout-reset {
+  display: inline-flex;
+  align-self: flex-end;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 6px;
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+.dashboard-layout-reset:hover {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground-hsl));
+}

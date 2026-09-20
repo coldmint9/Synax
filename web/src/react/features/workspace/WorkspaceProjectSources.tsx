@@ -1,6 +1,13 @@
-import { useState, type Ref } from "react";
+import { useState, type ReactNode, type Ref } from "react";
 import { Button, Input, Label, Tabs, TextField } from "@heroui/react";
-import { Check, FolderOpen, Layers2, Plus, Search } from "lucide-react";
+import {
+  Check,
+  FolderOpen,
+  Layers2,
+  Plus,
+  Search,
+  Terminal,
+} from "lucide-react";
 import type { ProjectSummary } from "../../state/shellStore";
 import { useWorkspaceCopy, workspacePathKey } from "./workspaceCopy";
 import "./workspaceProjects.css";
@@ -26,7 +33,15 @@ export function WorkspaceProjectSources({
   selectedId,
   mode,
   onModeChange,
+  localLabel,
+  directoryKind = "host",
+  onDirectoryKindChange,
+  wslSelector,
 }: {
+  localLabel?: string;
+  directoryKind?: "host" | "wsl";
+  onDirectoryKindChange?: (kind: "host" | "wsl") => void;
+  wslSelector?: ReactNode;
   projects: ProjectSummary[];
   loading: boolean;
   error?: string | null;
@@ -54,17 +69,28 @@ export function WorkspaceProjectSources({
     Boolean(path.trim()) && included.has(workspacePathKey(path));
   return (
     <Tabs
-      selectedKey={mode}
-      onSelectionChange={(key) => onModeChange(key as "local" | "existing")}
+      selectedKey={mode === "local" && directoryKind === "wsl" ? "wsl" : mode}
+      onSelectionChange={(key) => {
+        onModeChange(key === "existing" ? "existing" : "local");
+        if (key !== "existing")
+          onDirectoryKindChange?.(key === "wsl" ? "wsl" : "host");
+      }}
       className="workspace-sources"
     >
       <Tabs.ListContainer className="workspace-source-tabs">
         <Tabs.List aria-label={c.sources}>
           <Tabs.Tab id="local" isDisabled={disabled}>
             <FolderOpen size={14} />
-            {c.local}
+            {localLabel ?? c.local}
             <Tabs.Indicator />
           </Tabs.Tab>
+          {wslSelector && (
+            <Tabs.Tab id="wsl" isDisabled={disabled}>
+              <Terminal size={14} />
+              WSL2
+              <Tabs.Indicator />
+            </Tabs.Tab>
+          )}
           <Tabs.Tab id="existing" isDisabled={disabled}>
             <Layers2 size={14} />
             {c.existing}
@@ -72,63 +98,66 @@ export function WorkspaceProjectSources({
           </Tabs.Tab>
         </Tabs.List>
       </Tabs.ListContainer>
-      <Tabs.Panel id="local" className="workspace-source-panel">
-        <Button
-          ref={browseRef}
-          variant="outline"
-          className="workspace-browse"
-          isDisabled={disabled}
-          onPress={onBrowse}
-          aria-label={c.browse}
-        >
-          <span className="workspace-project-icon workspace-project-icon--large">
-            <FolderOpen size={23} strokeWidth={1.5} />
-          </span>
-          <span className="workspace-browse-title">{c.browseTitle}</span>
-          <span className="workspace-hint">
-            {onAddPath ? c.browseHint : c.singleBrowseHint}
-          </span>
-          <span className="workspace-browse-action">
-            {c.browse}
-            <Plus size={12} />
-          </span>
-        </Button>
-        <TextField
-          value={path}
-          onChange={onPathChange}
-          isDisabled={disabled}
-          className="workspace-path-field"
-        >
-          <Label>{c.path}</Label>
-          <div className="workspace-path-control">
-            <Input
-              placeholder="/path/to/project"
-              spellCheck={false}
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Enter" &&
-                  onAddPath &&
-                  !event.nativeEvent.isComposing
-                ) {
-                  event.preventDefault();
-                  if (!duplicate) onAddPath();
-                }
-              }}
-            />
-            {onAddPath && (
-              <Button
-                size="sm"
-                variant="secondary"
-                isDisabled={disabled || !path.trim() || duplicate}
-                onPress={onAddPath}
-              >
-                {c.add}
-              </Button>
-            )}
-          </div>
-        </TextField>
-        {duplicate && <p className="workspace-hint">{c.duplicate}</p>}
-      </Tabs.Panel>
+      {["local", ...(wslSelector ? ["wsl"] : [])].map((id) => (
+        <Tabs.Panel key={id} id={id} className="workspace-source-panel">
+          {id === "wsl" && wslSelector}
+          <Button
+            ref={browseRef}
+            variant="outline"
+            className="workspace-browse"
+            isDisabled={disabled}
+            onPress={onBrowse}
+            aria-label={c.browse}
+          >
+            <span className="workspace-project-icon workspace-project-icon--large">
+              <FolderOpen size={23} strokeWidth={1.5} />
+            </span>
+            <span className="workspace-browse-title">{c.browseTitle}</span>
+            <span className="workspace-hint">
+              {onAddPath ? c.browseHint : c.singleBrowseHint}
+            </span>
+            <span className="workspace-browse-action">
+              {c.browse}
+              <Plus size={12} />
+            </span>
+          </Button>
+          <TextField
+            value={path}
+            onChange={onPathChange}
+            isDisabled={disabled}
+            className="workspace-path-field"
+          >
+            <Label>{c.path}</Label>
+            <div className="workspace-path-control">
+              <Input
+                placeholder="/path/to/project"
+                spellCheck={false}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    onAddPath &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    event.preventDefault();
+                    if (!duplicate) onAddPath();
+                  }
+                }}
+              />
+              {onAddPath && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  isDisabled={disabled || !path.trim() || duplicate}
+                  onPress={onAddPath}
+                >
+                  {c.add}
+                </Button>
+              )}
+            </div>
+          </TextField>
+          {duplicate && <p className="workspace-hint">{c.duplicate}</p>}
+        </Tabs.Panel>
+      ))}
       <Tabs.Panel id="existing" className="workspace-source-panel">
         <TextField
           value={search}

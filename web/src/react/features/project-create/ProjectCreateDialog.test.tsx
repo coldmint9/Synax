@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectApi } from "../../../lib/api/project";
 import {
   listRemoteDirectories,
@@ -16,7 +16,7 @@ import {
 } from "../../../lib/api/fs";
 import { listWslDistributions } from "../../../lib/api/wsl";
 import type { ProjectSummary } from "../../state/shellStore";
-import { resolveSessionsEntryPath } from "../sessions/sessionLastVisit";
+import { resolveSessionsEntryPath } from "../agent-workspace/sessionLastVisit";
 import { ProjectCreateDialog } from "./ProjectCreateDialog";
 
 const { navigate, nativePicker } = vi.hoisted(() => ({
@@ -82,7 +82,7 @@ function deferred<T>() {
 }
 
 function addPath(path: string) {
-  fireEvent.click(screen.getByRole("tab", { name: "本地目录" }));
+  fireEvent.click(screen.getByRole("tab", { name: "本地" }));
   fireEvent.change(screen.getByRole("textbox", { name: "项目目录路径" }), {
     target: { value: path },
   });
@@ -95,7 +95,13 @@ async function renderDialog(onClose = vi.fn()) {
   return { ...view, onClose };
 }
 
+const desktopWindow = window as Window & { electronAPI?: { platform: string } };
+
 describe("ProjectCreateDialog", () => {
+  afterEach(() => {
+    delete desktopWindow.electronAPI;
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(projectApi.listProjects)
@@ -114,15 +120,13 @@ describe("ProjectCreateDialog", () => {
   });
 
   it("creates a WSL2 workspace with distribution plus Linux path", async () => {
-    const userAgent = vi
-      .spyOn(window.navigator, "userAgent", "get")
-      .mockReturnValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    desktopWindow.electronAPI = { platform: "win32" };
     vi.mocked(projectApi.createWorkspace).mockResolvedValueOnce({
       project: project({ id: "wsl" }),
     });
     const { onClose } = await renderDialog();
     await waitFor(() => expect(listWslDistributions).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "WSL2" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "WSL2" }));
     const pathInput = screen.getByRole("textbox", { name: "项目目录路径" });
     fireEvent.change(pathInput, { target: { value: "/home/dev/app" } });
     fireEvent.click(screen.getByRole("button", { name: "添加" }));
@@ -141,7 +145,92 @@ describe("ProjectCreateDialog", () => {
         },
       ],
     });
-    userAgent.mockRestore();
+  });
+
+  it.each(["darwin", "linux", undefined])(
+    "hides WSL2 outside the Windows desktop (%s), regardless of browser identity",
+    async (platform) => {
+      if (platform) desktopWindow.electronAPI = { platform };
+      vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      );
+      await renderDialog();
+      expect(screen.getByRole("tab", { name: "本地" })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("tab", { name: "WSL2" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("Windows")).not.toBeInTheDocument();
+      expect(listWslDistributions).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { available: false, items: [], reason: "WSL2 is unavailable" },
+    { available: true, items: [] },
+    {
+      available: false,
+      items: [{ name: "Ubuntu", version: 2 as const, default: true }],
+    },
+  ])("hides WSL2 without a usable capability result: %j", async (result) => {
+    desktopWindow.electronAPI = { platform: "win32" };
+    vi.mocked(listWslDistributions).mockResolvedValueOnce(result);
+    await renderDialog();
+    expect(listWslDistributions).toHaveBeenCalledExactlyOnceWith();
+    expect(screen.queryByRole("tab", { name: "WSL2" })).not.toBeInTheDocument();
+    expect(screen.queryByText("WSL2 is unavailable")).not.toBeInTheDocument();
+  });
+
+  it("keeps WSL2 hidden while detecting and after detection fails", async () => {
+    desktopWindow.electronAPI = { platform: "win32" };
+    const pending =
+      deferred<Awaited<ReturnType<typeof listWslDistributions>>>();
+    vi.mocked(listWslDistributions).mockReturnValueOnce(pending.promise);
+    await renderDialog();
+    expect(screen.queryByRole("tab", { name: "WSL2" })).not.toBeInTheDocument();
+    await act(async () => pending.reject(new Error("WSL unavailable")));
+    expect(screen.queryByRole("tab", { name: "WSL2" })).not.toBeInTheDocument();
+    addPath("C:/repos/app");
+    expect(screen.getByRole("listitem")).toHaveTextContent("C:/repos/app");
+  });
+
+  it("uses one tab slider and resets directories when switching local / WSL2", async () => {
+    desktopWindow.electronAPI = { platform: "win32" };
+    vi.mocked(listWslDistributions).mockResolvedValueOnce({
+      available: true,
+      items: [
+        { name: "Debian", version: 2, default: false },
+        { name: "Ubuntu", version: 2, default: true },
+      ],
+    });
+    await renderDialog();
+    const wslTab = await screen.findByRole("tab", { name: "WSL2" });
+    expect(screen.getAllByRole("tablist")).toHaveLength(1);
+    expect(
+      within(screen.getByRole("tablist")).getAllByRole("tab"),
+    ).toHaveLength(3);
+    addPath("C:/repos/app");
+    fireEvent.click(wslTab);
+    expect(wslTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "WSL2 发行版" })).toHaveValue(
+      "Ubuntu",
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "项目目录路径" }), {
+      target: { value: "/home/dev/app" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "添加" }));
+    fireEvent.click(screen.getByRole("tab", { name: "已有项目" }));
+    fireEvent.click(wslTab);
+    expect(screen.getByRole("listitem")).toHaveTextContent(
+      "Ubuntu · /home/dev/app",
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: "WSL2 发行版" }), {
+      target: { value: "Debian" },
+    });
+    expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
+    addPath("C:/repos/local");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.getByRole("listitem")).toHaveTextContent("C:/repos/local");
   });
 
   it("browses multiple directories on Electron and submits all roots in one request despite repeated clicks", async () => {
@@ -277,7 +366,7 @@ describe("ProjectCreateDialog", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "工作区名称" }), {
       target: { value: "" },
     });
-    fireEvent.click(screen.getByRole("tab", { name: "本地目录" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本地" }));
     const input = screen.getByRole("textbox", { name: "项目目录路径" });
     fireEvent.change(input, { target: { value: "C:\\repos\\single" } });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
@@ -384,7 +473,7 @@ describe("ProjectCreateDialog", () => {
     expect(screen.getByRole("status")).toHaveTextContent("已选择 0 个项目");
     await user.click(screen.getByRole("button", { name: "取消" }));
     expect(browse).toHaveFocus();
-    fireEvent.click(screen.getByRole("tab", { name: "本地目录" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本地" }));
     fireEvent.change(screen.getByRole("textbox", { name: "项目目录路径" }), {
       target: { value: "/unfinished" },
     });

@@ -17,6 +17,20 @@
 .dark .terminal-drawer {
   --terminal-bg: #141618;
 }
+.terminal-drawer--maximized {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  min-height: 0;
+  max-height: none;
+  border-top: 0;
+  box-shadow: none;
+}
+.electron-macos .terminal-drawer--maximized .terminal-drawer-header {
+  /* Leave room for the native window controls at every interface scale. */
+  padding-left: calc(80px / var(--ui-font-scale, 1));
+  min-height: calc(40px / var(--ui-font-scale, 1));
+}
 .terminal-drawer[hidden],
 .terminal-screen[hidden],
 .terminal-legacy[hidden] {

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -9,6 +9,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Synax</title>
     <script>
+      // Resolve appearance before the stylesheet paints; preserve explicit choices.
+      try {
+        const saved = JSON.parse(
+          localStorage.getItem("rumbling-shell-preferences") || "{}",
+        );
+        const dark =
+          saved?.theme === "dark" ||
+          (saved?.theme !== "light" &&
+            matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      } catch {
+        document.documentElement.classList.toggle(
+          "dark",
+          matchMedia("(prefers-color-scheme: dark)").matches,
+        );
+      }
       if (navigator.userAgent.includes("Electron"))
         document.documentElement.classList.add("electron");
     </script>

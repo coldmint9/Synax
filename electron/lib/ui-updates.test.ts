@@ -45,6 +45,22 @@ beforeEach(() => {
 });
 
 describe("desktop UI update interaction", () => {
+  it("prioritizes full desktop upgrades over a pending UI update", async () => {
+    const desktop = { check: vi.fn().mockResolvedValue(true) };
+    mocks.store.pendingVersion = "1.0.0";
+    await new UiUpdates(desktop as any).check(true);
+    expect(desktop.check).toHaveBeenCalledWith(true);
+    expect(mocks.find).not.toHaveBeenCalled();
+    expect(mocks.show).not.toHaveBeenCalled();
+  });
+
+  it("falls back to compatible UI upgrades after the desktop check", async () => {
+    const desktop = { check: vi.fn().mockResolvedValue(false) };
+    await new UiUpdates(desktop as any).check(true);
+    expect(desktop.check).toHaveBeenCalledWith(true);
+    expect(mocks.find).toHaveBeenCalledOnce();
+  });
+
   it("reports no compatible updates only on manual checks", async () => {
     const updates = new UiUpdates();
     await updates.check(false);

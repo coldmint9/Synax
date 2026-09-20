@@ -253,6 +253,11 @@ function runMigrations(sqlite: NativeDatabase.Database): void {
     }
     try {
       sqlite.transaction(() => {
+        // 0010 delegates this column to runtime repair; FTS backfill needs it
+        // before the usual post-migration schema repair on fresh databases.
+        if (f === '0039_session_fulltext_search.sql') {
+          ensureColumn(sqlite, 'agent_runtime_sessions', 'title', 'title TEXT');
+        }
         sqlite.exec(sql);
         markMigrationApplied(sqlite, f);
       })();

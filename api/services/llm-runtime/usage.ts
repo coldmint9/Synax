@@ -1,9 +1,11 @@
-/** Only token counts cross the model boundary; never retain response bodies here. */
+/** Standard token normalization stays separate from bounded extension metrics. */
 export interface UsageContext {
   source?: "sdk" | "raw" | "acp" | "cli" | "legacy";
   protocol?: string;
   adapter?: string;
   providerMetadata?: unknown;
+  providerId?: string;
+  sessionId?: string;
 }
 export interface UsageMetric {
   status: "known" | "unknown";

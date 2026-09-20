@@ -1,11 +1,24 @@
 import { Hono } from "hono";
+import {
+  systemTerminalShell,
+  validateTerminalShellPath,
+} from "../services/terminals/terminal-shell.js";
 import * as z from "zod/v4";
 import { existsSync } from "node:fs";
 import { execFile, execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import {
+  configureProviderMetric,
+  declareProviderMetrics,
+  extractExtendedUsage,
+  listProviderMetrics,
+  observeProviderMetrics,
+} from "../services/provider-metrics.js";
 import {
   deleteProjectConfig,
   getEffectiveConfigForDisplay,
   getGlobalConfig,
+  getGlobalConfigFilePath,
   getGlobalConfigForRuntime,
   getProjectConfig,
   listAvailableProviders,
@@ -74,6 +87,8 @@ const providerDefSchema = z.object({
 
 const globalConfigPatchSchema = z
   .object({
+    terminalShellPath: z.string().trim().max(4096).optional(),
+    wikiModel: z.string().trim().max(512).optional(),
     providers: z.array(providerDefSchema).optional(),
     defaultProviderId: z.enum(ACP_PROVIDER_IDS).optional(),
     defaultApiProviderId: z.string().min(1).optional(),
@@ -126,6 +141,171 @@ const aiApiModelsDiscoverSchema = z.object({
   format: z.enum(["openai", "openai-responses", "anthropic"]),
   baseUrl: z.string().url(),
   apiKey: z.string().min(1).optional(),
+});
+
+configRoutes.get("/provider-metrics", (c) => {
+  return c.json({
+    fields: listProviderMetrics({
+      providerId: c.req.query("providerId") || undefined,
+      sessionId: c.req.query("sessionId") || undefined,
+    }),
+  });
+});
+
+configRoutes.patch("/provider-metrics", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z
+    .object({
+      id: z.string().min(1).max(128),
+      visible: z.boolean().optional(),
+      accumulate: z.boolean().optional(),
+      sessionId: z.string().min(1).max(256).optional(),
+    })
+    .strict()
+    .safeParse(body);
+  if (!parsed.success)
+    return c.json({ error: "Invalid metric configuration" }, 400);
+  try {
+    const providerId = configureProviderMetric(parsed.data);
+    return c.json({
+      fields: listProviderMetrics({
+        ...(parsed.data.sessionId
+          ? { sessionId: parsed.data.sessionId }
+          : { providerId }),
+      }),
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : "Metric update failed",
+      },
+      400,
+    );
+  }
+});
+
+configRoutes.post("/provider-metrics/discover", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = aiApiModelsDiscoverSchema
+    .extend({ providerId: z.string().min(1).max(256) })
+    .safeParse(body);
+  if (!parsed.success)
+    return c.json(
+      { ok: false, error: "Invalid metric discovery request", fields: [] },
+      400,
+    );
+  const input = parsed.data;
+  const baseUrl = input.baseUrl.replace(/\/+$/, "");
+  if (!["http:", "https:"].includes(new URL(baseUrl).protocol))
+    return c.json(
+      { ok: false, error: "Unsupported URL protocol", fields: [] },
+      400,
+    );
+  const fields = () => listProviderMetrics({ providerId: input.providerId });
+  try {
+    const headers = buildModelDiscoveryHeaders(
+      input.format,
+      resolveAiApiKey(input.providerId, input.apiKey),
+    );
+    const signal = AbortSignal.timeout(8_000);
+    let resolvedBaseUrl = baseUrl;
+    let response = await fetch(`${baseUrl}/usage-schema`, {
+      headers,
+      signal,
+      redirect: "error",
+    });
+    if (response.status === 404 && !baseUrl.endsWith("/v1")) {
+      await response.body?.cancel();
+      resolvedBaseUrl = `${baseUrl}/v1`;
+      response = await fetch(`${resolvedBaseUrl}/usage-schema`, {
+        headers,
+        signal,
+        redirect: "error",
+      });
+    }
+    if (response.status === 404 || response.status === 405) {
+      await response.body?.cancel();
+      return c.json({ ok: true, supported: false, fields: fields() });
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      return c.json(
+        {
+          ok: false,
+          supported: false,
+          fields: fields(),
+          error: `Usage schema request failed (${response.status})`,
+        },
+        400,
+      );
+    }
+    const payload = await readBoundedJson(response, 64 * 1024);
+    declareProviderMetrics(input.providerId, payload);
+    return c.json({
+      ok: true,
+      supported: true,
+      fields: fields(),
+      ...(resolvedBaseUrl !== baseUrl ? { resolvedBaseUrl } : {}),
+    });
+  } catch (error) {
+    return c.json(
+      {
+        ok: false,
+        supported: false,
+        fields: fields(),
+        error:
+          error instanceof Error ? error.message : "Metric discovery failed",
+      },
+      400,
+    );
+  }
+});
+
+async function readBoundedJson(
+  response: Response,
+  maxBytes: number,
+): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) return {};
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) throw new Error("Usage response exceeds size limit");
+      chunks.push(value);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+async function observeValidationUsage(
+  response: Response,
+  providerId?: string,
+): Promise<void> {
+  if (!providerId) return;
+  try {
+    const body = (await readBoundedJson(response, 256 * 1024)) as {
+      usage?: unknown;
+      response?: { usage?: unknown };
+    };
+    observeProviderMetrics({
+      providerId,
+      requestId: randomUUID(),
+      values: extractExtendedUsage(body?.usage ?? body?.response?.usage),
+    });
+  } catch {
+    // A provider with an optional/non-JSON body can still validate successfully.
+  }
+}
+
+configRoutes.get("/terminal-shell", (c) => {
+  return c.json({ defaultPath: systemTerminalShell() });
 });
 
 configRoutes.get("/global", (c) => {
@@ -333,6 +513,9 @@ configRoutes.get("/projects/:projectId/config/effective", (c) => {
 
 configRoutes.post("/open-file", async (c) => {
   const body = await c.req.json().catch(() => null);
+  if (body?.target === "global") {
+    body.filePath = getGlobalConfigFilePath();
+  }
   if (!body || typeof body.filePath !== "string" || !body.filePath) {
     return c.json({ error: "Missing filePath" }, 400);
   }
@@ -417,11 +600,30 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
   }
 
   const patch = parsed.data;
+  if (patch.terminalShellPath !== undefined)
+    validateTerminalShellPath(patch.terminalShellPath);
   const current = getGlobalConfig();
   const nextProviders = patch.providers ?? current.providers;
   const providerMap = new Map(
     nextProviders.map((provider) => [provider.id, provider]),
   );
+  if (patch.wikiModel) {
+    const separator = patch.wikiModel.indexOf("/");
+    const providerId = patch.wikiModel.slice(0, separator);
+    const modelId = patch.wikiModel.slice(separator + 1);
+    const provider = providerMap.get(providerId);
+    if (
+      separator <= 0 ||
+      !modelId ||
+      provider?.kind !== "api" ||
+      provider.status === "inactive" ||
+      !provider.models.some((model) => model.id === modelId)
+    ) {
+      throw new Error(
+        "Wiki 模型必须是已配置的 API Provider / Model / Select a configured API provider/model for Wiki.",
+      );
+    }
+  }
 
   for (const official of [...ACP_PROVIDER_IDS, ...BUILTIN_API_PROVIDER_IDS]) {
     if (!providerMap.has(official)) {
@@ -633,6 +835,7 @@ async function tryValidateOnce(
   apiKey: string,
   model: string,
   signal: AbortSignal,
+  providerId?: string,
 ): Promise<{ ok: boolean; status: number; message?: string; error?: string }> {
   if (format === "anthropic") {
     const resp = await fetch(`${baseUrl}/messages`, {
@@ -649,12 +852,14 @@ async function tryValidateOnce(
       }),
       signal,
     });
-    if (resp.ok)
+    if (resp.ok) {
+      await observeValidationUsage(resp, providerId);
       return {
         ok: true,
         status: resp.status,
         message: "Anthropic-compatible API 验证成功",
       };
+    }
     return {
       ok: false,
       status: resp.status,
@@ -672,12 +877,14 @@ async function tryValidateOnce(
       body: JSON.stringify({ model, input: "ping", max_output_tokens: 1 }),
       signal,
     });
-    if (resp.ok)
+    if (resp.ok) {
+      await observeValidationUsage(resp, providerId);
       return {
         ok: true,
         status: resp.status,
         message: "OpenAI Responses API 验证成功",
       };
+    }
     return {
       ok: false,
       status: resp.status,
@@ -699,12 +906,14 @@ async function tryValidateOnce(
     }),
     signal,
   });
-  if (resp.ok)
+  if (resp.ok) {
+    await observeValidationUsage(resp, providerId);
     return {
       ok: true,
       status: resp.status,
       message: "OpenAI Chat Completions API 验证成功",
     };
+  }
   return { ok: false, status: resp.status, error: await validationError(resp) };
 }
 
@@ -727,6 +936,7 @@ async function validateAiApi(
       apiKey,
       input.model,
       controller.signal,
+      input.providerId,
     );
     if (result.ok) return { ok: true, message: result.message };
 
@@ -738,6 +948,7 @@ async function validateAiApi(
         apiKey,
         input.model,
         controller.signal,
+        input.providerId,
       );
       if (retry.ok)
         return { ok: true, message: retry.message, resolvedBaseUrl: altUrl };

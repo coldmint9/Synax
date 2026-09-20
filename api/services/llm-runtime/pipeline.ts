@@ -190,6 +190,8 @@ export async function executePipeline(
     source: "sdk",
     protocol: selection.apiFormat,
     adapter: selection.provider.npm,
+    providerId: selection.providerId,
+    sessionId: request.hookContext?.sessionId,
   });
   if (cacheDiagnosticsEnabled())
     model = applyCacheDiagnosticsMiddleware(model, {
@@ -219,7 +221,10 @@ export async function executePipeline(
   const callOptions = { ...thinkingStream, providerOptions, temperature };
 
   // Native snapshots persist exactly the hydrated/compiled representation verified by policy.
-  const preparedAnchor = inspectHistoryCacheAnchor(request.messages, request.previousHistoryAnchor);
+  const preparedAnchor = inspectHistoryCacheAnchor(
+    request.messages,
+    request.previousHistoryAnchor,
+  );
   await request.onRequestPrepared?.({
     messages: request.messages,
     ...preparedAnchor,

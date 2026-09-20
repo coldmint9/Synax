@@ -15,24 +15,58 @@ import { resolveSessionBackend } from "./backends/backend-binding.js";
 import {
   bindSessionWorkDir,
   resolveRegisteredProjectWorkDir,
-  isWorkspaceEntryVisible,
   isWorkspaceRelativePathBlocked,
+  resolveSessionWorkspaceRoots,
 } from "./tools/workspace.js";
-import { sandboxPolicy } from "./sandbox/index.js";
+import {
+  isWithinWorkspace,
+  projectWorkspaceRoots,
+  readWorkspaceProject,
+  workspaceRootHostPath,
+} from "../project-workspace.js";
+import { workspaceFileIndex } from "./workspace-file-index.js";
+import { recentWorkspaceReadPaths } from "./recent-workspace-reads.js";
+import { sandboxConfigForSession, sandboxPolicy } from "./sandbox/index.js";
 import type {
   TurnReference,
+  TurnReferenceOption,
   TurnReferenceContext,
 } from "./turn-reference-state.js";
 
 const MAX_REFERENCE_BYTES = 32_000;
 const MAX_CONTEXT_BYTES = 128_000;
 
-export function listTurnReferenceOptions(
+function referenceRoots(
+  projectId: string,
+  root: string,
+  sessionId?: string,
+): string[] {
+  const project = readWorkspaceProject(projectId);
+  const members = sessionId
+    ? resolveSessionWorkspaceRoots(sessionId, projectId)
+    : project
+      ? projectWorkspaceRoots(project)
+      : [];
+  // The active checkout replaces the primary directory, including worktrees.
+  return [
+    ...new Set([
+      root,
+      ...members
+        .filter(
+          (member) =>
+            member.role === "reference" && member.status === "available",
+        )
+        .map(workspaceRootHostPath),
+    ]),
+  ];
+}
+
+export async function listTurnReferenceOptions(
   projectId: string,
   kind: TurnReference["kind"],
   query = "",
   sessionId?: string,
-): TurnReference[] {
+): Promise<TurnReferenceOption[]> {
   if (
     sessionId &&
     agentRuntimeStore.getSession(sessionId).projectId !== projectId
@@ -41,7 +75,7 @@ export function listTurnReferenceOptions(
   const root = sessionId
     ? bindSessionWorkDir(sessionId)
     : resolveRegisteredProjectWorkDir(projectId);
-  let items: TurnReference[] = [];
+  let items: TurnReferenceOption[] = [];
   if (kind === "skill") {
     items = skillAgentBridge
       .listForPrompt({ projectId, profileId: "synax", activeSkillIds: [] })
@@ -60,27 +94,39 @@ export function listTurnReferenceOptions(
       .all(projectId, projectId) as Array<{ id: string; title: string }>;
     items = rows.map((row) => ({ kind, id: row.id, label: row.title }));
   } else {
-    // Bound traversal and never follow symlinks into another workspace or secret directory.
-    let visited = 0;
-    const visit = (dir: string, depth: number) => {
-      if (depth > 20 || visited >= 20_000 || items.length >= 100) return;
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (++visited > 20_000 || items.length >= 100) break;
-        if (
-          !isWorkspaceEntryVisible(entry.name, sessionId) ||
-          entry.isSymbolicLink()
-        )
-          continue;
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) visit(full, depth + 1);
-        else if (entry.isFile()) {
-          const id = path.relative(root, full).split(path.sep).join("/");
-          if (id.toLowerCase().includes(query.toLowerCase()))
-            items.push({ kind, id, label: id });
-        }
-      }
-    };
-    visit(root, 0);
+    const roots = referenceRoots(projectId, root, sessionId);
+    const files = new Set(
+      (await Promise.all(roots.map(workspaceFileIndex))).flat(),
+    );
+    const recent = new Set(recentWorkspaceReadPaths(roots));
+    const config = sandboxConfigForSession(sessionId ?? "__default__");
+    const needle = query.trim().replace(/\\/g, "/").toLowerCase();
+    // Recent reads can include explicitly read generated/ignored files. They
+    // still have to belong to this workspace and pass the current visibility rules.
+    const ordered = new Set([...recent, ...files]);
+    for (const full of ordered) {
+      if (
+        !config.unrestricted &&
+        (config.blockedExtensions.has(path.extname(full).toLowerCase()) ||
+          !roots.some(
+            (dir) =>
+              isWithinWorkspace(dir, full) &&
+              path.relative(dir, full).split(path.sep).length <=
+                config.maxDepth,
+          ))
+      )
+        continue;
+      const id = path.relative(root, full).split(path.sep).join("/");
+      if (id.toLowerCase().includes(needle))
+        items.push({
+          kind,
+          id,
+          label: id,
+          ...(recent.has(full) ? { recent: true } : {}),
+        });
+      if (items.length >= 100) break;
+    }
+    return items;
   }
   return items
     .filter((item) =>
@@ -195,6 +241,14 @@ export function prepareTurnReferences(
           sessionId,
           "workspace",
         );
+        if (
+          !referenceRoots(session.projectId, root, sessionId).some((dir) =>
+            isWithinWorkspace(dir, full),
+          )
+        )
+          throw new AgentValidationError(
+            `File is not in this workspace: ${ref.id}`,
+          );
         const stat = fs.statSync(full);
         if (!stat.isFile() || stat.size > MAX_REFERENCE_BYTES)
           throw new AgentValidationError(

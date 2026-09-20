@@ -1,4 +1,5 @@
 import { resolveSessionUserRequest } from "./session-user-request.js";
+import { normalizeSessionPromptMetadata } from "./session-metadata.js";
 import {
   makeBackendBinding,
   validateBackendTurnInput,
@@ -82,7 +83,7 @@ export class AgentSessionRuntime {
             }
           })());
     const sessionMetadata = seedSessionPermissionMetadata(
-      input.sessionMetadata ?? null,
+      normalizeSessionPromptMetadata(input.sessionMetadata),
       {
         permissionTier:
           input.permissionTier ??

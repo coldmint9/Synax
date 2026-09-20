@@ -1,145 +1,170 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, RefreshCw, Send, X } from 'lucide-react'
-import { Button, Card, Chip, ScrollShadow, Spinner } from '@heroui/react'
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, RefreshCw, Send, X } from "lucide-react";
+import { Button, Card, Chip, ScrollShadow, Spinner } from "@heroui/react";
 import {
   agentRuntimeApi,
   type AgentSession,
   type PermissionDecision,
   type RuntimeEvent,
-} from '../../lib/api/agentRuntime'
-import { useAgentSessionStore } from '../features/sessions/agentSessionStore'
-import { useShellStore } from '../state/shellStore'
-import { useSessionLiveStream } from '../features/sessions/useSessionLiveStream'
-import { AgentConversationView } from '../features/sessions/AgentConversationView'
-import { SessionLiveTurn } from '../features/sessions/SessionLiveTurn'
-import { isProviderNotConfiguredError, LlmProviderRequiredBanner } from '../components/LlmProviderRequiredBanner'
+} from "../../lib/api/agentRuntime";
+import { useAgentSessionStore } from "../features/agent-workspace/state/agentSessionStore";
+import { useShellStore } from "../state/shellStore";
+import { useSessionLiveStream } from "../features/agent-workspace/useSessionLiveStream";
+import { AgentConversationView } from "../features/agent-workspace/AgentConversationView";
+import { SessionLiveTurn } from "../features/agent-workspace/SessionLiveTurn";
+import {
+  isProviderNotConfiguredError,
+  LlmProviderRequiredBanner,
+} from "../components/LlmProviderRequiredBanner";
 
 type StreamChunk = {
-  type?: string
-  event?: RuntimeEvent
-  permission?: PermissionDecision
-}
+  type?: string;
+  event?: RuntimeEvent;
+  permission?: PermissionDecision;
+};
 
-const PROJECT_ID = 'agent-loop-test'
-const PROFILE_ID = 'executor'
+const PROJECT_ID = "agent-loop-test";
+const PROFILE_ID = "executor";
 
 function formatTime(value?: string | null): string {
-  if (!value) return ''
+  if (!value) return "";
   try {
-    return new Date(value).toLocaleTimeString()
+    return new Date(value).toLocaleTimeString();
   } catch {
-    return value
+    return value;
   }
 }
 
 function shortId(value?: string | null): string {
-  if (!value) return ''
-  return value.length > 12 ? value.slice(-10) : value
+  if (!value) return "";
+  return value.length > 12 ? value.slice(-10) : value;
 }
 
 export default function AgentLoopTestPage() {
-  const [session, setSession] = useState<AgentSession | null>(null)
-  const [events, setEvents] = useState<RuntimeEvent[]>([])
-  const [permissions, setPermissions] = useState<PermissionDecision[]>([])
-  const [input, setInput] = useState('Read package.json and summarize it in one sentence.')
-  const [error, setError] = useState<string | null>(null)
-  const [streaming, setStreaming] = useState(false)
-  const [approvingId, setApprovingId] = useState<string | null>(null)
-  const sessionIdRef = useRef<string | null>(null)
+  const [session, setSession] = useState<AgentSession | null>(null);
+  const [events, setEvents] = useState<RuntimeEvent[]>([]);
+  const [permissions, setPermissions] = useState<PermissionDecision[]>([]);
+  const [input, setInput] = useState(
+    "Read package.json and summarize it in one sentence.",
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [streaming, setStreaming] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
 
   // Wire up agentSessionStore for rich rendering
-  const sessionStore = useAgentSessionStore()
-  const { steps, toolCalls, messages: storeMessages, childSessions,
-    streamingStepId, streamingLive, streamingCompletedSteps } = sessionStore
+  const sessionStore = useAgentSessionStore();
+  const {
+    steps,
+    toolCalls,
+    messages: storeMessages,
+    childSessions,
+    streamingStepId,
+    streamingLive,
+    streamingCompletedSteps,
+  } = sessionStore;
 
-  const selectedSessionId = useAgentSessionStore(s => s.selectedSessionId)
+  const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
   // Keep live stream aligned with the store session id (set synchronously in openPanel).
-  useSessionLiveStream(selectedSessionId ?? session?.id ?? null)
+  useSessionLiveStream(selectedSessionId ?? session?.id ?? null);
 
   const pendingPermissions = permissions.filter(
-    (p) => p.action === 'ask' && !p.resolvedAt,
-  )
+    (p) => p.action === "ask" && !p.resolvedAt,
+  );
 
-  const refreshSessionData = useCallback(async (sessionId = sessionIdRef.current) => {
-    if (!sessionId) return
-    const [payload, eventList, permissionList] = await Promise.all([
-      agentRuntimeApi.getSession(sessionId),
-      agentRuntimeApi.listEvents(sessionId),
-      agentRuntimeApi.listPermissions(sessionId),
-    ])
-    setSession(payload.session)
-    setEvents(eventList.items)
-    setPermissions(permissionList.items)
-  }, [])
+  const refreshSessionData = useCallback(
+    async (sessionId = sessionIdRef.current) => {
+      if (!sessionId) return;
+      const [payload, eventList, permissionList] = await Promise.all([
+        agentRuntimeApi.getSession(sessionId),
+        agentRuntimeApi.listEvents(sessionId),
+        agentRuntimeApi.listPermissions(sessionId),
+      ]);
+      setSession(payload.session);
+      setEvents(eventList.items);
+      setPermissions(permissionList.items);
+    },
+    [],
+  );
 
   const ensureSession = useCallback(async (): Promise<AgentSession> => {
-    if (sessionIdRef.current && session) return session
+    if (sessionIdRef.current && session) return session;
     const payload = await agentRuntimeApi.createSession({
       projectId: PROJECT_ID,
       profileId: PROFILE_ID,
-      prompt: 'Agent loop test session.',
-    })
-    sessionIdRef.current = payload.session.id
-    setSession(payload.session)
-    return payload.session
-  }, [session])
+      prompt: "Agent loop test session.",
+    });
+    sessionIdRef.current = payload.session.id;
+    setSession(payload.session);
+    return payload.session;
+  }, [session]);
 
   const send = useCallback(async () => {
-    const text = input.trim()
-    if (!text || streaming) return
-    setStreaming(true)
-    setError(null)
+    const text = input.trim();
+    if (!text || streaming) return;
+    setStreaming(true);
+    setError(null);
     try {
-      const activeSession = await ensureSession()
-      sessionIdRef.current = activeSession.id
+      const activeSession = await ensureSession();
+      sessionIdRef.current = activeSession.id;
       // Open panel in agentSessionStore to load data and enable SSE rendering
-      sessionStore.openPanel(activeSession.id)
-      await agentRuntimeApi.streamTurn(activeSession.id, { message: text, locale: useShellStore.getState().preferences.locale }, (raw) => {
-        const chunk = raw as StreamChunk
-        if (chunk.event) {
-          setEvents((current) => [...current, chunk.event!])
-        }
-        if (chunk.permission) {
-          setPermissions((current) => {
-            const withoutExisting = current.filter((item) => item.id !== chunk.permission!.id)
-            return [...withoutExisting, chunk.permission!]
-          })
-        }
-      })
-      setInput('')
-      await refreshSessionData(activeSession.id)
-      await sessionStore.refreshDetail()
+      sessionStore.openPanel(activeSession.id);
+      await agentRuntimeApi.streamTurn(
+        activeSession.id,
+        { message: text, locale: useShellStore.getState().preferences.locale },
+        (raw) => {
+          const chunk = raw as StreamChunk;
+          if (chunk.event) {
+            setEvents((current) => [...current, chunk.event!]);
+          }
+          if (chunk.permission) {
+            setPermissions((current) => {
+              const withoutExisting = current.filter(
+                (item) => item.id !== chunk.permission!.id,
+              );
+              return [...withoutExisting, chunk.permission!];
+            });
+          }
+        },
+      );
+      setInput("");
+      await refreshSessionData(activeSession.id);
+      await sessionStore.refreshDetail();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setStreaming(false)
+      setStreaming(false);
     }
-  }, [ensureSession, input, refreshSessionData, streaming, sessionStore])
+  }, [ensureSession, input, refreshSessionData, streaming, sessionStore]);
 
   const replyPermission = useCallback(
-    async (permissionId: string, reply: 'once' | 'reject') => {
-      if (!sessionIdRef.current) return
-      setApprovingId(permissionId)
-      setError(null)
+    async (permissionId: string, reply: "once" | "reject") => {
+      if (!sessionIdRef.current) return;
+      setApprovingId(permissionId);
+      setError(null);
       try {
-        await agentRuntimeApi.replyPermission(sessionIdRef.current, permissionId, reply)
-        await refreshSessionData(sessionIdRef.current)
-        await sessionStore.refreshDetail()
+        await agentRuntimeApi.replyPermission(
+          sessionIdRef.current,
+          permissionId,
+          reply,
+        );
+        await refreshSessionData(sessionIdRef.current);
+        await sessionStore.refreshDetail();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+        setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setApprovingId(null)
+        setApprovingId(null);
       }
     },
     [refreshSessionData, sessionStore],
-  )
+  );
 
   // Sync session into store when sessionIdRef changes
   useEffect(() => {
     if (sessionIdRef.current && !sessionStore.selectedSessionId) {
-      sessionStore.openPanel(sessionIdRef.current)
+      sessionStore.openPanel(sessionIdRef.current);
     }
-  }, [session, sessionStore])
+  }, [session, sessionStore]);
 
   return (
     <div className="h-full overflow-hidden bg-background text-foreground">
@@ -147,22 +172,30 @@ export default function AgentLoopTestPage() {
         {/* Left sidebar */}
         <aside className="hidden w-72 shrink-0 border-r border-border bg-card/60 p-5 lg:block">
           <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Synax Runtime</p>
+            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              Synax Runtime
+            </p>
             <h1 className="mt-2 text-xl font-semibold">Agent Loop Test</h1>
           </div>
 
           <div className="mt-6 space-y-3 text-sm">
             <InfoRow label="Project" value={PROJECT_ID} />
             <InfoRow label="Profile" value={PROFILE_ID} />
-            <InfoRow label="Session" value={session ? shortId(session.id) : 'not created'} />
-            <InfoRow label="Status" value={session?.status ?? 'idle'} />
+            <InfoRow
+              label="Session"
+              value={session ? shortId(session.id) : "not created"}
+            />
+            <InfoRow label="Status" value={session?.status ?? "idle"} />
           </div>
 
           <Button
             variant="outline"
             size="sm"
             className="mt-6 w-full"
-            onPress={() => { void refreshSessionData(); void sessionStore.refreshDetail() }}
+            onPress={() => {
+              void refreshSessionData();
+              void sessionStore.refreshDetail();
+            }}
             isDisabled={!sessionIdRef.current}
           >
             <RefreshCw size={14} />
@@ -181,47 +214,70 @@ export default function AgentLoopTestPage() {
                   steps={steps}
                   toolCalls={toolCalls}
                   messages={storeMessages}
-                  childSessions={childSessions[sessionIdRef.current ?? ''] ?? []}
+                  childSessions={
+                    childSessions[sessionIdRef.current ?? ""] ?? []
+                  }
                   excludeStepId={streamingStepId}
-                  liveTurn={(
+                  liveTurn={
                     <SessionLiveTurn
                       steps={steps}
                       streamingStepId={streamingStepId}
                       streamingLive={streamingLive}
                       streamingCompletedSteps={streamingCompletedSteps}
                     />
-                  )}
+                  }
                 />
               </div>
 
-              {error && (
-                isProviderNotConfiguredError(error) ? (
+              {error &&
+                (isProviderNotConfiguredError(error) ? (
                   <div className="border-t border-destructive/30 px-5 py-3">
-                    <LlmProviderRequiredBanner error={error} onDismiss={() => setError(null)} />
+                    <LlmProviderRequiredBanner
+                      error={error}
+                      onDismiss={() => setError(null)}
+                    />
                   </div>
                 ) : (
                   <div className="border-t border-destructive/30 bg-destructive/10 px-5 py-3 text-sm text-destructive">
                     {error}
                   </div>
-                )
-              )}
+                ))}
 
               {pendingPermissions.length > 0 && (
                 <div className="border-t border-warning/40 bg-warning/10 px-5 py-3">
                   <div className="space-y-2">
                     {pendingPermissions.map((permission) => (
-                      <div key={permission.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/40 bg-background px-3 py-2">
+                      <div
+                        key={permission.id}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/40 bg-background px-3 py-2"
+                      >
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{permission.reason}</p>
+                          <p className="truncate text-sm font-medium">
+                            {permission.reason}
+                          </p>
                           <p className="text-xs text-muted-foreground">
-                            {permission.internalGate} · {permission.patterns.join(', ')}
+                            {permission.internalGate} ·{" "}
+                            {permission.patterns.join(", ")}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Button size="sm" onPress={() => void replyPermission(permission.id, 'once')} isDisabled={approvingId === permission.id}>
+                          <Button
+                            size="sm"
+                            onPress={() =>
+                              void replyPermission(permission.id, "once")
+                            }
+                            isDisabled={approvingId === permission.id}
+                          >
                             <Check size={13} /> Allow
                           </Button>
-                          <Button size="sm" variant="outline" onPress={() => void replyPermission(permission.id, 'reject')} isDisabled={approvingId === permission.id}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onPress={() =>
+                              void replyPermission(permission.id, "reject")
+                            }
+                            isDisabled={approvingId === permission.id}
+                          >
                             <X size={13} /> Reject
                           </Button>
                         </div>
@@ -233,7 +289,10 @@ export default function AgentLoopTestPage() {
 
               <form
                 className="border-t border-border p-4"
-                onSubmit={(e) => { e.preventDefault(); void send() }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void send();
+                }}
               >
                 <div className="flex items-end gap-2">
                   <textarea
@@ -242,8 +301,9 @@ export default function AgentLoopTestPage() {
                     className="min-h-20 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring transition focus:ring-2"
                     placeholder="Send a task to the agent loop..."
                     onKeyDown={(e) => {
-                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                        e.preventDefault(); void send()
+                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                        e.preventDefault();
+                        void send();
                       }
                     }}
                   />
@@ -269,19 +329,34 @@ export default function AgentLoopTestPage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {events.slice().reverse().slice(0, 50).map((event) => (
-                      <Card key={event.id} className="shadow-none border-border/60 bg-background/60">
-                        <div className="px-3 py-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <Chip size="sm" variant="soft" className="text-[9px] h-4">
-                              {event.type}
-                            </Chip>
-                            <span className="shrink-0 text-[10px] text-muted-foreground">{formatTime(event.timestamp)}</span>
+                    {events
+                      .slice()
+                      .reverse()
+                      .slice(0, 50)
+                      .map((event) => (
+                        <Card
+                          key={event.id}
+                          className="shadow-none border-border/60 bg-background/60"
+                        >
+                          <div className="px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <Chip
+                                size="sm"
+                                variant="soft"
+                                className="text-[9px] h-4"
+                              >
+                                {event.type}
+                              </Chip>
+                              <span className="shrink-0 text-[10px] text-muted-foreground">
+                                {formatTime(event.timestamp)}
+                              </span>
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                              {event.summary}
+                            </p>
                           </div>
-                          <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{event.summary}</p>
-                        </div>
-                      </Card>
-                    ))}
+                        </Card>
+                      ))}
                   </div>
                 )}
               </ScrollShadow>
@@ -290,7 +365,7 @@ export default function AgentLoopTestPage() {
         </main>
       </div>
     </div>
-  )
+  );
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -299,5 +374,5 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="truncate text-xs font-medium">{value}</span>
     </div>
-  )
+  );
 }

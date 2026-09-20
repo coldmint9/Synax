@@ -137,7 +137,7 @@ function MediaAsset({
           role="dialog"
           aria-modal="true"
           aria-label={asset.filename}
-          className="fixed inset-0 m-auto h-[90vh] w-[95vw] max-w-none items-center justify-center border-0 bg-black/80 p-8 text-white backdrop:bg-black/80"
+          className="media-preview-dialog"
           onClick={(e) => {
             if (e.target === e.currentTarget) setOpened(false);
           }}

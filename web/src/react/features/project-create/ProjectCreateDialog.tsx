@@ -1,3 +1,4 @@
+import { DialogOverlay } from "../../components/DialogOverlay";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Input, Label, TextField, Tooltip } from "@heroui/react";
@@ -10,7 +11,7 @@ import {
   listWslDistributions,
   type WslDistribution,
 } from "../../../lib/api/wsl";
-import { resolveSessionsEntryPath } from "../sessions/sessionLastVisit";
+import { resolveSessionsEntryPath } from "../agent-workspace/sessionLastVisit";
 import { DirectoryPickerDialog } from "../../components/directory-picker/DirectoryPickerDialog";
 import { useDialogFocus } from "../../components/directory-picker/useDialogFocus";
 import { useShellStore, type ProjectSummary } from "../../state/shellStore";
@@ -61,7 +62,6 @@ function ProjectCreateForm({
   const [locationKind, setLocationKind] = useState<"host" | "wsl">("host");
   const [distributions, setDistributions] = useState<WslDistribution[]>([]);
   const [distribution, setDistribution] = useState("");
-  const [wslReason, setWslReason] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [existing, setExisting] = useState<ProjectSummary[]>([]);
   const [loadingExisting, setLoadingExisting] = useState(true);
@@ -88,30 +88,22 @@ function ProjectCreateForm({
   }, [pickerOpen]);
 
   useEffect(() => {
-    if (
-      typeof navigator !== "undefined" &&
-      !/Windows/i.test(navigator.userAgent)
-    )
-      return;
+    const desktop = (window as Window & { electronAPI?: { platform: string } })
+      .electronAPI;
+    if (desktop?.platform !== "win32") return;
     let current = true;
     void listWslDistributions()
       .then((result) => {
-        if (!current || !active.current) return;
-        setDistributions(result.items);
+        if (!current || !active.current || !result.available) return;
+        const items = result.items.filter((item) => item.version === 2);
+        setDistributions(items);
         setDistribution(
-          result.items.find((item) => item.default)?.name ??
-            result.items[0]?.name ??
-            "",
-        );
-        setWslReason(
-          result.available ? null : (result.reason ?? "WSL2 unavailable"),
+          items.find((item) => item.default)?.name ?? items[0]?.name ?? "",
         );
       })
-      .catch(
-        (cause) =>
-          current &&
-          setWslReason(cause instanceof Error ? cause.message : String(cause)),
-      );
+      .catch(() => {
+        // Keep WSL2 hidden when the local capability probe fails.
+      });
     return () => {
       current = false;
     };
@@ -225,8 +217,7 @@ function ProjectCreateForm({
   };
   return (
     <>
-      <div
-        className="dialog-overlay"
+      <DialogOverlay
         inert={pickerOpen}
         aria-hidden={pickerOpen || undefined}
         onClick={handleClose}
@@ -275,58 +266,44 @@ function ProjectCreateForm({
               className="workspace-create-sources"
               aria-label={c.sources}
             >
-              {mode === "local" && (
-                <div className="workspace-runtime-picker">
-                  <Button
-                    size="sm"
-                    variant={locationKind === "host" ? "primary" : "ghost"}
-                    isDisabled={submitting}
-                    onPress={() => {
-                      setLocationKind("host");
-                      setPathInput("");
-                      setMembers([]);
-                    }}
-                  >
-                    {c.windowsHost}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={locationKind === "wsl" ? "primary" : "ghost"}
-                    isDisabled={submitting || distributions.length === 0}
-                    onPress={() => {
-                      setLocationKind("wsl");
-                      setPathInput("");
-                      setMembers([]);
-                    }}
-                  >
-                    WSL2
-                  </Button>
-                  {locationKind === "wsl" && distributions.length > 0 && (
-                    <select
-                      aria-label={c.wslDistribution}
-                      value={distribution}
-                      disabled={submitting}
-                      onChange={(event) => {
-                        setDistribution(event.target.value);
-                        setPathInput("");
-                        setMembers([]);
-                      }}
-                    >
-                      {distributions.map((item) => (
-                        <option key={item.name} value={item.name}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {wslReason && (
-                    <span className="workspace-hint">{wslReason}</span>
-                  )}
-                </div>
-              )}
               <WorkspaceProjectSources
                 mode={mode}
                 onModeChange={setMode}
+                localLabel={c.localHost}
+                directoryKind={locationKind}
+                onDirectoryKindChange={(kind) => {
+                  if (kind === locationKind) return;
+                  setLocationKind(kind);
+                  setPathInput("");
+                  setMembers([]);
+                  setError(null);
+                }}
+                wslSelector={
+                  distributions.length > 0 ? (
+                    <div className="workspace-runtime-picker">
+                      <label htmlFor="workspace-wsl-distribution">
+                        {c.wslDistribution}
+                      </label>
+                      <select
+                        id="workspace-wsl-distribution"
+                        value={distribution}
+                        disabled={submitting}
+                        onChange={(event) => {
+                          setDistribution(event.target.value);
+                          setPathInput("");
+                          setMembers([]);
+                          setError(null);
+                        }}
+                      >
+                        {distributions.map((item) => (
+                          <option key={item.name} value={item.name}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : undefined
+                }
                 projects={existing}
                 loading={loadingExisting}
                 error={existingError}
@@ -451,7 +428,7 @@ function ProjectCreateForm({
             </div>
           </footer>
         </div>
-      </div>
+      </DialogOverlay>
       <DirectoryPickerDialog
         open={pickerOpen}
         multiple

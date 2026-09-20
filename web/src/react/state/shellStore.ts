@@ -1,4 +1,12 @@
 import { create } from "zustand";
+import {
+  applyAppearance,
+  DEFAULT_ACCENT,
+  normalizeAccent,
+  systemTheme,
+  type ThemeMode,
+  type ResolvedTheme,
+} from "../../lib/appearance";
 import { useApiConnectivityStore } from "../../lib/apiConnectivity";
 
 export interface ProjectSummary {
@@ -27,12 +35,14 @@ export interface ProjectSummary {
 }
 
 export interface ShellPreferences {
-  theme: "light" | "dark";
+  theme: ThemeMode;
+  accentColor: string;
   defaultHome: "global-home" | "last-project";
   notifications: boolean;
   locale: "zh" | "en";
   editor: "system" | "vscode" | "cursor" | "windsurf" | "webstorm";
   agentFontSize: number;
+  wikiEnabled: boolean;
   /** Fold runs of activity-only agent turns into one work-log row. */
   sessionFoldWorkRuns: boolean;
 }
@@ -49,6 +59,7 @@ interface ShellState {
   projects: ProjectSummary[];
   projectsLoaded: boolean;
   preferences: ShellPreferences;
+  resolvedTheme: ResolvedTheme;
   currentProjectId: string | null;
   currentUser: {
     id: string;
@@ -58,11 +69,13 @@ interface ShellState {
   /** Search/filter state for project list */
   projectFilter: ProjectSearchFilter;
   setTheme: (theme: ShellPreferences["theme"]) => void;
+  setAccentColor: (color: string) => void;
   setLocale: (locale: ShellPreferences["locale"]) => void;
   setDefaultHome: (defaultHome: ShellPreferences["defaultHome"]) => void;
   setNotifications: (notifications: boolean) => void;
   setEditor: (editor: ShellPreferences["editor"]) => void;
   setAgentFontSize: (fontSize: number) => void;
+  setWikiEnabled: (enabled: boolean) => void;
   setSessionFoldWorkRuns: (value: boolean) => void;
   addProject: (project: ProjectSummary) => void;
   setProjects: (projects: ProjectSummary[]) => void;
@@ -98,13 +111,16 @@ function applyUiFontSize(fontSize: number): void {
 export const useShellStore = create<ShellState>((set, get) => ({
   projects: [],
   projectsLoaded: false,
+  resolvedTheme: systemTheme(),
   preferences: {
-    theme: "dark",
+    theme: "system",
+    accentColor: DEFAULT_ACCENT,
     defaultHome: "global-home",
     notifications: true,
     locale: "zh",
     editor: "system",
     agentFontSize: 14,
+    wikiEnabled: false,
     sessionFoldWorkRuns: true,
   },
   currentProjectId: null,
@@ -122,9 +138,15 @@ export const useShellStore = create<ShellState>((set, get) => ({
   },
   setTheme: (theme) => {
     set((state) => ({ preferences: { ...state.preferences, theme } }));
-    const next = useShellStore.getState().preferences;
-    localStorage.setItem(storageKey, JSON.stringify(next));
-    document.documentElement.classList.toggle("dark", theme === "dark");
+    syncShellAppearance();
+    persistAppearance();
+  },
+  setAccentColor: (color) => {
+    const accentColor = normalizeAccent(color);
+    if (!accentColor) return;
+    set((state) => ({ preferences: { ...state.preferences, accentColor } }));
+    syncShellAppearance();
+    persistAppearance();
   },
   setLocale: (locale) => {
     set((state) => ({ preferences: { ...state.preferences, locale } }));
@@ -153,6 +175,10 @@ export const useShellStore = create<ShellState>((set, get) => ({
       storageKey,
       JSON.stringify(useShellStore.getState().preferences),
     );
+  },
+  setWikiEnabled: (wikiEnabled) => {
+    set((state) => ({ preferences: { ...state.preferences, wikiEnabled } }));
+    localStorage.setItem(storageKey, JSON.stringify(get().preferences));
   },
   setAgentFontSize: (fontSize) => {
     const normalized = Math.min(
@@ -263,13 +289,19 @@ export function startProjectRecovery(): () => void {
 }
 
 export function hydrateShellPreferences() {
-  const raw = localStorage.getItem(storageKey);
-  if (!raw) return;
   try {
-    const parsed = JSON.parse(raw) as Partial<ShellPreferences>;
+    const raw = localStorage.getItem(storageKey);
+    const parsed = (raw ? JSON.parse(raw) : {}) as Partial<ShellPreferences>;
+    if (!parsed || typeof parsed !== "object") return;
     const patch: Partial<ShellPreferences> = {};
-    if (parsed.theme === "light" || parsed.theme === "dark")
+    if (
+      parsed.theme === "light" ||
+      parsed.theme === "dark" ||
+      parsed.theme === "system"
+    )
       patch.theme = parsed.theme;
+    const accentColor = normalizeAccent(parsed.accentColor);
+    if (accentColor) patch.accentColor = accentColor;
     if (parsed.locale === "zh" || parsed.locale === "en")
       patch.locale = parsed.locale;
     if (
@@ -277,6 +309,8 @@ export function hydrateShellPreferences() {
       parsed.defaultHome === "last-project"
     )
       patch.defaultHome = parsed.defaultHome;
+    if (typeof parsed.wikiEnabled === "boolean")
+      patch.wikiEnabled = parsed.wikiEnabled;
     if (typeof parsed.notifications === "boolean")
       patch.notifications = parsed.notifications;
     if (
@@ -303,8 +337,55 @@ export function hydrateShellPreferences() {
     const agentFontSize = useShellStore.getState().preferences.agentFontSize;
     applyUiFontSize(agentFontSize);
   } catch {
-    // ignore broken preference payload
+    // Ignore unavailable storage or broken preference payloads.
+  } finally {
+    syncShellAppearance();
   }
+}
+
+function persistAppearance() {
+  try {
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify(useShellStore.getState().preferences),
+    );
+  } catch {
+    // Appearance remains usable when browser storage is unavailable.
+  }
+}
+
+function syncShellAppearance() {
+  const { preferences, resolvedTheme } = useShellStore.getState();
+  const next =
+    preferences.theme === "system" ? systemTheme() : preferences.theme;
+  applyAppearance(next, preferences.accentColor);
+  if (next !== resolvedTheme) useShellStore.setState({ resolvedTheme: next });
+}
+
+export function startShellAppearance(): () => void {
+  syncShellAppearance();
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const onSystemChange = () => {
+    if (useShellStore.getState().preferences.theme === "system")
+      syncShellAppearance();
+  };
+  media.addEventListener("change", onSystemChange);
+  const unsubscribe = useShellStore.subscribe((state, previous) => {
+    if (
+      state.preferences.theme !== previous.preferences.theme ||
+      state.preferences.accentColor !== previous.preferences.accentColor
+    )
+      syncShellAppearance();
+  });
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === storageKey && event.newValue) hydrateShellPreferences();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    media.removeEventListener("change", onSystemChange);
+    window.removeEventListener("storage", onStorage);
+    unsubscribe();
+  };
 }
 
 export function getProjectById(projectId: string) {

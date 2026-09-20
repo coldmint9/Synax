@@ -653,7 +653,7 @@ wikiRoutes.post("/drafts/:draftId/discard", async (c) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Evaluations & Plans
+// Wiki Goals & Plans
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import * as goalService from "../services/wiki/wiki-goal-service.js";
@@ -662,8 +662,8 @@ import {
   generatePlan,
   generatePlanStream,
 } from "../services/wiki/wiki-plan-generator.js";
-import { buildGoalSessionPrompt } from "../services/wiki/wiki-goal-prompt.js";
-import { resolveGoalWikiContext } from "../services/wiki/wiki-goal-wiki-context.js";
+import { buildSessionPrompt } from "../services/agent-runtime/session-prompt.js";
+import { resolveSessionWikiContext } from "../services/wiki/wiki-session-context.js";
 
 const createGoalBodySchema = z.object({
   content: z.string().min(1).max(4096),
@@ -679,7 +679,7 @@ const createGoalBodySchema = z.object({
     .nullable(),
 });
 
-const buildGoalSessionPromptBodySchema = z.object({
+const buildSessionPromptBodySchema = z.object({
   mode: z.enum(["session", "direct", "plan_node"]).optional(),
   content: z.string().min(1).max(100_000),
   documentId: z.string().nullable().optional(),
@@ -689,20 +689,20 @@ const buildGoalSessionPromptBodySchema = z.object({
   locale: z.enum(["zh", "en"]).optional(),
 });
 
-// ── POST /api/wiki/projects/:projectId/goals/session-prompt ────────────
-wikiRoutes.post("/projects/:projectId/goals/session-prompt", async (c) => {
+// Shared session initialization; the goal-scoped URL remains a compatibility alias.
+async function sessionPromptHandler(c: Context) {
   const { projectId } = c.req.param();
-  const parsed = await parseBody(c, buildGoalSessionPromptBodySchema);
+  const parsed = await parseBody(c, buildSessionPromptBodySchema);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const wikiAttachMode = parsed.data.wikiAttachMode ?? "manual";
-  const wikiContext = await resolveGoalWikiContext({
+  const wikiContext = await resolveSessionWikiContext({
     projectId,
-    goalContent: parsed.data.content,
+    content: parsed.data.content,
     mode: wikiAttachMode,
     documentId: parsed.data.documentId ?? null,
     anchorJson: parsed.data.anchorJson ?? null,
   });
-  const prompt = buildGoalSessionPrompt({
+  const prompt = buildSessionPrompt({
     mode: parsed.data.mode ?? "direct",
     content: parsed.data.content,
     documentId: wikiContext.documentId,
@@ -713,7 +713,13 @@ wikiRoutes.post("/projects/:projectId/goals/session-prompt", async (c) => {
     locale: parsed.data.locale,
   });
   return c.json({ prompt, wikiContext });
-});
+}
+
+wikiRoutes.post("/projects/:projectId/session-prompt", sessionPromptHandler);
+wikiRoutes.post(
+  "/projects/:projectId/goals/session-prompt",
+  sessionPromptHandler,
+);
 
 // ── PATCH /api/wiki/goals/:goalId/last-session ─────────────────────────
 wikiRoutes.patch("/goals/:goalId/last-session", async (c) => {

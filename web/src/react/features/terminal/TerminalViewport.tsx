@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
+import { accentPalette, type ResolvedTheme } from "../../../lib/appearance";
 import { TerminalConnection } from "../../../lib/api/terminalConnection";
 import { type TerminalSession } from "../../../lib/api/terminal";
 import { useShellStore } from "../../state/shellStore";
@@ -13,20 +14,25 @@ const themes = {
   dark: {
     background: "#141618",
     foreground: "#e4e7eb",
-    cursor: "#b9d8c6",
-    selectionBackground: "#40564c",
     black: "#202226",
     brightBlack: "#7b818a",
   },
   light: {
     background: "#fafbfc",
     foreground: "#263238",
-    cursor: "#416454",
-    selectionBackground: "#c6dacc",
     black: "#263238",
     brightBlack: "#68737d",
   },
 };
+function terminalTheme(theme: ResolvedTheme, accent: string) {
+  const palette = accentPalette(accent, theme);
+  return {
+    ...themes[theme],
+    cursor: palette.strong,
+    selectionBackground: palette.soft,
+  };
+}
+
 export function TerminalViewport({
   session,
   visible,
@@ -36,7 +42,8 @@ export function TerminalViewport({
 }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const theme = useShellStore((state) => state.preferences.theme);
+  const theme = useShellStore((state) => state.resolvedTheme);
+  const accent = useShellStore((state) => state.preferences.accentColor);
   const host = useRef<HTMLDivElement>(null);
   const instance = useRef<{
     terminal: Terminal;
@@ -66,7 +73,10 @@ export function TerminalViewport({
       fontFamily: '"SFMono-Regular", Menlo, Consolas, monospace',
       scrollback: 5000,
       screenReaderMode: true,
-      theme: themes[useShellStore.getState().preferences.theme],
+      theme: terminalTheme(
+        useShellStore.getState().resolvedTheme,
+        useShellStore.getState().preferences.accentColor,
+      ),
       allowProposedApi: false,
       disableStdin: true,
       linkHandler: {
@@ -101,50 +111,101 @@ export function TerminalViewport({
       syncInput();
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        if (!stopped && !disposed) source.resize(Math.min(500, terminal.cols), Math.min(300, terminal.rows));
+        if (!stopped && !disposed)
+          source.resize(
+            Math.min(500, terminal.cols),
+            Math.min(300, terminal.rows),
+          );
       }, 80);
     };
     instance.current = { terminal, fit, search: finder, fitNow, syncInput };
-    let ackTimer: ReturnType<typeof setTimeout> | undefined, ackSequence = 0;
+    let ackTimer: ReturnType<typeof setTimeout> | undefined,
+      ackSequence = 0;
     const ack = (sequence: number) => {
       ackSequence = Math.max(ackSequence, sequence);
       if (ackTimer || disposed || stopped) return;
-      ackTimer = setTimeout(() => { ackTimer = undefined; if (!disposed && !stopped) source.acknowledge(ackSequence); }, 24);
+      ackTimer = setTimeout(() => {
+        ackTimer = undefined;
+        if (!disposed && !stopped) source.acknowledge(ackSequence);
+      }, 24);
     };
     const source = new TerminalConnection(session, {
-      connected: () => { if (!disposed) { connected = true; setConnection("connected"); syncInput(); fitNow(); } },
-      disconnected: () => { if (!disposed) { connected = false; setConnection("reconnecting"); syncInput(); } },
-      error: message => { if (!disposed) setError(message); },
+      connected: () => {
+        if (!disposed) {
+          connected = true;
+          setConnection("connected");
+          syncInput();
+          fitNow();
+        }
+      },
+      disconnected: () => {
+        if (!disposed) {
+          connected = false;
+          setConnection("reconnecting");
+          syncInput();
+        }
+      },
+      error: (message) => {
+        if (!disposed) setError(message);
+      },
       reset: (data, sequence, clear) => {
         if (disposed) return;
         // Replaying an old vi/SSH query must never send its response into the
         // current shell. Only live output may generate terminal protocol replies.
-        replaying = true; syncInput(); setConnection("connecting"); if (clear) terminal.reset();
+        replaying = true;
+        syncInput();
+        setConnection("connecting");
+        if (clear) terminal.reset();
         terminal.write(data, () => {
           replaying = false;
-          if (!disposed) { syncInput(); if (!stopped) { setConnection("connected"); source.redraw(); } ack(sequence); }
+          if (!disposed) {
+            syncInput();
+            if (!stopped) {
+              setConnection("connected");
+              source.redraw();
+            }
+            ack(sequence);
+          }
         });
       },
-      data: (data, sequence) => { if (!disposed) terminal.write(data, () => ack(sequence)); },
-      state: item => {
+      data: (data, sequence) => {
+        if (!disposed) terminal.write(data, () => ack(sequence));
+      },
+      state: (item) => {
         if (disposed) return;
         useTerminalStore.getState().update(item);
-        stopped = item.state === "closed" || item.state === "unconfirmed"; syncInput();
-        if (stopped) { setConnection(item.state === "closed" ? "closed" : "unavailable"); source.close(); terminalChanged(); }
+        stopped = item.state === "closed" || item.state === "unconfirmed";
+        syncInput();
+        if (stopped) {
+          setConnection(item.state === "closed" ? "closed" : "unavailable");
+          source.close();
+          terminalChanged();
+        }
       },
     });
     const input = (data: string, binary = false) => {
       if (disposed || !connected || stopped || replaying) return;
-      if (data.length > 256 * 1024) { setError(zh ? "粘贴内容过大，请改用文件。" : "Paste is too large; use a file instead."); return; }
+      if (data.length > 256 * 1024) {
+        setError(
+          zh
+            ? "粘贴内容过大，请改用文件。"
+            : "Paste is too large; use a file instead.",
+        );
+        return;
+      }
       try {
         source.prepareInput(data);
-        for (let offset = 0; offset < data.length;) {
+        for (let offset = 0; offset < data.length; ) {
           let end = Math.min(data.length, offset + 16000);
           const code = data.charCodeAt(end - 1);
-          if (!binary && end < data.length && code >= 0xd800 && code <= 0xdbff) end--;
-          source.write(data.slice(offset, end), binary); offset = end;
+          if (!binary && end < data.length && code >= 0xd800 && code <= 0xdbff)
+            end--;
+          source.write(data.slice(offset, end), binary);
+          offset = end;
         }
-      } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+      } catch (error) {
+        setError(error instanceof Error ? error.message : String(error));
+      }
     };
     const onData = terminal.onData((data) => input(data));
     const onBinary = terminal.onBinary((data) => input(data, true));
@@ -154,19 +215,28 @@ export function TerminalViewport({
       const appShortcut = mac ? event.metaKey : event.ctrlKey && event.shiftKey;
       const command = mac ? event.metaKey : event.ctrlKey;
       if (appShortcut && event.key.toLowerCase() === "j") {
-        event.preventDefault(); useTerminalStore.getState().toggle(); return false;
+        event.preventDefault();
+        useTerminalStore.getState().toggle();
+        return false;
       }
       if (command && event.shiftKey && event.key.toLowerCase() === "t") {
-        event.preventDefault(); document.dispatchEvent(new CustomEvent("terminal:new")); return false;
+        event.preventDefault();
+        document.dispatchEvent(new CustomEvent("terminal:new"));
+        return false;
       }
       if (appShortcut && event.key.toLowerCase() === "f") {
-        event.preventDefault(); searchRef.current?.focus(); return false;
+        event.preventDefault();
+        searchRef.current?.focus();
+        return false;
       }
       if (event.metaKey && event.key.toLowerCase() === "w") {
-        event.preventDefault(); useTerminalStore.getState().closeTab(session.id); return false;
+        event.preventDefault();
+        useTerminalStore.getState().closeTab(session.id);
+        return false;
       }
       if (event.metaKey && event.key.toLowerCase() === "k") {
-        event.preventDefault(); terminal.clear();
+        event.preventDefault();
+        terminal.clear();
         return false;
       }
       if (
@@ -206,8 +276,8 @@ export function TerminalViewport({
   }, [session.id]);
   useEffect(() => {
     if (instance.current)
-      instance.current.terminal.options.theme = themes[theme];
-  }, [theme]);
+      instance.current.terminal.options.theme = terminalTheme(theme, accent);
+  }, [theme, accent]);
   useLayoutEffect(() => {
     instance.current?.syncInput();
     if (visible) {

@@ -4,25 +4,28 @@
 // Wiki Generator Agent — 调用 LLM 生成 markdown WikiDocument 草稿
 // ---------------------------------------------------------------------------
 
-import * as z from 'zod/v4';
-import { generateGatewayObject } from '../llm-runtime/gateway.js';
-import type { CodeMapScanResult } from '../contracts/code-map.js';
-import { logger } from '../../lib/logger.js';
-import { buildLanguageDirective } from '../prompts/language-directive.js';
-import type { WikiDocType, WikiReference } from './contracts.js';
+import * as z from "zod/v4";
+import { generateGatewayObject } from "../llm-runtime/gateway.js";
+import { getWikiWorkflowModel } from "./wiki-model.js";
+import type { CodeMapScanResult } from "../contracts/code-map.js";
+import { logger } from "../../lib/logger.js";
+import { buildLanguageDirective } from "../prompts/language-directive.js";
+import type { WikiDocType, WikiReference } from "./contracts.js";
 
 const WikiDocumentDraftSchema = z.object({
   title: z.string(),
-  docType: z.enum(['landscape', 'topology', 'module', 'flow', 'data']),
+  docType: z.enum(["landscape", "topology", "module", "flow", "data"]),
   sortOrder: z.number().optional(),
   markdown: z.string(),
-  references: z.array(z.object({
-    filePath: z.string(),
-    startLine: z.number().optional(),
-    endLine: z.number().optional(),
-    symbol: z.string().optional(),
-    confidence: z.number().optional(),
-  })),
+  references: z.array(
+    z.object({
+      filePath: z.string(),
+      startLine: z.number().optional(),
+      endLine: z.number().optional(),
+      symbol: z.string().optional(),
+      confidence: z.number().optional(),
+    }),
+  ),
 });
 
 const WikiGeneratorOutputSchema = z.object({
@@ -47,42 +50,45 @@ function buildUserPrompt(scan: CodeMapScanResult): string {
 
   const fileSummary = codeIndex.files
     .slice(0, 60)
-    .map(f => `${f.path} (${f.language})`)
-    .join('\n');
+    .map((f) => `${f.path} (${f.language})`)
+    .join("\n");
 
   const symbolSummary = codeIndex.symbols
     .slice(0, 80)
-    .map(s => `${s.qualifiedName} [${s.kind}]`)
-    .join('\n');
+    .map((s) => `${s.qualifiedName} [${s.kind}]`)
+    .join("\n");
 
-  const langs = (moduleMap?.languages ?? []).map(l => l.language).join(', ');
+  const langs = (moduleMap?.languages ?? []).map((l) => l.language).join(", ");
 
   return [
-    'Generate wiki documents for this codebase.',
-    '',
-    `Languages: ${langs || 'unknown'}`,
-    '',
-    '## Files (sample)',
+    "Generate wiki documents for this codebase.",
+    "",
+    `Languages: ${langs || "unknown"}`,
+    "",
+    "## Files (sample)",
     fileSummary,
-    '',
-    '## Symbols (sample)',
+    "",
+    "## Symbols (sample)",
     symbolSummary,
-    '',
-    'Produce at least: 1 landscape, 1 topology, and 1 module document with substantive markdown.',
-  ].join('\n');
+    "",
+    "Produce at least: 1 landscape, 1 topology, and 1 module document with substantive markdown.",
+  ].join("\n");
 }
 
 function fallbackDocuments(scan: CodeMapScanResult): WikiGeneratorOutput {
-  const topFiles = scan.codeIndex.files.slice(0, 5).map(f => f.path);
-  const refs: WikiReference[] = topFiles.map(filePath => ({ filePath, confidence: 0.5 }));
+  const topFiles = scan.codeIndex.files.slice(0, 5).map((f) => f.path);
+  const refs: WikiReference[] = topFiles.map((filePath) => ({
+    filePath,
+    confidence: 0.5,
+  }));
 
   return {
     documents: [
       {
-        title: 'Project Overview',
-        docType: 'landscape',
+        title: "Project Overview",
+        docType: "landscape",
         sortOrder: 0,
-        markdown: `# Project Overview\n\n## Tech Stack\n\n| Layer | Notes |\n| --- | --- |\n| Code | ${topFiles.length} sampled files |\n\n## Repository Layout\n\n${topFiles.map(f => `- ${f}`).join('\n')}\n`,
+        markdown: `# Project Overview\n\n## Tech Stack\n\n| Layer | Notes |\n| --- | --- |\n| Code | ${topFiles.length} sampled files |\n\n## Repository Layout\n\n${topFiles.map((f) => `- ${f}`).join("\n")}\n`,
         references: refs,
       },
     ],
@@ -92,32 +98,34 @@ function fallbackDocuments(scan: CodeMapScanResult): WikiGeneratorOutput {
 export const wikiAgentService = {
   async generateWiki(
     scan: CodeMapScanResult,
-    opts: { locale?: 'zh' | 'en'; projectId?: string } = {},
+    opts: { locale?: "zh" | "en"; projectId?: string } = {},
   ): Promise<WikiGeneratorOutput> {
-    const locale = opts.locale ?? 'zh';
-    const prompt = buildLanguageDirective(locale) + '\n\n' + buildUserPrompt(scan);
+    const locale = opts.locale ?? "zh";
+    const prompt =
+      buildLanguageDirective(locale) + "\n\n" + buildUserPrompt(scan);
 
     try {
       const result = await generateGatewayObject(
         {
           projectId: opts.projectId,
-          purpose: 'wiki-generator',
+          purpose: "wiki-generator",
+          model: getWikiWorkflowModel(),
           messages: [
-            { role: 'system', content: buildSystemPrompt() },
-            { role: 'user', content: prompt },
+            { role: "system", content: buildSystemPrompt() },
+            { role: "user", content: prompt },
           ],
         },
         WikiGeneratorOutputSchema,
       );
 
       if (!result.documents.length) {
-        logger.warn('wiki-agent: empty generator output, using fallback');
+        logger.warn("wiki-agent: empty generator output, using fallback");
         return fallbackDocuments(scan);
       }
 
       return result;
     } catch (err) {
-      logger.warn({ err }, 'wiki-agent: generation failed, using fallback');
+      logger.warn({ err }, "wiki-agent: generation failed, using fallback");
       return fallbackDocuments(scan);
     }
   },

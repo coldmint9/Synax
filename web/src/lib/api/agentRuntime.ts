@@ -522,6 +522,7 @@ export type SessionEnvironmentInputSourceKind =
   | "tool";
 
 export interface SessionEnvironmentInputSource {
+  toolCallId?: string;
   kind: SessionEnvironmentInputSourceKind;
   label: string;
   path?: string;
@@ -632,6 +633,10 @@ export interface TurnReference {
   label?: string;
 }
 
+export interface TurnReferenceOption extends TurnReference {
+  recent?: boolean;
+}
+
 export interface StreamTurnRequest {
   contentParts?: RuntimeContentPart[];
   references?: TurnReference[];
@@ -659,14 +664,39 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return apiRequest<T>(`${BASE}${path}`, init);
 }
 
+export interface SessionSearchResponse {
+  items: Array<{ session: AgentSession; snippet: string }>;
+  hasMore: boolean;
+}
+
 export const agentRuntimeApi = {
+  compactContext: (sessionId: string) =>
+    request<{
+      compacted: boolean;
+      originalTokens: number;
+      tokens: number;
+      reason: string;
+    }>(`/sessions/${encodeURIComponent(sessionId)}/context/compact`, {
+      method: "POST",
+    }),
+  searchSessions: (
+    projectId: string,
+    q: string,
+    offset = 0,
+    signal?: AbortSignal,
+  ) =>
+    request<SessionSearchResponse>(
+      `/sessions/search?${new URLSearchParams({ projectId, q, offset: String(offset) })}`,
+      { signal },
+    ),
+
   listReferenceOptions: (
     projectId: string,
     kind: TurnReference["kind"],
     q = "",
     sessionId?: string,
   ) =>
-    apiRequest<{ items: TurnReference[] }>(
+    apiRequest<{ items: TurnReferenceOption[] }>(
       `${BASE}/projects/${encodeURIComponent(projectId)}/references?${new URLSearchParams({ kind, q, ...(sessionId ? { sessionId } : {}) })}`,
     ),
 
@@ -841,6 +871,10 @@ export const agentRuntimeApi = {
     request<{ items: ToolCallRecord[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/tool-calls`,
     ),
+  getSessionInputSource: (sessionId: string, toolCallId: string) =>
+    request<{ content: string; truncated: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/input-source/${encodeURIComponent(toolCallId)}`,
+    ),
   /** Sparse id/status/updatedAt rows for badge counts; avoids full list payloads. */
   listSessionBadges: (projectIds: string[]) =>
     request<{ items: SessionBadgeRow[] }>(
@@ -861,11 +895,17 @@ export const agentRuntimeApi = {
       { method: "POST" },
     ),
   listSessionBranches: (sessionId: string, rootId?: string) =>
-    request<SessionGitBranches>(`/sessions/${encodeURIComponent(sessionId)}/git/branches${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`),
+    request<SessionGitBranches>(
+      `/sessions/${encodeURIComponent(sessionId)}/git/branches${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`,
+    ),
   switchSessionBranch: (sessionId: string, branch: string, rootId?: string) =>
-    request<SessionGitBranches>(`/sessions/${encodeURIComponent(sessionId)}/git/branches/switch`, {
-      method: "POST", body: JSON.stringify({ branch, rootId }),
-    }),
+    request<SessionGitBranches>(
+      `/sessions/${encodeURIComponent(sessionId)}/git/branches/switch`,
+      {
+        method: "POST",
+        body: JSON.stringify({ branch, rootId }),
+      },
+    ),
   getSessionEnvironment: (sessionId: string) =>
     request<SessionEnvironment>(
       `/sessions/${encodeURIComponent(sessionId)}/environment`,
@@ -1057,6 +1097,20 @@ export const agentRuntimeApi = {
     apiRequest<{ items: QueuedInput[] }>(
       `${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue/${encodeURIComponent(itemId)}`,
       { method: "DELETE" },
+    ),
+
+  moveQueuedInput: (
+    sessionId: string,
+    itemId: string,
+    direction: "up" | "down",
+  ) =>
+    apiRequest<{ items: QueuedInput[] }>(
+      `${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue/${encodeURIComponent(itemId)}/order`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ direction }),
+      },
     ),
 
   forceQueuedInput: (sessionId: string, itemId: string) =>

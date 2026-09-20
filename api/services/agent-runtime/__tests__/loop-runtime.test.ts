@@ -3,7 +3,7 @@ import { applySessionPermissionUpdate } from "../session-permissions.js";
 import { inspectHistoryCacheAnchor } from "../../llm-runtime/cache-policy.js";
 import { asSchema } from "@ai-sdk/provider-utils";
 import { resolveGatewaySelection } from "../../llm-runtime/gateway.js";
-import { buildGoalSessionPrompt } from "../../wiki/wiki-goal-prompt.js";
+import { buildSessionPrompt } from "../session-prompt.js";
 import { workStore } from "../work-store.js";
 import { acceptRuntimeRun } from "../run-admission.js";
 import fs from "node:fs";
@@ -1959,7 +1959,7 @@ describe("provider-bound session initialization prompt", () => {
         modelDef: { reasoning: true, contextLimit: 200000 },
         providerId: "fixture",
       } as never);
-      const prompt = buildGoalSessionPrompt({
+      const prompt = buildSessionPrompt({
         mode: "session",
         content: message,
         wikiAttachMode: "auto",
@@ -2005,7 +2005,7 @@ describe("provider-bound session initialization prompt", () => {
 
   it("repairs legacy initial scaffolding in projection without changing the transcript or re-injecting it on step two", async () => {
     const raw = "请调查 package.json";
-    const prompt = buildGoalSessionPrompt({
+    const prompt = buildSessionPrompt({
       mode: "direct",
       content: raw,
       wikiAttachMode: "auto",

@@ -1,3 +1,5 @@
+import { compactSessionContext } from "../services/agent-runtime/manual-context-compaction.js";
+import { searchSessions } from "../services/agent-runtime/session-search.js";
 import {
   validateInputMedia,
   sessionInputCapabilities,
@@ -76,6 +78,7 @@ import {
 import {
   getSessionEnvironment,
   getSessionEnvironmentFile,
+  getSessionInputSourceContent,
   invalidateSessionEnvironment,
 } from "../services/agent-runtime/session-environment.js";
 import {
@@ -214,7 +217,7 @@ agentRuntimeRoutes.get("/backends/:id/models", async (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/projects/:projectId/references", (c) => {
+agentRuntimeRoutes.get("/projects/:projectId/references", async (c) => {
   const parsed = z
     .object({
       kind: z.enum(["skill", "mcp", "file", "wiki"]),
@@ -225,7 +228,7 @@ agentRuntimeRoutes.get("/projects/:projectId/references", (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     return c.json({
-      items: listTurnReferenceOptions(
+      items: await listTurnReferenceOptions(
         c.req.param("projectId"),
         parsed.data.kind,
         parsed.data.q,
@@ -313,6 +316,39 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
         error.status as 400 | 404 | 409 | 500 | 503,
       );
     }
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/sessions/:id/context/compact", (c) => {
+  try {
+    return c.json(compactSessionContext(c.req.param("id")));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.get("/sessions/search", (c) => {
+  const parsed = z
+    .object({
+      projectId: z.string().min(1).max(128),
+      q: z.string().trim().min(1).max(256),
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+      offset: z.coerce.number().int().min(0).default(0),
+    })
+    .safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const { projectId, q, limit, offset } = parsed.data;
+    const result = searchSessions(projectId, q, limit, offset);
+    return c.json({
+      ...result,
+      items: result.items.map((item) => ({
+        ...item,
+        session: projectSessionSummary(projectSessionState(item.session)),
+      })),
+    });
+  } catch (error) {
     return runtimeError(c, error);
   }
 });
@@ -822,6 +858,22 @@ agentRuntimeRoutes.get("/sessions/:sessionId/environment", async (c) => {
   }
 });
 
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/input-source/:toolCallId",
+  (c) => {
+    try {
+      return c.json(
+        getSessionInputSourceContent(
+          c.req.param("sessionId"),
+          c.req.param("toolCallId"),
+        ),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+
 agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
   const filePath = c.req.query("path");
   const kind = c.req.query("kind") === "input" ? "input" : "diff";
@@ -1122,6 +1174,28 @@ agentRuntimeRoutes.post("/sessions/:sessionId/input-queue", async (c) => {
     return runtimeError(c, error);
   }
 });
+
+agentRuntimeRoutes.patch(
+  "/sessions/:sessionId/input-queue/:itemId/order",
+  async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) return c.json({ error: body.error }, 400);
+    const direction = (body.data as { direction?: unknown } | null)?.direction;
+    if (direction !== "up" && direction !== "down")
+      return c.json({ error: "Direction must be up or down." }, 400);
+    try {
+      return c.json({
+        items: inputQueueService.move(
+          c.req.param("sessionId"),
+          c.req.param("itemId"),
+          direction,
+        ),
+      });
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 
 agentRuntimeRoutes.delete("/sessions/:sessionId/input-queue/:itemId", (c) => {
   try {

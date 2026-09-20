@@ -1,0 +1,49 @@
+.bui-process-confirm {
+  width: 260px;
+  max-width: calc(100vw - 24px);
+  border: 1px solid hsl(var(--border-hsl) / 0.7);
+  border-radius: 10px;
+}
+
+.bui-process-confirm [data-slot="popover-dialog"] {
+  padding: 12px;
+}
+
+.bui-process-confirm [slot="title"] {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bui-process-confirm p {
+  margin: 6px 0 12px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.bui-process-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.bui-process-confirm-actions button {
+  padding: 5px 9px;
+  border: 1px solid hsl(var(--border-hsl) / 0.7);
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.bui-process-confirm-actions button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.bui-process-confirm-actions button:hover {
+  background: hsl(var(--muted-hsl) / 0.5);
+}
+
+.bui-process-confirm-delete {
+  color: var(--danger);
+}

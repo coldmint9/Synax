@@ -57,6 +57,8 @@
     "test:desktop:workbench": "tsx scripts/desktop-workbench-e2e.ts",
     "test:desktop:terminal": "cross-env SYNAX_E2E_TERMINAL=1 tsx scripts/desktop-workbench-e2e.ts",
     "test:ui-updates": "vitest run electron/lib/ui-update-format.test.ts electron/lib/ui-update-store.test.ts electron/lib/ui-update-feed.test.ts electron/lib/ui-updates.test.ts scripts/ui-release-artifacts.test.ts",
+    "test:desktop-updates": "vitest run electron/lib/desktop-update-feed.test.ts electron/lib/desktop-updates.test.ts electron/lib/mac-desktop-update.test.ts scripts/desktop-release-artifacts.test.ts",
+    "test:desktop:update-smoke": "tsx scripts/desktop-update-smoke.ts",
     "test:desktop:ui-update-smoke": "tsx scripts/ui-update-smoke.ts",
     "test:wsl:smoke": "tsx scripts/wsl-smoke.ts"
   },

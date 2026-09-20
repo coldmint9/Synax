@@ -1,3 +1,4 @@
+import { useAgentDockStore } from "../agent-workspace/state/agentDockStore";
 import {
   AlertTriangle,
   FileText,
@@ -48,7 +49,7 @@ function GoalSelectionToolbar({
   containerClass: string;
 }) {
   const { t } = useLocale();
-  const openGoalInput = useWikiStore((s) => s.openGoalInput);
+  const openComposer = useAgentDockStore((s) => s.openComposer);
   const [toolbar, setToolbar] = useState<{
     x: number;
     y: number;
@@ -90,7 +91,7 @@ function GoalSelectionToolbar({
       onMouseDown={(e) => e.preventDefault()}
       onClick={() => {
         const heading = findNearestHeading(contentMd, toolbar.quote);
-        openGoalInput({
+        openComposer({
           content: toolbar.quote,
           documentId,
           anchor: { type: "selection", quote: toolbar.quote, heading },

@@ -5,12 +5,33 @@ import {
   type RuntimeContentPart,
 } from "../../../lib/api/runtimeMedia";
 export interface DraftMedia {
+  retained?: boolean;
   id: string;
   file: File;
   asset?: RuntimeAsset;
   error?: string;
   uploading: boolean;
   controller: AbortController;
+}
+
+export async function prepareQueuedMedia(
+  parts: RuntimeContentPart[] = [],
+): Promise<DraftMedia[]> {
+  return Promise.all(
+    parts
+      .filter((part) => part.type !== "text")
+      .map(async (part) => {
+        const { asset } = await runtimeMedia.metadata(part.assetId);
+        return {
+          id: crypto.randomUUID(),
+          file: new File([], asset.filename, { type: asset.mediaType }),
+          asset,
+          retained: true,
+          uploading: false,
+          controller: new AbortController(),
+        };
+      }),
+  );
 }
 export function useMediaDraft(
   projectId: string,
@@ -65,7 +86,10 @@ export function useMediaDraft(
   const add = useCallback(
     (files: File[]) => {
       if (!files.length) return;
-      const all = [...current.current.map((i) => i.file), ...files];
+      const all = [
+        ...current.current.map((i) => ({ size: i.asset?.size ?? i.file.size })),
+        ...files,
+      ];
       if (
         all.length > 10 ||
         all.some((f) => !f.size || f.size > 50 * 1024 * 1024) ||
@@ -92,7 +116,8 @@ export function useMediaDraft(
   const remove = useCallback((id: string) => {
     const item = current.current.find((x) => x.id === id);
     item?.controller.abort();
-    if (item?.asset) void runtimeMedia.remove(item.asset.id).catch(() => {});
+    if (item?.asset && !item.retained)
+      void runtimeMedia.remove(item.asset.id).catch(() => {});
     setItems((all) => all.filter((x) => x.id !== id));
     setError(null);
   }, []);
@@ -115,6 +140,12 @@ export function useMediaDraft(
     for (const item of current.current) item.controller.abort();
     setItems([]);
     current.current = [];
+    setError(null);
+  }, []);
+  const restore = useCallback((restored: DraftMedia[]) => {
+    for (const item of current.current) item.controller.abort();
+    current.current = restored;
+    setItems(restored);
     setError(null);
   }, []);
   const parts: RuntimeContentPart[] = items.flatMap((item) =>
@@ -150,6 +181,7 @@ export function useMediaDraft(
     remove,
     retry,
     clear,
+    restore,
   };
 }
 export type MediaDraft = ReturnType<typeof useMediaDraft>;

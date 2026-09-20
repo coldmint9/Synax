@@ -6,9 +6,8 @@ import { MediaDraftPreview } from "./MediaDraftControls";
 import type { MediaDraft } from "./useMediaDraft";
 
 vi.mock("../../../lib/api/runtimeMedia", async (importOriginal) => {
-  const original = await importOriginal<
-    typeof import("../../../lib/api/runtimeMedia")
-  >();
+  const original =
+    await importOriginal<typeof import("../../../lib/api/runtimeMedia")>();
   return {
     ...original,
     runtimeMedia: {
@@ -47,6 +46,7 @@ function createMedia(remove = vi.fn()): MediaDraft {
     remove,
     retry: vi.fn(),
     clear: vi.fn(),
+    restore: vi.fn(),
   };
 }
 
@@ -66,7 +66,9 @@ describe("MediaDraftPreview", () => {
 
   it("removes the ready row and deletes from the image card corner", async () => {
     const remove = vi.fn();
-    const { container } = render(<MediaDraftPreview media={createMedia(remove)} />);
+    const { container } = render(
+      <MediaDraftPreview media={createMedia(remove)} />,
+    );
 
     const removeButton = await screen.findByRole("button", {
       name: "移除 image.png",
@@ -80,6 +82,8 @@ describe("MediaDraftPreview", () => {
     fireEvent.click(removeButton);
     expect(remove).toHaveBeenCalledWith("draft-1");
 
-    await waitFor(() => expect(runtimeMedia.metadata).toHaveBeenCalledWith(asset.id));
+    await waitFor(() =>
+      expect(runtimeMedia.metadata).toHaveBeenCalledWith(asset.id),
+    );
   });
 });

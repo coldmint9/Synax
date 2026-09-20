@@ -1,117 +1,169 @@
-import { Switch } from '@heroui/react'
-import { Palette } from 'lucide-react'
-import { useShellStore } from '../../../state/shellStore'
-import { useLocale } from '../../../../hooks/useLocale'
-import { SettingsCard } from './SettingsCard'
-import { SettingsSelect } from './SettingsSelect'
-import { FormRow } from './FormRow'
+import { Switch } from "@heroui/react";
+import { SlidersHorizontal } from "lucide-react";
+import { useShellStore } from "../../../state/shellStore";
+import { useLocale } from "../../../../hooks/useLocale";
+import { SettingsCard } from "./SettingsCard";
+import { SettingsSelect } from "./SettingsSelect";
+import { FormRow } from "./FormRow";
 
 export function LayoutSection() {
-  const { t } = useLocale()
-  const locale = useShellStore(s => s.preferences.locale)
-  const defaultHome = useShellStore(s => s.preferences.defaultHome)
-  const notifications = useShellStore(s => s.preferences.notifications)
-  const foldWorkRuns = useShellStore(s => s.preferences.sessionFoldWorkRuns)
-  const editor = useShellStore(s => s.preferences.editor)
-  const agentFontSize = useShellStore(s => s.preferences.agentFontSize)
-  const setLocale = useShellStore(s => s.setLocale)
-  const setDefaultHome = useShellStore(s => s.setDefaultHome)
-  const setNotifications = useShellStore(s => s.setNotifications)
-  const setFoldWorkRuns = useShellStore(s => s.setSessionFoldWorkRuns)
-  const setEditor = useShellStore(s => s.setEditor)
-  const setAgentFontSize = useShellStore(s => s.setAgentFontSize)
+  const { t } = useLocale();
+  const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
+  const setWikiEnabled = useShellStore((s) => s.setWikiEnabled);
+  const locale = useShellStore((s) => s.preferences.locale);
+  const defaultHome = useShellStore((s) => s.preferences.defaultHome);
+  const notifications = useShellStore((s) => s.preferences.notifications);
+  const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns);
+  const editor = useShellStore((s) => s.preferences.editor);
+  const agentFontSize = useShellStore((s) => s.preferences.agentFontSize);
+  const setLocale = useShellStore((s) => s.setLocale);
+  const setDefaultHome = useShellStore((s) => s.setDefaultHome);
+  const setNotifications = useShellStore((s) => s.setNotifications);
+  const setFoldWorkRuns = useShellStore((s) => s.setSessionFoldWorkRuns);
+  const setEditor = useShellStore((s) => s.setEditor);
+  const setAgentFontSize = useShellStore((s) => s.setAgentFontSize);
 
   return (
-    <SettingsCard title={t('settingsLayoutTitle')} icon={Palette}>
+    <SettingsCard title={t("settingsLayoutTitle")} icon={SlidersHorizontal}>
       <div className="settings-rows">
-        <FormRow label={t('settingsLanguage')} description={t('settingsLanguageHint')}>
+        <FormRow
+          label={t("settingsLanguage")}
+          description={t("settingsLanguageHint")}
+        >
           <SettingsSelect
             className="w-36"
             fullWidth={false}
             selectedKey={locale}
             onSelectionChange={(key) => {
-              if (key) setLocale(key as 'zh' | 'en')
+              if (key) setLocale(key as "zh" | "en");
             }}
             disallowEmptySelection
-            aria-label={t('settingsLanguage')}
+            aria-label={t("settingsLanguage")}
             options={[
-              { key: 'zh', label: '中文' },
-              { key: 'en', label: 'English' },
+              { key: "zh", label: "中文" },
+              { key: "en", label: "English" },
             ]}
           />
         </FormRow>
 
-        <FormRow label={t('settingsDefaultHome')} description={t('settingsDefaultHomeHint')}>
+        <FormRow
+          label={t("settingsDefaultHome")}
+          description={t("settingsDefaultHomeHint")}
+        >
           <SettingsSelect
             className="w-36"
             fullWidth={false}
             selectedKey={defaultHome}
             onSelectionChange={(key) => {
-              if (key) setDefaultHome(key as 'global-home' | 'last-project')
+              if (key) setDefaultHome(key as "global-home" | "last-project");
             }}
             disallowEmptySelection
-            aria-label={t('settingsDefaultHome')}
+            aria-label={t("settingsDefaultHome")}
             options={[
-              { key: 'global-home', label: t('settingsGlobalHome') },
-              { key: 'last-project', label: t('settingsLastProject') },
+              { key: "global-home", label: t("settingsGlobalHome") },
+              { key: "last-project", label: t("settingsLastProject") },
             ]}
           />
         </FormRow>
 
-        <FormRow label={t('settingsNotifications')} description={t('settingsNotificationsHint')}>
-          <Switch size="sm" isSelected={notifications} onChange={setNotifications} aria-label={t('settingsNotifications')}>
-            <Switch.Control><Switch.Thumb /></Switch.Control>
+        <FormRow
+          label={t("settingsNotifications")}
+          description={t("settingsNotificationsHint")}
+        >
+          <Switch
+            size="sm"
+            isSelected={notifications}
+            onChange={setNotifications}
+            aria-label={t("settingsNotifications")}
+          >
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
           </Switch>
         </FormRow>
 
-        <FormRow label={t('sessionWorkLogToggle')} description={t('settingsFoldWorkLogHint')}>
+        <FormRow
+          label={t("sessionWorkLogToggle")}
+          description={t("settingsFoldWorkLogHint")}
+        >
           <Switch
             size="sm"
             isSelected={foldWorkRuns}
             onChange={setFoldWorkRuns}
-            aria-label={t('sessionWorkLogToggle')}
+            aria-label={t("sessionWorkLogToggle")}
           >
-            <Switch.Control><Switch.Thumb /></Switch.Control>
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
           </Switch>
         </FormRow>
 
-        <FormRow label="界面字体大小" description="调整 Synax 所有界面文字大小，默认 14px">
+        <FormRow
+          label="界面字体大小"
+          description="调整 Synax 所有界面文字大小，默认 14px"
+        >
           <SettingsSelect
             className="w-36"
             fullWidth={false}
             selectedKey={String(agentFontSize)}
             onSelectionChange={(key) => {
-              if (key) setAgentFontSize(Number(key))
+              if (key) setAgentFontSize(Number(key));
             }}
             disallowEmptySelection
             aria-label="界面字体大小"
-            options={[12, 13, 14, 15, 16, 18, 20].map(size => ({
+            options={[12, 13, 14, 15, 16, 18, 20].map((size) => ({
               key: String(size),
-              label: `${size}px${size === 14 ? '（默认）' : ''}`,
+              label: `${size}px${size === 14 ? "（默认）" : ""}`,
             }))}
           />
         </FormRow>
 
-        <FormRow label={t('settingsEditor')} description={t('settingsEditorHint')}>
+        <FormRow
+          label={locale === "zh" ? "Wiki（实验性功能）" : "Wiki (Experimental)"}
+          description={
+            locale === "zh"
+              ? "开启 Wiki 文档与规划功能。实验性功能仍在完善中，默认关闭。"
+              : "Enable Wiki documents and planning. This experimental feature is still in development and is off by default."
+          }
+        >
+          <Switch
+            size="sm"
+            isSelected={wikiEnabled}
+            onChange={setWikiEnabled}
+            aria-label="Wiki"
+          >
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
+          </Switch>
+        </FormRow>
+
+        <FormRow
+          label={t("settingsEditor")}
+          description={t("settingsEditorHint")}
+        >
           <SettingsSelect
             className="w-36"
             fullWidth={false}
             selectedKey={editor}
             onSelectionChange={(key) => {
-              if (key) setEditor(key as typeof editor)
+              if (key) setEditor(key as typeof editor);
             }}
             disallowEmptySelection
-            aria-label={t('settingsEditor')}
+            aria-label={t("settingsEditor")}
             options={[
-              { key: 'system', label: locale === 'zh' ? '系统默认' : 'System default' },
-              { key: 'vscode', label: 'VS Code' },
-              { key: 'cursor', label: 'Cursor' },
-              { key: 'windsurf', label: 'Windsurf' },
-              { key: 'webstorm', label: 'WebStorm' },
+              {
+                key: "system",
+                label: locale === "zh" ? "系统默认" : "System default",
+              },
+              { key: "vscode", label: "VS Code" },
+              { key: "cursor", label: "Cursor" },
+              { key: "windsurf", label: "Windsurf" },
+              { key: "webstorm", label: "WebStorm" },
             ]}
           />
         </FormRow>
       </div>
     </SettingsCard>
-  )
+  );
 }

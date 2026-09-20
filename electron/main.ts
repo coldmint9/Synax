@@ -18,18 +18,30 @@ import {
 } from "./menu.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 import { UiUpdates } from "./lib/ui-updates.js";
+import { DesktopUpdates } from "./lib/desktop-updates.js";
+
+import {
+  BACKGROUND_SCHEME,
+  DesktopAppearanceStore,
+  registerDesktopAppearance,
+} from "./lib/desktop-appearance.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
+let desktopAppearance: DesktopAppearanceStore | null = null;
 let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
 let uiReadyTimer: NodeJS.Timeout | null = null;
 
 // Register custom protocol scheme before app is ready
 protocol.registerSchemesAsPrivileged([
+  {
+    scheme: BACKGROUND_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
   {
     scheme: "app",
     privileges: {
@@ -72,6 +84,7 @@ function createWindow(): BrowserWindow {
       ? { trafficLightPosition: { x: 14, y: 18 } }
       : {}),
     show: false,
+    opacity: desktopAppearance?.snapshot().opacity ?? 1,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -222,14 +235,31 @@ function registerIPC(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  app.setAboutPanelOptions({
+    applicationName: "Synax",
+    applicationVersion: app.getVersion(),
+    copyright: "Copyright (c) 2026 Synax contributors",
+    credits:
+      "作者：coldmint9\nGitHub：https://github.com/coldmint9\nMIT License",
+    authors: ["coldmint9 (https://github.com/coldmint9)"],
+    website: "https://github.com/coldmint9",
+  });
   registerIPC();
+  if (!desktopAppearance) {
+    desktopAppearance = new DesktopAppearanceStore(app.getPath("userData"));
+    registerDesktopAppearance(
+      desktopAppearance,
+      () => mainWindow,
+      isDev ? `http://localhost:${process.env.WEB_PORT ?? "5173"}` : null,
+    );
+  }
   if (
     !uiUpdates &&
     app.isPackaged &&
     (process.platform === "darwin" || process.platform === "win32")
   ) {
     try {
-      const updates = new UiUpdates();
+      const updates = new UiUpdates(new DesktopUpdates());
       await updates.initialize();
       uiUpdates = updates;
       setUiUpdateAction(() => void uiUpdates?.check(true));

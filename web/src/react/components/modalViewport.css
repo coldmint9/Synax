@@ -1,0 +1,143 @@
+/* Native titlebar islands must not float over modal surfaces. Keep the
+   library's overlay level so nested select menus retain their portal order. */
+body:has(.modal__backdrop, .dialog-overlay) .workbench-header {
+  z-index: 30;
+}
+/* A dialog's available space is the viewport, never the size of its form.
+   Keep the heading/actions visible while long forms scroll between them. */
+.modal__backdrop {
+  z-index: 50;
+  height: min(100dvh, var(--visual-viewport-height, 100dvh));
+}
+.modal__backdrop > .modal__container {
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  max-width: 100%;
+  padding: max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+}
+.modal__container > .modal__dialog {
+  min-height: 0;
+  min-width: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}
+.modal__dialog > .modal__body {
+  min-height: 0;
+  min-width: 0;
+}
+.modal__dialog > :is(.modal__header, .modal__footer) {
+  flex-shrink: 0;
+  min-width: 0;
+}
+.modal__dialog .modal__footer {
+  flex-wrap: wrap;
+}
+.modal__dialog:has(> .modal__close-trigger) > .modal__header {
+  padding-right: 28px;
+}
+.modal__dialog :is(fieldset, .text-field, .input-group) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dialog-content {
+  width: min(26rem, 100%);
+}
+
+/* Custom dialogs share the same viewport contract and portal stacking level. */
+body > .dialog-overlay {
+  z-index: 50;
+  inset: var(--dialog-viewport-top, 0px) auto auto
+    var(--dialog-viewport-left, 0px);
+  width: var(--dialog-viewport-width, 100%);
+  height: var(--dialog-viewport-height, 100dvh);
+  padding: max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+body > .dialog-overlay > .dialog-content {
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}
+.dialog-content .dialog-actions {
+  flex-wrap: wrap;
+}
+.dialog-content.workspace-directory-picker {
+  width: 42rem;
+  height: 37.5rem;
+}
+
+/* Native image dialogs live in the top layer, but still need viewport limits. */
+.media-preview-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: calc(100dvw - 24px);
+  height: calc(100dvh - 24px);
+  max-width: 100%;
+  max-height: 100%;
+  border: 0;
+  padding: 48px 16px 16px;
+  color: white;
+  background: rgb(0 0 0 / 0.8);
+  overflow: auto;
+}
+.media-preview-dialog[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.media-preview-dialog::backdrop {
+  background: rgb(0 0 0 / 0.8);
+}
+.media-preview-dialog > img {
+  min-width: 0;
+  min-height: 0;
+}
+
+@media (max-width: 480px) {
+  .modal__container > .modal__dialog {
+    padding: 16px;
+  }
+  .modal__dialog > .modal__body {
+    padding-inline: 3px;
+  }
+  .modal__footer > :is(span, div) {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .workspace-directory-picker.dialog-content {
+    padding: 16px;
+  }
+}
+/* With very little height, allow the entire form to scroll instead of letting
+   fixed headers/footers squeeze the form's scroll area down to zero. */
+@media (max-height: 420px) {
+  .modal__container > .modal__dialog:not(.work-details-dialog) {
+    display: block;
+  }
+  .modal__dialog:not(.work-details-dialog) > .modal__body {
+    overflow: visible;
+    max-height: none;
+  }
+  body > .dialog-overlay > :is(.workspace-create, .workspace-directory-picker) {
+    display: block;
+  }
+  .workspace-create .workspace-create-body,
+  .workspace-directory-picker > .overflow-y-auto {
+    overflow: visible;
+  }
+}

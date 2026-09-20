@@ -1,4 +1,8 @@
 import { buildGoalInstruction, getGoalState } from "../goal-control.js";
+import {
+  getSessionUserPrompt,
+  isAgentDockSource,
+} from "../session-metadata.js";
 import type {
   SynaxSessionMetadata,
   SynaxSessionMode,
@@ -164,6 +168,7 @@ export function buildSynaxRuntimeState(
   ];
   if (context.mode === "goal") {
     const state = getGoalState(context.metadata as Record<string, unknown>);
+    const userPrompt = getSessionUserPrompt(context.metadata) ?? context.prompt;
     if (state)
       lines.push(
         buildGoalInstruction(
@@ -173,11 +178,11 @@ export function buildSynaxRuntimeState(
           >[1],
         ),
       );
-    else if (context.metadata.goalContent || context.prompt)
-      lines.push(
-        `Objective: ${context.metadata.goalContent || context.prompt}`,
-      );
-    if (context.metadata.source === "goal-dock" && context.metadata.documentId)
+    else if (userPrompt) lines.push(`Objective: ${userPrompt}`);
+    if (
+      isAgentDockSource(context.metadata.source) &&
+      context.metadata.documentId
+    )
       lines.push(
         `Related Wiki document: ${context.metadata.documentId}. Keep affected documentation aligned with the authorized change.`,
       );

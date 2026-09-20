@@ -1,119 +1,140 @@
-import { useEffect, useState, useMemo, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Trash2, X, Shield, Circle } from 'lucide-react'
-import { useShellStore, type ProjectSummary } from '../../state/shellStore'
-import { projectApi } from '../../../lib/api/project'
-import { useLocale } from '../../../hooks/useLocale'
-import { resolveSessionsEntryPath } from '../../features/sessions/sessionLastVisit'
+import { DialogOverlay } from "../../components/DialogOverlay";
+import { useEffect, useState, useMemo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import { Plus, Search, Trash2, X, Shield, Circle } from "lucide-react";
+import { useShellStore, type ProjectSummary } from "../../state/shellStore";
+import { projectApi } from "../../../lib/api/project";
+import { useLocale } from "../../../hooks/useLocale";
+import { resolveSessionsEntryPath } from "../../features/agent-workspace/sessionLastVisit";
 
 const STATUS_COLOR: Record<string, string> = {
-  healthy: 'text-success',
-  at_risk: 'text-warning',
-  blocked: 'text-destructive',
-}
+  healthy: "text-success",
+  at_risk: "text-warning",
+  blocked: "text-destructive",
+};
 
 interface ProjectsPanelContentProps {
-  onCreateProject: () => void
+  onCreateProject: () => void;
 }
 
-export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentProps) {
-  const navigate = useNavigate()
-  const { t } = useLocale()
-  const projects = useShellStore(s => s.projects)
-  const fetchProjects = useShellStore(s => s.fetchProjects)
-  const removeFromStore = useShellStore(s => s.removeProject)
-  const filter = useShellStore(s => s.projectFilter)
-  const setFilter = useShellStore(s => s.setProjectFilter)
+export function ProjectsPanelContent({
+  onCreateProject,
+}: ProjectsPanelContentProps) {
+  const navigate = useNavigate();
+  const { t } = useLocale();
+  const projects = useShellStore((s) => s.projects);
+  const fetchProjects = useShellStore((s) => s.fetchProjects);
+  const removeFromStore = useShellStore((s) => s.removeProject);
+  const filter = useShellStore((s) => s.projectFilter);
+  const setFilter = useShellStore((s) => s.setProjectFilter);
 
-  const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null)
-  const [deleting, setDeleting] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
     void (async () => {
       try {
-        await fetchProjects()
+        await fetchProjects();
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setLoading(false);
       }
-    })()
-    return () => { cancelled = true }
-  }, [fetchProjects])
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchProjects]);
 
   const filteredProjects = useMemo(() => {
-    let result = [...projects]
+    let result = [...projects];
     if (filter.search) {
-      const q = filter.search.toLowerCase()
+      const q = filter.search.toLowerCase();
       result = result.filter(
-        p =>
+        (p) =>
           p.name.toLowerCase().includes(q) ||
           p.id.toLowerCase().includes(q) ||
           (p.source?.repo && p.source.repo.toLowerCase().includes(q)) ||
           (p.source?.localPath && p.source.localPath.toLowerCase().includes(q)),
-      )
+      );
     }
     if (filter.statusFilter.length > 0) {
-      result = result.filter(p => filter.statusFilter.includes(p.status))
+      result = result.filter((p) => filter.statusFilter.includes(p.status));
     }
     if (filter.environmentFilter.length > 0) {
-      result = result.filter(p => filter.environmentFilter.includes(p.environment))
+      result = result.filter((p) =>
+        filter.environmentFilter.includes(p.environment),
+      );
     }
     result.sort((a, b) => {
-      let aVal: number | string, bVal: number | string
+      let aVal: number | string, bVal: number | string;
       switch (filter.sortBy) {
-        case 'name':
-          aVal = a.name.toLowerCase(); bVal = b.name.toLowerCase()
-          break
-        case 'healthScore':
-          aVal = a.healthScore; bVal = b.healthScore
-          break
-        case 'updatedAt':
-          aVal = a.updatedAt === 'just now' ? Date.now() : new Date(a.updatedAt).getTime()
-          bVal = b.updatedAt === 'just now' ? Date.now() : new Date(b.updatedAt).getTime()
-          break
+        case "name":
+          aVal = a.name.toLowerCase();
+          bVal = b.name.toLowerCase();
+          break;
+        case "healthScore":
+          aVal = a.healthScore;
+          bVal = b.healthScore;
+          break;
+        case "updatedAt":
+          aVal =
+            a.updatedAt === "just now"
+              ? Date.now()
+              : new Date(a.updatedAt).getTime();
+          bVal =
+            b.updatedAt === "just now"
+              ? Date.now()
+              : new Date(b.updatedAt).getTime();
+          break;
         default:
-          aVal = a.createdAt ? new Date(a.createdAt).getTime() : 0
-          bVal = b.createdAt ? new Date(b.createdAt).getTime() : 0
-          break
+          aVal = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          bVal = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          break;
       }
-      const cmp = typeof aVal === 'string' ? aVal.localeCompare(bVal as string) : aVal - (bVal as number)
-      return filter.sortOrder === 'asc' ? cmp : -cmp
-    })
-    return result
-  }, [projects, filter])
+      const cmp =
+        typeof aVal === "string"
+          ? aVal.localeCompare(bVal as string)
+          : aVal - (bVal as number);
+      return filter.sortOrder === "asc" ? cmp : -cmp;
+    });
+    return result;
+  }, [projects, filter]);
 
   const handleDelete = useCallback(async () => {
-    if (!deleteTarget || deleting) return
-    setDeleting(true)
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
     try {
-      await projectApi.deleteProject(deleteTarget.id)
-      removeFromStore(deleteTarget.id)
-      setDeleteTarget(null)
+      await projectApi.deleteProject(deleteTarget.id);
+      removeFromStore(deleteTarget.id);
+      setDeleteTarget(null);
     } catch (err) {
-      console.error('[ProjectsPanel] delete failed:', err)
+      console.error("[ProjectsPanel] delete failed:", err);
     } finally {
-      setDeleting(false)
+      setDeleting(false);
     }
-  }, [deleteTarget, deleting, removeFromStore])
+  }, [deleteTarget, deleting, removeFromStore]);
 
   return (
     <div className="sp-section">
       {/* Search + Add */}
       <div className="flex items-center gap-1 px-1 pb-2">
         <div className="relative flex-1">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground/50" />
+          <Search
+            size={12}
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground/50"
+          />
           <input
             type="text"
             className="sp-search-input pl-6"
-            placeholder={t('projectSearchPlaceholder')}
+            placeholder={t("projectSearchPlaceholder")}
             value={filter.search}
-            onChange={e => setFilter({ search: e.target.value })}
+            onChange={(e) => setFilter({ search: e.target.value })}
           />
           {filter.search && (
             <button
               className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-muted-foreground"
-              onClick={() => setFilter({ search: '' })}
+              onClick={() => setFilter({ search: "" })}
             >
               <X size={12} />
             </button>
@@ -122,7 +143,7 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
         <button
           type="button"
           className="sp-btn shrink-0"
-          title={t('appImportProject')}
+          title={t("appImportProject")}
           onClick={onCreateProject}
         >
           <Plus size={14} />
@@ -131,13 +152,13 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
 
       {/* Project list */}
       <div className="sp-list">
-        {loading && <div className="sp-empty">{t('commonLoading')}</div>}
+        {loading && <div className="sp-empty">{t("commonLoading")}</div>}
         {!loading && filteredProjects.length === 0 && (
           <div className="sp-empty">
-            {filter.search ? t('projectNoMatch') : t('projectNone')}
+            {filter.search ? t("projectNoMatch") : t("projectNone")}
           </div>
         )}
-        {filteredProjects.map(project => (
+        {filteredProjects.map((project) => (
           <button
             key={project.id}
             type="button"
@@ -146,18 +167,18 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
           >
             <Circle
               size={6}
-              className={`shrink-0 ${STATUS_COLOR[project.status] ?? 'text-muted-foreground'}`}
+              className={`shrink-0 ${STATUS_COLOR[project.status] ?? "text-muted-foreground"}`}
               fill="currentColor"
             />
             <span className="flex-1 truncate text-left">{project.name}</span>
             <button
               type="button"
               className="shrink-0 rounded p-0.5 text-muted-foreground/30 opacity-0 transition hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
-              onClick={e => {
-                e.stopPropagation()
-                setDeleteTarget(project)
+              onClick={(e) => {
+                e.stopPropagation();
+                setDeleteTarget(project);
               }}
-              title={t('commonDelete')}
+              title={t("commonDelete")}
             >
               <Trash2 size={11} />
             </button>
@@ -167,19 +188,32 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
 
       {/* Delete confirmation */}
       {deleteTarget && (
-        <div className="dialog-overlay" onClick={deleting ? undefined : () => setDeleteTarget(null)}>
-          <div className="dialog-content" onClick={e => e.stopPropagation()}>
+        <DialogOverlay
+          onClick={deleting ? undefined : () => setDeleteTarget(null)}
+        >
+          <div
+            className="dialog-content"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("projectDeleteTitle", { name: deleteTarget.name })}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-start gap-3">
-              <span className="icon-surface shrink-0 rounded-xl" data-tone="danger" data-size="md">
+              <span
+                className="icon-surface shrink-0 rounded-xl"
+                data-tone="danger"
+                data-size="md"
+              >
                 <Trash2 size={18} />
               </span>
               <div className="flex-1 min-w-0">
-                <h3>{t('projectDeleteTitle', { name: deleteTarget.name })}</h3>
-                <p className="mt-1">{t('projectDeleteIrreversible')}</p>
-                {(deleteTarget.source?.kind === 'github' || deleteTarget.source?.kind === 'gitlab') && (
+                <h3>{t("projectDeleteTitle", { name: deleteTarget.name })}</h3>
+                <p className="mt-1">{t("projectDeleteIrreversible")}</p>
+                {(deleteTarget.source?.kind === "github" ||
+                  deleteTarget.source?.kind === "gitlab") && (
                   <div className="mt-3 rounded-lg border border-warning/25 bg-warning/5 px-3 py-2 text-[11px] text-warning">
                     <Shield size={12} className="inline mr-1" />
-                    {t('projectDeleteGitWarning')}
+                    {t("projectDeleteGitWarning")}
                   </div>
                 )}
               </div>
@@ -190,19 +224,19 @@ export function ProjectsPanelContent({ onCreateProject }: ProjectsPanelContentPr
                 onClick={() => setDeleteTarget(null)}
                 disabled={deleting}
               >
-                {t('commonCancel')}
+                {t("commonCancel")}
               </button>
               <button
                 className="inline-flex items-center rounded-lg bg-destructive px-4 py-2 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition disabled:opacity-40"
                 onClick={handleDelete}
                 disabled={deleting}
               >
-                {deleting ? t('commonDeleting') : t('commonConfirmDelete')}
+                {deleting ? t("commonDeleting") : t("commonConfirmDelete")}
               </button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       )}
     </div>
-  )
+  );
 }

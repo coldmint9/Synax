@@ -1,4 +1,5 @@
 import { Terminal as TerminalIcon } from "lucide-react";
+import { ThemeMenu } from "../components/ThemeMenu";
 import { useTerminalStore } from "../features/terminal/terminalStore";
 import {
   useState,
@@ -14,8 +15,6 @@ import {
   Folder,
   Search,
   Settings2,
-  Sun,
-  Moon,
   Plus,
   Trash2,
   BookDashed,
@@ -27,12 +26,12 @@ import { useShellStore, type ProjectSummary } from "../state/shellStore";
 import { useWikiStore, type WikiViewMode } from "../state/wikiStore";
 import { useLocale } from "../../hooks/useLocale";
 import { wikiApi } from "../../lib/api/wiki";
-import { useAgentSessionStore } from "../features/sessions/agentSessionStore";
+import { useAgentSessionStore } from "../features/agent-workspace/state/agentSessionStore";
 import {
   useProjectSessionBadges,
   type ProjectSessionBadge,
-} from "../features/sessions/projectSessionBadges";
-import { useSessionWorkspaceStore } from "../features/sessions/sessionWorkspaceStore";
+} from "../features/agent-workspace/projectSessionBadges";
+import { useSessionWorkspaceStore } from "../features/agent-workspace/state/sessionWorkspaceStore";
 import { ProjectImportHint } from "./ProjectImportHint";
 import WikiSearchPanel from "../features/wiki/WikiSearchPanel";
 import {
@@ -250,6 +249,7 @@ function MainNavTabs({
   iconOnly?: boolean;
 }) {
   const { t } = useLocale();
+  const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
 
   return (
     <Tabs
@@ -259,34 +259,36 @@ function MainNavTabs({
     >
       <Tabs.ListContainer>
         <Tabs.List aria-label={t("workspaceMainNav")} className="wh-tabs-list">
-          {navTabs.map((tab, i) => {
-            const Icon = tab.icon;
-            return (
-              <Tabs.Tab
-                key={tab.id}
-                id={tab.id}
-                isDisabled={!hasProject}
-                onPress={() => {
-                  if (activePanel === tab.id) onPanelToggle(tab.id);
-                }}
-                aria-label={tab.label}
-                className={`wh-tab wh-tab--${tab.id}`}
-              >
-                {i > 0 && <Tabs.Separator />}
-                {iconOnly ? (
-                  <span className="inline-flex" title={tab.label}>
-                    <Icon size={13} />
-                  </span>
-                ) : (
-                  <>
-                    <Icon size={13} />
-                    <span>{tab.label}</span>
-                  </>
-                )}
-                <Tabs.Indicator />
-              </Tabs.Tab>
-            );
-          })}
+          {navTabs
+            .filter((tab) => tab.id !== "wiki" || wikiEnabled)
+            .map((tab, i) => {
+              const Icon = tab.icon;
+              return (
+                <Tabs.Tab
+                  key={tab.id}
+                  id={tab.id}
+                  isDisabled={!hasProject}
+                  onPress={() => {
+                    if (activePanel === tab.id) onPanelToggle(tab.id);
+                  }}
+                  aria-label={tab.label}
+                  className={`wh-tab wh-tab--${tab.id}`}
+                >
+                  {i > 0 && <Tabs.Separator />}
+                  {iconOnly ? (
+                    <span className="inline-flex" title={tab.label}>
+                      <Icon size={13} />
+                    </span>
+                  ) : (
+                    <>
+                      <Icon size={13} />
+                      <span>{tab.label}</span>
+                    </>
+                  )}
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+              );
+            })}
         </Tabs.List>
       </Tabs.ListContainer>
     </Tabs>
@@ -569,8 +571,6 @@ export function WorkbenchHeader({
   onRemoveProject,
 }: WorkbenchHeaderProps) {
   const { t } = useLocale();
-  const theme = useShellStore((s) => s.preferences.theme);
-  const setTheme = useShellStore((s) => s.setTheme);
   const confirmState = useOverlayState();
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -652,8 +652,23 @@ export function WorkbenchHeader({
           <div className="wh-divider" />
 
           <div className="wh-actions">
-            <button type="button" className="wh-btn" aria-label={useShellStore.getState().preferences.locale === "zh" ? "终端" : "Terminal"} title={useShellStore.getState().preferences.locale === "zh" ? "终端" : "Terminal"}
-              onClick={() => useTerminalStore.getState().toggle()}><TerminalIcon size={15} /></button>
+            <button
+              type="button"
+              className="wh-btn"
+              aria-label={
+                useShellStore.getState().preferences.locale === "zh"
+                  ? "终端"
+                  : "Terminal"
+              }
+              title={
+                useShellStore.getState().preferences.locale === "zh"
+                  ? "终端"
+                  : "Terminal"
+              }
+              onClick={() => useTerminalStore.getState().toggle()}
+            >
+              <TerminalIcon size={15} />
+            </button>
             <button
               type="button"
               className="wh-btn"
@@ -662,14 +677,7 @@ export function WorkbenchHeader({
             >
               <Settings2 size={15} />
             </button>
-            <button
-              type="button"
-              className="wh-btn"
-              title={theme === "dark" ? t("appLightMode") : t("appDarkMode")}
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            >
-              {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-            </button>
+            <ThemeMenu />
           </div>
         </div>
 

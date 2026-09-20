@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import os from "node:os";
+import { getGlobalConfig } from "../../lib/config/config-store.js";
+import { systemTerminalShell } from "./terminal-shell.js";
 import path from "node:path";
 import type { IPty } from "node-pty";
 import { getRawSqlite, assertRuntimeExecutionCurrent } from "../../db/index.js";
@@ -122,11 +123,6 @@ function dimensions(cols: number, rows: number) {
   )
     failure("Invalid terminal dimensions.", 400);
 }
-function defaultShell(): string {
-  if (process.platform === "win32") return process.env.COMSPEC || "cmd.exe";
-  return process.env.SHELL || os.userInfo().shell || "/bin/sh";
-}
-
 class TerminalManager {
   private live = new Map<string, LiveTerminal>();
   private flushTimer?: ReturnType<typeof setInterval>;
@@ -195,7 +191,13 @@ class TerminalManager {
       rows = input.rows ?? 30;
     dimensions(cols, rows);
     const wsl = parseWslUncPath(cwd);
-    const shell = wsl ? "/bin/sh" : (input.shell ?? defaultShell());
+    const shell = wsl
+      ? "/bin/sh"
+      : (input.shell ??
+          (input.kind === "terminal"
+            ? getGlobalConfig().terminalShellPath
+            : undefined)) ||
+        systemTerminalShell();
     const { spawn } = await import("node-pty");
     // Recheck after loading the native module; no process is spawned before the record is committed.
     if (input.requestKey) {

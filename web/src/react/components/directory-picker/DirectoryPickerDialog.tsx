@@ -1,3 +1,4 @@
+import { DialogOverlay } from "../DialogOverlay";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
@@ -191,17 +192,11 @@ function DirectoryPickerContent({
   const crumbs = current ? breadcrumbs(current) : [];
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
+    <DialogOverlay onClick={onClose}>
       <div
         ref={dialogRef}
         tabIndex={-1}
         className="dialog-content workspace-directory-picker flex min-h-0 min-w-0 flex-col overflow-hidden"
-        style={{
-          width: "42rem",
-          maxWidth: "calc(100vw - 2rem)",
-          height: "37.5rem",
-          maxHeight: "calc(100dvh - 2rem)",
-        }}
         role="dialog"
         aria-modal="true"
         aria-label={label.title}
@@ -479,6 +474,6 @@ function DirectoryPickerContent({
           </button>
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 }

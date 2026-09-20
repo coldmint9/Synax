@@ -135,24 +135,6 @@ export function buildAppMenu(projects?: Project[]): void {
           accelerator: "CmdOrCtrl+J",
           click: () => sendToRenderer("menu:action", "terminal:toggle"),
         },
-        {
-          label: "Work",
-          id: "view:sessions",
-          type: "checkbox",
-          checked: context.inWork,
-          enabled: Boolean(context.projectId),
-          accelerator: "CmdOrCtrl+1",
-          click: () => sendToRenderer("menu:action", "view:sessions"),
-        },
-        {
-          label: "Wiki",
-          id: "view:wiki",
-          type: "checkbox",
-          checked: context.inWiki,
-          enabled: Boolean(context.projectId),
-          accelerator: "CmdOrCtrl+2",
-          click: () => sendToRenderer("menu:action", "view:wiki"),
-        },
         { type: "separator" },
         {
           label: "切换会话侧栏",
@@ -215,7 +197,7 @@ export function buildAppMenu(projects?: Project[]): void {
         ...(app.isPackaged && (isMac || process.platform === "win32")
           ? [
               {
-                label: "检查界面更新…",
+                label: "检查更新…",
                 id: "ui:check-updates",
                 enabled: Boolean(checkUiUpdates),
                 click: () => checkUiUpdates?.(),

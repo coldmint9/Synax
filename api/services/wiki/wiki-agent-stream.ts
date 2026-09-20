@@ -1,11 +1,15 @@
-import { recordRuntimeStream } from '../agent-runtime/runtime-stream-writer.js';
-import type { AgentRunStreamChunk, StreamTurnRequest } from '../agent-runtime/contracts.js';
-import { agentLoopRuntime } from '../agent-runtime/loop-runtime.js';
-import { streamAgentSession } from '../agent-runtime/agent-stream-proxy.js';
-import type { AgentSessionStreamMode } from '../../lib/ipc/agent-session-protocol.js';
-import { ensureWikiProfileRegistered } from './wiki-loop-profile.js';
-import { ensurePlanProfileRegistered } from './wiki-plan-profile.js';
-import { ensureRefreshProfileRegistered } from './wiki-refresh-profile.js';
+import { recordRuntimeStream } from "../agent-runtime/runtime-stream-writer.js";
+import type {
+  AgentRunStreamChunk,
+  StreamTurnRequest,
+} from "../agent-runtime/contracts.js";
+import { agentLoopRuntime } from "../agent-runtime/loop-runtime.js";
+import { streamAgentSession } from "../agent-runtime/agent-stream-proxy.js";
+import type { AgentSessionStreamMode } from "../../lib/ipc/agent-session-protocol.js";
+import { ensureWikiProfileRegistered } from "./wiki-loop-profile.js";
+import { ensurePlanProfileRegistered } from "./wiki-plan-profile.js";
+import { ensureRefreshProfileRegistered } from "./wiki-refresh-profile.js";
+import { getWikiWorkflowModel } from "./wiki-model.js";
 
 function ensureWikiProfilesLoaded(): void {
   ensureWikiProfileRegistered();
@@ -33,14 +37,16 @@ export async function* streamWikiAgent(
   abortSignal?: AbortSignal,
   resume = false,
 ): AsyncGenerator<AgentRunStreamChunk> {
-  const mode: AgentSessionStreamMode = resume ? 'resume' : 'turn';
+  const mode: AgentSessionStreamMode = resume ? "resume" : "turn";
+  const model = input.model ?? getWikiWorkflowModel();
+  if (model) input = { ...input, model };
 
   // Wiki planner/writer tools keep mutable state in this process (outline draft, verifier handles).
   // Run the agent loop inside the wiki job child; remote fork requires DB-backed tool state (TODO).
   let source: AsyncGenerator<AgentRunStreamChunk>;
-  if (process.env.SYNAX_WIKI_JOB_CHILD === '1') {
+  if (process.env.SYNAX_WIKI_JOB_CHILD === "1") {
     source = streamWikiAgentInWikiChild(sessionId, input, abortSignal, resume);
-  } else if (process.env.SYNAX_AGENT_SESSION_IN_PROCESS === '1') {
+  } else if (process.env.SYNAX_AGENT_SESSION_IN_PROCESS === "1") {
     ensureWikiProfilesLoaded();
     source = agentLoopRuntime.streamRun(sessionId, input, abortSignal, resume);
   } else {

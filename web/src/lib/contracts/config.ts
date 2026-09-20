@@ -1,200 +1,204 @@
-export type ProviderStatus = 'live' | 'experimental' | 'inactive'
-export type ProviderKind = 'acp' | 'api'
-export type ApiFormat = 'openai' | 'openai-responses' | 'anthropic'
+export type ProviderStatus = "live" | "experimental" | "inactive";
+export type ProviderKind = "acp" | "api";
+export type ApiFormat = "openai" | "openai-responses" | "anthropic";
 
 export interface ProviderCaps {
-  canFollowUp: boolean
-  canCancel: boolean
+  canFollowUp: boolean;
+  canCancel: boolean;
 }
 
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ProviderModelDef {
-  inputModalities?: Array<'text' | 'image' | 'audio' | 'video' | 'file'>;
-  id: string
-  label: string
-  isDefault?: boolean
-  maxTokens?: number
+  inputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
+  id: string;
+  label: string;
+  isDefault?: boolean;
+  maxTokens?: number;
   /** Input context window in tokens (1_000_000 when the 1M input-context checkbox is set). */
-  contextLimit?: number
+  contextLimit?: number;
 }
 
 export interface ProviderDef {
-  id: string
-  label: string
-  description?: string
-  status: ProviderStatus
-  kind: ProviderKind
-  caps: ProviderCaps
-  models: ProviderModelDef[]
+  id: string;
+  label: string;
+  description?: string;
+  status: ProviderStatus;
+  kind: ProviderKind;
+  caps: ProviderCaps;
+  models: ProviderModelDef[];
 }
 
 export interface ProviderConnection {
-  providerId: string
-  baseUrl?: string
-  apiKey?: string
-  apiKeyMasked?: string
-  extra?: Record<string, unknown>
+  providerId: string;
+  baseUrl?: string;
+  apiKey?: string;
+  apiKeyMasked?: string;
+  extra?: Record<string, unknown>;
 }
 
 export interface McpServerConfig {
-  id: string
-  name: string
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-  cwd?: string
-  enabled?: boolean
+  id: string;
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  enabled?: boolean;
 }
 
 export interface McpDiscoverySource {
-  client: string
-  path: string
-  scope: 'project' | 'user'
+  client: string;
+  path: string;
+  scope: "project" | "user";
 }
 
 export interface DiscoveredMcpServer {
-  fingerprint: string
-  server: McpServerConfig
-  sources: McpDiscoverySource[]
+  fingerprint: string;
+  server: McpServerConfig;
+  sources: McpDiscoverySource[];
 }
 
 export interface McpDiscoveryResponse {
-  servers: DiscoveredMcpServer[]
-  scannedFiles: number
-  warnings: Array<{ client: string; path: string; message: string }>
+  servers: DiscoveredMcpServer[];
+  scannedFiles: number;
+  warnings: Array<{ client: string; path: string; message: string }>;
 }
 
 export interface GlobalConfig {
-  version: number
-  providers: ProviderDef[]
-  defaultProviderId: string
-  defaultApiProviderId: string
-  enabledAcpProviderIds: string[]
-  providerConnections: Record<string, ProviderConnection>
-  mcpServers: McpServerConfig[]
+  terminalShellPath?: string;
+  wikiModel?: string;
+  version: number;
+  providers: ProviderDef[];
+  defaultProviderId: string;
+  defaultApiProviderId: string;
+  enabledAcpProviderIds: string[];
+  providerConnections: Record<string, ProviderConnection>;
+  mcpServers: McpServerConfig[];
   limits: {
-    maxAgentsPerProject: number
-    agentTimeoutMs: number
-  }
+    maxAgentsPerProject: number;
+    agentTimeoutMs: number;
+  };
   features: {
-    allowProjectConnectionOverride: boolean
-  }
-  updatedAt: string
-  updatedBy: string
+    allowProjectConnectionOverride: boolean;
+  };
+  updatedAt: string;
+  updatedBy: string;
 }
 
 export interface ProjectConfig {
-  projectId: string
-  version: number
-  providerId?: string | null
-  modelId?: string | null
-  providerConnection?: ProviderConnection | null
+  projectId: string;
+  version: number;
+  providerId?: string | null;
+  modelId?: string | null;
+  providerConnection?: ProviderConnection | null;
   limits?: {
-    maxAgentsPerProject?: number
-    agentTimeoutMs?: number
-  }
-  custom?: Record<string, string>
-  updatedAt: string
-  updatedBy: string
+    maxAgentsPerProject?: number;
+    agentTimeoutMs?: number;
+  };
+  custom?: Record<string, string>;
+  updatedAt: string;
+  updatedBy: string;
 }
 
 export interface EffectiveConfig {
-  providerId: string
-  modelId: string
-  provider: ProviderDef
-  model: ProviderModelDef
-  connection: ProviderConnection
-  limits: GlobalConfig['limits']
+  providerId: string;
+  modelId: string;
+  provider: ProviderDef;
+  model: ProviderModelDef;
+  connection: ProviderConnection;
+  limits: GlobalConfig["limits"];
 }
 
 export interface UpdateGlobalConfigRequest {
-  providers?: ProviderDef[]
-  defaultProviderId?: string
-  defaultApiProviderId?: string
-  enabledAcpProviderIds?: string[]
-  providerConnections?: Record<string, ProviderConnection>
-  mcpServers?: McpServerConfig[]
-  limits?: GlobalConfig['limits']
-  features?: GlobalConfig['features']
+  terminalShellPath?: string;
+  wikiModel?: string;
+  providers?: ProviderDef[];
+  defaultProviderId?: string;
+  defaultApiProviderId?: string;
+  enabledAcpProviderIds?: string[];
+  providerConnections?: Record<string, ProviderConnection>;
+  mcpServers?: McpServerConfig[];
+  limits?: GlobalConfig["limits"];
+  features?: GlobalConfig["features"];
 }
 
 export interface UpdateProjectConfigRequest {
-  providerId?: string | null
-  modelId?: string | null
-  providerConnection?: ProviderConnection | null
-  limits?: ProjectConfig['limits']
-  custom?: Record<string, string>
+  providerId?: string | null;
+  modelId?: string | null;
+  providerConnection?: ProviderConnection | null;
+  limits?: ProjectConfig["limits"];
+  custom?: Record<string, string>;
 }
 
 export interface GlobalConfigResponse {
-  config: GlobalConfig
+  config: GlobalConfig;
 }
 
 export interface ProjectConfigResponse {
-  config: ProjectConfig | null
+  config: ProjectConfig | null;
 }
 
 export interface EffectiveConfigResponse {
-  config: EffectiveConfig
+  config: EffectiveConfig;
 }
 
 export interface ProviderListResponse {
-  providers: ProviderDef[]
+  providers: ProviderDef[];
 }
 
 export interface AcpCatalogModel {
-  id: string
-  label: string
-  description?: string | null
+  id: string;
+  label: string;
+  description?: string | null;
 }
 
 export interface AcpDiscoveryItem {
-  id: string
-  label: string
-  description?: string
-  command: string
-  status: 'available' | 'installed' | 'missing' | 'failed'
-  installed: boolean
-  handshakeOk: boolean
-  selected: boolean
-  compatibility: string
-  error?: string
-  models?: AcpCatalogModel[]
+  id: string;
+  label: string;
+  description?: string;
+  command: string;
+  status: "available" | "installed" | "missing" | "failed";
+  installed: boolean;
+  handshakeOk: boolean;
+  selected: boolean;
+  compatibility: string;
+  error?: string;
+  models?: AcpCatalogModel[];
 }
 
 export interface AcpDiscoveryResponse {
-  selectedProviderId: string
-  enabledIds: string[]
-  supported: AcpDiscoveryItem[]
+  selectedProviderId: string;
+  enabledIds: string[];
+  supported: AcpDiscoveryItem[];
 }
 
 export interface AiApiValidateRequest {
-  providerId?: string
-  format: ApiFormat
-  baseUrl: string
-  apiKey?: string
-  model: string
+  providerId?: string;
+  format: ApiFormat;
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
 }
 
 export interface AiApiValidateResponse {
-  ok: boolean
-  message?: string
-  error?: string
-  resolvedBaseUrl?: string
+  ok: boolean;
+  message?: string;
+  error?: string;
+  resolvedBaseUrl?: string;
 }
 
 export interface AiApiModelsDiscoverRequest {
-  providerId?: string
-  format: ApiFormat
-  baseUrl: string
-  apiKey?: string
+  providerId?: string;
+  format: ApiFormat;
+  baseUrl: string;
+  apiKey?: string;
 }
 
 export interface AiApiModelsDiscoverResponse {
-  ok: boolean
-  models: string[]
-  source: string
-  error?: string
-  resolvedBaseUrl?: string
+  ok: boolean;
+  models: string[];
+  source: string;
+  error?: string;
+  resolvedBaseUrl?: string;
 }

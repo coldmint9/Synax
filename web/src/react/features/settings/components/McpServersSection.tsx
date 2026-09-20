@@ -1,61 +1,61 @@
-import { useEffect, useRef, useState } from 'react'
-import { Button, Checkbox, Modal } from '@heroui/react'
-import { Loader2, Pencil, Plug, Plus, Trash2, Wifi } from 'lucide-react'
-import { SettingsCard } from './SettingsCard'
-import { SaveIndicator } from './SaveIndicator'
-import { configApi } from '../../../../lib/api/config'
+import { useEffect, useRef, useState } from "react";
+import { Button, Checkbox, Modal } from "@heroui/react";
+import { Loader2, Pencil, Plug, Plus, Trash2, Wifi } from "lucide-react";
+import { SettingsCard } from "./SettingsCard";
+import { SaveIndicator } from "./SaveIndicator";
+import { configApi } from "../../../../lib/api/config";
 import type {
   GlobalConfig,
   McpServerConfig,
-} from '../../../../lib/contracts/config'
-import { useLocale } from '../../../../hooks/useLocale'
+} from "../../../../lib/contracts/config";
+import { useLocale } from "../../../../hooks/useLocale";
 
 interface Props {
-  projectId?: string
+  projectId?: string;
   /** Global settings mode (legacy/administrative use). */
-  config?: GlobalConfig
+  config?: GlobalConfig;
   /** Project settings mode. */
-  servers?: McpServerConfig[]
-  onUpdate?: (patch: Record<string, unknown>) => Promise<void>
-  onSave?: (servers: McpServerConfig[]) => Promise<void>
-  title?: string
-  description?: string
+  servers?: McpServerConfig[];
+  onUpdate?: (patch: Record<string, unknown>) => Promise<void>;
+  onSave?: (servers: McpServerConfig[]) => Promise<void>;
+  title?: string;
+  description?: string;
 }
 
 type Draft = {
-  id: string
-  name: string
-  command: string
-  cwd: string
-  argsText: string
-  envText: string
-  enabled: boolean
-}
+  id: string;
+  name: string;
+  command: string;
+  cwd: string;
+  argsText: string;
+  envText: string;
+  enabled: boolean;
+};
 
 function emptyDraft(id: string): Draft {
   return {
     id,
-    name: '',
-    command: '',
-    cwd: '',
-    argsText: '',
-    envText: '',
+    name: "",
+    command: "",
+    cwd: "",
+    argsText: "",
+    envText: "",
     enabled: true,
-  }
+  };
 }
 
 function draftToConfig(draft: Draft): McpServerConfig {
   const args = draft.argsText
-    .split('\n')
+    .split("\n")
     .map((a) => a.trim())
-    .filter(Boolean)
-  const env: Record<string, string> = {}
-  for (const line of draft.envText.split('\n')) {
-    const idx = line.indexOf('=')
-    if (idx <= 0) continue
-    const key = line.slice(0, idx).trim()
-    const value = line.slice(idx + 1).trim()
-    if (key) env[key] = value
+    .filter(Boolean);
+  const env: Record<string, string> = {};
+  for (const line of draft.envText.split("\n")) {
+    const idx = line.indexOf("=");
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key) env[key] = value;
   }
   return {
     id: draft.id,
@@ -65,7 +65,7 @@ function draftToConfig(draft: Draft): McpServerConfig {
     ...(args.length > 0 ? { args } : {}),
     ...(Object.keys(env).length > 0 ? { env } : {}),
     ...(draft.enabled ? {} : { enabled: false }),
-  }
+  };
 }
 
 function configToDraft(server: McpServerConfig): Draft {
@@ -73,19 +73,19 @@ function configToDraft(server: McpServerConfig): Draft {
     id: server.id,
     name: server.name,
     command: server.command,
-    cwd: server.cwd ?? '',
-    argsText: (server.args ?? []).join('\n'),
+    cwd: server.cwd ?? "",
+    argsText: (server.args ?? []).join("\n"),
     envText: Object.entries(server.env ?? {})
       .map(([k, v]) => `${k}=${v}`)
-      .join('\n'),
+      .join("\n"),
     enabled: server.enabled !== false,
-  }
+  };
 }
 
 function randomId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
-    return `mcp-${crypto.randomUUID().slice(0, 8)}`
-  return `mcp-${Date.now().toString(36)}`
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto)
+    return `mcp-${crypto.randomUUID().slice(0, 8)}`;
+  return `mcp-${Date.now().toString(36)}`;
 }
 
 export function McpServersSection({
@@ -97,112 +97,112 @@ export function McpServersSection({
   title,
   description,
 }: Props) {
-  const { t } = useLocale()
+  const { t } = useLocale();
   const [servers, setServers] = useState<McpServerConfig[]>(
     initialServers ?? config?.mcpServers ?? [],
-  )
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [editing, setEditing] = useState<Draft | null>(null)
-  const activeProjectRef = useRef(projectId)
+  );
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Draft | null>(null);
+  const activeProjectRef = useRef(projectId);
 
   useEffect(() => {
-    setServers(initialServers ?? config?.mcpServers ?? [])
-  }, [config?.mcpServers, initialServers])
+    setServers(initialServers ?? config?.mcpServers ?? []);
+  }, [config?.mcpServers, initialServers]);
   useEffect(() => {
-    activeProjectRef.current = projectId
-    setSaving(false)
-  }, [projectId])
-  const [testingId, setTestingId] = useState<string | null>(null)
-  const [testMessages, setTestMessages] = useState<Record<string, string>>({})
+    activeProjectRef.current = projectId;
+    setSaving(false);
+  }, [projectId]);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testMessages, setTestMessages] = useState<Record<string, string>>({});
 
   async function persist(
     next: McpServerConfig[],
     expectedProjectId = activeProjectRef.current,
   ): Promise<boolean> {
-    setSaving(true)
-    setSaveError(null)
+    setSaving(true);
+    setSaveError(null);
     try {
-      if (onSave) await onSave(next)
-      else if (onUpdate) await onUpdate({ mcpServers: next })
-      if (activeProjectRef.current !== expectedProjectId) return false
-      setServers(next)
-      setSaved(true)
-      setTimeout(() => setSaved(false), 1200)
-      return true
+      if (onSave) await onSave(next);
+      else if (onUpdate) await onUpdate({ mcpServers: next });
+      if (activeProjectRef.current !== expectedProjectId) return false;
+      setServers(next);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1200);
+      return true;
     } catch (err) {
-      if (activeProjectRef.current !== expectedProjectId) return false
+      if (activeProjectRef.current !== expectedProjectId) return false;
       setSaveError(
-        err instanceof Error ? err.message : t('settingsMcpSaveFailed'),
-      )
-      return false
+        err instanceof Error ? err.message : t("settingsMcpSaveFailed"),
+      );
+      return false;
     } finally {
-      if (activeProjectRef.current === expectedProjectId) setSaving(false)
+      if (activeProjectRef.current === expectedProjectId) setSaving(false);
     }
   }
 
   async function handleTest(server: McpServerConfig) {
-    setTestingId(server.id)
-    setTestMessages((m) => ({ ...m, [server.id]: t('settingsMcpConnecting') }))
+    setTestingId(server.id);
+    setTestMessages((m) => ({ ...m, [server.id]: t("settingsMcpConnecting") }));
     try {
-      const result = await configApi.testMcpServer(server)
+      const result = await configApi.testMcpServer(server);
       if (result.ok) {
         setTestMessages((m) => ({
           ...m,
-          [server.id]: t('settingsMcpConnectedTools', {
+          [server.id]: t("settingsMcpConnectedTools", {
             count: result.tools.length,
             tools:
               result.tools
                 .slice(0, 8)
                 .map((tool) => tool.name)
-                .join(', ') || '—',
+                .join(", ") || "—",
           }),
-        }))
+        }));
       } else {
         setTestMessages((m) => ({
           ...m,
-          [server.id]: `✗ ${result.error ?? t('settingsMcpConnectionFailed')}`,
-        }))
+          [server.id]: `✗ ${result.error ?? t("settingsMcpConnectionFailed")}`,
+        }));
       }
     } catch (err) {
       setTestMessages((m) => ({
         ...m,
-        [server.id]: `✗ ${err instanceof Error ? err.message : t('settingsMcpConnectionFailed')}`,
-      }))
+        [server.id]: `✗ ${err instanceof Error ? err.message : t("settingsMcpConnectionFailed")}`,
+      }));
     } finally {
-      setTestingId(null)
+      setTestingId(null);
     }
   }
 
   function handleToggleEnabled(server: McpServerConfig, enabled: boolean) {
     const next = servers.map((s) =>
       s.id === server.id ? { ...s, enabled } : s,
-    )
-    void persist(next)
+    );
+    void persist(next);
   }
 
   async function handleSaveDraft() {
-    if (!editing) return
+    if (!editing) return;
     if (!editing.name.trim() || !editing.command.trim()) {
-      setSaveError(t('settingsMcpNameCommandRequired'))
-      return
+      setSaveError(t("settingsMcpNameCommandRequired"));
+      return;
     }
-    const configDraft = draftToConfig(editing)
+    const configDraft = draftToConfig(editing);
     const next = servers.some((s) => s.id === editing.id)
       ? servers.map((s) => (s.id === editing.id ? configDraft : s))
-      : [...servers, configDraft]
-    if (await persist(next)) setEditing(null)
+      : [...servers, configDraft];
+    if (await persist(next)) setEditing(null);
   }
 
   function handleDelete(id: string) {
-    void persist(servers.filter((s) => s.id !== id))
-    if (editing?.id === id) setEditing(null)
+    void persist(servers.filter((s) => s.id !== id));
+    if (editing?.id === id) setEditing(null);
   }
 
   return (
     <SettingsCard
-      title={title ?? t('settingsMcpTitle')}
+      title={title ?? t("settingsMcpTitle")}
       icon={Plug}
       trailing={
         <div className="flex items-center gap-2">
@@ -213,19 +213,19 @@ export function McpServersSection({
             className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm"
             isDisabled={saving}
             onPress={() => {
-              setSaveError(null)
-              setEditing(emptyDraft(randomId()))
+              setSaveError(null);
+              setEditing(emptyDraft(randomId()));
             }}
           >
             <Plus size={12} />
-            {t('settingsMcpAddServer')}
+            {t("settingsMcpAddServer")}
           </Button>
         </div>
       }
     >
-      <p className="settings-note">{description ?? t('settingsMcpDesc')}</p>
+      <p className="settings-note">{description ?? t("settingsMcpDesc")}</p>
       {servers.length === 0 && !editing && (
-        <p className="settings-note">{t('settingsMcpEmpty')}</p>
+        <p className="settings-note">{t("settingsMcpEmpty")}</p>
       )}
       <div className="settings-list">
         {servers.map((server) => (
@@ -237,7 +237,7 @@ export function McpServersSection({
                 onChange={(checked) =>
                   handleToggleEnabled(server, Boolean(checked))
                 }
-                aria-label={t('settingsMcpEnableServer', { name: server.name })}
+                aria-label={t("settingsMcpEnableServer", { name: server.name })}
               >
                 <Checkbox.Control>
                   <Checkbox.Indicator />
@@ -250,12 +250,12 @@ export function McpServersSection({
                   </span>
                   {server.enabled === false && (
                     <span className="settings-chip settings-chip--muted">
-                      {t('settingsMcpDisabled')}
+                      {t("settingsMcpDisabled")}
                     </span>
                   )}
                 </div>
                 <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                  {server.command} {server.args?.join(' ') ?? ''}
+                  {server.command} {server.args?.join(" ") ?? ""}
                 </div>
                 {testMessages[server.id] && (
                   <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
@@ -268,11 +268,11 @@ export function McpServersSection({
                     variant="secondary"
                     isDisabled={saving}
                     onPress={() => {
-                      setEditing(configToDraft(server))
-                      setSaveError(null)
+                      setEditing(configToDraft(server));
+                      setSaveError(null);
                     }}
                   >
-                    <Pencil size={12} /> {t('settingsMcpEdit')}
+                    <Pencil size={12} /> {t("settingsMcpEdit")}
                   </Button>
                   <Button
                     size="sm"
@@ -283,7 +283,7 @@ export function McpServersSection({
                     {({ isPending }) => (
                       <>
                         {isPending ? null : <Wifi size={12} />}
-                        {t('settingsMcpTest')}
+                        {t("settingsMcpTest")}
                       </>
                     )}
                   </Button>
@@ -293,7 +293,7 @@ export function McpServersSection({
                     isDisabled={saving}
                     onPress={() => handleDelete(server.id)}
                   >
-                    <Trash2 size={12} /> {t('settingsMcpDelete')}
+                    <Trash2 size={12} /> {t("settingsMcpDelete")}
                   </Button>
                 </div>
               </div>
@@ -305,7 +305,7 @@ export function McpServersSection({
       <Modal
         isOpen={Boolean(editing)}
         onOpenChange={(open) => {
-          if (!open && !saving) setEditing(null)
+          if (!open && !saving) setEditing(null);
         }}
       >
         <Modal.Backdrop>
@@ -316,15 +316,15 @@ export function McpServersSection({
                   <Modal.Header>
                     <Modal.Heading>
                       {servers.some((s) => s.id === editing.id)
-                        ? t('settingsMcpEditTitle')
-                        : t('settingsMcpAddTitle')}
+                        ? t("settingsMcpEditTitle")
+                        : t("settingsMcpAddTitle")}
                     </Modal.Heading>
                   </Modal.Header>
                   <Modal.Body>
                     <fieldset disabled={saving} className="space-y-3">
                       <label className="block">
                         <span className="mb-1 block text-xs font-medium text-foreground">
-                          {t('settingsMcpName')}
+                          {t("settingsMcpName")}
                         </span>
                         <input
                           className="import-input w-full"
@@ -332,12 +332,12 @@ export function McpServersSection({
                           onChange={(e) =>
                             setEditing({ ...editing, name: e.target.value })
                           }
-                          placeholder={t('settingsMcpNamePlaceholder')}
+                          placeholder={t("settingsMcpNamePlaceholder")}
                         />
                       </label>
                       <label className="block">
                         <span className="mb-1 block text-xs font-medium text-foreground">
-                          {t('settingsMcpCommand')}
+                          {t("settingsMcpCommand")}
                         </span>
                         <input
                           className="import-input w-full font-mono"
@@ -345,12 +345,12 @@ export function McpServersSection({
                           onChange={(e) =>
                             setEditing({ ...editing, command: e.target.value })
                           }
-                          placeholder={t('settingsMcpCommandPlaceholder')}
+                          placeholder={t("settingsMcpCommandPlaceholder")}
                         />
                       </label>
                       <label className="block">
                         <span className="mb-1 block text-xs font-medium text-foreground">
-                          {t('settingsMcpWorkingDirectory')}
+                          {t("settingsMcpWorkingDirectory")}
                         </span>
                         <input
                           className="import-input w-full font-mono"
@@ -359,13 +359,13 @@ export function McpServersSection({
                             setEditing({ ...editing, cwd: e.target.value })
                           }
                           placeholder={t(
-                            'settingsMcpWorkingDirectoryPlaceholder',
+                            "settingsMcpWorkingDirectoryPlaceholder",
                           )}
                         />
                       </label>
                       <label className="block">
                         <span className="mb-1 block text-xs font-medium text-foreground">
-                          {t('settingsMcpArgs')}
+                          {t("settingsMcpArgs")}
                         </span>
                         <textarea
                           className="import-input w-full font-mono"
@@ -379,7 +379,7 @@ export function McpServersSection({
                       </label>
                       <label className="block">
                         <span className="mb-1 block text-xs font-medium text-foreground">
-                          {t('settingsMcpEnv')}
+                          {t("settingsMcpEnv")}
                         </span>
                         <textarea
                           className="import-input w-full font-mono"
@@ -406,7 +406,7 @@ export function McpServersSection({
                           </Checkbox.Control>
                         </Checkbox>
                         <span className="text-xs text-foreground">
-                          {t('settingsMcpEnable')}
+                          {t("settingsMcpEnable")}
                         </span>
                       </label>
                       {saveError && (
@@ -422,42 +422,45 @@ export function McpServersSection({
                           {testMessages[editing.id]}
                         </p>
                       )}
-                      <div className="flex items-center justify-end gap-2 pt-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          isDisabled={saving}
-                          onPress={() => setEditing(null)}
-                        >
-                          {t('settingsMcpClose')}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          isDisabled={
-                            !editing.command.trim() || testingId !== null
-                          }
-                          onPress={() =>
-                            void handleTest(draftToConfig(editing))
-                          }
-                        >
-                          {testingId === editing.id ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <Wifi size={12} />
-                          )}
-                          {t('settingsMcpTest')}
-                        </Button>
-                        <Button
-                          size="sm"
-                          isPending={saving}
-                          onPress={() => void handleSaveDraft()}
-                        >
-                          {t('settingsMcpSave')}
-                        </Button>
-                      </div>
                     </fieldset>
                   </Modal.Body>
+                  <Modal.Footer>
+                    <fieldset
+                      disabled={saving}
+                      className="flex flex-wrap items-center justify-end gap-2"
+                    >
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        isDisabled={saving}
+                        onPress={() => setEditing(null)}
+                      >
+                        {t("settingsMcpClose")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        isDisabled={
+                          !editing.command.trim() || testingId !== null
+                        }
+                        onPress={() => void handleTest(draftToConfig(editing))}
+                      >
+                        {testingId === editing.id ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <Wifi size={12} />
+                        )}
+                        {t("settingsMcpTest")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        isPending={saving}
+                        onPress={() => void handleSaveDraft()}
+                      >
+                        {t("settingsMcpSave")}
+                      </Button>
+                    </fieldset>
+                  </Modal.Footer>
                 </>
               )}
             </Modal.Dialog>
@@ -465,5 +468,5 @@ export function McpServersSection({
         </Modal.Backdrop>
       </Modal>
     </SettingsCard>
-  )
+  );
 }

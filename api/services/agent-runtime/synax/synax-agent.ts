@@ -7,7 +7,7 @@ import { toolRegistry } from "../tool-registry.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { agentEventService } from "../event-service.js";
 import { nowIso } from "../runtime-ids.js";
-import { goalTitleGenerator } from "../../wiki/wiki-goal-title.js";
+import { sessionTitleGenerator } from "../session-title-input.js";
 import { synaxAgentProfile } from "./synax-agent-profile.js";
 import { createSynaxAdaptTool } from "./synax-adapt-tool.js";
 import {
@@ -50,7 +50,7 @@ export class SynaxAgent {
   register(): void {
     if (this.registered) return;
     profileService.register(synaxAgentProfile);
-    registerTitleGenerator(SYNAX_AGENT_PROFILE_ID, goalTitleGenerator);
+    registerTitleGenerator(SYNAX_AGENT_PROFILE_ID, sessionTitleGenerator);
     this.registerAdaptTool();
     this.registered = true;
   }
@@ -276,7 +276,7 @@ export function ensureLegacyGoalProfileRegistered(): void {
         "When wiki context is attached, keep documentation in sync after code changes.",
       ],
     });
-    registerTitleGenerator(LEGACY_GOAL_PROFILE_ID, goalTitleGenerator);
+    registerTitleGenerator(LEGACY_GOAL_PROFILE_ID, sessionTitleGenerator);
   }
   legacyGoalRegistered = true;
 }

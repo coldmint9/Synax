@@ -1,3 +1,4 @@
+import { compactSessionContext } from "../manual-context-compaction.js";
 import { snapshotRuntimeReminder } from "../runtime-request-snapshot.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../context-tokenizer.js", () => ({
@@ -100,6 +101,56 @@ function fixture() {
   return session.id;
 }
 describe("persistent work context projection", () => {
+  it("manually compacts below automatic thresholds while preserving recent steps and source history", () => {
+    const sessionId = fixture();
+    const input = {
+      sessionId,
+      toolSet,
+      contextLimit: 200000,
+      outputReserve: 8192,
+      systemTokens: 0,
+    };
+    expect(projectWorkContext(input).compacted).toBe(false);
+    store.updateRun("run", { status: "completed" });
+    store.updateSession(sessionId, { status: "completed", activeRunId: null });
+    const result = compactSessionContext(sessionId);
+    expect(result.compacted).toBe(true);
+    expect(result.tokens).toBeLessThan(result.originalTokens);
+    expect(result.reason).toBe("manual-compaction");
+    const again = projectWorkContext(input);
+    expect(JSON.stringify(again.messages)).toContain("signature-6");
+    expect(store.listRunParts("step-1")[0].content).toContain(
+      "private-thought-1",
+    );
+    expect(compactSessionContext(sessionId).compacted).toBe(false);
+  });
+  it("does not bypass pinned boundaries when forced", () => {
+    const sessionId = fixture();
+    store.updateSessionMetadata(sessionId, {
+      contextPinnedStepIds: ["step-1"],
+    });
+    const result = projectWorkContext({
+      sessionId,
+      toolSet,
+      contextLimit: 200000,
+      outputReserve: 8192,
+      systemTokens: 0,
+      forceCompact: true,
+    });
+    expect(result.compacted).toBe(false);
+    expect(workStore.current(sessionId)?.checkpoint).toBeFalsy();
+  });
+  it("rejects manual compaction during an active run or for a native CLI backend", () => {
+    const sessionId = fixture();
+    expect(() => compactSessionContext(sessionId)).toThrow("current run");
+    store.updateSessionMetadata(sessionId, {
+      backend: { version: 1, id: "codex", model: null, workDir: null },
+    });
+    expect(() => compactSessionContext(sessionId)).toThrow(
+      "manages its own context",
+    );
+  });
+
   it("uses a durable boundary and never reconstructs covered reasoning on following requests", () => {
     const sessionId = fixture();
     const input = {
@@ -464,8 +515,7 @@ describe("request-local history snapshot", () => {
     });
     expect(again).toEqual(direct);
     // The snapshot is already warm: a repeat projection performs no new reads.
-    for (const method of historyMethods)
-      expect(calls[method] ?? 0).toBe(0);
+    for (const method of historyMethods) expect(calls[method] ?? 0).toBe(0);
   });
 
   it("groups tool calls by run from one session-wide read without mutating cache order", () => {

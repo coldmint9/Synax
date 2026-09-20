@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   listToolCalls: vi.fn(),
+  getToolCall: vi.fn(),
   resolveSessionWorkspaceRoots: vi.fn(),
 }));
 
@@ -17,6 +18,7 @@ vi.mock("../tools/workspace.js", () => ({
 
 import {
   getSessionEnvironment,
+  getSessionInputSourceContent,
   invalidateSessionEnvironment,
 } from "../session-environment.js";
 
@@ -74,6 +76,82 @@ afterEach(() => {
 });
 
 describe("session environment Git ignore filtering", () => {
+  it("provides preview references for files, native reads and directory searches", async () => {
+    mocks.listToolCalls.mockReturnValue([
+      {
+        id: "file-read",
+        toolId: "claude-code.Read",
+        status: "completed",
+        mutability: "read",
+        inputRef: { nativeTool: { file_path: "src/main.ts" } },
+      },
+      {
+        id: "dir-read",
+        toolId: "list",
+        status: "completed",
+        mutability: "read",
+        inputSummary: "List src",
+        inputRef: { path: "src" },
+      },
+      {
+        id: "search-read",
+        toolId: "webSearch",
+        status: "completed",
+        mutability: "read",
+        inputSummary: "Search docs",
+        inputRef: {},
+      },
+    ]);
+    const env = await getSessionEnvironment(sessionId);
+    expect(env.inputSources).toEqual([
+      {
+        kind: "file",
+        label: "src/main.ts",
+        path: "src/main.ts",
+        toolCallId: "file-read",
+      },
+      { kind: "search", label: "List src", toolCallId: "dir-read" },
+      { kind: "search", label: "Search docs", toolCallId: "search-read" },
+    ]);
+  });
+
+  it("previews recorded output in the owning session and rejects non-read operations", () => {
+    mocks.getToolCall.mockReturnValue({
+      status: "completed",
+      mutability: "read",
+      outputRef: { matches: ["src/main.ts"] },
+      outputSummary: "one result",
+    });
+    expect(getSessionInputSourceContent(sessionId, "search-read")).toEqual({
+      content: JSON.stringify({ matches: ["src/main.ts"] }, null, 2),
+      truncated: false,
+    });
+    expect(mocks.getToolCall).toHaveBeenCalledWith(sessionId, "search-read");
+    mocks.getToolCall.mockReturnValue({
+      status: "completed",
+      mutability: "read",
+      outputRef: null,
+      outputSummary: "Recorded command output",
+    });
+    expect(
+      getSessionInputSourceContent(sessionId, "command-read").content,
+    ).toBe("Recorded command output");
+    mocks.getToolCall.mockReturnValue({
+      status: "completed",
+      mutability: "read",
+      outputRef: "a".repeat(1024 * 1024 + 10),
+    });
+    const limited = getSessionInputSourceContent(sessionId, "large-read");
+    expect(limited.truncated).toBe(true);
+    expect(limited.content.length).toBe(1024 * 1024);
+    mocks.getToolCall.mockReturnValue({
+      status: "completed",
+      mutability: "write",
+    });
+    expect(() => getSessionInputSourceContent(sessionId, "write")).toThrow(
+      "Only completed input reads",
+    );
+  });
   it("excludes ignored tracked and untracked changes from files, line totals and agent attribution", async () => {
     write("src/main.ts", "after\nextra\n");
     write("src/new.ts", "new\n");

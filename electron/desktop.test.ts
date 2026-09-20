@@ -107,7 +107,8 @@ describe("desktop platform contract", () => {
       expect(roles.includes(role)).toBe(target === "darwin");
     }
     const views = items.find((item) => item.label === "视图").submenu;
-    expect(views.map((item: any) => item.label)).toContain("Work");
+    expect(views.map((item: any) => item.label)).not.toContain("Work");
+    expect(views.map((item: any) => item.label)).not.toContain("Wiki");
     expect(views.map((item: any) => item.label)).not.toContain("Coordinates");
   });
 

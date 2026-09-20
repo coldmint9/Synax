@@ -45,6 +45,8 @@ export interface ContextProjectionInput {
   model?: string;
   currentStepId?: string;
   configurationFingerprint?: string;
+  /** Explicit user request; retains integrity checks and recent/pinned steps. */
+  forceCompact?: boolean;
 }
 
 /** Shared empty result so the hot projection path never allocates one. */
@@ -257,10 +259,12 @@ export function projectWorkContext(input: ContextProjectionInput): {
       compaction: diagnostic(),
     };
   };
-  if (originalTokens < watermarks.prepare) return finishUnchanged();
+  if (!input.forceCompact && originalTokens < watermarks.prepare)
+    return finishUnchanged();
   // Preparation is not a per-turn summarizer. Keep an existing invisible draft
   // until commit pressure; sources are revalidated below before any activation.
   if (
+    !input.forceCompact &&
     originalTokens < watermarks.high &&
     nextState.draft &&
     !configurationChanged &&
@@ -478,7 +482,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
         tokens,
         segments: selected,
       };
-    if (tokens <= watermarks.low) break;
+    if (!input.forceCompact && tokens <= watermarks.low) break;
   }
   if (!candidate) {
     decision = {
@@ -512,6 +516,19 @@ export function projectWorkContext(input: ContextProjectionInput): {
         : nowIso(),
   };
   decision = evaluate(candidate.tokens);
+  if (input.forceCompact) {
+    decision = {
+      ...decision,
+      action:
+        candidate.tokens < originalTokens && candidate.tokens <= watermarks.hard
+          ? "commit"
+          : "keep",
+      reason:
+        candidate.tokens < originalTokens
+          ? "manual-compaction"
+          : "no-token-reduction",
+    };
+  }
   if (decision.action !== "commit") return finishUnchanged();
 
   const currentCheckpoint = boundaryState.checkpointWork?.checkpoint;

@@ -1,108 +1,127 @@
-import { describe, expect, it } from 'vitest'
-import { resolveLlmSelection } from '../resolver.js'
-import type { RuntimeCatalog } from '../types.js'
-import type { GlobalConfig, ProjectConfig } from '../../../lib/config/config-types.js'
+import { describe, expect, it } from "vitest";
+import { resolveLlmSelection } from "../resolver.js";
+import type { RuntimeCatalog } from "../types.js";
+import type {
+  GlobalConfig,
+  ProjectConfig,
+} from "../../../lib/config/config-types.js";
 
 const catalog: RuntimeCatalog = {
-  fetchedAt: '2026-05-13T00:00:00.000Z',
-  source: 'snapshot',
+  fetchedAt: "2026-05-13T00:00:00.000Z",
+  source: "snapshot",
   providers: [
     {
-      id: 'openai',
-      label: 'OpenAI',
+      id: "openai",
+      label: "OpenAI",
       supported: true,
-      env: ['OPENAI_API_KEY'],
+      env: ["OPENAI_API_KEY"],
       models: [
-        { id: 'gpt-4o-mini', label: 'GPT-4o Mini', isDefault: true },
-        { id: 'gpt-4o', label: 'GPT-4o' },
+        { id: "gpt-4o-mini", label: "GPT-4o Mini", isDefault: true },
+        { id: "gpt-4o", label: "GPT-4o" },
       ],
     },
     {
-      id: 'anthropic',
-      label: 'Anthropic',
+      id: "anthropic",
+      label: "Anthropic",
       supported: true,
-      env: ['ANTHROPIC_API_KEY'],
+      env: ["ANTHROPIC_API_KEY"],
       models: [
-        { id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet', isDefault: true },
-        { id: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku' },
+        {
+          id: "claude-3-5-sonnet-latest",
+          label: "Claude 3.5 Sonnet",
+          isDefault: true,
+        },
+        { id: "claude-3-5-haiku-latest", label: "Claude 3.5 Haiku" },
       ],
     },
     {
-      id: 'unsupported',
-      label: 'Unsupported',
+      id: "unsupported",
+      label: "Unsupported",
       supported: false,
       env: [],
-      models: [{ id: 'default', label: 'Default', isDefault: true }],
+      models: [{ id: "default", label: "Default", isDefault: true }],
     },
   ],
-}
+};
 
 function createGlobalConfig(overrides?: Partial<GlobalConfig>): GlobalConfig {
   return {
     version: 1,
     providers: [
       {
-        id: 'opencode-acp',
-        label: 'OpenCode ACP',
-        status: 'live',
-        kind: 'acp',
+        id: "opencode-acp",
+        label: "OpenCode ACP",
+        status: "live",
+        kind: "acp",
         caps: { canFollowUp: true, canCancel: true },
-        models: [{ id: 'opencode-default', label: 'OpenCode Default', isDefault: true }],
+        models: [
+          {
+            id: "opencode-default",
+            label: "OpenCode Default",
+            isDefault: true,
+          },
+        ],
       },
       {
-        id: 'openai',
-        label: 'OpenAI',
-        status: 'live',
-        kind: 'api',
+        id: "openai",
+        label: "OpenAI",
+        status: "live",
+        kind: "api",
         caps: { canFollowUp: true, canCancel: true },
-        models: [{ id: 'gpt-4o-mini', label: 'GPT-4o Mini', isDefault: true }],
+        models: [{ id: "gpt-4o-mini", label: "GPT-4o Mini", isDefault: true }],
       },
       {
-        id: 'anthropic',
-        label: 'Anthropic',
-        status: 'live',
-        kind: 'api',
+        id: "anthropic",
+        label: "Anthropic",
+        status: "live",
+        kind: "api",
         caps: { canFollowUp: true, canCancel: true },
-        models: [{ id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet', isDefault: true }],
+        models: [
+          {
+            id: "claude-3-5-sonnet-latest",
+            label: "Claude 3.5 Sonnet",
+            isDefault: true,
+          },
+        ],
       },
       {
-        id: 'unsupported',
-        label: 'Unsupported',
-        status: 'live',
-        kind: 'api',
+        id: "unsupported",
+        label: "Unsupported",
+        status: "live",
+        kind: "api",
         caps: { canFollowUp: true, canCancel: true },
-        models: [{ id: 'default', label: 'Default', isDefault: true }],
+        models: [{ id: "default", label: "Default", isDefault: true }],
       },
     ],
-    defaultProviderId: 'opencode-acp',
-    defaultApiProviderId: 'openai',
-    enabledAcpProviderIds: ['opencode-acp'],
+    defaultProviderId: "opencode-acp",
+    defaultApiProviderId: "openai",
+    enabledAcpProviderIds: ["opencode-acp"],
     providerConnections: {
       openai: {
-        providerId: 'openai',
-        baseUrl: 'https://api.openai.com/v1',
+        providerId: "openai",
+        baseUrl: "https://api.openai.com/v1",
         extra: {
-          kind: 'api',
-          apiFormat: 'openai',
-          model: 'gpt-4o-mini',
+          kind: "api",
+          apiFormat: "openai",
+          model: "gpt-4o-mini",
         },
       },
       anthropic: {
-        providerId: 'anthropic',
-        baseUrl: 'https://api.anthropic.com/v1',
+        providerId: "anthropic",
+        baseUrl: "https://api.anthropic.com/v1",
         extra: {
-          kind: 'api',
-          apiFormat: 'anthropic',
-          model: 'claude-3-5-sonnet-latest',
+          kind: "api",
+          apiFormat: "anthropic",
+          model: "claude-3-5-sonnet-latest",
         },
       },
       unsupported: {
-        providerId: 'unsupported',
-        baseUrl: 'https://unsupported.example/v1',
+        providerId: "unsupported",
+        baseUrl: "https://unsupported.example/v1",
         extra: {
-          kind: 'api',
-          apiFormat: 'openai',
-          model: 'default',
+          kind: "api",
+          apiFormat: "openai",
+          model: "default",
         },
       },
     },
@@ -114,26 +133,96 @@ function createGlobalConfig(overrides?: Partial<GlobalConfig>): GlobalConfig {
     features: {
       allowProjectConnectionOverride: true,
     },
-    updatedAt: '2026-05-13T00:00:00.000Z',
-    updatedBy: 'tester',
+    updatedAt: "2026-05-13T00:00:00.000Z",
+    updatedBy: "tester",
     ...overrides,
-  }
+  };
 }
 
-function createProjectConfig(overrides?: Partial<ProjectConfig>): ProjectConfig {
+function createProjectConfig(
+  overrides?: Partial<ProjectConfig>,
+): ProjectConfig {
   return {
-    projectId: 'project-alpha',
+    projectId: "project-alpha",
     version: 1,
-    updatedAt: '2026-05-13T00:00:00.000Z',
-    updatedBy: 'tester',
+    updatedAt: "2026-05-13T00:00:00.000Z",
+    updatedBy: "tester",
     ...overrides,
-  }
+  };
 }
 
-describe('resolveLlmSelection', () => {
-  it('resolves a configured custom API provider even when it is absent from the runtime catalog', () => {
-    const current = createGlobalConfig()
-    const providerId = 'custom-api:rightcodes'
+describe("resolveLlmSelection", () => {
+  it("keeps an explicitly selected Kiro model on Kiro while OpenAI remains the default", () => {
+    const current = createGlobalConfig();
+    const providerId = "custom-api:kiro-local";
+    const globalConfig = {
+      ...current,
+      providers: [
+        ...current.providers,
+        {
+          id: providerId,
+          label: "Kiro",
+          status: "live" as const,
+          kind: "api" as const,
+          caps: { canFollowUp: true, canCancel: true },
+          models: [{ id: "claude-opus-5", label: "Opus 5", isDefault: true }],
+        },
+      ],
+      providerConnections: {
+        ...current.providerConnections,
+        [providerId]: {
+          providerId,
+          baseUrl: "http://127.0.0.1:3000/claude-kiro-oauth/v1",
+          extra: { kind: "api", apiFormat: "openai", model: "claude-opus-5" },
+        },
+      },
+    };
+    const result = resolveLlmSelection({
+      catalog,
+      globalConfig,
+      purpose: "wiki",
+      modelOverride: `${providerId}/claude-opus-5`,
+    });
+    expect(result).toMatchObject({
+      providerId,
+      modelId: "claude-opus-5",
+      config: { baseUrl: "http://127.0.0.1:3000/claude-kiro-oauth/v1" },
+    });
+    for (const modelOverride of [
+      "claude-opus-5",
+      `${providerId}/missing`,
+      "missing-provider/claude-opus-5",
+    ]) {
+      expect(() =>
+        resolveLlmSelection({
+          catalog,
+          globalConfig,
+          purpose: "wiki",
+          modelOverride,
+        }),
+      ).toThrow("Requested LLM model");
+    }
+  });
+
+  it("rejects an explicit blocked model instead of selecting the allowed default", () => {
+    const globalConfig = createGlobalConfig();
+    globalConfig.providerConnections.openai.extra = {
+      model: "gpt-4o-mini",
+      whitelist: ["gpt-4o-mini"],
+    };
+    expect(() =>
+      resolveLlmSelection({
+        catalog,
+        globalConfig,
+        purpose: "wiki",
+        modelOverride: "openai/gpt-4o",
+      }),
+    ).toThrow("Requested LLM model");
+  });
+
+  it("resolves a configured custom API provider even when it is absent from the runtime catalog", () => {
+    const current = createGlobalConfig();
+    const providerId = "custom-api:rightcodes";
     const result = resolveLlmSelection({
       catalog,
       globalConfig: {
@@ -142,11 +231,13 @@ describe('resolveLlmSelection', () => {
           ...current.providers,
           {
             id: providerId,
-            label: 'RightCodes',
-            status: 'live',
-            kind: 'api',
+            label: "RightCodes",
+            status: "live",
+            kind: "api",
             caps: { canFollowUp: true, canCancel: true },
-            models: [{ id: 'gpt-5.4-mini', label: 'gpt-5.4-mini', isDefault: true }],
+            models: [
+              { id: "gpt-5.4-mini", label: "gpt-5.4-mini", isDefault: true },
+            ],
           },
         ],
         defaultApiProviderId: providerId,
@@ -154,26 +245,26 @@ describe('resolveLlmSelection', () => {
           ...current.providerConnections,
           [providerId]: {
             providerId,
-            baseUrl: 'https://api.example.com/v1',
+            baseUrl: "https://api.example.com/v1",
             extra: {
-              kind: 'api',
-              apiFormat: 'openai',
-              model: 'gpt-5.4-mini',
+              kind: "api",
+              apiFormat: "openai",
+              model: "gpt-5.4-mini",
             },
           },
         },
       },
-      purpose: 'wiki',
-    })
+      purpose: "wiki",
+    });
 
-    expect(result.providerId).toBe(providerId)
-    expect(result.modelId).toBe('gpt-5.4-mini')
-    expect(result.apiFormat).toBe('openai')
-    expect(result.provider.npm).toBe('@ai-sdk/openai-compatible')
-  })
+    expect(result.providerId).toBe(providerId);
+    expect(result.modelId).toBe("gpt-5.4-mini");
+    expect(result.apiFormat).toBe("openai");
+    expect(result.provider.npm).toBe("@ai-sdk/openai-compatible");
+  });
 
-  it('routes OpenAI Responses connections to the native OpenAI SDK', () => {
-    const providerId = 'custom-api:codex-gateway'
+  it("routes OpenAI Responses connections to the native OpenAI SDK", () => {
+    const providerId = "custom-api:codex-gateway";
     const result = resolveLlmSelection({
       catalog,
       globalConfig: {
@@ -181,45 +272,47 @@ describe('resolveLlmSelection', () => {
         providers: [
           {
             id: providerId,
-            label: 'Codex Gateway',
-            status: 'live',
-            kind: 'api',
+            label: "Codex Gateway",
+            status: "live",
+            kind: "api",
             caps: { canFollowUp: true, canCancel: true },
-            models: [{ id: 'gpt-5.4-codex', label: 'gpt-5.4-codex', isDefault: true }],
+            models: [
+              { id: "gpt-5.4-codex", label: "gpt-5.4-codex", isDefault: true },
+            ],
           },
         ],
         defaultApiProviderId: providerId,
         providerConnections: {
           [providerId]: {
             providerId,
-            baseUrl: 'https://gateway.example.com/v1',
+            baseUrl: "https://gateway.example.com/v1",
             extra: {
-              kind: 'api',
-              apiFormat: 'openai-responses',
-              model: 'gpt-5.4-codex',
+              kind: "api",
+              apiFormat: "openai-responses",
+              model: "gpt-5.4-codex",
             },
           },
         },
       },
-      purpose: 'wiki',
-    })
+      purpose: "wiki",
+    });
 
-    expect(result.apiFormat).toBe('openai-responses')
-    expect(result.provider.npm).toBe('@ai-sdk/openai')
-    expect(result.provider.api).toBe('https://gateway.example.com/v1')
-    expect(result.config.apiFormat).toBe('openai-responses')
-  })
+    expect(result.apiFormat).toBe("openai-responses");
+    expect(result.provider.npm).toBe("@ai-sdk/openai");
+    expect(result.provider.api).toBe("https://gateway.example.com/v1");
+    expect(result.config.apiFormat).toBe("openai-responses");
+  });
 
-  it('defaults to Chat Completions and switches to Messages for the anthropic protocol', () => {
+  it("defaults to Chat Completions and switches to Messages for the anthropic protocol", () => {
     const openai = resolveLlmSelection({
       catalog,
       globalConfig: createGlobalConfig(),
-      purpose: 'wiki',
-    })
-    expect(openai.providerId).toBe('openai')
-    expect(openai.apiFormat).toBe('openai')
+      purpose: "wiki",
+    });
+    expect(openai.providerId).toBe("openai");
+    expect(openai.apiFormat).toBe("openai");
 
-    const providerId = 'custom-api:claude-gateway'
+    const providerId = "custom-api:claude-gateway";
     const custom = resolveLlmSelection({
       catalog,
       globalConfig: {
@@ -227,119 +320,129 @@ describe('resolveLlmSelection', () => {
         providers: [
           {
             id: providerId,
-            label: 'Claude Gateway',
-            status: 'live',
-            kind: 'api',
+            label: "Claude Gateway",
+            status: "live",
+            kind: "api",
             caps: { canFollowUp: true, canCancel: true },
-            models: [{ id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6', isDefault: true }],
+            models: [
+              {
+                id: "claude-sonnet-4-6",
+                label: "claude-sonnet-4-6",
+                isDefault: true,
+              },
+            ],
           },
         ],
         defaultApiProviderId: providerId,
         providerConnections: {
           [providerId]: {
             providerId,
-            baseUrl: 'https://claude-gateway.example.com/v1',
+            baseUrl: "https://claude-gateway.example.com/v1",
             extra: {
-              kind: 'api',
-              apiFormat: 'anthropic',
-              model: 'claude-sonnet-4-6',
+              kind: "api",
+              apiFormat: "anthropic",
+              model: "claude-sonnet-4-6",
             },
           },
         },
       },
-      purpose: 'wiki',
-    })
+      purpose: "wiki",
+    });
 
-    expect(custom.apiFormat).toBe('anthropic')
-    expect(custom.provider.npm).toBe('@ai-sdk/anthropic')
-    expect(custom.provider.api).toBe('https://claude-gateway.example.com/v1')
-  })
+    expect(custom.apiFormat).toBe("anthropic");
+    expect(custom.provider.npm).toBe("@ai-sdk/anthropic");
+    expect(custom.provider.api).toBe("https://claude-gateway.example.com/v1");
+  });
 
-  it('prefers project API provider/model override over global default', () => {
+  it("prefers project API provider/model override over global default", () => {
     const result = resolveLlmSelection({
       catalog,
       globalConfig: createGlobalConfig(),
       projectConfig: createProjectConfig({
-        providerId: 'anthropic',
-        modelId: 'claude-3-5-sonnet-latest',
+        providerId: "anthropic",
+        modelId: "claude-3-5-sonnet-latest",
       }),
-      purpose: 'wiki',
-    })
+      purpose: "wiki",
+    });
 
-    expect(result.providerId).toBe('anthropic')
-    expect(result.modelId).toBe('claude-3-5-sonnet-latest')
-  })
+    expect(result.providerId).toBe("anthropic");
+    expect(result.modelId).toBe("claude-3-5-sonnet-latest");
+  });
 
-  it('supports plain model override by attaching preferred provider id', () => {
+  it("supports plain model override by attaching preferred provider id", () => {
     const result = resolveLlmSelection({
       catalog,
       globalConfig: createGlobalConfig(),
       projectConfig: createProjectConfig({
-        providerId: 'openai',
+        providerId: "openai",
       }),
-      purpose: 'context-signal',
-      modelOverride: 'gpt-4o-mini',
+      purpose: "context-signal",
+      modelOverride: "gpt-4o-mini",
       useSmallModel: true,
-    })
+    });
 
-    expect(result.model).toBe('openai/gpt-4o-mini')
-  })
+    expect(result.model).toBe("openai/gpt-4o-mini");
+  });
 
-  it('throws when no candidate resolves instead of falling back', () => {
-    expect(() => resolveLlmSelection({
-      catalog,
-      globalConfig: createGlobalConfig({ defaultApiProviderId: 'unsupported' }),
-      purpose: 'wiki',
-    })).toThrow('No LLM provider configured. Please configure one in Settings.')
-  })
+  it("throws when no candidate resolves instead of falling back", () => {
+    expect(() =>
+      resolveLlmSelection({
+        catalog,
+        globalConfig: createGlobalConfig({
+          defaultApiProviderId: "unsupported",
+        }),
+        purpose: "wiki",
+      }),
+    ).toThrow("No LLM provider configured. Please configure one in Settings.");
+  });
 
-  it('rejects models blocked by whitelist and falls back to a valid default model', () => {
+  it("rejects models blocked by whitelist and falls back to a valid default model", () => {
     const result = resolveLlmSelection({
       catalog,
       globalConfig: createGlobalConfig({
         providerConnections: {
           openai: {
-            providerId: 'openai',
-            baseUrl: 'https://api.openai.com/v1',
+            providerId: "openai",
+            baseUrl: "https://api.openai.com/v1",
             extra: {
-              kind: 'api',
-              apiFormat: 'openai',
-              model: 'gpt-4o-mini',
-              whitelist: ['gpt-4o-mini'],
+              kind: "api",
+              apiFormat: "openai",
+              model: "gpt-4o-mini",
+              whitelist: ["gpt-4o-mini"],
             },
           },
           anthropic: {
-            providerId: 'anthropic',
-            baseUrl: 'https://api.anthropic.com/v1',
+            providerId: "anthropic",
+            baseUrl: "https://api.anthropic.com/v1",
             extra: {
-              kind: 'api',
-              apiFormat: 'anthropic',
-              model: 'claude-3-5-sonnet-latest',
+              kind: "api",
+              apiFormat: "anthropic",
+              model: "claude-3-5-sonnet-latest",
             },
           },
           unsupported: {
-            providerId: 'unsupported',
-            baseUrl: 'https://unsupported.example/v1',
+            providerId: "unsupported",
+            baseUrl: "https://unsupported.example/v1",
             extra: {
-              kind: 'api',
-              apiFormat: 'openai',
-              model: 'default',
+              kind: "api",
+              apiFormat: "openai",
+              model: "default",
             },
           },
         },
       }),
       projectConfig: createProjectConfig({
-        providerId: 'openai',
-        modelId: 'gpt-4o',
+        providerId: "openai",
+        modelId: "gpt-4o",
       }),
-      purpose: 'wiki',
-    })
+      purpose: "wiki",
+    });
 
-    expect(result.model).toBe('openai/gpt-4o-mini')
-  })
+    expect(result.model).toBe("openai/gpt-4o-mini");
+  });
 
-  it('routes custom DeepSeek API providers to the native DeepSeek SDK', () => {
-    const providerId = 'custom-api:deepseek'
+  it("routes custom DeepSeek API providers to the native DeepSeek SDK", () => {
+    const providerId = "custom-api:deepseek";
     const result = resolveLlmSelection({
       catalog,
       globalConfig: {
@@ -347,30 +450,36 @@ describe('resolveLlmSelection', () => {
         providers: [
           {
             id: providerId,
-            label: 'DeepSeek',
-            status: 'live',
-            kind: 'api',
+            label: "DeepSeek",
+            status: "live",
+            kind: "api",
             caps: { canFollowUp: true, canCancel: true },
-            models: [{ id: 'deepseek-v4-flash', label: 'deepseek-v4-flash', isDefault: true }],
+            models: [
+              {
+                id: "deepseek-v4-flash",
+                label: "deepseek-v4-flash",
+                isDefault: true,
+              },
+            ],
           },
         ],
         defaultApiProviderId: providerId,
         providerConnections: {
           [providerId]: {
             providerId,
-            baseUrl: 'https://api.deepseek.com',
+            baseUrl: "https://api.deepseek.com",
             extra: {
-              kind: 'api',
-              apiFormat: 'openai',
-              model: 'deepseek-v4-flash',
+              kind: "api",
+              apiFormat: "openai",
+              model: "deepseek-v4-flash",
             },
           },
         },
       },
-      purpose: 'wiki',
-    })
+      purpose: "wiki",
+    });
 
-    expect(result.provider.npm).toBe('@ai-sdk/deepseek')
-    expect(result.modelDef.reasoning).toBe(true)
-  })
-})
+    expect(result.provider.npm).toBe("@ai-sdk/deepseek");
+    expect(result.modelDef.reasoning).toBe(true);
+  });
+});
