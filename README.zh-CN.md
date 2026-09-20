@@ -274,7 +274,7 @@ libSQL 和 tree-sitter 包含原生二进制，必须在目标**系统和架构*
 
 macOS 保留融合式红绿灯标题栏和应用菜单；Windows 保留原生窗口控件并使用 Ctrl 快捷键。运行数据仍位于 `~/.synax`（Windows 为 `%USERPROFILE%\.synax`），可通过 `DATA_ROOT` 覆盖。安装包使用 Electron 内嵌运行时，不要求另行安装 Node.js。
 
-最终图标可放入 `electron/resources/icon.icns`（macOS）和 `electron/resources/icon.ico`（Windows），未提供时使用 Electron 默认图标。未配置签名和公证；未签名产物用于测试，可能触发系统安全提示。Electron、本地 API、原生模块仍需通过新版桌面安装包更新。
+桌面与网页图标统一使用 `electron/resources/Synax-Liquid-Glass.sketch` 中的液态玻璃 Logo。执行 `python3 scripts/generate-app-icons.py`（需要 Pillow）可重新生成 ICNS、ICO、PNG 和网页标签页图标。未配置签名和公证；未签名产物用于测试，可能触发系统安全提示。Electron、本地 API、原生模块仍需通过新版桌面安装包更新。
 
 ### 从 GitHub 更新界面资源
 

@@ -248,6 +248,28 @@ describe("WorkspaceDashboard", () => {
     expect(screen.getByRole("button", { name: "刷新工作区" })).toBeEnabled();
   });
 
+  it("marks repositories with project records as content-sized cards", () => {
+    const repository = {
+      ...environment,
+      rootId: "primary",
+      name: "Synax",
+      role: "primary" as const,
+      status: "ready" as const,
+    };
+    render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{ ...environment, repositories: [repository] }}
+      />,
+    );
+
+    expect(
+      screen
+        .getByRole("button", { name: /^Synax/ })
+        .closest(".ws-project-card"),
+    ).toHaveClass("ws-project-card--with-content");
+  });
+
   it("keeps project Git controls in the header when clean or collapsed", () => {
     const reload = vi.fn();
     const repository = {
@@ -271,6 +293,9 @@ describe("WorkspaceDashboard", () => {
     );
     const toggle = screen.getByRole("button", { name: "Synax" });
     const header = toggle.closest(".ws-card-head")!;
+    expect(toggle.closest(".ws-project-card")).toHaveClass(
+      "ws-project-card--status-only",
+    );
     expect(within(header).getByText("main")).toBeInTheDocument();
     expect(
       within(header).getByRole("button", { name: "提交并推送" }),
@@ -365,6 +390,13 @@ describe("WorkspaceDashboard", () => {
     const apiCard = apiHeader.closest(".ws-project-card")!;
     const webCard = webHeader.closest(".ws-project-card")!;
     const goneCard = goneHeader.closest(".ws-project-card")!;
+    const pane = apiCard.parentElement!;
+    expect(pane).toHaveClass("workspace-projects-pane--multiple");
+    expect(webCard.parentElement).toBe(pane);
+    expect(goneCard.parentElement).toBe(pane);
+    expect(pane.querySelectorAll(":scope > .ws-project-card")).toHaveLength(3);
+    expect(pane.closest(".ws-card")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^项目\s*3$/ })).toBeNull();
 
     expect(apiHeader).toHaveAttribute("aria-expanded", "true");
     expect(webHeader).toHaveAttribute("aria-expanded", "true");

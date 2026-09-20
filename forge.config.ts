@@ -25,7 +25,12 @@ const config: ForgeConfig = {
     appBundleId: "com.Synax.desktop",
     ...(existsSync(icon) ? { icon } : {}),
     asar: true,
-    extraResource: ["./server-dist", "./web/dist", "./api/db/migrations"],
+    extraResource: [
+      "./server-dist",
+      "./web/dist",
+      "./api/db/migrations",
+      "./electron/resources/icon.png",
+    ],
     ignore: (file: string) => {
       if (!file) return false;
       if (file === "/package.json") return false;
