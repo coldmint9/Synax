@@ -1,0 +1,45 @@
+name: Release UI Update
+
+on:
+  push:
+    tags:
+      - "ui-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  ui-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --include=dev
+      - name: Verify packaged desktop baseline exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          gh release view "v${version}" --json isDraft --jq 'if .isDraft then error("Desktop release is still a draft") else true end'
+      - run: npm run test:ui-updates
+      - run: npm run web:build
+      - name: Build compatible UI assets and optional delta
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: npx tsx scripts/build-ui-release.ts
+      - name: Publish only after all assets are ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          gh release create "$GITHUB_REF_NAME" out/ui-release/* \
+            --title "Synax UI $GITHUB_REF_NAME" \
+            --notes "UI-only update for Synax desktop ${version}. Does not update Electron or the local API." \
+            --draft --latest=false
+          gh release edit "$GITHUB_REF_NAME" --draft=false

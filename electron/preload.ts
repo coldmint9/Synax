@@ -3,12 +3,14 @@ const { contextBridge, ipcRenderer } =
 
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
-  setTerminalFocus: (focused: boolean) => ipcRenderer.send("terminal:focus", focused),
+  setTerminalFocus: (focused: boolean) =>
+    ipcRenderer.send("terminal:focus", focused),
   showOpenDialog: (options: Electron.OpenDialogOptions) =>
     ipcRenderer.invoke("dialog:open", options),
   showSaveDialog: (options: Electron.SaveDialogOptions) =>
     ipcRenderer.invoke("dialog:save", options),
   getAppVersion: () => ipcRenderer.invoke("app:version"),
+  reportUIReady: () => ipcRenderer.send("app:ui-ready"),
   getApiPort: () => ipcRenderer.invoke("app:api-port"),
   getRuntimeToken: () => ipcRenderer.invoke("app:runtime-token"),
   onDeepLink: (callback: (url: string) => void) => {
@@ -26,7 +28,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("menu:action", listener);
     return () => ipcRenderer.removeListener("menu:action", listener);
   },
-  updateMenuState: (state: { projectId: string | null; hasSession: boolean; hasViewer: boolean; inWork: boolean; inWiki: boolean; dark: boolean }) => ipcRenderer.send("menu:update-state", state),
+  updateMenuState: (state: {
+    projectId: string | null;
+    hasSession: boolean;
+    hasViewer: boolean;
+    inWork: boolean;
+    inWiki: boolean;
+    dark: boolean;
+  }) => ipcRenderer.send("menu:update-state", state),
   updateProjects: (projects: { id: string; name: string }[]) => {
     ipcRenderer.send("menu:update-projects", projects);
   },

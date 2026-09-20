@@ -278,7 +278,15 @@ Run `npm run test:desktop`, then `npm run make:desktop`, then `npm run test:desk
 
 macOS uses the integrated traffic-light titlebar and application menu; Windows retains native window controls and uses Ctrl shortcuts. Runtime data remains in `~/.synax` (or `%USERPROFILE%\.synax` on Windows), overridable with `DATA_ROOT`. Installed builds use Electron's embedded runtime rather than requiring a separate Node.js installation.
 
-Final icons can be supplied as `electron/resources/icon.icns` (macOS) and `electron/resources/icon.ico` (Windows). Without them, packaging uses the default Electron icon. Signing, notarization, and automatic updates are not configured; unsigned builds are intended for testing and may trigger OS warnings.
+Final icons can be supplied as `electron/resources/icon.icns` (macOS) and `electron/resources/icon.ico` (Windows). Without them, packaging uses the default Electron icon. Signing and notarization are not configured; unsigned builds are intended for testing and may trigger OS warnings. Full Electron/API/native-module updates still require a new desktop installer.
+
+### UI-only updates from GitHub
+
+Packaged macOS and Windows clients check the public `coldmint9/Synax` GitHub Releases for compatible `ui-vMAJOR.MINOR.PATCH` releases shortly after startup and every 12 hours; **Help → Check UI updates** checks on demand. They download only `web/dist` resources (a delta from the current UI release when available, otherwise the complete _UI_ archive), validate file hashes, and stage the update under Electron user data. The existing UI continues running until you choose **Restart now** or relaunch later. A broken UI is rolled back to the last healthy UI or the one bundled with the installer. Linux is not included.
+
+To publish, first tag and release `v<package.json version>` with the desktop updater; existing installations without this feature must install that release manually once. Keep `package.json` version unchanged for compatible UI-only changes, then push a newer `ui-v*` tag. `.github/workflows/build-ui-release.yml` verifies that the corresponding desktop release exists, refuses backend/desktop source changes since that tag, runs UI tests/build, and publishes a complete archive, the adjacent-version delta, and their manifest as a draft Release that becomes public only when all assets are ready. UI changes requiring new API/IPC behavior need a new desktop version and installer instead.
+
+**Security tradeoff:** these UI releases have no independent cryptographic signature, by choice. HTTPS and SHA-256 checks detect transport corruption, **not** a compromised GitHub repository or Release publisher: malicious UI JavaScript could access the desktop bridge and local API. Protect GitHub publishing access accordingly. UI updates do not bypass macOS signing rules for replacing an entire app.
 
 ## Contributing
 

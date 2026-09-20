@@ -6,6 +6,7 @@ export default defineConfig({
       "api/**/*.{test,spec}.{ts,tsx}",
       "cli/**/*.{test,spec}.{ts,tsx}",
       "electron/**/*.test.ts",
+      "scripts/**/*.test.ts",
     ],
     fileParallelism: false,
     env: {

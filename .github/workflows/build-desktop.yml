@@ -42,6 +42,9 @@ jobs:
       - name: Test desktop platform behavior
         run: npm run test:desktop
 
+      - name: Test UI update behavior
+        run: npm run test:ui-updates
+
       - name: Build API
         run: npm run build
 
@@ -58,12 +61,18 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:desktop:smoke
 
+      - name: Smoke test packaged UI update and rollback (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: npm run test:desktop:ui-update-smoke
+
       - name: Upload smoke diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: desktop-smoke-${{ matrix.platform }}-${{ matrix.arch }}
-          path: out/desktop-smoke.*
+          path: |
+            out/desktop-smoke.*
+            out/ui-update-smoke.*
           if-no-files-found: ignore
 
       - name: Upload artifacts

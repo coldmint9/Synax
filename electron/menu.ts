@@ -14,9 +14,24 @@ export interface DesktopMenuState {
   inWiki: boolean;
   dark: boolean;
 }
-let context: DesktopMenuState = { projectId: null, hasSession: false, hasViewer: false, inWork: false, inWiki: false, dark: false };
+
+let context: DesktopMenuState = {
+  projectId: null,
+  hasSession: false,
+  hasViewer: false,
+  inWork: false,
+  inWiki: false,
+  dark: false,
+};
+let checkUiUpdates: (() => void) | null = null;
+
 export function updateMenuState(state: DesktopMenuState): void {
   context = state;
+  buildAppMenu();
+}
+
+export function setUiUpdateAction(action: (() => void) | null): void {
+  checkUiUpdates = action;
   buildAppMenu();
 }
 
@@ -40,7 +55,11 @@ export function buildAppMenu(projects?: Project[]): void {
           label: p.name,
           type: "checkbox",
           checked: p.id === context.projectId,
-          click: () => sendToRenderer("menu:navigate", `/projects/${encodeURIComponent(p.id)}/sessions`),
+          click: () =>
+            sendToRenderer(
+              "menu:navigate",
+              `/projects/${encodeURIComponent(p.id)}/sessions`,
+            ),
         }))
       : [{ label: "无项目", enabled: false }];
 
@@ -81,7 +100,13 @@ export function buildAppMenu(projects?: Project[]): void {
         },
         { type: "separator" },
         { label: "切换项目", submenu: projectSubmenu },
-        { label: "新增终端", id: "terminal:new", accelerator: "CmdOrCtrl+Shift+T", enabled: Boolean(context.projectId), click: () => sendToRenderer("menu:action", "terminal:new") },
+        {
+          label: "新增终端",
+          id: "terminal:new",
+          accelerator: "CmdOrCtrl+Shift+T",
+          enabled: Boolean(context.projectId),
+          click: () => sendToRenderer("menu:action", "terminal:new"),
+        },
         { type: "separator" },
         { role: "close", label: "关闭窗口" },
         ...(!isMac
@@ -104,18 +129,27 @@ export function buildAppMenu(projects?: Project[]): void {
     {
       label: "视图",
       submenu: [
-        { label: "显示 / 隐藏终端", id: "terminal:toggle", accelerator: "CmdOrCtrl+J", click: () => sendToRenderer("menu:action", "terminal:toggle") },
+        {
+          label: "显示 / 隐藏终端",
+          id: "terminal:toggle",
+          accelerator: "CmdOrCtrl+J",
+          click: () => sendToRenderer("menu:action", "terminal:toggle"),
+        },
         {
           label: "Work",
           id: "view:sessions",
-          type: "checkbox", checked: context.inWork, enabled: Boolean(context.projectId),
+          type: "checkbox",
+          checked: context.inWork,
+          enabled: Boolean(context.projectId),
           accelerator: "CmdOrCtrl+1",
           click: () => sendToRenderer("menu:action", "view:sessions"),
         },
         {
           label: "Wiki",
           id: "view:wiki",
-          type: "checkbox", checked: context.inWiki, enabled: Boolean(context.projectId),
+          type: "checkbox",
+          checked: context.inWiki,
+          enabled: Boolean(context.projectId),
           accelerator: "CmdOrCtrl+2",
           click: () => sendToRenderer("menu:action", "view:wiki"),
         },
@@ -129,23 +163,34 @@ export function buildAppMenu(projects?: Project[]): void {
         },
         { type: "separator" },
         {
-          label: "返回对话", id: "view:conversation", accelerator: "CmdOrCtrl+Alt+Left",
+          label: "返回对话",
+          id: "view:conversation",
+          accelerator: "CmdOrCtrl+Alt+Left",
           enabled: context.hasViewer,
           click: () => sendToRenderer("menu:action", "view:conversation"),
         },
         {
-          label: "刷新工作区", id: "workspace:refresh", accelerator: "CmdOrCtrl+R",
+          label: "刷新工作区",
+          id: "workspace:refresh",
+          accelerator: "CmdOrCtrl+R",
           enabled: context.inWork && context.hasSession,
           click: () => sendToRenderer("menu:action", "workspace:refresh"),
         },
         {
-          label: "深色模式", id: "theme:toggle", type: "checkbox", checked: context.dark,
+          label: "深色模式",
+          id: "theme:toggle",
+          type: "checkbox",
+          checked: context.dark,
           accelerator: "CmdOrCtrl+Shift+L",
           click: () => sendToRenderer("menu:action", "theme:toggle"),
         },
         { type: "separator" },
         { role: "toggleDevTools", label: "开发者工具" },
-        { role: "reload", label: "重新加载界面", accelerator: "CmdOrCtrl+Shift+R" },
+        {
+          role: "reload",
+          label: "重新加载界面",
+          accelerator: "CmdOrCtrl+Shift+R",
+        },
         { type: "separator" },
         { role: "togglefullscreen", label: "全屏" },
       ],
@@ -167,6 +212,17 @@ export function buildAppMenu(projects?: Project[]): void {
       label: "帮助",
       submenu: [
         ...(!isMac ? [{ role: "about" as const, label: "关于 Synax" }] : []),
+        ...(app.isPackaged && (isMac || process.platform === "win32")
+          ? [
+              {
+                label: "检查界面更新…",
+                id: "ui:check-updates",
+                enabled: Boolean(checkUiUpdates),
+                click: () => checkUiUpdates?.(),
+              },
+              { type: "separator" as const },
+            ]
+          : []),
         {
           label: "文档",
           click: () => shell.openExternal("https://github.com/coldmint9/Synax"),

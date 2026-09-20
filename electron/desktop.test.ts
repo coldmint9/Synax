@@ -28,7 +28,7 @@ const spawn = vi.hoisted(() => vi.fn());
 vi.mock("electron", () => electron);
 vi.mock("node:child_process", () => ({ spawn }));
 
-import { buildAppMenu, updateMenuState } from "./menu.js";
+import { buildAppMenu, setUiUpdateAction, updateMenuState } from "./menu.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 import { startSidecar, stopSidecar } from "./lib/node-sidecar.js";
 import { spawnProcess, waitForExit } from "../scripts/_shared.js";
@@ -72,6 +72,27 @@ function menuRoles(items: any[]): string[] {
     .flatMap((item) => [item.role, ...menuRoles(item.submenu ?? [])])
     .filter(Boolean);
 }
+
+describe("desktop UI update menu", () => {
+  it.each(["darwin", "win32"] as const)(
+    "exposes a manual check on packaged %s",
+    (platformName) => {
+      onPlatform(platformName);
+      electron.app.isPackaged = true;
+      const check = vi.fn();
+      setUiUpdateAction(check);
+      const items = electron.Menu.buildFromTemplate.mock.lastCall![0] as any[];
+      const help = items.find((item) => item.label === "帮助");
+      const command = help.submenu.find(
+        (item: any) => item.id === "ui:check-updates",
+      );
+      expect(command).toBeTruthy();
+      command.click();
+      expect(check).toHaveBeenCalledOnce();
+      setUiUpdateAction(null);
+    },
+  );
+});
 
 describe("desktop platform contract", () => {
   it.each(["darwin", "win32"] as const)("uses native menus on %s", (target) => {
@@ -243,17 +264,34 @@ describe("desktop platform contract", () => {
 });
 
 it("keeps desktop commands contextual and uses the import dialog instead of a fake project route", () => {
-  updateMenuState({ projectId: null, hasSession: false, hasViewer: false, inWork: false, inWiki: false, dark: false });
+  updateMenuState({
+    projectId: null,
+    hasSession: false,
+    hasViewer: false,
+    inWork: false,
+    inWiki: false,
+    dark: false,
+  });
   const get = (id: string): any => {
-    const flatten = (items: any[]): any[] => items.flatMap(item => [item, ...flatten(item.submenu ?? [])]);
-    return flatten(electron.Menu.buildFromTemplate.mock.lastCall![0] as any[]).find(item => item.id === id);
+    const flatten = (items: any[]): any[] =>
+      items.flatMap((item) => [item, ...flatten(item.submenu ?? [])]);
+    return flatten(
+      electron.Menu.buildFromTemplate.mock.lastCall![0] as any[],
+    ).find((item) => item.id === id);
   };
-  expect(get('session:new').enabled).toBe(false);
-  expect(get('view:conversation').enabled).toBe(false);
-  expect(get('project:import').accelerator).toBe('CmdOrCtrl+O');
-  updateMenuState({ projectId: 'p', hasSession: true, hasViewer: true, inWork: true, inWiki: false, dark: true });
-  expect(get('session:new').enabled).toBe(true);
-  expect(get('view:conversation').enabled).toBe(true);
-  expect(get('workspace:refresh').enabled).toBe(true);
-  expect(get('theme:toggle').checked).toBe(true);
+  expect(get("session:new").enabled).toBe(false);
+  expect(get("view:conversation").enabled).toBe(false);
+  expect(get("project:import").accelerator).toBe("CmdOrCtrl+O");
+  updateMenuState({
+    projectId: "p",
+    hasSession: true,
+    hasViewer: true,
+    inWork: true,
+    inWiki: false,
+    dark: true,
+  });
+  expect(get("session:new").enabled).toBe(true);
+  expect(get("view:conversation").enabled).toBe(true);
+  expect(get("workspace:refresh").enabled).toBe(true);
+  expect(get("theme:toggle").checked).toBe(true);
 });
