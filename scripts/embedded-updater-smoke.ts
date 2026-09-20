@@ -38,7 +38,9 @@ const request: UpdaterRequest = {
 };
 const requestFile = path.join(root, "request.json");
 await fs.writeFile(requestFile, JSON.stringify(request));
-const env = { ...process.env };
+const env: Record<string, string> = {
+  ...(process.env as Record<string, string>),
+};
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.NODE_OPTIONS;
 let updater: ElectronApplication | undefined;
