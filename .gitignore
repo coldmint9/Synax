@@ -90,10 +90,32 @@ dist-app/
 .synax-test2/
 .synax-test3/
 .superpowers/
-# Keep the public integration guide trackable while continuing to ignore generated/internal docs.
+
+# Local tool state and hidden directories (CI configuration is part of the product).
+.*/
+!/.github/
+!/.github/**
+
+# Internal documentation and review records. Keep the public README and runtime skills.
 docs/
-!docs/
-docs/*
-!docs/integration/
-!docs/integration/**
-.plan/
+doc/
+semantic-review/
+review-records/
+reviews/
+*.md
+*.markdown
+*.mdx
+!/README.md
+!/README.zh-CN.md
+!api/skills/**/SKILL.md
+!api/services/skills/__tests__/fixtures/**/SKILL.md
+
+# Generated build caches and local design/preview artifacts.
+*.tsbuildinfo
+*.log
+*.sketch
+/preview-workbench.html
+
+# OS metadata remains ignored inside allowed CI directories.
+.DS_Store
+Thumbs.db

@@ -1,7 +1,7 @@
 {
   "name": "synax",
   "private": false,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "MIT",
   "author": "Synax",
   "description": "AI-powered code analysis platform",
@@ -11,8 +11,7 @@
     "server-dist",
     "README.md",
     "README.zh-CN.md",
-    "LICENSE",
-    "docs/integration"
+    "LICENSE"
   ],
   "bin": {
     "synax": "server-dist/cli.cjs"

@@ -9,7 +9,7 @@ Turn a local codebase into a source-linked, refreshable design wiki that becomes
 English | [Simplified Chinese](./README.zh-CN.md)
 
 ![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
-![Version](https://img.shields.io/badge/version-0.1.0--snapshot-64748b?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.2.0-64748b?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black)
 ![Vite](https://img.shields.io/badge/Vite-8-646cff?style=flat-square&logo=vite&logoColor=white)
@@ -31,11 +31,7 @@ It also supports custom endpoints that speak one of these API formats:
 
 Author note: Synax is currently developed and dogfooded mostly with DeepSeek V4. If a few paths feel especially friendly to DeepSeek users, that is not a coincidence.
 
-Because this is `0.1.0-snapshot`, provider details are still evolving. Some lower-level runtime adapters exist in code, but they should not be treated as product-ready provider support until they are wired into configuration, validation, and the UI.
-
-## Integration Guide
-
-- [Synax Usage and Integration Guide](./docs/integration/synax-runtime-integration.md)
+Because this is `0.2.0`, provider details are still evolving. Some lower-level runtime adapters exist in code, but they should not be treated as product-ready provider support until they are wired into configuration, validation, and the UI.
 
 ## Quick Start
 
@@ -109,9 +105,9 @@ Synax is built around a few practical beliefs:
 
 ## Version Status
 
-Current version: `0.1.0-snapshot`.
+Current version: `0.2.0`.
 
-This is an early development snapshot, not a stable release. Many product details, interaction flows, runtime boundaries, and engineering hardening work are still incomplete.
+This is an early development release, not a stable release. Many product details, interaction flows, runtime boundaries, and engineering hardening work are still incomplete.
 
 Currently available or actively evolving:
 
@@ -230,7 +226,7 @@ Create an installable npm tarball from the Synax source tree:
 ```bash
 npm run build
 npm pack --pack-destination /tmp
-npm install -g /tmp/synax-0.1.2.tgz
+npm install -g /tmp/synax-0.2.0.tgz
 ```
 
 After installation, enter any code directory and run:

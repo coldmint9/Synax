@@ -7,7 +7,7 @@
 [English](./README.md) | 简体中文
 
 ![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
-![Version](https://img.shields.io/badge/version-0.1.0--snapshot-64748b?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.2.0-64748b?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black)
 ![Vite](https://img.shields.io/badge/Vite-8-646cff?style=flat-square&logo=vite&logoColor=white)
@@ -29,11 +29,7 @@
 
 作者目前主要用 DeepSeek V4 开发和自测 Synax。如果某些路径看起来对 DeepSeek 用户特别顺手，这不是错觉。
 
-由于当前仍是 `0.1.0-snapshot`，Provider 细节还在演进中。代码里有一些更底层的 runtime adapter，但在完成配置、校验和 UI 串联之前，不应把它们视为已经产品化支持的 Provider。
-
-## 对接文档
-
-- [Synax 使用与对接指南](./docs/integration/synax-runtime-integration.md)
+由于当前仍是 `0.2.0`，Provider 细节还在演进中。代码里有一些更底层的 runtime adapter，但在完成配置、校验和 UI 串联之前，不应把它们视为已经产品化支持的 Provider。
 
 ## 快速开始
 
@@ -107,9 +103,9 @@ Synax 基于几个很朴素的判断：
 
 ## 版本说明
 
-当前版本：`0.1.0-snapshot`。
+当前版本：`0.2.0`。
 
-这只是一个早期开发快照，不是稳定发布版本。很多产品细节、交互流程、运行边界和工程稳定性工作都还没有完善。
+这只是一个早期开发版本，不是稳定发布版本。很多产品细节、交互流程、运行边界和工程稳定性工作都还没有完善。
 
 当前已经具备或正在完善的能力：
 
@@ -226,7 +222,7 @@ CLI 默认读取 `${DATA_ROOT}/runtime-access-token`，也可以通过 `SYNAX_RU
 ```bash
 npm run build
 npm pack --pack-destination /tmp
-npm install -g /tmp/synax-0.1.2.tgz
+npm install -g /tmp/synax-0.2.0.tgz
 ```
 
 安装后进入任意代码目录直接运行：

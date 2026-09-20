@@ -1,259 +1,395 @@
-import { hasInlineMedia, importToolContent } from '../agent-runtime/media-tool-content.js';
-import type { RuntimeContentPart } from '../agent-runtime/content-parts.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import os from 'node:os'
-import type { McpServerConfig } from '../../lib/config/config-types.js'
-import { getGlobalConfigForRuntime } from '../../lib/config/config-store.js'
-import { getProjectSettings } from '../../lib/config/project-settings-store.js'
-import { logger } from '../../lib/logger.js'
+import {
+  hasInlineMedia,
+  importToolContent,
+} from "../agent-runtime/media-tool-content.js";
+import type { RuntimeContentPart } from "../agent-runtime/content-parts.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import os from "node:os";
+import type { McpServerConfig } from "../../lib/config/config-types.js";
+import { getGlobalConfigForRuntime } from "../../lib/config/config-store.js";
+import { getProjectSettings } from "../../lib/config/project-settings-store.js";
+import { logger } from "../../lib/logger.js";
 
 function baseEnv(): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-  ) as Record<string, string>
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  ) as Record<string, string>;
 }
 
-function expandConfigValue(value: string, cwd: string, env: Record<string, string>): string {
+function expandConfigValue(
+  value: string,
+  cwd: string,
+  env: Record<string, string>,
+): string {
   return value
     .replace(/\$\{(?:workspaceFolder|workspaceRoot)\}/g, cwd)
     .replace(/\$\{userHome\}/g, os.homedir())
-    .replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name: string) => env[name] ?? match)
-    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name: string) => env[name] ?? match)
-    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (match, name: string) => env[name] ?? match)
-    .replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (match, name: string) => env[name] ?? match)
+    .replace(
+      /\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g,
+      (match, name: string) => env[name] ?? match,
+    )
+    .replace(
+      /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
+      (match, name: string) => env[name] ?? match,
+    )
+    .replace(
+      /\$([A-Za-z_][A-Za-z0-9_]*)/g,
+      (match, name: string) => env[name] ?? match,
+    )
+    .replace(
+      /%([A-Za-z_][A-Za-z0-9_]*)%/g,
+      (match, name: string) => env[name] ?? match,
+    );
 }
 
 function transportConfig(config: McpServerConfig) {
-  const inheritedEnv = baseEnv()
-  const rawCwd = config.cwd ?? process.cwd()
-  const cwd = expandConfigValue(rawCwd, process.cwd(), inheritedEnv)
+  const inheritedEnv = baseEnv();
+  const rawCwd = config.cwd ?? process.cwd();
+  const cwd = expandConfigValue(rawCwd, process.cwd(), inheritedEnv);
   const configuredEnv = Object.fromEntries(
-    Object.entries(config.env ?? {}).map(([name, value]) => [name, expandConfigValue(value, cwd, inheritedEnv)]),
-  )
-  const env = { ...inheritedEnv, ...configuredEnv }
+    Object.entries(config.env ?? {}).map(([name, value]) => [
+      name,
+      expandConfigValue(value, cwd, inheritedEnv),
+    ]),
+  );
+  const env = { ...inheritedEnv, ...configuredEnv };
   return {
     command: expandConfigValue(config.command, cwd, env),
-    args: (config.args ?? []).map(value => expandConfigValue(value, cwd, env)),
+    args: (config.args ?? []).map((value) =>
+      expandConfigValue(value, cwd, env),
+    ),
     ...(config.env && Object.keys(config.env).length > 0 ? { env } : {}),
     cwd,
-  }
+  };
 }
 
 export interface McpRuntimeToolDef {
-  name: string
-  title?: string
-  description?: string
-  readOnlyHint?: boolean
+  name: string;
+  title?: string;
+  description?: string;
+  readOnlyHint?: boolean;
 }
 
-const START_TIMEOUT_MS = 10_000
-const CALL_TIMEOUT_MS = 60_000
+const START_TIMEOUT_MS = 10_000;
+const CALL_TIMEOUT_MS = 60_000;
 
 type ServerState =
-  | { status: 'idle' }
-  | { status: 'starting' }
-  | { status: 'ready'; client: Client; transport: StdioClientTransport; tools: McpRuntimeToolDef[] }
-  | { status: 'failed'; error: string }
+  | { status: "idle" }
+  | { status: "starting" }
+  | {
+      status: "ready";
+      client: Client;
+      transport: StdioClientTransport;
+      tools: McpRuntimeToolDef[];
+    }
+  | { status: "failed"; error: string };
 
 function sanitizeName(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 96)
+  return value.replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 96);
 }
 
-function toToolDefs(tools: Array<Record<string, unknown>>): McpRuntimeToolDef[] {
-  return (tools ?? []).map((tool) => ({
-    name: typeof tool.name === 'string' ? tool.name : '',
-    title: typeof tool.title === 'string' ? tool.title : undefined,
-    description: typeof tool.description === 'string' ? tool.description : undefined,
-    readOnlyHint: Boolean((tool.annotations as Record<string, unknown> | undefined)?.readOnlyHint),
-  })).filter((tool) => tool.name)
+function toToolDefs(
+  tools: Array<Record<string, unknown>>,
+): McpRuntimeToolDef[] {
+  return (tools ?? [])
+    .map((tool) => ({
+      name: typeof tool.name === "string" ? tool.name : "",
+      title: typeof tool.title === "string" ? tool.title : undefined,
+      description:
+        typeof tool.description === "string" ? tool.description : undefined,
+      readOnlyHint: Boolean(
+        (tool.annotations as Record<string, unknown> | undefined)?.readOnlyHint,
+      ),
+    }))
+    .filter((tool) => tool.name);
 }
 
 function toText(content: unknown): string {
-  if (!Array.isArray(content)) return typeof content === 'string' ? content : JSON.stringify(content ?? {})
-  const parts: string[] = []
+  if (!Array.isArray(content))
+    return typeof content === "string"
+      ? content
+      : JSON.stringify(content ?? {});
+  const parts: string[] = [];
   for (const item of content) {
-    if (!item || typeof item !== 'object') continue
-    const rec = item as Record<string, unknown>
-    if (rec.type === 'text' && typeof rec.text === 'string') parts.push(rec.text)
-    else if (rec.type === 'resource' && rec.resource && typeof rec.resource === 'object') {
-      const res = rec.resource as Record<string, unknown>
-      if (typeof res.text === 'string') parts.push(res.text)
-      else parts.push(JSON.stringify(res))
-    } else if (rec.type === 'image' && typeof rec.data === 'string') {
-      throw new Error('Image results require structured media handling.')
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    if (rec.type === "text" && typeof rec.text === "string")
+      parts.push(rec.text);
+    else if (
+      rec.type === "resource" &&
+      rec.resource &&
+      typeof rec.resource === "object"
+    ) {
+      const res = rec.resource as Record<string, unknown>;
+      if (typeof res.text === "string") parts.push(res.text);
+      else parts.push(JSON.stringify(res));
+    } else if (rec.type === "image" && typeof rec.data === "string") {
+      throw new Error("Image results require structured media handling.");
     } else {
-      try { parts.push(JSON.stringify(rec)) } catch { /* ignore */ }
+      try {
+        parts.push(JSON.stringify(rec));
+      } catch {
+        /* ignore */
+      }
     }
   }
-  return parts.join('\n')
+  return parts.join("\n");
 }
 
 export class McpClientManager {
-  private readonly servers = new Map<string, ServerState>()
-  private readonly inflight = new Map<string, Promise<ServerState>>()
+  private readonly servers = new Map<string, ServerState>();
+  private readonly inflight = new Map<string, Promise<ServerState>>();
 
   private configById(projectId?: string): Map<string, McpServerConfig> {
     // MCP is project-scoped. Keep the global list only for backward-compatible
     // probe/config reads; never make global servers available to Agent runs.
     if (projectId) {
-      const project = getProjectSettings(projectId, true)
-      return new Map((project.mcpServers ?? []).map((server) => [server.id, server]))
+      const project = getProjectSettings(projectId, true);
+      return new Map(
+        (project.mcpServers ?? []).map((server) => [server.id, server]),
+      );
     }
-    const config = getGlobalConfigForRuntime()
-    return new Map((config?.mcpServers ?? []).map((server) => [server.id, server]))
+    const config = getGlobalConfigForRuntime();
+    return new Map(
+      (config?.mcpServers ?? []).map((server) => [server.id, server]),
+    );
   }
 
   private async startServer(config: McpServerConfig): Promise<ServerState> {
-    const key = config.id
-    const existing = this.servers.get(key)
-    if (existing?.status === 'ready') return existing
-    if (existing?.status === 'starting') {
-      const pending = this.inflight.get(key)
-      if (pending) return pending
+    const key = config.id;
+    const existing = this.servers.get(key);
+    if (existing?.status === "ready") return existing;
+    if (existing?.status === "starting") {
+      const pending = this.inflight.get(key);
+      if (pending) return pending;
     }
 
     const promise = (async (): Promise<ServerState> => {
       const transport = new StdioClientTransport({
         ...transportConfig(config),
-        stderr: 'pipe',
-      })
+        stderr: "pipe",
+      });
       const client = new Client(
-        { name: 'synax-host', version: '0.1.0' },
+        { name: "synax-host", version: "0.2.0" },
         { capabilities: {} },
-      )
+      );
       try {
         const timer = setTimeout(() => {
-          void transport.close().catch(() => undefined)
-        }, START_TIMEOUT_MS)
-        await client.connect(transport)
-        clearTimeout(timer)
-        const listed = await client.listTools()
-        const tools = toToolDefs((listed as { tools?: Array<Record<string, unknown>> }).tools ?? [])
-        const state: ServerState = { status: 'ready', client, transport, tools }
-        this.servers.set(key, state)
-        logger.info({ serverId: key, toolCount: tools.length }, '[mcp] server ready')
-        return state
+          void transport.close().catch(() => undefined);
+        }, START_TIMEOUT_MS);
+        await client.connect(transport);
+        clearTimeout(timer);
+        const listed = await client.listTools();
+        const tools = toToolDefs(
+          (listed as { tools?: Array<Record<string, unknown>> }).tools ?? [],
+        );
+        const state: ServerState = {
+          status: "ready",
+          client,
+          transport,
+          tools,
+        };
+        this.servers.set(key, state);
+        logger.info(
+          { serverId: key, toolCount: tools.length },
+          "[mcp] server ready",
+        );
+        return state;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        await transport.close().catch(() => undefined)
-        const state: ServerState = { status: 'failed', error: message }
-        this.servers.set(key, state)
-        logger.warn({ serverId: key, err: message }, '[mcp] server start failed')
-        return state
+        const message = err instanceof Error ? err.message : String(err);
+        await transport.close().catch(() => undefined);
+        const state: ServerState = { status: "failed", error: message };
+        this.servers.set(key, state);
+        logger.warn(
+          { serverId: key, err: message },
+          "[mcp] server start failed",
+        );
+        return state;
       } finally {
-        this.inflight.delete(key)
+        this.inflight.delete(key);
       }
-    })()
+    })();
 
-    this.inflight.set(key, promise)
-    return promise
+    this.inflight.set(key, promise);
+    return promise;
   }
 
   /** Warm up (start + list tools) for the given server ids. Missing/unconfigured servers are skipped. */
   async warmup(serverIds: string[], projectId?: string): Promise<void> {
-    const byId = this.configById(projectId)
+    const byId = this.configById(projectId);
     for (const id of serverIds) {
-      const config = byId.get(id)
-      if (!config) continue
+      const config = byId.get(id);
+      if (!config) continue;
       try {
-        await this.startServer(config)
-      } catch { /* warm-up best effort */ }
+        await this.startServer(config);
+      } catch {
+        /* warm-up best effort */
+      }
     }
   }
 
   getCachedTools(serverId: string): McpRuntimeToolDef[] {
-    const state = this.servers.get(serverId)
-    return state?.status === 'ready' ? state.tools : []
+    const state = this.servers.get(serverId);
+    return state?.status === "ready" ? state.tools : [];
   }
 
-  async callTool(serverId: string, toolName: string, args: unknown, projectId?: string): Promise<{ ok: boolean; text: string; error?: string; contentParts?: RuntimeContentPart[] }> {
-    const byId = this.configById(projectId)
-    const config = byId.get(serverId)
-    if (!config) return { ok: false, text: '', error: `MCP server ${serverId} 未配置` }
+  async callTool(
+    serverId: string,
+    toolName: string,
+    args: unknown,
+    projectId?: string,
+  ): Promise<{
+    ok: boolean;
+    text: string;
+    error?: string;
+    contentParts?: RuntimeContentPart[];
+  }> {
+    const byId = this.configById(projectId);
+    const config = byId.get(serverId);
+    if (!config)
+      return { ok: false, text: "", error: `MCP server ${serverId} 未配置` };
 
-    const state = await this.startServer(config)
-    if (state.status !== 'ready') {
-      const reason = state.status === 'failed' ? state.error : undefined
-      return { ok: false, text: '', error: reason ?? `MCP server ${serverId} 启动失败` }
+    const state = await this.startServer(config);
+    if (state.status !== "ready") {
+      const reason = state.status === "failed" ? state.error : undefined;
+      return {
+        ok: false,
+        text: "",
+        error: reason ?? `MCP server ${serverId} 启动失败`,
+      };
     }
 
-    const callOnce = async (client: Client): Promise<{ ok: boolean; text: string; error?: string; contentParts?: RuntimeContentPart[] }> => {
+    const callOnce = async (
+      client: Client,
+    ): Promise<{
+      ok: boolean;
+      text: string;
+      error?: string;
+      contentParts?: RuntimeContentPart[];
+    }> => {
       const timeout = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`MCP tool ${toolName} 调用超时`)), CALL_TIMEOUT_MS)
-      })
-      const result = await Promise.race([
-        client.callTool({ name: toolName, arguments: (args ?? {}) as Record<string, unknown> }),
+        setTimeout(
+          () => reject(new Error(`MCP tool ${toolName} 调用超时`)),
+          CALL_TIMEOUT_MS,
+        );
+      });
+      const result = (await Promise.race([
+        client.callTool({
+          name: toolName,
+          arguments: (args ?? {}) as Record<string, unknown>,
+        }),
         timeout,
-      ]) as { content?: unknown; isError?: boolean }
-      let contentParts: RuntimeContentPart[] = []
+      ])) as { content?: unknown; isError?: boolean };
+      let contentParts: RuntimeContentPart[] = [];
       try {
-        if (!projectId && hasInlineMedia(result.content)) throw new Error('Media results require a project context.')
-        contentParts = projectId ? await importToolContent(projectId, result.content) : []
+        if (!projectId && hasInlineMedia(result.content))
+          throw new Error("Media results require a project context.");
+        contentParts = projectId
+          ? await importToolContent(projectId, result.content)
+          : [];
       } catch (error) {
         // The tool already executed. A media import failure must not repeat its side effects.
-        return { ok: false, text: '', error: `Tool completed but media could not be retained: ${error instanceof Error ? error.message : String(error)} Do not automatically repeat the tool call.` }
+        return {
+          ok: false,
+          text: "",
+          error: `Tool completed but media could not be retained: ${error instanceof Error ? error.message : String(error)} Do not automatically repeat the tool call.`,
+        };
       }
-      const text = contentParts.length ? contentParts.filter(p=>p.type==='text').map(p=>p.text).join('\n') : toText(result.content)
+      const text = contentParts.length
+        ? contentParts
+            .filter((p) => p.type === "text")
+            .map((p) => p.text)
+            .join("\n")
+        : toText(result.content);
       if (result.isError) {
-        return { ok: false, text, contentParts, error: text || `MCP tool ${toolName} 执行失败` }
+        return {
+          ok: false,
+          text,
+          contentParts,
+          error: text || `MCP tool ${toolName} 执行失败`,
+        };
       }
-      return { ok: true, text, ...(contentParts.some(p=>p.type!=='text') ? {contentParts} : {}) }
-    }
+      return {
+        ok: true,
+        text,
+        ...(contentParts.some((p) => p.type !== "text")
+          ? { contentParts }
+          : {}),
+      };
+    };
     try {
-      return await callOnce(state.client)
+      return await callOnce(state.client);
     } catch (err) {
       // Server may have died between runs — drop the cached state and retry once.
-      const message = err instanceof Error ? err.message : String(err)
-      logger.warn({ serverId, toolName, err: message }, '[mcp] tool call failed; attempting restart')
-      this.servers.delete(serverId)
-      const restarted = await this.startServer(config)
-      if (restarted.status === 'ready') {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        { serverId, toolName, err: message },
+        "[mcp] tool call failed; attempting restart",
+      );
+      this.servers.delete(serverId);
+      const restarted = await this.startServer(config);
+      if (restarted.status === "ready") {
         try {
-          return await callOnce(restarted.client)
+          return await callOnce(restarted.client);
         } catch (retryErr) {
-          const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr)
-          logger.warn({ serverId, toolName, err: retryMessage }, '[mcp] tool call retry failed')
-          return { ok: false, text: '', error: retryMessage }
+          const retryMessage =
+            retryErr instanceof Error ? retryErr.message : String(retryErr);
+          logger.warn(
+            { serverId, toolName, err: retryMessage },
+            "[mcp] tool call retry failed",
+          );
+          return { ok: false, text: "", error: retryMessage };
         }
       }
-      return { ok: false, text: '', error: message }
+      return { ok: false, text: "", error: message };
     }
   }
 
   /** Spawn an ephemeral server, list its tools, then shut it down. Used by "test connection". */
-  async probe(config: McpServerConfig): Promise<{ ok: boolean; tools: McpRuntimeToolDef[]; error?: string }> {
+  async probe(
+    config: McpServerConfig,
+  ): Promise<{ ok: boolean; tools: McpRuntimeToolDef[]; error?: string }> {
     const transport = new StdioClientTransport({
       ...transportConfig(config),
-    })
-    const client = new Client({ name: 'synax-host-probe', version: '0.1.0' }, { capabilities: {} })
+    });
+    const client = new Client(
+      { name: "synax-host-probe", version: "0.2.0" },
+      { capabilities: {} },
+    );
     try {
-      const timer = setTimeout(() => { void transport.close().catch(() => undefined) }, START_TIMEOUT_MS)
-      await client.connect(transport)
-      clearTimeout(timer)
-      const listed = await client.listTools()
-      const tools = toToolDefs((listed as { tools?: Array<Record<string, unknown>> }).tools ?? [])
-      await client.close().catch(() => undefined)
-      await transport.close().catch(() => undefined)
-      return { ok: true, tools }
+      const timer = setTimeout(() => {
+        void transport.close().catch(() => undefined);
+      }, START_TIMEOUT_MS);
+      await client.connect(transport);
+      clearTimeout(timer);
+      const listed = await client.listTools();
+      const tools = toToolDefs(
+        (listed as { tools?: Array<Record<string, unknown>> }).tools ?? [],
+      );
+      await client.close().catch(() => undefined);
+      await transport.close().catch(() => undefined);
+      return { ok: true, tools };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      await client.close().catch(() => undefined)
-      await transport.close().catch(() => undefined)
-      return { ok: false, tools: [], error: message }
+      const message = err instanceof Error ? err.message : String(err);
+      await client.close().catch(() => undefined);
+      await transport.close().catch(() => undefined);
+      return { ok: false, tools: [], error: message };
     }
   }
 
   closeAll(): void {
     for (const [id, state] of this.servers.entries()) {
-      if (state.status === 'ready') {
-        void state.client.close().catch(() => undefined)
-        void state.transport.close().catch(() => undefined)
+      if (state.status === "ready") {
+        void state.client.close().catch(() => undefined);
+        void state.transport.close().catch(() => undefined);
       }
-      this.servers.delete(id)
+      this.servers.delete(id);
     }
   }
 }
 
-export const mcpClientManager = new McpClientManager()
-export { sanitizeName }
+export const mcpClientManager = new McpClientManager();
+export { sanitizeName };
