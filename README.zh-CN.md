@@ -164,6 +164,8 @@ npm run make:desktop
 
 桌面版本使用 `v*` 标签，纯界面版本使用 `ui-v*` 标签。构建与发布步骤见[桌面工作流](./.github/workflows/build-desktop.yml)和[界面工作流](./.github/workflows/build-ui-release.yml)。界面更新必须对应已发布的桌面版本，不能包含后端或 Electron 代码变更。更新下载使用 HTTPS 和哈希校验，没有独立的内容签名，可信来源取决于仓库的发布权限。
 
+每次向 `main` 推送都会构建上述四个平台。全部构建和检查成功后，工作流更新固定 `preview` 标签下的[最新预览版](https://github.com/coldmint9/Synax/releases/tag/preview)，发布说明包含应用基础版本、提交和 Actions 构建记录。预览版供手动下载安装，正式版自动更新不会选择预发布版本。旧构建不会覆盖 main 更新后的预览版；替换下载文件期间，预览发布暂时保持为草稿。发布失败时，可以在 `main` 上手动运行 **Build Desktop** 重试。
+
 ## 开发
 
 后端使用 Hono、libSQL 和 Drizzle，前端使用 React、Vite、HeroUI 和 Zustand。桌面端使用 Electron，源码解析使用 tree-sitter。

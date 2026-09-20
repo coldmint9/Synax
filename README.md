@@ -164,6 +164,8 @@ Packaged macOS and Windows apps check GitHub Releases for updates. Use **Help â†
 
 Desktop releases use `v*` tags; UI-only releases use `ui-v*` tags. The [desktop workflow](./.github/workflows/build-desktop.yml) and [UI workflow](./.github/workflows/build-ui-release.yml) contain the build and release steps. UI releases must match a published desktop version and cannot include backend or Electron changes. Update downloads use HTTPS and hash checks; they rely on the repository's release publishing access rather than an independent content signature.
 
+Every push to `main` also builds all four desktop targets. Once all builds and checks succeed, the workflow updates [Latest Preview](https://github.com/coldmint9/Synax/releases/tag/preview), a rolling prerelease tagged `preview`. Its notes identify the base app version, commit, and Actions run. Download and install previews manually; stable automatic updates exclude prereleases. Older builds cannot overwrite a newer main commit's preview, and the release stays in draft while its assets are being replaced. Running **Build Desktop** manually on `main` can retry a failed preview publication.
+
 ## Development
 
 The backend uses Hono, libSQL, and Drizzle. The frontend uses React, Vite, HeroUI, and Zustand. Electron hosts the desktop app; tree-sitter parses source files.
