@@ -27,6 +27,9 @@ const electron = vi.hoisted(() => ({
 const spawn = vi.hoisted(() => vi.fn());
 vi.mock("electron", () => electron);
 vi.mock("node:child_process", () => ({ spawn }));
+vi.mock("../scripts/build-embedded-updater.js", () => ({
+  buildEmbeddedUpdater: vi.fn(),
+}));
 
 import { buildAppMenu, setUiUpdateAction, updateMenuState } from "./menu.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";

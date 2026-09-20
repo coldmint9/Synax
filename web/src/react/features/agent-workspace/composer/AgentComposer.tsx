@@ -223,7 +223,7 @@ export function AgentComposer({
     const levels =
       allowedReasoningEfforts && allowedReasoningEfforts.length > 0
         ? allowedReasoningEfforts
-        : (["low", "medium", "high", "xhigh", "max"] as ReasoningEffort[]);
+        : (["none", "low", "medium", "high", "xhigh", "max"] as ReasoningEffort[]);
     if (levels.includes(reasoningEffort)) return;
     const fallback: ReasoningEffort = levels.includes("high")
       ? "high"

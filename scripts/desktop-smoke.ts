@@ -132,19 +132,22 @@ try {
   await page.waitForSelector(".work-page");
   await page.reload();
   await page.waitForSelector(".work-page");
-  for (const [label, route] of [
-    ["Wiki", /\/wiki$/],
-    ["Work", /\/sessions(?:[/?]|$)/],
-  ] as const) {
-    await desktop.evaluate(({ Menu }, label) => {
-      const item = Menu.getApplicationMenu()
-        ?.items.find((item) => item.label === "视图")
-        ?.submenu?.items.find((item) => item.label === label);
-      if (!item) throw new Error(`Missing ${label} menu item`);
-      item.click();
-    }, label);
-    await page.waitForURL(route);
-  }
+  const menus = await desktop.evaluate(({ Menu }) => {
+    const menu = Menu.getApplicationMenu();
+    return {
+      views:
+        menu?.items
+          .find((item) => item.label === "视图")
+          ?.submenu?.items.map((item) => item.label) ?? [],
+      updater: menu?.items
+        .find((item) => item.label === "帮助")
+        ?.submenu?.items.find((item) => item.id === "ui:check-updates")?.label,
+    };
+  });
+  assert(!menus.views.includes("Wiki"));
+  assert(!menus.views.includes("Work"));
+  if (process.platform === "darwin" || process.platform === "win32")
+    assert.equal(menus.updater, "软件更新…");
   await page.waitForSelector(".work-page");
   const chromeHeight = await page
     .locator(".workbench-shell")

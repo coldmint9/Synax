@@ -58,6 +58,13 @@ export const configApi = {
     });
   },
 
+  async startWebSearchOAuth(): Promise<{ authorizationUrl: string }> {
+    return request<{ authorizationUrl: string }>(
+      `${BASE}/web-search/oauth/start`,
+      { method: "POST" },
+    );
+  },
+
   async listProviders(): Promise<ProviderListResponse> {
     return request<ProviderListResponse>(`${BASE}/global/providers`);
   },

@@ -130,6 +130,11 @@ function createGlobalConfig(overrides?: Partial<GlobalConfig>): GlobalConfig {
       agentTimeoutMs: 300_000,
     },
     mcpServers: [],
+    webSearch: {
+      routing: "auto",
+      remote: { externalWebAccess: true, searchContextSize: "medium" },
+      local: { engine: "duckduckgo", auth: { type: "none" } },
+    },
     features: {
       allowProjectConnectionOverride: true,
     },

@@ -187,6 +187,17 @@ export function buildLoopModelMessages(
           (m) => m.runId === run!.id && injected.has(m.id),
         ),
       ].flatMap((m) => m.contentParts?.filter((p) => p.type !== "text") ?? []);
+      retained.push(
+        ...steps.flatMap((step) =>
+          history
+            .listRunParts(step.id)
+            .flatMap((part) =>
+              Array.isArray(part.metadata?.contentParts)
+                ? part.metadata.contentParts
+                : [],
+            ),
+        ),
+      );
       if (retained.length)
         messages.push(
           systemMessage(
@@ -275,6 +286,22 @@ function buildRunMessages(
     });
   for (const step of steps) {
     const reminder = readRuntimeReminder(step.metadata);
+    if (excludedStepIds?.has(step.id)) {
+      const retained = history
+        .listRunParts(step.id)
+        .flatMap((part) =>
+          Array.isArray(part.metadata?.contentParts)
+            ? part.metadata.contentParts
+            : [],
+        );
+      if (retained.length)
+        messages.push(
+          systemMessage(
+            `Earlier generated media retained; use media.read to inspect: ${JSON.stringify(retained)}`,
+            systemMessageContents,
+          ),
+        );
+    }
     // Legacy steps keep their original timestamp-based queue projection.
     if (excludedStepIds?.has(step.id) && !reminder) continue;
     // A snapshot records consumption, not a timestamp guess. Equal timestamps are common.
@@ -372,12 +399,16 @@ function buildRunMessages(
       }
     }
 
-    if (assistantContent.length > 0) {
-      messages.push({
-        role: "assistant",
-        content: assistantContent,
-      });
-    }
+    // Preserve the native media and opaque provider signatures for replay.
+    const generated = stepParts.flatMap((part) =>
+      Array.isArray(part.metadata?.contentParts)
+        ? part.metadata.contentParts
+        : [],
+    );
+    if (generated.length)
+      assistantContent.push(...modelContentParts(generated));
+    if (assistantContent.length > 0)
+      messages.push({ role: "assistant", content: assistantContent });
 
     const toolResults = orderedStepToolCalls(stepParts, toolCallsById)
       .filter((record) => {

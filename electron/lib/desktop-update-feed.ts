@@ -21,6 +21,7 @@ export interface DesktopManifest {
 export interface DesktopRelease {
   manifest: DesktopManifest;
   url: string;
+  notes?: string;
 }
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -116,7 +117,13 @@ export async function findDesktopRelease(
     const artifact = release.assets.find(
       (item) => item.name === manifest.artifact.name,
     );
-    if (artifact) return { manifest, url: artifact.browser_download_url };
+    if (artifact)
+      return {
+        manifest,
+        url: artifact.browser_download_url,
+        notes:
+          typeof release.body === "string" ? release.body.slice(0, 20_000) : "",
+      };
   }
   return null;
 }

@@ -8,7 +8,7 @@ import { useLocale } from "../../../../hooks/useLocale";
 export type ComposerReasoningEffort = ReasoningEffort;
 
 const FALLBACK: ReasoningEffort = "high";
-const ALL_LEVELS: ReasoningEffort[] = ["low", "medium", "high", "xhigh", "max"];
+const ALL_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 
 /* Light Morandi green accent — sourced from the global CSS vars in index.css. */
 const ACCENT_TOP = "var(--radio-accent-top, #b9cdbf)";

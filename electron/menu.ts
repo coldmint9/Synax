@@ -197,7 +197,7 @@ export function buildAppMenu(projects?: Project[]): void {
         ...(app.isPackaged && (isMac || process.platform === "win32")
           ? [
               {
-                label: "检查更新…",
+                label: "软件更新…",
                 id: "ui:check-updates",
                 enabled: Boolean(checkUiUpdates),
                 click: () => checkUiUpdates?.(),

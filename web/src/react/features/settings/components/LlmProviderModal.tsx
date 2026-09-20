@@ -219,17 +219,18 @@ export function LlmProviderModal({
     modelId: string,
     modality: InputModality,
     checked: boolean,
+    direction: "inputModalities" | "outputModalities" = "inputModalities",
   ) {
     setDraft((current) => {
       const metadata = current.modelMeta?.[modelId] ?? {};
-      const modalities = metadata.inputModalities ?? [];
+      const modalities = metadata[direction] ?? [];
       return {
         ...current,
         modelMeta: {
           ...current.modelMeta,
           [modelId]: {
             ...metadata,
-            inputModalities: checked
+            [direction]: checked
               ? [...new Set([...modalities, modality])]
               : modalities.filter((value) => value !== modality),
           },
@@ -247,6 +248,7 @@ export function LlmProviderModal({
         [modelId]: {
           ...current.modelMeta?.[modelId],
           inputModalities: undefined,
+          outputModalities: undefined,
           contextLimit: undefined,
         },
       },
@@ -529,7 +531,10 @@ export function LlmProviderModal({
                     const contextLimit =
                       draft.modelMeta?.[modelId]?.contextLimit;
                     const hasOverride =
-                      modalities !== undefined || contextLimit !== undefined;
+                      modalities !== undefined ||
+                      contextLimit !== undefined ||
+                      draft.modelMeta?.[modelId]?.outputModalities !==
+                        undefined;
                     const isDefault = modelId === draft.model.trim();
                     return (
                       <fieldset
@@ -610,6 +615,38 @@ export function LlmProviderModal({
                           >
                             {zh ? "恢复目录声明" : "Use catalog"}
                           </button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/30 pt-2">
+                          <span className="text-[10px] text-muted-foreground">
+                            {zh ? "输出类型" : "Output types"}
+                          </span>
+                          {INPUT_MODALITY_OPTIONS.map((option) => (
+                            <label
+                              key={option.id}
+                              className="inline-flex items-center gap-1.5 text-[10px]"
+                            >
+                              <input
+                                type="checkbox"
+                                aria-label={`${modelId} ${zh ? "输出" : "Output"} ${zh ? option.zh : option.en}`}
+                                className="size-3.5 accent-primary"
+                                checked={
+                                  draft.modelMeta?.[
+                                    modelId
+                                  ]?.outputModalities?.includes(option.id) ??
+                                  false
+                                }
+                                onChange={(event) =>
+                                  toggleModelModality(
+                                    modelId,
+                                    option.id,
+                                    event.target.checked,
+                                    "outputModalities",
+                                  )
+                                }
+                              />
+                              {zh ? option.zh : option.en}
+                            </label>
+                          ))}
                         </div>
                         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/30 pt-2">
                           <label className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[10px] text-foreground/85">

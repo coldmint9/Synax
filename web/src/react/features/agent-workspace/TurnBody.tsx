@@ -1,4 +1,5 @@
 import { Zap } from "lucide-react";
+import { MediaParts } from "../media/MediaParts";
 import type {
   InterleavedTurn,
   TurnContentBlock,
@@ -9,6 +10,14 @@ import { StreamingTextBlock } from "./StreamingTextBlock";
 import { SubSessionCard } from "./SubSessionCard";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import { buildTurnRenderSegments } from "./toolCallUtils";
+
+function sourceLabel(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
 
 function renderTurnBlocks(
   blocks: TurnContentBlock[],
@@ -30,6 +39,8 @@ function renderTurnBlocks(
       (toolBlocks.length === 0 || segment.type !== "thinking"),
   );
   const render = (segment: (typeof segments)[number], i: number) => {
+    if (segment.type === "media")
+      return <MediaParts key={i} parts={segment.parts} />;
     if (segment.type === "thinking")
       return (
         <ThinkingBlock
@@ -49,6 +60,23 @@ function renderTurnBlocks(
           isStreaming={isStreaming && segment === segments[segments.length - 1]}
           markdown={segment.markdown}
         />
+      );
+    if (segment.type === "sources")
+      return (
+        <div key={i} className="mt-2 flex flex-wrap gap-1.5">
+          {segment.sources.map((source, index) => (
+            <a
+              key={source.id}
+              href={source.url}
+              target="_blank"
+              rel="noreferrer"
+              className="max-w-full truncate rounded-md border border-default-200 px-2 py-1 text-[11px] text-primary hover:bg-default-100"
+              title={source.title || source.url}
+            >
+              {index + 1}. {source.title || sourceLabel(source.url)}
+            </a>
+          ))}
+        </div>
       );
     if (segment.type === "sub_session")
       return (

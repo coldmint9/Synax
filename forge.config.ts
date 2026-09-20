@@ -1,6 +1,7 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import path from "node:path";
 import { existsSync } from "node:fs";
+import { buildEmbeddedUpdater } from "./scripts/build-embedded-updater.js";
 
 const icon = path.resolve(
   __dirname,
@@ -15,6 +16,10 @@ const config: ForgeConfig = {
           `Native dependencies must be built on ${platform}/${arch}; use the matching desktop CI runner, not ${process.platform}/${process.arch}.`,
         );
       }
+      await buildEmbeddedUpdater(
+        platform as NodeJS.Platform,
+        arch as typeof process.arch,
+      );
     },
   },
   rebuildConfig: {
@@ -30,6 +35,9 @@ const config: ForgeConfig = {
       "./web/dist",
       "./api/db/migrations",
       "./electron/resources/icon.png",
+      ...(["darwin", "win32"].includes(process.platform)
+        ? ["./out/updater"]
+        : []),
     ],
     ignore: (file: string) => {
       if (!file) return false;

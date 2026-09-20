@@ -20,6 +20,7 @@ export interface ReleaseAsset {
   browser_download_url: string;
 }
 export interface Release {
+  body?: string;
   tag_name: string;
   draft: boolean;
   prerelease: boolean;

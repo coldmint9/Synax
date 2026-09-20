@@ -1,9 +1,13 @@
-import type { GlobalConfig, ProviderDef } from './config-types.js'
+import type {
+  GlobalConfig,
+  ProviderDef,
+  WebSearchConfig,
+} from "./config-types.js";
 
-const ACP_BASE_URL = 'http://127.0.0.1:3210'
+const ACP_BASE_URL = "http://127.0.0.1:3210";
 
 function createBuiltinApiProvider(
-  id: 'openai' | 'anthropic',
+  id: "openai" | "anthropic",
   label: string,
   description: string,
   defaultModel: string,
@@ -12,112 +16,143 @@ function createBuiltinApiProvider(
     id,
     label,
     description,
-    status: 'live',
-    kind: 'api',
+    status: "live",
+    kind: "api",
     caps: { canFollowUp: true, canCancel: true },
     models: [{ id: defaultModel, label: defaultModel, isDefault: true }],
-  }
+  };
 }
 
 export const BUILTIN_PROVIDERS: ProviderDef[] = [
   {
-    id: 'opencode-acp',
-    label: 'OpenCode ACP',
-    description: 'OpenCode Agent Client Protocol for local opencode runtime',
-    status: 'live',
-    kind: 'acp',
+    id: "opencode-acp",
+    label: "OpenCode ACP",
+    description: "OpenCode Agent Client Protocol for local opencode runtime",
+    status: "live",
+    kind: "acp",
     caps: { canFollowUp: true, canCancel: true },
-    models: [{ id: 'opencode-default', label: 'OpenCode Default', isDefault: true }],
+    models: [
+      { id: "opencode-default", label: "OpenCode Default", isDefault: true },
+    ],
   },
   {
-    id: 'cursor-acp',
-    label: 'Cursor ACP',
-    description: 'Cursor Agent Client Protocol for local Cursor runtime',
-    status: 'live',
-    kind: 'acp',
+    id: "cursor-acp",
+    label: "Cursor ACP",
+    description: "Cursor Agent Client Protocol for local Cursor runtime",
+    status: "live",
+    kind: "acp",
     caps: { canFollowUp: true, canCancel: true },
-    models: [{ id: 'cursor-default', label: 'Cursor Default', isDefault: true }],
+    models: [
+      { id: "cursor-default", label: "Cursor Default", isDefault: true },
+    ],
   },
   {
-    id: 'codex-acp',
-    label: 'Codex ACP',
-    description: 'Codex Agent Client Protocol via the codex-acp adapter for local OpenAI Codex runtime',
-    status: 'live',
-    kind: 'acp',
+    id: "codex-acp",
+    label: "Codex ACP",
+    description:
+      "Codex Agent Client Protocol via the codex-acp adapter for local OpenAI Codex runtime",
+    status: "live",
+    kind: "acp",
     caps: { canFollowUp: true, canCancel: true },
-    models: [{ id: 'codex-default', label: 'Codex Default', isDefault: true }],
+    models: [{ id: "codex-default", label: "Codex Default", isDefault: true }],
   },
   {
-    id: 'pi-acp',
-    label: 'Pi ACP',
-    description: 'Pi Agent Client Protocol via the pi-acp adapter for local pi coding-agent runtime',
-    status: 'live',
-    kind: 'acp',
+    id: "pi-acp",
+    label: "Pi ACP",
+    description:
+      "Pi Agent Client Protocol via the pi-acp adapter for local pi coding-agent runtime",
+    status: "live",
+    kind: "acp",
     caps: { canFollowUp: true, canCancel: true },
-    models: [{ id: 'pi-default', label: 'Pi Default', isDefault: true }],
+    models: [{ id: "pi-default", label: "Pi Default", isDefault: true }],
   },
-  createBuiltinApiProvider('openai', 'OpenAI', 'OpenAI-compatible API', 'gpt-4o-mini'),
-  createBuiltinApiProvider('anthropic', 'Anthropic', 'Anthropic Messages API', 'claude-3-5-sonnet-latest'),
-]
+  createBuiltinApiProvider(
+    "openai",
+    "OpenAI",
+    "OpenAI-compatible API",
+    "gpt-4o-mini",
+  ),
+  createBuiltinApiProvider(
+    "anthropic",
+    "Anthropic",
+    "Anthropic Messages API",
+    "claude-3-5-sonnet-latest",
+  ),
+];
 
-export function createDefaultGlobalConfig(updatedBy = 'system'): GlobalConfig {
-  const now = new Date().toISOString()
+export function createDefaultWebSearchConfig(): WebSearchConfig {
+  return {
+    routing: "auto",
+    remote: {
+      externalWebAccess: true,
+      searchContextSize: "medium",
+    },
+    local: {
+      engine: "duckduckgo",
+      auth: { type: "none" },
+    },
+  };
+}
+
+export function createDefaultGlobalConfig(updatedBy = "system"): GlobalConfig {
+  const now = new Date().toISOString();
   return {
     version: 1,
     providers: BUILTIN_PROVIDERS,
-    defaultProviderId: 'opencode-acp',
-    defaultApiProviderId: 'openai',
-    enabledAcpProviderIds: ['opencode-acp'],
+    defaultProviderId: "opencode-acp",
+    defaultApiProviderId: "openai",
+    enabledAcpProviderIds: ["opencode-acp"],
     mcpServers: [],
+    webSearch: createDefaultWebSearchConfig(),
     providerConnections: {
-      'opencode-acp': {
-        providerId: 'opencode-acp',
+      "opencode-acp": {
+        providerId: "opencode-acp",
         baseUrl: ACP_BASE_URL,
         extra: {
-          kind: 'acp',
-          connectionMode: 'local',
+          kind: "acp",
+          connectionMode: "local",
         },
       },
-      'cursor-acp': {
-        providerId: 'cursor-acp',
+      "cursor-acp": {
+        providerId: "cursor-acp",
         baseUrl: ACP_BASE_URL,
         extra: {
-          kind: 'acp',
-          connectionMode: 'local',
+          kind: "acp",
+          connectionMode: "local",
         },
       },
-      'codex-acp': {
-        providerId: 'codex-acp',
+      "codex-acp": {
+        providerId: "codex-acp",
         baseUrl: ACP_BASE_URL,
         extra: {
-          kind: 'acp',
-          connectionMode: 'local',
+          kind: "acp",
+          connectionMode: "local",
         },
       },
-      'pi-acp': {
-        providerId: 'pi-acp',
+      "pi-acp": {
+        providerId: "pi-acp",
         baseUrl: ACP_BASE_URL,
         extra: {
-          kind: 'acp',
-          connectionMode: 'local',
+          kind: "acp",
+          connectionMode: "local",
         },
       },
       openai: {
-        providerId: 'openai',
-        baseUrl: 'https://api.openai.com/v1',
+        providerId: "openai",
+        baseUrl: "https://api.openai.com/v1",
         extra: {
-          kind: 'api',
-          apiFormat: 'openai',
-          model: 'gpt-4o-mini',
+          kind: "api",
+          apiFormat: "openai",
+          model: "gpt-4o-mini",
         },
       },
       anthropic: {
-        providerId: 'anthropic',
-        baseUrl: 'https://api.anthropic.com/v1',
+        providerId: "anthropic",
+        baseUrl: "https://api.anthropic.com/v1",
         extra: {
-          kind: 'api',
-          apiFormat: 'anthropic',
-          model: 'claude-3-5-sonnet-latest',
+          kind: "api",
+          apiFormat: "anthropic",
+          model: "claude-3-5-sonnet-latest",
         },
       },
     },
@@ -130,18 +165,21 @@ export function createDefaultGlobalConfig(updatedBy = 'system'): GlobalConfig {
     },
     updatedAt: now,
     updatedBy,
-  }
+  };
 }
 
-export function createDefaultUserGlobalConfig(updatedBy = 'system'): GlobalConfig {
-  const now = new Date().toISOString()
+export function createDefaultUserGlobalConfig(
+  updatedBy = "system",
+): GlobalConfig {
+  const now = new Date().toISOString();
   return {
     version: 1,
     providers: [],
-    defaultProviderId: 'opencode-acp',
-    defaultApiProviderId: 'openai',
-    enabledAcpProviderIds: ['opencode-acp'],
+    defaultProviderId: "opencode-acp",
+    defaultApiProviderId: "openai",
+    enabledAcpProviderIds: ["opencode-acp"],
     mcpServers: [],
+    webSearch: createDefaultWebSearchConfig(),
     providerConnections: {},
     limits: {
       maxAgentsPerProject: 10,
@@ -152,19 +190,31 @@ export function createDefaultUserGlobalConfig(updatedBy = 'system'): GlobalConfi
     },
     updatedAt: now,
     updatedBy,
-  }
+  };
 }
 
 export function convertAcpProviders(
-  providers: Array<{ id: string; label: string; status: string; caps: { canFollowUp: boolean; canCancel: boolean }; description?: string }>,
+  providers: Array<{
+    id: string;
+    label: string;
+    status: string;
+    caps: { canFollowUp: boolean; canCancel: boolean };
+    description?: string;
+  }>,
 ): ProviderDef[] {
   return providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
     description: provider.description,
-    status: provider.status === 'experimental' ? 'experimental' : 'live',
-    kind: 'acp',
+    status: provider.status === "experimental" ? "experimental" : "live",
+    kind: "acp",
     caps: provider.caps,
-    models: [{ id: `${provider.id}-default`, label: `${provider.label} Default`, isDefault: true }],
-  }))
+    models: [
+      {
+        id: `${provider.id}-default`,
+        label: `${provider.label} Default`,
+        isDefault: true,
+      },
+    ],
+  }));
 }

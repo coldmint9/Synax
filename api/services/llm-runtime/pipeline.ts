@@ -206,6 +206,10 @@ export async function executePipeline(
   const callbacks = buildHookCallbacks(request);
   const thinkingStream = resolveThinkingOptions(request, selection);
   const providerOptions = mergeProviderOptions(
+    selection.config.options?.providerOptions as
+      | import("@ai-sdk/provider-utils").ProviderOptions
+      | undefined,
+    request.providerOptions,
     thinkingStream.providerOptions,
     buildProtocolProviderOptions(selection, request),
     ...(selection.apiFormat === "openai-responses"
@@ -215,6 +219,7 @@ export async function executePipeline(
 
   const temperature =
     selection.apiFormat === "openai-responses" &&
+    providerOptions?.openai?.reasoningEffort !== "none" &&
     (providerOptions?.openai?.forceReasoning ?? selection.modelDef.reasoning)
       ? undefined
       : thinkingStream.temperature;

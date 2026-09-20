@@ -34,6 +34,7 @@ let mainWindow: BrowserWindow | null = null;
 let desktopAppearance: DesktopAppearanceStore | null = null;
 let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
+let desktopUpdates: DesktopUpdates | null = null;
 let uiReadyTimer: NodeJS.Timeout | null = null;
 
 // Register custom protocol scheme before app is ready
@@ -168,15 +169,17 @@ function registerIPC(): void {
   ipcMain.handle("app:version", () => app.getVersion());
   ipcMain.on("app:ui-ready", (event) => {
     if (
-      !uiUpdates ||
       event.sender !== mainWindow?.webContents ||
       !event.senderFrame?.url.startsWith("app://./")
     )
       return;
     if (uiReadyTimer) clearTimeout(uiReadyTimer);
     uiReadyTimer = null;
+    void desktopUpdates
+      ?.markHealthy()
+      .catch((error) => console.error("[updater] health check failed", error));
     void uiUpdates
-      .markHealthy()
+      ?.markHealthy()
       .catch((error) =>
         console.error("[ui-update] health check failed", error),
       );
@@ -259,10 +262,9 @@ async function bootstrap(): Promise<void> {
     (process.platform === "darwin" || process.platform === "win32")
   ) {
     try {
-      const updates = new UiUpdates(new DesktopUpdates());
+      const updates = new UiUpdates();
       await updates.initialize();
       uiUpdates = updates;
-      setUiUpdateAction(() => void uiUpdates?.check(true));
     } catch (error) {
       // A broken update cache must never prevent the bundled app from opening.
       console.error(
@@ -270,9 +272,21 @@ async function bootstrap(): Promise<void> {
         error,
       );
       uiUpdates = null;
-      setUiUpdateAction(null);
     }
   } else buildAppMenu();
+  if (
+    !desktopUpdates &&
+    app.isPackaged &&
+    ["darwin", "win32"].includes(process.platform)
+  ) {
+    desktopUpdates = new DesktopUpdates(
+      async (manual) => {
+        await uiUpdates?.check(manual);
+      },
+      () => uiUpdates?.store.currentVersion ?? null,
+    );
+    setUiUpdateAction(() => void desktopUpdates?.check(true));
+  }
 
   // Register custom protocol to serve frontend assets over app:// scheme.
   // This is required because <script type="module"> does not work with file:// protocol.
@@ -330,6 +344,7 @@ async function bootstrap(): Promise<void> {
       await mainWindow.loadURL("app://./index.html");
     }
     uiUpdates?.start(mainWindow);
+    desktopUpdates?.start(mainWindow);
   }
 }
 
@@ -357,6 +372,6 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
-  uiUpdates?.stop();
+  desktopUpdates?.stop();
   stopSidecar();
 });

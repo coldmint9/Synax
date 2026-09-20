@@ -55,6 +55,9 @@ export function estimateEntryHeight(entry: ConversationTimelineEntry): number {
   let height = 28; // turn chrome + divider
   for (const block of entry.turn.blocks) {
     switch (block.type) {
+      case "media":
+        height += 180;
+        break;
       case "thinking":
         height += 20; // one collapsed activity line
         break;

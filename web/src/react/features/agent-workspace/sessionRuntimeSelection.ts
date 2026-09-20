@@ -60,7 +60,7 @@ export function sessionRuntimeSelection(
       text(binding?.model),
     reasoningEffort:
       typeof effort === "string" &&
-      ["low", "medium", "high", "xhigh", "max"].includes(effort)
+      ["none", "low", "medium", "high", "xhigh", "max"].includes(effort)
         ? (effort as ReasoningEffort)
         : null,
   };

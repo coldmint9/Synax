@@ -22,7 +22,8 @@ jobs:
           - os: macos-15
             platform: darwin
             arch: arm64
-          - os: windows-latest
+          # @electron/node-gyp 10 only recognizes VS 2019/2022, not VS 2026.
+          - os: windows-2022
             platform: win32
             arch: x64
           - os: ubuntu-latest
@@ -71,6 +72,10 @@ jobs:
         if: runner.os != 'Linux'
         run: npx tsx scripts/build-desktop-release.ts
 
+      - name: Smoke test independent embedded updater
+        if: runner.os != 'Linux'
+        run: npm run test:desktop:updater-smoke
+
       - name: Smoke test packaged app (macOS / Windows)
         if: runner.os != 'Linux'
         run: npm run test:desktop:smoke
@@ -87,6 +92,7 @@ jobs:
           path: |
             out/desktop-smoke.*
             out/ui-update-smoke.*
+            out/embedded-updater-smoke.*
           if-no-files-found: ignore
 
       - name: Upload artifacts

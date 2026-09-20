@@ -4,6 +4,7 @@ import type {
   ProviderDef,
 } from "../../lib/config/config-types.js";
 import { isProviderSupported } from "./providers/provider-registry.js";
+import { openAIModelContract } from "./openai-models.js";
 import {
   inferReasoningCapability,
   resolvePreferredProviderAdapter,
@@ -122,8 +123,29 @@ function tryResolveCandidate(
   );
   if (!isModelAllowed(parsed.modelId, config)) return null;
 
-  const modelDef = findModel(provider, parsed.modelId, config);
-  if (!modelDef) return null;
+  const found = findModel(provider, parsed.modelId, config);
+  if (!found) return null;
+  const declared = input.globalConfig.providers
+    .find((p) => p.id === parsed.providerId)
+    ?.models.find((m) => m.id === parsed.modelId);
+  const modelDef = {
+    ...found,
+    ...(["@ai-sdk/openai", "@ai-sdk/openai-compatible"].includes(
+      provider.npm ?? "",
+    )
+      ? openAIModelContract(parsed.modelId)
+      : {}),
+    ...(declared?.inputModalities
+      ? { inputModalities: declared.inputModalities }
+      : {}),
+    ...(declared?.contextLimit ? { contextLimit: declared.contextLimit } : {}),
+    ...(config.models?.[parsed.modelId]?.inputModalities
+      ? { inputModalities: config.models[parsed.modelId].inputModalities }
+      : {}),
+    ...(found.outputModalities
+      ? { outputModalities: found.outputModalities }
+      : {}),
+  };
 
   return {
     model: `${parsed.providerId}/${parsed.modelId}`,
@@ -192,6 +214,9 @@ function findModel(
       ...(config.models?.[modelId]?.inputModalities
         ? { inputModalities: config.models[modelId].inputModalities }
         : {}),
+      ...(config.models?.[modelId]?.outputModalities
+        ? { outputModalities: config.models[modelId].outputModalities }
+        : {}),
     };
   const override = config.models?.[modelId];
   if (!override) return null;
@@ -203,6 +228,7 @@ function findModel(
     id: modelId,
     label: override.label || modelId,
     inputModalities: override.inputModalities,
+    outputModalities: override.outputModalities,
     ...(reasoningCapable ? { reasoning: true, toolCall: true } : {}),
   };
 }
@@ -351,6 +377,9 @@ export function resolveRuntimeProvider(
           inputModalities:
             model.inputModalities ??
             fromCatalog.models.find((m) => m.id === model.id)?.inputModalities,
+          outputModalities:
+            model.outputModalities ??
+            fromCatalog.models.find((m) => m.id === model.id)?.outputModalities,
         })),
       };
     }
@@ -494,6 +523,7 @@ function toRuntimeModels(
     id: model.id,
     label: model.label,
     inputModalities: model.inputModalities,
+    outputModalities: model.outputModalities,
     isDefault: model.isDefault,
     maxTokens: model.maxTokens,
     ...(typeof model.contextLimit === "number"
@@ -656,12 +686,19 @@ function toModelOverrideMap(
             ["text", "image", "audio", "video", "file"].includes(String(m)),
         )
       : undefined;
+    const outputModalities = Array.isArray(record.outputModalities)
+      ? record.outputModalities.filter(
+          (m): m is import("../agent-runtime/content-parts.js").InputModality =>
+            ["text", "image", "audio", "video", "file"].includes(String(m)),
+        )
+      : undefined;
     return [
       [
         modelId,
         {
           ...(label ? { label } : {}),
           ...(inputModalities ? { inputModalities } : {}),
+          ...(outputModalities ? { outputModalities } : {}),
         },
       ],
     ] as const;

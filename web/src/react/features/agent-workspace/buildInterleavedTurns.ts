@@ -20,8 +20,13 @@ export interface ToolCallView {
 }
 
 export type TurnContentBlock =
+  | { type: "media"; parts: RuntimeContentPart[] }
   | { type: "text"; content: string }
   | { type: "thinking"; content: string }
+  | {
+      type: "sources";
+      sources: Array<{ id: string; url: string; title?: string }>;
+    }
   | { type: "tool_call"; call: ToolCallView }
   | { type: "tool_call_group"; calls: ToolCallView[] }
   | { type: "sub_session"; session: AgentSession }
@@ -143,6 +148,12 @@ export function buildInterleavedTurns(
 
     const stepMessages = messagesByStep.get(step.id) ?? [];
     for (const msg of stepMessages) {
+      if (msg.contentParts?.some((part) => part.type !== "text"))
+        items.push({
+          timestamp: new Date(msg.createdAt).getTime(),
+          block: { type: "media", parts: msg.contentParts },
+        });
+      if (!msg.content.trim()) continue;
       const isThinking =
         msg.metadata?.type === "thinking" || msg.metadata?.kind === "thought";
       items.push({
@@ -151,6 +162,35 @@ export function buildInterleavedTurns(
           ? { type: "thinking", content: msg.content }
           : { type: "text", content: msg.content },
       });
+      const sources = Array.isArray(msg.metadata?.sources)
+        ? msg.metadata.sources.flatMap((source) => {
+            if (!source || typeof source !== "object" || Array.isArray(source))
+              return [];
+            const record = source as Record<string, unknown>;
+            if (typeof record.id !== "string" || typeof record.url !== "string")
+              return [];
+            try {
+              if (!["http:", "https:"].includes(new URL(record.url).protocol))
+                return [];
+            } catch {
+              return [];
+            }
+            return [
+              {
+                id: record.id,
+                url: record.url,
+                ...(typeof record.title === "string"
+                  ? { title: record.title }
+                  : {}),
+              },
+            ];
+          })
+        : [];
+      if (sources.length)
+        items.push({
+          timestamp: new Date(msg.createdAt).getTime(),
+          block: { type: "sources", sources },
+        });
     }
 
     const stepToolCalls = toolCallsByStep.get(step.id) ?? [];

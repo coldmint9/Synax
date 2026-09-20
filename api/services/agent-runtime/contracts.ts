@@ -22,6 +22,7 @@ export const thinkingModeSchema = z.enum(["fast", "standard", "deep"]);
 export type ThinkingMode = z.infer<typeof thinkingModeSchema>;
 
 export const reasoningEffortSchema = z.enum([
+  "none",
   "low",
   "medium",
   "high",
@@ -660,6 +661,7 @@ export interface StructuredToolCall {
 }
 
 export interface LoopModelStep {
+  contentParts?: RuntimeContentPart[];
   toolCallProviderMetadata?: Record<string, Record<string, unknown>>;
   reasoningParts?: Array<{
     text: string;
@@ -673,6 +675,12 @@ export interface LoopModelStep {
   finishReason?: string | null;
   usage?: Record<string, unknown>;
   providerMetadata?: Record<string, unknown>;
+  sources?: Array<{
+    id: string;
+    sourceType: string;
+    url?: string;
+    title?: string;
+  }>;
   /** Native protocol envelope retained alongside normalized model output. */
   protocol?: {
     protocol: "openai-responses";

@@ -1,4 +1,6 @@
 import { mediaReadTool } from "./tools/media-read.js";
+import { mediaGenerateTool } from "./tools/media-generate.js";
+import { mediaAudioVideoTools } from "./tools/media-audio-video.js";
 import {
   contentPartsSchema,
   type RuntimeContentPart,
@@ -123,6 +125,8 @@ export class ToolRegistry {
       bashTool,
       fileReadTool,
       mediaReadTool,
+      mediaGenerateTool,
+      ...mediaAudioVideoTools,
       fileListTool,
       fileGlobTool,
       grepSearchTool,

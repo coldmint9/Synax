@@ -8,6 +8,7 @@ import {
   finishMacInstallation,
   macApplicationPath,
   MAC_INSTALL_SCRIPT,
+  verifyMacBundle,
 } from "./mac-desktop-update.js";
 const run = promisify(execFile);
 let root: string;
@@ -19,6 +20,51 @@ beforeEach(async () => {
 afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
+describe.skipIf(process.platform !== "darwin")(
+  "macOS bundle architecture",
+  () => {
+    it.each(["x64", "arm64"])(
+      "accepts a %s Mach-O bundle and rejects the other architecture",
+      async (arch) => {
+        const bundle = path.join(root, "Apps with spaces", "Synax.app");
+        await fs.mkdir(path.join(bundle, "Contents/MacOS"), {
+          recursive: true,
+        });
+        await fs.writeFile(
+          path.join(bundle, "Contents/Info.plist"),
+          `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.Synax.desktop</string>
+<key>CFBundleShortVersionString</key><string>0.2.0</string>
+<key>CFBundleExecutable</key><string>Synax</string>
+</dict></plist>`,
+        );
+        const source = path.join(root, "fixture.c");
+        await fs.writeFile(source, "int main(void) { return 0; }\n");
+        await run("/usr/bin/xcrun", [
+          "clang",
+          "-arch",
+          arch === "x64" ? "x86_64" : "arm64",
+          source,
+          "-o",
+          path.join(bundle, "Contents/MacOS/Synax"),
+        ]);
+        await expect(
+          verifyMacBundle(bundle, bundle, "0.2.0", arch),
+        ).resolves.toBeUndefined();
+        await expect(
+          verifyMacBundle(
+            bundle,
+            bundle,
+            "0.2.0",
+            arch === "x64" ? "arm64" : "x64",
+          ),
+        ).rejects.toThrow();
+      },
+      30_000,
+    );
+  },
+);
 it.skipIf(process.platform === "win32")(
   "locates only an application bundle executable",
   () => {

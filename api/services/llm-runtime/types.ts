@@ -43,6 +43,7 @@ export interface ModelsDevProvider {
 
 export interface RuntimeModel {
   inputModalities?: InputModality[];
+  outputModalities?: string[];
   id: string;
   label: string;
   isDefault?: boolean;
@@ -75,13 +76,14 @@ export type LlmGatewayMessage =
   | Extract<ModelMessage, { role: "user" | "assistant" | "tool" }>;
 
 export interface LlmGatewayRequest {
+  providerOptions?: import("@ai-sdk/provider-utils").ProviderOptions;
   projectId?: string;
   purpose: LlmPurpose | string;
   model?: string;
   messages: LlmGatewayMessage[];
   temperature?: number;
   /** DeepSeek thinking strength when thinking mode is enabled. */
-  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
   /** Native protocol controls. These are kept separate from generic provider options. */
   responseOptions?: LlmResponseOptions;
   maxTokens?: number;
@@ -146,6 +148,7 @@ export interface LlmGatewayConfig {
 
 export interface ModelOverrideConfig {
   inputModalities?: InputModality[];
+  outputModalities?: InputModality[];
   label?: string;
 }
 

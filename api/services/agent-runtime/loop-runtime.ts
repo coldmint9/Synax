@@ -1008,6 +1008,7 @@ export class AgentLoopRuntime {
               usage: modelResult.step.usage,
               reasoningParts: modelResult.step.reasoningParts,
               providerMetadata: modelResult.step.providerMetadata,
+              sources: modelResult.step.sources,
               toolCallProviderMetadata:
                 modelResult.step.toolCallProviderMetadata,
               protocol: modelResult.step.protocol,
@@ -1081,6 +1082,7 @@ export class AgentLoopRuntime {
               modelResult.model,
               input.purpose ?? profile.kind,
               modelResult.step.usage,
+              modelResult.step.sources,
             );
             const completedStep = this.store.updateRunStep(step.id, {
               status: "blocked",
@@ -1164,7 +1166,11 @@ export class AgentLoopRuntime {
             modelResult.step.toolCalls.length === 0 &&
             workStore.current(sessionId)
           ) {
-            const finalText = modelResult.step.message?.trim();
+            const finalText =
+              modelResult.step.message?.trim() ||
+              (modelResult.step.contentParts?.length
+                ? "Generated media is attached."
+                : undefined);
             try {
               if (!finalText)
                 throw new AgentValidationError(
@@ -1259,6 +1265,7 @@ export class AgentLoopRuntime {
               modelResult.model,
               input.purpose ?? profile.kind,
               modelResult.step.usage,
+              modelResult.step.sources,
             );
             const completedStep = this.store.updateRunStep(step.id, {
               status: "completed",
@@ -2369,8 +2376,12 @@ export class AgentLoopRuntime {
       );
     const session = this.store.getSession(input.sessionId);
     const userRequest = resolveSessionUserRequest(session, input.prompt);
+    const webSearchDisabled =
+      getGlobalConfigForRuntime().webSearch.routing === "disabled";
     const allowedTools = availableTools.filter(
-      (tool) => !controlToolError(session, tool),
+      (tool) =>
+        !controlToolError(session, tool) &&
+        !(webSearchDisabled && tool.id === "webSearch"),
     );
     const toolSet = buildLoopToolSet(allowedTools);
     const contextLimit =
@@ -2783,6 +2794,34 @@ export class AgentLoopRuntime {
     options?: { skipAssistantText?: boolean },
   ): Promise<AgentRunPart[]> {
     const parts: AgentRunPart[] = [];
+    if (step.contentParts?.length) {
+      const createdAt = nowIso();
+      this.store.appendMessage({
+        id: makeRuntimeId("msg"),
+        sessionId,
+        runId,
+        stepId,
+        role: "assistant",
+        content: "",
+        contentParts: step.contentParts,
+        metadata: { type: "media" },
+        createdAt,
+      });
+      parts.push(
+        this.store.appendRunPart({
+          id: makeRuntimeId("prt"),
+          sessionId,
+          runId,
+          stepId,
+          kind: "text",
+          sequence: this.store.nextRunPartSequence(stepId),
+          content: "",
+          toolCallId: null,
+          metadata: { contentParts: step.contentParts },
+          createdAt,
+        }),
+      );
+    }
     if (step.thought?.trim()) {
       logger.info(
         {
@@ -2869,6 +2908,7 @@ export class AgentLoopRuntime {
     model: string | null,
     purpose: string,
     usage?: Record<string, unknown>,
+    sources?: LoopStepModelResult["step"]["sources"],
   ): AgentRuntimeMessage {
     return this.store.appendMessage({
       id: makeRuntimeId("msg"),
@@ -2877,7 +2917,12 @@ export class AgentLoopRuntime {
       stepId,
       role: "assistant",
       content,
-      metadata: { model, purpose, usage },
+      metadata: {
+        model,
+        purpose,
+        usage,
+        ...(sources?.length ? { sources } : {}),
+      },
       createdAt: nowIso(),
     });
   }

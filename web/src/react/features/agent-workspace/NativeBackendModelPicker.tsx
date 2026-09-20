@@ -58,7 +58,7 @@ export function NativeBackendModelPicker({
         : undefined);
     onEffortsChange?.(
       selected?.efforts?.filter((effort): effort is ReasoningEffort =>
-        ["low", "medium", "high", "xhigh", "max"].includes(effort),
+        ["none", "low", "medium", "high", "xhigh", "max"].includes(effort),
       ),
     );
   }, [model, models, defaultModel, onEffortsChange]);

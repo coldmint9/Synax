@@ -62,6 +62,24 @@ function makeToolCall(partial: Partial<ToolCallRecord>): ToolCallRecord {
 }
 
 describe("buildInterleavedTurns", () => {
+  it("preserves media-only assistant messages after reloading the timeline", () => {
+    const parts = [
+      {
+        type: "image" as const,
+        assetId: "asset_00000000000000000000000000000000",
+      },
+      {
+        type: "audio" as const,
+        assetId: "asset_11111111111111111111111111111111",
+      },
+    ];
+    const turns = buildInterleavedTurns(
+      [makeStep()],
+      [],
+      [makeMessage({ content: "", contentParts: parts })],
+    );
+    expect(turns[0].blocks).toEqual([{ type: "media", parts }]);
+  });
   it("places thinking before tool calls when thinking timestamp is earlier", () => {
     const turns = buildInterleavedTurns(
       [makeStep()],

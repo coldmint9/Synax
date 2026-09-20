@@ -18,7 +18,13 @@ const BASE = "/api/agent-runtime";
 export type AgentProfileKind = "planner" | "executor" | "reviewer" | "explorer";
 export type AgentMode = "primary" | "subagent";
 export type ThinkingMode = "fast" | "standard" | "deep";
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffort =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
 export type AgentSessionStatus =
   | "stopping"
   | "queued"

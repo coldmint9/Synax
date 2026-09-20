@@ -3,6 +3,7 @@ import { logger } from "../../../lib/logger.js";
 import type { ApiFormat } from "../../../lib/config/config-types.js";
 import type { ResolvedProviderConfig, RuntimeProvider } from "../types.js";
 import { buildOpenAICompatibleClientSettings } from "../custom-api-compat.js";
+import { isImageGenerationModel } from "../openai-models.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ProviderFactory = (options?: any) => unknown;
@@ -110,6 +111,11 @@ export function selectLanguageModel(
   apiFormat?: ApiFormat,
 ): unknown {
   if (!client) throw new Error("Provider client was not created");
+  if (isImageGenerationModel(modelId)) {
+    throw new Error(
+      `'${modelId}' is an image model. Select a conversation model and use media.generate with this image model.`,
+    );
+  }
   const c = client as Record<string, unknown>;
 
   if (apiFormat === "openai-responses") {

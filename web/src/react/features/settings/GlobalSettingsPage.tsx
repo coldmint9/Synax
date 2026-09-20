@@ -10,6 +10,7 @@ import { LlmProviderSection } from "./components/LlmProviderSection";
 import { WikiModelSettings } from "./components/WikiModelSettings";
 import { OpenConfigFile } from "./components/OpenConfigFile";
 import { ProjectIntegrationsSection } from "./components/ProjectIntegrationsSection";
+import { WebSearchSettings } from "./components/WebSearchSettings";
 
 export default function GlobalSettingsPage() {
   const { globalConfig, providers, reload, updateGlobalConfig } = useConfig();
@@ -60,6 +61,11 @@ export default function GlobalSettingsPage() {
             <WikiModelSettings
               config={globalConfig}
               onUpdate={updateGlobalConfig}
+            />
+            <WebSearchSettings
+              config={globalConfig}
+              onUpdate={updateGlobalConfig}
+              onReload={reload}
             />
           </div>
           <ProjectIntegrationsSection />

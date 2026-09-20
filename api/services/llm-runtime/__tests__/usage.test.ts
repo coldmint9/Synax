@@ -20,7 +20,18 @@ import {
   readUsageOutputTokens,
 } from "../../agent-runtime/acp-engine/acp-usage.js";
 const gateway = vi.hoisted(() => ({ createGatewayStream: vi.fn() }));
-vi.mock("../gateway.js", () => gateway);
+vi.mock("../gateway.js", () => ({
+  ...gateway,
+  createGatewayStreamForSelection: (...args: unknown[]) =>
+    gateway.createGatewayStream(...args),
+  resolveGatewaySelection: async () => ({
+    providerId: "fixture",
+    modelId: "fixture",
+    apiFormat: "openai",
+    provider: { npm: "@ai-sdk/openai-compatible" },
+    config: {},
+  }),
+}));
 import { streamLoopModelStep } from "../../agent-runtime/loop-model-stream.js";
 import { buildLoopToolSet } from "../../agent-runtime/loop-ai-tools.js";
 

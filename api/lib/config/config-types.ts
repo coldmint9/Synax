@@ -18,10 +18,17 @@ export interface ProviderDef {
   connectionSchema?: Record<string, unknown>;
 }
 
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffort =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
 
 export interface ProviderModelDef {
   inputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
+  outputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
   id: string;
   label: string;
   isDefault?: boolean;
@@ -46,6 +53,50 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   cwd?: string;
   enabled?: boolean;
+}
+
+export type WebSearchRouting = "auto" | "remote" | "local" | "disabled";
+export type WebSearchEngine = "duckduckgo" | "brave" | "tavily" | "custom";
+export type WebSearchAuthType = "none" | "api-key" | "bearer" | "oauth2";
+
+export interface WebSearchAuthConfig {
+  type: WebSearchAuthType;
+  headerName?: string;
+  tokenPrefix?: string;
+  apiKey?: string;
+  apiKeyMasked?: string;
+  bearerToken?: string;
+  bearerTokenMasked?: string;
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  clientId?: string;
+  clientSecret?: string;
+  clientSecretMasked?: string;
+  scopes?: string[];
+  accessToken?: string;
+  accessTokenMasked?: string;
+  refreshToken?: string;
+  refreshTokenMasked?: string;
+  expiresAt?: number;
+}
+
+export interface WebSearchConfig {
+  routing: WebSearchRouting;
+  remote: {
+    externalWebAccess: boolean;
+    searchContextSize: "low" | "medium" | "high";
+  };
+  local: {
+    engine: WebSearchEngine;
+    endpoint?: string;
+    method?: "GET" | "POST";
+    queryParam?: string;
+    resultPath?: string;
+    titleField?: string;
+    urlField?: string;
+    snippetField?: string;
+    auth: WebSearchAuthConfig;
+  };
 }
 
 export interface McpDiscoverySource {
@@ -76,6 +127,7 @@ export interface GlobalConfig {
   enabledAcpProviderIds: string[];
   providerConnections: Record<string, ProviderConnection>;
   mcpServers: McpServerConfig[];
+  webSearch: WebSearchConfig;
   limits: {
     maxAgentsPerProject: number;
     agentTimeoutMs: number;
@@ -129,6 +181,7 @@ export interface UpdateGlobalConfigRequest {
   enabledAcpProviderIds?: string[];
   providerConnections?: Record<string, ProviderConnection>;
   mcpServers?: McpServerConfig[];
+  webSearch?: WebSearchConfig;
   limits?: GlobalConfig["limits"];
   features?: GlobalConfig["features"];
 }

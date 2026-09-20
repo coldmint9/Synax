@@ -24,7 +24,7 @@ export const queuedInputSchema = z.object({
   id: z.string().min(1),
   message: z.string().max(100_000).default(""),
   model: z.string().min(1).max(256).nullable().optional(),
-  reasoningEffort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+  reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh", "max"]).optional(),
   enqueuedAt: z.string().min(1),
 });
 
@@ -35,7 +35,7 @@ export const enqueueInputRequestSchema = z.object({
   references: z.array(turnReferenceSchema).max(20).optional(),
   message: z.string().max(100_000).default(""),
   model: z.string().min(1).max(256).optional(),
-  reasoningEffort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+  reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh", "max"]).optional(),
 });
 
 export type EnqueueInputRequest = z.infer<typeof enqueueInputRequestSchema>;

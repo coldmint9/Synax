@@ -51,6 +51,7 @@ const capturedRequests: Array<{
 }> = [];
 
 const mockStepResults: Array<{
+  contentParts?: import("../content-parts.js").RuntimeContentPart[];
   fullStream: AsyncIterable<MockStreamEvent>;
   tools?: { resolveToolId: (name: string) => string | undefined };
   mustFinalize?: boolean;
@@ -143,6 +144,7 @@ async function* mockStreamLoopModelStep(input: {
   type: string;
   delta?: string;
   step?: {
+    contentParts?: import("../content-parts.js").RuntimeContentPart[];
     thought?: string;
     message?: string;
     toolCalls: Array<{
@@ -266,6 +268,7 @@ async function* mockStreamLoopModelStep(input: {
   yield {
     type: "step_complete",
     step: {
+      contentParts: data.contentParts,
       thought: thought.trim() || undefined,
       message: text.trim() || undefined,
       toolCalls: finalToolCalls,
@@ -281,10 +284,15 @@ async function* mockStreamLoopModelStep(input: {
 
 function queueMockStep(
   stream: ReturnType<typeof makeStream>,
-  opts?: { mustFinalize?: boolean; model?: string | null },
+  opts?: {
+    mustFinalize?: boolean;
+    model?: string | null;
+    contentParts?: import("../content-parts.js").RuntimeContentPart[];
+  },
 ) {
   mockStepResults.push({
     fullStream: stream.fullStream,
+    contentParts: opts?.contentParts,
     mustFinalize: opts?.mustFinalize,
     model: opts?.model,
   });
@@ -378,6 +386,44 @@ describe("agentLoopRuntime", () => {
       force: true,
     });
     fs.writeFileSync(API_SESSION_LOG_FILE, "", "utf8");
+  });
+
+  it("completes a media-only response and persists its attachment for the timeline", async () => {
+    const { createAsset, readAsset } = await import("../media-assets.js");
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      workDir: process.cwd(),
+    });
+    const bytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const asset = await createAsset(
+      session.projectId,
+      "output.png",
+      bytes,
+      "image/png",
+    );
+    queueMockStep(makeTextStep(""), {
+      contentParts: [{ type: "image", assetId: asset.id }],
+    });
+    const chunks = await collectChunks(
+      agentLoopRuntime.streamRun(session.id, { message: "Generate an image." }),
+    );
+    expect(chunks.some((chunk) => chunk.type === "done")).toBe(true);
+    expect(agentRuntimeStore.listRuns(session.id)[0].status).toBe("completed");
+    expect(
+      agentRuntimeStore
+        .listMessages(session.id)
+        .some(
+          (message) =>
+            message.role === "assistant" &&
+            message.contentParts?.some(
+              (part) => part.type === "image" && part.assetId === asset.id,
+            ),
+        ),
+    ).toBe(true);
+    expect(await readAsset(asset.id)).toEqual(bytes);
   });
 
   it("uses the durable accepted Run instead of allocating a second Native Run", async () => {

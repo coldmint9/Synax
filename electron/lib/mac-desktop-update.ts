@@ -17,6 +17,7 @@ set -u
 parent_pid="$1"
 target="$2"
 workspace="$3"
+shift 3
 count=0
 while kill -0 "$parent_pid" 2>/dev/null; do
   count=$((count + 1))
@@ -28,19 +29,19 @@ while kill -0 "$parent_pid" 2>/dev/null; do
 done
 if ! /bin/mv "$target" "$workspace/previous.app"; then
   echo 'Could not move the installed app; it was left unchanged.' > "$workspace/status"
-  /usr/bin/open -n "$target"
+  /usr/bin/open -n "$target" --args "$@"
   exit 1
 fi
 restore() {
   if [ -e "$target" ]; then /bin/mv "$target" "$workspace/failed.app"; fi
   /bin/mv "$workspace/previous.app" "$target"
   echo 'Installation failed; restored the previous app.' > "$workspace/status"
-  /usr/bin/open -n "$target"
+  /usr/bin/open -n "$target" --args "$@"
   exit 1
 }
-trap restore HUP INT TERM
-if ! /bin/mv "$workspace/next.app" "$target"; then restore; fi
-if ! /usr/bin/open -n "$target"; then restore; fi
+trap 'restore "$@"' HUP INT TERM
+if ! /bin/mv "$workspace/next.app" "$target"; then restore "$@"; fi
+if ! /usr/bin/open -n "$target" --args "$@"; then restore "$@"; fi
 echo 'Installed; awaiting application health check.' > "$workspace/status"
 `;
 
@@ -103,9 +104,9 @@ export async function verifyMacBundle(
       "The downloaded app identity or version does not match the release",
     );
   await run("/usr/bin/lipo", [
+    path.join(bundle, "Contents/MacOS/Synax"),
     "-verify_arch",
     arch === "x64" ? "x86_64" : "arm64",
-    path.join(bundle, "Contents/MacOS/Synax"),
   ]);
   // Developer-signed installations must keep the same signing identity. Existing
   // unsigned/ad-hoc builds use the SHA-256 verified artifact from our GitHub release.
@@ -202,6 +203,7 @@ export async function launchMacInstaller(
   installation: MacInstallation,
   directory: string,
   parentPid = process.pid,
+  launchArgs: string[] = [],
 ): Promise<void> {
   await fs.writeFile(
     path.join(directory, "pending-install.json"),
@@ -221,6 +223,7 @@ export async function launchMacInstaller(
         String(parentPid),
         installation.target,
         installation.workspace,
+        ...launchArgs,
       ],
       {
         detached: true,

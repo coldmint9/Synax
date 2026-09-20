@@ -21,19 +21,34 @@ const caps = (
   mediaTypes?: string[],
   maxFileBytes = MAX_FILE_BYTES,
   maxTotalBytes = MAX_INPUT_BYTES,
+  maxFiles = 10,
 ): InputCapabilities => ({
   modalities: modalities ?? ["text"],
   verified: !!modalities,
   mediaTypes,
   maxFileBytes,
   maxTotalBytes,
-  maxFiles: 10,
+  maxFiles,
 });
 export function nativeInputCapabilities(
   selection: ResolvedModelSelection,
 ): InputCapabilities {
   const declared = selection.modelDef.inputModalities;
   const npm = selection.provider.npm;
+  if (
+    [
+      "@ai-sdk/groq",
+      "@ai-sdk/mistral",
+      "@ai-sdk/xai",
+      "@ai-sdk/perplexity",
+    ].includes(npm ?? "")
+  )
+    return caps(declared, [
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/gif",
+    ]);
   // A model catalog alone cannot prove that an SDK preserves media on the wire.
   if (
     ![
@@ -92,19 +107,26 @@ export function nativeInputCapabilities(
       ],
       MAX_FILE_BYTES,
       MAX_FILE_BYTES,
+      500,
     );
   // The installed Chat adapter has native image, PDF and WAV/MP3 parts.
   if (selection.apiFormat === "openai")
-    return caps(declared, [
-      "image/png",
-      "image/jpeg",
-      "image/webp",
-      "image/gif",
-      "application/pdf",
-      ...(["@ai-sdk/openai", "@ai-sdk/openai-compatible"].includes(npm ?? "")
-        ? ["audio/wav", "audio/mpeg"]
-        : []),
-    ]);
+    return caps(
+      declared,
+      [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "application/pdf",
+        ...(["@ai-sdk/openai", "@ai-sdk/openai-compatible"].includes(npm ?? "")
+          ? ["audio/wav", "audio/mpeg"]
+          : []),
+      ],
+      MAX_FILE_BYTES,
+      MAX_FILE_BYTES,
+      500,
+    );
   return caps(undefined);
 }
 export function assertMediaCapabilities(
@@ -261,7 +283,17 @@ export async function validateInputMedia(
     ...parts
       .filter((p) => p.type !== "text")
       .map((p) => getAsset(p.assetId, session.projectId)),
-    ...referencedAssets(history, session.projectId),
+    ...referencedAssets(
+      history.filter(
+        (message) =>
+          message.role !== "assistant" &&
+          !(
+            message.role === "user" &&
+            message.providerOptions?.synax?.toolCallId
+          ),
+      ),
+      session.projectId,
+    ),
   ];
   const unique = [...new Map(assets.map((a) => [a.id, a])).values()];
   if (unique.length)
@@ -295,6 +327,61 @@ export async function resolveMediaMessages(
   selection: ResolvedModelSelection,
   projectId?: string,
 ): Promise<LlmGatewayMessage[]> {
+  const capability = nativeInputCapabilities(selection);
+  // Google accepts native assistant media (including thought signatures).
+  // Chat/Responses/Anthropic accept prior generated files as explicit context.
+  if (selection.provider.npm !== "@ai-sdk/google")
+    messages = messages.flatMap((message) => {
+      if (message.role !== "assistant" || !Array.isArray(message.content))
+        return [message];
+      const files = message.content.filter((part) => part.type === "file");
+      if (!files.length) return [message];
+      const text = message.content.filter((part) => part.type !== "file");
+      return [
+        ...(text.length ? [{ ...message, content: text }] : []),
+        {
+          role: "user" as const,
+          content: [
+            {
+              type: "text" as const,
+              text: "Previously generated assistant media, retained as context; this is not a new user request.",
+            },
+            ...files,
+          ],
+          providerOptions: { synax: { generatedMedia: true } },
+        },
+      ];
+    });
+  messages = messages.map((message) => {
+    if (
+      message.role !== "user" ||
+      !(
+        message.providerOptions?.synax?.toolCallId ||
+        message.providerOptions?.synax?.generatedMedia
+      ) ||
+      !Array.isArray(message.content)
+    )
+      return message;
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type !== "file") return part;
+        const id = assetId(part.data);
+        if (!id) return part;
+        const asset = getAsset(id, projectId);
+        try {
+          assertMediaCapabilities([asset], capability);
+          return part;
+        } catch (error) {
+          if (!(error instanceof AgentRuntimeError)) throw error;
+          return {
+            type: "text" as const,
+            text: `Media asset retained: ${JSON.stringify(asset)}. This model cannot receive these bytes (${error.message}). Use a compatible media tool or model to inspect it.`,
+          };
+        }
+      }),
+    };
+  });
   const assets = referencedAssets(messages, projectId);
   if (!assets.length) return messages;
   if (!projectId)
@@ -370,6 +457,9 @@ export async function resolveMediaMessages(
           type: "file",
           mediaType: part.mediaType,
           filename: part.filename,
+          ...(part.providerOptions
+            ? { providerOptions: part.providerOptions }
+            : {}),
           data: {
             type: "data",
             data: Buffer.from(part.data as Uint8Array).toString("base64"),

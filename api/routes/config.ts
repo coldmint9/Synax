@@ -37,6 +37,7 @@ import type {
 } from "../lib/config/config-types.js";
 import { discoverAcpProviders } from "../services/acp/discovery.js";
 import { listProviders as listAcpProviders } from "../services/acp/index.js";
+import { beginWebSearchOAuth } from "../services/web-search/oauth.js";
 
 export const configRoutes = new Hono();
 
@@ -48,7 +49,26 @@ const ACP_PROVIDER_IDS = [
 ] as const;
 const BUILTIN_API_PROVIDER_IDS = ["openai", "anthropic"] as const;
 const CUSTOM_API_PROVIDER_PREFIX = "custom-api:";
-const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+const REASONING_EFFORTS = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+configRoutes.post("/web-search/oauth/start", (c) => {
+  try {
+    const redirectUri = new URL("/oauth/web-search/callback", c.req.url).href;
+    return c.json(beginWebSearchOAuth(redirectUri));
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      400,
+    );
+  }
+});
 
 const providerConnectionSchema = z
   .object({
@@ -80,10 +100,61 @@ const providerDefSchema = z.object({
       inputModalities: z
         .array(z.enum(["text", "image", "audio", "video", "file"]))
         .optional(),
+      outputModalities: z
+        .array(z.enum(["text", "image", "audio", "video", "file"]))
+        .optional(),
     }),
   ),
   connectionSchema: z.record(z.string(), z.unknown()).optional(),
 });
+
+const webSearchAuthSchema = z
+  .object({
+    type: z.enum(["none", "api-key", "bearer", "oauth2"]),
+    headerName: z.string().trim().min(1).max(128).optional(),
+    tokenPrefix: z.string().max(128).optional(),
+    apiKey: z.string().max(16_384).optional(),
+    apiKeyMasked: z.string().max(256).optional(),
+    bearerToken: z.string().max(16_384).optional(),
+    bearerTokenMasked: z.string().max(256).optional(),
+    authorizationUrl: z.string().url().optional(),
+    tokenUrl: z.string().url().optional(),
+    clientId: z.string().max(4096).optional(),
+    clientSecret: z.string().max(16_384).optional(),
+    clientSecretMasked: z.string().max(256).optional(),
+    scopes: z.array(z.string().trim().min(1).max(512)).max(64).optional(),
+    accessToken: z.string().max(32_768).optional(),
+    accessTokenMasked: z.string().max(256).optional(),
+    refreshToken: z.string().max(32_768).optional(),
+    refreshTokenMasked: z.string().max(256).optional(),
+    expiresAt: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+const webSearchConfigSchema = z
+  .object({
+    routing: z.enum(["auto", "remote", "local", "disabled"]),
+    remote: z
+      .object({
+        externalWebAccess: z.boolean(),
+        searchContextSize: z.enum(["low", "medium", "high"]),
+      })
+      .strict(),
+    local: z
+      .object({
+        engine: z.enum(["duckduckgo", "brave", "tavily", "custom"]),
+        endpoint: z.string().url().optional(),
+        method: z.enum(["GET", "POST"]).optional(),
+        queryParam: z.string().trim().min(1).max(128).optional(),
+        resultPath: z.string().trim().max(512).optional(),
+        titleField: z.string().trim().max(128).optional(),
+        urlField: z.string().trim().max(128).optional(),
+        snippetField: z.string().trim().max(128).optional(),
+        auth: webSearchAuthSchema,
+      })
+      .strict(),
+  })
+  .strict();
 
 const globalConfigPatchSchema = z
   .object({
@@ -112,6 +183,7 @@ const globalConfigPatchSchema = z
       )
       .max(64)
       .optional(),
+    webSearch: webSearchConfigSchema.optional(),
     limits: z
       .object({
         maxAgentsPerProject: z.number().int().positive(),
@@ -602,6 +674,7 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
   const patch = parsed.data;
   if (patch.terminalShellPath !== undefined)
     validateTerminalShellPath(patch.terminalShellPath);
+  if (patch.webSearch) validateWebSearchConfig(patch.webSearch);
   const current = getGlobalConfig();
   const nextProviders = patch.providers ?? current.providers;
   const providerMap = new Map(
@@ -690,6 +763,34 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
   return patch as UpdateGlobalConfigRequest;
 }
 
+function validateWebSearchConfig(
+  config: NonNullable<UpdateGlobalConfigRequest["webSearch"]>,
+): void {
+  const { engine, endpoint, auth } = config.local;
+  if (engine === "custom" && !endpoint) {
+    throw new Error("自定义 Web Search 引擎必须配置 endpoint");
+  }
+  for (const [label, value] of [
+    ["endpoint", endpoint],
+    ["authorizationUrl", auth.authorizationUrl],
+    ["tokenUrl", auth.tokenUrl],
+  ] as const) {
+    if (!value) continue;
+    const url = new URL(value);
+    const loopback = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+      throw new Error(`${label} 必须使用 HTTPS（本机 loopback 除外）`);
+    }
+  }
+  if (auth.type === "oauth2") {
+    if (!auth.authorizationUrl || !auth.tokenUrl || !auth.clientId) {
+      throw new Error(
+        "OAuth2 Web Search 必须配置 authorizationUrl、tokenUrl 和 clientId",
+      );
+    }
+  }
+}
+
 function validateProviderConnection(
   providerId: string,
   connection: ProviderConnectionInput | undefined,
@@ -766,7 +867,7 @@ function validateProviderConnection(
         !REASONING_EFFORTS.includes(item as (typeof REASONING_EFFORTS)[number])
       ) {
         throw new Error(
-          `${providerId} 的 reasoningEfforts 只能包含 low/medium/high/xhigh/max`,
+          `${providerId} 的 reasoningEfforts 只能包含 none/low/medium/high/xhigh/max`,
         );
       }
     }

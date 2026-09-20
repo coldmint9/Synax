@@ -31,6 +31,8 @@ const extensions: Record<string, string> = {
   avif: "image/avif",
   pdf: "application/pdf",
   mp3: "audio/mpeg",
+  aac: "audio/aac",
+  opus: "audio/ogg",
   wav: "audio/wav",
   flac: "audio/flac",
   ogg: "audio/ogg",
@@ -75,6 +77,8 @@ export function detectMediaType(
           : undefined;
   else if (bytes.subarray(0, 5).toString() === "%PDF-")
     detected = "application/pdf";
+  else if (bytes[0] === 255 && (bytes[1] & 0xf6) === 0xf0)
+    detected = "audio/aac";
   else if (
     bytes.toString("ascii", 0, 3) === "ID3" ||
     (bytes[0] === 255 && (bytes[1] & 0xe0) === 0xe0)
@@ -119,11 +123,13 @@ export function detectMediaType(
   }
   const claimed =
     hint && hint !== "application/octet-stream"
-      ? hint === "audio/mp3"
-        ? "audio/mpeg"
-        : hint === "audio/x-wav"
-          ? "audio/wav"
-          : hint
+      ? hint === "audio/opus"
+        ? "audio/ogg"
+        : hint === "audio/mp3"
+          ? "audio/mpeg"
+          : hint === "audio/x-wav"
+            ? "audio/wav"
+            : hint
       : extensions[ext];
   if (
     claimed &&
@@ -340,14 +346,29 @@ export async function sweepAssets(): Promise<void> {
   for (const row of rows) await deleteUnboundAsset(row.id).catch(() => {});
 }
 export function modelContentParts(parts: RuntimeContentPart[]): any[] {
-  return parts.map((p) =>
-    p.type === "text"
-      ? p
-      : {
-          type: "file",
-          data: new URL(`synax-asset:${p.assetId}`),
-          mediaType: getAsset(p.assetId).mediaType,
-          filename: getAsset(p.assetId).filename,
-        },
-  );
+  return parts.flatMap((p) => {
+    if (p.type === "text") return [p];
+    const asset = getAsset(p.assetId);
+    return [
+      {
+        type: "text",
+        text: `Attached media: ${JSON.stringify({ assetId: asset.id, filename: asset.filename })}. Use this assetId with media.read or media.generate.`,
+      },
+      {
+        type: "file",
+        data: new URL(`synax-asset:${p.assetId}`),
+        mediaType: asset.mediaType,
+        filename: asset.filename,
+        ...(p.providerOptions ? { providerOptions: p.providerOptions } : {}),
+        ...(p.type === "image" && p.detail
+          ? {
+              providerOptions: {
+                ...p.providerOptions,
+                openai: { ...p.providerOptions?.openai, imageDetail: p.detail },
+              },
+            }
+          : {}),
+      },
+    ];
+  });
 }

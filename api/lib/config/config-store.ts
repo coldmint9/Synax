@@ -11,6 +11,11 @@ import {
 import { isAcpProviderId } from "./acp-provider-ids.js";
 import { normalizeLegacyProviders } from "./normalize-legacy-providers.js";
 import {
+  mergeWebSearchConfig,
+  normalizeWebSearchConfig,
+  prepareWebSearchConfigForStorage,
+} from "./web-search-config.js";
+import {
   decryptSecret,
   encryptSecret,
   isEncryptedSecret,
@@ -485,6 +490,7 @@ function splitMergedGlobalConfig(config: GlobalConfig): ConfigLayers {
         config.defaultApiProviderId || globalBase.defaultApiProviderId,
       enabledAcpProviderIds:
         config.enabledAcpProviderIds ?? globalBase.enabledAcpProviderIds,
+      webSearch: config.webSearch ?? globalBase.webSearch,
       limits: config.limits,
       features: config.features,
       updatedAt: config.updatedAt,
@@ -535,6 +541,10 @@ function normalizeTemplateConfig(
       config.mcpServers ?? defaults.mcpServers ?? [],
       includeSecrets,
     ),
+    webSearch: normalizeWebSearchConfig(
+      config.webSearch ?? defaults.webSearch,
+      includeSecrets,
+    ),
   };
 }
 
@@ -567,6 +577,10 @@ function normalizeUserGlobalConfig(
       config.enabledAcpProviderIds ?? defaults.enabledAcpProviderIds,
     mcpServers: normalizeMcpServers(
       config.mcpServers ?? defaults.mcpServers ?? [],
+      includeSecrets,
+    ),
+    webSearch: normalizeWebSearchConfig(
+      config.webSearch ?? defaults.webSearch,
       includeSecrets,
     ),
   };
@@ -602,6 +616,10 @@ function mergeGlobalConfigLayers(
     providerConnections,
     mcpServers: normalizeMcpServers(
       global.mcpServers ?? template.mcpServers ?? [],
+      includeSecrets,
+    ),
+    webSearch: normalizeWebSearchConfig(
+      global.webSearch ?? template.webSearch,
       includeSecrets,
     ),
     limits: global.limits ?? template.limits,
@@ -673,6 +691,7 @@ function applyGlobalConfigPatch(
     Boolean(patch.enabledAcpProviderIds) ||
     Boolean(patch.limits) ||
     Boolean(patch.features) ||
+    Boolean(patch.webSearch) ||
     Boolean(patch.mcpServers) ||
     Boolean(userPatchProviders?.length) ||
     Object.keys(userPatchConnections).length > 0;
@@ -718,6 +737,9 @@ function applyGlobalConfigPatch(
     enabledAcpProviderIds:
       patch.enabledAcpProviderIds ?? current.enabledAcpProviderIds,
     mcpServers: patch.mcpServers ?? layers.global.mcpServers ?? [],
+    webSearch: patch.webSearch
+      ? mergeWebSearchConfig(current.webSearch, patch.webSearch)
+      : current.webSearch,
     limits: patch.limits
       ? { ...current.limits, ...patch.limits }
       : current.limits,
@@ -890,6 +912,7 @@ function prepareGlobalConfigForStorage(config: GlobalConfig): GlobalConfig {
   return {
     ...config,
     mcpServers: config.mcpServers ?? [],
+    webSearch: prepareWebSearchConfigForStorage(config.webSearch),
     providerConnections: prepareProviderConnectionsForStorage(
       config.providerConnections,
     ),

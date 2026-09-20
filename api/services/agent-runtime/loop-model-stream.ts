@@ -1,7 +1,10 @@
 import { normalizeUsage } from "../llm-runtime/usage.js";
 import type { streamText } from "ai";
 import { withRetryStream } from "../llm-runtime/middleware/retry.js";
-import { createGatewayStream } from "../llm-runtime/gateway.js";
+import {
+  createGatewayStreamForSelection,
+  resolveGatewaySelection,
+} from "../llm-runtime/gateway.js";
 import type { LlmGatewayRequest } from "../llm-runtime/types.js";
 import type { LlmHookContext } from "../llm-runtime/llm-hooks.js";
 import type {
@@ -13,6 +16,14 @@ import type { LoopToolSet } from "./loop-ai-tools.js";
 import { isRecord, parseLoopModelStepText } from "./loop-model-output.js";
 import { makeRuntimeId } from "./runtime-ids.js";
 import { ResponsesSnapshotAccumulator } from "./responses-snapshot.js";
+import {
+  isNativeWebSearchUnsupportedError,
+  markNativeWebSearchSupported,
+  markNativeWebSearchUnsupported,
+  routeNativeWebSearchTools,
+} from "../llm-runtime/native-web-search.js";
+import { saveGeneratedMedia } from "./generated-media.js";
+import type { RuntimeContentPart } from "./content-parts.js";
 
 export interface GenerateLoopModelStepInput {
   request: LlmGatewayRequest;
@@ -35,9 +46,10 @@ export async function generateLoopModelStep(
 export async function* streamLoopModelStep(
   input: GenerateLoopModelStepInput,
 ): AsyncGenerator<LoopModelStreamEvent> {
+  const routeState = { forceLocal: false };
   // Tools run only after a complete model step, so retrying cannot replay executed tools.
   for await (const event of withRetryStream(
-    () => streamLoopModelStepOnce(input),
+    () => streamLoopModelStepWithNativeFallback(input, routeState),
     {
       signal: input.abortSignal,
       repeatNetworkGroups: true,
@@ -47,25 +59,65 @@ export async function* streamLoopModelStep(
   }
 }
 
+async function* streamLoopModelStepWithNativeFallback(
+  input: GenerateLoopModelStepInput,
+  state: { forceLocal: boolean },
+): AsyncGenerator<LoopModelStreamEvent> {
+  const route = {
+    native: false,
+    capabilityKey: undefined as string | undefined,
+  };
+  let emitted = false;
+  try {
+    for await (const event of streamLoopModelStepOnce(
+      input,
+      state.forceLocal,
+      route,
+    )) {
+      emitted = true;
+      yield event;
+    }
+    if (route.native) markNativeWebSearchSupported(route.capabilityKey);
+  } catch (error) {
+    if (!emitted && route.native && isNativeWebSearchUnsupportedError(error)) {
+      markNativeWebSearchUnsupported(route.capabilityKey);
+      state.forceLocal = true;
+      yield* streamLoopModelStepOnce(input, true, route);
+      return;
+    }
+    throw error;
+  }
+}
+
 async function* streamLoopModelStepOnce(
   input: GenerateLoopModelStepInput,
+  forceLocal = false,
+  routeState?: { native: boolean; capabilityKey?: string },
 ): AsyncGenerator<LoopModelStreamEvent> {
-  const activeTools = input.tools.activeTools;
+  const selection = await resolveGatewaySelection(input.request);
+  const routed = routeNativeWebSearchTools(input.tools, selection, forceLocal);
+  if (routeState) {
+    routeState.native = routed.native;
+    routeState.capabilityKey = routed.capabilityKey;
+  }
+  const activeTools = routed.tools.activeTools;
   const hasTools = activeTools.length > 0;
-  const result = (await createGatewayStream(
+  const result = (await createGatewayStreamForSelection(
     {
       ...input.request,
-      tools: hasTools ? input.tools.tools : undefined,
+      tools: hasTools ? routed.tools.tools : undefined,
       activeTools: hasTools ? activeTools : undefined,
       toolChoice: hasTools ? "auto" : "none",
       repairToolCall: hasTools ? input.tools.repairToolCall : undefined,
       maxRetries: 0,
       hookContext: input.hookContext,
     },
+    selection,
     input.abortSignal,
   )) as ReturnType<typeof streamText>;
 
   let text = "";
+  const media: RuntimeContentPart[] = [];
   let thought = "";
   let finishReason: string | null = null;
   let usage: Record<string, unknown> | undefined;
@@ -77,6 +129,7 @@ async function* streamLoopModelStepOnce(
     text: string;
     providerMetadata?: Record<string, Record<string, unknown>>;
   }> = [];
+  const sources: NonNullable<LoopStepModelResult["step"]["sources"]> = [];
   const protocolSnapshot = new ResponsesSnapshotAccumulator();
 
   for await (const event of result.fullStream) {
@@ -87,6 +140,15 @@ async function* streamLoopModelStepOnce(
       case "text-delta":
         text += event.text;
         yield { type: "text_delta", delta: event.text };
+        break;
+      case "file":
+        media.push(
+          await saveGeneratedMedia(
+            input.request.projectId,
+            event.file,
+            event.providerMetadata,
+          ),
+        );
         break;
       case "reasoning-start":
         reasoningParts.push({
@@ -109,6 +171,7 @@ async function* streamLoopModelStepOnce(
         yield { type: "thought_delta", delta: event.text };
         break;
       case "tool-call": {
+        if (event.providerExecuted) break;
         if (event.providerMetadata)
           toolCallProviderMetadata[normalizeToolCallId(event.toolCallId)] =
             event.providerMetadata as Record<string, unknown>;
@@ -118,6 +181,22 @@ async function* streamLoopModelStepOnce(
           id: normalizeToolCallId(event.toolCallId),
           toolId,
           args: isRecord(event.input) ? event.input : {},
+        });
+        break;
+      }
+      case "source": {
+        const source = event as typeof event & {
+          id: string;
+          sourceType: string;
+          url?: string;
+          title?: string;
+        };
+        const url = safeSourceUrl(source.url);
+        sources.push({
+          id: source.id,
+          sourceType: source.sourceType,
+          ...(url ? { url } : {}),
+          ...(source.title ? { title: source.title } : {}),
         });
         break;
       }
@@ -174,6 +253,7 @@ async function* streamLoopModelStepOnce(
   yield {
     type: "step_complete",
     step: {
+      ...(media.length ? { contentParts: media } : {}),
       thought: thought.trim() || undefined,
       reasoningParts: reasoningParts.map(({ id, ...part }) => part),
       toolCallProviderMetadata,
@@ -184,10 +264,21 @@ async function* streamLoopModelStepOnce(
       finishReason: parsedFallback?.finishReason ?? finishReason ?? null,
       usage,
       providerMetadata,
+      sources,
       protocol: protocolSnapshot.snapshot(),
     },
     model: input.model,
   };
+}
+
+function safeSourceUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeToolCallId(value: unknown): string {

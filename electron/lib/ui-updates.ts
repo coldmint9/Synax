@@ -3,18 +3,13 @@ import path from "node:path";
 import { getResourcePath } from "./data-paths.js";
 import { findUiRelease } from "./ui-update-feed.js";
 import { UiUpdateStore } from "./ui-update-store.js";
-import type { DesktopUpdates } from "./desktop-updates.js";
-
-const CHECK_INTERVAL = 12 * 60 * 60 * 1_000;
 
 export class UiUpdates {
   readonly store: UiUpdateStore;
   private inFlight: Promise<void> | null = null;
-  private timer: NodeJS.Timeout | null = null;
-  private startTimer: NodeJS.Timeout | null = null;
   private window: BrowserWindow | null = null;
 
-  constructor(private readonly desktop?: DesktopUpdates) {
+  constructor() {
     this.store = new UiUpdateStore(
       path.join(app.getPath("userData"), "ui-updates", app.getVersion()),
       path.resolve(getResourcePath("dist")),
@@ -30,7 +25,6 @@ export class UiUpdates {
   }
   async markHealthy(): Promise<void> {
     await this.store.markHealthy();
-    await this.desktop?.markHealthy();
   }
   async rollback(): Promise<boolean> {
     return this.store.rollback();
@@ -38,18 +32,6 @@ export class UiUpdates {
 
   start(window: BrowserWindow): void {
     this.window = window;
-    this.desktop?.setWindow(window);
-    if (this.timer) return;
-    this.startTimer = setTimeout(() => void this.check(false), 30_000);
-    this.timer = setInterval(() => void this.check(false), CHECK_INTERVAL);
-    this.startTimer.unref?.();
-    this.timer.unref?.();
-  }
-
-  stop(): void {
-    if (this.startTimer) clearTimeout(this.startTimer);
-    if (this.timer) clearInterval(this.timer);
-    this.startTimer = this.timer = null;
   }
 
   check(manual: boolean): Promise<void> {
@@ -92,7 +74,6 @@ export class UiUpdates {
 
   private async runCheck(manual: boolean): Promise<void> {
     try {
-      if (await this.desktop?.check(manual)) return;
       if (this.store.pendingVersion) {
         if (manual) await this.promptRestart(this.store.pendingVersion);
         return;
@@ -107,7 +88,7 @@ export class UiUpdates {
           await this.message({
             type: "info",
             title: "检查更新",
-            message: "当前应用和兼容界面均已是最新版本。",
+            message: "当前已是最新的兼容界面。",
             buttons: ["确定"],
           });
         return;
