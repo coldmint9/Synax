@@ -1,3 +1,4 @@
+import { resolveSynaxMode } from "./synaxDisplay";
 import "./agentControls.css";
 import { memo, useMemo } from "react";
 import { SessionTodoPanel } from "./SessionTodoPanel";
@@ -192,7 +193,8 @@ const GOAL_STATUS_LABELS = {
 export function SessionModeSummary({ session }: { session: AgentSession }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const { goal, plan, specialist } = session.sessionMetadata ?? {};
+  const { goal: storedGoal, plan, specialist } = session.sessionMetadata ?? {};
+  const goal = resolveSynaxMode(session) === "goal" ? storedGoal : undefined;
   const snapshot =
     specialist && typeof specialist === "object"
       ? (specialist as Record<string, unknown>)

@@ -12,6 +12,7 @@ import {
   loadSessionLastVisit,
   saveSessionLastVisit,
 } from "./sessionLastVisit";
+import { isRuntimeResourceRemoved } from "../../../lib/runtimeResourceRegistry";
 import type { SessionListView } from "./sessionBuckets";
 
 /** Keep agent session detail in sync with sessions URL. */
@@ -31,6 +32,9 @@ export function useSessionRouteSync(
   const sessions = useAgentSessionStore((s) => s.sessions);
   const total = useAgentSessionStore((s) => s.sessionListTotal);
   const sessionIdFromUrl = searchParams.get("session");
+  const sessionRemoved = useAgentSessionStore(() =>
+    Boolean(sessionIdFromUrl && isRuntimeResourceRemoved(sessionIdFromUrl)),
+  );
   const isProjectReady = Boolean(projectId) && storeProjectId === projectId;
 
   useEffect(() => {
@@ -43,6 +47,11 @@ export function useSessionRouteSync(
 
     if (last.kind === "new") {
       navigate(newSessionPath(projectId), { replace: true });
+      return;
+    }
+
+    if (isRuntimeResourceRemoved(last.sessionId)) {
+      clearSessionLastVisit(projectId);
       return;
     }
 
@@ -75,6 +84,20 @@ export function useSessionRouteSync(
     // afterwards, so the panel would never reopen and the detail never loads.
     // Wait until the store has bound the project this page renders.
     if (!isProjectReady) return;
+
+    if (sessionRemoved && (listView === "sessions" || listView === "workflow")) {
+      const last = loadSessionLastVisit(projectId);
+      if (last?.kind === "session" && last.sessionId === sessionIdFromUrl) {
+        clearSessionLastVisit(projectId);
+      }
+      const search = new URLSearchParams(location.search);
+      search.delete("session");
+      navigate(
+        { pathname: location.pathname, search: search.toString() },
+        { replace: true },
+      );
+      return;
+    }
 
     if (listView === "workflow") {
       if (sessionIdFromUrl) {
@@ -115,7 +138,10 @@ export function useSessionRouteSync(
     listView,
     location.pathname,
     sessionIdFromUrl,
+    sessionRemoved,
+    location.search,
     projectId,
+    navigate,
     openPanel,
     resetForDraft,
     closePanel,

@@ -21,6 +21,7 @@ function ActiveTabContent({
   if (tab.kind === "input" && tab.inputSource)
     return (
       <CodeViewer
+        tabId={tab.id}
         sessionId={sessionId}
         path={`${tab.inputSource.kind}.txt`}
         inputSource={tab.inputSource}
@@ -29,7 +30,12 @@ function ActiveTabContent({
     );
   if (tab.kind === "file" && tab.path)
     return (
-      <CodeViewer sessionId={sessionId} path={tab.path} rootId={tab.rootId} />
+      <CodeViewer
+        tabId={tab.id}
+        sessionId={sessionId}
+        path={tab.path}
+        rootId={tab.rootId}
+      />
     );
   if (tab.kind === "diff" && tab.path)
     return (

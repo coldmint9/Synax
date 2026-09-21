@@ -1,3 +1,4 @@
+import { usesGoalWorkflow, workflowMode } from './workflow-mode.js';
 import { resolveSessionUserRequest } from './session-user-request.js';
 import { isWorkContinuation } from './work-intent.js';
 import type { AgentRun, ToolCallRecord, ToolExecutionInput, ToolExecutionResult } from './contracts.js';
@@ -39,7 +40,7 @@ class WorkRuntime {
     const hasMedia = Boolean(trigger?.contentParts?.some(part => part.type !== 'text'));
     const hasContent = Boolean(text) || hasMedia;
     const continuing = !hasMedia && (isWorkContinuation(text) || text.startsWith('Session was ') || text.startsWith('Session previously '));
-    const historicalGoal = getGoalState(session.sessionMetadata);
+    const historicalGoal = usesGoalWorkflow(session) ? getGoalState(session.sessionMetadata) : null;
     if (!work && historicalGoal?.status === 'completed') {
       work = workStore.create(sessionId, historicalGoal.objective, true);
       work.status = 'completed'; work.evidence = historicalGoal.acceptanceEvidence ?? [];
@@ -56,7 +57,7 @@ class WorkRuntime {
       const previousMessages = store.listMessages(sessionId).filter(m => m.role === 'user' && m.metadata.source !== 'system_injection' && !isWorkContinuation(m.content));
       const savedPlan = session.sessionMetadata?.plan as { objective?: string } | undefined;
       const lastProposal = old ? store.listToolCalls(sessionId).filter(c => c.toolId === 'plan.propose').at(-1)?.inputRef as { objective?: string } | undefined : undefined;
-      const objective = continuing ? savedPlan?.objective ?? getGoalState(session.sessionMetadata)?.objective ?? lastProposal?.objective ?? previousMessages.at(-1)?.content ?? session.prompt : text || (hasMedia ? 'Media input' : session.prompt);
+      const objective = continuing ? savedPlan?.objective ?? historicalGoal?.objective ?? lastProposal?.objective ?? previousMessages.at(-1)?.content ?? session.prompt : text || (hasMedia ? 'Media input' : session.prompt);
       work = workStore.create(sessionId, objective, old);
       if (old) work.requirements = previousMessages.map(m => ({ messageId: m.id, text: m.content, ...(m.contentParts ? { contentParts: m.contentParts } : {}) }));
       // Legacy transcripts remain unmodified; binding establishes their provenance, not successful acceptance.
@@ -75,7 +76,7 @@ class WorkRuntime {
         work.decisionFailures = 0;
         if (work.status === 'waiting') work.status = 'active';
         const goal = getGoalState(session.sessionMetadata);
-        if (goal?.status === 'blocked') store.updateSessionMetadata(sessionId, { goal: { ...goal, status: (session.sessionMetadata?.plan as { status?: string } | undefined)?.status === 'approved' ? 'executing' : 'planning', reason: undefined } });
+        if (usesGoalWorkflow(session) && goal?.status === 'blocked') store.updateSessionMetadata(sessionId, { goal: { ...goal, status: (session.sessionMetadata?.plan as { status?: string } | undefined)?.status === 'approved' ? 'executing' : 'planning', reason: undefined } });
       }
     }
     if (work.status === 'waiting' && !interactionService.pending(sessionId)) {
@@ -87,7 +88,28 @@ class WorkRuntime {
     return workStore.save(work);
   }
 
+  /** A selected workflow must not inherit the previous turn's terminal Work gate.
+   * Keep context memory and historical verification receipts; switching modes
+   * neither executes a plan nor accepts a goal.
+   */
+  onModeChanged(sessionId: string, previousMode: ReturnType<typeof workflowMode>): void {
+    if (workflowMode(store.getSession(sessionId)) === previousMode) return;
+    const work = workStore.current(sessionId);
+    if (!work) return;
+    work.status = 'active';
+    work.result = null; work.reason = null;
+    work.nextAction = null; work.expectedEvidence = null;
+    work.noProgressSteps = 0; work.decisionFailures = 0;
+    this.syncPlan(work);
+    workStore.save(work);
+  }
+
   syncPlan(work: WorkRecord): void {
+    if (!usesGoalWorkflow(store.getSession(work.sessionId))) {
+      work.planRevision = null;
+      work.acceptanceCriteria = [];
+      return;
+    }
     const plan = store.getSession(work.sessionId).sessionMetadata?.plan as { revision?: number; status?: string; acceptanceCriteria?: string[] } | undefined;
     if (plan?.status === 'approved') {
       work.planRevision = plan.revision ?? null;
@@ -251,6 +273,18 @@ class WorkRuntime {
       throw new AgentValidationError('Completion requires the active run checkpoint.');
     this.syncPlan(work);
     if (!summary.trim()) throw new AgentValidationError('A final summary or concrete blocker is required.');
+    // Chat/Plan end a conversational turn, not a formally accepted goal. Pending
+    // interactions/children still own execution; TODOs and receipts do not.
+    if (!usesGoalWorkflow(session)) {
+      if (this.pendingChildren(work) || interactionService.pending(work.sessionId))
+        throw new AgentValidationError('Resolve active children and pending interactions before ending the turn.');
+      if (TaskStore.fromEvents(work.sessionId).list().some(t => t.status !== 'completed'))
+        return this.yieldRound(input, summary);
+      work.status = 'completed'; work.result = summary; work.reason = null;
+      work.evidence = []; work.remaining = [];
+      getRawSqlite().transaction(() => { workStore.save(work); this.persistTerminal(work, input.runId!); })();
+      return { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [] };
+    }
     if (getGoalState(session.sessionMetadata) && !session.parentSessionId && !input.toolCallId)
       throw new AgentValidationError('Approved-plan acceptance requires goal.finish or work.checkpoint with criterion evidence; plain text cannot bypass it.');
     const tasks = TaskStore.fromEvents(work.sessionId).list().filter(t => t.status !== 'completed');
@@ -308,7 +342,7 @@ class WorkRuntime {
     this.syncPlan(work);
     if (!summary.trim()) throw new AgentValidationError('A concrete blocker is required.');
     const goal = getGoalState(session.sessionMetadata);
-    if (goal && !session.parentSessionId)
+    if (usesGoalWorkflow(session) && goal && !session.parentSessionId)
       store.updateSessionMetadata(work.sessionId, { goal: { ...goal, status: 'blocked', reason: summary } });
     const interaction = interactionService.request({
       ...input,
@@ -335,8 +369,13 @@ class WorkRuntime {
   prompt(sessionId: string): string {
     const work = workStore.current(sessionId);
     if (!work) return '';
-    const proof = this.calls(work).filter(successfulEvidence);
     const session = store.getSession(sessionId);
+    if (!usesGoalWorkflow(session)) {
+      return workflowMode(session) === 'plan'
+        ? 'Planning is read-only. Research and propose a plan; do not execute it without user approval. A final response ends this turn, not an implementation or goal acceptance.'
+        : 'Finish this turn with a concise answer describing delivered results, actual checks, and any unverified or remaining work. Checks may use normal execution tools. No structured acceptance or automatic continuation is required.';
+    }
+    const proof = this.calls(work).filter(successfulEvidence);
     const snapshot = {
       id: work.id, status: work.status, objective: resolveSessionUserRequest(session, work.objective),
       ...(work.requirements.length > 1 ? { requirements: work.requirements.map(r => ({ ...r, text: resolveSessionUserRequest(session, r.text) })) } : {}),

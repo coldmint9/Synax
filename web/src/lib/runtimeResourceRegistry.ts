@@ -1,5 +1,5 @@
 /**
- * Client-side record of runtime resources the user is removing or has removed.
+ * Client-side record of runtime resources being removed or confirmed missing.
  *
  * Deleting a session tears down a whole tree, while the UI regularly fans out
  * several parallel requests per session (a detail refresh alone issues nine).
@@ -8,9 +8,9 @@
  * reported as a failure the user did not experience.
  *
  * Callers register the ids they are deleting here and the error router consults
- * it before surfacing a missing-resource message. Ids are only ever registered
- * by an explicit user action, so unrelated `NOT_FOUND` responses keep their
- * normal treatment.
+ * it before surfacing a missing-resource message. Ids are registered by an
+ * explicit removal or an authoritative session `NOT_FOUND` response;
+ * unrelated missing-resource errors keep their normal treatment.
  */
 const MAX_TRACKED_RESOURCES = 512
 

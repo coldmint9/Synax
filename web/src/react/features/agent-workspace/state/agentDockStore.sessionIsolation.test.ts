@@ -240,7 +240,7 @@ it("uses the Wiki document context while submitting through the independent dock
     expect.objectContaining({
       prompt: "Review the appendix with document context",
       sessionMetadata: expect.objectContaining({
-        mode: "goal",
+        mode: "chat",
         source: "agent-dock",
         goalId: "wiki-goal",
         userPrompt: "Review the appendix",

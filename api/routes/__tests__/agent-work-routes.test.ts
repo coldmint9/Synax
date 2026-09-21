@@ -1,3 +1,4 @@
+import { workStore } from '../../services/agent-runtime/work-store.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { agentRuntimeRoutes } from '../agent-runtime.js';
 import { agentSessionRuntime } from '../../services/agent-runtime/session-runtime.js';
@@ -9,7 +10,7 @@ import { startAuxUsage, finishAuxUsage } from '../../services/agent-runtime/usag
 
 beforeEach(() => { resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
 describe('work-aware session API', () => {
-  it('preserves plan and goal on mode switch and still requires approved acceptance evidence in chat', async () => {
+  it('preserves historical plan and goal on mode switch without applying goal acceptance in chat', async () => {
     const session = agentSessionRuntime.create({ projectId: 'fixture', profileId: 'synax', prompt: 'Deliver verified change', sessionMetadata: { mode: 'goal' } });
     const plan = { title: 'Change', objective: 'Deliver verified change', status: 'approved', revision: 1, acceptanceCriteria: ['Behavior checked'], steps: [] };
     store.updateSessionMetadata(session.id, { plan, goal: { objective: plan.objective, status: 'executing' } });
@@ -23,7 +24,27 @@ describe('work-aware session API', () => {
     store.updateSession(session.id, { status: 'running', activeRunId: run.id });
     workRuntime.attach(session.id, run);
     store.appendRunStep({ id: 'step', sessionId: session.id, runId: run.id, index: 1, status: 'running', startedAt: now, completedAt: null, model: null, finishReason: null, metadata: {} });
-    await expect(workRuntime.complete({ sessionId: session.id, runId: run.id, stepId: 'step', toolCallId: 'finish', toolId: 'work.checkpoint', category: 'task', mutability: 'task', args: {} }, 'Done', [])).rejects.toThrow('Missing acceptance evidence');
+    await expect(workRuntime.complete({ sessionId: session.id, runId: run.id, stepId: 'step', toolCallId: '', toolId: 'runtime.final', category: 'task', mutability: 'task', args: {} }, 'Done', [])).resolves.toMatchObject({ displaySummary: 'Done' });
+    expect(store.getSession(session.id).status).toBe('completed');
+    expect(store.getSession(session.id).sessionMetadata?.goal).toMatchObject({ status: 'executing' });
+  });
+  it('reopens completed Chat work only when the user explicitly selects a different workflow', async () => {
+    const session = agentSessionRuntime.create({ projectId: 'fixture', profileId: 'synax', prompt: 'Discuss a change', sessionMetadata: { mode: 'chat' } });
+    const work = workStore.create(session.id, session.prompt);
+    work.status = 'completed'; work.result = 'Earlier chat answer';
+    work.checkpoint = { throughStepId: 'retained-step', summary: 'Retained context', createdAt: new Date().toISOString() };
+    workStore.save(work);
+    store.updateSession(session.id, { status: 'completed', activeRunId: null });
+    const switchTo = (mode: string) => agentRuntimeRoutes.request(`http://localhost/sessions/${session.id}/mode`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }),
+    });
+    expect((await switchTo('chat')).status).toBe(200);
+    expect(workStore.current(session.id)?.status).toBe('completed');
+    expect((await switchTo('goal')).status).toBe(200);
+    expect(workStore.current(session.id)).toMatchObject({ status: 'active', result: null, checkpoint: { summary: 'Retained context' } });
+    expect(store.getSession(session.id).sessionMetadata?.goal).toMatchObject({ status: 'planning' });
+    expect(store.getSession(session.id).activeRunId).toBeNull();
+    expect(store.listRuns(session.id)).toHaveLength(0);
   });
   it('counts auxiliary calls once and exposes separate context/usage fields', async () => {
     const session = agentSessionRuntime.create({ projectId: 'fixture', profileId: 'synax', prompt: 'Question' });

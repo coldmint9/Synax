@@ -1,3 +1,7 @@
+import {
+  SessionNotifications,
+  isTrustedNotificationSender,
+} from "./lib/session-notifications.js";
 import { isTerminalSystemShortcut } from "./lib/terminal-shortcuts.js";
 import fs from "node:fs/promises";
 import {
@@ -46,6 +50,23 @@ const artifactPreviews = new ArtifactPreviewManager(
       url,
       isDev ? `http://localhost:${process.env.WEB_PORT || "5173"}` : undefined,
     ),
+);
+let windowOpening: Promise<void> | null = null;
+async function ensureMainWindow(): Promise<BrowserWindow | null> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    windowOpening ??= bootstrap().finally(() => {
+      windowOpening = null;
+    });
+    await windowOpening;
+  }
+  return mainWindow;
+}
+const sessionNotifications = new SessionNotifications(
+  () => mainWindow,
+  ensureMainWindow,
+  isDev
+    ? getResourcePath("electron", "resources", "icon.png")
+    : getResourcePath("icon.png"),
 );
 let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
@@ -125,6 +146,11 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  win.webContents.on("did-start-loading", () =>
+    sessionNotifications.setRendererReady(false),
+  );
+  win.on("closed", () => sessionNotifications.setRendererReady(false));
+
   win.webContents.on("before-input-event", (_event, input) => {
     win.webContents.setIgnoreMenuShortcuts(
       terminalFocused && !isTerminalSystemShortcut(input),
@@ -191,6 +217,32 @@ let ipcRegistered = false;
 function registerIPC(): void {
   if (ipcRegistered) return;
   ipcRegistered = true;
+  const trustedNotificationSender = (
+    event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
+  ) =>
+    isTrustedNotificationSender(
+      event,
+      mainWindow,
+      isDev,
+      process.env.WEB_PORT ?? "5173",
+    );
+  ipcMain.handle(
+    "notifications:show",
+    (event, payload) =>
+      trustedNotificationSender(event) && sessionNotifications.show(payload),
+  );
+  ipcMain.on("notifications:enabled", (event, enabled) => {
+    if (trustedNotificationSender(event) && typeof enabled === "boolean")
+      sessionNotifications.setEnabled(enabled);
+  });
+  ipcMain.on("notifications:renderer-ready", (event, ready) => {
+    if (trustedNotificationSender(event) && typeof ready === "boolean")
+      sessionNotifications.setRendererReady(ready);
+  });
+  ipcMain.on("notifications:dismiss", (event, sessionId) => {
+    if (trustedNotificationSender(event) && typeof sessionId === "string")
+      sessionNotifications.dismiss(sessionId);
+  });
   ipcMain.handle("dialog:open", (_e, options) =>
     dialog.showOpenDialog(options),
   );
@@ -381,7 +433,7 @@ async function bootstrap(): Promise<void> {
 if (gotLock)
   app
     .whenReady()
-    .then(bootstrap)
+    .then(ensureMainWindow)
     .catch((err) => {
       console.error("[electron] failed to bootstrap", err);
       dialog.showErrorBox(
@@ -409,12 +461,15 @@ app.on("window-all-closed", () => {
 
 app.on("activate", () => {
   if (gotLock && BrowserWindow.getAllWindows().length === 0) {
-    bootstrap();
+    void ensureMainWindow().catch((error) => {
+      console.error("[electron] failed to reopen the window", error);
+    });
   }
 });
 
 app.on("before-quit", () => {
   artifactPreviews.dispose();
+  sessionNotifications.dispose();
   desktopUpdates?.stop();
   stopSidecar();
 });

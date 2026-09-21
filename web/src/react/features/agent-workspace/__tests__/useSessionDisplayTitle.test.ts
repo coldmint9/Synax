@@ -39,6 +39,7 @@ describe("getSessionDisplayTitle", () => {
   it.each([
     "new chat",
     "新对话",
+    "新会话",
     "new agent",
     "new session",
     "  NEW AGENT  ",

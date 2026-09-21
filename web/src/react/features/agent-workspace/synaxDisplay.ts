@@ -10,6 +10,7 @@ const VARIANT_LABELS: Record<string, string> = {
 
 const MODE_LABELS: Record<string, string> = {
   goal: "Goal",
+  plan: "Plan",
   plan_node: "Plan",
   chat: "Chat",
 };
@@ -31,12 +32,6 @@ export function resolveSynaxMode(session: AgentSession): string | null {
 
   const source = session.sessionMetadata?.source;
   if (source === "plan-execution") return "plan_node";
-  if (
-    source === "agent-dock" ||
-    source === "goal-dock" ||
-    source === "session-page"
-  )
-    return "goal";
 
   return isSynaxSession(session) ? "chat" : null;
 }

@@ -438,6 +438,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     );
     expect(dialog.getByRole("textbox", { name: "模型" })).toHaveValue("");
     expect(dialog.getByPlaceholderText("输入 API Key")).toHaveValue("");
+    expect(screen.queryByRole("button", { name: /^OpenAI$/ })).not.toBeInTheDocument();
     for (const protocol of [
       "OpenAI Chat Completions",
       "OpenAI Responses",

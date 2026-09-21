@@ -65,6 +65,18 @@ import {
   snapshotStreamingBuffers,
   type StreamingLiveBuffers,
 } from "../streamingLiveBlocks";
+import { clearSessionLastVisit, loadSessionLastVisit } from "../sessionLastVisit";
+
+// Only a missing session itself is terminal, not a missing nested resource,
+// unsupported endpoint, permission failure, or transient network error.
+function isMissingSession(error: unknown, sessionId: string): boolean {
+  return (
+    error instanceof AppError &&
+    error.statusCode === 404 &&
+    error.code === "NOT_FOUND" &&
+    error.message === `Agent runtime resource not found: ${sessionId}`
+  );
+}
 
 const READ_MARKERS_KEY = "synax-session-read-markers";
 
@@ -487,6 +499,10 @@ export interface AgentSessionStoreState {
     body: SessionInputBody,
   ) => Promise<AgentSession>;
   deleteSession: (sessionId: string) => Promise<string[]>;
+  discardRemovedSessions: (
+    sessionIds: string[],
+    projectId: string | null,
+  ) => void;
   openPanel: (sessionId: string) => void;
   closePanel: () => void;
   refreshDetail: (options?: { joinPending?: boolean }) => Promise<void>;
@@ -876,6 +892,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       ++detailRefreshEpoch;
       clearInvocationUsageRefresh();
       activeDetailRefresh = null;
+      activeTranscriptRefresh = null;
       releaseSessionLiveSubscription();
       clearStreamingBuffers();
       set({
@@ -950,6 +967,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     deleteSession: async (sessionId) => {
+      const projectId = get().projectId;
       // Suppress this session's in-flight detail requests before the delete
       // lands. They cannot be cancelled once dispatched, so without this the
       // responses arrive as a burst of "resource not found" notifications.
@@ -960,14 +978,30 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           await agentRuntimeApi.deleteSession(sessionId));
       } catch (err) {
         clearRuntimeResourcePendingRemoval(sessionId);
-        throw err;
+        if (!isMissingSession(err, sessionId)) throw err;
+        deletedSessionIds = [sessionId];
       }
+      get().discardRemovedSessions(deletedSessionIds, projectId);
+      return deletedSessionIds;
+    },
+
+    discardRemovedSessions: (deletedSessionIds, projectId) => {
       markRuntimeResourcesRemoved(deletedSessionIds);
       const deleted = new Set(deletedSessionIds);
       useSessionWorkspaceStore.getState().removeSessions(deleted);
+      const lastVisit = projectId ? loadSessionLastVisit(projectId) : null;
+      if (
+        projectId &&
+        lastVisit?.kind === "session" &&
+        deleted.has(lastVisit.sessionId)
+      ) {
+        clearSessionLastVisit(projectId);
+      }
+      if (get().projectId !== projectId) return;
       const shouldClosePanel = Boolean(
         get().selectedSessionId && deleted.has(get().selectedSessionId!),
       );
+      if (shouldClosePanel) get().resetSessionDetailForDraft();
       const nextCache = { ...get().sessionDetailCache };
       for (const id of deleted) delete nextCache[id];
       set({
@@ -990,19 +1024,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           get().sessionListOffset -
             get().sessions.filter((session) => deleted.has(session.id)).length,
         ),
-        selectedSessionId: shouldClosePanel ? null : get().selectedSessionId,
-        panelOpen: shouldClosePanel ? false : get().panelOpen,
-        interactionState: shouldClosePanel ? null : get().interactionState,
-        runs: shouldClosePanel ? [] : get().runs,
-        steps: shouldClosePanel ? [] : get().steps,
-        events: shouldClosePanel ? [] : get().events,
-        messages: shouldClosePanel ? [] : get().messages,
-        toolCalls: shouldClosePanel ? [] : get().toolCalls,
       });
-      return deletedSessionIds;
     },
 
     openPanel: (sessionId) => {
+      if (isRuntimeResourceGone(sessionId)) return;
       const { panelOpen, selectedSessionId: prev } = get();
       if (panelOpen && prev === sessionId) return;
 
@@ -1115,6 +1141,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               ? cachedEntry.events[cachedEntry.events.length - 1].id
               : undefined;
 
+            const discardIfMissing = (error: unknown) => {
+              if (!isCurrent() || !isMissingSession(error, targetSessionId))
+                return false;
+              get().discardRemovedSessions([targetSessionId], targetProjectId);
+              return true;
+            };
             const profileUpdates = [
               ...(!get().sessions.some(
                 (session) => session.id === targetSessionId,
@@ -1136,8 +1168,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                             : [...state.sessions, session],
                         }));
                       })
-                      .catch(() => {
-                        /* transcript errors provide the retry UI */
+                      .catch((error) => {
+                        discardIfMissing(error);
+                        /* Other transcript errors provide the retry UI. */
                       }),
                   ]
                 : []),
@@ -1277,6 +1310,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 },
               )
               .catch((error) => {
+                if (discardIfMissing(error)) return;
                 if (isCurrent())
                   set({ detailLoading: false, detailError: String(error) });
               });

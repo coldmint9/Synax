@@ -11,7 +11,6 @@ import {
   Bot,
   Check,
   ChevronRight,
-  FileCode2,
   FileDiff,
   Folder,
   FolderOpen,
@@ -36,6 +35,7 @@ import {
   WorkspaceDashboardLayout,
 } from "./WorkspaceDashboardLayout";
 import { WorkspaceSection as WorkspaceCard } from "./WorkspaceSection";
+import { WorkspaceFilesCard } from "./WorkspaceFilesCard";
 import { SessionTodoPanel } from "./SessionTodoPanel";
 import { SessionProfilePanel } from "./SessionProfilePanel";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -266,8 +266,6 @@ function RepositoryProjectCard({
   reload,
   changedFilesView,
   onChangedFilesView,
-  copiedPath,
-  onCopyPath,
 }: {
   sessionId: string;
   environment: SessionEnvironment;
@@ -276,22 +274,15 @@ function RepositoryProjectCard({
   reload: () => void | Promise<void>;
   changedFilesView: "tree" | "flat";
   onChangedFilesView: (view: "tree" | "flat") => void;
-  copiedPath: string | null;
-  onCopyPath: (path: string) => void;
 }) {
   const { t } = useLocale();
-  const outputFiles = repository.outputFiles ?? [];
   const changedFiles = repository.changedFiles;
   const changedFileTree = useMemo(
     () => buildChangedFileTree(changedFiles),
     [changedFiles],
   );
-  const recentSources = (repository.inputSources ?? []).slice(-8).reverse();
   const stagedFiles = changedFiles.filter((file) => file.staged).length;
-  const hasProjectRecords =
-    changedFiles.length > 0 ||
-    recentSources.length > 0 ||
-    outputFiles.length > 0;
+  const hasProjectRecords = changedFiles.length > 0;
   const openDiff = (filePath: string) => {
     openWorkspaceDiff(sessionId, filePath, repository.rootId, repository.name);
   };
@@ -353,9 +344,7 @@ function RepositoryProjectCard({
               {t("workspaceStagedCount", { count: stagedFiles })}
             </div>
           )}
-          {changedFiles.length === 0 ? (
-            <div className="ws-empty">{t("workspaceNoChanges")}</div>
-          ) : changedFilesView === "tree" ? (
+          {changedFilesView === "tree" ? (
             <ChangedFileTree directory={changedFileTree} onOpen={openDiff} />
           ) : (
             changedFiles.map((file) => (
@@ -368,53 +357,82 @@ function RepositoryProjectCard({
           )}
         </ProjectSection>
       )}
-      {recentSources.length > 0 && (
-        <ProjectSection
-          icon={<FileCode2 size={13} />}
-          storageKey={`${sessionId}:${repository.rootId}:inputs`}
-          title={t("workspaceCardInputSources")}
-          count={recentSources.length}
-        >
-          {recentSources.map((source) => (
-            <InputSourceRow
-              key={`${source.kind}:${source.label}`}
-              source={source}
-              copied={copiedPath === source.label}
-              onOpen={() =>
-                openWorkspaceInputSource(
-                  sessionId,
-                  source,
-                  repository.rootId,
-                  repository.name,
-                )
-              }
-              onCopy={() => onCopyPath(source.label)}
-            />
-          ))}
-        </ProjectSection>
-      )}
-      {outputFiles.length > 0 && (
-        <ProjectSection
-          icon={<FileCode2 size={13} />}
-          storageKey={`${sessionId}:${repository.rootId}:outputs`}
-          title={t("workspaceCardOutputs")}
-          count={outputFiles.length}
-        >
-          <OutputFiles
-            files={outputFiles}
-            onOpen={(filePath) =>
-              openWorkspaceFile(
-                sessionId,
-                filePath,
-                null,
-                repository.rootId,
-                repository.name,
-              )
-            }
-          />
-        </ProjectSection>
-      )}
     </WorkspaceCard>
+  );
+}
+
+function WorkspaceFilesDashboardPanel({
+  sessionId,
+  repositories,
+  inputSources = [],
+  outputFiles = [],
+  copiedPath,
+  onCopyPath,
+}: {
+  sessionId: string;
+  repositories: SessionEnvironmentRepository[];
+  inputSources?: SessionEnvironmentInputSource[];
+  outputFiles?: string[];
+  copiedPath: string | null;
+  onCopyPath: (path: string) => void;
+}) {
+  const fileRepositories =
+    repositories.length > 0
+      ? repositories
+      : [
+          {
+            rootId: "",
+            name: "Workspace",
+            inputSources,
+            outputFiles,
+          },
+        ];
+  const files = fileRepositories.flatMap((repository) => ({
+    inputs: (repository.inputSources ?? [])
+      .slice(-8)
+      .reverse()
+      .map((source) => ({
+        source,
+        rootId: repository.rootId,
+        rootName: repository.name,
+      })),
+    outputs: (repository.outputFiles ?? []).map((path) => ({
+      path,
+      rootId: repository.rootId,
+      rootName: repository.name,
+    })),
+  }));
+  const inputs = files.flatMap((item) => item.inputs);
+  const outputs = files.flatMap((item) => item.outputs);
+
+  if (inputs.length === 0 && outputs.length === 0) return null;
+
+  return (
+    <WorkspaceFilesCard
+      storageKey={`${sessionId}:files`}
+      inputCount={inputs.length}
+      outputCount={outputs.length}
+      inputs={inputs.map(({ source, rootId, rootName }) => (
+        <InputSourceRow
+          key={`${rootId}:${source.kind}:${source.toolCallId ?? source.label}`}
+          source={source}
+          rootName={rootName}
+          copied={copiedPath === source.label}
+          onOpen={() =>
+            openWorkspaceInputSource(sessionId, source, rootId, rootName)
+          }
+          onCopy={() => onCopyPath(source.label)}
+        />
+      ))}
+      outputs={
+        <OutputFiles
+          files={outputs}
+          onOpen={({ path, rootId, rootName }) =>
+            openWorkspaceFile(sessionId, path, null, rootId, rootName)
+          }
+        />
+      }
+    />
   );
 }
 
@@ -488,12 +506,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
     [],
   );
 
-  const recentSources = useMemo(
-    () => (repositoryEnvironment?.inputSources ?? []).slice(-8).reverse(),
-    [repositoryEnvironment?.inputSources],
-  );
   const changedFiles = repositoryEnvironment?.changedFiles ?? [];
-  const outputFiles = repositoryEnvironment?.outputFiles ?? [];
   const changedFileTree = useMemo(
     () => buildChangedFileTree(changedFiles),
     [changedFiles],
@@ -533,11 +546,17 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               reload={reload}
               changedFilesView={changedFilesView}
               onChangedFilesView={setChangedFilesView}
-              copiedPath={copiedPath}
-              onCopyPath={(path) => void copyPath(path)}
             />
           </DashboardPanel>
         ))}
+        <DashboardPanel id="files" label={t("workspaceCardFiles")}>
+          <WorkspaceFilesDashboardPanel
+            sessionId={sessionId}
+            repositories={repositories}
+            copiedPath={copiedPath}
+            onCopyPath={(path) => void copyPath(path)}
+          />
+        </DashboardPanel>
         {subagents.length > 0 && (
           <DashboardPanel id="subagents" label={t("workspaceCardSubagents")}>
             <WorkspaceCard
@@ -740,55 +759,17 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               </DashboardPanel>
             )}
 
-          {recentSources.length > 0 && (
-            <DashboardPanel id="inputs" label={t("workspaceCardInputSources")}>
-              <WorkspaceCard
-                defaultOpen={false}
-                icon={<FileCode2 size={13} />}
-                title={t("workspaceCardInputSources")}
-                count={recentSources.length}
-              >
-                {recentSources.map((source) => (
-                  <InputSourceRow
-                    key={`${source.kind}:${source.label}`}
-                    source={source}
-                    copied={copiedPath === source.label}
-                    onOpen={() =>
-                      openWorkspaceInputSource(
-                        sessionId,
-                        source,
-                        repository?.rootId,
-                        repository?.name,
-                      )
-                    }
-                    onCopy={() => void copyPath(source.label)}
-                  />
-                ))}
-              </WorkspaceCard>
-            </DashboardPanel>
-          )}
-          {outputFiles.length > 0 && (
-            <DashboardPanel id="outputs" label={t("workspaceCardOutputs")}>
-              <WorkspaceCard
-                icon={<FileCode2 size={13} />}
-                title={t("workspaceCardOutputs")}
-                count={outputFiles.length}
-              >
-                <OutputFiles
-                  files={outputFiles}
-                  onOpen={(filePath) =>
-                    openWorkspaceFile(
-                      sessionId,
-                      filePath,
-                      null,
-                      repository?.rootId,
-                      repository?.name,
-                    )
-                  }
-                />
-              </WorkspaceCard>
-            </DashboardPanel>
-          )}
+          <DashboardPanel id="files" label={t("workspaceCardFiles")}>
+            <WorkspaceFilesDashboardPanel
+              sessionId={sessionId}
+              repositories={repositories}
+              inputSources={environment.inputSources}
+              outputFiles={environment.outputFiles}
+              copiedPath={copiedPath}
+              onCopyPath={(path) => void copyPath(path)}
+            />
+          </DashboardPanel>
+
           {/* Only meaningful once the session actually spawned subagents — an
               empty placeholder here is pure noise. */}
           {subagents.length > 0 ? (
@@ -1087,25 +1068,26 @@ function OutputFiles({
   files,
   onOpen,
 }: {
-  files: string[];
-  onOpen: (path: string) => void;
+  files: Array<{ path: string; rootId: string; rootName: string }>;
+  onOpen: (file: { path: string; rootId: string; rootName: string }) => void;
 }) {
   const { t } = useLocale();
   if (!files.length) return null;
-  return files.map((filePath) => (
+  return files.map((file) => (
     <button
-      key={filePath}
+      key={`${file.rootId}:${file.path}`}
       type="button"
       className="ws-row"
-      title={filePath}
-      onClick={() => onOpen(filePath)}
+      title={file.path}
+      onClick={() => onOpen(file)}
     >
-      <FileTypeIcon path={filePath} size={11} />
+      <FileTypeIcon path={file.path} size={11} />
       <span className="ws-row-main">
-        <span className="ws-row-file">{fileName(filePath)}</span>
+        <span className="ws-row-file">{fileName(file.path)}</span>
         <span className="ws-row-sub">
-          {filePath.includes("/")
-            ? filePath.slice(0, filePath.lastIndexOf("/"))
+          {file.rootName} ·{" "}
+          {file.path.includes("/")
+            ? file.path.slice(0, file.path.lastIndexOf("/"))
             : t("workspaceRootDirectory")}
         </span>
       </span>
@@ -1115,11 +1097,13 @@ function OutputFiles({
 
 function InputSourceRow({
   source,
+  rootName,
   copied,
   onOpen,
   onCopy,
 }: {
   source: SessionEnvironmentInputSource;
+  rootName: string;
   copied: boolean;
   onOpen: () => void;
   onCopy: () => void;
@@ -1140,7 +1124,9 @@ function InputSourceRow({
       <FileTypeIcon path={source.path ?? "source"} size={11} />
       <span className="ws-row-main ws-row-main--file">
         <span className="ws-row-file">{label}</span>
-        <span className="ws-row-sub">{source.kind}</span>
+        <span className="ws-row-sub">
+          {rootName} · {source.kind}
+        </span>
       </span>
       {copied ? <Check size={11} className="ws-row-icon text-success" /> : null}
     </button>

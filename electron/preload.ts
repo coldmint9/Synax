@@ -32,6 +32,37 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.removeListener("artifact-preview:message", listener);
     },
   },
+  showDesktopNotification: (payload: {
+    id: string;
+    projectId: string;
+    sessionId: string;
+    kind: "completed" | "input" | "approval" | "failed";
+    title: string;
+    body: string;
+  }) => ipcRenderer.invoke("notifications:show", payload),
+  setDesktopNotificationsEnabled: (enabled: boolean) =>
+    ipcRenderer.send("notifications:enabled", enabled),
+  dismissDesktopNotification: (sessionId: string) =>
+    ipcRenderer.send("notifications:dismiss", sessionId),
+  onDesktopNotificationOpen: (
+    callback: (target: {
+      projectId: string;
+      sessionId: string;
+      kind: "completed" | "input" | "approval" | "failed";
+    }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      target: Parameters<typeof callback>[0],
+    ) => callback(target);
+    ipcRenderer.on("notifications:open-session", listener);
+    // Register the callback before draining a click queued during renderer reload.
+    ipcRenderer.send("notifications:renderer-ready", true);
+    return () => {
+      ipcRenderer.removeListener("notifications:open-session", listener);
+      ipcRenderer.send("notifications:renderer-ready", false);
+    };
+  },
   setTerminalFocus: (focused: boolean) =>
     ipcRenderer.send("terminal:focus", focused),
   showOpenDialog: (options: Electron.OpenDialogOptions) =>

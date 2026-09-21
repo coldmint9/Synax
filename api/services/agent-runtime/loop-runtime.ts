@@ -1,3 +1,4 @@
+import { workflowMode, usesGoalWorkflow } from './workflow-mode.js';
 import { buildToolContextReceipt } from "./tool-context-receipt.js";
 import {
   cacheDiagnosticsEnabled,
@@ -1188,14 +1189,14 @@ export class AgentLoopRuntime {
                 throw new AgentValidationError(
                   "An empty response is not a final result.",
                 );
-              if (shouldConverge(step.index, convergenceThreshold)) {
+              if (usesGoalWorkflow(this.store.getSession(sessionId)) && shouldConverge(step.index, convergenceThreshold)) {
                 workRuntime.yieldRound(
                   {
                     sessionId,
                     runId: run.id,
                     stepId: step.id,
                     toolCallId: "",
-                    toolId: "work.checkpoint",
+                    toolId: "runtime.final",
                     category: "task",
                     mutability: "task",
                     args: {},
@@ -1222,7 +1223,7 @@ export class AgentLoopRuntime {
                   runId: run.id,
                   stepId: step.id,
                   toolCallId: "",
-                  toolId: "work.checkpoint",
+                  toolId: "runtime.final",
                   category: "task",
                   mutability: "task",
                   args: {},
@@ -1238,7 +1239,10 @@ export class AgentLoopRuntime {
                 yield { type: "done", sessionId, runId: run.id };
                 return;
               }
-              yield* this.finishWorkRun(sessionId, run);
+              if (this.store.getRun(run.id).metadata.roundHandoff)
+                yield* this.finishYieldedRun(sessionId, run);
+              else
+                yield* this.finishWorkRun(sessionId, run);
               return;
             } catch (error) {
               const work = workRuntime.rejectedCompletion(
@@ -2538,7 +2542,7 @@ export class AgentLoopRuntime {
       input.profile.consecutiveFailureReminderThreshold,
     );
 
-    const stepNote = buildLoopStepNote(input);
+    const stepNote = buildLoopStepNote({ ...input, mode: workflowMode(session) });
     const tailReminders = [
       buildRuntimeEnvironment(input.sessionId, session.projectId),
       workRuntime.prompt(input.sessionId) ?? "",

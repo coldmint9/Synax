@@ -1,3 +1,4 @@
+import {workflowMode} from "./workflow-mode.js";
 import { createHash } from "node:crypto";
 import { getRawSqlite } from "../../db/index.js";
 import { agentRuntimeStore } from "./session-store.js";
@@ -13,6 +14,7 @@ export function publicationPermission(
   input: ArtifactPublishInput,
 ) {
   const session = agentRuntimeStore.getSession(sessionId);
+  if(workflowMode(session)==="plan")return {action:"deny" as const,reason:"Plan mode is read-only; artifact publication requires execution mode."};
   return resolvePermissionDecision({
     sessionId,
     category: "write",

@@ -1,6 +1,8 @@
 import { artifactVersionRoutes } from "./artifact-versions.js";
 import { drainArtifactPublications } from "../services/agent-runtime/artifact-integration.js";
 import { agentArtifactRoutes } from "./agent-artifacts.js";
+import { workRuntime } from "../services/agent-runtime/work-runtime.js";
+import { workflowMode } from "../services/agent-runtime/workflow-mode.js";
 import { compactSessionContext } from "../services/agent-runtime/manual-context-compaction.js";
 import { searchSessions } from "../services/agent-runtime/session-search.js";
 import {
@@ -82,6 +84,7 @@ import {
 import {
   getSessionEnvironment,
   getSessionEnvironmentFile,
+  saveSessionEnvironmentFile,
   getSessionInputSourceContent,
   invalidateSessionEnvironment,
 } from "../services/agent-runtime/session-environment.js";
@@ -889,6 +892,30 @@ agentRuntimeRoutes.get(
   },
 );
 
+agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z
+    .object({
+      path: z.string().min(1),
+      content: z.string(),
+      rootId: z.string().min(1).optional(),
+    })
+    .safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid file payload" }, 400);
+  try {
+    return c.json(
+      await saveSessionEnvironmentFile(
+        c.req.param("sessionId"),
+        parsed.data.path,
+        parsed.data.content,
+        parsed.data.rootId,
+      ),
+    );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
   const filePath = c.req.query("path");
   const kind = c.req.query("kind") === "input" ? "input" : "diff";
@@ -1523,6 +1550,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
         ? { goal: initializeGoal(session.prompt) }
         : {}),
     });
+    workRuntime.onModeChanged(id, workflowMode(session));
     return c.json({ session: updated });
   } catch (error) {
     return runtimeError(c, error);

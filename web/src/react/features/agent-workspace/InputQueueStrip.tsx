@@ -163,10 +163,10 @@ export function InputQueueStrip({
       if (from === -1) return;
       const rect = event.currentTarget.getBoundingClientRect();
       const below = event.clientY > rect.top + rect.height / 2;
-      // The drop marker is a boundary in the original list, but the API
-      // inserts at a final index after removing the dragged item.
-      const boundary = below ? index + 1 : index;
-      const to = boundary > from ? boundary - 1 : boundary;
+      // The pointer identifies a gap in the original list. The API accepts
+      // the final index after removing the source item, not that gap index.
+      const gap = below ? index + 1 : index;
+      const to = Math.max(0, Math.min(items.length - 1, gap > from ? gap - 1 : gap));
       if (to === from) return;
       void runAction(() => onReorder(sourceId, to));
     };

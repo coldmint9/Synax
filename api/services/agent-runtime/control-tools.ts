@@ -1,3 +1,4 @@
+import { workflowMode } from "./workflow-mode.js";
 import { workRuntime } from './work-runtime.js';
 import * as z from "zod/v4";
 import type { RegisteredTool } from "./contracts.js";
@@ -110,6 +111,7 @@ export const modeSwitchTool: RegisteredTool = {
       mode: args.mode,
       ...(goal ? { goal } : {}),
     });
+    workRuntime.onModeChanged(session.id, workflowMode(session));
     return {
       result: { mode: args.mode, reason: args.reason ?? null, goalStatus: goal?.status ?? null },
       displaySummary: `Switched session mode to ${args.mode}.`,

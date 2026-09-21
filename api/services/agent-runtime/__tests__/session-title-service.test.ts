@@ -223,7 +223,7 @@ describe("session title after first run", () => {
     });
   });
 
-  it.each(["new agent", "  NEW AGENT  ", "new chat", "新对话"])("still summarizes sessions left with placeholder %s", async (title) => {
+  it.each(["new agent", "  NEW AGENT  ", "new chat", "新对话", "新会话"])("still summarizes sessions left with placeholder %s", async (title) => {
     const session = agentSessionRuntime.create({
       projectId: "project-alpha",
       profileId: "synax",

@@ -115,6 +115,7 @@ export function enqueueArtifactJob(
   stepId: string | null = null,
 ): ArtifactBuildJob {
   validatePublish(input);
+  if(publicationPermission(sessionId,input).action==="deny")throw new ArtifactError("PERMISSION_DENIED","Artifact publication is denied by the current session policy",403);
   const session = agentRuntimeStore.getSession(sessionId);
   const root = resolveSessionWorkDir(sessionId, session.projectId);
   const job = runtimeTransaction(() => {
@@ -338,6 +339,7 @@ async function drainArtifactJobQueue(): Promise<void> {
         active.set(job.id, controller);
         signal(job.session_id);
         try {
+          if(publicationPermission(job.session_id,JSON.parse(job.input_json)).action==="deny")throw new ArtifactError("PERMISSION_DENIED","Artifact publication denied by current workflow",403);
           await publishArtifact(
             {
               ...JSON.parse(job.context_json),

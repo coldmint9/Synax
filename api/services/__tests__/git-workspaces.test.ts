@@ -183,7 +183,7 @@ describe("safe branch switching", () => {
     ).rejects.toThrow();
     await expect(switchGitBranch(repository, "missing")).rejects.toThrow();
     expect(git(["branch", "--show-current"])).toBe("feature/ui");
-  });
+  }, gitTestTimeoutMs);
   it("rejects dirty files, occupied branches and unfinished merges without changing HEAD", async () => {
     git(["branch", "feature/busy"]);
     fs.writeFileSync(path.join(repository, "untracked.txt"), "keep me");
@@ -206,5 +206,5 @@ describe("safe branch switching", () => {
       /progress/i,
     );
     expect(git(["branch", "--show-current"])).toBe("main");
-  });
+  }, gitTestTimeoutMs);
 });

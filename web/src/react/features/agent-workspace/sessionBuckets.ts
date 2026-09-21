@@ -1,3 +1,4 @@
+import { resolveSynaxMode } from "./synaxDisplay";
 import type { AgentSession } from "../../../lib/api/agentRuntime";
 
 /** Primary sessions page vs wiki/automation workflow sub-page. */
@@ -10,36 +11,7 @@ const WORKFLOW_PROFILE_IDS = new Set([
 ]);
 
 const LEGACY_GOAL_PROFILE_ID = "goal";
-const SYNAX_PROFILE_ID = "synax";
-
 const WORKSPACE_SESSION_MODES = new Set(["plan", "goal", "plan_node"]);
-const WORKSPACE_SESSION_SOURCES = new Set([
-  "agent-dock",
-  "goal-dock",
-  "session-page",
-  "plan-execution",
-]);
-
-function isSynaxProfile(profileId: string): boolean {
-  return profileId === SYNAX_PROFILE_ID || profileId === LEGACY_GOAL_PROFILE_ID;
-}
-
-function resolveSynaxMode(session: AgentSession): string | null {
-  const mode = session.sessionMetadata?.mode;
-  if (typeof mode === "string") return mode;
-
-  if (session.profileId === LEGACY_GOAL_PROFILE_ID) {
-    const source = session.sessionMetadata?.source;
-    return source === "plan-execution" ? "plan_node" : "goal";
-  }
-
-  const source = session.sessionMetadata?.source;
-  if (typeof source === "string" && WORKSPACE_SESSION_SOURCES.has(source)) {
-    return source === "plan-execution" ? "plan_node" : "goal";
-  }
-
-  return isSynaxProfile(session.profileId) ? "chat" : null;
-}
 
 export function isWorkflowSession(session: AgentSession): boolean {
   const { profileId, sessionMetadata } = session;

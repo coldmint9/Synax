@@ -275,3 +275,7 @@ it.each(["before", "after"])(
     expect(await response.json()).toEqual({ bytes: 70 * 1024 });
   },
 );
+it('keeps historical fork publication inside the selected workflow boundary',async()=>{
+ agentRuntimeStore.updateSessionMetadata(sessionId,{mode:'plan'});
+ expect((await request(`${base}/revisions/${revisionId}/fork`,{title:'Plan bypass',idempotencyKey:'plan-bypass'},'confirm-fork')).status).toBe(403);
+});

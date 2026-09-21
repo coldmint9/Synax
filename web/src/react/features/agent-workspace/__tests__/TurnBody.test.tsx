@@ -51,6 +51,7 @@ describe("TurnBody", () => {
 
     fireEvent.click(heading);
     expect(heading).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".bui-thinking-reveal")).toHaveAttribute("aria-hidden", "true");
     expect(container.querySelector('[role="timer"]')).toBeNull();
     expect(heading.querySelectorAll(".loading-state-cell")).toHaveLength(9);
     expect(container.querySelector("[data-thinking-dot]")).toBeNull();

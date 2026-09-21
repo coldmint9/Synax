@@ -51,14 +51,14 @@ describe("synax session mode", () => {
   });
 
   it.each(["agent-dock", "goal-dock"])(
-    "preserves mode inference for %s sessions",
+    "does not opt %s sessions into goal mode based on their source",
     (source) => {
       const session = {
         profileId: SYNAX_AGENT_PROFILE_ID,
         sessionMetadata: { source },
       };
-      expect(inferSynaxSessionMode(session)).toBe("goal");
-      expect(isGoalModeSession(session)).toBe(true);
+      expect(inferSynaxSessionMode(session)).toBe("chat");
+      expect(isGoalModeSession(session)).toBe(false);
       expect(
         inferSynaxSessionMode({
           ...session,
@@ -67,6 +67,12 @@ describe("synax session mode", () => {
       ).toBe("chat");
     },
   );
+
+  it.each(["chat", "plan"])("explicit %s overrides legacy goal profile/source", mode => {
+    const session = { profileId: "goal", sessionMetadata: { mode, source: "goal-dock" } };
+    expect(inferSynaxSessionMode(session)).toBe(mode);
+    expect(isGoalModeSession(session)).toBe(false);
+  });
 
   it("detects goal-like sessions across synax and legacy profiles", () => {
     expect(

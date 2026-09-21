@@ -204,7 +204,7 @@ describe("durable cooperative work runtime", () => {
     expect(store.getRun(run.id).status).toBe("running");
     expect(workRuntime.toolError(session.id, "bash")).toBeNull();
     expect(workRuntime.prompt(session.id)).toContain(
-      "This is advisory; tools remain available",
+      "Finish this turn with a concise answer",
     );
   });
 
@@ -293,6 +293,7 @@ describe("durable cooperative work runtime", () => {
 
   it("requires current-version verification after changes and rejects stale/cross-work proof", async () => {
     const { session, run } = setup();
+    store.updateSessionMetadata(session.id, { mode: 'goal' });
     fs.writeFileSync(path.join(root, "source.txt"), "first");
     const w = workStore.current(session.id)!;
     w.hasChanges = true;
@@ -326,6 +327,10 @@ describe("durable cooperative work runtime", () => {
       ]),
     ).rejects.toThrow("belong to this work");
     fs.writeFileSync(path.join(root, "source.txt"), "changed later");
+    await expect(workRuntime.complete(input(session.id, run.id, {}), "Done", [
+      { criterion: "Source", summary: "Old receipt", toolCallIds: [result.record.id] },
+    ])).rejects.toThrow("Stale or unsuccessful verification evidence");
+
     await expect(
       workRuntime.complete(input(session.id, run.id, {}), "Done"),
     ).rejects.toThrow("current-version verification");
@@ -340,6 +345,7 @@ describe("durable cooperative work runtime", () => {
 
   it("forbids automatic stash baselines and unscoped validation without a risk", async () => {
     const { session, run } = setup();
+    store.updateSessionMetadata(session.id, { mode: 'goal' });
     expect(
       workRuntime.toolError(session.id, "bash", {
         command: "git stash push -u -m baseline-check",

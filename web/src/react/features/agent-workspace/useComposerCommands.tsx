@@ -1,6 +1,5 @@
 import { composerMenuPosition } from "./composerMenuPosition";
 import { createPortal } from "react-dom";
-import { SessionModePicker } from "./SessionModePicker";
 import { ComposerContextPicker } from "./ComposerContextPicker";
 import {
   useEffect,
@@ -73,6 +72,7 @@ export function useComposerCommands({
   compactDisabled,
   onModeChange,
   disabled,
+  onAttachFiles,
 }: {
   projectId: string;
   sessionId?: string;
@@ -86,6 +86,7 @@ export function useComposerCommands({
   compactDisabled?: boolean;
   onModeChange: (value: AgentSessionMode) => Promise<void>;
   disabled: boolean;
+  onAttachFiles?: (files: File[]) => void;
 }) {
   const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
   const { locale } = useLocale(),
@@ -106,8 +107,11 @@ export function useComposerCommands({
     maxHeight: 320,
   });
   const native = backendId === "native";
-  useEffect(() => {
+  useLayoutEffect(() => {
+    setContextOpen(false);
     setQuery(null);
+    setOptions([]);
+    setActive(0);
     setError("");
   }, [sessionId, projectId, backendId, disabled, wikiEnabled]);
   useEffect(() => {
@@ -312,30 +316,24 @@ export function useComposerCommands({
     return false;
   };
   const trigger = (
-    <>
-      <ComposerContextPicker
-        projectId={projectId}
-        sessionId={sessionId}
-        backendId={backendId}
-        references={references}
-        onChange={setReferences}
-        disabled={disabled}
-        compactDisabled={compactDisabled}
-        onOpenChange={setContextOpen}
-        onOpen={() => setQuery(null)}
-      />
-      {native && (
-        <SessionModePicker
-          mode={mode}
-          disabled={!modeEnabled || disabled}
-          description={zh ? "选择工作方式" : "Choose how to work"}
-          onChange={(value) => {
-            void onModeChange(value).catch((err) => setError(String(err)));
-          }}
-          onOpenChange={setContextOpen}
-        />
-      )}
-    </>
+    <ComposerContextPicker
+      key={`${projectId}:${sessionId ?? "draft"}:${backendId}`}
+      projectId={projectId}
+      sessionId={sessionId}
+      backendId={backendId}
+      references={references}
+      onChange={setReferences}
+      disabled={disabled}
+      compactDisabled={compactDisabled}
+      onOpenChange={setContextOpen}
+      onOpen={() => setQuery(null)}
+      onAttachFiles={onAttachFiles}
+      mode={native ? mode : undefined}
+      modeDisabled={!modeEnabled}
+      onModeChange={(value) => {
+        void onModeChange(value).catch((err) => setError(String(err)));
+      }}
+    />
   );
   const header = references.length > 0 && (
     <div
@@ -436,6 +434,7 @@ export function useComposerCommands({
     onKeyDown,
     header,
     trigger,
+    handlesAttachments: Boolean(onAttachFiles),
     menu,
     open: Boolean(query) && !disabled,
     listId,

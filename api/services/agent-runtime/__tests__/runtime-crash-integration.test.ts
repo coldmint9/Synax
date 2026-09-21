@@ -30,6 +30,7 @@ describe('real host crash recovery', () => {
       expect(await recoverRuntime(lease.hostId)).toEqual({ reviewed: 1, resumable: [] });
       expect(agentRuntimeStore.getSession(info.sessionId)).toMatchObject({
         status: 'interrupted',
+        blockedReason: expect.stringMatching(/interrupted/i),
         activeRunId: null,
         pendingResumeToken: null,
         completedAt: null,

@@ -352,8 +352,9 @@ export default memo(function SessionsPage() {
           </Modal.Dialog>
         </Modal.Container>
       </Modal.Backdrop>
-      {showTranscript && agentSessionId && !hasWorkspaceContent ? (
+      {showTranscript && agentSessionId ? (
         <AgentCommandRail
+          hidden={hasWorkspaceContent}
           sessionId={agentSessionId}
           readingHistory={historyReading}
           projectId={projectId}

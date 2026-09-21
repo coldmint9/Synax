@@ -7,7 +7,9 @@ import type {
   AgentSession,
   PermissionDecision,
 } from "../../../../lib/api/agentRuntime";
-vi.mock("../SessionComposer", () => ({ SessionComposer: () => null }));
+vi.mock("../SessionComposer", () => ({
+  SessionComposer: () => <textarea aria-label="Draft" />,
+}));
 vi.mock("../SessionFileChangeIsland", () => ({
   SessionFileChangeIsland: () => null,
 }));
@@ -78,4 +80,32 @@ it("reserves the actual approval-rail height and removes the inset once resolved
   act(() => useAgentSessionStore.setState({ permissions: [] }));
   expect(page.style.getPropertyValue("--agent-command-rail-height")).toBe("");
   expect(disconnect).toHaveBeenCalled();
+});
+
+it("hides the composer for a workspace viewer without unmounting its input", () => {
+  useAgentSessionStore.setState({
+    ...useAgentSessionStore.getInitialState(),
+    sessions: [
+      {
+        id: "one",
+        profileId: "synax",
+        sessionMetadata: { source: "session-page", mode: "chat" },
+      } as AgentSession,
+    ],
+  });
+  const props = {
+    sessionId: "one",
+    projectId: "project",
+    focus: false,
+    insetLeft: 0,
+    insetRight: 0,
+    showFileSummary: false,
+  };
+  const view = render(<AgentCommandRail {...props} />);
+  const input = screen.getByRole("textbox");
+  view.rerender(<AgentCommandRail {...props} hidden />);
+  expect(input.isConnected).toBe(true);
+  expect(input.closest(".agent-command-rail")).toHaveAttribute("hidden");
+  view.rerender(<AgentCommandRail {...props} />);
+  expect(screen.getByRole("textbox")).toBe(input);
 });

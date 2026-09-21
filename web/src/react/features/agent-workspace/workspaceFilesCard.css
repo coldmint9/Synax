@@ -1,0 +1,83 @@
+.ws-files-card {
+  min-width: 0;
+}
+
+.ws-files-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.ws-files-tabs [role="tab"] {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--work-muted, hsl(var(--muted-foreground)));
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ws-files-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-files-tabs [role="tab"]:hover,
+.ws-files-collapse:hover {
+  background: hsl(var(--secondary) / 0.6);
+  color: hsl(var(--foreground-hsl));
+}
+
+.ws-files-tabs [aria-selected="true"] {
+  background: hsl(var(--secondary) / 0.85);
+  color: hsl(var(--foreground-hsl));
+}
+
+.ws-files-collapse {
+  display: inline-flex;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.ws-files-collapse svg {
+  transition: transform 120ms ease;
+}
+
+.ws-files-card[data-open="true"] > div > .ws-files-collapse svg {
+  transform: rotate(90deg);
+}
+
+.ws-files-tabs [role="tab"]:focus-visible,
+.ws-files-collapse:focus-visible,
+.ws-files-card [role="tabpanel"]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.ws-files-card > [role="tabpanel"][hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-files-collapse svg {
+    transition: none;
+  }
+}

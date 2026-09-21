@@ -1,0 +1,13 @@
+Liberation Mono 2.1.5 — regular and bold, unmodified upstream TTF files.
+Source: https://github.com/liberationfonts/liberation-fonts/releases/tag/2.1.5
+Archive: https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz
+License: SIL Open Font License 1.1; see LICENSE.txt.
+
+Codex's local desktop CSS uses a native system UI font stack and a monospace
+stack including Liberation Mono. This open-source fallback is bundled for a
+consistent offline ASCII wordmark, headings and shortcut hints. It is NOT
+OpenAI Sans, SF Mono, or a copy of proprietary font files from the Codex app.
+Chinese headings continue to use native Chinese glyph fallback.
+
+Vite resolves the CSS-relative font URLs into hashed build assets, included in
+web/dist and the desktop package. There are no runtime font CDN requests.

@@ -1,3 +1,5 @@
+import {publicationPermission} from "../services/agent-runtime/artifact-authorization.js";
+import {getRevision} from "../services/agent-runtime/artifacts/store.js";
 import { Hono } from "hono";
 import { getRawSqlite } from "../db/index.js";
 import { getArtifactState } from "../services/agent-runtime/artifacts/store.js";
@@ -111,6 +113,8 @@ artifactVersionRoutes.post(`${revision}/fork`, async (c) => {
   // Only the server-resolved session determines project identity. This operation deliberately
   // needs no workspace resolver: even a deleted workspace can branch its immutable snapshots.
   const session = agentRuntimeStore.getSession(sessionId);
+  const source=getRevision(sessionId,c.req.param("revisionId")!);
+  if(publicationPermission(sessionId,{sourcePath:source.sourcePath,sourceKind:source.sourceKind,title:input.title,idempotencyKey:input.idempotencyKey}).action==="deny")throw new ArtifactError("PERMISSION_DENIED","Current workflow denies artifact publication",403);
   const published = forkArtifactVersion(
     { sessionId, projectId: session.projectId, workspaceRoot: "" },
     c.req.param("revisionId")!,

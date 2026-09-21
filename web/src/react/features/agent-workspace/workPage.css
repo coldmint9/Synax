@@ -996,3 +996,75 @@
   border-color: transparent;
   box-shadow: none;
 }
+
+/* Workspace branch controls align with the project card edge instead of the
+   nested repository section's older inset. */
+:is(.work-page, .work-details-dialog) .ws-project-repository .ws-repo-head {
+  padding-left: 0;
+}
+:is(.work-page, .work-details-dialog) .ws-project-repository .ws-branch-trigger {
+  padding-left: 0;
+}
+
+.code-viewer-editor {
+  color: var(--foreground);
+  tab-size: 2;
+  white-space: pre;
+}
+
+.workspace-unsaved-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: hsl(var(--background) / 0.55);
+}
+
+.workspace-unsaved-dialog {
+  width: min(420px, 100%);
+  padding: 16px;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 10px;
+  background: hsl(var(--card));
+  box-shadow: 0 18px 60px hsl(0 0% 0% / 0.25);
+}
+
+.workspace-unsaved-dialog h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.workspace-unsaved-dialog p {
+  margin: 8px 0 14px;
+  color: var(--work-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.workspace-unsaved-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.workspace-unsaved-actions button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 6px;
+  color: var(--foreground);
+  font-size: 11px;
+}
+
+.workspace-unsaved-actions button:hover {
+  background: hsl(var(--secondary) / 0.6);
+}
+
+.workspace-unsaved-actions .workspace-unsaved-save {
+  border-color: hsl(var(--primary) / 0.8);
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}

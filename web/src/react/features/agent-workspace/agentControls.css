@@ -928,6 +928,10 @@ textarea.agent-request-input {
   box-shadow: 0 2px 8px hsl(0 0% 0% / 0.32);
 }
 .session-composer-island-content {
+  /* Keep the centering transform identical before and after measurement. */
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
   width: 100%;
   pointer-events: auto;
   opacity: 1;
@@ -1369,4 +1373,12 @@ textarea.agent-request-input {
   background: hsl(var(--primary) / 0.12);
   color: var(--foreground);
   box-shadow: none;
+}
+
+/* Switching drafts is an immediate replacement, never a layout/slide animation.
+   The stable host's HeroUI entrance runs only on actual mount. */
+.session-composer-island[data-switching="true"] .session-composer-island-frame,
+.session-composer-island[data-switching="true"] .session-composer-island-content,
+.session-composer-island[data-switching="true"] .session-composer-island-pill {
+  transition: none !important;
 }

@@ -34,6 +34,7 @@ const PLACEHOLDER_SESSION_TITLES = [
   DEFAULT_NEW_SESSION_TITLE,
   "new chat",
   "new agent",
+  "新会话",
   "新对话",
 ];
 

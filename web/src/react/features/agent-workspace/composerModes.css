@@ -1,0 +1,63 @@
+/* A single neutral plus opens all composer actions. Only the writing surface
+   communicates non-default modes; keyboard/screen-reader users get named radios. */
+.session-context-picker {
+  max-height: min(36rem, calc(100dvh - 3rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.session-composer-mode-group {
+  margin-block: 0.375rem;
+  padding-block: 0.375rem;
+  border-block: 1px solid hsl(var(--border-hsl) / 0.45);
+}
+.session-composer-mode-option {
+  position: relative;
+  cursor: pointer;
+}
+.session-composer-mode-option:has(input:checked) {
+  background: hsl(var(--foreground-hsl) / 0.045);
+}
+.session-composer-mode-option:has(input:focus-visible) {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: -2px;
+}
+.session-composer-mode-option[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.session-composer-mode-option[data-mode="plan"] > svg:first-of-type {
+  color: #2563eb;
+}
+.session-composer-mode-option[data-mode="goal"] > svg:first-of-type {
+  color: #8b5cf6;
+}
+.agent-session-controls[data-composer-mode="plan"] {
+  --composer-mode-border: #2563eb;
+}
+.agent-session-controls[data-composer-mode="goal"] {
+  --composer-mode-border: #8b5cf6;
+}
+.dark .agent-session-controls[data-composer-mode="plan"] {
+  --composer-mode-border: #60a5fa;
+}
+.dark .agent-session-controls[data-composer-mode="goal"] {
+  --composer-mode-border: #c084fc;
+}
+/* The attribute raises specificity above existing focused/dark composer rules.
+   No chat override: switching back restores the standard neutral surface. */
+:root
+  .agent-session-controls[data-composer-mode="plan"]
+  .agent-session-composer-shell.agent-dock-shell {
+  border: 2px dashed var(--composer-mode-border);
+}
+:root
+  .agent-session-controls[data-composer-mode="goal"]
+  .agent-session-composer-shell.agent-dock-shell {
+  border: 2px solid var(--composer-mode-border);
+}
+@media (forced-colors: active) {
+  :root .agent-session-controls[data-composer-mode="plan"],
+  :root .agent-session-controls[data-composer-mode="goal"] {
+    --composer-mode-border: Highlight;
+  }
+}

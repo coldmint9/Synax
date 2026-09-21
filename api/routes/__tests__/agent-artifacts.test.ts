@@ -374,3 +374,8 @@ it('accepts bounded binary screenshots only through the confirmed authenticated 
  const response=await agentArtifactRoutes.request(url,{method:'POST',body:form(),headers:{'X-Synax-Artifact-Action':'capture-screenshot'}});
  expect(response.status).toBe(201);expect((await response.json()).asset.mediaType).toBe('image/png');
 });
+it('does not let HTTP publication bypass the root plan workflow',async()=>{
+ agentRuntimeStore.updateSessionMetadata(sessionId,{mode:'plan'});
+ const response=await request(base,{sourcePath:'demo.html',title:'No plan write',sourceKind:'html',idempotencyKey:'plan-denied'});
+ expect(response.status).toBe(403);expect((await(await agentArtifactRoutes.request(base)).json()).items).toEqual([]);
+});

@@ -1,3 +1,4 @@
+import { goalContinuationInput } from "../goal-continuation.js";
 import os from "node:os";
 import { applySessionPermissionUpdate } from "../session-permissions.js";
 import { inspectHistoryCacheAnchor } from "../../llm-runtime/cache-policy.js";
@@ -597,7 +598,7 @@ describe("agentLoopRuntime", () => {
     );
     queueMockStep(
       makeToolStep({
-        toolName: "verification_run",
+        toolName: "bash",
         toolCallId: "verify-write",
         args: {
           command: `node -e "if(require('fs').readFileSync('${writePath}','utf8')!=='hello')process.exit(1)"`,
@@ -1513,11 +1514,11 @@ describe("agentLoopRuntime", () => {
     });
     queueMockStep(
       makeToolStep({
-        toolName: "goal_finish",
-        toolCallId: "blocked-goal",
+        toolName: "human_ask",
+        toolCallId: "blocked-chat",
         args: {
-          status: "blocked",
-          reason: "Execution started from the plan approval.",
+          title: "Blocked: execution needs input",
+          questions: [{ id: "unblock", type: "text", label: "Provide the missing execution detail" }],
         },
       }),
     );
@@ -1538,7 +1539,7 @@ describe("agentLoopRuntime", () => {
     expect(blocker.request.title).toContain("Blocked:");
     expect(
       agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
-    ).toEqual(["plan.propose", "goal.finish"]);
+    ).toEqual(["plan.propose", "human.ask"]);
   });
 
   it("executes a deferred plan from a later user instruction and finishes in chat without a goal acceptance loop", async () => {
@@ -1744,7 +1745,7 @@ describe("cooperative closing incident replay", () => {
       );
       queueMockStep(
         makeToolStep({
-          toolName: "verification_run",
+          toolName: "bash",
           toolCallId: "verify",
           args: {
             command: `node -e "if(require('./${file}')!==true)process.exit(1)"`,
@@ -1776,7 +1777,7 @@ describe("cooperative closing incident replay", () => {
       expect(agentRuntimeStore.getSession(session.id).status).toBe("completed");
       expect(
         agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
-      ).toEqual(["file.read", "file.write", "verification.run"]);
+      ).toEqual(["file.read", "file.write", "bash"]);
       expect(mockStepResults).toHaveLength(1);
       expect(agentRuntimeStore.listRuns(session.id)[0].currentStep).toBe(4);
     } finally {
@@ -1803,6 +1804,46 @@ describe("cooperative closing incident replay", () => {
         .listMessages(session.id)
         .filter((m) => m.metadata.purpose === "work_result"),
     ).toHaveLength(1);
+  });
+});
+
+describe("chat turn boundaries", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStepResults.length = 0;
+    capturedRequests.length = 0;
+    resetAgentRuntimeFixtures();
+    ensureSynaxAgentRegistered();
+  });
+
+  it("ends with an honest partial summary after a failed check, without accepting pending TODOs or resuming an old goal", async () => {
+    const session = agentSessionRuntime.create({
+      ...executorInput, profileId: "synax", permissionTier: "unrestricted",
+      sessionMetadata: { mode: "chat" },
+    });
+    agentRuntimeStore.updateSessionMetadata(session.id, {
+      goal: { objective: "Historical goal", status: "blocked", reason: "Historical blocker" },
+    });
+    queueMockStep(makeToolStep({ toolName: "task_create", toolCallId: "pending",
+      args: { subject: "Remaining implementation", description: "Not yet done" } }));
+    queueMockStep(makeToolStep({ toolName: "bash", toolCallId: "failed-check",
+      args: { command: 'node -e "process.exit(1)"' } }));
+    queueMockStep(makeTextStep("Partial result. The check failed; implementation remains incomplete."));
+    const chunks = await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Investigate and report the result." }));
+    expect(chunks.some(c => c.type === "run_completed")).toBe(true);
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
+      status: "completed", resultSummary: "Partial result. The check failed; implementation remains incomplete.",
+      sessionMetadata: { mode: "chat", goal: { status: "blocked" } },
+    });
+    expect(workStore.current(session.id)?.status).toBe("active");
+    expect(agentRuntimeStore.listToolCalls(session.id).map(c => c.toolId)).toEqual(["task.create", "bash"]);
+    expect(goalContinuationInput(session.id, agentRuntimeStore.listRuns(session.id)[0].id)).toBeNull();
+    for (const request of capturedRequests) {
+      expect(request.tools).not.toEqual(expect.arrayContaining(["work_checkpoint"]));
+      expect(request.tools).not.toContain("goal_finish");
+      expect(request.tools).not.toContain("verification_run");
+    }
+    expect(mockStepResults).toHaveLength(0);
   });
 });
 
@@ -1839,17 +1880,7 @@ describe("advisory closing state", () => {
         },
       }),
     );
-    queueMockStep(
-      makeToolStep({
-        toolName: "work_checkpoint",
-        toolCallId: "close",
-        args: {
-          action: "complete",
-          summary: "Inspection complete.",
-          evidence: [],
-        },
-      }),
-    );
+    queueMockStep(makeTextStep("Inspection complete."));
     const session = agentSessionRuntime.create({
       ...executorInput,
       permissionTier: "unrestricted",
@@ -2070,7 +2101,7 @@ describe("provider-bound session initialization prompt", () => {
       expect(text).not.toContain("One logical change per step");
       expect(text).not.toContain("otherwise run a code-map scan");
       expect(text).not.toContain("Keep wiki documentation aligned");
-      expect(text).toContain("Current work (authoritative runtime state)");
+      expect(text).toContain("Finish this turn with a concise answer");
       expect(request.reasoningEffort).toBe("max");
       expect(workStore.current(session.id)?.objective).toBe(message);
       expect(agentRuntimeStore.listToolCalls(session.id)).toHaveLength(0);
@@ -2377,15 +2408,15 @@ describe("provider-bound session initialization prompt", () => {
       agentLoopRuntime.streamRun(session.id, { message: "完成已有检查" }),
     );
     const closing = capturedRequests.at(-1)!;
-    expect(closing.tools).toContain("work_checkpoint");
+    expect(closing.tools).not.toContain("work_checkpoint");
     expect(closing.tools).toContain("bash");
-    expect(closing.tools).toContain("verification_run");
+    expect(closing.tools).not.toContain("verification_run");
     expect(closing.tools).toEqual(capturedRequests[0].tools);
     const system = String(closing.messages[0].content);
     expect(system).toBe(capturedRequests[0].messages[0].content);
     expect(system).not.toContain("Consider closing this round");
     const reminder = String(closing.messages.at(-1)!.content);
-    expect(reminder).toContain('"status":"closing"');
-    expect(reminder).toContain("This is advisory; tools remain available");
+    expect(reminder).not.toContain('"status":"closing"');
+    expect(reminder).toContain("Finish this turn with a concise answer");
   });
 });
