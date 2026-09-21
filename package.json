@@ -60,7 +60,9 @@
     "test:desktop-updates": "vitest run electron/lib/desktop-update-feed.test.ts electron/lib/desktop-updates.test.ts electron/lib/mac-desktop-update.test.ts electron/updater/controller.test.ts scripts/desktop-release-artifacts.test.ts",
     "test:desktop:update-smoke": "tsx scripts/desktop-update-smoke.ts",
     "test:desktop:ui-update-smoke": "tsx scripts/ui-update-smoke.ts",
-    "test:wsl:smoke": "tsx scripts/wsl-smoke.ts"
+    "test:wsl:smoke": "tsx scripts/wsl-smoke.ts",
+    "test:artifacts:desktop": "tsx scripts/artifact-desktop-e2e.ts",
+    "test:artifacts:wsl": "tsx scripts/artifact-wsl-smoke.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
