@@ -526,6 +526,43 @@ export function buildConversationTimeline(
       },
     });
   }
+  for (const message of messages) {
+    if (
+      message.role !== "assistant" ||
+      message.metadata?.source !== "artifact_job" ||
+      (options?.session && message.sessionId !== options.session.id)
+    )
+      continue;
+    const ref = message.metadata.artifactJob as
+      | { jobId?: unknown; title?: unknown }
+      | undefined;
+    if (
+      !ref ||
+      typeof ref.jobId !== "string" ||
+      typeof ref.title !== "string" ||
+      seenArtifacts.has(ref.jobId)
+    )
+      continue;
+    seenArtifacts.add(ref.jobId);
+    artifactEntries.push({
+      id: `artifact-job-${ref.jobId}`,
+      kind: "agent",
+      createdAt: message.createdAt,
+      label: ref.title,
+      turn: {
+        stepId: ref.jobId,
+        index: 0,
+        status: "completed",
+        duration: null,
+        blocks: [
+          {
+            type: "artifact_job",
+            reference: { jobId: ref.jobId, title: ref.title },
+          },
+        ],
+      },
+    });
+  }
   const withArtifacts = (entries: ConversationTimelineEntry[]) =>
     [...entries, ...artifactEntries].sort(
       (a, b) => toTimestamp(a.createdAt) - toTimestamp(b.createdAt),

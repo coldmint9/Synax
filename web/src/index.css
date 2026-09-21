@@ -3964,7 +3964,8 @@
 
 .session-nav-float-rail {
   position: relative;
-  pointer-events: auto;
+  /* Empty rail padding must not intercept controls in interactive replies. */
+  pointer-events: none;
   display: flex;
   align-items: center;
   padding: 6px 8px;
@@ -3993,6 +3994,7 @@
 }
 
 .session-nav-float-mark {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   justify-content: flex-end;

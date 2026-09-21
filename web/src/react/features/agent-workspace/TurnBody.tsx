@@ -1,4 +1,8 @@
 import {
+  ArtifactBuildCard,
+  type ArtifactJobReference,
+} from "../artifacts/ArtifactBuildCard";
+import {
   ArtifactPublicationCard,
   type ArtifactPublicationReference,
 } from "../artifacts/ArtifactPublicationCard";
@@ -38,6 +42,16 @@ function TranscriptArtifactRequest({
   ) : null;
 }
 
+function TranscriptArtifactJob({
+  reference,
+}: {
+  reference: ArtifactJobReference;
+}) {
+  const { sessionId } = useTranscriptSession();
+  return sessionId ? (
+    <ArtifactBuildCard sessionId={sessionId} reference={reference} />
+  ) : null;
+}
 function sourceLabel(url: string): string {
   try {
     return new URL(url).hostname;
@@ -66,6 +80,13 @@ function renderTurnBlocks(
       (toolBlocks.length === 0 || segment.type !== "thinking"),
   );
   const render = (segment: (typeof segments)[number], i: number) => {
+    if (segment.type === "artifact_job")
+      return (
+        <TranscriptArtifactJob
+          key={segment.reference.jobId}
+          reference={segment.reference}
+        />
+      );
     if (segment.type === "artifact_request")
       return (
         <TranscriptArtifactRequest

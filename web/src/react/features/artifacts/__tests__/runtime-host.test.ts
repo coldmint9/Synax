@@ -1,8 +1,12 @@
+import { artifactVersionsApi } from "../../../../lib/api/artifactVersions";
+vi.mock("../../../../lib/api/artifactVersions", () => ({
+  artifactVersionsApi: { registerControlSchema: vi.fn(async () => ({})) },
+}));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactRuntimeHost } from "../runtime-host";
 import { artifactsApi } from "../../../../lib/api/artifacts";
 vi.mock("../../../../lib/api/artifacts", () => ({
-  artifactsApi: { saveState: vi.fn() },
+  artifactsApi: { saveState: vi.fn(), state: vi.fn() },
 }));
 const state = {
   privateState: { secret: "never send" },
@@ -125,4 +129,58 @@ describe("artifact runtime host", () => {
     });
     host.dispose();
   });
+});
+
+it("calculates custom-schema defaults from refreshed state without overwriting a newer preview", async () => {
+  const { host } = makeHost();
+  host.state = {
+    ...state,
+    privateState: null,
+    controls: {},
+    schemaVersion: 1,
+    etag: 0,
+  };
+  let complete!: () => void;
+  vi.mocked(artifactVersionsApi.registerControlSchema).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        complete = () =>
+          resolve({
+            schema: { schemaVersion: 2, controls: [] },
+            state: { ...state, schemaVersion: 2, etag: 1 },
+          });
+      }),
+  );
+  const operation = host.handle("controls", {
+    schemaVersion: 2,
+    controls: [
+      {
+        key: "size",
+        label: "Size",
+        type: "number",
+        defaultValue: 2,
+        min: 1,
+        max: 10,
+      },
+    ],
+  });
+  vi.mocked(artifactsApi.state).mockResolvedValue({
+    ...state,
+    controls: { size: 7 },
+    schemaVersion: 2,
+    etag: 2,
+  });
+  complete();
+  await vi.advanceTimersByTimeAsync(600);
+  await operation;
+  expect(artifactsApi.saveState).toHaveBeenLastCalledWith(
+    "s",
+    "r",
+    expect.objectContaining({
+      controls: { size: 7 },
+      schemaVersion: 2,
+      etag: 2,
+    }),
+  );
+  host.dispose();
 });

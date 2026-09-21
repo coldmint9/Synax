@@ -7,6 +7,7 @@ import {
   maybeScheduleSessionTitleFromStreamChunk,
   ensureSessionTitleGenerated,
   isValidGeneratedSessionTitle,
+  needsGeneratedSessionTitle,
   registerSessionTitleHooks,
 } from "../session-title-service.js";
 import { agentSessionRuntime } from "../session-runtime.js";
@@ -222,7 +223,7 @@ describe("session title after first run", () => {
     });
   });
 
-  it("still summarizes sessions left with the legacy placeholder title", async () => {
+  it.each(["new agent", "  NEW AGENT  ", "new chat", "新对话"])("still summarizes sessions left with placeholder %s", async (title) => {
     const session = agentSessionRuntime.create({
       projectId: "project-alpha",
       profileId: "synax",
@@ -233,13 +234,29 @@ describe("session title after first run", () => {
         goalContent: LONG_INPUT,
       },
     });
-    agentRuntimeStore.updateSession(session.id, { title: "new agent" });
+    agentRuntimeStore.updateSession(session.id, { title });
 
     ensureSessionTitleGenerated(session.id);
 
     await vi.waitFor(() => {
       expect(agentRuntimeStore.getSession(session.id).title).toBe("问候用户");
     });
+  });
+
+  it("does not mistake a custom title mentioning new agent for a placeholder", () => {
+    const session = agentSessionRuntime.create({
+      projectId: "project-alpha",
+      profileId: "synax",
+      prompt: LONG_INPUT,
+    });
+    for (const title of ["Build a new agent", "new agent design"]) {
+      expect(needsGeneratedSessionTitle({ ...session, title })).toBe(false);
+    }
+    expect(needsGeneratedSessionTitle({
+      ...session,
+      title: "new agent",
+      sessionMetadata: { titleSummarized: true },
+    })).toBe(false);
   });
 
   it("scheduleSessionTitleAfterRunStart generates title for placeholder sessions", async () => {

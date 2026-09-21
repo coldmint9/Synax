@@ -5,7 +5,7 @@ import { transpileModule } from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
 describe("artifact preload boundaries", () => {
-  it("exposes only the five fixed host transport methods and strips IPC events", async () => {
+  it("exposes only fixed host transport methods and strips IPC events", async () => {
     const ipc = Object.assign(new EventEmitter(), {
       invoke: vi.fn(async () => {}),
       send: vi.fn(),
@@ -29,12 +29,22 @@ describe("artifact preload boundaries", () => {
       },
     );
     expect(Object.keys(api.artifactPreview).sort()).toEqual([
+      "annotate",
+      "capture",
       "create",
       "destroy",
       "onMessage",
       "send",
       "update",
     ]);
+    await api.artifactPreview.capture({
+      id: "one",
+      revisionId: "revision-one",
+    });
+    expect(ipc.invoke).toHaveBeenLastCalledWith("artifact-preview:capture", {
+      id: "one",
+      revisionId: "revision-one",
+    });
     const listener = vi.fn(),
       off = api.artifactPreview.onMessage(listener),
       message = { id: "one", message: { type: "hello" } };
@@ -99,6 +109,13 @@ describe("artifact preload boundaries", () => {
       source: window,
       data: { ...message, type: "executeJavaScript" },
     });
+    for (const type of [
+      "capture",
+      "screenshot",
+      "annotate",
+      "artifact-preview:capture",
+    ])
+      windowListener({ source: window, data: { ...message, type } });
     expect(ipc.send).not.toHaveBeenCalled();
     expect(expose).not.toHaveBeenCalled();
     windowListener({ source: window, data: message });
@@ -113,6 +130,15 @@ describe("artifact preload boundaries", () => {
     );
     windowListener({ source: window, data: { ...message, type: "connect" } });
     expect(ipc.send).toHaveBeenCalledTimes(1);
+    windowListener({
+      source: window,
+      data: { ...message, type: "annotationClear", payload: null },
+    });
+    expect(ipc.send).toHaveBeenLastCalledWith("artifact-runtime:message", {
+      ...message,
+      type: "annotationClear",
+      payload: null,
+    });
     ipc.emit("artifact-runtime:ping", {}, "challenge");
     expect(ipc.send).toHaveBeenLastCalledWith(
       "artifact-runtime:pong",

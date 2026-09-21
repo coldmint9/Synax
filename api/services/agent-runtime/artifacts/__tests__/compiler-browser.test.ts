@@ -63,4 +63,14 @@ describe.runIf(Boolean(executablePath))('real offline artifact browser', () => {
     expect(remoteRequests).toBe(0); expect(errors).toEqual([]); await page.close();
   });
 
+  it('supplies real Lucide icons to classic HTML without a network or React renderer',async()=>{
+    fs.writeFileSync(path.join(root,'icons.html'),'<i data-lucide="git-branch" aria-label="Branch icon"></i><button id="add">Add icon</button><script>document.getElementById("add").addEventListener("click",()=>{const el=document.createElement("i");el.dataset.lucide="folder";document.body.append(el);window.lucide.createIcons();});</script>');
+    const result=await compileArtifact(readSnapshot(root,'icons.html'),'html');
+    fs.writeFileSync(path.join(root,'icons-preview.html'),result.html);const page=await browser.newPage();
+    await page.goto(pathToFileURL(path.join(root,'icons-preview.html')).href);
+    await page.locator('svg[data-lucide-icon="git-branch"]').waitFor();
+    expect(await page.locator('svg[data-lucide-icon="git-branch"] circle').count()).toBeGreaterThan(0);
+    await page.getByRole('button',{name:'Add icon'}).click();await page.locator('svg[data-lucide-icon="folder"]').waitFor();await page.close();
+  });
+
 });

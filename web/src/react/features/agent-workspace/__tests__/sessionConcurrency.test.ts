@@ -130,35 +130,49 @@ it("does not let a background send steal the visible session live subscription",
 });
 
 it("merges and deduplicates subsequent pages, preserving old pages across head refreshes", async () => {
-  const first = Array.from({ length: 30 }, (_, i) => row(`s${i}`));
+  const first = Array.from({ length: 20 }, (_, i) => row(`s${i}`));
   vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({
     ...page(first),
-    totalCount: 32,
+    totalCount: 22,
   });
   await useAgentSessionStore.getState().refreshSessions();
+  expect(agentRuntimeApi.listSessions).toHaveBeenLastCalledWith({
+    projectId: "one",
+    limit: 20,
+  });
+  expect(useAgentSessionStore.getState().sessionListOffset).toBe(20);
   const original = useAgentSessionStore.getState().sessions[0];
   vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({
-    ...page([row("s30"), row("s31")]),
-    totalCount: 32,
+    ...page([row("s19"), row("s20"), row("s21")]),
+    totalCount: 22,
   });
   await Promise.all([
     useAgentSessionStore.getState().loadMoreSessions(),
     useAgentSessionStore.getState().loadMoreSessions(),
   ]);
-  expect(useAgentSessionStore.getState().sessions).toHaveLength(32);
+  expect(useAgentSessionStore.getState().sessions).toHaveLength(22);
+  expect(
+    new Set(useAgentSessionStore.getState().sessions.map((item) => item.id))
+      .size,
+  ).toBe(22);
+  // Offsets count fetched rows, including an overlap caused by concurrent list changes.
+  expect(useAgentSessionStore.getState().sessionListOffset).toBe(23);
   expect(agentRuntimeApi.listSessions).toHaveBeenCalledTimes(2);
   expect(agentRuntimeApi.listSessions).toHaveBeenLastCalledWith({
     projectId: "one",
-    limit: 30,
-    offset: 30,
+    limit: 20,
+    offset: 20,
   });
   vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({
     ...page(first.map((item) => ({ ...item }))),
-    totalCount: 32,
+    totalCount: 22,
   });
   await useAgentSessionStore.getState().refreshSessions();
-  expect(useAgentSessionStore.getState().sessions).toHaveLength(32);
+  expect(useAgentSessionStore.getState().sessions).toHaveLength(22);
   expect(useAgentSessionStore.getState().sessions[0]).toBe(original);
+  expect(useAgentSessionStore.getState().sessionListOffset).toBe(23);
+  await useAgentSessionStore.getState().loadMoreSessions();
+  expect(agentRuntimeApi.listSessions).toHaveBeenCalledTimes(3);
 });
 
 it("discards a next-page response after changing projects", async () => {
@@ -189,13 +203,16 @@ it("does not count a deep-linked session as a paginated row", async () => {
   });
   vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({
     ...page([row("s1")]),
-    totalCount: 31,
+    totalCount: 21,
   });
   await useAgentSessionStore.getState().loadMoreSessions();
   expect(agentRuntimeApi.listSessions).toHaveBeenCalledWith({
     projectId: "one",
-    limit: 30,
+    limit: 20,
     offset: 0,
   });
   expect(useAgentSessionStore.getState().sessionListOffset).toBe(1);
+  expect(
+    useAgentSessionStore.getState().sessions.map((item) => item.id),
+  ).toEqual(["linked", "s1"]);
 });

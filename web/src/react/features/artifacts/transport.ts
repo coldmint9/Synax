@@ -1,3 +1,4 @@
+import type { ArtifactCaptureResult, ArtifactElementBounds } from "./capture";
 import {
   acceptsEnvelope,
   injectRuntimeConfig,
@@ -15,6 +16,15 @@ export interface Bounds {
   clip?: { x: number; y: number; width: number; height: number };
 }
 export interface DesktopPreview {
+  capture?(input: {
+    id: string;
+    revisionId: string;
+  }): Promise<ArtifactCaptureResult>;
+  annotate?(input: {
+    id: string;
+    revisionId: string;
+    bounds: ArtifactElementBounds | null;
+  }): Promise<void>;
   create(input: {
     id: string;
     html: string;
@@ -49,6 +59,8 @@ export function desktopEnvironment(): {
   };
 }
 export interface PreviewConnection {
+  capture?: () => Promise<ArtifactCaptureResult>;
+  annotate?: (bounds: ArtifactElementBounds | null) => Promise<void>;
   send(type: string, payload: unknown): void;
   destroy(): void;
   update(): void;
@@ -328,6 +340,21 @@ export function mountPreview(options: {
     queueMicrotask(() => fail(error));
   }
   return {
+    ...(desktop && transport?.capture
+      ? {
+          capture: () => {
+            if (disposed || !connected)
+              return Promise.reject(new Error("Preview is not running"));
+            return transport.capture!({ id, revisionId: config.revisionId });
+          },
+        }
+      : {}),
+    ...(desktop && transport?.annotate
+      ? {
+          annotate: (bounds: ArtifactElementBounds | null) =>
+            transport.annotate!({ id, revisionId: config.revisionId, bounds }),
+        }
+      : {}),
     send: (type, payload) => {
       if (connected) sendEnvelope(envelope(type, payload));
     },

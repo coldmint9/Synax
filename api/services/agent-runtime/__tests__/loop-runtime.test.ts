@@ -5,6 +5,7 @@ import { asSchema } from "@ai-sdk/provider-utils";
 import { resolveGatewaySelection } from "../../llm-runtime/gateway.js";
 import { buildSessionPrompt } from "../session-prompt.js";
 import { workStore } from "../work-store.js";
+import { workspaceFingerprint } from "../work-fingerprint.js";
 import { acceptRuntimeRun } from "../run-admission.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -575,7 +576,16 @@ describe("agentLoopRuntime", () => {
     );
   });
 
-  it("resumes an approved pending write tool and continues the original run", async () => {
+  it("resumes an approved pending write tool and continues the original run", async ({
+    onTestFinished,
+  }) => {
+    // Verification fingerprints the workspace, including unrelated Git edits.
+    // Concurrent work on the checkout must not invalidate this approval fixture.
+    const workDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "synax-loop-approved-write-"),
+    );
+    onTestFinished(() => fs.rmSync(workDir, { recursive: true, force: true }));
+    capturedRequests.length = 0;
     const writePath = "tmp/agent-loop-runtime-write.txt";
     queueMockStep(
       makeToolStep({
@@ -599,7 +609,7 @@ describe("agentLoopRuntime", () => {
     );
     queueMockStep(makeTextStep("Write complete."));
 
-    const session = agentSessionRuntime.create(executorInput);
+    const session = agentSessionRuntime.create({ ...executorInput, workDir });
     const firstPass = await collectChunks(
       agentLoopRuntime.streamRun(session.id, { message: "Write the file." }),
     );
@@ -621,12 +631,29 @@ describe("agentLoopRuntime", () => {
     permissionPolicy.reply(session.id, verificationPermission!.id, "once");
     await agentLoopRuntime.resumeRun(session.id);
 
-    expect(fs.readFileSync(path.resolve(writePath), "utf8")).toBe("hello");
+    expect(fs.readFileSync(path.join(workDir, writePath), "utf8")).toBe(
+      "hello",
+    );
     expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
 
     const [run] = agentLoopRuntime.listRuns(session.id);
     const steps = agentLoopRuntime.listRunSteps(session.id, run.id);
     expect(steps).toHaveLength(3);
+    expect(run.status).toBe("completed");
+    expect(capturedRequests).toHaveLength(3);
+    expect(mockStepResults).toHaveLength(0);
+    const work = workStore.current(session.id)!;
+    expect(work.status).toBe("completed");
+    expect(work.verifications).toHaveLength(1);
+    const [verification] = work.verifications;
+    expect(verification).toMatchObject({
+      runId: run.id,
+      criterion: "Requested file content",
+      scope: [writePath],
+      status: "success",
+      changeVersion: work.changeVersion,
+      fingerprint: await workspaceFingerprint(session.id, [writePath]),
+    });
 
     const firstStepParts = agentRuntimeStore.listRunParts(steps[0].id);
     expect(firstStepParts.map((part) => part.kind)).toEqual([

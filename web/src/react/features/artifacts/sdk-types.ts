@@ -20,7 +20,7 @@ export interface SynaxWidget {
   onThemeChange(listener: (theme: "light" | "dark") => void): () => void;
   onStateChange(listener: (state: ArtifactState) => void): () => void;
   reportHeight(height: number): void;
-  registerControls(schema: ArtifactControl[]): Promise<void>;
+  registerControls(schema: ArtifactControl[], options?: {schemaVersion:number}): Promise<void>;
   onControlsChange(
     listener: (values: Record<string, unknown>) => void,
   ): () => void;

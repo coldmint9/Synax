@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('real host crash recovery', () => {
-  it.skipIf(process.platform === 'win32')('reclaims only identified child groups, fences old work and requires explicit review', async () => {
+  it.skipIf(process.platform === 'win32')('reclaims identified child groups and interrupts fenced work without replaying it', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-crash-integration-'));
     const parent = spawn(process.execPath, ['--import', 'tsx/esm', path.resolve('api/services/agent-runtime/__tests__/fixtures/crash-host.ts')], {
       env: { ...process.env, DATA_ROOT: root, LOG_LEVEL: 'error' }, stdio: ['ignore', 'pipe', 'pipe'],
@@ -27,9 +27,21 @@ describe('real host crash recovery', () => {
       vi.stubEnv('SYNAX_RUNTIME_HOST_ID', lease.hostId); vi.stubEnv('SYNAX_RUNTIME_DATA_ROOT', root);
       const { recoverRuntime } = await import('../runtime-recovery.js');
       const { agentRuntimeStore } = await import('../session-store.js');
-      await recoverRuntime(lease.hostId);
-      expect(agentRuntimeStore.getSession(info.sessionId).status).toBe('completed');
-      expect(agentRuntimeStore.getRun('crash-run').status).toBe('interrupted');
+      expect(await recoverRuntime(lease.hostId)).toEqual({ reviewed: 1, resumable: [] });
+      expect(agentRuntimeStore.getSession(info.sessionId)).toMatchObject({
+        status: 'interrupted',
+        activeRunId: null,
+        pendingResumeToken: null,
+        completedAt: null,
+        sessionMetadata: { runtimeControl: null },
+      });
+      expect(agentRuntimeStore.getRun('crash-run')).toMatchObject({
+        status: 'interrupted',
+        metadata: { executionLease: { closed: true }, recovery: { phase: 'running' } },
+      });
+      expect(agentRuntimeStore.listRuns(info.sessionId)).toHaveLength(1);
+      // A second recovery is inert: cleanup is not approval to replay old work.
+      expect(await recoverRuntime(lease.hostId)).toEqual({ reviewed: 0, resumable: [] });
       expect(() => process.kill(info.pid, 0)).toThrow();
       expect(fs.existsSync(path.join(root, 'workspace', 'must-not-finish.txt'))).toBe(false);
     } finally {

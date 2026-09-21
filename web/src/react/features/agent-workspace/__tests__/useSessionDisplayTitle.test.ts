@@ -36,17 +36,27 @@ describe("getSessionDisplayTitle", () => {
     );
   });
 
-  it("localizes the placeholder title instead of showing the raw value", () => {
-    expect(
-      getSessionDisplayTitle(session({ title: "new chat" }), "", "zh"),
-    ).toBe("新对话");
-    expect(
-      getSessionDisplayTitle(session({ title: "new agent" }), "", "zh"),
-    ).toBe("新会话");
-    expect(
-      getSessionDisplayTitle(session({ title: "new session" }), "", "en"),
-    ).toBe("new session");
+  it.each([
+    "new chat",
+    "新对话",
+    "new agent",
+    "new session",
+    "  NEW AGENT  ",
+    "  NEW SESSION  ",
+  ])("localizes placeholder %s using the shared title copy", (title) => {
+    expect(getSessionDisplayTitle(session({ title }), "", "zh")).toBe("新对话");
+    expect(getSessionDisplayTitle(session({ title }), "", "en")).toBe(
+      "new session",
+    );
   });
+
+  it.each(["Build a new agent", "new session design", "我的标题"])(
+    "preserves the non-placeholder title %s across locales",
+    (title) => {
+      expect(getSessionDisplayTitle(session({ title }), "", "zh")).toBe(title);
+      expect(getSessionDisplayTitle(session({ title }), "", "en")).toBe(title);
+    },
+  );
 
   it("prefers canonical userPrompt over the legacy field", () => {
     expect(

@@ -24,7 +24,26 @@ export interface ArtifactMessageEvent {
   id: string;
   message: Record<string, unknown>;
 }
+export interface ArtifactElementBounds extends ArtifactRect {
+  viewportWidth: number;
+  viewportHeight: number;
+}
+export interface ArtifactCaptureRequest {
+  id: string;
+  revisionId: string;
+}
+export interface ArtifactCaptureResult extends ArtifactCaptureRequest {
+  mimeType: "image/png";
+  bytes: Uint8Array;
+  width: number;
+  height: number;
+}
+export interface ArtifactAnnotationRequest extends ArtifactCaptureRequest {
+  bounds: ArtifactElementBounds | null;
+}
 export interface ArtifactPreviewAPI {
+  capture(input: ArtifactCaptureRequest): Promise<ArtifactCaptureResult>;
+  annotate(input: ArtifactAnnotationRequest): Promise<void>;
   create(input: ArtifactCreate): Promise<void>;
   update(input: ArtifactUpdate): Promise<void>;
   send(input: ArtifactMessageEvent): Promise<void>;

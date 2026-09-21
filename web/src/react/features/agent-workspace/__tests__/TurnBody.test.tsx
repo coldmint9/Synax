@@ -12,7 +12,7 @@ const emptyTurn: InterleavedTurn = {
 };
 
 describe("TurnBody", () => {
-  it("keeps the latest activity waiting after tools finish, and removes the dots when collapsed or stopped", () => {
+  it("keeps the live header loader after tools finish and collapse, but only times expanded activity", () => {
     const turn: InterleavedTurn = {
       ...emptyTurn,
       status: "completed",
@@ -40,23 +40,33 @@ describe("TurnBody", () => {
       "data-live",
       "true",
     );
-    expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
-    expect(
-      container.querySelector("[data-activity-body] [data-thinking-dot]"),
-    ).toBeNull();
+    // Tool activity uses a pixel loader in the header and a timer in the
+    // expanded footer; the three-dot placeholder belongs to empty turns only.
+    expect(heading.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+    expect(heading.querySelector('[role="status"]')).toHaveTextContent("bash · pwd");
+    expect(container.querySelector('[role="timer"]')).not.toBeNull();
+    expect(container.querySelector('[data-activity-body] [role="timer"]')).toBeNull();
+    expect(container.querySelector('[data-activity-body] .loading-state-cell')).toBeNull();
+    expect(container.querySelector("[data-thinking-dot]")).toBeNull();
 
     fireEvent.click(heading);
     expect(heading).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector('[role="timer"]')).toBeNull();
+    expect(heading.querySelectorAll(".loading-state-cell")).toHaveLength(9);
     expect(container.querySelector("[data-thinking-dot]")).toBeNull();
     expect(container.querySelector(".bui-thinking")).toHaveAttribute(
       "data-live",
       "true",
     );
     fireEvent.click(heading);
-    expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+    expect(heading).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector('[role="timer"]')).not.toBeNull();
+    expect(heading.querySelectorAll(".loading-state-cell")).toHaveLength(9);
 
     rerender(<TurnBody turn={turn} entryId="entry-1" isWorking={false} />);
     expect(container.querySelector('[data-live="true"]')).toBeNull();
+    expect(container.querySelector(".loading-state-cell")).toBeNull();
+    expect(container.querySelector('[role="timer"]')).toBeNull();
     expect(container.querySelector("[data-thinking-dot]")).toBeNull();
   });
 

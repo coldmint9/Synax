@@ -50,7 +50,13 @@ export interface ArtifactFeedbackInput {
   text: string;
   parameters?: Record<string, unknown>;
   modelState?: unknown;
-  element?: { qaId?: string; tag: string; text: string };
+  element?: {
+    qaId?: string;
+    tag: string;
+    text: string;
+    bounds?: ArtifactElementBounds;
+  };
+  screenshots?: Array<{ assetId: string; previewConfirmed: true }>;
   idempotencyKey: string;
 }
 export interface ArtifactControl {
@@ -68,6 +74,7 @@ export interface ArtifactPublishContext {
   projectId: string;
   workspaceRoot: string;
   signal?: AbortSignal;
+  jobId?: string;
   runId?: string | null;
   turnId?: string | null;
 }
@@ -100,3 +107,26 @@ export const emptyArtifactState = (): ArtifactState => ({
   etag: 0,
   schemaVersion: 1,
 });
+
+export interface ArtifactBuildJob {
+  jobId: string;
+  sessionId: string;
+  title: string;
+  status: "queued" | "building" | "ready" | "failed" | "cancelled";
+  revisionId: string | null;
+  artifactId: string | null;
+  errorCode: string | null;
+  diagnostics: string[];
+  createdAt: string;
+  updatedAt: string;
+  attempt: number;
+}
+
+export interface ArtifactElementBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}

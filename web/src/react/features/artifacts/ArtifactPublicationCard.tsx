@@ -1,3 +1,4 @@
+import { ArtifactBuildCard } from "./ArtifactBuildCard";
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../../lib/api/origin";
 import { useLocale } from "../../../hooks/useLocale";
@@ -17,14 +18,18 @@ export function ArtifactPublicationCard({
   const { locale } = useLocale();
   const zh = locale === "zh";
   const [status, setStatus] = useState("loading");
+  const [jobId, setJobId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const url = `/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/artifacts/requests/${encodeURIComponent(reference.requestId)}`;
   useEffect(() => {
     let active = true;
-    apiRequest<{ status: string }>(url, { silent: true })
+    apiRequest<{ status: string; jobId?: string }>(url, { silent: true })
       .then((result) => {
-        if (active) setStatus(result.status);
+        if (active) {
+          setStatus(result.status);
+          setJobId(result.jobId ?? null);
+        }
       })
       .catch((e) => {
         if (active) setError(e.message);
@@ -37,9 +42,12 @@ export function ArtifactPublicationCard({
     if (status !== "publishing") return;
     let active = true;
     const timer = setInterval(() => {
-      void apiRequest<{ status: string }>(url, { silent: true })
+      void apiRequest<{ status: string; jobId?: string }>(url, { silent: true })
         .then((r) => {
-          if (active) setStatus(r.status);
+          if (active) {
+            setStatus(r.status);
+            setJobId(r.jobId ?? null);
+          }
         })
         .catch((e) => {
           if (active) setError(e.message);
@@ -54,7 +62,7 @@ export function ArtifactPublicationCard({
     setBusy(true);
     setError("");
     try {
-      const result = await apiRequest<{ status: string }>(url, {
+      const result = await apiRequest<{ status: string; jobId?: string }>(url, {
         method: "POST",
         silent: true,
         headers: {
@@ -64,6 +72,7 @@ export function ArtifactPublicationCard({
         body: JSON.stringify({ action }),
       });
       setStatus(result.status);
+      setJobId(result.jobId ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Publication failed");
     } finally {
@@ -100,6 +109,12 @@ export function ArtifactPublicationCard({
         </p>
         {error && <p role="alert">{error}</p>}
       </div>
+      {status === "publishing" && jobId && (
+        <ArtifactBuildCard
+          sessionId={sessionId}
+          reference={{ jobId, title: reference.title }}
+        />
+      )}
       {status === "pending" && (
         <footer className="artifact-toolbar">
           <button disabled={busy} onClick={() => void decide("reject")}>

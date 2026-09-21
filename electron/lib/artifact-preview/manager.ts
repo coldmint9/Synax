@@ -26,8 +26,23 @@ import {
   isTrustedHostURL,
 } from "./policy.js";
 import { createDenyProxy } from "./network.js";
-import type { ArtifactBounds } from "./types.js";
+import type {
+  ArtifactBounds,
+  ArtifactCaptureResult,
+  ArtifactElementBounds,
+} from "./types.js";
+import {
+  boundedPng,
+  MAX_CAPTURE_DIMENSION,
+  parseCaptureRequest,
+  parseElementBounds,
+} from "./capture.js";
 
+const ANNOTATION_URL =
+  "data:text/html;charset=utf-8," +
+  encodeURIComponent(
+    "<!doctype html><meta http-equiv=Content-Security-Policy content=\"default-src 'none'; style-src 'unsafe-inline'\"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#2563eb}</style>",
+  );
 interface Instance {
   id: string;
   nonce: string;
@@ -49,9 +64,22 @@ interface Instance {
   watchdog?: NodeJS.Timeout;
   layoutVersion: number;
   geometryKey: string;
+  capturing?: boolean;
+  capturedAt?: number;
+  annotation?: ArtifactElementBounds | null;
+  borders?: WebContentsView[];
+  bordersReady?: Promise<void>;
+  borderLoads?: Set<number>;
   handshake: "new" | "hello" | "connected";
 }
-const CHANNELS = ["create", "update", "send", "destroy"] as const;
+const CHANNELS = [
+  "create",
+  "update",
+  "send",
+  "destroy",
+  "capture",
+  "annotate",
+] as const;
 /** No shared session, renderer evaluation, Node integration, or host credentials. */
 export class ArtifactPreviewManager {
   private instances = new Map<string, Instance>();
@@ -78,6 +106,12 @@ export class ArtifactPreviewManager {
     );
     ipcMain.handle("artifact-preview:send", (e, input) => this.send(e, input));
     ipcMain.handle("artifact-preview:destroy", (e, id) => this.destroy(e, id));
+    ipcMain.handle("artifact-preview:capture", (e, input) =>
+      this.captureForHost(e, input),
+    );
+    ipcMain.handle("artifact-preview:annotate", (e, input) =>
+      this.annotate(e, input),
+    );
     ipcMain.on("artifact-runtime:message", this.onRuntimeMessage);
     ipcMain.on("artifact-runtime:pong", this.onPong);
   }
@@ -342,16 +376,22 @@ export class ArtifactPreviewManager {
       event.preventDefault();
       item.cancel();
     });
-    ses.webRequest.onBeforeRequest((details, callback) =>
+    ses.webRequest.onBeforeRequest((details, callback) => {
+      // Exactly one constant, script-free document per host-owned border surface.
+      // Generated contents cannot claim these webContents IDs or request arbitrary URLs.
+      const borderLoad =
+        !i.disposed &&
+        details.url === ANNOTATION_URL &&
+        details.method === "GET" &&
+        details.resourceType === "mainFrame" &&
+        details.webContentsId !== undefined &&
+        i.borderLoads?.delete(details.webContentsId) === true;
       callback({
-        cancel: !allowBundleRequest(
-          details,
-          i.url,
-          wc.id,
-          i.loaded || i.disposed,
-        ),
-      }),
-    );
+        cancel:
+          !borderLoad &&
+          !allowBundleRequest(details, i.url, wc.id, i.loaded || i.disposed),
+      });
+    });
     wc.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
     wc.setWindowOpenHandler(() => ({ action: "deny" }));
     const events: NodeJS.EventEmitter = wc;
@@ -376,6 +416,7 @@ export class ArtifactPreviewManager {
     const data = parseUpdate(input),
       i = this.instance(event, data.id);
     const version = ++i.layoutVersion;
+    i.borders?.forEach((border) => border.setVisible(false));
     i.bounds = data.bounds;
     i.visible = data.visible;
     const [width, height] = i.owner.getContentSize();
@@ -399,6 +440,7 @@ export class ArtifactPreviewManager {
     const geometryKey = JSON.stringify({ geometry, zoom, scaleFactor });
     if (geometryKey === i.geometryKey) {
       i.container.setVisible(true);
+      this.drawAnnotation(i);
       return;
     }
     i.container.setVisible(false);
@@ -436,6 +478,7 @@ export class ArtifactPreviewManager {
       if (canShow()) {
         i.geometryKey = geometryKey;
         i.container.setVisible(true);
+        this.drawAnnotation(i);
       }
     } catch {
       if (!i.disposed) {
@@ -466,7 +509,146 @@ export class ArtifactPreviewManager {
     if (i.owner !== owner) fail();
     this.remove(i);
   }
-  /** Host-main-only optional screenshot capability; never exposed to generated content. */
+  /** Fixed trusted-host IPC, deliberately absent from the generated-content protocol. */
+  async captureForHost(
+    event: IpcMainInvokeEvent,
+    input: unknown,
+  ): Promise<ArtifactCaptureResult> {
+    this.authorize(event);
+    const request = parseCaptureRequest(input),
+      i = this.instance(event, request.id);
+    if (i.revisionId !== request.revisionId || i.handshake !== "connected")
+      return fail();
+    if (
+      i.capturing ||
+      (i.capturedAt !== undefined && Date.now() - i.capturedAt < 750)
+    )
+      return fail("RESOURCE_LIMIT");
+    const bounds = i.container.getBounds();
+    const scale = screen.getDisplayMatching(i.owner.getBounds()).scaleFactor;
+    if (
+      bounds.width * scale > MAX_CAPTURE_DIMENSION ||
+      bounds.height * scale > MAX_CAPTURE_DIMENSION
+    )
+      return fail("RESOURCE_LIMIT");
+    const version = i.layoutVersion;
+    i.capturing = true;
+    i.capturedAt = Date.now();
+    try {
+      const image = await this.capture(i.owner, i.id);
+      // No stale screenshot may escape after navigation, relayout, blur, or disposal.
+      if (
+        this.instance(event, request.id) !== i ||
+        i.layoutVersion !== version ||
+        i.revisionId !== request.revisionId ||
+        !i.visible ||
+        !i.container.getVisible() ||
+        !i.owner.isVisible() ||
+        i.owner.isMinimized() ||
+        !i.owner.isFocused()
+      )
+        return fail();
+      const bytes = image.toPNG(),
+        size = boundedPng(bytes);
+      return {
+        ...request,
+        mimeType: "image/png",
+        bytes: new Uint8Array(bytes),
+        ...size,
+      };
+    } finally {
+      i.capturing = false;
+    }
+  }
+  async annotate(event: IpcMainInvokeEvent, input: unknown): Promise<void> {
+    this.authorize(event);
+    const request = parseCaptureRequest(input),
+      i = this.instance(event, request.id);
+    if (i.revisionId !== request.revisionId || i.handshake !== "connected")
+      return fail();
+    i.annotation = parseElementBounds((input as { bounds?: unknown }).bounds);
+    if (i.annotation) await this.ensureBorders(i);
+    this.drawAnnotation(i);
+  }
+  private ensureBorders(i: Instance): Promise<void> {
+    if (i.bordersReady) return i.bordersReady;
+    // Plain View backgrounds paint below macOS native WebContentsView surfaces.
+    // Use four empty, script-disabled native surfaces, never generated HTML.
+    // Every strip is explicitly clipped: parent native Views do not clip on macOS.
+    i.borders = Array.from({ length: 4 }, () => {
+      const border = new WebContentsView({
+        webPreferences: {
+          session: i.session,
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+          javascript: false,
+          webSecurity: true,
+          webviewTag: false,
+          devTools: false,
+          navigateOnDragDrop: false,
+          disableDialogs: true,
+          backgroundThrottling: false,
+        },
+      });
+      border.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      border.webContents.on("will-navigate", (event) => event.preventDefault());
+      border.setBackgroundColor("#2563eb");
+      border.setVisible(false);
+      i.container.addChildView(border);
+      return border;
+    });
+    // A native compositor surface exists only after loading a document. This
+    // constant page has no scripts, preload, protocol bridge, or external assets.
+    i.borderLoads = new Set(i.borders.map((border) => border.webContents.id));
+    i.bordersReady = Promise.all(
+      i.borders.map((border) => border.webContents.loadURL(ANNOTATION_URL)),
+    ).then(() => {});
+    return i.bordersReady;
+  }
+  private drawAnnotation(i: Instance): void {
+    i.borders?.forEach((border) => border.setVisible(false));
+    const a = i.annotation;
+    if (
+      !a ||
+      !i.container.getVisible() ||
+      !i.visible ||
+      i.disposed ||
+      Math.abs(a.viewportWidth - i.bounds.width) > 2 ||
+      Math.abs(a.viewportHeight - i.bounds.height) > 2
+    )
+      return;
+    const [width, height] = i.owner.getContentSize();
+    const g = clipBounds(i.bounds, width, height, i.zoom);
+    if (!g) return;
+    if (!i.borders) return;
+    const x = Math.round(a.x * i.zoom + g.inner.x),
+      y = Math.round(a.y * i.zoom + g.inner.y);
+    const w = Math.round(a.width * i.zoom),
+      h = Math.round(a.height * i.zoom),
+      t = 2;
+    const strips = [
+      { x, y, width: w, height: Math.min(t, h) },
+      { x, y: y + Math.max(0, h - t), width: w, height: Math.min(t, h) },
+      { x, y, width: Math.min(t, w), height: h },
+      { x: x + Math.max(0, w - t), y, width: Math.min(t, w), height: h },
+    ];
+    strips.forEach((r, index) => {
+      const left = Math.max(0, r.x),
+        top = Math.max(0, r.y);
+      const right = Math.min(g.outer.width, r.x + r.width),
+        bottom = Math.min(g.outer.height, r.y + r.height);
+      if (right <= left || bottom <= top) return;
+      i.borders![index].setBounds({
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+      });
+      i.borders![index].setVisible(true);
+    });
+  }
+  /** Main-only native capture primitive; host IPC above verifies revision and result bounds. */
   async capture(
     owner: BrowserWindow,
     id: string,
@@ -476,6 +658,12 @@ export class ArtifactPreviewManager {
       !i ||
       i.owner !== owner ||
       owner !== this.getOwner() ||
+      i.disposed ||
+      owner.isDestroyed() ||
+      !owner.isVisible() ||
+      owner.isMinimized() ||
+      !owner.isFocused() ||
+      !i.visible ||
       !i.loaded ||
       !i.container.getVisible()
     )
@@ -483,8 +671,8 @@ export class ArtifactPreviewManager {
     const b = i.view.getBounds(),
       outer = i.container.getBounds();
     return i.view.webContents.capturePage({
-      x: -b.x,
-      y: -b.y,
+      x: Math.max(0, -b.x),
+      y: Math.max(0, -b.y),
       width: outer.width,
       height: outer.height,
     });
@@ -536,6 +724,11 @@ export class ArtifactPreviewManager {
     i.container.setVisible(false);
     if (!i.owner.isDestroyed())
       i.owner.contentView.removeChildView(i.container);
+    i.borders?.forEach((border) => {
+      i.container.removeChildView(border);
+      if (!border.webContents.isDestroyed())
+        border.webContents.close({ waitForBeforeUnload: false });
+    });
     i.container.removeChildView(i.view);
     if (!i.view.webContents.isDestroyed()) {
       if (i.view.webContents.debugger.isAttached())

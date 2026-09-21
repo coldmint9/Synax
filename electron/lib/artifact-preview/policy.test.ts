@@ -191,3 +191,42 @@ describe("artifact transport policy", () => {
     expect(limit.take(50)).toBe(false);
   });
 });
+
+it("allows only annotation clearing from runtime, never privileged capture/annotation calls", () => {
+  const identity = {
+    id: "one",
+    revisionId: "revision-one",
+    nonce: "n".repeat(32),
+  };
+  const envelope = {
+    protocol: 1,
+    instanceId: identity.id,
+    revisionId: identity.revisionId,
+    nonce: identity.nonce,
+    payload: null,
+  };
+  expect(() =>
+    validateEnvelope(
+      { ...envelope, type: "annotationClear" },
+      identity,
+      "runtime",
+    ),
+  ).not.toThrow();
+  expect(() =>
+    validateEnvelope(
+      { ...envelope, type: "annotationClear" },
+      identity,
+      "host",
+    ),
+  ).toThrow();
+  for (const type of [
+    "capture",
+    "annotate",
+    "screenshot",
+    "artifact-preview:capture",
+    "artifact-preview:annotate",
+  ])
+    expect(() =>
+      validateEnvelope({ ...envelope, type }, identity, "runtime"),
+    ).toThrow("POLICY_BLOCKED");
+});

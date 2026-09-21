@@ -191,6 +191,7 @@ export const RUNTIME_MESSAGE_TYPES = new Set([
   "controls",
   "feedbackDraft",
   "element",
+  "annotationClear",
   "log",
 ]);
 export const HOST_MESSAGE_TYPES = new Set([

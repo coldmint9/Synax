@@ -1,3 +1,4 @@
+import { artifactVersionRoutes } from "./artifact-versions.js";
 import { drainArtifactPublications } from "../services/agent-runtime/artifact-integration.js";
 import { agentArtifactRoutes } from "./agent-artifacts.js";
 import { compactSessionContext } from "../services/agent-runtime/manual-context-compaction.js";
@@ -110,6 +111,7 @@ import {
 
 export const agentRuntimeRoutes = new Hono();
 agentRuntimeRoutes.route("/", agentArtifactRoutes);
+agentRuntimeRoutes.route("/", artifactVersionRoutes);
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
 
 async function readJson(c: Context) {

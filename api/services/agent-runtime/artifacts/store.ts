@@ -53,7 +53,7 @@ export function beginBuild(context: ArtifactPublishContext, input: ArtifactPubli
     if (usage.total + requestBytes > ARTIFACT_LIMITS.totalBytes || usage.session + requestBytes > ARTIFACT_LIMITS.sessionBytes) throw new ArtifactError('RESOURCE_LIMIT', 'Artifact storage quota exceeded.', 413);
     const id = randomUUID();
     if (old) db.prepare('DELETE FROM agent_artifact_builds WHERE id=?').run(old.id);
-    db.prepare(`INSERT INTO agent_artifact_builds(id,session_id,artifact_id,idempotency_key,request_hash,request_json,context_json,status,lease_until,created_at) VALUES(?,?,?,?,?,?,?,'building',?,?)`).run(id, context.sessionId, input.artifactId ?? null, input.idempotencyKey, digest, JSON.stringify(input), JSON.stringify({ sessionId: context.sessionId, projectId: context.projectId, runId: context.runId ?? null, turnId: context.turnId ?? null }), Date.now() + ARTIFACT_LIMITS.buildMs + 5000, new Date().toISOString());
+    db.prepare(`INSERT INTO agent_artifact_builds(id,session_id,artifact_id,idempotency_key,request_hash,request_json,context_json,status,lease_until,created_at) VALUES(?,?,?,?,?,?,?,'building',?,?)`).run(id, context.sessionId, input.artifactId ?? null, input.idempotencyKey, digest, JSON.stringify(input), JSON.stringify({ sessionId: context.sessionId, projectId: context.projectId, runId: context.runId ?? null, turnId: context.turnId ?? null, ...(context.jobId ? { jobId: context.jobId } : {}) }), Date.now() + ARTIFACT_LIMITS.buildMs + 5000, new Date().toISOString());
     return { id };
   })();
 }
@@ -66,6 +66,10 @@ export function commitBuild(context: ArtifactPublishContext, input: ArtifactPubl
     assertSession(context);
     const build = db.prepare("SELECT * FROM agent_artifact_builds WHERE id=? AND session_id=? AND status='building'").get(buildId, context.sessionId) as BuildRow | undefined;
     if (!build || build.lease_until < Date.now()) throw new ArtifactError('BUILD_TIMEOUT', 'Artifact build lease expired; publish again.', 408);
+    if(context.jobId){
+      const job=db.prepare("SELECT status,attempt FROM artifact_jobs WHERE id=? AND session_id=?").get(context.jobId,context.sessionId) as {status:string;attempt:number}|undefined;
+      if(job?.status!=="building" || input.idempotencyKey !== `job:${context.jobId}:${job.attempt}`)throw new ArtifactError("BUILD_CANCELLED","Build was cancelled or superseded before commit",409);
+    }
     const current = checkBase(context, input);
     const sourceJson = JSON.stringify(compiled.source);
     if (hash(sourceJson) !== compiled.sourceHash || hash(compiled.html) !== compiled.bundleHash) throw new ArtifactError('INVALID_SOURCE', 'Build integrity verification failed.');
@@ -83,6 +87,7 @@ export function commitBuild(context: ArtifactPublishContext, input: ArtifactPubl
     if (update.changes !== 1) throw new ArtifactError('REVISION_CONFLICT', 'Artifact revision conflict.', 409);
     db.prepare("UPDATE agent_artifact_builds SET status='ready',revision_id=?,artifact_id=?,snapshot_json=NULL,snapshot_hash=NULL WHERE id=?").run(revision.revisionId, artifactId, buildId);
     db.prepare('INSERT INTO agent_artifact_outbox(id,session_id,revision_id,payload_json,created_at) VALUES(?,?,?,?,?)').run(randomUUID(), context.sessionId, revision.revisionId, JSON.stringify(revision), createdAt);
+    if(context.jobId)db.prepare("UPDATE artifact_jobs SET status='ready',revision_id=?,artifact_id=?,error_code=NULL,diagnostics_json='[]',lease_until=0,updated_at=? WHERE id=? AND session_id=? AND status='building'").run(revision.revisionId,revision.artifactId,createdAt,context.jobId,context.sessionId);
     return revision;
   })();
 }

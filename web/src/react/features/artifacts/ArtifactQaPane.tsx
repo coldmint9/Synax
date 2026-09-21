@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { ArtifactCapture, type ArtifactCaptureProps } from "./ArtifactCapture";
 import { X } from "lucide-react";
 import type {
   ArtifactControl,
@@ -8,6 +9,7 @@ import type { FeedbackDraft } from "./bridge";
 import { ArtifactControls } from "./ArtifactControls";
 import { artifactText } from "./locale";
 interface ArtifactQaPaneProps {
+  captureProps?: ArtifactCaptureProps;
   uid: string;
   locale: string;
   controls: ArtifactControl[];
@@ -27,6 +29,7 @@ interface ArtifactQaPaneProps {
   onReview: () => void;
 }
 export function ArtifactQaPane({
+  captureProps,
   uid,
   locale,
   controls,
@@ -100,6 +103,7 @@ export function ArtifactQaPane({
           </button>
         </div>
       )}
+      {captureProps && <ArtifactCapture {...captureProps} />}
       <label className="artifact-feedback-label" htmlFor={`${uid}-feedback`}>
         {translate("What should change?")}
       </label>
@@ -114,9 +118,9 @@ export function ArtifactQaPane({
         )}
       />
       <p className="artifact-muted">
-        {translate(
-          "Only your note, parameters, model-visible state and selected element are sent. Private state stays out of feedback.",
-        )}
+        {locale === "zh"
+          ? "仅发送你的说明、参数、模型可见状态、选中元素及已确认的截图。私有状态不会包含在反馈中。"
+          : "Only your note, parameters, model-visible state, selected element and confirmed screenshot are sent. Private state stays out of feedback."}
       </p>
       <button
         ref={reviewButton}

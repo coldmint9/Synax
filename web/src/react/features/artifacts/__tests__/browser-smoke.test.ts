@@ -31,11 +31,12 @@ describe.skipIf(process.env.SYNAX_ARTIFACT_BROWSER_QA !== "1")(
       const api = path.resolve("src/lib/api/artifacts.ts");
       const bundle = await build({
         stdin: {
-          contents: `import React from 'react';import {createRoot} from 'react-dom/client';import {ArtifactCard} from ${JSON.stringify(frontend)};import {artifactsApi} from ${JSON.stringify(api)};
+          contents: `import React from 'react';import {createRoot} from 'react-dom/client';import {ArtifactCard} from ${JSON.stringify(frontend)};import {artifactsApi} from ${JSON.stringify(api)};import {artifactVersionsApi} from ${JSON.stringify(path.resolve('src/lib/api/artifactVersions.ts'))};
       const reference={type:'artifact',artifactId:'a',revisionId:'r',title:'Checkout prototype',presentation:'inline'};
       const revision={...reference,sessionId:'s',revisionNumber:1,sourceKind:'html',sourcePath:'index.html',status:'ready',diagnostics:[]};
       let saved={privateState:{secret:'PRIVATE_SECRET'},modelState:{page:'cart restored'},controls:{},etag:1,schemaVersion:1};
       Object.assign(artifactsApi,{bundle:async()=>({revision,html:${JSON.stringify(html)}}),state:async()=>saved,revisions:async()=>({items:[revision]}),source:async()=>({files:[]}),saveState:async(s,r,state)=>(saved={...state,etag:state.etag+1}),feedback:async(s,r,input)=>{window.submitted=input;return {feedbackId:'f',message:'queued',submitted:true}}});
+      Object.assign(artifactVersionsApi,{registerControlSchema:async(s,r,schema)=>({schema,state:saved}),history:async()=>({revisions:[revision],branches:[],derivedFrom:null})});
       createRoot(document.getElementById('root')).render(<ArtifactCard sessionId="s" reference={reference}/>);`,
           resolveDir: process.cwd(),
           loader: "tsx",

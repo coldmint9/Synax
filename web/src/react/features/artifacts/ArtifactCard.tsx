@@ -1,3 +1,10 @@
+import { VersionActions } from "./ArtifactVersions";
+import { ArtifactCapture, ArtifactBoundsOverlay } from "./ArtifactCapture";
+import {
+  revokeScreenshot,
+  screenshotFeedback,
+  type ArtifactScreenshot,
+} from "./capture";
 import {
   acquirePreviewSlot,
   releasePreviewSlot,
@@ -89,6 +96,13 @@ function ArtifactCardSession({ sessionId, reference }: ArtifactCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<"preview" | "source" | "qa">("preview");
   const [compareId, setCompareId] = useState("");
+  const [screenshot, setScreenshot] = useState<ArtifactScreenshot | null>(null);
+  const screenshotRef = useRef<ArtifactScreenshot | null>(null);
+  const replaceScreenshot = (next: ArtifactScreenshot | null) => {
+    if (screenshotRef.current !== next) revokeScreenshot(screenshotRef.current);
+    screenshotRef.current = next;
+    setScreenshot(next);
+  };
   const [draft, setDraft] = useState<FeedbackDraft>({ text: "" });
   const [review, setReview] = useState<ArtifactFeedbackInput | null>(null);
   const [sending, setSending] = useState(false);
@@ -112,6 +126,7 @@ function ArtifactCardSession({ sessionId, reference }: ArtifactCardProps) {
     alive.current = true;
     return () => {
       alive.current = false;
+      revokeScreenshot(screenshotRef.current);
       releasePreviewSlot(uid);
     };
   }, []);
@@ -124,6 +139,7 @@ function ArtifactCardSession({ sessionId, reference }: ArtifactCardProps) {
     setControls([]);
     setLogs([]);
     setDraft({ text: "" });
+    replaceScreenshot(null);
     setReview(null);
     setPicking(false);
     setNotice("");
@@ -200,6 +216,10 @@ function ArtifactCardSession({ sessionId, reference }: ArtifactCardProps) {
         if (current) {
           setDraft((previous) => ({ ...previous, ...value }));
           setPicking(false);
+          if (Object.prototype.hasOwnProperty.call(value, "element"))
+            void connection.current
+              ?.annotate?.(value.element?.bounds ?? null)
+              .catch((error) => setError(errorText(error)));
           setNotice(
             value.element
               ? translate("Element selected. Review it in QA.")
@@ -362,7 +382,10 @@ function ArtifactCardSession({ sessionId, reference }: ArtifactCardProps) {
   }
   function reviewFeedback() {
     try {
-      setReview(feedbackInput(draft, state, runtimeId()));
+      setReview({
+        ...feedbackInput(draft, state, runtimeId()),
+        ...(screenshot ? { screenshots: screenshotFeedback(screenshot) } : {}),
+      });
     } catch (error) {
       setError(errorText(error));
     }
@@ -559,9 +582,13 @@ function ArtifactCardSession({ sessionId, reference }: ArtifactCardProps) {
             width: width || "100%",
             maxWidth: "100%",
             marginInline: "auto",
+            overflow: "hidden",
           }}
         >
           <div ref={container} className="artifact-preview-container" />
+          {!desktop && (
+            <ArtifactBoundsOverlay bounds={draft.element?.bounds ?? null} />
+          )}
           {!running && ready && (
             <div className="artifact-empty artifact-run-prompt">
               <Code2 size={26} strokeWidth={1.4} />
@@ -634,6 +661,34 @@ function ArtifactCardSession({ sessionId, reference }: ArtifactCardProps) {
           </div>
         </div>
       </div>
+      {tab === "preview" && (
+        <ArtifactCapture
+          locale={locale}
+          sessionId={sessionId}
+          revisionId={revisionId}
+          capture={
+            desktop && connected ? connection.current?.capture : undefined
+          }
+          disabled={!running || !connected || sending}
+          screenshot={screenshot}
+          onChange={replaceScreenshot}
+        />
+      )}
+      <VersionActions
+        sessionId={sessionId}
+        reference={revision ?? reference}
+        onForkPublished={() =>
+          setNotice(
+            locale === "zh"
+              ? "新分支已发布到会话"
+              : "Branch published to conversation",
+          )
+        }
+        onStateInherited={() => {
+          setRunning(false);
+          setReload((value) => value + 1);
+        }}
+      />
       {tab === "source" && (
         <ArtifactSourcePane
           uid={uid}
@@ -674,9 +729,12 @@ function ArtifactCardSession({ sessionId, reference }: ArtifactCardProps) {
             setPicking(true);
             connection.current?.send("pick", { enabled: true });
           }}
-          onRemoveAnnotation={() =>
-            setDraft((value) => ({ ...value, element: undefined }))
-          }
+          onRemoveAnnotation={() => {
+            setDraft((value) => ({ ...value, element: undefined }));
+            void connection.current
+              ?.annotate?.(null)
+              .catch((error) => setError(errorText(error)));
+          }}
           onTextChange={(text) => setDraft((value) => ({ ...value, text }))}
           onReview={reviewFeedback}
         />
@@ -729,6 +787,7 @@ function ArtifactCardSession({ sessionId, reference }: ArtifactCardProps) {
           uid={uid}
           locale={locale}
           review={review}
+          screenshotPreviews={screenshot ? [screenshot] : []}
           sending={sending}
           error={error}
           returnFocus={reviewButton}

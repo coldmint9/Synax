@@ -48,8 +48,23 @@ async function publish() {
     idempotencyKey: "publish-demo",
   });
   const json = await response.json();
-  expect(response.status, JSON.stringify(json)).toBe(201);
-  return json.revision;
+  expect(response.status, JSON.stringify(json)).toBe(202);
+  let job = json.job;
+  await vi.waitFor(async () => {
+    job = (
+      await (
+        await agentArtifactRoutes.request(`${base}/jobs/${json.job.jobId}`)
+      ).json()
+    ).job;
+    expect(job.status).toBe("ready");
+  });
+  return (
+    await (
+      await agentArtifactRoutes.request(
+        `${base}/revisions/${job.revisionId}/bundle`,
+      )
+    ).json()
+  ).revision;
 }
 describe("artifact route lifecycle", () => {
   it("publishes a durable reference once, serves JSON bundle and denies cross-session access", async () => {
@@ -195,6 +210,17 @@ it("publishes the QA revision without mutating history and replays the outbox on
   });
   await publishCompletedManifests(message);
   await publishCompletedManifests(message);
+  await vi.waitFor(async () =>
+    expect(
+      (
+        await (
+          await agentArtifactRoutes.request(
+            `${base}/${first.artifactId}/revisions`,
+          )
+        ).json()
+      ).items,
+    ).toHaveLength(2),
+  );
   const revisions = (
     await (
       await agentArtifactRoutes.request(`${base}/${first.artifactId}/revisions`)
@@ -283,10 +309,12 @@ it("gates completed manifests with the current publication permission", async ()
         "X-Synax-Artifact-Action": "confirm-publication",
       })
     ).status,
-  ).toBe(200);
-  expect(
-    (await (await agentArtifactRoutes.request(base)).json()).items,
-  ).toHaveLength(1);
+  ).toBe(202);
+  await vi.waitFor(async () =>
+    expect(
+      (await (await agentArtifactRoutes.request(base)).json()).items,
+    ).toHaveLength(1),
+  );
 });
 
 it("claims approval atomically so another client cannot reject an in-flight publication", async () => {
@@ -329,7 +357,20 @@ it("claims approval atomically so another client cannot reject an in-flight publ
   } finally {
     release();
   }
-  expect((await approve).status).toBe(200);
-  expect(getPublicationRequest(sessionId, id).status).toBe("ready");
+  expect((await approve).status).toBe(202);
+  await vi.waitFor(async () => {
+    await (
+      await import("../../services/agent-runtime/artifact-recovery.js")
+    ).recoverArtifacts();
+    expect(getPublicationRequest(sessionId, id).status).toBe("ready");
+  });
   compile.mockRestore();
+});
+it('accepts bounded binary screenshots only through the confirmed authenticated host route',async()=>{
+ const revision=await publish();const url=`${base}/revisions/${revision.revisionId}/screenshots`;
+ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2m0AAAAASUVORK5CYII=','base64');
+ const form=()=>{const body=new FormData();body.append('file',new File([png,Buffer.alloc(70*1024)],'test.png',{type:'image/png'}));return body;};
+ expect((await agentArtifactRoutes.request(url,{method:'POST',body:form()})).status).toBe(403);
+ const response=await agentArtifactRoutes.request(url,{method:'POST',body:form(),headers:{'X-Synax-Artifact-Action':'capture-screenshot'}});
+ expect(response.status).toBe(201);expect((await response.json()).asset.mediaType).toBe('image/png');
 });

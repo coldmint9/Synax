@@ -1,3 +1,4 @@
+import type { ArtifactJobReference } from "../artifacts/ArtifactBuildCard";
 import type { ArtifactPublicationReference } from "../artifacts/ArtifactPublicationCard";
 import type { ArtifactReference } from "../../../../../api/services/agent-runtime/artifacts/contracts";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
@@ -23,6 +24,7 @@ export interface ToolCallView {
 }
 
 export type TurnContentBlock =
+  | { type: "artifact_job"; reference: ArtifactJobReference }
   | { type: "artifact_request"; reference: ArtifactPublicationReference }
   | { type: "artifact"; reference: ArtifactReference }
   | { type: "media"; parts: RuntimeContentPart[] }
@@ -129,7 +131,7 @@ export function buildInterleavedTurns(
   const messagesByStep = new Map<string, AgentRuntimeMessage[]>();
   for (const message of messages) {
     if (
-      ["artifact_publisher", "artifact_request"].includes(
+      ["artifact_publisher", "artifact_request", "artifact_job"].includes(
         String(message.metadata?.source),
       )
     )

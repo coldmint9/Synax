@@ -1,3 +1,4 @@
+import { validElementBounds } from "./capture";
 import type {
   ArtifactControl,
   ArtifactFeedbackInput,
@@ -163,8 +164,11 @@ export function feedbackInput(
       (e.qaId !== undefined && typeof e.qaId !== "string")
     )
       throw new Error("Invalid element annotation.");
+    if (e.bounds && !validElementBounds(e.bounds))
+      throw new Error("Invalid annotation bounds");
     result.element = {
       tag: e.tag.slice(0, 80),
+      ...(e.bounds ? { bounds: e.bounds } : {}),
       text: e.text.slice(0, 500),
       ...(e.qaId ? { qaId: e.qaId.slice(0, 120) } : {}),
     };

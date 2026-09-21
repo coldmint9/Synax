@@ -221,11 +221,14 @@ export function artifactSdkSource(): string {
                 return;
             heightTimer = setTimeout(() => { heightTimer = undefined; void request('resize', { height: nextHeight }).catch(() => { }); }, 200);
         },
-        async registerControls(schema) {
+        async registerControls(schema, options = {schemaVersion:1}) {
             await api.ready();
             validateControls(schema);
             if (!standalone) {
-                const result = await request('controls', schema);
+                const schemaVersion=options.schemaVersion??1;
+                if(!Number.isSafeInteger(schemaVersion)||schemaVersion<1||schemaVersion>10000)throw new Error('Invalid state schema version');
+                const result = await request('controls', {schemaVersion,controls:schema});
+                state.schemaVersion=schemaVersion;
                 state.controls = result;
                 emit('controls', result);
                 return;
@@ -292,8 +295,15 @@ export function artifactSdkSource(): string {
             const target = event.target;
             const qaId = target.closest('[data-qa-id]')?.getAttribute('data-qa-id');
             // Never read input values, password fields, HTML, or arbitrary attributes.
-            const element = { tag: target.tagName.toLowerCase(), text: (target.textContent || '').slice(0, 500), ...(qaId ? { qaId: qaId.slice(0, 120) } : {}) };
+            const rect = target.getBoundingClientRect();
+            const vw=Math.min(16384,innerWidth),vh=Math.min(16384,innerHeight);
+            const x=Math.max(0,Math.min(vw,rect.left)),y=Math.max(0,Math.min(vh,rect.top));
+            const width=Math.max(0,Math.min(vw,rect.right)-x),height=Math.max(0,Math.min(vh,rect.bottom)-y);
+            const element = {tag:target.tagName.toLowerCase(),text:(target.textContent||'').slice(0,500),...(qaId?{qaId:qaId.slice(0,120)}:{}),...(width>0&&height>0?{bounds:{x,y,width,height,viewportWidth:vw,viewportHeight:vh}}:{})};
             void request('element', element).catch(() => { });
+            const clear=()=>{void request('annotationClear',null).catch(()=>{});};
+            window.addEventListener('scroll',clear,{once:true,capture:true});
+            window.addEventListener('resize',clear,{once:true});
         }, true);
     }
     if (document.readyState === 'loading')

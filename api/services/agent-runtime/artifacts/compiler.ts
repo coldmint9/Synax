@@ -1,3 +1,4 @@
+import {htmlIconRuntime} from "./html-icons.js";
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import type { DefaultTreeAdapterMap } from 'parse5';
@@ -82,7 +83,7 @@ export async function compileArtifact(snapshot: SnapshotReader, kind: ArtifactKi
     // Dynamic import permits independent SDK development; production never substitutes a stub.
     const sdk = options.sdkSource ?? (await import('./runtime-sdk.js')).artifactSdkSource();
     let html: string;
-    if (kind === 'html') html = await compileHtml(snapshot, compile, sdk, parseHtml);
+    if (kind === 'html') html = await compileHtml(snapshot, compile, sdk + '\n' + htmlIconRuntime(deps.entries['lucide-react']), parseHtml);
     else {
       const entry = snapshot.read(snapshot.entry);
       if (!/\.(?:tsx?|jsx?|mjs)$/i.test(entry.path)) throw new ArtifactError('INVALID_SOURCE', 'React entry must be a JS/TS module.');

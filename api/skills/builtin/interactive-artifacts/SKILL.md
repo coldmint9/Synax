@@ -38,7 +38,7 @@ let expanded = !!sdk.getState().privateState?.expanded;
 await sdk.registerControls([
   { key: 'density', label: 'Density', type: 'select', defaultValue: 'compact',
     options: [{ label: 'Compact', value: 'compact' }, { label: 'Comfortable', value: 'comfortable' }] }
-]);
+ ], { schemaVersion: 1 });
 sdk.onControlsChange(values => {
   document.documentElement.dataset.density = values.density;
 });
@@ -55,3 +55,7 @@ Theme follows the host; use standard `color-scheme` and `light-dark()` or the SD
 ## Verification
 
 Check run, pause, reload, narrow width, theme, Mini/Detail, parameter changes, old revision preservation, and state restore. Show honest diagnostics. Exported HTML runs standalone, but host feedback is unavailable; do not imply exported files retain Synax privileges. Web uses an opt-in sandbox and cannot promise hard CPU/network isolation; never ask users to enter secrets into generated content.
+
+Control definitions and defaults must remain stable for a revision. Restore `controls` values through SDK state/events rather than changing the declared defaultValue on reload. Await `ready()` before reading saved state; never save initial defaults before restoration. Increment schemaVersion when changing private/model state shape and publish a new revision. The host refuses incompatible inheritance; it never guesses migrations.
+
+Classic HTML can use `<i data-lucide="git-branch"></i>` and `window.lucide.createIcons()` without fetching a library. Dynamic placeholders require calling createIcons again.

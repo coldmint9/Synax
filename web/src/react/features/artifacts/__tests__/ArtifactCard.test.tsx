@@ -1,3 +1,4 @@
+vi.mock("../../../../lib/api/artifactVersions",()=>({artifactVersionsApi:{history:vi.fn(async()=>({revisions:[],derivedFrom:null,branches:[]}))}}));
 import {
   act,
   fireEvent,

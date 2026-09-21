@@ -20,6 +20,7 @@ vi.mock("electron", async () => {
       this.children = this.children.filter((c) => c !== v);
     }
     setBorderRadius(_radius: number) {}
+    setBackgroundColor(_color: string) {}
     setVisible(v: boolean) {
       this.visible = v;
     }
@@ -145,6 +146,198 @@ describe("artifact view manager", () => {
   afterEach(() => {
     manager.dispose();
     vi.useRealTimers();
+  });
+  async function connected() {
+    await manager.create(event, create());
+    const wc = mocks.views[0].view.webContents;
+    const message = {
+      protocol: 1,
+      instanceId: "one",
+      revisionId: create().revisionId,
+      nonce: create().nonce,
+    };
+    ipcMain.emit(
+      "artifact-runtime:message",
+      { sender: wc, senderFrame: wc.mainFrame },
+      { ...message, type: "hello" },
+    );
+    await manager.send(event, {
+      id: "one",
+      message: { ...message, type: "connect" },
+    });
+    await manager.update(event, {
+      id: "one",
+      bounds: create().bounds,
+      visible: true,
+    });
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlWQAAAAASUVORK5CYII=",
+      "base64",
+    );
+    wc.capturePage = vi.fn(async () => ({ toPNG: () => png }));
+    return { wc, png };
+  }
+  it("captures only the bound owner/revision, returning bounded PNG via fixed IPC", async () => {
+    const { wc, png } = await connected();
+    const input = { id: "one", revisionId: "revision-one" };
+    const handler = mocks.handlers.get("artifact-preview:capture")!;
+    await expect(handler({ ...event, sender: wc }, input)).rejects.toThrow();
+    await expect(
+      handler({ ...event, senderFrame: {} }, input),
+    ).rejects.toThrow();
+    await expect(
+      handler(event, { ...input, revisionId: "other" }),
+    ).rejects.toThrow();
+    expect(wc.capturePage).not.toHaveBeenCalled();
+    expect(await handler(event, input)).toEqual({
+      ...input,
+      mimeType: "image/png",
+      bytes: new Uint8Array(png),
+      width: 1,
+      height: 1,
+    });
+    expect(wc.capturePage).toHaveBeenCalledWith({
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 200,
+    });
+    await expect(handler(event, input)).rejects.toThrow("RESOURCE_LIMIT");
+  });
+  it("rejects hidden captures and rechecks disposed instance after awaiting native pixels", async () => {
+    const { wc, png } = await connected();
+    const input = { id: "one", revisionId: "revision-one" };
+    await manager.update(event, {
+      id: "one",
+      bounds: create().bounds,
+      visible: false,
+    });
+    await expect(manager.captureForHost(event, input)).rejects.toThrow();
+    expect(wc.capturePage).not.toHaveBeenCalled();
+    await manager.update(event, {
+      id: "one",
+      bounds: create().bounds,
+      visible: true,
+    });
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1000);
+    let finish!: (v: unknown) => void;
+    wc.capturePage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = manager.captureForHost(event, input);
+    await manager.destroy(event, "one");
+    finish({ toPNG: () => png });
+    await expect(pending).rejects.toThrow("ARTIFACT_NOT_FOUND");
+    vi.restoreAllMocks();
+  });
+  it("rejects oversized PNG and stale capture after relayout", async () => {
+    const { wc, png } = await connected();
+    const input = { id: "one", revisionId: "revision-one" };
+    wc.capturePage.mockResolvedValueOnce({
+      toPNG: () => Buffer.alloc(4 * 1024 * 1024 + 1),
+    });
+    await expect(manager.captureForHost(event, input)).rejects.toThrow(
+      "RESOURCE_LIMIT",
+    );
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1000);
+    let finish!: (v: unknown) => void;
+    wc.capturePage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = manager.captureForHost(event, input);
+    await manager.update(event, {
+      id: "one",
+      bounds: create().bounds,
+      visible: false,
+    });
+    finish({ toPNG: () => png });
+    await expect(pending).rejects.toThrow();
+    vi.restoreAllMocks();
+  });
+  it("clips controlled native annotation strips inside the actual preview surface", async () => {
+    await connected();
+    await manager.update(event, {
+      id: "one",
+      bounds: { x: -50, y: -20, width: 300, height: 200 },
+      visible: true,
+    });
+    await manager.annotate(event, {
+      id: "one",
+      revisionId: "revision-one",
+      bounds: {
+        x: 40,
+        y: 10,
+        width: 100,
+        height: 60,
+        viewportWidth: 300,
+        viewportHeight: 200,
+      },
+    });
+    const container = owner.contentView.children[0];
+    expect(container.children).toHaveLength(5);
+    const borders = mocks.views.slice(1);
+    expect(borders).toHaveLength(4);
+    const filter =
+      mocks.sessions[0].webRequest.onBeforeRequest.mock.calls[0][0];
+    for (const { view, options } of borders) {
+      expect(options.webPreferences).toMatchObject({
+        session: mocks.sessions[0],
+        sandbox: true,
+        javascript: false,
+        nodeIntegration: false,
+        contextIsolation: true,
+      });
+      expect(options.webPreferences.preload).toBeUndefined();
+      const url = view.webContents.loadURL.mock.calls[0][0];
+      expect(decodeURIComponent(url)).toContain("default-src 'none'");
+      const request = {
+        url,
+        method: "GET",
+        resourceType: "mainFrame",
+        webContentsId: view.webContents.id,
+      };
+      const result = vi.fn();
+      filter(
+        { ...request, webContentsId: mocks.views[0].view.webContents.id },
+        result,
+      );
+      expect(result).toHaveBeenLastCalledWith({ cancel: true });
+      filter({ ...request, url: "https://example.com" }, result);
+      expect(result).toHaveBeenLastCalledWith({ cancel: true });
+      filter(request, result);
+      expect(result).toHaveBeenLastCalledWith({ cancel: false });
+      filter(request, result);
+      expect(result).toHaveBeenLastCalledWith({ cancel: true });
+    }
+    for (const border of container.children
+      .slice(1)
+      .filter((v: any) => v.visible)) {
+      const b = border.bounds;
+      expect(b.x).toBeGreaterThanOrEqual(0);
+      expect(b.y).toBeGreaterThanOrEqual(0);
+      expect(b.x + b.width).toBeLessThanOrEqual(container.bounds.width);
+      expect(b.y + b.height).toBeLessThanOrEqual(container.bounds.height);
+    }
+    await manager.annotate(event, {
+      id: "one",
+      revisionId: "revision-one",
+      bounds: null,
+    });
+    expect(container.children.slice(1).every((b: any) => !b.visible)).toBe(
+      true,
+    );
+    await expect(
+      manager.annotate(event, { id: "one", revisionId: "wrong", bounds: null }),
+    ).rejects.toThrow();
+    await manager.destroy(event, "one");
+    for (const { view } of borders)
+      expect(view.webContents.close).toHaveBeenCalledOnce();
   });
   it("rejects arbitrary renderer and subframe calls before allocating a session", async () => {
     await expect(

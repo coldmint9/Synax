@@ -38,8 +38,12 @@ describe("restart recovery decisions", () => {
       "running",
     );
     agentRuntimeStore.updateRun(run.id, { status: "running" });
-    await recoverRuntime("new-host");
-    expect(agentRuntimeStore.getSession(session.id).status).toBe("interrupted");
+    expect(await recoverRuntime("new-host")).toEqual({ reviewed: 1, resumable: [] });
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
+      status: "interrupted",
+      activeRunId: null,
+      pendingResumeToken: null,
+    });
     expect(
       agentRuntimeStore.getSession(session.id).sessionMetadata?.runtimeControl,
     ).toBeNull();

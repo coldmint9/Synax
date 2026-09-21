@@ -75,7 +75,19 @@ describe('goal instruction', () => {
     expect(instruction).toContain('plan.propose');
     expect(instruction).toContain('plan.execute');
     expect(instruction).toMatch(/approved/i);
-    expect(instruction).toMatch(/session and model limits/i);
+    expect(instruction).not.toMatch(/remaining budget|maxTokens|maxSteps/i);
+  });
+
+  it('treats round limits as a soft handoff, never as goal acceptance or failure', () => {
+    const input = completionInput();
+    const instruction = buildGoalInstruction(input.goal, input.plan!);
+    expect(instruction).toContain('A completed run is not a completed goal');
+    expect(instruction).toMatch(/step threshold only requests a graceful wrap-up/i);
+    expect(instruction).toMatch(/never forces completion or failure/i);
+    expect(instruction).toContain('work.checkpoint(action="yield")');
+    expect(instruction).toMatch(/factual summary and next action/i);
+    expect(instruction).toMatch(/executing approved root goal automatically continues/i);
+    expect(instruction).toMatch(/after the previous execution releases ownership/i);
     expect(instruction).not.toMatch(/remaining budget|maxTokens|maxSteps/i);
   });
 

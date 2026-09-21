@@ -1,7 +1,15 @@
+import { outsideExecutionContext } from "../../../lib/execution-context.js";
+import {
+  enqueueArtifactJob,
+  getArtifactJob,
+  cancelArtifactJob,
+  processArtifactJobs,
+} from "../artifact-jobs.js";
+import { getArtifactBundle } from "../artifacts/publisher.js";
+import { ArtifactError } from "../artifacts/contracts.js";
 import { z } from "zod";
 import type { RegisteredTool } from "../contracts.js";
 import { publishArtifactSchema } from "../artifact-manifest.js";
-import { publishSessionArtifact } from "../artifact-integration.js";
 import {
   listArtifacts,
   getArtifactSource,
@@ -24,13 +32,38 @@ export const artifactTools: RegisteredTool[] = [
     async execute(input) {
       const args = publishArtifactSchema.parse(input.args);
       if (input.abortSignal?.aborted) throw new Error("Publication cancelled");
-      const revision = await publishSessionArtifact(
+      const queued = enqueueArtifactJob(
         input.sessionId,
         args,
         input.runId,
         input.stepId,
-        input.abortSignal,
       );
+      let job = getArtifactJob(input.sessionId, queued.jobId);
+      while (job.status === "queued" || job.status === "building") {
+        if (input.abortSignal?.aborted) {
+          outsideExecutionContext(() =>
+            cancelArtifactJob(input.sessionId, job.jobId),
+          );
+          throw new ArtifactError(
+            "BUILD_CANCELLED",
+            "Publication cancelled",
+            409,
+          );
+        }
+        void processArtifactJobs().catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        job = getArtifactJob(input.sessionId, job.jobId);
+      }
+      if (job.status !== "ready" || !job.revisionId)
+        throw new ArtifactError(
+          job.errorCode ?? "BUILD_FAILED",
+          job.diagnostics.join("\n") || "Build failed",
+          409,
+        );
+      const revision = getArtifactBundle(
+        input.sessionId,
+        job.revisionId,
+      ).revision;
       return {
         result: revision,
         displaySummary: `${revision.status}: ${revision.title} v${revision.revisionNumber}`,

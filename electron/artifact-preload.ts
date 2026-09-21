@@ -24,6 +24,7 @@
     "controls",
     "feedbackDraft",
     "element",
+    "annotationClear",
     "log",
   ]);
   const hostTypes = new Set([

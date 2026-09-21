@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -39,43 +40,6 @@ vi.mock("@heroui/react", () => {
   CardComp.Footer = Passthrough;
   CardComp.Title = Passthrough;
   CardComp.Description = Passthrough;
-  const { useState: useStateHook } = require("react");
-  const DropdownComp = ({ children }: any) => {
-    const [open, setOpen] = useStateHook(false);
-    const childArray = Array.isArray(children) ? children : [children];
-    const trigger = childArray[0];
-    const popover = childArray[1];
-    return (
-      <div>
-        <div onClick={() => setOpen(!open)}>{trigger}</div>
-        {open && popover}
-      </div>
-    );
-  };
-  DropdownComp.Popover = ({ children }: any) => <div>{children}</div>;
-  DropdownComp.Menu = ({
-    children,
-    onAction,
-    "aria-label": ariaLabel,
-  }: any) => {
-    return (
-      <div
-        aria-label={ariaLabel}
-        onClick={(e: any) => {
-          const key = (e.target as HTMLElement)
-            .closest("[data-key]")
-            ?.getAttribute("data-key");
-          if (key && onAction) onAction(key);
-        }}
-      >
-        {children}
-      </div>
-    );
-  };
-  DropdownComp.Item = ({ children, id, textValue }: any) => {
-    const label = typeof children === "string" ? children : textValue;
-    return <button data-key={id}>{label}</button>;
-  };
   const SelectComp = ({ children, "aria-label": ariaLabel }: any) => (
     <div aria-label={ariaLabel}>{children}</div>
   );
@@ -177,7 +141,6 @@ vi.mock("@heroui/react", () => {
         Content: Passthrough,
       },
     ),
-    Dropdown: DropdownComp,
     Input: ({
       value,
       onValueChange,
@@ -375,6 +338,18 @@ function createGlobalConfig(extra?: Partial<GlobalConfig>): GlobalConfig {
   };
 }
 
+// These tests exercise configuration and persistence, not per-keystroke logic.
+// Paste is a real user input event and avoids re-rendering the full settings
+// page for every character while the full suite runs in parallel.
+async function pasteValue(
+  user: ReturnType<typeof userEvent.setup>,
+  field: HTMLElement,
+  value: string,
+) {
+  await user.click(field);
+  await user.paste(value);
+}
+
 async function renderPage() {
   const { default: GlobalSettingsPage } =
     await import("./GlobalSettingsPage.tsx");
@@ -388,11 +363,12 @@ async function renderPage() {
 describe("GlobalSettingsPage LLM provider redesign", () => {
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
 
   beforeEach(async () => {
     vi.restoreAllMocks();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.discoverAcp.mockResolvedValue({
       selectedProviderId: "opencode-acp",
       supported: [],
@@ -445,30 +421,37 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     expect(mocks.discoverAcp).not.toHaveBeenCalled();
   });
 
-  it("opens the add dropdown and enters a preset configuration view", async () => {
+  it("opens a blank custom-provider dialog directly without applying a preset", async () => {
     const user = userEvent.setup();
     await renderPage();
-
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /添加/ }));
+    const dialog = within(screen.getByRole("dialog"));
     expect(
-      screen.getByRole("button", { name: /^OpenAI$/ }),
+      dialog.getByRole("heading", { name: "新增供应商" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /^Anthropic$/ }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /^DeepSeek$/ }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /^OpenRouter$/ }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^xAI$/ })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /^DeepSeek$/ }));
-    expect(
-      screen.getByDisplayValue("https://api.deepseek.com"),
-    ).toBeInTheDocument();
-    expect(screen.getByDisplayValue("deepseek-chat")).toBeInTheDocument();
+    expect(dialog.getByPlaceholderText("My Provider")).toHaveValue(
+      "Custom API 1",
+    );
+    expect(dialog.getByPlaceholderText("https://api.example.com")).toHaveValue(
+      "",
+    );
+    expect(dialog.getByRole("textbox", { name: "模型" })).toHaveValue("");
+    expect(dialog.getByPlaceholderText("输入 API Key")).toHaveValue("");
+    for (const protocol of [
+      "OpenAI Chat Completions",
+      "OpenAI Responses",
+      "Anthropic Messages",
+    ]) {
+      expect(
+        dialog.getByRole("option", { name: protocol }),
+      ).toBeInTheDocument();
+    }
+    expect(mocks.validateAiApi).not.toHaveBeenCalled();
+    expect(mocks.updateGlobalConfig).not.toHaveBeenCalled();
+    await user.click(dialog.getByRole("button", { name: "关闭", exact: true }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mocks.updateGlobalConfig).not.toHaveBeenCalled();
   });
 
   it("renders configured LLM provider cards with stored keys", async () => {
@@ -507,24 +490,23 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     await renderPage();
 
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^自定义/ }));
 
     expect(
       screen.getByRole("dialog").closest("[data-dismissable]"),
     ).toHaveAttribute("data-dismissable", "false");
 
     const baseUrlInput = screen.getByPlaceholderText("https://api.example.com");
-    const modelInput = within(screen.getByRole("dialog"))
-      .getByText("模型", { selector: "span" })
-      .parentElement!.querySelector("input")!;
+    const modelInput = within(screen.getByRole("dialog")).getByRole("textbox", {
+      name: "模型",
+    });
 
     await user.clear(baseUrlInput);
-    await user.type(baseUrlInput, "https://llm.internal/v1");
+    await pasteValue(user, baseUrlInput, "https://llm.internal/v1");
     expect(modelInput).toHaveValue("");
-    await user.type(modelInput, "local-model");
+    await pasteValue(user, modelInput, "local-model");
 
     const apiKeyInput = screen.getByPlaceholderText("输入 API Key");
-    await user.type(apiKeyInput, "sk-local");
+    await pasteValue(user, apiKeyInput, "sk-local");
     await waitFor(() => expect(mocks.validateAiApi).toHaveBeenCalled());
     await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled());
 
@@ -549,7 +531,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     );
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     await user.clear(modelInput);
-    await user.type(modelInput, "another-model");
+    await pasteValue(user, modelInput, "another-model");
     await waitFor(() =>
       expect(mocks.updateGlobalConfig).toHaveBeenCalledTimes(2),
     );
@@ -597,10 +579,27 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     await renderPage();
 
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^DeepSeek$/ }));
+    // Add no longer offers presets: configure this provider through the real form.
+    const dialog = within(screen.getByRole("dialog"));
+    await user.clear(dialog.getByPlaceholderText("My Provider"));
+    await pasteValue(
+      user,
+      dialog.getByPlaceholderText("My Provider"),
+      "DeepSeek",
+    );
+    await pasteValue(
+      user,
+      dialog.getByPlaceholderText("https://api.example.com"),
+      "https://api.deepseek.com",
+    );
+    await pasteValue(
+      user,
+      dialog.getByRole("textbox", { name: "模型" }),
+      "deepseek-chat",
+    );
 
     const apiKeyInput = screen.getByPlaceholderText("输入 API Key");
-    await user.type(apiKeyInput, "sk-test");
+    await pasteValue(user, apiKeyInput, "sk-test");
     await user.click(screen.getByRole("button", { name: /发现/ }));
 
     // 发现的模型只是候选：没有任何一个被自动配置
@@ -621,19 +620,34 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
       screen.getByRole("button", { name: "gpt-4o", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await user.click(screen.getByRole("button", { name: "完成" }));
-    await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled());
-
-    const payload = mocks.updateGlobalConfig.mock.calls[0][0];
-    const provider = payload.providers.find(
-      (p: ProviderDef) => p.id === "custom-api:deepseek",
-    );
-    expect(provider.models.map((m: { id: string }) => m.id)).toEqual([
-      "deepseek-chat",
-      "gpt-4o",
-    ]);
-    expect(
-      provider.models.find((m: { id: string }) => m.id === "deepseek-chat"),
-    ).toEqual(expect.objectContaining({ isDefault: true }));
+    // A prior autosave may contain only the default model. Wait for the
+    // selected-model edit itself to persist, not merely for any save request.
+    await waitFor(() => {
+      expect(mocks.updateGlobalConfig).toHaveBeenCalled();
+      const payload = mocks.updateGlobalConfig.mock.calls.at(-1)![0];
+      const provider = payload.providers.find(
+        (p: ProviderDef) =>
+          p.label === "DeepSeek" && p.id.startsWith("custom-api:"),
+      );
+      expect(provider.models.map((m: { id: string }) => m.id)).toEqual([
+        "deepseek-chat",
+        "gpt-4o",
+      ]);
+      expect(
+        provider.models.find((m: { id: string }) => m.id === "deepseek-chat"),
+      ).toEqual(expect.objectContaining({ isDefault: true }));
+      expect(payload.providerConnections[provider.id]).toMatchObject({
+        baseUrl: "https://api.deepseek.com",
+        apiKey: "sk-test",
+        extra: { apiFormat: "openai", model: "deepseek-chat" },
+      });
+    });
+    expect(mocks.discoverAiModels).toHaveBeenCalledExactlyOnceWith({
+      providerId: undefined,
+      format: "openai",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "sk-test",
+    });
   });
 
   it("configures the 1M input window per enabled model", async () => {
@@ -646,9 +660,30 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     await renderPage();
 
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^DeepSeek$/ }));
+    // Add no longer offers presets: configure this provider through the real form.
+    const dialog = within(screen.getByRole("dialog"));
+    await user.clear(dialog.getByPlaceholderText("My Provider"));
+    await pasteValue(
+      user,
+      dialog.getByPlaceholderText("My Provider"),
+      "DeepSeek",
+    );
+    await pasteValue(
+      user,
+      dialog.getByPlaceholderText("https://api.example.com"),
+      "https://api.deepseek.com",
+    );
+    await pasteValue(
+      user,
+      dialog.getByRole("textbox", { name: "模型" }),
+      "deepseek-chat",
+    );
 
-    await user.type(screen.getByPlaceholderText("输入 API Key"), "sk-test");
+    await pasteValue(
+      user,
+      screen.getByPlaceholderText("输入 API Key"),
+      "sk-test",
+    );
     await user.click(screen.getByRole("button", { name: /发现/ }));
     await user.click(
       await screen.findByRole("button", {
@@ -671,27 +706,35 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     expect(reasonerWindow).toBeChecked();
     expect(chatWindow).not.toBeChecked();
 
-    await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled());
-
-    const payload = mocks.updateGlobalConfig.mock.calls[0][0];
-    const provider = payload.providers.find(
-      (p: ProviderDef) => p.id === "custom-api:deepseek",
-    );
-    expect(
-      provider.models.find((m: { id: string }) => m.id === "deepseek-reasoner"),
-    ).toEqual(expect.objectContaining({ contextLimit: 1_000_000 }));
-    expect(
-      provider.models.find((m: { id: string }) => m.id === "deepseek-chat")
-        ?.contextLimit,
-    ).toBeUndefined();
+    await waitFor(() => {
+      expect(mocks.updateGlobalConfig).toHaveBeenCalled();
+      const payload = mocks.updateGlobalConfig.mock.calls.at(-1)![0];
+      const provider = payload.providers.find(
+        (p: ProviderDef) =>
+          p.label === "DeepSeek" && p.id.startsWith("custom-api:"),
+      );
+      expect(provider.models.map((m: { id: string }) => m.id)).toEqual([
+        "deepseek-chat",
+        "deepseek-reasoner",
+      ]);
+      expect(
+        provider.models.find(
+          (m: { id: string }) => m.id === "deepseek-reasoner",
+        ),
+      ).toEqual(expect.objectContaining({ contextLimit: 1_000_000 }));
+      expect(
+        provider.models.find((m: { id: string }) => m.id === "deepseek-chat")
+          ?.contextLimit,
+      ).toBeUndefined();
+    });
   });
 
   it("preserves an incomplete draft during a visibility-triggered background reload", async () => {
     const user = userEvent.setup();
     const view = await renderPage();
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^自定义/ }));
-    await user.type(
+    await pasteValue(
+      user,
       screen.getByPlaceholderText("https://api.example.com"),
       "https://unfinished.example",
     );
@@ -725,24 +768,53 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
   it("flushes edits on explicit close and preserves the dialog on save failure for retry", async () => {
     const user = userEvent.setup();
     await renderPage();
-    await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^OpenAI$/ }));
-    const input = screen.getByPlaceholderText("输入模型 ID");
-    fireEvent.change(input, { target: { value: "changed-model" } });
-    mocks.updateGlobalConfig.mockRejectedValueOnce(new Error("写入失败"));
-    await user.click(screen.getByRole("button", { name: "关闭", exact: true }));
+    // Edit the configured provider (with its stored key), rather than a removed preset.
+    const card = screen.getByText("OpenAI").closest(".settings-item")!;
+    await user.click(within(card).getByRole("button", { name: /OpenAI/ }));
+    await user.click(
+      within(card).getByRole("button", { name: "编辑", exact: true }),
+    );
     expect(
-      await screen.findByText("写入失败", { selector: "div" }),
+      within(screen.getByRole("dialog")).getByRole("heading", {
+        name: "OpenAI 配置",
+      }),
+    ).toBeInTheDocument();
+    const input = screen.getByPlaceholderText("输入模型 ID");
+    // Control only this debounce race: Close, not an elapsed timer, must
+    // trigger the first save. Native click events still exercise the real handler.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    mocks.updateGlobalConfig.mockRejectedValueOnce(new Error("写入失败"));
+    fireEvent.change(input, { target: { value: "changed-model" } });
+    expect(mocks.updateGlobalConfig).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "关闭", exact: true }),
+      );
+    });
+    expect(
+      screen.getByText("写入失败", { selector: "div" }),
     ).toBeInTheDocument();
     expect(input).toHaveValue("changed-model");
-    await user.click(screen.getByRole("button", { name: "重试保存" }));
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole("dialog")).getByRole("status"),
-      ).toHaveTextContent("已保存"),
-    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "重试保存" }));
+    });
+    expect(
+      within(screen.getByRole("dialog")).getByRole("status"),
+    ).toHaveTextContent("已保存");
     expect(mocks.updateGlobalConfig).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    const payload = mocks.updateGlobalConfig.mock.calls[1][0];
+    expect(payload.providerConnections.openai.extra.model).toBe(
+      "changed-model",
+    );
+    expect(payload.providerConnections.openai.apiKey).toBeUndefined();
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "关闭", exact: true }),
+      );
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mocks.updateGlobalConfig).toHaveBeenCalledTimes(2);
   });
 
   it("removes a configured provider card", async () => {

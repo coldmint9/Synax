@@ -1,3 +1,6 @@
+vi.mock("../artifact-jobs.js", () => ({
+  processArtifactJobs: vi.fn(async () => {}),
+}));
 import { afterEach, it, expect, vi } from "vitest";
 import { startArtifactRecovery } from "../artifact-recovery.js";
 import { resumeArtifactBuilds } from "../artifacts/publisher.js";

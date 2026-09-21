@@ -129,9 +129,10 @@ export async function publishCompletedManifests(
         );
         continue;
       }
-      await publishSessionArtifact(
+      const { enqueueArtifactJob } = await import("./artifact-jobs.js");
+      enqueueArtifactJob(
         message.sessionId,
-        { ...input, idempotencyKey: `message:${message.id}:${index}` },
+        publication,
         message.runId,
         message.stepId,
       );

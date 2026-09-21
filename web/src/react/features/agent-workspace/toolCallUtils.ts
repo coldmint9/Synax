@@ -80,6 +80,7 @@ export function isFinalTextBlock(
 }
 
 export type TurnRenderSegment =
+  | Extract<TurnContentBlock, { type: "artifact_job" }>
   | Extract<TurnContentBlock, { type: "artifact_request" }>
   | Extract<TurnContentBlock, { type: "artifact" }>
   | Extract<TurnContentBlock, { type: "media" }>
@@ -110,7 +111,8 @@ export function buildTurnRenderSegments(
     if (
       block.type === "media" ||
       block.type === "artifact" ||
-      block.type === "artifact_request"
+      block.type === "artifact_request" ||
+      block.type === "artifact_job"
     ) {
       segments.push(block);
       i++;

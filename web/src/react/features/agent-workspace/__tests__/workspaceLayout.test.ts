@@ -1,3 +1,4 @@
+import globalCss from "../../../../index.css?raw";
 import css from "../workPage.css?raw";
 import { describe, expect, it } from "vitest";
 import postcss from "postcss";
@@ -88,4 +89,9 @@ describe("workspace layout constraints", () => {
       "nowrap",
     );
   });
+});
+
+it("lets pointer events pass through navigation rail padding over interactive artifacts",()=>{
+ const sheet=postcss.parse(globalCss);const values=new Map<string,string>();sheet.walkRules(rule=>{if([".session-nav-float-rail",".session-nav-float-mark"].includes(rule.selector))rule.walkDecls("pointer-events",decl=>{values.set(rule.selector,decl.value);});});
+ expect(values.get(".session-nav-float-rail")).toBe("none");expect(values.get(".session-nav-float-mark")).toBe("auto");
 });

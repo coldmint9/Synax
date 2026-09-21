@@ -86,6 +86,7 @@ export function getPublicationRequest(sessionId: string, requestId: string) {
         step_id: string | null;
         status: string;
         revision_id: string | null;
+        job_id: string | null;
       }
     | undefined;
   if (!row)
@@ -101,6 +102,7 @@ export function getPublicationRequest(sessionId: string, requestId: string) {
     stepId: row.step_id,
     status: row.status,
     revisionId: row.revision_id,
+    jobId: row.job_id,
   };
 }
 export function resolvePublicationRequest(

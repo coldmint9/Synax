@@ -1,5 +1,6 @@
 import type {
   ArtifactBundle,
+  ArtifactBuildJob,
   ArtifactFeedbackInput,
   ArtifactFile,
   ArtifactPublishInput,
@@ -22,7 +23,7 @@ export const artifactsApi = {
       silent: true,
     }),
   publish: (sessionId: string, input: ArtifactPublishInput) =>
-    apiRequest<{ revision: ArtifactRevision }>(base(sessionId), {
+    apiRequest<{ job: ArtifactBuildJob }>(base(sessionId), {
       method: "POST",
       body: JSON.stringify(input),
       silent: true,

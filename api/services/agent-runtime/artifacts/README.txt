@@ -37,7 +37,7 @@ normal legacy session `INSERT OR REPLACE` is preserved with the existing SQLite 
   `lucide-react`, and exactly `d3@7.9.0` imports are supported. D3 is also available
   to HTML module scripts (`import {select, scaleLinear} from 'd3'`); there is no CDN
   or preinstalled global `d3`. Other bare imports, including direct `d3-*` subpackages,
-  are rejected. Lucide is available as React components only, not a global HTML API.
+  are rejected. Classic HTML also has the packaged window.lucide.createIcons() helper; no CDN is used.
   D3 network helpers and helpers that require dynamic code generation remain subject
   to the unchanged disconnected/no-unsafe-eval policy (e.g. prefer csvParseRows over
   the dynamic object converter used by csvParse).
@@ -108,8 +108,7 @@ as a host path on another platform. Windows/UNC path rules are unit-tested; actu
 filesystem execution has not been exercised on the macOS development host. This layer does not make
 the browser an OS sandbox: self-navigation/renderer CPU and standalone-file behavior
 need the Web/Electron transport's documented limits. No hard OS memory guarantee,
-workspace build plugins, arbitrary packages, schema-based cross-revision state migration,
-or ready-version garbage collection is claimed.
+workspace build plugins, arbitrary packages, or automatic ready-version garbage collection is claimed. Explicit confirmed state inheritance uses immutable registered schema versions and CAS; it never runs arbitrary migration code.
 
 Tests cover source validation, fixed dependency builds, HTML/CSS/SVG negative policy,
 timeout/abort, quotas, CAS, immutable retry, failed status, migration lifecycle,
@@ -117,3 +116,9 @@ transaction rollback, crash recovery, export ZIP integrity, and real Chrome offl
 and React/D3 chart interaction. Package tests reject entry/manifest/license escapes and
 undeclared dependencies. Browser tests run when Chrome/Chromium is installed (or
 `SYNAX_ARTIFACT_BROWSER` points to it); they never substitute a simulated DOM.
+
+## Asynchronous jobs and version QA
+
+HTTP publication returns 202 with a durable job; the job card supports cancellation and explicit retry. Commit checks both the job status and attempt number, so a cancelled or superseded compiler cannot publish a late revision. Restarts use captured bytes and leases, not silent rereads of changed source.
+
+Historical forks clone validated immutable bytes into an independent artifact with derived-from lineage. State transfer requires explicit user confirmation and matching registered control schemas/state versions. Desktop captures are bounded, instance-bound PNGs; feedback carries session-owned media asset references only after user preview confirmation. Web does not synthesize screenshots.

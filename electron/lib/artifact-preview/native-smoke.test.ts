@@ -128,6 +128,15 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
       app.focus({ steal: true });
       (globalThis as any).artifactSmoke.owner.focus();
     });
+    await expect
+      .poll(
+        () =>
+          desktop.evaluate(() =>
+            (globalThis as any).artifactSmoke.owner.isFocused(),
+          ),
+        { timeout: 5000 },
+      )
+      .toBe(true);
     await page.evaluate(async (id) => {
       await (window as any).electronAPI.artifactPreview.update({
         id,
@@ -141,6 +150,39 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
         visible: true,
       });
     }, id);
+    const hostCapture = await page.evaluate(
+      async ({ id, revisionId }) => {
+        const api = (window as any).electronAPI.artifactPreview;
+        const image = await api.capture({ id, revisionId });
+        await api.annotate({
+          id,
+          revisionId,
+          bounds: {
+            x: 65,
+            y: 105,
+            width: 100,
+            height: 80,
+            viewportWidth: 320,
+            viewportHeight: 400,
+          },
+        });
+        return {
+          id: image.id,
+          revisionId: image.revisionId,
+          mimeType: image.mimeType,
+          size: image.bytes.byteLength,
+          signature: Array.from(image.bytes.slice(0, 8)),
+        };
+      },
+      { id, revisionId },
+    );
+    expect(hostCapture).toMatchObject({
+      id,
+      revisionId,
+      mimeType: "image/png",
+      signature: [137, 80, 78, 71, 13, 10, 26, 10],
+    });
+    expect(hostCapture.size).toBeLessThanOrEqual(4 * 1024 * 1024);
     const capture = await desktop.evaluate(
       async ({ desktopCapturer }, { id, output }) => {
         const { owner, manager, writeFile } = (globalThis as any).artifactSmoke;
@@ -172,12 +214,31 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
           return [...b.subarray(offset, offset + 4)];
         };
         return {
+          nativeState: {
+            focused: owner.isFocused(),
+            instances: [...manager.instances.values()].map((i: any) => ({
+              visible: i.visible,
+              shown: i.container.getVisible(),
+              disposed: i.disposed,
+              borders: i.borders?.map((b: any) => ({
+                visible: b.getVisible(),
+                bounds: b.getBounds(),
+              })),
+            })),
+          },
           capture: artifact.getSize(),
           screenshot: size,
           composited: !!source,
           outside: pixel(20, 100),
           inside: pixel(80, 100),
           far: pixel(250, 100),
+          border: pixel(46, 65),
+          borders: [
+            pixel(46, 65),
+            pixel(100, 46),
+            pixel(144, 65),
+            pixel(100, 124),
+          ],
           output,
         };
       },
@@ -197,6 +258,23 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
       expect(capture.inside[1]).toBeGreaterThan(180);
       expect(capture.inside[2]).toBeGreaterThan(180);
     }
+    if (capture.composited) {
+      for (const pixel of capture.borders) {
+        expect(pixel[0]).toBeGreaterThan(180);
+        expect(pixel[1]).toBeLessThan(140);
+        expect(pixel[2]).toBeLessThan(100);
+      }
+    }
+    await page.evaluate(
+      async ({ id, revisionId }) => {
+        await (window as any).electronAPI.artifactPreview.annotate({
+          id,
+          revisionId,
+          bounds: null,
+        });
+      },
+      { id, revisionId },
+    );
     // Browser zoom must preserve both clipping and the artifact's CSS layout viewport.
     await desktop.evaluate(() =>
       (globalThis as any).artifactSmoke.owner.webContents.setZoomFactor(2),
@@ -205,6 +283,15 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
       app.focus({ steal: true });
       (globalThis as any).artifactSmoke.owner.focus();
     });
+    await expect
+      .poll(
+        () =>
+          desktop.evaluate(() =>
+            (globalThis as any).artifactSmoke.owner.isFocused(),
+          ),
+        { timeout: 5000 },
+      )
+      .toBe(true);
     await page.evaluate(async (id) => {
       await (window as any).electronAPI.artifactPreview.update({
         id,

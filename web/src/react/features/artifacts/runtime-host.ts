@@ -1,3 +1,4 @@
+import { artifactVersionsApi } from "../../../lib/api/artifactVersions";
 import type {
   ArtifactControl,
   ArtifactState,
@@ -5,6 +6,7 @@ import type {
 import { artifactsApi } from "../../../lib/api/artifacts";
 import {
   feedbackInput,
+  validateState,
   safeJson,
   validateControls,
   validateControlValue,
@@ -70,7 +72,32 @@ export class ArtifactRuntimeHost {
         return this.state;
       }
       case "controls": {
-        const controls = validateControls(payload);
+        const value = safeJson(payload);
+        const requested = Array.isArray(value)
+          ? { controls: value, schemaVersion: 1 }
+          : (value as { controls: unknown; schemaVersion: number });
+        if (
+          !requested ||
+          !Number.isSafeInteger(requested.schemaVersion) ||
+          requested.schemaVersion < 1 ||
+          requested.schemaVersion > 10000
+        )
+          throw new Error("Invalid state schema version");
+        const controls = validateControls(requested.controls);
+        await artifactVersionsApi.registerControlSchema(
+          this.options.sessionId,
+          this.options.revisionId,
+          { schemaVersion: requested.schemaVersion, controls },
+        );
+        if (this.state.schemaVersion !== requested.schemaVersion) {
+          const saved = await artifactsApi.state(
+            this.options.sessionId,
+            this.options.revisionId,
+          );
+          if (saved.schemaVersion !== requested.schemaVersion)
+            throw new Error("State schema initialization failed");
+          this.state = validateState(saved);
+        }
         const values: Record<string, unknown> = {};
         for (const c of controls)
           values[c.key] = validateControlValue(c, this.state.controls[c.key])
@@ -91,6 +118,10 @@ export class ArtifactRuntimeHost {
           text: checked.text,
           modelState: checked.modelState,
         });
+        return null;
+      }
+      case "annotationClear": {
+        this.options.onDraft({ element: undefined });
         return null;
       }
       case "element": {

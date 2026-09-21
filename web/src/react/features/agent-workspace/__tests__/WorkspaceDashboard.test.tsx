@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -550,9 +551,23 @@ describe("WorkspaceDashboard", () => {
     });
     const view = renderDashboard();
     expect(screen.getByText("Review outputs")).toBeTruthy();
-    expect(screen.getByRole("progressbar")).toHaveAttribute(
-      "aria-valuenow",
-      "0",
+    expect(screen.getByText("0 / 1")).toBeInTheDocument();
+    expect(screen.getByText("Review outputs").closest("li")).toHaveAttribute(
+      "data-status",
+      "in_progress",
+    );
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    act(() =>
+      useAgentSessionStore.setState({
+        sessionTodos: [
+          { id: "todo-1", label: "Review outputs", status: "done" },
+        ],
+      }),
+    );
+    expect(screen.getByText("1 / 1")).toBeInTheDocument();
+    expect(screen.getByText("Review outputs").closest("li")).toHaveAttribute(
+      "data-status",
+      "done",
     );
     view.rerender(
       <WorkspaceDashboard
@@ -560,6 +575,20 @@ describe("WorkspaceDashboard", () => {
         environment={{ ...environment, sessionId: "session-2" }}
       />,
     );
+    expect(screen.queryByText("Review outputs")).toBeNull();
+    expect(screen.queryByText("1 / 1")).toBeNull();
+    act(() =>
+      useAgentSessionStore.setState({
+        selectedSessionId: "session-2",
+        sessionTodos: [
+          { id: "todo-2", label: "Check second session", status: "pending" },
+        ],
+      }),
+    );
+    expect(
+      screen.getByText("Check second session").closest("li"),
+    ).toHaveAttribute("data-status", "pending");
+    expect(screen.getByText("0 / 1")).toBeInTheDocument();
     expect(screen.queryByText("Review outputs")).toBeNull();
   });
 });

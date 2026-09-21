@@ -11,6 +11,8 @@ describe("ThinkingIndicator", () => {
 
     expect(status?.getAttribute("aria-label")).toBeTruthy();
     expect(dots).toHaveLength(3);
+    expect(status?.querySelector('[aria-hidden="true"]')).toContainElement(dots[0] as HTMLElement);
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
     expect(
       dots.map((dot) => dot.classList.contains("animate-thinking-bounce")),
     ).toEqual([true, true, true]);

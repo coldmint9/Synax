@@ -1,7 +1,9 @@
 import { useEffect, useRef, type RefObject } from "react";
 import type { ArtifactFeedbackInput } from "../../../../../api/services/agent-runtime/artifacts/contracts";
+import type { ArtifactScreenshot } from "./capture";
 import { artifactText } from "./locale";
 interface ArtifactFeedbackConfirmationProps {
+  screenshotPreviews?: ArtifactScreenshot[];
   uid: string;
   locale: string;
   review: ArtifactFeedbackInput;
@@ -13,6 +15,7 @@ interface ArtifactFeedbackConfirmationProps {
 }
 /** Presentation/focus only. The card owns the immutable review snapshot and POST. */
 export function ArtifactFeedbackConfirmation({
+  screenshotPreviews = [],
   uid,
   locale,
   review,
@@ -22,6 +25,13 @@ export function ArtifactFeedbackConfirmation({
   onCancel,
   onConfirm,
 }: ArtifactFeedbackConfirmationProps) {
+  const screenshots = review.screenshots ?? [];
+  const missingPreview = screenshots.some(
+    (s) =>
+      !screenshotPreviews.some(
+        (p) => p.assetId === s.assetId && p.previewConfirmed,
+      ),
+  );
   const translate = (text: string) => artifactText(locale, text);
   const confirmation = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -79,6 +89,36 @@ export function ArtifactFeedbackConfirmation({
             2,
           )}
         </pre>
+        {screenshots.map((s) => {
+          const preview = screenshotPreviews.find(
+            (p) => p.assetId === s.assetId && p.previewConfirmed,
+          );
+          return preview ? (
+            <figure key={s.assetId}>
+              <img
+                src={preview.previewUrl}
+                alt={
+                  locale === "zh"
+                    ? "将发送给模型的截图"
+                    : "Screenshot that will be sent to the model"
+                }
+                style={{ maxWidth: "100%", maxHeight: 240 }}
+              />
+              <figcaption>
+                {locale === "zh"
+                  ? "此截图将作为图像附件发送给模型。"
+                  : "This screenshot will be sent to the model as an image attachment."}
+              </figcaption>
+            </figure>
+          ) : null;
+        })}
+        {missingPreview && (
+          <p role="alert">
+            {locale === "zh"
+              ? "截图预览不可用，请返回编辑并重新截图。"
+              : "Screenshot preview unavailable. Return to editing and capture again."}
+          </p>
+        )}
         {error && <p role="alert">{error}</p>}
         <div className="artifact-dialog-actions">
           <button type="button" disabled={sending} onClick={() => onCancel()}>
@@ -87,8 +127,10 @@ export function ArtifactFeedbackConfirmation({
           <button
             type="button"
             className="artifact-primary"
-            disabled={sending}
-            onClick={onConfirm}
+            disabled={sending || missingPreview}
+            onClick={() => {
+              if (!missingPreview) onConfirm();
+            }}
           >
             {sending ? translate("Sending…") : translate("Confirm and send")}
           </button>

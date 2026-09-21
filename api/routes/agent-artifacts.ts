@@ -1,3 +1,12 @@
+import { getRawSqlite } from "../db/index.js";
+import { runtimeTransaction } from "../services/agent-runtime/runtime-transaction.js";
+import {
+  enqueueArtifactJob,
+  getArtifactJob,
+  listArtifactJobs,
+  cancelArtifactJob,
+  retryArtifactJob,
+} from "../services/agent-runtime/artifact-jobs.js";
 import { bodyLimit } from "hono/body-limit";
 import {
   publicationPermission,
@@ -20,15 +29,20 @@ import {
   deleteArtifact,
 } from "../services/agent-runtime/artifacts/publisher.js";
 import { exportArtifact } from "../services/agent-runtime/artifacts/export.js";
-import { submitArtifactFeedback } from "../services/agent-runtime/artifact-feedback.js";
+import {
+  submitArtifactFeedback,
+  uploadArtifactScreenshot,
+  MAX_ARTIFACT_SCREENSHOT_BYTES,
+} from "../services/agent-runtime/artifact-feedback.js";
 import { ArtifactError } from "../services/agent-runtime/artifacts/contracts.js";
 import { toHttpError } from "../services/agent-runtime/runtime-errors.js";
 
 export const agentArtifactRoutes = new Hono();
-agentArtifactRoutes.use(
-  "/sessions/:sessionId/artifacts/*",
-  bodyLimit({ maxSize: 64 * 1024 }),
-);
+agentArtifactRoutes.use("/sessions/:sessionId/artifacts/*", async (c, next) => {
+  if (c.req.path.endsWith("/screenshots"))
+    return bodyLimit({ maxSize: 4 * 1024 * 1024 + 65536 })(c, next);
+  return bodyLimit({ maxSize: 64 * 1024 })(c, next);
+});
 agentArtifactRoutes.use(
   "/sessions/:sessionId/artifacts",
   bodyLimit({ maxSize: 64 * 1024 }),
@@ -77,11 +91,8 @@ agentArtifactRoutes.post(base, async (c) => {
   if (Buffer.byteLength(raw) > 8192)
     throw new ArtifactError("RESOURCE_LIMIT", "Publish request too large", 413);
   const input = publishArtifactSchema.parse(JSON.parse(raw));
-  const revision = await publishSessionArtifact(
-    c.req.param("sessionId")!,
-    input,
-  );
-  return c.json({ revision }, 201);
+  const job = enqueueArtifactJob(c.req.param("sessionId")!, input);
+  return c.json({ job }, 202);
 });
 agentArtifactRoutes.get(base + "/:artifactId/revisions", (c) =>
   c.json({
@@ -218,21 +229,24 @@ agentArtifactRoutes.post(base + "/requests/:requestId", async (c) => {
       "Publication is denied by the current session policy",
       403,
     );
-  resolvePublicationRequest(sessionId, id, "publishing");
-  try {
-    const revision = await publishSessionArtifact(
+  const job = runtimeTransaction(() => {
+    resolvePublicationRequest(sessionId, id, "publishing");
+    let job = enqueueArtifactJob(
       sessionId,
       request.input,
       request.runId,
       request.stepId,
-      c.req.raw.signal,
     );
-    resolvePublicationRequest(sessionId, id, "ready", revision.revisionId);
-    return c.json({ status: "ready", revisionId: revision.revisionId });
-  } catch (error) {
-    resolvePublicationRequest(sessionId, id, "pending");
-    throw error;
-  }
+    if (job.status === "failed" || job.status === "cancelled")
+      job = retryArtifactJob(sessionId, job.jobId);
+    getRawSqlite()
+      .prepare(
+        "UPDATE artifact_publication_requests SET job_id=? WHERE id=? AND session_id=? AND status='publishing'",
+      )
+      .run(job.jobId, id, sessionId);
+    return job;
+  });
+  return c.json({ status: "publishing", jobId: job.jobId, job }, 202);
 });
 
 agentArtifactRoutes.get(base + "/builds", (c) =>
@@ -242,4 +256,53 @@ agentArtifactRoutes.get(base + "/builds", (c) =>
       c.req.query("artifactId"),
     ),
   }),
+);
+
+agentArtifactRoutes.get(base + "/jobs", (c) =>
+  c.json({ items: listArtifactJobs(c.req.param("sessionId")!) }),
+);
+agentArtifactRoutes.get(base + "/jobs/:jobId", (c) =>
+  c.json({
+    job: getArtifactJob(c.req.param("sessionId")!, c.req.param("jobId")!),
+  }),
+);
+agentArtifactRoutes.post(base + "/jobs/:jobId/cancel", (c) =>
+  c.json({
+    job: cancelArtifactJob(c.req.param("sessionId")!, c.req.param("jobId")!),
+  }),
+);
+agentArtifactRoutes.post(base + "/jobs/:jobId/retry", (c) =>
+  c.json({
+    job: retryArtifactJob(c.req.param("sessionId")!, c.req.param("jobId")!),
+  }),
+);
+
+agentArtifactRoutes.post(
+  base + "/revisions/:revisionId/screenshots",
+  async (c) => {
+    if (c.req.header("X-Synax-Artifact-Action") !== "capture-screenshot")
+      throw new ArtifactError(
+        "CONFIRMATION_REQUIRED",
+        "Screenshot must be confirmed in the host",
+        403,
+      );
+    const form = await c.req.formData();
+    const file = form.get("file");
+    if (
+      !(file instanceof File) ||
+      file.type !== "image/png" ||
+      file.size > MAX_ARTIFACT_SCREENSHOT_BYTES
+    )
+      throw new ArtifactError(
+        "INVALID_SOURCE",
+        "Only bounded PNG screenshots are accepted",
+        400,
+      );
+    const asset = await uploadArtifactScreenshot(
+      c.req.param("sessionId")!,
+      c.req.param("revisionId")!,
+      Buffer.from(await file.arrayBuffer()),
+    );
+    return c.json({ asset }, 201);
+  },
 );

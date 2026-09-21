@@ -1,0 +1,50 @@
+name: Interactive artifact acceptance
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --include=dev
+      - name: Select an installed browser; do not silently skip browser acceptance
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const browser=[process.env.CHROME_PATH,'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome','/usr/bin/google-chrome','/usr/bin/chromium',`${process.env.ProgramFiles}/Google/Chrome/Application/chrome.exe`,`${process.env['ProgramFiles(x86)']}/Microsoft/Edge/Application/msedge.exe`].find(p=>p&&fs.existsSync(p));
+          if(!browser)throw new Error('Real browser required for artifact acceptance');
+          fs.appendFileSync(process.env.GITHUB_ENV,`SYNAX_ARTIFACT_BROWSER=${browser}\nSYNAX_CHROME_PATH=${browser}\nSYNAX_ARTIFACT_BROWSER_QA=1\n`);
+          JS
+      - name: API typecheck and artifact/security suites
+        run: npx tsc --noEmit
+      - run: npx vitest run api/services/agent-runtime/artifacts api/services/agent-runtime/__tests__/artifact-jobs.test.ts api/services/agent-runtime/__tests__/artifact-feedback.test.ts api/services/agent-runtime/__tests__/artifact-versions.test.ts api/routes/__tests__/agent-artifacts.test.ts api/routes/__tests__/artifact-versions.test.ts api/routes/__tests__/artifact-versions.browser.test.ts --maxWorkers=2
+      - name: Browser SDK, cards, state and feedback
+        run: npm run test --prefix web -- src/react/features/artifacts src/lib/api/artifacts.test.ts src/lib/api/artifactVersions.test.ts
+      - run: npm run build
+      - run: npm run web:build
+      - run: npm run build:electron
+      - name: Native desktop acceptance
+        if: runner.os != 'Linux'
+        env:
+          SYNAX_ARTIFACT_NATIVE_SMOKE: '1'
+        run: npx vitest run electron/lib/artifact-preview --maxWorkers=1
+      - name: Install virtual desktop for Linux native acceptance
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox
+      - name: Linux native desktop acceptance
+        if: runner.os == 'Linux'
+        env:
+          SYNAX_ARTIFACT_NATIVE_SMOKE: '1'
+        run: xvfb-run -a bash -c 'openbox >/tmp/openbox-artifacts.log 2>&1 & npx vitest run electron/lib/artifact-preview --maxWorkers=1'
