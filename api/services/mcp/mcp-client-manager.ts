@@ -127,7 +127,7 @@ export class McpClientManager {
           stderr: "pipe",
         });
         const client = new Client(
-          { name: "synax-host", version: "0.2.0" },
+          { name: "synax-host", version: "0.3.0" },
           { capabilities: {} },
         );
         timer = setTimeout(() => {
@@ -309,7 +309,7 @@ export class McpClientManager {
     let transport: StdioClientTransport | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const client = new Client(
-      { name: "synax-host-probe", version: "0.2.0" },
+      { name: "synax-host-probe", version: "0.3.0" },
       { capabilities: {} },
     );
     try {

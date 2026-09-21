@@ -34,7 +34,7 @@ import type {
 import { HELP, parseArgs, type CliOptions, type OutputMode } from "./args.js";
 import { ensureRuntime } from "./runtime-host.js";
 
-export const CLI_VERSION = "0.2.0";
+export const CLI_VERSION = "0.3.0";
 export const EXIT = {
   completed: 0,
   failed: 1,
