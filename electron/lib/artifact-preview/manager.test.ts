@@ -204,6 +204,31 @@ describe("artifact view manager", () => {
     });
     await expect(handler(event, input)).rejects.toThrow("RESOURCE_LIMIT");
   });
+  it("keeps a capture valid across identical host layout notifications", async () => {
+    const { wc, png } = await connected();
+    let finish!: (value: unknown) => void;
+    wc.capturePage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = manager.captureForHost(event, {
+      id: "one",
+      revisionId: "revision-one",
+    });
+    await manager.update(event, {
+      id: "one",
+      bounds: create().bounds,
+      visible: true,
+    });
+    finish({ toPNG: () => png });
+    await expect(pending).resolves.toMatchObject({
+      mimeType: "image/png",
+      width: 1,
+      height: 1,
+    });
+  });
   it("rejects hidden captures and rechecks disposed instance after awaiting native pixels", async () => {
     const { wc, png } = await connected();
     const input = { id: "one", revisionId: "revision-one" };

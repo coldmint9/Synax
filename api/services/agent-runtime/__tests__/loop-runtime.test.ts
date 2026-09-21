@@ -6,7 +6,6 @@ import { asSchema } from "@ai-sdk/provider-utils";
 import { resolveGatewaySelection } from "../../llm-runtime/gateway.js";
 import { buildSessionPrompt } from "../session-prompt.js";
 import { workStore } from "../work-store.js";
-import { workspaceFingerprint } from "../work-fingerprint.js";
 import { acceptRuntimeRun } from "../run-admission.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -580,8 +579,8 @@ describe("agentLoopRuntime", () => {
   it("resumes an approved pending write tool and continues the original run", async ({
     onTestFinished,
   }) => {
-    // Verification fingerprints the workspace, including unrelated Git edits.
-    // Concurrent work on the checkout must not invalidate this approval fixture.
+    // The approval test owns its workspace. Concurrent checkout edits must not
+    // change the evidence or trigger an extra model step in this fixture.
     const workDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "synax-loop-approved-write-"),
     );
@@ -645,16 +644,19 @@ describe("agentLoopRuntime", () => {
     expect(mockStepResults).toHaveLength(0);
     const work = workStore.current(session.id)!;
     expect(work.status).toBe("completed");
-    expect(work.verifications).toHaveLength(1);
-    const [verification] = work.verifications;
-    expect(verification).toMatchObject({
-      runId: run.id,
-      criterion: "Requested file content",
-      scope: [writePath],
-      status: "success",
-      changeVersion: work.changeVersion,
-      fingerprint: await workspaceFingerprint(session.id, [writePath]),
-    });
+    // Main separates chat tool execution from goal acceptance receipts. The
+    // real shell read-back succeeds, but must not invent a goal verification.
+    expect(work.verifications).toHaveLength(0);
+    expect(
+      agentRuntimeStore
+        .listToolCalls(session.id)
+        .find((call) => call.toolId === "bash"),
+    ).toMatchObject({ status: "completed", error: null });
+    expect(
+      capturedRequests.every(
+        (request) => !request.tools.includes("verification_run"),
+      ),
+    ).toBe(true);
 
     const firstStepParts = agentRuntimeStore.listRunParts(steps[0].id);
     expect(firstStepParts.map((part) => part.kind)).toEqual([
@@ -1518,7 +1520,13 @@ describe("agentLoopRuntime", () => {
         toolCallId: "blocked-chat",
         args: {
           title: "Blocked: execution needs input",
-          questions: [{ id: "unblock", type: "text", label: "Provide the missing execution detail" }],
+          questions: [
+            {
+              id: "unblock",
+              type: "text",
+              label: "Provide the missing execution detail",
+            },
+          ],
         },
       }),
     );
@@ -1818,28 +1826,66 @@ describe("chat turn boundaries", () => {
 
   it("ends with an honest partial summary after a failed check, without accepting pending TODOs or resuming an old goal", async () => {
     const session = agentSessionRuntime.create({
-      ...executorInput, profileId: "synax", permissionTier: "unrestricted",
+      ...executorInput,
+      profileId: "synax",
+      permissionTier: "unrestricted",
       sessionMetadata: { mode: "chat" },
     });
     agentRuntimeStore.updateSessionMetadata(session.id, {
-      goal: { objective: "Historical goal", status: "blocked", reason: "Historical blocker" },
+      goal: {
+        objective: "Historical goal",
+        status: "blocked",
+        reason: "Historical blocker",
+      },
     });
-    queueMockStep(makeToolStep({ toolName: "task_create", toolCallId: "pending",
-      args: { subject: "Remaining implementation", description: "Not yet done" } }));
-    queueMockStep(makeToolStep({ toolName: "bash", toolCallId: "failed-check",
-      args: { command: 'node -e "process.exit(1)"' } }));
-    queueMockStep(makeTextStep("Partial result. The check failed; implementation remains incomplete."));
-    const chunks = await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Investigate and report the result." }));
-    expect(chunks.some(c => c.type === "run_completed")).toBe(true);
+    queueMockStep(
+      makeToolStep({
+        toolName: "task_create",
+        toolCallId: "pending",
+        args: {
+          subject: "Remaining implementation",
+          description: "Not yet done",
+        },
+      }),
+    );
+    queueMockStep(
+      makeToolStep({
+        toolName: "bash",
+        toolCallId: "failed-check",
+        args: { command: 'node -e "process.exit(1)"' },
+      }),
+    );
+    queueMockStep(
+      makeTextStep(
+        "Partial result. The check failed; implementation remains incomplete.",
+      ),
+    );
+    const chunks = await collectChunks(
+      agentLoopRuntime.streamRun(session.id, {
+        message: "Investigate and report the result.",
+      }),
+    );
+    expect(chunks.some((c) => c.type === "run_completed")).toBe(true);
     expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
-      status: "completed", resultSummary: "Partial result. The check failed; implementation remains incomplete.",
+      status: "completed",
+      resultSummary:
+        "Partial result. The check failed; implementation remains incomplete.",
       sessionMetadata: { mode: "chat", goal: { status: "blocked" } },
     });
     expect(workStore.current(session.id)?.status).toBe("active");
-    expect(agentRuntimeStore.listToolCalls(session.id).map(c => c.toolId)).toEqual(["task.create", "bash"]);
-    expect(goalContinuationInput(session.id, agentRuntimeStore.listRuns(session.id)[0].id)).toBeNull();
+    expect(
+      agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
+    ).toEqual(["task.create", "bash"]);
+    expect(
+      goalContinuationInput(
+        session.id,
+        agentRuntimeStore.listRuns(session.id)[0].id,
+      ),
+    ).toBeNull();
     for (const request of capturedRequests) {
-      expect(request.tools).not.toEqual(expect.arrayContaining(["work_checkpoint"]));
+      expect(request.tools).not.toEqual(
+        expect.arrayContaining(["work_checkpoint"]),
+      );
       expect(request.tools).not.toContain("goal_finish");
       expect(request.tools).not.toContain("verification_run");
     }

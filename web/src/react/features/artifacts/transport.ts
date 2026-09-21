@@ -84,6 +84,8 @@ export function mountPreview(options: {
     transport: desktop ? "desktop" : "web",
   };
   const id = config.instanceId;
+  let lastCaptureAt = 0;
+  let capturePending = false;
   let disposed = false,
     connected = false,
     desktopCreated = false;
@@ -342,10 +344,45 @@ export function mountPreview(options: {
   return {
     ...(desktop && transport?.capture
       ? {
-          capture: () => {
+          capture: async () => {
             if (disposed || !connected)
-              return Promise.reject(new Error("Preview is not running"));
-            return transport.capture!({ id, revisionId: config.revisionId });
+              throw new Error("Preview is not running");
+            if (capturePending)
+              throw new Error("A screenshot is already in progress");
+            capturePending = true;
+            try {
+              // This instance outlives the QA/preview panels. Switching tabs must
+              // not reset the native rate-limit window as local button state does.
+              const remaining = 1000 - (Date.now() - lastCaptureAt);
+              if (remaining > 0)
+                await new Promise((resolve) => setTimeout(resolve, remaining));
+              let previous = "",
+                stable = 0;
+              const deadline = Date.now() + 1500;
+              while (stable < 2) {
+                await new Promise<void>((resolve) =>
+                  requestAnimationFrame(() => resolve()),
+                );
+                if (disposed || !connected)
+                  throw new Error("Preview is not running");
+                const current = bounds();
+                const key = JSON.stringify(current);
+                stable = current.visible && key === previous ? stable + 1 : 0;
+                previous = key;
+                if (Date.now() > deadline)
+                  throw new Error(
+                    "Preview is moving or hidden; wait until it is visible and retry the screenshot.",
+                  );
+              }
+              await transport.update({ id, ...bounds() });
+              lastCaptureAt = Date.now();
+              return await transport.capture!({
+                id,
+                revisionId: config.revisionId,
+              });
+            } finally {
+              capturePending = false;
+            }
           },
         }
       : {}),

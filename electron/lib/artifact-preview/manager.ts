@@ -63,6 +63,8 @@ interface Instance {
   challenge: string;
   watchdog?: NodeJS.Timeout;
   layoutVersion: number;
+  captureVersion: number;
+  captureGeometry?: string;
   geometryKey: string;
   capturing?: boolean;
   capturedAt?: number;
@@ -154,6 +156,7 @@ export class ArtifactPreviewManager {
         if (i.owner === owner) {
           i.visible = false;
           i.layoutVersion++;
+          i.captureVersion++;
           i.container.setVisible(false);
         }
     };
@@ -284,6 +287,7 @@ export class ArtifactPreviewManager {
       pongAt: Date.now(),
       challenge: "",
       layoutVersion: 0,
+      captureVersion: 0,
       geometryKey: "",
       handshake: "new",
     };
@@ -347,6 +351,7 @@ export class ArtifactPreviewManager {
         if (owner.webContents.getZoomFactor() !== i.zoom) {
           i.visible = false;
           i.layoutVersion++;
+          i.captureVersion++;
           container.setVisible(false);
         }
         // Keep one challenge outstanding; a stale pong cannot keep a stuck renderer alive.
@@ -415,6 +420,18 @@ export class ArtifactPreviewManager {
     this.authorize(event);
     const data = parseUpdate(input),
       i = this.instance(event, data.id);
+    // Host UI mutations can resend identical geometry (e.g. a capture button's
+    // busy state). They must cancel older async layouts, but not invalidate an
+    // in-flight screenshot unless the actual geometry/visibility changed.
+    const captureGeometry = JSON.stringify({
+      bounds: data.bounds,
+      visible: data.visible,
+      zoom: i.owner.webContents.getZoomFactor(),
+    });
+    if (captureGeometry !== i.captureGeometry) {
+      i.captureGeometry = captureGeometry;
+      i.captureVersion++;
+    }
     const version = ++i.layoutVersion;
     i.borders?.forEach((border) => border.setVisible(false));
     i.bounds = data.bounds;
@@ -531,7 +548,7 @@ export class ArtifactPreviewManager {
       bounds.height * scale > MAX_CAPTURE_DIMENSION
     )
       return fail("RESOURCE_LIMIT");
-    const version = i.layoutVersion;
+    const version = i.captureVersion;
     i.capturing = true;
     i.capturedAt = Date.now();
     try {
@@ -539,7 +556,7 @@ export class ArtifactPreviewManager {
       // No stale screenshot may escape after navigation, relayout, blur, or disposal.
       if (
         this.instance(event, request.id) !== i ||
-        i.layoutVersion !== version ||
+        i.captureVersion !== version ||
         i.revisionId !== request.revisionId ||
         !i.visible ||
         !i.container.getVisible() ||

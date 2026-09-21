@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -47,6 +48,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 it("does not auto-capture/upload; requires host click and explicit image preview confirmation", async () => {
@@ -205,4 +207,36 @@ it("final feedback confirmation shows exact attachment and blocks absent screens
     screen.getByAltText("Screenshot that will be sent to the model"),
   ).toHaveAttribute("src", "blob:review");
   expect(screen.getByText("Confirm and send")).not.toBeDisabled();
+});
+
+it("keeps rapid recapture disabled through the native rate-limit window", async () => {
+  vi.useFakeTimers();
+  const capture = vi.fn(async () => image());
+  render(
+    <ArtifactCapture
+      locale="en"
+      sessionId="s"
+      revisionId="revision"
+      capture={capture}
+      screenshot={null}
+      onChange={vi.fn()}
+    />,
+  );
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Capture prototype" }));
+  });
+  expect(
+    screen.getByRole("button", { name: "Capture prototype" }),
+  ).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Discard screenshot" }));
+  expect(
+    screen.getByRole("button", { name: "Capture prototype" }),
+  ).toBeDisabled();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(
+    screen.getByRole("button", { name: "Capture prototype" }),
+  ).toBeEnabled();
+  expect(capture).toHaveBeenCalledOnce();
 });

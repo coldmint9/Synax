@@ -34,6 +34,8 @@ export function ArtifactCapture({
     url: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
+  const cooldownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [error, setError] = useState("");
   const generation = useRef(0),
     pendingUrl = useRef<string | null>(null);
@@ -42,10 +44,12 @@ export function ArtifactCapture({
     generation.current++;
     setPending(null);
     setBusy(false);
+    setCooldown(false);
     setError("");
     inFlight.current = false;
     return () => {
       generation.current++;
+      if (cooldownTimer.current) clearTimeout(cooldownTimer.current);
       if (pendingUrl.current) URL.revokeObjectURL(pendingUrl.current);
       pendingUrl.current = null;
     };
@@ -56,10 +60,15 @@ export function ArtifactCapture({
     setPending(null);
   };
   async function take() {
-    if (!capture || disabled || inFlight.current) return;
+    if (!capture || disabled || inFlight.current || cooldown || pending) return;
     const epoch = generation.current;
     inFlight.current = true;
     setBusy(true);
+    setCooldown(true);
+    if (cooldownTimer.current) clearTimeout(cooldownTimer.current);
+    cooldownTimer.current = setTimeout(() => {
+      if (epoch === generation.current) setCooldown(false);
+    }, 1000);
     setError("");
     try {
       const image = await capture();
@@ -108,12 +117,13 @@ export function ArtifactCapture({
   return (
     <section
       className="artifact-capture"
+      style={{ position: "relative" }}
       aria-label={zh ? "原型截图" : "Prototype screenshot"}
     >
       <button
         type="button"
         onClick={() => void take()}
-        disabled={!capture || disabled || busy}
+        disabled={!capture || disabled || busy || cooldown || !!pending}
       >
         {zh ? "截取原型" : "Capture prototype"}
       </button>

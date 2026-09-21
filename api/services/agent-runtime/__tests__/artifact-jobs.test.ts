@@ -120,7 +120,7 @@ it("recovers an interrupted captured job after restart without reading changed w
   );
   // A new HTTP publication can drain the queue before the periodic recovery tick.
   await processArtifactJobs();
-  expect(getArtifactJob(id,job.jobId).status).toBe("building");
+  expect(getArtifactJob(id, job.jobId).status).toBe("building");
   await recoverArtifacts();
   const ready = getArtifactJob(id, job.jobId);
   expect(ready.status).toBe("ready");
@@ -199,4 +199,65 @@ it("agent child publishers leave durable jobs queued for the owning API host", a
   } finally {
     vi.unstubAllEnvs();
   }
+});
+it("refuses a recovered captured snapshot if the current root workflow is now read-only", async () => {
+  const { getRawSqlite } = await import("../../../db/index.js");
+  const { beginBuild, persistBuildSnapshot } =
+    await import("../artifacts/store.js");
+  const { readSnapshot } = await import("../artifacts/snapshot.js");
+  const { recoverArtifacts } = await import("../artifact-recovery.js");
+  const { agentRuntimeStore } = await import("../session-store.js");
+  const job = enqueueArtifactJob(id, input());
+  const db = getRawSqlite();
+  db.prepare(
+    "UPDATE artifact_jobs SET status='building',lease_until=1 WHERE id=?",
+  ).run(job.jobId);
+  const build = beginBuild(
+    {
+      sessionId: id,
+      projectId: "project-alpha",
+      workspaceRoot: root,
+      jobId: job.jobId,
+    },
+    { ...input(), idempotencyKey: `job:${job.jobId}:1` },
+  );
+  persistBuildSnapshot(build.id, readSnapshot(root, "demo.html").files());
+  db.prepare("UPDATE agent_artifact_builds SET lease_until=1 WHERE id=?").run(
+    build.id,
+  );
+  agentRuntimeStore.updateSessionMetadata(id, { mode: "plan" });
+  await recoverArtifacts();
+  expect(getArtifactJob(id, job.jobId)).toMatchObject({
+    status: "failed",
+    errorCode: "PERMISSION_DENIED",
+  });
+  expect(listArtifacts(id)).toEqual([]);
+});
+it("fences a permission tightening during an ordinary compilation at commit", async () => {
+  const { agentRuntimeStore } = await import("../session-store.js");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const original = compiler.compileArtifact;
+  vi.spyOn(compiler, "compileArtifact").mockImplementationOnce(
+    async (...args) => {
+      const result = await original(...args);
+      await gate;
+      return result;
+    },
+  );
+  const job = enqueueArtifactJob(id, input());
+  const operation = processArtifactJobs();
+  await vi.waitFor(() =>
+    expect(getArtifactJob(id, job.jobId).status).toBe("building"),
+  );
+  agentRuntimeStore.updateSessionMetadata(id, { mode: "plan" });
+  release();
+  await operation;
+  expect(getArtifactJob(id, job.jobId)).toMatchObject({
+    status: "failed",
+    errorCode: "PERMISSION_DENIED",
+  });
+  expect(listArtifacts(id)).toEqual([]);
 });
