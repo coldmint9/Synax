@@ -17,6 +17,12 @@ if (
     "Desktop online updates support macOS and Windows on arm64/x64",
   );
 const output = path.resolve("out/desktop-release");
+const privateKey = process.env.SYNAX_UPDATE_SIGNING_KEY?.trim() ?? "";
+const publicKey = process.env.SYNAX_UPDATE_PUBLIC_KEY?.trim() ?? "";
+if (Boolean(privateKey) !== Boolean(publicKey))
+  throw new Error(
+    "Configure both SYNAX_UPDATE_SIGNING_KEY and SYNAX_UPDATE_PUBLIC_KEY, or neither for full-download compatibility mode",
+  );
 await fs.rm(output, { recursive: true, force: true });
 const manifest = await createDesktopReleaseArtifacts(
   path.resolve("out/make"),
@@ -24,7 +30,13 @@ const manifest = await createDesktopReleaseArtifacts(
   version,
   process.platform,
   process.arch,
+  privateKey ? { privateKey, publicKey } : undefined,
 );
 console.log(
   `Desktop ${version} (${manifest.platform}/${manifest.arch}): ${manifest.artifact.name}, ${manifest.artifact.size} bytes`,
+);
+console.log(
+  manifest.signature
+    ? "Signed differential metadata generated"
+    : "Unsigned release: differential downloads remain disabled until a signing key is configured",
 );

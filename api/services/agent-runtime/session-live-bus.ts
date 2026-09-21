@@ -61,6 +61,8 @@ class SessionLiveBus {
     };
   }
 
+  clearBuffer(sessionId: string): void { this.buffers.delete(sessionId); }
+
   cleanup(sessionId: string): void {
     this.buffers.delete(sessionId);
     const emitter = this.emitters.get(sessionId);

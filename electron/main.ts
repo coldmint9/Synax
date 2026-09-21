@@ -36,6 +36,8 @@ import {
   ARTIFACT_SCHEME,
   isTrustedHostURL,
 } from "./lib/artifact-preview/policy.js";
+import { configureUpdateNetwork } from "./lib/update-network.js";
+import { UpdateSettingsStore } from "./lib/update-settings-store.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -71,6 +73,7 @@ const sessionNotifications = new SessionNotifications(
 let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
 let desktopUpdates: DesktopUpdates | null = null;
+let updateSettings: UpdateSettingsStore;
 let uiReadyTimer: NodeJS.Timeout | null = null;
 const terminalAccessibilitySupportEnabled = (
   systemEnabled = app.accessibilitySupportEnabled,
@@ -250,6 +253,37 @@ function registerIPC(): void {
     dialog.showSaveDialog(options),
   );
   ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.handle("updates:get-network", (event) => {
+    if (!trustedNotificationSender(event))
+      throw new Error("Untrusted update settings sender");
+    return updateSettings.settings;
+  });
+  ipcMain.handle("updates:set-network", async (event, value: unknown) => {
+    if (!trustedNotificationSender(event))
+      throw new Error("Untrusted update settings sender");
+    const settings = await updateSettings.save(value);
+    configureUpdateNetwork(settings);
+    return settings;
+  });
+  ipcMain.handle("updates:state", (event) => {
+    if (!trustedNotificationSender(event))
+      throw new Error("Untrusted update sender");
+    return desktopUpdates?.snapshot() ?? null;
+  });
+  ipcMain.handle("updates:check", (event) => {
+    if (!trustedNotificationSender(event))
+      throw new Error("Untrusted update sender");
+    if (!desktopUpdates)
+      throw new Error("Desktop updates are unavailable in this build");
+    void desktopUpdates.check(true);
+  });
+  ipcMain.handle("updates:install", async (event) => {
+    if (!trustedNotificationSender(event))
+      throw new Error("Untrusted update sender");
+    if (!desktopUpdates)
+      throw new Error("Desktop updates are unavailable in this build");
+    await desktopUpdates.install();
+  });
   ipcMain.handle("app:accessibility-support-enabled", () =>
     terminalAccessibilitySupportEnabled(),
   );
@@ -433,6 +467,13 @@ async function bootstrap(): Promise<void> {
 if (gotLock)
   app
     .whenReady()
+    .then(async () => {
+      updateSettings = new UpdateSettingsStore(
+        path.join(app.getPath("userData"), "update-network.json"),
+      );
+      await updateSettings.initialize();
+      configureUpdateNetwork(updateSettings.settings);
+    })
     .then(ensureMainWindow)
     .catch((err) => {
       console.error("[electron] failed to bootstrap", err);

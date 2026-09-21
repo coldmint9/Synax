@@ -52,13 +52,20 @@ export function useRuntimeSSE() {
         session_changed: (e) => {
           const data = JSON.parse(e.data) as {
             sessionId: string;
-            patch?: Partial<AgentSession>;
+            patch?: Partial<AgentSession> & {
+              historyReset?: boolean;
+              historyRevision?: number;
+            };
           };
           if (!data.patch) {
             void refreshSessions();
             return;
           }
 
+          if (data.patch.historyReset)
+            useAgentSessionStore
+              .getState()
+              .resetConversationHistory(data.sessionId);
           const previous = useAgentSessionStore
             .getState()
             .sessions.find((session) => session.id === data.sessionId);

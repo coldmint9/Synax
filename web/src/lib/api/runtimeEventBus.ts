@@ -31,6 +31,7 @@ function connect() {
     "session_changed",
     "session_process_changed",
     "session_step_completed",
+    "session_checkpoint_changed",
     "session_input_queue_changed",
     "session_created",
     "session_deleted",

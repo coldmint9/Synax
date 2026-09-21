@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import { createReadStream } from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { compareVersions } from "./ui-update-format.js";
@@ -8,59 +7,32 @@ import {
   fetchLimited,
   type Release,
 } from "./ui-update-feed.js";
-
-export type DesktopPlatform = "darwin" | "win32";
-export type DesktopArch = "arm64" | "x64";
-export interface DesktopManifest {
-  format: 1;
-  version: string;
-  platform: DesktopPlatform;
-  arch: DesktopArch;
-  artifact: { name: string; size: number; sha256: string };
-}
-export interface DesktopRelease {
-  manifest: DesktopManifest;
-  url: string;
-  notes?: string;
-}
-const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-
-export function desktopManifestName(platform: string, arch: string): string {
-  return `desktop-${platform}-${arch}.json`;
-}
-
-export function desktopArtifactName(
-  version: string,
-  platform: DesktopPlatform,
-  arch: DesktopArch,
-): string {
-  return platform === "darwin"
-    ? `Synax-${version}-darwin-${arch}.dmg`
-    : `Synax-${version}-full.nupkg`;
-}
-
-export function validateDesktopManifest(value: unknown): DesktopManifest {
-  const data = value as DesktopManifest;
-  if (
-    !data ||
-    data.format !== 1 ||
-    typeof data.version !== "string" ||
-    !VERSION.test(data.version) ||
-    !["darwin", "win32"].includes(data.platform) ||
-    !["arm64", "x64"].includes(data.arch) ||
-    !data.artifact ||
-    data.artifact.name !==
-      desktopArtifactName(data.version, data.platform, data.arch) ||
-    typeof data.artifact.sha256 !== "string" ||
-    !/^[a-f0-9]{64}$/.test(data.artifact.sha256) ||
-    !Number.isSafeInteger(data.artifact.size) ||
-    data.artifact.size <= 0 ||
-    data.artifact.size > 2 * 1024 ** 3
-  ) {
-    throw new Error("Invalid desktop update manifest");
-  }
-  return data;
-}
+import {
+  DESKTOP_VERSION as VERSION,
+  desktopManifestName,
+  validateDesktopManifest,
+  verifyDesktopArtifact,
+  desktopUpdateArtifact,
+  type DesktopPlatform,
+  type DesktopArch,
+  type DesktopRelease,
+} from "./desktop-update-format.js";
+import { verifyDesktopManifestSignature } from "./desktop-update-signing.js";
+import { findCachedDesktopBase } from "./desktop-update-cache.js";
+import { downloadDesktopDifferential } from "./desktop-differential.js";
+import type { DesktopTransfer } from "../updater/contract.js";
+export {
+  desktopArtifactName,
+  desktopUpdateArtifact,
+  desktopManifestName,
+  validateDesktopManifest,
+  verifyDesktopArtifact,
+  hashFile,
+  type DesktopPlatform,
+  type DesktopArch,
+  type DesktopManifest,
+  type DesktopRelease,
+} from "./desktop-update-format.js";
 
 export async function findDesktopRelease(
   current: string,
@@ -114,8 +86,9 @@ export async function findDesktopRelease(
       manifest.arch !== arch
     )
       throw new Error("Desktop update does not match its release or platform");
+    verifyDesktopManifestSignature(manifest);
     const artifact = release.assets.find(
-      (item) => item.name === manifest.artifact.name,
+      (item) => item.name === desktopUpdateArtifact(manifest).name,
     );
     if (artifact)
       return {
@@ -128,43 +101,78 @@ export async function findDesktopRelease(
   return null;
 }
 
-export async function hashFile(
-  file: string,
-  algorithm = "sha256",
-): Promise<string> {
-  const hash = createHash(algorithm);
-  for await (const chunk of createReadStream(file)) hash.update(chunk);
-  return hash.digest("hex");
-}
-
-export async function verifyDesktopArtifact(
-  file: string,
-  artifact: DesktopManifest["artifact"],
-): Promise<boolean> {
-  try {
-    const stat = await fs.lstat(file);
-    return (
-      stat.isFile() &&
-      !stat.isSymbolicLink() &&
-      stat.size === artifact.size &&
-      (await hashFile(file)) === artifact.sha256
-    );
-  } catch {
-    return false;
-  }
-}
-
 export async function downloadDesktopRelease(
   release: DesktopRelease,
   directory: string,
   onProgress?: (fraction: number) => void,
+  onVerifying?: () => void,
+  options?: {
+    currentVersion: string;
+    onTransfer?: (transfer: DesktopTransfer) => void;
+  },
 ): Promise<string> {
-  const { artifact } = validateDesktopManifest(release.manifest);
+  const artifact = desktopUpdateArtifact(
+    validateDesktopManifest(release.manifest),
+  );
+  const trusted = verifyDesktopManifestSignature(release.manifest);
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const file = path.join(directory, artifact.name);
-  if (await verifyDesktopArtifact(file, artifact)) return file;
+  if (await verifyDesktopArtifact(file, artifact)) {
+    onVerifying?.();
+    return file;
+  }
   const temporary = `${file}.${randomUUID()}.part`;
   try {
+    let fallback = false;
+    if (
+      trusted &&
+      release.manifest.blockMap &&
+      options?.currentVersion &&
+      VERSION.test(options.currentVersion) &&
+      compareVersions(options.currentVersion, release.manifest.version) < 0
+    ) {
+      try {
+        const base = await findCachedDesktopBase(
+          path.dirname(directory),
+          options.currentVersion,
+          release.manifest.platform,
+          release.manifest.arch,
+        );
+        if (
+          base &&
+          (await downloadDesktopDifferential(
+            release,
+            base,
+            temporary,
+            onProgress,
+            onVerifying,
+            options.onTransfer,
+          ))
+        ) {
+          await fs.rm(file, { force: true });
+          await fs.rename(temporary, file);
+          return file;
+        }
+      } catch (error) {
+        fallback = true;
+        console.warn(
+          "[desktop-update] Differential download failed; using full package:",
+          error instanceof Error ? error.message : String(error),
+        );
+        await fs.rm(temporary, { force: true });
+      }
+    }
+    const report = (downloadedBytes: number) => {
+      options?.onTransfer?.({
+        mode: "full",
+        downloadSize: artifact.size,
+        downloadedBytes,
+        reusedBytes: 0,
+        fallback,
+      });
+      onProgress?.(downloadedBytes / artifact.size);
+    };
+    report(0);
     const response = await fetchGithubResponse(release.url, 30 * 60_000);
     const reader = response.body!.getReader();
     const handle = await fs.open(temporary, "wx", 0o600);
@@ -179,8 +187,9 @@ export async function downloadDesktopRelease(
           throw new Error("Desktop update exceeds size limit");
         hash.update(value);
         await handle.writeFile(value);
-        onProgress?.(size / artifact.size);
+        report(size);
       }
+      onVerifying?.();
       if (size !== artifact.size || hash.digest("hex") !== artifact.sha256)
         throw new Error("Desktop update checksum mismatch");
       await handle.sync();

@@ -1,3 +1,4 @@
+import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { withDeadline } from "./managed-process.js";
 import { restoreUnlaunchedInput } from "./runtime-recovery.js";
@@ -424,6 +425,7 @@ export class RunCoordinator {
       }
       if (!owner.stopping && this.owners.get(sessionId) === owner)
         this.owners.delete(sessionId);
+      emitRuntimeBusEvent({ type: "session_checkpoint_changed", sessionId });
       const pending = this.pendingResumes.get(sessionId);
       this.pendingResumes.delete(sessionId);
       if (pending && !owner.stopping) {

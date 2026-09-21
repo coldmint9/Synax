@@ -79,6 +79,7 @@ describe("SessionFileChangeIsland", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
 
   it("renders nothing while the agent has not written anything", async () => {
@@ -125,5 +126,34 @@ describe("SessionFileChangeIsland", () => {
 
     fireEvent.click(row);
     expect(openWorkspaceDiff).toHaveBeenCalledWith("sess-1", "src/app.ts");
+  });
+
+  it("stays visible after a run finishes and hides once changes are cleared", async () => {
+    vi.useFakeTimers();
+    getSessionEnvironment.mockResolvedValue(environment([file()]));
+    const view = render(
+      <SessionFileChangeIsland sessionId="sess-1" isRunning />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const pill = screen.getByRole("button", { name: "1 个文件已更改" });
+
+    view.rerender(
+      <SessionFileChangeIsland sessionId="sess-1" isRunning={false} />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(pill).toBeVisible();
+
+    getSessionEnvironment.mockResolvedValue(environment([]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(screen.queryByRole("button", { name: "1 个文件已更改" })).toBeNull();
   });
 });

@@ -361,7 +361,6 @@ export default memo(function SessionsPage() {
           focus={false}
           insetLeft={commandRailLeft}
           insetRight={commandRailRight}
-          showFileSummary={!wideWorkspace}
         />
       ) : null}
     </div>

@@ -1,5 +1,6 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { createHash } = require("node:crypto");
 
 // A missing platform is allowed; a platform with only some of its files is not.
 module.exports = async function collectDesktopAssets(root) {
@@ -37,7 +38,44 @@ module.exports = async function collectDesktopAssets(root) {
         `Synax-${version}-full.nupkg`,
         "RELEASES",
       );
-    if (!name.startsWith("linux")) names.push(`desktop-${name}.json`);
+    if (!name.startsWith("linux")) {
+      const manifestName = `desktop-${name}.json`;
+      const blockMapName = name.startsWith("darwin")
+        ? `Synax-${version}-${name}.zip.blockmap`
+        : `Synax-${version}-full.nupkg.blockmap`;
+      names.push(manifestName);
+      recognized.add(blockMapName);
+      const manifestFile = assets.get(manifestName);
+      if (manifestFile) {
+        const manifest = JSON.parse(await fs.readFile(manifestFile, "utf8"));
+        if (manifest?.blockMap) {
+          const map = manifest.blockMap;
+          if (
+            map.name !== blockMapName ||
+            !Number.isSafeInteger(map.size) ||
+            map.size <= 0 ||
+            map.size > 8 * 1024 ** 2 ||
+            !/^[a-f0-9]{64}$/.test(map.sha256)
+          )
+            throw new Error(
+              `Invalid desktop blockmap metadata: ${manifestName}`,
+            );
+          const file = assets.get(blockMapName);
+          if (!file) throw new Error(`Missing desktop asset: ${blockMapName}`);
+          if (
+            (await fs.stat(file)).size !== map.size ||
+            createHash("sha256")
+              .update(await fs.readFile(file))
+              .digest("hex") !== map.sha256
+          )
+            throw new Error(
+              `Desktop blockmap does not match manifest: ${blockMapName}`,
+            );
+          names.push(blockMapName);
+        } else if (assets.has(blockMapName))
+          throw new Error(`Unreferenced desktop blockmap: ${blockMapName}`);
+      } else if (assets.has(blockMapName)) names.push(blockMapName);
+    }
     for (const asset of names) recognized.add(asset);
     if (!names.some((asset) => assets.has(asset))) continue;
     for (const asset of names) {

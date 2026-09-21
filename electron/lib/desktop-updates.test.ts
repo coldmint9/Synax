@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   profile: "/tmp/synax-desktop-updates",
@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
     check: vi.fn().mockResolvedValue(undefined),
     download: vi.fn().mockResolvedValue(undefined),
     install: vi.fn().mockResolvedValue(undefined),
+    snapshot: vi.fn(() => structuredClone(mocks.controller.state)),
   },
   controllerConstructor: vi.fn(function MockController() {
     return mocks.controller;
@@ -60,8 +61,77 @@ beforeEach(() => {
   mocks.controller.install.mockImplementation(async () => {});
   mocks.dialog.mockResolvedValue({ response: 0 });
 });
+afterEach(() => vi.useRealTimers());
 
 describe("main-process desktop updates", () => {
+  it("does not prompt during download or verification, even when all bytes have arrived", async () => {
+    let finish!: () => void;
+    mocks.controller.check.mockImplementation(async () => {
+      mocks.controller.state.phase = "available";
+      mocks.controller.state.availableVersion = "0.2.0";
+    });
+    mocks.controller.download.mockImplementation(async () => {
+      mocks.controller.state.phase = "downloading";
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      mocks.controller.state.phase = "verifying";
+    });
+    const updates = new DesktopUpdates(() => null);
+    const check = updates.check(true);
+    await vi.waitFor(() =>
+      expect(mocks.controller.download).toHaveBeenCalledOnce(),
+    );
+    await updates.install();
+    expect(mocks.dialog).not.toHaveBeenCalled();
+    finish();
+    await check;
+    expect(mocks.dialog).not.toHaveBeenCalled();
+    expect(mocks.controller.install).not.toHaveBeenCalled();
+  });
+
+  it("publishes progress to the renderer and native taskbar, and clears it on completion", () => {
+    vi.useFakeTimers();
+    const window = {
+      isDestroyed: () => false,
+      setProgressBar: vi.fn(),
+      webContents: { isDestroyed: () => false, send: vi.fn() },
+    };
+    const updates = new DesktopUpdates(() => null);
+    updates.start(window as any);
+    const changed = mocks.controllerConstructor.mock.calls[0][1] as (
+      state: any,
+    ) => void;
+    changed({
+      ...mocks.controller.state,
+      phase: "downloading",
+      progress: 0.25,
+    });
+    expect(window.webContents.send).toHaveBeenLastCalledWith(
+      "updates:state",
+      expect.objectContaining({ progress: 0.25 }),
+    );
+    expect(window.setProgressBar).toHaveBeenLastCalledWith(0.25);
+    changed({ ...mocks.controller.state, phase: "verifying", progress: 1 });
+    expect(window.setProgressBar).toHaveBeenLastCalledWith(2);
+    changed({ ...mocks.controller.state, phase: "ready", progress: 1 });
+    expect(window.setProgressBar).toHaveBeenLastCalledWith(-1);
+    updates.stop();
+  });
+
+  it("keeps a deferred cached version ready without another check or repeated automatic prompts", async () => {
+    mocks.controller.state.phase = "ready";
+    mocks.controller.state.availableVersion = "0.2.0";
+    const updates = new DesktopUpdates(() => null);
+    await updates.check(false);
+    await updates.check(false);
+    expect(mocks.dialog).toHaveBeenCalledOnce();
+    expect(mocks.controller.check).not.toHaveBeenCalled();
+    expect(mocks.controller.download).not.toHaveBeenCalled();
+    mocks.dialog.mockResolvedValue({ response: 1 });
+    await updates.install();
+    expect(mocks.controller.install).toHaveBeenCalledOnce();
+  });
   it("checks and downloads silently before asking with a native dialog", async () => {
     mocks.controller.check.mockImplementation(async () => {
       mocks.controller.state.phase = "available";

@@ -1,4 +1,6 @@
 import { artifactTools } from "./tools/artifact-tools.js";
+import { withCheckpointMutation } from "./checkpoints/mutations.js";
+import { assertHistoryUnlocked } from "./checkpoints/guards.js";
 import { mediaReadTool } from "./tools/media-read.js";
 import { mediaGenerateTool } from "./tools/media-generate.js";
 import { mediaAudioVideoTools } from "./tools/media-audio-video.js";
@@ -72,7 +74,10 @@ import {
   buildExplorerSubagentPrompt,
   shouldWrapExplorerDelegatePrompt,
 } from "./synax/synax-explorer-delegate.js";
-import { isToolMountedForSession, profileCanUseTool } from "./tool-mount-policy.js";
+import {
+  isToolMountedForSession,
+  profileCanUseTool,
+} from "./tool-mount-policy.js";
 import {
   taskCreateTool,
   taskUpdateTool,
@@ -900,9 +905,19 @@ export class ToolRegistry {
         : undefined;
       abortSignal?.throwIfAborted();
       assertRuntimeExecutionCurrent();
-      const result = await inApprovalScope(() =>
-        withCommandSignal(abortSignal, () => tool.execute(input)),
-      );
+      assertHistoryUnlocked(sessionId);
+      const executeTool = () =>
+        inApprovalScope(() =>
+          withCommandSignal(abortSignal, () => tool.execute(input)),
+        );
+      const checkpointMutation =
+        tool.mutability === "write" ||
+        tool.id === "bash" ||
+        tool.id === "verification.run" ||
+        tool.category === "mcp";
+      const result = checkpointMutation
+        ? await withCheckpointMutation(sessionId, executeTool)
+        : await executeTool();
       const after = trackChanges
         ? await workspaceFingerprint(sessionId, fingerprintScope).catch(
             () => undefined,

@@ -73,7 +73,10 @@ beforeEach(async () => {
       );
     if (!target.startsWith("linux")) names.push(`desktop-${target}.json`);
     for (const name of names)
-      await fs.writeFile(path.join(dir, name), "fixture");
+      await fs.writeFile(
+        path.join(dir, name),
+        name.startsWith("desktop-") ? JSON.stringify({ format: 1 }) : "fixture",
+      );
   }
 });
 afterEach(async () => {

@@ -1,3 +1,4 @@
+import { withCheckpointMutation } from "./checkpoints/mutations.js";
 import fs from "node:fs";
 import path from "node:path";
 import { agentRuntimeStore } from "./session-store.js";
@@ -638,7 +639,11 @@ export async function saveSessionEnvironmentFile(
   if (!fs.statSync(absolutePath).isFile()) {
     throw new AgentValidationError(`Not a file: ${cleanPath}`);
   }
-  fs.writeFileSync(absolutePath, content, "utf8");
+  await withCheckpointMutation(
+    sessionId,
+    () => fs.writeFileSync(absolutePath, content, "utf8"),
+    true,
+  );
   return {
     sessionId,
     path: cleanPath,

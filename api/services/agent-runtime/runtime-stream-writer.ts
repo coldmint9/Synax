@@ -1,3 +1,4 @@
+import { historyRevision } from "./checkpoints/guards.js";
 import { getRawSqlite } from '../../db/index.js';
 import { agentRuntimeStore } from './session-store.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
@@ -11,10 +12,13 @@ export class RuntimeStreamWriter {
   private pending: AgentRunStreamChunk[] = [];
   private delta?: Extract<AgentRunStreamChunk, { type: 'message_delta' | 'thought_delta' }>;
   private timer?: ReturnType<typeof setTimeout>;
-  constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true) {}
+  private readonly revision: number;
+  constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true) { this.revision = historyRevision(sessionId); }
+
+  private isCurrent(): boolean { return this.current() && historyRevision(this.sessionId) === this.revision; }
 
   write(chunk: AgentRunStreamChunk): void {
-    if (!this.current()) { this.abandon(); return; }
+    if (!this.isCurrent()) { this.abandon(); return; }
     const commit: AgentRunStreamChunk[] = [];
     if (!this.runId) {
       if ('run' in chunk) this.runId = chunk.run.id;
@@ -87,7 +91,7 @@ export class RuntimeStreamWriter {
   }
 
   flush(): void {
-    if (!this.current()) { this.abandon(); return; }
+    if (!this.isCurrent()) { this.abandon(); return; }
     if (this.timer) clearTimeout(this.timer); this.timer = undefined;
     if (this.delta && this.runId) {
       runtimeJournal.append(this.sessionId, this.runId, this.delta);

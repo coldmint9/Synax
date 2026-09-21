@@ -5,15 +5,14 @@ import {
   type UiArtifact,
   type UiManifest,
 } from "./ui-update-format.js";
+import {
+  getUpdateProxyUrl,
+  updateRequestUrl,
+  updateRedirectUrl,
+} from "./update-network.js";
 
 const REPO = "coldmint9/Synax";
 const API = `https://api.github.com/repos/${REPO}/releases`;
-const allowedHosts = new Set([
-  "api.github.com",
-  "github.com",
-  "release-assets.githubusercontent.com",
-  "objects.githubusercontent.com",
-]);
 
 export interface ReleaseAsset {
   name: string;
@@ -34,35 +33,71 @@ export interface UiRelease {
 export async function fetchGithubResponse(
   url: string,
   timeout = 30_000,
+  options: {
+    range?: { start: number; end: number };
+    signal?: AbortSignal;
+  } = {},
 ): Promise<Response> {
-  const signal = AbortSignal.timeout(timeout);
+  const range = options.range;
+  if (
+    range &&
+    (!Number.isSafeInteger(range.start) ||
+      !Number.isSafeInteger(range.end) ||
+      range.start < 0 ||
+      range.end <= range.start)
+  )
+    throw new Error("Invalid update byte range");
+  const timeoutSignal = AbortSignal.timeout(timeout);
+  const signal = options.signal
+    ? AbortSignal.any([timeoutSignal, options.signal])
+    : timeoutSignal;
+  const proxy = getUpdateProxyUrl();
+  let parsed = updateRequestUrl(url, proxy);
   for (let redirect = 0; redirect < 6; redirect++) {
-    const parsed = new URL(url);
-    if (
-      parsed.protocol !== "https:" ||
-      !allowedHosts.has(parsed.hostname) ||
-      parsed.username ||
-      parsed.password
-    ) {
-      throw new Error("Update URL must be hosted by GitHub over HTTPS");
+    let response: Response;
+    try {
+      response = await fetch(parsed, {
+        redirect: "manual",
+        signal,
+        credentials: "omit",
+        headers: {
+          "User-Agent": "Synax-updater",
+          Accept: range
+            ? "application/octet-stream"
+            : "application/vnd.github+json",
+          ...(range
+            ? {
+                Range: `bytes=${range.start}-${range.end - 1}`,
+                "Accept-Encoding": "identity",
+              }
+            : {}),
+        },
+      });
+    } catch (error) {
+      const cause =
+        error instanceof Error
+          ? (error.cause as { code?: string } | undefined)
+          : undefined;
+      const reason =
+        cause?.code ?? (error instanceof Error ? error.message : String(error));
+      throw new Error(
+        `GitHub ${proxy ? "proxy" : "direct"} update request failed (${parsed.host}): ${reason}`,
+        { cause: error },
+      );
     }
-    const response = await fetch(parsed, {
-      redirect: "manual",
-      signal,
-      headers: {
-        "User-Agent": "Synax-updater",
-        Accept: "application/vnd.github+json",
-      },
-    });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get("location");
       await response.body?.cancel();
       if (!location) throw new Error("Missing GitHub redirect location");
-      url = new URL(location, parsed).href;
+      parsed = updateRedirectUrl(location, parsed, proxy);
       continue;
     }
-    if (!response.ok || !response.body)
-      throw new Error(`GitHub update request failed (${response.status})`);
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      throw new Error(
+        `GitHub update request failed (${response.status}) via ${proxy ? "proxy" : "direct"}: ${parsed.host}`,
+      );
+    }
     return response;
   }
   throw new Error("Too many GitHub redirects");

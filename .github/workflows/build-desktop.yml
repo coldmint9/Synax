@@ -69,6 +69,8 @@ jobs:
         run: npm run web:build
 
       - name: Build Electron
+        env:
+          SYNAX_UPDATE_PUBLIC_KEY: ${{ vars.SYNAX_UPDATE_PUBLIC_KEY }}
         run: npm run build:electron
 
       - name: Package desktop app
@@ -81,6 +83,9 @@ jobs:
 
       - name: Build desktop update manifest
         if: runner.os != 'Linux'
+        env:
+          SYNAX_UPDATE_PUBLIC_KEY: ${{ vars.SYNAX_UPDATE_PUBLIC_KEY }}
+          SYNAX_UPDATE_SIGNING_KEY: ${{ secrets.SYNAX_UPDATE_SIGNING_KEY }}
         run: npx tsx scripts/build-desktop-release.ts
 
       - name: Smoke test packaged app (macOS / Windows)

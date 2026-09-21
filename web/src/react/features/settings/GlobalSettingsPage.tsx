@@ -10,6 +10,7 @@ import { WikiModelSettings } from "./components/WikiModelSettings";
 import { OpenConfigFile } from "./components/OpenConfigFile";
 import { ProjectIntegrationsSection } from "./components/ProjectIntegrationsSection";
 import { WebSearchSettings } from "./components/WebSearchSettings";
+import { UpdateSettings } from "./components/UpdateSettings";
 
 export default function GlobalSettingsPage() {
   const { globalConfig, providers, reload, updateGlobalConfig } = useConfig();
@@ -46,6 +47,7 @@ export default function GlobalSettingsPage() {
           <div className="space-y-8">
             <AppearanceSection />
             <LayoutSection />
+            <UpdateSettings />
             <TerminalSettings
               configuredPath={globalConfig.terminalShellPath}
               onUpdate={updateGlobalConfig}

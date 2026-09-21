@@ -1,3 +1,7 @@
+import {
+  assertHistoryUnlocked,
+  historyRevision,
+} from "./checkpoints/guards.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { normalizeInput, hasInput, inputParts } from "./content-parts.js";
 import { bindAssets } from "./media-assets.js";
@@ -23,6 +27,7 @@ import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 
 export interface AcceptedRuntimeInput {
   version: 1;
+  historyRevision?: number;
   requestId: string;
   inputHash: string;
   mode: AgentSessionStreamMode;
@@ -66,6 +71,7 @@ export function acceptRuntimeRun(
     .digest("hex");
   const db = getRawSqlite();
   return db.transaction(() => {
+    assertHistoryUnlocked(sessionId);
     let session = agentRuntimeStore.getSession(sessionId);
     const previous = db
       .prepare(
@@ -171,6 +177,7 @@ export function acceptRuntimeRun(
     }
     const runtime: AcceptedRuntimeInput = {
       version: 1,
+      historyRevision: historyRevision(sessionId),
       requestId,
       inputHash,
       mode,

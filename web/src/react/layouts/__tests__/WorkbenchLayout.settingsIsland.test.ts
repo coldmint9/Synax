@@ -7,11 +7,7 @@ import layoutSource from "../WorkbenchLayout.tsx?raw";
 const stylesheet = postcss.parse(css);
 const workPageStylesheet = postcss.parse(workPageCss);
 
-function declaration(
-  selector: string,
-  property: string,
-  root = stylesheet,
-) {
+function declaration(selector: string, property: string, root = stylesheet) {
   let value: string | undefined;
   root.walkRules((rule) => {
     if (rule.selector.replace(/\s+/g, " ").trim() !== selector) return;
@@ -38,4 +34,27 @@ describe("settings island layout", () => {
       ),
     );
   });
+});
+
+describe("empty workspace island layout", () => {
+  it("removes the sidebar offset when no project is selected", () => {
+    expect(layoutSource).toContain("data-has-project={!!effectiveProjectId}");
+    expect(
+      declaration(
+        '.workbench-shell[data-has-project="false"] .workbench-header',
+        "--island-center-offset",
+      ),
+    ).toBe("0px");
+  });
+});
+
+it("preserves macOS titlebar positioning and non-drag island behavior", () => {
+  const macHeader = ".electron-macos .workbench-header";
+  expect(declaration(macHeader, "left")).toBe("50%");
+  expect(declaration(macHeader, "top")).toBe("15px");
+  expect(declaration(macHeader, "-webkit-app-region")).toBe("no-drag");
+  const emptyHeader =
+    '.workbench-shell[data-has-project="false"] .workbench-header';
+  for (const property of ["left", "top", "transform", "-webkit-app-region"])
+    expect(declaration(emptyHeader, property)).toBeUndefined();
 });

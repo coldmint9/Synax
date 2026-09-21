@@ -389,6 +389,54 @@ describe("agentLoopRuntime", () => {
     fs.writeFileSync(API_SESSION_LOG_FILE, "", "utf8");
   });
 
+  it("captures native input and reply boundaries and restores the exact earlier turn", async () => {
+    const { listCheckpoints } = await import("../checkpoints/store.js");
+    const { applyHistory } = await import("../checkpoints/operations.js");
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "synax-native-history-"),
+    );
+    try {
+      const session = agentSessionRuntime.create({
+        ...executorInput,
+        workDir: directory,
+      });
+      queueMockStep(makeTextStep("First answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, { message: "First question" }),
+      );
+      const checkpoint = listCheckpoints(session.id).find(
+        (c) => c.kind === "reply",
+      )!;
+      expect(checkpoint.payload.error).toBeUndefined();
+      queueMockStep(makeTextStep("Second answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, { message: "Second question" }),
+      );
+      expect(listCheckpoints(session.id).map((c) => c.kind)).toEqual([
+        "input",
+        "reply",
+        "input",
+        "reply",
+      ]);
+      await applyHistory(session.id, {
+        action: "rollback",
+        checkpointId: checkpoint.id,
+        revision: 0,
+        requestId: "native-rollback",
+      });
+      const text = agentRuntimeStore
+        .listMessages(session.id)
+        .map((m) => m.content)
+        .join("\n");
+      expect(text).toContain("First question");
+      expect(text).toContain("First answer.");
+      expect(text).not.toContain("Second question");
+      expect(text).not.toContain("Second answer.");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("completes a media-only response and persists its attachment for the timeline", async () => {
     const { createAsset, readAsset } = await import("../media-assets.js");
     const session = agentSessionRuntime.create({

@@ -27,11 +27,12 @@ export type TurnContentBlock =
   | { type: "artifact_job"; reference: ArtifactJobReference }
   | { type: "artifact_request"; reference: ArtifactPublicationReference }
   | { type: "artifact"; reference: ArtifactReference }
-  | { type: "media"; parts: RuntimeContentPart[] }
-  | { type: "text"; content: string }
+  | { type: "media"; parts: RuntimeContentPart[]; messageId?: string }
+  | { type: "text"; content: string; messageId?: string }
   | { type: "thinking"; content: string }
   | {
       type: "sources";
+      messageId?: string;
       sources: Array<{ id: string; url: string; title?: string }>;
     }
   | { type: "tool_call"; call: ToolCallView }
@@ -102,8 +103,13 @@ function mergeConsecutiveBlocks(
   const result: TurnContentBlock[] = [];
   for (const block of blocks) {
     const prev = result[result.length - 1];
-    if (block.type === "text" && prev?.type === "text") {
+    if (
+      block.type === "text" &&
+      prev?.type === "text" &&
+      block.messageId === prev.messageId
+    ) {
       result[result.length - 1] = {
+        ...prev,
         type: "text",
         content: prev.content + "\n" + block.content,
       };
@@ -164,7 +170,7 @@ export function buildInterleavedTurns(
       if (msg.contentParts?.some((part) => part.type !== "text"))
         items.push({
           timestamp: new Date(msg.createdAt).getTime(),
-          block: { type: "media", parts: msg.contentParts },
+          block: { type: "media", parts: msg.contentParts, messageId: msg.id },
         });
       if (!msg.content.trim()) continue;
       const isThinking =
@@ -174,7 +180,7 @@ export function buildInterleavedTurns(
         timestamp: new Date(msg.createdAt).getTime(),
         block: isThinking
           ? { type: "thinking", content: msg.content }
-          : { type: "text", content: msg.content },
+          : { type: "text", content: msg.content, messageId: msg.id },
       });
       const sources = Array.isArray(msg.metadata?.sources)
         ? msg.metadata.sources.flatMap((source) => {
@@ -203,7 +209,7 @@ export function buildInterleavedTurns(
       if (sources.length)
         items.push({
           timestamp: new Date(msg.createdAt).getTime(),
-          block: { type: "sources", sources },
+          block: { type: "sources", sources, messageId: msg.id },
         });
     }
 

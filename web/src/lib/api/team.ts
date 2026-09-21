@@ -1,3 +1,4 @@
+import { projectApi } from './project'
 import {
   type AddAgentToRoleRequest,
   type AssignRoleRequest,
@@ -155,10 +156,7 @@ export const teamApi = {
   },
 
   async getMemberProjects(_memberId: string) {
-    return [
-      { projectId: 'rumbling-core', name: 'Rumbling Core' },
-      { projectId: 'growth-ops', name: 'Growth Ops' },
-      { projectId: 'mobile-revamp', name: 'Mobile Revamp' },
-    ]
+    const { items } = await projectApi.listProjects()
+    return items.map(project => ({ projectId: project.id, name: project.name }))
   },
 }

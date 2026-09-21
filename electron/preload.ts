@@ -70,6 +70,28 @@ contextBridge.exposeInMainWorld("electronAPI", {
   showSaveDialog: (options: Electron.SaveDialogOptions) =>
     ipcRenderer.invoke("dialog:save", options),
   getAppVersion: () => ipcRenderer.invoke("app:version"),
+  getUpdateNetworkSettings: () => ipcRenderer.invoke("updates:get-network"),
+  getDesktopUpdateState: () => ipcRenderer.invoke("updates:state"),
+  checkDesktopUpdate: () => ipcRenderer.invoke("updates:check"),
+  installDesktopUpdate: () => ipcRenderer.invoke("updates:install"),
+  onDesktopUpdateState: (
+    callback: (state: import("./updater/contract.js").UpdaterState) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      state: import("./updater/contract.js").UpdaterState,
+    ) => callback(state);
+    ipcRenderer.on("updates:state", listener);
+    return () => ipcRenderer.removeListener("updates:state", listener);
+  },
+  onDesktopUpdateShow: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("updates:show", listener);
+    return () => ipcRenderer.removeListener("updates:show", listener);
+  },
+  setUpdateNetworkSettings: (
+    settings: import("./lib/update-network.js").UpdateNetworkSettings,
+  ) => ipcRenderer.invoke("updates:set-network", settings),
   getAccessibilitySupportEnabled: () =>
     ipcRenderer.invoke("app:accessibility-support-enabled"),
   onAccessibilitySupportChanged: (callback: (enabled: boolean) => void) => {
