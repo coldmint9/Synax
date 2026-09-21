@@ -587,7 +587,7 @@ describe("agentLoopRuntime", () => {
     );
     queueMockStep(
       makeToolStep({
-        toolName: "verification_run",
+        toolName: "bash",
         toolCallId: "verify-write",
         args: {
           command: `node -e "if(require('fs').readFileSync('${writePath}','utf8')!=='hello')process.exit(1)"`,
@@ -1486,11 +1486,11 @@ describe("agentLoopRuntime", () => {
     });
     queueMockStep(
       makeToolStep({
-        toolName: "goal_finish",
-        toolCallId: "blocked-goal",
+        toolName: "human_ask",
+        toolCallId: "blocked-chat",
         args: {
-          status: "blocked",
-          reason: "Execution started from the plan approval.",
+          title: "Blocked: execution needs input",
+          questions: [{ id: "unblock", type: "text", label: "Provide the missing execution detail" }],
         },
       }),
     );
@@ -1511,7 +1511,7 @@ describe("agentLoopRuntime", () => {
     expect(blocker.request.title).toContain("Blocked:");
     expect(
       agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
-    ).toEqual(["plan.propose", "goal.finish"]);
+    ).toEqual(["plan.propose", "human.ask"]);
   });
 
   it("executes a deferred plan from a later user instruction and finishes in chat without a goal acceptance loop", async () => {
@@ -1717,7 +1717,7 @@ describe("cooperative closing incident replay", () => {
       );
       queueMockStep(
         makeToolStep({
-          toolName: "verification_run",
+          toolName: "bash",
           toolCallId: "verify",
           args: {
             command: `node -e "if(require('./${file}')!==true)process.exit(1)"`,
@@ -1749,7 +1749,7 @@ describe("cooperative closing incident replay", () => {
       expect(agentRuntimeStore.getSession(session.id).status).toBe("completed");
       expect(
         agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
-      ).toEqual(["file.read", "file.write", "verification.run"]);
+      ).toEqual(["file.read", "file.write", "bash"]);
       expect(mockStepResults).toHaveLength(1);
       expect(agentRuntimeStore.listRuns(session.id)[0].currentStep).toBe(4);
     } finally {
@@ -1812,17 +1812,7 @@ describe("advisory closing state", () => {
         },
       }),
     );
-    queueMockStep(
-      makeToolStep({
-        toolName: "work_checkpoint",
-        toolCallId: "close",
-        args: {
-          action: "complete",
-          summary: "Inspection complete.",
-          evidence: [],
-        },
-      }),
-    );
+    queueMockStep(makeTextStep("Inspection complete."));
     const session = agentSessionRuntime.create({
       ...executorInput,
       permissionTier: "unrestricted",
@@ -2350,15 +2340,15 @@ describe("provider-bound session initialization prompt", () => {
       agentLoopRuntime.streamRun(session.id, { message: "完成已有检查" }),
     );
     const closing = capturedRequests.at(-1)!;
-    expect(closing.tools).toContain("work_checkpoint");
+    expect(closing.tools).not.toContain("work_checkpoint");
     expect(closing.tools).toContain("bash");
-    expect(closing.tools).toContain("verification_run");
+    expect(closing.tools).not.toContain("verification_run");
     expect(closing.tools).toEqual(capturedRequests[0].tools);
     const system = String(closing.messages[0].content);
     expect(system).toBe(capturedRequests[0].messages[0].content);
     expect(system).not.toContain("Consider closing this round");
     const reminder = String(closing.messages.at(-1)!.content);
-    expect(reminder).toContain('"status":"closing"');
-    expect(reminder).toContain("This is advisory; tools remain available");
+    expect(reminder).not.toContain('"status":"closing"');
+    expect(reminder).toContain("Finish this turn with a concise answer");
   });
 });

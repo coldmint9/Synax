@@ -33,11 +33,11 @@ function makeSession(overrides: Partial<AgentSession> = {}): AgentSession {
 
 describe("synaxDisplay", () => {
   it.each(["agent-dock", "goal-dock"])(
-    "restores dock mode for %s metadata",
+    "does not infer goal mode from %s metadata",
     (source) => {
       expect(
         resolveSynaxAgentLabel(makeSession({ sessionMetadata: { source } })),
-      ).toBe("Synax · Goal");
+      ).toBe("Synax");
     },
   );
 

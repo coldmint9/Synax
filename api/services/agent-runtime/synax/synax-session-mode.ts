@@ -1,4 +1,3 @@
-import { isSessionComposerSource } from "../session-metadata.js";
 
 export const SYNAX_AGENT_PROFILE_ID = "synax";
 
@@ -68,9 +67,7 @@ export function inferSynaxSessionMode(input: {
   }
 
   const source = input.sessionMetadata?.source;
-  if (isSessionComposerSource(source) || source === "plan-execution") {
-    return source === "plan-execution" ? "plan_node" : "goal";
-  }
+  if (source === "plan-execution") return "plan_node";
 
   return "chat";
 }
@@ -83,14 +80,6 @@ export function isGoalModeSession(input: {
   profileId: string;
   sessionMetadata: Record<string, unknown> | null | undefined;
 }): boolean {
-  if (input.profileId === LEGACY_GOAL_PROFILE_ID) return true;
-
-  const source = input.sessionMetadata?.source;
-  if (isSessionComposerSource(source) || source === "plan-execution") {
-    return true;
-  }
-
   if (!isSynaxProfile(input.profileId)) return false;
-
-  return isGoalLikeMode(inferSynaxSessionMode(input));
+  return inferSynaxSessionMode(input) === "goal";
 }

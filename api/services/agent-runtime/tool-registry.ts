@@ -71,7 +71,7 @@ import {
   buildExplorerSubagentPrompt,
   shouldWrapExplorerDelegatePrompt,
 } from "./synax/synax-explorer-delegate.js";
-import { profileCanUseTool } from "./tool-mount-policy.js";
+import { isToolMountedForSession, profileCanUseTool } from "./tool-mount-policy.js";
 import {
   taskCreateTool,
   taskUpdateTool,
@@ -469,6 +469,7 @@ export class ToolRegistry {
     const effective = this.profiles.getForSession(session);
     return [...sessionTools, ...globalTools].filter(
       (t) =>
+        isToolMountedForSession(session, t) &&
         (options.includeGated || !controlToolError(session, t)) &&
         (session.profileId !== "specialist" ||
           profileCanUseTool(effective, t) ||

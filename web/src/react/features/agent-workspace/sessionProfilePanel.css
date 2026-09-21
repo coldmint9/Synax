@@ -1,0 +1,292 @@
+/* Runtime mini/detail: a single summary owns the disclosure. Keep these rules
+   scoped so repository cards retain their existing sizing and icon layout. */
+.runtime-profile {
+  --profile-muted: hsl(var(--muted-foreground));
+  --profile-line: hsl(var(--border-hsl) / 0.42);
+  --profile-accent: light-dark(#8195ae, #94a9c5);
+  --profile-green: light-dark(#53846f, #91b6a2);
+  container-type: inline-size;
+}
+.runtime-profile .runtime-profile-card {
+  background: var(--work-surface, var(--surface));
+  color: hsl(var(--foreground-hsl));
+}
+/* Body scrolls independently; no inherited sticky offset on the summary. */
+:is(.work-page, .work-details-dialog, .workspace-dashboard--custom)
+  .runtime-profile
+  .runtime-profile-head,
+.runtime-profile .runtime-profile-head {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  position: relative;
+  top: auto;
+  min-height: 0;
+  gap: 0;
+  padding: 10px 12px 11px 26px;
+  background: transparent;
+}
+.runtime-profile .runtime-profile-toggle {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  font: inherit;
+}
+.runtime-profile .runtime-profile-head:has(.runtime-profile-toggle:hover) {
+  background: hsl(var(--secondary) / 0.24);
+}
+.runtime-profile-toggle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+.runtime-profile-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  min-height: 20px;
+}
+.runtime-profile-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.runtime-profile-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--profile-muted);
+}
+.runtime-profile-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+.runtime-profile-status[data-tone="running"] .runtime-profile-dot {
+  background: var(--profile-green);
+}
+.runtime-profile [data-tone="warning"] {
+  color: var(--warning);
+}
+.runtime-profile [data-tone="danger"] {
+  color: var(--danger);
+}
+.runtime-profile-chevron {
+  flex: 0 0 auto;
+  color: var(--profile-muted);
+  opacity: 0.7;
+  transition: transform 160ms ease;
+}
+.runtime-profile-toggle[aria-expanded="true"] .runtime-profile-chevron {
+  transform: rotate(180deg);
+}
+.runtime-profile-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 5px;
+  color: var(--profile-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.runtime-profile-context-label,
+.runtime-profile-context-value {
+  white-space: nowrap;
+}
+.runtime-profile-value {
+  color: hsl(var(--foreground-hsl) / 0.9);
+  font-weight: 500;
+}
+.runtime-profile-limit {
+  opacity: 0.75;
+}
+.runtime-profile-calls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.runtime-profile-calls > svg,
+.runtime-profile-hint > svg {
+  flex: 0 0 auto;
+}
+.runtime-profile-meter {
+  height: 3px;
+  margin-top: 8px;
+  border-radius: 4px;
+  background: hsl(var(--secondary));
+  overflow: hidden;
+}
+.runtime-profile-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--profile-accent);
+  transition: width 180ms ease;
+}
+.runtime-profile-meter[data-high="true"] > span {
+  background: var(--warning);
+}
+.runtime-profile-meter[data-stale="true"] > span {
+  background: var(--profile-muted);
+  opacity: 0.5;
+}
+.runtime-profile-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 7px;
+  font-size: 10px;
+}
+.runtime-profile-hint > svg {
+  margin-top: 1px;
+}
+.runtime-profile-hint > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* Match DashboardLayout's drag handle to the first summary line, not the
+   center of the two-line card. Its pointer/keyboard behavior stays unchanged. */
+.dashboard-panel:has(> .dashboard-panel-content > .runtime-profile)
+  > .dashboard-panel-grip {
+  top: 9px;
+  color: hsl(var(--muted-foreground) / 0.65);
+}
+:is(.work-page, .work-details-dialog, .workspace-dashboard--custom)
+  .runtime-profile
+  .runtime-profile-body,
+.runtime-profile .runtime-profile-body {
+  padding: 0 12px 0 26px;
+  border-top: 0;
+  font-size: 11px;
+  animation: runtime-profile-reveal 160ms ease-out;
+}
+.runtime-profile-body > * {
+  padding-block: 12px;
+  border-top: 1px solid var(--profile-line);
+}
+.runtime-profile-empty {
+  margin: 0;
+  color: var(--profile-muted);
+  font-size: 11px;
+}
+.runtime-profile-properties {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  gap: 7px 10px;
+  margin: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.runtime-profile-properties dt {
+  color: var(--profile-muted);
+}
+.runtime-profile-properties dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.runtime-profile-performance {
+  display: grid;
+  gap: 9px;
+}
+.runtime-profile-footer {
+  font-size: 10px;
+  color: var(--profile-muted);
+}
+/* Reuse the actual context/cache accounting and invocation breakdown; only
+   adapt presentation here, never replace it with the prototype's sample data. */
+.runtime-profile-context section > div:first-child {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.runtime-profile-context section > div:first-child,
+.runtime-profile-context section > p,
+.runtime-profile-context dl,
+.runtime-profile-performance section {
+  font-size: 10px;
+}
+.runtime-profile-context [role="img"] {
+  height: 4px;
+}
+.runtime-profile-context :is([data-context-category="tools"], .bg-blue-500) {
+  background: var(--profile-accent);
+}
+.runtime-profile-context :is([data-context-category="mcp"], .bg-violet-500) {
+  background: light-dark(#a498b8, #b4a4cc);
+}
+.runtime-profile-context :is([data-context-category="skills"], .bg-amber-500) {
+  background: light-dark(#b29e83, #c1ad8d);
+}
+.runtime-profile-context
+  :is([data-context-category="messages"], .bg-emerald-500) {
+  background: var(--profile-green);
+}
+.runtime-profile-invocations > section {
+  padding: 0;
+  border: 0;
+}
+.runtime-profile-invocations > section > div:first-child {
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.runtime-profile-invocations li {
+  font-size: 11px;
+}
+.runtime-profile-invocations [data-invocation-kind] > div {
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+@container (max-width: 270px) {
+  .runtime-profile-status {
+    font-size: 9px;
+    gap: 4px;
+  }
+  .runtime-profile-line {
+    gap: 5px;
+  }
+  .runtime-profile-calls {
+    margin-left: 0;
+  }
+  .runtime-profile-metrics {
+    column-gap: 5px;
+  }
+}
+@keyframes runtime-profile-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .runtime-profile .runtime-profile-body {
+    animation: none;
+  }
+  .runtime-profile-chevron,
+  .runtime-profile-meter > span {
+    transition: none;
+  }
+}

@@ -1,6 +1,7 @@
 import type { AgentSession } from "./contracts.js";
 import { agentRuntimeStore as store } from "./session-store.js";
 import { controlRoot } from "./control-policy.js";
+import { usesGoalWorkflow } from "./workflow-mode.js";
 import { getGoalState } from "./goal-control.js";
 
 export function rootGoal(session: AgentSession) {
@@ -8,7 +9,7 @@ export function rootGoal(session: AgentSession) {
   return {
     root,
     goal:
-      Boolean(root.sessionMetadata?.goal)
+      usesGoalWorkflow(root) && Boolean(root.sessionMetadata?.goal)
         ? getGoalState(root.sessionMetadata)
         : null,
   };

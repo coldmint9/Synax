@@ -25,8 +25,8 @@ class ChatModePromptStrategy extends SynaxModePromptStrategy {
 
   buildSection(context: SynaxModePromptContext): string | null {
     return [
-      "Session mode: chat. Respond or act according to the user request; a small task needs no mandatory plan. An approved plan can be executed here without entering goal mode; finish with the delivered result and actual validation.",
-      "Switch modes only on explicit user intent. Executing a saved plan requires plan.execute or its approval interaction; changing mode is not approval.",
+      "Session mode: chat. Respond or act on the request without mandatory planning. End with concise results, actual checks, and remaining or unverified work; no structured acceptance or automatic continuation.",
+      "Switch modes only on explicit user intent. Execute saved plans only through plan.execute or approval; execution stays in chat unless goal was selected.",
     ]
       .filter(Boolean)
       .join("\n");

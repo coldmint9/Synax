@@ -542,6 +542,14 @@ describe("SessionComposer mode controls", () => {
     expect(screen.getByRole("textbox", { name: "Message" })).toBeEnabled();
   });
 
+  it.each(["chat", "plan"] as const)("does not mount stale goal summaries in %s", mode => {
+    const { container } = render(<SessionModeSummary session={{
+      ...session,
+      sessionMetadata: { mode, goal: { objective: "Historical goal", status: "blocked", reason: "Old blocker" } },
+    }} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("renders the goal summary and specialist role without goal budgets", () => {
     const summarySession = {
       ...session,

@@ -176,7 +176,8 @@ describe("persistent human input", () => {
         prompt: "Work on this",
         sessionMetadata: { mode },
       });
-      expect(controlToolError(session, toolRegistry.get("plan.execute"))).toBeNull();
+      if (mode === "chat") expect(controlToolError(session, toolRegistry.get("plan.execute"))).toBeTruthy();
+      else expect(controlToolError(session, toolRegistry.get("plan.execute"))).toBeNull();
       expect(controlToolError(session, toolRegistry.get("mode.switch"))).toBeNull();
     },
   );
@@ -246,7 +247,7 @@ describe("persistent human input", () => {
     // Read-only planning ends, but the approved task structure remains protected.
     store.updateSession(session.id, { status: "running" });
     expect(controlToolError(store.getSession(session.id), { id: "file.write" })).toBeNull();
-    expect(controlToolError(store.getSession(session.id), { id: "task.create" })).toBeTruthy();
+    expect(Boolean(controlToolError(store.getSession(session.id), { id: "task.create" }))).toBe(mode === "goal");
   });
 
   it.each(["plan", "goal"] as const)("preserves explicit %s intent when deferring and later executing", mode => {
