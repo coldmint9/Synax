@@ -56,7 +56,7 @@ export function WebSearchResults({ output }: { output: unknown }) {
                 href={result.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="break-words font-medium text-foreground underline decoration-primary/60 underline-offset-2 hover:decoration-current"
+                className="break-words font-medium text-foreground no-underline hover:no-underline hover:text-primary"
               >
                 {index + 1}. {result.title}
               </a>

@@ -1,0 +1,87 @@
+.highlighted-code-editor {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.highlighted-code-editor-gutter {
+  flex: 0 0 auto;
+  overflow: hidden;
+  user-select: none;
+}
+.highlighted-code-editor-numbers {
+  padding: 8px;
+}
+.highlighted-code-editor-viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.highlighted-code-editor-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+/* Both layers must use identical text metrics, including tabs and ligatures. */
+.highlighted-code-editor-paint,
+.highlighted-code-editor-input {
+  box-sizing: border-box;
+  margin: 0;
+  border: 0;
+  padding: 8px 12px;
+  font: inherit;
+  letter-spacing: normal;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-variant-ligatures: none;
+}
+.highlighted-code-editor-paint {
+  width: max-content;
+  min-width: 100%;
+  color: var(--synax-code-foreground);
+}
+.highlighted-code-editor-paint :is(pre, code, span) {
+  margin: 0;
+  padding: 0;
+  font: inherit !important;
+  background: transparent !important;
+}
+.highlighted-code-editor-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--synax-code-foreground);
+  overflow: auto;
+}
+.highlighted-code-editor-input::selection {
+  background: color-mix(
+    in srgb,
+    var(--synax-code-token-keyword) 25%,
+    transparent
+  );
+}
+@media (forced-colors: active) {
+  .highlighted-code-editor-overlay {
+    display: none;
+  }
+  .highlighted-code-editor-input {
+    color: CanvasText;
+    -webkit-text-fill-color: CanvasText;
+    caret-color: CanvasText;
+  }
+}
