@@ -41,7 +41,7 @@ const PLAN_TOOLS = new Set([
   ...WIKI_AGENT_READ_TOOL_IDS,
   'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'agent.adapt',
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',
-  'tools.invalid',
+  'work.checkpoint', 'goal.finish', 'tools.invalid',
 ]);
 export function isPlanningReadTool(toolId: string): boolean {
   return PLAN_TOOLS.has(toolId);

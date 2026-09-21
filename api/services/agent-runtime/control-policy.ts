@@ -21,8 +21,13 @@ export function controlToolError(
   tool: Pick<RegisteredTool, "id">,
   args?: unknown,
 ): string | null {
-  if (!isToolMountedForSession(session, tool))
-    return `Tool ${tool.id} is not mounted in this workflow; goal controls and verification receipts require goal mode, and planning controls require plan/goal mode or a saved plan.`;
+  if (!isToolMountedForSession(session, tool)) {
+    if (["work.checkpoint", "goal.finish", "verification.run"].includes(tool.id))
+      return `Tool ${tool.id} is only available in goal mode.`;
+    if (inferSynaxSessionMode(controlRoot(session)) === "plan")
+      return "Planning is read-only. Approve a plan before executing changes.";
+    return `Tool ${tool.id} requires plan/goal mode or, for plan.execute, a saved plan and explicit execution intent.`;
+  }
   const workError = workRuntime.toolError(session.id, tool.id, args);
   if (workError) return workError;
   const root = controlRoot(session);

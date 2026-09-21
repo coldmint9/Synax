@@ -70,6 +70,44 @@ describe("compact session mode control", () => {
     },
   );
 
+  it("puts keyboard hints in the input tooltip, not a separate layout row", () => {
+    render(
+      <AgentComposer
+        {...props}
+        defaultExpanded
+        keyboardHintPlacement="tooltip"
+        placeholder="An idea, a question, a place to begin…"
+        commands={{
+          inputRef: { current: null },
+          onInput: vi.fn(),
+          onKeyDown: () => false,
+          header: null,
+          trigger: null,
+          open: false,
+          listId: "commands",
+        }}
+      />,
+    );
+    const input = screen.getByRole("textbox");
+    expect(input).toHaveAttribute(
+      "placeholder",
+      "An idea, a question, a place to begin…",
+    );
+    const hints = document.getElementById(
+      input.getAttribute("aria-describedby")!,
+    );
+    expect(hints).toHaveTextContent("Shift+Enter");
+    expect(hints).toHaveTextContent("commands");
+    expect(hints).toHaveClass("sr-only");
+    expect(input).toHaveAttribute(
+      "title",
+      "Shift+Enter for a new line · / for commands",
+    );
+    expect(
+      document.querySelector(".session-composer-keyboard-hints"),
+    ).toBeNull();
+  });
+
   it("turns the stop action into a pulsing queue-send action only while new input is present", async () => {
     const onStop = vi.fn(),
       onSubmit = vi.fn();
@@ -155,6 +193,47 @@ describe("compact session mode control", () => {
         ) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
       expect(container.querySelectorAll(".agent-mode-trigger")).toHaveLength(1);
+    },
+  );
+
+  it.each([true, false])(
+    "shows an attachment button only if the plus menu does not own it (unified=%s)",
+    (handlesAttachments) => {
+      render(
+        <AgentComposer
+          {...props}
+          modeControl={<span>Backend</span>}
+          media={{
+            items: [],
+            parts: [],
+            error: null,
+            ready: true,
+            add: vi.fn(),
+            remove: vi.fn(),
+            retry: vi.fn(),
+            clear: vi.fn(),
+            restore: vi.fn(),
+          }}
+          commands={{
+            inputRef: { current: null },
+            onInput: vi.fn(),
+            onKeyDown: () => false,
+            header: null,
+            trigger: <button>Add actions</button>,
+            handlesAttachments,
+            open: false,
+            listId: "commands",
+          }}
+        />,
+      );
+      expect(
+        screen.getByRole("button", { name: "Add actions" }),
+      ).toBeInTheDocument();
+      const attachment = screen.queryByRole("button", {
+        name: "添加附件 / Attach files",
+      });
+      if (handlesAttachments) expect(attachment).not.toBeInTheDocument();
+      else expect(attachment).toBeInTheDocument();
     },
   );
 

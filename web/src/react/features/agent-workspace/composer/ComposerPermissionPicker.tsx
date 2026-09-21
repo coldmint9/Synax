@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { LoaderCircle, Shield } from "lucide-react";
 import { useLocale } from "../../../../hooks/useLocale";
 import { SYNAX_PERMISSION_TIER_LABELS } from "../synaxSessionTypes";
@@ -6,6 +6,7 @@ import type { SynaxPermissionTier } from "./composerTypes";
 
 const ORDER: SynaxPermissionTier[] = ["boundary", "auto", "unrestricted"];
 interface Props {
+  sessionId?: string;
   value: SynaxPermissionTier;
   onChange: (value: SynaxPermissionTier) => void | Promise<void>;
   disabled?: boolean;
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export function ComposerPermissionPicker({
+  sessionId,
   value,
   onChange,
   disabled,
@@ -20,8 +22,15 @@ export function ComposerPermissionPicker({
 }: Props) {
   const { locale, t } = useLocale();
   const zh = locale === "zh";
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const scope = useRef({ sessionId });
+  if (scope.current.sessionId !== sessionId) scope.current = { sessionId };
+  const [state, setState] = useState<{
+    scope: typeof scope.current;
+    pending: boolean;
+    error: string | null;
+  }>({ scope: scope.current, pending: false, error: null });
+  const pending = state.scope === scope.current && state.pending;
+  const error = state.scope === scope.current ? state.error : null;
   if (backendId === "codex" || backendId === "claude-code") {
     const label = zh ? "CLI 原生审批" : "Native CLI approvals";
     return (
@@ -55,14 +64,20 @@ export function ComposerPermissionPicker({
           disabled={disabled || pending}
           className="max-w-36 cursor-pointer bg-transparent text-inherit outline-offset-2"
           onChange={async (event) => {
-            setPending(true);
-            setError(null);
+            const requestScope = scope.current;
+            setState({ scope: requestScope, pending: true, error: null });
             try {
               await onChange(event.target.value as SynaxPermissionTier);
             } catch (err) {
-              setError(err instanceof Error ? err.message : String(err));
+              if (scope.current === requestScope)
+                setState({
+                  scope: requestScope,
+                  pending: false,
+                  error: err instanceof Error ? err.message : String(err),
+                });
             } finally {
-              setPending(false);
+              if (scope.current === requestScope)
+                setState((previous) => ({ ...previous, pending: false }));
             }
           }}
         >

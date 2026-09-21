@@ -68,6 +68,12 @@ describe("synax session mode", () => {
     },
   );
 
+  it.each(["chat", "plan"])("explicit %s overrides legacy goal profile/source", mode => {
+    const session = { profileId: "goal", sessionMetadata: { mode, source: "goal-dock" } };
+    expect(inferSynaxSessionMode(session)).toBe(mode);
+    expect(isGoalModeSession(session)).toBe(false);
+  });
+
   it("detects goal-like sessions across synax and legacy profiles", () => {
     expect(
       isGoalModeSession({

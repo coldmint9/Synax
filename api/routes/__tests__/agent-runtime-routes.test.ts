@@ -196,7 +196,7 @@ describe("agent runtime routes", () => {
       )
       .mockResolvedValueOnce(
         makeToolStep({
-          toolName: "verification_run",
+          toolName: "bash",
           toolCallId: "route-verify",
           args: {
             command: `node -e "if(require('fs').readFileSync('${writePath}','utf8')!=='route resume')process.exit(1)"`,

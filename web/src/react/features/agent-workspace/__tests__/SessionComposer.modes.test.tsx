@@ -1,3 +1,5 @@
+import { resetSessionComposerDrafts } from "../state/sessionComposerDraftStore";
+import { mediaDraftItems } from "../../media/useMediaDraft";
 import { useWikiStore } from "../../../state/wikiStore";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -111,6 +113,8 @@ const session: AgentSession = {
 };
 
 beforeEach(() => {
+  resetSessionComposerDrafts();
+  mediaDraftItems.reset();
   vi.restoreAllMocks();
   useSessionComposerSelections.setState({
     selections: {},
@@ -183,6 +187,19 @@ it("keeps the interaction panel mounted when its state refreshes beside the inpu
   expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/);
 });
 
+it("uses one plus menu and keeps mode border state synchronized without a toolbar label", async () => {
+  const { container } = renderComposer();
+  const controls = container.querySelector(".agent-session-controls")!;
+  expect(controls).toHaveAttribute("data-composer-mode", "chat");
+  expect(screen.queryByRole("button", { name: "Session mode" })).not.toBeInTheDocument();
+  for (const [label, mode] of [["Plan", "plan"], ["Goal", "goal"], ["Chat", "chat"]]) {
+    await userEvent.click(screen.getByRole("button", { name: "Add attachments, context or change mode" }));
+    await userEvent.click(screen.getByRole("radio", { name: label, exact: true }));
+    await waitFor(() => expect(controls).toHaveAttribute("data-composer-mode", mode));
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+  }
+});
+
 it("shows an optimistic draft immediately and restores its text if creation fails", async () => {
   let reject!: (error: Error) => void;
   vi.spyOn(agentRuntimeApi, "createSession").mockImplementation(
@@ -216,7 +233,7 @@ async function selectMode(mode: "plan" | "goal", prefix = "") {
 }
 
 async function expectModeUnavailable() {
-  const trigger = screen.getByRole("button", { name: "Add context" });
+  const trigger = screen.getByRole("button", { name: "Add attachments, context or change mode" });
   if ((trigger as HTMLButtonElement).disabled) {
     expect(trigger).toBeDisabled();
     return;
@@ -492,7 +509,7 @@ describe("SessionComposer mode controls", () => {
     await selectMode("plan", "Keep my draft ");
     expect(await screen.findByRole("alert")).toHaveTextContent("Run started");
     expect(
-      screen.queryByRole("button", { name: "Session mode" }),
+      screen.getByRole("button", { name: "Add attachments, context or change mode" }),
     ).toBeEnabled();
     expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
       "Keep my draft /plan",

@@ -57,7 +57,7 @@ class WorkRuntime {
       const previousMessages = store.listMessages(sessionId).filter(m => m.role === 'user' && m.metadata.source !== 'system_injection' && !isWorkContinuation(m.content));
       const savedPlan = session.sessionMetadata?.plan as { objective?: string } | undefined;
       const lastProposal = old ? store.listToolCalls(sessionId).filter(c => c.toolId === 'plan.propose').at(-1)?.inputRef as { objective?: string } | undefined : undefined;
-      const objective = continuing ? savedPlan?.objective ?? getGoalState(session.sessionMetadata)?.objective ?? lastProposal?.objective ?? previousMessages.at(-1)?.content ?? session.prompt : text || (hasMedia ? 'Media input' : session.prompt);
+      const objective = continuing ? savedPlan?.objective ?? historicalGoal?.objective ?? lastProposal?.objective ?? previousMessages.at(-1)?.content ?? session.prompt : text || (hasMedia ? 'Media input' : session.prompt);
       work = workStore.create(sessionId, objective, old);
       if (old) work.requirements = previousMessages.map(m => ({ messageId: m.id, text: m.content, ...(m.contentParts ? { contentParts: m.contentParts } : {}) }));
       // Legacy transcripts remain unmodified; binding establishes their provenance, not successful acceptance.
@@ -86,6 +86,22 @@ class WorkRuntime {
     this.syncPlan(work);
     store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, workId: work.id } });
     return workStore.save(work);
+  }
+
+  /** A selected workflow must not inherit the previous turn's terminal Work gate.
+   * Keep context memory and historical verification receipts; switching modes
+   * neither executes a plan nor accepts a goal.
+   */
+  onModeChanged(sessionId: string, previousMode: ReturnType<typeof workflowMode>): void {
+    if (workflowMode(store.getSession(sessionId)) === previousMode) return;
+    const work = workStore.current(sessionId);
+    if (!work) return;
+    work.status = 'active';
+    work.result = null; work.reason = null;
+    work.nextAction = null; work.expectedEvidence = null;
+    work.noProgressSteps = 0; work.decisionFailures = 0;
+    this.syncPlan(work);
+    workStore.save(work);
   }
 
   syncPlan(work: WorkRecord): void {

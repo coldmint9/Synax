@@ -244,7 +244,7 @@ describe("persistent human input", () => {
     expect(updated.sessionMetadata?.plan).toMatchObject({ status: "approved", revision: 1 });
     if (mode === "goal") expect(updated.sessionMetadata?.goal).toMatchObject({ status: "executing" });
     else expect(updated.sessionMetadata?.goal).toBeNull();
-    // Read-only planning ends, but the approved task structure remains protected.
+    // Read-only planning ends; only Goal freezes the approved task structure.
     store.updateSession(session.id, { status: "running" });
     expect(controlToolError(store.getSession(session.id), { id: "file.write" })).toBeNull();
     expect(Boolean(controlToolError(store.getSession(session.id), { id: "task.create" }))).toBe(mode === "goal");

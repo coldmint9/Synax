@@ -1,3 +1,5 @@
+import { workRuntime } from "../services/agent-runtime/work-runtime.js";
+import { workflowMode } from "../services/agent-runtime/workflow-mode.js";
 import { compactSessionContext } from "../services/agent-runtime/manual-context-compaction.js";
 import { searchSessions } from "../services/agent-runtime/session-search.js";
 import {
@@ -1517,6 +1519,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
         ? { goal: initializeGoal(session.prompt) }
         : {}),
     });
+    workRuntime.onModeChanged(id, workflowMode(session));
     return c.json({ session: updated });
   } catch (error) {
     return runtimeError(c, error);

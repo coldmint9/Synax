@@ -1,3 +1,5 @@
+import { resetSessionComposerDrafts } from "../state/sessionComposerDraftStore";
+import { mediaDraftItems } from "../../media/useMediaDraft";
 import { useWikiStore } from "../../../state/wikiStore";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -138,6 +140,8 @@ const cachedContext = {
 };
 
 beforeEach(() => {
+  resetSessionComposerDrafts();
+  mediaDraftItems.reset();
   vi.restoreAllMocks();
   clearDraftComposer("p1");
   useSessionComposerSelections.setState({

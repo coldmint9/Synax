@@ -6283,9 +6283,7 @@
   z-index: 25;
   padding: 0;
   pointer-events: none;
-  transition:
-    left 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    right 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Session changes update the rail in place; never slide the input laterally. */
 }
 
 .agent-command-rail-inner {

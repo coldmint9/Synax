@@ -120,16 +120,94 @@ describe("WorkspaceDashboard", () => {
 
     expect(screen.getByRole("button", { name: /^Subagents/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /^Git 变更/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^输入源/ })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /^输入源/ })).toBeTruthy();
     expect(screen.getByText("运行中 1")).toBeTruthy();
     expect(screen.getByText("已暂存 1")).toBeTruthy();
-    expect(container.querySelectorAll("[data-file-type-icon]")).toHaveLength(3);
+    expect(container.querySelectorAll("[data-file-type-icon]")).toHaveLength(5);
     expect(
       container.querySelector('[data-file-type-icon="index.vue"]'),
     ).not.toBeNull();
     expect(
       container.querySelector('[data-file-type-icon="notes.md"]'),
     ).not.toBeNull();
+  });
+
+  it("combines inputs and outputs into one panel with counts and exclusive views", () => {
+    const { container } = renderDashboard({ outputFiles: ["docs/result.md"] });
+    expect(
+      container.querySelectorAll('[data-dashboard-panel="files"]'),
+    ).toHaveLength(1);
+    expect(
+      container.querySelector('[data-dashboard-panel="inputs"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-dashboard-panel="outputs"]'),
+    ).toBeNull();
+    const inputs = screen.getByRole("tab", { name: "输入源 2" });
+    const outputs = screen.getByRole("tab", { name: "产出文件 1" });
+    expect(inputs).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("toolDisplay.js")).toBeInTheDocument();
+    expect(screen.queryByText("result.md")).toBeNull();
+    fireEvent.click(outputs);
+    expect(outputs).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("result.md")).toBeInTheDocument();
+    expect(screen.queryByText("toolDisplay.js")).toBeNull();
+    fireEvent.click(inputs);
+    expect(screen.getByText("toolDisplay.js")).toBeInTheDocument();
+    expect(screen.queryByText("result.md")).toBeNull();
+  });
+
+  it("defaults to outputs when no inputs exist and shows empty views explicitly", () => {
+    renderDashboard({ inputSources: [], outputFiles: ["result.md"] });
+    expect(screen.getByRole("tab", { name: "产出文件 1" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("result.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "输入源 0" }));
+    expect(screen.getByText("暂无输入源")).toBeInTheDocument();
+    expect(screen.queryByText("result.md")).toBeNull();
+  });
+
+  it("shares one disclosure and supports keyboard switching while collapsed", () => {
+    renderDashboard();
+    const toggle = screen.getByRole("button", { name: "输入 / 输出" });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("toolDisplay.js")).toBeNull();
+    const inputs = screen.getByRole("tab", { name: /^输入源/ });
+    const outputs = screen.getByRole("tab", { name: /^产出文件/ });
+    fireEvent.keyDown(inputs, { key: "ArrowRight" });
+    expect(outputs).toHaveFocus();
+    expect(outputs).toHaveAttribute("aria-selected", "true");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("还没有产出物")).toBeInTheDocument();
+    fireEvent.keyDown(outputs, { key: "Home" });
+    expect(inputs).toHaveFocus();
+    expect(screen.getByText("toolDisplay.js")).toBeInTheDocument();
+    fireEvent.keyDown(inputs, { key: "End" });
+    expect(outputs).toHaveFocus();
+    fireEvent.keyDown(outputs, { key: "ArrowLeft" });
+    expect(inputs).toHaveFocus();
+  });
+
+  it("resets the selected file view when switching sessions", () => {
+    const view = renderDashboard({ outputFiles: ["result.md"] });
+    fireEvent.click(screen.getByRole("tab", { name: /^产出文件/ }));
+    view.rerender(
+      <WorkspaceDashboard
+        sessionId="session-2"
+        environment={{
+          ...environment,
+          sessionId: "session-2",
+          outputFiles: ["result.md"],
+        }}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: /^输入源/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("falls back to the prompt headline for untitled subagents", () => {
@@ -153,7 +231,7 @@ describe("WorkspaceDashboard", () => {
       ],
     });
     if (!screen.queryByText("Search documentation"))
-      fireEvent.click(screen.getByRole("button", { name: /^输入源/ }));
+      fireEvent.click(screen.getByRole("tab", { name: /^输入源/ }));
     fireEvent.click(screen.getByText("Search documentation"));
     expect(
       useSessionWorkspaceStore.getState().sessions["session-1"],
@@ -182,7 +260,7 @@ describe("WorkspaceDashboard", () => {
     ]);
 
     if (!screen.queryByText("toolDisplay.js"))
-      fireEvent.click(screen.getByRole("button", { name: /^输入源/ }));
+      fireEvent.click(screen.getByRole("tab", { name: /^输入源/ }));
     fireEvent.click(screen.getByText("toolDisplay.js"));
     expect(
       useSessionWorkspaceStore.getState().sessions["session-1"].tabs,
@@ -214,7 +292,7 @@ describe("WorkspaceDashboard", () => {
       .getByRole("button", { name: /^Git 变更/ })
       .closest(".ws-card");
     const inputCard = screen
-      .getByRole("button", { name: /^输入源/ })
+      .getByRole("tab", { name: /^输入源/ })
       .closest(".ws-card");
 
     fireEvent.click(screen.getByRole("button", { name: "目录视图" }));
@@ -250,9 +328,9 @@ describe("WorkspaceDashboard", () => {
 
     expect(header.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("notes.md")).toBeNull();
-    expect(screen.getByRole("button", { name: /^输入源/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "输入 / 输出" })).toHaveAttribute(
       "aria-expanded",
-      "false",
+      "true",
     );
   });
 
@@ -493,6 +571,7 @@ describe("WorkspaceDashboard", () => {
     expect(
       screen.queryByRole("button", { name: /notes.md.*工作目录/ }),
     ).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /^产出文件/ }));
     fireEvent.click(
       screen.getByRole("button", { name: "deliverable.md docs" }),
     );
@@ -528,6 +607,11 @@ describe("WorkspaceDashboard", () => {
     const webCard = screen
       .getByRole("button", { name: /^Web/ })
       .closest(".ws-project-card")!;
+    fireEvent.click(within(apiCard).getByRole("tab", { name: /^产出文件/ }));
+    expect(
+      within(webCard).getByRole("tab", { name: /^输入源/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(within(webCard).getByRole("tab", { name: /^产出文件/ }));
     fireEvent.click(
       within(apiCard).getByRole("button", { name: "result.md 工作目录" }),
     );

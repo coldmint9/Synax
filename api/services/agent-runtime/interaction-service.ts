@@ -163,7 +163,7 @@ export const interactionService = {
           plan: { ...request.plan, revision, status: "draft" },
         });
         const goal = session.sessionMetadata?.goal;
-        if (goal && typeof goal === "object")
+        if (session.sessionMetadata?.mode === "goal" && goal && typeof goal === "object")
           store.updateSessionMetadata(i.sessionId, {
             goal: { ...goal, status: "planning" },
           });

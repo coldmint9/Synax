@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { useLocale } from "../../../hooks/useLocale";
+import { SynaxWordmark } from "./SynaxWordmark";
 import { SessionTreeItem } from "./SessionTreeItem";
 import type { TimeGroup } from "./useSessionList";
 
@@ -80,9 +81,9 @@ export function SessionTimeGroups({
     );
   if (nonEmptyGroups.length === 0 && !hasMore && !error) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-        <span className="text-[28px] opacity-30">☕</span>
-        <span className="text-[11px]">{emptyLabel ?? "No sessions yet"}</span>
+      <div className="session-list-empty">
+        <SynaxWordmark compact />
+        <span className="session-list-empty-label">{emptyLabel ?? "No sessions yet"}</span>
       </div>
     );
   }

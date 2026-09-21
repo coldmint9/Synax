@@ -336,7 +336,8 @@ export const useAgentDockStore = create<AgentDockStoreState>((set, get) => ({
           s.composerSkillIds.length > 0 ? s.composerSkillIds : undefined,
         reasoningEffort: s.composerReasoningEffort,
         permissionTier: s.composerPermissionTier,
-        sessionMetadata: createSynaxSessionMetadata("goal", {
+        // A Wiki goal record is context, not consent to autonomous Goal mode.
+        sessionMetadata: createSynaxSessionMetadata("chat", {
           source: "agent-dock",
           goalId: goal.id,
           documentId: documentId ?? null,

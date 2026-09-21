@@ -11,7 +11,6 @@ import {
   Bot,
   Check,
   ChevronRight,
-  FileCode2,
   FileDiff,
   Folder,
   FolderOpen,
@@ -36,6 +35,7 @@ import {
   WorkspaceDashboardLayout,
 } from "./WorkspaceDashboardLayout";
 import { WorkspaceSection as WorkspaceCard } from "./WorkspaceSection";
+import { WorkspaceFilesCard } from "./WorkspaceFilesCard";
 import { SessionTodoPanel } from "./SessionTodoPanel";
 import { SessionProfilePanel } from "./SessionProfilePanel";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -368,38 +368,29 @@ function RepositoryProjectCard({
           )}
         </ProjectSection>
       )}
-      {recentSources.length > 0 && (
-        <ProjectSection
-          icon={<FileCode2 size={13} />}
-          storageKey={`${sessionId}:${repository.rootId}:inputs`}
-          title={t("workspaceCardInputSources")}
-          count={recentSources.length}
-        >
-          {recentSources.map((source) => (
-            <InputSourceRow
-              key={`${source.kind}:${source.label}`}
-              source={source}
-              copied={copiedPath === source.label}
-              onOpen={() =>
-                openWorkspaceInputSource(
-                  sessionId,
-                  source,
-                  repository.rootId,
-                  repository.name,
-                )
-              }
-              onCopy={() => onCopyPath(source.label)}
-            />
-          ))}
-        </ProjectSection>
-      )}
-      {outputFiles.length > 0 && (
-        <ProjectSection
-          icon={<FileCode2 size={13} />}
-          storageKey={`${sessionId}:${repository.rootId}:outputs`}
-          title={t("workspaceCardOutputs")}
-          count={outputFiles.length}
-        >
+      <WorkspaceFilesCard
+        key={`${sessionId}:${repository.rootId}`}
+        storageKey={`${sessionId}:${repository.rootId}:files`}
+        embedded
+        inputCount={recentSources.length}
+        outputCount={outputFiles.length}
+        inputs={recentSources.map((source) => (
+          <InputSourceRow
+            key={`${source.kind}:${source.label}`}
+            source={source}
+            copied={copiedPath === source.label}
+            onOpen={() =>
+              openWorkspaceInputSource(
+                sessionId,
+                source,
+                repository.rootId,
+                repository.name,
+              )
+            }
+            onCopy={() => onCopyPath(source.label)}
+          />
+        ))}
+        outputs={
           <OutputFiles
             files={outputFiles}
             onOpen={(filePath) =>
@@ -412,8 +403,8 @@ function RepositoryProjectCard({
               )
             }
           />
-        </ProjectSection>
-      )}
+        }
+      />
     </WorkspaceCard>
   );
 }
@@ -740,15 +731,14 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               </DashboardPanel>
             )}
 
-          {recentSources.length > 0 && (
-            <DashboardPanel id="inputs" label={t("workspaceCardInputSources")}>
-              <WorkspaceCard
-                defaultOpen={false}
-                icon={<FileCode2 size={13} />}
-                title={t("workspaceCardInputSources")}
-                count={recentSources.length}
-              >
-                {recentSources.map((source) => (
+          {(recentSources.length > 0 || outputFiles.length > 0) && (
+            <DashboardPanel id="files" label={t("workspaceCardFiles")}>
+              <WorkspaceFilesCard
+                key={`${sessionId}:${repository?.rootId ?? "default"}`}
+                storageKey={`${sessionId}:${repository?.rootId ?? "default"}:files`}
+                inputCount={recentSources.length}
+                outputCount={outputFiles.length}
+                inputs={recentSources.map((source) => (
                   <InputSourceRow
                     key={`${source.kind}:${source.label}`}
                     source={source}
@@ -764,29 +754,21 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                     onCopy={() => void copyPath(source.label)}
                   />
                 ))}
-              </WorkspaceCard>
-            </DashboardPanel>
-          )}
-          {outputFiles.length > 0 && (
-            <DashboardPanel id="outputs" label={t("workspaceCardOutputs")}>
-              <WorkspaceCard
-                icon={<FileCode2 size={13} />}
-                title={t("workspaceCardOutputs")}
-                count={outputFiles.length}
-              >
-                <OutputFiles
-                  files={outputFiles}
-                  onOpen={(filePath) =>
-                    openWorkspaceFile(
-                      sessionId,
-                      filePath,
-                      null,
-                      repository?.rootId,
-                      repository?.name,
-                    )
-                  }
-                />
-              </WorkspaceCard>
+                outputs={
+                  <OutputFiles
+                    files={outputFiles}
+                    onOpen={(filePath) =>
+                      openWorkspaceFile(
+                        sessionId,
+                        filePath,
+                        null,
+                        repository?.rootId,
+                        repository?.name,
+                      )
+                    }
+                  />
+                }
+              />
             </DashboardPanel>
           )}
           {/* Only meaningful once the session actually spawned subagents — an

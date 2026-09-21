@@ -16,6 +16,7 @@ export function AgentCommandRail({
   insetLeft,
   insetRight,
   showFileSummary = true,
+  hidden = false,
 }: {
   sessionId: string;
   readingHistory?: boolean;
@@ -24,6 +25,7 @@ export function AgentCommandRail({
   insetLeft: number;
   insetRight: number;
   showFileSummary?: boolean;
+  hidden?: boolean;
 }) {
   const session = useAgentSessionStore((state) =>
     state.sessions.find((item) => item.id === sessionId),
@@ -43,7 +45,7 @@ export function AgentCommandRail({
   useLayoutEffect(() => {
     const rail = railRef.current;
     const page = rail?.closest<HTMLElement>(".agent-page-shell");
-    if (!rail || !page || !visible) return;
+    if (!rail || !page || !visible || hidden) return;
     const scroll = page.querySelector<HTMLElement>(".session-chat-scroll");
     const measure = () => {
       if (!rail.isConnected || page.clientHeight <= 0) return;
@@ -72,13 +74,14 @@ export function AgentCommandRail({
       page.style.removeProperty("--agent-command-rail-height");
       page.style.removeProperty("--agent-command-rail-max-height");
     };
-  }, [sessionId, visible]);
+  }, [sessionId, visible, hidden]);
 
   if (!session || !visible) return null;
 
   return (
     <div
       ref={railRef}
+      hidden={hidden}
       className="agent-command-rail"
       data-focus={focus ? "true" : "false"}
       style={{ left: insetLeft, right: insetRight }}

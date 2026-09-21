@@ -1,3 +1,15 @@
+import "./composerModes.css";
+import { NewSessionWelcome } from "./NewSessionWelcome";
+import {
+  composerDraftScope,
+  sessionComposerText,
+  sessionComposerReferences,
+  sessionComposerSkills,
+  sessionComposerSubmitting,
+  sessionComposerEditing,
+  sessionComposerChangingMode,
+  sessionComposerError,
+} from "./state/sessionComposerDraftStore";
 import { useWikiStore } from "../../state/wikiStore";
 import {
   useSessionComposerSelection,
@@ -28,7 +40,14 @@ import { agentRuntimeApi, type BackendId } from "../../../lib/api/agentRuntime";
 import { SessionBackendPicker } from "./SessionBackendPicker";
 import { GitWorkspacePicker } from "./GitWorkspacePicker";
 import { readSessionBackendId } from "./synaxSessionTypes";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useId,
+} from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   EMPTY_INPUT_QUEUE,
@@ -94,25 +113,39 @@ export function SessionComposer({
   const zh = locale === "zh";
   const navigate = useNavigate();
   const location = useLocation();
-  // New-session drafts start from the per-project cache so typed text
-  // survives navigating away or reloading before the session is created.
-  const [content, setContent] = useState(() =>
+  const composerInstance = useId();
+  const sessionId = session?.id;
+  const viewKey = composerDraftScope(
+    projectId,
+    sessionId ?? `draft:${location.key}:${composerInstance}`,
+  );
+  const [content, setContent] = sessionComposerText.useDraft(viewKey, () =>
     session ? "" : loadDraftComposer(projectId),
   );
   const [gitWorkspace, setGitWorkspace] = useState<GitWorkspaceSelection>();
-  const [skillIds, setSkillIds] = useState<string[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const [skillIds, setSkillIds] = sessionComposerSkills.useDraft(
+    viewKey,
+    () => [],
+  );
+  const [submitting, setSubmitting, readSubmitting] =
+    sessionComposerSubmitting.useDraft(viewKey, () => false);
   const submitLock = useRef<object | null>(null);
   const [draftPreview, setDraftPreview] = useState<{
     scope: string;
     message: string;
     contentParts?: RuntimeContentPart[];
   } | null>(null);
-  const [changingMode, setChangingMode] = useState(false);
-  const [editingQueue, setEditingQueue] = useState(false);
+  const [changingMode, setChangingMode] = sessionComposerChangingMode.useDraft(
+    viewKey,
+    () => false,
+  );
+  const [editingQueue, setEditingQueue] = sessionComposerEditing.useDraft(
+    viewKey,
+    () => false,
+  );
   const editLock = useRef<object | null>(null);
   const [overlayOpen, setOverlayOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = sessionComposerError.useDraft(viewKey, () => null);
   const draftMode = useAgentSessionStore((s) => s.draftMode);
   const setDraftMode = useAgentSessionStore((s) => s.setDraftMode);
   const updateSessionMode = useAgentSessionStore((s) => s.updateSessionMode);
@@ -125,8 +158,6 @@ export function SessionComposer({
   const removeQueuedInput = useAgentSessionStore((s) => s.removeQueuedInput);
   const forceQueuedInput = useAgentSessionStore((s) => s.forceQueuedInput);
   const moveQueuedInput = useAgentSessionStore((s) => s.moveQueuedInput);
-  const sessionId = session?.id;
-  const viewKey = `${projectId}:${sessionId ?? `draft:${location.key}`}`;
   const viewScope = useRef({ key: viewKey });
   if (viewScope.current.key !== viewKey) viewScope.current = { key: viewKey };
   const mounted = useRef(true);
@@ -149,23 +180,24 @@ export function SessionComposer({
   const hasPendingPermissions = useAgentSessionStore((s) =>
     sessionHasPendingPermissions(sessionId, s.selectedSessionId, s.permissions),
   );
-  const media = useMediaDraft(projectId);
+  const media = useMediaDraft(
+    projectId,
+    undefined,
+    sessionId ? viewKey : undefined,
+  );
   const hasMediaInput = media.parts.length > 0;
   const isDraft = !session;
   // New-session drafts start with the cached context references.
-  const [references, setReferences] = useState<TurnReference[]>(() =>
-    isDraft ? loadDraftComposerContext(projectId).references : [],
+  const [references, setReferences] = sessionComposerReferences.useDraft(
+    viewKey,
+    () => (isDraft ? loadDraftComposerContext(projectId).references : []),
   );
   const createdDraftRef = useRef<AgentSession | null>(null);
-  useEffect(() => {
-    // Existing sessions never carry draft context; drafts restore theirs.
-    setReferences(isDraft ? loadDraftComposerContext(projectId).references : []);
+  useLayoutEffect(() => {
     setGitWorkspace(undefined);
+    setOverlayOpen(false);
     createdDraftRef.current = null;
-    setSubmitting(false);
-    setEditingQueue(false);
-    setError(null);
-  }, [isDraft, sessionId, projectId, viewKey]);
+  }, [viewKey]);
   // Keep the new-session draft cached per project while typing; an empty
   // composer (sent or cleared) drops the cached entry.
   useEffect(() => {
@@ -255,7 +287,6 @@ export function SessionComposer({
 
   useEffect(() => {
     resyncedStaleWaitingRef.current = false;
-    setError(null);
   }, [sessionId]);
 
   useEffect(() => {
@@ -345,7 +376,7 @@ export function SessionComposer({
     return () => {
       active = false;
     };
-  }, [zh]);
+  }, [zh, setError]);
   useEffect(() => {
     setCliEfforts(undefined);
   }, [session?.id, backendId]);
@@ -373,7 +404,12 @@ export function SessionComposer({
     (reasoningEffort: ReasoningEffort) => setSelection({ reasoningEffort }),
     [setSelection],
   );
-  const permissionTier = useAgentDockStore((s) => s.composerPermissionTier);
+  const draftPermissionTier = useAgentDockStore(
+    (s) => s.composerPermissionTier,
+  );
+  const permissionTier = session
+    ? readSynaxPermissionTier(session.sessionMetadata)
+    : draftPermissionTier;
   const wikiAttachMode = useAgentDockStore((s) => s.composerWikiAttachMode);
   const setWikiAttachMode = useAgentDockStore(
     (s) => s.setComposerWikiAttachMode,
@@ -476,7 +512,7 @@ export function SessionComposer({
     if (
       (!message && !media.parts.length) ||
       !media.ready ||
-      submitting ||
+      readSubmitting() ||
       editingQueue ||
       submitLock.current === viewScope.current ||
       changingMode ||
@@ -542,30 +578,34 @@ export function SessionComposer({
         await submitOrEnqueueSessionInput(session.id, body);
         markSubmitted(session.id);
       }
-      if (isCurrent()) {
+      if (!isDraft || isCurrent()) {
         setContent("");
         media.clear();
         setReferences([]);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (isCurrent()) {
+      if (!isDraft || isCurrent()) {
         setError(message);
         setContent(content);
-      } else
+      }
+      if (!isCurrent())
         useNotificationStore.getState().push({
           type: "error",
           message: `${zh ? "后台会话提交失败" : "Background session submission failed"}: ${message}`,
         });
     } finally {
       if (submitLock.current === submittedScope) submitLock.current = null;
-      if (isCurrent()) {
-        setSubmitting(false);
-        setDraftPreview(null);
-      }
+      setSubmitting(false);
+      if (isCurrent()) setDraftPreview(null);
     }
   }, [
     media,
+    readSubmitting,
+    setContent,
+    setReferences,
+    setSubmitting,
+    setError,
     zh,
     viewKey,
     content,
@@ -598,6 +638,7 @@ export function SessionComposer({
   ]);
 
   const commands = useComposerCommands({
+    onAttachFiles: media.add,
     projectId,
     sessionId,
     backendId,
@@ -696,8 +737,7 @@ export function SessionComposer({
       throw error;
     } finally {
       if (editLock.current === scope) editLock.current = null;
-      if (mounted.current && viewScope.current === scope)
-        setEditingQueue(false);
+      setEditingQueue(false);
     }
   };
 
@@ -738,17 +778,12 @@ export function SessionComposer({
       commands={commands}
       placeholder={
         mode === "plan"
-          ? zh
-            ? "描述你想做的事，一起理清方案…"
-            : "What would you like to plan?"
+          ? t("sessionPlanPlaceholder")
           : mode === "goal"
-            ? zh
-              ? "描述目标，以及怎样才算完成…"
-              : "Describe your goal and what success looks like…"
-            : zh
-              ? "告诉 Synax 你想做什么…"
-              : "Ask Synax to do something…"
+            ? t("sessionGoalPlaceholder")
+            : t("sessionComposePlaceholder")
       }
+      keyboardHintPlacement={isCentered ? "tooltip" : "placeholder"}
       onOverlayOpenChange={setOverlayOpen}
       modelControl={
         backendId === "codex" || backendId === "claude-code" ? (
@@ -854,7 +889,12 @@ export function SessionComposer({
   );
 
   const composerShell = (
-    <div className="agent-session-controls w-full">
+    <div
+      className="agent-session-controls w-full"
+      data-composer-mode={
+        backendId !== "native" ? "chat" : mode === "plan_node" ? "plan" : mode
+      }
+    >
       {error && (
         <p role="alert" className="mb-2 px-2 text-xs text-danger">
           {error}
@@ -927,8 +967,7 @@ export function SessionComposer({
         />
       )}
       <ComposerIsland
-        key={`composer-${sessionId ?? "draft"}`}
-        sessionId={sessionId}
+        sessionId={viewKey}
         running={session?.status === "running"}
         readingHistory={readingHistory}
         protectedInteraction={
@@ -965,16 +1004,9 @@ export function SessionComposer({
       }
     >
       {isCentered ? (
-        <div className="flex w-full max-w-3xl flex-col items-center gap-6">
+        <div className="session-welcome-layout flex w-full max-w-3xl flex-col items-center gap-6">
           {draftPreview?.scope !== viewKey && (
-            <div className="max-w-lg text-center">
-              <h2 className="text-lg font-medium text-foreground">
-                {t("sessionDraftTitle")}
-              </h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {t("sessionDraftHint")}
-              </p>
-            </div>
+            <NewSessionWelcome />
           )}
           <div className="w-full min-w-0">{composerShell}</div>
         </div>

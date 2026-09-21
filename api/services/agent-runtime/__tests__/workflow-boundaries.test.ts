@@ -93,6 +93,27 @@ describe('workflow boundaries', () => {
     expect(workRuntime.prompt(s.id)).not.toMatch(/work\.checkpoint|goal\.finish|verification\.run/);
     expect(buildLoopStepNote({ stepIndex: 50, maxSteps: 50, converging: true, mode })).not.toMatch(/work\.checkpoint|goal\.finish/);
   });
+  it('goal acceptance cannot be bypassed by plain final text', async () => {
+    const { input } = active('goal');
+    await expect(workRuntime.complete(input, 'Done')).rejects.toThrow('plain text cannot bypass');
+  });
+  it('switching workflow reopens the turn without discarding context or accepting the goal', async () => {
+    const { s, input } = active('chat');
+    const work = workStore.current(s.id)!;
+    work.checkpoint = { throughStepId: input.stepId, summary: 'Retained memory', createdAt: new Date().toISOString() };
+    workStore.save(work);
+    await workRuntime.complete(input, 'Chat response');
+    store.updateSessionMetadata(s.id, { mode: 'goal', goal: { objective: 'Explicit goal', status: 'planning' } });
+    workRuntime.onModeChanged(s.id, 'chat');
+    expect(workStore.current(s.id)).toMatchObject({ status: 'active', result: null, checkpoint: { summary: 'Retained memory' } });
+    expect(store.getSession(s.id).sessionMetadata?.goal).toMatchObject({ status: 'planning' });
+  });
+  it('plan children cannot mount or execute writes despite their local mode', async () => {
+    const parent = session('plan');
+    const child = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', parentSessionId: parent.id, prompt: 'Subtask', sessionMetadata: { mode: 'chat' } });
+    expect(toolRegistry.listForSession(child.id, { includeGated: true }).map(t => t.id)).not.toContain('file.write');
+    expect((await toolRegistry.execute(child.id, 'file.write', { path: 'never-written.txt', content: 'no' })).record.error).toMatch(/read-only/i);
+  });
   it('children inherit the root workflow even with stale local metadata', () => {
     const parent = session('chat');
     const child = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', parentSessionId: parent.id, prompt: 'Subtask', sessionMetadata: { mode: 'goal' } });

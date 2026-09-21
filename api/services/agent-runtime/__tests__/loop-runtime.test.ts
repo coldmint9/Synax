@@ -1,3 +1,4 @@
+import { goalContinuationInput } from "../goal-continuation.js";
 import os from "node:os";
 import { applySessionPermissionUpdate } from "../session-permissions.js";
 import { inspectHistoryCacheAnchor } from "../../llm-runtime/cache-policy.js";
@@ -1779,6 +1780,46 @@ describe("cooperative closing incident replay", () => {
   });
 });
 
+describe("chat turn boundaries", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStepResults.length = 0;
+    capturedRequests.length = 0;
+    resetAgentRuntimeFixtures();
+    ensureSynaxAgentRegistered();
+  });
+
+  it("ends with an honest partial summary after a failed check, without accepting pending TODOs or resuming an old goal", async () => {
+    const session = agentSessionRuntime.create({
+      ...executorInput, profileId: "synax", permissionTier: "unrestricted",
+      sessionMetadata: { mode: "chat" },
+    });
+    agentRuntimeStore.updateSessionMetadata(session.id, {
+      goal: { objective: "Historical goal", status: "blocked", reason: "Historical blocker" },
+    });
+    queueMockStep(makeToolStep({ toolName: "task_create", toolCallId: "pending",
+      args: { subject: "Remaining implementation", description: "Not yet done" } }));
+    queueMockStep(makeToolStep({ toolName: "bash", toolCallId: "failed-check",
+      args: { command: 'node -e "process.exit(1)"' } }));
+    queueMockStep(makeTextStep("Partial result. The check failed; implementation remains incomplete."));
+    const chunks = await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Investigate and report the result." }));
+    expect(chunks.some(c => c.type === "run_completed")).toBe(true);
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
+      status: "completed", resultSummary: "Partial result. The check failed; implementation remains incomplete.",
+      sessionMetadata: { mode: "chat", goal: { status: "blocked" } },
+    });
+    expect(workStore.current(session.id)?.status).toBe("active");
+    expect(agentRuntimeStore.listToolCalls(session.id).map(c => c.toolId)).toEqual(["task.create", "bash"]);
+    expect(goalContinuationInput(session.id, agentRuntimeStore.listRuns(session.id)[0].id)).toBeNull();
+    for (const request of capturedRequests) {
+      expect(request.tools).not.toEqual(expect.arrayContaining(["work_checkpoint"]));
+      expect(request.tools).not.toContain("goal_finish");
+      expect(request.tools).not.toContain("verification_run");
+    }
+    expect(mockStepResults).toHaveLength(0);
+  });
+});
+
 describe("advisory closing state", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -2033,7 +2074,7 @@ describe("provider-bound session initialization prompt", () => {
       expect(text).not.toContain("One logical change per step");
       expect(text).not.toContain("otherwise run a code-map scan");
       expect(text).not.toContain("Keep wiki documentation aligned");
-      expect(text).toContain("Current work (authoritative runtime state)");
+      expect(text).toContain("Finish this turn with a concise answer");
       expect(request.reasoningEffort).toBe("max");
       expect(workStore.current(session.id)?.objective).toBe(message);
       expect(agentRuntimeStore.listToolCalls(session.id)).toHaveLength(0);

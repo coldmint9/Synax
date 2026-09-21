@@ -1,3 +1,5 @@
+import { resetSessionComposerDrafts } from "../state/sessionComposerDraftStore";
+import { mediaDraftItems } from "../../media/useMediaDraft";
 import {
   act,
   fireEvent,
@@ -79,6 +81,8 @@ const item: QueuedInput = {
   references: [{ kind: "file", path: "src/app.ts" } as never],
 };
 beforeEach(() => {
+  resetSessionComposerDrafts();
+  mediaDraftItems.reset();
   vi.restoreAllMocks();
   useSessionComposerSelections.setState({
     selections: {},
@@ -253,4 +257,152 @@ it("keeps an in-flight queue edit for its original session after navigating away
     ),
   );
   expect(useQueuedInputDraftStore.getState().drafts.s1).toBeUndefined();
+});
+
+function switchTo(view: ReturnType<typeof show>, target: AgentSession) {
+  act(() => useAgentSessionStore.setState({ selectedSessionId: target.id }));
+  view.rerender(
+    <MemoryRouter>
+      <SessionComposer projectId={target.projectId} session={target} />
+    </MemoryRouter>,
+  );
+}
+
+it("switches isolated drafts in the same textarea and island without remounting", () => {
+  const view = show();
+  const input = screen.getByRole("textbox", { name: "Message" });
+  const island = view.container.querySelector(".session-composer-island");
+  fireEvent.change(input, { target: { value: "Draft A\nSecond line" } });
+  switchTo(view, { ...session, id: "s2" });
+  expect(screen.getByRole("textbox", { name: "Message" })).toBe(input);
+  expect(view.container.querySelector(".session-composer-island")).toBe(island);
+  expect(island).toHaveAttribute("data-switching", "true");
+  expect(input).toHaveValue("");
+  fireEvent.change(input, { target: { value: "Draft B" } });
+  switchTo(view, session);
+  expect(input).toHaveValue("Draft A\nSecond line");
+  switchTo(view, { ...session, id: "s2" });
+  expect(input).toHaveValue("Draft B");
+  switchTo(view, { ...session, projectId: "p2" });
+  expect(input).toHaveValue("");
+  switchTo(view, session);
+  expect(input).toHaveValue("Draft A\nSecond line");
+});
+
+it.each(["success", "failure"])(
+  "keeps an in-flight %s scoped to A while B has a new draft",
+  async (outcome) => {
+    let finish!: () => void;
+    const send = vi.fn(
+      () =>
+        new Promise<"queued">((resolve, reject) => {
+          finish = () =>
+            outcome === "success"
+              ? resolve("queued")
+              : reject(new Error("A failed"));
+        }),
+    );
+    useAgentSessionStore.setState({ submitOrEnqueueSessionInput: send });
+    const view = show();
+    const input = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(input, { target: { value: "Send A" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(send).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ message: "Send A" }),
+    );
+    switchTo(view, { ...session, id: "s2" });
+    expect(input).not.toBeDisabled();
+    fireEvent.change(input, { target: { value: "Keep B" } });
+    await act(async () => finish());
+    expect(input).toHaveValue("Keep B");
+    switchTo(view, session);
+    expect(input).toHaveValue(outcome === "success" ? "" : "Send A");
+    expect(input).not.toBeDisabled();
+  },
+);
+
+it("returning to A during submission cannot submit its draft a second time", async () => {
+  let finish!: () => void;
+  const send = vi.fn(
+    () =>
+      new Promise<"queued">((resolve) => {
+        finish = () => resolve("queued");
+      }),
+  );
+  useAgentSessionStore.setState({ submitOrEnqueueSessionInput: send });
+  const view = show();
+  const input = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(input, { target: { value: "Once" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  switchTo(view, { ...session, id: "s2" });
+  switchTo(view, session);
+  expect(input).toBeDisabled();
+  expect(send).toHaveBeenCalledTimes(1);
+  await act(async () => finish());
+  expect(input).not.toBeDisabled();
+  expect(input).toHaveValue("");
+});
+
+it("restores A's attachments and references without carrying them into B's send", async () => {
+  const withMedia = {
+    ...item,
+    contentParts: [{ type: "image" as const, assetId: "asset-a" }],
+  };
+  useAgentSessionStore.getState().setInputQueue("s1", [withMedia]);
+  vi.spyOn(runtimeMedia, "metadata").mockResolvedValue({
+    asset: {
+      id: "asset-a",
+      filename: "a.png",
+      mediaType: "image/png",
+      size: 12,
+    } as never,
+  });
+  const send = vi.fn(async () => "queued" as const);
+  useAgentSessionStore.setState({
+    submitOrEnqueueSessionInput: send,
+    removeQueuedInput: vi.fn(async () =>
+      useAgentSessionStore.getState().setInputQueue("s1", []),
+    ),
+  });
+  const view = show();
+  fireEvent.click(screen.getByRole("button", { name: "编辑队列消息 1" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("attachments")).toHaveTextContent("1"),
+  );
+  switchTo(view, { ...session, id: "s2" });
+  expect(screen.getByTestId("attachments")).toHaveTextContent("0");
+  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
+    target: { value: "Only B" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith(
+      "s2",
+      expect.objectContaining({
+        message: "Only B",
+        references: [],
+        contentParts: undefined,
+      }),
+    ),
+  );
+  switchTo(view, session);
+  expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
+    item.message,
+  );
+  expect(screen.getByTestId("attachments")).toHaveTextContent("1");
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({
+        message: item.message,
+        references: item.references,
+        contentParts: [
+          { type: "text", text: item.message },
+          { type: "image", assetId: "asset-a" },
+        ],
+      }),
+    ),
+  );
 });

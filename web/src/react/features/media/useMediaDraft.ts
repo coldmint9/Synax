@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useId } from "react";
 import {
   runtimeMedia,
   type RuntimeAsset,
   type RuntimeContentPart,
 } from "../../../lib/api/runtimeMedia";
+import { createScopedDraftState } from "./scopedDraftState";
+
+export const mediaDraftItems = createScopedDraftState<DraftMedia[]>();
+const mediaDraftErrors = createScopedDraftState<string | null>();
+
 export interface DraftMedia {
   retained?: boolean;
   id: string;
@@ -64,19 +69,20 @@ export async function restoreDraftMedia(
 export function useMediaDraft(
   projectId: string,
   onPartsChange?: (parts: RuntimeContentPart[]) => void,
+  scope?: string,
 ) {
-  const [items, setItems] = useState<DraftMedia[]>([]);
-  const current = useRef(items);
-  current.current = items;
-  const [error, setError] = useState<string | null>(null);
-  const mounted = useRef(true);
+  const instance = useId();
+  const key = scope ?? `media-instance:${instance}:${projectId}`;
+  const [items, setItems, readItems] = mediaDraftItems.useDraft(key, () => []);
+  const [error, setError] = mediaDraftErrors.useDraft(key, () => null);
   useEffect(() => {
-    mounted.current = true;
+    if (scope) return; // Session drafts own uploads even while not visible.
     return () => {
-      mounted.current = false;
-      for (const item of current.current) item.controller.abort();
+      for (const item of readItems()) item.controller.abort();
+      setItems([]);
+      setError(null);
     };
-  }, []);
+  }, [scope, readItems, setItems, setError]);
   const upload = useCallback(
     async (item: DraftMedia) => {
       try {
@@ -85,7 +91,7 @@ export function useMediaDraft(
           item.file,
           item.controller.signal,
         );
-        if (!mounted.current || item.controller.signal.aborted) {
+        if (item.controller.signal.aborted) {
           void runtimeMedia.remove(asset.id).catch(() => {});
           return;
         }
@@ -95,7 +101,7 @@ export function useMediaDraft(
           ),
         );
       } catch (e) {
-        if (!mounted.current) return;
+        if (item.controller.signal.aborted) return;
         setItems((all) =>
           all.map((x) =>
             x.id === item.id
@@ -109,13 +115,13 @@ export function useMediaDraft(
         );
       }
     },
-    [projectId],
+    [projectId, setItems],
   );
   const add = useCallback(
     (files: File[]) => {
       if (!files.length) return;
       const all = [
-        ...current.current.map((i) => ({ size: i.asset?.size ?? i.file.size })),
+        ...readItems().map((i) => ({ size: i.asset?.size ?? i.file.size })),
         ...files,
       ];
       if (
@@ -135,23 +141,25 @@ export function useMediaDraft(
         uploading: true,
         controller: new AbortController(),
       }));
-      current.current = [...current.current, ...added];
-      setItems(current.current);
+      setItems([...readItems(), ...added]);
       for (const item of added) void upload(item);
     },
-    [upload],
+    [upload, readItems, setItems, setError],
   );
-  const remove = useCallback((id: string) => {
-    const item = current.current.find((x) => x.id === id);
-    item?.controller.abort();
-    if (item?.asset && !item.retained)
-      void runtimeMedia.remove(item.asset.id).catch(() => {});
-    setItems((all) => all.filter((x) => x.id !== id));
-    setError(null);
-  }, []);
+  const remove = useCallback(
+    (id: string) => {
+      const item = readItems().find((x) => x.id === id);
+      item?.controller.abort();
+      if (item?.asset && !item.retained)
+        void runtimeMedia.remove(item.asset.id).catch(() => {});
+      setItems((all) => all.filter((x) => x.id !== id));
+      setError(null);
+    },
+    [readItems, setItems, setError],
+  );
   const retry = useCallback(
     (id: string) => {
-      const old = current.current.find((x) => x.id === id);
+      const old = readItems().find((x) => x.id === id);
       if (!old) return;
       const item = {
         ...old,
@@ -162,20 +170,21 @@ export function useMediaDraft(
       setItems((all) => all.map((x) => (x.id === id ? item : x)));
       void upload(item);
     },
-    [upload],
+    [upload, readItems, setItems, setError],
   );
   const clear = useCallback(() => {
-    for (const item of current.current) item.controller.abort();
+    for (const item of readItems()) item.controller.abort();
     setItems([]);
-    current.current = [];
     setError(null);
-  }, []);
-  const restore = useCallback((restored: DraftMedia[]) => {
-    for (const item of current.current) item.controller.abort();
-    current.current = restored;
-    setItems(restored);
-    setError(null);
-  }, []);
+  }, [readItems, setItems, setError]);
+  const restore = useCallback(
+    (restored: DraftMedia[]) => {
+      for (const item of readItems()) item.controller.abort();
+      setItems(restored);
+      setError(null);
+    },
+    [readItems, setItems, setError],
+  );
   const parts: RuntimeContentPart[] = items.flatMap((item) =>
     item.asset
       ? [

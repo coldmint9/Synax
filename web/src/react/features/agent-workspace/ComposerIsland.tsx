@@ -27,8 +27,31 @@ export function ComposerIsland({
   const { locale } = useLocale(),
     zh = locale === "zh";
   const hostRef = useRef<HTMLDivElement>(null);
+  const initialSession = useRef(sessionId);
+  const [entranceFinished, setEntranceFinished] = useState(false);
+  useLayoutEffect(() => {
+    if (initialSession.current !== sessionId) setEntranceFinished(true);
+  }, [sessionId]);
   const contentRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const [settledSession, setSettledSession] = useState<{ id?: string } | null>(
+    null,
+  );
+  const switching = !settledSession || settledSession.id !== sessionId;
+  // Keep transitions off through layout measurement and the first painted frame.
+  useLayoutEffect(() => {
+    setSettledSession(null);
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() =>
+        setSettledSession({ id: sessionId }),
+      );
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [sessionId]);
   const [focused, setFocused] = useState(false);
   const [manuallyExpanded, setManuallyExpanded] = useState(false);
   useEffect(() => {
@@ -55,13 +78,13 @@ export function ComposerIsland({
     observer?.observe(host);
     observer?.observe(content);
     return () => observer?.disconnect();
-  }, []);
+  }, [sessionId]);
   const collapsed =
     running &&
     readingHistory &&
     !protectedInteraction &&
     !focused &&
-    !manuallyExpanded;
+    !(manuallyExpanded && !switching);
   const expand = () => {
     setManuallyExpanded(true);
     // Do not focus the offscreen textarea or change the reader's scroll position.
@@ -69,7 +92,11 @@ export function ComposerIsland({
   return (
     <div
       ref={hostRef}
-      className="session-composer-island"
+      className={`session-composer-island${!entranceFinished ? " animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none" : ""}`}
+      onAnimationEnd={(event) => {
+        if (event.target === event.currentTarget) setEntranceFinished(true);
+      }}
+      data-switching={switching ? "true" : undefined}
       data-collapsed={collapsed ? "true" : "false"}
       style={
         {

@@ -5,6 +5,7 @@ import {
 } from "../../media/MediaDraftControls";
 import type { MediaDraft } from "../../media/useMediaDraft";
 import {
+  useId,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -35,6 +36,7 @@ export interface ComposerCommands {
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
   header: ReactNode;
   trigger: ReactNode;
+  handlesAttachments?: boolean;
   open: boolean;
   listId: string;
   activeId?: string;
@@ -50,6 +52,7 @@ interface Props {
   modelControl?: ReactNode;
   modeControl?: ReactNode;
   placeholder?: string;
+  keyboardHintPlacement?: "placeholder" | "tooltip";
   projectId: string;
   content: string;
   onContentChange: (value: string) => void;
@@ -92,6 +95,7 @@ export function AgentComposer({
   backendId,
   modeControl,
   placeholder,
+  keyboardHintPlacement = "placeholder",
   projectId,
   media,
   sessionId,
@@ -127,7 +131,12 @@ export function AgentComposer({
   defaultExpanded = false,
 }: Props) {
   const { t, locale } = useLocale();
-  const inputPlaceholder = `${placeholder ?? t("agentPlaceholder")} ${locale === "zh" ? "Shift+Enter 换行" : "Shift+Enter for a new line"}${commands ? (locale === "zh" ? " · / 打开命令" : " · / for commands") : ""}`;
+  const keyboardHintId = useId();
+  const separateKeyboardHints = keyboardHintPlacement === "tooltip";
+  const keyboardHint = `${locale === "zh" ? "Shift+Enter 换行" : "Shift+Enter for a new line"}${commands ? (locale === "zh" ? " · / 打开命令" : " · / for commands") : ""}`;
+  const inputPlaceholder = separateKeyboardHints
+    ? (placeholder ?? t("agentPlaceholder"))
+    : `${placeholder ?? t("agentPlaceholder")} ${keyboardHint}`;
   const inputCapability = useInputCapability(
     projectId,
     sessionId,
@@ -140,14 +149,29 @@ export function AgentComposer({
   const localTextareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = commands?.inputRef ?? localTextareaRef;
   const isComposingRef = useRef(false);
+  const composerScope = JSON.stringify([projectId, sessionId ?? null]);
+  const compositionScopeRef = useRef<string | null>(null);
   const suppressEnterRef = useRef(false);
   const isMultiline = content.includes("\n");
   const isSessionComposer = Boolean(modeControl);
   const expandedLayout = isSessionComposer || defaultExpanded || isMultiline;
 
   const handleCompositionStart = useCallback(() => {
+    compositionScopeRef.current = composerScope;
     isComposingRef.current = true;
-  }, []);
+  }, [composerScope]);
+
+  useLayoutEffect(() => {
+    if (
+      compositionScopeRef.current &&
+      compositionScopeRef.current !== composerScope
+    ) {
+      // Commit/cancel the old IME editor without writing its final input into
+      // the newly selected draft. Non-composing session switches keep focus.
+      textareaRef.current?.blur();
+      isComposingRef.current = false;
+    }
+  }, [composerScope, textareaRef]);
 
   const handleCompositionEnd = useCallback(() => {
     isComposingRef.current = false;
@@ -155,6 +179,7 @@ export function AgentComposer({
     suppressEnterRef.current = true;
     window.setTimeout(() => {
       suppressEnterRef.current = false;
+      compositionScopeRef.current = null;
     }, 20);
   }, []);
 
@@ -223,7 +248,14 @@ export function AgentComposer({
     const levels =
       allowedReasoningEfforts && allowedReasoningEfforts.length > 0
         ? allowedReasoningEfforts
-        : (["none", "low", "medium", "high", "xhigh", "max"] as ReasoningEffort[]);
+        : ([
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+          ] as ReasoningEffort[]);
     if (levels.includes(reasoningEffort)) return;
     const fallback: ReasoningEffort = levels.includes("high")
       ? "high"
@@ -276,7 +308,7 @@ export function AgentComposer({
   const toolbar = (
     <>
       <div className="agent-dock-composer-leading contents">
-        {media && (
+        {media && !commands?.handlesAttachments && (
           <MediaAttachButton
             media={media}
             disabled={disabled && !queueWhileGenerating}
@@ -300,7 +332,7 @@ export function AgentComposer({
         )}
 
         <ComposerPermissionPicker
-          key={sessionId ?? "draft"}
+          sessionId={sessionId}
           backendId={backendId}
           value={permissionTier}
           onChange={onPermissionTierChange}
@@ -377,6 +409,13 @@ export function AgentComposer({
             ref={textareaRef}
             value={content}
             onChange={(e) => {
+              if (
+                compositionScopeRef.current &&
+                compositionScopeRef.current !== composerScope
+              ) {
+                e.target.value = content;
+                return;
+              }
               onContentChange(e.target.value);
               commands?.onInput(e.target.value, e.target.selectionStart);
             }}
@@ -394,7 +433,11 @@ export function AgentComposer({
             onKeyDown={handleKeyDown}
             {...compositionProps}
             placeholder={inputPlaceholder}
+            title={separateKeyboardHints ? keyboardHint : undefined}
             aria-label={t("agentPlaceholder")}
+            aria-describedby={
+              separateKeyboardHints ? keyboardHintId : undefined
+            }
             disabled={disabled && !queueWhileGenerating}
             rows={
               isSessionComposer ? 2 : defaultExpanded && !isMultiline ? 4 : 1
@@ -427,7 +470,7 @@ export function AgentComposer({
             onOverlayOpenChange={onOverlayOpenChange}
           />
           <ComposerPermissionPicker
-            key={sessionId ?? "draft"}
+            sessionId={sessionId}
             backendId={backendId}
             value={permissionTier}
             onChange={onPermissionTierChange}
@@ -436,6 +479,13 @@ export function AgentComposer({
             ref={textareaRef}
             value={content}
             onChange={(e) => {
+              if (
+                compositionScopeRef.current &&
+                compositionScopeRef.current !== composerScope
+              ) {
+                e.target.value = content;
+                return;
+              }
               onContentChange(e.target.value);
               commands?.onInput(e.target.value, e.target.selectionStart);
             }}
@@ -453,7 +503,11 @@ export function AgentComposer({
             onKeyDown={handleKeyDown}
             {...compositionProps}
             placeholder={inputPlaceholder}
+            title={separateKeyboardHints ? keyboardHint : undefined}
             aria-label={t("agentPlaceholder")}
+            aria-describedby={
+              separateKeyboardHints ? keyboardHintId : undefined
+            }
             disabled={disabled && !queueWhileGenerating}
             rows={1}
             className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
@@ -481,6 +535,11 @@ export function AgentComposer({
           />
           {actionButton}
         </div>
+      )}
+      {separateKeyboardHints && (
+        <span id={keyboardHintId} className="sr-only">
+          {keyboardHint}
+        </span>
       )}
     </div>
   );
