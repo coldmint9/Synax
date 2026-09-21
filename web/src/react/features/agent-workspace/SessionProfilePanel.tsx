@@ -7,7 +7,6 @@ import { useLocale } from "../../../hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { SessionInvocationUsagePanel } from "./SessionInvocationUsagePanel";
 import { SessionRuntimeStatus, SessionStatusCard } from "./SessionWorkspace";
-import { SessionSystemPromptPanel } from "./SessionSystemPromptPanel";
 import { WorkspaceSection } from "./WorkspaceSection";
 
 const EMPTY_STEPS: AgentRunStep[] = [];
@@ -67,7 +66,6 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({
             {sessionInvocationUsage && (
               <SessionInvocationUsagePanel usage={sessionInvocationUsage} />
             )}
-            {session && <SessionSystemPromptPanel session={session} />}
             {!sessionStats && !sessionInvocationUsage && (
               <p className="ws-empty">
                 {locale === "zh" ? "暂无运行数据" : "No runtime data yet"}

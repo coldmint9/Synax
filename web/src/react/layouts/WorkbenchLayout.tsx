@@ -233,7 +233,11 @@ export default function WorkbenchLayout() {
       sessionId={chromeMode === "global" ? null : selectedSessionId}
     >
       <WorkbenchIslandProvider>
-        <div className="workbench-shell" data-chrome-mode={chromeMode}>
+        <div
+          className="workbench-shell"
+          data-chrome-mode={chromeMode}
+          data-active-panel={activePanel ?? undefined}
+        >
           <WorkbenchHeader
             chromeMode={chromeMode}
             activePanel={activePanel}

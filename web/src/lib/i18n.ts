@@ -690,10 +690,6 @@ const messages = {
     effortReset: "恢复默认",
     effortAllowedHint: "仅可在此供应商允许的档位中选择",
     effortUnrestrictedHint: "未限制思考档位，可选择全部强度",
-    sessionSystemPrompt: "最近组装的系统提示词",
-    sessionSystemPromptDescription:
-      "此预览不包含完整对话、工具定义和尾部运行状态。",
-    sessionSystemPromptEmpty: "尚未生成",
     subSessionDetails: "详情",
     subSessionStop: "停止子代理",
     subSessionDestroy: "销毁子代理",
@@ -1444,10 +1440,6 @@ const messages = {
     effortAllowedHint: "Only levels allowed by this provider are available",
     effortUnrestrictedHint:
       "Reasoning effort is unrestricted; all levels are available",
-    sessionSystemPrompt: "Latest assembled system prompt",
-    sessionSystemPromptDescription:
-      "This preview excludes conversation history, tool definitions and the trailing runtime state.",
-    sessionSystemPromptEmpty: "Not generated yet",
     subSessionDetails: "Details",
     subSessionStop: "Stop subagent",
     subSessionDestroy: "Destroy subagent",

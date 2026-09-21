@@ -1100,6 +1100,13 @@
     width: max-content;
     max-width: calc(100% - 2 * var(--island-center-offset) - 24px);
   }
+  /* Settings has no session sidebar. Match the Work island's viewport
+     position without inheriting its horizontal content-column offset. */
+  .workbench-shell[data-active-panel="settings"] .workbench-header {
+    --island-center-offset: 0px;
+    top: 8px;
+  }
+
   .workbench-header > .wh-pill {
     min-width: 0;
     max-width: 100%;
