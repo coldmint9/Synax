@@ -25,6 +25,7 @@ vi.mock('../../../lib/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(
 import {
   getSessionEnvironment,
   getSessionEnvironmentFile,
+  saveSessionEnvironmentFile,
   invalidateSessionEnvironment,
 } from '../session-environment.js'
 import { commitSessionWorkspace } from '../session-git-commit.js'
@@ -238,6 +239,18 @@ describe('session workspace Git roots', () => {
       })
     }
   })
+
+  it('saves an existing file only inside the selected workspace root', async () => {
+    await expect(
+      saveSessionEnvironmentFile(sessionId, relativePath, 'primary edited\n', primary.id),
+    ).resolves.toMatchObject({ path: relativePath, bytes: 15 });
+    expect(fs.readFileSync(path.join(primary.path, relativePath), 'utf8')).toBe('primary edited\n');
+    expect(fs.readFileSync(path.join(reference.path, relativePath), 'utf8')).toBe('reference working\n');
+
+    await expect(
+      saveSessionEnvironmentFile(sessionId, relativePath, 'should not escape\n', 'unknown-root'),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
 
   it('keeps file views and commits compatible with an omitted selector in a one-root workspace', async () => {
     mocks.resolveSessionWorkspaceRoots.mockReturnValue([primary])

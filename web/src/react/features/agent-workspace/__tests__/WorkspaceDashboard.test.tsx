@@ -512,9 +512,9 @@ describe("WorkspaceDashboard", () => {
     fireEvent.click(webHeader);
 
     fireEvent.click(within(apiCard).getByText("BlockAsk.vue"));
-    fireEvent.click(within(apiCard).getByText("toolDisplay.js"));
+    fireEvent.click(screen.getAllByText("toolDisplay.js")[0]);
     fireEvent.click(within(webCard).getByText("BlockAsk.vue"));
-    fireEvent.click(within(webCard).getByText("toolDisplay.js"));
+    fireEvent.click(screen.getAllByText("toolDisplay.js")[1]);
     const tabs = useSessionWorkspaceStore.getState().sessions["session-1"].tabs;
     expect(tabs).toHaveLength(4);
     expect(new Set(tabs.map((tab) => tab.id)).size).toBe(4);
@@ -573,7 +573,7 @@ describe("WorkspaceDashboard", () => {
     ).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: /^产出文件/ }));
     fireEvent.click(
-      screen.getByRole("button", { name: "deliverable.md docs" }),
+      screen.getByRole("button", { name: /deliverable\.md.*docs/ }),
     );
     expect(
       useSessionWorkspaceStore.getState().sessions["session-1"].tabs,
@@ -601,23 +601,19 @@ describe("WorkspaceDashboard", () => {
         },
       ],
     });
-    const apiCard = screen
-      .getByRole("button", { name: /^API/ })
-      .closest(".ws-project-card")!;
-    const webCard = screen
-      .getByRole("button", { name: /^Web/ })
-      .closest(".ws-project-card")!;
-    fireEvent.click(within(apiCard).getByRole("tab", { name: /^产出文件/ }));
-    expect(
-      within(webCard).getByRole("tab", { name: /^输入源/ }),
-    ).toHaveAttribute("aria-selected", "true");
-    fireEvent.click(within(webCard).getByRole("tab", { name: /^产出文件/ }));
-    fireEvent.click(
-      within(apiCard).getByRole("button", { name: "result.md 工作目录" }),
+    const filesCard = screen
+      .getByRole("tab", { name: /^产出文件/ })
+      .closest(".ws-card")!;
+    fireEvent.click(screen.getByRole("tab", { name: /^产出文件/ }));
+    expect(screen.getByRole("tab", { name: /^输入源/ })).toHaveAttribute(
+      "aria-selected",
+      "false",
     );
-    fireEvent.click(
-      within(webCard).getByRole("button", { name: "result.md 工作目录" }),
-    );
+    const outputs = within(filesCard).getAllByRole("button", {
+      name: /result\.md/,
+    });
+    fireEvent.click(outputs[0]);
+    fireEvent.click(outputs[1]);
     expect(
       useSessionWorkspaceStore
         .getState()
@@ -634,9 +630,10 @@ describe("WorkspaceDashboard", () => {
     });
     const view = renderDashboard();
     expect(screen.getByText("Review outputs")).toBeTruthy();
-    expect(screen.getByRole("progressbar")).toHaveAttribute(
-      "aria-valuenow",
-      "0",
+    expect(screen.getByText("0 / 1")).toBeVisible();
+    expect(screen.getByText("Review outputs").closest("li")).toHaveAttribute(
+      "data-status",
+      "in_progress",
     );
     view.rerender(
       <WorkspaceDashboard

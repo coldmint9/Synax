@@ -56,7 +56,7 @@ function fireDrag(
 }
 
 describe("InputQueueStrip media rendering", () => {
-  it("reorders queued inputs by dragging a pill onto another position", () => {
+  it("reorders queued inputs by dragging a pill onto another position", async () => {
     const onReorder = vi.fn().mockResolvedValue(undefined);
     const { container } = render(
       <InputQueueStrip
@@ -78,11 +78,13 @@ describe("InputQueueStrip media rendering", () => {
     fireDrag(pills[2]!, "dragover");
     fireDrag(pills[2]!, "drop");
     expect(onReorder).toHaveBeenCalledTimes(1);
-    expect(onReorder).toHaveBeenCalledWith("one", 2);
+    expect(onReorder).toHaveBeenCalledWith("one", 1);
+    await waitFor(() => expect(grabs[0]).toBeEnabled());
     fireDrag(grabs[2]!, "dragstart");
     fireDrag(pills[0]!, "dragover");
     fireDrag(pills[0]!, "drop");
     expect(onReorder).toHaveBeenLastCalledWith("three", 0);
+    await waitFor(() => expect(grabs[2]).toBeEnabled());
     // Dropping right after itself is a no-op and must not call the API.
     fireDrag(grabs[0]!, "dragstart");
     fireDrag(pills[1]!, "dragover");
@@ -95,21 +97,36 @@ describe("InputQueueStrip media rendering", () => {
 
   it("supports keyboard reordering through the focused drag handle", async () => {
     const onReorder = vi.fn().mockResolvedValue(undefined);
-    const { container } = render(
-      <InputQueueStrip
-        items={[queuedItem({ id: "one" }), queuedItem({ id: "two" })]}
-        onReorder={onReorder}
-        onRemove={vi.fn()}
-        onForce={vi.fn()}
-      />,
-    );
-    const grabs = container.querySelectorAll('button[draggable="true"]');
-    grabs[1]!.focus();
+    const props = { onReorder, onRemove: vi.fn(), onForce: vi.fn() };
+    const one = queuedItem({ id: "one" }), two = queuedItem({ id: "two" });
+    const { container, rerender } = render(<InputQueueStrip {...props} items={[one, two]} />);
+    const handle = container.querySelectorAll('button[draggable="true"]')[1]!;
+    (handle as HTMLElement).focus();
     await userEvent.keyboard("{ArrowUp}");
-    expect(onReorder).toHaveBeenCalledTimes(1);
-    expect(onReorder).toHaveBeenCalledWith("two", 0);
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith("two", 0);
+    await waitFor(() => expect(handle).toBeEnabled());
+    // This is a controlled queue: acknowledge the backend's reordered items.
+    rerender(<InputQueueStrip {...props} items={[two, one]} />);
+    (handle as HTMLElement).focus();
     await userEvent.keyboard("{ArrowDown}");
     expect(onReorder).toHaveBeenLastCalledWith("two", 1);
+    await waitFor(() => expect(handle).toBeEnabled());
+  });
+
+  it.each([
+    [0, 2, 0, "one", 1],
+    [0, 2, 1, "one", 2],
+    [2, 0, 0, "three", 0],
+    [2, 0, 1, "three", 1],
+  ] as const)("maps drop gaps to final backend indices (%s -> %s, y=%s)", async (from, target, clientY, id, to) => {
+    const onReorder = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(<InputQueueStrip items={["one", "two", "three"].map(id => queuedItem({id}))}
+      onReorder={onReorder} onRemove={vi.fn()} onForce={vi.fn()} />);
+    const handles = container.querySelectorAll('button[draggable="true"]');
+    fireDrag(handles[from]!, "dragstart");
+    fireDrag(container.querySelectorAll("li")[target]!, "drop", {clientY});
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith(id, to);
+    await waitFor(() => expect(handles[from]).toBeEnabled());
   });
 
   it("does not offer drag handles for single-item queues", () => {

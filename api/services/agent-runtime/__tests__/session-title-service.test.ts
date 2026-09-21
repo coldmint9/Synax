@@ -222,7 +222,7 @@ describe("session title after first run", () => {
     });
   });
 
-  it("still summarizes sessions left with the legacy placeholder title", async () => {
+  it.each(["new agent", "新会话", " NEW AGENT "])("still summarizes the legacy placeholder %s", async (title) => {
     const session = agentSessionRuntime.create({
       projectId: "project-alpha",
       profileId: "synax",
@@ -233,7 +233,7 @@ describe("session title after first run", () => {
         goalContent: LONG_INPUT,
       },
     });
-    agentRuntimeStore.updateSession(session.id, { title: "new agent" });
+    agentRuntimeStore.updateSession(session.id, { title });
 
     ensureSessionTitleGenerated(session.id);
 

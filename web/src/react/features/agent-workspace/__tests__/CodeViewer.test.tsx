@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
 const getSessionEnvironmentFile = vi.fn();
 const getSessionInputSource = vi.fn();
+const saveSessionEnvironmentFile = vi.fn();
 const highlightCode = vi.fn();
 
 vi.mock("../../../../lib/api/agentRuntime", () => ({
@@ -11,6 +18,8 @@ vi.mock("../../../../lib/api/agentRuntime", () => ({
       getSessionEnvironmentFile(...args),
     getSessionInputSource: (...args: unknown[]) =>
       getSessionInputSource(...args),
+    saveSessionEnvironmentFile: (...args: unknown[]) =>
+      saveSessionEnvironmentFile(...args),
   },
 }));
 
@@ -46,6 +55,12 @@ describe("CodeViewer", () => {
   beforeEach(() => {
     getSessionEnvironmentFile.mockReset();
     getSessionInputSource.mockReset();
+    saveSessionEnvironmentFile.mockReset();
+    saveSessionEnvironmentFile.mockResolvedValue({
+      sessionId: "sess-1",
+      path: "src/app.ts",
+      bytes: SOURCE.length,
+    });
     highlightCode.mockReset();
     highlightCode.mockResolvedValue(
       '<pre class="shiki synax-code" style="color:var(--synax-code-foreground)">' +
@@ -99,6 +114,31 @@ describe("CodeViewer", () => {
     await renderViewer();
 
     expect(screen.getByText("missing file")).toBeTruthy();
+  });
+
+  it("edits a file and saves it with Command+S", async () => {
+    getSessionEnvironmentFile.mockResolvedValue(fileView(SOURCE));
+    render(
+      <CodeViewer
+        sessionId="sess-1"
+        path="src/app.ts"
+        tabId="file:src/app.ts"
+      />,
+    );
+    const editor = await screen.findByRole("textbox", {
+      name: "编辑文件 src/app.ts",
+    });
+    fireEvent.change(editor, { target: { value: "const changed = true\n" } });
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+
+    await waitFor(() =>
+      expect(saveSessionEnvironmentFile).toHaveBeenCalledWith(
+        "sess-1",
+        "src/app.ts",
+        "const changed = true\n",
+        undefined,
+      ),
+    );
   });
 
   it("opens recorded input results in the file viewer without reading a fake file path", async () => {

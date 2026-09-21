@@ -1,6 +1,6 @@
 import { useWorkspaceRefresh } from "./workspaceRefresh";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Save } from "lucide-react";
 import {
   agentRuntimeApi,
   type SessionEnvironmentInputSource,
@@ -9,6 +9,12 @@ import { highlightCode, languageForPath } from "./codeHighlight";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { WikiMarkdown } from "../wiki/WikiMarkdown";
 import "../wiki/wiki-theme.css";
+import {
+  getWorkspaceDraft,
+  registerWorkspaceSaveHandler,
+  setWorkspaceDraft,
+  useSessionWorkspaceStore,
+} from "./state/sessionWorkspaceStore";
 
 function LineNumbers({ count }: { count: number }) {
   const lines = useMemo(
@@ -32,20 +38,34 @@ export const CodeViewer = memo(function CodeViewer({
   path,
   rootId,
   inputSource,
+  tabId,
 }: {
   sessionId: string;
   path: string;
   rootId?: string;
   inputSource?: SessionEnvironmentInputSource;
+  tabId?: string;
 }) {
   const [view, setView] = useState<"preview" | "source">("preview");
   const [content, setContent] = useState("");
   const [html, setHtml] = useState("");
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
   // Guards against a slow read for a previous file overwriting the current one.
   const requestRef = useRef(0);
+  const contentRef = useRef(content);
+  const dirtyRef = useRef(false);
+  const setTabDirty = useSessionWorkspaceStore((state) => state.setTabDirty);
+
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+
+  const editable = Boolean(tabId && !inputSource && !truncated);
 
   const load = useCallback(async () => {
     const requestId = requestRef.current + 1;
@@ -76,20 +96,59 @@ export const CodeViewer = memo(function CodeViewer({
                 "input",
               ));
       const text = result.content ?? "";
-      const nextHtml = await highlightCode(text, path);
       if (requestRef.current !== requestId) return;
-      setContent(text);
+      const draft = tabId ? getWorkspaceDraft(tabId) : undefined;
+      const nextContent = draft ?? text;
+      const nextDirty = draft !== undefined && draft !== text;
+      const nextHtml = await highlightCode(nextContent, path);
+      if (requestRef.current !== requestId) return;
+      setContent(nextContent);
+      contentRef.current = nextContent;
       setHtml(nextHtml);
       setTruncated(result.truncated);
+      setDirty(nextDirty);
+      dirtyRef.current = nextDirty;
+      if (tabId) setTabDirty(sessionId, tabId, nextDirty);
     } catch (err) {
       if (requestRef.current !== requestId) return;
       setError(err instanceof Error ? err.message : "读取文件失败");
     } finally {
       if (requestRef.current === requestId) setLoading(false);
     }
-  }, [path, sessionId, rootId, inputSource]);
+  }, [path, sessionId, rootId, inputSource, tabId, setTabDirty]);
 
-  useWorkspaceRefresh(sessionId, load, rootId);
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!editable || !tabId) return false;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await agentRuntimeApi.saveSessionEnvironmentFile(
+        sessionId,
+        path,
+        contentRef.current,
+        rootId,
+      );
+      setWorkspaceDraft(tabId, contentRef.current);
+      // A saved draft is retained so switching tabs does not re-read stale data.
+      setDirty(false);
+      dirtyRef.current = false;
+      setTabDirty(sessionId, tabId, false);
+      return true;
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "保存文件失败");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }, [editable, path, rootId, sessionId, setTabDirty, tabId]);
+
+  useWorkspaceRefresh(
+    sessionId,
+    () => {
+      if (!dirtyRef.current) void load();
+    },
+    rootId,
+  );
 
   useEffect(() => {
     void load();
@@ -102,6 +161,25 @@ export const CodeViewer = memo(function CodeViewer({
     setView("preview");
   }, [sessionId, path, rootId]);
 
+  useEffect(() => {
+    if (!tabId || !editable) return;
+    // Keep the handler alive while the tab is inactive. Only the tab store
+    // removes it when the user actually closes the tab.
+    registerWorkspaceSaveHandler(tabId, save);
+  }, [editable, save, tabId]);
+
+  useEffect(() => {
+    if (!tabId || !editable) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s")
+        return;
+      event.preventDefault();
+      void save();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editable, save, tabId]);
+
   const lineCount = useMemo(
     () => (content ? content.split("\n").length : 0),
     [content],
@@ -109,6 +187,18 @@ export const CodeViewer = memo(function CodeViewer({
   const language = languageForPath(path);
   const canPreview = language === "html" || language === "markdown";
   const showPreview = canPreview && view === "preview";
+
+  const updateContent = (next: string) => {
+    setContent(next);
+    contentRef.current = next;
+    const nextDirty = true;
+    setDirty(nextDirty);
+    dirtyRef.current = nextDirty;
+    if (tabId) {
+      setWorkspaceDraft(tabId, next);
+      setTabDirty(sessionId, tabId, true);
+    }
+  };
 
   return (
     <div className="code-viewer flex min-h-0 flex-1 flex-col">
@@ -119,6 +209,7 @@ export const CodeViewer = memo(function CodeViewer({
           title={inputSource?.label ?? path}
         >
           {inputSource?.label ?? path}
+          {dirty && <span className="ml-1 text-warning">●</span>}
         </span>
         <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
           {language}
@@ -142,6 +233,18 @@ export const CodeViewer = memo(function CodeViewer({
             ))}
           </div>
         )}
+        {editable && (
+          <button
+            type="button"
+            className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground disabled:opacity-40"
+            onClick={() => void save()}
+            disabled={!dirty || saving}
+            aria-label="保存文件"
+            title="保存 (⌘S)"
+          >
+            <Save size={11} className={saving ? "animate-pulse" : ""} />
+          </button>
+        )}
         <button
           type="button"
           className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
@@ -154,7 +257,13 @@ export const CodeViewer = memo(function CodeViewer({
       </div>
       {!loading && !error && truncated && (
         <p role="status" className="px-3 py-1 text-xs text-muted-foreground">
-          内容较长，仅显示前 1 MB。 / Preview limited to the first 1 MB.
+          内容较长，仅显示前 1 MB，暂不支持编辑。 / Preview limited to the first
+          1 MB; editing is disabled.
+        </p>
+      )}
+      {saveError && (
+        <p role="alert" className="px-3 py-1 text-xs text-danger">
+          {saveError}
         </p>
       )}
       <div
@@ -182,6 +291,14 @@ export const CodeViewer = memo(function CodeViewer({
               </div>
             </article>
           )
+        ) : editable ? (
+          <textarea
+            aria-label={`编辑文件 ${path}`}
+            className="code-viewer-editor min-h-full w-full resize-none border-0 bg-transparent px-3 py-2 font-mono text-[11px] leading-[1.5] outline-none"
+            value={content}
+            spellCheck={false}
+            onChange={(event) => updateContent(event.target.value)}
+          />
         ) : (
           <div className="flex min-w-max items-stretch">
             <div className="code-viewer-gutter sticky left-0 z-10 px-2 py-2">

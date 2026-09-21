@@ -445,30 +445,16 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     expect(mocks.discoverAcp).not.toHaveBeenCalled();
   });
 
-  it("opens the add dropdown and enters a preset configuration view", async () => {
+  it("opens a blank provider configuration directly without the removed preset menu", async () => {
     const user = userEvent.setup();
     await renderPage();
-
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    expect(
-      screen.getByRole("button", { name: /^OpenAI$/ }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /^Anthropic$/ }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /^DeepSeek$/ }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /^OpenRouter$/ }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^xAI$/ })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /^DeepSeek$/ }));
-    expect(
-      screen.getByDisplayValue("https://api.deepseek.com"),
-    ).toBeInTheDocument();
-    expect(screen.getByDisplayValue("deepseek-chat")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("My Provider")).toHaveValue("Custom API 1");
+    expect(screen.getByPlaceholderText("https://api.example.com")).toHaveValue("");
+    expect(screen.getByPlaceholderText("输入模型 ID")).toHaveValue("");
+    expect(screen.queryByRole("button", {name: /^OpenAI$/})).not.toBeInTheDocument();
+    expect(mocks.updateGlobalConfig).not.toHaveBeenCalled();
   });
 
   it("renders configured LLM provider cards with stored keys", async () => {
@@ -507,7 +493,6 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     await renderPage();
 
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^自定义/ }));
 
     expect(
       screen.getByRole("dialog").closest("[data-dismissable]"),
@@ -597,7 +582,9 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     await renderPage();
 
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^DeepSeek$/ }));
+    fireEvent.change(screen.getByPlaceholderText("My Provider"), {target: {value: "DeepSeek"}});
+    fireEvent.change(screen.getByPlaceholderText("https://api.example.com"), {target: {value: "https://api.deepseek.com"}});
+    fireEvent.change(screen.getByPlaceholderText("输入模型 ID"), {target: {value: "deepseek-chat"}});
 
     const apiKeyInput = screen.getByPlaceholderText("输入 API Key");
     await user.type(apiKeyInput, "sk-test");
@@ -625,7 +612,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
 
     const payload = mocks.updateGlobalConfig.mock.calls[0][0];
     const provider = payload.providers.find(
-      (p: ProviderDef) => p.id === "custom-api:deepseek",
+      (p: ProviderDef) => p.label === "DeepSeek",
     );
     expect(provider.models.map((m: { id: string }) => m.id)).toEqual([
       "deepseek-chat",
@@ -646,7 +633,9 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     await renderPage();
 
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^DeepSeek$/ }));
+    fireEvent.change(screen.getByPlaceholderText("My Provider"), {target: {value: "DeepSeek"}});
+    fireEvent.change(screen.getByPlaceholderText("https://api.example.com"), {target: {value: "https://api.deepseek.com"}});
+    fireEvent.change(screen.getByPlaceholderText("输入模型 ID"), {target: {value: "deepseek-chat"}});
 
     await user.type(screen.getByPlaceholderText("输入 API Key"), "sk-test");
     await user.click(screen.getByRole("button", { name: /发现/ }));
@@ -675,7 +664,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
 
     const payload = mocks.updateGlobalConfig.mock.calls[0][0];
     const provider = payload.providers.find(
-      (p: ProviderDef) => p.id === "custom-api:deepseek",
+      (p: ProviderDef) => p.label === "DeepSeek",
     );
     expect(
       provider.models.find((m: { id: string }) => m.id === "deepseek-reasoner"),
@@ -690,7 +679,6 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     const user = userEvent.setup();
     const view = await renderPage();
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^自定义/ }));
     await user.type(
       screen.getByPlaceholderText("https://api.example.com"),
       "https://unfinished.example",
@@ -726,7 +714,8 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     const user = userEvent.setup();
     await renderPage();
     await user.click(screen.getByRole("button", { name: /添加/ }));
-    await user.click(screen.getByRole("button", { name: /^OpenAI$/ }));
+    fireEvent.change(screen.getByPlaceholderText("https://api.example.com"), {target: {value: "https://api.openai.com/v1"}});
+    fireEvent.change(screen.getByPlaceholderText("输入 API Key"), {target: {value: "sk-test"}});
     const input = screen.getByPlaceholderText("输入模型 ID");
     fireEvent.change(input, { target: { value: "changed-model" } });
     mocks.updateGlobalConfig.mockRejectedValueOnce(new Error("写入失败"));

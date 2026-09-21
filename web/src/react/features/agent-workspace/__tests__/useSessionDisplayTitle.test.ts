@@ -40,9 +40,9 @@ describe("getSessionDisplayTitle", () => {
     expect(
       getSessionDisplayTitle(session({ title: "new chat" }), "", "zh"),
     ).toBe("新对话");
-    expect(
-      getSessionDisplayTitle(session({ title: "new agent" }), "", "zh"),
-    ).toBe("新会话");
+    for (const title of ["new agent", "new session", "新会话", " NEW AGENT "]) {
+      expect(getSessionDisplayTitle(session({ title }), "", "zh")).toBe("新对话");
+    }
     expect(
       getSessionDisplayTitle(session({ title: "new session" }), "", "en"),
     ).toBe("new session");

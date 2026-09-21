@@ -81,6 +81,7 @@ import {
 import {
   getSessionEnvironment,
   getSessionEnvironmentFile,
+  saveSessionEnvironmentFile,
   getSessionInputSourceContent,
   invalidateSessionEnvironment,
 } from "../services/agent-runtime/session-environment.js";
@@ -884,6 +885,30 @@ agentRuntimeRoutes.get(
     }
   },
 );
+
+agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z
+    .object({
+      path: z.string().min(1),
+      content: z.string(),
+      rootId: z.string().min(1).optional(),
+    })
+    .safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid file payload" }, 400);
+  try {
+    return c.json(
+      await saveSessionEnvironmentFile(
+        c.req.param("sessionId"),
+        parsed.data.path,
+        parsed.data.content,
+        parsed.data.rootId,
+      ),
+    );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
 
 agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
   const filePath = c.req.query("path");

@@ -149,7 +149,7 @@ it("merges and deduplicates subsequent pages, preserving old pages across head r
   expect(agentRuntimeApi.listSessions).toHaveBeenCalledTimes(2);
   expect(agentRuntimeApi.listSessions).toHaveBeenLastCalledWith({
     projectId: "one",
-    limit: 30,
+    limit: 20,
     offset: 30,
   });
   vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({
@@ -194,7 +194,7 @@ it("does not count a deep-linked session as a paginated row", async () => {
   await useAgentSessionStore.getState().loadMoreSessions();
   expect(agentRuntimeApi.listSessions).toHaveBeenCalledWith({
     projectId: "one",
-    limit: 30,
+    limit: 20,
     offset: 0,
   });
   expect(useAgentSessionStore.getState().sessionListOffset).toBe(1);

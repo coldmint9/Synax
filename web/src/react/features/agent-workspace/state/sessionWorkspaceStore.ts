@@ -17,6 +17,8 @@ export interface WorkspaceTab {
   sessionId?: string;
   /** 1-based line a transcript link jumped to; viewers highlight it. */
   line?: number | null;
+  /** True while the file viewer has edits that are not saved to disk. */
+  dirty?: boolean;
 }
 
 export interface WorkspaceSessionState {
@@ -28,6 +30,36 @@ export interface WorkspaceSessionState {
 }
 
 type SessionWorkspaceRecord = Record<string, WorkspaceSessionState>;
+type WorkspaceSaveHandler = () => Promise<boolean>;
+
+const saveHandlers = new Map<string, WorkspaceSaveHandler>();
+const drafts = new Map<string, string>();
+
+export function registerWorkspaceSaveHandler(
+  tabId: string,
+  handler: WorkspaceSaveHandler,
+): () => void {
+  saveHandlers.set(tabId, handler);
+  return () => {
+    if (saveHandlers.get(tabId) === handler) saveHandlers.delete(tabId);
+  };
+}
+
+export async function saveWorkspaceTab(tabId: string): Promise<boolean> {
+  return (await saveHandlers.get(tabId)?.()) ?? false;
+}
+
+export function setWorkspaceDraft(tabId: string, content: string): void {
+  drafts.set(tabId, content);
+}
+
+export function getWorkspaceDraft(tabId: string): string | undefined {
+  return drafts.get(tabId);
+}
+
+export function clearWorkspaceDraft(tabId: string): void {
+  drafts.delete(tabId);
+}
 
 interface SessionWorkspaceStoreState {
   sessions: SessionWorkspaceRecord;
@@ -39,6 +71,7 @@ interface SessionWorkspaceStoreState {
   closeTab: (sessionId: string, id: string) => void;
   closeOthers: (sessionId: string, id: string) => void;
   closeAll: (sessionId: string) => void;
+  setTabDirty: (sessionId: string, id: string, dirty: boolean) => void;
   setPresentation: (
     sessionId: string,
     presentation: WorkspacePresentation,
@@ -131,7 +164,9 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
         })),
       })),
 
-    closeTab: (sessionId, id) =>
+    closeTab: (sessionId, id) => {
+      clearWorkspaceDraft(id);
+      saveHandlers.delete(id);
       set((state) => ({
         sessions: patchSession(state.sessions, sessionId, (current) => {
           const tabs = current.tabs.filter((item) => item.id !== id);
@@ -146,7 +181,8 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
             presentation: tabs.length === 0 ? "dock" : current.presentation,
           };
         }),
-      })),
+      }));
+    },
 
     closeOthers: (sessionId, id) =>
       set((state) => ({
@@ -164,6 +200,16 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
           tabs: [],
           activeTabId: null,
           presentation: "dock",
+        })),
+      })),
+
+    setTabDirty: (sessionId, id, dirty) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) => ({
+          ...current,
+          tabs: current.tabs.map((tab) =>
+            tab.id === id ? { ...tab, dirty: dirty || undefined } : tab,
+          ),
         })),
       })),
 

@@ -75,7 +75,9 @@ describe('goal instruction', () => {
     expect(instruction).toContain('plan.propose');
     expect(instruction).toContain('plan.execute');
     expect(instruction).toMatch(/approved/i);
-    expect(instruction).toMatch(/session and model limits/i);
+    expect(instruction).toMatch(/round step threshold.*graceful wrap-up/i);
+    expect(instruction).toContain('work.checkpoint(action="yield")');
+    expect(instruction).toMatch(/never forces completion or failure/i);
     expect(instruction).not.toMatch(/remaining budget|maxTokens|maxSteps/i);
   });
 
