@@ -987,17 +987,19 @@ function RepositoryCard({
           <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
-      <SessionCommitDialog
-        isOpen={commitOpen}
-        sessionId={environment.sessionId}
-        projectId={environment.projectId}
-        rootId={repository?.rootId}
-        rootName={repository?.name}
-        branch={environment.branch}
-        changedFiles={changedCount}
-        onClose={() => setCommitOpen(false)}
-        onCommitted={() => void reload()}
-      />
+      {commitOpen && (
+        <SessionCommitDialog
+          isOpen
+          sessionId={environment.sessionId}
+          projectId={environment.projectId}
+          rootId={repository?.rootId}
+          rootName={repository?.name}
+          branch={environment.branch}
+          changedFiles={changedCount}
+          onClose={() => setCommitOpen(false)}
+          onCommitted={() => void reload()}
+        />
+      )}
     </section>
   );
 }
