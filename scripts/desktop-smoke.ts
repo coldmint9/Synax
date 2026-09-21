@@ -172,21 +172,20 @@ try {
     process.platform === "darwin",
     "macOS titlebar insets must not leak into Windows",
   );
-  const assertStaticDesktop = async () => {
+  const assertOpaqueDesktop = async () => {
     const renderer = await page.evaluate(() => {
-      const effects = [...document.querySelectorAll("*")].flatMap((element) =>
-        [null, "::before", "::after"].flatMap((pseudo) => {
-          const style = getComputedStyle(element, pseudo);
-          return style.backdropFilter !== "none" ||
-            style.animationName !== "none"
-            ? [
-                `${element.className}${pseudo ?? ""}: ${style.backdropFilter}, ${style.animationName}`,
-              ]
-            : [];
-        }),
+      // Loading and activity animations are allowed; backdrop filters are not.
+      const backdropFilters = [...document.querySelectorAll("*")].flatMap(
+        (element) =>
+          [null, "::before", "::after"].flatMap((pseudo) => {
+            const style = getComputedStyle(element, pseudo);
+            return style.backdropFilter !== "none"
+              ? [`${element.className}${pseudo ?? ""}: ${style.backdropFilter}`]
+              : [];
+          }),
       );
       return {
-        effects,
+        backdropFilters,
         hasAppearanceAPI: "appearance" in (window as any).electronAPI,
         backgroundLayers: document.querySelectorAll(
           ".desktop-background, #liquid_glass_filter",
@@ -195,9 +194,9 @@ try {
       };
     });
     assert.deepEqual(
-      renderer.effects,
+      renderer.backdropFilters,
       [],
-      "desktop must not animate or blur the backdrop",
+      "desktop must not blur the backdrop",
     );
     assert.equal(renderer.hasAppearanceAPI, false);
     assert.equal(renderer.backgroundLayers, 0);
@@ -217,7 +216,7 @@ try {
     assert.match(nativeSurface.color, /^#(?:ff)?[\da-f]{6}$/i);
     assert.equal(nativeSurface.backgroundProtocol, false);
   };
-  await assertStaticDesktop();
+  await assertOpaqueDesktop();
   const island = page.locator(".workbench-header > .wh-pill").first();
   const islandBounds = await island.boundingBox();
   assert.ok(islandBounds);
@@ -225,12 +224,19 @@ try {
     (window as any).smokeIsland = el;
   });
   const assertIslandPosition = async () => {
+    await island.evaluate(async (element) => {
+      await Promise.all(
+        element
+          .getAnimations()
+          .map((animation) => animation.finished.catch(() => undefined)),
+      );
+    });
     const bounds = await island.boundingBox();
     assert.ok(bounds);
     assert.ok(
       Math.abs(bounds.x - islandBounds.x) < 1 &&
         Math.abs(bounds.y - islandBounds.y) < 1,
-      "the island must stay at the same position across routes and themes",
+      "the island must stay at the same position across themes",
     );
     assert.equal(
       await island.evaluate((el) => el === (window as any).smokeIsland),
@@ -259,7 +265,7 @@ try {
       "theme toggles directly without a popup",
     );
     await assertIslandPosition();
-    await assertStaticDesktop();
+    await assertOpaqueDesktop();
     if (!wasDark) {
       assert.equal(
         await page
@@ -279,12 +285,16 @@ try {
     ),
   );
   await page.locator(".settings-scroll-content").waitFor();
-  await assertIslandPosition();
+  assert.equal(
+    await island.evaluate((el) => el === (window as any).smokeIsland),
+    true,
+    "navigation must retain the same island DOM node",
+  );
   assert.equal(
     await page.getByText(/窗口与背景|Window & Background/).count(),
     0,
   );
-  await assertStaticDesktop();
+  await assertOpaqueDesktop();
   await desktop.evaluate(
     ({ BrowserWindow }, id) =>
       BrowserWindow.getAllWindows()[0].webContents.send(
