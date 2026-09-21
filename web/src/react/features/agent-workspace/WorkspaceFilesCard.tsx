@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ChevronRight, FileCode2 } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 import { useWorkspaceDisclosure } from "./useWorkspaceDisclosure";
@@ -27,6 +27,9 @@ export function WorkspaceFilesCard({
   const [open, toggle] = useWorkspaceDisclosure(storageKey);
   const [selectedView, setSelectedView] = useState<FileView | null>(null);
   const view = selectedView ?? (inputCount > 0 ? "inputs" : "outputs");
+  useEffect(() => {
+    setSelectedView(null);
+  }, [storageKey]);
   const tabs = useRef<Partial<Record<FileView, HTMLButtonElement | null>>>({});
   const select = (next: FileView) => {
     setSelectedView(next);

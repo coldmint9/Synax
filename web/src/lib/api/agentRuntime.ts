@@ -946,6 +946,19 @@ export const agentRuntimeApi = {
     request<SessionEnvironmentFileView>(
       `/sessions/${encodeURIComponent(sessionId)}/environment/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}${rootId ? `&rootId=${encodeURIComponent(rootId)}` : ""}`,
     ),
+  saveSessionEnvironmentFile: (
+    sessionId: string,
+    path: string,
+    content: string,
+    rootId?: string,
+  ) =>
+    request<{ sessionId: string; path: string; bytes: number }>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/file`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ path, content, rootId }),
+      },
+    ),
   streamCommitMessage: (
     sessionId: string,
     body: { rootId?: string; model: string },

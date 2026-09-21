@@ -9,10 +9,10 @@ export const SESSION_DISPLAY_TITLE_MAX = 80;
 /** Placeholder titles only mean "not summarized yet"; they are localized. */
 const PLACEHOLDER_TITLES = [
   "new session",
-  "new chat",
+  "new session", "new chat",
   "new agent",
   "新会话",
-  "新对话",
+  "new agent", "新会话", "新对话",
 ];
 
 function isPlaceholderTitle(title: string): boolean {

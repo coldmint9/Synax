@@ -5,7 +5,13 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from "react";
-import { GripVertical, ListStart, Paperclip, Pencil, X } from "lucide-react";
+import {
+  GripVertical,
+  ListStart,
+  Paperclip,
+  Pencil,
+  X,
+} from "lucide-react";
 import type { QueuedInput } from "../../../lib/api/agentRuntime";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import { runtimeMedia } from "../../../lib/api/runtimeMedia";
@@ -147,7 +153,8 @@ export function InputQueueStrip({
     };
 
   const handleItemDrop =
-    (itemId: string, index: number) => (event: DragEvent<HTMLLIElement>) => {
+    (itemId: string, index: number) =>
+    (event: DragEvent<HTMLLIElement>) => {
       event.preventDefault();
       const sourceId = draggingId;
       clearDragState();
@@ -159,10 +166,7 @@ export function InputQueueStrip({
       // The pointer identifies a gap in the original list. The API accepts
       // the final index after removing the source item, not that gap index.
       const gap = below ? index + 1 : index;
-      const to = Math.max(
-        0,
-        Math.min(items.length - 1, gap > from ? gap - 1 : gap),
-      );
+      const to = Math.max(0, Math.min(items.length - 1, gap > from ? gap - 1 : gap));
       if (to === from) return;
       void runAction(() => onReorder(sourceId, to));
     };

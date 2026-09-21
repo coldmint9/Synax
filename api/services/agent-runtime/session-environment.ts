@@ -618,6 +618,34 @@ export function getSessionInputSourceContent(
   };
 }
 
+export async function saveSessionEnvironmentFile(
+  sessionId: string,
+  relativePath: string,
+  content: string,
+  rootId?: string,
+): Promise<{ sessionId: string; path: string; bytes: number }> {
+  const session = getSession(sessionId);
+  const workspacePath = resolveSessionRepository(
+    sessionId,
+    session.projectId,
+    rootId,
+  ).path;
+  const cleanPath = assertRelativePath(relativePath);
+  const absolutePath = resolveSafeFile(workspacePath, cleanPath);
+  if (!fs.existsSync(absolutePath)) {
+    throw new AgentValidationError(`File not found: ${cleanPath}`);
+  }
+  if (!fs.statSync(absolutePath).isFile()) {
+    throw new AgentValidationError(`Not a file: ${cleanPath}`);
+  }
+  fs.writeFileSync(absolutePath, content, "utf8");
+  return {
+    sessionId,
+    path: cleanPath,
+    bytes: Buffer.byteLength(content, "utf8"),
+  };
+}
+
 export async function getSessionEnvironmentFile(
   sessionId: string,
   relativePath: string,
