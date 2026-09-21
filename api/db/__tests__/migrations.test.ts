@@ -53,7 +53,8 @@ describe('runMigrations ledger', () => {
       db2.prepare('SELECT COUNT(*) as c FROM _schema_migrations').get() as { c: number }
     ).c;
     expect(secondCount).toBe(firstCount);
-  });
+  }, 20_000); // Real disk migrations plus two fresh module loads under concurrent CI/desktop work.
+
 
   it('bootstraps ledger for pre-existing databases without re-running migrations', async () => {
     const dbPath = path.join(tempDir, 'context.db');
