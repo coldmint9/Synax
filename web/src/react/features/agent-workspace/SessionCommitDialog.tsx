@@ -1,21 +1,37 @@
-import { Button, Modal, TextArea } from "@heroui/react";
+import { Button, Modal, TextArea, Tooltip } from "@heroui/react";
 import {
   AlertCircle,
   CheckCircle2,
   GitBranch,
   GitCommit,
   Sparkles,
+  X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   agentRuntimeApi,
   type SessionGitCommitResult,
 } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
+import { useConfig } from "../settings/useConfig";
+import { useAgentSessionStore } from "./state/agentSessionStore";
+import { sessionRuntimeSelection } from "./sessionRuntimeSelection";
+import {
+  buildAgentModelOptions,
+  formatModelReference,
+} from "./composer/modelSelection";
+import {
+  pickCommitMessageModel,
+  useCommitModelPreference,
+} from "./commitMessageModelPreference";
+
+const EMPTY_RUNS: import("../../../lib/api/agentRuntime").AgentRun[] = [];
+const EMPTY_STEPS: import("../../../lib/api/agentRuntime").AgentRunStep[] = [];
 
 interface Props {
   isOpen: boolean;
   sessionId: string | null;
+  projectId: string;
   rootId?: string;
   rootName?: string;
   branch: string;
@@ -27,12 +43,12 @@ interface Props {
 /**
  * Commit the session workspace on its current branch, optionally pushing it.
  *
- * Leaving the message empty asks the session's current model to write it —
- * that call happens on the server, so the dialog only sends what the user typed.
+ * Message generation is an explicit, cancellable preview separate from committing.
  */
 export function SessionCommitDialog({
   isOpen,
   sessionId,
+  projectId,
   rootId,
   rootName,
   branch,
@@ -41,10 +57,45 @@ export function SessionCommitDialog({
   onCommitted,
 }: Props) {
   const { t } = useLocale();
+  const { globalConfig, providers } = useConfig(projectId);
+  const apiModels = useMemo(
+    () => buildAgentModelOptions(globalConfig, providers).apiModels,
+    [globalConfig, providers],
+  );
+  const session = useAgentSessionStore((state) =>
+    state.sessions.find((item) => item.id === sessionId),
+  );
+  const runs = useAgentSessionStore((state) =>
+    state.selectedSessionId === sessionId
+      ? state.runs
+      : (state.sessionDetailCache[sessionId ?? ""]?.runs ?? EMPTY_RUNS),
+  );
+  const steps = useAgentSessionStore((state) =>
+    state.selectedSessionId === sessionId
+      ? state.steps
+      : (state.sessionDetailCache[sessionId ?? ""]?.steps ?? EMPTY_STEPS),
+  );
+  const sessionModel = sessionRuntimeSelection(session, runs, steps).model;
+  const remembered = useCommitModelPreference(
+    (state) => state.byProject[projectId] ?? null,
+  );
+  const remember = useCommitModelPreference((state) => state.remember);
+  const selectedModel = pickCommitMessageModel(
+    apiModels,
+    sessionModel,
+    remembered,
+  );
+  const selectedModelRef = selectedModel
+    ? formatModelReference(selectedModel.providerId, selectedModel.modelId)
+    : null;
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState<"commit" | "push" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SessionGitCommitResult | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const streamController = useRef<AbortController | null>(null);
+  const priorMessage = useRef("");
+  const frame = useRef<number | null>(null);
   const generation = useRef(0);
   const locked = useRef(false);
 
@@ -53,17 +104,93 @@ export function SessionCommitDialog({
     generation.current += 1;
     locked.current = false;
     setMessage("");
+    setGenerating(false);
     setError(null);
     setResult(null);
     setSubmitting(null);
     return () => {
       generation.current += 1;
+      streamController.current?.abort();
+      streamController.current = null;
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
       locked.current = false;
     };
-  }, [isOpen, sessionId, rootId]);
+  }, [isOpen, sessionId, projectId, rootId]);
+
+  const cancelGeneration = () => {
+    if (!streamController.current) return;
+    generation.current += 1;
+    streamController.current.abort();
+    streamController.current = null;
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+    setMessage(priorMessage.current);
+    setGenerating(false);
+  };
+
+  const generate = async () => {
+    if (
+      !sessionId ||
+      !isOpen ||
+      !selectedModelRef ||
+      generating ||
+      streamController.current ||
+      locked.current
+    )
+      return;
+    const controller = new AbortController();
+    streamController.current = controller;
+    const request = ++generation.current;
+    priorMessage.current = message;
+    setMessage("");
+    setError(null);
+    setGenerating(true);
+    let accumulated = "";
+    try {
+      await agentRuntimeApi.streamCommitMessage(
+        sessionId,
+        { ...(rootId ? { rootId } : {}), model: selectedModelRef },
+        (event) => {
+          if (request !== generation.current || controller.signal.aborted)
+            return;
+          if (event.type === "delta") {
+            accumulated += event.text;
+            if (frame.current === null)
+              frame.current = requestAnimationFrame(() => {
+                frame.current = null;
+                if (request === generation.current) setMessage(accumulated);
+              });
+          } else {
+            if (frame.current !== null) cancelAnimationFrame(frame.current);
+            frame.current = null;
+            setMessage(event.message);
+          }
+        },
+        controller.signal,
+      );
+    } catch (err) {
+      if (request !== generation.current || controller.signal.aborted) return;
+      setMessage(priorMessage.current);
+      setError(
+        err instanceof Error ? err.message : t("workspaceCommitGenerateFailed"),
+      );
+    } finally {
+      if (request === generation.current) {
+        if (frame.current !== null) cancelAnimationFrame(frame.current);
+        frame.current = null;
+        streamController.current = null;
+        setGenerating(false);
+      }
+    }
+  };
 
   const run = async (push: boolean) => {
-    if (!sessionId || !isOpen || locked.current) return;
+    if (!sessionId || !isOpen || locked.current || generating) return;
+    if (!message.trim()) {
+      setError(t("workspaceCommitMessageRequired"));
+      return;
+    }
     locked.current = true;
     const request = generation.current;
     setSubmitting(push ? "push" : "commit");
@@ -74,7 +201,7 @@ export function SessionCommitDialog({
         sessionId,
         {
           ...(rootId ? { rootId } : {}),
-          ...(trimmed ? { message: trimmed } : {}),
+          message: trimmed,
           ...(push ? {} : { push: false }),
         },
       );
@@ -99,7 +226,10 @@ export function SessionCommitDialog({
   };
 
   const handleOpenChange = (open: boolean) => {
-    if (!open && !submitting) onClose();
+    if (!open && !submitting) {
+      cancelGeneration();
+      onClose();
+    }
   };
 
   const busy = submitting !== null;
@@ -182,33 +312,95 @@ export function SessionCommitDialog({
                 </div>
 
                 <div className="space-y-1.5">
-                  <div className="flex items-baseline justify-between gap-2">
+                  <div className="flex items-center justify-between gap-2">
                     <label
                       className="text-xs font-medium text-foreground/85"
                       htmlFor="session-commit-message"
                     >
                       {t("workspaceCommitMessageLabel")}
                     </label>
-                    <span className="text-[10px] text-muted-foreground/70">
-                      {t("workspaceCommitMessageOptional")}
-                    </span>
+                    <label className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+                      {t("workspaceCommitModel")}
+                      <select
+                        aria-label={t("workspaceCommitModel")}
+                        className="max-w-44 truncate rounded-md border border-border bg-background px-2 py-1 text-foreground focus-visible:outline-2 focus-visible:outline-primary"
+                        value={selectedModelRef ?? ""}
+                        disabled={busy || apiModels.length === 0}
+                        onChange={(event) => {
+                          cancelGeneration();
+                          remember(projectId, event.target.value);
+                        }}
+                      >
+                        {apiModels.length === 0 ? (
+                          <option value="">
+                            {t("workspaceCommitNoModel")}
+                          </option>
+                        ) : null}
+                        {apiModels.map((option) => {
+                          const reference = formatModelReference(
+                            option.providerId,
+                            option.modelId,
+                          )!;
+                          return (
+                            <option key={reference} value={reference}>
+                              {option.providerId} / {option.label}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </label>
                   </div>
-                  <TextArea
-                    id="session-commit-message"
-                    aria-label={t("workspaceCommitMessageLabel")}
-                    value={message}
-                    onChange={(event) => setMessage(event.target.value)}
-                    placeholder={t("workspaceCommitMessagePlaceholder")}
-                    rows={4}
-                    fullWidth
-                    className="text-xs"
-                  />
-                  <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
-                    <Sparkles
-                      size={11}
-                      className="mt-[3px] shrink-0 text-primary/70"
+                  <div className="relative">
+                    <TextArea
+                      id="session-commit-message"
+                      aria-label={t("workspaceCommitMessageLabel")}
+                      value={message}
+                      onChange={(event) => setMessage(event.target.value)}
+                      placeholder={t("workspaceCommitMessagePlaceholder")}
+                      rows={4}
+                      fullWidth
+                      disabled={generating || busy}
+                      className="pr-12 text-xs"
                     />
-                    <span>{t("workspaceCommitMessageHint")}</span>
+                    <div className="absolute right-2 top-2">
+                      {generating ? (
+                        <Tooltip delay={300}>
+                          <Button
+                            isIconOnly
+                            variant="ghost"
+                            size="sm"
+                            onPress={cancelGeneration}
+                            aria-label={t("workspaceCommitStopGenerating")}
+                          >
+                            <X size={14} />
+                          </Button>
+                          <Tooltip.Content>
+                            {t("workspaceCommitStopGenerating")}
+                          </Tooltip.Content>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip delay={300}>
+                          <Button
+                            isIconOnly
+                            variant="ghost"
+                            size="sm"
+                            onPress={() => void generate()}
+                            isDisabled={
+                              !selectedModelRef || changedFiles === 0 || busy
+                            }
+                            aria-label={t("workspaceCommitGenerate")}
+                          >
+                            <Sparkles size={14} />
+                          </Button>
+                          <Tooltip.Content>
+                            {t("workspaceCommitGenerate")}
+                          </Tooltip.Content>
+                        </Tooltip>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    {t("workspaceCommitMessageHint")}
                   </p>
                 </div>
 
@@ -256,7 +448,10 @@ export function SessionCommitDialog({
                     onPress={() => void run(false)}
                     isPending={submitting === "commit"}
                     isDisabled={
-                      !sessionId || changedFiles === 0 || submitting === "push"
+                      !sessionId ||
+                      changedFiles === 0 ||
+                      submitting === "push" ||
+                      generating
                     }
                   >
                     {t("workspaceCommitOnly")}
@@ -269,7 +464,8 @@ export function SessionCommitDialog({
                     isDisabled={
                       !sessionId ||
                       changedFiles === 0 ||
-                      submitting === "commit"
+                      submitting === "commit" ||
+                      generating
                     }
                   >
                     {t("workspaceCommitPush")}

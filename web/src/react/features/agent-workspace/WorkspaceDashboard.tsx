@@ -990,6 +990,7 @@ function RepositoryCard({
       <SessionCommitDialog
         isOpen={commitOpen}
         sessionId={environment.sessionId}
+        projectId={environment.projectId}
         rootId={repository?.rootId}
         rootName={repository?.name}
         branch={environment.branch}

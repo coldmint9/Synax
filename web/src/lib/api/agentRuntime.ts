@@ -12,6 +12,8 @@ export type BackendId =
 import { apiFetch, apiRequest } from "./origin";
 import { createAppError, handleError } from "../errors";
 import type { SkillSummary } from "./skills";
+import { streamCommitMessage } from "./commitMessageStream";
+import type { CommitMessageStreamEvent } from "./commitMessageStream";
 
 const BASE = "/api/agent-runtime";
 
@@ -603,7 +605,7 @@ export interface SessionGitCommitResult {
   branch: string;
   commitSha: string;
   message: string;
-  /** True when the message was generated because the user left the input empty. */
+  /** Retained for older clients; explicit commits always return false. */
   messageGenerated: boolean;
   /** `null` for a commit-only run, where no push was attempted. */
   pushed: boolean | null;
@@ -928,14 +930,19 @@ export const agentRuntimeApi = {
     request<SessionEnvironmentFileView>(
       `/sessions/${encodeURIComponent(sessionId)}/environment/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}${rootId ? `&rootId=${encodeURIComponent(rootId)}` : ""}`,
     ),
+  streamCommitMessage: (
+    sessionId: string,
+    body: { rootId?: string; model: string },
+    onEvent: (event: CommitMessageStreamEvent) => void,
+    signal: AbortSignal,
+  ) => streamCommitMessage(sessionId, body, onEvent, signal),
   commitSessionWorkspace: (
     sessionId: string,
     body: {
-      message?: string;
-      model?: string;
+      message: string;
       push?: boolean;
       rootId?: string;
-    } = {},
+    },
   ) =>
     request<SessionGitCommitResult>(
       `/sessions/${encodeURIComponent(sessionId)}/git/commit`,

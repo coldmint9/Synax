@@ -11,11 +11,40 @@ import type { SessionGitCommitResult } from "../../../../lib/api/agentRuntime";
 import { useShellStore } from "../../../state/shellStore";
 
 const commitSessionWorkspace = vi.fn();
+const streamCommitMessage = vi.fn();
+vi.mock("../../settings/useConfig", () => ({
+  useConfig: () => ({
+    globalConfig: {
+      providers: [
+        {
+          id: "p1",
+          label: "Provider 1",
+          kind: "api",
+          status: "live",
+          models: [{ id: "m1", label: "M1" }],
+        },
+      ],
+      providerConnections: {
+        p1: { providerId: "p1", apiKeyMasked: "te****ey" },
+      },
+    },
+    providers: [
+      {
+        id: "p1",
+        label: "Provider 1",
+        kind: "api",
+        status: "live",
+        models: [{ id: "m1", label: "M1" }],
+      },
+    ],
+  }),
+}));
 
 vi.mock("../../../../lib/api/agentRuntime", () => ({
   agentRuntimeApi: {
     commitSessionWorkspace: (...args: unknown[]) =>
       commitSessionWorkspace(...args),
+    streamCommitMessage: (...args: unknown[]) => streamCommitMessage(...args),
   },
 }));
 
@@ -40,6 +69,7 @@ function renderDialog(
     <SessionCommitDialog
       isOpen
       sessionId="session-1"
+      projectId="project-1"
       branch="feature/commit-ui"
       changedFiles={3}
       onClose={onClose}
@@ -54,18 +84,20 @@ describe("SessionCommitDialog", () => {
   beforeEach(() => {
     cleanup();
     commitSessionWorkspace.mockReset();
+    streamCommitMessage.mockReset();
     useShellStore.setState((state) => ({
       preferences: { ...state.preferences, locale: "zh" },
     }));
   });
 
-  it("shows the target branch, the change count and the auto-generate hint", () => {
+  it("shows the branch, model and explicit generation control", () => {
     renderDialog();
 
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByText("feature/commit-ui")).toBeTruthy();
     expect(screen.getByText("3 个文件已变更")).toBeTruthy();
-    expect(screen.getByText("可选")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "生成提交信息" })).toBeTruthy();
+    expect(screen.getByLabelText("生成模型")).toBeTruthy();
     expect(screen.getByLabelText("提交信息")).toBeTruthy();
     expect(screen.getByRole("button", { name: "仅提交" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "提交并推送" })).toBeTruthy();
@@ -79,15 +111,102 @@ describe("SessionCommitDialog", () => {
     expect(screen.getByRole("button", { name: "提交并推送" })).toBeDisabled();
   });
 
-  it("asks the model to write the message when the input is left empty", async () => {
+  it("rejects an empty submit without calling the model or committing", async () => {
+    renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: "提交并推送" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "请先填写或生成",
+    );
+    expect(streamCommitMessage).not.toHaveBeenCalled();
+    expect(commitSessionWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("streams into the editor, then commits the reviewed final message", async () => {
+    streamCommitMessage.mockImplementation(async (_id, _body, onEvent) => {
+      onEvent({ type: "delta", text: "fix:" });
+      await Promise.resolve();
+      onEvent({ type: "delta", text: " new message" });
+      onEvent({ type: "final", message: "fix: new message" });
+    });
     commitSessionWorkspace.mockResolvedValue(committed);
     renderDialog();
-
-    fireEvent.click(screen.getByRole("button", { name: "提交并推送" }));
-
+    fireEvent.click(screen.getByRole("button", { name: "生成提交信息" }));
     await waitFor(() =>
-      expect(commitSessionWorkspace).toHaveBeenCalledWith("session-1", {}),
+      expect(screen.getByLabelText("提交信息")).toHaveValue("fix: new message"),
     );
+    expect(streamCommitMessage.mock.calls[0][1]).toMatchObject({
+      model: "p1/m1",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交并推送" }));
+    await waitFor(() =>
+      expect(commitSessionWorkspace).toHaveBeenCalledWith("session-1", {
+        message: "fix: new message",
+      }),
+    );
+  });
+
+  it("restores the original content when generation fails", async () => {
+    streamCommitMessage.mockImplementation(async (_id, _body, onEvent) => {
+      onEvent({ type: "delta", text: "partial" });
+      throw new Error("model failed");
+    });
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("提交信息"), {
+      target: { value: "keep me" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成提交信息" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "model failed",
+    );
+    expect(screen.getByLabelText("提交信息")).toHaveValue("keep me");
+  });
+
+  it("cancels generation and restores the prior message", async () => {
+    let deliver!: (event: { type: "delta"; text: string }) => void;
+    let pendingSignal!: AbortSignal;
+    streamCommitMessage.mockImplementation((_id, _body, callback, signal) => {
+      deliver = callback;
+      pendingSignal = signal;
+      return new Promise<void>(() => {});
+    });
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("提交信息"), {
+      target: { value: "original" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成提交信息" }));
+    act(() => deliver({ type: "delta", text: "partial" }));
+    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    expect(pendingSignal.aborted).toBe(true);
+    expect(screen.getByLabelText("提交信息")).toHaveValue("original");
+    act(() => deliver({ type: "delta", text: "late" }));
+    expect(screen.getByLabelText("提交信息")).toHaveValue("original");
+  });
+
+  it("discards stale stream events after changing repositories", async () => {
+    let deliver!: (event: { type: "final"; message: string }) => void;
+    let pendingSignal!: AbortSignal;
+    streamCommitMessage.mockImplementation((_id, _body, callback, signal) => {
+      deliver = callback;
+      pendingSignal = signal;
+      return new Promise<void>(() => {});
+    });
+    const props = {
+      isOpen: true,
+      sessionId: "session-1",
+      projectId: "project-1",
+      branch: "main",
+      changedFiles: 3,
+      onClose: vi.fn(),
+      onCommitted: vi.fn(),
+    };
+    const { rerender } = render(
+      <SessionCommitDialog {...props} rootId="primary" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "生成提交信息" }));
+    rerender(<SessionCommitDialog {...props} rootId="secondary" />);
+    expect(pendingSignal.aborted).toBe(true);
+    act(() => deliver({ type: "final", message: "stale" }));
+    expect(screen.getByLabelText("提交信息")).toHaveValue("");
   });
 
   it("sends a trimmed message and reports the pushed commit", async () => {
@@ -118,10 +237,14 @@ describe("SessionCommitDialog", () => {
     } satisfies SessionGitCommitResult);
     renderDialog();
 
+    fireEvent.change(screen.getByLabelText("提交信息"), {
+      target: { value: "fix: local" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "仅提交" }));
 
     await waitFor(() =>
       expect(commitSessionWorkspace).toHaveBeenCalledWith("session-1", {
+        message: "fix: local",
         push: false,
       }),
     );
@@ -135,7 +258,9 @@ describe("SessionCommitDialog", () => {
       new Error("remote rejected the push"),
     );
     renderDialog();
-
+    fireEvent.change(screen.getByLabelText("提交信息"), {
+      target: { value: "fix: retry" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "提交并推送" }));
 
     const alert = await screen.findByRole("alert");
@@ -157,6 +282,7 @@ describe("SessionCommitDialog", () => {
       const props = {
         isOpen: true,
         sessionId: "session-1",
+        projectId: "project-1",
         branch: "main",
         changedFiles: 3,
         onClose: vi.fn(),
@@ -165,6 +291,9 @@ describe("SessionCommitDialog", () => {
       const { rerender } = render(
         <SessionCommitDialog {...props} rootId="primary" rootName="API" />,
       );
+      fireEvent.change(screen.getByLabelText("提交信息"), {
+        target: { value: "fix: first" },
+      });
       const submit = screen.getByRole("button", { name: "仅提交" });
       act(() => {
         fireEvent.click(submit);
@@ -173,6 +302,7 @@ describe("SessionCommitDialog", () => {
       expect(commitSessionWorkspace).toHaveBeenCalledTimes(1);
       expect(commitSessionWorkspace).toHaveBeenCalledWith("session-1", {
         rootId: "primary",
+        message: "fix: first",
         push: false,
       });
 
@@ -191,6 +321,9 @@ describe("SessionCommitDialog", () => {
         ...committed,
         rootId: "secondary",
       });
+      fireEvent.change(screen.getByLabelText("提交信息"), {
+        target: { value: "fix: second" },
+      });
       fireEvent.click(screen.getByRole("button", { name: "仅提交" }));
       await waitFor(() =>
         expect(props.onCommitted).toHaveBeenCalledWith({
@@ -200,6 +333,7 @@ describe("SessionCommitDialog", () => {
       );
       expect(commitSessionWorkspace).toHaveBeenLastCalledWith("session-1", {
         rootId: "secondary",
+        message: "fix: second",
         push: false,
       });
     },

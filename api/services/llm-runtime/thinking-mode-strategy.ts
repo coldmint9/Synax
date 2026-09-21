@@ -243,6 +243,7 @@ const nativeReasoningModelStrategy: ThinkingModeStrategy = {
       ctx.npm === "@ai-sdk/google" ||
       ctx.npm === "@ai-sdk/anthropic" ||
       ctx.npm === "@ai-sdk/openai" ||
+      ctx.npm === "@ai-sdk/openai-compatible" ||
       ctx.npm === "@ai-sdk/xai"
     );
   },

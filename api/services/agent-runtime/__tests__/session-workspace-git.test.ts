@@ -141,6 +141,13 @@ describe('session workspace Git roots', () => {
     }
   })
 
+  it('rejects an empty message without staging or generating', async () => {
+    const before = [primary, reference].map(repositoryState)
+    await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: '  ', push: false }))
+      .rejects.toMatchObject({ code: 'GIT_COMMIT_MESSAGE_MISSING' })
+    expect([primary, reference].map(repositoryState)).toEqual(before)
+  })
+
   it('commits the selected root only, then lets the other dirty root commit independently', async () => {
     // Keep a cached snapshot so each successful commit must also refresh its repository status.
     await getSessionEnvironment(sessionId)

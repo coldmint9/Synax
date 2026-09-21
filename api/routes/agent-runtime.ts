@@ -86,6 +86,10 @@ import {
   switchSessionGitBranch,
 } from "../services/agent-runtime/session-git-branches.js";
 import { commitSessionWorkspace } from "../services/agent-runtime/session-git-commit.js";
+import {
+  prepareCommitMessageGeneration,
+  streamSessionCommitMessage,
+} from "../services/agent-runtime/session-commit-message-stream.js";
 import { resolveSessionConfiguredContextLimit } from "../services/agent-runtime/session-context-limit.js";
 import {
   RUNTIME_PROTOCOL_SCHEMA,
@@ -837,19 +841,22 @@ agentRuntimeRoutes.post(
   },
 );
 
-agentRuntimeRoutes.delete("/sessions/:sessionId/processes/:processId", async (c) => {
-  try {
-    await deleteSessionBackgroundProcess(
-      c.req.param("sessionId"),
-      c.req.param("processId"),
-    );
-    return c.json({
-      items: listSessionBackgroundProcesses(c.req.param("sessionId")),
-    });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
+agentRuntimeRoutes.delete(
+  "/sessions/:sessionId/processes/:processId",
+  async (c) => {
+    try {
+      await deleteSessionBackgroundProcess(
+        c.req.param("sessionId"),
+        c.req.param("processId"),
+      );
+      return c.json({
+        items: listSessionBackgroundProcesses(c.req.param("sessionId")),
+      });
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 
 agentRuntimeRoutes.get("/sessions/:sessionId/environment", async (c) => {
   try {
@@ -930,11 +937,56 @@ agentRuntimeRoutes.post(
   },
 );
 
+const commitMessageStreamSchema = z.object({
+  rootId: z.string().min(1).optional(),
+  model: z.string().trim().min(1).max(256),
+});
+
+agentRuntimeRoutes.post(
+  "/sessions/:sessionId/git/commit-message/stream",
+  async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) return c.json({ error: body.error }, 400);
+    const parsed = commitMessageStreamSchema.safeParse(body.data ?? {});
+    if (!parsed.success) return validationError(c, parsed.error);
+    let prepared: Awaited<ReturnType<typeof prepareCommitMessageGeneration>>;
+    try {
+      prepared = await prepareCommitMessageGeneration(
+        c.req.param("sessionId"),
+        parsed.data,
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+    return streamSSE(c, async (stream) => {
+      try {
+        for await (const event of streamSessionCommitMessage(
+          prepared,
+          c.req.raw.signal,
+        )) {
+          await stream.writeSSE({ data: JSON.stringify(event) });
+        }
+      } catch (error) {
+        if (!c.req.raw.signal.aborted) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          await stream
+            .writeSSE({
+              data: JSON.stringify({ type: "error", error: message }),
+            })
+            .catch(() => {});
+        }
+      } finally {
+        if (!c.req.raw.signal.aborted)
+          await stream.writeSSE({ data: "[DONE]" }).catch(() => {});
+      }
+    });
+  },
+);
+
 const commitSessionWorkspaceSchema = z.object({
   rootId: z.string().min(1).optional(),
-  // Empty message = generate one with the session's current model.
-  message: z.string().max(2000).optional(),
-  model: z.string().max(256).optional(),
+  message: z.string().trim().min(1).max(2000),
   // Absent means "push after committing" so existing senders keep working.
   push: z.boolean().optional(),
 });

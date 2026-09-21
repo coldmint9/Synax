@@ -112,6 +112,19 @@ describe('thinking-mode-strategy', () => {
     })
   })
 
+  it('forwards reasoning effort for custom API reasoning models without disabling thinking', () => {
+    const base = deepSeekCustomApiSelection()
+    const selection = {
+      ...base,
+      providerId: 'custom-api:glm',
+      modelId: 'glm-5.3-flash',
+      provider: { ...base.provider, id: 'custom-api:glm' },
+      config: { ...base.config, providerId: 'custom-api:glm', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4' },
+    } satisfies ResolvedModelSelection
+    expect(buildThinkingStreamOptions(selection, { reasoningEffort: 'high' }).providerOptions?.['custom-api:glm']).toEqual({ reasoning_effort: 'high' })
+    expect(buildThinkingStreamOptions({ ...selection, modelDef: { ...selection.modelDef, reasoning: false } }, { reasoningEffort: 'high' }).providerOptions).toBeUndefined()
+  })
+
   it('uses native reasoning strategy for catalog reasoning models', () => {
     expect(resolveThinkingModeStrategy({
       providerId: 'google',

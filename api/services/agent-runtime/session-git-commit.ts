@@ -1,7 +1,5 @@
-import { normalizeResultUsage } from "../llm-runtime/usage.js";
 import path from "node:path";
 import { logger } from "../../lib/logger.js";
-import { generateGatewayTextResult } from "../llm-runtime/gateway.js";
 import {
   invalidateSessionEnvironment,
   resolveSessionRepository,
@@ -17,19 +15,15 @@ import {
   AgentRuntimeError,
   AgentValidationError,
 } from "./runtime-errors.js";
-import { finishAuxUsage, startAuxUsage } from "./usage-projection.js";
 
 const MAX_BUFFER = 8 * 1024 * 1024;
 const COMMIT_TIMEOUT_MS = 120_000;
 const MAX_COMMIT_MESSAGE_LEN = 200;
-const MAX_DIFF_CHARS = 6_000;
 
 export interface SessionGitCommitInput {
   rootId?: string;
-  /** User supplied commit message. Empty/absent means "generate one". */
+  /** Explicit, reviewed commit message; empty messages are rejected. */
   message?: string | null;
-  /** Explicit model override for generation; defaults to the session's model. */
-  model?: string | null;
   /** Defaults to `true`. `false` commits locally without touching the remote. */
   push?: boolean | null;
 }
@@ -102,12 +96,6 @@ function getSession(sessionId: string) {
   }
 }
 
-/** Model the session is currently running with, so generated text matches it. */
-function resolveSessionModel(sessionId: string): string | null {
-  const runs = agentRuntimeStore.listRuns(sessionId);
-  return runs.find((run) => run.model?.trim())?.model?.trim() ?? null;
-}
-
 /**
  * Keep the generated text usable as a `git commit -m` argument: one line,
  * no wrapping quotes, no "Commit message:" preamble.
@@ -132,69 +120,11 @@ export function normalizeCommitMessage(raw: string): string {
   return message.slice(0, MAX_COMMIT_MESSAGE_LEN);
 }
 
-function buildCommitPrompt(input: {
-  branch: string;
-  branchSummary: string;
-  changedFiles: string;
-  diffExcerpt: string;
-  locale: "zh" | "en";
-}): string {
-  const instruction =
-    input.locale === "zh"
-      ? "用一行中文写一条 Git 提交信息，使用约定式提交前缀（如 feat/fix/refactor/docs/chore），不超过 72 个字符。只输出提交信息本身，不要引号、句号或任何解释。"
-      : "Write a single-line Git commit message with a conventional-commit prefix (feat/fix/refactor/docs/chore), at most 72 characters. Output only the message, without quotes, trailing period, or explanation.";
-  return [
-    instruction,
-    "",
-    `Branch: ${input.branch}`,
-    "Changed files:",
-    input.changedFiles || "(none)",
-    "",
-    "Staged diff summary:",
-    input.branchSummary || "(empty)",
-    "",
-    "Staged diff excerpt:",
-    input.diffExcerpt || "(empty)",
-  ].join("\n");
-}
-
-async function generateCommitMessage(input: {
-  sessionId: string;
-  projectId: string;
-  model: string | null;
-  branch: string;
-  branchSummary: string;
-  changedFiles: string;
-  diffExcerpt: string;
-  locale: "zh" | "en";
-}): Promise<string | null> {
-  const usageId = startAuxUsage(input.sessionId, "git-commit-message");
-  try {
-    const result = await generateGatewayTextResult({
-      projectId: input.projectId,
-      purpose: "commit-message",
-      ...(input.model ? { model: input.model } : {}),
-      messages: [{ role: "user", content: buildCommitPrompt(input) }],
-      maxTokens: 200,
-      temperature: 0.2,
-    });
-    finishAuxUsage(usageId, normalizeResultUsage(result));
-    return normalizeCommitMessage(String(result.text ?? "")) || null;
-  } catch (err) {
-    finishAuxUsage(usageId);
-    logger.warn(
-      { sessionId: input.sessionId, err },
-      "[git-commit] commit message generation failed",
-    );
-    return null;
-  }
-}
-
 /**
  * Commit everything in the session workspace on its current branch.
  *
  * Explicit user action from the workspace panel: the commit message is either
- * supplied by the user or generated with the session's current model.
+ * explicitly supplied by the user after optional separate generation.
  * `push: false` stops after the local commit so the user can inspect it first.
  */
 export async function commitSessionWorkspace(
@@ -257,41 +187,16 @@ export async function commitSessionWorkspace(
     );
   }
 
-  await runGit(workspacePath, ["add", "-A"]);
-
-  const stagedNames = (
-    await runGit(workspacePath, ["diff", "--cached", "--name-status"])
-  ).stdout.trim();
-  const stagedSummary = (
-    await runGit(workspacePath, ["diff", "--cached", "--stat"])
-  ).stdout.trim();
-  const stagedPatch = (
-    await runGit(workspacePath, ["diff", "--cached"])
-  ).stdout.slice(0, MAX_DIFF_CHARS);
-
-  let message = normalizeCommitMessage(input.message ?? "");
-  let messageGenerated = false;
-  if (!message) {
-    message =
-      (await generateCommitMessage({
-        sessionId,
-        projectId: session.projectId,
-        model: input.model?.trim() || resolveSessionModel(sessionId),
-        branch,
-        branchSummary: stagedSummary,
-        changedFiles: stagedNames,
-        diffExcerpt: stagedPatch,
-        locale: /[\u4e00-\u9fff]/.test(session.prompt ?? "") ? "zh" : "en",
-      })) ?? "";
-    messageGenerated = true;
-  }
+  const message = normalizeCommitMessage(input.message ?? "");
   if (!message) {
     throw new AgentRuntimeError(
-      "Could not generate a commit message. Enter one manually.",
+      "Enter a commit message or generate one first.",
       "GIT_COMMIT_MESSAGE_MISSING",
       422,
     );
   }
+
+  await runGit(workspacePath, ["add", "-A"]);
 
   const commit = await runGit(workspacePath, ["commit", "-m", message], true);
   if (!commit.ok) {
@@ -346,7 +251,7 @@ export async function commitSessionWorkspace(
       sessionId,
       branch,
       commitSha,
-      messageGenerated,
+      messageGenerated: false,
       files: changedFiles.length,
       pushed,
     },
@@ -360,7 +265,7 @@ export async function commitSessionWorkspace(
     branch,
     commitSha,
     message,
-    messageGenerated,
+    messageGenerated: false,
     pushed,
     upstream,
     committedFiles: changedFiles.length,
