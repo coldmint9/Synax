@@ -187,7 +187,7 @@ describe('session workspace Git roots', () => {
         headCommitSha: untouchedBefore.head, dirty: untouchedBefore.status !== '',
       })
     }
-  })
+  }, 20_000) // Two real commits plus per-root index/status snapshots need an integration budget.
 
   it.each([
     { selector: 'an unknown root', rootId: 'unknown-root', error: 'The selected project is not in this workspace.' },

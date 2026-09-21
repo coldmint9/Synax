@@ -222,25 +222,28 @@ describe("session title after first run", () => {
     });
   });
 
-  it("still summarizes sessions left with the legacy placeholder title", async () => {
-    const session = agentSessionRuntime.create({
-      projectId: "project-alpha",
-      profileId: "synax",
-      prompt: LONG_INPUT,
-      sessionMetadata: {
-        mode: "goal",
-        source: "session-page",
-        goalContent: LONG_INPUT,
-      },
-    });
-    agentRuntimeStore.updateSession(session.id, { title: "new agent" });
+  it.each(["new agent", "新会话", " NEW AGENT "])(
+    "still summarizes the legacy placeholder %s",
+    async (title) => {
+      const session = agentSessionRuntime.create({
+        projectId: "project-alpha",
+        profileId: "synax",
+        prompt: LONG_INPUT,
+        sessionMetadata: {
+          mode: "goal",
+          source: "session-page",
+          goalContent: LONG_INPUT,
+        },
+      });
+      agentRuntimeStore.updateSession(session.id, { title });
 
-    ensureSessionTitleGenerated(session.id);
+      ensureSessionTitleGenerated(session.id);
 
-    await vi.waitFor(() => {
-      expect(agentRuntimeStore.getSession(session.id).title).toBe("问候用户");
-    });
-  });
+      await vi.waitFor(() => {
+        expect(agentRuntimeStore.getSession(session.id).title).toBe("问候用户");
+      });
+    },
+  );
 
   it("scheduleSessionTitleAfterRunStart generates title for placeholder sessions", async () => {
     const session = agentSessionRuntime.create({

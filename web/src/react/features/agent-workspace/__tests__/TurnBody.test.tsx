@@ -12,7 +12,7 @@ const emptyTurn: InterleavedTurn = {
 };
 
 describe("TurnBody", () => {
-  it("keeps the latest activity waiting after tools finish, and removes the dots when collapsed or stopped", () => {
+  it("keeps the work-log loader active while collapsed and removes it when work stops", () => {
     const turn: InterleavedTurn = {
       ...emptyTurn,
       status: "completed",
@@ -40,24 +40,28 @@ describe("TurnBody", () => {
       "data-live",
       "true",
     );
-    expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
     expect(
       container.querySelector("[data-activity-body] [data-thinking-dot]"),
     ).toBeNull();
 
     fireEvent.click(heading);
     expect(heading).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelector("[data-thinking-dot]")).toBeNull();
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+    expect(container.querySelector(".bui-thinking-reveal")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
     expect(container.querySelector(".bui-thinking")).toHaveAttribute(
       "data-live",
       "true",
     );
     fireEvent.click(heading);
-    expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
 
     rerender(<TurnBody turn={turn} entryId="entry-1" isWorking={false} />);
     expect(container.querySelector('[data-live="true"]')).toBeNull();
-    expect(container.querySelector("[data-thinking-dot]")).toBeNull();
+    expect(container.querySelector(".loading-state-cell")).toBeNull();
   });
 
   it("shows the thinking dots while a streaming turn is waiting for content", () => {

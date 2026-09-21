@@ -1,11 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { loadRepositoryCorpus, sliceSourceByRange } from '../corpus-loader.js';
 import { serializeChunkContext } from '../serializers.js';
 
 describe('corpus-loader', () => {
+  let corpus: Awaited<ReturnType<typeof loadRepositoryCorpus>>;
+  // Parse the real repository once, outside each 5s unit-test deadline.
+  beforeAll(async () => {
+    corpus = await loadRepositoryCorpus({ maxChunks: 20 });
+  }, 30_000);
   it('从 Synax 仓库构建 chunk contexts', async () => {
-    const corpus = await loadRepositoryCorpus({ maxChunks: 20 });
     expect(corpus.chunkContexts.length).toBe(20);
     expect(corpus.codeIndex.stats.fileCount).toBeGreaterThan(100);
     const first = corpus.chunkContexts[0];
@@ -19,7 +23,6 @@ describe('corpus-loader', () => {
   });
 
   it('chunk-enriched 序列化包含源码', async () => {
-    const corpus = await loadRepositoryCorpus({ maxChunks: 1 });
     const serialized = serializeChunkContext(corpus.chunkContexts[0], 'chunk-enriched');
     expect(serialized).toContain('path:');
     expect(serialized).toContain('---');

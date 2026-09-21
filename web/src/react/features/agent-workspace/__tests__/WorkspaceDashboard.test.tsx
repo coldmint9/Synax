@@ -634,9 +634,10 @@ describe("WorkspaceDashboard", () => {
     });
     const view = renderDashboard();
     expect(screen.getByText("Review outputs")).toBeTruthy();
-    expect(screen.getByRole("progressbar")).toHaveAttribute(
-      "aria-valuenow",
-      "0",
+    expect(screen.getByText("0 / 1")).toBeVisible();
+    expect(screen.getByText("Review outputs").closest("li")).toHaveAttribute(
+      "data-status",
+      "in_progress",
     );
     view.rerender(
       <WorkspaceDashboard

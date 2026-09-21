@@ -80,9 +80,13 @@ describe("SubagentControls", () => {
     await waitFor(() =>
       expect(actions.deleteSession).toHaveBeenCalledWith("child"),
     );
-    expect(
-      screen.queryByRole("button", { name: "Destroy subagent" }),
-    ).toBeNull();
+    // Calling the API is synchronous; removing the controls happens only after
+    // the awaited deletion finishes and React commits the resulting state.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Destroy subagent" }),
+      ).toBeNull(),
+    );
     expect(actions.cancelSessionRun).not.toHaveBeenCalled();
   });
   it("keeps stop available and reports an unconfirmed shutdown error", async () => {
