@@ -1,0 +1,450 @@
+.artifact-card {
+  --artifact-muted: var(--muted-foreground, #777b85);
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  margin: 12px 0;
+  border: 1px solid var(--border, #dedee5);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  color: var(--foreground, #24242b);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+.artifact-card button,
+.artifact-card select,
+.artifact-card input,
+.artifact-card textarea {
+  font: inherit;
+  color: inherit;
+}
+.artifact-card button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 8px;
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.artifact-card button:hover:not(:disabled) {
+  background: var(--surface-secondary, #f3f3f6);
+  border-color: var(--border, #dedee5);
+}
+.artifact-card button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.artifact-card :is(button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--accent, #7c3aed);
+  outline-offset: 2px;
+}
+.artifact-card select,
+.artifact-card input:not([type="checkbox"]):not([type="range"]),
+.artifact-card textarea {
+  border: 1px solid var(--border, #dedee5);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  padding: 4px 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+.artifact-card-header,
+.artifact-toolbar,
+.artifact-card-footer,
+.artifact-preview-footer,
+.artifact-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+}
+.artifact-card-header {
+  padding-bottom: 8px;
+}
+.artifact-card-title,
+.artifact-header-actions,
+.artifact-tabs,
+.artifact-run-actions,
+.artifact-card-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.artifact-card-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 13px;
+}
+.artifact-mark {
+  display: grid;
+  place-items: center;
+  background: var(--surface-secondary, #f3f3f6);
+  border: 1px solid var(--border, #dedee5);
+  border-radius: 7px;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+}
+.artifact-badge {
+  color: var(--artifact-muted);
+  font-size: 10px;
+  white-space: nowrap;
+  border: 1px solid var(--border, #dedee5);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.artifact-header-actions select {
+  max-width: 115px;
+  font-size: 11px;
+}
+.artifact-toolbar {
+  border-bottom: 1px solid var(--border, #dedee5);
+  padding-top: 0;
+  padding-bottom: 7px;
+  flex-wrap: wrap;
+}
+.artifact-tabs button {
+  color: var(--artifact-muted);
+  font-size: 11px;
+}
+.artifact-tabs button[aria-selected="true"] {
+  color: var(--foreground, #24242b);
+  background: var(--surface-secondary, #f3f3f6);
+}
+.artifact-preview-stage {
+  position: relative;
+  min-height: 96px;
+  background: var(--surface-secondary, #f7f7f9);
+}
+.artifact-preview-container,
+.artifact-preview-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.artifact-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  padding: 24px;
+  text-align: center;
+  color: var(--artifact-muted);
+}
+.artifact-run-prompt {
+  position: absolute;
+  inset: 0;
+}
+.artifact-empty strong {
+  color: var(--foreground, #24242b);
+  font-size: 14px;
+  font-weight: 500;
+}
+.artifact-empty p {
+  max-width: 420px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.artifact-card button.artifact-primary {
+  background: var(--foreground, #24242b);
+  color: var(--surface, #fff);
+  border-color: var(--foreground, #24242b);
+  padding: 6px 12px;
+}
+.artifact-card button.artifact-primary:hover:not(:disabled) {
+  opacity: 0.9;
+  background: var(--foreground, #24242b);
+}
+.artifact-preview-footer,
+.artifact-card-footer {
+  color: var(--artifact-muted);
+  font-size: 10px;
+  padding: 7px 12px;
+  flex-wrap: wrap;
+}
+.artifact-preview-footer {
+  border-top: 1px solid var(--border, #dedee5);
+}
+.artifact-preview-footer label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.artifact-card-footer {
+  border-top: 1px solid var(--border, #dedee5);
+}
+.artifact-card-footer button {
+  font-size: 11px;
+}
+.artifact-starting {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #dedee5);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+.artifact-message {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border, #dedee5);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.artifact-message button {
+  margin-left: 8px;
+  text-decoration: underline;
+}
+.artifact-error {
+  color: var(--danger, #b42336);
+  background: color-mix(in srgb, var(--danger, #b42336) 5%, transparent);
+}
+.artifact-error pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.artifact-source,
+.artifact-qa {
+  padding: 12px;
+  min-height: 96px;
+}
+.artifact-compare {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--artifact-muted);
+}
+.artifact-source details {
+  border: 1px solid var(--border, #dedee5);
+  border-radius: 7px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.artifact-source summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  font-family: monospace;
+  overflow-wrap: anywhere;
+}
+.artifact-source summary .artifact-badge {
+  margin-left: 8px;
+}
+.artifact-source pre {
+  max-height: 400px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  background: var(--surface-secondary, #f7f7f9);
+  font-size: 11px;
+  tab-size: 2;
+}
+.artifact-source-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1px;
+  background: var(--border, #dedee5);
+}
+.artifact-source-columns > div {
+  min-width: 0;
+  background: var(--surface, #fff);
+}
+.artifact-source-label {
+  display: block;
+  padding: 4px 10px;
+  font-size: 10px;
+  color: var(--artifact-muted);
+}
+.artifact-section-heading {
+  padding: 0 0 8px;
+}
+.artifact-section-heading strong {
+  font-weight: 600;
+}
+.artifact-muted {
+  color: var(--artifact-muted);
+  font-size: 11px;
+  margin: 0 0 14px;
+}
+.artifact-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 16px;
+  margin-bottom: 18px;
+}
+.artifact-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+}
+.artifact-control > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.artifact-control :is(input, select) {
+  max-width: 55%;
+}
+.artifact-control input[type="range"] {
+  width: 100px;
+  accent-color: var(--foreground, #24242b);
+}
+.artifact-control output {
+  font-size: 10px;
+  min-width: 20px;
+  text-align: right;
+}
+.artifact-feedback-label {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+.artifact-qa textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+.artifact-annotation {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid var(--border, #dedee5);
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+.artifact-annotation span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.artifact-annotation code {
+  overflow-wrap: anywhere;
+  max-width: 50%;
+  font-size: 10px;
+}
+.artifact-card-expanded {
+  position: fixed;
+  inset: 24px;
+  width: auto;
+  max-width: 1600px;
+  margin: 0 auto;
+  z-index: 90;
+  overflow: auto;
+  box-shadow: 0 18px 80px #0005;
+}
+.artifact-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #0007;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 110;
+}
+.artifact-dialog {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #dedee5);
+  border-radius: 12px;
+  box-shadow: 0 20px 80px #0004;
+  padding: 20px;
+  width: 520px;
+  max-width: 100%;
+  max-height: 85vh;
+  overflow: auto;
+}
+.artifact-dialog h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.artifact-dialog p {
+  font-size: 12px;
+  color: var(--artifact-muted);
+}
+.artifact-dialog pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 45vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border, #dedee5);
+  border-radius: 7px;
+  background: var(--surface-secondary, #f7f7f9);
+  font-size: 11px;
+}
+.artifact-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+@media (max-width: 520px) {
+  .artifact-card-title > .artifact-badge {
+    display: none;
+  }
+  .artifact-card-header,
+  .artifact-toolbar {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .artifact-source-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .artifact-card-expanded {
+    inset: 8px;
+  }
+  .artifact-header-actions select {
+    max-width: 85px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .artifact-card * {
+    scroll-behavior: auto;
+    transition: none;
+    animation: none;
+  }
+}
+.artifact-logs {
+  margin-top: 14px;
+  color: var(--artifact-muted);
+  font-size: 11px;
+}
+.artifact-logs summary {
+  cursor: pointer;
+}
+.artifact-logs pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow: auto;
+  background: var(--surface-secondary, #f7f7f9);
+  padding: 10px;
+}
+.artifact-dimensions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}

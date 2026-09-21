@@ -1,3 +1,10 @@
+import {
+  ArtifactPublicationCard,
+  type ArtifactPublicationReference,
+} from "../artifacts/ArtifactPublicationCard";
+import { ArtifactCard } from "../artifacts/ArtifactCard";
+import { useTranscriptSession } from "./SessionTranscriptContext";
+import type { ArtifactReference } from "../../../../../api/services/agent-runtime/artifacts/contracts";
 import { Zap } from "lucide-react";
 import { MediaParts } from "../media/MediaParts";
 import type {
@@ -10,6 +17,26 @@ import { StreamingTextBlock } from "./StreamingTextBlock";
 import { SubSessionCard } from "./SubSessionCard";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import { buildTurnRenderSegments } from "./toolCallUtils";
+
+function TranscriptArtifact({ reference }: { reference: ArtifactReference }) {
+  const { sessionId } = useTranscriptSession();
+  return sessionId ? (
+    <ArtifactCard sessionId={sessionId} reference={reference} />
+  ) : (
+    <p role="status">{reference.title} — session unavailable</p>
+  );
+}
+
+function TranscriptArtifactRequest({
+  reference,
+}: {
+  reference: ArtifactPublicationReference;
+}) {
+  const { sessionId } = useTranscriptSession();
+  return sessionId ? (
+    <ArtifactPublicationCard sessionId={sessionId} reference={reference} />
+  ) : null;
+}
 
 function sourceLabel(url: string): string {
   try {
@@ -39,6 +66,20 @@ function renderTurnBlocks(
       (toolBlocks.length === 0 || segment.type !== "thinking"),
   );
   const render = (segment: (typeof segments)[number], i: number) => {
+    if (segment.type === "artifact_request")
+      return (
+        <TranscriptArtifactRequest
+          key={segment.reference.requestId}
+          reference={segment.reference}
+        />
+      );
+    if (segment.type === "artifact")
+      return (
+        <TranscriptArtifact
+          key={segment.reference.revisionId}
+          reference={segment.reference}
+        />
+      );
     if (segment.type === "media")
       return <MediaParts key={i} parts={segment.parts} />;
     if (segment.type === "thinking")

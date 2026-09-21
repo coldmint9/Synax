@@ -1,3 +1,4 @@
+import { artifactTools } from "./tools/artifact-tools.js";
 import { mediaReadTool } from "./tools/media-read.js";
 import { mediaGenerateTool } from "./tools/media-generate.js";
 import { mediaAudioVideoTools } from "./tools/media-audio-video.js";
@@ -121,6 +122,7 @@ export class ToolRegistry {
     [
       ...controlTools,
       ...workTools,
+      ...artifactTools,
       verificationTool,
       bashTool,
       fileReadTool,

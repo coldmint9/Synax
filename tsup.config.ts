@@ -19,9 +19,10 @@ export default defineConfig({
   splitting: false,
   // These runtimes resolve package-relative resources and optional modules; ship them intact.
   noExternal: [
-    /^(?!(?:@anthropic-ai\/claude-agent-sdk|playwright-core|node-pty)(?:\/|$)).*/,
+    /^(?!(?:@anthropic-ai\/claude-agent-sdk|playwright-core|node-pty|esbuild)(?:\/|$)).*/,
   ],
   external: [
+    "esbuild",
     "libsql",
     "node-pty",
     "@libsql/*",

@@ -27,12 +27,26 @@ import {
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 import { UiUpdates } from "./lib/ui-updates.js";
 import { DesktopUpdates } from "./lib/desktop-updates.js";
+import { ArtifactPreviewManager } from "./lib/artifact-preview/manager.js";
+import {
+  ARTIFACT_SCHEME,
+  isTrustedHostURL,
+} from "./lib/artifact-preview/policy.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
+const artifactPreviews = new ArtifactPreviewManager(
+  path.join(__dirname, "artifact-preload.js"),
+  () => mainWindow,
+  (url) =>
+    isTrustedHostURL(
+      url,
+      isDev ? `http://localhost:${process.env.WEB_PORT || "5173"}` : undefined,
+    ),
+);
 let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
 let desktopUpdates: DesktopUpdates | null = null;
@@ -43,6 +57,15 @@ const terminalAccessibilitySupportEnabled = (
 
 // Register custom protocol scheme before app is ready
 protocol.registerSchemesAsPrivileged([
+  {
+    scheme: ARTIFACT_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: false,
+      corsEnabled: false,
+    },
+  },
   {
     scheme: "app",
     privileges: {
@@ -265,6 +288,7 @@ async function bootstrap(): Promise<void> {
     website: "https://github.com/coldmint9",
   });
   registerIPC();
+  artifactPreviews.registerIPC();
   if (
     !uiUpdates &&
     app.isPackaged &&
@@ -390,6 +414,7 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
+  artifactPreviews.dispose();
   desktopUpdates?.stop();
   stopSidecar();
 });

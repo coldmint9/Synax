@@ -69,7 +69,7 @@ export function installRuntimeAccess(app: Hono, options: {
   });
   app.use('/api/*', cors({
     origin: (origin, c) => trustedOrigin(origin, c) || desktopOrigin(origin) ? origin : undefined,
-    credentials: true, allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'Last-Event-ID', 'Range'],
+    credentials: true, allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'Last-Event-ID', 'Range', 'X-Synax-Artifact-Action'],
     exposeHeaders: ['Content-Disposition', 'Content-Length', 'Content-Range', 'Accept-Ranges'],
     allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   }));

@@ -1,3 +1,5 @@
+import type { ArtifactPublicationReference } from "../artifacts/ArtifactPublicationCard";
+import type { ArtifactReference } from "../../../../../api/services/agent-runtime/artifacts/contracts";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import { hasDisplayableReasoning } from "./activityText";
 import type {
@@ -21,6 +23,8 @@ export interface ToolCallView {
 }
 
 export type TurnContentBlock =
+  | { type: "artifact_request"; reference: ArtifactPublicationReference }
+  | { type: "artifact"; reference: ArtifactReference }
   | { type: "media"; parts: RuntimeContentPart[] }
   | { type: "text"; content: string }
   | { type: "thinking"; content: string }
@@ -124,6 +128,12 @@ export function buildInterleavedTurns(
 
   const messagesByStep = new Map<string, AgentRuntimeMessage[]>();
   for (const message of messages) {
+    if (
+      ["artifact_publisher", "artifact_request"].includes(
+        String(message.metadata?.source),
+      )
+    )
+      continue;
     if (message.role !== "assistant") continue;
     // Work/goal completion messages are persisted without a step. They belong
     // to the final step of their Run so the transcript survives live cleanup.

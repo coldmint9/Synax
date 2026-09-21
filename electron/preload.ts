@@ -3,6 +3,29 @@ const { contextBridge, ipcRenderer } =
 
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
+  artifactPreview: {
+    create: (input: import("./lib/artifact-preview/types.js").ArtifactCreate) =>
+      ipcRenderer.invoke("artifact-preview:create", input),
+    update: (input: import("./lib/artifact-preview/types.js").ArtifactUpdate) =>
+      ipcRenderer.invoke("artifact-preview:update", input),
+    send: (
+      input: import("./lib/artifact-preview/types.js").ArtifactMessageEvent,
+    ) => ipcRenderer.invoke("artifact-preview:send", input),
+    destroy: (id: string) => ipcRenderer.invoke("artifact-preview:destroy", id),
+    onMessage: (
+      callback: (
+        event: import("./lib/artifact-preview/types.js").ArtifactMessageEvent,
+      ) => void,
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        message: import("./lib/artifact-preview/types.js").ArtifactMessageEvent,
+      ) => callback(message);
+      ipcRenderer.on("artifact-preview:message", listener);
+      return () =>
+        ipcRenderer.removeListener("artifact-preview:message", listener);
+    },
+  },
   setTerminalFocus: (focused: boolean) =>
     ipcRenderer.send("terminal:focus", focused),
   showOpenDialog: (options: Electron.OpenDialogOptions) =>

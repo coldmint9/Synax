@@ -1,3 +1,4 @@
+import { ARTIFACT_AUTHORING_INSTRUCTIONS } from "../artifact-manifest.js";
 import type { AgentProfile } from "../contracts.js";
 import { SYNAX_AGENT_PROFILE_ID } from "./synax-session-mode.js";
 
@@ -12,6 +13,9 @@ export const synaxAgentProfile: AgentProfile = {
   allowedCapabilities: [
     "bash",
     "file.read",
+    "artifact.publish",
+    "artifact.read",
+    "artifact.list",
     "media.read",
     "media.generate",
     "media.speak",
@@ -80,6 +84,7 @@ export const synaxAgentProfile: AgentProfile = {
     maxParallelReadTools: 4,
   },
   loopHints: [
+    ARTIFACT_AUTHORING_INSTRUCTIONS,
     "Preserve the user request and finish authorized work with relevant evidence.",
   ],
   allowsSubsessions: true,

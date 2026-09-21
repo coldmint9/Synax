@@ -1,3 +1,4 @@
+import { messageArtifacts, messageArtifactRequest } from "./artifactTranscript";
 import { readSessionUserPrompt } from "./sessionMetadata";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import type {
@@ -480,6 +481,55 @@ export function buildConversationTimeline(
     interactions?: AgentInteraction[];
   },
 ): ConversationTimelineEntry[] {
+  const seenArtifacts = new Set<string>();
+  const artifactEntries: ConversationTimelineEntry[] = messages.flatMap(
+    (message) => {
+      if (options?.session && message.sessionId !== options.session.id)
+        return [];
+      return messageArtifacts(message).flatMap((reference) => {
+        if (seenArtifacts.has(reference.revisionId)) return [];
+        seenArtifacts.add(reference.revisionId);
+        return [
+          {
+            id: `artifact-${reference.revisionId}`,
+            kind: "agent" as const,
+            createdAt: message.createdAt,
+            label: reference.title,
+            turn: {
+              stepId: `artifact-${reference.revisionId}`,
+              index: 0,
+              status: "completed",
+              duration: null,
+              blocks: [{ type: "artifact" as const, reference }],
+            },
+          },
+        ];
+      });
+    },
+  );
+  for (const message of messages) {
+    if (options?.session && message.sessionId !== options.session.id) continue;
+    const reference = messageArtifactRequest(message);
+    if (!reference || seenArtifacts.has(reference.requestId)) continue;
+    seenArtifacts.add(reference.requestId);
+    artifactEntries.push({
+      id: `artifact-request-${reference.requestId}`,
+      kind: "agent",
+      createdAt: message.createdAt,
+      label: reference.title,
+      turn: {
+        stepId: reference.requestId,
+        index: 0,
+        status: "completed",
+        duration: null,
+        blocks: [{ type: "artifact_request", reference }],
+      },
+    });
+  }
+  const withArtifacts = (entries: ConversationTimelineEntry[]) =>
+    [...entries, ...artifactEntries].sort(
+      (a, b) => toTimestamp(a.createdAt) - toTimestamp(b.createdAt),
+    );
   const filteredSteps = options?.excludeStepId
     ? steps.filter((step) => step.id !== options.excludeStepId)
     : steps;
@@ -501,6 +551,7 @@ export function buildConversationTimeline(
   const userEntries = buildUserMessageEntries(messages, options?.session);
 
   if (
+    artifactEntries.length === 0 &&
     userEntries.length === 0 &&
     agentTurns.length === 0 &&
     failedRunIds.size === 0 &&
@@ -560,7 +611,8 @@ export function buildConversationTimeline(
       items.splice(next < 0 ? items.length : next, 0, row);
     }
   }
-  if (options?.foldWorkRuns === false) return items.map((item) => item.entry);
+  if (options?.foldWorkRuns === false)
+    return withArtifacts(items.map((item) => item.entry));
 
   const stepById = new Map(filteredSteps.map((step) => [step.id, step]));
   const runStatusById = new Map(runs.map((run) => [run.id, run.status]));
@@ -568,8 +620,10 @@ export function buildConversationTimeline(
     filteredSteps.map((step) => [step.id, runStatusById.get(step.runId)]),
   );
 
-  return foldCompletedRounds(items, stepById, runStatusByStepId).map(
-    (item) => item.entry,
+  return withArtifacts(
+    foldCompletedRounds(items, stepById, runStatusByStepId).map(
+      (item) => item.entry,
+    ),
   );
 }
 

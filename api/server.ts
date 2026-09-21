@@ -1,3 +1,4 @@
+import { startArtifactRecovery } from "./services/agent-runtime/artifact-recovery.js";
 import { attachTerminalSockets } from "./services/terminals/terminal-socket.js";
 import { terminalRoutes } from "./routes/terminals.js";
 import { terminalManager } from "./services/terminals/terminal-manager.js";
@@ -132,6 +133,7 @@ let closeTerminalSockets: (() => void) | undefined;
 let shuttingDown = false;
 
 async function startRuntime(): Promise<void> {
+  startArtifactRecovery((error) => pinoLogger.warn({ error: error instanceof Error ? error.message : "unknown" }, "artifact recovery failed"));
   const recovery = await recoverRuntime(runtimeHost.hostId);
   if (recovery.reviewed)
     pinoLogger.warn(

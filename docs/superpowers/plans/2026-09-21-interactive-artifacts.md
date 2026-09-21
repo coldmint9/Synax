@@ -58,3 +58,10 @@ Routes under `/sessions/:sessionId/artifacts`: POST publish; GET list; GET `/:ar
 ## Execution ledger
 - Plan prepared. Ruling: execute in this existing worktree with disjoint workers authorized by the execution skill; main owns integration and contracts, not workers' implementation scopes.
 - Baseline: clean worktree based on design commit; node_modules linked read-only in practice from original checkout for existing dependencies. Package changes, if necessary, must be made only here.
+
+## Verification and scope ledger
+- Core tasks 1–4 implemented and tested. Task 5 checkpoints: 161 API/compiler/Electron tests and 66 Web tests passed; real app conversation and relocated package exercised.
+- Ruling: SQLite stores immutable bytes atomically instead of separate disk blobs — simpler crash integrity; storage quotas remain enforced.
+- Ruling: external ask-policy publication uses a dedicated persisted host approval card, not the already-finished external tool loop — deny/allow semantics remain intact.
+- Full design is not marked 100% complete: remaining screenshot/lineage/state inheritance/job-management UX and platform QA are enumerated in `docs/superpowers/reviews/2026-09-21-interactive-artifacts-verification.md`.
+- No claim that all repository tests pass: baseline thinking-dot test fails identically before the change.
