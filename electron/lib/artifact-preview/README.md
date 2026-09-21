@@ -1,7 +1,7 @@
 # Isolated desktop artifact transport
 
-The app preload exposes only `artifactPreview.create`, `update`, `send`, `destroy`
-and `onMessage` (the listener returns an unsubscribe function synchronously).
+The trusted app preload exposes only `artifactPreview.create`, `update`, `send`,
+`destroy`, `capture`, `annotate` and `onMessage` (the listener returns an unsubscribe function synchronously).
 `create` starts hidden; the host must subscribe first and then send a visible
 `update` after creation. Bounds are content-window CSS coordinates. `bounds.clip`
 is the intersection of scroll-ancestor viewports; main also intersects the window
@@ -34,17 +34,29 @@ host zoom are accounted for. There is no arbitrary CDP or JavaScript-evaluation
 entry point. Failed viewport setup closes the preview rather than displaying an
 unclipped surface. Async layout generations cannot restore a newer hidden view.
 
-`ArtifactPreviewManager.capture(owner, id)` provides a real cropped NativeImage
-to main-process callers only. There is no capture IPC or screenshot UI in this
-change. A WebContents screenshot cannot prove composition of sibling native
-views; the native smoke also uses the OS window thumbnail when available.
+`ArtifactPreviewManager.capture(owner, id)` provides a real cropped NativeImage.
+The fixed trusted-host `capture({id, revisionId})` IPC additionally verifies the
+owning window, handshake, current revision, stable visible geometry and rate
+limit, and returns bounded PNG bytes. Generated content has no capture capability.
+The production QA pane reviews the capture before upload and requires explicit
+confirmation before sending image feedback. Geometry changes invalidate in-flight
+captures, while identical host layout updates do not.
+
+`annotate({id, revisionId, bounds})` accepts only bounded element coordinates (or
+null to clear). Four clipped, script-disabled native border surfaces keep host
+outlines above the preview without giving generated content any host privileges.
+A WebContents screenshot alone cannot prove composition of sibling native views;
+the native smoke also uses the OS window thumbnail when available.
 
 ## Verification
 
 ```sh
 npm run build:electron
 npx vitest run electron
-SYNAX_ARTIFACT_NATIVE_SMOKE=1 npx vitest run electron/lib/artifact-preview/native-smoke.test.ts
+SYNAX_ARTIFACT_NATIVE_SMOKE=1 npx vitest run electron/lib/artifact-preview --maxWorkers=1
+npm run build:desktop
+npm run test:artifacts:desktop
+npm run test:desktop:smoke
 ```
 
 The opt-in smoke launches the installed Electron against `native-smoke.ts`'s
@@ -55,7 +67,16 @@ infinite loop while the host and sibling remain alive. Screenshots are written
 to a temporary `synax-artifact-native-*` directory. It needs a graphical session
 and may briefly focus the fixture window; native blur intentionally hides views.
 
-Verified locally on macOS with Electron 39.8.10 on September 21, 2026. This is a
-transport harness, not an end-to-end published-artifact/product-UI test. Windows,
-Linux, mixed-DPI monitor transitions, and full-app overlay/focus/accessibility
-regressions still require native QA on those platforms.
+Verified locally on macOS arm64 with Electron 39.8.10 on September 21, 2026:
+28 native tests, plus six separate packaged-product checks through the actual
+sidecar, preload and transcript. The latter cover screenshot review/upload,
+feedback-modal occlusion, expanded-view capture, pause/reload and credential-free
+offline export. They use a disposable DATA_ROOT and do not invoke a provider.
+
+Windows and actual WSL are explicitly deferred for this acceptance round, not
+verified. Linux and mixed-DPI monitor transitions remain unverified.
+The opt-in CI matrix is a way to run acceptance, not evidence of a successful run.
+On a suitable Windows host, `npm run test:artifacts:wsl` checks real WSL snapshot,
+compile and symlink containment; it intentionally fails on an unsuitable host.
+See `docs/superpowers/reviews/2026-09-21-interactive-artifacts-final-acceptance.md`
+for full-suite results, environment prerequisites and remaining merge gates.

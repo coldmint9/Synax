@@ -1,6 +1,11 @@
 name: Interactive artifact acceptance
 on:
   workflow_dispatch:
+    inputs:
+      include_windows:
+        description: 'Include the deferred Windows acceptance environment'
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -9,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, windows-2022, ubuntu-latest]
+        os: ${{ fromJSON(inputs.include_windows && '["macos-15","windows-2022","ubuntu-latest"]' || '["macos-15","ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -32,14 +37,21 @@ jobs:
       - run: npx vitest run api/services/agent-runtime/artifacts api/services/agent-runtime/__tests__/artifact-jobs.test.ts api/services/agent-runtime/__tests__/artifact-feedback.test.ts api/services/agent-runtime/__tests__/artifact-versions.test.ts api/routes/__tests__/agent-artifacts.test.ts api/routes/__tests__/artifact-versions.test.ts api/routes/__tests__/artifact-versions.browser.test.ts --maxWorkers=2
       - name: Browser SDK, cards, state and feedback
         run: npm run test --prefix web -- src/react/features/artifacts src/lib/api/artifacts.test.ts src/lib/api/artifactVersions.test.ts
-      - run: npm run build
-      - run: npm run web:build
-      - run: npm run build:electron
+      - name: Web typecheck
+        run: npx tsc -p web/tsconfig.json --noEmit
+      - name: Build the native package on the matching host
+        run: npm run build:desktop
       - name: Native desktop acceptance
         if: runner.os != 'Linux'
         env:
           SYNAX_ARTIFACT_NATIVE_SMOKE: '1'
         run: npx vitest run electron/lib/artifact-preview --maxWorkers=1
+      - name: Packaged application acceptance
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          npm run test:desktop:smoke
+          npm run test:artifacts:desktop
       - name: Install virtual desktop for Linux native acceptance
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb openbox
@@ -47,4 +59,15 @@ jobs:
         if: runner.os == 'Linux'
         env:
           SYNAX_ARTIFACT_NATIVE_SMOKE: '1'
-        run: xvfb-run -a bash -c 'openbox >/tmp/openbox-artifacts.log 2>&1 & npx vitest run electron/lib/artifact-preview --maxWorkers=1'
+        run: xvfb-run -a bash -c 'openbox >/tmp/openbox-artifacts.log 2>&1 & npx vitest run electron/lib/artifact-preview --maxWorkers=1 && npm run test:desktop:smoke && npm run test:artifacts:desktop'
+      - name: Retain safe packaged acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-acceptance-${{ matrix.os }}
+          if-no-files-found: warn
+          path: |
+            out/artifact-acceptance/packaged-acceptance.json
+            out/artifact-acceptance/packaged-feedback-confirmation.png
+            out/desktop-smoke.png
+            out/desktop-dark-work.png

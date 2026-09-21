@@ -16,6 +16,11 @@
 
 ## Tasks and independent write scopes
 
+The checklist below is the original execution plan, retained as planning history.
+Current completion and remaining gates are recorded in the verification ledger at
+its end and the linked final-acceptance document; unchecked historical steps do
+not mean their implementations are absent.
+
 ### 1. Contracts, storage, compiler, publisher
 Files: `api/services/agent-runtime/artifacts/{contracts,validation,store,snapshot,compiler,publisher,export}.ts`, artifact migration, tests.
 Consumes `ArtifactPublishContext` and `ArtifactPublishInput`; produces `publishArtifact(context,input): Promise<ArtifactRevision>`, `listArtifacts(sessionId)`, `listRevisions(sessionId,artifactId)`, `getArtifactBundle(sessionId,revisionId)`, `getArtifactSource(sessionId,revisionId)`, `getArtifactState(sessionId,revisionId)`, `saveArtifactState(sessionId,revisionId,state,expectedEtag)`, `deleteArtifact(sessionId,artifactId)`.
@@ -59,9 +64,11 @@ Routes under `/sessions/:sessionId/artifacts`: POST publish; GET list; GET `/:ar
 - Plan prepared. Ruling: execute in this existing worktree with disjoint workers authorized by the execution skill; main owns integration and contracts, not workers' implementation scopes.
 - Baseline: clean worktree based on design commit; node_modules linked read-only in practice from original checkout for existing dependencies. Package changes, if necessary, must be made only here.
 
-## Verification and scope ledger
-- Core tasks 1–4 implemented and tested. Task 5 checkpoints: 161 API/compiler/Electron tests and 66 Web tests passed; real app conversation and relocated package exercised.
-- Ruling: SQLite stores immutable bytes atomically instead of separate disk blobs — simpler crash integrity; storage quotas remain enforced.
-- Ruling: external ask-policy publication uses a dedicated persisted host approval card, not the already-finished external tool loop — deny/allow semantics remain intact.
-- Full design is not marked 100% complete: remaining screenshot/lineage/state inheritance/job-management UX and platform QA are enumerated in `docs/superpowers/reviews/2026-09-21-interactive-artifacts-verification.md`.
-- No claim that all repository tests pass: baseline thinking-dot test fails identically before the change.
+## Verification and scope ledger (updated September 21, 2026)
+- Core tasks 1–4 and the closing async-job, screenshot/annotation, lineage/state-inheritance and HTML-global icon work are implemented. A real isolated Agent generated v1, consumed confirmed feedback and generated v2 without overwriting v1.
+- SQLite stores immutable bytes atomically instead of separate disk blobs; storage quotas remain enforced.
+- External ask-policy publication uses a persisted host approval card; plan/read-only roots are rejected, including within the publication commit transaction.
+- Feature commit `fade138` incorporates main `fdb7c8d`. Full reruns: 1879 API tests passed / 2 skipped; 943 Web tests passed; 28 macOS native tests passed; six packaged artifact checks passed. The API suite's two skipped tests are not counted as verified.
+- Task 5 is not fully closed: Linux native and mixed-DPI monitor transitions still require matching environments. Windows environment acceptance, including actual Windows-host WSL, is explicitly deferred by the user for this round (not passed). General desktop packaging and merge readiness are tracked separately.
+- See [final acceptance](../reviews/2026-09-21-interactive-artifacts-final-acceptance.md) for current command evidence, package environment prerequisites and merge gates. The initial verification document is explicitly historical.
+- No feature-to-main merge or remote push has been performed. Unrelated uncommitted changes in the main checkout must be preserved.

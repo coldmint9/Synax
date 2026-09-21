@@ -1,4 +1,12 @@
-# Interactive artifacts implementation and verification
+# Interactive artifacts implementation and verification (historical checkpoint)
+
+> This document preserves the **initial delivery checkpoint**, not current acceptance.
+> The subsequent implementation closed the async-job UI/API, screenshot/annotation,
+> lineage/state-inheritance and HTML-global icon gaps listed below. A real Agent
+> feedback loop and green full-suite reruns also supersede the earlier limitations
+> and test failures. See [the current acceptance ledger](2026-09-21-interactive-artifacts-final-acceptance.md)
+> for exact evidence, remaining platform gates and merge status. Historical counts
+> and statements below must not be used as the final delivery status.
 
 ## Implemented
 
