@@ -249,6 +249,59 @@ describe("desktop platform contract", () => {
     }
   });
 
+  it("exposes bounded notification IPC and subscribes before announcing renderer readiness", async () => {
+    const ipc = Object.assign(new EventEmitter(), {
+      send: vi.fn(),
+      invoke: vi.fn(async () => true),
+    });
+    let api: any;
+    runInNewContext(
+      transpileModule(
+        readFileSync(new URL("./preload.ts", import.meta.url), "utf8"),
+        {},
+      ).outputText,
+      {
+        process: { platform: "darwin" },
+        require: () => ({
+          ipcRenderer: ipc,
+          contextBridge: {
+            exposeInMainWorld: (_name: string, value: unknown) => {
+              api = value;
+            },
+          },
+        }),
+      },
+    );
+    const target = { projectId: "p", sessionId: "s", kind: "input" };
+    const callback = vi.fn();
+    ipc.send.mockImplementation((channel, ready) => {
+      if (channel === "notifications:renderer-ready" && ready)
+        ipc.emit("notifications:open-session", {}, target);
+    });
+    const off = api.onDesktopNotificationOpen(callback);
+    expect(callback).toHaveBeenCalledExactlyOnceWith(target);
+    api.setDesktopNotificationsEnabled(false);
+    api.dismissDesktopNotification("s");
+    await api.showDesktopNotification({
+      ...target,
+      id: "e",
+      title: "Title",
+      body: "Question",
+    });
+    expect(ipc.send).toHaveBeenCalledWith("notifications:enabled", false);
+    expect(ipc.send).toHaveBeenCalledWith("notifications:dismiss", "s");
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "notifications:show",
+      expect.objectContaining(target),
+    );
+    off();
+    expect(ipc.listenerCount("notifications:open-session")).toBe(0);
+    expect(ipc.send).toHaveBeenLastCalledWith(
+      "notifications:renderer-ready",
+      false,
+    );
+  });
+
   it("rejects cross-platform packages containing the host native modules", async () => {
     const prePackage = forgeConfig.hooks!.prePackage as (
       ...args: any[]

@@ -1,3 +1,4 @@
+import type { SessionNotificationTarget } from "../../lib/notifications/sessionNotifications";
 import { TerminalDrawer } from "../features/terminal/TerminalDrawer";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Outlet, useNavigate, useParams, useLocation } from "react-router-dom";
@@ -123,7 +124,16 @@ export default function WorkbenchLayout() {
     navigateToSession,
     visibleSessionId,
   );
-  useDesktopNotification(effectiveProjectId || null);
+  const openNotificationSession = useCallback(
+    (target: SessionNotificationTarget) => {
+      // Leave an inspected file/diff tab without discarding it, so the pending
+      // input/approval (or completed answer) is visible in the conversation.
+      useSessionWorkspaceStore.getState().showDashboard(target.sessionId);
+      navigate(sessionPath(target.projectId, target.sessionId));
+    },
+    [navigate],
+  );
+  useDesktopNotification(openNotificationSession);
   useTaskNotificationListener(effectiveProjectId || null);
 
   useEffect(() => {
