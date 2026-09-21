@@ -2425,9 +2425,7 @@ export class AgentLoopRuntime {
     let projectRulesSection: string | null = null;
     try {
       const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
-      projectRulesSection = loadProjectRulesSection(workDir, {
-        scope: isWikiAgentProfile(input.profile.id) ? "synax-only" : "all",
-      });
+      projectRulesSection = loadProjectRulesSection(workDir);
     } catch {
       projectRulesSection = null;
     }

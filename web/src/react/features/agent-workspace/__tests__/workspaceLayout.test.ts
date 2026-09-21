@@ -55,6 +55,24 @@ describe("workspace layout constraints", () => {
     ).toBe("1px solid var(--work-line)");
   });
 
+  it("keeps the project header in place both at rest and when hovered", () => {
+    const header = ":is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-head";
+    const selector = `${header}, ${header}:has(.ws-card-toggle:hover)`;
+    expect(declaration(selector, "position")).toBe("relative");
+    expect(declaration(selector, "top")).toBe("auto");
+  });
+
+  it("uses matching row padding and unclipped icon slots instead of offsets", () => {
+    const repository = ":is(.work-page, .work-details-dialog) .ws-project-repository";
+    const branch = `${repository} .ws-branch-trigger`;
+    expect(declaration(repository, "padding")).toBe("0");
+    expect(declaration(branch, "padding")).toBe("0 2px");
+    expect(declaration(branch, "gap")).toBe("6px");
+    expect(declaration(`${branch} > svg:first-child`, "inset-inline-start")).toBeUndefined();
+    expect(declaration(".ws-branch-icon", "flex")).toBe("0 0 auto");
+    expect(declaration(".ws-branch-icon", "overflow")).toBe("visible");
+  });
+
   it("keeps Git actions on one row and lets the branch absorb width changes", () => {
     expect(declaration(".ws-repo-head", "flex-wrap")).toBe("nowrap");
     expect(declaration(".ws-branch-trigger.button", "flex")).toBe("1 1 0");

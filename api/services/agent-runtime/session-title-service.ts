@@ -32,8 +32,8 @@ export const DEFAULT_NEW_SESSION_TITLE = "new session";
  */
 const PLACEHOLDER_SESSION_TITLES = [
   DEFAULT_NEW_SESSION_TITLE,
-  "new agent",
-  "新会话",
+  "new chat",
+  "新对话",
 ];
 
 function isPlaceholderSessionTitle(title: string | null | undefined): boolean {

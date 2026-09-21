@@ -160,12 +160,14 @@ export function RepositoryBranchPicker({
           isDisabled={disabled || switching}
           aria-label={`${zh ? "切换 Git 分支" : "Switch Git branch"}: ${branch || "HEAD"}`}
         >
-          {switching ? (
-            <LoaderCircle size={12} className="animate-spin" />
-          ) : (
-            <GitBranch size={12} />
-          )}
-          <span>{branch || "HEAD"}</span>
+          <span className="ws-branch-icon" aria-hidden="true">
+            {switching ? (
+              <LoaderCircle size={12} className="animate-spin" />
+            ) : (
+              <GitBranch size={12} />
+            )}
+          </span>
+          <span className="ws-branch-label">{branch || "HEAD"}</span>
           <ChevronDown size={10} />
         </Button>
         <Dropdown.Popover

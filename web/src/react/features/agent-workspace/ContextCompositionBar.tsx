@@ -117,17 +117,6 @@ export function ContextCompositionBar({
         ? ((composition?.[item.key] ?? 0) / estimatedTotal) * total
         : 0;
     const percent = total > 0 ? (tokens / total) * 100 : 0;
-    const usedEstimate =
-      item.key === "messages" ? undefined : composition?.usage?.[item.key];
-    const used =
-      typeof usedEstimate === "number" &&
-      Number.isFinite(usedEstimate) &&
-      usedEstimate >= 0 &&
-      usedEstimate <= (composition?.[item.key] ?? 0)
-        ? estimatedTotal > 0
-          ? (usedEstimate / estimatedTotal) * total
-          : 0
-        : null;
     return {
       ...item,
       tokens,
@@ -135,8 +124,6 @@ export function ContextCompositionBar({
       width: toWidth(tokens),
       label: item.key === "messages" && !zh ? "Messages" : item.label,
       ratio: ratio(percent),
-      used,
-      usageRatio: ratio(total > 0 && used !== null ? (used / total) * 100 : 0),
     };
   });
   const windowUsage =
@@ -224,33 +211,9 @@ export function ContextCompositionBar({
                 <dd className="text-right tabular-nums text-muted-foreground/70">
                   {item.ratio}
                 </dd>
-                {item.key !== "messages" && (
-                  <dd
-                    className="col-span-3 mb-1 ml-3 text-[9px] text-muted-foreground/60"
-                    data-context-usage={item.key}
-                  >
-                    {item.used !== null
-                      ? `${zh ? "基础" : "Base"} ${reported ? "≈" : ""}${formatTokenCount(Math.round(item.tokens - item.used))} · ${zh ? "使用" : "Used"} ${reported ? "≈" : ""}${formatTokenCount(Math.round(item.used))} · ${zh ? "占当前上下文" : "of current context"} ${item.usageRatio}`
-                      : zh
-                        ? "使用明细将在下一次模型请求后更新"
-                        : "Usage breakdown updates with the next model request"}
-                  </dd>
-                )}
               </div>
             ))}
           </dl>
-          <p
-            className="text-[9px] text-muted-foreground/60"
-            title={
-              zh
-                ? "基础为工具定义和技能目录；使用为当前保留的调用参数、结果及按需加载指令。系统提示和运行状态计入总量，不混入消息。"
-                : "Base is definitions and catalogs; used is retained calls, results and loaded instructions. System instructions and runtime state count toward the total, not messages."
-            }
-          >
-            {zh
-              ? "四色显示分类占用；总量含系统提示等基础上下文。"
-              : "Four colors show category usage; total includes system context."}
-          </p>
         </>
       ) : available ? (
         <div

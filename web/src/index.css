@@ -4,6 +4,7 @@
 @import "./react/desktopPerformance.css";
 @import "./react/components/beautiful-ui/activities.css";
 @import "./react/components/beautiful-ui/approvals.css";
+@import "./react/focusAppearance.css";
 @variant dark (&:where(.dark, .dark *));
 
 @theme {
@@ -3745,9 +3746,7 @@
   border-radius: 1rem;
   overflow: hidden;
   background: var(--surface);
-  box-shadow:
-    var(--surface-shadow),
-    var(--overlay-shadow);
+  box-shadow: none;
 }
 .agent-session-composer-shell[data-has-media="false"] {
   min-height: 0;
@@ -3769,6 +3768,9 @@
   min-height: 2.75rem;
   border-radius: 1rem;
   align-items: stretch;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
 }
 .agent-session-composer-shell--draft {
   border-radius: 1rem;
@@ -3786,10 +3788,6 @@
 }
 .dark .agent-session-composer-shell {
   border-color: hsl(0 0% 100% / 0.1);
-  box-shadow:
-    var(--overlay-shadow),
-    0 12px 32px hsl(0 0% 0% / 0.38),
-    0 4px 12px hsl(0 0% 0% / 0.28);
 }
 
 .agent-dock-tool-list {
@@ -6276,7 +6274,7 @@
   position: absolute;
   bottom: 0;
   z-index: 25;
-  padding: 0 12px 12px;
+  padding: 0;
   pointer-events: none;
   transition:
     left 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -6286,9 +6284,12 @@
 .agent-command-rail-inner {
   max-height: var(--agent-command-rail-max-height, calc(100dvh - 96px));
   overflow-y: auto;
+  /* Scroll containment clips box shadows too. Reserve paint space on every
+     edge while keeping the input's previous width and bottom inset. */
+  padding: 12px;
   pointer-events: auto;
   display: flex;
-  width: min(100%, 48rem);
+  width: min(100%, calc(48rem + 24px));
   margin: 0 auto;
   flex-direction: column;
   align-items: stretch;
@@ -6296,7 +6297,7 @@
 }
 
 .agent-command-rail[data-focus="true"] .agent-command-rail-inner {
-  width: min(100%, 56rem);
+  width: min(100%, calc(56rem + 24px));
 }
 
 .agent-command-status-row {

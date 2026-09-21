@@ -9,7 +9,7 @@ export type BackendId =
   | "codex-acp"
   | "pi-acp";
 
-import { apiFetch, apiRequest } from "./origin";
+import { apiFetch, apiRequest, type ApiRequestOptions } from "./origin";
 import { createAppError, handleError } from "../errors";
 import type { SkillSummary } from "./skills";
 import { streamCommitMessage } from "./commitMessageStream";
@@ -620,6 +620,21 @@ export interface SessionMcpServerSummary {
   toolCount: number;
 }
 
+export type SessionInvocationKind = "tool" | "skill" | "mcp";
+
+export interface SessionInvocationUsageItem {
+  kind: SessionInvocationKind;
+  id: string;
+  label: string;
+  callCount: number;
+  lastCalledAt: string;
+}
+
+export interface SessionInvocationUsageResponse {
+  items: SessionInvocationUsageItem[];
+  totalCalls: number;
+}
+
 export interface SessionCapabilities {
   backend?: {
     id: BackendId;
@@ -674,7 +689,7 @@ export interface StreamTurnRequest {
   >;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   return apiRequest<T>(`${BASE}${path}`, init);
 }
 
@@ -701,7 +716,8 @@ export const agentRuntimeApi = {
   ) =>
     request<SessionSearchResponse>(
       `/sessions/search?${new URLSearchParams({ projectId, q, offset: String(offset) })}`,
-      { signal },
+      // Search owns its inline error/retry UI. Avoid duplicate global toasts.
+      { signal, silent: true },
     ),
 
   listReferenceOptions: (
@@ -960,6 +976,10 @@ export const agentRuntimeApi = {
   getSessionCapabilities: (sessionId: string) =>
     request<SessionCapabilities>(
       `/sessions/${encodeURIComponent(sessionId)}/capabilities`,
+    ),
+  getSessionInvocationUsage: (sessionId: string) =>
+    request<SessionInvocationUsageResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/invocation-usage`,
     ),
   resumeStream: async (
     sessionId: string,

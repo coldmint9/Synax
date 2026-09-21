@@ -5,6 +5,7 @@ import type {
   CreateProjectFromScratchRequest,
 } from "../contracts/project";
 import { apiFetch } from "./origin";
+import { createAppError } from "../errors";
 
 const API_BASE = "/api/projects";
 
@@ -215,7 +216,7 @@ export const projectApi = {
       if (params?.order) qs.set("order", params.order);
       const url = qs.toString() ? `${API_BASE}?${qs.toString()}` : API_BASE;
       const resp = await apiFetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) throw createAppError(`HTTP ${resp.status}`, resp.status);
       const data = await resp.json();
       const items = (data.items ?? []).map((p: Record<string, unknown>) =>
         mapToProjectSummary(p),

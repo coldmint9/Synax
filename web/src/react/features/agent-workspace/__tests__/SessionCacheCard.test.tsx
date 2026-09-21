@@ -44,7 +44,7 @@ describe("cache statistics evidence", () => {
     expect(screen.queryByText("最近 10 次平均")).toBeNull();
     expect(screen.queryByText("API 返回值与计算依据")).toBeNull();
     expect(screen.getAllByText("0.0%").length).toBeGreaterThan(0);
-    expect(screen.getByText("1 个请求等待 usage")).toBeTruthy();
+    expect(screen.queryByText("1 个请求等待 usage")).toBeNull();
     expect(screen.queryByText(/811,648 \/ 4,362,282 tokens/)).toBeNull();
     expect(
       screen.queryByText(/raw:input_tokens_details.cached_tokens/),

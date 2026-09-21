@@ -33,12 +33,12 @@
   --work-transcript-surface: var(--background);
   background: var(--work-transcript-surface);
 }
-.work-conversation {
+/* Layout anchor only: conversation content is painted on the workbench
+   background, without an inset card, rounded clipping or panel shadow. */
+.work-content-layout {
   position: relative;
-  margin: var(--work-panel-inset);
-  border-radius: var(--work-panel-radius);
-  background: var(--work-surface);
-  box-shadow: var(--work-shadow);
+  min-height: 0;
+  container-type: inline-size;
 }
 /* Keep the scrollport full-height. These insets belong to its content so
    messages can pass behind the island without hiding the first/last entry. */
@@ -256,9 +256,10 @@
   .ws-project-card
   > .ws-card-head:has(.ws-card-toggle:hover) {
   min-height: 34px;
-  position: sticky;
-  /* Cover the dashboard's 6px top gutter when content scrolls behind it. */
-  top: -6px;
+  /* Only the card body scrolls. A sticky offset here also shifts the header
+     after DashboardLayout switches it to relative positioning. */
+  position: relative;
+  top: auto;
   z-index: 2;
   flex-wrap: wrap;
   border-radius: 11px;
@@ -307,7 +308,16 @@
   white-space: nowrap;
 }
 :is(.work-page, .work-details-dialog) .ws-project-repository {
-  padding: 5px 2px 6px;
+  padding: 0;
+}
+/* Both rows own the same inset; do not shift SVGs outside the button's clip. */
+:is(.work-page, .work-details-dialog) .ws-project-repository .ws-branch-trigger {
+  padding: 0 2px;
+  gap: 6px;
+}
+:is(.work-page, .work-details-dialog) .ws-project-card > .ws-card-head .ws-card-icon > svg,
+:is(.work-page, .work-details-dialog) .ws-project-repository .ws-branch-icon > svg {
+  margin-inline: 0;
 }
 :is(.work-page, .work-details-dialog) .ws-project-section {
   border-top: 1px solid var(--work-line);
@@ -571,22 +581,6 @@
     animation: none;
   }
 }
-.work-page
-  .agent-session-controls
-  .agent-session-composer-shell.agent-dock-shell {
-  background: var(--surface);
-  border-color: hsl(var(--border-hsl) / 0.65);
-  box-shadow: var(--surface-shadow), var(--overlay-shadow);
-}
-.work-page
-  .agent-session-controls
-  .agent-session-composer-shell.agent-dock-shell:focus-within {
-  box-shadow:
-    var(--surface-shadow),
-    var(--overlay-shadow),
-    0 12px 32px hsl(var(--foreground-hsl) / 0.1);
-}
-
 /* Each primary panel owns its scrollport. The three headers never scroll away. */
 :is(.work-page, .work-details-dialog) .workspace-dashboard--pinned {
   overflow: hidden;
@@ -776,23 +770,7 @@
 .bui-process-meta {
   flex-wrap: wrap;
 }
-.dark
-  .work-page
-  .agent-session-controls
-  .agent-session-composer-shell.agent-dock-shell {
-  background: var(--surface);
-}
-.dark
-  .work-page
-  .agent-session-controls
-  .agent-session-composer-shell.agent-dock-shell:focus-within {
-  box-shadow:
-    var(--overlay-shadow),
-    0 16px 40px hsl(0 0% 0% / 0.46),
-    0 6px 16px hsl(0 0% 0% / 0.34);
-}
-
-/* The viewer shares the conversation card and receives the compact island. */
+/* The viewer shares the conversation layout and receives the compact island. */
 .workbench-shell .workspace-viewer-header {
   display: flex;
   align-items: center;
@@ -855,7 +833,7 @@
   width: max-content;
   max-width: calc(100% - 24px);
 }
-.work-conversation:has(> .work-quick-actions)
+.work-content-layout:has(> .work-quick-actions)
   > .workspace-island-slot--conversation {
   max-width: calc(100% - 88px);
 }
@@ -896,11 +874,11 @@
 .workbench-shell .workbench-header--docked .wh-tabs .tabs__tab svg {
   display: block;
 }
-.work-conversation:has(.workspace-viewer-header) > .work-quick-actions {
+.work-content-layout:has(.workspace-viewer-header) > .work-quick-actions {
   top: 8px;
   right: 6px;
 }
-.work-conversation:has(> .work-quick-actions) .workspace-viewer-header {
+.work-content-layout:has(> .work-quick-actions) .workspace-viewer-header {
   padding-right: 40px;
 }
 .electron-macos
@@ -911,9 +889,6 @@
   padding-left: 80px;
 }
 /* A narrow viewer gives tabs their own row instead of hiding menu actions. */
-.work-conversation {
-  container-type: inline-size;
-}
 @container (max-width: 520px) {
   .workspace-viewer-header {
     flex-wrap: wrap;
@@ -951,7 +926,14 @@
   padding: 0 3px;
   font-size: 10px;
 }
-.ws-branch-trigger > span {
+.ws-branch-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+.ws-branch-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -994,9 +976,6 @@
 }
 
 /* Separate conversation, sidebar and elevated controls by color, without blur. */
-.dark .work-page .work-conversation {
-  background: var(--background);
-}
 .dark .work-page .session-list-card--sessions {
   --work-surface: var(--surface-secondary);
   border-color: transparent;

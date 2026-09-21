@@ -96,7 +96,10 @@ beforeEach(() => {
   }));
   vi.spyOn(api, "getSessionStats").mockResolvedValue(stats());
   vi.spyOn(api, "getSessionTodos").mockResolvedValue({ items: [] });
-  vi.spyOn(api, "getSessionCapabilities").mockResolvedValue({} as never);
+  vi.spyOn(api, "getSessionInvocationUsage").mockResolvedValue({
+    items: [],
+    totalCalls: 0,
+  });
   for (const key of [
     "listSessionSteps",
     "listRuns",

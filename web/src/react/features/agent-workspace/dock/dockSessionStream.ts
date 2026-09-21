@@ -50,7 +50,7 @@ export const initialDockSessionState: DockSessionState = {
 };
 
 /** Placeholder titles only mean "not summarized yet"; prefer the user's input. */
-const PLACEHOLDER_TITLES = ["new agent", "new session", "新会话"];
+const PLACEHOLDER_TITLES = ["new chat", "新对话"];
 
 export function resolveDockSessionTitle(
   session: DockSessionState,

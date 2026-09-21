@@ -56,7 +56,7 @@ afterEach(() => {
     permissions: [],
     sessionStats: null,
     sessionTodos: [],
-    sessionCapabilities: null,
+    sessionInvocationUsage: null,
     readSessionMarkers: {},
     sessionDetailCache: {},
     streamingStepId: null,

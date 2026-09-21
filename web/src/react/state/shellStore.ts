@@ -8,6 +8,7 @@ import {
   type ResolvedTheme,
 } from "../../lib/appearance";
 import { useApiConnectivityStore } from "../../lib/apiConnectivity";
+import { AppError } from "../../lib/appError";
 
 export interface ProjectSummary {
   id: string;
@@ -92,6 +93,22 @@ const MIN_UI_FONT_SIZE = 12;
 const MAX_UI_FONT_SIZE = 20;
 let projectFetchVersion = 0;
 let projectMutationVersion = 0;
+const PROJECT_RETRY_DELAY_MS = 10_000;
+let projectRetryTimer: ReturnType<typeof setTimeout> | undefined;
+
+function clearProjectRetry(): void {
+  if (projectRetryTimer) clearTimeout(projectRetryTimer);
+  projectRetryTimer = undefined;
+}
+
+function scheduleProjectRetry(delay = PROJECT_RETRY_DELAY_MS): void {
+  if (projectRetryTimer) return;
+  projectRetryTimer = setTimeout(() => {
+    projectRetryTimer = undefined;
+    if (useApiConnectivityStore.getState().shouldSkipRequest()) return;
+    void useShellStore.getState().fetchProjects();
+  }, delay);
+}
 
 function applyUiFontSize(fontSize: number): void {
   const normalized = Math.min(
@@ -253,38 +270,37 @@ export const useShellStore = create<ShellState>((set, get) => ({
         await get().fetchProjects();
         return;
       }
+      clearProjectRetry();
       set({ projects: items, projectsLoaded: true });
-    } catch {
-      // A failed request is not an empty project list. Retry on connectivity recovery.
+    } catch (error) {
+      // A failed request is not an empty project list. Endpoint-level 5xx
+      // failures retry locally; transport failures wait for health recovery.
+      if (
+        error instanceof AppError &&
+        error.statusCode !== undefined &&
+        error.statusCode >= 500 &&
+        !useApiConnectivityStore.getState().shouldSkipRequest()
+      ) {
+        scheduleProjectRetry();
+      }
     }
   },
 }));
 
 export function startProjectRecovery(): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let lastRefreshAt = -Infinity;
-  const refresh = () => {
-    timer = undefined;
-    if (useApiConnectivityStore.getState().shouldSkipRequest()) return;
-    lastRefreshAt = Date.now();
-    void useShellStore.getState().fetchProjects();
-  };
   const unsubscribe = useApiConnectivityStore.subscribe((state, previous) => {
     if (
       state.recoveryVersion === previous.recoveryVersion ||
-      state.shouldSkipRequest() ||
-      timer
+      state.shouldSkipRequest()
     )
       return;
-    // A healthy /health endpoint must not create an immediate retry loop when
-    // /projects itself fails. Coalesce recoveries and retry at most every 10s.
-    const delay = Math.max(0, lastRefreshAt + 10_000 - Date.now());
-    if (delay > 0) timer = setTimeout(refresh, delay);
-    else refresh();
+    // Transport recovery retries immediately unless an endpoint-level backoff
+    // is already pending, in which case the existing deadline is preserved.
+    scheduleProjectRetry(0);
   });
   return () => {
     unsubscribe();
-    if (timer) clearTimeout(timer);
+    clearProjectRetry();
   };
 }
 

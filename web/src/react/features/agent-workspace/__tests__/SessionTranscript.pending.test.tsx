@@ -150,3 +150,13 @@ it("rolls back only the failed session's temporary message after switching sessi
   expect(usePendingSubmissionStore.getState().items.s1).toBeUndefined();
   expect(useAgentSessionStore.getState().selectedSessionId).toBe("s2");
 });
+
+it("keeps the scrollport keyboard-accessible without rendering focus hints", () => {
+  const { container } = render(<SessionTranscript />);
+  const scroll = screen.getByLabelText("对话记录");
+  expect(scroll).toHaveAttribute("tabindex", "0");
+  expect(container.querySelector(".session-transcript-focus-hint")).toBeNull();
+  expect(
+    screen.queryByText(/键盘滚动|Keyboard scrolling/),
+  ).not.toBeInTheDocument();
+});

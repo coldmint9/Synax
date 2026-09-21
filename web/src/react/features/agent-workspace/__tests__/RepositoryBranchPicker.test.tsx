@@ -25,6 +25,21 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(agentRuntimeApi.listSessionBranches).mockResolvedValue(branches);
 });
+it.each(["main", "codex/streaming-commit-message"])(
+  "keeps the Git icon outside the truncated label for %s",
+  (branch) => {
+    render(
+      <RepositoryBranchPicker sessionId="s" branch={branch} onSwitched={vi.fn()} />,
+    );
+    const trigger = screen.getByRole("button", { name: /Switch Git branch/ });
+    const icon = trigger.querySelector(".ws-branch-icon");
+    const label = trigger.querySelector(".ws-branch-label");
+    expect(icon?.querySelector("svg.lucide-git-branch")).not.toBeNull();
+    expect(label).toHaveTextContent(branch);
+    expect(label?.querySelector("svg")).toBeNull();
+  },
+);
+
 it("lists local branches and prevents choosing a branch used by another worktree", async () => {
   const changed = vi.fn();
   vi.mocked(agentRuntimeApi.switchSessionBranch).mockResolvedValue({

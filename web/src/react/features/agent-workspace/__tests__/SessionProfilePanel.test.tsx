@@ -35,7 +35,7 @@ describe("SessionProfilePanel", () => {
       detailLoading: false,
       sessionStats: null,
       sessionTodos: [],
-      sessionCapabilities: null,
+      sessionInvocationUsage: null,
       steps: [],
     });
   });
@@ -51,7 +51,7 @@ describe("SessionProfilePanel", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("keeps status and elapsed time in the header without repeating context there", () => {
+  it("keeps status in the header without repeating context or elapsed time there", () => {
     localStorage.removeItem("synax:workspace:disclosure:metrics:runtime");
     useAgentSessionStore.setState({
       selectedSessionId: "metrics",
@@ -76,12 +76,40 @@ describe("SessionProfilePanel", () => {
     expect(header.queryByText(/上下文/)).toBeNull();
     expect(container.textContent).not.toContain("≈");
     expect(header.getByText("completed")).toBeInTheDocument();
-    expect(header.getByText("1:05")).toBeInTheDocument();
+    expect(header.queryByText("1:05")).toBeNull();
     expect(header.queryByText("运行详情")).toBeNull();
     fireEvent.click(header.getByRole("button", { name: "运行详情" }));
     expect(screen.getAllByText("completed")).toHaveLength(1);
-    expect(screen.getAllByText("1:05")).toHaveLength(1);
+    expect(screen.queryByText("1:05")).toBeNull();
     expect(screen.getByText("上下文组成")).toBeInTheDocument();
+  });
+
+
+  it("shows invocation usage instead of the capability inventory", () => {
+    localStorage.removeItem("synax:workspace:disclosure:usage:runtime");
+    useAgentSessionStore.setState({
+      selectedSessionId: "usage",
+      sessions: [session("usage")],
+      sessionInvocationUsage: {
+        totalCalls: 3,
+        items: [
+          {
+            kind: "tool",
+            id: "browser.click",
+            label: "Browser Click",
+            callCount: 3,
+            lastCalledAt: "2026-09-21T00:00:00Z",
+          },
+        ],
+      },
+    });
+
+    render(<SessionProfilePanel sessionId="usage" />);
+    fireEvent.click(screen.getByRole("button", { name: "运行详情" }));
+    expect(screen.getByText("调用统计")).toBeInTheDocument();
+    expect(screen.getByText("Browser Click")).toBeInTheDocument();
+    expect(screen.getByText("×3")).toBeInTheDocument();
+    expect(screen.queryByText("0/42")).toBeNull();
   });
 
   it("does not show an inspector without a session", () => {

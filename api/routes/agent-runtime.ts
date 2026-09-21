@@ -52,6 +52,7 @@ import {
   permissionReplyRequestSchema,
   profileService,
   resolveSessionCapabilities,
+  resolveSessionInvocationUsage,
   streamTurnRequestSchema,
   toHttpError,
   applySessionPermissionUpdate,
@@ -1026,6 +1027,14 @@ agentRuntimeRoutes.get("/sessions/:sessionId/capabilities", (c) => {
     const sessionId = c.req.param("sessionId");
     agentSessionRuntime.get(sessionId);
     return c.json(resolveSessionCapabilities(sessionId));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/invocation-usage", (c) => {
+  try {
+    return c.json(resolveSessionInvocationUsage(c.req.param("sessionId")));
   } catch (error) {
     return runtimeError(c, error);
   }

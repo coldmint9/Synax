@@ -1,0 +1,23 @@
+/* Focus changes behavior, not decoration. Cover native controls, custom
+   focus-within wrappers and React Aria/HeroUI controls (including body portals).
+   Reset only focus outlines/rings: preserve ordinary borders, card shadows,
+   selected/checked states, text selection and keyboard navigation. */
+:where(
+  :focus,
+  :focus-visible,
+  :focus-within,
+  [data-focused="true"],
+  [data-focus-within="true"],
+  [data-focus-visible="true"],
+  [data-focus-visible="true"] *
+) {
+  &,
+  &::before,
+  &::after {
+    outline: none !important;
+    outline-offset: 0 !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
+    --tw-inset-ring-shadow: 0 0 #0000 !important;
+  }
+}

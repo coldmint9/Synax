@@ -10,6 +10,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   showSaveDialog: (options: Electron.SaveDialogOptions) =>
     ipcRenderer.invoke("dialog:save", options),
   getAppVersion: () => ipcRenderer.invoke("app:version"),
+  getAccessibilitySupportEnabled: () =>
+    ipcRenderer.invoke("app:accessibility-support-enabled"),
+  onAccessibilitySupportChanged: (callback: (enabled: boolean) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, enabled: boolean) =>
+      callback(enabled);
+    ipcRenderer.on("app:accessibility-support-changed", listener);
+    return () =>
+      ipcRenderer.removeListener("app:accessibility-support-changed", listener);
+  },
   reportUIReady: () => ipcRenderer.send("app:ui-ready"),
   getApiPort: () => ipcRenderer.invoke("app:api-port"),
   getRuntimeToken: () => ipcRenderer.invoke("app:runtime-token"),

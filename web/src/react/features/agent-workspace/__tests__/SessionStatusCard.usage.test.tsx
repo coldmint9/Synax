@@ -3,8 +3,23 @@ import { render, screen } from "@testing-library/react";
 vi.mock("../../../../hooks/useLocale", () => ({
   useLocale: () => ({ locale: "zh" }),
 }));
+vi.mock("../useProviderNames", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../useProviderNames")>();
+  return {
+    ...actual,
+    // Keep the network off the unit-test path; the name mapping itself is
+    // covered by useProviderNames.test.ts.
+    useProviderNames: () => [
+      { id: "custom-api:1789630765113", label: "智谱" },
+    ] as never,
+  };
+});
 import { SessionStatusCard } from "../SessionWorkspace";
-import type { SessionStats } from "../../../../lib/api/agentRuntime";
+import type {
+  AgentSession,
+  SessionStats,
+} from "../../../../lib/api/agentRuntime";
 
 const stats: SessionStats = {
   roundCount: 32,
@@ -65,7 +80,7 @@ describe("SessionStatusCard usage boundaries", () => {
     );
     expect(screen.getByText("completed")).toBeTruthy();
     expect(screen.queryByText("running")).toBeNull();
-    expect(screen.getByText("0:05")).toBeTruthy();
+    expect(screen.queryByText("0:05")).toBeNull();
   });
 
   it("does not invent context composition when a snapshot is unavailable", () => {
@@ -132,7 +147,7 @@ describe("SessionStatusCard usage boundaries", () => {
       ).map((bar) => bar.style.width),
     ).toEqual(["20%", "30%", "10%", "40%"]);
   });
-  it("does not add time for a stale running step after the run has ended", () => {
+  it("renders no elapsed time for a stale running step after the run has ended", () => {
     render(
       <SessionStatusCard
         stats={stats}
@@ -153,12 +168,12 @@ describe("SessionStatusCard usage boundaries", () => {
         todos={[]}
       />,
     );
-    expect(screen.getByText("0:05")).toBeTruthy();
+    expect(screen.queryByText("0:05")).toBeNull();
   });
 });
 
 describe("measured context and cache hit rate", () => {
-  it("keeps four colors and shows retained usage within each tool category", () => {
+  it("keeps four colors without per-category usage captions", () => {
     const composition = {
       ...stats.contextComposition!,
       version: 2 as const,
@@ -187,17 +202,13 @@ describe("measured context and cache hit rate", () => {
         container.querySelectorAll<HTMLElement>("[data-context-category]"),
       ).map((bar) => bar.style.width),
     ).toEqual(["8%", "12%", "4%", "16%"]);
+    expect(container.querySelector("[data-context-usage]")).toBeNull();
+    expect(screen.queryByText(/基础 · 使用 · 占当前上下文/)).toBeNull();
     expect(
-      container.querySelector('[data-context-usage="tools"]'),
-    ).toHaveTextContent("基础 50.0K · 使用 30.0K · 占当前上下文 6.0%");
+      screen.queryByText("使用明细将在下一次模型请求后更新"),
+    ).toBeNull();
     expect(
-      container.querySelector('[data-context-usage="mcp"]'),
-    ).toHaveTextContent("基础 100.0K · 使用 20.0K · 占当前上下文 4.0%");
-    expect(
-      container.querySelector('[data-context-usage="skills"]'),
-    ).toHaveTextContent("基础 10.0K · 使用 30.0K · 占当前上下文 6.0%");
-    expect(
-      container.querySelector('[data-context-usage="messages"]'),
+      screen.queryByText("四色显示分类占用；总量含系统提示等基础上下文。"),
     ).toBeNull();
     expect(screen.getByText(/500\.0K \/ 1M/)).toBeTruthy();
     expect(
@@ -291,5 +302,31 @@ describe("measured context and cache hit rate", () => {
     expect(screen.getByText("最近一次缓存率")).toBeTruthy();
     expect(screen.getByText("平均缓存率（逐轮）")).toBeTruthy();
     expect(screen.queryByText("18.6%")).toBeNull();
+  });
+
+  it("shows the context token total in the runtime status header", () => {
+    render(<SessionStatusCard stats={stats} steps={[]} todos={[]} />);
+    const tokens = screen.getByTitle("当前上下文 Token");
+    // The fixture's latest sample is not provider-reported, so the header
+    // shows the composition estimate, not the raw 403.3K input tokens.
+    expect(tokens.textContent).toBe("400.0K");
+  });
+
+  it("prefixes the LLM row with the provider display name", () => {
+    const session = {
+      id: "s",
+      projectId: "p",
+      model: "custom-api:1789630765113/glm-5.3",
+    } as AgentSession;
+    render(
+      <SessionStatusCard
+        stats={stats}
+        session={session}
+        steps={[]}
+        todos={[]}
+      />,
+    );
+    const row = screen.getByTitle("custom-api:1789630765113/glm-5.3");
+    expect(row.textContent).toBe("智谱/glm-5.3");
   });
 });

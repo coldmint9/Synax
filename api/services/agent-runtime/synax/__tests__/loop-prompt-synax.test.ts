@@ -36,10 +36,10 @@ describe("buildLoopSystemPrompt synax mode section", () => {
     const prompt = buildLoopSystemPrompt({
       profile: synaxAgentProfile,
       context: null,
-      projectRulesSection: "### SYNAX.md\n\nRun npm test.",
+      projectRulesSection: "### AGENTS.md\n\nRun npm test.",
     });
     expect(prompt).toContain("[Project Rules]");
-    expect(prompt).toContain("### SYNAX.md");
+    expect(prompt).toContain("### AGENTS.md");
     expect(prompt).toContain("Run npm test.");
   });
 

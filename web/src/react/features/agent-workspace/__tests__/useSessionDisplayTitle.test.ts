@@ -38,8 +38,8 @@ describe("getSessionDisplayTitle", () => {
 
   it("localizes the placeholder title instead of showing the raw value", () => {
     expect(
-      getSessionDisplayTitle(session({ title: "new session" }), "", "zh"),
-    ).toBe("新会话");
+      getSessionDisplayTitle(session({ title: "new chat" }), "", "zh"),
+    ).toBe("新对话");
     expect(
       getSessionDisplayTitle(session({ title: "new agent" }), "", "zh"),
     ).toBe("新会话");

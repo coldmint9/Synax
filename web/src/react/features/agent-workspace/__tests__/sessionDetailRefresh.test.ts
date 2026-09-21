@@ -34,7 +34,10 @@ beforeEach(() => {
   });
   vi.spyOn(api, "getSessionStats").mockResolvedValue(stats("completed"));
   vi.spyOn(api, "getSessionTodos").mockResolvedValue({ items: [] });
-  vi.spyOn(api, "getSessionCapabilities").mockResolvedValue({} as never);
+  vi.spyOn(api, "getSessionInvocationUsage").mockResolvedValue({
+    items: [],
+    totalCalls: 0,
+  });
   for (const key of [
     "listSessionSteps",
     "listRuns",
@@ -242,4 +245,47 @@ it("rejects an old response after switching A → B → A", async () => {
   await Promise.resolve();
   await Promise.resolve();
   expect(store.getState().messages[0].id).toBe("a-current");
+});
+
+describe("invocation usage live refresh", () => {
+  it("debounces new tool calls and does not refetch for updates to the same call", async () => {
+    vi.useFakeTimers();
+    try {
+      store.setState({ streamingStepId: "step-1" });
+      const call = {
+        id: "call-1",
+        stepId: "step-1",
+        toolId: "file.read",
+      } as never;
+      store.getState().applyLiveEvent({
+        type: "tool_call",
+        stepId: "step-1",
+        toolCall: call,
+      });
+      store.getState().applyLiveEvent({
+        type: "tool_call",
+        stepId: "step-1",
+        toolCall: call,
+      });
+
+      expect(api.getSessionInvocationUsage).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(api.getSessionInvocationUsage).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reconciles invocation usage immediately when a run becomes terminal", async () => {
+    store.getState().applyLiveEvent({
+      type: "runtime_state",
+      sessionId: session.id,
+      patch: { status: "completed" },
+      reset: true,
+      refresh: false,
+    });
+    await vi.waitFor(() =>
+      expect(api.getSessionInvocationUsage).toHaveBeenCalledTimes(1),
+    );
+  });
 });

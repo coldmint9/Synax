@@ -12,6 +12,7 @@ import type {
   StreamTurnRequest,
   AgentRuntimeMessage,
 } from './contracts.js';
+import type { SessionInvocationUsageResponse } from './session-invocation-usage.js';
 import {
   RUNTIME_PROTOCOL_VERSION,
   type ObserveRunOptions,
@@ -287,6 +288,10 @@ export class HttpRuntimeClient implements RuntimeClient {
 
   getSessionCapabilities(sessionId: string): Promise<{ backend?: RuntimeBackendDescriptor }> {
     return this.request(`/api/agent-runtime/sessions/${encodeId(sessionId)}/capabilities`);
+  }
+
+  getSessionInvocationUsage(sessionId: string): Promise<SessionInvocationUsageResponse> {
+    return this.request(`/api/agent-runtime/sessions/${encodeId(sessionId)}/invocation-usage`);
   }
 
   uploadAsset(projectId: string, file: File, signal?: AbortSignal): Promise<{asset: RuntimeAsset}> {

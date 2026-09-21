@@ -7,7 +7,7 @@ const WIKI_PLAN_PROFILE_IDS = new Set<string>([
   PLAN_GENERATOR_LEGACY_ID,
 ]);
 
-/** Wiki pipeline agents — inject SYNAX.md only to avoid CLAUDE/AGENTS context pollution. */
+/** Wiki pipeline agents — specialized output contract (project rule loading is unified). */
 export function isWikiAgentProfile(profileId: string): boolean {
   return profileId.startsWith(WIKI_PROFILE_PREFIX) || WIKI_PLAN_PROFILE_IDS.has(profileId);
 }

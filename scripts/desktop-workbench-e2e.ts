@@ -465,9 +465,7 @@ try {
   });
   const assertOpaqueDesktop = async () => {
     const surfaces = await page!
-      .locator(
-        ".agent-session-composer-shell, .workbench-header .wh-pill, .work-conversation",
-      )
+      .locator(".agent-session-composer-shell, .workbench-header .wh-pill")
       .evaluateAll((elements) =>
         elements.map((el) => ({
           background: getComputedStyle(el).backgroundColor,
@@ -475,7 +473,7 @@ try {
           animation: getComputedStyle(el).animationName,
         })),
       );
-    assert.ok(surfaces.length >= 3);
+    assert.ok(surfaces.length >= 2);
     for (const surface of surfaces) {
       assert.match(
         surface.background,
@@ -485,6 +483,15 @@ try {
       assert.equal(surface.blur, "none");
       assert.equal(surface.animation, "none");
     }
+    assert.deepEqual(
+      await page!.locator(".work-content-layout").evaluate((element) => {
+        const style = getComputedStyle(element);
+        return [style.backgroundColor, style.boxShadow, style.borderRadius];
+      }),
+      ["rgba(0, 0, 0, 0)", "none", "0px"],
+      "conversation content must stay on the workbench background",
+    );
+    assert.equal(await page!.locator(".work-conversation").count(), 0);
     assert.equal(
       await page!.evaluate(() => "appearance" in (window as any).electronAPI),
       false,

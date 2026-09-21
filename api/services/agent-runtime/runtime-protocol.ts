@@ -11,6 +11,7 @@ import type {
   AgentRuntimeMessage,
 } from './contracts.js';
 import type { BackendDescription } from './backends/backend-contracts.js';
+import type { SessionInvocationUsageResponse } from './session-invocation-usage.js';
 
 /** Stable wire identifier for clients that are not coupled to Synax internals. */
 export const RUNTIME_PROTOCOL_VERSION = 'synax.runtime.v1' as const;
@@ -164,6 +165,7 @@ export interface RuntimeClient {
   listRuns(sessionId: string): Promise<{ items: AgentRun[] }>;
   listMessages(sessionId: string): Promise<{ items: AgentRuntimeMessage[] }>;
   getSessionCapabilities(sessionId: string): Promise<{ backend?: RuntimeBackendDescriptor }>;
+  getSessionInvocationUsage(sessionId: string): Promise<SessionInvocationUsageResponse>;
   createSession(body: CreateSessionRequest): Promise<RuntimeSessionPayload>;
   getSession(sessionId: string): Promise<RuntimeSessionPayload>;
   submitRun(sessionId: string, input: StreamTurnRequest, options: SubmitRunOptions): Promise<{ run: AgentRun; reused: boolean }>;

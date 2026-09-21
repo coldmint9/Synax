@@ -54,13 +54,6 @@ export function SessionCacheCard({ cache }: { cache?: SessionCacheUsage }) {
           </span>
         </div>
       ))}
-      {!!cache?.pending && (
-        <p>
-          {zh
-            ? `${cache.pending} 个请求等待 usage`
-            : `${cache.pending} requests awaiting usage`}
-        </p>
-      )}
     </section>
   );
 }

@@ -19,7 +19,7 @@ import {
   type ReasoningEffort,
   type RuntimeEvent,
   type SessionStats,
-  type SessionCapabilities,
+  type SessionInvocationUsageResponse,
   type TodoItem,
   type ToolCallRecord,
 } from "../../../../lib/api/agentRuntime";
@@ -164,7 +164,7 @@ export interface SessionDetailCacheEntry {
   permissions: PermissionDecision[];
   sessionStats: SessionStats | null;
   sessionTodos: TodoItem[];
-  sessionCapabilities: SessionCapabilities | null;
+  sessionInvocationUsage: SessionInvocationUsageResponse | null;
   cachedAt: number;
 }
 
@@ -212,7 +212,7 @@ function emptyDetailPayload(): Pick<
   | "permissions"
   | "sessionStats"
   | "sessionTodos"
-  | "sessionCapabilities"
+  | "sessionInvocationUsage"
 > {
   return {
     runs: [],
@@ -223,7 +223,7 @@ function emptyDetailPayload(): Pick<
     permissions: [],
     sessionStats: null,
     sessionTodos: [],
-    sessionCapabilities: null,
+    sessionInvocationUsage: null,
   };
 }
 
@@ -330,7 +330,7 @@ function patchSessionDetailCache(
     permissions: state.permissions,
     sessionStats: state.sessionStats,
     sessionTodos: state.sessionTodos,
-    sessionCapabilities: state.sessionCapabilities,
+    sessionInvocationUsage: state.sessionInvocationUsage,
     cachedAt: 0,
   };
   useAgentSessionStore.setState((s) => ({
@@ -361,6 +361,22 @@ function scheduleLiveRefreshDetail(): void {
     liveDetailRefreshTimer = null;
     void useAgentSessionStore.getState().refreshDetail();
   }, LIVE_REFRESH_DEBOUNCE_MS);
+}
+
+const INVOCATION_USAGE_REFRESH_DEBOUNCE_MS = 500;
+let invocationUsageRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleInvocationUsageRefresh(): void {
+  if (invocationUsageRefreshTimer) return;
+  invocationUsageRefreshTimer = setTimeout(() => {
+    invocationUsageRefreshTimer = null;
+    void useAgentSessionStore.getState().fetchSessionInvocationUsage();
+  }, INVOCATION_USAGE_REFRESH_DEBOUNCE_MS);
+}
+
+function clearInvocationUsageRefresh(): void {
+  if (invocationUsageRefreshTimer) clearTimeout(invocationUsageRefreshTimer);
+  invocationUsageRefreshTimer = null;
 }
 
 function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
@@ -435,7 +451,7 @@ export interface AgentSessionStoreState {
   permissions: PermissionDecision[];
   sessionStats: SessionStats | null;
   sessionTodos: TodoItem[];
-  sessionCapabilities: SessionCapabilities | null;
+  sessionInvocationUsage: SessionInvocationUsageResponse | null;
   readSessionMarkers: Record<string, string>;
   sessionDetailCache: Record<string, SessionDetailCacheEntry>;
 
@@ -478,7 +494,7 @@ export interface AgentSessionStoreState {
   resumeSession: (sessionId: string, message?: string) => Promise<void>;
   fetchSessionStats: () => Promise<void>;
   fetchSessionTodos: () => Promise<void>;
-  fetchSessionCapabilities: () => Promise<void>;
+  fetchSessionInvocationUsage: () => Promise<void>;
   replyPermission: (
     permissionId: string,
     reply: "once" | "always" | "reject",
@@ -528,7 +544,7 @@ type SessionDetailState = Pick<
   | "permissions"
   | "sessionStats"
   | "sessionTodos"
-  | "sessionCapabilities"
+  | "sessionInvocationUsage"
   | "streamingRetry"
   | "streamingStepId"
   | "streamingLive"
@@ -549,7 +565,7 @@ function emptySessionDetailState(): SessionDetailState {
     permissions: [],
     sessionStats: null,
     sessionTodos: [],
-    sessionCapabilities: null,
+    sessionInvocationUsage: null,
     streamingRetry: null,
     streamingStepId: null,
     streamingLive: EMPTY_STREAMING_BUFFERS,
@@ -586,7 +602,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     permissions: [],
     sessionStats: null,
     sessionTodos: [],
-    sessionCapabilities: null,
+    sessionInvocationUsage: null,
     readSessionMarkers: {},
     sessionDetailCache: {},
     streamingRetry: null,
@@ -699,6 +715,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       activeSessionsPage = null;
       activeDetailRefresh = null;
       activeTranscriptRefresh = null;
+      clearInvocationUsageRefresh();
       ++detailRefreshEpoch;
       releaseSessionLiveSubscription();
       clearStreamingBuffers();
@@ -857,6 +874,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     resetSessionDetailForDraft: () => {
       ++detailRefreshEpoch;
+      clearInvocationUsageRefresh();
       activeDetailRefresh = null;
       releaseSessionLiveSubscription();
       clearStreamingBuffers();
@@ -874,7 +892,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         permissions: [],
         sessionStats: null,
         sessionTodos: [],
-        sessionCapabilities: null,
+            sessionInvocationUsage: null,
         streamingRetry: null,
         streamingStepId: null,
         streamingLive: EMPTY_STREAMING_BUFFERS,
@@ -991,6 +1009,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       const isSwitch = prev !== sessionId;
       if (isSwitch) {
         ++detailRefreshEpoch;
+        clearInvocationUsageRefresh();
         activeDetailRefresh = null;
         activeTranscriptRefresh = null;
       }
@@ -1023,7 +1042,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               permissions: cached.permissions,
               sessionStats: cached.sessionStats,
               sessionTodos: cached.sessionTodos,
-              sessionCapabilities: cached.sessionCapabilities,
+              sessionInvocationUsage: cached.sessionInvocationUsage,
             }
           : isSwitch
             ? emptyDetailPayload()
@@ -1040,13 +1059,14 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     closePanel: () => {
       releaseSessionLiveSubscription();
+      clearInvocationUsageRefresh();
       set({ panelOpen: false });
     },
 
     /**
      * Refresh the selected session's detail.
      *
-     * Profile-critical data (stats, todos, capabilities) is applied as
+     * Profile-critical data (stats, todos, invocation usage) is applied as
      * soon as each response lands, and the heavier transcript queries (events,
      * messages, tool calls) are applied in the background. Previously everything
      * was committed in a single batch, so one slow query (the event log can take
@@ -1145,24 +1165,18 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .catch(() => {
                   /* todos are optional */
                 }),
-              // Capabilities change rarely (profile / permission tier); skip
-              // the refetch while a cached snapshot exists for this session.
-              ...(cachedEntry?.sessionCapabilities
-                ? []
-                : [
-                    agentRuntimeApi
-                      .getSessionCapabilities(targetSessionId)
-                      .then((capabilities) => {
-                        if (!isCurrent()) return;
-                        set({ sessionCapabilities: capabilities });
-                        patchSessionDetailCache(targetSessionId, {
-                          sessionCapabilities: capabilities,
-                        });
-                      })
-                      .catch(() => {
-                        /* capabilities are optional */
-                      }),
-                  ]),
+              agentRuntimeApi
+                .getSessionInvocationUsage(targetSessionId)
+                .then((usage) => {
+                  if (!isCurrent()) return;
+                  set({ sessionInvocationUsage: usage });
+                  patchSessionDetailCache(targetSessionId, {
+                    sessionInvocationUsage: usage,
+                  });
+                })
+                .catch(() => {
+                  /* retain the most recent successful usage snapshot */
+                }),
             ];
 
             // While a run streams, tool calls stay current through live
@@ -1227,7 +1241,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     permissions: permissionsRes.items,
                     sessionStats: get().sessionStats,
                     sessionTodos: get().sessionTodos,
-                    sessionCapabilities: get().sessionCapabilities,
+                    sessionInvocationUsage: get().sessionInvocationUsage,
                     cachedAt: Date.now(),
                   };
 
@@ -1349,19 +1363,19 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
     },
 
-    fetchSessionCapabilities: async () => {
+    fetchSessionInvocationUsage: async () => {
       const { selectedSessionId } = get();
       if (!selectedSessionId) return;
       try {
-        const capabilities =
-          await agentRuntimeApi.getSessionCapabilities(selectedSessionId);
+        const usage =
+          await agentRuntimeApi.getSessionInvocationUsage(selectedSessionId);
         if (get().selectedSessionId !== selectedSessionId) return;
-        set({ sessionCapabilities: capabilities });
+        set({ sessionInvocationUsage: usage });
         patchSessionDetailCache(selectedSessionId, {
-          sessionCapabilities: capabilities,
+          sessionInvocationUsage: usage,
         });
       } catch {
-        /* silent */
+        /* retain the most recent successful usage snapshot */
       }
     },
 
@@ -1405,11 +1419,6 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         sessionMetadata: payload.session.sessionMetadata,
         updatedAt: payload.session.updatedAt,
       });
-      // Tier changes remount the tool set; drop the cached capability snapshot
-      // so the next refresh fetches it again.
-      patchSessionDetailCache(sessionId, { sessionCapabilities: null });
-      if (get().selectedSessionId === sessionId)
-        set({ sessionCapabilities: null });
     },
 
     sendSessionMessage: async (sessionId, body) => {
@@ -1544,13 +1553,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         case "runtime_state": {
           get().patchSession(event.sessionId, event.patch);
           if (get().selectedSessionId !== event.sessionId) break;
+          const terminal = [
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+          ].includes(event.patch.status ?? "");
           if (event.reset) {
-            const terminal = [
-              "completed",
-              "failed",
-              "cancelled",
-              "interrupted",
-            ].includes(event.patch.status ?? "");
             if (terminal && get().streamingStepId) {
               // The persisted transcript arrives later. Keep the visible answer
               // until refreshDetail replaces it and clears live state together.
@@ -1567,6 +1576,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             }
           }
           if (event.refresh) scheduleLiveRefreshDetail();
+          if (terminal) void get().fetchSessionInvocationUsage();
           break;
         }
         case "step_started": {
@@ -1615,14 +1625,19 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           if (get().streamingStepId !== event.stepId) break;
           bufferStreamingDelta("thinking", event.delta);
           break;
-        case "tool_call":
+        case "tool_call": {
           if (get().streamingStepId !== event.stepId) break;
+          const isNewCall = !get().toolCalls.some(
+            (call) => call.id === event.toolCall.id,
+          );
           flushStreamingDeltas();
           set((s) => ({
             streamingLive: applyToolCall(s.streamingLive, event.toolCall),
             toolCalls: upsertById(s.toolCalls, event.toolCall),
           }));
+          if (isNewCall) scheduleInvocationUsageRefresh();
           break;
+        }
         case "tool_result":
           if (get().streamingStepId !== event.stepId) break;
           flushStreamingDeltas();

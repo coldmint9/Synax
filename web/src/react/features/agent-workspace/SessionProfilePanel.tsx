@@ -5,7 +5,7 @@ import { SlidersHorizontal } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useLocale } from "../../../hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
-import { SessionCapabilitiesPanel } from "./SessionCapabilitiesPanel";
+import { SessionInvocationUsagePanel } from "./SessionInvocationUsagePanel";
 import { SessionRuntimeStatus, SessionStatusCard } from "./SessionWorkspace";
 import { SessionSystemPromptPanel } from "./SessionSystemPromptPanel";
 import { WorkspaceSection } from "./WorkspaceSection";
@@ -19,13 +19,13 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({
   sessionId: string | null;
 }) {
   const { locale } = useLocale();
-  const { loading, sessionStats, sessionCapabilities, steps, runs, session } =
+  const { loading, sessionStats, sessionInvocationUsage, steps, runs, session } =
     useAgentSessionStore(
       useShallow((s) => ({
         loading: s.detailLoading,
         sessionStats: s.selectedSessionId === sessionId ? s.sessionStats : null,
-        sessionCapabilities:
-          s.selectedSessionId === sessionId ? s.sessionCapabilities : null,
+        sessionInvocationUsage:
+          s.selectedSessionId === sessionId ? s.sessionInvocationUsage : null,
         steps: s.selectedSessionId === sessionId ? s.steps : EMPTY_STEPS,
         runs: s.selectedSessionId === sessionId ? s.runs : EMPTY_RUNS,
         session: s.sessions.find((item) => item.id === sessionId),
@@ -64,11 +64,11 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({
                 steps={steps}
               />
             )}
-            {sessionCapabilities && (
-              <SessionCapabilitiesPanel capabilities={sessionCapabilities} />
+            {sessionInvocationUsage && (
+              <SessionInvocationUsagePanel usage={sessionInvocationUsage} />
             )}
             {session && <SessionSystemPromptPanel session={session} />}
-            {!sessionStats && !sessionCapabilities && (
+            {!sessionStats && !sessionInvocationUsage && (
               <p className="ws-empty">
                 {locale === "zh" ? "暂无运行数据" : "No runtime data yet"}
               </p>

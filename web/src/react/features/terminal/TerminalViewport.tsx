@@ -9,6 +9,8 @@ import { type TerminalSession } from "../../../lib/api/terminal";
 import { useShellStore } from "../../state/shellStore";
 import { useLocale } from "../../../hooks/useLocale";
 import { terminalChanged, useTerminalStore } from "./terminalStore";
+import { TerminalOutputBuffer } from "./terminalOutputBuffer";
+import { enableWebglRenderer } from "./terminalRenderer";
 
 const themes = {
   dark: {
@@ -51,6 +53,7 @@ export function TerminalViewport({
     search: SearchAddon;
     fitNow: () => void;
     syncInput: () => void;
+    setVisible: (visible: boolean) => void;
   } | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -67,12 +70,24 @@ export function TerminalViewport({
       replaying = false,
       stopped = session.state === "closed";
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    const desktop = (
+      window as Window & {
+        electronAPI?: {
+          getAccessibilitySupportEnabled?: () => Promise<boolean>;
+          onAccessibilitySupportChanged?: (
+            callback: (enabled: boolean) => void,
+          ) => () => void;
+        };
+      }
+    ).electronAPI;
     const terminal = new Terminal({
       cursorBlink: true,
       fontSize: 13,
       fontFamily: '"SFMono-Regular", Menlo, Consolas, monospace',
       scrollback: 5000,
-      screenReaderMode: true,
+      // Desktop can query the OS and enable the full accessibility tree only
+      // when assistive technology is active. Browsers retain xterm's a11y path.
+      screenReaderMode: !desktop?.getAccessibilitySupportEnabled,
       theme: terminalTheme(
         useShellStore.getState().resolvedTheme,
         useShellStore.getState().preferences.accentColor,
@@ -95,6 +110,19 @@ export function TerminalViewport({
     terminal.loadAddon(fit);
     terminal.loadAddon(finder);
     terminal.open(host.current);
+    const terminalHost = host.current;
+    enableWebglRenderer(terminal, (renderer) => {
+      terminalHost.dataset.renderer = renderer;
+    });
+    const setAccessibility = (enabled: boolean) => {
+      if (!disposed) terminal.options.screenReaderMode = enabled;
+    };
+    void desktop
+      ?.getAccessibilitySupportEnabled?.()
+      .then(setAccessibility)
+      .catch(() => {});
+    const removeAccessibilityListener =
+      desktop?.onAccessibilitySupportChanged?.(setAccessibility);
     if (terminal.textarea)
       terminal.textarea.setAttribute(
         "aria-label",
@@ -118,7 +146,6 @@ export function TerminalViewport({
           );
       }, 80);
     };
-    instance.current = { terminal, fit, search: finder, fitNow, syncInput };
     let ackTimer: ReturnType<typeof setTimeout> | undefined,
       ackSequence = 0;
     const ack = (sequence: number) => {
@@ -129,60 +156,97 @@ export function TerminalViewport({
         if (!disposed && !stopped) source.acknowledge(ackSequence);
       }, 24);
     };
-    const source = new TerminalConnection(session, {
-      connected: () => {
-        if (!disposed) {
-          connected = true;
-          setConnection("connected");
-          syncInput();
-          fitNow();
-        }
-      },
-      disconnected: () => {
-        if (!disposed) {
-          connected = false;
-          setConnection("reconnecting");
-          syncInput();
-        }
-      },
-      error: (message) => {
-        if (!disposed) setError(message);
-      },
-      reset: (data, sequence, clear) => {
-        if (disposed) return;
-        // Replaying an old vi/SSH query must never send its response into the
-        // current shell. Only live output may generate terminal protocol replies.
-        replaying = true;
-        syncInput();
-        setConnection("connecting");
-        if (clear) terminal.reset();
-        terminal.write(data, () => {
-          replaying = false;
+    const output = new TerminalOutputBuffer(
+      (data, callback) => terminal.write(data, callback),
+      ack,
+    );
+    const source = new TerminalConnection(
+      session,
+      {
+        connected: () => {
           if (!disposed) {
+            connected = true;
+            setConnection("connected");
             syncInput();
-            if (!stopped) {
-              setConnection("connected");
-              source.redraw();
-            }
-            ack(sequence);
+            fitNow();
           }
-        });
+        },
+        disconnected: () => {
+          if (!disposed) {
+            connected = false;
+            setConnection("reconnecting");
+            syncInput();
+          }
+        },
+        error: (message) => {
+          if (!disposed) setError(message);
+        },
+        reset: (data, sequence, clear) => {
+          if (disposed) return;
+          // Replaying an old vi/SSH query must never send its response into the
+          // current shell. Only live output may generate terminal protocol replies.
+          replaying = true;
+          syncInput();
+          setConnection("connecting");
+          if (clear) terminal.reset();
+          terminal.write(data, () => {
+            replaying = false;
+            if (!disposed) {
+              syncInput();
+              if (!stopped) {
+                setConnection("connected");
+                source.redraw();
+              }
+              ack(sequence);
+            }
+          });
+        },
+        data: (data, sequence) => {
+          if (!disposed) output.push(data, sequence);
+        },
+        state: (item) => {
+          if (disposed) return;
+          useTerminalStore.getState().update(item);
+          stopped = item.state === "closed" || item.state === "unconfirmed";
+          syncInput();
+          if (stopped) {
+            setConnection(item.state === "closed" ? "closed" : "unavailable");
+            source.close();
+            terminalChanged();
+          }
+        },
       },
-      data: (data, sequence) => {
-        if (!disposed) terminal.write(data, () => ack(sequence));
-      },
-      state: (item) => {
-        if (disposed) return;
-        useTerminalStore.getState().update(item);
-        stopped = item.state === "closed" || item.state === "unconfirmed";
-        syncInput();
-        if (stopped) {
-          setConnection(item.state === "closed" ? "closed" : "unavailable");
-          source.close();
-          terminalChanged();
+      visibleRef.current,
+    );
+    let viewVisible = visibleRef.current;
+    const setVisible = (nextVisible: boolean) => {
+      if (nextVisible === viewVisible) {
+        if (nextVisible) {
+          fitNow();
+          terminal.focus();
         }
-      },
-    });
+        return;
+      }
+      viewVisible = nextVisible;
+      if (nextVisible) {
+        setConnection("connecting");
+        source.resume();
+        fitNow();
+        terminal.focus();
+      } else {
+        connected = false;
+        source.pause();
+        syncInput();
+      }
+    };
+    instance.current = {
+      terminal,
+      fit,
+      search: finder,
+      fitNow,
+      syncInput,
+      setVisible,
+    };
     const input = (data: string, binary = false) => {
       if (disposed || !connected || stopped || replaying) return;
       if (data.length > 256 * 1024) {
@@ -266,6 +330,8 @@ export function TerminalViewport({
       disposed = true;
       clearTimeout(resizeTimer);
       clearTimeout(ackTimer);
+      output.dispose();
+      removeAccessibilityListener?.();
       source.close();
       observer.disconnect();
       onData.dispose();
@@ -280,11 +346,7 @@ export function TerminalViewport({
   }, [theme, accent]);
   useLayoutEffect(() => {
     instance.current?.syncInput();
-    if (visible) {
-      instance.current?.fitNow();
-      instance.current?.terminal.focus();
-    }
-    // Hidden views are inert, but VT protocol replies must still reach the PTY.
+    instance.current?.setVisible(visible);
   }, [visible, session.state]);
   return (
     <div

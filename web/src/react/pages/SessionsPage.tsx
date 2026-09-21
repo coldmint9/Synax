@@ -272,7 +272,7 @@ export default memo(function SessionsPage() {
 
         {showTranscript ? (
           <>
-            <div className="work-conversation flex min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="work-content-layout flex min-w-0 flex-1 flex-col overflow-hidden">
               <WorkbenchIslandSlot placement="conversation" />
               {agentSessionId && (
                 <WorkQuickActions
@@ -308,12 +308,12 @@ export default memo(function SessionsPage() {
             ) : null}
           </>
         ) : isNewDraft ? (
-          <div className="work-conversation flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="work-content-layout flex min-w-0 flex-1 flex-col overflow-hidden">
             <WorkbenchIslandSlot placement="conversation" />
             <SessionComposer projectId={projectId} layout="centered" />
           </div>
         ) : (
-          <div className="work-conversation flex min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <div className="work-content-layout flex min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
             <WorkbenchIslandSlot placement="conversation" />
             <p className="text-sm text-muted-foreground">
               {canCreateSession

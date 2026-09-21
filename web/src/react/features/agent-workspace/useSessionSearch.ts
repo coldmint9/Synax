@@ -3,6 +3,7 @@ import {
   agentRuntimeApi,
   type SessionSearchResponse,
 } from "../../../lib/api/agentRuntime";
+import { AppError } from "../../../lib/appError";
 
 type SearchState = SessionSearchResponse & {
   key: string;
@@ -18,6 +19,57 @@ const empty: SearchState = {
   offset: 0,
   error: null,
 };
+
+const RETRY_DELAYS_MS = [120, 360] as const;
+
+function isTransientServerError(error: unknown): boolean {
+  return (
+    error instanceof AppError &&
+    error.statusCode !== undefined &&
+    error.statusCode >= 500
+  );
+}
+
+function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function searchWithRetry(
+  projectId: string,
+  query: string,
+  offset: number,
+  signal: AbortSignal,
+): Promise<SessionSearchResponse> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await agentRuntimeApi.searchSessions(
+        projectId,
+        query,
+        offset,
+        signal,
+      );
+    } catch (error) {
+      if (
+        signal.aborted ||
+        !isTransientServerError(error) ||
+        attempt >= RETRY_DELAYS_MS.length
+      )
+        throw error;
+      await waitForRetry(RETRY_DELAYS_MS[attempt], signal);
+    }
+  }
+}
 
 export function useSessionSearch(projectId: string, query: string) {
   const q = query.trim();
@@ -35,12 +87,7 @@ export function useSessionSearch(projectId: string, query: string) {
     if (!enabled) return () => request.abort();
     const timer = setTimeout(async () => {
       try {
-        const result = await agentRuntimeApi.searchSessions(
-          projectId,
-          q,
-          0,
-          request.signal,
-        );
+        const result = await searchWithRetry(projectId, q, 0, request.signal);
         if (!request.signal.aborted)
           setState({
             ...result,
@@ -79,7 +126,7 @@ export function useSessionSearch(projectId: string, query: string) {
     pending.current = true;
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
-      const result = await agentRuntimeApi.searchSessions(
+      const result = await searchWithRetry(
         projectId,
         q,
         state.offset,

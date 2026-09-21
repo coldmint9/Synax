@@ -37,6 +37,9 @@ let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
 let desktopUpdates: DesktopUpdates | null = null;
 let uiReadyTimer: NodeJS.Timeout | null = null;
+const terminalAccessibilitySupportEnabled = (
+  systemEnabled = app.accessibilitySupportEnabled,
+) => process.env.SYNAX_E2E_TERMINAL === "1" || systemEnabled;
 
 // Register custom protocol scheme before app is ready
 protocol.registerSchemesAsPrivileged([
@@ -172,6 +175,9 @@ function registerIPC(): void {
     dialog.showSaveDialog(options),
   );
   ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.handle("app:accessibility-support-enabled", () =>
+    terminalAccessibilitySupportEnabled(),
+  );
   ipcMain.on("app:ui-ready", (event) => {
     if (
       event.sender !== mainWindow?.webContents ||
@@ -360,6 +366,18 @@ if (gotLock)
       );
       app.quit();
     });
+
+app.on(
+  "accessibility-support-changed",
+  (_event, accessibilitySupportEnabled) => {
+    const win = mainWindow;
+    if (win && !win.isDestroyed())
+      win.webContents.send(
+        "app:accessibility-support-changed",
+        terminalAccessibilitySupportEnabled(accessibilitySupportEnabled),
+      );
+  },
+);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

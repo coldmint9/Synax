@@ -13,6 +13,7 @@ export class TerminalConnection {
   private socket?: WebSocket;
   private stopped = false;
   private ready = false;
+  private suspended: boolean;
   private sequence: number | undefined;
   private retry?: ReturnType<typeof setTimeout>;
   private attempts = 0;
@@ -20,26 +21,36 @@ export class TerminalConnection {
   constructor(
     private terminal: TerminalSession,
     private callbacks: Callbacks,
+    active = true,
   ) {
-    void this.connect();
+    this.suspended = !active;
+    if (active) void this.connect();
   }
   private async connect() {
+    if (this.stopped || this.suspended) return;
     const generation = ++this.generation;
     try {
       const { ticket } = await terminalApi.connectionTicket(this.terminal);
-      if (this.stopped || generation !== this.generation) return;
+      if (this.stopped || this.suspended || generation !== this.generation)
+        return;
       const url = new URL(
         "/api/terminals/socket",
         getApiOrigin() || window.location.origin,
       );
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       const socket = (this.socket = new WebSocket(url.href));
-      socket.onopen = () =>
+      socket.onopen = () => {
+        if (this.stopped || this.suspended || generation !== this.generation) {
+          socket.close();
+          return;
+        }
         socket.send(
           JSON.stringify({ type: "attach", ticket, after: this.sequence }),
         );
+      };
       socket.onmessage = (event) => {
-        if (this.stopped || generation !== this.generation) return;
+        if (this.stopped || this.suspended || generation !== this.generation)
+          return;
         try {
           const frame = JSON.parse(String(event.data));
           if (frame.type === "ready") {
@@ -49,7 +60,11 @@ export class TerminalConnection {
             const replay = frame.replay;
             this.sequence = replay.sequence;
             // Even a delta replay can contain expired terminal queries.
-            this.callbacks.reset(replay.frames.map((item: { data: string }) => item.data).join(""), replay.sequence, replay.reset);
+            this.callbacks.reset(
+              replay.frames.map((item: { data: string }) => item.data).join(""),
+              replay.sequence,
+              replay.reset,
+            );
             this.callbacks.state(frame.terminal);
           } else if (frame.type === "data") {
             this.sequence = frame.sequence;
@@ -63,7 +78,11 @@ export class TerminalConnection {
         }
       };
       socket.onclose = () => {
-        if (!this.stopped && generation === this.generation) {
+        if (
+          !this.stopped &&
+          !this.suspended &&
+          generation === this.generation
+        ) {
           this.ready = false;
           this.callbacks.disconnected();
           this.reconnect();
@@ -71,7 +90,7 @@ export class TerminalConnection {
       };
       socket.onerror = () => socket.close();
     } catch (error) {
-      if (!this.stopped && generation === this.generation) {
+      if (!this.stopped && !this.suspended && generation === this.generation) {
         this.callbacks.disconnected();
         this.callbacks.error(
           error instanceof Error ? error.message : String(error),
@@ -81,6 +100,7 @@ export class TerminalConnection {
     }
   }
   private reconnect() {
+    if (this.stopped || this.suspended) return;
     clearTimeout(this.retry);
     this.retry = setTimeout(
       () => {
@@ -128,6 +148,21 @@ export class TerminalConnection {
   acknowledge(sequence: number) {
     if (this.ready && this.socket?.readyState === WebSocket.OPEN)
       this.send({ type: "ack", sequence });
+  }
+  pause() {
+    if (this.stopped || this.suspended) return;
+    this.suspended = true;
+    this.ready = false;
+    ++this.generation;
+    clearTimeout(this.retry);
+    const socket = this.socket;
+    this.socket = undefined;
+    socket?.close();
+  }
+  resume() {
+    if (this.stopped || !this.suspended) return;
+    this.suspended = false;
+    void this.connect();
   }
   close() {
     this.stopped = true;

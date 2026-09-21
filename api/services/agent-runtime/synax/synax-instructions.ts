@@ -3,8 +3,6 @@ import path from "node:path";
 import {
   SYNAX_DIR,
   SYNAX_RULES_DIR,
-  SYNAX_LOCAL_FILENAME,
-  SYNAX_MD_FILENAME,
   CLAUDE_MD_FILENAME,
   AGENTS_MD_FILENAME,
   PROJECT_RULE_FILES,
@@ -37,7 +35,8 @@ function instructionFileExists(dir: string): boolean {
 }
 
 export function findPrimaryInstructionFile(workDir: string): string | null {
-  for (const name of PROJECT_RULE_FILES) {
+  // Primary = highest-precedence existing rules file (AGENTS.md over CLAUDE.md).
+  for (const name of [...PROJECT_RULE_FILES].reverse()) {
     const candidate = path.join(workDir, name);
     if (fs.existsSync(candidate)) return candidate;
   }
@@ -70,13 +69,9 @@ export function loadProjectInstructions(
   return loadInstructionFile(primary, resolved);
 }
 
-export type ProjectRulesScope = "all" | "synax-only";
-
 const PROJECT_RULE_FILE_BUDGETS: Record<string, number> = {
-  [SYNAX_MD_FILENAME]: 4_000,
   [CLAUDE_MD_FILENAME]: 8_000,
   [AGENTS_MD_FILENAME]: 4_000,
-  [SYNAX_LOCAL_FILENAME]: 2_000,
 };
 
 const TOTAL_PROJECT_RULES_CAP = 18_000;
@@ -94,12 +89,12 @@ function prepareRuleBody(body: string): string {
   return stripPromptBloat(stripFrontmatter(body).trim());
 }
 
-/** All project rule files for system-prompt injection (SYNAX → CLAUDE → AGENTS + local). */
+/** All project rule files for system-prompt injection (CLAUDE → AGENTS; AGENTS.md takes precedence). */
 export function loadProjectRulesSection(
   workDir: string,
-  options: { maxChars?: number; scope?: ProjectRulesScope } = {},
+  options: { maxChars?: number } = {},
 ): string | null {
-  const { maxChars = TOTAL_PROJECT_RULES_CAP, scope = "all" } = options;
+  const { maxChars = TOTAL_PROJECT_RULES_CAP } = options;
   let directories: string[];
   try {
     directories = instructionDirectories(workDir);
@@ -111,10 +106,7 @@ export function loadProjectRulesSection(
   }
   const root = directories[0];
   const parts: Array<{ heading: string; body: string }> = [];
-  const files =
-    scope === "synax-only"
-      ? [SYNAX_MD_FILENAME]
-      : [...PROJECT_RULE_FILES, SYNAX_LOCAL_FILENAME];
+  const files = [...PROJECT_RULE_FILES];
   for (const directory of directories) {
     for (const name of files) {
       const filePath = path.join(directory, name);
@@ -151,7 +143,7 @@ export function loadProjectRulesSection(
     }
   }
   if (parts.length === 0) return null;
-  const precedence = `Project rule order: root to cwd; ${scope === "synax-only" ? "SYNAX.md only" : "within each directory SYNAX.md, CLAUDE.md, AGENTS.md, then SYNAX.local.md"}. Later rules take precedence within user authorization and runtime limits.\n\n`;
+  const precedence = `Project rule order: root to cwd; within each directory CLAUDE.md, then AGENTS.md. Later rules take precedence within user authorization and runtime limits.\n\n`;
   const full =
     precedence + parts.map(({ heading, body }) => heading + body).join("\n\n");
   if (full.length <= maxChars) return full;

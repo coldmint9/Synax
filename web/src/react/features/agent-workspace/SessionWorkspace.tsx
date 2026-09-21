@@ -1,12 +1,16 @@
 import "./agentControls.css";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useMemo } from "react";
 import { SessionTodoPanel } from "./SessionTodoPanel";
 import { SessionCacheCard } from "./SessionCacheCard";
-import { ContextCompositionBar } from "./ContextCompositionBar";
+import { ContextCompositionBar, contextUsage } from "./ContextCompositionBar";
+import { formatTokenCount } from "../../../lib/formatTokens";
+import {
+  formatModelDisplayName,
+  useProviderNames,
+} from "./useProviderNames";
 import {
   ChevronRight,
   Target,
-  Clock,
   FileEdit,
   FilePlus,
   FileX,
@@ -21,20 +25,10 @@ import type {
   TodoItem,
   AgentRunStep,
 } from "../../../lib/api/agentRuntime";
-import { SessionCapabilitiesPanel } from "./SessionCapabilitiesPanel";
-import { sumAgentTurnDurationMs } from "./sumAgentTurnDuration";
+import { SessionInvocationUsagePanel } from "./SessionInvocationUsagePanel";
 import { sessionRuntimeSelection } from "./sessionRuntimeSelection";
 import type { AgentRun } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
-
-function fmtDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const h = Math.floor(m / 60);
-  if (h > 0)
-    return `${h}:${String(m % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-  return `${m}:${String(s % 60).padStart(2, "0")}`;
-}
 
 const STATUS_BADGE: Record<string, string> = {
   queued: "bg-primary/12 text-primary",
@@ -69,7 +63,6 @@ const CHANGE_COLOR = {
 export function SessionRuntimeStatus({
   stats,
   session,
-  steps,
   status,
 }: {
   stats?: SessionStats | null;
@@ -78,26 +71,29 @@ export function SessionRuntimeStatus({
   status?: AgentSession["status"];
 }) {
   const { locale } = useLocale();
-  const [tick, setTick] = useState(0);
   const currentStatus = status ?? session?.status ?? stats?.status ?? "idle";
-  const isLive = currentStatus === "running";
-
-  useEffect(() => {
-    if (!isLive) return;
-    const timer = setInterval(() => setTick((value) => value + 1), 1000);
-    return () => clearInterval(timer);
-  }, [isLive]);
-
-  const elapsed = useMemo(() => {
-    if (isLive && steps.length > 0) return sumAgentTurnDurationMs(steps);
-    return stats?.runningDuration ?? 0;
-  }, [steps, stats?.runningDuration, tick, isLive]);
 
   const badgeClass =
     STATUS_BADGE[currentStatus] ?? "bg-secondary/70 text-foreground/80";
+  const contextTokens = contextUsage(
+    stats?.contextComposition,
+    stats?.context,
+  );
+  const contextTokensLabel =
+    contextTokens.available && contextTokens.total > 0
+      ? formatTokenCount(contextTokens.total)
+      : null;
 
   return (
     <span className="runtime-session-status inline-flex items-center gap-1.5">
+      {contextTokensLabel && (
+        <span
+          className="tabular-nums text-[9px] text-muted-foreground/70"
+          title={locale === "zh" ? "当前上下文 Token" : "Context tokens"}
+        >
+          {contextTokensLabel}
+        </span>
+      )}
       <span
         className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`}
       >
@@ -106,10 +102,6 @@ export function SessionRuntimeStatus({
             ? "等待输入"
             : "Waiting for input"
           : currentStatus}
-      </span>
-      <span className="flex items-center gap-1 text-[9px] text-muted-foreground">
-        <Clock size={9} />
-        {fmtDuration(elapsed)}
       </span>
     </span>
   );
@@ -133,6 +125,8 @@ export function SessionStatusCard({
 }) {
   const { locale } = useLocale();
   const runtime = sessionRuntimeSelection(session, runs, steps);
+  const providers = useProviderNames();
+  const modelLabel = formatModelDisplayName(runtime.model, providers);
 
   return (
     <div className="runtime-status-details border-b border-border/40 px-2 py-2 space-y-2">
@@ -164,7 +158,7 @@ export function SessionStatusCard({
             className="truncate text-foreground/80"
             title={runtime.model ?? undefined}
           >
-            {runtime.model ?? "—"}
+            {modelLabel ?? "—"}
           </dd>
         </div>
         <div className="flex items-center justify-between gap-2">
@@ -316,7 +310,7 @@ export const SessionWorkspace = memo(function SessionWorkspace() {
     events,
     sessionStats,
     sessionTodos,
-    sessionCapabilities,
+    sessionInvocationUsage,
     steps,
     runs,
   } = useAgentSessionStore(
@@ -324,7 +318,7 @@ export const SessionWorkspace = memo(function SessionWorkspace() {
       events: s.events,
       sessionStats: s.sessionStats,
       sessionTodos: s.sessionTodos,
-      sessionCapabilities: s.sessionCapabilities,
+      sessionInvocationUsage: s.sessionInvocationUsage,
       steps: s.steps,
       runs: s.runs,
     })),
@@ -355,8 +349,8 @@ export const SessionWorkspace = memo(function SessionWorkspace() {
           steps={steps}
         />
       )}
-      {sessionCapabilities && (
-        <SessionCapabilitiesPanel capabilities={sessionCapabilities} />
+      {sessionInvocationUsage && (
+        <SessionInvocationUsagePanel usage={sessionInvocationUsage} />
       )}
       <FilesCard files={fileChanges} />
     </div>
