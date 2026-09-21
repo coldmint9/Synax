@@ -1,17 +1,65 @@
 # Interactive artifacts: final acceptance and merge gate
 
-Updated: September 21, 2026. This is the current acceptance record; the separate
-initial verification document is historical.
+Updated: September 22, 2026. The release/merge checkpoint below supersedes the
+September 21 baseline sections retained as historical evidence.
 
-**Status:** feature implementation and macOS local acceptance passed. Full
-cross-platform acceptance and feature-to-main integration are **not complete**.
-No remote push or CI dispatch has been performed.
+**Status:** merged into local `main` at the user's explicit request; the overall
+software version is **0.3.0**. macOS local acceptance passed. Cross-platform
+acceptance remains incomplete and is not implied by this local merge.
+No remote push, release tag, publication or CI dispatch has been performed.
 
 **User scope adjustment:** Windows environment acceptance is deferred for this
 round at the user's explicit request. Actual Windows-host WSL checks are also
 deferred because they require that environment. These are unverified follow-ups,
 not successful tests and not current-round blockers. This adjustment does not
 waive Linux or mixed-DPI checks.
+
+## September 22 release and completed local merge
+
+- Integrated the latest committed main `6727333` (0.2.2) into feature as `6092658`.
+  Import/type conflicts were resolved by preserving both artifact functionality
+  and main's conversation-history/checkpoint and update-network functionality.
+- Release commit `e6f5053` sets root/Web manifests, both lockfiles, CLI, About page,
+  MCP client identities and Codex/Claude client identifiers to 0.3.0. Desktop
+  packaging inherits the root manifest. A two-case consistency regression test
+  prevents these surfaces drifting apart unnoticed.
+- Local main fast-forwarded from `6727333` to `e6f5053`. The user's explicit merge
+  request superseded the prior wait-for-cross-platform merge gate; Windows/WSL
+  remain deferred and Linux/mixed-DPI remain unverified, not passed.
+- Only the two overlapping dirty UI test files were temporarily stashed. Both
+  restored without conflicts; all other pre-existing dirty files were verified
+  byte-identical immediately after merge. They remain uncommitted, not included
+  in this feature or release commit. A backup patch/files are local under
+  `.tmp/artifact-qa/main-030-backup`; retained safety stash:
+  `b3607889dd20719030af8f3f0911e20a93adddfc`.
+- Post-restore UI tests were run in the actual main checkout, along with the
+  version-consistency test. No reset, forced update, remote push or `.DS_Store`
+  tracking was used.
+
+Latest evidence under `.tmp/artifact-qa` in the feature worktree:
+
+| Verification | Result | Log |
+|---|---|---|
+| Full API/root regression after integrating main | 270 files passed / 1 skipped; 1987 tests passed / 3 skipped | `release-030-api.log` |
+| Full Web regression after integrating main | 170 files / 976 tests passed | `release-030-web.log` |
+| API/Web/Electron and CLI typechecks | Passed | `release-030-types.log`, `release-030-package.log` |
+| Release consistency + desktop branding tests, full 0.3.0 build/package, general desktop smoke and artifact E2E | Passed; six artifact checks, native parser/child fork/shutdown verified | `release-030-package.log` |
+| Native artifact preview | 5 files / 28 tests passed | `release-030-native.log` |
+| Restored dirty UI tests on main | Three files passed | `release-030-restored-ui.log` |
+| Version consistency on main | Two tests passed | `release-030-main-version.log` |
+
+Full-suite runs preceded the final client-version literal changes; the dedicated
+version tests, typechecks, production build, packaged CLI `--version` output and
+macOS `CFBundleShortVersionString` were checked after those changes and report
+0.3.0. Test-fixture and third-party dependency version numbers are not release
+identities and were deliberately left unchanged. Skipped tests and platform gaps
+remain disclosed.
+
+## September 21 historical baseline
+
+The sections below record the previous checkpoint. Their pending-merge statements
+are superseded by the completed local merge above; their evidence remains valid
+for the earlier baseline only.
 
 ## Accepted code baseline
 
