@@ -3072,7 +3072,7 @@
   @apply my-1;
 }
 .feed-prose a {
-  @apply font-medium text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary;
+  @apply font-medium text-primary no-underline hover:no-underline;
 }
 .feed-prose mark {
   @apply rounded bg-primary/15 px-0.5 font-medium text-foreground;

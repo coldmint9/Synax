@@ -61,6 +61,53 @@ describe("ComposerPermissionPicker", () => {
 });
 
 describe("ComposerEffortPicker", () => {
+  it("uses themeable surfaces and preserves selection and reset behavior", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const view = render(
+      <ComposerEffortPicker
+        effort="low"
+        modelLabel="Test model"
+        onChange={onChange}
+      />,
+    );
+    await user.click(screen.getByLabelText("思考强度"));
+    const rail = await screen.findByRole("radiogroup");
+    expect(rail).toHaveClass("composer-effort-rail");
+    expect(rail.style.background).toBe("");
+    expect(rail.closest(".composer-effort-picker")).not.toBeNull();
+    expect(screen.getByText("Test model")).toBeVisible();
+    expect(
+      screen.getByRole("radio", { name: REASONING_EFFORT_LABELS.low }),
+    ).toHaveAttribute("aria-checked", "true");
+    await user.click(
+      screen.getByRole("radio", { name: REASONING_EFFORT_LABELS.max }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith("max");
+    view.rerender(
+      <ComposerEffortPicker
+        effort="max"
+        modelLabel="Test model"
+        onChange={onChange}
+      />,
+    );
+    expect(
+      screen.getByRole("radio", { name: REASONING_EFFORT_LABELS.max }),
+    ).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("button", { name: "恢复默认思考强度" }));
+    expect(onChange).toHaveBeenLastCalledWith("high");
+    expect(screen.getByRole("radiogroup")).toBeVisible();
+  });
+
+  it("does not open when disabled", () => {
+    render(<ComposerEffortPicker effort="high" disabled onChange={vi.fn()} />);
+    expect(screen.getByLabelText("思考强度")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+  });
+
   it("shows the raw level id on the chip instead of a translated label", () => {
     render(<ComposerEffortPicker effort="xhigh" onChange={() => {}} />);
 

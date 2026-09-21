@@ -7,6 +7,7 @@ import {
 } from "../../../lib/api/agentRuntime";
 import { highlightCode, languageForPath } from "./codeHighlight";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { HighlightedCodeEditor } from "./HighlightedCodeEditor";
 import { WikiMarkdown } from "../wiki/WikiMarkdown";
 import "../wiki/wiki-theme.css";
 import {
@@ -48,7 +49,11 @@ export const CodeViewer = memo(function CodeViewer({
 }) {
   const [view, setView] = useState<"preview" | "source">("preview");
   const [content, setContent] = useState("");
-  const [html, setHtml] = useState("");
+  const [highlighted, setHighlighted] = useState<{
+    content: string;
+    path: string;
+    html: string;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [truncated, setTruncated] = useState(false);
@@ -100,11 +105,8 @@ export const CodeViewer = memo(function CodeViewer({
       const draft = tabId ? getWorkspaceDraft(tabId) : undefined;
       const nextContent = draft ?? text;
       const nextDirty = draft !== undefined && draft !== text;
-      const nextHtml = await highlightCode(nextContent, path);
-      if (requestRef.current !== requestId) return;
       setContent(nextContent);
       contentRef.current = nextContent;
-      setHtml(nextHtml);
       setTruncated(result.truncated);
       setDirty(nextDirty);
       dirtyRef.current = nextDirty;
@@ -179,6 +181,28 @@ export const CodeViewer = memo(function CodeViewer({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [editable, save, tabId]);
+
+  // Highlight the current draft, not just the original file read. An older
+  // asynchronous result must never cover newer text (or another file).
+  useEffect(() => {
+    if (loading || error) return;
+    let cancelled = false;
+    void highlightCode(content, path).then(
+      (html) => {
+        if (!cancelled) setHighlighted({ content, path, html });
+      },
+      () => {
+        if (!cancelled) setHighlighted(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [content, path, loading, error]);
+  const html =
+    highlighted?.content === content && highlighted.path === path
+      ? highlighted.html
+      : undefined;
 
   const lineCount = useMemo(
     () => (content ? content.split("\n").length : 0),
@@ -267,7 +291,7 @@ export const CodeViewer = memo(function CodeViewer({
         </p>
       )}
       <div
-        className={`code-viewer-body session-workspace-scroll min-h-0 flex-1 ${showPreview && language === "html" ? "flex flex-col overflow-hidden" : "overflow-auto"}`}
+        className={`code-viewer-body session-workspace-scroll min-h-0 flex-1 ${(showPreview && language === "html") || (editable && !showPreview) ? "flex flex-col overflow-hidden" : "overflow-auto"}`}
       >
         {loading ? (
           <div className="file-viewer-status">读取中…</div>
@@ -292,22 +316,26 @@ export const CodeViewer = memo(function CodeViewer({
             </article>
           )
         ) : editable ? (
-          <textarea
-            aria-label={`编辑文件 ${path}`}
-            className="code-viewer-editor min-h-full w-full resize-none border-0 bg-transparent px-3 py-2 font-mono text-[11px] leading-[1.5] outline-none"
-            value={content}
-            spellCheck={false}
-            onChange={(event) => updateContent(event.target.value)}
+          <HighlightedCodeEditor
+            key={`${sessionId}:${rootId ?? ""}:${path}`}
+            path={path}
+            content={content}
+            html={html}
+            onChange={updateContent}
+            gutter={<LineNumbers count={Math.max(1, lineCount)} />}
           />
         ) : (
           <div className="flex min-w-max items-stretch">
             <div className="code-viewer-gutter sticky left-0 z-10 px-2 py-2">
               <LineNumbers count={lineCount} />
             </div>
-            <div
-              className="code-viewer-content min-w-max px-3 py-2 font-mono text-[11px] leading-[1.5]"
-              dangerouslySetInnerHTML={{ __html: html }}
-            />
+            <div className="code-viewer-content min-w-max px-3 py-2 font-mono text-[11px] leading-[1.5]">
+              {html === undefined ? (
+                <pre>{content}</pre>
+              ) : (
+                <div dangerouslySetInnerHTML={{ __html: html }} />
+              )}
+            </div>
           </div>
         )}
       </div>

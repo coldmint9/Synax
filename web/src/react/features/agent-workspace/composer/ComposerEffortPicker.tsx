@@ -4,16 +4,19 @@ import { Popover, useOverlayState } from "@heroui/react";
 import type { ReasoningEffort } from "../../../../lib/api/agentRuntime";
 import { REASONING_EFFORT_LABELS } from "../../settings/lib/providerPresets";
 import { useLocale } from "../../../../hooks/useLocale";
+import "./composerEffortPicker.css";
 
 export type ComposerReasoningEffort = ReasoningEffort;
 
 const FALLBACK: ReasoningEffort = "high";
-const ALL_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
-
-/* Light Morandi green accent — sourced from the global CSS vars in index.css. */
-const ACCENT_TOP = "var(--radio-accent-top, #b9cdbf)";
-const ACCENT_BOTTOM = "var(--radio-accent-bottom, #a1bba8)";
-const ACCENT_TEXT = "var(--radio-accent-text, #2f3d34)";
+const ALL_LEVELS: ReasoningEffort[] = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 
 interface Props {
   effort: ReasoningEffort;
@@ -103,16 +106,13 @@ export function ComposerEffortPicker({
       <Popover.Content
         placement="top end"
         offset={8}
-        className="z-50 w-[16rem] overflow-hidden rounded-xl p-0"
+        className="composer-effort-picker z-50 w-[16rem] overflow-hidden rounded-xl p-0"
       >
         <div className="px-3 pb-3 pt-2.5">
           {/* Compact header: current effort, disclosure chevron, reset affordance. */}
           <div className="relative flex min-h-6 items-center justify-center">
             <div className="flex items-center gap-0.5">
-              <span
-                className="text-sm font-medium leading-none"
-                style={{ color: ACCENT_TEXT }}
-              >
+              <span className="composer-effort-value text-sm font-medium leading-none">
                 {activeEffort}
               </span>
               <ChevronRight size={12} className="text-muted-foreground/75" />
@@ -134,35 +134,25 @@ export function ComposerEffortPicker({
             {modelText}
           </div>
 
-          {/* Compact slider: green progress, white 3D thumb, and station dots. */}
+          {/* Compact slider: theme-aware green progress, raised thumb, and station dots. */}
           <div
             role="radiogroup"
             aria-label={t("effortLabel")}
-            className="relative mt-2.5 flex h-8 items-center rounded-full p-1"
-            style={{
-              background: "#e3e4e4",
-              border: "1px solid #d1d3d3",
-              boxShadow:
-                "inset 0 1px 2px rgba(30, 36, 32, 0.06), 0 1px 1px rgba(30, 36, 32, 0.04)",
-            }}
+            className="composer-effort-rail relative mt-2.5 flex h-8 items-center rounded-full p-1"
           >
             <span
               aria-hidden
-              className="pointer-events-none absolute left-1 top-1 bottom-1 rounded-full transition-[width] duration-300"
+              className="composer-effort-fill pointer-events-none absolute left-1 top-1 bottom-1 rounded-full transition-[width] duration-300"
               style={{
                 width: fillWidth,
-                background: `linear-gradient(180deg, ${ACCENT_TOP}, ${ACCENT_BOTTOM})`,
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.45)",
                 transitionTimingFunction: "cubic-bezier(0.34, 0.9, 0.4, 1)",
               }}
             />
             <span
               aria-hidden
-              className="pointer-events-none absolute top-1/2 z-20 size-7 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white transition-[left] duration-300"
+              className="composer-effort-thumb pointer-events-none absolute top-1/2 z-20 size-7 -translate-x-1/2 -translate-y-1/2 rounded-full transition-[left] duration-300"
               style={{
                 left: thumbLeft,
-                boxShadow:
-                  "0 2px 5px rgba(43, 54, 47, 0.22), 0 0 0 1px rgba(43,54,47,0.08), inset 0 1px 0 rgba(255,255,255,0.95)",
                 transitionTimingFunction: "cubic-bezier(0.34, 0.9, 0.4, 1)",
               }}
             />
@@ -180,22 +170,18 @@ export function ComposerEffortPicker({
                     if (!selected) onChange(level);
                   }}
                   style={{ left: stationLeft(index) }}
-                  className="group/effort-station absolute top-1/2 z-30 grid size-6 -translate-x-1/2 -translate-y-1/2 cursor-pointer place-items-center rounded-full outline-none transition-colors duration-200 hover:bg-white/55 focus-visible:ring-2 focus-visible:ring-white/80"
+                  className="composer-effort-station group/effort-station absolute top-1/2 z-30 grid size-6 -translate-x-1/2 -translate-y-1/2 cursor-pointer place-items-center rounded-full outline-none transition-colors duration-200"
                 >
                   <span
                     aria-hidden
-                    className="size-1.5 rounded-full transition-[background-color,transform] duration-200 group-hover/effort-station:scale-150"
-                    style={{
-                      background: selected ? ACCENT_TOP : "#aeb1b0",
-                      opacity: selected ? 0.95 : 0.9,
-                    }}
+                    className="composer-effort-dot size-1.5 rounded-full transition-[background-color,transform] duration-200 group-hover/effort-station:scale-150"
                   />
                 </button>
               );
             })}
           </div>
 
-          <p className="mt-1.5 text-center text-[10px] text-muted-foreground/70">
+          <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
             {allowed && allowed.length > 0
               ? t("effortAllowedHint")
               : t("effortUnrestrictedHint")}

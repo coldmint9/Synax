@@ -311,7 +311,9 @@
   padding: 0;
 }
 /* Both rows own the same inset; do not shift SVGs outside the button's clip. */
-:is(.work-page, .work-details-dialog) .ws-project-repository .ws-branch-trigger {
+:is(.work-page, .work-details-dialog)
+  .ws-project-repository
+  .ws-branch-trigger {
   padding: 0 2px;
   gap: 6px;
 }
@@ -1002,14 +1004,10 @@
 :is(.work-page, .work-details-dialog) .ws-project-repository .ws-repo-head {
   padding-left: 0;
 }
-:is(.work-page, .work-details-dialog) .ws-project-repository .ws-branch-trigger {
+:is(.work-page, .work-details-dialog)
+  .ws-project-repository
+  .ws-branch-trigger {
   padding-left: 0;
-}
-
-.code-viewer-editor {
-  color: var(--foreground);
-  tab-size: 2;
-  white-space: pre;
 }
 
 .workspace-unsaved-overlay {
