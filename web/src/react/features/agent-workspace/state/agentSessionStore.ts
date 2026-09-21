@@ -15,6 +15,7 @@ import {
   type GitWorkspaceSelection,
   type PermissionDecision,
   type QueuedInput,
+  type QueuedMoveTarget,
   type ReasoningEffort,
   type RuntimeEvent,
   type SessionStats,
@@ -503,7 +504,7 @@ export interface AgentSessionStoreState {
   moveQueuedInput: (
     sessionId: string,
     itemId: string,
-    direction: "up" | "down",
+    target: QueuedMoveTarget,
   ) => Promise<void>;
   forceQueuedInput: (sessionId: string, itemId: string) => Promise<void>;
   setInputQueue: (sessionId: string, items: QueuedInput[]) => void;
@@ -1505,12 +1506,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       get().setInputQueue(sessionId, items);
     },
 
-    moveQueuedInput: async (sessionId, itemId, direction) => {
+    moveQueuedInput: async (sessionId, itemId, target) => {
       try {
         const { items } = await agentRuntimeApi.moveQueuedInput(
           sessionId,
           itemId,
-          direction,
+          target,
         );
         get().setInputQueue(sessionId, items);
       } catch (error) {

@@ -26,9 +26,11 @@ const electron = vi.hoisted(() => ({
 }));
 const spawn = vi.hoisted(() => vi.fn());
 vi.mock("electron", () => electron);
-vi.mock("node:child_process", () => ({ spawn }));
-vi.mock("../scripts/build-embedded-updater.js", () => ({
-  buildEmbeddedUpdater: vi.fn(),
+vi.mock("node:child_process", () => ({
+  spawn,
+  execFile: vi.fn((_file, _args, _options, callback) =>
+    callback(null, "\0/usr/bin:/bin\0", ""),
+  ),
 }));
 
 import { buildAppMenu, setUiUpdateAction, updateMenuState } from "./menu.js";

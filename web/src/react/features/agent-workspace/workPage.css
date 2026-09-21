@@ -36,7 +36,6 @@
 .work-conversation {
   position: relative;
   margin: var(--work-panel-inset);
-  border: 1px solid var(--work-panel-edge);
   border-radius: var(--work-panel-radius);
   background: var(--work-surface);
   box-shadow: var(--work-shadow);
@@ -575,9 +574,17 @@
 .work-page
   .agent-session-controls
   .agent-session-composer-shell.agent-dock-shell {
-  background: hsl(var(--card));
-  border-color: var(--work-panel-edge);
-  box-shadow: var(--work-shadow);
+  background: var(--surface);
+  border-color: hsl(var(--border-hsl) / 0.65);
+  box-shadow: var(--surface-shadow), var(--overlay-shadow);
+}
+.work-page
+  .agent-session-controls
+  .agent-session-composer-shell.agent-dock-shell:focus-within {
+  box-shadow:
+    var(--surface-shadow),
+    var(--overlay-shadow),
+    0 12px 32px hsl(var(--foreground-hsl) / 0.1);
 }
 
 /* Each primary panel owns its scrollport. The three headers never scroll away. */
@@ -773,7 +780,16 @@
   .work-page
   .agent-session-controls
   .agent-session-composer-shell.agent-dock-shell {
-  background: hsl(var(--card) / 0.94);
+  background: var(--surface);
+}
+.dark
+  .work-page
+  .agent-session-controls
+  .agent-session-composer-shell.agent-dock-shell:focus-within {
+  box-shadow:
+    var(--overlay-shadow),
+    0 16px 40px hsl(0 0% 0% / 0.46),
+    0 6px 16px hsl(0 0% 0% / 0.34);
 }
 
 /* The viewer shares the conversation card and receives the compact island. */
@@ -980,7 +996,6 @@
 /* Separate conversation, sidebar and elevated controls by color, without blur. */
 .dark .work-page .work-conversation {
   background: var(--background);
-  border-color: transparent;
 }
 .dark .work-page .session-list-card--sessions {
   --work-surface: var(--surface-secondary);

@@ -13,9 +13,7 @@ export function buildRuntimeEnvironment(
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const hostCwd = resolveSessionWorkDir(sessionId, projectId);
   const roots = resolveSessionWorkspaceRoots(sessionId, projectId);
-  const primary = roots.find((root) => root.role === "primary");
-  const location = primary?.location ??
-    parseWslUncPath(hostCwd) ?? { kind: "host" as const, path: hostCwd };
+  const location = parseWslUncPath(hostCwd) ?? { kind: "host" as const, path: hostCwd };
   const environment = {
     cwd: location.path,
     workspaceRoots: roots.map(({ id, name, path, role, status }) => ({

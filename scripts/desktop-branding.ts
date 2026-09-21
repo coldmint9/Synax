@@ -13,18 +13,6 @@ export const desktopProduct = JSON.parse(
   description: string;
   author: string;
 };
-export const updaterDescription =
-  "Software updater for the Synax AI coding workspace";
-
-// The updater must survive the host app while it is being replaced, so it
-// remains a detached process. On macOS, mark it as an agent app instead of a
-// normal Dock application so background checks do not flash a second icon.
-export function updaterMacInfo(
-  platform: string,
-): { LSUIElement: true } | undefined {
-  return platform === "darwin" ? { LSUIElement: true } : undefined;
-}
-
 export function desktopIcon(platform: string): string {
   const extension =
     platform === "darwin" ? "icns" : platform === "win32" ? "ico" : "png";

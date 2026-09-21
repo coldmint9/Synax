@@ -40,7 +40,6 @@ function Assert-Product([string] $Executable, [string] $Name, [string] $Descript
 }
 
 Assert-Product (Join-Path $appRoot 'Synax.exe') $product.productName $product.description
-Assert-Product (Join-Path $appRoot 'resources/updater/Synax Updater.exe') 'Synax Updater' 'Software updater for the Synax AI coding workspace'
 $installer = Join-Path $projectRoot "out/make/squirrel.windows/x64/Synax-$($product.version)-win32-x64-Setup.exe"
 Assert-BrandIcon $installer
-Write-Host 'Windows executable, installer and updater branding verified.'
+Write-Host 'Windows executable and installer branding verified.'

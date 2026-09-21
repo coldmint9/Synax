@@ -6,14 +6,13 @@ import {
   UpdaterController,
   type ControllerDependencies,
 } from "./controller.js";
-import { validateUpdaterRequest, type UpdaterRequest } from "./contract.js";
+import type { UpdaterRequest } from "./contract.js";
 import type { DesktopRelease } from "../lib/desktop-update-feed.js";
 let root: string;
 let request: UpdaterRequest;
 let dependencies: ControllerDependencies;
 const release: DesktopRelease = {
   manifest: {
-    format: 1,
     version: "0.2.0",
     platform: "darwin",
     arch: "arm64",
@@ -31,15 +30,11 @@ beforeEach(async () => {
     await fs.mkdtemp(path.join(os.tmpdir(), "synax-controller-")),
   );
   request = {
-    format: 1,
     currentVersion: "0.1.2",
     uiVersion: null,
     executable: path.join(root, "Synax.app/Contents/MacOS/Synax"),
     profile: root,
     parentPid: process.pid,
-    controlUrl: "http://127.0.0.1:32101/",
-    token: "a".repeat(64),
-    background: false,
   };
   dependencies = {
     find: vi.fn().mockResolvedValue(release),
@@ -106,13 +101,4 @@ it("does not run overlapping checks or allow installation before download", asyn
   await pending;
   await controller.install();
   expect(dependencies.install).not.toHaveBeenCalled();
-});
-it("rejects foreign control endpoints and malformed requests", () => {
-  expect(validateUpdaterRequest(request)).toEqual(request);
-  expect(() =>
-    validateUpdaterRequest({ ...request, controlUrl: "https://example.com/" }),
-  ).toThrow("endpoint");
-  expect(() =>
-    validateUpdaterRequest({ ...request, token: "invalid" }),
-  ).toThrow("request");
 });

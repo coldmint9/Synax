@@ -33,6 +33,34 @@ export async function prepareQueuedMedia(
       }),
   );
 }
+
+/**
+ * Rebuild draft attachments from cached content parts. Assets that no longer
+ * resolve are skipped so the composer can persist only the survivors. Items
+ * stay non-retained: the draft cache is their sole owner, so removing one
+ * later also deletes its server asset.
+ */
+export async function restoreDraftMedia(
+  parts: RuntimeContentPart[] = [],
+): Promise<DraftMedia[]> {
+  const settled = await Promise.allSettled(
+    parts
+      .filter((part) => part.type !== "text")
+      .map(async (part) => {
+        const { asset } = await runtimeMedia.metadata(part.assetId);
+        return {
+          id: crypto.randomUUID(),
+          file: new File([], asset.filename, { type: asset.mediaType }),
+          asset,
+          uploading: false,
+          controller: new AbortController(),
+        } satisfies DraftMedia;
+      }),
+  );
+  return settled.flatMap((entry) =>
+    entry.status === "fulfilled" ? [entry.value] : [],
+  );
+}
 export function useMediaDraft(
   projectId: string,
   onPartsChange?: (parts: RuntimeContentPart[]) => void,

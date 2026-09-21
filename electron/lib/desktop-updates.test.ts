@@ -1,103 +1,117 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { EventEmitter } from "node:events";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const mocks = vi.hoisted(() => ({
-  profile: "",
-  resources: "",
-  spawn: vi.fn(),
+  profile: "/tmp/synax-desktop-updates",
+  version: "0.1.2",
+  dialog: vi.fn(),
   quit: vi.fn(),
-  show: vi.fn(),
+  controller: {
+    state: {
+      phase: "current",
+      currentVersion: "0.1.2",
+      uiVersion: null,
+      availableVersion: null,
+      size: 0,
+      progress: 0,
+      notes: "",
+      message: "",
+      history: [],
+    },
+    initialize: vi.fn().mockResolvedValue(undefined),
+    check: vi.fn().mockResolvedValue(undefined),
+    download: vi.fn().mockResolvedValue(undefined),
+    install: vi.fn().mockResolvedValue(undefined),
+  },
+  controllerConstructor: vi.fn(function MockController() {
+    return mocks.controller;
+  }),
 }));
-vi.mock("original-fs", async () => import("node:fs"));
+
+vi.mock("original-fs", () => ({
+  promises: {
+    readFile: vi.fn(),
+    rm: vi.fn(),
+  },
+}));
 vi.mock("electron", () => ({
   app: {
     getPath: () => mocks.profile,
-    getVersion: () => "0.1.2",
+    getVersion: () => mocks.version,
     quit: mocks.quit,
   },
-  dialog: { showMessageBox: mocks.show },
+  dialog: { showMessageBox: mocks.dialog },
 }));
-vi.mock("node:child_process", async (original) => ({
-  ...(await original<typeof import("node:child_process")>()),
-  spawn: mocks.spawn,
+vi.mock("../updater/controller.js", () => ({
+  UpdaterController: mocks.controllerConstructor,
 }));
-vi.mock("./data-paths.js", () => ({
-  getResourcePath: (...parts: string[]) => path.join(mocks.resources, ...parts),
+vi.mock("./mac-desktop-update.js", () => ({
+  finishMacInstallation: vi.fn().mockResolvedValue(undefined),
 }));
+
 import { DesktopUpdates } from "./desktop-updates.js";
-let root: string;
-let updates: DesktopUpdates;
-let child: EventEmitter & {
-  unref: ReturnType<typeof vi.fn>;
-  kill: ReturnType<typeof vi.fn>;
-};
-beforeEach(async () => {
+
+beforeEach(() => {
   vi.clearAllMocks();
-  root = await fs.mkdtemp(path.join(os.tmpdir(), "synax-embedded-host-"));
-  mocks.profile = path.join(root, "profile");
-  mocks.resources = path.join(root, "resources");
-  const resource = path.join(
-    mocks.resources,
-    "updater",
-    process.platform === "darwin"
-      ? "Synax Updater.app/Contents/Resources"
-      : "resources",
-  );
-  await fs.mkdir(resource, { recursive: true });
-  await fs.writeFile(path.join(resource, "app.asar"), "embedded updater");
-  child = Object.assign(new EventEmitter(), { unref: vi.fn(), kill: vi.fn() });
-  mocks.spawn.mockImplementation(() => {
-    queueMicrotask(() => child.emit("spawn"));
-    return child;
-  });
+  mocks.controller.state.phase = "current";
+  mocks.controller.state.availableVersion = null;
+  mocks.controller.state.message = "";
+  mocks.controller.check.mockImplementation(async () => {});
+  mocks.controller.download.mockImplementation(async () => {});
+  mocks.controller.install.mockImplementation(async () => {});
+  mocks.dialog.mockResolvedValue({ response: 0 });
 });
-afterEach(async () => {
-  updates?.stop();
-  child.emit("exit", 0);
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  await fs.rm(root, { recursive: true, force: true });
-});
-it("copies and launches a detached updater runtime outside the installation", async () => {
-  updates = new DesktopUpdates(
-    async () => {},
-    () => "1.0.0",
-  );
-  await updates.check(true);
-  const [executable, args, options] = mocks.spawn.mock.calls[0];
-  expect(
-    executable.startsWith(path.join(mocks.profile, "updater-runtime")),
-  ).toBe(true);
-  expect(options.detached).toBe(true);
-  const request = JSON.parse(await fs.readFile(args[0].slice(10), "utf8"));
-  expect(request).toMatchObject({
-    currentVersion: "0.1.2",
-    uiVersion: "1.0.0",
-    parentPid: process.pid,
-    background: false,
+
+describe("main-process desktop updates", () => {
+  it("checks and downloads silently before asking with a native dialog", async () => {
+    mocks.controller.check.mockImplementation(async () => {
+      mocks.controller.state.phase = "available";
+      mocks.controller.state.availableVersion = "0.2.0";
+    });
+    mocks.controller.download.mockImplementation(async () => {
+      mocks.controller.state.phase = "ready";
+    });
+    const updates = new DesktopUpdates(() => null);
+
+    await updates.check(false);
+
+    expect(mocks.controller.initialize).toHaveBeenCalledOnce();
+    expect(mocks.controller.download).toHaveBeenCalledOnce();
+    expect(mocks.dialog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "question",
+        message: expect.stringContaining("0.2.0"),
+      }),
+    );
   });
-  await updates.check(true);
-  expect(mocks.spawn).toHaveBeenCalledOnce();
-  await fs.access(`${args[0].slice(10)}.show`);
-  updates.stop();
-  expect(child.kill).not.toHaveBeenCalled();
-});
-it("authenticates host commands and forwards interface checks", async () => {
-  const checkUi = vi.fn().mockResolvedValue(undefined);
-  updates = new DesktopUpdates(checkUi, () => null);
-  await updates.check(true);
-  const request = JSON.parse(
-    await fs.readFile(mocks.spawn.mock.calls[0][1][0].slice(10), "utf8"),
-  );
-  expect(
-    (await fetch(`${request.controlUrl}quit`, { method: "POST" })).status,
-  ).toBe(403);
-  expect(mocks.quit).not.toHaveBeenCalled();
-  const response = await fetch(`${request.controlUrl}ui-check`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${request.token}` },
+
+  it("reports that a manual check is current without launching another app", async () => {
+    const updates = new DesktopUpdates(() => null);
+
+    await updates.check(true);
+
+    expect(mocks.dialog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "info",
+        message: "当前已是最新版本。",
+      }),
+    );
+    expect(mocks.controller.install).not.toHaveBeenCalled();
   });
-  expect(response.status).toBe(200);
-  expect(checkUi).toHaveBeenCalledOnce();
+
+  it("installs only after the user confirms the native prompt", async () => {
+    mocks.controller.check.mockImplementation(async () => {
+      mocks.controller.state.phase = "ready";
+      mocks.controller.state.availableVersion = "0.2.0";
+    });
+    mocks.dialog.mockResolvedValue({ response: 1 });
+    const updates = new DesktopUpdates(() => null);
+
+    await updates.check(true);
+
+    expect(mocks.controller.install).toHaveBeenCalledOnce();
+    const quitHost = mocks.controllerConstructor.mock
+      .calls[0][3] as () => Promise<void>;
+    quitHost();
+    expect(mocks.quit).toHaveBeenCalledOnce();
+  });
 });

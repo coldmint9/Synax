@@ -7,7 +7,6 @@ import {
   desktopIcon,
   desktopProduct,
   normalizeDesktopArtifacts,
-  updaterMacInfo,
   windowsMetadata,
 } from "./desktop-branding.js";
 import { desktopArtifactName } from "../electron/lib/desktop-update-feed.js";
@@ -36,10 +35,6 @@ describe("Synax desktop branding", () => {
       OriginalFilename: "Synax.exe",
     });
     expect(desktopProduct.description).toBe("Local-first AI coding workspace");
-  });
-  it("keeps the macOS updater out of the Dock while preserving its window", () => {
-    expect(updaterMacInfo("darwin")).toEqual({ LSUIElement: true });
-    expect(updaterMacInfo("win32")).toBeUndefined();
   });
   it("includes a real Windows ICO with small and large icons", async () => {
     const bytes = await fs.readFile(desktopIcon("win32"));

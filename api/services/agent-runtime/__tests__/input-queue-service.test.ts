@@ -24,16 +24,12 @@ describe("inputQueueService", () => {
       reasoningEffort: "high",
     });
     const original = inputQueueService.enqueue(sessionId, { message: "Third" });
-    expect(inputQueueService.move(sessionId, original[2].id, "up")).toEqual([
-      original[0],
-      original[2],
-      original[1],
-    ]);
-    expect(inputQueueService.move(sessionId, original[0].id, "down")).toEqual([
-      original[2],
-      original[0],
-      original[1],
-    ]);
+    expect(
+      inputQueueService.move(sessionId, original[2].id, { direction: "up" }),
+    ).toEqual([original[0], original[2], original[1]]);
+    expect(
+      inputQueueService.move(sessionId, original[0].id, { direction: "down" }),
+    ).toEqual([original[2], original[0], original[1]]);
     expect(inputQueueService.list(sessionId)).toEqual([
       original[2],
       original[0],
@@ -44,16 +40,44 @@ describe("inputQueueService", () => {
     expect(inputQueueService.consumeNext(sessionId)).toEqual(original[1]);
   });
 
+  it("reorders an item to an arbitrary index for drag-and-drop", () => {
+    inputQueueService.enqueue(sessionId, { message: "First" });
+    inputQueueService.enqueue(sessionId, { message: "Second" });
+    // enqueue resolves to the whole queue after the insert: [First, Second, Third].
+    const items = inputQueueService.enqueue(sessionId, { message: "Third" });
+    expect(
+      inputQueueService.move(sessionId, items[0].id, { toIndex: 2 }),
+    ).toEqual([items[1], items[2], items[0]]);
+    // Already at the requested index: no-op.
+    expect(
+      inputQueueService.move(sessionId, items[1].id, { toIndex: 0 }),
+    ).toEqual([items[1], items[2], items[0]]);
+    // Out-of-range index: no-op.
+    expect(
+      inputQueueService.move(sessionId, items[1].id, { toIndex: 99 }),
+    ).toEqual([items[1], items[2], items[0]]);
+    expect(
+      inputQueueService.move(sessionId, items[2].id, { toIndex: 0 }),
+    ).toEqual([items[2], items[1], items[0]]);
+    expect(inputQueueService.list(sessionId)).toEqual([
+      items[2],
+      items[1],
+      items[0],
+    ]);
+  });
+
   it("leaves boundaries unchanged and never restores an item already consumed", () => {
     inputQueueService.enqueue(sessionId, { message: "First" });
     const items = inputQueueService.enqueue(sessionId, { message: "Second" });
-    expect(inputQueueService.move(sessionId, items[0].id, "up")).toEqual(items);
-    expect(inputQueueService.move(sessionId, items[1].id, "down")).toEqual(
-      items,
-    );
+    expect(
+      inputQueueService.move(sessionId, items[0].id, { direction: "up" }),
+    ).toEqual(items);
+    expect(
+      inputQueueService.move(sessionId, items[1].id, { direction: "down" }),
+    ).toEqual(items);
     inputQueueService.consumeNext(sessionId);
     expect(() =>
-      inputQueueService.move(sessionId, items[0].id, "down"),
+      inputQueueService.move(sessionId, items[0].id, { direction: "down" }),
     ).toThrow("Queued input not found");
     expect(inputQueueService.list(sessionId)).toEqual([items[1]]);
   });
@@ -63,7 +87,7 @@ describe("inputQueueService", () => {
     inputQueueService.enqueue(sessionId, { message: "Second" });
     const items = inputQueueService.enqueue(sessionId, { message: "Third" });
     inputQueueService.markForceInject(sessionId, items[1].id);
-    inputQueueService.move(sessionId, items[1].id, "down");
+    inputQueueService.move(sessionId, items[1].id, { direction: "down" });
     expect(inputQueueService.consumeNext(sessionId)).toEqual(items[1]);
     expect(inputQueueService.list(sessionId)).toEqual([items[0], items[2]]);
   });

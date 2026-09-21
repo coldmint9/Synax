@@ -301,6 +301,7 @@ button.bui-activity-trigger:focus-visible,
   flex: 0 0 auto;
   align-items: center;
   color: var(--bui-muted);
+  transition: color 300ms ease;
 }
 .bui-thinking-banner[data-live="true"] .bui-thinking-banner-symbol {
   color: color-mix(in srgb, var(--accent) 45%, var(--foreground));
@@ -584,6 +585,7 @@ button.bui-thinking[data-live="true"][data-variant="coding"]
   flex: 0 0 16px;
   align-items: center;
   justify-content: center;
+  transition: color 300ms ease;
 }
 .bui-thinking[data-live="true"] .bui-thinking-symbol {
   color: var(--bui-ink);
@@ -749,5 +751,36 @@ button.bui-thinking[data-live="true"][data-variant="coding"]
   .bui-thinking-reveal,
   .bui-thinking-chevron {
     transition: none;
+  }
+}
+
+/* Chips expand smoothly: whenever a chip mounts its body below the trigger
+   (tool details, batch bodies, activity rows, task rows, card outputs), the
+   body fades and slides in instead of popping. Thinking chips keep their
+   grid-rows `.bui-thinking-reveal` transition, which also animates collapse. */
+@keyframes bui-chip-body-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.bui-tool-details,
+.bui-tool-batch-body,
+.bui-activity-body,
+.bui-task-body,
+.bui-tool-card-output {
+  animation: bui-chip-body-in 180ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bui-tool-details,
+  .bui-tool-batch-body,
+  .bui-activity-body,
+  .bui-task-body,
+  .bui-tool-card-output {
+    animation: none;
   }
 }

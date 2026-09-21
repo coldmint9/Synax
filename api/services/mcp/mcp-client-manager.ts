@@ -5,66 +5,13 @@ import {
 import type { RuntimeContentPart } from "../agent-runtime/content-parts.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import os from "node:os";
+import { mcpLaunchConfig } from "./mcp-launch-config.js";
+import { readWorkspaceProject, projectSourceLocation } from "../project-workspace.js";
+import { workspaceLocationHostPath } from "../workspace-location.js";
 import type { McpServerConfig } from "../../lib/config/config-types.js";
 import { getGlobalConfigForRuntime } from "../../lib/config/config-store.js";
 import { getProjectSettings } from "../../lib/config/project-settings-store.js";
 import { logger } from "../../lib/logger.js";
-
-function baseEnv(): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
-  ) as Record<string, string>;
-}
-
-function expandConfigValue(
-  value: string,
-  cwd: string,
-  env: Record<string, string>,
-): string {
-  return value
-    .replace(/\$\{(?:workspaceFolder|workspaceRoot)\}/g, cwd)
-    .replace(/\$\{userHome\}/g, os.homedir())
-    .replace(
-      /\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g,
-      (match, name: string) => env[name] ?? match,
-    )
-    .replace(
-      /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
-      (match, name: string) => env[name] ?? match,
-    )
-    .replace(
-      /\$([A-Za-z_][A-Za-z0-9_]*)/g,
-      (match, name: string) => env[name] ?? match,
-    )
-    .replace(
-      /%([A-Za-z_][A-Za-z0-9_]*)%/g,
-      (match, name: string) => env[name] ?? match,
-    );
-}
-
-function transportConfig(config: McpServerConfig) {
-  const inheritedEnv = baseEnv();
-  const rawCwd = config.cwd ?? process.cwd();
-  const cwd = expandConfigValue(rawCwd, process.cwd(), inheritedEnv);
-  const configuredEnv = Object.fromEntries(
-    Object.entries(config.env ?? {}).map(([name, value]) => [
-      name,
-      expandConfigValue(value, cwd, inheritedEnv),
-    ]),
-  );
-  const env = { ...inheritedEnv, ...configuredEnv };
-  return {
-    command: expandConfigValue(config.command, cwd, env),
-    args: (config.args ?? []).map((value) =>
-      expandConfigValue(value, cwd, env),
-    ),
-    ...(config.env && Object.keys(config.env).length > 0 ? { env } : {}),
-    cwd,
-  };
-}
 
 export interface McpRuntimeToolDef {
   name: string;
@@ -158,8 +105,8 @@ export class McpClientManager {
     );
   }
 
-  private async startServer(config: McpServerConfig): Promise<ServerState> {
-    const key = config.id;
+  private async startServer(config: McpServerConfig, projectId?: string): Promise<ServerState> {
+    const key = JSON.stringify([projectId ?? null, config.id]);
     const existing = this.servers.get(key);
     if (existing?.status === "ready") return existing;
     if (existing?.status === "starting") {
@@ -168,17 +115,23 @@ export class McpClientManager {
     }
 
     const promise = (async (): Promise<ServerState> => {
-      const transport = new StdioClientTransport({
-        ...transportConfig(config),
-        stderr: "pipe",
-      });
-      const client = new Client(
-        { name: "synax-host", version: "0.2.0" },
-        { capabilities: {} },
-      );
+      let transport: StdioClientTransport | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const timer = setTimeout(() => {
-          void transport.close().catch(() => undefined);
+        const project = projectId ? readWorkspaceProject(projectId) : undefined;
+        const location = project ? projectSourceLocation(project) : undefined;
+        if (projectId && !location && !config.cwd)
+          throw new Error("The MCP project has no registered workspace. Set an explicit cwd.");
+        transport = new StdioClientTransport({
+          ...mcpLaunchConfig(config, location ? workspaceLocationHostPath(location) : undefined),
+          stderr: "pipe",
+        });
+        const client = new Client(
+          { name: "synax-host", version: "0.2.0" },
+          { capabilities: {} },
+        );
+        timer = setTimeout(() => {
+          void transport?.close().catch(() => undefined);
         }, START_TIMEOUT_MS);
         await client.connect(transport);
         clearTimeout(timer);
@@ -200,7 +153,7 @@ export class McpClientManager {
         return state;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        await transport.close().catch(() => undefined);
+        await transport?.close().catch(() => undefined);
         const state: ServerState = { status: "failed", error: message };
         this.servers.set(key, state);
         logger.warn(
@@ -209,6 +162,7 @@ export class McpClientManager {
         );
         return state;
       } finally {
+        clearTimeout(timer);
         this.inflight.delete(key);
       }
     })();
@@ -224,15 +178,15 @@ export class McpClientManager {
       const config = byId.get(id);
       if (!config) continue;
       try {
-        await this.startServer(config);
+        await this.startServer(config, projectId);
       } catch {
         /* warm-up best effort */
       }
     }
   }
 
-  getCachedTools(serverId: string): McpRuntimeToolDef[] {
-    const state = this.servers.get(serverId);
+  getCachedTools(serverId: string, projectId?: string): McpRuntimeToolDef[] {
+    const state = this.servers.get(JSON.stringify([projectId ?? null, serverId]));
     return state?.status === "ready" ? state.tools : [];
   }
 
@@ -252,7 +206,7 @@ export class McpClientManager {
     if (!config)
       return { ok: false, text: "", error: `MCP server ${serverId} 未配置` };
 
-    const state = await this.startServer(config);
+    const state = await this.startServer(config, projectId);
     if (state.status !== "ready") {
       const reason = state.status === "failed" ? state.error : undefined;
       return {
@@ -329,8 +283,8 @@ export class McpClientManager {
         { serverId, toolName, err: message },
         "[mcp] tool call failed; attempting restart",
       );
-      this.servers.delete(serverId);
-      const restarted = await this.startServer(config);
+      this.servers.delete(JSON.stringify([projectId ?? null, serverId]));
+      const restarted = await this.startServer(config, projectId);
       if (restarted.status === "ready") {
         try {
           return await callOnce(restarted.client);
@@ -352,16 +306,16 @@ export class McpClientManager {
   async probe(
     config: McpServerConfig,
   ): Promise<{ ok: boolean; tools: McpRuntimeToolDef[]; error?: string }> {
-    const transport = new StdioClientTransport({
-      ...transportConfig(config),
-    });
+    let transport: StdioClientTransport | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const client = new Client(
       { name: "synax-host-probe", version: "0.2.0" },
       { capabilities: {} },
     );
     try {
-      const timer = setTimeout(() => {
-        void transport.close().catch(() => undefined);
+      transport = new StdioClientTransport(mcpLaunchConfig(config));
+      timer = setTimeout(() => {
+        void transport?.close().catch(() => undefined);
       }, START_TIMEOUT_MS);
       await client.connect(transport);
       clearTimeout(timer);
@@ -370,13 +324,15 @@ export class McpClientManager {
         (listed as { tools?: Array<Record<string, unknown>> }).tools ?? [],
       );
       await client.close().catch(() => undefined);
-      await transport.close().catch(() => undefined);
+      await transport?.close().catch(() => undefined);
       return { ok: true, tools };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await client.close().catch(() => undefined);
-      await transport.close().catch(() => undefined);
+      await transport?.close().catch(() => undefined);
       return { ok: false, tools: [], error: message };
+    } finally {
+      clearTimeout(timer);
     }
   }
 

@@ -53,7 +53,12 @@ function scanSource(source: SkillSourceRecord, projectId?: string): ParsedSkillF
   }
   if (source.type === 'project') {
     if (!projectId) return [];
-    return scanSkillsDirectory(path.join(resolveProjectWorkDir(projectId), '.synax', 'skills'));
+    try {
+      return scanSkillsDirectory(path.join(resolveProjectWorkDir(projectId), '.synax', 'skills'));
+    } catch {
+      // An unregistered project has no project-local skills, not the API's skills.
+      return [];
+    }
   }
   if (source.type === 'local') {
     const paths = source.config.scanPaths?.length

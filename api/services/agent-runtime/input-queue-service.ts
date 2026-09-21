@@ -30,6 +30,10 @@ export const queuedInputSchema = z.object({
 
 export type QueuedInput = z.infer<typeof queuedInputSchema>;
 
+export type QueuedMoveTarget =
+  | { direction: "up" | "down" }
+  | { toIndex: number };
+
 export const enqueueInputRequestSchema = z.object({
   contentParts: contentPartsSchema.optional(),
   references: z.array(turnReferenceSchema).max(20).optional(),
@@ -126,7 +130,7 @@ export const inputQueueService = {
   move(
     sessionId: string,
     itemId: string,
-    direction: "up" | "down",
+    target: QueuedMoveTarget,
   ): QueuedInput[] {
     return runtimeTransaction(() => {
       const session = agentRuntimeStore.getSession(sessionId);
@@ -136,9 +140,13 @@ export const inputQueueService = {
         throw new AgentValidationError(
           "Queued input not found. It may already be running.",
         );
-      const target = index + (direction === "up" ? -1 : 1);
-      if (target < 0 || target >= queue.length) return queue;
-      [queue[index], queue[target]] = [queue[target], queue[index]];
+      const to =
+        "toIndex" in target
+          ? target.toIndex
+          : index + (target.direction === "up" ? -1 : 1);
+      if (to === index || to < 0 || to >= queue.length) return queue;
+      const [moved] = queue.splice(index, 1);
+      queue.splice(to, 0, moved);
       return writeQueue(sessionId, queue);
     });
   },

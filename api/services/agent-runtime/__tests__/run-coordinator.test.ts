@@ -10,6 +10,7 @@ import { runtimeJournal } from "../runtime-journal.js";
 import { RunCoordinator } from "../run-coordinator.js";
 import { normalizeAgentSessionStatus } from "../session-projection.js";
 import { inputQueueService } from "../input-queue-service.js";
+import { workStore } from "../work-store.js";
 import {
   plannerSessionInput,
   resetAgentRuntimeFixtures,
@@ -109,12 +110,6 @@ describe("headless Run coordinator", () => {
 
   it.each([
     {
-      label: "round handoff",
-      runStatus: "completed",
-      sessionStatus: "completed",
-      stopReason: "round_yielded",
-    },
-    {
       label: "failed",
       runStatus: "failed",
       sessionStatus: "failed",
@@ -180,6 +175,81 @@ describe("headless Run coordinator", () => {
       expect(inputQueueService.list(session.id)).toHaveLength(1);
     },
   );
+
+  it("drains queued messages when a plain conversation ends in a round handoff", async () => {
+    const session = create();
+    execute.mockImplementationOnce(async function* (id, _mode, input) {
+      const run = activateAcceptedRun(id, input.acceptedRunId!, "user", null);
+      await gate;
+      const finished = agentRuntimeStore.updateRun(run.id, {
+        status: "completed",
+        stopReason: "round_yielded",
+        completedAt: new Date().toISOString(),
+      });
+      agentRuntimeStore.updateSession(id, {
+        status: "completed",
+        activeRunId: null,
+      });
+      yield { type: "done", sessionId: id, runId: finished.id };
+    });
+    coordinator.submit(session.id, { message: "Original" }, "queue-plain");
+    inputQueueService.enqueue(session.id, { message: "Later" });
+    release();
+    await coordinator.waitForIdle();
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    expect(execute.mock.calls[1][2].message).toBe("Later");
+    expect(inputQueueService.list(session.id)).toHaveLength(0);
+  });
+
+  it("keeps queued messages while a settled goal round still has a continuation", async () => {
+    const session = create();
+    const work = workStore.create(session.id, "Finish the approved goal");
+    execute.mockImplementationOnce(async function* (id, _mode, input) {
+      const run = activateAcceptedRun(id, input.acceptedRunId!, "user", null);
+      await gate;
+      const finished = agentRuntimeStore.updateRun(run.id, {
+        status: "completed",
+        stopReason: "round_yielded",
+        completedAt: new Date().toISOString(),
+        metadata: { goalExecutionId: "execution-1", workId: work.id },
+      });
+      agentRuntimeStore.updateSession(id, {
+        status: "completed",
+        activeRunId: null,
+      });
+      yield { type: "done", sessionId: id, runId: finished.id };
+    });
+    coordinator.submit(session.id, { message: "Original" }, "queue-goal");
+    inputQueueService.enqueue(session.id, { message: "Later" });
+    agentRuntimeStore.updateSessionMetadata(session.id, {
+      mode: "goal",
+      goal: { objective: "Finish the approved goal", status: "executing" },
+      plan: {
+        title: "Current plan",
+        objective: "Finish the approved goal",
+        revision: 1,
+        status: "approved",
+        executionId: "execution-1",
+        acceptanceCriteria: ["Done"],
+        steps: [
+          {
+            id: "s1",
+            title: "Finish",
+            description: "Finish the approved goal",
+            dependsOn: [],
+            expectedFiles: [],
+          },
+        ],
+      },
+    });
+    release();
+    await coordinator.waitForIdle();
+    expect(execute.mock.calls.map((call) => call[2].message)).not.toContain(
+      "Later",
+    );
+    expect(inputQueueService.list(session.id)).toHaveLength(1);
+    expect(coordinator.dispatchQueuedInput(session.id)).toBe(false);
+  });
 
   it("dispatches an input arriving after completion and does not submit it twice", async () => {
     const session = create();

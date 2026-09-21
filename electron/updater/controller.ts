@@ -33,22 +33,6 @@ export function processRunning(pid: number): boolean {
     return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
-export async function controlHost(
-  request: UpdaterRequest,
-  command: "quit" | "ui-check",
-  manual = false,
-): Promise<void> {
-  const response = await fetch(new URL(command, request.controlUrl), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${request.token}`,
-      "X-Synax-Manual": manual ? "1" : "0",
-    },
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!response.ok)
-    throw new Error("Synax 拒绝了升级器请求，请重新打开升级器。");
-}
 export interface ControllerDependencies {
   find: typeof findDesktopRelease;
   download: typeof downloadDesktopRelease;
@@ -59,6 +43,7 @@ export interface ControllerDependencies {
     file: string,
     directory: string,
     status: (message: string) => void,
+    quitHost?: () => Promise<void>,
   ) => Promise<void>;
 }
 
@@ -68,6 +53,7 @@ export async function installDesktop(
   file: string,
   directory: string,
   status: (message: string) => void,
+  quitHost: () => Promise<void> = async () => {},
 ): Promise<void> {
   if (!(await verifyDesktopArtifact(file, release.manifest.artifact)))
     throw new Error("安装包校验失败，请重新下载。");
@@ -81,9 +67,9 @@ export async function installDesktop(
       request.executable,
       directory,
     );
-    // Confirm the host can accept the request before starting the helper. If the
-    // user already quit Synax, the independent updater can continue on its own.
-    if (processRunning(request.parentPid)) await controlHost(request, "quit");
+    // Prepare the swap before asking the running app to quit. The detached
+    // shell helper then waits for this process and replaces the .app.
+    if (processRunning(request.parentPid)) await quitHost();
     await launchMacInstaller(installation, root, request.parentPid, [
       "--user-data-dir=" + request.profile,
     ]);
@@ -95,7 +81,7 @@ export async function installDesktop(
       path.join(directory, "RELEASES"),
       `${await hashFile(file, "sha1")} ${path.basename(file)} ${(await fs.stat(file)).size}\n`,
     );
-    if (processRunning(request.parentPid)) await controlHost(request, "quit");
+    if (processRunning(request.parentPid)) await quitHost();
     const deadline = Date.now() + 120_000;
     while (processRunning(request.parentPid)) {
       if (Date.now() > deadline)
@@ -111,7 +97,7 @@ export async function installDesktop(
         installRoot: path.resolve(request.executable, "../.."),
       }),
     );
-    // Target the host's Squirrel installation, never the updater's own runtime.
+    // Target the installed app's Squirrel installation.
     await run(updateExe, ["--update", directory], {
       timeout: 15 * 60_000,
       windowsHide: true,
@@ -144,7 +130,7 @@ export async function installDesktop(
     await delay(500);
   }
   throw new Error(
-    "尚未收到新版本启动成功的确认。升级记录和旧版本已保留，请查看 updater.log 后重试打开 Synax。",
+    "尚未收到新版本启动成功的确认。升级记录和旧版本已保留，请查看桌面更新日志后重试打开 Synax。",
   );
 }
 
@@ -163,6 +149,7 @@ export class UpdaterController {
     readonly request: UpdaterRequest,
     private readonly changed: (state: UpdaterState) => void,
     private readonly dependencies = defaults,
+    private readonly quitHost: () => Promise<void> = async () => {},
   ) {
     this.state = {
       phase: "idle",
@@ -234,7 +221,7 @@ export class UpdaterController {
     try {
       await action();
     } catch (error) {
-      console.error("[updater]", error);
+      console.error("[desktop-update]", error);
       this.update({
         phase: "error",
         message: error instanceof Error ? error.message : String(error),
@@ -327,6 +314,7 @@ export class UpdaterController {
           this.file!,
           path.dirname(this.file!),
           (message) => this.update({ message }),
+          this.quitHost,
         );
       } catch (error) {
         await this.record("failed");

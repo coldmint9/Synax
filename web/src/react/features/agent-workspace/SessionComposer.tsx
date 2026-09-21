@@ -3,8 +3,19 @@ import {
   useSessionComposerSelection,
   useSessionComposerSelections,
 } from "./useSessionComposerSelection";
-import { prepareQueuedMedia, useMediaDraft } from "../media/useMediaDraft";
+import {
+  prepareQueuedMedia,
+  restoreDraftMedia,
+  useMediaDraft,
+} from "../media/useMediaDraft";
 import { useQueuedInputDraftStore } from "./state/queuedInputDraftStore";
+import {
+  clearDraftComposer,
+  loadDraftComposer,
+  loadDraftComposerContext,
+  saveDraftComposer,
+  saveDraftComposerContext,
+} from "./state/draftComposerStore";
 import { ComposerIsland } from "./ComposerIsland";
 import { useComposerCommands } from "./useComposerCommands";
 import type {
@@ -83,7 +94,11 @@ export function SessionComposer({
   const zh = locale === "zh";
   const navigate = useNavigate();
   const location = useLocation();
-  const [content, setContent] = useState("");
+  // New-session drafts start from the per-project cache so typed text
+  // survives navigating away or reloading before the session is created.
+  const [content, setContent] = useState(() =>
+    session ? "" : loadDraftComposer(projectId),
+  );
   const [gitWorkspace, setGitWorkspace] = useState<GitWorkspaceSelection>();
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -136,17 +151,85 @@ export function SessionComposer({
   );
   const media = useMediaDraft(projectId);
   const hasMediaInput = media.parts.length > 0;
-  const [references, setReferences] = useState<TurnReference[]>([]);
+  const isDraft = !session;
+  // New-session drafts start with the cached context references.
+  const [references, setReferences] = useState<TurnReference[]>(() =>
+    isDraft ? loadDraftComposerContext(projectId).references : [],
+  );
   const createdDraftRef = useRef<AgentSession | null>(null);
   useEffect(() => {
-    setReferences([]);
+    // Existing sessions never carry draft context; drafts restore theirs.
+    setReferences(isDraft ? loadDraftComposerContext(projectId).references : []);
     setGitWorkspace(undefined);
     createdDraftRef.current = null;
     setSubmitting(false);
     setEditingQueue(false);
     setError(null);
-  }, [sessionId, projectId, viewKey]);
-  const isDraft = !session;
+  }, [isDraft, sessionId, projectId, viewKey]);
+  // Keep the new-session draft cached per project while typing; an empty
+  // composer (sent or cleared) drops the cached entry.
+  useEffect(() => {
+    if (!isDraft || submitting) return;
+    saveDraftComposer(projectId, content);
+  }, [isDraft, projectId, content, submitting]);
+  // Cached attachments reattach asynchronously; hold off overwriting the
+  // context cache until that resolves (or nothing needed restoring).
+  const [draftMediaHydrated, setDraftMediaHydrated] = useState(!isDraft);
+  // Cache draft context (attachment parts + references) alongside the text.
+  // Declared before hydration so a removal rewrites the cache first and the
+  // hydration pass never resurrects a just-removed attachment.
+  const contextPartsKey = JSON.stringify(media.parts);
+  useEffect(() => {
+    if (!isDraft || submitting || !draftMediaHydrated) return;
+    saveDraftComposerContext(projectId, {
+      parts: JSON.parse(contextPartsKey) as RuntimeContentPart[],
+      references,
+    });
+  }, [
+    isDraft,
+    projectId,
+    submitting,
+    draftMediaHydrated,
+    contextPartsKey,
+    references,
+  ]);
+  // Reattach cached attachments once their assets are confirmed. Only hydrate
+  // an empty tray: items already in the composer are newer than the cache.
+  useEffect(() => {
+    if (!isDraft) return;
+    if (media.items.length) {
+      setDraftMediaHydrated(true);
+      return;
+    }
+    const cached = loadDraftComposerContext(projectId).parts;
+    if (!cached.length) {
+      setDraftMediaHydrated(true);
+      return;
+    }
+    let cancelled = false;
+    setDraftMediaHydrated(false);
+    restoreDraftMedia(cached)
+      .then((items) => {
+        if (!cancelled) media.restore(items);
+      })
+      .finally(() => {
+        if (!cancelled) setDraftMediaHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDraft, projectId, media.items.length, media.restore]);
+  const draftScopeRef = useRef({ isDraft, projectId });
+  draftScopeRef.current = { isDraft, projectId };
+  useEffect(
+    () => () => {
+      // An in-flight submit owns the text; leaving mid-send must not
+      // resurrect it later as an unsent draft.
+      if (draftScopeRef.current.isDraft && submitLock.current)
+        clearDraftComposer(draftScopeRef.current.projectId);
+    },
+    [],
+  );
   const currentInteractions =
     interactionState?.sessionId === sessionId ? interactionState : null;
   const pendingInteractions =
@@ -836,8 +919,8 @@ export function SessionComposer({
                   : "Send or clear the current draft first"
                 : undefined
           }
-          onMove={(itemId, direction) =>
-            moveQueuedInput(sessionId, itemId, direction)
+          onReorder={(itemId, toIndex) =>
+            moveQueuedInput(sessionId, itemId, { toIndex })
           }
           onRemove={(itemId) => removeQueuedInput(sessionId, itemId)}
           onForce={(itemId) => forceQueuedInput(sessionId, itemId)}

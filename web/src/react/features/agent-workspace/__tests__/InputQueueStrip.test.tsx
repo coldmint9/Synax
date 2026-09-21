@@ -40,28 +40,95 @@ function queuedInputItem(): QueuedInput {
   };
 }
 
+function fireDrag(
+  element: Element,
+  type: string,
+  coords: { clientY?: number } = {},
+) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clientY", { value: coords.clientY ?? 0 });
+  Object.defineProperty(event, "dataTransfer", {
+    value: { setData: vi.fn(), effectAllowed: "move", dropEffect: "move" },
+  });
+  act(() => {
+    element.dispatchEvent(event);
+  });
+}
+
 describe("InputQueueStrip media rendering", () => {
-  it("allows moving queued inputs and disables moves beyond the list boundaries", async () => {
-    const onMove = vi.fn().mockResolvedValue(undefined);
-    render(
+  it("reorders queued inputs by dragging a pill onto another position", () => {
+    const onReorder = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(
       <InputQueueStrip
-        items={[queuedItem({ id: "one" }), queuedItem({ id: "two" })]}
-        onMove={onMove}
+        items={[
+          queuedItem({ id: "one" }),
+          queuedItem({ id: "two" }),
+          queuedItem({ id: "three" }),
+        ]}
+        onReorder={onReorder}
         onRemove={vi.fn()}
         onForce={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "上移 1" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "下移 2" })).toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: "上移 2" }));
-    expect(onMove).toHaveBeenCalledWith("two", "up");
-    await userEvent.click(screen.getByRole("button", { name: "下移 1" }));
-    expect(onMove).toHaveBeenLastCalledWith("one", "down");
+    const pills = container.querySelectorAll("li");
+    const grabs = container.querySelectorAll('button[draggable="true"]');
+    expect(grabs).toHaveLength(3);
+    // jsdom rects collapse to zero, so every drop lands "above" the target.
+    fireDrag(grabs[0]!, "dragstart");
+    fireDrag(pills[2]!, "dragover");
+    fireDrag(pills[2]!, "drop");
+    expect(onReorder).toHaveBeenCalledTimes(1);
+    expect(onReorder).toHaveBeenCalledWith("one", 2);
+    fireDrag(grabs[2]!, "dragstart");
+    fireDrag(pills[0]!, "dragover");
+    fireDrag(pills[0]!, "drop");
+    expect(onReorder).toHaveBeenLastCalledWith("three", 0);
+    // Dropping right after itself is a no-op and must not call the API.
+    fireDrag(grabs[0]!, "dragstart");
+    fireDrag(pills[1]!, "dragover");
+    fireDrag(pills[1]!, "drop");
+    expect(onReorder).toHaveBeenCalledTimes(2);
+    // A stray drop without an active drag is ignored.
+    fireDrag(pills[2]!, "drop");
+    expect(onReorder).toHaveBeenCalledTimes(2);
   });
 
-  it("prevents duplicate moves while saving and lets the user retry a failed move", async () => {
+  it("supports keyboard reordering through the focused drag handle", async () => {
+    const onReorder = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(
+      <InputQueueStrip
+        items={[queuedItem({ id: "one" }), queuedItem({ id: "two" })]}
+        onReorder={onReorder}
+        onRemove={vi.fn()}
+        onForce={vi.fn()}
+      />,
+    );
+    const grabs = container.querySelectorAll('button[draggable="true"]');
+    grabs[1]!.focus();
+    await userEvent.keyboard("{ArrowUp}");
+    expect(onReorder).toHaveBeenCalledTimes(1);
+    expect(onReorder).toHaveBeenCalledWith("two", 0);
+    await userEvent.keyboard("{ArrowDown}");
+    expect(onReorder).toHaveBeenLastCalledWith("two", 1);
+  });
+
+  it("does not offer drag handles for single-item queues", () => {
+    const { container } = render(
+      <InputQueueStrip
+        items={[queuedItem({ id: "only" })]}
+        onReorder={vi.fn()}
+        onRemove={vi.fn()}
+        onForce={vi.fn()}
+      />,
+    );
+    expect(
+      container.querySelectorAll('button[draggable="true"]'),
+    ).toHaveLength(0);
+  });
+
+  it("serializes concurrent drags and lets the user retry a failed reorder", async () => {
     let reject!: (error: Error) => void;
-    const onMove = vi
+    const onReorder = vi
       .fn()
       .mockImplementationOnce(
         () =>
@@ -70,22 +137,34 @@ describe("InputQueueStrip media rendering", () => {
           }),
       )
       .mockResolvedValue(undefined);
-    render(
+    const { container } = render(
       <InputQueueStrip
-        items={[queuedItem({ id: "one" }), queuedItem({ id: "two" })]}
-        onMove={onMove}
+        items={[
+          queuedItem({ id: "one" }),
+          queuedItem({ id: "two" }),
+          queuedItem({ id: "three" }),
+        ]}
+        onReorder={onReorder}
         onRemove={vi.fn()}
         onForce={vi.fn()}
       />,
     );
-    const up = screen.getByRole("button", { name: "上移 2" });
-    await userEvent.dblClick(up);
-    expect(onMove).toHaveBeenCalledTimes(1);
-    expect(up).toBeDisabled();
+    const grabs = container.querySelectorAll('button[draggable="true"]');
+    const pills = container.querySelectorAll("li");
+    fireDrag(grabs[0]!, "dragstart");
+    fireDrag(pills[2]!, "drop");
+    expect(onReorder).toHaveBeenCalledTimes(1);
+    expect(grabs[0]).toBeDisabled();
+    // A second drop while the reorder is still in flight must not fire again.
+    fireDrag(grabs[0]!, "dragstart");
+    fireDrag(pills[2]!, "drop");
+    expect(onReorder).toHaveBeenCalledTimes(1);
     await act(async () => reject(new Error("Queue changed")));
     expect(screen.getByRole("alert")).toHaveTextContent("Queue changed");
-    await userEvent.click(up);
-    expect(onMove).toHaveBeenCalledTimes(2);
+    expect(grabs[0]).not.toBeDisabled();
+    fireDrag(grabs[0]!, "dragstart");
+    fireDrag(pills[2]!, "drop");
+    expect(onReorder).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
   it("renders compact image thumbnails instead of full media cards", async () => {

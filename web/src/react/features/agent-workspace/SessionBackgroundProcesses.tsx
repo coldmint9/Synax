@@ -150,6 +150,11 @@ export function SessionBackgroundProcesses({
 
   if (!items.length) return null;
 
+  const services = items.filter((item) => item.kind !== "terminal");
+  const runningCount = services.filter(
+    (item) => item.state !== "closed",
+  ).length;
+
   return (
     <WorkspaceSection
       className="bui-processes"
@@ -179,9 +184,9 @@ export function SessionBackgroundProcesses({
         </button>
       }
       summary={
-        items.length
-          ? items.some((item) => item.state !== "closed")
-            ? `${items.filter((item) => item.state !== "closed").length} ${zh ? "运行中" : "running"}`
+        services.length
+          ? runningCount
+            ? `${runningCount} ${zh ? "运行中" : "running"}`
             : zh
               ? "均已结束"
               : "All stopped"
@@ -195,17 +200,25 @@ export function SessionBackgroundProcesses({
       )}
       {items.map((item) => {
         const live = item.state !== "closed";
+        // Plain terminals have no service lifecycle: no status, no stop — the
+        // delete button directly clears the terminal and its session.
+        const plainTerminal = item.kind === "terminal";
+        const livePorts = live && !plainTerminal ? (item.ports ?? []) : [];
         const deleteProps = {
           disabled: busy !== null,
           className: "ws-icon-button bui-process-delete",
-          "aria-label": `${zh ? "删除记录" : "Delete record"} ${item.command}`,
-          title: live
+          "aria-label": `${plainTerminal ? (zh ? "删除终端" : "Delete terminal") : zh ? "删除记录" : "Delete record"} ${item.command}`,
+          title: plainTerminal
             ? zh
-              ? "停止并删除记录"
-              : "Stop and delete record"
-            : zh
-              ? "删除记录（不删除文件）"
-              : "Delete record (keeps files)",
+              ? "删除终端并清除该终端会话"
+              : "Delete the terminal and clear its session"
+            : live
+              ? zh
+                ? "停止并删除记录"
+                : "Stop and delete record"
+              : zh
+                ? "删除记录（不删除文件）"
+                : "Delete record (keeps files)",
         };
         const deleteIcon =
           busy?.id === item.id && busy.action !== "stop" ? (
@@ -218,7 +231,10 @@ export function SessionBackgroundProcesses({
           (activeTerminal === item.terminalId ||
             activeTerminal === `legacy:${item.id}`);
         return (
-          <div className="bui-process-row" key={item.id}>
+          <div
+            className={`bui-process-row${livePorts.length ? " bui-process-row--ports" : ""}`}
+            key={item.id}
+          >
             <div className="bui-process-info">
               <button
                 type="button"
@@ -246,27 +262,36 @@ export function SessionBackgroundProcesses({
                 <Terminal size={11} aria-hidden />
                 <code>{item.command}</code>
               </button>
-              <span className="bui-process-meta">
-                <ActivityStatus
-                  status={
-                    live
-                      ? item.state === "preparing"
-                        ? "queued"
-                        : item.state === "unconfirmed"
-                          ? "blocked"
-                          : "running"
-                      : item.exitCode === null
-                        ? "cancelled"
-                        : item.exitCode === 0
-                          ? "completed"
-                          : "failed"
-                  }
-                />
-                {item.pid && <span>PID {item.pid}</span>}
-              </span>
+              {!plainTerminal && (
+                <span className="bui-process-meta">
+                  {/* Running is conveyed by the row colour alone; only
+                      finished records get a status chip. */}
+                  {!live && (
+                    <ActivityStatus
+                      status={
+                        item.exitCode === null
+                          ? "cancelled"
+                          : item.exitCode === 0
+                            ? "completed"
+                            : "failed"
+                      }
+                    />
+                  )}
+                  {item.pid && <span>PID {item.pid}</span>}
+                  {livePorts.map((port) => (
+                    <span
+                      key={port}
+                      className="bui-process-port"
+                      title={zh ? `服务端口 :${port}` : `Service port :${port}`}
+                    >
+                      :{port}
+                    </span>
+                  ))}
+                </span>
+              )}
             </div>
             <div className="bui-process-actions">
-              {live && (
+              {live && !plainTerminal && (
                 <button
                   type="button"
                   disabled={busy !== null}
@@ -284,7 +309,7 @@ export function SessionBackgroundProcesses({
                   )}
                 </button>
               )}
-              {live ? (
+              {live && !plainTerminal ? (
                 <Popover
                   isOpen={confirmDeleteId === item.id && busy === null}
                   onOpenChange={(open) =>

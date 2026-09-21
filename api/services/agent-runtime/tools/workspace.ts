@@ -20,12 +20,17 @@ import {
 const sessionWorkspaceRoots = new Map<string, string>();
 
 export function workspaceRoot(sessionId?: string): string {
-  return sessionId
-    ? (sessionWorkspaceRoots.get(sessionId) ?? path.resolve(process.cwd()))
-    : path.resolve(process.cwd());
+  if (!sessionId) return path.resolve(process.cwd());
+  const bound = sessionWorkspaceRoots.get(sessionId);
+  if (bound) return bound;
+  const session = agentRuntimeStore.tryGetSession(sessionId);
+  if (!session) throw new Error("The session has no registered workspace.");
+  return resolveSessionWorkDir(sessionId, session.projectId);
 }
 
-export function resolveWorkspaceRoot(inputPath = "."): string {
+export function resolveWorkspaceRoot(inputPath: string): string {
+  if (!path.isAbsolute(inputPath) || inputPath.includes("\0"))
+    throw new Error("Workspace root must be an absolute path.");
   const resolved = path.resolve(inputPath);
   const stat = fs.statSync(resolved);
   if (!stat.isDirectory())
@@ -82,15 +87,9 @@ function entryLocation(
 
 /** Resolve a project's host-accessible workspace root from the on-disk registry. */
 export function resolveProjectWorkDir(projectId: string): string {
-  try {
-    const location = entryLocation(
-      readProjectWorkDirEntries().find((entry) => entry.id === projectId),
-    );
-    if (location) return workspaceLocationHostPath(location);
-  } catch {
-    /* fall through */
-  }
-  return path.resolve(process.cwd());
+  const location = resolveProjectWorkspaceLocation(projectId);
+  if (!location) throw new Error("The project has no registered workspace.");
+  return workspaceLocationHostPath(location);
 }
 
 export function resolveProjectWorkspaceLocation(
@@ -151,13 +150,35 @@ export function resolveSessionWorkDir(
 ): string {
   const bound = tryGetSessionWorkspaceRoot(sessionId);
   if (bound) return bound;
-  try {
-    return workspaceLocationHostPath(
-      resolveSessionWorkspaceLocation(sessionId, projectId),
-    );
-  } catch {
-    return resolveProjectWorkDir(projectId);
-  }
+  return workspaceLocationHostPath(
+    resolveSessionWorkspaceLocation(sessionId, projectId),
+  );
+}
+
+/** Keep repository views and tool execution on the same primary directory. */
+function withSessionPrimary(
+  roots: ProjectWorkspaceRoot[],
+  location: WorkspaceLocation,
+  projectId: string,
+): ProjectWorkspaceRoot[] {
+  const primary = roots.find((item) => item.role === "primary") ?? {
+    id: projectId,
+    name: projectId,
+    role: "primary" as const,
+  };
+  const normalized: ProjectWorkspaceRoot = {
+    ...primary,
+    path: location.path,
+    location,
+    status: "available",
+  };
+  // A spread must not retain an old enumerable hostPath from persisted metadata.
+  delete normalized.hostPath;
+  if (location.kind === "host")
+    Object.defineProperty(normalized, "location", {
+      configurable: true, enumerable: false, value: location,
+    });
+  return [normalized, ...roots.filter((item) => item.role !== "primary")];
 }
 
 /** A persisted membership snapshot also works in session worker processes. */
@@ -167,23 +188,11 @@ export function resolveSessionWorkspaceRoots(
 ): ProjectWorkspaceRoot[] {
   const binding = agentRuntimeStore.tryGetSession(sessionId)?.sessionMetadata
     ?.backend as { workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
-  if (binding?.workspaceRoots) return binding.workspaceRoots;
   const project = readWorkspaceProject(projectId);
-  if (project) return projectWorkspaceRoots(project);
-  const location = tryResolveSessionWorkspaceLocation(sessionId, projectId) ?? {
-    kind: "host" as const,
-    path: resolveProjectWorkDir(projectId),
-  };
-  return [
-    {
-      id: projectId,
-      name: projectId,
-      path: location.path,
-      location,
-      role: "primary",
-      status: "available",
-    },
-  ];
+  const roots = binding?.workspaceRoots ?? (project ? projectWorkspaceRoots(project) : []);
+  return withSessionPrimary(
+    roots, resolveSessionWorkspaceLocation(sessionId, projectId), projectId,
+  );
 }
 
 /** Freeze the real execution root before accepting work; never infer it from server cwd. */
@@ -202,31 +211,30 @@ export function bindSessionWorkDir(sessionId: string): string {
   const root = workspaceLocationHostPath(location);
   const previous = binding?.workspaceRoots;
   const project = readWorkspaceProject(session.projectId);
-  const roots =
+  const roots = withSessionPrimary(
     (session.activeRunId || session.parentSessionId) && previous
       ? previous
-      : project
-        ? projectWorkspaceRoots(project)
-        : [
-            {
-              id: session.projectId,
-              name: session.projectId,
-              path: location.path,
-              location,
-              role: "primary" as const,
-              status: "available" as const,
-            },
-          ];
-  const workspaceRoots = roots.map((item) => {
-    const canonical = canonicalizeWorkspaceLocationSync(
-      item.location ?? { kind: "host", path: item.path },
-    );
+      : project ? projectWorkspaceRoots(project) : [],
+    location,
+    session.projectId,
+  );
+  const workspaceRoots = roots.map((item): ProjectWorkspaceRoot => {
+    const itemLocation = item.location ?? { kind: "host" as const, path: item.path };
+    let canonical: WorkspaceLocation;
+    try {
+      canonical = canonicalizeWorkspaceLocationSync(itemLocation);
+    } catch (error) {
+      if (item.role === "primary") throw error;
+      // Keep the missing member visible, but never grant it sandbox access.
+      return { ...item, status: "missing" };
+    }
     const normalized: ProjectWorkspaceRoot = {
       ...item,
       path: canonical.path,
       location: canonical,
-      status: "available" as const,
+      status: "available",
     };
+    delete normalized.hostPath;
     if (canonical.kind === "host")
       Object.defineProperty(normalized, "location", {
         configurable: true,

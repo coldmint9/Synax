@@ -83,11 +83,6 @@ jobs:
         if: runner.os != 'Linux'
         run: npx tsx scripts/build-desktop-release.ts
 
-      - name: Smoke test independent embedded updater
-        if: runner.os != 'Linux'
-        timeout-minutes: 5
-        run: npm run test:desktop:updater-smoke
-
       - name: Smoke test packaged app (macOS / Windows)
         if: runner.os != 'Linux'
         run: npm run test:desktop:smoke
@@ -104,7 +99,6 @@ jobs:
           path: |
             out/desktop-smoke.*
             out/ui-update-smoke.*
-            out/embedded-updater-smoke.*
           if-no-files-found: ignore
 
       - name: Upload artifacts

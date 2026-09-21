@@ -5,6 +5,7 @@ import { utilityProcess, app, type UtilityProcess } from "electron";
 import path from "node:path";
 import net from "node:net";
 import { getDataRoot, getResourcePath } from "./data-paths.js";
+import { resolveDesktopPath } from "./desktop-path.js";
 
 const require = createRequire(import.meta.url);
 let sidecar: UtilityProcess | ChildProcess | null = null;
@@ -32,6 +33,7 @@ export async function startSidecar(): Promise<number> {
   assignedPort = await findFreePort();
   const env = {
     ...(process.env as Record<string, string>),
+    PATH: await resolveDesktopPath(process.env.PATH),
     PORT: String(assignedPort),
     DATA_ROOT: getDataRoot(),
     NODE_ENV: app.isPackaged ? "production" : "development",

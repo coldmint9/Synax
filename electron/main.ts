@@ -182,7 +182,9 @@ function registerIPC(): void {
     uiReadyTimer = null;
     void desktopUpdates
       ?.markHealthy()
-      .catch((error) => console.error("[updater] health check failed", error));
+      .catch((error) =>
+        console.error("[desktop-update] health check failed", error),
+      );
     void uiUpdates
       ?.markHealthy()
       .catch((error) =>
@@ -281,9 +283,6 @@ async function bootstrap(): Promise<void> {
     ["darwin", "win32"].includes(process.platform)
   ) {
     desktopUpdates = new DesktopUpdates(
-      async (manual) => {
-        await uiUpdates?.check(manual);
-      },
       () => uiUpdates?.store.currentVersion ?? null,
     );
     setUiUpdateAction(() => void desktopUpdates?.check(true));

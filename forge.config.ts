@@ -1,6 +1,6 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import path from "node:path";
-import { buildEmbeddedUpdater } from "./scripts/build-embedded-updater.js";
+import { ensureDmgNative } from "./scripts/prepare-dmg-native.js";
 import {
   desktopProduct,
   desktopIcon,
@@ -14,16 +14,15 @@ const windowsIcon = desktopIcon("win32");
 
 const config: ForgeConfig = {
   hooks: {
+    preMake: async () => {
+      ensureDmgNative();
+    },
     prePackage: async (_config, platform, arch) => {
       if (platform !== process.platform || arch !== process.arch) {
         throw new Error(
           `Native dependencies must be built on ${platform}/${arch}; use the matching desktop CI runner, not ${process.platform}/${process.arch}.`,
         );
       }
-      await buildEmbeddedUpdater(
-        platform as NodeJS.Platform,
-        arch as typeof process.arch,
-      );
     },
     postMake: async (_config, results) => normalizeDesktopArtifacts(results),
   },
@@ -46,9 +45,6 @@ const config: ForgeConfig = {
       "./api/db/migrations",
       "./electron/resources/icon.png",
       "./electron/resources/icon.ico",
-      ...(["darwin", "win32"].includes(process.platform)
-        ? ["./out/updater"]
-        : []),
     ],
     ignore: (file: string) => {
       if (!file) return false;

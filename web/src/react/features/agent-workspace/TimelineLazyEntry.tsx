@@ -35,6 +35,27 @@ const viewportObservers = new Map<
 const FALLBACK_ENTRY_HEIGHT = 180;
 
 /**
+ * Total height actually measured for the rows a finished round folded away.
+ *
+ * Used to animate the collapse into the `工作用时` row instead of snapping:
+ * the caller plays a height transition from this size down to the folded row.
+ * A prefix only matches at a key boundary, so `-answer` rows stay excluded.
+ */
+export function getMeasuredFoldHeight(
+  prefixes: readonly string[],
+): { height: number; rows: number } | null {
+  let height = 0;
+  let rows = 0;
+  for (const [key, value] of measuredEntryHeights) {
+    if (!prefixes.some((prefix) => key === prefix || key.startsWith(`${prefix}:`)))
+      continue;
+    height += value;
+    rows += 1;
+  }
+  return rows > 0 ? { height, rows } : null;
+}
+
+/**
  * Cheap height estimate derived from the entry shape. It is only used until a
  * real measurement exists, but being in the right order of magnitude is what
  * keeps the scrollbar from lurching while the transcript settles.

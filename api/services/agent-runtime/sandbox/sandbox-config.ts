@@ -49,7 +49,9 @@ export function sandboxConfigForSession(sessionId: string): SandboxConfig {
       | { workspaceRoots?: ProjectWorkspaceRoot[] }
       | undefined;
     if (binding?.workspaceRoots)
-      config.workspaceRoots = binding.workspaceRoots.map(workspaceRootHostPath);
+      config.workspaceRoots = binding.workspaceRoots
+        .filter((root) => root.status === "available")
+        .map(workspaceRootHostPath);
   } catch {
     // Unavailable session state falls back to the restrictive default.
   }

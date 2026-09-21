@@ -192,6 +192,29 @@
     opacity: 1;
   }
 }
+@keyframes pixel-on {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes shimmer-text {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-state-cell,
+  .loading-state-label {
+    animation: none !important;
+  }
+}
 @keyframes particle-flow {
   0% {
     offset-distance: 0%;
@@ -913,7 +936,7 @@
 
   .electron-macos .workbench-header {
     position: fixed;
-    top: 12px;
+    top: 15px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 9998;
@@ -1054,26 +1077,45 @@
     position: relative;
   }
 
-  /* The island is anchored to the viewport on every route. Auxiliary Wiki
-     controls sit below it, so they never change the primary pill's position. */
+  /* The island shares the default Work page's anchor: centered in the column
+     right of the 260px session sidebar, i.e. 50vw + half the sidebar width,
+     so switching Work <-> Wiki never shifts the pill horizontally. The Work
+     page re-parents this header into .workspace-island-slot--conversation,
+     which follows the live sidebar geometry; routes without that slot (Wiki)
+     keep this fixed equivalent. The primary pill is the only in-flow child,
+     so auxiliary Wiki controls attach beside it and never influence the
+     primary pill's position. top: 15px matches the docked Work-page island
+     (6px panel inset + 1px edge + 8px slot top). */
   .workbench-header {
+    --island-center-offset: 130px; /* half of the default 260px session sidebar */
     position: fixed;
-    top: 12px;
-    left: 50%;
+    top: 15px;
+    left: calc(50% + var(--island-center-offset));
     transform: translateX(-50%);
     z-index: 30;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 8px;
     white-space: nowrap;
     width: max-content;
-    max-width: calc(100% - 16px);
+    max-width: calc(100% - 2 * var(--island-center-offset) - 24px);
   }
   .workbench-header > .wh-pill {
     min-width: 0;
     max-width: 100%;
+  }
+  /* Secondary island floats to the right of the primary pill, vertically
+     centered with it. Capped at the free viewport width to its right so it
+     never pushes the primary pill off-center. */
+  .workbench-header > .wh-pill-slot {
+    position: absolute;
+    top: 0;
+    left: calc(100% + 8px);
+    /* Definite max-content width: an absolutely-positioned shrink-to-fit grid
+       would resolve the `1fr` open-state track down to min-content (20px),
+       collapsing the secondary island. With a definite width the track fills
+       the content size and the 0fr→1fr transition still animates. */
+    width: max-content;
+    max-width: max(180px, calc(50vw - 50% - 16px));
   }
 
   .wh-pill {
@@ -1085,12 +1127,24 @@
     padding: 0 10px;
     height: 36px;
     border-radius: 999px;
-    background: hsl(var(--card));
-    border: 1px solid var(--border);
-    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.06);
+    /* Frosted glass: no border — the outline is carried entirely by the
+       shadow stack plus a faint top-edge highlight. */
+    background: hsl(var(--card) / 0.92);
+    -webkit-backdrop-filter: blur(28px) saturate(1.4);
+    backdrop-filter: blur(28px) saturate(1.4);
+    box-shadow:
+      inset 0 1px 0 hsl(0 0% 100% / 0.07),
+      0 1px 2px hsl(0 0% 0% / 0.07),
+      0 4px 12px hsl(0 0% 0% / 0.07),
+      0 12px 32px hsl(0 0% 0% / 0.1);
   }
   .dark .wh-pill {
-    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.28);
+    background: hsl(var(--card) / 0.88);
+    box-shadow:
+      inset 0 1px 0 hsl(0 0% 100% / 0.05),
+      0 1px 2px hsl(0 0% 0% / 0.3),
+      0 6px 16px hsl(0 0% 0% / 0.26),
+      0 16px 40px hsl(0 0% 0% / 0.3);
   }
 
   /* Wiki toolbar cell-division animation — grid slot for layout-space animation */
@@ -3690,11 +3744,10 @@
   min-height: 2.75rem;
   border-radius: 1rem;
   overflow: hidden;
+  background: var(--surface);
   box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.9) inset,
-    0 -2px 16px hsl(0 0% 0% / 0.04),
-    0 8px 28px hsl(0 0% 0% / 0.1),
-    0 2px 8px hsl(0 0% 0% / 0.06);
+    var(--surface-shadow),
+    var(--overlay-shadow);
 }
 .agent-session-composer-shell[data-has-media="false"] {
   min-height: 0;
@@ -3732,11 +3785,11 @@
   padding: 0.875rem 0.875rem 0.75rem;
 }
 .dark .agent-session-composer-shell {
+  border-color: hsl(0 0% 100% / 0.1);
   box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.16) inset,
-    0 -2px 20px hsl(0 0% 0% / 0.28),
-    0 12px 36px hsl(0 0% 0% / 0.42),
-    0 4px 12px hsl(0 0% 0% / 0.32);
+    var(--overlay-shadow),
+    0 12px 32px hsl(0 0% 0% / 0.38),
+    0 4px 12px hsl(0 0% 0% / 0.28);
 }
 
 .agent-dock-tool-list {
@@ -4258,6 +4311,24 @@
 .dropdown__popover,
 .popover {
   border-radius: 12px;
+  /* Chips (model, permission, effort, context pickers) expand their option
+     panel with a short fade. Opacity only: HeroUI positions the panel with
+     its own inline transform, which an animated transform would clobber. */
+  animation: overlay-fade-in 140ms ease-out;
+}
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dropdown__popover,
+  .popover {
+    animation: none;
+  }
 }
 .dropdown__menu,
 .menu {
@@ -4963,7 +5034,7 @@
   margin-bottom: 6px;
   border: 1px solid transparent;
   border-radius: 12px;
-  background: hsl(var(--secondary) / 0.38);
+  background: transparent;
   transition: background-color 140ms ease;
 }
 .session-list-item:hover {
@@ -4973,7 +5044,7 @@
   background: hsl(var(--secondary) / 0.9);
 }
 .dark .session-list-item {
-  background: hsl(var(--secondary) / 0.48);
+  background: transparent;
 }
 .dark .session-list-item:hover,
 .dark .session-list-item--active {
@@ -5267,7 +5338,9 @@
   }
 
   .workbench-header .wh-pill-slot {
+    position: static;
     min-width: 0;
+    width: auto;
     max-width: calc(100vw - 12px);
   }
   .workbench-header .wh-pill-slot > .wh-pill {

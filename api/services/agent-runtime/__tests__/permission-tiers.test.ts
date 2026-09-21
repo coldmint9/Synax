@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { setSessionWorkspaceRoot, clearSessionWorkspaceRoot } from '../tools/workspace.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { permissionPolicy } from '../permission-policy.js';
 import { permissionRulesForTier, resolveSessionPermissionRules } from '../permission-tiers.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
@@ -94,3 +95,7 @@ describe('resolveSessionPermissionRules', () => {
     }).action).toBe('allow');
   });
 });
+
+// Shell policy tests still need a known directory; never inherit the API cwd implicitly.
+beforeEach(() => setSessionWorkspaceRoot('s1', process.cwd()));
+afterEach(() => clearSessionWorkspaceRoot('s1'));

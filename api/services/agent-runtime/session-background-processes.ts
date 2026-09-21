@@ -20,6 +20,34 @@ export interface SessionBackgroundProcess {
   kind?: "terminal" | "service";
   cwd?: string;
   projectId?: string;
+  /** Listening/mapped ports inferred from the service command; services only. */
+  ports?: number[];
+}
+
+/**
+ * Infer which ports a background service command exposes. Plain terminals are
+ * never parsed; this only decorates rows that run a service command.
+ */
+export function detectServicePorts(command: string): number[] {
+  const ports = new Set<number>();
+  const add = (value: string | undefined) => {
+    const port = Number(value);
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) ports.add(port);
+  };
+  for (const match of command.matchAll(/\bPORT\s*=\s*(\d{1,5})\b/gi))
+    add(match[1]);
+  for (const match of command.matchAll(/--port[=\s]+(\d{1,5})\b/gi))
+    add(match[1]);
+  // Short flag, including docker-style host:container mappings (-p 8080:80).
+  for (const match of command.matchAll(/(?:^|[\s=])-p\s*(\d{1,5})(?::(\d{1,5}))?\b/g)) {
+    add(match[1]);
+    add(match[2]);
+  }
+  for (const match of command.matchAll(/\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\*):(\d{2,5})\b/gi))
+    add(match[1]);
+  for (const match of command.matchAll(/\bhttp\.server\s+(\d{1,5})\b/g))
+    add(match[1]);
+  return [...ports].sort((a, b) => a - b);
 }
 
 export function listSessionBackgroundProcesses(
@@ -32,10 +60,21 @@ export function listSessionBackgroundProcesses(
     WHERE (p.session_id=? AND p.kind='background') OR (t.project_id=? AND t.kind='terminal')
   ) SELECT * FROM visible WHERE state<>'closed' OR id IN (SELECT id FROM visible WHERE state='closed' ORDER BY started_at DESC LIMIT 5)
   ORDER BY (state<>'closed') DESC, started_at DESC`).all(sessionId, session.projectId) as Array<OwnedProcessRecord & { terminal_id?: string; terminal_kind?: "terminal" | "service"; cwd?: string; project_id?: string }>;
-  return rows.map(row => ({ id: row.id, command: row.command_label, pid: row.pid, state: row.state,
-    exitCode: row.exit_code ?? null, startedAt: row.started_at!, endedAt: row.ended_at ?? null,
-    ...(row.terminal_id ? { terminalId: row.terminal_id, kind: row.terminal_kind, cwd: row.cwd, projectId: row.project_id } : {}),
-  }));
+  return rows.map(row => {
+    const plainTerminal = row.terminal_kind === "terminal";
+    const ports = plainTerminal ? [] : detectServicePorts(row.command_label ?? "");
+    return {
+      id: row.id,
+      command: row.command_label,
+      pid: row.pid,
+      state: row.state,
+      exitCode: row.exit_code ?? null,
+      startedAt: row.started_at!,
+      endedAt: row.ended_at ?? null,
+      ...(row.terminal_id ? { terminalId: row.terminal_id, kind: row.terminal_kind, cwd: row.cwd, projectId: row.project_id } : {}),
+      ...(ports.length ? { ports } : {}),
+    };
+  });
 }
 
 function ownedRow(sessionId: string, processId: string): OwnedProcessRecord & { terminal_id?: string } {
@@ -66,19 +105,25 @@ export async function stopSessionBackgroundProcess(sessionId: string, processId:
 }
 
 /** Removing history is deliberately separate from stopping an owned process. */
-export function deleteSessionBackgroundProcess(
+export async function deleteSessionBackgroundProcess(
   sessionId: string,
   processId: string,
-): void {
+): Promise<void> {
   const row = ownedRow(sessionId, processId);
   const db = getRawSqlite();
-  if (row.state !== "closed")
-    throw new AgentRuntimeError(
-      "Stop the service before deleting its record.",
-      "PROCESS_STILL_RUNNING",
-      409,
-    );
-  if (row.terminal_id) terminalManager.remove(processId);
-  else db.prepare("DELETE FROM agent_runtime_processes WHERE id=? AND session_id=? AND kind='background' AND state='closed'").run(processId, sessionId);
+  if (row.terminal_id) {
+    // Plain terminals have no service lifecycle: deleting the row directly
+    // stops the shell and clears the terminal session in one step.
+    if (row.state !== "closed") await terminalManager.stop(processId);
+    terminalManager.remove(processId);
+  } else {
+    if (row.state !== "closed")
+      throw new AgentRuntimeError(
+        "Stop the service before deleting its record.",
+        "PROCESS_STILL_RUNNING",
+        409,
+      );
+    db.prepare("DELETE FROM agent_runtime_processes WHERE id=? AND session_id=? AND kind='background' AND state='closed'").run(processId, sessionId);
+  }
   emitRuntimeBusEvent({ type: "session_process_changed", sessionId });
 }

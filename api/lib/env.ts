@@ -80,6 +80,32 @@ export const ACP_SESSION_IDLE_TIMEOUT_MS = Number(env('ACP_SESSION_IDLE_TIMEOUT_
 /** Agent session child ready handshake timeout (ms). */
 export const AGENT_SESSION_CHILD_READY_TIMEOUT_MS = Number(env('AGENT_SESSION_CHILD_READY_TIMEOUT_MS', '30000'));
 
+/** LLM 流式空闲看门狗默认值（ms）：流式请求超过该时长未收到任何事件（含 raw 心跳）时，
+ *  视为上游连接静默挂起，主动中断并按网络错误重试，避免会话永久卡在某个 step。 */
+export const DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS = 300_000;
+
+/** LLM 流式空闲看门狗（ms），读取环境变量 AGENT_LLM_STREAM_IDLE_TIMEOUT_MS。
+ *  每次调用时读取以便运行/测试期调优；显式设为 0 表示禁用。 */
+export function agentLlmStreamIdleTimeoutMs(): number {
+  const raw = env('AGENT_LLM_STREAM_IDLE_TIMEOUT_MS', '');
+  if (raw === '') return DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS;
+}
+
+/** 本地 LLM 令牌桶限流开关，读取环境变量 AGENT_LLM_RATE_LIMITER。
+ *  默认关闭：本地按 provider/model 估算配额会在多会话/多 subagent 并发时把同一
+ *  provider 的请求串行排队，造成会话长时间停滞；真实配额限制交由 provider 的
+ *  429 响应与 retry middleware 处理。设为 on/1/true 可重新启用本地排队。
+ *  每次调用时读取以便运行/测试期切换。 */
+export function llmRateLimiterEnabled(): boolean {
+  const raw = env('AGENT_LLM_RATE_LIMITER', '');
+  if (raw === '') return false;
+  return !['0', 'false', 'off'].includes(raw.trim().toLowerCase());
+}
+
 /** Wiki Phase 2: max verifier/corrector agents in flight */
 export const WIKI_VERIFY_CONCURRENCY = Number(env('WIKI_VERIFY_CONCURRENCY', '3'));
 

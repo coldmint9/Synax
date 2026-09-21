@@ -1,7 +1,12 @@
-import { useEffect, useRef, useState } from "react";
 import {
-  ArrowUp,
-  ArrowDown,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
+import {
+  GripVertical,
   ListStart,
   Paperclip,
   Pencil,
@@ -16,7 +21,7 @@ interface Props {
   items: QueuedInput[];
   onRemove: (itemId: string) => void | Promise<void>;
   onForce: (itemId: string) => void | Promise<void>;
-  onMove?: (itemId: string, direction: "up" | "down") => Promise<void>;
+  onReorder?: (itemId: string, toIndex: number) => Promise<void>;
   onEdit?: (item: QueuedInput) => Promise<void>;
   editDisabledReason?: string;
 }
@@ -91,13 +96,18 @@ export function InputQueueStrip({
   items,
   onRemove,
   onForce,
-  onMove,
+  onReorder,
   onEdit,
   editDisabledReason,
 }: Props) {
   const { t, locale } = useLocale();
   const [moving, setMoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropHint, setDropHint] = useState<{
+    id: string;
+    position: "above" | "below";
+  } | null>(null);
   const busy = useRef(false);
   const runAction = async (action: () => void | Promise<void>) => {
     if (busy.current) return;
@@ -113,6 +123,67 @@ export function InputQueueStrip({
       setMoving(false);
     }
   };
+  const canReorder = Boolean(onReorder) && items.length > 1;
+
+  const clearDragState = () => {
+    setDraggingId(null);
+    setDropHint(null);
+  };
+
+  const handleItemDragStart =
+    (itemId: string) => (event: DragEvent<HTMLButtonElement>) => {
+      event.dataTransfer?.setData("text/plain", itemId);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+      setDraggingId(itemId);
+    };
+
+  const handleItemDragOver =
+    (itemId: string) => (event: DragEvent<HTMLLIElement>) => {
+      if (!draggingId || draggingId === itemId) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      const rect = event.currentTarget.getBoundingClientRect();
+      const position =
+        event.clientY > rect.top + rect.height / 2 ? "below" : "above";
+      setDropHint((prev) =>
+        prev && prev.id === itemId && prev.position === position
+          ? prev
+          : { id: itemId, position },
+      );
+    };
+
+  const handleItemDrop =
+    (itemId: string, index: number) =>
+    (event: DragEvent<HTMLLIElement>) => {
+      event.preventDefault();
+      const sourceId = draggingId;
+      clearDragState();
+      if (!sourceId || !onReorder || sourceId === itemId) return;
+      const from = items.findIndex((it) => it.id === sourceId);
+      if (from === -1) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const below = event.clientY > rect.top + rect.height / 2;
+      const to = Math.max(
+        0,
+        Math.min(items.length - 1, below ? index + 1 : index),
+      );
+      if (to === from || to === from + 1) return;
+      void runAction(() => onReorder(sourceId, to));
+    };
+
+  const handleItemKeyDown =
+    (itemId: string, index: number) =>
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (!onReorder || moving) return;
+      if (event.key === "ArrowUp" && index > 0) {
+        event.preventDefault();
+        void runAction(() => onReorder(itemId, index - 1));
+      } else if (event.key === "ArrowDown" && index < items.length - 1) {
+        event.preventDefault();
+        void runAction(() => onReorder(itemId, index + 1));
+      }
+    };
+
   if (items.length === 0) return null;
 
   return (
@@ -120,50 +191,57 @@ export function InputQueueStrip({
       <div className="input-queue-strip-header mb-1 flex items-center justify-between px-1 text-[10px] text-muted-foreground/70">
         <span>{t("inputQueueTitle", { count: items.length })}</span>
       </div>
-      <ul className="input-queue-strip-list flex max-h-32 flex-col gap-1 overflow-y-auto overscroll-contain">
+      <ul
+        className="input-queue-strip-list flex max-h-32 flex-col gap-1 overflow-y-auto overscroll-contain"
+        onDragOver={(e) => {
+          if (draggingId) e.preventDefault();
+        }}
+        onDrop={(e) => e.preventDefault()}
+      >
         {items.map((item, index) => (
           <li
             key={item.id}
-            className="input-queue-strip-item flex shrink-0 items-center gap-1.5 rounded-full border border-border/50 bg-surface/80 px-2.5 py-1 text-[11px] text-foreground/85 backdrop-blur-sm"
+            className={`input-queue-strip-item relative flex shrink-0 items-center gap-1.5 rounded-full border border-border/50 bg-surface/80 px-2.5 py-1 text-[11px] text-foreground/85 backdrop-blur-sm transition-opacity${
+              draggingId === item.id ? " opacity-40" : ""
+            }`}
+            onDragOver={canReorder ? handleItemDragOver(item.id) : undefined}
+            onDrop={canReorder ? handleItemDrop(item.id, index) : undefined}
           >
+            {dropHint?.id === item.id && (
+              <span
+                aria-hidden
+                className={`pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-primary/80 ${
+                  dropHint.position === "above" ? "-top-1.5" : "-bottom-1.5"
+                }`}
+              />
+            )}
             <span className="min-w-0 flex-1 truncate" title={item.message}>
               {previewMessage(item.message)}
             </span>
             <QueueMediaIndicators parts={item.contentParts} />
-            {onMove &&
-              items.length > 1 &&
-              (["up", "down"] as const).map((direction) => (
-                <button
-                  key={direction}
-                  type="button"
-                  aria-label={`${locale === "zh" ? (direction === "up" ? "上移" : "下移") : direction === "up" ? "Move up" : "Move down"} ${index + 1}`}
-                  title={
-                    locale === "zh"
-                      ? direction === "up"
-                        ? "上移"
-                        : "下移"
-                      : direction === "up"
-                        ? "Move up"
-                        : "Move down"
-                  }
-                  disabled={
-                    moving ||
-                    (direction === "up"
-                      ? index === 0
-                      : index === items.length - 1)
-                  }
-                  className="input-queue-strip-btn inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
-                  onClick={() =>
-                    void runAction(() => onMove(item.id, direction))
-                  }
-                >
-                  {direction === "up" ? (
-                    <ArrowUp size={12} aria-hidden />
-                  ) : (
-                    <ArrowDown size={12} aria-hidden />
-                  )}
-                </button>
-              ))}
+            {canReorder && (
+              <button
+                type="button"
+                draggable={!moving}
+                onDragStart={handleItemDragStart(item.id)}
+                onDragEnd={clearDragState}
+                onKeyDown={handleItemKeyDown(item.id, index)}
+                disabled={moving}
+                aria-label={
+                  locale === "zh"
+                    ? `拖动调整顺序,当前第 ${index + 1} 项`
+                    : `Drag to reorder, item ${index + 1}`
+                }
+                title={
+                  locale === "zh"
+                    ? "拖动调整顺序(聚焦后可用 ↑/↓)"
+                    : "Drag to reorder (focus and use ↑/↓)"
+                }
+                className="input-queue-strip-btn inline-flex size-6 shrink-0 cursor-grab items-center justify-center rounded-full text-muted-foreground hover:bg-primary/10 hover:text-primary active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                <GripVertical size={12} aria-hidden />
+              </button>
+            )}
             <button
               type="button"
               disabled={moving}

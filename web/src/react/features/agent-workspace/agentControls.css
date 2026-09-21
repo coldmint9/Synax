@@ -510,17 +510,37 @@ textarea.agent-request-input {
 .agent-session-controls {
   container-type: inline-size;
 }
+/* HeroUI card material for the composer: solid `--surface` plus the theme's
+   layered card shadows (--surface-shadow hairline + contact, --overlay-shadow
+   ambient lift), so the input reads as an elevated card on any background. */
 .agent-session-controls .agent-session-composer-shell.agent-dock-shell {
   border: 1px solid hsl(var(--border-hsl) / 0.65);
   border-radius: 1rem;
   min-height: 0;
-  background: hsl(var(--card) / 0.96);
-  -webkit-backdrop-filter: blur(24px) saturate(1.35);
-  backdrop-filter: blur(24px) saturate(1.35);
-  box-shadow: 0 2px 8px hsl(var(--foreground-hsl) / 0.035);
+  background: var(--surface);
+  box-shadow:
+    var(--surface-shadow),
+    var(--overlay-shadow);
 }
 .agent-session-controls .agent-session-composer-shell:focus-within {
   border-color: hsl(var(--muted-foreground) / 0.45);
+  box-shadow:
+    var(--surface-shadow),
+    var(--overlay-shadow),
+    0 12px 32px hsl(var(--foreground-hsl) / 0.1);
+}
+.dark .agent-session-controls .agent-session-composer-shell.agent-dock-shell {
+  border-color: hsl(0 0% 100% / 0.1);
+  box-shadow:
+    var(--overlay-shadow),
+    0 12px 32px hsl(0 0% 0% / 0.38),
+    0 4px 12px hsl(0 0% 0% / 0.28);
+}
+.dark .agent-session-controls .agent-session-composer-shell:focus-within {
+  box-shadow:
+    var(--overlay-shadow),
+    0 16px 40px hsl(0 0% 0% / 0.46),
+    0 6px 16px hsl(0 0% 0% / 0.34);
 }
 .agent-session-controls .agent-dock-composer[data-session-controls] {
   gap: 0.75rem;
@@ -907,6 +927,25 @@ textarea.agent-request-input {
 }
 .session-composer-island-frame[data-measured="true"] {
   height: var(--composer-island-height);
+}
+/* Electron mis-rasterizes a box-shadow on the composited composer shell (its
+   parent .session-composer-island-content carries a transform): the shadow
+   collapses into hard gray crescents at the four corners. Paint the shadow
+   from the non-transformed frame instead and strip it from the shell. */
+.session-composer-island:not([data-collapsed="true"])
+  > .session-composer-island-frame {
+  box-shadow: var(--surface-shadow), var(--overlay-shadow);
+}
+.dark
+  .session-composer-island:not([data-collapsed="true"])
+  > .session-composer-island-frame {
+  box-shadow:
+    var(--overlay-shadow),
+    0 12px 32px hsl(0 0% 0% / 0.38),
+    0 4px 12px hsl(0 0% 0% / 0.28);
+}
+.session-composer-island .agent-session-composer-shell.agent-dock-shell {
+  box-shadow: none;
 }
 .session-composer-island-content {
   width: 100%;

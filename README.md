@@ -160,7 +160,7 @@ Install dependencies and build on the target operating system **and CPU architec
 
 Artifacts are written to `out/make/`. Use `npm run build:desktop` if you only need an unpacked app. Signing and notarization are not configured, so the OS may warn when opening a build.
 
-Packaged macOS and Windows apps check GitHub Releases for updates. Use **Help → Software Update…** (`帮助 → 软件更新…`) to check manually. Compatible UI updates take effect after a restart and can fall back to the previous UI if loading fails. Linux does not currently have this updater.
+Packaged macOS and Windows apps check GitHub Releases for updates. Desktop packages are checked and downloaded silently in the main app process; Synax only shows a native confirmation dialog when a verified update is ready to install. Use **Help → Software Update…** (`帮助 → 软件更新…`) to check manually. Compatible UI updates take effect after a restart and can fall back to the previous UI if loading fails. macOS uses only a small shell handoff to replace the running app; no separate Electron updater app is shipped. Linux does not currently have desktop updating.
 
 Desktop releases use `v*` tags; UI-only releases use `ui-v*` tags. The [desktop workflow](./.github/workflows/build-desktop.yml) and [UI workflow](./.github/workflows/build-ui-release.yml) contain the build and release steps. Desktop releases publish successful platforms even if another platform fails. Reruns can fill an empty release or add missing platforms while preserving already published platform files; update manifests are uploaded after their installers. UI releases must match a published desktop version and cannot include backend or Electron changes. Update downloads use HTTPS and hash checks; they rely on the repository's release publishing access rather than an independent content signature.
 
@@ -173,7 +173,7 @@ The backend uses Hono, libSQL, and Drizzle. The frontend uses React, Vite, HeroU
 ```text
 api/        API routes, database, code analysis, Wiki, and agent runtime
 web/        React app
-electron/   Desktop app and updater
+electron/   Desktop app and in-process update controller
 cli/        Terminal client
 scripts/    Development, build, release, and smoke-test scripts
 ```

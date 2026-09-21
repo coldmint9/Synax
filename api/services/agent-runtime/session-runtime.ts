@@ -132,7 +132,7 @@ export class AgentSessionRuntime {
     const requestedLocation =
       (input.sessionMetadata?.workspaceLocation as
         | WorkspaceLocation
-        | undefined) ?? parentBackend?.workspaceLocation;
+        | undefined) ?? (input.workDir ? undefined : parentBackend?.workspaceLocation);
     if (requestedLocation) backend.workspaceLocation = requestedLocation;
     if (parentBackend?.workspaceRoots) {
       backend.workspaceRoots = parentBackend.workspaceRoots.map((root) => ({

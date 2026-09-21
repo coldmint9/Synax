@@ -1,13 +1,21 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { logger } from '../../../lib/logger.js'
 import {
   RateLimitCapacityError,
   TokenBucket,
   getOrCreateBucket,
+  isSaturated,
   withRateLimit,
 } from './rate-limiter.js'
 
+// The local limiter is disabled by default (AGENT_LLM_RATE_LIMITER); the legacy
+// wrapper/bucket-registry tests below opt in explicitly.
+beforeEach(() => {
+  process.env.AGENT_LLM_RATE_LIMITER = 'on'
+})
+
 afterEach(() => {
+  delete process.env.AGENT_LLM_RATE_LIMITER
   vi.useRealTimers()
   vi.unstubAllGlobals()
 })
@@ -274,5 +282,42 @@ describe('withRateLimit', () => {
       withRateLimit('oversize', 'model', 100_000, fn),
     ).rejects.toBeInstanceOf(RateLimitCapacityError)
     expect(fn).not.toHaveBeenCalled()
+  })
+})
+
+describe('local limiter disabled by default', () => {
+  beforeEach(() => {
+    delete process.env.AGENT_LLM_RATE_LIMITER
+  })
+
+  it('passes through without queueing even when the bucket is drained', async () => {
+    getOrCreateBucket('disabled-passthrough', 'model').syncFromProvider(
+      0,
+      Date.now() + 60_000,
+    )
+    const fn = vi.fn(async () => 'sent')
+    await expect(
+      withRateLimit('disabled-passthrough', 'model', 1000, fn),
+    ).resolves.toBe('sent')
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('still honours abort signals in pass-through mode', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const fn = vi.fn(async () => 'sent')
+    await expect(
+      withRateLimit('disabled-abort', 'model', 1000, fn, ac.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('reports no saturation even while an internal queue exists', () => {
+    const bucket = getOrCreateBucket('disabled-saturated', 'model')
+    bucket.syncFromProvider(0, Date.now() + 60_000)
+    void bucket.acquire(5000).catch(() => undefined)
+    expect(bucket.hasWaiters).toBe(true)
+    expect(isSaturated('disabled-saturated', 'model')).toBe(false)
+    expect(isSaturated()).toBe(false)
   })
 })

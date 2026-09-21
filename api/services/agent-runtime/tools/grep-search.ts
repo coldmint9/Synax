@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runCommand } from './exec-async.js';
+import { resolveRipgrep, RIPGREP_MISSING_HELP } from './ripgrep.js';
 import * as z from 'zod/v4';
 import type { RegisteredTool, ToolExecutionResult } from '../contracts.js';
 import { resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
@@ -81,7 +82,11 @@ interface GrepSearchInput {
 
 async function runGrepSearch(prepared: GrepSearchInput): Promise<ToolExecutionResult> {
   const { sessionId, query: queryText, rgArgs, cwd, limit, contextLines } = prepared;
-  const result = await runCommand('rg', rgArgs, {
+  // Desktop apps launched from the OS GUI inherit a minimal PATH that usually
+  // excludes Homebrew/cargo install dirs, so resolve an absolute rg path.
+  const rgPath = await resolveRipgrep();
+  if (!rgPath) throw new Error(RIPGREP_MISSING_HELP);
+  const result = await runCommand(rgPath, rgArgs, {
     cwd,
     maxBufferBytes: 8 * 1024 * 1024,
   });

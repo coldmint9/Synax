@@ -1,3 +1,4 @@
+import { llmRateLimiterEnabled } from '../../../lib/env.js'
 import { logger } from '../../../lib/logger.js'
 
 const DEFAULT_CAPACITY_TPM = 80_000
@@ -265,6 +266,9 @@ export function getOrCreateBucket(providerId: string, modelId: string): TokenBuc
  * throttle new work submission when the provider is saturated.
  */
 export function isSaturated(providerId?: string, modelId?: string): boolean {
+  // Local queueing is disabled by default (AGENT_LLM_RATE_LIMITER); a disabled
+  // limiter never has waiters, so backpressure consumers see no saturation.
+  if (!llmRateLimiterEnabled()) return false
   if (providerId && modelId) {
     const bucket = buckets.get(bucketKey(providerId, modelId))
     return bucket?.hasWaiters ?? false
@@ -351,6 +355,13 @@ export async function withRateLimit<T>(
   fn: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
+  // Local pre-flight queueing is disabled by default: real quota enforcement
+  // is left to the provider (429) plus the retry middleware. Pass-through
+  // keeps abort semantics without serializing same-provider requests.
+  if (!llmRateLimiterEnabled()) {
+    signal?.throwIfAborted()
+    return fn()
+  }
   const bucket = getOrCreateBucket(providerId, modelId)
   const estimatedInput = Math.ceil(maxTokens * INPUT_TOKEN_ESTIMATE_RATIO)
   const estimatedTotal = estimatedInput + maxTokens
@@ -399,6 +410,10 @@ export async function withStreamRateLimit<T>(
   fn: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (!llmRateLimiterEnabled()) {
+    signal?.throwIfAborted()
+    return fn()
+  }
   const bucket = getOrCreateBucket(providerId, modelId)
   const estimatedInput = Math.ceil(maxTokens * INPUT_TOKEN_ESTIMATE_RATIO)
   const estimatedTotal = estimatedInput + maxTokens

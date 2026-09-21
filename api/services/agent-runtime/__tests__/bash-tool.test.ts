@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { setSessionWorkspaceRoot, clearSessionWorkspaceRoot } from '../tools/workspace.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseBashInvocations } from '../tools/bash-command-policy.js';
 import { bashTool, extractBashPaths } from '../tools/bash.js';
 
@@ -364,3 +365,7 @@ describe('extractBashPaths', () => {
     expect(paths.filter((p) => p !== 'echo')).toEqual([]);
   });
 });
+
+// Shell policy tests still need a known directory; never inherit the API cwd implicitly.
+beforeEach(() => setSessionWorkspaceRoot('s1', process.cwd()));
+afterEach(() => clearSessionWorkspaceRoot('s1'));

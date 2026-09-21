@@ -9,8 +9,11 @@ import GlobalSettingsPage from "./features/settings/GlobalSettingsPage";
 import ProjectSettingsPage from "./features/settings/ProjectSettingsPage";
 import { useElectronMenu } from "../lib/electron-menu";
 import { useWikiStore } from "./state/wikiStore";
+import { useTabKeyBehavior } from "../hooks/useTabKeyBehavior";
 
 export default function App() {
+  useTabKeyBehavior();
+
   useEffect(() => {
     if (navigator.userAgent.includes("Electron")) {
       document.documentElement.classList.add("electron");

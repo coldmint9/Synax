@@ -1,6 +1,9 @@
-/* Desktop uses solid surfaces and avoids decorative CSS motion, including
-   portals and pseudo-elements. The explicitly requested island docking uses
-   a short, component-owned transform animation only when its location changes. */
+/* Desktop keeps solid surfaces and disables expensive backdrop filters,
+   including portals and pseudo-elements. CSS motion is intentionally NOT
+   disabled: activity and thinking chips keep their shimmer sweeps, reveal
+   transitions and spinner feedback, matching the web build. Users who ask
+   for reduced motion still get static surfaces via the prefers-reduced-motion
+   rules shipped with each component stylesheet. */
 html.electron,
 html.electron *,
 html.electron *::before,
@@ -8,8 +11,6 @@ html.electron *::after,
 html.electron *::backdrop {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
-  animation: none !important;
-  transition: none !important;
   scroll-behavior: auto !important;
   will-change: auto !important;
 }
@@ -18,24 +19,6 @@ html.electron {
   --glass-surface: hsl(var(--card));
   --glass-filter: none;
   --agent-glass-bg: hsl(var(--card));
-}
-
-/* The blanket rule above also stops progress indicators, which left a running
-   session looking idle. Rotation here is functional feedback rather than
-   decoration, so restore it for the dedicated spinner elements only. These
-   selectors are more specific than `html.electron *`, so they win the cascade.
-   Users who ask for reduced motion keep them static, matching the web build. */
-@media (prefers-reduced-motion: no-preference) {
-  html.electron .animate-spin,
-  html.electron .bui-status-spinner {
-    animation: var(--animate-spin, spin 1s linear infinite) !important;
-  }
-
-  html.electron
-    .session-composer-island[data-collapsed="true"]
-    .session-composer-island-spinner {
-    animation: session-composer-island-spin 1.2s linear infinite !important;
-  }
 }
 
 .electron
@@ -56,17 +39,4 @@ html.electron {
   ) {
   background: hsl(var(--card)) !important;
   background-image: none !important;
-}
-
-/* A disabled shimmer must remain readable, rather than leave transparent text
-   or an unfinished fade. Runtime status is still conveyed by text and icons. */
-.electron .bui-thinking-trigger,
-.electron .bui-thinking-label,
-.electron .bui-thinking-banner-text,
-.electron .bui-thinking-banner-chunk {
-  background: none !important;
-  color: var(--bui-ink) !important;
-  -webkit-text-fill-color: currentColor;
-  opacity: 1;
-  transform: none;
 }

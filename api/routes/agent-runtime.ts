@@ -837,9 +837,9 @@ agentRuntimeRoutes.post(
   },
 );
 
-agentRuntimeRoutes.delete("/sessions/:sessionId/processes/:processId", (c) => {
+agentRuntimeRoutes.delete("/sessions/:sessionId/processes/:processId", async (c) => {
   try {
-    deleteSessionBackgroundProcess(
+    await deleteSessionBackgroundProcess(
       c.req.param("sessionId"),
       c.req.param("processId"),
     );
@@ -1181,15 +1181,37 @@ agentRuntimeRoutes.patch(
   async (c) => {
     const body = await readJson(c);
     if (!body.ok) return c.json({ error: body.error }, 400);
-    const direction = (body.data as { direction?: unknown } | null)?.direction;
-    if (direction !== "up" && direction !== "down")
+    const payload = (body.data ?? {}) as {
+      direction?: unknown;
+      toIndex?: unknown;
+    };
+    if (payload.direction === undefined && payload.toIndex === undefined)
+      return c.json({ error: "Provide direction (up/down) or toIndex." }, 400);
+    if (payload.direction !== undefined && payload.toIndex !== undefined)
+      return c.json(
+        { error: "Provide either direction or toIndex, not both." },
+        400,
+      );
+    if (
+      payload.direction !== undefined &&
+      payload.direction !== "up" &&
+      payload.direction !== "down"
+    )
       return c.json({ error: "Direction must be up or down." }, 400);
+    if (
+      payload.toIndex !== undefined &&
+      (typeof payload.toIndex !== "number" ||
+        !Number.isInteger(payload.toIndex))
+    )
+      return c.json({ error: "toIndex must be an integer." }, 400);
     try {
       return c.json({
         items: inputQueueService.move(
           c.req.param("sessionId"),
           c.req.param("itemId"),
-          direction,
+          payload.direction !== undefined
+            ? { direction: payload.direction }
+            : { toIndex: payload.toIndex as number },
         ),
       });
     } catch (error) {

@@ -235,3 +235,75 @@ it("keeps stopped history available to retry when deletion fails", async () => {
   );
   expect(agentRuntimeApi.stopSessionProcess).toHaveBeenCalledTimes(1);
 });
+
+it("lets plain terminals be deleted without stop, status, or confirmation", async () => {
+  vi.mocked(agentRuntimeApi.listSessionProcesses).mockResolvedValue({
+    items: [
+      {
+        ...process,
+        id: "term-1",
+        command: "zsh",
+        pid: 77,
+        terminalId: "term-1",
+        kind: "terminal",
+      },
+    ],
+  });
+  vi.mocked(agentRuntimeApi.deleteSessionProcess).mockResolvedValue({
+    items: [],
+  });
+  render(<SessionBackgroundProcesses sessionId="one" />);
+  const del = await screen.findByRole("button", {
+    name: "Delete terminal zsh",
+  });
+  expect(
+    screen.queryByRole("button", { name: "Stop zsh" }),
+  ).not.toBeInTheDocument();
+  expect(del.closest(".bui-process-row")).not.toHaveClass(
+    "bui-process-row--ports",
+  );
+  expect(screen.queryByText("PID 77")).not.toBeInTheDocument();
+  expect(screen.queryByText("1 running")).not.toBeInTheDocument();
+  await userEvent.click(del);
+  await waitFor(() =>
+    expect(screen.queryByText("zsh")).not.toBeInTheDocument(),
+  );
+  expect(agentRuntimeApi.deleteSessionProcess).toHaveBeenCalledWith(
+    "one",
+    "term-1",
+  );
+  expect(agentRuntimeApi.stopSessionProcess).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("dialog", { name: "Stop and delete?" }),
+  ).not.toBeInTheDocument();
+});
+
+it("highlights running services that expose a mapped port in green", async () => {
+  vi.mocked(agentRuntimeApi.listSessionProcesses).mockResolvedValue({
+    items: [{ ...process, command: "vite --port 5173", ports: [5173] }],
+  });
+  render(<SessionBackgroundProcesses sessionId="one" />);
+  const stop = await screen.findByRole("button", {
+    name: "Stop vite --port 5173",
+  });
+  expect(stop.closest(".bui-process-row")).toHaveClass(
+    "bui-process-row--ports",
+  );
+  expect(screen.getByText(":5173")).toBeInTheDocument();
+  // Running is conveyed by colour alone: no spinner/status chip.
+  expect(
+    document.querySelector(".bui-process-meta .bui-status"),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("1 running")).toBeInTheDocument();
+});
+
+it("does not highlight services without mapped ports", async () => {
+  render(<SessionBackgroundProcesses sessionId="one" />);
+  const stop = await screen.findByRole("button", { name: "Stop npm run dev" });
+  expect(stop.closest(".bui-process-row")).not.toHaveClass(
+    "bui-process-row--ports",
+  );
+  expect(
+    document.querySelector(".bui-process-meta .bui-status"),
+  ).not.toBeInTheDocument();
+});

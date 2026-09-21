@@ -4,6 +4,7 @@ import path from 'node:path';
 import * as z from 'zod/v4';
 import type { RegisteredTool, ToolExecutionResult } from '../contracts.js';
 import { isWorkspaceRelativePathBlocked, resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
+import { resolveRipgrep } from './ripgrep.js';
 
 // ---------------------------------------------------------------------------
 // Node.js glob fallback helpers (used when ripgrep is not available)
@@ -105,21 +106,6 @@ function globWalk(baseDir: string, pattern: string, limit: number): string[] {
 // Tool definition
 // ---------------------------------------------------------------------------
 
-let rgAvailability: Promise<boolean> | null = null;
-
-/**
- * Ripgrep availability probe. Cached and asynchronous: the previous
- * synchronous probe spawned `rg --version` on every single glob call.
- */
-function rgIsAvailable(): Promise<boolean> {
-  if (!rgAvailability) {
-    rgAvailability = runCommand('rg', ['--version'], { timeoutMs: 3000 })
-      .then((check) => check.status === 0)
-      .catch(() => false);
-  }
-  return rgAvailability;
-}
-
 export const fileGlobTool: RegisteredTool = {
   id: 'file.glob',
   label: 'Glob Files',
@@ -160,9 +146,10 @@ interface GlobSearchInput {
 async function runGlobSearch(input: GlobSearchInput): Promise<ToolExecutionResult> {
   const { sessionId, pattern, base, limit } = input;
 
-  // -- ripgrep path --------------------------------------------------
-  if (await rgIsAvailable()) {
-    const result = await runCommand('rg', ['--files', '--glob', pattern], { cwd: base });
+  // -- ripgrep path (absolute path; the desktop GUI PATH is minimal) --
+  const rgPath = await resolveRipgrep();
+  if (rgPath) {
+    const result = await runCommand(rgPath, ['--files', '--glob', pattern], { cwd: base });
     if (result.error) throw result.error;
     if (result.status !== 0 && result.status !== 1) {
       throw new Error(result.stderr.trim() || `rg failed with exit code ${result.status ?? 'unknown'}.`);

@@ -287,6 +287,10 @@ export interface AgentContextBundle {
   createdAt: string;
 }
 
+export type QueuedMoveTarget =
+  | { direction: "up" | "down" }
+  | { toIndex: number };
+
 export interface QueuedInput {
   contentParts?: RuntimeContentPart[];
   references?: TurnReference[];
@@ -546,6 +550,8 @@ export interface SessionBackgroundProcess {
   kind?: "terminal" | "service";
   cwd?: string;
   projectId?: string;
+  /** Listening/mapped ports inferred from the service command; services only. */
+  ports?: number[];
 }
 
 export interface SessionEnvironment {
@@ -1105,14 +1111,14 @@ export const agentRuntimeApi = {
   moveQueuedInput: (
     sessionId: string,
     itemId: string,
-    direction: "up" | "down",
+    target: QueuedMoveTarget,
   ) =>
     apiRequest<{ items: QueuedInput[] }>(
       `${BASE}/sessions/${encodeURIComponent(sessionId)}/input-queue/${encodeURIComponent(itemId)}/order`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ direction }),
+        body: JSON.stringify(target),
       },
     ),
 

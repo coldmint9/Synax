@@ -186,7 +186,10 @@ export class RunCoordinator {
           session.parentSessionId ||
           session.sessionMetadata?.runtimeControl ||
           latestRun?.status !== "completed" ||
-          latestRun.stopReason === "round_yielded" ||
+          // A settled round handoff stays reserved for the goal continuation;
+          // once no continuation applies (e.g. the goal finished), drain the queue.
+          (latestRun.stopReason === "round_yielded" &&
+            goalContinuationInput(sessionId, latestRun.id) !== null) ||
           (work && work.status !== "completed") ||
           interactionService.pending(sessionId)
         )

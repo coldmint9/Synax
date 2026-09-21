@@ -1939,6 +1939,7 @@ describe("provider-bound session initialization prompt", () => {
   it("freezes compact first-emission tool receipts without rewriting raw results or later prefixes", async () => {
     const session = agentSessionRuntime.create({
       projectId: "receipt-fixture",
+      workDir: process.cwd(),
       profileId: "synax",
       prompt: "Inspect the diagnostic log",
       permissionTier: "unrestricted",
@@ -2013,6 +2014,7 @@ describe("provider-bound session initialization prompt", () => {
       });
       const session = agentSessionRuntime.create({
         projectId: "prompt-fixture",
+        workDir: process.cwd(),
         profileId: "synax",
         prompt,
         reasoningEffort: "max",
@@ -2058,6 +2060,7 @@ describe("provider-bound session initialization prompt", () => {
     });
     const session = agentSessionRuntime.create({
       projectId: "prompt-fixture",
+      workDir: process.cwd(),
       profileId: "synax",
       prompt,
       sessionMetadata: {
@@ -2157,6 +2160,7 @@ describe("provider-bound session initialization prompt", () => {
     fs.writeFileSync(outside, "requires a new approval");
     const session = agentSessionRuntime.create({
       projectId: "prompt-fixture",
+      workDir: process.cwd(),
       profileId: "synax",
       prompt: "Inspect the files",
       permissionTier: "unrestricted",
@@ -2212,6 +2216,7 @@ describe("provider-bound session initialization prompt", () => {
   it("keeps three Native requests prefix-identical as tool evidence and step state grow", async () => {
     const session = agentSessionRuntime.create({
       projectId: "prompt-fixture",
+      workDir: process.cwd(),
       profileId: "synax",
       prompt: "请调查 package.json",
       sessionMetadata: { mode: "chat" },
@@ -2294,6 +2299,7 @@ describe("provider-bound session initialization prompt", () => {
   it("renders actual permission overrides and keeps forbidden operations gated", async () => {
     const session = agentSessionRuntime.create({
       projectId: "prompt-fixture",
+      workDir: process.cwd(),
       profileId: "synax",
       prompt: "调查代码",
       permissionTier: "unrestricted",
@@ -2321,6 +2327,7 @@ describe("provider-bound session initialization prompt", () => {
   it("keeps tools available and puts advisory closing state in the runtime reminder", async () => {
     const session = agentSessionRuntime.create({
       projectId: "prompt-fixture",
+      workDir: process.cwd(),
       profileId: "synax",
       prompt: "完成已有检查",
     });

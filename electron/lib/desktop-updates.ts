@@ -1,44 +1,63 @@
-import { app, dialog, type BrowserWindow } from "electron";
-import { promises as fs, createReadStream } from "original-fs";
+import {
+  app,
+  dialog,
+  type BrowserWindow,
+  type MessageBoxOptions,
+} from "electron";
+import { promises as fs } from "original-fs";
 import path from "node:path";
-import { createServer, type Server } from "node:http";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
-import { getResourcePath } from "./data-paths.js";
 import { finishMacInstallation } from "./mac-desktop-update.js";
+import { UpdaterController } from "../updater/controller.js";
 import type { UpdaterRequest } from "../updater/contract.js";
-import { updaterExecutable } from "../updater/paths.js";
 
-// The host only launches the embedded app and handles its authenticated quit
-// request. All version checks, downloads and installation run in that app.
+/**
+ * Runs desktop update checks and downloads in the main process. The only
+ * detached process left in the flow is the tiny macOS shell swapper, which is
+ * required because a running .app cannot replace itself.
+ */
 export class DesktopUpdates {
-  private child: ChildProcess | null = null;
-  private server: Server | null = null;
-  private requestFile: string | null = null;
+  private readonly controller: UpdaterController;
+  private readonly initialized: Promise<void>;
+  private window: BrowserWindow | null = null;
   private opening: Promise<void> | null = null;
   private timer: NodeJS.Timeout | null = null;
   private startTimer: NodeJS.Timeout | null = null;
+  private promptedVersion: string | null = null;
 
-  constructor(
-    private readonly checkUi: (manual: boolean) => Promise<void>,
-    private readonly uiVersion: () => string | null,
-  ) {}
+  constructor(uiVersion: () => string | null) {
+    const profile = app.getPath("userData");
+    const request: UpdaterRequest = {
+      currentVersion: app.getVersion(),
+      uiVersion: uiVersion(),
+      executable: process.execPath,
+      profile,
+      parentPid: process.pid,
+    };
+    this.controller = new UpdaterController(
+      request,
+      () => {},
+      undefined,
+      async () => {
+        app.quit();
+      },
+    );
+    this.initialized = this.controller.initialize();
+  }
 
-  start(_window: BrowserWindow): void {
+  start(window: BrowserWindow): void {
+    this.window = window;
     if (this.timer) return;
     this.startTimer = setTimeout(() => void this.check(false), 30_000);
     this.timer = setInterval(() => void this.check(false), 12 * 60 * 60_000);
-    this.startTimer.unref();
-    this.timer.unref();
+    this.startTimer.unref?.();
+    this.timer.unref?.();
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     if (this.startTimer) clearTimeout(this.startTimer);
     this.timer = this.startTimer = null;
-    this.server?.close();
-    this.server = null;
-    // Do not terminate the updater: it must survive the host application.
+    this.window = null;
   }
 
   async markHealthy(): Promise<void> {
@@ -66,17 +85,25 @@ export class DesktopUpdates {
     }
   }
 
+  private showDialog(
+    options: MessageBoxOptions,
+  ): Promise<Electron.MessageBoxReturnValue> {
+    return this.window
+      ? dialog.showMessageBox(this.window, options)
+      : dialog.showMessageBox(options);
+  }
+
   check(manual: boolean): Promise<void> {
     if (this.opening) return this.opening;
-    this.opening = this.open(manual)
+    this.opening = this.runCheck(manual)
       .catch(async (error) => {
-        console.error("[updater] failed to open", error);
+        console.error("[desktop-update] failed", error);
         if (manual)
-          await dialog.showMessageBox({
+          await this.showDialog({
             type: "error",
-            title: "无法打开升级器",
-            message: "内置升级器启动失败。",
-            detail: String(error),
+            title: "检查更新失败",
+            message: "无法完成 Synax 更新检查。",
+            detail: error instanceof Error ? error.message : String(error),
             buttons: ["确定"],
           });
       })
@@ -86,128 +113,46 @@ export class DesktopUpdates {
     return this.opening;
   }
 
-  private async open(manual: boolean): Promise<void> {
-    if (this.child && this.requestFile) {
-      if (manual) await fs.writeFile(`${this.requestFile}.show`, "show");
+  private async runCheck(manual: boolean): Promise<void> {
+    await this.initialized;
+    await this.controller.check();
+
+    if (this.controller.state.phase === "current") {
+      if (manual)
+        await this.showDialog({
+          type: "info",
+          title: "检查更新",
+          message: "当前已是最新版本。",
+          buttons: ["确定"],
+        });
       return;
     }
-    const profile = app.getPath("userData");
-    const embedded = getResourcePath("updater");
-    const asar = path.join(
-      embedded,
-      process.platform === "darwin"
-        ? "Synax Updater.app/Contents/Resources/app.asar"
-        : "resources/app.asar",
-    );
-    // Treat app.asar as an opaque file when hashing and copying the runtime.
-    // Electron's patched fs would otherwise interpret it as an archive directory.
-    const hash = createHash("sha256");
-    for await (const chunk of createReadStream(asar)) hash.update(chunk);
-    const revision = hash.digest("hex").slice(0, 16);
-    const runtime = path.join(
-      profile,
-      "updater-runtime",
-      `${app.getVersion()}-${revision}`,
-    );
-    try {
-      await fs.access(path.join(runtime, ".ready"));
-    } catch {
-      const staging = `${runtime}.${randomUUID()}.tmp`;
-      await fs.mkdir(path.dirname(runtime), { recursive: true, mode: 0o700 });
-      try {
-        await fs.cp(embedded, staging, {
-          recursive: true,
-          verbatimSymlinks: true,
-        });
-        await fs.writeFile(path.join(staging, ".ready"), revision);
-        await fs.rm(runtime, { recursive: true, force: true });
-        await fs.rename(staging, runtime);
-      } finally {
-        await fs.rm(staging, { recursive: true, force: true });
-      }
+
+    if (this.controller.state.phase === "available")
+      await this.controller.download();
+    if (this.controller.state.phase !== "ready") {
+      if (manual && this.controller.state.phase === "error")
+        throw new Error(this.controller.state.message);
+      return;
     }
-    const token = randomBytes(32).toString("hex");
-    const server = createServer((request, response) => {
-      if (
-        request.method !== "POST" ||
-        request.headers.authorization !== `Bearer ${token}`
-      ) {
-        response.writeHead(403).end();
-        return;
-      }
-      if (request.url === "/quit") {
-        response.end("ok");
-        setTimeout(() => app.quit(), 100);
-        return;
-      }
-      if (request.url === "/ui-check") {
-        response.end("ok");
-        void this.checkUi(request.headers["x-synax-manual"] === "1").catch(
-          (error) => console.error("[ui-update]", error),
-        );
-        return;
-      }
-      response.writeHead(404).end();
+
+    const version = this.controller.state.availableVersion;
+    if (!version || version === this.promptedVersion) return;
+    this.promptedVersion = version;
+    const answer = await this.showDialog({
+      type: "question",
+      title: "发现 Synax 更新",
+      message: `Synax ${version} 已准备好安装。现在重启更新吗？`,
+      detail:
+        "更新已在后台下载并校验。确认后 Synax 会退出，关闭正在运行的任务和终端，并在完成后自动重新启动。",
+      buttons: ["稍后", "安装并重启"],
+      defaultId: 0,
+      cancelId: 0,
     });
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    this.server = server;
-    const address = server.address();
-    if (!address || typeof address === "string")
-      throw new Error("Updater control server unavailable");
-    const directory = path.join(profile, "updater-sessions");
-    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-    const requestFile = path.join(directory, `${randomUUID()}.json`);
-    this.requestFile = requestFile;
-    const request: UpdaterRequest = {
-      format: 1,
-      currentVersion: app.getVersion(),
-      uiVersion: this.uiVersion(),
-      executable: process.execPath,
-      profile,
-      parentPid: process.pid,
-      controlUrl: `http://127.0.0.1:${address.port}/`,
-      token,
-      background: !manual,
-    };
-    await fs.writeFile(requestFile, JSON.stringify(request), { mode: 0o600 });
-    const log = await fs.open(path.join(profile, "updater.log"), "a", 0o600);
-    try {
-      const env = { ...process.env };
-      delete env.ELECTRON_RUN_AS_NODE;
-      delete env.NODE_OPTIONS;
-      const child = spawn(
-        updaterExecutable(runtime),
-        [`--request=${requestFile}`],
-        {
-          detached: true,
-          stdio: ["ignore", log.fd, log.fd],
-          cwd: runtime,
-          env,
-        },
-      );
-      await new Promise<void>((resolve, reject) => {
-        child.once("spawn", resolve);
-        child.once("error", reject);
-      });
-      this.child = child;
-      child.once("exit", () => {
-        this.child = null;
-        this.requestFile = null;
-        server.close();
-        if (this.server === server) this.server = null;
-        void fs.rm(requestFile, { force: true });
-        void fs.rm(`${requestFile}.show`, { force: true });
-      });
-      child.unref();
-    } catch (error) {
-      server.close();
-      this.server = null;
-      throw error;
-    } finally {
-      await log.close();
+    if (answer.response === 1) {
+      await this.controller.install();
+      return;
     }
+    this.promptedVersion = null;
   }
 }

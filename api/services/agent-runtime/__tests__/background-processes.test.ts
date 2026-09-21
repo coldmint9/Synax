@@ -12,6 +12,7 @@ import { hasBackgroundBashOperator } from "../tools/bash-command-policy.js";
 import {
   listSessionBackgroundProcesses,
   stopSessionBackgroundProcess,
+  detectServicePorts,
 } from "../session-background-processes.js";
 import {
   hasBackgroundProcesses,
@@ -26,6 +27,7 @@ beforeEach(() => {
 const session = () =>
   agentSessionRuntime.create({
     projectId: "process-test",
+    workDir: process.cwd(),
     profileId: "synax",
     prompt: "service test",
   });
@@ -222,4 +224,110 @@ it("only deletes closed service records belonging to the requested session", asy
     .prepare("UPDATE agent_runtime_processes SET state='closed' WHERE id=?")
     .run(foreground.id);
   expect((await remove(owner.id, foreground.id)).status).toBe(404);
+});
+
+it("detects service ports from common listen flags while ignoring look-alikes", () => {
+  expect(detectServicePorts("npm run dev")).toEqual([]);
+  expect(detectServicePorts("vite --port 5173")).toEqual([5173]);
+  expect(detectServicePorts("PORT=3000 node server.js")).toEqual([3000]);
+  expect(detectServicePorts("next dev -p 4000")).toEqual([4000]);
+  expect(detectServicePorts("docker run -p 8080:80 nginx")).toEqual([80, 8080]);
+  expect(detectServicePorts("node server.js --host localhost:3000")).toEqual([
+    3000,
+  ]);
+  expect(detectServicePorts("python3 -m http.server 8080 --bind 0.0.0.0")).toEqual([
+    8080,
+  ]);
+  expect(detectServicePorts("curl http://example.com:8080/api")).toEqual([]);
+  expect(detectServicePorts("tar -xf site-2024.tar.gz --port=0")).toEqual([]);
+  expect(detectServicePorts("vite --port 999999 --mode Important=1")).toEqual(
+    [],
+  );
+});
+
+it("treats plain terminals as deletable while running and never maps ports for them", async () => {
+  const owner = session();
+  const { agentRuntimeRoutes } =
+    await import("../../../routes/agent-runtime.js");
+  // A real spawned owned process (no PTY): node-pty is unavailable in some
+  // CI sandboxes, but the owned-process launcher carries the same ownership
+  // nonce the terminal delete path must verify and stop.
+  const child = spawnOwnedProcess(
+    `${quote(process.execPath)} -e ${quote("setInterval(() => {}, 1000)")}`,
+    [],
+    {
+      shell: true,
+      background: true,
+      sessionId: owner.id,
+      stdin: "ignore",
+      commandLabel: "dev :3000",
+    },
+  );
+  const ticketId = child.ownedProcessId;
+  try {
+    const db = getRawSqlite();
+    db.prepare(
+      "UPDATE agent_runtime_processes SET kind='terminal' WHERE id=?",
+    ).run(ticketId);
+    db.prepare(
+      `INSERT INTO terminal_sessions (id,project_id,root_id,owner_session_id,kind,title,cwd,shell,command,cols,rows,request_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      ticketId,
+      owner.projectId,
+      "primary",
+      owner.id,
+      "terminal",
+      // A port-like title must not produce a port mapping.
+      "dev :3000",
+      os.tmpdir(),
+      process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+      null,
+      100,
+      30,
+      null,
+    );
+    child.stdout?.resume();
+    child.stderr?.resume();
+    await new Promise<void>((resolve, reject) => {
+      child.on("message", (message: any) => {
+        if (message.type === "started") resolve();
+      });
+      child.once("error", reject);
+    });
+    const listed = listSessionBackgroundProcesses(owner.id).find(
+      (item) => item.id === ticketId,
+    );
+    expect(listed).toMatchObject({
+      kind: "terminal",
+      state: "active",
+      terminalId: ticketId,
+    });
+    expect(listed?.ports).toBeUndefined();
+    // Deleting a running terminal must not require stopping it first.
+    expect(
+      (
+        await agentRuntimeRoutes.request(
+          `/sessions/${owner.id}/processes/${ticketId}`,
+          { method: "DELETE" },
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      listSessionBackgroundProcesses(owner.id).find(
+        (item) => item.id === ticketId,
+      ),
+    ).toBeUndefined();
+    expect(
+      db.prepare("SELECT id FROM terminal_sessions WHERE id=?").get(ticketId),
+    ).toBeUndefined();
+    await vi.waitFor(() =>
+      expect(child.exitCode === null && child.signalCode === null).toBe(false),
+    );
+  } finally {
+    try {
+      process.kill(-child.pid!, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
 });

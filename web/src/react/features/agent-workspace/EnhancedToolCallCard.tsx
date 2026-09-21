@@ -107,7 +107,7 @@ export function EnhancedToolCallCard({ call }: Props) {
 
       <MediaParts parts={call.contentParts} />
       {expanded && call.outputSummary && (
-        <div className="border-t border-border/40 px-3 pb-2.5 pt-2">
+        <div className="bui-tool-card-output border-t border-border/40 px-3 pb-2.5 pt-2">
           <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
             {showFull || !isLong
               ? outputText

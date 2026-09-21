@@ -157,7 +157,7 @@ describe("durable Run admission", () => {
   });
 
   it("does not fall back to the server cwd when the execution workspace is missing", () => {
-    const session = agentSessionRuntime.create(plannerSessionInput);
+    const session = agentSessionRuntime.create({ ...plannerSessionInput, projectId: "unregistered-project" });
     expect(() =>
       acceptRuntimeRun(session.id, { message: "Read" }, "root"),
     ).toThrow(/workspace|directory/i);

@@ -1,4 +1,4 @@
-import { memo, useMemo, type RefObject } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import { shallow } from "zustand/shallow";
 import { Skeleton } from "@heroui/react";
 import { useLocale } from "../../../hooks/useLocale";
@@ -12,9 +12,14 @@ import type {
 import {
   buildConversationTimeline,
   type ConversationTimelineEntry,
+  sessionEntryDomId,
 } from "./buildConversationTimeline";
 import { TimelineEntryView } from "./TimelineEntryView";
-import { TimelineLazyEntry, estimateEntryHeight } from "./TimelineLazyEntry";
+import {
+  TimelineLazyEntry,
+  estimateEntryHeight,
+  getMeasuredFoldHeight,
+} from "./TimelineLazyEntry";
 import { groupActivityEntries } from "./groupActivityEntries";
 import {
   EMPTY_STREAMING_BUFFERS,
@@ -49,6 +54,14 @@ type RowProps = Omit<RowsProps, "entries" | "streaming"> & {
   isWorking: boolean;
   isStreaming: boolean;
 };
+
+/** Flex gap between transcript rows; the timeline column uses `gap-5`. */
+const ROW_GAP_PX = 20;
+const FOLD_ANIMATION_MS = 460;
+// Same curve as the `--ease-spring` design token; WAAPI needs the literal.
+const FOLD_ANIMATION_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+/** Below this gain the collapse reads as noise, so skip the animation. */
+const FOLD_MIN_GAIN_PX = 24;
 
 const TimelineRow = memo(
   function TimelineRow({
@@ -199,6 +212,64 @@ function TimelineRows({
   // Flatten the cached history and live rows into the SAME keyed sibling list.
   // Separate component/fragment parents remount every row at the live handoff,
   // resetting disclosure state and lazy height reservations (visible flashes).
+  // The ref keeps the previous frame's row keys so the layout effect below can
+  // tell a fresh fold (animate it) from a history row (never animate it).
+  const rowKeysRef = useRef<Set<string> | null>(null);
+  useLayoutEffect(() => {
+    const sid = sessionId ?? "standalone";
+    const keyOf = (entry: ConversationTimelineEntry) =>
+      `${sid}:${entry.kind}-${entry.id}`;
+    const keys = new Set<string>();
+    for (const entry of history) keys.add(keyOf(entry));
+    for (const entry of combined) keys.add(keyOf(entry));
+    const previous = rowKeysRef.current;
+    rowKeysRef.current = keys;
+    if (!previous) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+    const animateFreshFolds = (list: ConversationTimelineEntry[]) => {
+      for (const entry of list) {
+        if (entry.kind !== "work_log") continue;
+        if (previous.has(keyOf(entry))) continue;
+        const element = document.getElementById(sessionEntryDomId(entry.id));
+        if (!element || typeof element.animate !== "function") continue;
+        // Only fold visibly when the source rows were actually on screen in
+        // the previous frame; otherwise this is history settling, not a run
+        // finishing, and the row must appear without an animation.
+        const prefixes = entry.turns.map(
+          (turn) => `${sid}:agent-${turn.stepId}`,
+        );
+        let hadSourceRow = false;
+        for (const key of previous) {
+          if (
+            prefixes.some((prefix) => key === prefix || key.startsWith(`${prefix}:`))
+          ) {
+            hadSourceRow = true;
+            break;
+          }
+        }
+        if (!hadSourceRow) continue;
+        const measured = getMeasuredFoldHeight(prefixes);
+        if (!measured) continue;
+        const collapsedHeight = element.getBoundingClientRect().height;
+        const fromHeight = measured.height + (measured.rows - 1) * ROW_GAP_PX;
+        if (fromHeight <= collapsedHeight + FOLD_MIN_GAIN_PX) continue;
+        element.animate(
+          [
+            { height: `${fromHeight}px`, opacity: 0.5, overflow: "hidden" },
+            {
+              height: `${collapsedHeight}px`,
+              opacity: 1,
+              overflow: "hidden",
+            },
+          ],
+          { duration: FOLD_ANIMATION_MS, easing: FOLD_ANIMATION_EASING },
+        );
+      }
+    };
+    animateFreshFolds(history);
+    animateFreshFolds(combined);
+  }, [history, combined, sessionId]);
   return (
     <>
       {[

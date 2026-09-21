@@ -86,7 +86,7 @@ class McpSessionToolProvider implements SessionToolProvider {
     for (const serverId of serverIds) {
       const config = byId.get(serverId)
       if (!config || config.enabled === false) continue
-      for (const def of mcpClientManager.getCachedTools(serverId)) {
+      for (const def of mcpClientManager.getCachedTools(serverId, session.projectId)) {
         tools.push(buildTool(serverId, def))
       }
     }

@@ -5,6 +5,42 @@
   border-radius: 10px;
 }
 
+/* Background services that expose a mapped port stand out by colour alone:
+   a soft rounded green block styled after the session-list cards, with no
+   accent edge and no separator lines crossing it. */
+.bui-processes .bui-process-row.bui-process-row--ports {
+  position: relative;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: hsl(var(--success-hsl) / 0.12);
+  padding: 8px 8px;
+}
+
+/* Trim the shared row separators so they never cross the rounded block. */
+.bui-processes .bui-process-row.bui-process-row--ports,
+.bui-processes .bui-process-row.bui-process-row--ports + .bui-process-row {
+  border-top: 0;
+}
+
+.bui-process-row--ports .bui-process-info,
+.bui-process-row--ports .bui-process-command {
+  color: var(--success);
+}
+
+.bui-process-row--ports .bui-process-command code {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.bui-process-port {
+  padding: 1px 6px;
+  border: 1px solid hsl(var(--success-hsl) / 0.45);
+  border-radius: 999px;
+  color: var(--success);
+  background: hsl(var(--success-hsl) / 0.12);
+  font: 600 10px/1.5 var(--font-mono);
+}
+
 .bui-process-confirm [data-slot="popover-dialog"] {
   padding: 12px;
 }
