@@ -1,3 +1,18 @@
+import {
+  checkpointSummary,
+  previewHistory,
+  applyHistory,
+  recoverHistoryOperation,
+  editRunRequestId,
+} from "../services/agent-runtime/checkpoints/operations.js";
+import { forkCheckpoint } from "../services/agent-runtime/checkpoints/fork.js";
+import { getCheckpoint } from "../services/agent-runtime/checkpoints/store.js";
+import {
+  assertHistoryIdle,
+  assertHistoryUnlocked,
+  historyRevision,
+} from "../services/agent-runtime/checkpoints/guards.js";
+import { SNAPSHOT_EXCLUSIONS } from "../services/agent-runtime/checkpoints/files.js";
 import { workRuntime } from "../services/agent-runtime/work-runtime.js";
 import { workflowMode } from "../services/agent-runtime/workflow-mode.js";
 import { compactSessionContext } from "../services/agent-runtime/manual-context-compaction.js";
@@ -1581,6 +1596,118 @@ agentRuntimeRoutes.get("/input-capabilities", async (c) => {
         parsed.data.model,
       ),
     );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+// Conversation history operations are deliberately separate from work.checkpoint.
+const historyActionSchema = z.object({
+  checkpointId: z.string().min(1).max(160),
+  revision: z.number().int().nonnegative(),
+  requestId: z.string().min(1).max(128),
+  message: z.string().trim().min(1).max(100_000).optional(),
+});
+agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", (c) => {
+  try {
+    return c.json(checkpointSummary(c.req.param("sessionId")));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = z
+    .object({
+      checkpointId: z.string().min(1),
+      action: z.enum(["rollback", "edit", "fork"]),
+    })
+    .safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const sessionId = c.req.param("sessionId");
+    if (parsed.data.action !== "fork")
+      return c.json(await previewHistory(sessionId, parsed.data.checkpointId));
+    assertHistoryUnlocked(sessionId);
+    assertHistoryIdle(sessionId);
+    const checkpoint = getCheckpoint(sessionId, parsed.data.checkpointId);
+    if (
+      checkpoint.kind !== "reply" ||
+      checkpoint.payload.error ||
+      !checkpoint.payload.manifests
+    )
+      throw new AgentValidationError(
+        "A complete reply checkpoint is required.",
+      );
+    return c.json({
+      checkpointId: checkpoint.id,
+      revision: historyRevision(sessionId),
+      removedMessages: 0,
+      files: checkpoint.payload.manifests.flatMap((m) =>
+        Object.keys(m.files).map((path) => ({
+          root: m.root,
+          path,
+          action: "restore",
+        })),
+      ),
+      conflicts: [],
+      exclusions: SNAPSHOT_EXCLUSIONS,
+      canApply: true,
+    });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+for (const action of ["rollback", "edit", "fork"] as const) {
+  agentRuntimeRoutes.post(
+    `/sessions/:sessionId/history/${action}`,
+    async (c) => {
+      const body = await readJson(c);
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const parsed = historyActionSchema.safeParse(body.data);
+      if (!parsed.success) return validationError(c, parsed.error);
+      try {
+        const sessionId = c.req.param("sessionId"),
+          input = parsed.data;
+        if (action === "fork")
+          return c.json(
+            await forkCheckpoint(
+              sessionId,
+              input.checkpointId,
+              input.revision,
+              input.requestId,
+            ),
+            201,
+          );
+        if (action === "edit") requireSessionBackendConfig(sessionId);
+        const result = await applyHistory(sessionId, { ...input, action });
+        if (
+          result.input &&
+          result.runId &&
+          historyRevision(sessionId) === result.revision
+        )
+          runCoordinator.submit(
+            sessionId,
+            result.input,
+            editRunRequestId(sessionId, input.requestId),
+            "turn",
+          );
+        return c.json({
+          sessionId: result.sessionId,
+          revision: result.revision,
+          runId: result.runId,
+        });
+      } catch (error) {
+        return runtimeError(c, error);
+      }
+    },
+  );
+}
+agentRuntimeRoutes.post("/sessions/:sessionId/history/recover", async (c) => {
+  try {
+    await recoverHistoryOperation(c.req.param("sessionId"));
+    return c.json({ recovered: true });
   } catch (error) {
     return runtimeError(c, error);
   }

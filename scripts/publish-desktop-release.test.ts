@@ -55,7 +55,10 @@ function client() {
 }
 async function addFiles(names: string[]) {
   for (const name of names)
-    await fs.writeFile(path.join(root, "release-assets", name), "fixture");
+    await fs.writeFile(
+      path.join(root, "release-assets", name),
+      name.startsWith("desktop-") ? JSON.stringify({ format: 1 }) : "fixture",
+    );
 }
 function published(names: string[] = []) {
   input.github.rest.repos.getReleaseByTag.mockResolvedValue({
@@ -78,6 +81,45 @@ beforeEach(async () => {
 afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
+async function addBlockMap() {
+  const name = "Synax-0.2.0-darwin-arm64.zip.blockmap";
+  const bytes = Buffer.from("compressed blockmap");
+  await fs.writeFile(path.join(root, "release-assets", name), bytes);
+  await fs.writeFile(
+    path.join(root, "release-assets", mac[2]),
+    JSON.stringify({
+      format: 1,
+      blockMap: {
+        name,
+        size: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+    }),
+  );
+  return name;
+}
+it("publishes the blockmap before exposing its referencing update manifest", async () => {
+  const name = await addBlockMap();
+  await publishRelease(input, root);
+  const uploaded = input.github.rest.repos.uploadReleaseAsset.mock.calls.map(
+    ([call]) => call.name,
+  );
+  expect(uploaded).toHaveLength(4);
+  expect(uploaded.indexOf(name)).toBeLessThan(uploaded.indexOf(mac[2]));
+});
+it.each(["missing", "corrupt"])(
+  "refuses a %s blockmap before publishing metadata",
+  async (kind) => {
+    const name = await addBlockMap();
+    const file = path.join(root, "release-assets", name);
+    if (kind === "missing") await fs.rm(file);
+    else await fs.writeFile(file, "wrong bytes");
+    await expect(publishRelease(input, root)).rejects.toThrow(
+      /blockmap|Missing desktop asset/,
+    );
+    expect(input.github.rest.repos.uploadReleaseAsset).not.toHaveBeenCalled();
+  },
+);
 
 it("publishes a successful macOS target without requiring Windows or Linux", async () => {
   await publishRelease(input, root);

@@ -77,7 +77,7 @@ describe("buildInterleavedTurns", () => {
       );
       expect(turns[0].blocks).toEqual([
         { type: "thinking", content: "嗯" },
-        { type: "text", content: "..." },
+        { type: "text", content: "...", messageId: "answer" },
       ]);
     },
   );
@@ -98,7 +98,9 @@ describe("buildInterleavedTurns", () => {
       [],
       [makeMessage({ content: "", contentParts: parts })],
     );
-    expect(turns[0].blocks).toEqual([{ type: "media", parts }]);
+    expect(turns[0].blocks).toEqual([
+      { type: "media", parts, messageId: "msg-1" },
+    ]);
   });
   it("places thinking before tool calls when thinking timestamp is earlier", () => {
     const turns = buildInterleavedTurns(

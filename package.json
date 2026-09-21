@@ -48,7 +48,7 @@
     "bench:repl": "tsx scripts/tree-embedding-repl.ts",
     "bench:eval": "tsx scripts/tree-embedding-repl.ts --eval",
     "dev:desktop": "tsx scripts/dev-desktop.ts",
-    "build:electron": "tsc -p electron/tsconfig.json",
+    "build:electron": "tsc -p electron/tsconfig.json && tsx scripts/build-desktop-updater-runtime.ts",
     "build:desktop": "npm run build && npm run web:build && npm run build:electron && electron-forge package",
     "make:desktop": "npm run build && npm run web:build && npm run build:electron && electron-forge make",
     "start:desktop": "electron-forge start",
@@ -57,7 +57,7 @@
     "test:desktop:workbench": "tsx scripts/desktop-workbench-e2e.ts",
     "test:desktop:terminal": "cross-env SYNAX_E2E_TERMINAL=1 tsx scripts/desktop-workbench-e2e.ts",
     "test:ui-updates": "vitest run electron/lib/ui-update-format.test.ts electron/lib/ui-update-store.test.ts electron/lib/ui-update-feed.test.ts electron/lib/ui-updates.test.ts scripts/ui-release-artifacts.test.ts",
-    "test:desktop-updates": "vitest run electron/lib/desktop-update-feed.test.ts electron/lib/desktop-updates.test.ts electron/lib/mac-desktop-update.test.ts electron/updater/controller.test.ts scripts/desktop-release-artifacts.test.ts",
+    "test:desktop-updates": "vitest run electron/lib/desktop-update-feed.test.ts electron/lib/desktop-update-cache.test.ts electron/lib/desktop-differential.test.ts electron/lib/desktop-update-signing.test.ts electron/lib/desktop-updates.test.ts electron/lib/update-network.test.ts electron/lib/update-settings-store.test.ts electron/lib/mac-desktop-update.test.ts electron/lib/mac-update-archive.test.ts electron/updater/controller.test.ts scripts/desktop-release-artifacts.test.ts scripts/publish-desktop-release.test.ts",
     "test:desktop:update-smoke": "tsx scripts/desktop-update-smoke.ts",
     "test:desktop:ui-update-smoke": "tsx scripts/ui-update-smoke.ts",
     "test:wsl:smoke": "tsx scripts/wsl-smoke.ts"
@@ -128,13 +128,17 @@
     "@electron/packager": "^18.4.4",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.18.1",
+    "@types/yauzl": "2.10.3",
+    "app-builder-bin": "4.2.0",
     "cross-env": "^10.1.0",
     "electron": "^39.8.10",
+    "electron-updater": "6.8.9",
     "electronmon": "^2.0.4",
     "pino-pretty": "^13.0.0",
     "tsup": "^8.4.0",
     "tsx": "^4.23.13",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.6",
+    "yauzl": "3.4.0"
   }
 }

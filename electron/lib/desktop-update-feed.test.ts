@@ -4,6 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sha256 } from "./ui-update-format.js";
 import {
+  configureUpdateNetwork,
+  DEFAULT_UPDATE_NETWORK,
+} from "./update-network.js";
+import {
   desktopArtifactName,
   downloadDesktopRelease,
   findDesktopRelease,
@@ -30,10 +34,166 @@ const asset = (name: string) => ({
 let directory: string;
 afterEach(async () => {
   vi.unstubAllGlobals();
+  configureUpdateNetwork(DEFAULT_UPDATE_NETWORK);
   if (directory) await fs.rm(directory, { recursive: true, force: true });
 });
 
 describe("desktop update feed", () => {
+  it("prefers the macOS update ZIP while retaining DMG metadata for older clients", async () => {
+    const zipBytes = Buffer.from("zip update payload");
+    const name = "Synax-0.2.0-darwin-arm64.zip";
+    const upgraded = {
+      ...manifest,
+      updateArchive: { name, size: zipBytes.length, sha256: sha256(zipBytes) },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (url: URL) =>
+          new Response(
+            url.pathname.endsWith(".zip")
+              ? zipBytes
+              : JSON.stringify(
+                  url.pathname.endsWith(".json")
+                    ? upgraded
+                    : [
+                        {
+                          tag_name: "v0.2.0",
+                          assets: [
+                            asset("desktop-darwin-arm64.json"),
+                            asset(manifest.artifact.name),
+                            asset(name),
+                          ],
+                        },
+                      ],
+                ),
+          ),
+      ),
+    );
+    const release = await findDesktopRelease("0.1.2", "darwin", "arm64");
+    expect(release!.url).toBe(asset(name).browser_download_url);
+    expect(release!.manifest.artifact.name).toMatch(/\.dmg$/);
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), "synax-update-zip-"));
+    expect(
+      await fs.readFile(await downloadDesktopRelease(release!, directory)),
+    ).toEqual(zipBytes);
+  });
+  it("reports partial byte progress, enters verification only at EOF, and atomically commits the complete package", async () => {
+    directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "synax-desktop-stream-"),
+    );
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                stream = controller;
+              },
+            }),
+          ),
+      ),
+    );
+    const progress = vi.fn();
+    const verifying = vi.fn();
+    const release = {
+      manifest,
+      url: asset(manifest.artifact.name).browser_download_url,
+    };
+    const download = downloadDesktopRelease(
+      release,
+      directory,
+      progress,
+      verifying,
+    );
+    await vi.waitFor(() => expect(stream).toBeDefined());
+    const split = Math.floor(bytes.length / 2);
+    stream.enqueue(bytes.subarray(0, split));
+    await vi.waitFor(() =>
+      expect(progress).toHaveBeenCalledWith(split / bytes.length),
+    );
+    expect(verifying).not.toHaveBeenCalled();
+    await expect(
+      fs.access(path.join(directory, manifest.artifact.name)),
+    ).rejects.toThrow();
+    stream.enqueue(bytes.subarray(split));
+    stream.close();
+    const file = await download;
+    expect(progress).toHaveBeenLastCalledWith(1);
+    expect(verifying).toHaveBeenCalledOnce();
+    expect(await fs.readFile(file)).toEqual(bytes);
+    expect(await fs.readdir(directory)).toEqual([manifest.artifact.name]);
+  });
+
+  it("removes an interrupted download instead of turning it into a cache", async () => {
+    directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "synax-desktop-stream-"),
+    );
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                stream = controller;
+              },
+            }),
+          ),
+      ),
+    );
+    const progress = vi.fn();
+    const download = downloadDesktopRelease(
+      { manifest, url: asset(manifest.artifact.name).browser_download_url },
+      directory,
+      progress,
+    );
+    const failed = expect(download).rejects.toThrow("connection lost");
+    await vi.waitFor(() => expect(stream).toBeDefined());
+    stream.enqueue(bytes.subarray(0, 2));
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled());
+    stream.error(new Error("connection lost"));
+    await failed;
+    expect(await fs.readdir(directory)).toEqual([]);
+  });
+  it("uses a custom proxy for discovery, the manifest and verified desktop package", async () => {
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), "synax-desktop-feed-"));
+    configureUpdateNetwork({
+      mode: "custom",
+      customProxyUrl: "https://proxy.example/prefix/",
+    });
+    const request = vi.fn(async (url: URL) => {
+      expect(url.href.startsWith("https://proxy.example/prefix/https://")).toBe(
+        true,
+      );
+      return new Response(
+        url.pathname.endsWith(".dmg")
+          ? bytes
+          : JSON.stringify(
+              url.pathname.endsWith(".json")
+                ? manifest
+                : [
+                    {
+                      tag_name: "v0.2.0",
+                      assets: [
+                        asset("desktop-darwin-arm64.json"),
+                        asset(manifest.artifact.name),
+                      ],
+                    },
+                  ],
+            ),
+      );
+    });
+    vi.stubGlobal("fetch", request);
+    const release = await findDesktopRelease("0.1.2", "darwin", "arm64");
+    expect(
+      await fs.readFile(await downloadDesktopRelease(release!, directory)),
+    ).toEqual(bytes);
+    expect(request).toHaveBeenCalledTimes(3);
+  });
   it("chooses a newer full release for the exact platform, ignoring UI tags and prereleases", async () => {
     const releases = [
       { tag_name: "ui-v9.0.0", assets: [] },
@@ -139,6 +299,7 @@ describe("desktop update feed", () => {
     Buffer.alloc(bytes.length + 1),
     Buffer.alloc(1),
   ])("never commits a corrupt or truncated download %#", async (data) => {
+    configureUpdateNetwork({ mode: "gh-proxy", customProxyUrl: "" });
     directory = await fs.mkdtemp(path.join(os.tmpdir(), "synax-desktop-feed-"));
     vi.stubGlobal(
       "fetch",

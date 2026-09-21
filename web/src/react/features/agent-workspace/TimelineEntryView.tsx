@@ -84,6 +84,7 @@ export const TimelineEntryView = memo(function TimelineEntryView({
     }
     return (
       <UserMessageBlock
+        messageId={entry.id}
         content={entry.content}
         contentParts={entry.contentParts}
       />

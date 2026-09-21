@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -8,10 +9,27 @@ import type {
   PermissionDecision,
 } from "../../../../lib/api/agentRuntime";
 vi.mock("../SessionComposer", () => ({
-  SessionComposer: () => <textarea aria-label="Draft" />,
+  SessionComposer: ({ statusSlot }: { statusSlot?: ReactNode }) => (
+    <div>
+      {statusSlot}
+      <textarea aria-label="Draft" />
+    </div>
+  ),
 }));
 vi.mock("../SessionFileChangeIsland", () => ({
-  SessionFileChangeIsland: () => null,
+  SessionFileChangeIsland: ({
+    sessionId,
+    isRunning,
+  }: {
+    sessionId: string;
+    isRunning: boolean;
+  }) => (
+    <div
+      data-testid="file-summary"
+      data-session-id={sessionId}
+      data-running={String(isRunning)}
+    />
+  ),
 }));
 vi.mock("../../../../hooks/useLocale", () => ({
   useLocale: () => ({ locale: "en", t: (key: string) => key }),
@@ -99,7 +117,6 @@ it("hides the composer for a workspace viewer without unmounting its input", () 
     focus: false,
     insetLeft: 0,
     insetRight: 0,
-    showFileSummary: false,
   };
   const view = render(<AgentCommandRail {...props} />);
   const input = screen.getByRole("textbox");
@@ -109,3 +126,40 @@ it("hides the composer for a workspace viewer without unmounting its input", () 
   view.rerender(<AgentCommandRail {...props} />);
   expect(screen.getByRole("textbox")).toBe(input);
 });
+
+it.each(["running", "completed"])(
+  "keeps the file summary above the composer for a %s session while reading history",
+  (status) => {
+    useAgentSessionStore.setState({
+      ...useAgentSessionStore.getInitialState(),
+      sessions: [
+        {
+          id: "one",
+          profileId: "synax",
+          status,
+          sessionMetadata: { source: "session-page", mode: "chat" },
+        } as AgentSession,
+      ],
+    });
+    // Legacy callers must not be able to suppress the summary in wide layouts.
+    const props = {
+      sessionId: "one",
+      projectId: "project",
+      focus: false,
+      insetLeft: 240,
+      insetRight: 320,
+      showFileSummary: false,
+    };
+    const view = render(<AgentCommandRail {...props} />);
+    const summary = screen.getByTestId("file-summary");
+    expect(summary).toHaveAttribute("data-session-id", "one");
+    expect(summary).toHaveAttribute(
+      "data-running",
+      String(status === "running"),
+    );
+    expect(summary.nextElementSibling).toBe(screen.getByRole("textbox"));
+    view.rerender(<AgentCommandRail {...props} readingHistory />);
+    expect(screen.getByTestId("file-summary")).toBe(summary);
+    expect(summary).toBeVisible();
+  },
+);

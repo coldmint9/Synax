@@ -207,6 +207,12 @@ interface RunPartRow {
 }
 
 const RUNTIME_TABLES = [
+  "conversation_snapshot_leases",
+  "conversation_workspace_locks",
+  "conversation_history_operations",
+  "conversation_history_versions",
+  "conversation_checkpoints",
+  "conversation_mutations",
   "agent_runtime_processes",
   "agent_runtime_stream_records",
   "agent_runtime_work",
@@ -382,9 +388,10 @@ function mapEvent(row: EventRow): RuntimeEvent {
   return {
     id: row.id,
     sessionId: row.session_id,
-    type: row.type === "session_blocked"
-      ? "session_completed"
-      : row.type as RuntimeEvent["type"],
+    type:
+      row.type === "session_blocked"
+        ? "session_completed"
+        : (row.type as RuntimeEvent["type"]),
     timestamp: row.timestamp,
     visibility: row.visibility,
     summary: row.summary,
@@ -615,9 +622,12 @@ export class AgentRuntimeStore {
   }
 
   /** Minimal projection for badge counts: three columns per row, no metadata. */
-  listSessionBadges(
-    projectIds: string[],
-  ): Array<{ id: string; projectId: string; status: AgentSession["status"]; updatedAt: string }> {
+  listSessionBadges(projectIds: string[]): Array<{
+    id: string;
+    projectId: string;
+    status: AgentSession["status"];
+    updatedAt: string;
+  }> {
     if (projectIds.length === 0) return [];
     const placeholders = projectIds.map(() => "?").join(",");
     const rows = getRawSqlite()
@@ -847,6 +857,14 @@ export class AgentRuntimeStore {
         });
       }
 
+      for (const id of deleteIds) {
+        db.prepare(
+          "DELETE FROM conversation_checkpoints WHERE session_id=?",
+        ).run(id);
+        db.prepare(
+          "DELETE FROM conversation_history_versions WHERE session_id=?",
+        ).run(id);
+      }
       for (const id of deleteIds)
         db.prepare(
           "UPDATE agent_runtime_processes SET session_id = NULL WHERE session_id = ?",
@@ -934,6 +952,9 @@ export class AgentRuntimeStore {
     for (const id of deleteIds) {
       emitRuntimeBusEvent({ type: "session_deleted", sessionId: id });
     }
+    void import("./checkpoints/gc.js")
+      .then(({ pruneCheckpointBlobs }) => pruneCheckpointBlobs())
+      .catch(() => {});
     return deleteIds;
   }
 

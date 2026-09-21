@@ -46,6 +46,16 @@ Attach a screenshot, document, audio clip, or video to a conversation when the s
 
 Sessions and execution history are saved locally. The runtime can compact older context while retaining recent steps and selected requirements, decisions, and results. The conversation view shows context usage and provider-reported cache statistics when available, so you can see how much context a task is using.
 
+### Copy, edit, and roll back conversations
+
+Hover over a message or focus it with the keyboard to reveal its toolbar. User messages support copy and inline editing; assistant replies support copy, fork, and rollback. Copy preserves Markdown without adding reasoning or tool logs.
+
+Native Synax sessions capture checkpoints before inputs and after complete replies. Editing replaces that input and truncates the later history. Rolling back preserves the selected reply and reverses subsequent file changes. A preview lists the impact before execution; conflicts with manual edits, other sessions, or unattributed writes block the operation. Stop active execution, approvals, and background processes before changing history.
+
+Forks use historical context and files in an isolated directory, leaving the original unchanged; Git projects use detached worktrees. Snapshots exclude dependencies, caches, credential files, and Git internals. External databases, network effects, and Git commits are not reversed. The snapshot safety limits are **128 MiB per file** and **512 MiB per workspace root**. Oversized or incomplete snapshots disable recovery rather than silently omitting files. Use a clean worktree for projects with large build directories.
+
+External agents and messages without checkpoints remain copy-only. Historical checkpoints are not reconstructed retrospectively, including earlier messages inherited by a fork. Snapshots live in Synax's data directory, interrupted restores have a recovery entry point, and session cleanup collects aged unreferenced snapshot content without breaking forks.
+
 ### Generate a Wiki that points back to the code
 
 Synax uses tree-sitter to analyze source files and symbols, then generates project documentation with code references. Read the document tree, search its contents, view diagrams, or export Markdown. When code changes, refresh checks identify affected documents and produce drafts for review.
@@ -158,13 +168,31 @@ Install dependencies and build on the target operating system **and CPU architec
 | Windows x64         | `windows-2022`   | Squirrel installer and ZIP |
 | Linux x64           | `ubuntu-latest`  | ZIP                        |
 
-Artifacts are written to `out/make/`. Use `npm run build:desktop` if you only need an unpacked app. Signing and notarization are not configured, so the OS may warn when opening a build.
+Artifacts are written to `out/make/`. Use `npm run build:desktop` if you only need an unpacked app. Operating-system code signing and notarization are not configured, so the OS may warn when opening a build. These are separate from the update-manifest signing described below.
 
-Packaged macOS and Windows apps check GitHub Releases for updates. Desktop packages are checked and downloaded silently in the main app process; Synax only shows a native confirmation dialog when a verified update is ready to install. Use **Help → Software Update…** (`帮助 → 软件更新…`) to check manually. Compatible UI updates take effect after a restart and can fall back to the previous UI if loading fails. macOS uses only a small shell handoff to replace the running app; no separate Electron updater app is shipped. Linux does not currently have desktop updating.
+Packaged macOS and Windows apps check GitHub Releases for updates. A collapsible progress panel and **Settings → Online updates** show download progress, verification, cached packages, and differential/full transfer status. Installation requires a complete, verified package and explicit confirmation. Use **Help → Software Update…** (`帮助 → 软件更新…`) to check manually. Compatible UI updates take effect after a restart and can fall back to the previous UI if loading fails. macOS uses only a small shell handoff to replace the running app; no separate Electron updater app is shipped. Linux does not currently have desktop updating.
 
-Desktop releases use `v*` tags; UI-only releases use `ui-v*` tags. The [desktop workflow](./.github/workflows/build-desktop.yml) and [UI workflow](./.github/workflows/build-ui-release.yml) contain the build and release steps. Desktop releases publish successful platforms even if another platform fails. Reruns can fill an empty release or add missing platforms while preserving already published platform files; update manifests are uploaded after their installers. UI releases must match a published desktop version and cannot include backend or Electron changes. Update downloads use HTTPS and hash checks; they rely on the repository's release publishing access rather than an independent content signature.
+Desktop releases use `v*` tags; UI-only releases use `ui-v*` tags. The [desktop workflow](./.github/workflows/build-desktop.yml) and [UI workflow](./.github/workflows/build-ui-release.yml) contain the build and release steps. Desktop releases publish successful platforms even if another platform fails. Reruns can fill an empty release or add missing platforms while preserving already published platform files; update manifests are uploaded after their installers and blockmaps. UI releases must match a published desktop version and cannot include backend or Electron changes. Desktop manifests support pinned Ed25519 signatures; the separate UI-only channel continues to use HTTPS and hash checks.
 
 Every push to `main` also builds all four desktop targets. After the builds finish, the workflow publishes the platforms whose builds and checks succeeded to [Latest Preview](https://github.com/coldmint9/Synax/releases/tag/preview), a rolling prerelease tagged `preview`. Its notes identify the available platforms, base app version, commit, and Actions run. A failed platform does not block successful platforms; if all platforms fail, the existing preview is kept. Download and install previews manually; stable automatic updates exclude prereleases. Older builds cannot overwrite a newer main commit's preview, and the release stays in draft while its assets are being replaced. Running **Build Desktop** manually on `main` can retry a failed preview publication.
+
+### Enable signed differential updates
+
+macOS automatic updates use ZIP + blockmap; DMGs remain available for manual installation and older clients. Windows uses NUPKG + blockmap. The pinned electron-builder planner identifies reusable blocks in a verified cached package for the currently installed version. Only changed ranges are downloaded, and the complete reconstructed package must match its SHA-256 before it becomes installable. Missing/corrupt bases, incompatible proxies, failed ranges, or insufficient savings fall back to a verified full download. Direct and custom GitHub proxy routes are supported.
+
+Generate one persistent Ed25519 key pair **outside the repository**:
+
+```sh
+umask 077
+openssl genpkey -algorithm ED25519 -out /secure/location/synax-update-private.pem
+openssl pkey -in /secure/location/synax-update-private.pem -pubout -outform DER | openssl base64 -A
+```
+
+In GitHub Actions, set secret `SYNAX_UPDATE_SIGNING_KEY` to the private PEM contents and variable `SYNAX_UPDATE_PUBLIC_KEY` to the base64 SPKI public key printed by the second command. Only the public key is embedded in the app. Back up the private key securely, never commit it, and do not regenerate it for each release. Key rotation requires a planned transition release.
+
+With neither setting configured, builds retain unsigned full-download compatibility and do not enable differential downloads. Configuring just one setting fails the release build. Once a client pins a public key, a missing or invalid manifest signature is an error, not a reason to downgrade to unsigned updates. These signatures do not replace OS code signing or notarization.
+
+Packages and manifests are cached under `<userData>/desktop-updates/<version>-<platform>-<arch>/`. A verified pending package can be installed after restarting offline. A manually installed app or an older DMG-only cache usually needs one full automatic ZIP/NUPKG download before it has a differential base. Interrupted transfers restart on retry; cross-process HTTP resume is not included. Validate this flow with `npm run test:desktop-updates` and `npm run build:electron`.
 
 ## Development
 

@@ -1,4 +1,9 @@
-import { workflowMode, usesGoalWorkflow } from './workflow-mode.js';
+import {
+  captureCheckpoint,
+  captureCompletedReply,
+} from "./checkpoints/store.js";
+import { assertHistoryUnlocked } from "./checkpoints/guards.js";
+import { workflowMode, usesGoalWorkflow } from "./workflow-mode.js";
 import { buildToolContextReceipt } from "./tool-context-receipt.js";
 import {
   cacheDiagnosticsEnabled,
@@ -265,6 +270,7 @@ export class AgentLoopRuntime {
   ): AsyncGenerator<AgentRunStreamChunk> {
     input = normalizeInput(input);
     this.assertSessionNotBusy(sessionId);
+    assertHistoryUnlocked(sessionId);
     const beforeStart = this.store.getSession(sessionId);
     if (
       beforeStart.sessionMetadata?.runtimeControl ||
@@ -511,8 +517,16 @@ export class AgentLoopRuntime {
         );
         yield { type: "run_resumed", run, event: resumedEvent };
       } else {
+        const inputMessageId = makeRuntimeId("msg");
+        await captureCheckpoint(
+          sessionId,
+          "input",
+          inputMessageId,
+          null,
+          input.acceptedRunId,
+        );
         const userMessage = this.store.appendMessage({
-          id: makeRuntimeId("msg"),
+          id: inputMessageId,
           sessionId,
           runId: null,
           stepId: null,
@@ -986,6 +1000,7 @@ export class AgentLoopRuntime {
               completedAt: nowIso(),
               finishReason: "input_force_inject",
             });
+            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1107,6 +1122,7 @@ export class AgentLoopRuntime {
                 usage: modelResult.step.usage,
               },
             });
+            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1159,6 +1175,7 @@ export class AgentLoopRuntime {
                 completedAt: nowIso(),
                 finishReason: "input_injected",
               });
+              await captureCompletedReply(sessionId, step.id);
               void sessionHooks.emit({
                 type: "step:after",
                 sessionId,
@@ -1189,7 +1206,10 @@ export class AgentLoopRuntime {
                 throw new AgentValidationError(
                   "An empty response is not a final result.",
                 );
-              if (usesGoalWorkflow(this.store.getSession(sessionId)) && shouldConverge(step.index, convergenceThreshold)) {
+              if (
+                usesGoalWorkflow(this.store.getSession(sessionId)) &&
+                shouldConverge(step.index, convergenceThreshold)
+              ) {
                 workRuntime.yieldRound(
                   {
                     sessionId,
@@ -1208,6 +1228,7 @@ export class AgentLoopRuntime {
                   completedAt: nowIso(),
                   finishReason: "round_yielded",
                 });
+                await captureCompletedReply(sessionId, step.id);
                 void sessionHooks.emit({
                   type: "step:after",
                   sessionId,
@@ -1241,8 +1262,7 @@ export class AgentLoopRuntime {
               }
               if (this.store.getRun(run.id).metadata.roundHandoff)
                 yield* this.finishYieldedRun(sessionId, run);
-              else
-                yield* this.finishWorkRun(sessionId, run);
+              else yield* this.finishWorkRun(sessionId, run);
               return;
             } catch (error) {
               const work = workRuntime.rejectedCompletion(
@@ -1295,6 +1315,7 @@ export class AgentLoopRuntime {
                 usage: modelResult.step.usage,
               },
             });
+            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1344,6 +1365,7 @@ export class AgentLoopRuntime {
               completedAt: nowIso(),
               finishReason: "input_force_inject",
             });
+            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1735,6 +1757,7 @@ export class AgentLoopRuntime {
               usage: modelResult.step.usage,
             },
           });
+          await captureCompletedReply(sessionId, step.id);
           void sessionHooks.emit({
             type: "step:after",
             sessionId,
@@ -1998,6 +2021,7 @@ export class AgentLoopRuntime {
               });
           }
           try {
+            await captureCompletedReply(sessionId);
             const finalRun = this.store.getRun(run.id);
             void sessionHooks.emit({
               type: "run:completed",
@@ -2230,6 +2254,9 @@ export class AgentLoopRuntime {
     userMessage: AgentRuntimeMessage;
     queueItemId: string;
   } | null> {
+    const queuedMessageId = makeRuntimeId("msg");
+    if (inputQueueService.getForceInjectId(sessionId))
+      await captureCheckpoint(sessionId, "input", queuedMessageId);
     const injected = runtimeTransaction(() => {
       const item = inputQueueService.consumeForced(sessionId);
       if (!item) return null;
@@ -2241,7 +2268,7 @@ export class AgentLoopRuntime {
         },
       });
       const userMessage = this.store.appendMessage({
-        id: makeRuntimeId("msg"),
+        id: queuedMessageId,
         sessionId,
         runId: run.id,
         stepId: null,
@@ -2542,7 +2569,10 @@ export class AgentLoopRuntime {
       input.profile.consecutiveFailureReminderThreshold,
     );
 
-    const stepNote = buildLoopStepNote({ ...input, mode: workflowMode(session) });
+    const stepNote = buildLoopStepNote({
+      ...input,
+      mode: workflowMode(session),
+    });
     const tailReminders = [
       buildRuntimeEnvironment(input.sessionId, session.projectId),
       workRuntime.prompt(input.sessionId) ?? "",

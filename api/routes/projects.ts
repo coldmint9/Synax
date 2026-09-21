@@ -44,7 +44,7 @@ import {
 // ---------------------------------------------------------------------------
 // Project store — in-memory Map 与磁盘 JSON 双写（原子写入）
 // 落盘路径：<DATA_ROOT>/projects.json（默认 .data/projects.json）
-// 策略：进程启动时从磁盘加载；无文件则用 seeds 初始化并落盘。
+// 策略：进程启动时从磁盘加载；无文件则初始化为空项目列表并落盘。
 // 所有修改操作（POST / PATCH / DELETE）同步写回磁盘。
 // ---------------------------------------------------------------------------
 
@@ -123,10 +123,12 @@ function saveProjectsToDisk(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Seed data + disk initialization
+// Disk initialization and one-time cleanup of untouched legacy demo records
 // ---------------------------------------------------------------------------
 
-const seedProjects: ProjectRecord[] = [
+// Fingerprints are only for migration; these records must never be created again.
+// Do not delete by name/ID alone: imported or customized projects are user data.
+const legacyDemoFingerprints = [
   {
     id: "rumbling-core",
     name: "Rumbling Core",
@@ -138,7 +140,6 @@ const seedProjects: ProjectRecord[] = [
     openRisks: 2,
     updatedAt: "just now",
     createdBy: "alice",
-    createdAt: new Date().toISOString(),
   },
   {
     id: "growth-ops",
@@ -151,7 +152,6 @@ const seedProjects: ProjectRecord[] = [
     openRisks: 0,
     updatedAt: "12m ago",
     createdBy: "alice",
-    createdAt: new Date().toISOString(),
   },
   {
     id: "mobile-revamp",
@@ -164,24 +164,45 @@ const seedProjects: ProjectRecord[] = [
     openRisks: 3,
     updatedAt: "8m ago",
     createdBy: "alice",
-    createdAt: new Date().toISOString(),
   },
-];
+] as const;
 
-// Init projects
+function isUntouchedLegacyDemo(project: ProjectRecord): boolean {
+  if (
+    project.source ||
+    project.references?.length ||
+    project.primaryName ||
+    project.importState ||
+    project.importError
+  )
+    return false;
+  return legacyDemoFingerprints.some((fingerprint) =>
+    Object.entries(fingerprint).every(
+      ([key, value]) => project[key as keyof ProjectRecord] === value,
+    ),
+  );
+}
+
 const diskProjects = loadJsonFile<ProjectRecord[]>(PROJECTS_FILE, "items");
 if (diskProjects !== null) {
-  for (const p of diskProjects) projects.set(p.id, p);
+  const retained = diskProjects.filter(
+    (project) => !isUntouchedLegacyDemo(project),
+  );
+  for (const project of retained) projects.set(project.id, project);
+  if (retained.length !== diskProjects.length) saveProjectsToDisk();
   logger.info(
-    { count: projects.size, file: PROJECTS_FILE },
+    {
+      count: projects.size,
+      removedLegacyDemos: diskProjects.length - retained.length,
+      file: PROJECTS_FILE,
+    },
     "[projects] loaded from disk",
   );
 } else {
-  for (const s of seedProjects) projects.set(s.id, s);
   saveProjectsToDisk();
   logger.info(
     { count: projects.size, file: PROJECTS_FILE },
-    "[projects] initialized from seeds",
+    "[projects] initialized empty store",
   );
 }
 

@@ -9,7 +9,9 @@ import {
   macApplicationPath,
   MAC_INSTALL_SCRIPT,
   verifyMacBundle,
+  prepareMacInstallation,
 } from "./mac-desktop-update.js";
+import { hashFile, type DesktopManifest } from "./desktop-update-format.js";
 const run = promisify(execFile);
 let root: string;
 beforeEach(async () => {
@@ -23,6 +25,70 @@ afterEach(async () => {
 describe.skipIf(process.platform !== "darwin")(
   "macOS bundle architecture",
   () => {
+    it("prepares a verified full ZIP without mounting a DMG or replacing the running bundle", async () => {
+      const arch = process.arch as "arm64" | "x64";
+      const target = path.join(root, "installed", "Synax.app");
+      const source = path.join(root, "release", "Synax.app");
+      const code = path.join(root, "fixture.c");
+      await fs.writeFile(code, "int main(void) { return 0; }\n");
+      for (const [bundle, version] of [
+        [target, "0.1.2"],
+        [source, "0.2.0"],
+      ]) {
+        await fs.mkdir(path.join(bundle, "Contents/MacOS"), {
+          recursive: true,
+        });
+        await fs.writeFile(
+          path.join(bundle, "Contents/Info.plist"),
+          `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.Synax.desktop</string><key>CFBundleShortVersionString</key><string>${version}</string><key>CFBundleExecutable</key><string>Synax</string></dict></plist>`,
+        );
+        await run("/usr/bin/xcrun", [
+          "clang",
+          code,
+          "-o",
+          path.join(bundle, "Contents/MacOS/Synax"),
+        ]);
+      }
+      const directory = path.join(root, "cache");
+      await fs.mkdir(directory);
+      const name = `Synax-0.2.0-darwin-${arch}.zip`;
+      const zip = path.join(directory, name);
+      await run("zip", ["-r", "-y", zip, "Synax.app"], {
+        cwd: path.dirname(source),
+      });
+      const manifest: DesktopManifest = {
+        format: 1,
+        version: "0.2.0",
+        platform: "darwin",
+        arch,
+        artifact: {
+          name: `Synax-0.2.0-darwin-${arch}.dmg`,
+          size: 1,
+          sha256: "a".repeat(64),
+        },
+        updateArchive: {
+          name,
+          size: (await fs.stat(zip)).size,
+          sha256: await hashFile(zip),
+        },
+      };
+      const prepared = await prepareMacInstallation(
+        zip,
+        manifest,
+        path.join(target, "Contents/MacOS/Synax"),
+        directory,
+      );
+      expect(
+        await fs.readFile(
+          path.join(prepared.workspace, "next.app/Contents/Info.plist"),
+          "utf8",
+        ),
+      ).toContain("0.2.0");
+      expect(
+        await fs.readFile(path.join(target, "Contents/Info.plist"), "utf8"),
+      ).toContain("0.1.2");
+      expect(await fs.readdir(directory)).toEqual([name]);
+    }, 30_000);
     it.each(["x64", "arm64"])(
       "accepts a %s Mach-O bundle and rejects the other architecture",
       async (arch) => {

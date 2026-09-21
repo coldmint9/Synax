@@ -389,6 +389,54 @@ describe("agentLoopRuntime", () => {
     fs.writeFileSync(API_SESSION_LOG_FILE, "", "utf8");
   });
 
+  it("captures native input and reply boundaries and restores the exact earlier turn", async () => {
+    const { listCheckpoints } = await import("../checkpoints/store.js");
+    const { applyHistory } = await import("../checkpoints/operations.js");
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "synax-native-history-"),
+    );
+    try {
+      const session = agentSessionRuntime.create({
+        ...executorInput,
+        workDir: directory,
+      });
+      queueMockStep(makeTextStep("First answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, { message: "First question" }),
+      );
+      const checkpoint = listCheckpoints(session.id).find(
+        (c) => c.kind === "reply",
+      )!;
+      expect(checkpoint.payload.error).toBeUndefined();
+      queueMockStep(makeTextStep("Second answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, { message: "Second question" }),
+      );
+      expect(listCheckpoints(session.id).map((c) => c.kind)).toEqual([
+        "input",
+        "reply",
+        "input",
+        "reply",
+      ]);
+      await applyHistory(session.id, {
+        action: "rollback",
+        checkpointId: checkpoint.id,
+        revision: 0,
+        requestId: "native-rollback",
+      });
+      const text = agentRuntimeStore
+        .listMessages(session.id)
+        .map((m) => m.content)
+        .join("\n");
+      expect(text).toContain("First question");
+      expect(text).toContain("First answer.");
+      expect(text).not.toContain("Second question");
+      expect(text).not.toContain("Second answer.");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("completes a media-only response and persists its attachment for the timeline", async () => {
     const { createAsset, readAsset } = await import("../media-assets.js");
     const session = agentSessionRuntime.create({
@@ -1491,7 +1539,13 @@ describe("agentLoopRuntime", () => {
         toolCallId: "blocked-chat",
         args: {
           title: "Blocked: execution needs input",
-          questions: [{ id: "unblock", type: "text", label: "Provide the missing execution detail" }],
+          questions: [
+            {
+              id: "unblock",
+              type: "text",
+              label: "Provide the missing execution detail",
+            },
+          ],
         },
       }),
     );
@@ -1791,28 +1845,66 @@ describe("chat turn boundaries", () => {
 
   it("ends with an honest partial summary after a failed check, without accepting pending TODOs or resuming an old goal", async () => {
     const session = agentSessionRuntime.create({
-      ...executorInput, profileId: "synax", permissionTier: "unrestricted",
+      ...executorInput,
+      profileId: "synax",
+      permissionTier: "unrestricted",
       sessionMetadata: { mode: "chat" },
     });
     agentRuntimeStore.updateSessionMetadata(session.id, {
-      goal: { objective: "Historical goal", status: "blocked", reason: "Historical blocker" },
+      goal: {
+        objective: "Historical goal",
+        status: "blocked",
+        reason: "Historical blocker",
+      },
     });
-    queueMockStep(makeToolStep({ toolName: "task_create", toolCallId: "pending",
-      args: { subject: "Remaining implementation", description: "Not yet done" } }));
-    queueMockStep(makeToolStep({ toolName: "bash", toolCallId: "failed-check",
-      args: { command: 'node -e "process.exit(1)"' } }));
-    queueMockStep(makeTextStep("Partial result. The check failed; implementation remains incomplete."));
-    const chunks = await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Investigate and report the result." }));
-    expect(chunks.some(c => c.type === "run_completed")).toBe(true);
+    queueMockStep(
+      makeToolStep({
+        toolName: "task_create",
+        toolCallId: "pending",
+        args: {
+          subject: "Remaining implementation",
+          description: "Not yet done",
+        },
+      }),
+    );
+    queueMockStep(
+      makeToolStep({
+        toolName: "bash",
+        toolCallId: "failed-check",
+        args: { command: 'node -e "process.exit(1)"' },
+      }),
+    );
+    queueMockStep(
+      makeTextStep(
+        "Partial result. The check failed; implementation remains incomplete.",
+      ),
+    );
+    const chunks = await collectChunks(
+      agentLoopRuntime.streamRun(session.id, {
+        message: "Investigate and report the result.",
+      }),
+    );
+    expect(chunks.some((c) => c.type === "run_completed")).toBe(true);
     expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
-      status: "completed", resultSummary: "Partial result. The check failed; implementation remains incomplete.",
+      status: "completed",
+      resultSummary:
+        "Partial result. The check failed; implementation remains incomplete.",
       sessionMetadata: { mode: "chat", goal: { status: "blocked" } },
     });
     expect(workStore.current(session.id)?.status).toBe("active");
-    expect(agentRuntimeStore.listToolCalls(session.id).map(c => c.toolId)).toEqual(["task.create", "bash"]);
-    expect(goalContinuationInput(session.id, agentRuntimeStore.listRuns(session.id)[0].id)).toBeNull();
+    expect(
+      agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
+    ).toEqual(["task.create", "bash"]);
+    expect(
+      goalContinuationInput(
+        session.id,
+        agentRuntimeStore.listRuns(session.id)[0].id,
+      ),
+    ).toBeNull();
     for (const request of capturedRequests) {
-      expect(request.tools).not.toEqual(expect.arrayContaining(["work_checkpoint"]));
+      expect(request.tools).not.toEqual(
+        expect.arrayContaining(["work_checkpoint"]),
+      );
       expect(request.tools).not.toContain("goal_finish");
       expect(request.tools).not.toContain("verification_run");
     }

@@ -30,20 +30,24 @@ describe("ComposerPermissionPicker", () => {
     const view = render(
       <ComposerPermissionPicker value="boundary" onChange={onChange} />,
     );
-    const select = screen.getByRole("combobox");
-    expect(select.closest("label")).toHaveAttribute("data-tier", "boundary");
+    const select = screen.getByRole("button", { name: "审批模式" });
+    expect(select).toHaveAttribute("data-tier", "boundary");
+    await userEvent.click(select);
     expect(
       screen
         .getAllByRole("option")
-        .map((option) => option.getAttribute("value")),
+        .map((option) => option.getAttribute("data-key")),
     ).toEqual(["boundary", "auto", "unrestricted"]);
-    expect(select.closest("label")?.title).toContain("下一步生效");
-    await userEvent.selectOptions(select, "auto");
+    expect(select.title).toContain("下一步生效");
+    await userEvent.click(screen.getByRole("option", { name: /^自动审批/ }));
     expect(onChange).toHaveBeenCalledWith("auto");
     view.rerender(
       <ComposerPermissionPicker value="auto" onChange={onChange} />,
     );
-    expect(screen.getByRole("combobox")).toHaveValue("auto");
+    expect(screen.getByRole("button", { name: "审批模式" })).toHaveAttribute(
+      "data-tier",
+      "auto",
+    );
   });
 
   it("does not claim a mode switch succeeded when the server rejects it", async () => {
@@ -51,12 +55,16 @@ describe("ComposerPermissionPicker", () => {
       .fn()
       .mockRejectedValue(new Error("Permission update failed"));
     render(<ComposerPermissionPicker value="boundary" onChange={onChange} />);
-    await userEvent.selectOptions(screen.getByRole("combobox"), "unrestricted");
+    await userEvent.click(screen.getByRole("button", { name: "审批模式" }));
+    await userEvent.click(screen.getByRole("option", { name: /^无限制/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Permission update failed",
     );
-    expect(screen.getByRole("combobox")).toHaveValue("boundary");
-    expect(screen.getByRole("combobox")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "审批模式" })).toHaveAttribute(
+      "data-tier",
+      "boundary",
+    );
+    expect(screen.getByRole("button", { name: "审批模式" })).toBeEnabled();
   });
 });
 

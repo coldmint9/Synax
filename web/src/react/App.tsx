@@ -10,6 +10,8 @@ import ProjectSettingsPage from "./features/settings/ProjectSettingsPage";
 import { useElectronMenu } from "../lib/electron-menu";
 import { useWikiStore } from "./state/wikiStore";
 import { useTabKeyBehavior } from "../hooks/useTabKeyBehavior";
+import { DesktopUpdateProvider } from "./features/updates/DesktopUpdateProvider";
+import { DesktopUpdatePanel } from "./features/updates/DesktopUpdateStatus";
 
 export default function App() {
   useTabKeyBehavior();
@@ -31,8 +33,9 @@ export default function App() {
   const draftPreviewActive = useWikiStore((s) => s.draftPreviewActive);
 
   return (
-    <>
+    <DesktopUpdateProvider>
       <GlobalSessionSearch />
+      <DesktopUpdatePanel />
       <div className="app-viewport flex flex-col overflow-hidden bg-background text-foreground">
         <div className="min-h-0 flex-1">
           <Routes>
@@ -81,6 +84,6 @@ export default function App() {
           aria-hidden="true"
         />
       </div>
-    </>
+    </DesktopUpdateProvider>
   );
 }

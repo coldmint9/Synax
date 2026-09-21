@@ -5,8 +5,10 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import {
   verifyDesktopArtifact,
+  desktopUpdateArtifact,
   type DesktopManifest,
 } from "./desktop-update-feed.js";
+import { validateMacUpdateArchive } from "./mac-update-archive.js";
 
 const run = promisify(execFile);
 
@@ -140,14 +142,14 @@ export interface MacInstallation {
 }
 
 export async function prepareMacInstallation(
-  dmg: string,
+  archive: string,
   manifest: DesktopManifest,
   executable: string,
   directory: string,
 ): Promise<MacInstallation> {
   if (
     manifest.platform !== "darwin" ||
-    !(await verifyDesktopArtifact(dmg, manifest.artifact))
+    !(await verifyDesktopArtifact(archive, desktopUpdateArtifact(manifest)))
   )
     throw new Error("Desktop update checksum mismatch");
   const target = await checkMacInstallLocation(executable);
@@ -157,21 +159,32 @@ export async function prepareMacInstallation(
   const mount = await fs.mkdtemp(path.join(directory, "mount-"));
   let mounted = false;
   try {
-    await run(
-      "/usr/bin/hdiutil",
-      [
-        "attach",
-        "-readonly",
-        "-nobrowse",
-        "-noautoopen",
-        "-mountpoint",
-        mount,
-        dmg,
-      ],
-      { timeout: 120_000 },
-    );
-    mounted = true;
+    if (manifest.updateArchive) {
+      await validateMacUpdateArchive(archive);
+      await run("/usr/bin/ditto", ["-x", "-k", archive, mount], {
+        timeout: 10 * 60_000,
+      });
+    } else {
+      await run(
+        "/usr/bin/hdiutil",
+        [
+          "attach",
+          "-readonly",
+          "-nobrowse",
+          "-noautoopen",
+          "-mountpoint",
+          mount,
+          archive,
+        ],
+        { timeout: 120_000 },
+      );
+      mounted = true;
+    }
     const source = path.join(mount, "Synax.app");
+    if (!(await fs.lstat(source)).isDirectory())
+      throw new Error(
+        "Update archive does not contain an application directory",
+      );
     await verifyMacBundle(source, target, manifest.version, manifest.arch);
     await run("/usr/bin/ditto", [source, path.join(workspace, "next.app")], {
       timeout: 10 * 60_000,
@@ -195,7 +208,9 @@ export async function prepareMacInstallation(
         console.error("[desktop-update] detach failed", error),
       );
     // Do not recursively remove a mount point if detach failed.
-    await fs.rmdir(mount).catch(() => {});
+    if (manifest.updateArchive)
+      await fs.rm(mount, { recursive: true, force: true });
+    else await fs.rmdir(mount).catch(() => {});
   }
 }
 

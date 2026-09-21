@@ -1100,6 +1100,11 @@
     width: max-content;
     max-width: calc(100% - 2 * var(--island-center-offset) - 24px);
   }
+  /* No project means no sidebar to compensate for. Keep macOS titlebar
+     positioning and the project/conversation/viewer layouts unchanged. */
+  .workbench-shell[data-has-project="false"] .workbench-header {
+    --island-center-offset: 0px;
+  }
   /* Settings has no session sidebar. Match the Work island's viewport
      position without inheriting its horizontal content-column offset. */
   .workbench-shell[data-active-panel="settings"] .workbench-header {

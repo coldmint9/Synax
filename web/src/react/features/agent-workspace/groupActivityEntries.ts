@@ -35,6 +35,22 @@ export function groupActivityEntries(
         pending.turn.status = entry.turn.status;
       } else {
         flush();
+        const previous = result[result.length - 1];
+        const messageId = "messageId" in block ? block.messageId : undefined;
+        const previousBlock =
+          previous?.kind === "agent"
+            ? previous.turn.blocks[previous.turn.blocks.length - 1]
+            : undefined;
+        if (
+          messageId &&
+          previous?.kind === "agent" &&
+          previousBlock &&
+          "messageId" in previousBlock &&
+          previousBlock.messageId === messageId
+        ) {
+          previous.turn.blocks.push(block);
+          return;
+        }
         result.push({
           ...entry,
           id: `${entry.id}:content:${index}`,

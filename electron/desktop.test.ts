@@ -294,6 +294,40 @@ describe("desktop platform contract", () => {
       "notifications:show",
       expect.objectContaining(target),
     );
+    await api.getUpdateNetworkSettings();
+    expect(ipc.invoke).toHaveBeenCalledWith("updates:get-network");
+    const updateSettings = {
+      mode: "custom",
+      customProxyUrl: "https://proxy.example/",
+    };
+    await api.setUpdateNetworkSettings(updateSettings);
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "updates:set-network",
+      updateSettings,
+    );
+    await api.getDesktopUpdateState();
+    await api.checkDesktopUpdate();
+    await api.installDesktopUpdate();
+    expect(ipc.invoke).toHaveBeenCalledWith("updates:state");
+    expect(ipc.invoke).toHaveBeenCalledWith("updates:check");
+    expect(ipc.invoke).toHaveBeenCalledWith("updates:install");
+    const progress = vi.fn();
+    const show = vi.fn();
+    const offProgress = api.onDesktopUpdateState(progress);
+    const offShow = api.onDesktopUpdateShow(show);
+    const state = { phase: "downloading", progress: 0.5 };
+    ipc.emit("updates:state", {}, state);
+    ipc.emit("updates:show", {});
+    expect(progress).toHaveBeenCalledExactlyOnceWith(state);
+    expect(show).toHaveBeenCalledOnce();
+    offProgress();
+    offShow();
+    ipc.emit("updates:state", {}, state);
+    ipc.emit("updates:show", {});
+    expect(progress).toHaveBeenCalledOnce();
+    expect(show).toHaveBeenCalledOnce();
+    expect(ipc.listenerCount("updates:state")).toBe(0);
+    expect(ipc.listenerCount("updates:show")).toBe(0);
     off();
     expect(ipc.listenerCount("notifications:open-session")).toBe(0);
     expect(ipc.send).toHaveBeenLastCalledWith(

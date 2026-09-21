@@ -246,6 +246,7 @@ export default function WorkbenchLayout() {
         <div
           className="workbench-shell"
           data-chrome-mode={chromeMode}
+          data-has-project={!!effectiveProjectId}
           data-active-panel={activePanel ?? undefined}
         >
           <WorkbenchHeader

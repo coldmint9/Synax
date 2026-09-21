@@ -398,3 +398,78 @@ describe('project workspace references API', () => {
     expect(await workspace()).toEqual(roots);
   });
 });
+
+describe("project store initialization", () => {
+  async function reload() {
+    vi.resetModules();
+    ({ projectRoutes: routes } = await import("./projects.js"));
+    const response = await routes.request("/");
+    return (await response.json()) as { items: ProjectRecord[]; total: number };
+  }
+
+  it("starts empty without a data file and remains empty after restart", async () => {
+    fs.unlinkSync(projectsFile);
+    expect((await reload()).items).toEqual([]);
+    expect(diskProjects()).toEqual([]);
+    expect((await reload()).items).toEqual([]);
+  });
+
+  it("removes persisted default examples without removing real projects", async () => {
+    const examples: ProjectRecord[] = [
+      {
+        ...project("rumbling-core"),
+        name: "Rumbling Core",
+        status: "at_risk",
+        environment: "staging",
+        healthScore: 72,
+        activeAgents: 4,
+        activeHumans: 2,
+        openRisks: 2,
+        updatedAt: "just now",
+        createdBy: "alice",
+      },
+      {
+        ...project("growth-ops"),
+        name: "Growth Ops",
+        environment: "production",
+        healthScore: 89,
+        activeAgents: 3,
+        activeHumans: 1,
+        updatedAt: "12m ago",
+        createdBy: "alice",
+      },
+      {
+        ...project("mobile-revamp"),
+        name: "Mobile Revamp",
+        status: "blocked",
+        healthScore: 54,
+        activeAgents: 2,
+        activeHumans: 2,
+        openRisks: 3,
+        updatedAt: "8m ago",
+        createdBy: "alice",
+      },
+    ];
+    const desktop = { ...project("desktop", mainPath), name: "Desktop" };
+    fs.writeFileSync(
+      projectsFile,
+      JSON.stringify({ items: [...examples, desktop] }),
+    );
+    expect((await reload()).items).toEqual([desktop]);
+    expect(diskProjects()).toEqual([desktop]);
+    expect((await reload()).items).toEqual([desktop]);
+
+    // Identical names/IDs do not justify deleting imported or customized projects.
+    const realProjects = [
+      {
+        ...examples[0],
+        source: { kind: "localPath" as const, localPath: mainPath },
+      },
+      { ...examples[1], name: "My growth project" },
+      { ...examples[2], references: [{ id: "ref", name: "Code", localPath }] },
+    ];
+    fs.writeFileSync(projectsFile, JSON.stringify({ items: realProjects }));
+    expect((await reload()).items).toHaveLength(3);
+    expect(diskProjects()).toEqual(realProjects);
+  });
+});

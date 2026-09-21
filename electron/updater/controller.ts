@@ -8,6 +8,7 @@ import {
   findDesktopRelease,
   verifyDesktopArtifact,
   hashFile,
+  desktopUpdateArtifact,
   type DesktopRelease,
   type DesktopPlatform,
   type DesktopArch,
@@ -21,7 +22,14 @@ import type {
   UpdaterRequest,
   UpdaterState,
   UpdateHistory,
+  DesktopTransfer,
 } from "./contract.js";
+import {
+  cacheDesktopRelease,
+  desktopReleaseDirectory,
+  findCachedDesktopRelease,
+  forgetCachedDesktopRelease,
+} from "../lib/desktop-update-cache.js";
 
 const run = promisify(execFile);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -55,7 +63,12 @@ export async function installDesktop(
   status: (message: string) => void,
   quitHost: () => Promise<void> = async () => {},
 ): Promise<void> {
-  if (!(await verifyDesktopArtifact(file, release.manifest.artifact)))
+  if (
+    !(await verifyDesktopArtifact(
+      file,
+      desktopUpdateArtifact(release.manifest),
+    ))
+  )
     throw new Error("安装包校验失败，请重新下载。");
   const root = path.dirname(directory);
   let marker: string;
@@ -197,7 +210,52 @@ export class UpdaterController {
     } catch {
       /* First run or a damaged history must not prevent updating. */
     }
+    if (!(await this.restoreCache()))
+      this.update({
+        phase: "idle",
+        availableVersion: null,
+        size: 0,
+        progress: 0,
+        message: "准备检查更新",
+      });
     this.changed(this.snapshot());
+  }
+  private ready(
+    release: DesktopRelease,
+    file: string,
+    transfer?: DesktopTransfer,
+  ): void {
+    this.release = release;
+    this.file = file;
+    this.update({
+      phase: "ready",
+      availableVersion: release.manifest.version,
+      size: desktopUpdateArtifact(release.manifest).size,
+      progress: 1,
+      notes: release.notes || "此版本包含 Synax 内核、后台服务和界面更新。",
+      message: "安装包已缓存并校验，可以安装",
+      transfer,
+    });
+  }
+  private async restoreCache(): Promise<boolean> {
+    const cached = await findCachedDesktopRelease(
+      this.directory,
+      this.state.currentVersion,
+      process.platform,
+      process.arch,
+      this.dependencies.verify,
+      (release) =>
+        this.update({
+          phase: "verifying",
+          availableVersion: release.manifest.version,
+          size: desktopUpdateArtifact(release.manifest).size,
+          progress: 1,
+          message: "正在校验缓存安装包…",
+        }),
+    );
+    if (!cached) return false;
+    this.ready(cached.release, cached.file);
+    return true;
   }
   private async record(outcome: UpdateHistory["outcome"]): Promise<void> {
     const entries = [
@@ -237,6 +295,19 @@ export class UpdaterController {
         phase: "checking",
         message: "正在检查可用版本…",
         progress: 0,
+        transfer: undefined,
+        availableVersion: null,
+        size: 0,
+      });
+      if (await this.restoreCache()) return;
+      this.release = null;
+      this.file = null;
+      this.update({
+        phase: "checking",
+        availableVersion: null,
+        size: 0,
+        progress: 0,
+        message: "正在检查可用版本…",
       });
       this.release = await this.dependencies.find(
         this.state.currentVersion,
@@ -255,20 +326,28 @@ export class UpdaterController {
         return;
       }
       const { manifest } = this.release;
-      const directory = path.join(
-        this.directory,
-        `${manifest.version}-${manifest.platform}-${manifest.arch}`,
-      );
-      const candidate = path.join(directory, manifest.artifact.name);
-      if (await this.dependencies.verify(candidate, manifest.artifact))
-        this.file = candidate;
+      const artifact = desktopUpdateArtifact(manifest);
+      const directory = desktopReleaseDirectory(this.directory, manifest);
+      const candidate = path.join(directory, artifact.name);
       this.update({
-        phase: this.file ? "ready" : "available",
+        phase: "verifying",
         availableVersion: manifest.version,
-        size: manifest.artifact.size,
+        size: artifact.size,
+        message: "正在检查缓存安装包…",
+      });
+      if (await this.dependencies.verify(candidate, artifact)) {
+        await cacheDesktopRelease(this.directory, this.release);
+        this.ready(this.release, candidate);
+        return;
+      }
+      this.update({
+        phase: "available",
+        availableVersion: manifest.version,
+        size: artifact.size,
         notes:
           this.release.notes || "此版本包含 Synax 内核、后台服务和界面更新。",
-        message: this.file ? "安装包已校验，可以安装" : "发现可用的新版本",
+        progress: 0,
+        message: "发现可用的新版本",
       });
     });
   }
@@ -285,27 +364,58 @@ export class UpdaterController {
       const { manifest } = this.release!;
       this.update({
         phase: "downloading",
-        message: "正在下载并校验安装包…",
+        message: "正在下载安装包…",
         progress: 0,
+        transfer: undefined,
       });
-      this.file = await this.dependencies.download(
+      const file = await this.dependencies.download(
         this.release!,
-        path.join(
-          this.directory,
-          `${manifest.version}-${manifest.platform}-${manifest.arch}`,
-        ),
+        desktopReleaseDirectory(this.directory, manifest),
         (progress) => this.update({ progress }),
+        () => this.update({ phase: "verifying", message: "正在校验安装包…" }),
+        {
+          currentVersion: this.state.currentVersion,
+          onTransfer: (transfer) =>
+            this.update({
+              phase: "downloading",
+              transfer,
+              progress: transfer.downloadSize
+                ? transfer.downloadedBytes / transfer.downloadSize
+                : 0,
+              message:
+                transfer.mode === "differential"
+                  ? "正在差分下载安装包…"
+                  : "正在下载完整安装包…",
+            }),
+        },
       );
       this.update({
-        phase: "ready",
+        phase: "verifying",
         progress: 1,
-        message: "下载完成，安装包已校验",
+        message: "正在校验安装包…",
       });
+      if (
+        !(await this.dependencies.verify(file, desktopUpdateArtifact(manifest)))
+      )
+        throw new Error("安装包校验失败，请重新下载。");
+      await cacheDesktopRelease(this.directory, this.release!);
+      this.ready(this.release!, file, this.state.transfer);
     });
   }
   async install(): Promise<void> {
     if (!this.release || !this.file || this.state.phase !== "ready") return;
     await this.operation(async () => {
+      this.update({ phase: "verifying", message: "正在校验安装包…" });
+      if (
+        !(await this.dependencies.verify(
+          this.file!,
+          desktopUpdateArtifact(this.release!.manifest),
+        ))
+      ) {
+        this.file = null;
+        await forgetCachedDesktopRelease(this.directory, this.release!);
+        throw new Error("安装包校验失败，请重新下载。");
+      }
       this.update({ phase: "installing", message: "正在准备安装…" });
       try {
         await this.dependencies.install(

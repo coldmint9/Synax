@@ -15,7 +15,6 @@ export function AgentCommandRail({
   focus,
   insetLeft,
   insetRight,
-  showFileSummary = true,
   hidden = false,
 }: {
   sessionId: string;
@@ -24,7 +23,6 @@ export function AgentCommandRail({
   focus: boolean;
   insetLeft: number;
   insetRight: number;
-  showFileSummary?: boolean;
   hidden?: boolean;
 }) {
   const session = useAgentSessionStore((state) =>
@@ -105,12 +103,10 @@ export function AgentCommandRail({
             projectId={projectId}
             layout="focusRail"
             statusSlot={
-              showFileSummary ? (
-                <SessionFileChangeIsland
-                  sessionId={session.id}
-                  isRunning={session.status === "running"}
-                />
-              ) : undefined
+              <SessionFileChangeIsland
+                sessionId={session.id}
+                isRunning={session.status === "running"}
+              />
             }
           />
         ) : null}

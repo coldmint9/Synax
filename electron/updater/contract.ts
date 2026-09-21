@@ -12,6 +12,7 @@ export type UpdatePhase =
   | "current"
   | "available"
   | "downloading"
+  | "verifying"
   | "ready"
   | "installing"
   | "complete"
@@ -34,4 +35,13 @@ export interface UpdaterState {
   notes: string;
   message: string;
   history: UpdateHistory[];
+  transfer?: DesktopTransfer;
+}
+
+export interface DesktopTransfer {
+  mode: "full" | "differential";
+  downloadedBytes: number;
+  downloadSize: number;
+  reusedBytes: number;
+  fallback?: boolean;
 }

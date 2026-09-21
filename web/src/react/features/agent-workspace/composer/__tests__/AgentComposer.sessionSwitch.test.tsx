@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -34,7 +35,9 @@ describe("real composer session switching", () => {
   it("retains the real textarea, focus, and approval control nodes", () => {
     const view = render(<AgentComposer {...props} />);
     const input = screen.getByRole("textbox");
-    const approval = screen.getByRole("combobox");
+    const approval = screen.getByRole("button", {
+      name: /审批模式|Approval mode/,
+    });
     input.focus();
     view.rerender(
       <AgentComposer
@@ -47,8 +50,10 @@ describe("real composer session switching", () => {
     expect(screen.getByRole("textbox")).toBe(input);
     expect(input).toHaveFocus();
     expect(input).toHaveValue("Draft B\nSecond line");
-    expect(screen.getByRole("combobox")).toBe(approval);
-    expect(approval).toHaveValue("unrestricted");
+    expect(screen.getByRole("button", { name: /审批模式|Approval mode/ })).toBe(
+      approval,
+    );
+    expect(approval).toHaveAttribute("data-tier", "unrestricted");
   });
 
   it("does not let a late approval error from A disable or display in B", async () => {
@@ -62,11 +67,17 @@ describe("real composer session switching", () => {
     const view = render(
       <AgentComposer {...props} onPermissionTierChange={pending} />,
     );
-    const approval = screen.getByRole("combobox");
-    fireEvent.change(approval, { target: { value: "auto" } });
+    const approval = screen.getByRole("button", {
+      name: /审批模式|Approval mode/,
+    });
+    const user = userEvent.setup();
+    await user.click(approval);
+    await user.click(screen.getByRole("option", { name: /自动审批|Auto/ }));
     expect(approval).toBeDisabled();
     view.rerender(<AgentComposer {...props} sessionId="b" content="B" />);
-    expect(screen.getByRole("combobox")).toBe(approval);
+    expect(screen.getByRole("button", { name: /审批模式|Approval mode/ })).toBe(
+      approval,
+    );
     expect(approval).not.toBeDisabled();
     await act(async () => rejectA(new Error("A failed")));
     expect(approval).not.toBeDisabled();

@@ -65,7 +65,10 @@ import {
   snapshotStreamingBuffers,
   type StreamingLiveBuffers,
 } from "../streamingLiveBlocks";
-import { clearSessionLastVisit, loadSessionLastVisit } from "../sessionLastVisit";
+import {
+  clearSessionLastVisit,
+  loadSessionLastVisit,
+} from "../sessionLastVisit";
 
 // Only a missing session itself is terminal, not a missing nested resource,
 // unsupported endpoint, permission failure, or transient network error.
@@ -494,6 +497,7 @@ export interface AgentSessionStoreState {
   refreshSessions: (options?: { joinPending?: boolean }) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
   resetSessionDetailForDraft: () => void;
+  resetConversationHistory: (sessionId: string) => void;
   submitSessionDraft: (
     projectId: string,
     body: SessionInputBody,
@@ -909,7 +913,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         permissions: [],
         sessionStats: null,
         sessionTodos: [],
-            sessionInvocationUsage: null,
+        sessionInvocationUsage: null,
         streamingRetry: null,
         streamingStepId: null,
         streamingLive: EMPTY_STREAMING_BUFFERS,
@@ -1025,6 +1029,40 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             get().sessions.filter((session) => deleted.has(session.id)).length,
         ),
       });
+    },
+
+    resetConversationHistory: (sessionId) => {
+      ++detailRefreshEpoch;
+      activeDetailRefresh = null;
+      activeTranscriptRefresh = null;
+      const selected = get().selectedSessionId === sessionId;
+      if (selected) {
+        releaseSessionLiveSubscription();
+        clearStreamingBuffers();
+      }
+      set((state) => {
+        const cache = { ...state.sessionDetailCache };
+        delete cache[sessionId];
+        const childSessions = { ...state.childSessions };
+        delete childSessions[sessionId];
+        return {
+          sessionDetailCache: cache,
+          childSessions,
+          inputQueues: { ...state.inputQueues, [sessionId]: [] },
+          ...(selected
+            ? {
+                ...emptyDetailPayload(),
+                streamingRetry: null,
+                streamingStepId: null,
+                streamingLive: EMPTY_STREAMING_BUFFERS,
+                streamingCompletedSteps: [],
+                interactionState: null,
+              }
+            : {}),
+        };
+      });
+      if (selected) ensureLiveStream(sessionId);
+      void get().refreshDetail();
     },
 
     openPanel: (sessionId) => {

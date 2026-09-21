@@ -1,3 +1,4 @@
+import { assertHistoryUnlocked } from "./checkpoints/guards.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
 import { normalizeSessionPromptMetadata } from "./session-metadata.js";
 import {
@@ -132,7 +133,8 @@ export class AgentSessionRuntime {
     const requestedLocation =
       (input.sessionMetadata?.workspaceLocation as
         | WorkspaceLocation
-        | undefined) ?? (input.workDir ? undefined : parentBackend?.workspaceLocation);
+        | undefined) ??
+      (input.workDir ? undefined : parentBackend?.workspaceLocation);
     if (requestedLocation) backend.workspaceLocation = requestedLocation;
     if (parentBackend?.workspaceRoots) {
       backend.workspaceRoots = parentBackend.workspaceRoots.map((root) => ({
@@ -351,6 +353,7 @@ export class AgentSessionRuntime {
   }
 
   delete(sessionId: string): string[] {
+    assertHistoryUnlocked(sessionId);
     void sessionHooks.emit({ type: "session:deleted", sessionId });
     return this.store.deleteSessionTree(sessionId);
   }

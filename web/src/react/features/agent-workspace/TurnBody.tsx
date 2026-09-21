@@ -1,3 +1,5 @@
+import { MessageActionToolbar } from "./MessageActionToolbar";
+import { useSessionHistory } from "./SessionHistoryContext";
 import { Zap } from "lucide-react";
 import { MediaParts } from "../media/MediaParts";
 import type {
@@ -131,8 +133,18 @@ export function TurnBody({
   isStreaming?: boolean;
   isWorking?: boolean;
 }) {
+  const history = useSessionHistory();
+  const textBlocks = turn.blocks.filter((block) => block.type === "text");
+  const messageId =
+    textBlocks[textBlocks.length - 1]?.messageId ??
+    turn.blocks.find((block) => block.type === "media")?.messageId;
+  const checkpoint = history?.checkpoint(messageId, turn.stepId);
+  const text = textBlocks.map((block) => block.content).join("\n\n");
+  const hasAnswer = Boolean(
+    text || turn.blocks.some((block) => block.type === "media"),
+  );
   return (
-    <div className="session-turn-content flex min-w-0 flex-1 flex-col gap-1">
+    <div className="session-turn-content message-action-group flex min-w-0 flex-1 flex-col gap-1">
       {isStreaming && turn.blocks.length === 0 ? (
         <ThinkingIndicator />
       ) : (
@@ -143,6 +155,29 @@ export function TurnBody({
           isStreaming,
           isWorking,
         )
+      )}
+      {hasAnswer && (
+        <MessageActionToolbar
+          role="assistant"
+          text={text}
+          disabledReason={history?.reason || checkpoint?.reason || undefined}
+          rollbackDisabled={checkpoint ? !checkpoint.hasLaterHistory : false}
+          busy={history?.busy || isStreaming || isWorking}
+          onFork={
+            checkpoint?.available
+              ? () => {
+                  void history?.request("fork", checkpoint);
+                }
+              : undefined
+          }
+          onRollback={
+            checkpoint?.available
+              ? () => {
+                  void history?.request("rollback", checkpoint);
+                }
+              : undefined
+          }
+        />
       )}
     </div>
   );
