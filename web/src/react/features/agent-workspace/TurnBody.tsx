@@ -1,5 +1,10 @@
-import { InteractivePrototypeCard } from "../artifacts/InteractivePrototypeCard";
-import type { InteractivePrototypeReference } from "./artifactTranscript";
+import { lazy, Suspense } from "react";
+const InlineVisualization = lazy(() =>
+  import("../visualizations/InlineVisualization").then((module) => ({
+    default: module.InlineVisualization,
+  })),
+);
+import type { InlineVisualizationReference } from "./visualizationTranscript";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 import { Zap } from "lucide-react";
@@ -15,12 +20,22 @@ import { SubSessionCard } from "./SubSessionCard";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import { buildTurnRenderSegments } from "./toolCallUtils";
 
-function TranscriptPrototype({
+function TranscriptVisualization({
   reference,
 }: {
-  reference: InteractivePrototypeReference;
+  reference: InlineVisualizationReference;
 }) {
-  return <InteractivePrototypeCard prototype={reference} />;
+  return (
+    <Suspense
+      fallback={
+        <div className="text-xs text-muted-foreground" role="status">
+          正在加载预览…
+        </div>
+      }
+    >
+      <InlineVisualization visualization={reference} />
+    </Suspense>
+  );
 }
 function sourceLabel(url: string): string {
   try {
@@ -50,9 +65,9 @@ function renderTurnBlocks(
       (toolBlocks.length === 0 || segment.type !== "thinking"),
   );
   const render = (segment: (typeof segments)[number], i: number) => {
-    if (segment.type === "prototype")
+    if (segment.type === "visualization")
       return (
-        <TranscriptPrototype
+        <TranscriptVisualization
           key={segment.reference.id}
           reference={segment.reference}
         />
@@ -153,11 +168,16 @@ export function TurnBody({
   const textBlocks = turn.blocks.filter((block) => block.type === "text");
   const messageId =
     textBlocks[textBlocks.length - 1]?.messageId ??
-    turn.blocks.find((block) => block.type === "media")?.messageId;
+    turn.blocks.find(
+      (block) => block.type === "media" || block.type === "visualization",
+    )?.messageId;
   const checkpoint = history?.checkpoint(messageId, turn.stepId);
   const text = textBlocks.map((block) => block.content).join("\n\n");
   const hasAnswer = Boolean(
-    text || turn.blocks.some((block) => block.type === "media"),
+    text ||
+    turn.blocks.some(
+      (block) => block.type === "media" || block.type === "visualization",
+    ),
   );
   return (
     <div className="session-turn-content message-action-group flex min-w-0 flex-1 flex-col gap-1">

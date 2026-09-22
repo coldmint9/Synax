@@ -31,11 +31,6 @@ import {
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 import { UiUpdates } from "./lib/ui-updates.js";
 import { DesktopUpdates } from "./lib/desktop-updates.js";
-import { ArtifactPreviewManager } from "./lib/artifact-preview/manager.js";
-import {
-  ARTIFACT_SCHEME,
-  isTrustedHostURL,
-} from "./lib/artifact-preview/policy.js";
 import { configureUpdateNetwork } from "./lib/update-network.js";
 import { UpdateSettingsStore } from "./lib/update-settings-store.js";
 
@@ -44,15 +39,6 @@ const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
-const artifactPreviews = new ArtifactPreviewManager(
-  path.join(__dirname, "artifact-preload.js"),
-  () => mainWindow,
-  (url) =>
-    isTrustedHostURL(
-      url,
-      isDev ? `http://localhost:${process.env.WEB_PORT || "5173"}` : undefined,
-    ),
-);
 let windowOpening: Promise<void> | null = null;
 async function ensureMainWindow(): Promise<BrowserWindow | null> {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -81,15 +67,6 @@ const terminalAccessibilitySupportEnabled = (
 
 // Register custom protocol scheme before app is ready
 protocol.registerSchemesAsPrivileged([
-  {
-    scheme: ARTIFACT_SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: false,
-      corsEnabled: false,
-    },
-  },
   {
     scheme: "app",
     privileges: {
@@ -146,7 +123,14 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      webviewTag: false,
     },
+  });
+
+  // The same srcdoc renderer is used on desktop; subframes never navigate away.
+  win.webContents.on("will-frame-navigate", (event) => {
+    if (!event.isMainFrame && !["about:blank", "about:srcdoc"].includes(event.url)) event.preventDefault();
   });
 
   win.webContents.on("did-start-loading", () =>
@@ -365,7 +349,6 @@ function registerIPC(): void {
 
 async function bootstrap(): Promise<void> {
   registerIPC();
-  artifactPreviews.registerIPC();
   if (
     !uiUpdates &&
     app.isPackaged &&
@@ -500,7 +483,6 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
-  artifactPreviews.dispose();
   sessionNotifications.dispose();
   desktopUpdates?.stop();
   stopSidecar();

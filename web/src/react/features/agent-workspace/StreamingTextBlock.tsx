@@ -1,3 +1,4 @@
+import { hideVisualizationSource } from "./visualizationTranscript";
 import { memo } from "react";
 import { SessionMarkdown } from "./SessionMarkdown";
 
@@ -12,6 +13,7 @@ export const StreamingTextBlock = memo(function StreamingTextBlock({
   isStreaming,
   markdown = false,
 }: Props) {
+  text = hideVisualizationSource(text, isStreaming);
   if (!text && !isStreaming) return null;
 
   return markdown && !isStreaming ? (

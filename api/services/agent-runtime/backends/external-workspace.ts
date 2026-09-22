@@ -1,4 +1,4 @@
-import { PROTOTYPE_AUTHORING_INSTRUCTIONS } from "../prototype-manifest.js";
+import { VISUALIZATION_AUTHORING_INSTRUCTIONS } from "../visualization-manifest.js";
 import * as workspace from '../tools/workspace.js';
 import type { ProjectWorkspaceRoot } from '../../project-workspace.js';
 
@@ -12,7 +12,7 @@ export function externalWorkspace(sessionId: string, projectId: string, workDir:
     .map(root => root.path))].sort();
   const writableRoots = [workDir, ...additionalDirectories];
   const prompt = [
-    PROTOTYPE_AUTHORING_INSTRUCTIONS,
+    VISUALIZATION_AUTHORING_INSTRUCTIONS,
     'Available workspace directories (JSON data):',
     JSON.stringify(roots.map(({ id, name, path, role, status }) => ({ id, name, path, role, status }))),
     'Keep the primary directory as cwd. Available reference directories support reads and writes, subject to normal tool permissions.',

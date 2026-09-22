@@ -1,4 +1,4 @@
-import { compileCompletedPrototypes } from "./prototype-integration.js";
+import { persistInlineVisualization } from "./visualization-integration.js";
 import { filterHistoryFileReads } from "./checkpoints/state.js";
 import {
   captureCheckpoint,
@@ -1310,7 +1310,7 @@ export class AgentLoopRuntime {
               modelResult.step.usage,
               modelResult.step.sources,
             );
-            await compileCompletedPrototypes(assistantMessage, runAbortSignal);
+            persistInlineVisualization(assistantMessage, runAbortSignal);
             const completedStep = this.store.updateRunStep(step.id, {
               status: "completed",
               completedAt: nowIso(),
@@ -2085,7 +2085,7 @@ export class AgentLoopRuntime {
           "work_result",
         );
     })();
-    if(work.status === "completed" && message) await compileCompletedPrototypes(message);
+    if(work.status === "completed" && message) persistInlineVisualization(message);
     const terminalRun = this.store.getRun(run.id);
     const eventType =
       work.status === "completed" ? "run_completed" : "run_failed";
@@ -2148,7 +2148,7 @@ export class AgentLoopRuntime {
         blockedReason: null,
       });
     })();
-    await compileCompletedPrototypes(message);
+    persistInlineVisualization(message);
     const event = this.events.append({
       sessionId,
       type: "run_completed",
@@ -2197,7 +2197,7 @@ export class AgentLoopRuntime {
       metadata: { goalStatus: goal?.status },
       createdAt: nowIso(),
     });
-    if(completed)await compileCompletedPrototypes(message);
+    if(completed)persistInlineVisualization(message);
     yield { type: "message", message };
     yield completed
       ? { type: "run_completed", run: finished, message }

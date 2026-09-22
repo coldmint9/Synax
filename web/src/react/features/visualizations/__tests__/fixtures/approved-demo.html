@@ -1,0 +1,393 @@
+<div id="synax-visualize-demo" class="synax-visualize-demo" data-theme="light">
+  <style>
+    #synax-visualize-demo {
+      --synax-canvas: light-dark(#f7f7f8, #101113);
+      --synax-surface: light-dark(#ffffff, #18191c);
+      --synax-surface-raised: light-dark(#fbfbfc, #202125);
+      --synax-surface-soft: light-dark(#f1f2f4, #27282d);
+      --synax-text: light-dark(#17181b, #f2f3f5);
+      --synax-text-secondary: light-dark(#6c707a, #a5a9b4);
+      --synax-text-tertiary: light-dark(#979ba5, #747985);
+      --synax-line: light-dark(#e7e8eb, #303137);
+      --synax-accent: light-dark(#3b5ccc, #93a9ff);
+      --synax-accent-strong: light-dark(#2946b4, #b4c3ff);
+      --synax-accent-soft: light-dark(#eef1ff, #2a3150);
+      --synax-success: light-dark(#2b8a61, #7dd3aa);
+      --synax-radius: 18px;
+      color: var(--synax-text);
+      font: 400 14px/1.5 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      width: 100%;
+      max-width: 736px;
+      margin: 0 auto;
+      box-sizing: border-box;
+    }
+
+    #synax-visualize-demo *,
+    #synax-visualize-demo *::before,
+    #synax-visualize-demo *::after { box-sizing: border-box; }
+
+    #synax-visualize-demo .visual-shell {
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--synax-line) 88%, transparent);
+      border-radius: var(--synax-radius);
+      background: var(--synax-canvas);
+      box-shadow: 0 18px 60px color-mix(in srgb, var(--synax-text) 10%, transparent);
+    }
+
+    #synax-visualize-demo .visual-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 56px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--synax-line);
+      background: color-mix(in srgb, var(--synax-surface) 88%, transparent);
+    }
+
+    #synax-visualize-demo .brand,
+    #synax-visualize-demo .topbar-meta,
+    #synax-visualize-demo .status,
+    #synax-visualize-demo .actions,
+    #synax-visualize-demo .section-heading,
+    #synax-visualize-demo .activity-row,
+    #synax-visualize-demo .metric-line,
+    #synax-visualize-demo .tablist {
+      display: flex;
+      align-items: center;
+    }
+
+    #synax-visualize-demo .brand { gap: 10px; min-width: 0; }
+    #synax-visualize-demo .brand-mark {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 9px;
+      color: var(--synax-accent-strong);
+      background: var(--synax-accent-soft);
+    }
+    #synax-visualize-demo .brand-copy { min-width: 0; }
+    #synax-visualize-demo .brand-name { font-size: 13px; font-weight: 500; letter-spacing: -0.01em; }
+    #synax-visualize-demo .brand-path { color: var(--synax-text-tertiary); font-size: 11px; white-space: nowrap; }
+    #synax-visualize-demo .topbar-meta { gap: 12px; }
+    #synax-visualize-demo .status { gap: 7px; color: var(--synax-text-secondary); font-size: 11px; }
+    #synax-visualize-demo .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--synax-success);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--synax-success) 14%, transparent);
+    }
+
+    #synax-visualize-demo .visual-main { padding: 28px; }
+    #synax-visualize-demo .eyebrow {
+      margin: 0 0 8px;
+      color: var(--synax-accent);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+    #synax-visualize-demo h2 {
+      margin: 0;
+      color: var(--synax-text);
+      font-size: clamp(22px, 4vw, 30px);
+      font-weight: 500;
+      letter-spacing: -0.045em;
+      line-height: 1.08;
+    }
+    #synax-visualize-demo .lede {
+      max-width: 510px;
+      margin: 12px 0 0;
+      color: var(--synax-text-secondary);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    #synax-visualize-demo .actions { gap: 9px; margin-top: 22px; flex-wrap: wrap; }
+    #synax-visualize-demo button {
+      min-height: 36px;
+      border: 0;
+      border-radius: 10px;
+      padding: 0 13px;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+    #synax-visualize-demo button:focus-visible { outline: 2px solid var(--synax-accent); outline-offset: 2px; }
+    #synax-visualize-demo .button-primary { color: var(--synax-surface); background: var(--synax-text); }
+    #synax-visualize-demo .button-primary:hover { background: var(--synax-accent-strong); transform: translateY(-1px); }
+    #synax-visualize-demo .button-quiet { color: var(--synax-text-secondary); background: var(--synax-surface-soft); }
+    #synax-visualize-demo .button-quiet:hover { color: var(--synax-text); background: var(--synax-line); }
+
+    #synax-visualize-demo .workspace-panel {
+      margin-top: 28px;
+      border: 1px solid var(--synax-line);
+      border-radius: 14px;
+      background: var(--synax-surface);
+    }
+    #synax-visualize-demo .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 18px 0;
+    }
+    #synax-visualize-demo .tablist { gap: 18px; min-width: 0; }
+    #synax-visualize-demo .tab {
+      position: relative;
+      min-height: 32px;
+      padding: 0;
+      border-radius: 0;
+      color: var(--synax-text-tertiary);
+      background: transparent;
+      font-size: 12px;
+    }
+    #synax-visualize-demo .tab[aria-selected="true"] { color: var(--synax-text); }
+    #synax-visualize-demo .tab[aria-selected="true"]::after {
+      position: absolute;
+      right: 0;
+      bottom: -1px;
+      left: 0;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--synax-accent);
+      content: "";
+    }
+    #synax-visualize-demo .panel-label { color: var(--synax-text-tertiary); font-size: 11px; white-space: nowrap; }
+    #synax-visualize-demo .panel-content { padding: 18px; border-top: 1px solid var(--synax-line); }
+
+    #synax-visualize-demo .overview-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(180px, 0.65fr);
+      gap: 12px;
+    }
+    #synax-visualize-demo .summary-block,
+    #synax-visualize-demo .signal-block {
+      min-height: 146px;
+      border-radius: 12px;
+      background: var(--synax-surface-raised);
+      padding: 16px;
+    }
+    #synax-visualize-demo .summary-block { display: flex; flex-direction: column; justify-content: space-between; }
+    #synax-visualize-demo .summary-top { display: flex; justify-content: space-between; gap: 12px; }
+    #synax-visualize-demo .summary-label,
+    #synax-visualize-demo .metric-label { color: var(--synax-text-tertiary); font-size: 11px; }
+    #synax-visualize-demo .summary-value { margin-top: 7px; font-size: 29px; font-weight: 500; letter-spacing: -0.06em; }
+    #synax-visualize-demo .summary-delta { color: var(--synax-success); font-size: 11px; white-space: nowrap; }
+    #synax-visualize-demo .meter { height: 6px; overflow: hidden; margin-top: 20px; border-radius: 99px; background: var(--synax-surface-soft); }
+    #synax-visualize-demo .meter-fill { width: 72%; height: 100%; border-radius: inherit; background: var(--synax-accent); transition: width 220ms ease; }
+    #synax-visualize-demo .signal-block { display: flex; flex-direction: column; justify-content: space-between; }
+    #synax-visualize-demo .signal-icon {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 9px;
+      color: var(--synax-accent-strong);
+      background: var(--synax-accent-soft);
+    }
+    #synax-visualize-demo .metric-line { justify-content: space-between; gap: 10px; margin-top: 15px; }
+    #synax-visualize-demo .metric-value { color: var(--synax-text); font-size: 13px; font-weight: 500; }
+
+    #synax-visualize-demo .activity-list { display: grid; gap: 2px; }
+    #synax-visualize-demo .activity-row { gap: 12px; min-height: 56px; padding: 8px 4px; border-bottom: 1px solid var(--synax-line); }
+    #synax-visualize-demo .activity-row:last-child { border-bottom: 0; }
+    #synax-visualize-demo .activity-icon {
+      display: grid;
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 8px;
+      color: var(--synax-text-secondary);
+      background: var(--synax-surface-soft);
+    }
+    #synax-visualize-demo .activity-copy { min-width: 0; flex: 1; }
+    #synax-visualize-demo .activity-title { overflow: hidden; color: var(--synax-text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    #synax-visualize-demo .activity-meta { margin-top: 2px; color: var(--synax-text-tertiary); font-size: 11px; }
+    #synax-visualize-demo .activity-time { color: var(--synax-text-tertiary); font-size: 11px; white-space: nowrap; }
+    #synax-visualize-demo .empty-state { padding: 28px 8px; color: var(--synax-text-secondary); text-align: center; }
+
+    #synax-visualize-demo .demo-note {
+      margin: 18px 0 0;
+      color: var(--synax-text-tertiary);
+      font-size: 11px;
+      text-align: center;
+    }
+    #synax-visualize-demo .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+
+    @media (max-width: 560px) {
+      #synax-visualize-demo .visual-main { padding: 22px 16px; }
+      #synax-visualize-demo .visual-topbar { padding: 0 14px; }
+      #synax-visualize-demo .status { display: none; }
+      #synax-visualize-demo .overview-grid { grid-template-columns: 1fr; }
+      #synax-visualize-demo .panel-head { padding-left: 14px; padding-right: 14px; }
+      #synax-visualize-demo .panel-content { padding: 14px; }
+      #synax-visualize-demo .brand-path { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #synax-visualize-demo *, #synax-visualize-demo *::before, #synax-visualize-demo *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+      }
+    }
+  </style>
+
+  <section class="visual-shell" aria-label="Synax inline visualization demo">
+    <header class="visual-topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><i data-lucide="sparkles"></i></div>
+        <div class="brand-copy">
+          <div class="brand-name">Synax</div>
+          <div class="brand-path">Conversation / workspace overview</div>
+        </div>
+      </div>
+      <div class="topbar-meta">
+        <div class="status"><span class="status-dot" aria-hidden="true"></span>Live preview</div>
+        <i data-lucide="more-horizontal" aria-hidden="true"></i>
+      </div>
+    </header>
+
+    <main class="visual-main">
+      <p class="eyebrow">Inline prototype</p>
+      <h2>Make the next step feel obvious.</h2>
+      <p class="lede">This is the intended interaction model: the prototype appears directly in the conversation, without a publishing shell or secondary artifact workspace.</p>
+
+      <div class="actions">
+        <button type="button" class="button-primary" data-action="advance">Explore workspace</button>
+        <button type="button" class="button-quiet" data-action="add-note">Add a note</button>
+      </div>
+
+      <section class="workspace-panel" aria-label="Workspace preview">
+        <div class="panel-head">
+          <div class="tablist" role="tablist" aria-label="Workspace views">
+            <button type="button" class="tab" role="tab" aria-selected="true" aria-controls="synax-overview">Overview</button>
+            <button type="button" class="tab" role="tab" aria-selected="false" aria-controls="synax-activity">Activity</button>
+          </div>
+          <span class="panel-label" data-live-label>Updated just now</span>
+        </div>
+        <div class="panel-content" id="synax-overview" role="tabpanel">
+          <div class="overview-grid">
+            <div class="summary-block">
+              <div class="summary-top">
+                <div>
+                  <div class="summary-label">Workspace clarity</div>
+                  <div class="summary-value" data-progress-value>72%</div>
+                </div>
+                <span class="summary-delta">+8% this week</span>
+              </div>
+              <div class="meter" role="progressbar" aria-label="Workspace clarity" aria-valuemin="0" aria-valuemax="100" aria-valuenow="72"><div class="meter-fill" data-meter-fill></div></div>
+            </div>
+            <div class="signal-block">
+              <div class="signal-icon" aria-hidden="true"><i data-lucide="wand-sparkles"></i></div>
+              <div>
+                <div class="metric-label">Next best action</div>
+                <div class="metric-line"><span class="metric-value">Review 3 open threads</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="panel-content" id="synax-activity" role="tabpanel" hidden>
+          <div class="activity-list" data-activity-list>
+            <div class="activity-row"><div class="activity-icon" aria-hidden="true"><i data-lucide="check"></i></div><div class="activity-copy"><div class="activity-title">Prototype rendered in the conversation</div><div class="activity-meta">Inline preview · no publish step</div></div><span class="activity-time">now</span></div>
+            <div class="activity-row"><div class="activity-icon" aria-hidden="true"><i data-lucide="layers-2"></i></div><div class="activity-copy"><div class="activity-title">Workspace context connected</div><div class="activity-meta">Theme and resize synced</div></div><span class="activity-time">2m</span></div>
+          </div>
+        </div>
+      </section>
+      <p class="demo-note" data-demo-status aria-live="polite">Everything important stays inside the preview.</p>
+    </main>
+  </section>
+
+  <script>
+    (() => {
+      const root = document.getElementById("synax-visualize-demo");
+      if (!root) return;
+
+      const tabs = Array.from(root.querySelectorAll("[role=tab]"));
+      const panels = {
+        overview: root.querySelector("#synax-overview"),
+        activity: root.querySelector("#synax-activity"),
+      };
+      const status = root.querySelector("[data-demo-status]");
+      const value = root.querySelector("[data-progress-value]");
+      const fill = root.querySelector("[data-meter-fill]");
+      const progress = root.querySelector("[role=progressbar]");
+      const liveLabel = root.querySelector("[data-live-label]");
+      const activityList = root.querySelector("[data-activity-list]");
+      let progressValue = 72;
+      let notes = 0;
+
+      const saveState = () => {
+        const setter = window.openai && window.openai.setWidgetState;
+        if (typeof setter !== "function") return;
+        setter({
+          modelContent: JSON.stringify({ progressValue, notes }),
+          privateContent: null,
+        }).catch(() => {});
+      };
+
+      const restoreState = () => {
+        const raw = window.openai && window.openai.widgetState;
+        if (!raw) return;
+        try {
+          const state = typeof raw === "string" ? JSON.parse(raw) : raw;
+          if (Number.isFinite(state?.progressValue)) progressValue = Math.max(0, Math.min(100, state.progressValue));
+          if (Number.isFinite(state?.notes)) notes = Math.max(0, state.notes);
+        } catch (_) {}
+      };
+
+      const renderProgress = () => {
+        if (value) value.textContent = `${progressValue}%`;
+        if (fill) fill.style.width = `${progressValue}%`;
+        if (progress) progress.setAttribute("aria-valuenow", String(progressValue));
+      };
+
+      const selectTab = (name) => {
+        tabs.forEach((tab) => {
+          const active = tab.textContent?.trim().toLowerCase() === name;
+          tab.setAttribute("aria-selected", String(active));
+        });
+        if (panels.overview) panels.overview.hidden = name !== "overview";
+        if (panels.activity) panels.activity.hidden = name !== "activity";
+        if (liveLabel) liveLabel.textContent = name === "overview" ? "Updated just now" : "2 recent changes";
+      };
+
+      tabs.forEach((tab) => tab.addEventListener("click", () => {
+        selectTab(tab.textContent?.trim().toLowerCase() === "activity" ? "activity" : "overview");
+      }));
+
+      root.querySelector("[data-action=advance]")?.addEventListener("click", () => {
+        progressValue = Math.min(100, progressValue + 6);
+        renderProgress();
+        if (status) status.textContent = "Workspace moved forward by one step.";
+        saveState();
+      });
+
+      root.querySelector("[data-action=add-note]")?.addEventListener("click", () => {
+        notes += 1;
+        const row = document.createElement("div");
+        row.className = "activity-row";
+        row.innerHTML = `<div class="activity-icon" aria-hidden="true"><i data-lucide="message-circle-plus"></i></div><div class="activity-copy"><div class="activity-title">A note was added to the prototype</div><div class="activity-meta">Local interaction state · note ${notes}</div></div><span class="activity-time">now</span>`;
+        activityList?.prepend(row);
+        selectTab("activity");
+        status && (status.textContent = "Note added to this preview instance.");
+        if (window.lucide) window.lucide.createIcons({ attrs: { width: 14, height: 14 } });
+        saveState();
+      });
+
+      restoreState();
+      renderProgress();
+      const themeFromHost = () => {
+        const dark = document.documentElement.classList.contains("dark") || document.documentElement.dataset.theme === "dark";
+        root.dataset.theme = dark ? "dark" : "light";
+      };
+      themeFromHost();
+      new MutationObserver(themeFromHost).observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
+      window.addEventListener("openai:set_globals", themeFromHost);
+    })();
+  </script>
+</div>

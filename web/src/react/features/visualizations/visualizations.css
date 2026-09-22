@@ -1,0 +1,19 @@
+.inline-visualization {
+  width: 100%;
+  min-width: 0;
+  margin: 12px 0;
+}
+.inline-visualization__frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+.inline-visualization__error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}

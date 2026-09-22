@@ -1,4 +1,5 @@
-import type { InteractivePrototypeReference } from "./artifactTranscript";
+import { visualizationReplyParts } from "./visualizationTranscript";
+import type { InlineVisualizationReference } from "./visualizationTranscript";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import { hasDisplayableReasoning } from "./activityText";
 import type {
@@ -22,7 +23,11 @@ export interface ToolCallView {
 }
 
 export type TurnContentBlock =
-  | { type: "prototype"; reference: InteractivePrototypeReference }
+  | {
+      type: "visualization";
+      reference: InlineVisualizationReference;
+      messageId?: string;
+    }
   | { type: "media"; parts: RuntimeContentPart[]; messageId?: string }
   | { type: "text"; content: string; messageId?: string }
   | { type: "thinking"; content: string }
@@ -131,7 +136,10 @@ export function buildInterleavedTurns(
   const lastStepByRun = new Map(sorted.map((step) => [step.runId, step.id]));
 
   const messagesByStep = new Map<string, AgentRuntimeMessage[]>();
+  const seenMessages = new Set<string>();
   for (const message of messages) {
+    if (seenMessages.has(message.id)) continue;
+    seenMessages.add(message.id);
     if (
       ["artifact_publisher", "artifact_request", "artifact_job"].includes(
         String(message.metadata?.source),
@@ -163,55 +171,64 @@ export function buildInterleavedTurns(
 
     const stepMessages = messagesByStep.get(step.id) ?? [];
     for (const original of stepMessages) {
-      const msg =
-        original.metadata.source === "interactive_prototype" &&
-        typeof original.metadata.prototypeDisplayText === "string"
-          ? { ...original, content: original.metadata.prototypeDisplayText }
-          : original;
+      const msg = original;
+      const timestamp = new Date(msg.createdAt).getTime();
       if (msg.contentParts?.some((part) => part.type !== "text"))
         items.push({
-          timestamp: new Date(msg.createdAt).getTime(),
+          timestamp,
           block: { type: "media", parts: msg.contentParts, messageId: msg.id },
         });
-      if (!msg.content.trim()) continue;
+
       const isThinking =
         msg.metadata?.type === "thinking" || msg.metadata?.kind === "thought";
-      if (isThinking && !hasDisplayableReasoning(msg.content)) continue;
-      items.push({
-        timestamp: new Date(msg.createdAt).getTime(),
-        block: isThinking
-          ? { type: "thinking", content: msg.content }
-          : { type: "text", content: msg.content, messageId: msg.id },
-      });
-      const sources = Array.isArray(msg.metadata?.sources)
-        ? msg.metadata.sources.flatMap((source) => {
-            if (!source || typeof source !== "object" || Array.isArray(source))
-              return [];
-            const record = source as Record<string, unknown>;
-            if (typeof record.id !== "string" || typeof record.url !== "string")
-              return [];
-            try {
-              if (!["http:", "https:"].includes(new URL(record.url).protocol))
+      if (isThinking) {
+        if (hasDisplayableReasoning(msg.content))
+          items.push({
+            timestamp,
+            block: { type: "thinking", content: msg.content },
+          });
+        continue;
+      }
+      for (const block of visualizationReplyParts(msg))
+        items.push({ timestamp, block });
+      if (msg.content.trim()) {
+        const sources = Array.isArray(msg.metadata?.sources)
+          ? msg.metadata.sources.flatMap((source) => {
+              if (
+                !source ||
+                typeof source !== "object" ||
+                Array.isArray(source)
+              )
                 return [];
-            } catch {
-              return [];
-            }
-            return [
-              {
-                id: record.id,
-                url: record.url,
-                ...(typeof record.title === "string"
-                  ? { title: record.title }
-                  : {}),
-              },
-            ];
-          })
-        : [];
-      if (sources.length)
-        items.push({
-          timestamp: new Date(msg.createdAt).getTime(),
-          block: { type: "sources", sources, messageId: msg.id },
-        });
+              const record = source as Record<string, unknown>;
+              if (
+                typeof record.id !== "string" ||
+                typeof record.url !== "string"
+              )
+                return [];
+              try {
+                if (!["http:", "https:"].includes(new URL(record.url).protocol))
+                  return [];
+              } catch {
+                return [];
+              }
+              return [
+                {
+                  id: record.id,
+                  url: record.url,
+                  ...(typeof record.title === "string"
+                    ? { title: record.title }
+                    : {}),
+                },
+              ];
+            })
+          : [];
+        if (sources.length)
+          items.push({
+            timestamp,
+            block: { type: "sources", sources, messageId: msg.id },
+          });
+      }
     }
 
     const stepToolCalls = toolCallsByStep.get(step.id) ?? [];

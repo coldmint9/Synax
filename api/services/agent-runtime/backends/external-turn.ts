@@ -1,4 +1,4 @@
-import { compileCompletedPrototypes } from "../prototype-integration.js";
+import { persistInlineVisualization } from "../visualization-integration.js";
 import { hasInlineMedia, normalizeMediaPayload, redactInlineMedia } from '../media-tool-content.js';
 import type { RuntimeContentPart } from '../content-parts.js';
 import { normalizeInput, hasInput } from '../content-parts.js';
@@ -187,7 +187,7 @@ export class ExternalTurn {
       stepId: this.step.id, role: 'assistant', content: this.text, createdAt: nowIso(), metadata: {
         source: this.backendId, thought: this.thought || undefined, partial: Boolean(error || interrupted), runId: this.run.id, stepId: this.step.id,
       } }) : undefined;
-    if (message && !error && !interrupted) await compileCompletedPrototypes(message);
+    if (message && !error && !interrupted) persistInlineVisualization(message);
     const status = interrupted ? 'interrupted' : error ? 'failed' : 'completed';
     const run = store.getRun(this.run.id);
     const finished = store.updateRun(run.id, { status, completedAt: nowIso(), stopReason: error ?? 'end_turn', metadata: {

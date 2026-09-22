@@ -222,6 +222,22 @@ describe("desktop platform contract", () => {
     log.mockRestore();
   });
 
+  it("does not expose host IPC in any preview subframe", () => {
+    const exposeInMainWorld = vi.fn();
+    const source = readFileSync(
+      new URL("./preload.ts", import.meta.url),
+      "utf8",
+    );
+    runInNewContext(transpileModule(source, {}).outputText, {
+      process: { platform: "darwin", isMainFrame: false },
+      require: () => ({
+        ipcRenderer: new EventEmitter(),
+        contextBridge: { exposeInMainWorld },
+      }),
+    });
+    expect(exposeInMainWorld).not.toHaveBeenCalled();
+  });
+
   it("unsubscribes native menu callbacks instead of accumulating them on navigation", () => {
     const ipc = new EventEmitter();
     let api: any;
@@ -230,7 +246,7 @@ describe("desktop platform contract", () => {
       "utf8",
     );
     runInNewContext(transpileModule(source, {}).outputText, {
-      process: { platform: "win32" },
+      process: { platform: "win32", isMainFrame: true },
       require: () => ({
         ipcRenderer: ipc,
         contextBridge: {
@@ -269,7 +285,7 @@ describe("desktop platform contract", () => {
         {},
       ).outputText,
       {
-        process: { platform: "darwin" },
+        process: { platform: "darwin", isMainFrame: true },
         require: () => ({
           ipcRenderer: ipc,
           contextBridge: {

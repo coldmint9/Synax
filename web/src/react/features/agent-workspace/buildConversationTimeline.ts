@@ -1,7 +1,4 @@
-import {
-  messagePrototypes,
-  messagePrototypeDiagnostics,
-} from "./artifactTranscript";
+import { visualizationReplyParts } from "./visualizationTranscript";
 import { readSessionUserPrompt } from "./sessionMetadata";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import type {
@@ -316,22 +313,39 @@ function workLogEntry(
   };
 }
 
-/**
- * Split a turn into the process that led to its answer and the answer itself.
- *
- * Only the trailing text block is the answer; anything the model wrote earlier
- * in the same step was still working out loud, so it folds with the rest.
- */
+/** Keep the entire completed reply (text → preview → text) outside the work log. */
 function splitTurnAnswer(turn: InterleavedTurn): {
   process: TurnContentBlock[];
-  answer: { type: "text"; content: string } | null;
+  answer: TurnContentBlock[];
 } {
-  for (let i = turn.blocks.length - 1; i >= 0; i -= 1) {
-    const block = turn.blocks[i];
-    if (block.type !== "text" || !block.content.trim()) continue;
-    return { process: turn.blocks.slice(0, i), answer: block };
+  const visualIndex = turn.blocks.findIndex(
+    (block) => block.type === "visualization",
+  );
+  if (visualIndex >= 0) {
+    let start = visualIndex;
+    const visual = turn.blocks[visualIndex];
+    const messageId = "messageId" in visual ? visual.messageId : undefined;
+    while (start > 0) {
+      const previous = turn.blocks[start - 1];
+      if (
+        !messageId ||
+        !("messageId" in previous) ||
+        previous.messageId !== messageId
+      )
+        break;
+      start--;
+    }
+    return {
+      process: turn.blocks.slice(0, start),
+      answer: turn.blocks.slice(start),
+    };
   }
-  return { process: turn.blocks, answer: null };
+  for (let i = turn.blocks.length - 1; i >= 0; i--) {
+    const block = turn.blocks[i];
+    if (block.type === "text" && block.content.trim())
+      return { process: turn.blocks.slice(0, i), answer: turn.blocks.slice(i) };
+  }
+  return { process: turn.blocks, answer: [] };
 }
 
 function turnWithBlocks(
@@ -372,11 +386,22 @@ function foldRound(
   round: AgentTimelineItem[],
   stepById: Map<string, AgentRunStep>,
 ): TimelineItem[] {
+  // Each visual reply stays visible, even if a goal continues afterwards.
+  const visualTurn = round.findIndex((item) =>
+    item.entry.turn.blocks.some((block) => block.type === "visualization"),
+  );
+  if (visualTurn >= 0 && visualTurn < round.length - 1)
+    return [
+      ...foldRound(round.slice(0, visualTurn + 1), stepById),
+      ...foldRound(round.slice(visualTurn + 1), stepById),
+    ];
   let answerIndex = -1;
   for (let i = round.length - 1; i >= 0; i -= 1) {
     if (
       round[i].entry.turn.blocks.some(
-        (block) => block.type === "text" && block.content.trim() !== "",
+        (block) =>
+          block.type === "visualization" ||
+          (block.type === "text" && block.content.trim() !== ""),
       )
     ) {
       answerIndex = i;
@@ -390,7 +415,7 @@ function foldRound(
 
   const answerItem = round[answerIndex];
   const { process, answer } = splitTurnAnswer(answerItem.entry.turn);
-  if (!answer) return foldSegment(round, stepById);
+  if (!answer.length) return foldSegment(round, stepById);
 
   const leading = round.slice(0, answerIndex);
   const trailing = round.slice(answerIndex + 1);
@@ -418,8 +443,14 @@ function foldRound(
       ...answerItem.entry,
       // A distinct anchor: the same step id also names the folded process row.
       id: `${answerItem.entry.id}-answer`,
-      label: truncate(answer.content),
-      turn: turnWithBlocks(answerItem.entry.turn, [answer]),
+      label:
+        truncate(
+          answer
+            .filter((block) => block.type === "text")
+            .map((block) => block.content)
+            .join(" "),
+        ) || "交互预览",
+      turn: turnWithBlocks(answerItem.entry.turn, answer),
     },
   });
   folded.push(...foldSegment(trailing, stepById));
@@ -484,51 +515,9 @@ export function buildConversationTimeline(
     interactions?: AgentInteraction[];
   },
 ): ConversationTimelineEntry[] {
-  const seenPrototypes = new Set<string>();
-  const prototypeEntries: ConversationTimelineEntry[] = messages.flatMap(
-    (message) => {
-      if (options?.session && message.sessionId !== options.session.id)
-        return [];
-      const prototypes = messagePrototypes(message);
-      const diagnostics = messagePrototypeDiagnostics(message);
-      const entries: ConversationTimelineEntry[] = prototypes.flatMap(
-        (prototype) => {
-          if (seenPrototypes.has(prototype.id)) return [];
-          seenPrototypes.add(prototype.id);
-          return [
-            {
-              id: `prototype-${prototype.id}`,
-              kind: "agent" as const,
-              createdAt: message.createdAt,
-              label: prototype.title,
-              turn: {
-                stepId: `prototype-${prototype.id}`,
-                index: 0,
-                status: "completed",
-                duration: null,
-                blocks: [{ type: "prototype" as const, reference: prototype }],
-              },
-            },
-          ];
-        },
-      );
-      return [
-        ...entries,
-        ...diagnostics.map((d, index) => ({
-          id: `prototype-diagnostic-${message.id}-${index}`,
-          kind: "error" as const,
-          createdAt: message.createdAt,
-          label: d.title,
-          message: `${d.title}：${d.message}`,
-          model: null,
-        })),
-      ];
-    },
-  );
-  const withArtifacts = (entries: ConversationTimelineEntry[]) =>
-    [...entries, ...prototypeEntries].sort(
-      (a, b) => toTimestamp(a.createdAt) - toTimestamp(b.createdAt),
-    );
+  messages = options?.session
+    ? messages.filter((message) => message.sessionId === options.session!.id)
+    : messages;
   const filteredSteps = options?.excludeStepId
     ? steps.filter((step) => step.id !== options.excludeStepId)
     : steps;
@@ -549,16 +538,41 @@ export function buildConversationTimeline(
   ).filter((turn) => !failedStepIds.has(turn.stepId) || turn.blocks.length > 0);
   const userEntries = buildUserMessageEntries(messages, options?.session);
 
-  if (
-    prototypeEntries.length === 0 &&
-    userEntries.length === 0 &&
-    agentTurns.length === 0 &&
-    failedRunIds.size === 0 &&
-    !options?.interactions?.length
-  )
-    return [];
-
   const items = buildTimelineItems(filteredSteps, agentTurns, userEntries);
+  // Completed replies with no surviving step still belong to their message, not a synthetic artifact event.
+  const stepIds = new Set(steps.map((step) => step.id));
+  const runIdsWithSteps = new Set(steps.map((step) => step.runId));
+  const seenOrphans = new Set<string>();
+  for (const message of messages) {
+    if (
+      (message.stepId && stepIds.has(message.stepId)) ||
+      (!message.stepId &&
+        message.runId &&
+        runIdsWithSteps.has(message.runId)) ||
+      seenOrphans.has(message.id)
+    )
+      continue;
+    const blocks = visualizationReplyParts(message);
+    if (!blocks.some((block) => block.type === "visualization")) continue;
+    seenOrphans.add(message.id);
+    items.push({
+      timestamp: toTimestamp(message.createdAt),
+      entry: {
+        id: `reply-${message.id}`,
+        kind: "agent",
+        createdAt: message.createdAt,
+        label: "交互预览",
+        turn: {
+          stepId: `reply-${message.id}`,
+          index: 0,
+          status: "completed",
+          duration: null,
+          blocks,
+        },
+      },
+    });
+  }
+  items.sort((a, b) => a.timestamp - b.timestamp);
   // A failed run has no assistant reply in storage. Keep its error as a durable,
   // unfolded row, independent of the session's status after a later successful run.
   for (const run of runs) {
@@ -610,8 +624,7 @@ export function buildConversationTimeline(
       items.splice(next < 0 ? items.length : next, 0, row);
     }
   }
-  if (options?.foldWorkRuns === false)
-    return withArtifacts(items.map((item) => item.entry));
+  if (options?.foldWorkRuns === false) return items.map((item) => item.entry);
 
   const stepById = new Map(filteredSteps.map((step) => [step.id, step]));
   const runStatusById = new Map(runs.map((run) => [run.id, run.status]));
@@ -619,10 +632,8 @@ export function buildConversationTimeline(
     filteredSteps.map((step) => [step.id, runStatusById.get(step.runId)]),
   );
 
-  return withArtifacts(
-    foldCompletedRounds(items, stepById, runStatusByStepId).map(
-      (item) => item.entry,
-    ),
+  return foldCompletedRounds(items, stepById, runStatusByStepId).map(
+    (item) => item.entry,
   );
 }
 

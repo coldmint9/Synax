@@ -106,8 +106,6 @@ export function assertHistoryIdle(sessionId: string): void {
         "Stop the session and its agents before changing history.",
         "HISTORY_SESSION_BUSY",
       );
-    if (db.prepare("SELECT id FROM artifact_jobs WHERE session_id=? AND status IN ('queued','building') LIMIT 1").get(session.id))
-      throw historyError("Stop pending artifact jobs before changing history.", "HISTORY_JOB_ACTIVE");
     if (
       db
         .prepare(
