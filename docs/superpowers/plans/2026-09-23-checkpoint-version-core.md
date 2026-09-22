@@ -30,7 +30,7 @@ Create under `api/services/agent-runtime/checkpoints/version-store/`:
 - `versions.ts`: typed root manifests with validated tree references.
 - `heads.ts`: minimal immutable root versions, per-session head CAS and operation idempotency, metadata-only forks.
 
-Create SQL migration `api/db/migrations/0051_conversation_version_core.sql` after rechecking migration numbering.
+Create SQL migrations `api/db/migrations/0051_conversation_version_core.sql` and `0052_conversation_version_heads.sql` after rechecking migration numbering.
 
 Create tests under `api/services/agent-runtime/__tests__/`:
 - `version-store-fixture.ts`: owns isolated databases, applies the real migration, closes/removes fixtures.
@@ -78,11 +78,11 @@ Create tests under `api/services/agent-runtime/__tests__/`:
 - `switch({sessionId, targetVersionId, expectedRevision, requestId, requestHash})` atomically changes a root, increments epoch/revision, stores result, and never iterates objects.
 - `fork({sourceSessionId, targetSessionId, versionId, expectedRevision, requestId, requestHash})` records an independent head and stable idempotent result; no data copy.
 
-- [ ] Tests: exact repeat result, conflicting request hash, stale revision, root integrity/missing root, independent forks, outer transaction rollback, reopening after committed switch, no data writes proportional to history.
-- [ ] Confirm RED before implementing `heads.ts`.
-- [ ] Implement small transactions; target must be a version object, CAS updates and operation result commit together.
-- [ ] Verify wrong-session references cannot bypass ownership via arbitrary supplied object hashes (repository authorization/root pin layer must be explicit; no public API exposed yet).
-- [ ] Run all three test suites and commit.
+- [x] Tests: exact repeat result, conflicting request hash, stale revision, root integrity/missing root, independent forks, outer transaction rollback, reopening after committed switch, no data writes proportional to history.
+- [x] Confirm RED before implementing `heads.ts`.
+- [x] Implement small transactions; target must be a version object, CAS updates and operation result commit together.
+- [x] Verify wrong-session references cannot bypass ownership via arbitrary supplied object hashes (repository authorization/root pin layer must be explicit; no public API exposed yet).
+- [x] Run all three test suites and commit.
 
 ## Task 4 — Core performance evidence and scope audit
 
@@ -105,3 +105,4 @@ Each subsequent plan must keep the parent objective and all specification gates;
 
 - 2026-09-23 Task 1: observed RED for missing objects module, then 11 real-libSQL tests PASS; `tsc --noEmit` PASS. Logical quota accounting is not yet a physical disk/WAL guard, and no production session uses v3.
 - 2026-09-23 Task 2: observed missing-module RED and empty-page-budget RED, then 22 tests PASS across objects/tree; `tsc --noEmit` PASS. 6,000-key multi-level fixture verifies bounded reads/path-copy allocation. Not an end-to-end latency/memory/storage acceptance result.
+- 2026-09-23 Task 3: missing-module RED observed, then all 34 core tests PASS; `tsc --noEmit` PASS. Ownership proof rejects arbitrary cross-session rollback targets; trusted publish still requires runtime authorization/fencing integration. Metadata quota accounting, checkpoint pins and concurrent GC remain later gates.
