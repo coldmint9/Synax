@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Checkbox, Modal } from "@heroui/react";
-import { Loader2, Pencil, Plug, Plus, Trash2, Wifi } from "lucide-react";
+import { Button, Switch, Modal } from "@heroui/react";
+import { Loader2, Plug, Plus, Wifi } from "lucide-react";
+import { ExtensionControls } from '../../../components/extensions/ExtensionControls';
+import { UninstallDialog } from '../../../components/extensions/UninstallDialog';
 import { SettingsCard } from "./SettingsCard";
 import { SaveIndicator } from "./SaveIndicator";
 import { configApi } from "../../../../lib/api/config";
@@ -106,6 +108,8 @@ export function McpServersSection({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Draft | null>(null);
   const activeProjectRef = useRef(projectId);
+  const savingRef = useRef(false);
+  const [pendingUninstall, setPendingUninstall] = useState<McpServerConfig | null>(null);
 
   useEffect(() => {
     setServers(initialServers ?? config?.mcpServers ?? []);
@@ -113,6 +117,11 @@ export function McpServersSection({
   useEffect(() => {
     activeProjectRef.current = projectId;
     setSaving(false);
+    savingRef.current = false;
+    setEditing(null);
+    setPendingUninstall(null);
+    setSaveError(null);
+    setTestMessages({});
   }, [projectId]);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testMessages, setTestMessages] = useState<Record<string, string>>({});
@@ -121,6 +130,8 @@ export function McpServersSection({
     next: McpServerConfig[],
     expectedProjectId = activeProjectRef.current,
   ): Promise<boolean> {
+    if (savingRef.current) return false;
+    savingRef.current = true;
     setSaving(true);
     setSaveError(null);
     try {
@@ -138,7 +149,7 @@ export function McpServersSection({
       );
       return false;
     } finally {
-      if (activeProjectRef.current === expectedProjectId) setSaving(false);
+      if (activeProjectRef.current === expectedProjectId) { savingRef.current = false; setSaving(false); }
     }
   }
 
@@ -195,9 +206,11 @@ export function McpServersSection({
     if (await persist(next)) setEditing(null);
   }
 
-  function handleDelete(id: string) {
-    void persist(servers.filter((s) => s.id !== id));
-    if (editing?.id === id) setEditing(null);
+  async function handleDelete(id: string) {
+    if (await persist(servers.filter((s) => s.id !== id))) {
+      setPendingUninstall(null);
+      if (editing?.id === id) setEditing(null);
+    }
   }
 
   return (
@@ -210,7 +223,6 @@ export function McpServersSection({
           <Button
             size="sm"
             variant="secondary"
-            className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm"
             isDisabled={saving}
             onPress={() => {
               setSaveError(null);
@@ -230,78 +242,30 @@ export function McpServersSection({
       <div className="settings-list">
         {servers.map((server) => (
           <div key={server.id} className="settings-item overflow-hidden">
-            <div className="flex items-start gap-3 p-3">
-              <Checkbox
-                isDisabled={saving}
-                isSelected={server.enabled !== false}
-                onChange={(checked) =>
-                  handleToggleEnabled(server, Boolean(checked))
-                }
-                aria-label={t("settingsMcpEnableServer", { name: server.name })}
-              >
-                <Checkbox.Content><Checkbox.Control>
-                  <Checkbox.Indicator />
-                </Checkbox.Control></Checkbox.Content>
-              </Checkbox>
+            <div className="flex min-h-[76px] items-center gap-3 px-4 py-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Plug size={17} /></div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-foreground">
-                    {server.name}
-                  </span>
-                  {server.enabled === false && (
-                    <span className="settings-chip settings-chip--muted">
-                      {t("settingsMcpDisabled")}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                  {server.command} {server.args?.join(" ") ?? ""}
-                </div>
-                {testMessages[server.id] && (
-                  <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                    {testMessages[server.id]}
-                  </div>
-                )}
-                <div className="mt-2 flex items-center gap-1.5">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    isDisabled={saving}
-                    onPress={() => {
-                      setEditing(configToDraft(server));
-                      setSaveError(null);
-                    }}
-                  >
-                    <Pencil size={12} /> {t("settingsMcpEdit")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    isPending={testingId === server.id}
-                    onPress={() => void handleTest(server)}
-                  >
-                    {({ isPending }) => (
-                      <>
-                        {isPending ? null : <Wifi size={12} />}
-                        {t("settingsMcpTest")}
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="danger-soft"
-                    isDisabled={saving}
-                    onPress={() => handleDelete(server.id)}
-                  >
-                    <Trash2 size={12} /> {t("settingsMcpDelete")}
-                  </Button>
-                </div>
+                <p className="truncate text-sm font-medium text-foreground" title={server.name}>{server.name}</p>
+                <p className="mt-1 truncate font-mono text-xs leading-5 text-muted-foreground" title={`${server.command} ${server.args?.join(' ') ?? ''}`}>
+                  {server.command} {server.args?.join(' ') ?? ''}
+                </p>
+                {testMessages[server.id] && <p role="status" className="mt-1 text-xs leading-5 text-muted-foreground">{testMessages[server.id]}</p>}
               </div>
+              <ExtensionControls name={server.name} enabled={server.enabled !== false} busy={saving}
+                onToggle={(enabled) => handleToggleEnabled(server, enabled)}
+                actions={[
+                  { id: 'edit', label: t('settingsMcpEdit'), onAction: () => { setEditing(configToDraft(server)); setSaveError(null); } },
+                  { id: 'test', label: t(testingId === server.id ? 'settingsMcpConnecting' : 'settingsMcpTest'), disabled: testingId !== null, onAction: () => void handleTest(server) },
+                  { id: 'uninstall', label: t('settingsMcpDelete'), danger: true, onAction: () => { setSaveError(null); setPendingUninstall(server); } },
+                ]} />
             </div>
           </div>
         ))}
       </div>
 
+      <UninstallDialog name={pendingUninstall?.name ?? null} description={t('mcpUninstallHint')}
+        busy={saving} error={saveError} onCancel={() => setPendingUninstall(null)}
+        onConfirm={() => { if (pendingUninstall) void handleDelete(pendingUninstall.id); }} />
       <Modal
         isOpen={Boolean(editing)}
         onOpenChange={(open) => {
@@ -374,7 +338,7 @@ export function McpServersSection({
                           onChange={(e) =>
                             setEditing({ ...editing, argsText: e.target.value })
                           }
-                          placeholder="-y\n@modelcontextprotocol/server-filesystem\n/path/to/dir"
+                          placeholder={"-y\n@modelcontextprotocol/server-filesystem\n/path/to/dir"}
                         />
                       </label>
                       <label className="block">
@@ -391,8 +355,10 @@ export function McpServersSection({
                           placeholder="API_KEY=sk-xxx"
                         />
                       </label>
-                      <label className="flex items-center gap-2">
-                        <Checkbox
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          size="md"
+                          aria-label={t("settingsMcpEnable")}
                           isSelected={editing.enabled}
                           onChange={(checked) =>
                             setEditing({
@@ -401,14 +367,14 @@ export function McpServersSection({
                             })
                           }
                         >
-                          <Checkbox.Content><Checkbox.Control>
-                            <Checkbox.Indicator />
-                          </Checkbox.Control></Checkbox.Content>
-                        </Checkbox>
+                          <Switch.Content><Switch.Control>
+                            <Switch.Thumb />
+                          </Switch.Control></Switch.Content>
+                        </Switch>
                         <span className="text-xs text-foreground">
                           {t("settingsMcpEnable")}
                         </span>
-                      </label>
+                      </div>
                       {saveError && (
                         <p role="alert" className="text-xs text-destructive">
                           {saveError}
@@ -457,7 +423,7 @@ export function McpServersSection({
                         isPending={saving}
                         onPress={() => void handleSaveDraft()}
                       >
-                        {t("settingsMcpSave")}
+                        {t(servers.some((s) => s.id === editing.id) ? "settingsMcpSave" : "settingsMcpAddServer")}
                       </Button>
                     </fieldset>
                   </Modal.Footer>

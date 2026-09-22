@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { Button } from '@heroui/react'
-import { Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronDown, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import type { SkillSourceRecord } from '../../../lib/api/skills'
 
 export type SourceFilter = 'all' | 'installed' | string
@@ -45,14 +45,24 @@ export function SkillMarketSidebar({
   onSyncSource,
   onRemoveSource,
 }: Props) {
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const filtersId = useId()
+  const selectedLabel = selectedSource === 'all' ? labels.all : selectedSource === 'installed' ? labels.installed : sources.find(source => source.id === selectedSource)?.label ?? labels.title
+  function selectSource(sourceId: SourceFilter) {
+    onSelectSource(sourceId)
+    setFiltersOpen(false)
+  }
   const localSources = sources.filter((source) => !isRemoteSource(source))
   const remoteSources = sources.filter(isRemoteSource)
 
   return (
-    <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-border/40 bg-background">
+    <aside className="flex w-full shrink-0 flex-col border-b sm:h-full sm:w-[216px] sm:border-b-0 sm:border-r border-border/40 bg-background">
       <div className="border-b border-border/20 px-3 pb-3 pt-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-xs font-semibold text-foreground">{labels.title}</h2>
+          <h2 className="hidden text-xs font-semibold text-foreground sm:block">{labels.title}</h2>
+          <Button size="sm" variant="ghost" className="min-w-0 justify-start sm:hidden" aria-label={labels.title} aria-expanded={filtersOpen} aria-controls={filtersId} onPress={() => setFiltersOpen(open => !open)}>
+            <span className="truncate">{selectedLabel}</span><ChevronDown size={14} className={filtersOpen ? 'rotate-180' : ''} />
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -66,15 +76,15 @@ export function SkillMarketSidebar({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-        <p className="px-2 pb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+      <div id={filtersId} className={`${filtersOpen ? "block" : "hidden"} max-h-48 min-h-0 flex-1 overflow-y-auto px-2 py-2 sm:block sm:max-h-none`}>
+        <p className="px-2 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
           {labels.quickFilters}
         </p>
-        <FilterRow active={selectedSource === 'all'} label={labels.all} onClick={() => onSelectSource('all')} />
+        <FilterRow active={selectedSource === 'all'} label={labels.all} onClick={() => selectSource('all')} />
         <FilterRow
           active={selectedSource === 'installed'}
           label={labels.installed}
-          onClick={() => onSelectSource('installed')}
+          onClick={() => selectSource('installed')}
         />
 
         {localSources.length > 0 ? (
@@ -85,7 +95,7 @@ export function SkillMarketSidebar({
                 active={selectedSource === source.id}
                 label={source.label}
                 hint={source.type}
-                onClick={() => onSelectSource(source.id)}
+                onClick={() => selectSource(source.id)}
               />
             ))}
           </SourceSection>
@@ -101,7 +111,7 @@ export function SkillMarketSidebar({
                 busy={busy === source.id}
                 canRemove={!PROTECTED_SOURCE_IDS.has(source.id)}
                 labels={{ sync: labels.syncSource, remove: labels.removeSource }}
-                onSelect={() => onSelectSource(source.id)}
+                onSelect={() => selectSource(source.id)}
                 onSync={() => onSyncSource(source.id)}
                 onRemove={() => onRemoveSource(source.id)}
               />
@@ -116,7 +126,7 @@ export function SkillMarketSidebar({
 function SourceSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="mt-3">
-      <p className="px-2 pb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+      <p className="px-2 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
         {title}
       </p>
       {children}
@@ -139,7 +149,7 @@ function FilterRow({
     <button
       type="button"
       onClick={onClick}
-      className={`mb-0.5 flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[11px] transition-colors ${
+      className={`mb-0.5 flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
         active
           ? 'bg-primary/10 font-medium text-primary'
           : 'text-foreground hover:bg-muted/40'
@@ -147,7 +157,7 @@ function FilterRow({
     >
       <span className="truncate">{label}</span>
       {hint ? (
-        <span className="ms-2 shrink-0 rounded bg-secondary/60 px-1 py-px text-[9px] uppercase text-muted-foreground">
+        <span className="ms-2 shrink-0 rounded bg-secondary/60 px-1 py-px text-[10px] uppercase text-muted-foreground">
           {hint}
         </span>
       ) : null}
@@ -186,15 +196,15 @@ function RemoteSourceRow({
         className="flex w-full items-start gap-2 px-2.5 py-2 text-left"
       >
         <div className="min-w-0 flex-1">
-          <p className={`truncate text-[11px] ${active ? 'font-medium text-primary' : 'text-foreground'}`}>
+          <p className={`truncate text-xs ${active ? 'font-medium text-primary' : 'text-foreground'}`}>
             {source.label}
           </p>
           {source.lastSyncError ? (
-            <p className="mt-0.5 line-clamp-2 text-[10px] text-destructive">{source.lastSyncError}</p>
+            <p className="mt-0.5 line-clamp-2 text-[11px] text-destructive">{source.lastSyncError}</p>
           ) : source.lastSyncAt ? (
-            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{source.lastSyncAt}</p>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{source.lastSyncAt}</p>
           ) : (
-            <p className="mt-0.5 text-[10px] text-muted-foreground/60">{source.type}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground/60">{source.type}</p>
           )}
         </div>
       </button>

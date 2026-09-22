@@ -44,6 +44,13 @@ const fixturePath = fileURLToPath(
 );
 
 describe("mcp client manager", () => {
+  it("does not warm up or invoke a disabled server, even if a session still selects it", async () => {
+    updateGlobalConfig({ mcpServers: [{ id: "disabled", name: "Disabled", command: process.execPath, args: [fixturePath], enabled: false }] }, "test");
+    await manager.warmup(["disabled"]);
+    expect(manager.getCachedTools("disabled")).toEqual([]);
+    expect(await manager.callTool("disabled", "echo", {})).toMatchObject({ ok: false, error: expect.stringContaining("已关闭") });
+  });
+
   it("probes a stdio server and lists its tools", async () => {
     const result = await manager.probe({
       id: "fixture",
