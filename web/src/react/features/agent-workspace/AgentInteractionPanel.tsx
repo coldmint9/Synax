@@ -118,6 +118,9 @@ function InteractionForm({
   const zh = locale === "zh";
   const formId = useId();
   const [values, setValues] = useState<Answers>({});
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const questionRef = useRef<HTMLFieldSetElement>(null);
+  const previousQuestionIndex = useRef(questionIndex);
   const [otherEnabled, setOtherEnabled] = useState<Record<string, boolean>>({});
   const [otherValues, setOtherValues] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -129,13 +132,26 @@ function InteractionForm({
     (s) => s.refreshInteractions,
   );
   const isPlan = interaction.kind === "plan_approval";
+  const questions = interaction.request.questions ?? [];
+  const paginated = !isPlan && questions.length > 1;
+  const visibleQuestions = paginated
+    ? questions.slice(questionIndex, questionIndex + 1)
+    : questions;
+  const hasNextQuestion = paginated && questionIndex < questions.length - 1;
+
+  useEffect(() => {
+    if (previousQuestionIndex.current !== questionIndex) {
+      questionRef.current?.focus();
+      previousQuestionIndex.current = questionIndex;
+    }
+  }, [questionIndex]);
   const update = (id: string, value: Answers[string]) =>
     setValues((current) => ({ ...current, [id]: value }));
 
-  function collectAnswers(): Answers | null {
+  function collectAnswers(questionsToValidate = questions): Answers | null {
     const answers: Answers = {};
     const invalid: Record<string, string> = {};
-    for (const question of interaction.request.questions ?? []) {
+    for (const question of questionsToValidate) {
       let value = values[question.id];
       if (typeof value === "string") value = value.trim();
       if (question.allowOther && otherEnabled[question.id]) {
@@ -187,7 +203,15 @@ function InteractionForm({
       }
     }
     setErrors(invalid);
-    return Object.keys(invalid).length ? null : answers;
+    if (Object.keys(invalid).length) {
+      if (paginated) {
+        setQuestionIndex(
+          questions.findIndex((question) => invalid[question.id]),
+        );
+      }
+      return null;
+    }
+    return answers;
   }
 
   async function reply(action: AgentInteractionReply["action"]) {
@@ -399,7 +423,14 @@ function InteractionForm({
       aria-busy={submitting}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!isPlan) void reply("submit");
+        if (isPlan || disabled || submittingRef.current) return;
+        if (hasNextQuestion) {
+          if (collectAnswers(visibleQuestions) !== null) {
+            setQuestionIndex((index) => index + 1);
+          }
+        } else {
+          void reply("submit");
+        }
       }}
       className="agent-request-surface"
     >
@@ -479,9 +510,22 @@ function InteractionForm({
               }
             />
           )}
-          {(interaction.request.questions ?? []).map((question) => (
+          {paginated && (
+            <p
+              className="text-xs text-muted-foreground"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {zh
+                ? `第 ${questionIndex + 1} / ${questions.length} 题`
+                : `Question ${questionIndex + 1} of ${questions.length}`}
+            </p>
+          )}
+          {visibleQuestions.map((question) => (
             <fieldset
               key={question.id}
+              ref={paginated ? questionRef : undefined}
+              tabIndex={paginated ? -1 : undefined}
               aria-describedby={
                 errors[question.id]
                   ? `${formId}-${question.id}-error`
@@ -515,6 +559,19 @@ function InteractionForm({
             </p>
           )}
           <div className="agent-request-footer-actions">
+            {paginated && (
+              <button
+                type="button"
+                className={buttonClass}
+                disabled={questionIndex === 0}
+                onClick={() => {
+                  setErrors({});
+                  setQuestionIndex((index) => index - 1);
+                }}
+              >
+                {zh ? "上一步" : "Previous"}
+              </button>
+            )}
             {isPlan && (
               <button
                 type="button"
@@ -542,9 +599,13 @@ function InteractionForm({
                 ? zh
                   ? "开始执行"
                   : "Start execution"
-                : zh
-                  ? "提交回答"
-                  : "Submit answers"}
+                : hasNextQuestion
+                  ? zh
+                    ? "下一步"
+                    : "Next"
+                  : zh
+                    ? "提交回答"
+                    : "Submit answers"}
               {isPlan && <ArrowUpRight size={14} aria-hidden />}
             </button>
           </div>

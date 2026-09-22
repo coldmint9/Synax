@@ -176,7 +176,7 @@ export class McpClientManager {
     const byId = this.configById(projectId);
     for (const id of serverIds) {
       const config = byId.get(id);
-      if (!config) continue;
+      if (!config || config.enabled === false) continue;
       try {
         await this.startServer(config, projectId);
       } catch {
@@ -205,6 +205,9 @@ export class McpClientManager {
     const config = byId.get(serverId);
     if (!config)
       return { ok: false, text: "", error: `MCP server ${serverId} 未配置` };
+
+    if (config.enabled === false)
+      return { ok: false, text: "", error: `MCP server ${serverId} 已关闭` };
 
     const state = await this.startServer(config, projectId);
     if (state.status !== "ready") {

@@ -86,6 +86,14 @@ export class SkillInstallService {
 
   async install(input: { sourceId: string; name: string; version?: string; remoteUrl?: string }): Promise<SkillSummary> {
     assertSafeSkillName(input.name);
+    const installDir = resolveInstallDir(input.name);
+    const skillId = `local/${input.name}`;
+    const existing = this.getInstall(skillId);
+    // A market item with the same name is not necessarily the same skill.
+    // Never overwrite source-owned files or another source's installation.
+    if (fs.existsSync(installDir) && (!existing || existing.sourceId !== input.sourceId)) {
+      throw new Error('A skill with this name already exists. Remove or rename it before installing from another source.');
+    }
     const catalogId = `${input.sourceId}/${input.name}`;
     const entry = skillIndexService.getCatalogEntry(catalogId);
     const remoteUrl = input.remoteUrl ?? entry?.remoteUrl;
@@ -102,13 +110,11 @@ export class SkillInstallService {
       throw new Error('Skill content digest mismatch');
     }
 
-    const installDir = resolveInstallDir(input.name);
     fs.mkdirSync(installDir, { recursive: true });
     const installPath = path.join(installDir, 'SKILL.md');
     fs.writeFileSync(installPath, rawContent, 'utf8');
 
     const parsed = parseSkillFile(installPath);
-    const skillId = `local/${input.name}`;
     const now = nowIso();
     const digest = entry?.contentDigest ?? `sha256:${sha256Digest(rawContent)}`;
 
@@ -132,7 +138,7 @@ export class SkillInstallService {
       skillId,
       input.sourceId,
       input.name,
-      parsed.version,
+      parsed.version || entry?.version || input.version || '',
       parsed.label,
       parsed.description,
       installPath,

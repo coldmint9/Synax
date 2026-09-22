@@ -17,6 +17,7 @@ export interface SkillsShV1Skill {
   installUrl: string | null;
   url: string;
   isDuplicate?: boolean;
+  version?: string;
 }
 
 interface SkillsShListResponse {
@@ -87,7 +88,7 @@ export function skillsShDownloadUrl(skillPath: string): string {
 
 export function resolveSkillsShSearchQuery(q: string | undefined): string | undefined {
   const trimmed = q?.trim() ?? '';
-  return trimmed.length >= 2 ? trimmed : undefined;
+  return trimmed || undefined;
 }
 
 async function fetchSkillsShJson<T>(url: string): Promise<T> {
@@ -108,7 +109,7 @@ async function fetchSkillsShJson<T>(url: string): Promise<T> {
     const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
     if (!response.ok) {
       throw new SkillsShApiError(
-        body.message ?? `skills.sh API error (${response.status})`,
+        body.message ?? body.error ?? `skills.sh API error (${response.status})`,
         response.status,
         body.error,
       );
@@ -131,7 +132,7 @@ function mapV1SkillToSummary(
     description: `${skill.source} · ${skill.installs.toLocaleString()} installs`,
     sourceId,
     sourceKind: 'remote',
-    version: '0.0.0',
+    version: typeof skill.version === 'string' ? skill.version.trim() : '',
     appliesTo: [],
     requiredCapabilities: [],
     permissionHints: [],
@@ -155,7 +156,7 @@ function mapLegacyHitToSummary(
     description: `${hit.source} · ${hit.installs.toLocaleString()} installs`,
     sourceId,
     sourceKind: 'remote',
-    version: '0.0.0',
+    version: '',
     appliesTo: [],
     requiredCapabilities: [],
     permissionHints: [],
@@ -189,7 +190,7 @@ async function listSkillsShV1(input: {
     const hits = (response.data ?? []).filter((skill) => !skill.isDuplicate);
     const pageHits = hits.slice(offset, offset + limit);
     const items = pageHits.map((hit) => mapV1SkillToSummary(input.sourceId, hit, input.installedNames));
-    const hasMore = hits.length > offset + limit || (hits.length === fetchLimit && pageHits.length === limit);
+    const hasMore = hits.length > offset + limit || (fetchLimit < 200 && hits.length === fetchLimit && pageHits.length === limit);
     const total = hasMore
       ? offset + pageHits.length + 1
       : offset + pageHits.length;
@@ -197,28 +198,27 @@ async function listSkillsShV1(input: {
     return { items, total, hasMore, totalExact: false };
   }
 
+  // The local catalog can occupy part of a page, so the remote offset is not
+  // necessarily a multiple of limit. Fetch the exact range, including its tail.
   const page = Math.floor(offset / limit);
-  const url = new URL(`${SKILLS_SH_V1}/skills`);
-  url.searchParams.set('view', input.view ?? 'all-time');
-  url.searchParams.set('page', String(page));
-  url.searchParams.set('per_page', String(limit));
-
-  const response = await fetchSkillsShJson<SkillsShListResponse>(url.toString());
-  const hits = (response.data ?? []).filter((skill) => !skill.isDuplicate);
+  const skip = offset % limit;
+  const fetchPage = async (index: number) => {
+    const url = new URL(`${SKILLS_SH_V1}/skills`);
+    url.searchParams.set('view', input.view ?? 'all-time');
+    url.searchParams.set('page', String(index));
+    url.searchParams.set('per_page', String(limit));
+    return fetchSkillsShJson<SkillsShListResponse>(url.toString());
+  };
+  const response = await fetchPage(page);
+  const data = [...(response.data ?? [])];
+  if (skip && response.pagination?.hasMore) {
+    const next = await fetchPage(page + 1);
+    data.push(...(next.data ?? []));
+  }
+  const hits = data.slice(skip, skip + limit).filter((skill) => !skill.isDuplicate);
   const items = hits.map((hit) => mapV1SkillToSummary(input.sourceId, hit, input.installedNames));
-  const pagination = response.pagination ?? {
-    page,
-    perPage: limit,
-    total: items.length,
-    hasMore: false,
-  };
-
-  return {
-    items,
-    total: pagination.total,
-    hasMore: pagination.hasMore,
-    totalExact: true,
-  };
+  const total = response.pagination?.total ?? offset + items.length;
+  return { items, total, hasMore: offset + limit < total, totalExact: true };
 }
 
 async function listSkillsShLegacy(input: {
@@ -244,7 +244,7 @@ async function listSkillsShLegacy(input: {
   const hits = response.skills ?? [];
   const pageHits = hits.slice(offset, offset + limit);
   const items = pageHits.map((hit) => mapLegacyHitToSummary(input.sourceId, hit, input.installedNames));
-  const hasMore = pageHits.length === limit && hits.length === fetchLimit;
+  const hasMore = hits.length > offset + limit || (fetchLimit < 200 && pageHits.length === limit && hits.length === fetchLimit);
 
   return {
     items,
@@ -263,6 +263,9 @@ export async function listSkillsSh(input: {
   offset: number;
   installedNames: Set<string>;
 }): Promise<{ items: SkillSummary[]; total: number; hasMore: boolean; totalExact?: boolean }> {
+  if (input.q?.trim().length === 1) {
+    throw new SkillsShApiError('Remote skill search requires at least 2 characters', 400, 'query_too_short');
+  }
   try {
     return await listSkillsShV1(input);
   } catch (err) {
