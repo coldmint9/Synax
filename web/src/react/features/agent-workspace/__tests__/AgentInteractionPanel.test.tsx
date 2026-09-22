@@ -159,23 +159,88 @@ async function fillForm() {
   const user = userEvent.setup();
   await screen.findByRole("textbox", { name: "Name" });
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Synax");
+  await user.click(screen.getByRole("button", { name: "Next" }));
   await user.type(
     screen.getByRole("textbox", { name: "Notes" }),
     "Keep inputs",
   );
+  await user.click(screen.getByRole("button", { name: "Next" }));
   await user.type(screen.getByRole("spinbutton", { name: "Count" }), "2");
+  await user.click(screen.getByRole("button", { name: "Next" }));
   await user.click(
     within(screen.getByRole("group", { name: "Confirmed *" })).getByRole(
       "radio",
       { name: "No" },
     ),
   );
+  await user.click(screen.getByRole("button", { name: "Next" }));
   await user.click(screen.getByRole("radio", { name: "Web" }));
+  await user.click(screen.getByRole("button", { name: "Next" }));
   await user.click(screen.getByRole("checkbox", { name: "Unit" }));
   return user;
 }
 
 describe("AgentInteractionPanel", () => {
+  it("shows one question at a time, keeps drafts when going back, and advances on Enter without posting", async () => {
+    render(<AgentInteractionPanel session={session} />);
+    const user = userEvent.setup();
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    expect(screen.getByText("Question 1 of 6")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(
+      screen.queryByRole("textbox", { name: "Notes" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Submit answers" }),
+    ).not.toBeInTheDocument();
+    await user.type(name, "Synax{Enter}");
+    expect(screen.getByText("Question 2 of 6")).toBeVisible();
+    expect(
+      screen.queryByRole("textbox", { name: "Name" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Notes" })).toHaveFocus();
+    await user.type(screen.getByRole("textbox", { name: "Notes" }), "Draft");
+    await user.click(screen.getByRole("button", { name: "Previous" }));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Synax");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByRole("textbox", { name: "Notes" })).toHaveValue("Draft");
+    expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
+  });
+
+  it("keeps a single question directly submittable without pagination", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          request: {
+            title: "One question",
+            questions: [clarification.request.questions![0]],
+          },
+        },
+      ],
+    });
+    render(<AgentInteractionPanel session={session} />);
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("textbox", { name: "Name" }),
+      "Synax",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Next" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Previous" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Submit answers" }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "i1",
+        { revision: 3, action: "submit", answers: { name: "Synax" } },
+      ),
+    );
+  });
+
   it.each(["codex", "claude-code"])(
     "loads and answers persisted questions for the %s native CLI backend",
     async (backendId) => {
@@ -255,13 +320,16 @@ describe("AgentInteractionPanel", () => {
   it("validates required fields and numeric bounds without posting", async () => {
     render(<AgentInteractionPanel session={session} />);
     await screen.findByRole("textbox", { name: "Name" });
-    fireEvent.click(screen.getByRole("button", { name: "Submit answers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findAllByText("Required")).not.toHaveLength(0);
     expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
     const user = await fillForm();
+    for (let i = 0; i < 3; i++) {
+      await user.click(screen.getByRole("button", { name: "Previous" }));
+    }
     await user.clear(screen.getByRole("spinbutton", { name: "Count" }));
     await user.type(screen.getByRole("spinbutton", { name: "Count" }), "8");
-    await user.click(screen.getByRole("button", { name: "Submit answers" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByRole("spinbutton", { name: "Count" })).toHaveAttribute(
       "aria-invalid",
       "true",
@@ -287,13 +355,24 @@ describe("AgentInteractionPanel", () => {
     await waitFor(() =>
       expect(agentRuntimeApi.listInteractions).toHaveBeenCalledTimes(2),
     );
+    expect(screen.getByText("Question 6 of 6")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Unit" })).toBeChecked();
+    for (let i = 0; i < 5; i++) {
+      await user.click(screen.getByRole("button", { name: "Previous" }));
+    }
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Synax");
+    for (let i = 0; i < 3; i++) {
+      await user.click(screen.getByRole("button", { name: "Next" }));
+    }
     expect(
       within(screen.getByRole("group", { name: "Confirmed *" })).getByRole(
         "radio",
         { name: "No" },
       ),
     ).toBeChecked();
+    for (let i = 0; i < 2; i++) {
+      await user.click(screen.getByRole("button", { name: "Next" }));
+    }
     await user.click(screen.getByRole("button", { name: "Submit answers" }));
     await waitFor(() =>
       expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledTimes(2),
@@ -364,15 +443,14 @@ describe("AgentInteractionPanel", () => {
     render(
       <AgentInteractionPanel session={{ ...session, status: "cancelled" }} />,
     );
-    expect(
-      await screen.findByRole("button", { name: "Submit answers" }),
-    ).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Next" })).toBeDisabled();
     expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
   });
 
   it("supports other values and validates multi-select cardinality", async () => {
     render(<AgentInteractionPanel session={session} />);
     const user = await fillForm();
+    await user.click(screen.getByRole("button", { name: "Previous" }));
     await user.click(
       within(screen.getByRole("group", { name: "Target *" })).getByRole(
         "radio",
@@ -383,6 +461,7 @@ describe("AgentInteractionPanel", () => {
       screen.getByRole("textbox", { name: "Target — Other" }),
       "Desktop",
     );
+    await user.click(screen.getByRole("button", { name: "Next" }));
     await user.click(screen.getByRole("checkbox", { name: "UI" }));
     await user.click(
       within(screen.getByRole("group", { name: "Checks *" })).getByRole(
@@ -449,12 +528,14 @@ describe("AgentInteractionPanel", () => {
     fireEvent.change(await screen.findByRole("spinbutton", { name: "Count" }), {
       target: { value: "0" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(
       within(screen.getByRole("group", { name: "Confirmed *" })).getByRole(
         "radio",
         { name: "No" },
       ),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit answers" }));
     await waitFor(() =>
       expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
@@ -506,9 +587,7 @@ describe("AgentInteractionPanel", () => {
       screen.getByLabelText("Approve plan v3 — Saved for later execution"),
     ).toBeVisible();
     expect(screen.getByLabelText("Clarify scope v2 — Declined")).toBeVisible();
-    expect(
-      screen.getAllByRole("button", { name: "Submit answers" }),
-    ).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Next" })).toHaveLength(1);
     unmount();
     useAgentSessionStore.setState({ interactionState: null });
     render(<AgentInteractionPanel session={session} />);
@@ -611,7 +690,8 @@ describe("AgentInteractionPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit answers" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit answers" }));
     expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Unit" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     await act(async () =>
       resolve({ interaction: { ...clarification, status: "answered" } }),
     );

@@ -303,6 +303,8 @@ export const CodeViewer = memo(function CodeViewer({
     previewKind === "markdown" ||
     previewKind === "svg";
   const showPreview = canPreview && view === "preview";
+  // Markdown scrolls in the body; embedded previews and the editor own their scrolling.
+  const hasNestedViewport = showPreview ? previewKind !== "markdown" : editable;
   const formatLabel =
     previewKind === "image"
       ? (mediaBlob?.type.split("/")[1] ?? "image")
@@ -400,7 +402,7 @@ export const CodeViewer = memo(function CodeViewer({
         </p>
       )}
       <div
-        className={`code-viewer-body session-workspace-scroll min-h-0 flex-1 ${showPreview || (editable && !showPreview) ? "flex flex-col overflow-hidden" : "overflow-auto"}`}
+        className={`code-viewer-body session-workspace-scroll min-h-0 flex-1 ${hasNestedViewport ? "flex flex-col overflow-hidden" : "overflow-auto"}`}
       >
         {loading ? (
           <div className="file-viewer-status">读取中…</div>

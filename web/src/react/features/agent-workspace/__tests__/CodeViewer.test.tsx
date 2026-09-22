@@ -352,6 +352,38 @@ describe("CodeViewer", () => {
     );
   });
 
+  it.each([undefined, "file:docs/guide.md"])(
+    "gives Markdown preview its own scrollable body (tab: %s)",
+    async (tabId) => {
+      const content =
+        "## Long guide\n\n" + "A paragraph of content.\n\n".repeat(100);
+      getSessionEnvironmentFile.mockResolvedValue(fileView(content));
+      const { container } = render(
+        <CodeViewer sessionId="sess-1" path="docs/guide.md" tabId={tabId} />,
+      );
+      await screen.findByRole("heading", { name: "Long guide" });
+      const body = container.querySelector(".code-viewer-body");
+      expect(body).toHaveClass("min-h-0", "flex-1", "overflow-auto");
+      expect(body).not.toHaveClass("overflow-hidden");
+      expect(body).toContainElement(
+        container.querySelector(".file-viewer-markdown"),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "源码" }));
+      if (tabId) {
+        expect(body).toHaveClass("overflow-hidden");
+        expect(
+          screen.getByRole("textbox", { name: "编辑文件 docs/guide.md" }),
+        ).toHaveValue(content);
+      } else {
+        expect(body).toHaveClass("overflow-auto");
+      }
+      fireEvent.click(screen.getByRole("button", { name: "预览" }));
+      expect(body).toHaveClass("overflow-auto");
+      expect(body).not.toHaveClass("overflow-hidden");
+      expect(screen.getByRole("heading", { name: "Long guide" })).toBeVisible();
+    },
+  );
+
   it("retains HTML preview and highlights the editable source", async () => {
     getSessionEnvironmentFile.mockResolvedValue(fileView("<h1>Hello</h1>"));
     highlightCode.mockImplementation(async (text: string) => markup(text));
@@ -364,6 +396,10 @@ describe("CodeViewer", () => {
     );
     const preview = await screen.findByTitle("HTML 预览：src/page.html");
     expect(preview).toHaveAttribute("sandbox", "allow-scripts");
+    expect(container.querySelector(".code-viewer-body")).toHaveClass(
+      "overflow-hidden",
+    );
+    expect(preview).toHaveClass("min-h-0", "flex-1");
     expect(preview).not.toHaveAttribute(
       "allow",
       expect.stringContaining("same-origin"),
