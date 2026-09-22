@@ -1,5 +1,17 @@
+import {
+  RuntimeCheckpointIndex,
+  type RuntimeCheckpoint,
+} from "./checkpoint-index.js";
+export type { RuntimeCheckpoint } from "./checkpoint-index.js";
+import { assertRuntimeBatch, type RuntimeWrite } from "./batch-input.js";
+import {
+  writeRuntimeBatch,
+  orderKey,
+  eventKey,
+  type TableState,
+} from "./batch-write.js";
 import { readVersionSnapshot } from "../version-store/read-snapshot.js";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { VersionObjects } from "../version-store/objects.js";
 import { VersionHeads, type HeadState } from "../version-store/heads.js";
 import { VersionTree } from "../version-store/tree.js";
@@ -9,7 +21,6 @@ import {
   type VersionRoots,
 } from "../version-store/versions.js";
 import { atomicVersionWrite } from "../version-store/transaction.js";
-import { hashBytes } from "../version-store/hash-codec.js";
 import {
   PAGE_BYTES,
   PAGE_ROWS,
@@ -18,41 +29,12 @@ import {
 } from "../version-store/limits.js";
 import { RuntimeRecordCodec } from "./record-codec.js";
 
-interface TableState {
-  kind: "table";
-  version: 1;
-  ids: string | null;
-  order: string | null;
-  next: number;
-  count: number;
-}
-export interface RuntimeCheckpoint {
-  id: string;
-  sessionId: string;
-  ordinal: number;
-  kind: "input" | "reply";
-  messageId: string;
-  stepId: string | null;
-  mutationCursor: number;
-  createdAt: string;
-  payload: {
-    version: 3;
-    versionId: string;
-    boundary: {
-      cursor: number;
-      sessionIds: string[];
-      messageCount: number;
-      omitRunId?: string;
-    };
-  };
-}
 export interface RecordPageOptions {
   limit?: number;
   maxBytes?: number;
   cursor?: string;
   fields?: readonly string[];
 }
-const orderKey = (order: number) => order.toString().padStart(16, "0");
 const allowedTables = [
   "messages",
   "events",
@@ -76,18 +58,6 @@ function tableName(table: string): void {
       "Unsupported versioned runtime table.",
     );
 }
-function eventKey(type: unknown): string {
-  if (
-    typeof type !== "string" ||
-    !type.length ||
-    type.length > 128 ||
-    !type.isWellFormed() ||
-    type.includes("\0") ||
-    Buffer.byteLength(type) > 128
-  )
-    throw new VersionStoreError("VERSION_EVENT_TYPE", "Invalid event type.");
-  return `event-type/${type}`;
-}
 function stale(): never {
   throw new VersionStoreError(
     "HISTORY_STALE",
@@ -99,20 +69,12 @@ export class RuntimeVersionRepository {
   readonly records: RuntimeRecordCodec;
   private readonly tree: VersionTree;
   private readonly heads: VersionHeads;
-  private readonly checkpointState;
-  private readonly updateCheckpoints;
+  private readonly checkpointIndex: RuntimeCheckpointIndex;
   constructor(readonly objects: VersionObjects) {
     this.records = new RuntimeRecordCodec(objects);
     this.tree = new VersionTree(objects);
     this.heads = new VersionHeads(objects.db, objects);
-    this.checkpointState = objects.db.prepare<[string]>(
-      "SELECT CASE WHEN checkpoint_root IS NULL THEN NULL ELSE lower(hex(checkpoint_root)) END AS root,next_checkpoint AS next FROM conversation_v3_heads WHERE session_id=?",
-    );
-    this.updateCheckpoints = objects.db.prepare<
-      [Uint8Array | null, number, string]
-    >(
-      "UPDATE conversation_v3_heads SET checkpoint_root=?,next_checkpoint=? WHERE session_id=?",
-    );
+    this.checkpointIndex = new RuntimeCheckpointIndex(objects);
   }
   head(sessionId: string): HeadState {
     return this.heads.read(sessionId);
@@ -201,60 +163,29 @@ export class RuntimeVersionRepository {
     id: string,
     fields: Record<string, unknown>,
   ): HeadState {
+    return this.publishBatch(sessionId, [{ table, id, fields }]);
+  }
+  putBatch(sessionId: string, writes: readonly RuntimeWrite[]): HeadState {
+    assertRuntimeBatch(writes);
+    return this.publishBatch(sessionId, writes);
+  }
+  private publishBatch(
+    sessionId: string,
+    writes: readonly RuntimeWrite[],
+  ): HeadState {
+    for (const write of writes) tableName(write.table);
+    if (!writes.length) return this.head(sessionId);
     return atomicVersionWrite(this.objects.db, () => {
-      const { head, roots } = this.roots(sessionId),
-        state = this.table(roots, table);
-      if (!Number.isSafeInteger(state.next + 1))
-        throw new VersionStoreError(
-          "VERSION_RECORD_ORDER",
-          "Runtime order exhausted.",
-        );
-      const previous = this.tree.get(state.ids, id),
-        old = previous ? this.records.header(previous) : undefined;
-      const record = this.records.write(
-        table,
+      const { head, roots } = this.roots(sessionId);
+      writeRuntimeBatch(
+        this.objects,
+        this.records,
+        this.tree,
         sessionId,
-        id,
-        state.next,
-        fields,
+        roots,
+        writes,
+        (table) => this.table(roots, table),
       );
-      state.ids = this.tree.update(state.ids, [{ key: id, value: record }]);
-      state.order = this.tree.update(state.order, [
-        ...(old ? [{ key: orderKey(old.order), value: null }] : []),
-        { key: orderKey(state.next), value: record },
-      ]);
-      state.next++;
-      if (!old) state.count++;
-      const manifest = this.objects.put(
-        "record",
-        Buffer.from(JSON.stringify(state)),
-        [state.ids!, state.order!],
-      );
-      roots.stateRoot = this.tree.update(roots.stateRoot, [
-        { key: `table/${table}`, value: manifest },
-      ]);
-      if (table === "events") {
-        if (old && previous) {
-          const priorType = this.records.read(previous, 1024, ["type"]).type,
-            key = eventKey(priorType);
-          const index = this.tree.update(
-            this.tree.get(roots.stateRoot, key) ?? null,
-            [{ key: orderKey(old.order), value: null }],
-          );
-          roots.stateRoot = this.tree.update(roots.stateRoot, [
-            { key, value: index },
-          ]);
-        }
-        const key = eventKey(fields.type),
-          index = this.tree.update(
-            this.tree.get(roots.stateRoot, key) ?? null,
-            [{ key: orderKey(state.next - 1), value: record }],
-          );
-        roots.stateRoot = this.tree.update(roots.stateRoot, [
-          { key, value: index },
-        ]);
-      }
-      if (table === "messages") roots.transcriptRoot = state.order;
       return this.publish(sessionId, head, roots);
     });
   }
@@ -486,20 +417,6 @@ export class RuntimeVersionRepository {
       revision: head.revision,
     };
   }
-  private checkpointIndex(sessionId: string): {
-    root: string | null;
-    next: number;
-  } {
-    const state = this.checkpointState.get(sessionId) as
-      | { root: string | null; next: number }
-      | undefined;
-    if (!state)
-      throw new VersionStoreError(
-        "VERSION_SESSION_MISSING",
-        "Versioned session is missing.",
-      );
-    return state;
-  }
   capture(
     sessionId: string,
     kind: "input" | "reply",
@@ -509,115 +426,31 @@ export class RuntimeVersionRepository {
     omitRunId?: string,
   ): RuntimeCheckpoint {
     return atomicVersionWrite(this.objects.db, () => {
-      const { head, roots } = this.roots(sessionId),
-        index = this.checkpointIndex(sessionId);
-      if (!Number.isSafeInteger(index.next + 1))
-        throw new VersionStoreError(
-          "VERSION_CHECKPOINT_LIMIT",
-          "Checkpoint order exhausted.",
-        );
-      const cp: RuntimeCheckpoint = {
-        id: `vcp_${index.next}_${randomUUID()}`,
+      const { head, roots } = this.roots(sessionId);
+      return this.checkpointIndex.capture({
         sessionId,
-        ordinal: index.next,
         kind,
         messageId,
         stepId,
         mutationCursor,
-        createdAt: new Date().toISOString(),
-        payload: {
-          version: 3,
-          versionId: head.versionId,
-          boundary: {
-            cursor: 0,
-            sessionIds: [sessionId],
-            messageCount: this.table(roots, "messages").count,
-            ...(omitRunId ? { omitRunId } : {}),
-          },
-        },
-      };
-      const record = this.objects.put(
-        "record",
-        Buffer.from(JSON.stringify(cp)),
-        [head.versionId],
-      );
-      const root = this.tree.update(index.root, [
-        { key: orderKey(index.next), value: record },
-      ]);
-      this.updateCheckpoints.run(
-        root ? hashBytes(root) : null,
-        index.next + 1,
-        sessionId,
-      );
-      return cp;
+        omitRunId,
+        versionId: head.versionId,
+        messageCount: this.table(roots, "messages").count,
+      });
     });
   }
-  private checkpointRecord(ref: string, sessionId: string): RuntimeCheckpoint {
-    const object = this.objects.get(ref, "record"),
-      cp = JSON.parse(object.bytes.toString()) as RuntimeCheckpoint;
-    if (
-      cp.sessionId !== sessionId ||
-      cp.payload?.version !== 3 ||
-      !Number.isSafeInteger(cp.ordinal) ||
-      cp.ordinal < 1 ||
-      object.references.length !== 1 ||
-      object.references[0] !== cp.payload.versionId
-    )
-      throw new VersionStoreError(
-        "VERSION_CHECKPOINT_CORRUPT",
-        "Checkpoint integrity check failed.",
-      );
-    return cp;
-  }
-  checkpoint(sessionId: string, id: string) {
+  checkpoint(sessionId: string, id: string): RuntimeCheckpoint {
     return readVersionSnapshot(this.objects.db, () =>
-      this.checkpointSnapshot(sessionId, id),
+      this.checkpointIndex.get(sessionId, id),
     );
-  }
-  private checkpointSnapshot(sessionId: string, id: string): RuntimeCheckpoint {
-    const match = /^vcp_(\d+)_([0-9a-f-]{36})$/.exec(id),
-      ordinal = match ? Number(match[1]) : NaN;
-    if (!Number.isSafeInteger(ordinal) || ordinal < 1)
-      throw new VersionStoreError(
-        "CHECKPOINT_NOT_FOUND",
-        "Invalid checkpoint identity.",
-      );
-    const ref = this.tree.get(
-      this.checkpointIndex(sessionId).root,
-      orderKey(ordinal),
-    );
-    if (!ref)
-      throw new VersionStoreError(
-        "CHECKPOINT_NOT_FOUND",
-        "Checkpoint is no longer in the visible history.",
-      );
-    const cp = this.checkpointRecord(ref, sessionId);
-    if (cp.id !== id)
-      throw new VersionStoreError(
-        "CHECKPOINT_NOT_FOUND",
-        "Checkpoint identity does not match.",
-      );
-    return cp;
   }
   checkpoints(
     sessionId: string,
     options: { after?: string; limit?: number } = {},
-  ) {
-    return readVersionSnapshot(this.objects.db, () =>
-      this.checkpointsSnapshot(sessionId, options),
-    );
-  }
-  private checkpointsSnapshot(
-    sessionId: string,
-    options: { after?: string; limit?: number } = {},
   ): { items: RuntimeCheckpoint[]; next?: string } {
-    const page = this.tree.page(this.checkpointIndex(sessionId).root, options);
-    return {
-      items: page.entries.map((entry) =>
-        this.checkpointRecord(entry.value, sessionId),
-      ),
-      ...(page.next ? { next: page.next } : {}),
-    };
+    return readVersionSnapshot(this.objects.db, () =>
+      this.checkpointIndex.page(sessionId, options),
+    );
   }
   preview(sessionId: string, checkpointId: string) {
     return readVersionSnapshot(this.objects.db, () =>
@@ -658,24 +491,18 @@ export class RuntimeVersionRepository {
       };
       const previous = this.heads.retrySwitch(common);
       if (previous) return previous;
-      const cp = this.checkpoint(sessionId, request.checkpointId),
-        index = this.checkpointIndex(sessionId);
+      const cp = this.checkpoint(sessionId, request.checkpointId);
       if (this.head(sessionId).revision !== request.revision) stale();
       if (cp.kind !== "reply")
         throw new VersionStoreError(
           "HISTORY_CONFLICT",
           "Reply rollback requires a reply checkpoint boundary.",
         );
-      const root = this.tree.prefix(index.root, orderKey(cp.ordinal));
       const result = this.heads.switch({
         ...common,
         targetVersionId: cp.payload.versionId,
       });
-      this.updateCheckpoints.run(
-        root ? hashBytes(root) : null,
-        index.next,
-        sessionId,
-      );
+      this.checkpointIndex.truncate(sessionId, cp);
       return result;
     });
   }

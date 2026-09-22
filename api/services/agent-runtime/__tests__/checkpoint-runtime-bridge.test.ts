@@ -78,6 +78,14 @@ describe("real runtime transcript bridge", () => {
     expect(store.listMessages(id).map((m) => m.id)).toEqual(["a"]);
     expect(store.getSession(id).sessionMetadata?.future).toBeUndefined();
   });
+  it("returns the original checkpoint on capture retry after later writes", async () => {
+    message("a");
+    const first = (await captureCheckpoint(id, "reply", "a"))!;
+    message("b");
+    const before = versionRepository().objects.stats();
+    expect(await captureCheckpoint(id, "reply", "a")).toEqual(first);
+    expect(versionRepository().objects.stats()).toEqual(before);
+  });
   it("keeps live authorization changes after a history switch", async () => {
     message("a");
     const cp = (await captureCheckpoint(id, "reply", "a"))!;

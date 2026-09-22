@@ -75,6 +75,43 @@ describe("runtime version repository", () => {
       c.id,
     ]);
   });
+  it("deduplicates capture retries even after intervening writes without allocating a new snapshot", () => {
+    repo.put("s", "messages", "a", message("a"));
+    const cp = repo.capture("s", "reply", "a", null, 0);
+    repo.put("s", "messages", "b", message("b"));
+    const stats = objects.stats(),
+      head = repo.head("s");
+    expect(repo.capture("s", "reply", "a", "ignored-retry-step", 99)).toEqual(
+      cp,
+    );
+    expect(objects.stats()).toEqual(stats);
+    expect(repo.head("s")).toEqual(head);
+    expect(repo.checkpoints("s").items.map((item) => item.id)).toEqual([cp.id]);
+    expect(repo.capture("s", "input", "a", null, 0).id).not.toBe(cp.id);
+  });
+  it("restores capture identity lookup on rollback without reviving a popped checkpoint", () => {
+    repo.put("s", "messages", "a", message("a"));
+    const a = repo.capture("s", "reply", "a", null, 0);
+    repo.put("s", "messages", "b", message("b"));
+    const b = repo.capture("s", "reply", "b", null, 0);
+    repo.rollback("s", {
+      checkpointId: a.id,
+      revision: repo.head("s").revision,
+      requestId: "undo",
+    });
+    repo.put("s", "messages", "b", message("b", "new branch"));
+    const replacement = repo.capture("s", "reply", "b", null, 0);
+    expect(replacement.id).not.toBe(b.id);
+    expect(replacement.ordinal).toBeGreaterThan(b.ordinal);
+    expect(repo.capture("s", "reply", "a", null, 0)).toEqual(a);
+    expect(repo.checkpoints("s").items.map((item) => item.id)).toEqual([
+      a.id,
+      replacement.id,
+    ]);
+    const gc = new VersionCollector(objects);
+    for (let n = 0; n < 100 && gc.collect().remaining; n++);
+    expect(repo.capture("s", "reply", "b", null, 0)).toEqual(replacement);
+  });
   it("paginates a fixed version and rejects unpinned stale page versions", () => {
     for (let n = 0; n < 20; n++)
       repo.put("s", "messages", String(n), message(String(n)));

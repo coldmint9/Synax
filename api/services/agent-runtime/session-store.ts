@@ -1,3 +1,4 @@
+import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import {
   versionRepository,
   versionedSession,
@@ -1090,6 +1091,53 @@ export class AgentRuntimeStore {
       )
       .all(sessionId) as MessageRow[];
     return rows.map(mapMessage);
+  }
+
+  /** One durable, bounded burst; never accepts mixed-session writes. */
+  appendEvents(events: readonly RuntimeEvent[]): RuntimeEvent[] {
+    if (!Array.isArray(events) || events.length > 256)
+      throw new AgentRuntimeError(
+        "Event batch row limit exceeded.",
+        "VERSION_BATCH_LIMIT",
+        413,
+      );
+    assertBatchInput(events);
+    if (!events.length) return [];
+    const sessionId = events[0].sessionId;
+    if (events.some((event) => event.sessionId !== sessionId))
+      throw new AgentRuntimeError(
+        "Event batch must belong to one session.",
+        "VERSION_BATCH_SESSION",
+        409,
+      );
+    return getRawSqlite().transaction(() => {
+      this.getSession(sessionId);
+      if (versionedSession(sessionId)) {
+        versionRepository().putBatch(
+          sessionId,
+          events.map((event) => ({
+            table: "events",
+            id: event.id,
+            fields: event as unknown as Record<string, unknown>,
+          })),
+        );
+      } else {
+        const insert = getRawSqlite().prepare(
+          "INSERT OR REPLACE INTO agent_runtime_events(id,session_id,type,timestamp,visibility,summary,payload_json) VALUES(?,?,?,?,?,?,?)",
+        );
+        for (const event of events)
+          insert.run(
+            event.id,
+            event.sessionId,
+            event.type,
+            event.timestamp,
+            event.visibility,
+            event.summary,
+            stringify(event.payload),
+          );
+      }
+      return [...events];
+    })();
   }
 
   appendEvent(event: RuntimeEvent): RuntimeEvent {

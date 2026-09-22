@@ -47,19 +47,19 @@ it("rolls back a real 10k-event transcript through the route without history-pro
     const repo = versionRepository(),
       gc = new VersionCollector(repo.objects),
       db = getRawSqlite();
+    const generationStart = performance.now();
     for (let base = 0; base < 10000; base += 32) {
-      db.transaction(() => {
-        for (let n = base; n < Math.min(base + 32, 10000); n++)
-          store.appendEvent({
-            id: `event-${n}`,
-            sessionId: id!,
-            type: "thought_delta",
-            timestamp: "now",
-            visibility: "internal",
-            summary: "delta",
-            payload: { delta: `${n}` },
-          });
-      })();
+      store.appendEvents(
+        Array.from({ length: Math.min(32, 10000 - base) }, (_, offset) => ({
+          id: `event-${base + offset}`,
+          sessionId: id!,
+          type: "thought_delta" as const,
+          timestamp: "now",
+          visibility: "internal" as const,
+          summary: "delta",
+          payload: { delta: `${base + offset}` },
+        })),
+      );
       // Explicit maintenance harness, not a claim that a runtime scheduler exists.
       for (
         let batch = 0;
@@ -68,6 +68,7 @@ it("rolls back a real 10k-event transcript through the route without history-pro
         batch++
       );
     }
+    const generationMs = performance.now() - generationStart;
     addMessage("after");
     const revision = repo.head(id).revision;
     const nativeGet = repo.objects.get.bind(repo.objects);
@@ -108,6 +109,9 @@ it("rolls back a real 10k-event transcript through the route without history-pro
     const report = {
       scope: "actual-transcript-route-only",
       events: 10000,
+      batchRows: 32,
+      generationMs,
+      objectStats: repo.objects.stats(),
       rollbackMs: elapsed,
       immutableObjectReads: reads,
       rss: process.memoryUsage().rss,

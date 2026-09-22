@@ -4,4 +4,5 @@ export const VERSION_SCHEMA_MIGRATIONS = [
   "0052_conversation_version_heads.sql",
   "0053_conversation_compact_versions.sql",
   "0054_conversation_checkpoint_index.sql",
+  "0056_conversation_checkpoint_identity.sql",
 ] as const;
