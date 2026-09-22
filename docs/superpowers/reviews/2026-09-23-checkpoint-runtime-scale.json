@@ -1,0 +1,8 @@
+{
+  "scope": "actual-transcript-route-only",
+  "events": 10000,
+  "rollbackMs": 6.488708000004408,
+  "immutableObjectReads": 13,
+  "rss": 248283136,
+  "heapUsed": 155121440
+}

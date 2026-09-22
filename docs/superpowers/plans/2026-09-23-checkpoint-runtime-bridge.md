@@ -30,36 +30,43 @@ Interfaces:
 - `VersionText.write(text): string`, `info(ref)`, `page(ref, cursor?)`, `read(ref,maxBytes)`; text manifests carry raw and JSON-encoded sizes, code-point-safe chunks and an indexed chunk root.
 - `RuntimeRecordCodec.write(table,scope,id,order,fields): string`, `header(ref)`, `read(ref,byteBudget,fields?)`; inline small values, externalize large strings/JSON, preserve exact value semantics and enforce finite node/depth/byte budgets before serialization.
 
-- [ ] RED tests for multi-chunk Unicode round trips, pre-materialization byte rejection, bounded chunk pages, dedup, corrupted descriptors, record projection and large message content.
-- [ ] Implement bounded codecs, without whole-string UTF-8 copies or whole-history arrays.
-- [ ] Verify real SQLite tests and typecheck.
+- [x] RED tests for multi-chunk Unicode round trips, pre-materialization byte rejection, bounded chunk pages, dedup, corrupted descriptors, record projection and large message content.
+- [x] Implement bounded codecs, without whole-string UTF-8 copies or whole-history arrays.
+- [x] Verify real SQLite tests and typecheck.
 
 ## Task 2 — Persistent checkpoint index and weak identity metadata
 
-Add a migration for `checkpoint_root` on heads and bounded weak checkpoint/record locators; extend collector cleanup under its shared metadata-row budget. Add prefix truncation to VersionTree and a transactional optional checkpoint-root change to head switch/fork.
+Add a migration for `checkpoint_root` on heads. Current same-session checkpoint lookup uses the ordinal encoded in its nonce-bearing identity directly in the immutable index: no additional weak locator table or GC fanout is required in this phase. Prefix truncation and the head/index switch share one outer transaction. Fork-specific root mapping remains a later runtime integration task.
 
-- [ ] RED tests for logarithmic prefix truncation, unchanged old roots, checkpoint pinning via index root, stable locator lookup and atomic head/index/idempotency publication.
-- [ ] Verify weak metadata does not pin discarded branches, GC handles locator fanout in pages, and metadata quotas include new rows.
-- [ ] Use one core migration filename manifest in isolated fixtures and probes rather than updating scattered hardcoded lists.
+- [x] RED tests for logarithmic prefix truncation, unchanged old roots, checkpoint pinning via index root, stable locator lookup and atomic head/index/idempotency publication.
+- [x] Verify index roots protect checkpoints through GC and discarded index prefixes become collectible; no separate per-checkpoint mutable metadata rows are created.
+- [x] Use one core migration filename manifest in isolated fixtures and probes rather than updating scattered hardcoded lists.
 
 ## Task 3 — Real session-store message/session bridge
 
 Create `version-runtime/repository.ts` and `version-runtime/bridge.ts`; integrate message append/get/list/page and historical session fields into AgentRuntimeStore.
 
-- [ ] Explicit initializer only for a fresh inactive native root session; no public/default feature switch yet.
-- [ ] RED tests through real AgentRuntimeStore: writes avoid the mutable message table, ordering/replacement are exact, old versions remain visible through fixed views, and large history requires pagination rather than silent truncation.
-- [ ] Keep current permissions and execution control outside historical session projections; preserve volatile metadata instead of copying it into every snapshot.
-- [ ] Checkpoint payload v3 can carry common boundary metadata for compatibility, but must never be sent to the old undo replay implementation.
+- [x] Explicit initializer only for a fresh inactive native root session; no public/default feature switch yet.
+- [x] RED tests through real AgentRuntimeStore: writes avoid the mutable message table, ordering/replacement are exact, old versions remain visible through fixed views, and large history requires pagination rather than silent truncation.
+- [x] Keep current permissions and execution control outside historical session projections; preserve volatile metadata instead of copying it into every snapshot.
+- [x] Checkpoint payload v3 can carry common boundary metadata for compatibility, but must never be sent to the old undo replay implementation.
 
 ## Task 4 — Capture / preview / rollback and bounded endpoints
 
 Integrate dispatch in checkpoint store/operations, separate history epoch from revision in stream fences, and add version-fixed paged messages/content endpoints.
 
-- [ ] RED real-route tests for checkpoint/preview/rollback, request retries, stale preview, future-checkpoint exclusion, new branch writes, active-run rejection and large content paging.
-- [ ] No-file transcript cohort initially rejects edit/run/fork/file operations until their real consumers are integrated. This is a temporary rollout guard, not a replacement scope or a completion claim.
-- [ ] Verify no full message/checkpoint scan or old undo DELETE is issued by the v3 rollback path.
-- [ ] Run all prior core, DB safety, conversation/file/recovery/route regressions.
+- [x] RED real-route tests for checkpoint/preview/rollback, request retries, stale preview, future-checkpoint exclusion, new branch writes, active-run rejection and large content paging.
+- [x] No-file transcript cohort initially rejects edit/run/fork/file operations until their real consumers are integrated. This is a temporary rollout guard, not a replacement scope or a completion claim.
+- [x] Verify no full message/checkpoint scan or old undo DELETE is issued by the v3 rollback path.
+- [x] Run all prior core, DB safety, conversation/file/recovery/route regressions.
 
 ## Subsequent required integration
 
 Port all runtime row types and direct SQL consumers (context/search/export/usage/control/children), execution admission/edit-resend/fork scopes, chunked event replay, reader pins/worker scheduling, frontend paging, file plans/compensation, resumable old data conversion and physical disk/WAL/temp admission. Do not enable v3 by default or mark the overall goal complete until those requirements and end-to-end cold/concurrent/large-data tests pass.
+
+## Execution evidence and scope boundary
+
+- RED→GREEN: bounded value modules, tree prefix/rank/last, real bridge dispatch, session-list overlays/event queries, content continuation revision, stale initializer, run-admission guard and two-connection read/GC race.
+- Final 22-file / 138-test isolated run PASS; API/probe typechecks PASS. Actual 10k-event rollback route sample: 6.489ms, 13 immutable object reads, no legacy undo journal. See `docs/superpowers/reviews/2026-09-23-checkpoint-runtime-verification.md`.
+- Planned weak locator tables were unnecessary for ordinal checkpoint IDs in the current same-session cohort; by-ID cross-session runtime entities/fork mappings still need a design in the next full-runtime step.
+- This plan establishes the real transcript bridge ONLY. Capture dedup/latest-reply/client pagination, all execution row types, edit/fork/files, production maintenance/admission, UI, migration and full resource acceptance remain incomplete. V3 is NOT enabled by default.
