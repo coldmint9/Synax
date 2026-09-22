@@ -22,6 +22,8 @@ describe('fixed-policy isolated compiler', () => {
     expect(result.source.map(f => f.path)).toEqual(['colors.css', 'icon.svg', 'index.html', 'main.js', 'styles.css']);
     expect(result.html).toContain('data:image/svg+xml'); expect(result.html).not.toContain('src="main.js"');
     expect(result.html.indexOf(sdk)).toBeLessThan(result.html.indexOf('dataset.ready'));
+    expect(result.html).toContain('--viz-primary');
+    expect(result.html).toContain('style-src');
     const document = parse(result.html);
     const hashes: string[] = [];
     const walk = (n: any) => { if (['style','script'].includes(n.tagName)) hashes.push(createHash('sha256').update(n.childNodes.map((x: any) => x.value ?? '').join('')).digest('base64')); n.childNodes?.forEach(walk); }; walk(document);

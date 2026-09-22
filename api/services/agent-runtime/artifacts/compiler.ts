@@ -1,4 +1,5 @@
 import {htmlIconRuntime} from "./html-icons.js";
+import { visualizationStyles } from "./visualize-runtime.js";
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import type { DefaultTreeAdapterMap } from 'parse5';
@@ -82,14 +83,15 @@ export async function compileArtifact(snapshot: SnapshotReader, kind: ArtifactKi
     };
     // Dynamic import permits independent SDK development; production never substitutes a stub.
     const sdk = options.sdkSource ?? (await import('./runtime-sdk.js')).artifactSdkSource();
+    const hostStyles = visualizationStyles();
     let html: string;
-    if (kind === 'html') html = await compileHtml(snapshot, compile, sdk + '\n' + htmlIconRuntime(deps.entries['lucide-react']), parseHtml);
+    if (kind === 'html') html = await compileHtml(snapshot, compile, sdk + '\n' + htmlIconRuntime(deps.entries['lucide-react']), parseHtml, [hostStyles]);
     else {
       const entry = snapshot.read(snapshot.entry);
       if (!/\.(?:tsx?|jsx?|mjs)$/i.test(entry.path)) throw new ArtifactError('INVALID_SOURCE', 'React entry must be a JS/TS module.');
       // A default-exported component is the entry contract; workspace bootstraps/configs never run.
       const result = await compile({ path: '__synax_entry__.tsx', content: `import React from 'react';import {createRoot} from 'react-dom/client';import App from ${JSON.stringify('./' + entry.path)};createRoot(document.getElementById('root')).render(React.createElement(App));`, encoding: 'utf8', mediaType: 'text/typescript' });
-      html = runtimeDocument('<div id="root"></div>', [result.js], result.css ? [result.css] : [], sdk);
+      html = runtimeDocument('<div id="root"></div>', [result.js], [hostStyles, ...(result.css ? [result.css] : [])], sdk);
     }
     if (failure) throw failure;
     if (options.signal?.aborted) throw new ArtifactError('BUILD_CANCELLED', 'Artifact build was cancelled.', 499);

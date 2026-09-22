@@ -76,7 +76,7 @@ export function runtimeDocument(body: string, scripts: string[], styles: string[
 }
 
 /** Parse and reconstruct, never concatenate untrusted markup around CSP or bootstrap. */
-export async function compileHtml(snapshot: SnapshotReader, compile: Compile, sdk: string, parseHtml: (source: string) => Promise<DefaultTreeAdapterMap['document']> = async source => parse(source)): Promise<string> {
+export async function compileHtml(snapshot: SnapshotReader, compile: Compile, sdk: string, parseHtml: (source: string) => Promise<DefaultTreeAdapterMap['document']> = async source => parse(source), extraStyles: string[] = []): Promise<string> {
   const entry = snapshot.read(snapshot.entry);
   if (entry.mediaType !== 'text/html') throw new ArtifactError('INVALID_SOURCE', 'HTML entry must be an HTML file.');
   const document = await parseHtml(entry.content);
@@ -131,5 +131,5 @@ export async function compileHtml(snapshot: SnapshotReader, compile: Compile, sd
   const head = elements.find(e => e.tagName === 'head')!;
   const body = elements.find(e => e.tagName === 'body')!;
   head.childNodes = head.childNodes.filter(child => !('tagName' in child) || !['meta','title'].includes(child.tagName));
-  return runtimeDocument(serialize(head) + serialize(body), scripts, styles, sdk);
+  return runtimeDocument(serialize(head) + serialize(body), scripts, [...extraStyles, ...styles], sdk);
 }
