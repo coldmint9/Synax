@@ -25,7 +25,9 @@ Create under `api/services/agent-runtime/checkpoints/version-store/`:
 - `limits.ts`: byte/count limits and typed resource/corruption/conflict errors.
 - `transaction.ts`: short synchronous nested transaction boundary (savepoint inside caller transaction, IMMEDIATE outside).
 - `objects.ts`: typed hashing, read/write integrity, explicit reference edges, quota admission and bounded retrieval.
+- `tree-nodes.ts`: bounded node codec, structural validation and byte-aware node splitting.
 - `tree.ts`: immutable ordered map from bounded keys to content references; sorted incremental updates, keyset pagination and sharing.
+- `versions.ts`: typed root manifests with validated tree references.
 - `heads.ts`: minimal immutable root versions, per-session head CAS and operation idempotency, metadata-only forks.
 
 Create SQL migration `api/db/migrations/0051_conversation_version_core.sql` after rechecking migration numbering.
@@ -55,16 +57,16 @@ Create tests under `api/services/agent-runtime/__tests__/`:
 
 **Interfaces:**
 - `VersionTree(objects)` is stateless across requests.
-- `update(root: string | null, changes: readonly { key: string; value: string | null }[]): string | null` publishes only reachable new path nodes for a bounded sorted batch; null value deletes a key.
+- `update(root: string | null, changes: readonly { key: string; value: string | null }[]): string | null` copies changed paths for a bounded sorted batch (collapsed intermediate roots may leave bounded garbage for the GC phase); null value deletes a key.
 - `get(root, key): string | undefined` performs bounded-depth lookup.
 - `page(root, { after?, limit?, maxBytes? }): { entries, next? }` fixes the root across pages and uses an exclusive key cursor, not SQL OFFSET or ancestor replay.
 - `size(root): number` reads cached subtree counts from bounded root data.
 
-- [ ] Tests: literal insertion/update/delete, stable old roots, forks sharing content, multi-level split, huge-key rejection, max batch rejection, exact cursor pagination, randomized operations against a Map oracle, no missing/duplicate keys after deletion.
-- [ ] Confirm RED with the command targeting `checkpoint-version-tree.test.ts`.
-- [ ] Implement byte-bounded node codec and sorted batch path copying, bounded-depth validation; avoid cloning one path for every token.
-- [ ] Verify shared untouched subtrees and allocation/read counts with actual database rows and prepared-statement spies that still execute real SQL.
-- [ ] Re-run objects + tree tests and commit.
+- [x] Tests: literal insertion/update/delete, stable old roots, forks sharing content, multi-level split, huge-key rejection, max batch rejection, exact cursor pagination, randomized operations against a Map oracle, no missing/duplicate keys after deletion.
+- [x] Confirm RED with the command targeting `checkpoint-version-tree.test.ts`.
+- [x] Implement byte-bounded node codec and sorted batch path copying, bounded-depth validation; avoid cloning one path for every token.
+- [x] Verify shared untouched subtrees and allocation/read counts with actual database rows and prepared-statement spies that still execute real SQL.
+- [x] Re-run objects + tree tests and commit.
 
 ## Task 3 — Atomic head switches, epochs and idempotency
 
@@ -72,6 +74,7 @@ Create tests under `api/services/agent-runtime/__tests__/`:
 - `VersionHeads(db, objects)` shares the same connection as objects.
 - `create(sessionId, rootVersionId)` creates an independent control identity.
 - `read(sessionId): { versionId, revision, epoch }` reads one head.
+- `publish({sessionId, versionId, expectedRevision, expectedEpoch})` is the trusted writer API: validates the writer generation, registers version ownership and advances the head without restoring an old execution epoch.
 - `switch({sessionId, targetVersionId, expectedRevision, requestId, requestHash})` atomically changes a root, increments epoch/revision, stores result, and never iterates objects.
 - `fork({sourceSessionId, targetSessionId, versionId, expectedRevision, requestId, requestHash})` records an independent head and stable idempotent result; no data copy.
 
@@ -101,3 +104,4 @@ Each subsequent plan must keep the parent objective and all specification gates;
 ## Execution evidence
 
 - 2026-09-23 Task 1: observed RED for missing objects module, then 11 real-libSQL tests PASS; `tsc --noEmit` PASS. Logical quota accounting is not yet a physical disk/WAL guard, and no production session uses v3.
+- 2026-09-23 Task 2: observed missing-module RED and empty-page-budget RED, then 22 tests PASS across objects/tree; `tsc --noEmit` PASS. 6,000-key multi-level fixture verifies bounded reads/path-copy allocation. Not an end-to-end latency/memory/storage acceptance result.
