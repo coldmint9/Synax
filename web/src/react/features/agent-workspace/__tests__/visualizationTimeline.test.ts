@@ -152,3 +152,31 @@ it("hides streaming source but never interprets nested examples or ordinary HTML
     .join("\n");
   expect(hideVisualizationSource(quoted)).toBe(quoted);
 });
+
+it("projects a real visualize file reference in place without showing its control characters", () => {
+  const reference =
+    'visualize{"path":"/workspace/navbar-demo.html","mode":"wide","title":"导航栏"}';
+  const parts = visualizationReplyParts({
+    ...message,
+    content: `Before\n${reference}\nAfter`,
+    metadata: {
+      source: "inline_visualization",
+      visualization: {
+        id: "real-ref",
+        html: "<button>Work</button>",
+        title: "导航栏",
+        mode: "wide",
+        start: 7,
+        end: 7 + reference.length,
+      },
+    },
+  });
+  expect(parts.map((p) => p.type)).toEqual(["text", "visualization", "text"]);
+  expect(parts[1]).toMatchObject({
+    reference: { title: "导航栏", mode: "wide", html: "<button>Work</button>" },
+  });
+  expect(hideVisualizationSource(reference, true)).toBe("正在生成交互预览…");
+  expect(
+    hideVisualizationSource("```text\n" + reference + "\n```", true),
+  ).toContain(reference);
+});

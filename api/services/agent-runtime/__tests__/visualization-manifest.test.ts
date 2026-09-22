@@ -62,3 +62,47 @@ describe("inline visualization protocol", () => {
     expect(parseVisualization("x".repeat(2_000_001))).toBeNull();
   });
 });
+
+describe("visualize skill file references", () => {
+  const ref =
+    'visualize{"path":"/workspace/.tmp/navbar-demo/navbar-demo.html","mode":"wide","title":"Synax 导航栏 Demo"}';
+  it("parses the exact protocol emitted in the reported reply", () => {
+    expect(parseVisualization(`Before\n\n${ref}\n\nAfter`)).toEqual({
+      sourcePath: "/workspace/.tmp/navbar-demo/navbar-demo.html",
+      title: "Synax 导航栏 Demo",
+      mode: "wide",
+      start: 8,
+      end: 8 + ref.length,
+    });
+    expect(
+      parseVisualization(`Before\r\n${ref}\r\nAfter`)?.sourcePath,
+    ).toBeTruthy();
+  });
+  it.each([
+    `\`\`\`text\n${ref}\n\`\`\``,
+    `> ${ref}`,
+    `- ${ref}`,
+    `    ${ref}`,
+    `\`code\n${ref}\nexample\``,
+    `Example ${ref}`,
+    ref.slice(0, -1),
+  ])(
+    "does not execute nested examples or incomplete references: %s",
+    (value) => {
+      expect(parseVisualization(value)).toBeNull();
+    },
+  );
+  it.each([
+    '{"path":42}',
+    '{"path":"demo.html","mode":"fullscreen"}',
+    '{"path":"demo.html","unexpected":true}',
+    "{invalid}",
+  ])("reports malformed references without treating them as HTML", (value) => {
+    expect(parseVisualization(`visualize${value}`)).toMatchObject({
+      error: expect.any(String),
+    });
+  });
+  it("enforces one preview across both protocols", () => {
+    expect(parseVisualization(`${ref}\n\n${fence()}`)?.error).toContain("一个");
+  });
+});

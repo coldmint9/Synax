@@ -1,5 +1,6 @@
 .inline-visualization {
   width: 100%;
+  max-width: 736px;
   min-width: 0;
   margin: 12px 0;
 }
@@ -16,4 +17,8 @@
   background: var(--muted);
   color: var(--muted-foreground);
   font-size: 12px;
+}
+
+.inline-visualization[data-mode="wide"] {
+  max-width: 1024px;
 }
