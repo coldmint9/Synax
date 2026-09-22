@@ -1,3 +1,4 @@
+import { filterHistoryFileReads } from "./checkpoints/state.js";
 import {
   captureCheckpoint,
   captureCompletedReply,
@@ -730,7 +731,7 @@ export class AgentLoopRuntime {
           pendingResume = null;
         }
 
-        rebuildSessionFileReads(sessionId, this.store.listToolCalls(sessionId));
+        rebuildSessionFileReads(sessionId, filterHistoryFileReads(sessionId, this.store.listToolCalls(sessionId)));
 
         let clearingActivated = false;
 

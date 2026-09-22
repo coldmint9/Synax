@@ -207,6 +207,9 @@ interface RunPartRow {
 }
 
 const RUNTIME_TABLES = [
+  "conversation_history_access",
+  "conversation_history_tracking",
+  "conversation_history_journal",
   "conversation_snapshot_leases",
   "conversation_workspace_locks",
   "conversation_history_operations",
@@ -834,6 +837,12 @@ export class AgentRuntimeStore {
     }).filter((session) => !deleteSet.has(session.id));
     const db = getRawSqlite();
     const tx = db.transaction(() => {
+      for (const id of deleteIds) {
+        db.prepare("DELETE FROM conversation_history_tracking WHERE session_id=?").run(id);
+        db.prepare("DELETE FROM conversation_history_journal WHERE session_id=?").run(id);
+        db.prepare("DELETE FROM conversation_history_access WHERE session_id=?").run(id);
+        db.prepare("DELETE FROM conversation_mutations WHERE session_id=? OR owner_session_id=?").run(id,id);
+      }
       const deletedAt = nowIso();
       for (const survivor of survivors) {
         const nextParentSessionId =
@@ -988,6 +997,11 @@ export class AgentRuntimeStore {
         message.contentParts ? stringify(message.contentParts) : null,
       );
     return message;
+  }
+
+  getMessage(sessionId: string, messageId: string): AgentRuntimeMessage | undefined {
+    const row = getRawSqlite().prepare("SELECT * FROM agent_runtime_messages WHERE session_id=? AND id=?").get(sessionId,messageId) as MessageRow | undefined;
+    return row ? mapMessage(row) : undefined;
   }
 
   listMessages(sessionId: string): AgentRuntimeMessage[] {

@@ -9,7 +9,7 @@ import {
 import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore as store } from "../session-store.js";
 import { captureCheckpoint, listCheckpoints } from "../checkpoints/store.js";
-import { withCheckpointMutation } from "../checkpoints/mutations.js";
+import { withCheckpointMutation as recordFileChange } from "../checkpoints/mutations.js";
 import {
   applyHistory,
   previewHistory,
@@ -17,6 +17,16 @@ import {
 } from "../checkpoints/operations.js";
 import { forkCheckpoint } from "../checkpoints/fork.js";
 import { getRawSqlite } from "../../../db/index.js";
+const withCheckpointMutation = <T>(
+  session: string,
+  action: () => Promise<T> | T,
+) =>
+  recordFileChange(
+    session,
+    action,
+    false,
+    ["file", "new", "created", "a", "b"].map((name) => path.join(root, name)),
+  );
 let root: string, sessionId: string;
 beforeEach(async () => {
   resetAgentRuntimeFixtures();
@@ -47,7 +57,7 @@ async function roundOne() {
   await fs.writeFile(path.join(root, "file"), "first");
   message("reply1", "assistant");
   const checkpoint = (await captureCheckpoint(sessionId, "reply", "reply1"))!;
-  expect(checkpoint.payload.error).toBeUndefined();
+  expect(checkpoint.payload.version).toBe(2);
   return checkpoint;
 }
 describe("conversation checkpoints", () => {
@@ -132,7 +142,7 @@ describe("conversation checkpoints", () => {
     try {
       expect(workDir).not.toBe(root);
       expect(await fs.readFile(path.join(workDir, "file"), "utf8")).toBe(
-        "first",
+        "present",
       );
       expect(store.listMessages(fork.sessionId).map((m) => m.content)).toEqual([
         "user1",

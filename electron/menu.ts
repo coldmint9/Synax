@@ -1,4 +1,5 @@
 import { Menu, BrowserWindow, app, shell } from "electron";
+import { showAboutWindow } from "./about-window.js";
 
 interface Project {
   id: string;
@@ -68,7 +69,7 @@ export function buildAppMenu(projects?: Project[]): void {
     template.push({
       label: app.name,
       submenu: [
-        { role: "about", label: "关于 Synax" },
+        { label: "关于 Synax", click: () => showAboutWindow() },
         { type: "separator" },
         preferences,
         { type: "separator" },

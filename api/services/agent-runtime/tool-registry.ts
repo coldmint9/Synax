@@ -1,3 +1,5 @@
+import { parseApplyPatchEnvelope } from "./tools/patch-format.js";
+import { resolveWorkspacePath as resolveUndoPath } from "./tools/workspace.js";
 import { artifactTools } from "./tools/artifact-tools.js";
 import { withCheckpointMutation } from "./checkpoints/mutations.js";
 import { assertHistoryUnlocked } from "./checkpoints/guards.js";
@@ -906,17 +908,36 @@ export class ToolRegistry {
       abortSignal?.throwIfAborted();
       assertRuntimeExecutionCurrent();
       assertHistoryUnlocked(sessionId);
-      const executeTool = () =>
-        inApprovalScope(() =>
-          withCommandSignal(abortSignal, () => tool.execute(input)),
-        );
+      const executeTool = () => {
+        // Recording a large before-image may yield. Recheck cancellation and
+        // ownership immediately before the native tool is allowed to write.
+        abortSignal?.throwIfAborted();
+        assertRuntimeExecutionCurrent();
+        assertHistoryUnlocked(sessionId);
+        return inApprovalScope(() => withCommandSignal(abortSignal, () => tool.execute(input)));
+      };
       const checkpointMutation =
         tool.mutability === "write" ||
         tool.id === "bash" ||
         tool.id === "verification.run" ||
         tool.category === "mcp";
+      let undoPaths: string[] | undefined;
+      if (
+        ["file.write", "edit", "file.delete"].includes(tool.id) &&
+        typeof (args as { path?: unknown }).path === "string"
+      )
+        undoPaths = [
+          resolveUndoPath((args as { path: string }).path, sessionId),
+        ];
+      if (tool.id === "file.patch")
+        undoPaths = parseApplyPatchEnvelope((args as { patch: string }).patch)
+          .flatMap((hunk) => [
+            hunk.path,
+            ...("movePath" in hunk && hunk.movePath ? [hunk.movePath] : []),
+          ])
+          .map((file) => resolveUndoPath(file, sessionId));
       const result = checkpointMutation
-        ? await withCheckpointMutation(sessionId, executeTool)
+        ? await withCheckpointMutation(sessionId, executeTool, false, undoPaths)
         : await executeTool();
       const after = trackChanges
         ? await workspaceFingerprint(sessionId, fingerprintScope).catch(

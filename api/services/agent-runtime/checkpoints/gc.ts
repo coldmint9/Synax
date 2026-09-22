@@ -1,3 +1,4 @@
+import { expireFileUndo } from "./retention.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getRawSqlite } from "../../../db/index.js";
@@ -6,6 +7,7 @@ import { beginSnapshotPrune, endSnapshotPrune } from "./storage-leases.js";
 
 /** Opportunistic collection. A fork's immutable manifest is an independent reference. */
 export async function pruneCheckpointBlobs(): Promise<number> {
+  expireFileUndo();
   const lease = beginSnapshotPrune();
   if (!lease) return 0;
   try {
@@ -50,15 +52,21 @@ export async function pruneCheckpointBlobs(): Promise<number> {
     const directory = path.join(checkpointFiles.directory, "blobs");
     let removed = 0;
     for (const prefix of await fs.readdir(directory).catch(() => [])) {
+      if (/^\.pending-[0-9a-f-]{36}$/.test(prefix)) {
+        const pending=path.join(directory,prefix);
+        if ((await fs.lstat(pending)).isFile()) { await fs.unlink(pending); removed++; }
+        continue;
+      }
       if (!/^[a-f0-9]{2}$/.test(prefix)) continue;
       const folder = path.join(directory, prefix),
         stat = await fs.lstat(folder);
       if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
       for (const name of await fs.readdir(folder)) {
-        if (!/^[a-f0-9]{62}$/.test(name) || live.has(prefix + name)) continue;
+        const temporary=/^[a-f0-9]{62}\.[0-9a-f-]{36}\.tmp$/.test(name);
+        if (!temporary && (!/^[a-f0-9]{62}$/.test(name) || live.has(prefix + name))) continue;
         const file = path.join(folder, name),
           info = await fs.lstat(file);
-        if (info.isFile() && Date.now() - info.mtimeMs > 24 * 60 * 60 * 1000) {
+        if (info.isFile()) {
           await fs.unlink(file);
           removed++;
         }

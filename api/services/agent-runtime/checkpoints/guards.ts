@@ -57,7 +57,7 @@ export function rootsOverlap(a: string, b: string): boolean {
     !p || (!p.startsWith(`..${path.sep}`) && p !== ".." && !path.isAbsolute(p));
   return inside(relative) || inside(reverse);
 }
-export function assertHistoryUnlocked(sessionId: string): void {
+export function assertHistoryUnlocked(sessionId: string, rootsOverride?: string[]): void {
   const db = getRawSqlite();
   if (
     db
@@ -75,7 +75,7 @@ export function assertHistoryUnlocked(sessionId: string): void {
     .all() as { root: string }[];
   if (
     locks.length &&
-    sessionRoots(sessionId).some((root) =>
+    (rootsOverride ?? sessionRoots(sessionId)).some((root) =>
       locks.some((lock) => rootsOverlap(root, lock.root)),
     )
   )
@@ -106,6 +106,8 @@ export function assertHistoryIdle(sessionId: string): void {
         "Stop the session and its agents before changing history.",
         "HISTORY_SESSION_BUSY",
       );
+    if (db.prepare("SELECT id FROM artifact_jobs WHERE session_id=? AND status IN ('queued','building') LIMIT 1").get(session.id))
+      throw historyError("Stop pending artifact jobs before changing history.", "HISTORY_JOB_ACTIVE");
     if (
       db
         .prepare(
@@ -126,7 +128,7 @@ export function acquireHistoryLocks(
 ): void {
   const db = getRawSqlite();
   db.transaction(() => {
-    assertHistoryUnlocked(sessionId);
+    assertHistoryUnlocked(sessionId, roots);
     assertHistoryIdle(sessionId);
     const ownTree = new Set(
       agentRuntimeStore.listSessionTree(sessionId).map((s) => s.id),

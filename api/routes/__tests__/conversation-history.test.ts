@@ -10,7 +10,17 @@ import {
 import { agentSessionRuntime } from "../../services/agent-runtime/session-runtime.js";
 import { agentRuntimeStore as store } from "../../services/agent-runtime/session-store.js";
 import { captureCheckpoint } from "../../services/agent-runtime/checkpoints/store.js";
-import { withCheckpointMutation } from "../../services/agent-runtime/checkpoints/mutations.js";
+import { withCheckpointMutation as recordFileChange } from "../../services/agent-runtime/checkpoints/mutations.js";
+const withCheckpointMutation = <T>(
+  session: string,
+  action: () => Promise<T> | T,
+) =>
+  recordFileChange(
+    session,
+    action,
+    false,
+    ["file", "new", "created", "a", "b"].map((name) => path.join(root, name)),
+  );
 let root: string, id: string, checkpointId: string;
 beforeEach(async () => {
   resetAgentRuntimeFixtures();

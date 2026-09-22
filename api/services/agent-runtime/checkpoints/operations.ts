@@ -1,3 +1,6 @@
+import { clearSessionFileReads } from "../read-tracker.js";
+import { planFileUndo, type PreservedFile } from "./file-plan.js";
+import { committedFileReason } from "./git-boundary.js";
 import { recoverOrphanedCheckpointWriters } from "./mutations.js";
 import { sessionLiveBus } from "../session-live-bus.js";
 import { recoverForkOperation } from "./fork.js";
@@ -29,13 +32,14 @@ import {
   rootsOverlap,
   sessionRoots,
 } from "./guards.js";
-import { replaceHistory } from "./state.js";
+import { restoreHistoryBoundary } from "./state.js";
 
 export interface HistoryRequest {
   checkpointId: string;
   revision: number;
   requestId: string;
   action: "rollback" | "edit";
+  includeFiles?: boolean;
   message?: string;
 }
 export interface HistoryPreview {
@@ -46,6 +50,8 @@ export interface HistoryPreview {
   conflicts: FileConflict[];
   exclusions: string;
   canApply: boolean;
+  warnings: string[];
+  preservedFiles: PreservedFile[];
 }
 export interface HistoryResult {
   sessionId: string;
@@ -82,13 +88,13 @@ function supported(sessionId: string): void {
 }
 function assertCheckpoint(checkpoint: ConversationCheckpoint): void {
   if (
-    checkpoint.payload.error ||
-    !checkpoint.payload.history ||
-    !checkpoint.payload.manifests?.length
+    checkpoint.payload.version !== 2 ||
+    !checkpoint.payload.boundary ||
+    (checkpoint.payload.boundary.legacy &&
+      checkpoint.payload.boundary.messageSequence == null)
   )
     throw historyError(
-      checkpoint.payload.error ||
-        "No complete historical snapshot is available.",
+      "No surviving conversation boundary is available.",
       "CHECKPOINT_UNAVAILABLE",
     );
 }
@@ -109,9 +115,9 @@ export function checkpointSummary(sessionId: string) {
   const checkpoints = db
     .prepare(
       `SELECT id, kind, message_id AS messageId, step_id AS stepId,
-    mutation_cursor AS mutationCursor, json_extract(payload_json,'$.error') AS reason,
-    json_type(payload_json,'$.history') IS NOT NULL AND json_array_length(payload_json,'$.manifests') > 0 AS available,
-    COALESCE(json_array_length(payload_json,'$.history.tables.agent_runtime_messages'),0) = 0 AS initialInput
+    mutation_cursor AS mutationCursor, NULL AS reason,
+    json_extract(payload_json,'$.version') = 2 AND json_type(payload_json,'$.boundary') IS NOT NULL AS available,
+    COALESCE(json_extract(payload_json,'$.boundary.messageCount'),0) = 0 AS initialInput
     FROM conversation_checkpoints WHERE session_id=? ORDER BY ordinal`,
     )
     .all(sessionId) as Array<{
@@ -166,123 +172,41 @@ export function checkpointSummary(sessionId: string) {
   };
 }
 
-async function prepareChanges(
-  checkpoint: ConversationCheckpoint,
-): Promise<{ changes: FileChange[]; conflicts: FileConflict[] }> {
-  const db = getRawSqlite(),
-    owner = rootOwner(checkpoint.sessionId),
-    conflicts: FileConflict[] = [];
-  const mutations = db
-    .prepare(
-      "SELECT * FROM conversation_mutations WHERE sequence>? ORDER BY sequence",
-    )
-    .all(checkpoint.mutationCursor) as Mutation[];
-  const ours = mutations.filter(
-    (m) => m.owner_session_id === owner && m.state !== "reverted",
-  );
-  const byPath = new Map<string, FileChange>();
-  for (const mutation of ours) {
-    if (mutation.uncertain || mutation.state === "open") {
-      for (const root of JSON.parse(mutation.roots_json) as string[])
-        conflicts.push({
-          root,
-          path: "*",
-          reason:
-            "Overlapping, incomplete or background writes cannot be safely attributed.",
-        });
-    }
-    for (const change of JSON.parse(mutation.changes_json) as FileChange[]) {
-      const key = JSON.stringify([change.root, change.path]),
-        previous = byPath.get(key);
-      if (previous && !sameVersion(previous.after, change.before))
-        conflicts.push({
-          root: change.root,
-          path: change.path,
-          reason: "Independent changes occurred between these writes.",
-        });
-      byPath.set(key, previous ? { ...previous, after: change.after } : change);
-    }
-  }
-  const changes = [...byPath.values()].filter(
-    (c) => !sameVersion(c.before, c.after),
-  );
-  // Same-content subsequent writes from another session still have independent ownership.
-  for (const mutation of mutations.filter(
-    (m) => m.owner_session_id !== owner && m.state !== "reverted",
-  )) {
-    for (const other of JSON.parse(mutation.changes_json) as FileChange[])
-      if (changes.some((c) => c.root === other.root && c.path === other.path))
-        conflicts.push({
-          root: other.root,
-          path: other.path,
-          reason: "Another session also wrote this file.",
-        });
-    if (
-      mutation.uncertain &&
-      (JSON.parse(mutation.roots_json) as string[]).some((root) =>
-        changes.some((c) => rootsOverlap(root, c.root)),
-      )
-    )
-      conflicts.push({
-        root: "*",
-        path: "*",
-        reason: "Another session has unattributed writes in this workspace.",
-      });
-  }
-  const roots = sessionRoots(checkpoint.sessionId);
-  if (roots.length !== checkpoint.payload.manifests!.length)
-    conflicts.push({
-      root: "*",
-      path: "*",
-      reason: "Workspace bindings have changed.",
-    });
-  for (const manifest of checkpoint.payload.manifests!) {
-    if (!roots.includes(manifest.root))
-      conflicts.push({
-        root: manifest.root,
-        path: "*",
-        reason: "Workspace binding has changed.",
-      });
-    else if ((await checkpointFiles.head(manifest.root)) !== manifest.gitHead)
-      conflicts.push({
-        root: manifest.root,
-        path: "*",
-        reason:
-          "Git HEAD changed; Git history is not rewound by conversation rollback.",
-      });
-  }
-  conflicts.push(...(await checkpointFiles.verify(changes, "after")));
-  return { changes, conflicts };
-}
 export async function previewHistory(
   sessionId: string,
   checkpointId: string,
+  includeFiles = true,
 ): Promise<HistoryPreview> {
   supported(sessionId);
-  assertHistoryUnlocked(sessionId);
+  assertHistoryUnlocked(sessionId, []);
   assertHistoryIdle(sessionId);
   const checkpoint = getCheckpoint(sessionId, checkpointId);
   assertCheckpoint(checkpoint);
-  const { changes, conflicts } = await prepareChanges(checkpoint);
-  const beforeCount =
-    checkpoint.payload.history!.tables.agent_runtime_messages.filter(
-      (row) => row.session_id === sessionId,
-    ).length;
+  const plan = await planFileUndo(checkpoint, includeFiles);
+  const count = (
+    getRawSqlite()
+      .prepare(
+        "SELECT count(*) AS count FROM agent_runtime_messages WHERE session_id=?",
+      )
+      .get(sessionId) as { count: number }
+  ).count;
   return {
     checkpointId,
     revision: historyRevision(sessionId),
     removedMessages: Math.max(
       0,
-      agentRuntimeStore.listMessages(sessionId).length - beforeCount,
+      count - checkpoint.payload.boundary.messageCount,
     ),
-    files: changes.map((c) => ({
+    files: plan.changes.map((c) => ({
       root: c.root,
       path: c.path,
       action: c.before ? "restore" : "delete",
     })),
-    conflicts,
+    conflicts: plan.conflicts,
+    canApply: !plan.conflicts.length,
+    warnings: plan.warnings,
+    preservedFiles: plan.preservedFiles,
     exclusions: SNAPSHOT_EXCLUSIONS,
-    canApply: !conflicts.length,
   };
 }
 
@@ -418,11 +342,13 @@ export async function applyHistory(
     throw historyError("Wrong checkpoint boundary for this operation.");
   if (request.action === "edit" && !request.message?.trim())
     throw historyError("The edited message cannot be empty.");
-  const original = agentRuntimeStore
-    .listMessages(sessionId)
-    .find((m) => m.id === checkpoint.messageId);
-  if (!original) throw historyError("The checkpoint message no longer exists.");
-  const roots = sessionRoots(sessionId);
+  const original = checkpoint.messageId ? agentRuntimeStore.getMessage(sessionId, checkpoint.messageId) : undefined;
+  if (!original && request.action === "edit") throw historyError("The checkpoint message no longer exists.");
+  const initialPlan = await planFileUndo(
+    checkpoint,
+    request.includeFiles !== false,
+  );
+  const roots = [...new Set(initialPlan.changes.map((c) => c.root))];
   let journal: JournalPayload = {
     changes: [],
     applied: 0,
@@ -451,7 +377,10 @@ export async function applyHistory(
         "Conversation changed. Refresh the preview.",
         "HISTORY_STALE",
       );
-    const { changes, conflicts } = await prepareChanges(checkpoint);
+    const { changes, conflicts } = await planFileUndo(
+      checkpoint,
+      request.includeFiles !== false,
+    );
     if (conflicts.length)
       throw historyError(
         `File conflicts: ${conflicts.map((c) => c.path).join(", ")}`,
@@ -460,6 +389,11 @@ export async function applyHistory(
     journal = { ...journal, changes };
     writeJournal(id, "prepared", journal);
     for (const change of changes) {
+      if (await committedFileReason(change))
+        throw historyError(
+          "Git commit status changed. Refresh the preview; committed files will be preserved.",
+          "HISTORY_GIT_CHANGED",
+        );
       // Validate each file again immediately before mutation; journal + compensation handles late conflicts.
       if (
         !sameVersion(
@@ -478,7 +412,7 @@ export async function applyHistory(
     }
     let result: HistoryResult = { sessionId, revision: request.revision + 1 };
     db.transaction(() => {
-      replaceHistory(sessionId, checkpoint.payload.history!);
+      restoreHistoryBoundary(sessionId, checkpoint.payload.boundary);
       db.prepare(
         "DELETE FROM conversation_checkpoints WHERE session_id=? AND ordinal>?",
       ).run(
@@ -486,7 +420,7 @@ export async function applyHistory(
         checkpoint.ordinal - (request.action === "edit" ? 1 : 0),
       );
       db.prepare(
-        "UPDATE conversation_mutations SET state='reverted' WHERE owner_session_id=? AND sequence>?",
+        "UPDATE conversation_mutations SET state='reverted',changes_json='[]' WHERE owner_session_id=? AND sequence>?",
       ).run(rootOwner(sessionId), checkpoint.mutationCursor);
       db.prepare(
         "INSERT INTO conversation_history_versions(session_id,revision) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET revision=excluded.revision",
@@ -498,11 +432,7 @@ export async function applyHistory(
       writeJournal(id, "committed", journal!);
       releaseHistoryLocks(id);
       if (request.action === "edit") {
-        if (
-          !checkpoint.payload.history!.tables.agent_runtime_messages.some(
-            (row) => row.session_id === sessionId,
-          )
-        ) {
+        if (checkpoint.payload.boundary.messageCount === 0) {
           const session = agentRuntimeStore.getSession(sessionId);
           agentRuntimeStore.updateSession(sessionId, {
             prompt: request.message!.trim(),
@@ -518,8 +448,8 @@ export async function applyHistory(
         }
         const input: StreamTurnRequest = {
           message: request.message!.trim(),
-          contentParts: original.contentParts,
-          references: original.metadata
+          contentParts: original!.contentParts,
+          references: original!.metadata
             ?.references as StreamTurnRequest["references"],
         };
         // Text content parts must not resurrect the old message body.
@@ -535,8 +465,9 @@ export async function applyHistory(
         "UPDATE conversation_history_operations SET result_json=? WHERE id=?",
       ).run(JSON.stringify(result), id);
     })();
+    for(const id of originalTree) clearSessionFileReads(id);
     const restoredIds = new Set(
-      checkpoint.payload.history!.sessions.map((row) => String(row.id)),
+      agentRuntimeStore.listSessionTree(sessionId).map((row) => row.id),
     );
     for (const childId of originalTree.filter((id) => id !== sessionId)) {
       sessionLiveBus.clearBuffer(childId);

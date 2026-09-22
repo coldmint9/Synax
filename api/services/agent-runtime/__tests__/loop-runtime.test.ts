@@ -407,7 +407,7 @@ describe("agentLoopRuntime", () => {
       const checkpoint = listCheckpoints(session.id).find(
         (c) => c.kind === "reply",
       )!;
-      expect(checkpoint.payload.error).toBeUndefined();
+      expect(checkpoint.payload.version).toBe(2);
       queueMockStep(makeTextStep("Second answer."));
       await collectChunks(
         agentLoopRuntime.streamRun(session.id, { message: "Second question" }),
