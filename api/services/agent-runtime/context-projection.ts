@@ -5,7 +5,6 @@ import {
   readContextEpochState,
   sessionContextBoundary,
   sentContextRequests,
-  contextGrowthP95,
   type ContextEpochState,
 } from "./context-epoch-store.js";
 import {
@@ -31,11 +30,11 @@ import { workStore } from "./work-store.js";
 import {
   buildLoopModelMessages,
   createLoopHistoryReader,
+  type ClearingOptions,
 } from "./loop-model-messages.js";
 import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { AgentValidationError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
-import { DISABLE_CONTEXT_COMPACTION } from "../../lib/env.js";
 
 export interface ContextProjectionInput {
   sessionId: string;
@@ -46,6 +45,8 @@ export interface ContextProjectionInput {
   model?: string;
   currentStepId?: string;
   configurationFingerprint?: string;
+  /** Independent tool-output clearing; does not compact conversation steps. */
+  clearing?: ClearingOptions;
   /** Explicit user request; retains integrity checks and recent/pinned steps. */
   forceCompact?: boolean;
 }
@@ -92,6 +93,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
       input.toolSet,
       {
         initialUserMessage,
+        clearing: input.clearing,
         currentStepId: input.currentStepId,
         snapshot: history,
         systemMessageContents,
@@ -146,6 +148,8 @@ export function projectWorkContext(input: ContextProjectionInput): {
       ? { committedRequestCount: sent.length, draft: undefined }
       : {}),
   };
+  // Prepared drafts belonged to the removed early-compaction scheduler.
+  delete nextState.draft;
   const stableRequests = Math.max(
     0,
     sent.length - nextState.committedRequestCount,
@@ -154,7 +158,6 @@ export function projectWorkContext(input: ContextProjectionInput): {
     policy,
     input.contextLimit,
     input.outputReserve,
-    contextGrowthP95(sent, epochState.epoch),
   );
   const users = history
     .listMessages()
@@ -203,6 +206,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
   ) =>
     buildLoopModelMessages(store, input.sessionId, input.toolSet, {
       snapshot: history,
+      clearing: input.clearing,
       systemMessageContents,
       excludedStepIds: excludedThrough(through),
       compactionSummary: summary,
@@ -260,25 +264,9 @@ export function projectWorkContext(input: ContextProjectionInput): {
       compaction: diagnostic(),
     };
   };
-  const autoDisabled = policy.disabled ?? DISABLE_CONTEXT_COMPACTION;
-  if (autoDisabled && !input.forceCompact && !decision.urgent) {
-    decision = { ...decision, action: "keep", reason: "auto-compaction-disabled" };
-    return finishUnchanged();
-  }
-  if (!input.forceCompact && originalTokens < watermarks.prepare)
-    return finishUnchanged();
-  // Preparation is not a per-turn summarizer. Keep an existing invisible draft
-  // until commit pressure; sources are revalidated below before any activation.
-  if (
-    !input.forceCompact &&
-    originalTokens < watermarks.high &&
-    nextState.draft &&
-    !configurationChanged &&
-    nextState.draft.fromStepId === (steps[boundary]?.id ?? null)
-  ) {
-    preparedThroughStepId = nextState.draft.throughStepId;
-    return finishUnchanged();
-  }
+  // Automatic compaction exists only to rescue a request that cannot fit.
+  // Manual compaction is still allowed below the physical window boundary.
+  if (!input.forceCompact && !decision.urgent) return finishUnchanged();
 
   const pinned = new Set(
     Array.isArray(session.sessionMetadata?.contextPinnedStepIds)
@@ -436,7 +424,6 @@ export function projectWorkContext(input: ContextProjectionInput): {
     summary: string;
     tokens: number;
     messages: ModelMessage[];
-    segments: ContextMemorySegment[];
   };
   let candidate: Candidate | undefined;
   let invalidReason: string | undefined;
@@ -452,7 +439,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
       0,
       Math.min(
         policy.memoryTokenBudget,
-        Math.max(128, watermarks.low - input.systemTokens),
+        Math.max(128, watermarks.hard - input.systemTokens),
       ) -
         countTokens(locator, input.model) -
         8,
@@ -486,9 +473,8 @@ export function projectWorkContext(input: ContextProjectionInput): {
         summary,
         messages: projected,
         tokens,
-        segments: selected,
       };
-    if (!input.forceCompact && tokens <= watermarks.low) break;
+    if (!input.forceCompact && tokens <= watermarks.hard) break;
   }
   if (!candidate) {
     decision = {
@@ -499,28 +485,6 @@ export function projectWorkContext(input: ContextProjectionInput): {
     return finishUnchanged();
   }
   preparedThroughStepId = steps[candidate.through].id;
-  const sourceFingerprint = createHash("sha256")
-    .update(
-      JSON.stringify([
-        steps[boundary]?.id ?? null,
-        candidate.segments.map((segment) => segment.fingerprint),
-        candidate.summary,
-      ]),
-    )
-    .digest("hex");
-  const priorDraft = nextState.draft;
-  nextState.draft = {
-    version: 1,
-    fromStepId: steps[boundary]?.id ?? null,
-    throughStepId: preparedThroughStepId,
-    sourceFingerprint,
-    memory: candidate.memory,
-    summary: candidate.summary,
-    preparedAt:
-      priorDraft?.sourceFingerprint === sourceFingerprint
-        ? priorDraft.preparedAt
-        : nowIso(),
-  };
   decision = evaluate(candidate.tokens);
   if (input.forceCompact) {
     decision = {

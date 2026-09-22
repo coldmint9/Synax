@@ -1,21 +1,7 @@
 /** Server/session configuration only; historical model text is not policy input. */
 export interface ContextCompactionPolicy {
-  effectiveWindowCap: number;
-  prepareRatio: number;
-  highRatio: number;
-  lowRatio: number;
-  minStableRequests: number;
-  minReclaimRatio: number;
   keepRecentSteps: number;
   memoryTokenBudget: number;
-  safetyTokens: number;
-  /**
-   * Temporary kill switch for the automatic compaction sawtooth: suppress
-   * prepare/high actions and ignore effectiveWindowCap. Hard-window rescue
-   * and explicit manual compaction still apply. Defaults from
-   * SYNAX_DISABLE_CONTEXT_COMPACTION when the session policy omits it.
-   */
-  disabled?: boolean;
   /** Comparison horizon N, including the first request after the cut. */
   expectedRemainingRequests?: number;
   pricing?: {
@@ -35,19 +21,12 @@ export interface ContextWatermarks {
   high: number;
   low: number;
   minReclaim: number;
-  /** Effective safety headroom, including the bounded growth margin. */
+  /** Legacy diagnostic field; no additional headroom is withheld. */
   safety: number;
 }
 
 export interface ContextCompactionDecision {
-  action:
-    | "keep"
-    | "prepare"
-    | "commit"
-    | "defer-cooldown"
-    | "defer-cost"
-    | "defer-small-gain"
-    | "blocked";
+  action: "keep" | "commit" | "blocked";
   reason: string;
   urgent: boolean;
   reclaimedTokens: number;
@@ -70,15 +49,8 @@ export interface ContextCompactionDecision {
 }
 
 const DEFAULT_POLICY: Readonly<ContextCompactionPolicy> = Object.freeze({
-  effectiveWindowCap: 120_000,
-  prepareRatio: 0.65,
-  highRatio: 0.8,
-  lowRatio: 0.5,
-  minStableRequests: 8,
-  minReclaimRatio: 0.2,
   keepRecentSteps: 2,
   memoryTokenBudget: 6_000,
-  safetyTokens: 1_024,
 });
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -103,15 +75,12 @@ function count(value: unknown, name: string, minimum = 0): number {
   return result;
 }
 
-function ratio(value: unknown, name: string): number {
-  const result = nonnegative(value, name);
-  if (result <= 0 || result > 1) {
-    throw new RangeError(`${name} must be in (0, 1]`);
-  }
-  return result;
-}
-
-/** Missing fields default; malformed supplied values are rejected, not coerced. */
+/**
+ * Only retention and diagnostic pricing remain configurable. Legacy scheduling
+ * fields (cap, ratios, cooldown, safety and disabled) are intentionally ignored:
+ * persisted session metadata must never reinstate early automatic compaction.
+ * Malformed active settings are rejected, not coerced.
+ */
 export function resolveContextCompactionPolicy(
   value?: unknown,
 ): ContextCompactionPolicy {
@@ -120,41 +89,13 @@ export function resolveContextCompactionPolicy(
   const field = (key: keyof ContextCompactionPolicy) =>
     supplied[key] === undefined ? DEFAULT_POLICY[key] : supplied[key];
   const policy: ContextCompactionPolicy = {
-    effectiveWindowCap: count(
-      field("effectiveWindowCap"),
-      "effectiveWindowCap",
-      1,
-    ),
-    prepareRatio: ratio(field("prepareRatio"), "prepareRatio"),
-    highRatio: ratio(field("highRatio"), "highRatio"),
-    lowRatio: ratio(field("lowRatio"), "lowRatio"),
-    minStableRequests: count(field("minStableRequests"), "minStableRequests"),
-    minReclaimRatio: ratio(field("minReclaimRatio"), "minReclaimRatio"),
     keepRecentSteps: count(field("keepRecentSteps"), "keepRecentSteps"),
     memoryTokenBudget: count(
       field("memoryTokenBudget"),
       "memoryTokenBudget",
       1,
     ),
-    safetyTokens: count(field("safetyTokens"), "safetyTokens"),
   };
-  if (supplied.disabled !== undefined) {
-    if (typeof supplied.disabled !== "boolean") {
-      throw new TypeError("contextCompactionPolicy.disabled must be a boolean");
-    }
-    policy.disabled = supplied.disabled;
-  }
-  if (
-    !(
-      policy.lowRatio < policy.prepareRatio &&
-      policy.prepareRatio < policy.highRatio &&
-      policy.highRatio < 1
-    )
-  ) {
-    throw new RangeError(
-      "Watermarks must satisfy 0 < lowRatio < prepareRatio < highRatio < 1",
-    );
-  }
   if (supplied.expectedRemainingRequests !== undefined) {
     policy.expectedRemainingRequests = nonnegative(
       supplied.expectedRemainingRequests,
@@ -183,43 +124,28 @@ export function resolveContextCompactionPolicy(
 }
 
 /**
- * Reserve output first, then cap the effective window. Base safety and measured
- * growth each reserve at most 10% of that window, so defaults and growth outliers
- * cannot consume a tiny window. `safety` exposes their combined effective reserve.
- * Thresholds round down (at least one token for a nonempty budget); tiny windows
- * may necessarily have equal watermarks. Low is a candidate target, not a gate:
- * the caller must preserve whole steps and required evidence over reaching it.
- * A disabled policy ignores the cap and spans the physical hard window, so
- * only genuine hard-window pressure remains.
+ * The input budget is the physical model window minus reserved output tokens.
+ * Keep the historical diagnostic keys for stored traces/consumers, but every
+ * threshold now denotes the same hard boundary. There is no early watermark,
+ * effective-window cap, growth reserve, or half-window compaction target.
  */
 export function contextWatermarks(
-  policy: ContextCompactionPolicy,
+  _policy: ContextCompactionPolicy,
   contextLimit: number,
   outputReserve: number,
-  growthP95?: number,
+  _growthP95?: number,
 ): ContextWatermarks {
   count(contextLimit, "contextLimit");
   count(outputReserve, "outputReserve");
-  const growth = nonnegative(growthP95 ?? 0, "growthP95");
   const hard = Math.max(0, contextLimit - outputReserve);
-  const available = policy.disabled
-    ? hard
-    : Math.min(hard, policy.effectiveWindowCap);
-  const marginLimit = Math.floor(available / 10);
-  const safety =
-    Math.min(policy.safetyTokens, marginLimit) +
-    Math.min(Math.ceil(growth), marginLimit);
-  const budget = available - safety;
-  const threshold = (fraction: number) =>
-    budget === 0 ? 0 : Math.max(1, Math.floor(budget * fraction));
   return {
     hard,
-    budget,
-    prepare: threshold(policy.prepareRatio),
-    high: threshold(policy.highRatio),
-    low: threshold(policy.lowRatio),
-    minReclaim: threshold(policy.minReclaimRatio),
-    safety,
+    budget: hard,
+    prepare: hard,
+    high: hard,
+    low: hard,
+    minReclaim: 0,
+    safety: 0,
   };
 }
 
@@ -317,8 +243,7 @@ export function evaluateContextCompaction(input: {
   );
   if (candidateTokens !== undefined) count(candidateTokens, "candidateTokens");
 
-  const urgent =
-    currentTokens > watermarks.budget || currentTokens > watermarks.hard;
+  const urgent = currentTokens > watermarks.hard;
   const reclaimedTokens =
     candidateTokens === undefined ? 0 : currentTokens - candidateTokens;
   const economics = economicsFor(
@@ -338,47 +263,13 @@ export function evaluateContextCompaction(input: {
     economics,
   });
 
-  if (!urgent && (currentTokens === 0 || currentTokens < watermarks.prepare)) {
-    return decide("keep", "below-prepare");
-  }
-  if (!urgent && currentTokens < watermarks.high)
-    return decide("prepare", "prepare-watermark");
-  if (candidateTokens === undefined) {
-    return decide(urgent ? "blocked" : "prepare", "candidate-required");
-  }
+  if (!urgent) return decide("keep", "within-hard-window");
+  if (candidateTokens === undefined)
+    return decide("blocked", "candidate-required");
   if (candidateTokens > watermarks.hard)
     return decide("blocked", "candidate-exceeds-hard");
-  if (reclaimedTokens <= 0)
-    return decide(
-      urgent ? "blocked" : "defer-small-gain",
-      "no-positive-reclaim",
-    );
-  // Budget/cap pressure alone must not trigger tiny cuts on every request when
-  // the candidate would still be over budget. Actual hard-window pressure keeps
-  // the positive-gain override; reaching budget or reclaiming a batch also suffices.
-  if (
-    urgent &&
-    currentTokens <= watermarks.hard &&
-    candidateTokens > watermarks.budget &&
-    reclaimedTokens < watermarks.minReclaim
-  ) {
-    return decide("defer-small-gain", "budget-pressure-insufficient-reclaim");
-  }
-  if (urgent)
-    return decide(
-      "commit",
-      currentTokens > watermarks.hard ? "hard-pressure" : "budget-pressure",
-    );
-  if (reclaimedTokens < watermarks.minReclaim)
-    return decide("defer-small-gain", "insufficient-reclaim");
-  if (stableRequests < policy.minStableRequests)
-    return decide("defer-cooldown", "epoch-cooldown");
-  if (
-    economics.known &&
-    (economics.breakEvenRequests === null ||
-      policy.expectedRemainingRequests! < economics.breakEvenRequests)
-  ) {
-    return decide("defer-cost", "horizon-below-break-even");
-  }
-  return decide("commit", "high-watermark");
+  if (reclaimedTokens <= 0) return decide("blocked", "no-positive-reclaim");
+  // Hard-window rescue cannot depend on cache economics, cooldown or a minimum
+  // reclaim ratio. The first complete-prefix batch that fits is sufficient.
+  return decide("commit", "hard-pressure");
 }

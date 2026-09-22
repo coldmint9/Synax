@@ -2088,6 +2088,104 @@ describe("provider-bound session initialization prompt", () => {
     }
   });
 
+  it.each([300_000, 500_000, 500_001])(
+    "preserves tool clearing and dedup at %i input tokens in a 1M window",
+    async (inputTokens) => {
+      const shouldClear = inputTokens > 500_000;
+      vi.mocked(resolveGatewaySelection).mockResolvedValueOnce({
+        modelDef: { reasoning: true, contextLimit: 1_000_000 },
+        providerId: "fixture",
+      } as never);
+      const directory = fs.mkdtempSync(
+        path.join(os.tmpdir(), "synax-tool-clearing-"),
+      );
+      try {
+        for (let n = 0; n < 4; n++)
+          fs.writeFileSync(
+            path.join(directory, `${n}.txt`),
+            `CLEARING_EVIDENCE_${n}`,
+          );
+        const session = agentSessionRuntime.create({
+          projectId: "clearing-fixture",
+          workDir: directory,
+          profileId: "synax",
+          prompt: "Read and then recheck the evidence",
+          permissionTier: "unrestricted",
+        });
+        queueMockStep(
+          makeStream([
+            ...Array.from({ length: 4 }, (_, n) => ({
+              type: "tool-call" as const,
+              toolCallId: `read-${n}`,
+              toolName: "file_read",
+              input: { path: `${n}.txt` },
+            })),
+            {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens },
+            },
+          ]),
+        );
+        queueMockStep(
+          makeToolStep({
+            toolName: "file_read",
+            toolCallId: "reread-0",
+            args: { path: "0.txt" },
+          }),
+        );
+        queueMockStep(makeTextStep("Evidence checked."));
+        await collectChunks(
+          agentLoopRuntime.streamRun(session.id, {
+            message: "Read and then recheck the evidence",
+          }),
+        );
+        expect(capturedRequests).toHaveLength(3);
+        const results = capturedRequests[1].messages
+          .filter((m) => m.role === "tool")
+          .flatMap(
+            (m) => m.content as Array<{ toolCallId: string; output: unknown }>,
+          );
+        // Calls execute concurrently; check by actual persisted order rather than assuming completion order.
+        const calls = agentRuntimeStore.listToolCalls(session.id);
+        const initialCalls = calls.filter((c) =>
+          c.modelToolCallId?.startsWith("read-"),
+        );
+        const cleared = results.find(
+          (r) => r.toolCallId === initialCalls[0].modelToolCallId,
+        )!;
+        expect(JSON.stringify(cleared.output).includes("result cleared")).toBe(
+          shouldClear,
+        );
+        for (const call of initialCalls.slice(1)) {
+          expect(
+            JSON.stringify(
+              results.find((r) => r.toolCallId === call.modelToolCallId)
+                ?.output,
+            ),
+          ).not.toContain("result cleared");
+        }
+        expect(workStore.current(session.id)?.checkpoint).toBeFalsy();
+        // The first call is inserted before parallel execution and must remain eligible for re-reading.
+        expect(initialCalls[0].modelToolCallId).toBe("read-0");
+        const reread = calls.find((c) => c.modelToolCallId === "reread-0")!;
+        expect(reread.status).toBe(shouldClear ? "completed" : "compacted");
+        expect(reread.outputRef === null).toBe(!shouldClear);
+        expect(
+          JSON.stringify(capturedRequests[2].messages).includes(
+            "result cleared",
+          ),
+        ).toBe(shouldClear);
+        expect(
+          agentRuntimeStore.listRuns(session.id)[0].metadata.contextLimit,
+        ).toBe(1_000_000);
+        expect(initialCalls[0].outputRef).not.toBeNull();
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("freezes compact first-emission tool receipts without rewriting raw results or later prefixes", async () => {
     const session = agentSessionRuntime.create({
       projectId: "receipt-fixture",

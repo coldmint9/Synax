@@ -107,8 +107,15 @@ function referenceProjection(
   const trigger =
     mode === "legacy-threshold"
       ? Math.min(64000, Math.floor((contextLimit - outputReserve) / 2))
-      : watermarks.high;
-  const target = mode === "legacy-threshold" ? trigger : watermarks.low;
+      : Math.floor(
+          (Math.min(contextLimit - outputReserve, 120_000) - 1024) * 0.8,
+        );
+  const target =
+    mode === "legacy-threshold"
+      ? trigger
+      : Math.floor(
+          (Math.min(contextLimit - outputReserve, 120_000) - 1024) * 0.5,
+        );
   let compacted = false;
   if (originalTokens > trigger)
     while (count(messages) > target && boundary + 1 < steps.length - 2) {
