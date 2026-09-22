@@ -45,11 +45,11 @@ Create tests under `api/services/agent-runtime/__tests__/`:
 - `stats(): { objects, bytes }` is O(1) using transactional counters, never COUNT over history.
 - `atomicVersionWrite(db, action)` supports nested rollback and rejects asynchronous callbacks.
 
-- [ ] Write tests for dedup, kind/reference identity, mutation-safe returned data, missing/corrupt payload, oversized payload/reference list, quota rollback, nesting and disk reopen.
-- [ ] Run `node node_modules/vitest/vitest.mjs run api/services/agent-runtime/__tests__/checkpoint-version-objects.test.ts`; observe missing-module/failing behavior before implementation.
-- [ ] Implement the migration and minimal store; SQL constraints mirror ingress limits; retrieval checks length before materializing payload.
-- [ ] Run the suite again; test a quota failure leaves both counters and object rows unchanged.
-- [ ] Commit the passing implementation and tests (explicit paths only).
+- [x] Write tests for dedup, kind/reference identity, mutation-safe returned data, missing/corrupt payload, oversized payload/reference list, quota rollback, nesting and disk reopen.
+- [x] Run `node node_modules/vitest/vitest.mjs run api/services/agent-runtime/__tests__/checkpoint-version-objects.test.ts`; observe missing-module/failing behavior before implementation.
+- [x] Implement the migration and minimal store; SQL constraints mirror ingress limits; retrieval checks length before materializing payload.
+- [x] Run the suite again; test a quota failure leaves both counters and object rows unchanged.
+- [x] Commit the passing implementation and tests (explicit paths only).
 
 ## Task 2 — Bounded persistent ordered tree
 
@@ -97,3 +97,7 @@ Create tests under `api/services/agent-runtime/__tests__/`:
 5. End-to-end 10k/100k/1M event runs, 1k checkpoints/branches, 10k-operation soak, native memory and physical storage budgets, crash/ENOSPC/race tests.
 
 Each subsequent plan must keep the parent objective and all specification gates; the current core is not a substitute deliverable.
+
+## Execution evidence
+
+- 2026-09-23 Task 1: observed RED for missing objects module, then 11 real-libSQL tests PASS; `tsc --noEmit` PASS. Logical quota accounting is not yet a physical disk/WAL guard, and no production session uses v3.
