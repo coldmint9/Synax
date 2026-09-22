@@ -1,3 +1,4 @@
+import { VERSION_SCHEMA_MIGRATIONS } from "../api/services/agent-runtime/checkpoints/version-store/schema.js";
 /** Isolated bounded-resource soak. Does not load application DATA_ROOT. */
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -32,7 +33,7 @@ function run(operations: number) {
   const db = new Database(path.join(directory, "soak.db"));
   try {
     db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; PRAGMA wal_autocheckpoint=1000;");
-    for (const file of ["0051_conversation_version_core.sql", "0052_conversation_version_heads.sql", "0053_conversation_compact_versions.sql"])
+    for (const file of VERSION_SCHEMA_MIGRATIONS)
       db.exec(readFileSync(new URL(`../api/db/migrations/${file}`, import.meta.url), "utf8"));
     const objects = new VersionObjects(db, { maxBytes: 64 * 1024 * 1024, maxObjects: 100000 });
     const tree = new VersionTree(objects), heads = new VersionHeads(db, objects), pins = new VersionPins(db);

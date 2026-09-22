@@ -118,6 +118,27 @@ describe("persistent bounded checkpoint tree", () => {
     expect(JSON.parse(stored.bytes.toString()).height).toBeLessThan(6);
   });
 
+  it("truncates a checkpoint prefix with bounded path work, without enumerating the suffix", () => {
+    let root: string | null = null;
+    for(let base=0;base<10000;base+=200) root=tree.update(root,Array.from({length:200},(_,n)=>({key:String(base+n).padStart(6,"0"),value:a})));
+    const read=vi.spyOn(objects,"get"), before=objects.stats();
+    const prefix=tree.prefix(root,"005000");
+    expect(read.mock.calls.length).toBeLessThanOrEqual(12);
+    expect(objects.stats().objects-before.objects).toBeLessThanOrEqual(8);
+    expect(tree.size(prefix)).toBe(5001); expect(tree.size(root)).toBe(10000);
+    expect(tree.get(prefix,"005000")).toBe(a); expect(tree.get(prefix,"005001")).toBeUndefined();
+    expect(tree.prefix(root,"999999")).toBe(root);
+    expect(tree.prefix(root,"")).toBeNull();
+    expect(tree.prefix(null,"x")).toBeNull();
+  });
+
+  it("answers prefix ranks and last entry without enumerating indexed events",()=>{
+    let root:string|null=null;for(let base=0;base<1000;base+=200)root=tree.update(root,Array.from({length:200},(_,n)=>({key:String(base+n).padStart(4,"0"),value:a})));
+    const read=vi.spyOn(objects,"get");expect(tree.rank(root,"0500")).toBe(501);expect(read.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(tree.rank(root,"")).toBe(0);expect(tree.rank(root,"9999")).toBe(1000);expect(tree.rank(null,"x")).toBe(0);
+    expect(tree.last(root)).toEqual({key:"0999",value:a});expect(tree.last(null)).toBeUndefined();
+  });
+
   it("fails closed on structurally invalid tree objects even when their hash is valid", () => {
     const bad = objects.put("tree", Buffer.from('{"v":1,"height":0,"count":2,"entries":[["z","' + a + '"],["a","' + a + '"]]}'), [a]);
     expect(() => tree.get(bad, "z")).toThrow(/tree/i);
