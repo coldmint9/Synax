@@ -76,7 +76,8 @@ describe("bounded immutable checkpoint objects", () => {
     expect(() => store.get("a".repeat(64))).toThrow(/missing/i);
     const id = store.put("chunk", Buffer.from("before"));
     expect(() => store.get(id, "tree")).toThrow(/kind/i);
-    db.prepare("UPDATE conversation_v3_objects SET payload=? WHERE hash=?").run(Buffer.from("broken"), id);
+    db.exec("DROP TRIGGER conversation_v3_objects_immutable");
+    db.prepare("UPDATE conversation_v3_objects SET payload=? WHERE hash=?").run(Buffer.from("broken"), Buffer.from(id, "hex"));
     expect(() => store.get(id)).toThrow(/integrity/i);
   });
 
@@ -88,7 +89,7 @@ describe("bounded immutable checkpoint objects", () => {
       throw new Error("crash before publishing root");
     })).toThrow("crash before publishing root");
     expect(store.stats()).toEqual({ objects: 0, bytes: 0 });
-    expect(db.prepare("SELECT count(*) AS n FROM conversation_v3_edges").get()).toMatchObject({ n: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM conversation_v3_objects WHERE length(refs)>0").get()).toMatchObject({ n: 0 });
   });
 
   it("can reject a nested write without rolling back other valid outer writes", () => {

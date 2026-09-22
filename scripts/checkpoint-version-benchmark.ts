@@ -69,7 +69,7 @@ function runCase(entries: number, switches: number, payloadBytes: number) {
   };
   try {
     db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; PRAGMA wal_autocheckpoint=1000;");
-    for (const migration of ["0051_conversation_version_core.sql", "0052_conversation_version_heads.sql"])
+    for (const migration of ["0051_conversation_version_core.sql", "0052_conversation_version_heads.sql", "0053_conversation_compact_versions.sql"])
       db.exec(readFileSync(new URL(`../api/db/migrations/${migration}`, import.meta.url), "utf8"));
     const objects = new VersionObjects(db, { maxBytes: 1024 * 1024 * 1024, maxObjects: 2_000_000 });
     const tree = new VersionTree(objects), heads = new VersionHeads(db, objects);

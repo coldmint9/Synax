@@ -3,6 +3,7 @@ import type Database from "libsql";
 import { VersionObjects } from "./objects.js";
 import { VersionStoreError, assertObjectId } from "./limits.js";
 import { atomicVersionWrite } from "./transaction.js";
+import { hashBytes } from "./hash-codec.js";
 import { readVersion } from "./versions.js";
 
 export interface HeadState { sessionId: string; versionId: string; revision: number; epoch: number }
@@ -41,17 +42,17 @@ export class VersionHeads {
 
   constructor(private readonly db: Database.Database, private readonly objects: VersionObjects) {
     if (objects.db !== db) throw new TypeError("Heads and objects require the same database connection.");
-    this.find = db.prepare<[string]>("SELECT version_id,revision,epoch FROM conversation_v3_heads WHERE session_id=?");
-    this.insert = db.prepare<[string, string]>("INSERT INTO conversation_v3_heads(session_id,version_id) VALUES(?,?)");
-    this.own = db.prepare<[string, string]>("INSERT OR IGNORE INTO conversation_v3_owned_versions(session_id,version_id) VALUES(?,?)");
-    this.isOwned = db.prepare<[string, string]>("SELECT 1 AS present FROM conversation_v3_owned_versions WHERE session_id=? AND version_id=?");
-    this.cas = db.prepare<[string, number, string, number, number]>(
+    this.find = db.prepare<[string]>("SELECT lower(hex(version_id)) AS version_id,revision,epoch FROM conversation_v3_heads WHERE session_id=?");
+    this.insert = db.prepare<[string, Uint8Array]>("INSERT INTO conversation_v3_heads(session_id,version_id) VALUES(?,?)");
+    this.own = db.prepare<[string, Uint8Array]>("INSERT OR IGNORE INTO conversation_v3_owned_versions(session_id,version_id) VALUES(?,?)");
+    this.isOwned = db.prepare<[string, Uint8Array]>("SELECT 1 AS present FROM conversation_v3_owned_versions WHERE session_id=? AND version_id=?");
+    this.cas = db.prepare<[Uint8Array, number, string, number, number]>(
       "UPDATE conversation_v3_heads SET version_id=?,revision=revision+1,epoch=? WHERE session_id=? AND revision=? AND epoch=?",
     );
     this.prior = db.prepare<[string, string]>(
-      "SELECT body_hash,result_session_id,result_version_id,result_revision,result_epoch FROM conversation_v3_operations WHERE session_id=? AND request_id=?",
+      "SELECT lower(hex(body_hash)) AS body_hash,result_session_id,lower(hex(result_version_id)) AS result_version_id,result_revision,result_epoch FROM conversation_v3_operations WHERE session_id=? AND request_id=?",
     );
-    this.saveResult = db.prepare<[string, string, string, string, string, number, number]>(
+    this.saveResult = db.prepare<[string, string, Uint8Array, string, Uint8Array, number, number]>(
       "INSERT INTO conversation_v3_operations(session_id,request_id,body_hash,result_session_id,result_version_id,result_revision,result_epoch) VALUES(?,?,?,?,?,?,?)",
     );
   }
@@ -68,8 +69,8 @@ export class VersionHeads {
     return atomicVersionWrite(this.db, () => {
       readVersion(this.objects, versionId);
       if (this.find.get(sessionId)) throw new VersionStoreError("VERSION_SESSION_EXISTS", "Versioned session already exists.");
-      this.insert.run(sessionId, versionId);
-      this.own.run(sessionId, versionId);
+      this.insert.run(sessionId, hashBytes(versionId));
+      this.own.run(sessionId, hashBytes(versionId));
       return { sessionId, versionId, revision: 0, epoch: 1 };
     });
   }
@@ -84,7 +85,7 @@ export class VersionHeads {
       if (current.epoch !== request.expectedEpoch)
         throw new VersionStoreError("VERSION_EPOCH_STALE", "Writer epoch has been superseded.");
       readVersion(this.objects, request.versionId);
-      this.own.run(request.sessionId, request.versionId);
+      this.own.run(request.sessionId, hashBytes(request.versionId));
       return this.advance(current, request.versionId, current.epoch);
     });
   }
@@ -127,7 +128,7 @@ export class VersionHeads {
   }
 
   private checkOwned(sessionId: string, versionId: string): void {
-    if (!this.isOwned.get(sessionId, versionId))
+    if (!this.isOwned.get(sessionId, hashBytes(versionId)))
       throw new VersionStoreError("VERSION_ROOT_NOT_OWNED", "Target version is not owned by this session.");
     readVersion(this.objects, versionId);
   }
@@ -135,7 +136,7 @@ export class VersionHeads {
   private advance(current: HeadState, versionId: string, epoch: number): HeadState {
     assertCounter(current.revision);
     assertCounter(epoch, 1);
-    if (!this.cas.run(versionId, epoch, current.sessionId, current.revision, current.epoch).changes)
+    if (!this.cas.run(hashBytes(versionId), epoch, current.sessionId, current.revision, current.epoch).changes)
       throw new VersionStoreError("VERSION_REVISION_STALE", "Session revision changed before root publication.");
     return { sessionId: current.sessionId, versionId, revision: current.revision + 1, epoch };
   }
@@ -151,6 +152,6 @@ export class VersionHeads {
   }
 
   private record(sessionId: string, requestId: string, bodyHash: string, result: HeadState): void {
-    this.saveResult.run(sessionId, requestId, bodyHash, result.sessionId, result.versionId, result.revision, result.epoch);
+    this.saveResult.run(sessionId, requestId, hashBytes(bodyHash), result.sessionId, hashBytes(result.versionId), result.revision, result.epoch);
   }
 }

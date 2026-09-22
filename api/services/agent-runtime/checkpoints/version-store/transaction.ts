@@ -1,4 +1,5 @@
 import type Database from "libsql";
+import { VersionStoreError } from "./limits.js";
 
 let savepointSequence = 0;
 
@@ -20,6 +21,8 @@ export function atomicVersionWrite<T>(db: Database.Database, action: () => T): T
     } else {
       db.exec("ROLLBACK");
     }
+    if (error instanceof Error && error.message.includes("VERSION_METADATA_BUDGET_EXCEEDED"))
+      throw new VersionStoreError("VERSION_METADATA_BUDGET_EXCEEDED", "Version metadata budget exceeded; growth was rolled back.");
     throw error;
   }
 }

@@ -32,7 +32,23 @@ export function childRef(child: Child, parentHeight: number): NodeRef {
 export function readNode(objects: VersionObjects, hash: string, expected?: NodeRef): TreeNode {
   const stored = objects.get(hash, "tree");
   try {
-    const node = JSON.parse(stored.bytes.toString()) as TreeNode;
+    let node = JSON.parse(stored.bytes.toString()) as TreeNode;
+    // Compact disk nodes address the already stored reference vector by index.
+    // Decode to the same bounded in-memory shape used by the tree algorithm.
+    if ((node as { v: number })?.v === 2) {
+      const raw = node as unknown as { height: number; count: number; entries?: unknown[]; children?: unknown[] };
+      const source = raw.height === 0 ? raw.entries : raw.children;
+      if (!Array.isArray(source) || source.length > MAX_ITEMS) corrupt();
+      const decoded = source.map((item): Entry | Child => {
+        if (!Array.isArray(item) || item.length !== (raw.height === 0 ? 2 : 3)) corrupt();
+        const index = item[1];
+        if (!Number.isSafeInteger(index) || index < 0 || index >= stored.references.length) corrupt();
+        return raw.height === 0 ? [item[0], stored.references[index]] : [item[0], stored.references[index], item[2]];
+      });
+      node = raw.height === 0
+        ? { v: 1, height: 0, count: raw.count, entries: decoded as Entry[] }
+        : { v: 1, height: raw.height, count: raw.count, children: decoded as Child[] };
+    }
     if (!node || node.v !== 1 || !Number.isSafeInteger(node.height) || node.height < 0 || node.height >= MAX_TREE_DEPTH ||
         !Number.isSafeInteger(node.count) || node.count < 1) corrupt();
     const leaf = node.height === 0;
@@ -98,8 +114,13 @@ function partition<T>(items: readonly T[]): T[][] {
 function persist(objects: VersionObjects, node: TreeNode): NodeRef {
   if (node.height >= MAX_TREE_DEPTH || !Number.isSafeInteger(node.count))
     throw new VersionStoreError("VERSION_TREE_DEPTH", "Tree exceeds its depth or count limit.");
-  const refs = ("entries" in node ? node.entries : node.children).map(item => item[1]);
-  const hash = objects.put("tree", Buffer.from(JSON.stringify(node)), refs);
+  const items = "entries" in node ? node.entries : node.children;
+  const refs = [...new Set(items.map(item => item[1]))].sort();
+  const indexes = new Map(refs.map((id, index) => [id, index]));
+  const encoded = "entries" in node
+    ? { v: 2, height: 0, count: node.count, entries: node.entries.map(([key, id]) => [key, indexes.get(id)!]) }
+    : { v: 2, height: node.height, count: node.count, children: node.children.map(([key, id, count]) => [key, indexes.get(id)!, count]) };
+  const hash = objects.put("tree", Buffer.from(JSON.stringify(encoded)), refs);
   return nodeRef(hash, node);
 }
 

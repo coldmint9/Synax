@@ -31,12 +31,12 @@ The 100k diagnostic shows 45,375,488 bytes in edge table + reverse edge index. C
 
 **Interfaces:** Existing public hex IDs and object/tree/head methods remain stable. `VersionObjects.put` increments each unique child's count before inserting a new parent; dedup does not double-count. Object reads verify reference ordering/limits and payload integrity. The DB has a partial index for `ref_count=0` and no reference edge table.
 
-- [ ] Write failing tests for 32-byte disk IDs, compact adjacency, unchanged dedup counts, atomic count rollback, SQL limits, compact tree payload and guarded populated-prototype migration.
-- [ ] Observe RED with the core suites.
-- [ ] Implement additive 0053 migration: refuse populated prototype tables before changing any data; replace empty draft tables transactionally; keep production v2 untouched.
-- [ ] Implement binary boundary codecs and compact references; keep public hash semantics and bounded get behavior.
-- [ ] Encode v2 tree nodes using indexes into the sorted reference array, while validating v1 node fixtures for compatibility.
-- [ ] Verify all prior core tests plus new representation/integrity tests and typecheck; commit.
+- [x] Write failing tests for 32-byte disk IDs, compact adjacency, unchanged dedup counts, atomic count rollback, SQL limits, compact tree payload and guarded populated-prototype migration.
+- [x] Observe RED with the core suites.
+- [x] Implement additive 0053 migration: refuse populated prototype tables before changing any data; replace empty draft tables transactionally; keep production v2 untouched.
+- [x] Implement binary boundary codecs and compact references; keep public hash semantics and bounded get behavior.
+- [x] Encode v2 tree nodes using indexes into the sorted reference array, while validating v1 node fixtures for compatibility.
+- [x] Verify all prior core tests plus new representation/integrity tests and typecheck; commit.
 
 ## Task 2 — Durable root pins and bounded metadata
 
@@ -44,10 +44,10 @@ The 100k diagnostic shows 45,375,488 bytes in edge table + reverse edge index. C
 
 **Interfaces:** `VersionPins.hold({id,objectId,kind,owner})`, `release(id,owner)`, `moveWriter({id,owner,expectedObjectId,objectId})`, `page(owner,{after?,limit?})`. Pin IDs are stable/idempotent and immutable except explicitly moved writer pins. `VersionResources.metadata()` and `setMetadataLimit(bytes)` expose a DB-global finite budget.
 
-- [ ] Write RED tests for head transfer counts, checkpoint/fork/reader protection, owner mismatch, idempotent hold/release, atomic writer-pin transfer and reopen persistence.
-- [ ] Add tests that metadata-limit failure rolls back head/ownership/operation/pin writes and object counts; INSERT OR IGNORE must not double-charge.
-- [ ] Implement after-insert/delete/update triggers and APIs. Ownership rows use RESTRICT so GC must delete them in bounded pages, not unbounded FK cascades.
-- [ ] Run real disk-backed two-connection tests and core regressions; commit.
+- [x] Write RED tests for head transfer counts, checkpoint/fork/reader protection, owner mismatch, idempotent hold/release, atomic writer-pin transfer and reopen persistence.
+- [x] Add tests that metadata-limit failure rolls back head/ownership/operation/pin writes and object counts; INSERT OR IGNORE must not double-charge.
+- [x] Implement after-insert/delete/update triggers and APIs. Ownership rows use RESTRICT so GC must delete them in bounded pages, not unbounded FK cascades.
+- [x] Run real disk-backed two-connection tests and core regressions; commit.
 
 ## Task 3 — Bounded orphan collector
 
@@ -55,10 +55,10 @@ The 100k diagnostic shows 45,375,488 bytes in edge table + reverse edge index. C
 
 **Interfaces:** `VersionCollector.collect({maxObjects?,maxEdges?,maxBytes?,maxOwnershipRows?,maxMs?})` returns removed counts, reclaimed logical bytes, released proof rows and whether work remains. It processes the indexed zero-reference set, verifies each bounded object, pages weak ownership proofs, then releases child counts and removes the object in one short transaction.
 
-- [ ] RED: pinned descendants survive; released roots eventually reclaim a shared DAG exactly once; each budget is honored; proof fanout is paged; failed batch rolls back; interrupted/reopened collection resumes.
-- [ ] Implement without loading all objects/roots/hashes and without time-based unsafe pin expiration.
-- [ ] Verify with a hand-checked live reference-count oracle and mixed publication/pin/GC sequences.
-- [ ] Run core tests and existing checkpoint regressions; commit.
+- [x] RED: pinned descendants survive; released roots eventually reclaim a shared DAG exactly once; each budget is honored; proof fanout is paged; failed batch rolls back; interrupted/reopened collection resumes.
+- [x] Implement without loading all objects/roots/hashes and without time-based unsafe pin expiration.
+- [x] Verify with a hand-checked live reference-count oracle and mixed publication/pin/GC sequences.
+- [x] Run core tests and existing checkpoint regressions; commit.
 
 ## Task 4 — Repeat storage probes and soak
 
@@ -66,3 +66,9 @@ The 100k diagnostic shows 45,375,488 bytes in edge table + reverse edge index. C
 - [ ] Run comparable 10k/100k/1M workloads under 128MiB V8 old-space and archive raw samples. Compare compact no-GC against prior baseline before attributing gains to GC.
 - [ ] Run a >=10k-operation small-data mixed-write/switch/pin/GC soak. Verify exact content, steady object counts after maintenance, finite metadata behavior and no directory/file leaks.
 - [ ] Document what passed and what remains; storage tuning alone does not meet end-to-end runtime/UI/file/migration acceptance.
+
+## Execution evidence
+
+- Compact representation RED observed (v1 payload vs required v2), then pin modules RED, pin admission/identity guard RED and collector module RED; 60 core/CLI tests now PASS. API typecheck PASS.
+- Installed libSQL 0.5.29 treats a sole Buffer argument as named binds and may abort natively; all single binary predicates now use named parameter maps. Its `.all()` returns ArrayBuffer BLOBs rather than the Buffer returned by `.get()`; the collector selects bounded hex identities instead of rebinding that raw value. Both were reproduced only in isolated processes and corrected before benchmarking.
+- Metadata admission has a default 64MiB hard logical reservation ceiling; resource snapshots observe DB/WAL/SHM and freelist but do not yet enforce a physical history quota. No runtime session uses this core.
