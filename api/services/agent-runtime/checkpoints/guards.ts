@@ -1,3 +1,7 @@
+import {
+  versionRepository,
+  versionedSession,
+} from "./version-runtime/bridge.js";
 import fs from "node:fs";
 import path from "node:path";
 import { getRawSqlite } from "../../../db/index.js";
@@ -10,6 +14,8 @@ export const activeHistoryOperations = new Set<string>();
 export const historyError = (message: string, code = "HISTORY_CONFLICT") =>
   new AgentRuntimeError(message, code, 409);
 export function historyRevision(sessionId: string): number {
+  if (versionedSession(sessionId))
+    return versionRepository().head(sessionId).revision;
   return (
     (
       getRawSqlite()
@@ -19,6 +25,11 @@ export function historyRevision(sessionId: string): number {
         .get(sessionId) as { revision: number } | undefined
     )?.revision ?? 0
   );
+}
+export function historyEpoch(sessionId: string): number {
+  return versionedSession(sessionId)
+    ? versionRepository().head(sessionId).epoch
+    : historyRevision(sessionId);
 }
 export function rootOwner(sessionId: string): string {
   const seen = new Set<string>();
@@ -57,7 +68,10 @@ export function rootsOverlap(a: string, b: string): boolean {
     !p || (!p.startsWith(`..${path.sep}`) && p !== ".." && !path.isAbsolute(p));
   return inside(relative) || inside(reverse);
 }
-export function assertHistoryUnlocked(sessionId: string, rootsOverride?: string[]): void {
+export function assertHistoryUnlocked(
+  sessionId: string,
+  rootsOverride?: string[],
+): void {
   const db = getRawSqlite();
   if (
     db

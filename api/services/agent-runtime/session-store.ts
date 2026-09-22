@@ -1,3 +1,10 @@
+import {
+  versionRepository,
+  versionedSession,
+  versionSessionView,
+  historySessionFields,
+  versionedList,
+} from "./checkpoints/version-runtime/bridge.js";
 import type { ContextComposition } from "./context-composition.js";
 import { bindAssets } from "./media-assets.js";
 import { runtimeTransaction } from "./runtime-transaction.js";
@@ -31,7 +38,7 @@ import type {
   ThinkingSummary,
   ToolCallRecord,
 } from "./contracts.js";
-import { AgentNotFoundError } from "./runtime-errors.js";
+import { AgentNotFoundError, AgentRuntimeError } from "./runtime-errors.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
 
 type JsonObject = Record<string, unknown>;
@@ -312,7 +319,7 @@ function parseObject(raw: string | null | undefined): JsonObject {
 }
 
 function mapSession(row: SessionRow): AgentSession {
-  return {
+  return versionSessionView({
     id: row.id,
     projectId: row.project_id,
     parentSessionId: row.parent_session_id,
@@ -338,7 +345,7 @@ function mapSession(row: SessionRow): AgentSession {
     activeRunId: row.active_run_id,
     pendingResumeToken: row.pending_resume_token,
     sessionMetadata: parseObject(row.session_metadata_json),
-  };
+  });
 }
 
 function mapMessage(row: MessageRow): AgentRuntimeMessage {
@@ -568,6 +575,8 @@ export class AgentRuntimeStore {
       const current = this.getSession(id);
       const next = { ...current, ...patch };
       this.upsertSession(next);
+      if (versionedSession(id))
+        versionRepository().session(id, historySessionFields(next));
       return { current, next };
     });
     const notify = () => {
@@ -824,6 +833,12 @@ export class AgentRuntimeStore {
   }
 
   deleteSessionTree(sessionId: string): string[] {
+    if (versionedSession(sessionId))
+      throw new AgentRuntimeError(
+        "Versioned session deletion is not integrated yet.",
+        "VERSION_RUNTIME_NOT_READY",
+        409,
+      );
     const sessionsToDelete = this.listSessionTree(sessionId);
     const deleteIds = sessionsToDelete.map((session) => session.id);
     const deleteSet = new Set(deleteIds);
@@ -838,10 +853,18 @@ export class AgentRuntimeStore {
     const db = getRawSqlite();
     const tx = db.transaction(() => {
       for (const id of deleteIds) {
-        db.prepare("DELETE FROM conversation_history_tracking WHERE session_id=?").run(id);
-        db.prepare("DELETE FROM conversation_history_journal WHERE session_id=?").run(id);
-        db.prepare("DELETE FROM conversation_history_access WHERE session_id=?").run(id);
-        db.prepare("DELETE FROM conversation_mutations WHERE session_id=? OR owner_session_id=?").run(id,id);
+        db.prepare(
+          "DELETE FROM conversation_history_tracking WHERE session_id=?",
+        ).run(id);
+        db.prepare(
+          "DELETE FROM conversation_history_journal WHERE session_id=?",
+        ).run(id);
+        db.prepare(
+          "DELETE FROM conversation_history_access WHERE session_id=?",
+        ).run(id);
+        db.prepare(
+          "DELETE FROM conversation_mutations WHERE session_id=? OR owner_session_id=?",
+        ).run(id, id);
       }
       const deletedAt = nowIso();
       for (const survivor of survivors) {
@@ -968,6 +991,21 @@ export class AgentRuntimeStore {
   }
 
   appendMessage(message: AgentRuntimeMessage): AgentRuntimeMessage {
+    if (versionedSession(message.sessionId)) {
+      if (message.contentParts?.some((part) => part.type !== "text"))
+        throw new AgentRuntimeError(
+          "Version asset writes are not integrated yet.",
+          "VERSION_RUNTIME_NOT_READY",
+          409,
+        );
+      versionRepository().put(
+        message.sessionId,
+        "messages",
+        message.id,
+        message as unknown as Record<string, unknown>,
+      );
+      return message;
+    }
     const session = this.getSession(message.sessionId);
     const nextSequence = this.nextMessageSequence(message.sessionId);
     if (message.contentParts)
@@ -999,28 +1037,53 @@ export class AgentRuntimeStore {
     return message;
   }
 
-  getMessage(sessionId: string, messageId: string): AgentRuntimeMessage | undefined {
-    const row = getRawSqlite().prepare(
-      "SELECT * FROM agent_runtime_messages WHERE id = ? AND session_id = ?",
-    ).get(messageId, sessionId) as MessageRow | undefined;
+  getMessage(
+    sessionId: string,
+    messageId: string,
+  ): AgentRuntimeMessage | undefined {
+    if (versionedSession(sessionId))
+      return versionRepository().get(
+        sessionId,
+        "messages",
+        messageId,
+      ) as unknown as AgentRuntimeMessage | undefined;
+    const row = getRawSqlite()
+      .prepare(
+        "SELECT * FROM agent_runtime_messages WHERE id = ? AND session_id = ?",
+      )
+      .get(messageId, sessionId) as MessageRow | undefined;
     return row ? mapMessage(row) : undefined;
   }
 
   /** Attach an inline reply without REPLACE, sequence changes or stale-message resurrection. */
-  attachVisualizationMetadata(message: AgentRuntimeMessage, additions: Record<string, unknown>): AgentRuntimeMessage | undefined {
+  attachVisualizationMetadata(
+    message: AgentRuntimeMessage,
+    additions: Record<string, unknown>,
+  ): AgentRuntimeMessage | undefined {
     const sqlite = getRawSqlite();
     return sqlite.transaction(() => {
       const current = this.getMessage(message.sessionId, message.id);
-      if (!current || current.role !== "assistant" || current.content !== message.content || current.metadata.partial) return undefined;
+      if (
+        !current ||
+        current.role !== "assistant" ||
+        current.content !== message.content ||
+        current.metadata.partial
+      )
+        return undefined;
       if (current.metadata.source === "inline_visualization") return current;
-      const metadata = {...current.metadata, ...additions};
-      sqlite.prepare("UPDATE agent_runtime_messages SET metadata_json = ? WHERE id = ? AND session_id = ?")
+      const metadata = { ...current.metadata, ...additions };
+      sqlite
+        .prepare(
+          "UPDATE agent_runtime_messages SET metadata_json = ? WHERE id = ? AND session_id = ?",
+        )
         .run(stringify(metadata), message.id, message.sessionId);
-      return {...current, metadata};
+      return { ...current, metadata };
     })();
   }
 
   listMessages(sessionId: string): AgentRuntimeMessage[] {
+    if (versionedSession(sessionId))
+      return versionedList<AgentRuntimeMessage>(sessionId, "messages");
     const rows = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_messages WHERE session_id = ? ORDER BY sequence, created_at, rowid",
@@ -1030,6 +1093,15 @@ export class AgentRuntimeStore {
   }
 
   appendEvent(event: RuntimeEvent): RuntimeEvent {
+    if (versionedSession(event.sessionId)) {
+      versionRepository().put(
+        event.sessionId,
+        "events",
+        event.id,
+        event as unknown as Record<string, unknown>,
+      );
+      return event;
+    }
     getRawSqlite()
       .prepare(
         `INSERT OR REPLACE INTO agent_runtime_events
@@ -1049,6 +1121,14 @@ export class AgentRuntimeStore {
   }
 
   listEvents(sessionId: string, after?: string): RuntimeEvent[] {
+    if (versionedSession(sessionId)) {
+      const items = versionedList<RuntimeEvent>(sessionId, "events");
+      return after
+        ? items.slice(
+            Math.max(0, items.findIndex((event) => event.id === after) + 1),
+          )
+        : items;
+    }
     const db = getRawSqlite();
     if (after) {
       // Incremental fetch: only read rows after the caller's cursor instead of
@@ -1085,6 +1165,11 @@ export class AgentRuntimeStore {
     types: RuntimeEvent["type"][],
   ): RuntimeEvent | null {
     if (types.length === 0) return null;
+    if (versionedSession(sessionId))
+      return versionRepository().latestEvent(
+        sessionId,
+        types,
+      ) as unknown as RuntimeEvent | null;
     const placeholders = types.map(() => "?").join(", ");
     const row = getRawSqlite()
       .prepare(
@@ -1103,6 +1188,8 @@ export class AgentRuntimeStore {
     eventId: string,
     type: RuntimeEvent["type"],
   ): number {
+    if (versionedSession(sessionId))
+      return versionRepository().countEventsAfter(sessionId, eventId, type);
     const row = getRawSqlite()
       .prepare(
         `SELECT COUNT(*) AS count FROM agent_runtime_events

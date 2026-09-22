@@ -1,4 +1,4 @@
-import { historyRevision } from "./checkpoints/guards.js";
+import { historyEpoch } from "./checkpoints/guards.js";
 import { getRawSqlite } from '../../db/index.js';
 import { agentRuntimeStore } from './session-store.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
@@ -13,9 +13,9 @@ export class RuntimeStreamWriter {
   private delta?: Extract<AgentRunStreamChunk, { type: 'message_delta' | 'thought_delta' }>;
   private timer?: ReturnType<typeof setTimeout>;
   private readonly revision: number;
-  constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true) { this.revision = historyRevision(sessionId); }
+  constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true) { this.revision = historyEpoch(sessionId); }
 
-  private isCurrent(): boolean { return this.current() && historyRevision(this.sessionId) === this.revision; }
+  private isCurrent(): boolean { return this.current() && historyEpoch(this.sessionId) === this.revision; }
 
   write(chunk: AgentRunStreamChunk): void {
     if (!this.isCurrent()) { this.abandon(); return; }

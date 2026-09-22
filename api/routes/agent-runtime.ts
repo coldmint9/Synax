@@ -1,3 +1,4 @@
+import { versionRepository,versionedSession } from "../services/agent-runtime/checkpoints/version-runtime/bridge.js";
 import { visitConversation } from "../services/agent-runtime/checkpoints/retention.js";
 import { planFileUndo } from "../services/agent-runtime/checkpoints/file-plan.js";
 import {
@@ -545,12 +546,25 @@ agentRuntimeRoutes.post("/sessions/clear-inactive", async (c) => {
 
 agentRuntimeRoutes.get("/sessions/:sessionId/messages", (c) => {
   try {
+    const sessionId=c.req.param("sessionId");
+    if(versionedSession(sessionId))return c.json(versionRepository().page(sessionId,"messages",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),fields:c.req.query("fields")?.split(",")}));
     return c.json({
       items: agentLoopRuntime.listMessages(c.req.param("sessionId")),
     });
   } catch (error) {
     return runtimeError(c, error);
   }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/messages/:messageId/content",(c)=>{
+  try{
+    const sessionId=c.req.param("sessionId");
+    if(!versionedSession(sessionId))return c.json({error:"Content paging requires a versioned session."},409);
+    const repo=versionRepository();
+    if(Number(c.req.query("cursor")??0)>0&&c.req.query("revision")===undefined)return c.json({error:"Content continuation requires the original revision.",code:"HISTORY_STALE"},409);
+    if(c.req.query("revision")!==undefined&&Number(c.req.query("revision"))!==repo.head(sessionId).revision)return c.json({error:"Conversation changed.",code:"HISTORY_STALE"},409);
+    return c.json(repo.content(sessionId,"messages",c.req.param("messageId"),"content",Number(c.req.query("cursor")??0),c.req.query("revision")===undefined?undefined:Number(c.req.query("revision"))));
+  }catch(error){return runtimeError(c,error);}
 });
 
 agentRuntimeRoutes.get("/sessions/:sessionId/runs", (c) => {
@@ -777,6 +791,12 @@ agentRuntimeRoutes.post("/sessions/:sessionId/turns/stream", async (c) => {
 });
 
 agentRuntimeRoutes.get("/sessions/:sessionId/events", (c) => {
+  if(versionedSession(c.req.param("sessionId"))){
+    try{
+      if(c.req.query("after"))return c.json({error:"Use the versioned event cursor instead of a legacy event id.",code:"HISTORY_PAGE_REQUIRED"},409);
+      return c.json(versionRepository().page(c.req.param("sessionId"),"events",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),fields:c.req.query("fields")?.split(",")}));
+    }catch(error){return runtimeError(c,error);}
+  }
   const parsed = listEventsQuerySchema.safeParse(
     Object.fromEntries(new URL(c.req.url).searchParams),
   );
