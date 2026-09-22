@@ -86,10 +86,10 @@ Create tests under `api/services/agent-runtime/__tests__/`:
 
 ## Task 4 — Core performance evidence and scope audit
 
-- [ ] Create isolated benchmark coverage for key counts that cross several node levels, repeated root switches and forks, bounded pages, dedup and quota boundaries.
-- [ ] Record elapsed time, object/node counts, DB/WAL size and RSS separately; avoid a timing-only brittle unit-test assertion.
-- [ ] Run `node node_modules/typescript/bin/tsc --noEmit` and relevant existing checkpoint tests using isolated environment configuration.
-- [ ] Inspect production call sites to verify v3 has NOT been partially enabled; update task status and document remaining integration gaps.
+- [x] Create isolated benchmark coverage for key counts that cross several node levels, repeated root switches and forks, bounded pages, dedup and quota boundaries.
+- [x] Record elapsed time, object/node counts, DB/WAL size and RSS separately; avoid a timing-only brittle unit-test assertion.
+- [x] Run `node node_modules/typescript/bin/tsc --noEmit` and relevant existing checkpoint tests using isolated environment configuration.
+- [x] Inspect production call sites to verify v3 has NOT been partially enabled; update task status and document remaining integration gaps.
 
 ## Subsequent plans required before full completion
 
@@ -106,3 +106,4 @@ Each subsequent plan must keep the parent objective and all specification gates;
 - 2026-09-23 Task 1: observed RED for missing objects module, then 11 real-libSQL tests PASS; `tsc --noEmit` PASS. Logical quota accounting is not yet a physical disk/WAL guard, and no production session uses v3.
 - 2026-09-23 Task 2: observed missing-module RED and empty-page-budget RED, then 22 tests PASS across objects/tree; `tsc --noEmit` PASS. 6,000-key multi-level fixture verifies bounded reads/path-copy allocation. Not an end-to-end latency/memory/storage acceptance result.
 - 2026-09-23 Task 3: missing-module RED observed, then all 34 core tests PASS; `tsc --noEmit` PASS. Ownership proof rejects arbitrary cross-session rollback targets; trusted publish still requires runtime authorization/fencing integration. Metadata quota accounting, checkpoint pins and concurrent GC remain later gates.
+- 2026-09-23 Task 4: 10k/100k/1M disk-backed probes completed with 1,000 switches/forks each and 128MiB V8 old-space; immutable bytes unchanged during switches. Storage FAILED the intended growth gate (1M: 244MiB raw → 1055MiB DB). Full report: `docs/superpowers/reviews/2026-09-23-checkpoint-core-verification.md`. Next priority is compact references, bounded GC/pins and physical budgets before production enablement; full objective remains active.
