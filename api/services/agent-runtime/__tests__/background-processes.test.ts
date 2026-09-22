@@ -172,9 +172,19 @@ it.skipIf(process.platform === "win32")(
     const file = path.join(dir, "pid");
     const program = `require('fs').writeFileSync(${JSON.stringify(file)},String(process.pid));setInterval(()=>{},1000);`;
     // An explicitly legacy pipe-based service: new PTYs do not have a separate launcher.
-    const child = spawnOwnedProcess(`${quote(process.execPath)} -e ${quote(program)}`, [], { shell: true, background: true, sessionId: owner.id, stdin: "ignore" });
-    child.stdout?.resume(); child.stderr?.resume();
-    await new Promise<void>((resolve, reject) => { child.on("message", (message: any) => { if (message.type === "started") resolve(); }); child.once("error", reject); });
+    const child = spawnOwnedProcess(
+      `${quote(process.execPath)} -e ${quote(program)}`,
+      [],
+      { shell: true, background: true, sessionId: owner.id, stdin: "ignore" },
+    );
+    child.stdout?.resume();
+    child.stderr?.resume();
+    await new Promise<void>((resolve, reject) => {
+      child.on("message", (message: any) => {
+        if (message.type === "started") resolve();
+      });
+      child.once("error", reject);
+    });
     const started = { processId: child.ownedProcessId, pid: child.pid! };
     try {
       await vi.waitFor(() => expect(fs.existsSync(file)).toBe(true));
@@ -235,9 +245,9 @@ it("detects service ports from common listen flags while ignoring look-alikes", 
   expect(detectServicePorts("node server.js --host localhost:3000")).toEqual([
     3000,
   ]);
-  expect(detectServicePorts("python3 -m http.server 8080 --bind 0.0.0.0")).toEqual([
-    8080,
-  ]);
+  expect(
+    detectServicePorts("python3 -m http.server 8080 --bind 0.0.0.0"),
+  ).toEqual([8080]);
   expect(detectServicePorts("curl http://example.com:8080/api")).toEqual([]);
   expect(detectServicePorts("tar -xf site-2024.tar.gz --port=0")).toEqual([]);
   expect(detectServicePorts("vite --port 999999 --mode Important=1")).toEqual(
@@ -297,12 +307,9 @@ it("treats plain terminals as deletable while running and never maps ports for t
     const listed = listSessionBackgroundProcesses(owner.id).find(
       (item) => item.id === ticketId,
     );
-    expect(listed).toMatchObject({
-      kind: "terminal",
-      state: "active",
-      terminalId: ticketId,
-    });
-    expect(listed?.ports).toBeUndefined();
+    // Manually created terminals are owned by the terminal drawer and are
+    // intentionally absent from the background-services list.
+    expect(listed).toBeUndefined();
     // Deleting a running terminal must not require stopping it first.
     expect(
       (

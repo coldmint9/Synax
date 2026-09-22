@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="128" alt="Synax logo" src="electron/resources/icon.png" />
+<img alt="Synax" src="web/public/synax-github-cover.png" />
 
 # Synax
 
@@ -79,22 +79,14 @@ npm run dev:web   # 仅 Web，5173 端口
 
 ### 端口
 
-| 变量       | 默认值     | 用途                     |
-| ---------- | ---------- | ------------------------ |
-| `PORT`     | `3210`     | API 端口                 |
-| `WEB_PORT` | `5173`     | Web 开发服务端口         |
-| `WEB_HOST` | `0.0.0.0`  | Web 开发服务监听地址     |
+| 变量       | 默认值    | 用途                 |
+| ---------- | --------- | -------------------- |
+| `PORT`     | `3210`    | API 端口             |
+| `WEB_PORT` | `5173`    | Web 开发服务端口     |
+| `WEB_HOST` | `0.0.0.0` | Web 开发服务监听地址 |
 
 这些变量需要在启动开发脚本的终端中设置。
 
 ## 许可
 
 [MIT](./LICENSE)
-
-## 对话内交互原型
-
-Agent 在授权工作区编写 HTML 或默认导出的 React/TSX 组件，在成功完成的回复中输出 `synax-prototype` 代码块，JSON 包含 `sourcePath`、`title`、`sourceKind`（`html` 或 `react`）。每条消息最多三个原型，一次编译后存入该消息 metadata；刷新不重新读取源文件。
-
-只呈现直接可交互的轻量卡片，标题在 hover/键盘聚焦时以顶部浮层显示，触屏可见。重启预览后交互状态恢复初始值。没有发布、版本、QA、截图、反馈、持久状态或导出功能；旧记录和历史迁移保留，但旧卡片不再渲染。
-
-保留安全路径读取、固定依赖、限时编译、CSP、Web opaque sandbox 和 Electron 独立临时预览进程。Web 不等同于原生网络/CPU 硬隔离，请勿输入敏感信息。原生预览禁止外部网络、导航、下载和权限，不暴露 Node 或任意宿主 IPC。运行时只交换握手、主题、高度，不安装 npm 包、不执行项目构建脚本、不使用 CDN。编写示例见 `api/skills/builtin/interactive-artifacts/`。

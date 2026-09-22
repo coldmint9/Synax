@@ -230,7 +230,8 @@ export function TerminalDrawer({
       document.removeEventListener("terminal:toggle", show);
     };
   }, [create]);
-  // An empty drawer should come up ready to type, not as a placeholder.
+  // The drawer owns manually created terminals. Hydration uses the terminal
+  // API directly and never reads the background-services list.
   const autoCreated = useRef(false);
   useEffect(() => {
     if (!open) {
@@ -239,7 +240,12 @@ export function TerminalDrawer({
     }
     if (autoCreated.current || !projectId || pending > 0 || tabs.length) return;
     autoCreated.current = true;
-    create();
+    void useTerminalStore
+      .getState()
+      .hydrate(projectId)
+      .then(() => {
+        if (!useTerminalStore.getState().tabs.length) create();
+      });
   }, [open, projectId, pending, tabs.length, create]);
   const setNativeFocus = (focused: boolean) =>
     (window as any).electronAPI?.setTerminalFocus?.(focused);

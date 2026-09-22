@@ -39,11 +39,15 @@ export function detectServicePorts(command: string): number[] {
   for (const match of command.matchAll(/--port[=\s]+(\d{1,5})\b/gi))
     add(match[1]);
   // Short flag, including docker-style host:container mappings (-p 8080:80).
-  for (const match of command.matchAll(/(?:^|[\s=])-p\s*(\d{1,5})(?::(\d{1,5}))?\b/g)) {
+  for (const match of command.matchAll(
+    /(?:^|[\s=])-p\s*(\d{1,5})(?::(\d{1,5}))?\b/g,
+  )) {
     add(match[1]);
     add(match[2]);
   }
-  for (const match of command.matchAll(/\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\*):(\d{2,5})\b/gi))
+  for (const match of command.matchAll(
+    /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\*):(\d{2,5})\b/gi,
+  ))
     add(match[1]);
   for (const match of command.matchAll(/\bhttp\.server\s+(\d{1,5})\b/g))
     add(match[1]);
@@ -53,16 +57,28 @@ export function detectServicePorts(command: string): number[] {
 export function listSessionBackgroundProcesses(
   sessionId: string,
 ): SessionBackgroundProcess[] {
-  const session = agentRuntimeStore.getSession(sessionId);
-  const rows = getRawSqlite().prepare(`WITH visible AS (
+  const rows = getRawSqlite()
+    .prepare(
+      `WITH visible AS (
     SELECT p.*, t.id AS terminal_id, t.kind AS terminal_kind, t.cwd, t.project_id
     FROM agent_runtime_processes p LEFT JOIN terminal_sessions t ON t.id=p.id
-    WHERE (p.session_id=? AND p.kind='background') OR (t.project_id=? AND t.kind='terminal')
+    WHERE p.session_id=? AND p.kind='background'
   ) SELECT * FROM visible WHERE state<>'closed' OR id IN (SELECT id FROM visible WHERE state='closed' ORDER BY started_at DESC LIMIT 5)
-  ORDER BY (state<>'closed') DESC, started_at DESC`).all(sessionId, session.projectId) as Array<OwnedProcessRecord & { terminal_id?: string; terminal_kind?: "terminal" | "service"; cwd?: string; project_id?: string }>;
-  return rows.map(row => {
+  ORDER BY (state<>'closed') DESC, started_at DESC`,
+    )
+    .all(sessionId) as Array<
+    OwnedProcessRecord & {
+      terminal_id?: string;
+      terminal_kind?: "terminal" | "service";
+      cwd?: string;
+      project_id?: string;
+    }
+  >;
+  return rows.map((row) => {
     const plainTerminal = row.terminal_kind === "terminal";
-    const ports = plainTerminal ? [] : detectServicePorts(row.command_label ?? "");
+    const ports = plainTerminal
+      ? []
+      : detectServicePorts(row.command_label ?? "");
     return {
       id: row.id,
       command: row.command_label,
@@ -71,24 +87,45 @@ export function listSessionBackgroundProcesses(
       exitCode: row.exit_code ?? null,
       startedAt: row.started_at!,
       endedAt: row.ended_at ?? null,
-      ...(row.terminal_id ? { terminalId: row.terminal_id, kind: row.terminal_kind, cwd: row.cwd, projectId: row.project_id } : {}),
+      ...(row.terminal_id
+        ? {
+            terminalId: row.terminal_id,
+            kind: row.terminal_kind,
+            cwd: row.cwd,
+            projectId: row.project_id,
+          }
+        : {}),
       ...(ports.length ? { ports } : {}),
     };
   });
 }
 
-function ownedRow(sessionId: string, processId: string): OwnedProcessRecord & { terminal_id?: string } {
+function ownedRow(
+  sessionId: string,
+  processId: string,
+): OwnedProcessRecord & { terminal_id?: string } {
   const session = agentRuntimeStore.getSession(sessionId);
-  const row = getRawSqlite().prepare(`SELECT p.*, t.id AS terminal_id FROM agent_runtime_processes p
+  const row = getRawSqlite()
+    .prepare(
+      `SELECT p.*, t.id AS terminal_id FROM agent_runtime_processes p
     LEFT JOIN terminal_sessions t ON t.id=p.id WHERE p.id=? AND
-    ((p.session_id=? AND p.kind='background') OR (t.project_id=? AND t.kind='terminal'))`)
-    .get(processId, sessionId, session.projectId) as (OwnedProcessRecord & { terminal_id?: string }) | undefined;
+    ((p.session_id=? AND p.kind='background') OR (t.project_id=? AND t.kind='terminal'))`,
+    )
+    .get(processId, sessionId, session.projectId) as
+    | (OwnedProcessRecord & { terminal_id?: string })
+    | undefined;
   if (!row) throw new AgentNotFoundError(processId);
   return row;
 }
-export async function stopSessionBackgroundProcess(sessionId: string, processId: string): Promise<void> {
+export async function stopSessionBackgroundProcess(
+  sessionId: string,
+  processId: string,
+): Promise<void> {
   const row = ownedRow(sessionId, processId);
-  if (row.terminal_id) { await terminalManager.stop(processId); return; }
+  if (row.terminal_id) {
+    await terminalManager.stop(processId);
+    return;
+  }
   if (row.state === "closed") return;
   if (!(await stopRecordedProcess(row))) {
     getRawSqlite()
@@ -123,7 +160,9 @@ export async function deleteSessionBackgroundProcess(
         "PROCESS_STILL_RUNNING",
         409,
       );
-    db.prepare("DELETE FROM agent_runtime_processes WHERE id=? AND session_id=? AND kind='background' AND state='closed'").run(processId, sessionId);
+    db.prepare(
+      "DELETE FROM agent_runtime_processes WHERE id=? AND session_id=? AND kind='background' AND state='closed'",
+    ).run(processId, sessionId);
   }
   emitRuntimeBusEvent({ type: "session_process_changed", sessionId });
 }

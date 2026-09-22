@@ -27,6 +27,7 @@ interface TerminalState {
   closeTab: (id: string) => void;
   update: (item: TerminalSession) => void;
   openTerminal: (projectId: string, id: string) => Promise<void>;
+  hydrate: (projectId: string) => Promise<void>;
   openLegacy: (legacy: LegacyTerminal) => void;
   create: (
     projectId: string,
@@ -141,6 +142,37 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         ? state.tabs
         : [...state.tabs, { id, legacy }],
     }));
+  },
+  // Reconcile the drawer with the terminal records behind the background
+  // services list: refresh states, drop views deleted elsewhere, and surface
+  // live terminals this window has never opened.
+  hydrate: async (projectId) => {
+    let items: TerminalSession[];
+    try {
+      items = (await terminalApi.list(projectId)).items;
+    } catch {
+      return; // Server unreachable; keep the current tabs untouched.
+    }
+    const records = new Map(items.map((item) => [item.id, item]));
+    for (const tab of get().tabs)
+      if (tab.terminal && !records.has(tab.id)) get().closeTab(tab.id);
+    for (const item of items)
+      if (get().tabs.some((tab) => tab.id === item.id)) get().update(item);
+    const known = new Set(get().tabs.map((tab) => tab.id));
+    const missing = items.filter(
+      (item) =>
+        item.kind === "terminal" &&
+        item.state !== "closed" &&
+        !known.has(item.id),
+    );
+    if (missing.length)
+      set((state) => ({
+        tabs: [
+          ...state.tabs,
+          ...missing.map((item) => ({ id: item.id, terminal: item })),
+        ],
+        activeId: state.activeId ?? missing[0].id,
+      }));
   },
   create: async (projectId, rootId, sessionId) => {
     if (get().pending > 0) return;

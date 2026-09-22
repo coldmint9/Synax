@@ -2,12 +2,13 @@ import { useTerminalStore } from "../terminal/terminalStore";
 import { useSessionWorkspaceStore } from "./state/sessionWorkspaceStore";
 import { useEffect, useRef, useState } from "react";
 import { Popover } from "@heroui/react";
-import { Plus, LoaderCircle, Square, Terminal, Trash2 } from "lucide-react";
+import { LoaderCircle, Square, Terminal, Trash2 } from "lucide-react";
 import {
   agentRuntimeApi,
   type SessionBackgroundProcess,
   type SessionEnvironment,
 } from "../../../lib/api/agentRuntime";
+import { terminalApi } from "../../../lib/api/terminal";
 import { subscribe } from "../../../lib/api/runtimeEventBus";
 import { useLocale } from "../../../hooks/useLocale";
 import { ActivityStatus } from "../../components/beautiful-ui/ActivityStatus";
@@ -46,6 +47,29 @@ export function SessionBackgroundProcesses({
   const generation = useRef(0);
   const revision = useRef(0);
   const busyRef = useRef(false);
+  // The row delete confirmation follows the pointer: it appears on hover and
+  // lingers briefly so the cursor can travel into the popover.
+  const hoverClose = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openDeleteHover = (id: string) => {
+    if (hoverClose.current) {
+      clearTimeout(hoverClose.current);
+      hoverClose.current = null;
+    }
+    setConfirmDeleteId(id);
+  };
+  const scheduleDeleteHoverClose = () => {
+    if (hoverClose.current) clearTimeout(hoverClose.current);
+    hoverClose.current = setTimeout(() => {
+      hoverClose.current = null;
+      setConfirmDeleteId(null);
+    }, 250);
+  };
+  useEffect(
+    () => () => {
+      if (hoverClose.current) clearTimeout(hoverClose.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     const current = ++generation.current;
@@ -85,8 +109,6 @@ export function SessionBackgroundProcesses({
       }
     };
     void reload();
-    const onTerminalChanged = () => void reload();
-    document.addEventListener("terminal:changed", onTerminalChanged);
     const timer = window.setInterval(() => void reload(), 30_000);
     const unsubscribe = subscribe({
       events: {
@@ -103,7 +125,6 @@ export function SessionBackgroundProcesses({
       disposed = true;
       if (generation.current === current) generation.current++;
       window.clearInterval(timer);
-      document.removeEventListener("terminal:changed", onTerminalChanged);
       unsubscribe();
     };
   }, [sessionId]);
@@ -132,6 +153,23 @@ export function SessionBackgroundProcesses({
       if (current === generation.current) {
         revision.current++;
         setItems(result.items);
+        if (action === "stop") {
+          // A terminal view of the stopped service must follow immediately,
+          // not wait for its next reconnect.
+          const stopped = items.find((item) => item.id === id);
+          const stoppedProject = stopped?.projectId ?? environment?.projectId;
+          if (stopped?.terminalId && stoppedProject) {
+            try {
+              useTerminalStore
+                .getState()
+                .update(
+                  await terminalApi.get(stoppedProject, stopped.terminalId),
+                );
+            } catch {
+              /* The terminal view refreshes on its next connection. */
+            }
+          }
+        }
         if (action !== "stop") {
           useTerminalStore.getState().closeTab(id);
           useTerminalStore.getState().closeTab(`legacy:${id}`);
@@ -148,12 +186,54 @@ export function SessionBackgroundProcesses({
     }
   }
 
-  if (!items.length) return null;
+  // One click stops every live service and clears every service record;
+  // plain terminals keep their shells.
+  async function deleteAll() {
+    if (busyRef.current) return;
+    const current = generation.current;
+    const targets = items.filter((item) => item.kind !== "terminal");
+    if (!targets.length) return;
+    busyRef.current = true;
+    setBusy({ id: "*all*", action: "stop-delete" });
+    setError(null);
+    revision.current++;
+    try {
+      const outcomes = await Promise.allSettled(
+        targets.map(async (item) => {
+          if (item.state !== "closed")
+            await agentRuntimeApi.stopSessionProcess(sessionId, item.id);
+          await agentRuntimeApi.deleteSessionProcess(sessionId, item.id);
+        }),
+      );
+      const result = await agentRuntimeApi.listSessionProcesses(sessionId);
+      if (current === generation.current) {
+        revision.current++;
+        setItems(result.items);
+        for (const item of targets) {
+          useTerminalStore.getState().closeTab(item.id);
+          useTerminalStore.getState().closeTab(`legacy:${item.id}`);
+        }
+        const failed = outcomes.find(
+          (outcome) => outcome.status === "rejected",
+        );
+        if (failed)
+          throw failed.reason instanceof Error
+            ? failed.reason
+            : new Error(String(failed.reason));
+      }
+    } catch (err) {
+      if (current === generation.current)
+        setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (current === generation.current) {
+        busyRef.current = false;
+        setBusy(null);
+      }
+    }
+  }
 
   const services = items.filter((item) => item.kind !== "terminal");
-  const runningCount = services.filter(
-    (item) => item.state !== "closed",
-  ).length;
+  if (!services.length) return null;
 
   return (
     <WorkspaceSection
@@ -161,36 +241,28 @@ export function SessionBackgroundProcesses({
       storageKey={`${sessionId}:services`}
       icon={<Terminal size={13} />}
       title={zh ? "后台服务" : "Background services"}
-      count={items.length}
+      count={services.length}
       actions={
-        <button
-          type="button"
-          className="bui-process-new"
-          disabled={!environment?.projectId}
-          aria-label={zh ? "新增终端" : "New terminal"}
-          onClick={() =>
-            environment &&
-            void useTerminalStore
-              .getState()
-              .create(
-                environment.projectId,
-                root?.rootId ?? environment.projectId,
-                sessionId,
-              )
-          }
-        >
-          <Plus size={11} />
-          {zh ? "新增终端" : "New terminal"}
-        </button>
-      }
-      summary={
-        services.length
-          ? runningCount
-            ? `${runningCount} ${zh ? "运行中" : "running"}`
-            : zh
-              ? "均已结束"
-              : "All stopped"
-          : null
+        services.length > 0 && (
+          <button
+            type="button"
+            className="ws-icon-button"
+            disabled={busy !== null}
+            aria-label={zh ? "删除所有服务" : "Delete all services"}
+            title={
+              zh
+                ? "停止并删除所有服务记录"
+                : "Stop and delete every service record"
+            }
+            onClick={() => void deleteAll()}
+          >
+            {busy?.id === "*all*" ? (
+              <LoaderCircle size={13} className="animate-spin" />
+            ) : (
+              <Trash2 size={13} />
+            )}
+          </button>
+        )
       }
     >
       {(error || loadError) && (
@@ -198,7 +270,7 @@ export function SessionBackgroundProcesses({
           {error || loadError}
         </p>
       )}
-      {items.map((item) => {
+      {services.map((item) => {
         const live = item.state !== "closed";
         // Plain terminals have no service lifecycle: no status, no stop — the
         // delete button directly clears the terminal and its session.
@@ -318,6 +390,9 @@ export function SessionBackgroundProcesses({
                 >
                   <Popover.Trigger<"button">
                     {...deleteProps}
+                    onMouseEnter={() => openDeleteHover(item.id)}
+                    onMouseLeave={scheduleDeleteHoverClose}
+                    onFocus={() => openDeleteHover(item.id)}
                     render={(props) => <button {...props} type="button" />}
                   >
                     {deleteIcon}
@@ -326,6 +401,8 @@ export function SessionBackgroundProcesses({
                     placement="top end"
                     offset={6}
                     className="bui-process-confirm"
+                    onMouseEnter={() => openDeleteHover(item.id)}
+                    onMouseLeave={scheduleDeleteHoverClose}
                   >
                     <Popover.Dialog
                       aria-label={zh ? "停止并删除？" : "Stop and delete?"}

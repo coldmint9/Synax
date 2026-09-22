@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="128" alt="Synax logo" src="electron/resources/icon.png" />
+<img alt="Synax" src="web/public/synax-github-cover.png" />
 
 # Synax
 
@@ -90,11 +90,3 @@ Set these in the shell that launches the development scripts.
 ## License
 
 [MIT](./LICENSE)
-
-## Interactive conversation prototypes
-
-Write HTML or a default-export React/TSX component in the authorized workspace and emit a complete `synax-prototype` fenced JSON declaration with `sourcePath`, `title` and `sourceKind` (`html` or `react`). Up to three prototypes per completed assistant message are compiled once and saved in that message's metadata. No publication tools, artifact APIs, revision/state tables, QA, screenshots, feedback or exports are used. Existing legacy records are left untouched and not rendered.
-
-Conversation cards render directly. Titles appear as a top hover/focus overlay (always readable on touch devices); interaction state resets when the preview restarts. Only ready, theme and bounded height messages cross the preview boundary. HTML/React interactions stay inside the preview.
-
-**Security:** retain workspace path/symlink/secret protection, fixed dependencies, bounded worker compilation, CSP and opaque Web sandbox. Browser sandboxing does not guarantee hard network/CPU isolation; do not enter secrets. Desktop previews retain ephemeral Electron sessions, denied navigation/network/permissions and no Node/host IPC privileges. No npm installs, project build scripts or runtime CDN are executed. Authoring examples are in `api/skills/builtin/interactive-artifacts/`.
