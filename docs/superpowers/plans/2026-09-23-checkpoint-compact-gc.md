@@ -62,13 +62,16 @@ The 100k diagnostic shows 45,375,488 bytes in edge table + reverse edge index. C
 
 ## Task 4 — Repeat storage probes and soak
 
-- [ ] Extend benchmark to retain a fixed number of checkpoint pins, collect unpinned intermediate states in bounded batches and report live/allocated/freelist/WAL bytes separately.
-- [ ] Run comparable 10k/100k/1M workloads under 128MiB V8 old-space and archive raw samples. Compare compact no-GC against prior baseline before attributing gains to GC.
-- [ ] Run a >=10k-operation small-data mixed-write/switch/pin/GC soak. Verify exact content, steady object counts after maintenance, finite metadata behavior and no directory/file leaks.
-- [ ] Document what passed and what remains; storage tuning alone does not meet end-to-end runtime/UI/file/migration acceptance.
+- [x] Extend benchmark to retain a fixed number of checkpoint pins, collect unpinned intermediate states in bounded batches and report live/allocated/freelist/WAL bytes separately.
+- [x] Run comparable 10k/100k/1M workloads under 128MiB V8 old-space and archive raw samples. Compare compact no-GC against prior baseline before attributing gains to GC.
+- [x] Run a >=10k-operation small-data mixed-write/switch/pin/GC soak. Verify exact content, steady object counts after maintenance, finite metadata behavior and no directory/file leaks.
+- [x] Document what passed and what remains; storage tuning alone does not meet end-to-end runtime/UI/file/migration acceptance.
 
 ## Execution evidence
 
 - Compact representation RED observed (v1 payload vs required v2), then pin modules RED, pin admission/identity guard RED and collector module RED; 60 core/CLI tests now PASS. API typecheck PASS.
 - Installed libSQL 0.5.29 treats a sole Buffer argument as named binds and may abort natively; all single binary predicates now use named parameter maps. Its `.all()` returns ArrayBuffer BLOBs rather than the Buffer returned by `.get()`; the collector selects bounded hex identities instead of rebinding that raw value. Both were reproduced only in isolated processes and corrected before benchmarking.
 - Metadata admission has a default 64MiB hard logical reservation ceiling; resource snapshots observe DB/WAL/SHM and freelist but do not yet enforce a physical history quota. No runtime session uses this core.
+
+- Final phase verification: 111 tests in 18 files PASS; API/script typechecks PASS. Comparable no-GC and 1,000-checkpoint GC probes plus a 10,000-operation soak completed under 128MiB V8 old-space. See `docs/superpowers/reviews/2026-09-23-checkpoint-compact-verification.md` and raw JSON. Overall objective remains active: no production session is versioned yet.
+- Error hardening added shared `api/db/transaction-safety.ts`: real SQLITE_FULL auto-rollback and failed savepoint rollback cannot be hidden by outer transactions. Maximum-escaped-key tree packing now makes progress within its hard node budget. Both have RED→GREEN regressions.

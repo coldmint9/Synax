@@ -26,6 +26,22 @@ describe("isolated checkpoint core benchmark", () => {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
+  it("collects abandoned versions while retaining explicit checkpoint roots", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "synax-version-benchmark-gc-test-"));
+    try {
+      const output = path.join(directory, "report.json");
+      execFileSync(process.execPath, ["--import", "tsx", entry, "--entries", "1000", "--switches", "20", "--collect", "1", "--checkpoints", "2", "--output", output], { encoding: "utf8", timeout: 30_000 });
+      const result = JSON.parse(readFileSync(output, "utf8")).cases[0];
+      expect(result.retainedCheckpointPins).toBe(2);
+      expect(result.maintenance.calls).toBeGreaterThan(0);
+      expect(result.maintenance.removed).toBeGreaterThan(0);
+      expect(result.maintenance.remaining).toBe(false);
+      expect(result.metadata.bytes).toBeGreaterThan(0);
+      expect(result.disk.sqliteAllocatedBytes).toBeGreaterThanOrEqual(result.disk.freePageBytes);
+      expect(result.objectCountAfterSwitches).toBe(result.objectCountBeforeSwitches);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
   it("rejects unbounded/invalid benchmark workloads before opening a database", () => {
     const result = spawnSync(process.execPath, ["--import", "tsx", entry, "--entries", "999999999999999"], { encoding: "utf8" });
     expect(result.status).not.toBe(0);
