@@ -5,6 +5,8 @@ import "./visualizations.css";
 export interface InlineVisualizationReference {
   id: string;
   html?: string;
+  title?: string;
+  mode?: "wide";
   error?: string;
 }
 
@@ -41,7 +43,7 @@ function VisualizationInstance({
   const container = useRef<HTMLDivElement>(null);
   const [error, setError] = useState(visualization.error ?? "");
   const [ready, setReady] = useState(false);
-  const { id, html } = visualization;
+  const { id, html, title } = visualization;
 
   useEffect(() => {
     const host = container.current;
@@ -49,7 +51,7 @@ function VisualizationInstance({
     // Set srcdoc before insertion so an initial about:blank load cannot race the handshake.
     const element = document.createElement("iframe");
     element.className = "inline-visualization__frame";
-    element.title = "交互预览";
+    element.title = title || "交互预览";
     element.loading = "lazy";
     element.referrerPolicy = "no-referrer";
     element.setAttribute("sandbox", "allow-scripts");
@@ -146,12 +148,13 @@ function VisualizationInstance({
       element.removeEventListener("load", loaded);
       element.remove();
     };
-  }, [id, html, error]);
+  }, [id, html, title, error]);
 
   return (
     <div
       className="inline-visualization"
       data-visualization-id={id}
+      data-mode={visualization.mode}
       aria-busy={!ready && !error}
     >
       {error ? (

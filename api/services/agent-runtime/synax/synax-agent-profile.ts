@@ -1,4 +1,3 @@
-import { VISUALIZATION_AUTHORING_INSTRUCTIONS } from "../visualization-manifest.js";
 import type { AgentProfile } from "../contracts.js";
 import { SYNAX_AGENT_PROFILE_ID } from "./synax-session-mode.js";
 
@@ -81,7 +80,6 @@ export const synaxAgentProfile: AgentProfile = {
     maxParallelReadTools: 4,
   },
   loopHints: [
-    VISUALIZATION_AUTHORING_INSTRUCTIONS,
     "Preserve the user request and finish authorized work with relevant evidence.",
   ],
   allowsSubsessions: true,

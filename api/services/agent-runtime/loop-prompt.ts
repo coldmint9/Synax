@@ -1,3 +1,4 @@
+import { VISUALIZATION_AUTHORING_INSTRUCTIONS } from "./visualization-manifest.js";
 import { createHash } from "node:crypto";
 import type {
   AgentContextBundle,
@@ -168,6 +169,9 @@ export function buildLoopSystemPrompt(
     ),
     !input.specializedOutput
       ? "## Result presentation\nUse concise Markdown. Link primary workspace files as [path:line](path#Lline), with verified 1-based lines. Use absolute paths for reference-directory files without promising a clickable preview. Link web sources. Only use display formats supported by this application; do not invent UI directives."
+      : "",
+    !input.specializedOutput && input.skillsSection?.includes("visualize")
+      ? VISUALIZATION_AUTHORING_INSTRUCTIONS
       : "",
     input.skillsSection ? `\n${input.skillsSection}` : "",
     input.selectedReferencesSection,

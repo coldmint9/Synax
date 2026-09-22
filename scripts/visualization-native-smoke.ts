@@ -153,6 +153,20 @@ try {
   });
   assert.equal(downloads, 0);
   assert.equal(requests, 0);
+  await frame.evaluate(() => {
+    window.dispatchEvent(
+      new ErrorEvent("error", {
+        message:
+          "ResizeObserver loop completed with undelivered notifications.",
+      }),
+    );
+  });
+  await inner.getByRole("button", { name: "Explore workspace" }).click();
+  await inner
+    .locator("[data-progress-value]")
+    .filter({ hasText: "84%" })
+    .waitFor();
+  assert.equal(await card.getByRole("alert").count(), 0);
   await card.screenshot({ path: path.join(output, "preview.png") });
   await page.evaluate(() => (window as any).removePreview());
   await page.waitForFunction(() => !document.querySelector("iframe"));

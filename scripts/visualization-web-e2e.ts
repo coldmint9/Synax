@@ -7,10 +7,15 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { chromium } from "playwright-core";
+const reported = process.env.SYNAX_VISUALIZATION_REFERENCE === "1";
 const temp = await fs.mkdtemp(
   path.join(os.tmpdir(), "synax-visualization-web-"),
 );
-const output = path.resolve("out/visualization-web-acceptance");
+const output = path.resolve(
+  reported
+    ? "out/visualization-reference-acceptance"
+    : "out/visualization-web-acceptance",
+);
 await fs.mkdir(output, { recursive: true });
 process.env.DATA_ROOT = path.join(temp, "data");
 process.env.LOG_LEVEL = "error";
@@ -19,7 +24,9 @@ const workspace = path.join(temp, "workspace");
 await fs.mkdir(workspace);
 const source = await fs.readFile(
   path.resolve(
-    "web/src/react/features/visualizations/__tests__/fixtures/approved-demo.html",
+    reported
+      ? "web/src/react/features/visualizations/__tests__/fixtures/reported-navbar.html"
+      : "web/src/react/features/visualizations/__tests__/fixtures/approved-demo.html",
   ),
   "utf8",
 );
@@ -56,22 +63,43 @@ const session = agentSessionRuntime.create({
   workDir: workspace,
 });
 agentRuntimeStore.updateSession(session.id, { status: "completed" });
+const referencedFile = path.join(workspace, "navbar-demo.html");
+if (reported) {
+  await fs.writeFile(referencedFile, source);
+  agentRuntimeStore.appendRun({
+    id: "reported-completed-run",
+    sessionId: session.id,
+    status: "completed",
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    triggerMessageId: null,
+    currentStep: 63,
+    stopReason: "work_completed",
+    model: null,
+    metadata: {},
+  });
+}
 const message = agentRuntimeStore.appendMessage({
   id: "visualization-message",
   sessionId: session.id,
-  runId: null,
+  runId: reported ? "reported-completed-run" : null,
   stepId: null,
   role: "assistant",
-  content:
-    "这是对话内联预览。\n```synax-visualize\n" +
-    source +
-    "\n```\n确认后再继续调整。",
-  metadata: {},
+  content: reported
+    ? `这是对话内联预览。\n\nvisualize${JSON.stringify({ path: referencedFile, mode: "wide", title: "Synax 导航栏 Demo" })}\n\n确认后再继续调整。`
+    : "这是对话内联预览。\n```synax-visualize\n" +
+      source +
+      "\n```\n确认后再继续调整。",
+  metadata: reported ? { purpose: "work_result" } : {},
   createdAt: new Date().toISOString(),
 });
-persistInlineVisualization(message);
-assert.ok(message.metadata.visualization);
-assert.deepEqual(await fs.readdir(workspace), []);
+if (reported)
+  assert.equal(message.metadata.visualization, undefined); // Reproduce the missed production finalizer; GET must hydrate this successful reply.
+else {
+  persistInlineVisualization(message);
+  assert.ok(message.metadata.visualization);
+  assert.deepEqual(await fs.readdir(workspace), []);
+}
 
 closeDb();
 
@@ -171,6 +199,14 @@ try {
     headless: true,
   });
   page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+  await page.addInitScript(() =>
+    window.addEventListener("error", (event) =>
+      console.error("PREVIEW_ERROR", event.message),
+    ),
+  );
+  page.on("console", (message) => {
+    if (message.type() === "error") logs.push(message.text());
+  });
   page.on("pageerror", (e) => logs.push("PAGE ERROR: " + e.message));
   page.on("response", (r) => {
     if (r.status() >= 400) logs.push("HTTP " + r.status() + " " + r.url());
@@ -181,20 +217,50 @@ try {
   const card = page.locator(".inline-visualization");
   await card.waitFor({ timeout: 30000 });
   const frame = card.frameLocator("iframe");
-  await frame.getByRole("button", { name: "Explore workspace" }).click();
-  await frame
-    .locator("[data-progress-value]")
-    .filter({ hasText: "78%" })
-    .waitFor();
-  await frame.getByRole("button", { name: "Add a note" }).click();
-  await frame
-    .locator("[data-activity-list]")
-    .getByText("A note was added to the prototype")
-    .waitFor();
-  await frame.getByRole("tab", { name: "Overview" }).click();
-  assert.equal(await card.locator('button,select,[role="tab"]').count(), 0);
-  assert.equal(await page.locator(".prototype-card,.artifact-card").count(), 0);
-  assert.ok(await frame.locator('svg[data-lucide-icon="sparkles"]').count());
+  if (reported) {
+    await frame.getByRole("tab", { name: "Wiki", exact: true }).click();
+    await frame.locator("#sx-panel-wiki").waitFor();
+    await frame.locator("#sx-proj-btn").click();
+    await frame.locator('[data-name="synax-docs"]').click();
+    assert.equal(
+      await frame.locator(".sx-proj-label").innerText(),
+      "synax-docs",
+    );
+    await frame.locator("[data-theme-btn]").click();
+    assert.equal(await frame.locator('[data-theme-icon="moon"]').count(), 1);
+    assert.equal(await frame.locator('[data-theme-icon="sun"]').count(), 1);
+    await frame.getByRole("button", { name: "320", exact: true }).click();
+    await frame
+      .locator("[data-width-live]")
+      .filter({ hasText: /^320px$/ })
+      .waitFor();
+    await frame.getByRole("button", { name: "1024", exact: true }).click();
+    assert.equal(await card.getAttribute("data-mode"), "wide");
+    assert.equal(
+      await card.locator("iframe").getAttribute("title"),
+      "Synax 导航栏 Demo",
+    );
+    assert.equal(await page.getByText(/visualize/).count(), 0);
+    await fs.unlink(referencedFile); // The hydrated message is now the snapshot, not this file.
+  } else {
+    await frame.getByRole("button", { name: "Explore workspace" }).click();
+    await frame
+      .locator("[data-progress-value]")
+      .filter({ hasText: "78%" })
+      .waitFor();
+    await frame.getByRole("button", { name: "Add a note" }).click();
+    await frame
+      .locator("[data-activity-list]")
+      .getByText("A note was added to the prototype")
+      .waitFor();
+    await frame.getByRole("tab", { name: "Overview" }).click();
+    assert.equal(await card.locator('button,select,[role="tab"]').count(), 0);
+    assert.equal(
+      await page.locator(".prototype-card,.artifact-card").count(),
+      0,
+    );
+    assert.ok(await frame.locator('svg[data-lucide-icon="sparkles"]').count());
+  }
   await page.getByText("这是对话内联预览。", { exact: true }).waitFor();
   await page.getByText("确认后再继续调整。", { exact: true }).waitFor();
   const iframe = await card.locator("iframe").elementHandle();
@@ -229,9 +295,10 @@ try {
     }, escape),
     false,
   );
-  await card.evaluate((node) => {
-    (node as HTMLElement).style.maxWidth = "736px";
-  });
+  if (!reported)
+    await card.evaluate((node) => {
+      (node as HTMLElement).style.maxWidth = "736px";
+    });
   await page.evaluate(() => {
     document.documentElement.classList.remove("dark");
     document.documentElement.dataset.theme = "light";
@@ -269,14 +336,27 @@ try {
   assert.equal(escapedRequests, 0);
   await card.getByRole("alert").waitFor();
   await page.reload();
-  await frame
-    .locator("[data-progress-value]")
-    .filter({ hasText: "72%" })
-    .waitFor();
-  assert.equal(
-    await frame.getByText("A note was added to the prototype").count(),
-    0,
-  );
+  if (reported) {
+    await frame.locator("#sx-proj-btn").waitFor();
+    assert.equal(
+      await frame.locator(".sx-proj-label").innerText(),
+      "synax-web",
+    );
+    assert.equal(
+      await frame.locator("#sx-tab-work").getAttribute("aria-selected"),
+      "true",
+    );
+    assert.equal(await page.getByText(/visualize/).count(), 0);
+  } else {
+    await frame
+      .locator("[data-progress-value]")
+      .filter({ hasText: "72%" })
+      .waitFor();
+    assert.equal(
+      await frame.getByText("A note was added to the prototype").count(),
+      0,
+    );
+  }
   assert.equal((await fs.readdir(workspace)).length, 0);
   await fs.writeFile(
     path.join(output, "acceptance.json"),
@@ -284,8 +364,11 @@ try {
       {
         passed: true,
         platform: "Chromium",
+        protocol: reported
+          ? "visualize file reference / completed work_result reload"
+          : "inline fence",
         checks: [
-          "production API + Web transcript renders saved inline metadata without workspace files",
+          reported ? "completed work_result file reference hydrates on GET /messages, then survives source deletion" : "production API + Web transcript renders saved inline metadata without workspace files",
           "approved design styles and bundled Lucide icons render; buttons and tabs work",
           "reply ordering, no outer artifact UI, light/dark, automatic height and 320px layout",
           "opaque sandbox blocks parent DOM, Node, fetch and self navigation before network",

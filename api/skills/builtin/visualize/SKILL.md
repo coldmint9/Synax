@@ -1,7 +1,7 @@
 ---
 name: visualize
 description: Show an interactive prototype, chart, simulation or visual explanation directly in a conversation. Not for ordinary code examples or building a project page.
-version: 1.0.0
+version: 1.1.0
 synax:
   applies-to: [executor, planner, explorer, reviewer]
   permission-hints: [none]
@@ -13,29 +13,22 @@ Use when the user needs to see or interact with a proposed interface or explanat
 
 ## Output
 
-Emit one complete **top-level** `synax-visualize` fence at the intended position in the final answer. Its contents are literal, self-contained HTML/CSS/JavaScript, not JSON and not a file reference. Put concise prose outside it. Only successful assistant replies execute; incomplete, user and quoted code blocks do not.
+Write one self-contained **HTML fragment** to an authorized, task-owned location inside the session workspace (for example `.synax/visualizations/navigation-demo.html`). This is preview content, not a project component or a published site. Read it back and check the primary interaction.
 
-```synax-visualize
-<div id="counter-demo" class="viz-row">
-  <button class="btn btn-primary" type="button">Add one</button>
-  <output class="tabular-nums" aria-live="polite">0</output>
-</div>
-<script>
-(() => {
-  const root = document.getElementById('counter-demo');
-  let count = 0;
-  root.querySelector('button').addEventListener('click', () => {
-    root.querySelector('output').textContent = String(++count);
-  });
-})();
-</script>
+Emit its reference on its own line at the intended position in the successful final answer. Use the absolute file path, optionally a concise title and `mode: "wide"` for a desktop app mockup:
+
+```text
+visualize{"path":"/absolute/workspace/.synax/visualizations/navigation-demo.html","title":"Navigation demo","mode":"wide"}
 ```
+
+Do not wrap the reference in a code fence in the actual answer. Keep explanatory prose outside the fragment. The host reads the file once and saves the HTML with the reply, so subsequent file edits or deletion do not change an already displayed preview.
 
 - Maximum one preview per reply, 1,000,000 UTF-8 bytes. Use one unique root ID and scope custom CSS/DOM queries to it.
 - Fragment only: no doctype, html/head/body tags, meta/base/link tags, frames or embedded documents.
-- No React/TSX compilation, build scripts, workspace source files, publishing or installation.
-- Offline: inline all data, styles and scripts. No CDN, fetch/XHR/WebSocket, remote images/fonts, Node, host IPC, downloads or navigation. Native forms may update local DOM state without submitting.
-- The host sizes the frame to content. Avoid viewport-height layouts, fixed outer widths and unnecessary inner scrolling. Support 320px–736px; wrap or stack at narrow widths.
+- No React/TSX compilation, build scripts, publishing or installation. Never point to credentials, arbitrary host files, remote URLs or files outside the authorized session roots.
+- Offline: inline all data, styles and scripts. No CDN, fetch/XHR/WebSocket, remote images/fonts, Node, host IPC, downloads or navigation. Native forms may update local DOM state without submitting. The Codex-only `Tweak` and `sendFollowUpMessage` APIs are not available in Synax.
+- The host sizes the frame to content. Avoid viewport-height layouts, fixed outer widths and unnecessary inner scrolling. Support 320px–736px (up to 1024px when wide); wrap or stack at narrow widths.
+- A complete top-level `synax-visualize` fence containing the literal HTML fragment is also supported when no file is needed. Do not emit both forms for the same preview. Normal code fences, quoted examples, user messages and incomplete replies never execute.
 
 ## Appearance
 

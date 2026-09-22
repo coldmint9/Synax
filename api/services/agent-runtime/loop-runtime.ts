@@ -1,4 +1,7 @@
-import { persistInlineVisualization } from "./visualization-integration.js";
+import {
+  persistInlineVisualization,
+  hydrateCompletedVisualizations,
+} from "./visualization-integration.js";
 import { filterHistoryFileReads } from "./checkpoints/state.js";
 import {
   captureCheckpoint,
@@ -156,7 +159,9 @@ export class AgentLoopRuntime {
 
   listMessages(sessionId: string): AgentRuntimeMessage[] {
     this.store.getSession(sessionId);
-    return this.store.listMessages(sessionId);
+    const messages = this.store.listMessages(sessionId);
+    hydrateCompletedVisualizations(messages);
+    return messages;
   }
 
   listRuns(sessionId: string): AgentRun[] {
