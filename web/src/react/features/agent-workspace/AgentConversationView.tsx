@@ -1,4 +1,5 @@
 import { SessionHistoryProvider } from "./SessionHistoryContext";
+import { TranscriptSessionProvider } from "./SessionTranscriptContext";
 import { memo } from "react";
 import { Chip, Card } from "@heroui/react";
 import { XCircle, Zap } from "lucide-react";
@@ -61,8 +62,9 @@ export const AgentConversationView = memo(function AgentConversationView({
   const showHeader = Boolean(isRunning && onCancel);
 
   return (
-    <SessionHistoryProvider session={session} messages={messages}>
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-[1.2rem] py-4">
+    <TranscriptSessionProvider sessionId={session?.id}>
+      <SessionHistoryProvider session={session} messages={messages}>
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-[1.2rem] py-4">
         {showHeader ? (
           <div className="flex items-center gap-2 border-b border-border/40 pb-3">
             {session && routeReason && isSynaxSession(session) ? (
@@ -155,7 +157,8 @@ export const AgentConversationView = memo(function AgentConversationView({
             </div>
           </Card>
         ) : null}
-      </div>
-    </SessionHistoryProvider>
+        </div>
+      </SessionHistoryProvider>
+    </TranscriptSessionProvider>
   );
 });
