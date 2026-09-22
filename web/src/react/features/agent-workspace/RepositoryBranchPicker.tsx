@@ -175,7 +175,11 @@ export function RepositoryBranchPicker({
                 selectionMode="single"
                 selectionBehavior="replace"
                 selectedKeys={new Set(data?.current ? [data.current] : [])}
-                onAction={(key) => void select(String(key))}
+                onSelectionChange={(keys) => {
+                  if (keys === "all") return;
+                  const key = [...keys][0];
+                  if (key != null) void select(String(key));
+                }}
               >
                 {visibleBranches.map((item) => (
                   <ListBox.Item

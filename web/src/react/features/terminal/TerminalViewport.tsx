@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { accentPalette, type ResolvedTheme } from "../../../lib/appearance";
 import { TerminalConnection } from "../../../lib/api/terminalConnection";
@@ -50,7 +49,6 @@ export function TerminalViewport({
   const instance = useRef<{
     terminal: Terminal;
     fit: FitAddon;
-    search: SearchAddon;
     fitNow: () => void;
     syncInput: () => void;
     setVisible: (visible: boolean) => void;
@@ -59,10 +57,7 @@ export function TerminalViewport({
   visibleRef.current = visible;
   const endedRef = useRef(session.state === "closed");
   endedRef.current = session.state === "closed";
-  const [connection, setConnection] = useState("connecting");
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!host.current) return;
     let disposed = false,
@@ -105,10 +100,8 @@ export function TerminalViewport({
         },
       },
     });
-    const fit = new FitAddon(),
-      finder = new SearchAddon();
+    const fit = new FitAddon();
     terminal.loadAddon(fit);
-    terminal.loadAddon(finder);
     terminal.open(host.current);
     const terminalHost = host.current;
     enableWebglRenderer(terminal, (renderer) => {
@@ -166,7 +159,6 @@ export function TerminalViewport({
         connected: () => {
           if (!disposed) {
             connected = true;
-            setConnection("connected");
             syncInput();
             fitNow();
           }
@@ -174,7 +166,6 @@ export function TerminalViewport({
         disconnected: () => {
           if (!disposed) {
             connected = false;
-            setConnection("reconnecting");
             syncInput();
           }
         },
@@ -187,14 +178,12 @@ export function TerminalViewport({
           // current shell. Only live output may generate terminal protocol replies.
           replaying = true;
           syncInput();
-          setConnection("connecting");
           if (clear) terminal.reset();
           terminal.write(data, () => {
             replaying = false;
             if (!disposed) {
               syncInput();
               if (!stopped) {
-                setConnection("connected");
                 source.redraw();
               }
               ack(sequence);
@@ -210,7 +199,6 @@ export function TerminalViewport({
           stopped = item.state === "closed" || item.state === "unconfirmed";
           syncInput();
           if (stopped) {
-            setConnection(item.state === "closed" ? "closed" : "unavailable");
             source.close();
             terminalChanged();
           }
@@ -229,7 +217,6 @@ export function TerminalViewport({
       }
       viewVisible = nextVisible;
       if (nextVisible) {
-        setConnection("connecting");
         source.resume();
         fitNow();
         terminal.focus();
@@ -242,7 +229,6 @@ export function TerminalViewport({
     instance.current = {
       terminal,
       fit,
-      search: finder,
       fitNow,
       syncInput,
       setVisible,
@@ -286,11 +272,6 @@ export function TerminalViewport({
       if (command && event.shiftKey && event.key.toLowerCase() === "t") {
         event.preventDefault();
         document.dispatchEvent(new CustomEvent("terminal:new"));
-        return false;
-      }
-      if (appShortcut && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        searchRef.current?.focus();
         return false;
       }
       if (event.metaKey && event.key.toLowerCase() === "w") {
@@ -355,52 +336,6 @@ export function TerminalViewport({
       inert={!visible}
       data-terminal-id={session.id}
     >
-      <div className="terminal-session-tools">
-        <span
-          className={`terminal-connection terminal-connection--${connection}`}
-          role="status"
-        >
-          {connection === "closed"
-            ? zh
-              ? `已结束 · ${session.exitCode ?? "已停止"}`
-              : `Exited · ${session.exitCode ?? "stopped"}`
-            : connection === "connected"
-              ? zh
-                ? "已连接"
-                : "Connected"
-              : connection === "unavailable"
-                ? zh
-                  ? "连接不可用"
-                  : "Unavailable"
-                : zh
-                  ? "连接中…"
-                  : "Connecting…"}
-        </span>
-        <input
-          ref={searchRef}
-          value={search}
-          onChange={(event) => {
-            setSearch(event.target.value);
-            instance.current?.search.findNext(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              if (event.shiftKey) instance.current?.search.findPrevious(search);
-              else instance.current?.search.findNext(search);
-            }
-            if (event.key === "Escape") instance.current?.terminal.focus();
-          }}
-          aria-label={zh ? "搜索终端输出" : "Search terminal output"}
-          placeholder={zh ? "搜索输出" : "Search output"}
-        />
-        <button
-          type="button"
-          onClick={() => instance.current?.terminal.clear()}
-        >
-          {zh ? "清屏" : "Clear"}
-        </button>
-      </div>
       {error && (
         <div className="terminal-error" role="alert">
           {error}

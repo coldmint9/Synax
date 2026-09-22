@@ -782,11 +782,6 @@
 .workspace-worktrees :is(.input, .select, .label) {
   font-size: 12px;
 }
-.workspace-root-select .select__trigger {
-  min-height: 38px;
-  border-radius: 10px;
-  gap: 9px;
-}
 .workspace-primary-badge,
 .workspace-browse-action {
   color: color-mix(in srgb, hsl(var(--primary)) 60%, var(--foreground));
@@ -800,13 +795,6 @@
   font-size: 11px;
   color: hsl(var(--muted-foreground));
 }
-.workspace-runtime-picker select {
-  min-height: 2rem;
-  max-width: 14rem;
-  border: 1px solid hsl(var(--border-hsl));
-  border-radius: 0.5rem;
-  background: var(--surface);
-  color: var(--foreground);
-  padding: 0 0.65rem;
-  font-size: 0.75rem;
+.workspace-runtime-picker .app-select {
+  width: min(14rem, 100%);
 }

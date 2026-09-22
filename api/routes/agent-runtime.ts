@@ -98,6 +98,7 @@ import {
 import {
   getSessionEnvironment,
   getSessionEnvironmentFile,
+  getSessionEnvironmentFileMedia,
   saveSessionEnvironmentFile,
   getSessionInputSourceContent,
   invalidateSessionEnvironment,
@@ -107,6 +108,7 @@ import {
   switchSessionGitBranch,
 } from "../services/agent-runtime/session-git-branches.js";
 import { commitSessionWorkspace } from "../services/agent-runtime/session-git-commit.js";
+import { restoreSessionFile } from "../services/agent-runtime/session-git-files.js";
 import {
   prepareCommitMessageGeneration,
   streamSessionCommitMessage,
@@ -927,6 +929,33 @@ agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
   }
 });
 
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/file/media",
+  async (c) => {
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json({ error: "Missing path" }, 400);
+    try {
+      const result = await getSessionEnvironmentFileMedia(
+        c.req.param("sessionId"),
+        filePath,
+        c.req.query("rootId"),
+      );
+      c.header("Content-Type", result.mediaType);
+      c.header("Content-Length", String(result.bytes.length));
+      c.header("Cache-Control", "no-store");
+      c.header("X-Content-Type-Options", "nosniff");
+      c.header("Content-Security-Policy", "default-src 'none'; sandbox");
+      c.header(
+        "Content-Disposition",
+        `inline; filename*=UTF-8''${encodeURIComponent(result.path.split("/").pop() ?? "preview")}`,
+      );
+      return c.body(new Uint8Array(result.bytes));
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+
 agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
   const filePath = c.req.query("path");
   const kind = c.req.query("kind") === "input" ? "input" : "diff";
@@ -1034,6 +1063,8 @@ const commitSessionWorkspaceSchema = z.object({
   message: z.string().trim().min(1).max(2000),
   // Absent means "push after committing" so existing senders keep working.
   push: z.boolean().optional(),
+  // Absent means "stage everything" so existing senders keep working.
+  includeUntracked: z.boolean().optional(),
 });
 
 agentRuntimeRoutes.post("/sessions/:sessionId/git/commit", async (c) => {
@@ -1049,6 +1080,28 @@ agentRuntimeRoutes.post("/sessions/:sessionId/git/commit", async (c) => {
     return runtimeError(c, error);
   }
 });
+
+const restoreSessionFileSchema = z.object({
+  rootId: z.string().min(1).optional(),
+  path: z.string().trim().min(1).max(1024),
+});
+
+agentRuntimeRoutes.post(
+  "/sessions/:sessionId/git/files/restore",
+  async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) return c.json({ error: body.error }, 400);
+    const parsed = restoreSessionFileSchema.safeParse(body.data ?? {});
+    if (!parsed.success) return validationError(c, parsed.error);
+    try {
+      return c.json(
+        await restoreSessionFile(c.req.param("sessionId"), parsed.data),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 
 agentRuntimeRoutes.get("/sessions/:sessionId/stats", async (c) => {
   try {

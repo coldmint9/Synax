@@ -1,14 +1,12 @@
-import { Select, ListBox } from "@heroui/react";
-import type { ReactNode, Key } from "react";
+import type { ReactNode } from "react";
+import { AppSelect, type AppSelectOption } from "../../../components/AppSelect";
 
-export interface SelectOption {
-  key: string;
+export interface SelectOption extends AppSelectOption {
   label: ReactNode;
 }
 
 interface SettingsSelectProps {
   label?: string;
-  size?: "sm" | "md" | "lg";
   variant?: "primary" | "secondary";
   className?: string;
   fullWidth?: boolean;
@@ -22,50 +20,29 @@ interface SettingsSelectProps {
 
 export function SettingsSelect({
   label,
-  size = "sm",
   variant = "secondary",
   className,
   fullWidth,
   selectedKey,
   onSelectionChange,
   isDisabled,
-  disallowEmptySelection,
   "aria-label": ariaLabel,
   options,
 }: SettingsSelectProps) {
   return (
     <div className={className}>
-      {label && (
-        <span className="block text-xs text-foreground pb-1.5">{label}</span>
-      )}
-      <Select
-        isDisabled={isDisabled}
+      <AppSelect
+        className="settings-select"
+        popoverClassName="settings-select-popover"
+        label={label}
         variant={variant}
         fullWidth={fullWidth}
         value={selectedKey}
-        onChange={(value: Key | null) => {
-          onSelectionChange(value ? String(value) : null);
-        }}
+        onChange={onSelectionChange}
+        isDisabled={isDisabled}
         aria-label={ariaLabel ?? label}
-      >
-        <Select.Trigger>
-          <Select.Value />
-        </Select.Trigger>
-        <Select.Popover>
-          <ListBox aria-label={ariaLabel ?? label ?? "Options"}>
-            {options.map((opt) => (
-              <ListBox.Item
-                key={opt.key}
-                id={opt.key}
-                textValue={typeof opt.label === "string" ? opt.label : opt.key}
-              >
-                {opt.label}
-                <ListBox.ItemIndicator />
-              </ListBox.Item>
-            ))}
-          </ListBox>
-        </Select.Popover>
-      </Select>
+        options={options}
+      />
     </div>
   );
 }

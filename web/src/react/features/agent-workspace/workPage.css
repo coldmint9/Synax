@@ -140,7 +140,7 @@
   background: hsl(var(--secondary) / 0.45);
 }
 .work-page .session-list-item--active {
-  background: hsl(var(--secondary) / 0.58);
+  background: hsl(var(--cx-gray-150-hsl));
 }
 .work-page .session-list-select {
   min-height: 46px;
@@ -268,6 +268,18 @@
 .ws-card-toolbar {
   flex: 0 0 100%;
   min-width: 0;
+}
+/* Dashboard headers reserve 25px for the drag handle. The project toolbar is
+   a second row, so reclaim that first-row-only inset and align Git controls
+   with the card's normal 7px edge padding. */
+:is(.work-page, .work-details-dialog)
+  .dashboard-panel-content
+  > .ws-project-card
+  > .ws-card-head
+  > .ws-card-toolbar {
+  margin-left: -18px;
+  flex-basis: calc(100% + 18px);
+  max-width: calc(100% + 18px);
 }
 :is(.work-page, .work-details-dialog)
   .ws-project-card
@@ -828,14 +840,14 @@
 }
 
 /* The conversation slot follows its actual column, including sidebar resizing.
-   6px card inset + 1px border + 8px slot inset puts the island at y=15px. */
+   Share the global island inset now that the conversation has no card offset. */
 .workbench-island-anchor,
 .workbench-island-mount {
   display: contents;
 }
 .workspace-island-slot--conversation {
   position: absolute;
-  top: 8px;
+  top: var(--workbench-island-top);
   left: 50%;
   transform: translateX(-50%);
   z-index: 30;
@@ -972,13 +984,7 @@
   width: min(360px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   max-height: min(440px, 70vh);
-  padding: 6px;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--overlay);
-  color: var(--foreground);
-  box-shadow: 0 12px 36px rgb(0 0 0 / 0.2);
 }
 .ws-branch-dialog {
   display: flex;
@@ -1035,30 +1041,6 @@
   flex-shrink: 0;
   align-items: center;
   gap: 10px;
-  min-height: 38px;
-  padding: 8px 10px;
-  border-radius: 9px;
-  color: var(--foreground);
-  font-size: 13px;
-  line-height: 20px;
-  cursor: pointer;
-}
-/* Keep this picker neutral in both themes instead of the global selected pill. */
-:root .ws-branch-popover .ws-branch-option,
-:root .ws-branch-popover .ws-branch-option[aria-selected="true"] {
-  width: 100%;
-  margin-inline: 0;
-  background: transparent;
-  color: var(--foreground);
-  box-shadow: none;
-}
-:root .ws-branch-popover .ws-branch-option[data-hovered],
-:root .ws-branch-popover .ws-branch-option[data-focused] {
-  background: var(--default);
-}
-.ws-branch-option[data-disabled] {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 .ws-branch-option-icon,
 .ws-branch-check {

@@ -94,7 +94,6 @@ app.route("/api/health", healthRoutes);
 app.route("/api/prototypes/tree-embedding-bench", treeEmbeddingBenchRoutes);
 app.route("/api/fs", fsRoutes);
 app.route("/api/terminals", terminalRoutes);
-process.env.SYNAX_TERMINAL_HOST_ORIGIN = `http://127.0.0.1:${PORT}`;
 app.route("/api/wsl", wslRoutes);
 // OAuth providers redirect from a different site, so this state-validated callback
 // intentionally lives outside the cookie-protected /api namespace.
@@ -190,22 +189,30 @@ async function startRuntime(): Promise<void> {
   stopFileUndoRetention = startFileUndoRetention();
   startInteractionRecovery();
 
-  for (const sessionId of recovery.resumable) runCoordinator.resume(sessionId);
-  if (!shuttingDown) startServer();
+  if (!shuttingDown) startServer(recovery.resumable);
 }
 
-function startServer(): void {
-  httpServer = serve({
-    fetch: app.fetch,
-    port: PORT,
-    hostname: "127.0.0.1",
-  }) as Server;
+function startServer(resumable: string[]): void {
+  httpServer = serve(
+    {
+      fetch: app.fetch,
+      port: PORT,
+      hostname: "127.0.0.1",
+    },
+    (address) => {
+      process.env.SYNAX_TERMINAL_HOST_ORIGIN = `http://127.0.0.1:${address.port}`;
+      // Recovered tools must see the actual bound origin, never port zero.
+      for (const sessionId of resumable) runCoordinator.resume(sessionId);
+      pinoLogger.info(
+        { logFile: API_SESSION_LOG_FILE },
+        `Server listening on http://localhost:${address.port}`,
+      );
+      if (process.env.SYNAX_DESKTOP_SIDECAR === "1") {
+        process.stdout.write(`SYNAX_DESKTOP_READY:${address.port}\n`);
+      }
+    },
+  ) as Server;
   closeTerminalSockets = attachTerminalSockets(httpServer);
-
-  pinoLogger.info(
-    { logFile: API_SESSION_LOG_FILE },
-    `Server listening on http://localhost:${PORT}`,
-  );
 }
 
 async function shutdownRuntime(): Promise<void> {

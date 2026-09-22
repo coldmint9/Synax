@@ -1,3 +1,8 @@
+import { useShellStore } from "../../react/state/shellStore";
+import { useNotificationStore } from "../../react/state/notificationStore";
+
+export interface FileOpener { id: string; name: string; icon: string | null }
+
 import type {
   AcpDiscoveryResponse,
   AiApiModelsDiscoverRequest,
@@ -35,14 +40,24 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return resp.json();
 }
 
+async function openWithPreference(body: Record<string, unknown>): Promise<void> {
+  const { editor, locale } = useShellStore.getState().preferences;
+  const result = await request<{ ok: true; fallback?: boolean }>(`${BASE}/open-file`, {
+    method: "POST",
+    body: JSON.stringify({ ...body, opener: editor }),
+  });
+  if (result.fallback) useNotificationStore.getState().push({
+    type: "warning",
+    message: locale === "zh" ? "所选应用已不可用，已使用系统默认应用打开。" : "The selected app is unavailable. Opened with the system default.",
+  });
+}
+
 export const configApi = {
+  listFileOpeners: () => request<{ apps: FileOpener[] }>(`${BASE}/file-openers`),
   getTerminalShell: () =>
     request<{ defaultPath: string }>(`${BASE}/terminal-shell`),
   async openGlobalFile(): Promise<void> {
-    await request<{ ok: true }>(`${BASE}/open-file`, {
-      method: "POST",
-      body: JSON.stringify({ target: "global" }),
-    });
+    await openWithPreference({ target: "global" });
   },
 
   async getGlobal(): Promise<GlobalConfigResponse> {
@@ -167,13 +182,10 @@ export const configApi = {
       | { kind: "host"; path: string }
       | { kind: "wsl"; distribution: string; path: string },
   ): Promise<void> {
-    await request<{ ok: true }>(`${BASE}/open-file`, {
-      method: "POST",
-      body: JSON.stringify({
-        filePath,
-        ...(line != null ? { line } : {}),
-        ...(location ? { location } : {}),
-      }),
+    await openWithPreference({
+      filePath,
+      ...(line != null ? { line } : {}),
+      ...(location ? { location } : {}),
     });
   },
 };

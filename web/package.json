@@ -1,7 +1,7 @@
 {
   "name": "synax-web",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "scripts": {
     "dev": "vite --force",
@@ -12,8 +12,11 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
-    "@heroui/react": "^3.1.0",
-    "@heroui/styles": "^3.1.0",
+    "@heroui/react": "^3.2.6",
+    "@heroui/styles": "^3.2.6",
+    "@internationalized/date": "^3.12.4",
+    "@react-aria/ssr": "^3.10.1",
+    "@react-aria/utils": "^3.34.1",
     "@react-symbols/icons": "^1.4.1",
     "@tailwindcss/postcss": "^4.3.0",
     "@xterm/addon-fit": "^0.11.0",
@@ -25,6 +28,8 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.9.0",
     "react": "^19.2.5",
+    "react-aria": "^3.52.1",
+    "react-aria-components": "^1.21.1",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.14.2",

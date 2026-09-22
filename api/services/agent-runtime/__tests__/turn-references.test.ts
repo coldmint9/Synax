@@ -24,8 +24,25 @@ vi.mock("../tools/workspace.js", () => ({
   isWorkspaceEntryVisible: (name: string) => !name.endsWith(".pem"),
   isWorkspaceRelativePathBlocked: (name: string) => name.endsWith(".pem"),
 }));
-vi.mock("../../skills/skill-registry.js", () => ({ skillRegistry: {} }));
-vi.mock("../../skills/agent-bridge.js", () => ({ skillAgentBridge: {} }));
+vi.mock("../../skills/skill-registry.js", () => ({
+  skillRegistry: {
+    getSummary: () => ({
+      id: "fixture/skill",
+      label: "Fixture skill",
+      status: "available",
+      installPath: "/tmp/fixture-skill/SKILL.md",
+      profileIds: [],
+    }),
+  },
+}));
+vi.mock("../../skills/agent-bridge.js", () => ({
+  skillAgentBridge: { listForPrompt: () => [] },
+}));
+vi.mock("../../../lib/config/project-settings-store.js", () => ({
+  getProjectSettings: () => ({
+    mcpServers: [{ id: "fixture-mcp", name: "Fixture MCP", enabled: true }],
+  }),
+}));
 vi.mock("../profile-service.js", () => ({
   profileService: { getForSession: () => ({ id: "synax" }) },
 }));
@@ -126,6 +143,22 @@ describe("context workspace files", () => {
         await listTurnReferenceOptions("project", "file", ".config", "current")
       )[0]?.id,
     ).toBe(".config/settings.json");
+  });
+
+  it("keeps manually selected skills and MCP servers in mount metadata", () => {
+    const context = prepareTurnReferences("current", [
+      { kind: "skill", id: "fixture/skill" },
+      { kind: "mcp", id: "fixture-mcp" },
+    ]);
+    expect(context).toMatchObject({
+      content: "",
+      skillIds: ["fixture/skill"],
+      mcpServerIds: ["fixture-mcp"],
+      references: [
+        { kind: "skill", id: "fixture/skill", label: "Fixture skill" },
+        { kind: "mcp", id: "fixture-mcp", label: "Fixture MCP" },
+      ],
+    });
   });
 
   it("uses the active worktree plus reference roots and keeps references injectable", async () => {

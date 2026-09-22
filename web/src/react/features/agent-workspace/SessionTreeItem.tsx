@@ -1,6 +1,7 @@
 import { SearchHighlight } from "./SearchHighlight";
+import { PixelLoader } from "./LoadingState";
 import { memo } from "react";
-import { ChevronDown, ChevronRight, Loader2, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 import type { SessionTreeNode } from "./useSessionList";
 import {
@@ -132,7 +133,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
       >
         <span className="session-list-indicator" aria-hidden="true">
           {isRunning ? (
-            <Loader2 size={12} className="shrink-0 animate-spin text-run" />
+            <PixelLoader />
           ) : showStatusDot ? (
             <span
               className={`session-list-dot ${DOT[session.status] ?? "bg-muted-foreground/50"}`}

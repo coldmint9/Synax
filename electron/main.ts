@@ -15,11 +15,7 @@ import {
 } from "electron";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  startSidecar,
-  stopSidecar,
-  getSidecarPort,
-} from "./lib/node-sidecar.js";
+import { startSidecar, stopSidecar } from "./lib/node-sidecar.js";
 import { getDataRoot, getResourcePath } from "./lib/data-paths.js";
 import { loadWindowState, saveWindowState } from "./lib/window-state.js";
 import {
@@ -290,7 +286,19 @@ function registerIPC(): void {
         console.error("[ui-update] health check failed", error),
       );
   });
-  ipcMain.handle("app:api-port", () => getSidecarPort());
+  ipcMain.handle("app:api-port", async (event) => {
+    if (!trustedNotificationSender(event))
+      throw new Error("Untrusted runtime port request.");
+    // A slow backend is not evidence of a broken downloaded UI bundle.
+    if (uiReadyTimer) clearTimeout(uiReadyTimer);
+    uiReadyTimer = null;
+    const port =
+      process.env.ELECTRON_SKIP_SIDECAR === "1"
+        ? Number(process.env.PORT || "3210")
+        : await startSidecar();
+    armUiReadyTimer();
+    return port;
+  });
   ipcMain.handle("app:runtime-token", async (event) => {
     const url = event.senderFrame?.url ?? "";
     const trusted =
@@ -345,6 +353,16 @@ function registerIPC(): void {
       dark: state.dark === true,
     });
   });
+}
+
+function armUiReadyTimer(): void {
+  if (uiReadyTimer) clearTimeout(uiReadyTimer);
+  uiReadyTimer = null;
+  if (!uiUpdates?.store.needsHealthCheck) return;
+  uiReadyTimer = setTimeout(() => {
+    if (mainWindow) void recoverUi(mainWindow);
+  }, 30_000);
+  uiReadyTimer.unref?.();
 }
 
 async function bootstrap(): Promise<void> {
@@ -403,16 +421,8 @@ async function bootstrap(): Promise<void> {
     protocolRegistered = true;
   }
 
-  const externalApi = process.env.ELECTRON_SKIP_SIDECAR === "1";
-
-  if (!externalApi) {
-    console.log("[electron] starting API sidecar...");
-    const port = await startSidecar();
-    console.log(`[electron] API ready on port ${port}`);
-  } else {
-    console.log("[electron] using external API server");
-  }
-
+  // Paint the shell before waiting for the backend. The renderer requests the
+  // actual bound port over IPC and owns the retryable connection gate.
   mainWindow = createWindow();
 
   if (isDev) {
@@ -420,12 +430,7 @@ async function bootstrap(): Promise<void> {
     mainWindow.loadURL(`http://localhost:${webPort}`);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
-    if (uiUpdates?.store.needsHealthCheck) {
-      uiReadyTimer = setTimeout(() => {
-        if (mainWindow) void recoverUi(mainWindow);
-      }, 30_000);
-      uiReadyTimer.unref?.();
-    }
+    armUiReadyTimer();
     try {
       await mainWindow.loadURL("app://./index.html");
     } catch (error) {

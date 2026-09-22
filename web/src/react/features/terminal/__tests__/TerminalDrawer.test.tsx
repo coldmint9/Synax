@@ -11,17 +11,28 @@ vi.mock('../TerminalViewport', async () => {
 });
 vi.mock('../../../../lib/api/project', () => ({ projectApi: { getWorkspace: vi.fn().mockResolvedValue({ roots: [{ id: 'p', name: 'Project', path: '/project', status: 'available', role: 'primary' }] }) } }));
 vi.mock('../../../../lib/api/terminal', () => ({ terminalApi: { create: vi.fn(), stop: vi.fn(), remove: vi.fn(), restartLegacy: vi.fn() } }));
-const item = (id: string): TerminalSession => ({ id, projectId: 'p', rootId: 'p', ownerSessionId: null, kind: 'terminal', title: 'Project', cwd: '/project', shell: '/bin/sh', command: null, pid: 42, state: 'active', exitCode: null, startedAt: '', endedAt: null, cols: 80, rows: 24 });
+const item = (id: string, cwd = '/project'): TerminalSession => ({ id, projectId: 'p', rootId: 'p', ownerSessionId: null, kind: 'terminal', title: 'Project', cwd, shell: '/bin/sh', command: null, pid: 42, state: 'active', exitCode: null, startedAt: '', endedAt: null, cols: 80, rows: 24 });
 beforeEach(() => { vi.clearAllMocks(); useTerminalStore.setState({ open: true, tabs: [], activeId: null, pending: 0, error: null }); });
 it('keeps terminal views mounted across tab switches and drawer hiding', async () => {
-  useTerminalStore.getState().accept(item('one')); useTerminalStore.getState().accept(item('two'));
+  useTerminalStore.getState().accept(item('one', '/workspaces/alpha')); useTerminalStore.getState().accept(item('two', '/workspaces/beta'));
   render(<TerminalDrawer projectId="p" sessionId={null} />);
-  await userEvent.click(screen.getByRole('tab', { name: /终端 1/ }));
+  expect(screen.getByRole('tab', { name: 'alpha' })).toBeInTheDocument();
+  expect(screen.getByRole('tab', { name: 'beta' })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('tab', { name: 'alpha' }));
   await userEvent.click(screen.getByRole('button', { name: '收起终端' }));
   expect(mocks.mounted).toHaveBeenCalledTimes(2); expect(mocks.unmounted).not.toHaveBeenCalled();
   expect(terminalApi.stop).not.toHaveBeenCalled();
   act(() => useTerminalStore.getState().show());
   expect(screen.getByText('terminal:one')).toBeVisible();
+});
+it('creates a terminal automatically when the drawer opens without tabs', async () => {
+  vi.mocked(terminalApi.create).mockResolvedValue(item('auto'));
+  useTerminalStore.setState({ open: false, tabs: [], activeId: null });
+  render(<TerminalDrawer projectId="p" sessionId={null} />);
+  expect(terminalApi.create).not.toHaveBeenCalled();
+  act(() => useTerminalStore.getState().show());
+  await waitFor(() => expect(terminalApi.create).toHaveBeenCalledWith('p', expect.objectContaining({ rootId: 'p', sessionId: undefined })));
+  expect(await screen.findByText('terminal:auto')).toBeVisible();
 });
 it('keeps legacy services untouched until the explicit restart confirmation is submitted', async () => {
   useTerminalStore.getState().openLegacy({ sessionId: 's', projectId: 'p', cwd: '/project', process: { id: 'old', command: 'npm run dev', pid: 77, state: 'active', exitCode: null, startedAt: '', endedAt: null } });

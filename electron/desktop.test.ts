@@ -35,7 +35,11 @@ vi.mock("node:child_process", () => ({
 
 import { buildAppMenu, setUiUpdateAction, updateMenuState } from "./menu.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
-import { startSidecar, stopSidecar } from "./lib/node-sidecar.js";
+import {
+  startSidecar,
+  stopSidecar,
+  getSidecarPort,
+} from "./lib/node-sidecar.js";
 import { spawnProcess, waitForExit } from "../scripts/_shared.js";
 import forgeConfig from "../forge.config.js";
 
@@ -52,8 +56,13 @@ const child = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  spawn.mockImplementation(child);
-  electron.utilityProcess.fork.mockImplementation(child);
+  const readyChild = () => {
+    const proc = child();
+    queueMicrotask(() => proc.stdout.write("SYNAX_DESKTOP_READY:49152\n"));
+    return proc;
+  };
+  spawn.mockImplementation(readyChild);
+  electron.utilityProcess.fork.mockImplementation(readyChild);
   electron.app.isPackaged = false;
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
 });
@@ -168,7 +177,11 @@ describe("desktop platform contract", () => {
         expect.stringMatching(/server\.ts$/),
       ]),
       expect.objectContaining({
-        env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: "1" }),
+        env: expect.objectContaining({
+          ELECTRON_RUN_AS_NODE: "1",
+          PORT: "0",
+          SYNAX_DESKTOP_SIDECAR: "1",
+        }),
       }),
     );
     stopSidecar();
@@ -188,6 +201,54 @@ describe("desktop platform contract", () => {
       [],
       expect.objectContaining({ cwd: "/test resources" }),
     );
+  });
+
+  it("shares concurrent startup and waits for the bound port, including split output", async () => {
+    const proc = child();
+    spawn.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        proc.stdout.write(
+          "ordinary log\nSYNAX_DESKTOP_READY:0\nSYNAX_DESKTOP_READY:99999\n",
+        );
+        proc.stdout.write("SYNAX_DESKTOP_");
+        proc.stdout.write("READY:54321\n");
+      });
+      return proc;
+    });
+    const first = startSidecar();
+    expect(startSidecar()).toBe(first);
+    expect(await first).toBe(54321);
+    expect(getSidecarPort()).toBe(54321);
+    expect(spawn).toHaveBeenCalledOnce();
+    proc.emit("exit", 0);
+    expect(getSidecarPort()).toBe(0);
+  });
+
+  it("can retry after the backend exits before announcing its port", async () => {
+    spawn.mockImplementationOnce(() => {
+      const proc = child();
+      queueMicrotask(() => proc.emit("exit", 1));
+      return proc;
+    });
+    await expect(startSidecar()).rejects.toThrow("exited with code 1");
+    expect(await startSidecar()).toBe(49152);
+  });
+
+  it("times out a backend that never announces readiness and permits retry", async () => {
+    vi.useFakeTimers();
+    const proc = child();
+    spawn.mockImplementationOnce(() => proc);
+    try {
+      const starting = startSidecar();
+      const rejected = expect(starting).rejects.toThrow("startup timed out");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await rejected;
+      expect(proc.kill).toHaveBeenCalledOnce();
+      expect(getSidecarPort()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await startSidecar()).toBe(49152);
   });
 
   it("rejects a broken sidecar immediately and cleans it up", async () => {

@@ -90,6 +90,14 @@ describe("workspace layout constraints", () => {
     );
   });
 
+  it("removes the dashboard drag-handle inset from the project toolbar row", () => {
+    const toolbar =
+      ":is(.work-page, .work-details-dialog) .dashboard-panel-content > .ws-project-card > .ws-card-head > .ws-card-toolbar";
+    expect(declaration(toolbar, "margin-left")).toBe("-18px");
+    expect(declaration(toolbar, "flex-basis")).toBe("calc(100% + 18px)");
+    expect(declaration(toolbar, "max-width")).toBe("calc(100% + 18px)");
+  });
+
   it("keeps branch controls flush left and centers their icon and label", () => {
     expect(
       declaration(

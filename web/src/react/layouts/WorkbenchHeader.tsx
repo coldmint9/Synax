@@ -1,3 +1,4 @@
+import { ToolbarPill } from "./ToolbarPill";
 import { Terminal as TerminalIcon } from "lucide-react";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useTerminalStore } from "../features/terminal/terminalStore";
@@ -6,7 +7,6 @@ import {
   useCallback,
   useEffect,
   useRef,
-  type ReactNode,
 } from "react";
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from "@heroui/react";
 import {
@@ -296,7 +296,7 @@ function MainNavTabs({
   );
 }
 
-function WikiToolbar() {
+function WikiToolbar({ visible }: { visible: boolean }) {
   const { t } = useLocale();
   const viewMode = useWikiStore((s) => s.viewMode);
   const setViewMode = useWikiStore((s) => s.setViewMode);
@@ -318,6 +318,7 @@ function WikiToolbar() {
   const { results } = useWikiSearch(query);
 
   useEffect(() => {
+    if (!visible) return;
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
@@ -326,7 +327,7 @@ function WikiToolbar() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [visible]);
 
   useEffect(() => {
     if (searching) inputRef.current?.focus();
@@ -512,23 +513,8 @@ function WikiToolbar() {
 function WikiToolbarPill({ visible }: { visible: boolean }) {
   return (
     <ToolbarPill visible={visible}>
-      <WikiToolbar />
+      <WikiToolbar visible={visible} />
     </ToolbarPill>
-  );
-}
-
-function ToolbarPill({
-  visible,
-  children,
-}: {
-  visible: boolean;
-  children: ReactNode;
-}) {
-  if (!visible) return null;
-  return (
-    <div className="wh-pill-slot open">
-      <div className="wh-pill">{children}</div>
-    </div>
   );
 }
 

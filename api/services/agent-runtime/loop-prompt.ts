@@ -19,7 +19,7 @@ interface BuildLoopSystemPromptInput {
   context: AgentContextBundle | null;
   /** Skill summaries (id, label, description) for on-demand skill.load. */
   skillsSection?: string | null;
-  /** User-selected skill instructions and reference data, tagged by kind. */
+  /** User-selected file/Wiki reference data; skills/MCP use runtime mounts. */
   selectedReferencesSection?: string | null;
   /** Synax session mode prompt section when profileId is synax. */
   modePromptSection?: string | null;

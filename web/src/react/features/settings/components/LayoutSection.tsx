@@ -1,3 +1,4 @@
+import { FileOpenerSelect } from "./FileOpenerSelect";
 import { Switch } from "@heroui/react";
 import { SlidersHorizontal } from "lucide-react";
 import { useShellStore } from "../../../state/shellStore";
@@ -14,13 +15,11 @@ export function LayoutSection() {
   const defaultHome = useShellStore((s) => s.preferences.defaultHome);
   const notifications = useShellStore((s) => s.preferences.notifications);
   const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns);
-  const editor = useShellStore((s) => s.preferences.editor);
   const agentFontSize = useShellStore((s) => s.preferences.agentFontSize);
   const setLocale = useShellStore((s) => s.setLocale);
   const setDefaultHome = useShellStore((s) => s.setDefaultHome);
   const setNotifications = useShellStore((s) => s.setNotifications);
   const setFoldWorkRuns = useShellStore((s) => s.setSessionFoldWorkRuns);
-  const setEditor = useShellStore((s) => s.setEditor);
   const setAgentFontSize = useShellStore((s) => s.setAgentFontSize);
 
   return (
@@ -31,8 +30,7 @@ export function LayoutSection() {
           description={t("settingsLanguageHint")}
         >
           <SettingsSelect
-            className="w-36"
-            fullWidth={false}
+            className="w-32 max-w-full"
             selectedKey={locale}
             onSelectionChange={(key) => {
               if (key) setLocale(key as "zh" | "en");
@@ -51,8 +49,7 @@ export function LayoutSection() {
           description={t("settingsDefaultHomeHint")}
         >
           <SettingsSelect
-            className="w-36"
-            fullWidth={false}
+            className="w-32 max-w-full"
             selectedKey={defaultHome}
             onSelectionChange={(key) => {
               if (key) setDefaultHome(key as "global-home" | "last-project");
@@ -76,9 +73,9 @@ export function LayoutSection() {
             onChange={setNotifications}
             aria-label={t("settingsNotifications")}
           >
-            <Switch.Control>
+            <Switch.Content><Switch.Control>
               <Switch.Thumb />
-            </Switch.Control>
+            </Switch.Control></Switch.Content>
           </Switch>
         </FormRow>
 
@@ -92,9 +89,9 @@ export function LayoutSection() {
             onChange={setFoldWorkRuns}
             aria-label={t("sessionWorkLogToggle")}
           >
-            <Switch.Control>
+            <Switch.Content><Switch.Control>
               <Switch.Thumb />
-            </Switch.Control>
+            </Switch.Control></Switch.Content>
           </Switch>
         </FormRow>
 
@@ -103,8 +100,7 @@ export function LayoutSection() {
           description="调整 Synax 所有界面文字大小，默认 14px"
         >
           <SettingsSelect
-            className="w-36"
-            fullWidth={false}
+            className="w-32 max-w-full"
             selectedKey={String(agentFontSize)}
             onSelectionChange={(key) => {
               if (key) setAgentFontSize(Number(key));
@@ -132,9 +128,9 @@ export function LayoutSection() {
             onChange={setWikiEnabled}
             aria-label="Wiki"
           >
-            <Switch.Control>
+            <Switch.Content><Switch.Control>
               <Switch.Thumb />
-            </Switch.Control>
+            </Switch.Control></Switch.Content>
           </Switch>
         </FormRow>
 
@@ -142,26 +138,7 @@ export function LayoutSection() {
           label={t("settingsEditor")}
           description={t("settingsEditorHint")}
         >
-          <SettingsSelect
-            className="w-36"
-            fullWidth={false}
-            selectedKey={editor}
-            onSelectionChange={(key) => {
-              if (key) setEditor(key as typeof editor);
-            }}
-            disallowEmptySelection
-            aria-label={t("settingsEditor")}
-            options={[
-              {
-                key: "system",
-                label: locale === "zh" ? "系统默认" : "System default",
-              },
-              { key: "vscode", label: "VS Code" },
-              { key: "cursor", label: "Cursor" },
-              { key: "windsurf", label: "Windsurf" },
-              { key: "webstorm", label: "WebStorm" },
-            ]}
-          />
+          <FileOpenerSelect />
         </FormRow>
       </div>
     </SettingsCard>

@@ -45,7 +45,7 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
               onChange={(v) => handleToggle('allowProjectConnectionOverride', v)}
               aria-label={t('settingsAllowProjectOverride')}
             >
-              <Switch.Control><Switch.Thumb /></Switch.Control>
+              <Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content>
             </Switch>
           </FormRow>
 

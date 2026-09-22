@@ -25,6 +25,7 @@ const LANG_BY_EXT: Record<string, string> = {
   less: "less",
   html: "html",
   htm: "html",
+  svg: "xml",
   xml: "xml",
   yaml: "yaml",
   yml: "yaml",

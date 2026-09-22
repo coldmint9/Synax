@@ -239,9 +239,9 @@ export function McpServersSection({
                 }
                 aria-label={t("settingsMcpEnableServer", { name: server.name })}
               >
-                <Checkbox.Control>
+                <Checkbox.Content><Checkbox.Control>
                   <Checkbox.Indicator />
-                </Checkbox.Control>
+                </Checkbox.Control></Checkbox.Content>
               </Checkbox>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -401,9 +401,9 @@ export function McpServersSection({
                             })
                           }
                         >
-                          <Checkbox.Control>
+                          <Checkbox.Content><Checkbox.Control>
                             <Checkbox.Indicator />
-                          </Checkbox.Control>
+                          </Checkbox.Control></Checkbox.Content>
                         </Checkbox>
                         <span className="text-xs text-foreground">
                           {t("settingsMcpEnable")}

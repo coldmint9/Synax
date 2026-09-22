@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { RuntimeAccessGate } from "./RuntimeAccessGate";
@@ -11,6 +17,10 @@ const auth = vi.hoisted(() => ({
   RUNTIME_AUTH_REQUIRED: "synax-runtime-auth-required",
 }));
 vi.mock("../../../lib/api/runtimeAuth", () => auth);
+vi.mock("../../../lib/apiConnectivity", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/apiConnectivity")>()),
+  startApiConnectivityMonitor: vi.fn(() => () => {}),
+}));
 vi.mock("../../../hooks/useLocale", () => ({
   useLocale: () => ({ locale: "zh" }),
 }));
@@ -33,9 +43,11 @@ afterEach(() => {
   delete desktopWindow.electronAPI;
 });
 
-it("shows only connection status on the very first render, before effects run", () => {
+it("shows only a text-free full-window skeleton before effects run", () => {
   const html = renderToString(workspace);
-  expect(html).toContain("正在连接运行服务");
+  expect(html).toContain("runtime-skeleton");
+  expect(html).toContain('aria-busy="true"');
+  expect(html).not.toContain("正在");
   expect(html).not.toContain("需要连接授权");
   expect(html).not.toContain("<input");
 });
@@ -50,6 +62,9 @@ it("waits for automatic authentication before opening the workspace", async () =
   render(workspace);
   expect(screen.queryByText("Workspace")).toBeNull();
   expect(screen.queryByLabelText("Runtime access token")).toBeNull();
+  await waitFor(() =>
+    expect(auth.ensureRuntimeAuthentication).toHaveBeenCalled(),
+  );
   await act(async () => connected());
   expect(screen.getByText("Workspace")).toBeInTheDocument();
 });
@@ -91,4 +106,43 @@ it("asks for a token only after the browser runtime explicitly requires authenti
   fireEvent.click(screen.getByRole("button", { name: "连接 / 重试" }));
   await screen.findByText("Workspace");
   expect(auth.setRuntimeAccessToken).toHaveBeenCalledWith("test-token");
+});
+
+it("paints the skeleton while the desktop is still allocating its backend port", async () => {
+  let bound!: (port: number) => void;
+  desktopWindow.electronAPI = {
+    getApiPort: vi.fn(
+      () =>
+        new Promise<number>((resolve) => {
+          bound = resolve;
+        }),
+    ),
+  };
+  const { container } = render(workspace);
+  expect(container.querySelector(".runtime-skeleton")).not.toBeNull();
+  expect(container.textContent).toBe("");
+  expect(auth.ensureRuntimeAuthentication).not.toHaveBeenCalled();
+  await act(async () => bound(54321));
+  await screen.findByText("Workspace");
+});
+
+it("allows retry when desktop startup fails, showing only the skeleton during retry", async () => {
+  let bound!: (port: number) => void;
+  const getApiPort = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Startup failed"))
+    .mockImplementationOnce(
+      () =>
+        new Promise<number>((resolve) => {
+          bound = resolve;
+        }),
+    );
+  desktopWindow.electronAPI = { getApiPort, getRuntimeToken: vi.fn() };
+  const { container } = render(workspace);
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", { name: "连接 / 重试" }));
+  expect(container.textContent).toBe("");
+  expect(container.querySelector(".runtime-skeleton")).not.toBeNull();
+  await act(async () => bound(54322));
+  await screen.findByText("Workspace");
 });

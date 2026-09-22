@@ -24,7 +24,10 @@ import {
   hasInput,
   mediaSafeErrorText,
 } from "./content-parts.js";
-import { activeTurnReferences } from "./turn-reference-state.js";
+import {
+  activeTurnReferences,
+  pendingTurnReferenceSkillLoads,
+} from "./turn-reference-state.js";
 import { prepareTurnReferences } from "./turn-references.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
 import { runtimeTransaction } from "./runtime-transaction.js";
@@ -416,6 +419,12 @@ export class AgentLoopRuntime {
     try {
       let run: AgentRun;
       let pendingPermission = pendingResume?.permission ?? null;
+      let mcpWarmedUp = false;
+
+      // Kick MCP warm-up eagerly. startServer dedupes concurrent starts, so the
+      // awaited warm-up after step_started below usually resolves immediately
+      // instead of serializing a cold spawn into first-token latency.
+      void warmupMcpForSession(sessionId);
 
       logger.info(
         {
@@ -684,8 +693,6 @@ export class AgentLoopRuntime {
           metadata: { ...run.metadata, reasoningEffort: runReasoningEffort },
         });
 
-        await warmupMcpForSession(sessionId);
-
         let currentPrompt = prompt;
         if (pendingResume?.permission.userReply) {
           this.appendSystemNotePart({
@@ -814,6 +821,13 @@ export class AgentLoopRuntime {
             stepIndex: step.index,
             modelCapabilities,
           });
+          if (!mcpWarmedUp) {
+            mcpWarmedUp = true;
+            // Tool schemas are read by generateStep below, so MCP must be warm
+            // before the model call — but a cold spawn must not sit between run
+            // admission and the step_started handoff the client renders.
+            await warmupMcpForSession(sessionId);
+          }
 
           const history = this.store
             .listMessages(sessionId)
@@ -1459,6 +1473,8 @@ export class AgentLoopRuntime {
             allCalls.map(async (call) => {
               const tool = this.tools.list().find((t) => t.id === call.toolId);
               if (
+                this.store.getRunStep(step.id).metadata.source !==
+                  "turn_reference" &&
                 tool?.mutability === "read" &&
                 !["bash", "verification.run", "context.read"].includes(
                   tool.id,
@@ -1529,7 +1545,7 @@ export class AgentLoopRuntime {
                     mutability: tool.mutability,
                     argsHash,
                     inputSummary: prev.inputSummary,
-                    inputRef: null,
+                    inputRef: call.toolId === "skill.load" ? call.args : null,
                     outputSummary: `[Duplicate of earlier ${call.toolId} call — the result is already in your context above. Re-read what you received earlier instead of calling again.]`,
                     outputRef: null,
                     status: "compacted",
@@ -2289,6 +2305,7 @@ export class AgentLoopRuntime {
         metadata: {
           ...this.store.getRun(run.id).metadata,
           turnReferences: item.referenceContext ?? null,
+          turnReferenceInputId: queuedMessageId,
         },
       });
       const userMessage = this.store.appendMessage({
@@ -2420,6 +2437,28 @@ export class AgentLoopRuntime {
       return;
     }
 
+    // Runtime-requested loads use an ordinary tool-only step before generation.
+    // The existing execution path owns permissions, hooks, persistence, events,
+    // resume and history projection; no skill body is injected into the prompt.
+    const referenceLoads = pendingTurnReferenceSkillLoads(input.sessionId);
+    if (referenceLoads.length) {
+      const step = this.store.getRunStep(input.stepId);
+      this.store.updateRunStep(step.id, {
+        metadata: { ...step.metadata, source: "turn_reference" },
+      });
+      yield {
+        type: "step_complete",
+        model: null,
+        step: {
+          toolCalls: referenceLoads,
+          final: false,
+          stopReason: null,
+          finishReason: "tool_calls",
+        },
+      };
+      return;
+    }
+
     logger.info(
       {
         sessionId: input.sessionId,
@@ -2503,7 +2542,7 @@ export class AgentLoopRuntime {
       skillCandidates.length > 0
         ? [
             "## Available skills",
-            "Prioritize explicitly selected skills; otherwise call skill.load when a description matches the task. Full instructions load on demand. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
+            "Skills selected for this turn are loaded by the runtime through skill.load; check their tool results for success or failure. For other selected skills, or when a description matches the task, call skill.load as needed. Full instructions arrive as tool results. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
             ...skillCandidates.map((skill) => {
               return JSON.stringify({
                 id: skill.id,
@@ -2511,7 +2550,7 @@ export class AgentLoopRuntime {
                 description: skill.description,
                 ...(activeSkillIds.has(skill.id) ? { selected: true } : {}),
                 ...(selectedReferences?.skillIds.includes(skill.id)
-                  ? { instructionsIncluded: true }
+                  ? { selectedForTurnMount: true }
                   : {}),
               }).replace(/</g, "\\u003c");
             }),

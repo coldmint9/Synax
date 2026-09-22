@@ -177,7 +177,7 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
                 onChange={(isChecked) => handleToggle(item.id, isChecked)}
                 aria-label={item.label}
               >
-                <Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>
+                <Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control></Checkbox.Content>
               </Checkbox>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
