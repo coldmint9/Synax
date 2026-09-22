@@ -1,4 +1,3 @@
-import type { ArtifactCaptureResult, ArtifactElementBounds } from "./capture";
 import {
   acceptsEnvelope,
   injectRuntimeConfig,
@@ -16,19 +15,10 @@ export interface Bounds {
   clip?: { x: number; y: number; width: number; height: number };
 }
 export interface DesktopPreview {
-  capture?(input: {
-    id: string;
-    revisionId: string;
-  }): Promise<ArtifactCaptureResult>;
-  annotate?(input: {
-    id: string;
-    revisionId: string;
-    bounds: ArtifactElementBounds | null;
-  }): Promise<void>;
   create(input: {
     id: string;
     html: string;
-    revisionId: string;
+    prototypeId: string;
     nonce: string;
     bounds: Bounds;
   }): Promise<unknown>;
@@ -59,8 +49,6 @@ export function desktopEnvironment(): {
   };
 }
 export interface PreviewConnection {
-  capture?: () => Promise<ArtifactCaptureResult>;
-  annotate?: (bounds: ArtifactElementBounds | null) => Promise<void>;
   send(type: string, payload: unknown): void;
   destroy(): void;
   update(): void;
@@ -68,7 +56,7 @@ export interface PreviewConnection {
 export function mountPreview(options: {
   container: HTMLElement;
   html: string;
-  revisionId: string;
+  prototypeId: string;
   title: string;
   onRequest: (type: string, payload: unknown) => unknown | Promise<unknown>;
   onError: (error: Error) => void;
@@ -80,12 +68,10 @@ export function mountPreview(options: {
     protocol: 1,
     instanceId: runtimeId(),
     nonce: runtimeId(),
-    revisionId: options.revisionId,
+    prototypeId: options.prototypeId,
     transport: desktop ? "desktop" : "web",
   };
   const id = config.instanceId;
-  let lastCaptureAt = 0;
-  let capturePending = false;
   let disposed = false,
     connected = false,
     desktopCreated = false;
@@ -298,7 +284,7 @@ export function mountPreview(options: {
         await transport.create({
           id,
           html,
-          revisionId: options.revisionId,
+          prototypeId: options.prototypeId,
           nonce: config.nonce,
           bounds: bounds().bounds,
         });
@@ -342,56 +328,6 @@ export function mountPreview(options: {
     queueMicrotask(() => fail(error));
   }
   return {
-    ...(desktop && transport?.capture
-      ? {
-          capture: async () => {
-            if (disposed || !connected)
-              throw new Error("Preview is not running");
-            if (capturePending)
-              throw new Error("A screenshot is already in progress");
-            capturePending = true;
-            try {
-              // This instance outlives the QA/preview panels. Switching tabs must
-              // not reset the native rate-limit window as local button state does.
-              const remaining = 1000 - (Date.now() - lastCaptureAt);
-              if (remaining > 0)
-                await new Promise((resolve) => setTimeout(resolve, remaining));
-              let previous = "",
-                stable = 0;
-              const deadline = Date.now() + 1500;
-              while (stable < 2) {
-                await new Promise<void>((resolve) =>
-                  requestAnimationFrame(() => resolve()),
-                );
-                if (disposed || !connected)
-                  throw new Error("Preview is not running");
-                const current = bounds();
-                const key = JSON.stringify(current);
-                stable = current.visible && key === previous ? stable + 1 : 0;
-                previous = key;
-                if (Date.now() > deadline)
-                  throw new Error(
-                    "Preview is moving or hidden; wait until it is visible and retry the screenshot.",
-                  );
-              }
-              await transport.update({ id, ...bounds() });
-              lastCaptureAt = Date.now();
-              return await transport.capture!({
-                id,
-                revisionId: config.revisionId,
-              });
-            } finally {
-              capturePending = false;
-            }
-          },
-        }
-      : {}),
-    ...(desktop && transport?.annotate
-      ? {
-          annotate: (bounds: ArtifactElementBounds | null) =>
-            transport.annotate!({ id, revisionId: config.revisionId, bounds }),
-        }
-      : {}),
     send: (type, payload) => {
       if (connected) sendEnvelope(envelope(type, payload));
     },

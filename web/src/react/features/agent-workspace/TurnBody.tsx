@@ -1,14 +1,5 @@
-import {
-  ArtifactBuildCard,
-  type ArtifactJobReference,
-} from "../artifacts/ArtifactBuildCard";
-import {
-  ArtifactPublicationCard,
-  type ArtifactPublicationReference,
-} from "../artifacts/ArtifactPublicationCard";
-import { ArtifactCard } from "../artifacts/ArtifactCard";
-import { useTranscriptSession } from "./SessionTranscriptContext";
-import type { ArtifactReference } from "../../../../../api/services/agent-runtime/artifacts/contracts";
+import { InteractivePrototypeCard } from "../artifacts/InteractivePrototypeCard";
+import type { InteractivePrototypeReference } from "./artifactTranscript";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 import { Zap } from "lucide-react";
@@ -24,35 +15,12 @@ import { SubSessionCard } from "./SubSessionCard";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import { buildTurnRenderSegments } from "./toolCallUtils";
 
-function TranscriptArtifact({ reference }: { reference: ArtifactReference }) {
-  const { sessionId } = useTranscriptSession();
-  return sessionId ? (
-    <ArtifactCard sessionId={sessionId} reference={reference} />
-  ) : (
-    <p role="status">{reference.title} — session unavailable</p>
-  );
-}
-
-function TranscriptArtifactRequest({
+function TranscriptPrototype({
   reference,
 }: {
-  reference: ArtifactPublicationReference;
+  reference: InteractivePrototypeReference;
 }) {
-  const { sessionId } = useTranscriptSession();
-  return sessionId ? (
-    <ArtifactPublicationCard sessionId={sessionId} reference={reference} />
-  ) : null;
-}
-
-function TranscriptArtifactJob({
-  reference,
-}: {
-  reference: ArtifactJobReference;
-}) {
-  const { sessionId } = useTranscriptSession();
-  return sessionId ? (
-    <ArtifactBuildCard sessionId={sessionId} reference={reference} />
-  ) : null;
+  return <InteractivePrototypeCard prototype={reference} />;
 }
 function sourceLabel(url: string): string {
   try {
@@ -82,24 +50,10 @@ function renderTurnBlocks(
       (toolBlocks.length === 0 || segment.type !== "thinking"),
   );
   const render = (segment: (typeof segments)[number], i: number) => {
-    if (segment.type === "artifact_job")
+    if (segment.type === "prototype")
       return (
-        <TranscriptArtifactJob
-          key={segment.reference.jobId}
-          reference={segment.reference}
-        />
-      );
-    if (segment.type === "artifact_request")
-      return (
-        <TranscriptArtifactRequest
-          key={segment.reference.requestId}
-          reference={segment.reference}
-        />
-      );
-    if (segment.type === "artifact")
-      return (
-        <TranscriptArtifact
-          key={segment.reference.revisionId}
+        <TranscriptPrototype
+          key={segment.reference.id}
           reference={segment.reference}
         />
       );

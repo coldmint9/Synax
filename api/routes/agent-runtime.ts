@@ -1,6 +1,3 @@
-import { artifactVersionRoutes } from "./artifact-versions.js";
-import { drainArtifactPublications } from "../services/agent-runtime/artifact-integration.js";
-import { agentArtifactRoutes } from "./agent-artifacts.js";
 import {
   checkpointSummary,
   previewHistory,
@@ -128,8 +125,6 @@ import {
 } from "../services/git-workspaces.js";
 
 export const agentRuntimeRoutes = new Hono();
-agentRuntimeRoutes.route("/", agentArtifactRoutes);
-agentRuntimeRoutes.route("/", artifactVersionRoutes);
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
 
 async function readJson(c: Context) {
@@ -153,7 +148,6 @@ function runtimeError(c: Context, error: unknown) {
 }
 
 function withSessionPayload(sessionId: string) {
-  drainArtifactPublications(sessionId);
   const session = projectSessionState(agentSessionRuntime.get(sessionId));
   const profile = profileService.getForSession(session);
   return {

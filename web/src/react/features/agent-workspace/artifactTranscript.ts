@@ -1,47 +1,59 @@
-import type { ArtifactReference } from "../../../../../api/services/agent-runtime/artifacts/contracts";
 import type { AgentRuntimeMessage } from "../../../lib/api/agentRuntime";
-/** Executable content is only referenced by server-published metadata, never raw Markdown. */
-export function messageArtifacts(
+
+export interface InteractivePrototypeReference {
+  id: string;
+  title: string;
+  sourceKind: "html" | "react";
+  html: string;
+}
+
+export interface PrototypeDiagnostic {
+  title: string;
+  code: string;
+  message: string;
+}
+
+export function messagePrototypes(
   message: AgentRuntimeMessage,
-): ArtifactReference[] {
+): InteractivePrototypeReference[] {
   if (
     message.role !== "assistant" ||
-    message.metadata?.source !== "artifact_publisher" ||
-    !Array.isArray(message.metadata.artifacts)
+    message.metadata?.source !== "interactive_prototype" ||
+    !Array.isArray(message.metadata.prototypes)
   )
     return [];
-  return message.metadata.artifacts.flatMap((value: unknown) => {
+  return message.metadata.prototypes.slice(0, 3).flatMap((value: unknown) => {
     if (!value || typeof value !== "object") return [];
     const item = value as Record<string, unknown>;
     if (
-      item.type !== "artifact" ||
-      typeof item.artifactId !== "string" ||
-      typeof item.revisionId !== "string" ||
+      typeof item.id !== "string" ||
       typeof item.title !== "string" ||
-      !["inline", "wide"].includes(String(item.presentation))
+      typeof item.html !== "string" ||
+      !["html", "react"].includes(String(item.sourceKind))
     )
       return [];
-    return [item as unknown as ArtifactReference];
+    return [item as unknown as InteractivePrototypeReference];
   });
 }
 
-export function messageArtifactRequest(message: AgentRuntimeMessage) {
+export function messagePrototypeDiagnostics(
+  message: AgentRuntimeMessage,
+): PrototypeDiagnostic[] {
   if (
     message.role !== "assistant" ||
-    message.metadata?.source !== "artifact_request"
+    message.metadata?.source !== "interactive_prototype" ||
+    !Array.isArray(message.metadata.prototypeDiagnostics)
   )
-    return null;
-  const value = message.metadata.artifactRequest as
-    | Record<string, unknown>
-    | undefined;
-  return value &&
-    typeof value.requestId === "string" &&
-    typeof value.title === "string" &&
-    typeof value.sourcePath === "string"
-    ? {
-        requestId: value.requestId,
-        title: value.title,
-        sourcePath: value.sourcePath,
-      }
-    : null;
+    return [];
+  return message.metadata.prototypeDiagnostics
+    .slice(0, 3)
+    .flatMap((value: unknown) => {
+      if (!value || typeof value !== "object") return [];
+      const item = value as Record<string, unknown>;
+      return typeof item.title === "string" &&
+        typeof item.code === "string" &&
+        typeof item.message === "string"
+        ? [item as unknown as PrototypeDiagnostic]
+        : [];
+    });
 }

@@ -990,6 +990,27 @@ export class AgentRuntimeStore {
     return message;
   }
 
+  getMessage(sessionId: string, messageId: string): AgentRuntimeMessage | undefined {
+    const row = getRawSqlite().prepare(
+      "SELECT * FROM agent_runtime_messages WHERE id = ? AND session_id = ?",
+    ).get(messageId, sessionId) as MessageRow | undefined;
+    return row ? mapMessage(row) : undefined;
+  }
+
+  /** Attach compiled data without REPLACE, sequence changes or stale-message resurrection. */
+  attachPrototypeMetadata(message: AgentRuntimeMessage, additions: Record<string, unknown>): AgentRuntimeMessage | undefined {
+    const sqlite = getRawSqlite();
+    return sqlite.transaction(() => {
+      const current = this.getMessage(message.sessionId, message.id);
+      if (!current || current.role !== "assistant" || current.content !== message.content || current.metadata.partial) return undefined;
+      if (current.metadata.source === "interactive_prototype") return current;
+      const metadata = {...current.metadata, ...additions};
+      sqlite.prepare("UPDATE agent_runtime_messages SET metadata_json = ? WHERE id = ? AND session_id = ?")
+        .run(stringify(metadata), message.id, message.sessionId);
+      return {...current, metadata};
+    })();
+  }
+
   listMessages(sessionId: string): AgentRuntimeMessage[] {
     const rows = getRawSqlite()
       .prepare(

@@ -37,7 +37,6 @@ export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): 
  * unmounted tool must not be advertised to the model or capability UI at all.
  */
 const PLAN_TOOLS = new Set([
-  'artifact.read', 'artifact.list',
   'context.read', 'file.read', 'file.list', 'file.glob', 'grep.search', 'diff.read',
   ...WIKI_AGENT_READ_TOOL_IDS,
   'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'agent.adapt',

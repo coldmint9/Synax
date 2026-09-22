@@ -1,4 +1,7 @@
-import { messageArtifacts, messageArtifactRequest } from "./artifactTranscript";
+import {
+  messagePrototypes,
+  messagePrototypeDiagnostics,
+} from "./artifactTranscript";
 import { readSessionUserPrompt } from "./sessionMetadata";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import type {
@@ -481,90 +484,49 @@ export function buildConversationTimeline(
     interactions?: AgentInteraction[];
   },
 ): ConversationTimelineEntry[] {
-  const seenArtifacts = new Set<string>();
-  const artifactEntries: ConversationTimelineEntry[] = messages.flatMap(
+  const seenPrototypes = new Set<string>();
+  const prototypeEntries: ConversationTimelineEntry[] = messages.flatMap(
     (message) => {
       if (options?.session && message.sessionId !== options.session.id)
         return [];
-      return messageArtifacts(message).flatMap((reference) => {
-        if (seenArtifacts.has(reference.revisionId)) return [];
-        seenArtifacts.add(reference.revisionId);
-        return [
-          {
-            id: `artifact-${reference.revisionId}`,
-            kind: "agent" as const,
-            createdAt: message.createdAt,
-            label: reference.title,
-            turn: {
-              stepId: `artifact-${reference.revisionId}`,
-              index: 0,
-              status: "completed",
-              duration: null,
-              blocks: [{ type: "artifact" as const, reference }],
+      const prototypes = messagePrototypes(message);
+      const diagnostics = messagePrototypeDiagnostics(message);
+      const entries: ConversationTimelineEntry[] = prototypes.flatMap(
+        (prototype) => {
+          if (seenPrototypes.has(prototype.id)) return [];
+          seenPrototypes.add(prototype.id);
+          return [
+            {
+              id: `prototype-${prototype.id}`,
+              kind: "agent" as const,
+              createdAt: message.createdAt,
+              label: prototype.title,
+              turn: {
+                stepId: `prototype-${prototype.id}`,
+                index: 0,
+                status: "completed",
+                duration: null,
+                blocks: [{ type: "prototype" as const, reference: prototype }],
+              },
             },
-          },
-        ];
-      });
+          ];
+        },
+      );
+      return [
+        ...entries,
+        ...diagnostics.map((d, index) => ({
+          id: `prototype-diagnostic-${message.id}-${index}`,
+          kind: "error" as const,
+          createdAt: message.createdAt,
+          label: d.title,
+          message: `${d.title}：${d.message}`,
+          model: null,
+        })),
+      ];
     },
   );
-  for (const message of messages) {
-    if (options?.session && message.sessionId !== options.session.id) continue;
-    const reference = messageArtifactRequest(message);
-    if (!reference || seenArtifacts.has(reference.requestId)) continue;
-    seenArtifacts.add(reference.requestId);
-    artifactEntries.push({
-      id: `artifact-request-${reference.requestId}`,
-      kind: "agent",
-      createdAt: message.createdAt,
-      label: reference.title,
-      turn: {
-        stepId: reference.requestId,
-        index: 0,
-        status: "completed",
-        duration: null,
-        blocks: [{ type: "artifact_request", reference }],
-      },
-    });
-  }
-  for (const message of messages) {
-    if (
-      message.role !== "assistant" ||
-      message.metadata?.source !== "artifact_job" ||
-      (options?.session && message.sessionId !== options.session.id)
-    )
-      continue;
-    const ref = message.metadata.artifactJob as
-      | { jobId?: unknown; title?: unknown }
-      | undefined;
-    if (
-      !ref ||
-      typeof ref.jobId !== "string" ||
-      typeof ref.title !== "string" ||
-      seenArtifacts.has(ref.jobId)
-    )
-      continue;
-    seenArtifacts.add(ref.jobId);
-    artifactEntries.push({
-      id: `artifact-job-${ref.jobId}`,
-      kind: "agent",
-      createdAt: message.createdAt,
-      label: ref.title,
-      turn: {
-        stepId: ref.jobId,
-        index: 0,
-        status: "completed",
-        duration: null,
-        blocks: [
-          {
-            type: "artifact_job",
-            reference: { jobId: ref.jobId, title: ref.title },
-          },
-        ],
-      },
-    });
-  }
   const withArtifacts = (entries: ConversationTimelineEntry[]) =>
-    [...entries, ...artifactEntries].sort(
+    [...entries, ...prototypeEntries].sort(
       (a, b) => toTimestamp(a.createdAt) - toTimestamp(b.createdAt),
     );
   const filteredSteps = options?.excludeStepId
@@ -588,7 +550,7 @@ export function buildConversationTimeline(
   const userEntries = buildUserMessageEntries(messages, options?.session);
 
   if (
-    artifactEntries.length === 0 &&
+    prototypeEntries.length === 0 &&
     userEntries.length === 0 &&
     agentTurns.length === 0 &&
     failedRunIds.size === 0 &&

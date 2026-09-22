@@ -1,4 +1,4 @@
-import { publishCompletedManifests } from "../artifact-integration.js";
+import { compileCompletedPrototypes } from "../prototype-integration.js";
 import { validateInputMedia } from '../media-capabilities.js';
 import { hasInlineMedia, normalizeMediaPayload } from '../media-tool-content.js';
 import { acpMediaInput } from '../media-backend-input.js';
@@ -330,7 +330,7 @@ class AcpSessionEngine {
       const captured = await captureFileChanges(pooled.workDir, [], baseline);
       const stopReason = promptResult.stopReason ?? 'end_turn';
       const failed = stopReason !== 'end_turn' && stopReason !== 'max_tokens';
-      if (assistantMessage && stopReason === 'end_turn') await publishCompletedManifests(assistantMessage);
+      if (assistantMessage && stopReason === 'end_turn') await compileCompletedPrototypes(assistantMessage, abortSignal);
 
       const currentStep = agentRuntimeStore.getRunStep(step.id);
       const usage = mergeStepUsage(

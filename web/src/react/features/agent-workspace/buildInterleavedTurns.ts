@@ -1,6 +1,4 @@
-import type { ArtifactJobReference } from "../artifacts/ArtifactBuildCard";
-import type { ArtifactPublicationReference } from "../artifacts/ArtifactPublicationCard";
-import type { ArtifactReference } from "../../../../../api/services/agent-runtime/artifacts/contracts";
+import type { InteractivePrototypeReference } from "./artifactTranscript";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import { hasDisplayableReasoning } from "./activityText";
 import type {
@@ -24,9 +22,7 @@ export interface ToolCallView {
 }
 
 export type TurnContentBlock =
-  | { type: "artifact_job"; reference: ArtifactJobReference }
-  | { type: "artifact_request"; reference: ArtifactPublicationReference }
-  | { type: "artifact"; reference: ArtifactReference }
+  | { type: "prototype"; reference: InteractivePrototypeReference }
   | { type: "media"; parts: RuntimeContentPart[]; messageId?: string }
   | { type: "text"; content: string; messageId?: string }
   | { type: "thinking"; content: string }
@@ -166,7 +162,12 @@ export function buildInterleavedTurns(
     const items: Array<{ timestamp: number; block: TurnContentBlock }> = [];
 
     const stepMessages = messagesByStep.get(step.id) ?? [];
-    for (const msg of stepMessages) {
+    for (const original of stepMessages) {
+      const msg =
+        original.metadata.source === "interactive_prototype" &&
+        typeof original.metadata.prototypeDisplayText === "string"
+          ? { ...original, content: original.metadata.prototypeDisplayText }
+          : original;
       if (msg.contentParts?.some((part) => part.type !== "text"))
         items.push({
           timestamp: new Date(msg.createdAt).getTime(),

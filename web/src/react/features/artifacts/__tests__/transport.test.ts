@@ -6,7 +6,7 @@ function setup() {
   const options = {
     container,
     html: "<html><head></head><body>Preview</body></html>",
-    revisionId: "r",
+    prototypeId: "r",
     title: "Demo",
     onRequest: vi.fn(),
     onConnected: vi.fn(),
@@ -104,60 +104,12 @@ it("repositions a desktop view when its owner window requests fresh layout", asy
       protocol: 1,
       instanceId: input.id,
       nonce: input.nonce,
-      revisionId: input.revisionId,
+      prototypeId: input.prototypeId,
       type: "transport-needs-layout",
     },
   });
   await vi.waitFor(() =>
     expect(api.update.mock.calls.length).toBeGreaterThan(previous),
   );
-  preview.destroy();
-});
-it("keeps native screenshot spacing across host panel remounts on the same instance", async () => {
-  let notify: (event: any) => void = () => {};
-  const times: number[] = [];
-  const api = {
-    create: vi.fn().mockResolvedValue(undefined),
-    update: vi.fn().mockResolvedValue(undefined),
-    send: vi.fn().mockResolvedValue(undefined),
-    destroy: vi.fn().mockResolvedValue(undefined),
-    capture: vi.fn(async () => {
-      times.push(Date.now());
-      return { mimeType: "image/png" };
-    }),
-    onMessage: vi.fn((listener: any) => {
-      notify = listener;
-      return () => {};
-    }),
-  };
-  (window as any).electronAPI = { artifactPreview: api };
-  const { options } = setup();
-  vi.spyOn(options.container, "getBoundingClientRect").mockReturnValue({
-    x: 0,
-    y: 0,
-    left: 0,
-    top: 0,
-    width: 100,
-    height: 100,
-    right: 100,
-    bottom: 100,
-    toJSON: () => ({}),
-  });
-  const preview = mountPreview(options);
-  await vi.waitFor(() => expect(api.create).toHaveBeenCalledOnce());
-  const input = api.create.mock.calls[0][0];
-  notify({
-    id: input.id,
-    message: {
-      protocol: 1,
-      instanceId: input.id,
-      nonce: input.nonce,
-      revisionId: input.revisionId,
-      type: "hello",
-    },
-  });
-  await preview.capture!();
-  await preview.capture!();
-  expect(times[1] - times[0]).toBeGreaterThanOrEqual(950);
   preview.destroy();
 });

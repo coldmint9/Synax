@@ -50,9 +50,9 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
     const page = await desktop.firstWindow();
     await page.waitForFunction(() => !!(window as any).electronAPI);
     const id = "native-one",
-      revisionId = "revision-one",
+      prototypeId = "revision-one",
       nonce = "n".repeat(32);
-    const config = { protocol: 1, instanceId: id, revisionId, nonce };
+    const config = { protocol: 1, instanceId: id, prototypeId, nonce };
     const html = `<html><body style="margin:0;background:red;height:400px"><div style="height:60px;background:lime"></div><div style="position:absolute;left:60px;top:100px;width:160px;height:180px;background:yellow"></div><script>
       const config=${JSON.stringify(config)};
       const send=(type,payload={},requestId)=>window.postMessage({...config,type,payload,...(requestId?{requestId}:{})},'*');
@@ -66,8 +66,8 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
         try { await navigator.mediaDevices.getUserMedia({audio:true});tests.media='escaped'; } catch {tests.media='blocked';}
         try {const pc=new RTCPeerConnection({iceServers:[{urls:'stun:127.0.0.1:${udpPort}'}]});pc.createDataChannel('probe');await pc.setLocalDescription(await pc.createOffer());await new Promise(r=>setTimeout(r,800));pc.close();tests.webrtc='attempted';}catch{tests.webrtc='unavailable';}
         send('ready',tests,'1');
-      } if(e.data.type==='pick') { location.href='https://example.com/leak'; setTimeout(()=>send('log',{stillHere:location.protocol}),100); }
-      if(e.data.type==='controlsChanged') { while(true){} }
+      } if(e.data.type==='theme' && e.data.payload?.probe==='navigate') { location.href='https://example.com/leak'; setTimeout(()=>send('resize',{stillHere:location.protocol}),100); }
+      if(e.data.type==='theme' && e.data.payload?.probe==='hang') { while(true){} }
       }); send('hello');
       </script></body></html>`;
     await page.evaluate(() => {
@@ -77,11 +77,11 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
       );
     });
     await page.evaluate(
-      async ({ id, html, revisionId, nonce }) => {
+      async ({ id, html, prototypeId, nonce }) => {
         await (window as any).electronAPI.artifactPreview.create({
           id,
           html,
-          revisionId,
+          prototypeId,
           nonce,
           bounds: {
             x: -20,
@@ -92,7 +92,7 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
           },
         });
       },
-      { id, html, revisionId, nonce },
+      { id, html, prototypeId, nonce },
     );
     await page.waitForFunction(() =>
       (window as any).events.some((e: any) => e.message.type === "hello"),
@@ -150,39 +150,6 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
         visible: true,
       });
     }, id);
-    const hostCapture = await page.evaluate(
-      async ({ id, revisionId }) => {
-        const api = (window as any).electronAPI.artifactPreview;
-        const image = await api.capture({ id, revisionId });
-        await api.annotate({
-          id,
-          revisionId,
-          bounds: {
-            x: 65,
-            y: 105,
-            width: 100,
-            height: 80,
-            viewportWidth: 320,
-            viewportHeight: 400,
-          },
-        });
-        return {
-          id: image.id,
-          revisionId: image.revisionId,
-          mimeType: image.mimeType,
-          size: image.bytes.byteLength,
-          signature: Array.from(image.bytes.slice(0, 8)),
-        };
-      },
-      { id, revisionId },
-    );
-    expect(hostCapture).toMatchObject({
-      id,
-      revisionId,
-      mimeType: "image/png",
-      signature: [137, 80, 78, 71, 13, 10, 26, 10],
-    });
-    expect(hostCapture.size).toBeLessThanOrEqual(4 * 1024 * 1024);
     const capture = await desktop.evaluate(
       async ({ desktopCapturer }, { id, output }) => {
         const { owner, manager, writeFile } = (globalThis as any).artifactSmoke;
@@ -258,23 +225,6 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
       expect(capture.inside[1]).toBeGreaterThan(180);
       expect(capture.inside[2]).toBeGreaterThan(180);
     }
-    if (capture.composited) {
-      for (const pixel of capture.borders) {
-        expect(pixel[0]).toBeGreaterThan(180);
-        expect(pixel[1]).toBeLessThan(140);
-        expect(pixel[2]).toBeLessThan(100);
-      }
-    }
-    await page.evaluate(
-      async ({ id, revisionId }) => {
-        await (window as any).electronAPI.artifactPreview.annotate({
-          id,
-          revisionId,
-          bounds: null,
-        });
-      },
-      { id, revisionId },
-    );
     // Browser zoom must preserve both clipping and the artifact's CSS layout viewport.
     await desktop.evaluate(() =>
       (globalThis as any).artifactSmoke.owner.webContents.setZoomFactor(2),
@@ -361,18 +311,18 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
       async ({ id, config }) => {
         await (window as any).electronAPI.artifactPreview.send({
           id,
-          message: { ...config, type: "pick", payload: { enabled: true } },
+          message: { ...config, type: "theme", payload: { probe: "navigate" } },
         });
       },
       { id, config },
     );
     await page.waitForFunction(() =>
-      (window as any).events.some((e: any) => e.message.type === "log"),
+      (window as any).events.some((e: any) => e.message.type === "resize"),
     );
     expect(
       await page.evaluate(
         () =>
-          (window as any).events.find((e: any) => e.message.type === "log")
+          (window as any).events.find((e: any) => e.message.type === "resize")
             .message.payload.stillHere,
       ),
     ).toBe("synax-artifact:");
@@ -381,10 +331,10 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
       protocol: 1,
       instanceId: "native-sdk",
       nonce: "s".repeat(32),
-      revisionId: "sdk-revision",
+      prototypeId: "sdk-revision",
       transport: "desktop",
     };
-    const sdkHtml = `<html><head><meta name="synax-artifact-runtime" content='${JSON.stringify(sdkConfig)}'><script>${artifactSdkSource()}</script></head><body><script>synaxWidget.ready().then(()=>synaxWidget.setState({modelState:{nativeSdk:true}}));</script></body></html>`;
+    const sdkHtml = `<html><head><meta name="synax-artifact-runtime" content='${JSON.stringify(sdkConfig)}'><script>${artifactSdkSource()}</script></head><body><script>synaxWidget.ready().then(()=>synaxWidget.reportHeight(123));</script></body></html>`;
     await page.evaluate(
       async ({ sdkConfig, sdkHtml }) => {
         const api = (window as any).electronAPI.artifactPreview;
@@ -432,7 +382,7 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
         await api.create({
           id: sdkConfig.instanceId,
           nonce: sdkConfig.nonce,
-          revisionId: sdkConfig.revisionId,
+          prototypeId: sdkConfig.prototypeId,
           html: sdkHtml,
           bounds: { x: 400, y: 0, width: 300, height: 300 },
         });
@@ -443,8 +393,8 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
       (window as any).events.some(
         (e: any) =>
           e.id === "native-sdk" &&
-          e.message.type === "state" &&
-          e.message.payload.modelState.nativeSdk === true,
+          e.message.type === "resize" &&
+          e.message.payload.height === 123,
       ),
     );
     const sessionCount = await desktop.evaluate(
@@ -462,7 +412,7 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
         await (window as any).electronAPI.artifactPreview.create({
           id: "third",
           nonce: "t".repeat(32),
-          revisionId: "third",
+          prototypeId: "third",
           html: "hello",
           bounds: { x: 0, y: 0, width: 100, height: 100 },
         });
@@ -478,7 +428,7 @@ describe.skipIf(!native)("real Electron artifact transport", () => {
       async ({ id, config }) => {
         await (window as any).electronAPI.artifactPreview.send({
           id,
-          message: { ...config, type: "controlsChanged", payload: {} },
+          message: { ...config, type: "theme", payload: { probe: "hang" } },
         });
       },
       { id, config },

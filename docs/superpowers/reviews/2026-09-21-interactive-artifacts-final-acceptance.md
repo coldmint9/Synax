@@ -1,5 +1,9 @@
 # Interactive artifacts: final acceptance and merge gate
 
+> Historical delivery record. The interactive artifact platform below is superseded
+> by the approved September 22 lightweight prototype design; see
+> [simplification verification](2026-09-22-interactive-prototype-simplification.md).
+
 Updated: September 22, 2026. The release/merge checkpoint below supersedes the
 September 21 baseline sections retained as historical evidence.
 

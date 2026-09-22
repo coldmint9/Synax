@@ -13,7 +13,7 @@ import {
 const input = {
   id: "preview-1",
   html: "<p>hello</p>",
-  revisionId: "revision-1",
+  prototypeId: "revision-1",
   nonce: "a".repeat(32),
   bounds: { x: 0, y: 0, width: 300, height: 200 },
 };
@@ -37,17 +37,17 @@ describe("artifact transport policy", () => {
     const identity = {
       id: "one",
       nonce: "n".repeat(32),
-      revisionId: "revision-one",
+      prototypeId: "revision-one",
     };
     const message = {
       protocol: 1,
       instanceId: identity.id,
       nonce: identity.nonce,
-      revisionId: identity.revisionId,
+      prototypeId: identity.prototypeId,
       type: "hello",
     };
     expect(() => validateEnvelope(message, identity, "runtime")).not.toThrow();
-    for (const key of ["protocol", "instanceId", "nonce", "revisionId"])
+    for (const key of ["protocol", "instanceId", "nonce", "prototypeId"])
       expect(() =>
         validateEnvelope({ ...message, [key]: "wrong" }, identity, "runtime"),
       ).toThrow();
@@ -192,41 +192,28 @@ describe("artifact transport policy", () => {
   });
 });
 
-it("allows only annotation clearing from runtime, never privileged capture/annotation calls", () => {
-  const identity = {
-    id: "one",
-    revisionId: "revision-one",
-    nonce: "n".repeat(32),
-  };
-  const envelope = {
-    protocol: 1,
-    instanceId: identity.id,
-    revisionId: identity.revisionId,
-    nonce: identity.nonce,
-    payload: null,
-  };
-  expect(() =>
-    validateEnvelope(
-      { ...envelope, type: "annotationClear" },
-      identity,
-      "runtime",
-    ),
-  ).not.toThrow();
-  expect(() =>
-    validateEnvelope(
-      { ...envelope, type: "annotationClear" },
-      identity,
-      "host",
-    ),
-  ).toThrow();
+it("rejects removed runtime and host operations", () => {
+  const identity = { id: "one", prototypeId: "p", nonce: "n" };
   for (const type of [
+    "state",
+    "controls",
+    "feedbackDraft",
+    "element",
+    "annotationClear",
+    "log",
     "capture",
     "annotate",
-    "screenshot",
-    "artifact-preview:capture",
-    "artifact-preview:annotate",
-  ])
-    expect(() =>
-      validateEnvelope({ ...envelope, type }, identity, "runtime"),
-    ).toThrow("POLICY_BLOCKED");
+    "stateChanged",
+    "controlsChanged",
+    "pick",
+  ]) {
+    for (const direction of ["runtime", "host"] as const)
+      expect(() =>
+        validateEnvelope(
+          { protocol: 1, instanceId: identity.id, ...identity, type },
+          identity,
+          direction,
+        ),
+      ).toThrow();
+  }
 });

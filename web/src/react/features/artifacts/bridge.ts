@@ -1,14 +1,7 @@
-import { validElementBounds } from "./capture";
-import type {
-  ArtifactControl,
-  ArtifactFeedbackInput,
-  ArtifactState,
-} from "../../../../../api/services/agent-runtime/artifacts/contracts";
-
 export interface RuntimeConfig {
   protocol: 1;
   instanceId: string;
-  revisionId: string;
+  prototypeId: string;
   nonce: string;
   transport?: "web" | "desktop";
 }
@@ -62,118 +55,12 @@ export function acceptsEnvelope(
     m.protocol === 1 &&
     m.nonce === config.nonce &&
     m.instanceId === config.instanceId &&
-    m.revisionId === config.revisionId &&
+    m.prototypeId === config.prototypeId &&
     typeof m.type === "string" &&
     m.type.length < 64 &&
     (m.requestId === undefined ||
       (typeof m.requestId === "string" && m.requestId.length <= 100))
   );
-}
-export function validateControlValue(
-  control: ArtifactControl,
-  value: unknown,
-): boolean {
-  if (control.type === "toggle") return typeof value === "boolean";
-  if (control.type === "number" || control.type === "range")
-    return (
-      typeof value === "number" &&
-      Number.isFinite(value) &&
-      (control.min === undefined || value >= control.min) &&
-      (control.max === undefined || value <= control.max)
-    );
-  if (typeof value !== "string" || value.length > 2000) return false;
-  if (control.type === "color") return /^#[\da-f]{6}$/i.test(value);
-  return (
-    control.type !== "select" ||
-    !!control.options?.some((option) => option.value === value)
-  );
-}
-export function validateControls(input: unknown): ArtifactControl[] {
-  safeJson(input, 16384);
-  if (!Array.isArray(input) || input.length > 12)
-    throw new Error("At most 12 controls are allowed.");
-  const keys = new Set<string>();
-  for (const c of input) {
-    if (
-      !c ||
-      typeof c !== "object" ||
-      typeof c.key !== "string" ||
-      !/^[a-zA-Z][\w-]{0,63}$/.test(c.key) ||
-      forbidden.has(c.key) ||
-      keys.has(c.key) ||
-      typeof c.label !== "string" ||
-      !c.label.trim() ||
-      c.label.length > 120 ||
-      !["select", "toggle", "range", "number", "color", "text"].includes(c.type)
-    )
-      throw new Error("Invalid artifact control.");
-    keys.add(c.key);
-    for (const key of ["min", "max", "step"])
-      if (
-        c[key] !== undefined &&
-        (typeof c[key] !== "number" || !Number.isFinite(c[key]))
-      )
-        throw new Error("Invalid control bounds.");
-    if (
-      (c.min !== undefined && c.max !== undefined && c.min > c.max) ||
-      (c.step !== undefined && c.step <= 0)
-    )
-      throw new Error("Invalid control range.");
-    if (
-      c.type === "select" &&
-      (!Array.isArray(c.options) ||
-        c.options.length < 1 ||
-        c.options.length > 50 ||
-        c.options.some(
-          (o: any) =>
-            !o ||
-            typeof o.label !== "string" ||
-            o.label.length > 120 ||
-            typeof o.value !== "string" ||
-            o.value.length > 2000,
-        ))
-    )
-      throw new Error("Invalid control options.");
-    if (!validateControlValue(c, c.defaultValue))
-      throw new Error("Invalid control default.");
-  }
-  return safeJson(input) as ArtifactControl[];
-}
-export interface FeedbackDraft {
-  text?: string;
-  modelState?: unknown;
-  element?: ArtifactFeedbackInput["element"];
-}
-export function feedbackInput(
-  draft: FeedbackDraft,
-  state: ArtifactState,
-  idempotencyKey: string,
-): ArtifactFeedbackInput {
-  const result: ArtifactFeedbackInput = {
-    text: typeof draft.text === "string" ? draft.text.slice(0, 8000) : "",
-    parameters: state.controls,
-    modelState:
-      draft.modelState === undefined ? state.modelState : draft.modelState,
-    idempotencyKey,
-  };
-  if (draft.element) {
-    const e = draft.element;
-    if (
-      typeof e.tag !== "string" ||
-      typeof e.text !== "string" ||
-      (e.qaId !== undefined && typeof e.qaId !== "string")
-    )
-      throw new Error("Invalid element annotation.");
-    if (e.bounds && !validElementBounds(e.bounds))
-      throw new Error("Invalid annotation bounds");
-    result.element = {
-      tag: e.tag.slice(0, 80),
-      ...(e.bounds ? { bounds: e.bounds } : {}),
-      text: e.text.slice(0, 500),
-      ...(e.qaId ? { qaId: e.qaId.slice(0, 120) } : {}),
-    };
-  }
-  return safeJson(result);
 }
 export function injectRuntimeConfig(
   html: string,
@@ -214,23 +101,4 @@ export function runtimeId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(24)), (value) =>
     value.toString(16).padStart(2, "0"),
   ).join("");
-}
-export function validateState(input: unknown): ArtifactState {
-  const state = safeJson(input, 16384) as ArtifactState;
-  if (
-    !state ||
-    typeof state !== "object" ||
-    Array.isArray(state) ||
-    !Object.prototype.hasOwnProperty.call(state, "privateState") ||
-    !Object.prototype.hasOwnProperty.call(state, "modelState") ||
-    !state.controls ||
-    typeof state.controls !== "object" ||
-    Array.isArray(state.controls) ||
-    !Number.isSafeInteger(state.etag) ||
-    state.etag < 0 ||
-    !Number.isSafeInteger(state.schemaVersion) ||
-    state.schemaVersion < 1
-  )
-    throw new Error("Saved artifact state is invalid.");
-  return state;
 }

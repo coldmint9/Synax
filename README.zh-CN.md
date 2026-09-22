@@ -226,12 +226,10 @@ scripts/    开发、构建、发布和冒烟测试脚本
 
 [MIT](./LICENSE)
 
-## 对话内交互产物
+## 对话内交互原型
 
-Agent 可以通过 `artifact.publish` 在对话中发布 HTML 或默认导出的 React/TSX 原型；Codex/Claude/ACP 后端也可用完成消息中的 `synax-artifact` 清单发布。产物保存不可变版本，支持内联预览、放大、源码/版本对比、暂停/重载、状态恢复，以及离线 HTML 和源码包导出。
+Agent 在授权工作区编写 HTML 或默认导出的 React/TSX 组件，在成功完成的回复中输出 `synax-prototype` 代码块，JSON 包含 `sourcePath`、`title`、`sourceKind`（`html` 或 `react`）。每条消息最多三个原型，一次编译后存入该消息 metadata；刷新不重新读取源文件。
 
-QA 面板支持原型声明的参数、元素选择和反馈预审。只有用户确认后的反馈进入现有会话队列，参数点击不会直接调用模型，私有状态不自动发给 Agent。
+只呈现直接可交互的轻量卡片，标题在 hover/键盘聚焦时以顶部浮层显示，触屏可见。重启预览后交互状态恢复初始值。没有发布、版本、QA、截图、反馈、持久状态或导出功能；旧记录和历史迁移保留，但旧卡片不再渲染。
 
-**安全边界：** Web 预览需主动运行，浏览器沙箱不保证完全隔离网络或 CPU，请勿输入机密。Electron 使用独立预览会话，阻止外部网络、导航、弹窗和权限请求，不向原型开放 Node、文件系统或应用 IPC。只支持受控依赖和本地资源，不会执行项目构建脚本或自动安装 npm 包。
-
-编写示例见 `api/skills/builtin/interactive-artifacts/`。构建包包含固定编译器和运行依赖，不依赖运行时 CDN。
+保留安全路径读取、固定依赖、限时编译、CSP、Web opaque sandbox 和 Electron 独立临时预览进程。Web 不等同于原生网络/CPU 硬隔离，请勿输入敏感信息。原生预览禁止外部网络、导航、下载和权限，不暴露 Node 或任意宿主 IPC。运行时只交换握手、主题、高度，不安装 npm 包、不执行项目构建脚本、不使用 CDN。编写示例见 `api/skills/builtin/interactive-artifacts/`。

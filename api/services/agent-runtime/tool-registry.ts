@@ -1,4 +1,3 @@
-import { artifactTools } from "./tools/artifact-tools.js";
 import { withCheckpointMutation } from "./checkpoints/mutations.js";
 import { assertHistoryUnlocked } from "./checkpoints/guards.js";
 import { mediaReadTool } from "./tools/media-read.js";
@@ -127,7 +126,6 @@ export class ToolRegistry {
     [
       ...controlTools,
       ...workTools,
-      ...artifactTools,
       verificationTool,
       bashTool,
       fileReadTool,

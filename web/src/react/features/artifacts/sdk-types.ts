@@ -1,31 +1,6 @@
-import type {
-  ArtifactControl,
-  ArtifactState,
-} from "../../../../../api/services/agent-runtime/artifacts/contracts";
-
-/** Authoring contract for the global installed inside previews/exports. This module
- * has no runtime imports; importing it never grants application or Node access. */
+/** No persistent state, controls, feedback or host privileges. */
 export interface SynaxWidget {
-  ready(): Promise<{
-    theme: "light" | "dark";
-    locale: string;
-    state: ArtifactState;
-    standalone: boolean;
-  }>;
-  getState(): ArtifactState;
-  setState(next: {
-    privateState?: unknown;
-    modelState?: unknown;
-  }): Promise<void>;
+  ready(): Promise<{ theme: "light" | "dark"; locale: string }>;
   onThemeChange(listener: (theme: "light" | "dark") => void): () => void;
-  onStateChange(listener: (state: ArtifactState) => void): () => void;
   reportHeight(height: number): void;
-  registerControls(schema: ArtifactControl[], options?: {schemaVersion:number}): Promise<void>;
-  onControlsChange(
-    listener: (values: Record<string, unknown>) => void,
-  ): () => void;
-  requestFeedbackDraft(input: {
-    text?: string;
-    modelState?: unknown;
-  }): Promise<void>;
 }

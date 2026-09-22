@@ -226,12 +226,10 @@ For a bug report, include reproduction steps, your OS and Node.js version, and r
 
 [MIT](./LICENSE)
 
-## Interactive conversation artifacts
+## Interactive conversation prototypes
 
-Agents can publish immutable HTML or default-export React/TSX prototypes with `artifact.publish`. External Codex/Claude/ACP backends can use a completed `synax-artifact` manifest. Conversation cards support inline/fullscreen previews, source and revision comparison, pause/reload, saved interaction state, and offline HTML/source archive exports.
+Write HTML or a default-export React/TSX component in the authorized workspace and emit a complete `synax-prototype` fenced JSON declaration with `sourcePath`, `title` and `sourceKind` (`html` or `react`). Up to three prototypes per completed assistant message are compiled once and saved in that message's metadata. No publication tools, artifact APIs, revision/state tables, QA, screenshots, feedback or exports are used. Existing legacy records are left untouched and not rendered.
 
-The host QA inspector supports declared parameters, element selection and reviewed feedback. Only confirmed feedback enters the existing input queue; changing a control does not invoke the model, and private state is excluded from feedback by default.
+Conversation cards render directly. Titles appear as a top hover/focus overlay (always readable on touch devices); interaction state resets when the preview restarts. Only ready, theme and bounded height messages cross the preview boundary. HTML/React interactions stay inside the preview.
 
-**Security boundary:** Web execution is opt-in and browser sandboxing does not guarantee hard network/CPU isolation. Do not enter secrets. Desktop previews use isolated Electron sessions with external networking, navigation, popups and permissions blocked, without Node, filesystem or application IPC access. Only fixed dependencies and local assets are compiled; project scripts and automatic npm installation are not supported.
-
-Authoring examples live in `api/skills/builtin/interactive-artifacts/`. Packaged builds include the fixed compiler/runtime dependencies and do not require a runtime CDN.
+**Security:** retain workspace path/symlink/secret protection, fixed dependencies, bounded worker compilation, CSP and opaque Web sandbox. Browser sandboxing does not guarantee hard network/CPU isolation; do not enter secrets. Desktop previews retain ephemeral Electron sessions, denied navigation/network/permissions and no Node/host IPC privileges. No npm installs, project build scripts or runtime CDN are executed. Authoring examples are in `api/skills/builtin/interactive-artifacts/`.

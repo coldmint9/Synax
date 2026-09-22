@@ -120,44 +120,8 @@ export class ArtifactSnapshot implements SnapshotReader {
   verify(): void {
     for (const [name, old] of this.captured) {
       const fresh = this.capture(name);
-      if (fresh.digest !== old.digest || fresh.dev !== old.dev || fresh.ino !== old.ino || fresh.mtimeMs !== old.mtimeMs || fresh.ctimeMs !== old.ctimeMs) throw new ArtifactError('INVALID_SOURCE', 'Source changed during build; publish again.');
+      if (fresh.digest !== old.digest || fresh.dev !== old.dev || fresh.ino !== old.ino || fresh.mtimeMs !== old.mtimeMs || fresh.ctimeMs !== old.ctimeMs) throw new ArtifactError('INVALID_SOURCE', 'Source changed during compilation; regenerate the prototype.');
     }
   }
 }
 export function readSnapshot(root: string, entry: string): ArtifactSnapshot { return new ArtifactSnapshot(root, entry); }
-
-/** Crash recovery never re-reads a changed workspace. Missing captured imports fail closed. */
-export class StoredSnapshot implements SnapshotReader {
-  readonly root = '[durable-snapshot]';
-  readonly entry: string;
-  private captured = new Map<string, ArtifactFile>();
-  constructor(entry: string, files: ArtifactFile[]) {
-    this.entry = safeRelativePath(entry);
-    if (!Array.isArray(files) || files.length > ARTIFACT_LIMITS.files) throw new ArtifactError('RESOURCE_LIMIT', 'Stored snapshot file count limit exceeded.');
-    const folded = new Set<string>(); let textBytes = 0, assetBytes = 0;
-    for (const file of files) {
-      const name = safeRelativePath(file.path);
-      const extension = path.posix.extname(name).toLowerCase();
-      const key = name.normalize('NFC').toLowerCase();
-      if (folded.has(key) || file.mediaType !== media[extension] || !['utf8','base64'].includes(file.encoding) || (file.encoding === 'utf8') !== textExtensions.has(extension)) throw new ArtifactError('INVALID_SOURCE', 'Invalid stored snapshot.');
-      folded.add(key);
-      const bytes = Buffer.byteLength(file.content, file.encoding === 'base64' ? 'base64' : 'utf8');
-      if (file.encoding === 'utf8') textBytes += bytes; else assetBytes += bytes;
-      this.captured.set(name, { ...file });
-    }
-    if (textBytes > ARTIFACT_LIMITS.textBytes || assetBytes > ARTIFACT_LIMITS.assetBytes) throw new ArtifactError('RESOURCE_LIMIT', 'Stored snapshot size limit exceeded.');
-    this.read(this.entry);
-  }
-  read(name: string): ArtifactFile {
-    const file = this.captured.get(safeRelativePath(name));
-    if (!file) throw new ArtifactError('INVALID_SOURCE', 'Build was interrupted before its complete source graph was captured; publish again.');
-    return { ...file };
-  }
-  resolve(importer: string, reference: string): ArtifactFile {
-    const candidate = resolveReference(importer, reference);
-    const candidates = path.posix.extname(candidate) ? [candidate] : [candidate, ...['.tsx','.ts','.jsx','.js','.mjs','.json','.css'].map(ext => candidate + ext), ...['/index.tsx','/index.ts','/index.jsx','/index.js'].map(ext => candidate + ext)];
-    return this.read(candidates.find(name => this.captured.has(name)) ?? candidate);
-  }
-  files(): ArtifactFile[] { return [...this.captured.values()].map(file => ({ ...file })).sort((a,b) => a.path.localeCompare(b.path, 'en')); }
-  verify(): void { /* Immutable DB bytes were hash-verified when claiming the recovery job. */ }
-}

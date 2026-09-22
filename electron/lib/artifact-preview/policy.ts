@@ -38,6 +38,11 @@ export function parseId(value: unknown): string {
     return fail();
   return value;
 }
+function parsePrototypeId(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_:-]{1,256}$/.test(value))
+    return fail();
+  return value;
+}
 function rect(value: unknown): ArtifactRect {
   const v = object(value);
   for (const key of ["x", "y", "width", "height"]) {
@@ -77,7 +82,7 @@ export function parseCreate(value: unknown): ArtifactCreate {
   return {
     id: parseId(v.id),
     html: v.html,
-    revisionId: parseId(v.revisionId),
+    prototypeId: parsePrototypeId(v.prototypeId),
     nonce: v.nonce,
     bounds: bounds(v.bounds),
   };
@@ -183,35 +188,18 @@ export class RateLimit {
   }
 }
 
-export const RUNTIME_MESSAGE_TYPES = new Set([
-  "hello",
-  "ready",
-  "state",
-  "resize",
-  "controls",
-  "feedbackDraft",
-  "element",
-  "annotationClear",
-  "log",
-]);
-export const HOST_MESSAGE_TYPES = new Set([
-  "connect",
-  "response",
-  "theme",
-  "stateChanged",
-  "controlsChanged",
-  "pick",
-]);
+export const RUNTIME_MESSAGE_TYPES = new Set(["hello", "ready", "resize"]);
+export const HOST_MESSAGE_TYPES = new Set(["connect", "response", "theme"]);
 export function validateEnvelope(
   message: Record<string, unknown>,
-  identity: { id: string; nonce: string; revisionId: string },
+  identity: { id: string; nonce: string; prototypeId: string },
   direction: "host" | "runtime",
 ): void {
   if (
     message.protocol !== 1 ||
     message.instanceId !== identity.id ||
     message.nonce !== identity.nonce ||
-    message.revisionId !== identity.revisionId
+    message.prototypeId !== identity.prototypeId
   )
     fail();
   if (

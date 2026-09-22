@@ -62,7 +62,7 @@ function scrollToEntry(scrollRoot: HTMLElement | null, entryId: string) {
   // The anchor element is always in the DOM, but its body may still be a height
   // reservation that only mounts once it approaches the viewport. Re-centre
   // after that swap, otherwise jumping to an older message lands short.
-  const target = scrollRoot?.querySelector(`#${sessionEntryDomId(entryId)}`);
+  const target = scrollRoot?.querySelector(`#${CSS.escape(sessionEntryDomId(entryId))}`);
   if (!(target instanceof HTMLElement)) return;
 
   const reservedHeight = target.getBoundingClientRect().height;
@@ -233,7 +233,7 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
       const rootTop = root.getBoundingClientRect().top;
       const next: Array<{ id: string; top: number }> = [];
       for (const turn of turns) {
-        const element = root.querySelector(`#${sessionEntryDomId(turn.id)}`);
+        const element = root.querySelector(`#${CSS.escape(sessionEntryDomId(turn.id))}`);
         if (!(element instanceof HTMLElement)) continue;
         next.push({
           id: turn.id,

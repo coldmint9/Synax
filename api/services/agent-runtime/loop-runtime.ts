@@ -1,3 +1,4 @@
+import { compileCompletedPrototypes } from "./prototype-integration.js";
 import {
   captureCheckpoint,
   captureCompletedReply,
@@ -1303,6 +1304,7 @@ export class AgentLoopRuntime {
               modelResult.step.usage,
               modelResult.step.sources,
             );
+            await compileCompletedPrototypes(assistantMessage, runAbortSignal);
             const completedStep = this.store.updateRunStep(step.id, {
               status: "completed",
               completedAt: nowIso(),
@@ -2039,10 +2041,10 @@ export class AgentLoopRuntime {
     }
   }
 
-  private *finishWorkRun(
+  private async *finishWorkRun(
     sessionId: string,
     run: AgentRun,
-  ): Generator<AgentRunStreamChunk> {
+  ): AsyncGenerator<AgentRunStreamChunk> {
     const work = workStore.current(sessionId)!;
     let message: AgentRuntimeMessage | undefined;
     getRawSqlite().transaction(() => {
@@ -2064,6 +2066,7 @@ export class AgentLoopRuntime {
           "work_result",
         );
     })();
+    if(work.status === "completed" && message) await compileCompletedPrototypes(message);
     const terminalRun = this.store.getRun(run.id);
     const eventType =
       work.status === "completed" ? "run_completed" : "run_failed";
@@ -2090,10 +2093,10 @@ export class AgentLoopRuntime {
     yield { type: "done", sessionId, runId: run.id };
   }
 
-  private *finishYieldedRun(
+  private async *finishYieldedRun(
     sessionId: string,
     run: AgentRun,
-  ): Generator<AgentRunStreamChunk> {
+  ): AsyncGenerator<AgentRunStreamChunk> {
     const handoff = this.store.getRun(run.id).metadata.roundHandoff as {
       stepId: string;
       summary: string;
@@ -2126,6 +2129,7 @@ export class AgentLoopRuntime {
         blockedReason: null,
       });
     })();
+    await compileCompletedPrototypes(message);
     const event = this.events.append({
       sessionId,
       type: "run_completed",
@@ -2143,11 +2147,11 @@ export class AgentLoopRuntime {
     yield { type: "done", sessionId, runId: run.id };
   }
 
-  private *finishControlledGoal(
+  private async *finishControlledGoal(
     sessionId: string,
     run: AgentRun,
     reason: string,
-  ): Generator<AgentRunStreamChunk> {
+  ): AsyncGenerator<AgentRunStreamChunk> {
     const session = this.store.getSession(sessionId),
       goal = rootGoal(session).goal;
     const completed = goal?.status === "completed";
@@ -2174,6 +2178,7 @@ export class AgentLoopRuntime {
       metadata: { goalStatus: goal?.status },
       createdAt: nowIso(),
     });
+    if(completed)await compileCompletedPrototypes(message);
     yield { type: "message", message };
     yield completed
       ? { type: "run_completed", run: finished, message }

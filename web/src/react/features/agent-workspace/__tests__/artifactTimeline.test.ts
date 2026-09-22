@@ -1,48 +1,67 @@
-import { describe, it, expect } from "vitest";
+import { it, expect } from "vitest";
 import { buildConversationTimeline } from "../buildConversationTimeline";
-import { buildTurnRenderSegments } from "../toolCallUtils";
+import { messagePrototypes } from "../artifactTranscript";
 import type { AgentRuntimeMessage } from "../../../../lib/api/agentRuntime";
-const ref = {
-  type: "artifact" as const,
-  artifactId: "art_demo",
-  revisionId: "arv_demo",
+const prototype = {
+  id: "m:abc",
   title: "Demo",
-  presentation: "inline" as const,
+  html: "<html>Demo</html>",
+  sourceKind: "html",
 };
-const message = {
-  id: "msg_art",
+const m: AgentRuntimeMessage = {
+  id: "m",
   sessionId: "s",
   runId: null,
   stepId: null,
   role: "assistant",
-  content: "Demo",
-  createdAt: "2026-09-21T00:00:00Z",
-  metadata: { source: "artifact_publisher", artifacts: [ref] },
-} as AgentRuntimeMessage;
-describe("interactive artifact timeline", () => {
-  it("renders committed artifacts without a run and keeps the fixed revision", () => {
-    const timeline = buildConversationTimeline([], [], [message], []);
-    expect(timeline).toHaveLength(1);
-    expect(timeline[0]).toMatchObject({
-      kind: "agent",
-      turn: { blocks: [{ type: "artifact", reference: ref }] },
-    });
+  content: "",
+  metadata: { source: "interactive_prototype", prototypes: [prototype] },
+  createdAt: "2026-09-22",
+};
+it("renders immutable message prototypes outside work logs without fetching session artifacts", () => {
+  const entries = buildConversationTimeline([], [], [m, m], [], [], {
+    foldWorkRuns: true,
   });
-  it("deduplicates repeated snapshot metadata and ignores untrusted user metadata", () => {
-    expect(
-      buildConversationTimeline([], [], [message, message], []),
-    ).toHaveLength(1);
-    expect(
-      buildConversationTimeline(
-        [],
-        [],
-        [{ ...message, role: "user" }],
-        [],
-      ).some((e) => e.kind === "agent"),
-    ).toBe(false);
+  expect(entries).toHaveLength(1);
+  expect(entries[0]).toMatchObject({
+    kind: "agent",
+    turn: { blocks: [{ type: "prototype", reference: prototype }] },
   });
-  it("preserves artifact blocks when projecting render segments", () =>
-    expect(
-      buildTurnRenderSegments([{ type: "artifact", reference: ref }]),
-    ).toEqual([{ type: "artifact", reference: ref }]));
+});
+it("limits output to three, ignores user/legacy content, and preserves per-item errors", () => {
+  expect(messagePrototypes({ ...m, role: "user" })).toEqual([]);
+  expect(
+    messagePrototypes({
+      ...m,
+      metadata: { source: "artifact_publisher", artifacts: [prototype] },
+    }),
+  ).toEqual([]);
+  expect(
+    messagePrototypes({
+      ...m,
+      metadata: { ...m.metadata, prototypes: Array(5).fill(prototype) },
+    }),
+  ).toHaveLength(3);
+  const entries = buildConversationTimeline(
+    [],
+    [],
+    [
+      {
+        ...m,
+        metadata: {
+          ...m.metadata,
+          prototypeDiagnostics: [
+            {
+              title: "Failed",
+              code: "INVALID_SOURCE",
+              message: "Invalid source",
+            },
+          ],
+        },
+      },
+    ],
+    [],
+  );
+  expect(entries.some((e) => e.kind === "error")).toBe(true);
+  expect(entries.some((e) => e.kind === "agent")).toBe(true);
 });

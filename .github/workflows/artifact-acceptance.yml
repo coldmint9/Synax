@@ -1,4 +1,4 @@
-name: Interactive artifact acceptance
+name: Interactive prototype acceptance
 on:
   workflow_dispatch:
     inputs:
@@ -34,13 +34,15 @@ jobs:
           JS
       - name: API typecheck and artifact/security suites
         run: npx tsc --noEmit
-      - run: npx vitest run api/services/agent-runtime/artifacts api/services/agent-runtime/__tests__/artifact-jobs.test.ts api/services/agent-runtime/__tests__/artifact-feedback.test.ts api/services/agent-runtime/__tests__/artifact-versions.test.ts api/routes/__tests__/agent-artifacts.test.ts api/routes/__tests__/artifact-versions.test.ts api/routes/__tests__/artifact-versions.browser.test.ts --maxWorkers=2
+      - run: npx vitest run api/services/agent-runtime/artifacts api/services/agent-runtime/__tests__/prototype-manifest.test.ts api/services/agent-runtime/__tests__/prototype-integration.test.ts api/services/agent-runtime/__tests__/prototype-persistence.test.ts --maxWorkers=2
       - name: Browser SDK, cards, state and feedback
-        run: npm run test --prefix web -- src/react/features/artifacts src/lib/api/artifacts.test.ts src/lib/api/artifactVersions.test.ts
+        run: npm run test --prefix web -- src/react/features/artifacts
       - name: Web typecheck
         run: npx tsc -p web/tsconfig.json --noEmit
       - name: Build the native package on the matching host
         run: npm run build:desktop
+      - name: Real Web conversation acceptance
+        run: npm run test:prototypes:web
       - name: Native desktop acceptance
         if: runner.os != 'Linux'
         env:
@@ -51,7 +53,7 @@ jobs:
         shell: bash
         run: |
           npm run test:desktop:smoke
-          npm run test:artifacts:desktop
+          npm run test:prototypes:desktop
       - name: Install virtual desktop for Linux native acceptance
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb openbox
@@ -59,7 +61,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           SYNAX_ARTIFACT_NATIVE_SMOKE: '1'
-        run: xvfb-run -a bash -c 'openbox >/tmp/openbox-artifacts.log 2>&1 & npx vitest run electron/lib/artifact-preview --maxWorkers=1 && npm run test:desktop:smoke && npm run test:artifacts:desktop'
+        run: xvfb-run -a bash -c 'openbox >/tmp/openbox-artifacts.log 2>&1 & npx vitest run electron/lib/artifact-preview --maxWorkers=1 && npm run test:desktop:smoke && npm run test:prototypes:desktop'
       - name: Retain safe packaged acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -68,6 +70,8 @@ jobs:
           if-no-files-found: warn
           path: |
             out/artifact-acceptance/packaged-acceptance.json
-            out/artifact-acceptance/packaged-feedback-confirmation.png
+            out/artifact-acceptance/packaged-prototype.png
+            out/prototype-web-acceptance/acceptance.json
+            out/prototype-web-acceptance/conversation.png
             out/desktop-smoke.png
             out/desktop-dark-work.png

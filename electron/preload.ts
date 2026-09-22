@@ -4,12 +4,6 @@ const { contextBridge, ipcRenderer } =
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   artifactPreview: {
-    capture: (
-      input: import("./lib/artifact-preview/types.js").ArtifactCaptureRequest,
-    ) => ipcRenderer.invoke("artifact-preview:capture", input),
-    annotate: (
-      input: import("./lib/artifact-preview/types.js").ArtifactAnnotationRequest,
-    ) => ipcRenderer.invoke("artifact-preview:annotate", input),
     create: (input: import("./lib/artifact-preview/types.js").ArtifactCreate) =>
       ipcRenderer.invoke("artifact-preview:create", input),
     update: (input: import("./lib/artifact-preview/types.js").ArtifactUpdate) =>
