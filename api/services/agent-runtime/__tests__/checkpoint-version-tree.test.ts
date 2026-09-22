@@ -109,6 +109,15 @@ describe("persistent bounded checkpoint tree", () => {
     expect(objects.stats()).toEqual(before);
   });
 
+  it("makes progress when valid keys expand near the JSON node-size target", () => {
+    const changes = Array.from({ length: 16 }, (_, n) => ({ key: String(n).padStart(2, "0") + "\u0000".repeat(1022), value: a }));
+    const root = tree.update(null, changes);
+    expect(tree.size(root)).toBe(16);
+    for (const entry of changes) expect(tree.get(root, entry.key)).toBe(a);
+    const stored = objects.get(root!, "tree");
+    expect(JSON.parse(stored.bytes.toString()).height).toBeLessThan(6);
+  });
+
   it("fails closed on structurally invalid tree objects even when their hash is valid", () => {
     const bad = objects.put("tree", Buffer.from('{"v":1,"height":0,"count":2,"entries":[["z","' + a + '"],["a","' + a + '"]]}'), [a]);
     expect(() => tree.get(bad, "z")).toThrow(/tree/i);

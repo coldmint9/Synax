@@ -84,7 +84,12 @@ function partition<T>(items: readonly T[]): T[][] {
   for (const item of items) {
     const size = Buffer.byteLength(JSON.stringify(item)) + 1;
     if (size > TARGET_BYTES) throw new VersionStoreError("VERSION_TREE_SIZE", "Tree item exceeds its node size budget.");
-    if (group.length && (bytes + size > TARGET_BYTES || group.length === MAX_ITEMS)) {
+    // Two maximally escaped valid keys can exceed the preferred fill target
+    // while still fitting the hard node limit. Permit a pair so branch packing
+    // always reduces fanout rather than manufacturing a chain of unary nodes.
+    const overTarget = bytes + size > TARGET_BYTES;
+    const mustSplit = group.length >= 2 || bytes + size > TREE_NODE_BYTES - 128;
+    if (group.length && ((overTarget && mustSplit) || group.length === MAX_ITEMS)) {
       groups.push(group); group = []; bytes = 0;
     }
     group.push(item); bytes += size;

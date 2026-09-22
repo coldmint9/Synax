@@ -1,3 +1,4 @@
+import { assertTransactionSafe } from '../db/transaction-safety.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import type NativeDatabase from 'libsql';
@@ -10,6 +11,7 @@ export function outsideExecutionContext<T>(action: () => T): T { return contexts
 export function withoutExecutionContext<T>(action: () => T): T { return contexts.run(null, action); }
 
 export function assertDatabaseWriteAllowed(sqlite: NativeDatabase.Database, databasePath: string): void {
+  assertTransactionSafe(sqlite);
   const context = contexts.getStore();
   if (context === null) return; // Trusted lifecycle bookkeeping, never model-facing tools.
   const hostId = process.env.SYNAX_RUNTIME_HOST_ID;

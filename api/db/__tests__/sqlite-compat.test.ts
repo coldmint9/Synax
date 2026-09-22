@@ -24,8 +24,10 @@ afterEach(async () => {
   if (tempDir) {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
-  process.env.DATA_ROOT = originalEnv.DATA_ROOT;
-  process.env.LOG_LEVEL = originalEnv.LOG_LEVEL;
+  if (originalEnv.DATA_ROOT === undefined) delete process.env.DATA_ROOT;
+  else process.env.DATA_ROOT = originalEnv.DATA_ROOT;
+  if (originalEnv.LOG_LEVEL === undefined) delete process.env.LOG_LEVEL;
+  else process.env.LOG_LEVEL = originalEnv.LOG_LEVEL;
 });
 
 describe('libsql raw helpers', () => {
@@ -78,4 +80,45 @@ describe('libsql raw helpers', () => {
       .all() as unknown as Array<{ name: string }>;
     expect(rows.map((row) => row.name)).toEqual(['outer']);
   });
+
+  it('preserves SQLITE_FULL through nested version and compatibility transactions', async () => {
+    const { getRawSqlite } = await import('../index.js');
+    const { atomicVersionWrite } = await import('../../services/agent-runtime/checkpoints/version-store/transaction.js');
+    const db = getRawSqlite();
+    db.exec('CREATE TABLE full_tx_test (content BLOB)');
+    const pages = (db.prepare('PRAGMA page_count').get() as { page_count: number }).page_count;
+    const free = (db.prepare('PRAGMA freelist_count').get() as { freelist_count: number }).freelist_count;
+    const size = (db.prepare('PRAGMA page_size').get() as { page_size: number }).page_size;
+    db.exec(`PRAGMA max_page_count=${pages}`);
+    let error: unknown;
+    try {
+      db.transaction(() => atomicVersionWrite(db, () => db.prepare('INSERT INTO full_tx_test VALUES(zeroblob(?))').run((free + 8) * size)))();
+    } catch (failure) { error = failure; }
+    expect(error).toMatchObject({ code: 'SQLITE_FULL' });
+    expect(db.inTransaction).toBe(false);
+    expect(db.prepare('SELECT count(*) AS n FROM full_tx_test').get()).toMatchObject({ n: 0 });
+    expect(() => db.prepare('INSERT INTO full_tx_test VALUES(NULL)').run()).toThrow(/reopen|unsafe/i);
+  });
+
+  it('does not let the compatibility wrapper commit after a failed version savepoint rollback', async () => {
+    const { getRawSqlite } = await import('../index.js');
+    const { atomicVersionWrite } = await import('../../services/agent-runtime/checkpoints/version-store/transaction.js');
+    const db = getRawSqlite();
+    db.exec('CREATE TABLE poisoned_tx_test (name TEXT)');
+    const execute = db.exec.bind(db);
+    let fail = true;
+    const spy = vi.spyOn(db, 'exec').mockImplementation(sql => {
+      if (fail && sql.startsWith('ROLLBACK TO SAVEPOINT synax_version_')) { fail = false; throw new Error('injected rollback failure'); }
+      return execute(sql);
+    });
+    try {
+      expect(() => db.transaction(() => {
+        try {
+          atomicVersionWrite(db, () => { db.prepare("INSERT INTO poisoned_tx_test VALUES('must rollback')").run(); throw new Error('action failed'); });
+        } catch { /* The outer wrapper must still reject COMMIT. */ }
+      })()).toThrow(/reopen|unsafe/i);
+      expect(db.prepare('SELECT count(*) AS n FROM poisoned_tx_test').get()).toMatchObject({ n: 0 });
+    } finally { spy.mockRestore(); }
+  });
+
 });
