@@ -389,6 +389,67 @@ describe("agentLoopRuntime", () => {
     fs.writeFileSync(API_SESSION_LOG_FILE, "", "utf8");
   });
 
+  it("persists bounded delta bursts instead of one event and undo entry per provider token", async () => {
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      workDir: process.cwd(),
+    });
+    queueMockStep(
+      makeStream([
+        ...Array.from({ length: 1000 }, () => ({
+          type: "text-delta" as const,
+          text: "x",
+        })),
+        { type: "finish-step", finishReason: "stop", usage: {} },
+        { type: "finish", finishReason: "stop", totalUsage: {} },
+      ]),
+    );
+    const chunks = await collectChunks(
+      agentLoopRuntime.streamRun(session.id, {
+        message: "Produce token bursts",
+      }),
+    );
+    const deltas = agentRuntimeStore
+      .listEvents(session.id)
+      .filter((event) => event.type === "message_delta");
+    expect(deltas.map((event) => event.payload.delta).join("")).toBe(
+      "x".repeat(1000),
+    );
+    expect(deltas.length).toBeLessThan(100);
+    expect(
+      chunks
+        .filter((chunk) => chunk.type === "message_delta")
+        .map((chunk) => (chunk as { delta: string }).delta)
+        .join(""),
+    ).toBe("x".repeat(1000));
+    expect(agentRuntimeStore.listMessages(session.id).at(-1)?.content).toBe(
+      "x".repeat(1000),
+    );
+    if (process.env.SYNAX_NATIVE_BURST_REPORT) {
+      const { getRawSqlite } = await import("../../../db/index.js");
+      const undo = getRawSqlite()
+        .prepare(
+          "SELECT count(*) AS count FROM conversation_history_journal WHERE session_id=? AND table_name='agent_runtime_events' AND record_key IN (SELECT id FROM agent_runtime_events WHERE session_id=? AND type='message_delta')",
+        )
+        .get(session.id, session.id) as { count: number };
+      fs.writeFileSync(
+        process.env.SYNAX_NATIVE_BURST_REPORT,
+        JSON.stringify(
+          {
+            scope: "real-native-loop-with-provider-fixture",
+            providerDeltas: 1000,
+            persistedDeltaEvents: deltas.length,
+            deltaUndoEntries: undo.count,
+            finalContentBytes: 1000,
+          },
+          null,
+          2,
+        ),
+        { flag: "wx" },
+      );
+    }
+  });
+
   it("captures native input and reply boundaries and restores the exact earlier turn", async () => {
     const { listCheckpoints } = await import("../checkpoints/store.js");
     const { applyHistory } = await import("../checkpoints/operations.js");

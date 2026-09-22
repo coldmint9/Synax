@@ -1,3 +1,4 @@
+import { coalesceLoopDeltas } from "./loop-delta-bursts.js";
 import { persistInlineVisualization } from "./visualization-integration.js";
 import { filterHistoryFileReads } from "./checkpoints/state.js";
 import {
@@ -739,7 +740,13 @@ export class AgentLoopRuntime {
           pendingResume = null;
         }
 
-        rebuildSessionFileReads(sessionId, filterHistoryFileReads(sessionId, this.store.listToolCalls(sessionId)));
+        rebuildSessionFileReads(
+          sessionId,
+          filterHistoryFileReads(
+            sessionId,
+            this.store.listToolCalls(sessionId),
+          ),
+        );
 
         let clearingActivated = false;
 
@@ -853,28 +860,32 @@ export class AgentLoopRuntime {
             runId: run.id,
             stepIndex: step.index,
           });
-          for await (const event of this.generateStep({
-            sessionId,
-            stepId: step.id,
-            prompt: currentPrompt,
-            input,
-            profile,
-            context,
-            history,
-            previousParts: previousStepParts,
-            previousToolCalls,
-            stepIndex: step.index,
-            maxSteps: convergenceThreshold,
-            converging: shouldConverge(step.index, convergenceThreshold),
-            blockedByPermission: pendingPermission?.userReply === "reject",
-            previousStepUsage: previousStep?.metadata?.usage as
-              | Record<string, unknown>
-              | undefined,
-            abortSignal: runAbortSignal,
-            clearingActivated,
-            contextLimit: runContextLimit,
-            outputReserve: runOutputReserve,
-          })) {
+          for await (const event of coalesceLoopDeltas(
+            (stepSignal) =>
+              this.generateStep({
+                sessionId,
+                stepId: step.id,
+                prompt: currentPrompt,
+                input,
+                profile,
+                context,
+                history,
+                previousParts: previousStepParts,
+                previousToolCalls,
+                stepIndex: step.index,
+                maxSteps: convergenceThreshold,
+                converging: shouldConverge(step.index, convergenceThreshold),
+                blockedByPermission: pendingPermission?.userReply === "reject",
+                previousStepUsage: previousStep?.metadata?.usage as
+                  | Record<string, unknown>
+                  | undefined,
+                abortSignal: stepSignal,
+                clearingActivated,
+                contextLimit: runContextLimit,
+                outputReserve: runOutputReserve,
+              }),
+            runAbortSignal,
+          )) {
             if (inputQueueService.getForceInjectId(sessionId)) {
               stepForceInjectRequested = true;
               break;
@@ -2101,7 +2112,8 @@ export class AgentLoopRuntime {
           "work_result",
         );
     })();
-    if(work.status === "completed" && message) persistInlineVisualization(message);
+    if (work.status === "completed" && message)
+      persistInlineVisualization(message);
     const terminalRun = this.store.getRun(run.id);
     const eventType =
       work.status === "completed" ? "run_completed" : "run_failed";
@@ -2213,7 +2225,7 @@ export class AgentLoopRuntime {
       metadata: { goalStatus: goal?.status },
       createdAt: nowIso(),
     });
-    if(completed)persistInlineVisualization(message);
+    if (completed) persistInlineVisualization(message);
     yield { type: "message", message };
     yield completed
       ? { type: "run_completed", run: finished, message }
