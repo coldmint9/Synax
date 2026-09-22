@@ -1,0 +1,14 @@
+{
+  "scope": "actual-transcript-route-only",
+  "events": 10000,
+  "batchRows": 32,
+  "generationMs": 6537.70675,
+  "objectStats": {
+    "objects": 10489,
+    "bytes": 7154404
+  },
+  "rollbackMs": 5.975250000000415,
+  "immutableObjectReads": 15,
+  "rss": 310116352,
+  "heapUsed": 166506744
+}
