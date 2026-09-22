@@ -78,6 +78,13 @@ function menuRoles(items: any[]): string[] {
     .filter(Boolean);
 }
 
+function flattenMenuLabels(items: any[]): string[] {
+  return items.flatMap((item) => [
+    item.label,
+    ...flattenMenuLabels(item.submenu ?? []),
+  ]);
+}
+
 describe("desktop UI update menu", () => {
   it.each(["darwin", "win32"] as const)(
     "exposes a manual check on packaged %s",
@@ -106,7 +113,8 @@ describe("desktop platform contract", () => {
     const items = electron.Menu.buildFromTemplate.mock.lastCall![0] as any[];
     expect(items[0].label).toBe(target === "darwin" ? "Synax" : "文件");
     const roles = menuRoles(items);
-    expect(roles).toContain("about");
+    const labels = flattenMenuLabels(items);
+    expect(labels).toContain("关于 Synax");
     expect(roles).toContain("quit");
     for (const role of ["services", "hide", "hideOthers", "unhide", "front"]) {
       expect(roles.includes(role)).toBe(target === "darwin");

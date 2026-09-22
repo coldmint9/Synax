@@ -51,8 +51,8 @@ export const UserMessageBlock = memo(function UserMessageBlock({
       ? null
       : checkpoint?.reason ||
         (zh
-          ? "此消息没有可恢复的历史快照"
-          : "No recoverable checkpoint for this message"));
+          ? "此消息没有可用的会话检查点"
+          : "No conversation checkpoint for this message"));
   return (
     <div className="flex justify-end">
       {editing ? (

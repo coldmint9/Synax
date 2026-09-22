@@ -1,4 +1,5 @@
 import { compileCompletedPrototypes } from "./prototype-integration.js";
+import { filterHistoryFileReads } from "./checkpoints/state.js";
 import {
   captureCheckpoint,
   captureCompletedReply,
@@ -115,7 +116,12 @@ import {
 } from "../llm-runtime/thinking-mode-strategy.js";
 import { getGlobalConfigForRuntime } from "../../lib/config/config-store.js";
 import { logger } from "../../lib/logger.js";
-import { CONTEXT_TOOL_CLEAR_THRESHOLD } from "../../lib/env.js";
+import {
+  CONTEXT_TOOL_CLEAR_THRESHOLD,
+  CONTEXT_TOOL_CLEAR_KEEP_RECENT,
+  CONTEXT_TOOL_CLEAR_EXCLUDE,
+} from "../../lib/env.js";
+import { computeClearedToolCallIds } from "./loop-model-messages.js";
 import { inputQueueService } from "./input-queue-service.js";
 import { warmupMcpForSession } from "../mcp/mcp-session-tool-provider.js";
 
@@ -726,7 +732,7 @@ export class AgentLoopRuntime {
           pendingResume = null;
         }
 
-        rebuildSessionFileReads(sessionId, this.store.listToolCalls(sessionId));
+        rebuildSessionFileReads(sessionId, filterHistoryFileReads(sessionId, this.store.listToolCalls(sessionId)));
 
         let clearingActivated = false;
 
@@ -1408,6 +1414,19 @@ export class AgentLoopRuntime {
           // However, if the original output has been cleared from context, the LLM
           // legitimately needs the data again — skip those from the dedup index.
           const clearedIds = evictedContextToolIds(sessionId);
+          const clearedToolOutputs = computeClearedToolCallIds(
+            this.store,
+            sessionId,
+            {
+              contextLimit: runContextLimit,
+              threshold: CONTEXT_TOOL_CLEAR_THRESHOLD,
+              keepRecent: CONTEXT_TOOL_CLEAR_KEEP_RECENT,
+              excludeTools: CONTEXT_TOOL_CLEAR_EXCLUDE,
+              priorInputTokens: null,
+              forceActivated: clearingActivated,
+            },
+          );
+          for (const id of clearedToolOutputs ?? []) clearedIds.add(id);
 
           const dedupIndex = new Map<string, ToolCallRecord>();
           for (const prev of this.store.listRunToolCalls(run.id)) {
@@ -2628,6 +2647,17 @@ export class AgentLoopRuntime {
       contextLimit,
       currentStepId: input.stepId,
       configurationFingerprint: stableContextFingerprint,
+      clearing: {
+        contextLimit,
+        threshold: CONTEXT_TOOL_CLEAR_THRESHOLD,
+        keepRecent: CONTEXT_TOOL_CLEAR_KEEP_RECENT,
+        excludeTools: CONTEXT_TOOL_CLEAR_EXCLUDE,
+        priorInputTokens:
+          typeof input.previousStepUsage?.inputTokens === "number"
+            ? input.previousStepUsage.inputTokens
+            : null,
+        forceActivated: input.clearingActivated,
+      },
       outputReserve: input.outputReserve ?? input.input.maxTokens ?? 8192,
       systemTokens:
         reminderTokens +

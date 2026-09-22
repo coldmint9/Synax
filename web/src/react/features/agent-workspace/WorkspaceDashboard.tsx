@@ -932,21 +932,17 @@ function RepositoryCard({
           disabled={loading || unavailable}
           onSwitched={() => void reload()}
         />
-        <span
-          className={`ws-repo-state ${unavailable ? "bg-warning/15 text-warning" : environment.dirty ? "bg-warning/15 text-warning" : "bg-success/15 text-success"}`}
-        >
-          {unavailable
-            ? t(
-                repository.status === "missing"
-                  ? "workspaceRepositoryMissing"
-                  : repository.status === "not_repository"
-                    ? "workspaceRepositoryNotGit"
-                    : "workspaceRepositoryError",
-              )
-            : environment.dirty
-              ? t("workspaceChangeModified")
-              : t("workspaceNoChanges")}
-        </span>
+        {unavailable && (
+          <span className="ws-repo-state bg-warning/15 text-warning">
+            {t(
+              repository.status === "missing"
+                ? "workspaceRepositoryMissing"
+                : repository.status === "not_repository"
+                  ? "workspaceRepositoryNotGit"
+                  : "workspaceRepositoryError",
+            )}
+          </span>
+        )}
         <button
           type="button"
           className="ws-repo-action"

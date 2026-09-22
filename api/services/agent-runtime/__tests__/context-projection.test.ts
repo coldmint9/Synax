@@ -26,7 +26,7 @@ beforeEach(resetAgentRuntimeFixtures);
 // previous spy as "original" and recurses.
 afterEach(() => vi.restoreAllMocks());
 const toolSet = buildLoopToolSet([]);
-function fixture() {
+function fixture(reasoningLength = 2000) {
   const session = agentSessionRuntime.create(executorInput);
   store.appendMessage({
     id: "u",
@@ -67,7 +67,7 @@ function fixture() {
         workId: work.id,
         reasoningParts: [
           {
-            text: `private-thought-${n} ` + "x".repeat(2000),
+            text: `private-thought-${n} ` + "x".repeat(reasoningLength),
             providerMetadata: { anthropic: { signature: `signature-${n}` } },
           },
         ],
@@ -80,7 +80,7 @@ function fixture() {
       stepId: `step-${n}`,
       kind: "thought",
       sequence: 1,
-      content: `private-thought-${n} ` + "x".repeat(2000),
+      content: `private-thought-${n} ` + "x".repeat(reasoningLength),
       toolCallId: null,
       metadata: {},
       createdAt: `2026-09-13T00:00:0${n}Z`,
@@ -101,7 +101,7 @@ function fixture() {
   return session.id;
 }
 describe("persistent work context projection", () => {
-  it("manually compacts below automatic thresholds while preserving recent steps and source history", () => {
+  it("manually compacts below the hard window while preserving recent steps and source history", () => {
     const sessionId = fixture();
     const input = {
       sessionId,
@@ -188,38 +188,175 @@ describe("persistent work context projection", () => {
     ).toThrow("context_blocked");
   });
 
-  it("keeps full history while auto compaction is disabled, ignoring the window cap", () => {
+  it.each([undefined, false, true])(
+    "ignores legacy early-compaction policy with disabled=%s",
+    (disabled) => {
+      const sessionId = fixture();
+      store.updateSessionMetadata(sessionId, {
+        contextCompactionPolicy: {
+          disabled,
+          effectiveWindowCap: 6000,
+          prepareRatio: 0.1,
+          highRatio: 0.2,
+          lowRatio: 0.05,
+          minStableRequests: 0,
+          minReclaimRatio: 0.01,
+        },
+        contextCompactionState: {
+          version: 1,
+          epoch: 0,
+          committedRequestCount: 0,
+          draft: { version: 1, fromStepId: null, throughStepId: "step-4" },
+        },
+      });
+      const result = projectWorkContext({
+        sessionId,
+        toolSet,
+        contextLimit: 60000,
+        outputReserve: 2000,
+        systemTokens: 100,
+      });
+      expect(result.compacted).toBe(false);
+      expect(result.compaction?.action).toBe("keep");
+      expect(result.compaction?.reason).toBe("within-hard-window");
+      expect(result.compaction?.watermarks.budget).toBe(58000);
+      expect(workStore.current(sessionId)?.checkpoint).toBeFalsy();
+      expect(JSON.stringify(result.messages)).toContain("private-thought-1");
+      expect(
+        store.getRunStep("step-1").metadata.contextMemorySegment,
+      ).toBeUndefined();
+      expect(
+        store.getSession(sessionId).sessionMetadata?.contextCompactionState,
+      ).not.toHaveProperty("draft");
+    },
+  );
+
+  it.each([120_000, 200_000, 500_000, 920_000])(
+    "does not compact a 1M model at %i tokens",
+    (tokens) => {
+      const sessionId = fixture(Math.ceil(tokens / 6));
+      const input = {
+        sessionId,
+        toolSet,
+        contextLimit: 1_000_000,
+        outputReserve: 8192,
+        systemTokens: 100,
+      };
+      const original = buildLoopModelMessages(store, sessionId, toolSet);
+      const result = projectWorkContext(input);
+      expect(result.originalTokens).toBeGreaterThan(tokens);
+      expect(result.compacted).toBe(false);
+      expect(result.messages).toEqual(original);
+      expect(projectWorkContext(input).messages).toEqual(original);
+      expect(workStore.current(sessionId)?.checkpoint).toBeFalsy();
+      for (let n = 1; n <= 6; n++)
+        expect(
+          store.getRunStep(`step-${n}`).metadata.contextMemorySegment,
+        ).toBeUndefined();
+    },
+  );
+
+  it("keeps an exact-fit request and rescues only once it crosses the physical boundary", () => {
     const sessionId = fixture();
-    store.updateSessionMetadata(sessionId, {
-      contextCompactionPolicy: { disabled: true, effectiveWindowCap: 6000 },
-    });
-    const result = projectWorkContext({
+    const input = {
       sessionId,
       toolSet,
-      contextLimit: 60000,
-      outputReserve: 2000,
+      contextLimit: 1_000_000,
+      outputReserve: 8192,
       systemTokens: 100,
+    };
+    const full = projectWorkContext(input);
+    const exact = { ...input, contextLimit: full.tokens + input.outputReserve };
+    expect(projectWorkContext(exact).messages).toEqual(full.messages);
+    const rescued = projectWorkContext({
+      ...exact,
+      contextLimit: exact.contextLimit - 1,
     });
-    expect(result.compacted).toBe(false);
-    expect(result.compaction?.action).toBe("keep");
-    expect(result.compaction?.reason).toBe("auto-compaction-disabled");
-    expect(result.compaction?.watermarks.budget).toBeGreaterThan(6000);
-    expect(workStore.current(sessionId)?.checkpoint).toBeFalsy();
-    expect(JSON.stringify(result.messages)).toContain("private-thought-1");
-
-    const controlId = fixture();
-    store.updateSessionMetadata(controlId, {
-      contextCompactionPolicy: { effectiveWindowCap: 6000 },
-    });
-    const control = projectWorkContext({
-      sessionId: controlId,
-      toolSet,
-      contextLimit: 60000,
-      outputReserve: 2000,
-      systemTokens: 100,
-    });
-    expect(control.compacted).toBe(true);
+    expect(rescued.compacted).toBe(true);
+    expect(rescued.compaction?.reason).toBe("hard-pressure");
+    expect(rescued.tokens).toBeLessThanOrEqual(full.tokens - 1);
   });
+
+  it.each([true, false])(
+    "preserves independent tool clearing with Work=%s",
+    (hasWork) => {
+      const sessionId = fixture();
+      for (let n = 1; n <= 6; n++) {
+        store.appendToolCall({
+          id: `clear-tc-${n}`,
+          sessionId,
+          runId: "run",
+          stepId: `step-${n}`,
+          modelToolCallId: `clear-call-${n}`,
+          toolId: n === 1 ? "task.get" : "file.read",
+          category: "read",
+          mutability: "read",
+          argsHash: `hash-${n}`,
+          inputRef: { path: `file-${n}` },
+          inputSummary: "",
+          outputRef: { text: `FULL_TOOL_OUTPUT_${n}` },
+          outputSummary: `summary-${n}`,
+          status: "completed",
+          permissionDecisionId: null,
+          startedAt: `2026-09-13T00:00:0${n}Z`,
+          endedAt: `2026-09-13T00:00:0${n}Z`,
+          error: null,
+        });
+        store.appendRunPart({
+          id: `clear-part-${n}`,
+          sessionId,
+          runId: "run",
+          stepId: `step-${n}`,
+          kind: "tool_call",
+          sequence: 3,
+          content: "",
+          toolCallId: `clear-tc-${n}`,
+          metadata: {},
+          createdAt: `2026-09-13T00:00:0${n}Z`,
+        });
+      }
+      if (!hasWork) vi.spyOn(workStore, "current").mockReturnValue(null);
+      const clearing = {
+        priorInputTokens: 500_000,
+        contextLimit: 1_000_000,
+        threshold: 0.5,
+        keepRecent: 3,
+        excludeTools: ["task.get"],
+      };
+      const input = {
+        sessionId,
+        toolSet,
+        contextLimit: 1_000_000,
+        outputReserve: 8192,
+        systemTokens: 100,
+        clearing,
+      };
+      const full = projectWorkContext(input);
+      expect(JSON.stringify(full.messages)).toContain("FULL_TOOL_OUTPUT_2");
+      const cleared = projectWorkContext({
+        ...input,
+        clearing: { ...clearing, priorInputTokens: 500_001 },
+      });
+      expect(cleared.compacted).toBe(false);
+      const text = JSON.stringify(cleared.messages);
+      expect(text).toContain("private-thought-1");
+      expect(text).toContain("result cleared");
+      for (const n of [1, 4, 5, 6])
+        expect(text).toContain(`FULL_TOOL_OUTPUT_${n}`);
+      for (const n of [2, 3])
+        expect(text).not.toContain(`FULL_TOOL_OUTPUT_${n}`);
+      expect(
+        projectWorkContext({
+          ...input,
+          clearing: { ...clearing, priorInputTokens: 1, forceActivated: true },
+        }).messages,
+      ).toEqual(cleared.messages);
+      expect(
+        store.listToolCalls(sessionId).find((c) => c.id === "clear-tc-2")
+          ?.outputRef,
+      ).toEqual({ text: "FULL_TOOL_OUTPUT_2" });
+    },
+  );
 
   it("still rescues at the physical hard window and supports manual compaction while disabled", () => {
     const sessionId = fixture();

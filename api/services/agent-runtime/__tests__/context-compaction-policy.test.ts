@@ -5,20 +5,9 @@ import {
   resolveContextCompactionPolicy,
   type ContextCompactionDecision,
   type ContextCompactionPolicy,
-  type ContextWatermarks,
 } from "../context-compaction-policy.js";
 
-const defaults = {
-  effectiveWindowCap: 120_000,
-  prepareRatio: 0.65,
-  highRatio: 0.8,
-  lowRatio: 0.5,
-  minStableRequests: 8,
-  minReclaimRatio: 0.2,
-  keepRecentSteps: 2,
-  memoryTokenBudget: 6_000,
-  safetyTokens: 1_024,
-};
+const defaults = { keepRecentSteps: 2, memoryTokenBudget: 6_000 };
 
 function evaluate(
   overrides: Partial<Parameters<typeof evaluateContextCompaction>[0]> = {},
@@ -49,20 +38,44 @@ function pricedPolicy(
   });
 }
 
+const legacyPolicy = {
+  effectiveWindowCap: 120_000,
+  prepareRatio: 0.65,
+  highRatio: 0.8,
+  lowRatio: 0.5,
+  minStableRequests: 8,
+  minReclaimRatio: 0.2,
+  safetyTokens: 1024,
+  disabled: false,
+};
+
 describe("resolveContextCompactionPolicy", () => {
-  it("uses exactly the documented defaults, with unknown economics", () => {
+  it("only defaults retention and memory settings", () => {
     expect(resolveContextCompactionPolicy()).toEqual(defaults);
   });
 
-  it("defaults missing fields, copies values, and does not mutate configuration", () => {
-    const config = Object.freeze({ highRatio: 0.9, keepRecentSteps: 3 });
+  it.each([false, true])(
+    "ignores old scheduling fields even with disabled=%s",
+    (disabled) => {
+      expect(
+        resolveContextCompactionPolicy({ ...legacyPolicy, disabled }),
+      ).toEqual(defaults);
+    },
+  );
+
+  it("copies retained settings without mutating configuration", () => {
+    const config = Object.freeze({ keepRecentSteps: 3 });
     expect(resolveContextCompactionPolicy(config)).toEqual({
       ...defaults,
       ...config,
     });
     const first = resolveContextCompactionPolicy();
-    first.highRatio = 0.95;
-    expect(resolveContextCompactionPolicy().highRatio).toBe(0.8);
+    first.keepRecentSteps = 0;
+    expect(resolveContextCompactionPolicy().keepRecentSteps).toBe(2);
+    const source = pricedPolicy();
+    const copy = resolveContextCompactionPolicy(source);
+    expect(copy.pricing).toEqual(source.pricing);
+    expect(copy.pricing).not.toBe(source.pricing);
   });
 
   it.each([null, false, "policy", 42, []])(
@@ -73,385 +86,152 @@ describe("resolveContextCompactionPolicy", () => {
   );
 
   it.each([
-    { effectiveWindowCap: 0 },
-    { effectiveWindowCap: 1.5 },
-    { effectiveWindowCap: Number.MAX_VALUE },
-    { highRatio: NaN },
-    { lowRatio: -0.1 },
-    { prepareRatio: Infinity },
-    { highRatio: 1 },
-    { lowRatio: 0.7 },
-    { prepareRatio: 0.8 },
-    { highRatio: 0.65 },
-    { minStableRequests: -1 },
-    { minStableRequests: 1.5 },
-    { minReclaimRatio: 0 },
-    { minReclaimRatio: 1.1 },
     { keepRecentSteps: -1 },
+    { keepRecentSteps: 1.5 },
     { memoryTokenBudget: 0 },
-    { safetyTokens: -1 },
-    { safetyTokens: "1024" },
+    { memoryTokenBudget: "6000" },
     { expectedRemainingRequests: NaN },
     { expectedRemainingRequests: -1 },
     { pricing: {} },
     { pricing: null },
-    {
-      pricing: {
-        cachedInputPerMillion: -1,
-        cacheWritePerMillion: 1,
-        summaryCost: 0,
-        retrievalCost: 0,
-      },
-    },
-    {
-      pricing: {
-        cachedInputPerMillion: 1,
-        cacheWritePerMillion: Infinity,
-        summaryCost: 0,
-        retrievalCost: 0,
-      },
-    },
-    {
-      pricing: {
-        cachedInputPerMillion: 1,
-        cacheWritePerMillion: 1,
-        summaryCost: NaN,
-        retrievalCost: 0,
-      },
-    },
-    {
+    ...[
+      "cachedInputPerMillion",
+      "cacheWritePerMillion",
+      "summaryCost",
+      "retrievalCost",
+    ].map((key) => ({
       pricing: {
         cachedInputPerMillion: 1,
         cacheWritePerMillion: 1,
         summaryCost: 0,
-        retrievalCost: -1,
+        retrievalCost: 0,
+        [key]: -1,
       },
-    },
-  ])("rejects invalid numbers, ordering, or incomplete prices: %j", (value) => {
+    })),
+  ])("rejects invalid active settings %j", (value) => {
     expect(() => resolveContextCompactionPolicy(value)).toThrow();
   });
-
-  it("accepts explicit zero costs, horizon, cooldown, retention and safety", () => {
-    expect(
-      resolveContextCompactionPolicy({
-        expectedRemainingRequests: 0,
-        minStableRequests: 0,
-        keepRecentSteps: 0,
-        safetyTokens: 0,
-        pricing: {
-          cachedInputPerMillion: 0,
-          cacheWritePerMillion: 0,
-          summaryCost: 0,
-          retrievalCost: 0,
-        },
-      }),
-    ).toMatchObject({
-      expectedRemainingRequests: 0,
-      minStableRequests: 0,
-      safetyTokens: 0,
-    });
-  });
-
-  it("copies pricing rather than retaining mutable configuration", () => {
-    const source = pricedPolicy();
-    const copy = resolveContextCompactionPolicy(source);
-    expect(copy.pricing).toEqual(source.pricing);
-    expect(copy.pricing).not.toBe(source.pricing);
-  });
 });
 
-describe("contextWatermarks", () => {
-  it("exposes all thresholds and uses the effective cap after output reservation", () => {
-    const marks: ContextWatermarks = contextWatermarks(
-      resolveContextCompactionPolicy(),
-      200_000,
-      8_000,
-    );
-    expect(marks).toEqual({
-      hard: 192_000,
-      budget: 118_976,
-      safety: 1_024,
-      prepare: 77_334,
-      high: 95_180,
-      low: 59_488,
-      minReclaim: 23_795,
-    });
-    expect(
-      contextWatermarks(resolveContextCompactionPolicy(), 100_000, 8_000)
-        .budget,
-    ).toBe(90_976);
-  });
+describe("physical context budget", () => {
+  it.each([200_000, 1_000_000, 1_048_576])(
+    "uses the full %i-token model window minus output reserve",
+    (limit) => {
+      const policy = resolveContextCompactionPolicy(legacyPolicy);
+      expect(contextWatermarks(policy, limit, 8192, 100_000)).toEqual({
+        hard: limit - 8192,
+        budget: limit - 8192,
+        prepare: limit - 8192,
+        high: limit - 8192,
+        low: limit - 8192,
+        minReclaim: 0,
+        safety: 0,
+      });
+    },
+  );
 
-  it("reserves measured growth, bounded to ten percent of the effective window", () => {
-    const policy = resolveContextCompactionPolicy();
-    expect(contextWatermarks(policy, 200_000, 8_000, 2_000)).toMatchObject({
-      safety: 3_024,
-      budget: 116_976,
-    });
-    expect(
-      contextWatermarks(policy, 200_000, 8_000, Number.MAX_SAFE_INTEGER),
-    ).toMatchObject({
-      safety: 13_024,
-      budget: 106_976,
-    });
-  });
-
-  it("bounds safety for tiny windows without manufacturing context capacity", () => {
-    const policy = resolveContextCompactionPolicy();
-    for (const contextLimit of [0, 1, 2, 3, 8, 10, 64, 1_000]) {
-      for (const outputReserve of [0, 1, contextLimit, contextLimit + 1]) {
-        const marks = contextWatermarks(
-          policy,
-          contextLimit,
-          outputReserve,
-          1_000_000,
-        );
-        expect(marks.hard).toBe(Math.max(0, contextLimit - outputReserve));
-        expect(marks.budget).toBe(marks.hard - marks.safety);
-        expect(marks.safety).toBeLessThanOrEqual(Math.floor(marks.hard * 0.2));
-        expect(marks.low).toBeGreaterThanOrEqual(0);
-        expect(marks.low).toBeLessThanOrEqual(marks.prepare);
-        expect(marks.prepare).toBeLessThanOrEqual(marks.high);
-        expect(marks.high).toBeLessThanOrEqual(marks.budget);
-        expect(marks.minReclaim).toBeLessThanOrEqual(marks.budget);
-        for (const value of Object.values(marks))
-          expect(Number.isSafeInteger(value)).toBe(true);
-      }
-    }
-  });
+  it.each([0, 1, 8, 100])(
+    "handles a tiny window of %i without negative budgets",
+    (limit) => {
+      const marks = contextWatermarks(
+        resolveContextCompactionPolicy(),
+        limit,
+        8,
+      );
+      expect(marks.hard).toBe(Math.max(0, limit - 8));
+      expect(marks.budget).toBe(marks.hard);
+    },
+  );
 
   it.each([
-    [-1, 0, 0],
-    [NaN, 0, 0],
-    [10, -1, 0],
-    [10, Infinity, 0],
-    [10, 0, -1],
-    [10, 0, NaN],
-  ])(
-    "rejects invalid window measurements %j/%j/%j",
-    (limit, reserve, growth) => {
-      expect(() =>
-        contextWatermarks(
-          resolveContextCompactionPolicy(),
-          limit,
-          reserve,
-          growth,
-        ),
-      ).toThrow();
-    },
-  );
+    [-1, 0],
+    [Infinity, 0],
+    [1.5, 0],
+    [200_000, -1],
+    [200_000, NaN],
+  ])("rejects invalid context/output limits %j %j", (limit, reserve) => {
+    expect(() =>
+      contextWatermarks(resolveContextCompactionPolicy(), limit, reserve),
+    ).toThrow();
+  });
 });
 
-describe("evaluateContextCompaction", () => {
-  it("keeps below prepare and prepares without committing below high", () => {
-    expect(evaluate({ currentTokens: 70_000 })).toMatchObject({
-      action: "keep",
-      urgent: false,
-    });
-    expect(
-      evaluate({ currentTokens: 80_000, candidateTokens: 30_000 }),
-    ).toMatchObject({ action: "prepare", urgent: false });
-  });
-
-  it("uses inclusive prepare and high thresholds, but strict budget pressure", () => {
-    const watermarks = contextWatermarks(
-      resolveContextCompactionPolicy(),
-      200_000,
-      8_000,
-    );
-    expect(evaluate({ currentTokens: watermarks.prepare }).action).toBe(
-      "prepare",
-    );
-    expect(evaluate({ currentTokens: watermarks.high }).action).toBe("commit");
-    expect(
-      evaluate({ currentTokens: watermarks.budget, stableRequests: 0 }),
-    ).toMatchObject({ action: "defer-cooldown", urgent: false });
-    expect(
-      evaluate({ currentTokens: watermarks.budget + 1, stableRequests: 0 }),
-    ).toMatchObject({ action: "commit", urgent: true });
-  });
-
-  it("prepares a missing optional candidate but blocks if urgent and none exists", () => {
-    expect(evaluate({ candidateTokens: undefined }).action).toBe("prepare");
-    expect(
-      evaluate({ currentTokens: 120_000, candidateTokens: undefined }),
-    ).toMatchObject({ action: "blocked", urgent: true });
-  });
-
-  it("defers cooldown and accepts its exact boundary", () => {
-    expect(evaluate({ stableRequests: 7 }).action).toBe("defer-cooldown");
-    expect(evaluate({ stableRequests: 8 }).action).toBe("commit");
-  });
-
-  it("defers small gains, including no gain and negative gain", () => {
-    for (const candidateTokens of [90_000, 100_000, 110_000]) {
-      expect(evaluate({ candidateTokens }).action).toBe("defer-small-gain");
-    }
-    const minReclaim = contextWatermarks(
-      resolveContextCompactionPolicy(),
-      200_000,
-      8_000,
-    ).minReclaim;
-    expect(evaluate({ candidateTokens: 100_000 - minReclaim }).action).toBe(
-      "commit",
-    );
-    expect(evaluate({ candidateTokens: 100_000 - minReclaim + 1 }).action).toBe(
-      "defer-small-gain",
-    );
-  });
-
-  it("commits an eligible batch, reporting reclaim and a nonempty reason", () => {
-    const decision = evaluate();
-    expect(decision).toMatchObject({
-      action: "commit",
-      urgent: false,
-      reclaimedTokens: 40_000,
-    });
-    expect(decision.reason.length).toBeGreaterThan(0);
-  });
-
-  it.each([193_000, 192_001])(
-    "hard pressure at %i overrides cooldown, cost and minimum reclaim",
+describe("hard-window-only compaction", () => {
+  it.each([0, 60_000, 95_000, 120_000, 200_000, 500_000, 920_001, 991_808])(
+    "keeps %i tokens intact in a 1M window regardless of legacy policy",
     (currentTokens) => {
-      expect(
-        evaluate({
-          policy: pricedPolicy({ expectedRemainingRequests: 0 }),
-          currentTokens,
-          candidateTokens: Math.min(currentTokens - 1, 192_000),
-          stableRequests: 0,
-        }),
-      ).toMatchObject({ action: "commit", urgent: true });
-    },
-  );
-
-  it("defers repeated tiny cuts that would leave the candidate above budget", () => {
-    const policy = pricedPolicy({ expectedRemainingRequests: 0 });
-    const watermarks = contextWatermarks(policy, 200_000, 8_000);
-    for (const currentTokens of [120_000, 121_000, watermarks.hard]) {
-      for (const stableRequests of [0, 8, 20]) {
+      const policy = resolveContextCompactionPolicy(legacyPolicy);
+      for (const stableRequests of [0, 8, 100]) {
         expect(
           evaluate({
             policy,
-            watermarks,
+            watermarks: contextWatermarks(policy, 1_000_000, 8192),
             currentTokens,
-            candidateTokens: currentTokens - 1,
+            candidateTokens: undefined,
             stableRequests,
           }),
-        ).toMatchObject({ action: "defer-small-gain", urgent: true });
+        ).toMatchObject({
+          action: "keep",
+          reason: "within-hard-window",
+          urgent: false,
+        });
       }
-    }
-  });
+    },
+  );
 
-  it("budget pressure still overrides optional gates when a tiny cut reaches budget", () => {
+  it("only commits above hard pressure and accepts an exact-fit candidate", () => {
     const policy = pricedPolicy({ expectedRemainingRequests: 0 });
-    const watermarks = contextWatermarks(policy, 200_000, 8_000);
-    for (const candidateTokens of [watermarks.budget, watermarks.budget - 1]) {
-      expect(
-        evaluate({
-          policy,
-          watermarks,
-          currentTokens: watermarks.budget + 1,
-          candidateTokens,
-          stableRequests: 0,
-        }),
-      ).toMatchObject({ action: "commit", urgent: true });
-    }
-  });
-
-  it("permits meaningful budget-pressure cuts at the exact minimum reclaim", () => {
-    const policy = pricedPolicy({ expectedRemainingRequests: 0 });
-    const watermarks = contextWatermarks(policy, 200_000, 8_000);
-    const currentTokens = 160_000;
+    const watermarks = contextWatermarks(policy, 1_000_000, 8192);
     expect(
       evaluate({
         policy,
         watermarks,
-        currentTokens,
-        candidateTokens: currentTokens - watermarks.minReclaim,
+        currentTokens: watermarks.hard + 1,
+        candidateTokens: watermarks.hard,
         stableRequests: 0,
       }),
-    ).toMatchObject({ action: "commit", urgent: true });
+    ).toMatchObject({
+      action: "commit",
+      reason: "hard-pressure",
+      urgent: true,
+      reclaimedTokens: 1,
+    });
     expect(
       evaluate({
         policy,
         watermarks,
-        currentTokens,
-        candidateTokens: currentTokens - watermarks.minReclaim + 1,
-        stableRequests: 0,
-      }),
-    ).toMatchObject({ action: "defer-small-gain", urgent: true });
+        currentTokens: watermarks.hard,
+        candidateTokens: 60_000,
+      }).action,
+    ).toBe("keep");
   });
 
-  it("blocks an oversized candidate, including a positive gain under urgency", () => {
-    expect(
-      evaluate({ currentTokens: 210_000, candidateTokens: 192_001 }),
-    ).toMatchObject({ action: "blocked", urgent: true });
-    expect(evaluate({ candidateTokens: 192_001 }).action).toBe("blocked");
-    expect(
-      evaluate({ currentTokens: 210_000, candidateTokens: 192_000 }).action,
-    ).toBe("commit");
-  });
-
-  it("requires positive gain even when urgent", () => {
-    for (const candidateTokens of [120_000, 120_001]) {
+  it("blocks overflow without a fitting candidate", () => {
+    for (const candidateTokens of [undefined, 192_001, 200_000]) {
       expect(
-        evaluate({ currentTokens: 120_000, candidateTokens }),
+        evaluate({ currentTokens: 200_000, candidateTokens }),
       ).toMatchObject({ action: "blocked", urgent: true });
     }
   });
 
-  it("allows a zero-token candidate and handles an exhausted window", () => {
-    const watermarks = contextWatermarks(
-      resolveContextCompactionPolicy(),
-      8,
-      8,
-    );
-    expect(
-      evaluate({ watermarks, currentTokens: 1, candidateTokens: 0 }),
-    ).toMatchObject({ action: "commit", urgent: true });
-    expect(
-      evaluate({ watermarks, currentTokens: 1, candidateTokens: 1 }).action,
-    ).toBe("blocked");
-    expect(
-      evaluate({ watermarks, currentTokens: 0, candidateTokens: undefined })
-        .action,
-    ).toBe("keep");
-  });
-
   it.each([
-    { currentTokens: NaN },
     { currentTokens: -1 },
-    { candidateTokens: Infinity },
-    { candidateTokens: -1 },
+    { currentTokens: NaN },
+    { candidateTokens: 1.5 },
     { stableRequests: -1 },
-    { stablePrefixTokens: -1 },
-  ])("rejects invalid decision measurements %j", (overrides) => {
+    { stablePrefixTokens: Infinity },
+  ])("rejects malformed usage %j", (overrides) => {
     expect(() => evaluate(overrides)).toThrow();
-  });
-
-  it("does not mutate frozen inputs", () => {
-    const policy = Object.freeze(resolveContextCompactionPolicy());
-    const watermarks = Object.freeze(contextWatermarks(policy, 200_000, 8_000));
-    const input = Object.freeze({
-      policy,
-      watermarks,
-      currentTokens: 100_000,
-      candidateTokens: 60_000,
-      stableRequests: 8,
-    });
-    expect(evaluateContextCompaction(input)).toEqual(
-      evaluateContextCompaction(input),
-    );
   });
 });
 
-describe("optional economic gate", () => {
+describe("diagnostic economics (never a compaction gate)", () => {
   it("uses currency per million only for token prices, and excludes the stable prefix", () => {
     const decision = evaluate({
       policy: pricedPolicy(),
       stablePrefixTokens: 20_000,
     });
-    expect(decision.action).toBe("commit");
+    expect(decision.action).toBe("keep");
     expect(decision.economics).toMatchObject({
       known: true,
       affectedBeforeTokens: 80_000,
@@ -465,7 +245,7 @@ describe("optional economic gate", () => {
     expect(
       evaluate({ policy: pricedPolicy({ expectedRemainingRequests: 9 }) })
         .action,
-    ).toBe("defer-cost");
+    ).toBe("keep");
   });
 
   it("reports the warm-cache 80k-to-30k break-even including the first post-cut request", () => {
@@ -498,19 +278,19 @@ describe("optional economic gate", () => {
     expect(decision.economics.savingsPerRequest).toBeCloseTo(0.005);
     expect(decision.economics.breakEvenRequests).toBeCloseTo(10.9);
     expect(decision.economics.expectedNetSavings).toBeCloseTo(0.0005);
-    expect(decision.action).toBe("commit");
+    expect(decision.action).toBe("keep");
     expect(
       evaluate({
         ...input,
         policy: { ...policy, expectedRemainingRequests: 10 },
       }).action,
-    ).toBe("defer-cost");
+    ).toBe("keep");
     expect(
       evaluate({
         ...input,
         policy: { ...policy, expectedRemainingRequests: 10.9 },
       }).action,
-    ).toBe("commit");
+    ).toBe("keep");
     // Direct comparison: N warm original reads vs one rewritten suffix + N-1 reads.
     const originalCost = (11 * 80_000 * 0.1) / 1_000_000;
     const compactedCost =
@@ -540,7 +320,7 @@ describe("optional economic gate", () => {
     },
   );
 
-  it("defers below break-even and permits the exact horizon boundary", () => {
+  it("keeps context on both sides of the break-even horizon", () => {
     const pricing = {
       cachedInputPerMillion: 2,
       cacheWritePerMillion: 10,
@@ -552,13 +332,13 @@ describe("optional economic gate", () => {
         policy: pricedPolicy({ pricing, expectedRemainingRequests: 3 }),
         stablePrefixTokens: 20_000,
       }).action,
-    ).toBe("defer-cost");
+    ).toBe("keep");
     expect(
       evaluate({
         policy: pricedPolicy({ pricing, expectedRemainingRequests: 4 }),
         stablePrefixTokens: 20_000,
       }).action,
-    ).toBe("commit");
+    ).toBe("keep");
   });
 
   it.each([
@@ -578,7 +358,7 @@ describe("optional economic gate", () => {
       const decision = evaluate({
         policy: resolveContextCompactionPolicy(config),
       });
-      expect(decision.action).toBe("commit");
+      expect(decision.action).toBe("keep");
       expect(decision.economics).toMatchObject({
         known: false,
         breakEvenRequests: null,
@@ -608,7 +388,7 @@ describe("optional economic gate", () => {
       });
       const decision = evaluate({ policy });
       expect(decision).toMatchObject({
-        action: "defer-cost",
+        action: "keep",
         economics: {
           known: true,
           savingsPerRequest: 0,
@@ -632,7 +412,7 @@ describe("optional economic gate", () => {
       savingsPerRequest: 0,
       breakEvenRequests: null,
     });
-    expect(decision.action).toBe("defer-cost");
+    expect(decision.action).toBe("keep");
   });
 
   it("treats arithmetic overflow as unknown, not a fake economic benefit", () => {
@@ -649,28 +429,5 @@ describe("optional economic gate", () => {
       known: false,
       breakEvenRequests: null,
     });
-  });
-});
-
-describe("compaction kill switch", () => {
-  it("parses disabled strictly and leaves documented defaults untouched otherwise", () => {
-    expect(resolveContextCompactionPolicy().disabled).toBeUndefined();
-    expect(resolveContextCompactionPolicy({ disabled: true }).disabled).toBe(
-      true,
-    );
-    expect(() => resolveContextCompactionPolicy({ disabled: "yes" })).toThrow(
-      TypeError,
-    );
-  });
-
-  it("ignores the effective window cap while disabled", () => {
-    const disabled = resolveContextCompactionPolicy({ disabled: true });
-    const enabled = resolveContextCompactionPolicy();
-    expect(contextWatermarks(disabled, 200_000, 8_000).budget).toBeGreaterThan(
-      120_000,
-    );
-    expect(
-      contextWatermarks(enabled, 200_000, 8_000).budget,
-    ).toBeLessThanOrEqual(120_000);
   });
 });

@@ -47,8 +47,8 @@ export function MessageActionToolbar({
   const unavailable =
     disabledReason ||
     (zh
-      ? "此消息没有可恢复的历史快照"
-      : "No recoverable checkpoint for this message");
+      ? "此消息没有可用的会话检查点"
+      : "No conversation checkpoint for this message");
   const button = (
     label: string,
     icon: React.ReactNode,

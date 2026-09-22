@@ -80,14 +80,32 @@ describe("workspace layout constraints", () => {
 
   it("keeps Git actions on one row and lets the branch absorb width changes", () => {
     expect(declaration(".ws-repo-head", "flex-wrap")).toBe("nowrap");
-    expect(declaration(".ws-branch-trigger.button", "flex")).toBe("1 1 0");
-    expect(declaration(".ws-branch-trigger.button", "min-width")).toBe("0");
+    expect(declaration(".ws-branch-trigger", "flex")).toBe("1 1 0");
+    expect(declaration(".ws-branch-trigger", "min-width")).toBe("0");
     expect(declaration(".ws-repo-head > .ws-icon-button", "flex")).toBe(
       "0 0 auto",
     );
     expect(declaration(".ws-repo-head > .ws-repo-action", "white-space")).toBe(
       "nowrap",
     );
+  });
+
+  it("keeps branch controls flush left and centers their icon and label", () => {
+    expect(
+      declaration(
+        ":is(.work-page, .work-details-dialog) .ws-project-repository .ws-branch-trigger",
+        "padding-left",
+      ),
+    ).toBe("0");
+    expect(declaration(".ws-branch-trigger", "align-items")).toBe("center");
+  });
+
+  it("scrolls the branch list without shrinking wrapped branch rows", () => {
+    expect(declaration(".ws-branch-popover", "display")).toBe("flex");
+    expect(declaration(".ws-branch-dialog", "min-height")).toBe("0");
+    expect(declaration(".ws-branch-list", "overflow-y")).toBe("auto");
+    expect(declaration(".ws-branch-option", "flex-shrink")).toBe("0");
+    expect(declaration(".ws-branch-name", "overflow-wrap")).toBe("anywhere");
   });
 });
 

@@ -335,6 +335,19 @@ describe("WorkspaceDashboard", () => {
     );
   });
 
+  it.each([true, false])(
+    "omits the repository state badge when dirty is %s",
+    (dirty) => {
+      const { container } = renderDashboard({ dirty });
+      expect(
+        container.querySelector(".ws-repo-head .ws-repo-state"),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: /切换 Git 分支/ }),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("hides empty input, output and subagent sections while keeping Git controls", () => {
     renderDashboard({
       changedFiles: [],
@@ -345,7 +358,7 @@ describe("WorkspaceDashboard", () => {
     });
 
     expect(screen.queryByRole("button", { name: /^Subagents/ })).toBeNull();
-    expect(screen.getAllByText("无变更").length).toBeGreaterThan(0);
+    expect(screen.queryByText("无变更")).not.toBeInTheDocument();
     expect(screen.queryByText("暂无读取文件")).toBeNull();
     expect(screen.queryByText("还没有产出物")).toBeNull();
     expect(screen.queryByText("产出文件")).toBeNull();

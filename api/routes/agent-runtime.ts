@@ -1,3 +1,5 @@
+import { visitConversation } from "../services/agent-runtime/checkpoints/retention.js";
+import { planFileUndo } from "../services/agent-runtime/checkpoints/file-plan.js";
 import {
   checkpointSummary,
   previewHistory,
@@ -1606,6 +1608,7 @@ const historyActionSchema = z.object({
   revision: z.number().int().nonnegative(),
   requestId: z.string().min(1).max(128),
   message: z.string().trim().min(1).max(100_000).optional(),
+  includeFiles: z.boolean().default(true),
 });
 agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", (c) => {
   try {
@@ -1621,39 +1624,23 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
     .object({
       checkpointId: z.string().min(1),
       action: z.enum(["rollback", "edit", "fork"]),
+      includeFiles: z.boolean().default(true),
     })
     .safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const sessionId = c.req.param("sessionId");
     if (parsed.data.action !== "fork")
-      return c.json(await previewHistory(sessionId, parsed.data.checkpointId));
+      return c.json(await previewHistory(sessionId, parsed.data.checkpointId, parsed.data.includeFiles));
     assertHistoryUnlocked(sessionId);
     assertHistoryIdle(sessionId);
     const checkpoint = getCheckpoint(sessionId, parsed.data.checkpointId);
-    if (
-      checkpoint.kind !== "reply" ||
-      checkpoint.payload.error ||
-      !checkpoint.payload.manifests
-    )
-      throw new AgentValidationError(
-        "A complete reply checkpoint is required.",
-      );
-    return c.json({
-      checkpointId: checkpoint.id,
-      revision: historyRevision(sessionId),
-      removedMessages: 0,
-      files: checkpoint.payload.manifests.flatMap((m) =>
-        Object.keys(m.files).map((path) => ({
-          root: m.root,
-          path,
-          action: "restore",
-        })),
-      ),
-      conflicts: [],
-      exclusions: SNAPSHOT_EXCLUSIONS,
-      canApply: true,
-    });
+    if (checkpoint.kind !== "reply" || checkpoint.payload.version !== 2) throw new AgentValidationError("A reply boundary is required.");
+    const plan = await planFileUndo(checkpoint, parsed.data.includeFiles);
+    return c.json({ checkpointId: checkpoint.id, revision: historyRevision(sessionId), removedMessages: 0,
+      files: plan.changes.map(c => ({root:c.root,path:c.path,action:c.before ? "restore" : "delete"})),
+      conflicts: plan.conflicts, warnings: [...plan.warnings, "Fork copies the current workspace on demand; unrelated files retain their current versions."], preservedFiles: plan.preservedFiles,
+      exclusions: SNAPSHOT_EXCLUSIONS, canApply: !plan.conflicts.length });
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1676,6 +1663,7 @@ for (const action of ["rollback", "edit", "fork"] as const) {
               input.checkpointId,
               input.revision,
               input.requestId,
+              input.includeFiles,
             ),
             201,
           );
@@ -1710,4 +1698,9 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/recover", async (c) => {
   } catch (error) {
     return runtimeError(c, error);
   }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/history/visit", c => {
+  try { visitConversation(c.req.param("sessionId")); return c.json({visited:true}); }
+  catch(error) { return runtimeError(c,error); }
 });

@@ -1,22 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, Dropdown } from "@heroui/react";
-import {
-  Check,
-  ChevronDown,
-  Folder,
-  GitBranch,
-  LoaderCircle,
-} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ListBox, Popover } from "@heroui/react";
+import { Check, GitBranch, LoaderCircle, Search } from "lucide-react";
 import {
   agentRuntimeApi,
   type SessionGitBranches,
 } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
 import { refreshWorkspace } from "./workspaceRefresh";
-import {
-  groupBranchDirectories,
-  type BranchDirectoryEntry,
-} from "./branchDirectory";
 
 export function RepositoryBranchPicker({
   sessionId,
@@ -34,12 +24,21 @@ export function RepositoryBranchPicker({
   const { locale } = useLocale();
   const zh = locale === "zh";
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [data, setData] = useState<SessionGitBranches | null>(null);
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
   const mutating = useRef(false);
+  useEffect(() => {
+    if (!open) return;
+    // The dialog restores focus after mounting; focus search after that step.
+    const frame = requestAnimationFrame(() => searchRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
   useEffect(
     () => () => {
       generation.current++;
@@ -91,73 +90,30 @@ export function RepositoryBranchPicker({
       if (request === generation.current) setSwitching(false);
     }
   }
-  function renderEntries(entries: BranchDirectoryEntry[]): ReactNode[] {
-    return entries.map((entry) => {
-      if (entry.kind === "directory") {
-        return (
-          <Dropdown.SubmenuTrigger key={`directory:${entry.path}`}>
-            <Dropdown.Item
-              id={`directory:${entry.path}`}
-              textValue={entry.label}
-            >
-              <Folder size={13} aria-hidden />
-              <span className="ws-branch-name" title={entry.path}>
-                {entry.label}
-              </span>
-              {entry.current && (
-                <Check
-                  size={13}
-                  aria-label={zh ? "包含当前分支" : "Contains current branch"}
-                />
-              )}
-              <Dropdown.SubmenuIndicator />
-            </Dropdown.Item>
-            <Dropdown.Popover className="ws-branch-popover">
-              <Dropdown.Menu
-                aria-label={`${zh ? "分支目录" : "Branch directory"}: ${entry.path}`}
-              >
-                {renderEntries(entry.children)}
-              </Dropdown.Menu>
-            </Dropdown.Popover>
-          </Dropdown.SubmenuTrigger>
-        );
-      }
-      const item = entry.branch;
-      return (
-        <Dropdown.Item
-          key={item.name}
-          id={item.name}
-          textValue={entry.label}
-          isDisabled={item.occupied || switching}
-          onAction={() => void select(item.name)}
-        >
-          <span className="ws-branch-name" title={item.name}>
-            {entry.label}
-          </span>
-          {item.current && (
-            <Check size={13} aria-label={zh ? "当前分支" : "Current branch"} />
-          )}
-          {item.occupied && (
-            <small>{zh ? "已被工作树占用" : "In another worktree"}</small>
-          )}
-        </Dropdown.Item>
-      );
-    });
-  }
+  const search = query.trim().toLocaleLowerCase();
+  const visibleBranches =
+    data?.branches.filter((item) =>
+      item.name.toLocaleLowerCase().includes(search),
+    ) ?? [];
+  const searchLabel = zh ? "搜索分支" : "Search branches";
+
   return (
     <>
-      <Dropdown
+      <Popover
         isOpen={open}
         onOpenChange={(value) => {
           setOpen(value);
-          if (value) void load();
+          if (value) {
+            setQuery("");
+            void load();
+          }
         }}
       >
-        <Button
-          size="sm"
-          variant="ghost"
+        <Popover.Trigger<"button">
+          render={(props) => <button {...props} type="button" />}
           className="ws-branch-trigger"
-          isDisabled={disabled || switching}
+          disabled={disabled || switching}
+          title={branch || "HEAD"}
           aria-label={`${zh ? "切换 Git 分支" : "Switch Git branch"}: ${branch || "HEAD"}`}
         >
           <span className="ws-branch-icon" aria-hidden="true">
@@ -168,34 +124,114 @@ export function RepositoryBranchPicker({
             )}
           </span>
           <span className="ws-branch-label">{branch || "HEAD"}</span>
-          <ChevronDown size={10} />
-        </Button>
-        <Dropdown.Popover
+        </Popover.Trigger>
+        <Popover.Content
           className="ws-branch-popover"
           placement="bottom start"
+          offset={6}
         >
-          <Dropdown.Menu aria-label={zh ? "Git 分支" : "Git branches"}>
-            {loading || !data?.branches.length ? (
-              <Dropdown.Item id="loading" isDisabled textValue="loading">
-                {loading
+          <Popover.Dialog
+            aria-label={zh ? "切换 Git 分支" : "Switch Git branch"}
+            className="ws-branch-dialog"
+          >
+            <label className="ws-branch-search">
+              <Search size={15} aria-hidden />
+              <input
+                ref={searchRef}
+                type="search"
+                aria-label={searchLabel}
+                placeholder={searchLabel}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowDown" && event.key !== "ArrowUp")
+                    return;
+                  const options =
+                    listRef.current?.querySelectorAll<HTMLElement>(
+                      '[role="option"]:not([aria-disabled="true"])',
+                    );
+                  if (!options?.length) return;
+                  event.preventDefault();
+                  options[
+                    event.key === "ArrowDown" ? 0 : options.length - 1
+                  ].focus();
+                }}
+              />
+            </label>
+            <p className="ws-branch-heading">{zh ? "分支" : "Branches"}</p>
+            {loading ? (
+              <p role="status" className="ws-branch-empty">
+                {zh ? "加载分支…" : "Loading branches…"}
+              </p>
+            ) : error ? (
+              <p role="alert" className="ws-branch-error">
+                {error}
+              </p>
+            ) : visibleBranches.length ? (
+              <ListBox
+                ref={listRef}
+                className="ws-branch-list"
+                aria-label={zh ? "Git 分支" : "Git branches"}
+                selectionMode="single"
+                selectionBehavior="replace"
+                selectedKeys={new Set(data?.current ? [data.current] : [])}
+                onAction={(key) => void select(String(key))}
+              >
+                {visibleBranches.map((item) => (
+                  <ListBox.Item
+                    key={item.name}
+                    id={item.name}
+                    textValue={item.name}
+                    aria-label={item.name}
+                    aria-description={
+                      item.occupied
+                        ? zh
+                          ? "已被工作树占用"
+                          : "In another worktree"
+                        : undefined
+                    }
+                    isDisabled={item.occupied || switching}
+                    className="ws-branch-option"
+                  >
+                    <GitBranch
+                      size={16}
+                      className="ws-branch-option-icon"
+                      aria-hidden
+                    />
+                    <span className="ws-branch-copy">
+                      <span className="ws-branch-name" title={item.name}>
+                        {item.name}
+                      </span>
+                      {item.occupied && (
+                        <small>
+                          {zh ? "已被工作树占用" : "In another worktree"}
+                        </small>
+                      )}
+                    </span>
+                    {item.current && (
+                      <Check
+                        size={16}
+                        className="ws-branch-check"
+                        aria-label={zh ? "当前分支" : "Current branch"}
+                      />
+                    )}
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            ) : (
+              <p role="status" className="ws-branch-empty">
+                {data?.branches.length
                   ? zh
-                    ? "加载分支…"
-                    : "Loading branches…"
+                    ? "没有匹配的分支"
+                    : "No matching branches"
                   : zh
                     ? "没有可切换的本地分支"
                     : "No local branches"}
-              </Dropdown.Item>
-            ) : (
-              renderEntries(groupBranchDirectories(data.branches))
+              </p>
             )}
-          </Dropdown.Menu>
-          {error && open && (
-            <p role="alert" className="ws-branch-error">
-              {error}
-            </p>
-          )}
-        </Dropdown.Popover>
-      </Dropdown>
+          </Popover.Dialog>
+        </Popover.Content>
+      </Popover>
       {error && !open && (
         <p role="alert" className="ws-branch-error">
           {error}

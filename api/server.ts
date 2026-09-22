@@ -1,3 +1,4 @@
+import { startFileUndoRetention } from "./services/agent-runtime/checkpoints/retention.js";
 import { attachTerminalSockets } from "./services/terminals/terminal-socket.js";
 import { terminalRoutes } from "./routes/terminals.js";
 import { terminalManager } from "./services/terminals/terminal-manager.js";
@@ -131,6 +132,7 @@ let httpServer: Server | undefined;
 let closeTerminalSockets: (() => void) | undefined;
 let shuttingDown = false;
 
+let stopFileUndoRetention = () => {};
 async function startRuntime(): Promise<void> {
   const recovery = await recoverRuntime(runtimeHost.hostId);
   if (recovery.reviewed)
@@ -185,6 +187,7 @@ async function startRuntime(): Promise<void> {
   });
 
   startPermissionTimeoutSweeper();
+  stopFileUndoRetention = startFileUndoRetention();
   startInteractionRecovery();
 
   for (const sessionId of recovery.resumable) runCoordinator.resume(sessionId);
@@ -206,6 +209,7 @@ function startServer(): void {
 }
 
 async function shutdownRuntime(): Promise<void> {
+  stopFileUndoRetention();
   if (shuttingDown) return;
   shuttingDown = true;
   closeTerminalSockets?.();

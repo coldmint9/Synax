@@ -364,15 +364,6 @@ function registerIPC(): void {
 }
 
 async function bootstrap(): Promise<void> {
-  app.setAboutPanelOptions({
-    applicationName: "Synax",
-    applicationVersion: app.getVersion(),
-    copyright: "Copyright (c) 2026 Synax contributors",
-    credits:
-      "作者：coldmint9\nGitHub：https://github.com/coldmint9\nMIT License",
-    authors: ["coldmint9 (https://github.com/coldmint9)"],
-    website: "https://github.com/coldmint9",
-  });
   registerIPC();
   artifactPreviews.registerIPC();
   if (

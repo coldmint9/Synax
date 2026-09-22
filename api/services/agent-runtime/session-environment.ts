@@ -643,6 +643,7 @@ export async function saveSessionEnvironmentFile(
     sessionId,
     () => fs.writeFileSync(absolutePath, content, "utf8"),
     true,
+    [absolutePath],
   );
   return {
     sessionId,

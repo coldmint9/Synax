@@ -922,8 +922,9 @@
 .ws-repo-head > .ws-repo-action {
   white-space: nowrap;
 }
-.ws-branch-trigger.button {
+.ws-branch-trigger {
   display: inline-flex;
+  align-items: center;
   justify-content: flex-start;
   gap: 4px;
   min-width: 0;
@@ -932,8 +933,26 @@
   overflow: hidden;
   height: 24px;
   min-height: 24px;
-  padding: 0 3px;
+  padding: 0 2px 0 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-branch-trigger:hover:not(:disabled) {
+  background: hsl(var(--muted-foreground) / 0.08);
+}
+.ws-branch-trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.ws-branch-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .ws-branch-icon {
   display: inline-flex;
@@ -947,19 +966,125 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ws-branch-trigger > svg {
-  flex-shrink: 0;
-}
 .ws-branch-popover {
-  min-width: 210px;
-  max-width: min(360px, calc(100vw - 24px));
-  max-height: min(360px, 60vh);
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: min(440px, 70vh);
+  padding: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--overlay);
+  color: var(--foreground);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.2);
+}
+.ws-branch-dialog {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  max-height: min(426px, calc(70vh - 14px));
+  padding: 0;
+  outline: none;
+}
+.ws-branch-search {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 10px;
+  margin: 2px 4px 4px;
+  padding: 8px;
+  color: var(--muted);
+}
+.ws-branch-search > svg {
+  flex: 0 0 auto;
+}
+.ws-branch-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 13px;
+  line-height: 22px;
+}
+.ws-branch-search input::placeholder {
+  color: var(--muted);
+}
+.ws-branch-heading {
+  flex: 0 0 auto;
+  margin: 2px 12px 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 20px;
+}
+.ws-branch-list {
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 2px 2px;
+  scroll-padding-block: 4px;
+}
+.ws-branch-option {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+/* Keep this picker neutral in both themes instead of the global selected pill. */
+:root .ws-branch-popover .ws-branch-option,
+:root .ws-branch-popover .ws-branch-option[aria-selected="true"] {
+  width: 100%;
+  margin-inline: 0;
+  background: transparent;
+  color: var(--foreground);
+  box-shadow: none;
+}
+:root .ws-branch-popover .ws-branch-option[data-hovered],
+:root .ws-branch-popover .ws-branch-option[data-focused] {
+  background: var(--default);
+}
+.ws-branch-option[data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ws-branch-option-icon,
+.ws-branch-check {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.ws-branch-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
 }
 .ws-branch-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ws-branch-copy small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 18px;
+}
+.ws-branch-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .ws-branch-error {
   flex: 0 0 100%;

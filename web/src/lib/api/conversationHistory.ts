@@ -25,6 +25,14 @@ export interface HistoryPreview {
   conflicts: Array<{ root: string; path: string; reason: string }>;
   exclusions: string;
   canApply: boolean;
+  warnings?: string[];
+  preservedFiles?: Array<{
+    root: string;
+    path: string;
+    reason: string;
+    kind:
+      "committed" | "git_unverified" | "expired" | "untracked" | "workspace";
+  }>;
 }
 const base = (sessionId: string) =>
   `/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}`;
@@ -40,8 +48,17 @@ export const conversationHistoryApi = {
       signal,
       silent: true,
     }),
-  preview: (sessionId: string, checkpointId: string, action: HistoryAction) =>
-    post<HistoryPreview>(sessionId, "preview", { checkpointId, action }),
+  preview: (
+    sessionId: string,
+    checkpointId: string,
+    action: HistoryAction,
+    includeFiles = true,
+  ) =>
+    post<HistoryPreview>(sessionId, "preview", {
+      checkpointId,
+      action,
+      includeFiles,
+    }),
   apply: (
     sessionId: string,
     action: HistoryAction,
@@ -50,6 +67,7 @@ export const conversationHistoryApi = {
       revision: number;
       requestId: string;
       message?: string;
+      includeFiles?: boolean;
     },
   ) =>
     post<{ sessionId: string; revision?: number; runId?: string }>(
@@ -57,6 +75,8 @@ export const conversationHistoryApi = {
       action,
       body,
     ),
+  visit: (sessionId: string) =>
+    post<{ visited: boolean }>(sessionId, "visit", {}),
   recover: (sessionId: string) =>
     post<{ recovered: boolean }>(sessionId, "recover", {}),
 };

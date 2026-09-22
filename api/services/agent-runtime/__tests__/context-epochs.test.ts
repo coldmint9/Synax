@@ -83,18 +83,21 @@ function fixture(count = 10, length = 2800) {
   return { sessionId: session.id, append, input };
 }
 describe("cache-stable context epochs", () => {
-  it("prepares memory out of the prompt and reuses the unmodified prefix below the high watermark", () => {
+  it("keeps the unmodified prefix without preparing memory below the hard window", () => {
     const f = fixture(9);
     const first = projectWorkContext(f.input);
     expect(first.compacted).toBe(false);
     expect(workStore.current(f.sessionId)?.checkpoint).toBeNull();
     expect(
       store.getSession(f.sessionId).sessionMetadata?.contextCompactionState,
-    ).toMatchObject({ version: 1, draft: { version: 1 } });
+    ).not.toHaveProperty("draft");
+    expect(
+      store.getRunStep("s1").metadata.contextMemorySegment,
+    ).toBeUndefined();
     expect(JSON.stringify(first.messages)).not.toContain("context-memory");
     expect(projectWorkContext(f.input).messages).toEqual(first.messages);
   });
-  it("commits one complete prefix toward the low watermark then stops threshold chatter", () => {
+  it("rescues an overflowing request with one complete prefix and leaves subsequent requests intact", () => {
     const f = fixture(13);
     const first = projectWorkContext(f.input);
     expect(first.compacted).toBe(true);
@@ -172,7 +175,7 @@ it("archives the old canonical checkpoint and retains original requirements acro
   expect(JSON.stringify(result)).toContain("contextCheckpointArchive");
 });
 
-it("defers an optional high-watermark cut when the explicit future horizon cannot amortize it", () => {
+it("does not prepare optional cuts or candidates to evaluate pricing within the window", () => {
   const f = fixture(11);
   store.updateSessionMetadata(f.sessionId, {
     contextCompactionPolicy: {
@@ -187,8 +190,8 @@ it("defers an optional high-watermark cut when the explicit future horizon canno
   });
   const result = projectWorkContext(f.input);
   expect(result.compacted).toBe(false);
-  expect(result.compaction?.action).toBe("defer-cost");
-  expect(result.compaction?.economics.known).toBe(true);
+  expect(result.compaction?.action).toBe("keep");
+  expect(result.compaction?.economics.known).toBe(false);
   expect(workStore.current(f.sessionId)?.checkpoint).toBeNull();
 });
 
@@ -255,7 +258,7 @@ it("keeps the full memory index discoverable across a Work transition with legac
   const f = fixture(13);
   for (const step of store.listRunSteps("run"))
     store.updateRunStep(step.id, { metadata: {} });
-  const first = projectWorkContext(f.input);
+  const first = projectWorkContext({ ...f.input, contextLimit: 36000 });
   expect(first.compacted).toBe(true);
   const checkpoint = workStore.current(f.sessionId)!.checkpoint!;
   expect(first.messages[0].content).toContain(
@@ -330,21 +333,68 @@ it("restores epoch identity conservatively from a checkpoint when session schedu
   );
 });
 
-it('retains media and a message locator when a snapshot-owned queued input is inside a partial cut',async()=>{
-  const f=fixture(4);
-  const inputId='snapshot-media-queue';
-  const {createAsset}=await import('../media-assets.js');
-  const asset=await createAsset(store.getSession(f.sessionId).projectId,'retained.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlWQAAAAASUVORK5CYII=','base64'),'image/png');
-  store.appendMessage({id:inputId,sessionId:f.sessionId,runId:'run',stepId:null,role:'user',content:'Inspect this image',contentParts:[{type:'text',text:'Inspect this image'},{type:'image',assetId:asset.id}],metadata:{source:'input_queue',consumedBeforeStepIndex:1},createdAt:'2026-09-15T00:00:00.500Z'});
-  const step=store.getRunStep('s1');
-  store.updateRunStep(step.id,{metadata:{...step.metadata,runtimeReminder:snapshotRuntimeReminder({},['state-1'],[inputId])}});
+it("retains media and a message locator when a snapshot-owned queued input is inside a partial cut", async () => {
+  const f = fixture(4);
+  const inputId = "snapshot-media-queue";
+  const { createAsset } = await import("../media-assets.js");
+  const asset = await createAsset(
+    store.getSession(f.sessionId).projectId,
+    "retained.png",
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlWQAAAAASUVORK5CYII=",
+      "base64",
+    ),
+    "image/png",
+  );
+  store.appendMessage({
+    id: inputId,
+    sessionId: f.sessionId,
+    runId: "run",
+    stepId: null,
+    role: "user",
+    content: "Inspect this image",
+    contentParts: [
+      { type: "text", text: "Inspect this image" },
+      { type: "image", assetId: asset.id },
+    ],
+    metadata: { source: "input_queue", consumedBeforeStepIndex: 1 },
+    createdAt: "2026-09-15T00:00:00.500Z",
+  });
+  const step = store.getRunStep("s1");
+  store.updateRunStep(step.id, {
+    metadata: {
+      ...step.metadata,
+      runtimeReminder: snapshotRuntimeReminder({}, ["state-1"], [inputId]),
+    },
+  });
   // Use the public replay path without trying to hydrate the fixture asset.
-  const options={excludedStepIds:new Set(['s1','s2']),summarizedInputIds:new Set<string>(),compactionSummary:'Earlier findings'};
-  const replay=buildLoopModelMessages(store,f.sessionId,toolSet,options);
-  const text=JSON.stringify(replay);
+  const options = {
+    excludedStepIds: new Set(["s1", "s2"]),
+    summarizedInputIds: new Set<string>(),
+    compactionSummary: "Earlier findings",
+  };
+  const replay = buildLoopModelMessages(store, f.sessionId, toolSet, options);
+  const text = JSON.stringify(replay);
   expect(text).toContain(asset.id);
   expect(text).toContain(inputId);
-  expect(text).toContain('use context.read for their original text');
-  expect(buildLoopModelMessages(store,f.sessionId,toolSet,options)).toEqual(replay);
-  expect(buildLoopModelMessages(store,f.sessionId,toolSet,{...options,summarizedInputIds:new Set([inputId])})).toEqual(replay);
+  expect(text).toContain("use context.read for their original text");
+  expect(buildLoopModelMessages(store, f.sessionId, toolSet, options)).toEqual(
+    replay,
+  );
+  expect(
+    buildLoopModelMessages(store, f.sessionId, toolSet, {
+      ...options,
+      summarizedInputIds: new Set([inputId]),
+    }),
+  ).toEqual(replay);
+});
+
+it("stops rescue at the first fitting prefix instead of targeting half the window", () => {
+  const f = fixture(40);
+  const result = projectWorkContext({ ...f.input, contextLimit: 108000 });
+  expect(result.originalTokens).toBeGreaterThan(106000);
+  expect(result.compacted).toBe(true);
+  expect(result.tokens).toBeLessThanOrEqual(106000);
+  expect(result.tokens).toBeGreaterThan(53000);
+  expect(workStore.current(f.sessionId)?.checkpoint?.throughStepId).toBe("s8");
 });
