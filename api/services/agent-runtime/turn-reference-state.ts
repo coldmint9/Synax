@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import type { StructuredToolCall } from "./contracts.js";
 import { agentRuntimeStore } from "./session-store.js";
 
 export interface TurnReference {
@@ -33,4 +35,33 @@ export function effectiveTurnMcpIds(sessionId: string): string[] {
   return selected?.length
     ? selected
     : (agentRuntimeStore.getSession(sessionId).mcpServerIds ?? []);
+}
+
+/** Each selected skill loads once per user input, including forced queue inputs
+ * within a Run. Persisted call IDs make permission resume/replay idempotent. */
+export function pendingTurnReferenceSkillLoads(
+  sessionId: string,
+): StructuredToolCall[] {
+  const selected = activeTurnReferences(sessionId);
+  if (!selected?.skillIds.length) return [];
+  const session = agentRuntimeStore.getSession(sessionId);
+  const run = agentRuntimeStore.getRun(session.activeRunId!);
+  const inputId =
+    run.metadata.turnReferenceInputId ?? run.triggerMessageId ?? run.id;
+  const called = new Set(
+    agentRuntimeStore
+      .listRunToolCalls(run.id)
+      .map((call) => call.modelToolCallId),
+  );
+  return [...new Set(selected.skillIds)]
+    .map((skillId) => ({
+      id: `turn_skill_${createHash("sha256")
+        .update(JSON.stringify([run.id, inputId, skillId]))
+        .digest("hex")
+        .slice(0, 24)}`,
+      toolId: "skill.load",
+      args: { skillId },
+      reason: "Load the user-selected skill for this turn.",
+    }))
+    .filter((call) => !called.has(call.id));
 }

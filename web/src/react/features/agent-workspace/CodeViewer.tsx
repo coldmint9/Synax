@@ -1,10 +1,11 @@
 import { useWorkspaceRefresh } from "./workspaceRefresh";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Save } from "lucide-react";
+import { Download, RefreshCw, Save } from "lucide-react";
 import {
   agentRuntimeApi,
   type SessionEnvironmentInputSource,
 } from "../../../lib/api/agentRuntime";
+import { runtimeMedia } from "../../../lib/api/runtimeMedia";
 import { highlightCode, languageForPath } from "./codeHighlight";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { HighlightedCodeEditor } from "./HighlightedCodeEditor";
@@ -16,6 +17,28 @@ import {
   setWorkspaceDraft,
   useSessionWorkspaceStore,
 } from "./state/sessionWorkspaceStore";
+
+type FilePreviewKind = "text" | "markdown" | "html" | "svg" | "image";
+
+const RASTER_IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "avif",
+  "bmp",
+  "ico",
+]);
+
+function previewKindForPath(path: string): FilePreviewKind {
+  const extension = path.split(".").pop()?.toLowerCase() ?? "";
+  if (RASTER_IMAGE_EXTENSIONS.has(extension)) return "image";
+  if (extension === "svg") return "svg";
+  if (extension === "html" || extension === "htm") return "html";
+  if (extension === "md" || extension === "markdown") return "markdown";
+  return "text";
+}
 
 function LineNumbers({ count }: { count: number }) {
   const lines = useMemo(
@@ -49,6 +72,8 @@ export const CodeViewer = memo(function CodeViewer({
 }) {
   const [view, setView] = useState<"preview" | "source">("preview");
   const [content, setContent] = useState("");
+  const [mediaBlob, setMediaBlob] = useState<Blob | null>(null);
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [highlighted, setHighlighted] = useState<{
     content: string;
     path: string;
@@ -65,19 +90,62 @@ export const CodeViewer = memo(function CodeViewer({
   const contentRef = useRef(content);
   const dirtyRef = useRef(false);
   const setTabDirty = useSessionWorkspaceStore((state) => state.setTabDirty);
+  const previewKind = inputSource
+    ? inputSource.assetId
+      ? previewKindForPath(inputSource.label)
+      : "text"
+    : previewKindForPath(path);
 
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
 
-  const editable = Boolean(tabId && !inputSource && !truncated);
+  const editable = Boolean(
+    tabId && !inputSource && !truncated && previewKind !== "image",
+  );
 
   const load = useCallback(async () => {
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     setLoading(true);
     setError(null);
+    setMediaBlob(null);
     try {
+      if (inputSource?.assetId) {
+        const blob = await runtimeMedia.blob(inputSource.assetId);
+        if (requestRef.current !== requestId) return;
+        if (previewKind === "image") {
+          setMediaBlob(blob);
+          setContent("");
+          contentRef.current = "";
+        } else {
+          setMediaBlob(null);
+          const note = `${inputSource.label}\n\n该附件类型暂不支持内联预览，请使用工具栏的下载按钮查看原文件。`;
+          setContent(note);
+          contentRef.current = note;
+        }
+        setTruncated(false);
+        setDirty(false);
+        dirtyRef.current = false;
+        if (tabId) setTabDirty(sessionId, tabId, false);
+        return;
+      }
+      if (!inputSource && previewKind === "image") {
+        const blob = await agentRuntimeApi.getSessionEnvironmentFileMedia(
+          sessionId,
+          path,
+          rootId,
+        );
+        if (requestRef.current !== requestId) return;
+        setMediaBlob(blob);
+        setContent("");
+        contentRef.current = "";
+        setTruncated(false);
+        setDirty(false);
+        dirtyRef.current = false;
+        if (tabId) setTabDirty(sessionId, tabId, false);
+        return;
+      }
       const result = inputSource
         ? inputSource.toolCallId
           ? await agentRuntimeApi.getSessionInputSource(
@@ -117,7 +185,7 @@ export const CodeViewer = memo(function CodeViewer({
     } finally {
       if (requestRef.current === requestId) setLoading(false);
     }
-  }, [path, sessionId, rootId, inputSource, tabId, setTabDirty]);
+  }, [path, sessionId, rootId, inputSource, tabId, setTabDirty, previewKind]);
 
   const save = useCallback(async (): Promise<boolean> => {
     if (!editable || !tabId) return false;
@@ -143,6 +211,26 @@ export const CodeViewer = memo(function CodeViewer({
       setSaving(false);
     }
   }, [editable, path, rootId, sessionId, setTabDirty, tabId]);
+
+  useEffect(() => {
+    if (loading || error) {
+      setMediaUrl(null);
+      return;
+    }
+    const blob =
+      previewKind === "image"
+        ? mediaBlob
+        : previewKind === "svg"
+          ? new Blob([content], { type: "image/svg+xml" })
+          : null;
+    if (!blob) {
+      setMediaUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    setMediaUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [content, error, loading, mediaBlob, previewKind]);
 
   useWorkspaceRefresh(
     sessionId,
@@ -185,7 +273,7 @@ export const CodeViewer = memo(function CodeViewer({
   // Highlight the current draft, not just the original file read. An older
   // asynchronous result must never cover newer text (or another file).
   useEffect(() => {
-    if (loading || error) return;
+    if (loading || error || previewKind === "image") return;
     let cancelled = false;
     void highlightCode(content, path).then(
       (html) => {
@@ -198,7 +286,7 @@ export const CodeViewer = memo(function CodeViewer({
     return () => {
       cancelled = true;
     };
-  }, [content, path, loading, error]);
+  }, [content, path, loading, error, previewKind]);
   const html =
     highlighted?.content === content && highlighted.path === path
       ? highlighted.html
@@ -209,8 +297,18 @@ export const CodeViewer = memo(function CodeViewer({
     [content],
   );
   const language = languageForPath(path);
-  const canPreview = language === "html" || language === "markdown";
+  const canPreview = previewKind !== "text";
+  const canShowSource =
+    previewKind === "html" ||
+    previewKind === "markdown" ||
+    previewKind === "svg";
   const showPreview = canPreview && view === "preview";
+  const formatLabel =
+    previewKind === "image"
+      ? (mediaBlob?.type.split("/")[1] ?? "image")
+      : previewKind === "svg"
+        ? "svg"
+        : language;
 
   const updateContent = (next: string) => {
     setContent(next);
@@ -236,9 +334,9 @@ export const CodeViewer = memo(function CodeViewer({
           {dirty && <span className="ml-1 text-warning">●</span>}
         </span>
         <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
-          {language}
+          {formatLabel}
         </span>
-        {canPreview && (
+        {canShowSource && (
           <div
             className="flex shrink-0 gap-0.5 rounded bg-secondary/40 p-0.5"
             role="group"
@@ -269,6 +367,17 @@ export const CodeViewer = memo(function CodeViewer({
             <Save size={11} className={saving ? "animate-pulse" : ""} />
           </button>
         )}
+        {inputSource?.assetId && (
+          <a
+            className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+            href={`/api/agent-runtime/assets/${encodeURIComponent(inputSource.assetId)}/content`}
+            download={inputSource.label}
+            aria-label="下载附件"
+            title="下载附件"
+          >
+            <Download size={11} />
+          </a>
+        )}
         <button
           type="button"
           className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
@@ -291,7 +400,7 @@ export const CodeViewer = memo(function CodeViewer({
         </p>
       )}
       <div
-        className={`code-viewer-body session-workspace-scroll min-h-0 flex-1 ${(showPreview && language === "html") || (editable && !showPreview) ? "flex flex-col overflow-hidden" : "overflow-auto"}`}
+        className={`code-viewer-body session-workspace-scroll min-h-0 flex-1 ${showPreview || (editable && !showPreview) ? "flex flex-col overflow-hidden" : "overflow-auto"}`}
       >
         {loading ? (
           <div className="file-viewer-status">读取中…</div>
@@ -300,7 +409,7 @@ export const CodeViewer = memo(function CodeViewer({
             {error}
           </div>
         ) : showPreview ? (
-          language === "html" ? (
+          previewKind === "html" ? (
             <iframe
               title={`HTML 预览：${path}`}
               className="min-h-0 w-full flex-1 border-0 bg-white"
@@ -308,6 +417,22 @@ export const CodeViewer = memo(function CodeViewer({
               referrerPolicy="no-referrer"
               srcDoc={content}
             />
+          ) : previewKind === "image" || previewKind === "svg" ? (
+            <div
+              className="file-viewer-media flex min-h-0 flex-1 items-center justify-center overflow-auto p-4"
+              role="region"
+              aria-label={`${previewKind === "svg" ? "SVG" : "图片"}预览：${path}`}
+            >
+              {mediaUrl ? (
+                <img
+                  src={mediaUrl}
+                  alt={path.split(/[\\/]/).pop() ?? path}
+                  className="file-viewer-media-image block max-h-full max-w-full object-contain"
+                />
+              ) : (
+                <div className="file-viewer-status">生成预览中…</div>
+              )}
+            </div>
           ) : (
             <article className="file-viewer-markdown wiki-doc mx-auto w-full px-5 py-4">
               <div className="wiki-markdown">

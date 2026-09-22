@@ -386,6 +386,8 @@ export class ToolRegistry {
     this.register({
       id: "skill.load",
       label: "Load Skill",
+      getPattern: (args) =>
+        (args as { skillId?: string } | null)?.skillId ?? "skill.load",
       description:
         "Load full skill content after profile filtering and permission evaluation.",
       category: "skill",

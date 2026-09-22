@@ -1,4 +1,5 @@
-import { Button, Modal, TextArea, Tooltip } from "@heroui/react";
+import { Button, Checkbox, Modal, TextArea, Tooltip } from "@heroui/react";
+import { AppSelect } from "../../components/AppSelect";
 import {
   AlertCircle,
   CheckCircle2,
@@ -89,6 +90,7 @@ export function SessionCommitDialog({
     ? formatModelReference(selectedModel.providerId, selectedModel.modelId)
     : null;
   const [message, setMessage] = useState("");
+  const [includeUntracked, setIncludeUntracked] = useState(true);
   const [submitting, setSubmitting] = useState<"commit" | "push" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SessionGitCommitResult | null>(null);
@@ -104,6 +106,7 @@ export function SessionCommitDialog({
     generation.current += 1;
     locked.current = false;
     setMessage("");
+    setIncludeUntracked(true);
     setGenerating(false);
     setError(null);
     setResult(null);
@@ -203,6 +206,7 @@ export function SessionCommitDialog({
           ...(rootId ? { rootId } : {}),
           message: trimmed,
           ...(push ? {} : { push: false }),
+          ...(includeUntracked ? {} : { includeUntracked: false }),
         },
       );
       if (generation.current !== request) return;
@@ -311,6 +315,23 @@ export function SessionCommitDialog({
                   </span>
                 </div>
 
+                {/* Untracked files only join the commit when explicitly chosen. */}
+                <label className="flex cursor-pointer items-center gap-2 px-1 text-[11px] text-muted-foreground">
+                  <Checkbox
+                    isSelected={includeUntracked}
+                    onChange={setIncludeUntracked}
+                    isDisabled={busy}
+                    aria-label={t("workspaceCommitIncludeUntracked")}
+                  >
+                    <Checkbox.Content>
+                      <Checkbox.Control>
+                        <Checkbox.Indicator />
+                      </Checkbox.Control>
+                    </Checkbox.Content>
+                  </Checkbox>
+                  <span>{t("workspaceCommitIncludeUntracked")}</span>
+                </label>
+
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <label
@@ -319,36 +340,29 @@ export function SessionCommitDialog({
                     >
                       {t("workspaceCommitMessageLabel")}
                     </label>
-                    <label className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
-                      {t("workspaceCommitModel")}
-                      <select
+                    <div className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>{t("workspaceCommitModel")}</span>
+                      <AppSelect
                         aria-label={t("workspaceCommitModel")}
-                        className="max-w-44 truncate rounded-md border border-border bg-background px-2 py-1 text-foreground focus-visible:outline-2 focus-visible:outline-primary"
-                        value={selectedModelRef ?? ""}
-                        disabled={busy || apiModels.length === 0}
-                        onChange={(event) => {
+                        className="max-w-44"
+                        fullWidth={false}
+                        value={selectedModelRef ?? null}
+                        isDisabled={busy || apiModels.length === 0}
+                        placeholder={t("workspaceCommitNoModel")}
+                        onChange={(value) => {
+                          if (!value) return;
                           cancelGeneration();
-                          remember(projectId, event.target.value);
+                          remember(projectId, value);
                         }}
-                      >
-                        {apiModels.length === 0 ? (
-                          <option value="">
-                            {t("workspaceCommitNoModel")}
-                          </option>
-                        ) : null}
-                        {apiModels.map((option) => {
-                          const reference = formatModelReference(
+                        options={apiModels.map((option) => ({
+                          key: formatModelReference(
                             option.providerId,
                             option.modelId,
-                          )!;
-                          return (
-                            <option key={reference} value={reference}>
-                              {option.providerId} / {option.label}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </label>
+                          )!,
+                          label: `${option.providerId} / ${option.label}`,
+                        }))}
+                      />
+                    </div>
                   </div>
                   <div className="relative">
                     <TextArea

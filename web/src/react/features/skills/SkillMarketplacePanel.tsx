@@ -251,11 +251,11 @@ export function SkillMarketplacePanel({ projectId: projectIdProp }: { projectId?
           </div>
 
           {loading ? (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <div className="flex flex-col gap-2">
               {Array.from({ length: 6 }, (_, index) => (
                 <div
                   key={index}
-                  className="h-[168px] animate-pulse rounded-xl border border-border/30 bg-secondary/20"
+                  className="h-[60px] animate-pulse rounded-xl border border-border/30 bg-secondary/20"
                 />
               ))}
             </div>
@@ -270,9 +270,9 @@ export function SkillMarketplacePanel({ projectId: projectIdProp }: { projectId?
               </p>
             </div>
           ) : (
-            <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <ul className="flex flex-col gap-2">
               {skills.map((skill) => (
-                <li key={skill.id} className="min-h-[168px]">
+                <li key={skill.id}>
                   <SkillCard
                     skill={skill}
                     busy={busy === skill.id}

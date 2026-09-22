@@ -4,12 +4,10 @@ import {
   ensureWorkspaceInstall,
   logStart,
   readPort,
-  resolveApiDevCommand,
   spawnProcess,
   waitForExit,
 } from "./_shared";
 
-const apiPort = readPort("PORT", 3210);
 const webPort = readPort("WEB_PORT", 5173);
 const webHost = process.env.WEB_HOST ?? "0.0.0.0";
 
@@ -23,10 +21,9 @@ const buildElectron = spawnProcess(
 const buildCode = await waitForExit(buildElectron);
 if (buildCode !== 0) process.exit(buildCode);
 
-logStart("dev:desktop", `API http://localhost:${apiPort}`);
+logStart("dev:desktop", "API uses an OS-assigned desktop sidecar port");
 logStart("dev:desktop", `Web http://${webHost}:${webPort}`);
 
-const api = spawnProcess(resolveApiDevCommand(), ROOT_DIR);
 const web = spawnProcess(
   ["npx", "vite", "--force", "--host", webHost, "--port", String(webPort)],
   WEB_DIR,
@@ -57,7 +54,6 @@ async function waitForServer(url: string, retries = 60): Promise<void> {
 }
 
 await Promise.all([
-  waitForServer(`http://127.0.0.1:${apiPort}/api/health`),
   waitForServer(
     `http://${webHost === "0.0.0.0" ? "127.0.0.1" : webHost}:${webPort}`,
   ),
@@ -66,17 +62,12 @@ await Promise.all([
 logStart("dev:desktop", "Servers ready, launching Electron with hot-reload...");
 
 const electron = spawnProcess(["npx", "electronmon", "."], ROOT_DIR, {
-  ELECTRON_SKIP_SIDECAR: "1",
+  ELECTRON_SKIP_SIDECAR: "0",
   WEB_PORT: String(webPort),
 });
 
-const winner = await Promise.race([
-  waitForExit(api),
-  waitForExit(web),
-  waitForExit(electron),
-]);
+const winner = await Promise.race([waitForExit(web), waitForExit(electron)]);
 
-api.kill();
 web.kill();
 electron.kill();
 tscWatch.kill();

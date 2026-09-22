@@ -4,12 +4,13 @@
 // 保留文件以便 Git 历史追踪，新功能请在 ConfigPage 中实现。
 // ────────────────────────────────────────────────────────────────────────────
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { aiIntegrationApi } from '../../../lib/api/ai-integration'
 import { useShellStore } from '../../state/shellStore'
 import { useAiIntegrations } from './useAiIntegrations'
+import { AppSelect } from '../../components/AppSelect'
 
 export default function AgentConfigPage() {
   const user = useShellStore(s => s.currentUser)
@@ -18,6 +19,10 @@ export default function AgentConfigPage() {
   const [model, setModel] = useState('gpt-4.1')
   const [projectId, setProjectId] = useState('rumbling-core')
   const [agentKey, setAgentKey] = useState('opencode-acp')
+  const [integrationId, setIntegrationId] = useState('')
+  useEffect(() => {
+    if (!integrations.some(item => item.id === integrationId)) setIntegrationId(integrations[0]?.id ?? '')
+  }, [integrationId, integrations])
 
   return (
     <div className="h-full overflow-auto bg-background">
@@ -81,14 +86,11 @@ export default function AgentConfigPage() {
             <div className="mt-3 grid gap-3 sm:grid-cols-4">
               <input className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={projectId} onChange={e => setProjectId(e.target.value)} />
               <input className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={agentKey} onChange={e => setAgentKey(e.target.value)} />
-              <select className="h-10 rounded-md border border-border bg-background px-3 text-sm" id="integration-picker">
-                {integrations.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-              </select>
+              <AppSelect aria-label="集成" value={integrationId || null} onChange={value => setIntegrationId(value ?? '')} isDisabled={integrations.length === 0} options={integrations.map(item => ({ key: item.id, label: item.name }))} />
               <button
                 className="h-10 rounded-md bg-primary text-sm text-primary-foreground disabled:opacity-50"
                 disabled={integrations.length === 0}
                 onClick={async () => {
-                  const integrationId = (document.getElementById('integration-picker') as HTMLSelectElement)?.value
                   if (!integrationId) return
                   await aiIntegrationApi.upsertBinding({
                     projectId,

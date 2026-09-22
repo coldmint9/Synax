@@ -1,3 +1,5 @@
+import path from "node:path";
+import { listFileOpeners, resolveFileOpener } from "../services/file-openers/index.js";
 import { Hono } from "hono";
 import {
   systemTerminalShell,
@@ -5,7 +7,7 @@ import {
 } from "../services/terminals/terminal-shell.js";
 import * as z from "zod/v4";
 import { existsSync } from "node:fs";
-import { execFile, execSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import {
   deleteProjectConfig,
   getEffectiveConfigForDisplay,
@@ -414,6 +416,8 @@ configRoutes.get("/projects/:projectId/config/effective", (c) => {
 
 // ── Open file in system default editor ──────────────────────────────────────
 
+configRoutes.get("/file-openers", async (c) => c.json({ apps: await listFileOpeners() }));
+
 configRoutes.post("/open-file", async (c) => {
   const body = await c.req.json().catch(() => null);
   if (body?.target === "global") {
@@ -436,60 +440,32 @@ configRoutes.post("/open-file", async (c) => {
     return c.json({ error: "File not found" }, 404);
   }
 
-  const cmd = buildOpenFileCommand(editorPath, line ?? undefined);
-
-  return new Promise<Response>((resolve) => {
-    execFile(cmd.bin, cmd.args, (err) => {
-      if (err) {
-        logger.error(
-          { err: err.message, filePath: editorPath, line },
-          "[config] open-file failed",
-        );
-        resolve(c.json({ error: err.message }, 500));
-      } else {
-        resolve(c.json({ ok: true }));
-      }
-    });
+  if (body.opener != null && (typeof body.opener !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(body.opener))) {
+    return c.json({ error: "Invalid file opener" }, 400);
+  }
+  if (line != null && (!Number.isSafeInteger(line) || line < 1)) {
+    return c.json({ error: "Invalid line number" }, 400);
+  }
+  const launch = (command: { bin: string; args: string[] }) => new Promise<void>((resolve, reject) => {
+    execFile(command.bin, command.args, (error) => error ? reject(error) : resolve());
   });
-});
-
-function buildOpenFileCommand(
-  filePath: string,
-  line?: number,
-): { bin: string; args: string[] } {
-  const platform = process.platform;
-
-  function which(bin: string): string | null {
+  try {
+    const { command, fallback } = await resolveFileOpener(path.resolve(editorPath), line, body.opener ?? "system");
     try {
-      return execSync(`which ${bin}`, {
-        stdio: ["ignore", "pipe", "ignore"],
-        encoding: "utf8",
-      }).trim();
-    } catch {
-      return null;
+      await launch(command);
+    } catch (error) {
+      if (!body.opener || body.opener === "system" || fallback) throw error;
+      const system = await resolveFileOpener(path.resolve(editorPath), undefined, "system");
+      await launch(system.command);
+      return c.json({ ok: true, fallback: true });
     }
+    return c.json({ ok: true, fallback });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not open file";
+    logger.error({ err: message, filePath: editorPath, line }, "[config] open-file failed");
+    return c.json({ error: message }, 500);
   }
-
-  const editorBins = ["code", "cursor", "windsurf"] as const;
-  for (const bin of editorBins) {
-    const path = which(bin);
-    if (path) {
-      return line
-        ? { bin: path, args: ["--goto", `${filePath}:${line}`] }
-        : { bin: path, args: [filePath] };
-    }
-  }
-
-  const sublPath = which("subl");
-  if (sublPath) {
-    return { bin: sublPath, args: [line ? `${filePath}:${line}` : filePath] };
-  }
-
-  if (platform === "darwin") return { bin: "/usr/bin/open", args: [filePath] };
-  if (platform === "win32")
-    return { bin: "cmd", args: ["/c", "start", "", filePath] };
-  return { bin: "xdg-open", args: [filePath] };
-}
+});
 
 function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
   const parsed = globalConfigPatchSchema.safeParse(body);

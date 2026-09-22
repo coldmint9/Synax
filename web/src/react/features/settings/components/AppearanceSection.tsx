@@ -102,8 +102,9 @@ export function AppearanceSection() {
               aria-label={label}
               className="appearance-mode"
             >
-              <span
-                className={`appearance-mini appearance-mini--${id}`}
+              <Radio.Content>
+                <span
+                  className={`appearance-mini appearance-mini--${id}`}
                 aria-hidden="true"
               >
                 <span className="appearance-mini__sidebar">
@@ -127,6 +128,7 @@ export function AppearanceSection() {
                   <Check size={11} />
                 </span>
               </span>
+              </Radio.Content>
             </Radio>
           ))}
         </RadioGroup>

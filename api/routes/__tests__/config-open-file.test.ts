@@ -58,6 +58,43 @@ describe("opening the global config", () => {
     expect(await response.json()).toEqual({ error: "Editor could not start" });
   });
 
+  it("rejects executable paths supplied as opener ids", async () => {
+    const response = await request({ target: "global", opener: "/tmp/arbitrary-app" });
+    expect(response.status).toBe(400);
+    expect(opener.exec).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid line numbers", async () => {
+    const response = await request({ target: "global", line: -1 });
+    expect(response.status).toBe(400);
+    expect(opener.exec).not.toHaveBeenCalled();
+  });
+
+  it("resolves and launches the selected app with the requested line", async () => {
+    const discovery = await import("../../services/file-openers/index.js");
+    const resolve = vi.spyOn(discovery, "resolveFileOpener").mockResolvedValue({ command: { bin: "/apps/zed", args: ["/file:12"] }, fallback: false });
+    const response = await request({ target: "global", opener: "zed", line: 12 });
+    expect(response.status).toBe(200);
+    expect(resolve).toHaveBeenCalledWith(expect.any(String), 12, "zed");
+    expect(opener.exec.mock.calls[0].slice(0, 2)).toEqual(["/apps/zed", ["/file:12"]]);
+  });
+
+  it("reports fallback when the saved app is unavailable", async () => {
+    const discovery = await import("../../services/file-openers/index.js");
+    vi.spyOn(discovery, "resolveFileOpener").mockResolvedValue({ command: { bin: "/usr/bin/open", args: ["/file"] }, fallback: true });
+    expect(await (await request({ target: "global", opener: "zed" })).json()).toEqual({ ok: true, fallback: true });
+  });
+
+  it("falls back to the OS association when a selected app cannot launch", async () => {
+    const discovery = await import("../../services/file-openers/index.js");
+    const resolve = vi.spyOn(discovery, "resolveFileOpener")
+      .mockResolvedValueOnce({ command: { bin: "/apps/zed", args: ["/file"] }, fallback: false })
+      .mockResolvedValueOnce({ command: { bin: "/usr/bin/open", args: ["/file"] }, fallback: false });
+    opener.exec.mockImplementationOnce((_bin, _args, callback) => callback(new Error("App removed")));
+    expect(await (await request({ target: "global", opener: "zed" })).json()).toEqual({ ok: true, fallback: true });
+    expect(resolve.mock.calls[1][2]).toBe("system");
+  });
+
   it("keeps rejecting empty generic file requests", async () => {
     const response = await request({});
     expect(response.status).toBe(400);

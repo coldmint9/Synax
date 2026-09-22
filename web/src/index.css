@@ -909,6 +909,7 @@
   }
 
   .workbench-shell {
+    --workbench-island-top: 8px;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -937,8 +938,8 @@
 
   .electron-macos .workbench-header {
     position: fixed;
-    top: 15px;
-    left: 50%;
+    top: var(--workbench-island-top);
+    left: calc(50% + var(--island-center-offset));
     transform: translateX(-50%);
     z-index: 9998;
     -webkit-app-region: no-drag;
@@ -1078,19 +1079,14 @@
     position: relative;
   }
 
-  /* The island shares the default Work page's anchor: centered in the column
-     right of the 260px session sidebar, i.e. 50vw + half the sidebar width,
-     so switching Work <-> Wiki never shifts the pill horizontally. The Work
-     page re-parents this header into .workspace-island-slot--conversation,
-     which follows the live sidebar geometry; routes without that slot (Wiki)
-     keep this fixed equivalent. The primary pill is the only in-flow child,
-     so auxiliary Wiki controls attach beside it and never influence the
-     primary pill's position. top: 15px matches the docked Work-page island
-     (6px panel inset + 1px edge + 8px slot top). */
+  /* Center the whole island group on the default Work content-column anchor.
+     The Wiki slot participates in layout: growing it to the right moves the
+     primary pill left by half that growth. Work's live slot still follows its
+     actual conversation column. Both routes share the same top inset. */
   .workbench-header {
     --island-center-offset: 130px; /* half of the default 260px session sidebar */
     position: fixed;
-    top: 15px;
+    top: var(--workbench-island-top);
     left: calc(50% + var(--island-center-offset));
     transform: translateX(-50%);
     z-index: 30;
@@ -1099,6 +1095,10 @@
     white-space: nowrap;
     width: max-content;
     max-width: calc(100% - 2 * var(--island-center-offset) - 24px);
+  }
+  /* Give the expanded Wiki group a little more room on the right. */
+  .workbench-shell[data-active-panel="wiki"] .workbench-header {
+    --island-center-offset: 90px;
   }
   /* No project means no sidebar to compensate for. Keep macOS titlebar
      positioning and the project/conversation/viewer layouts unchanged. */
@@ -1109,26 +1109,16 @@
      position without inheriting its horizontal content-column offset. */
   .workbench-shell[data-active-panel="settings"] .workbench-header {
     --island-center-offset: 0px;
-    top: 8px;
+    top: var(--workbench-island-top);
   }
 
   .workbench-header > .wh-pill {
     min-width: 0;
     max-width: 100%;
   }
-  /* Secondary island floats to the right of the primary pill, vertically
-     centered with it. Capped at the free viewport width to its right so it
-     never pushes the primary pill off-center. */
-  .workbench-header > .wh-pill-slot {
-    position: absolute;
-    top: 0;
-    left: calc(100% + 8px);
-    /* Definite max-content width: an absolutely-positioned shrink-to-fit grid
-       would resolve the `1fr` open-state track down to min-content (20px),
-       collapsing the secondary island. With a definite width the track fills
-       the content size and the 0fr→1fr transition still animates. */
-    width: max-content;
-    max-width: max(180px, calc(50vw - 50% - 16px));
+  /* Keep the primary controls at their natural size while the Wiki slot grows. */
+  .workbench-header > .wh-pill {
+    flex-shrink: 0;
   }
 
   .wh-pill {
@@ -1160,22 +1150,40 @@
       0 16px 40px hsl(0 0% 0% / 0.3);
   }
 
-  /* Wiki toolbar cell-division animation — grid slot for layout-space animation */
+  /* Animate actual layout width so both pills move together, not just pixels.
+     The measured natural width includes translated labels and toolbar modes. */
   .wh-pill-slot {
-    display: grid;
-    grid-template-columns: 0fr;
-    transition: grid-template-columns 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    flex: 0 0 auto;
+    width: 0;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      width 280ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 180ms ease,
+      visibility 0s linear 280ms;
   }
   .wh-pill-slot.open {
-    grid-template-columns: 1fr;
-  }
-  .wh-pill-slot.closing {
-    grid-template-columns: 0fr;
-    transition: grid-template-columns 0.35s cubic-bezier(0.55, 0, 0.75, 0.2);
+    width: calc(var(--toolbar-width, 0px) + 8px);
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s;
   }
   .wh-pill-slot > .wh-pill {
-    min-width: 0;
-    overflow: hidden;
+    margin-left: 8px;
+    width: max-content;
+    transform: translateX(-12px);
+    transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .wh-pill-slot.open > .wh-pill {
+    transform: translateX(0);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .wh-pill-slot,
+    .wh-pill-slot > .wh-pill {
+      transition: none;
+    }
   }
   .wh-pill:has([data-searching]) {
     overflow: visible !important;
@@ -1462,6 +1470,12 @@
     background: transparent !important;
     border: none !important;
     padding: 0 !important;
+  }
+  /* Let the selected pill shadow/focus ring fit inside the scrollport.
+     Negative margins preserve the header's existing height and tab position. */
+  .wh-tabs .tabs__list-container__scroller {
+    padding-block: 6px;
+    margin-block: -6px;
   }
   .wh-tabs .tabs__list {
     background: transparent !important;
@@ -4211,40 +4225,9 @@
   background: transparent;
 }
 
-/* List-box and select menus: pill hover/selected highlight stays inside the
-   menu border instead of painting a full rectangular row. */
-:root:not(.dark) .list-box-item,
-:root:not(.dark) [data-slot="list-box-item"] {
-  border-radius: 999px;
-  margin-inline: 4px;
-  width: calc(100% - 8px);
-}
-:root:not(.dark) .list-box-item:hover,
-:root:not(.dark) .list-box-item[data-hovered="true"],
-:root:not(.dark) [data-slot="list-box-item"]:hover,
-:root:not(.dark) [data-slot="list-box-item"][data-hovered="true"] {
-  background: var(--cx-accent-soft);
-  color: var(--cx-accent-muted);
-}
-:root:not(.dark) .list-box-item[aria-selected="true"],
-:root:not(.dark) .list-box-item[data-selected="true"],
-:root:not(.dark) [data-slot="list-box-item"][aria-selected="true"],
-:root:not(.dark) [data-slot="list-box-item"][data-selected="true"] {
-  background: linear-gradient(
-    180deg,
-    var(--cx-accent-top),
-    var(--cx-accent-bottom)
-  );
-  color: var(--cx-accent-ink);
-  box-shadow:
-    0 1px 3px rgba(47, 61, 52, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5);
-}
-:root:not(.dark) .select__trigger:hover,
-:root:not(.dark) .select__trigger[data-hovered="true"] {
-  background: var(--cx-accent-soft);
-  border-color: var(--cx-accent-bottom);
-}
+/* Select, ListBox and Dropdown geometry is owned by HeroUI v3. Theme
+   customisation stays in semantic tokens rather than internal component
+   selectors, so upgrades retain the official sizing and focus behavior. */
 
 /* Gradients cannot be used as background-color custom-property values; apply
    the light-mode switch gradient explicitly to the track state. */
@@ -4291,83 +4274,6 @@
     0 1px 3px rgba(47, 61, 52, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
-:root:not(.dark) .menu-item,
-:root:not(.dark) .menu-item:hover,
-:root:not(.dark) .menu-item[data-hovered="true"] {
-  border-radius: 999px;
-  margin-inline: 4px;
-  width: calc(100% - 8px);
-}
-:root:not(.dark) .menu-item:hover,
-:root:not(.dark) .menu-item[data-hovered="true"] {
-  background: var(--cx-accent-soft);
-  color: var(--cx-accent-muted);
-}
-:root:not(.dark) .menu-item[aria-selected="true"],
-:root:not(.dark) .menu-item[aria-checked="true"],
-:root:not(.dark) .menu-item[data-selected="true"] {
-  background: linear-gradient(
-    180deg,
-    var(--cx-accent-top),
-    var(--cx-accent-bottom)
-  );
-  color: var(--cx-accent-ink);
-  box-shadow:
-    0 1px 3px rgba(47, 61, 52, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5);
-}
-
-/* Compact menu/list geometry: every floating panel shares one radius (12px) and
-   every row one radius (10px), so custom popovers match dropdowns instead of the
-   oversized HeroUI defaults. Applies in both light and dark modes. */
-.dropdown__popover,
-.popover {
-  border-radius: 12px;
-  /* Chips (model, permission, effort, context pickers) expand their option
-     panel with a short fade. Opacity only: HeroUI positions the panel with
-     its own inline transform, which an animated transform would clobber. */
-  animation: overlay-fade-in 140ms ease-out;
-}
-@keyframes overlay-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dropdown__popover,
-  .popover {
-    animation: none;
-  }
-}
-.dropdown__menu,
-.menu {
-  border-radius: 12px;
-}
-.menu-item,
-.menu-item:hover,
-.menu-item[data-hovered="true"],
-.list-box-item,
-.list-box-item:hover,
-.list-box-item[data-hovered="true"],
-[data-slot="menu-item"],
-[data-slot="list-box-item"] {
-  border-radius: 10px;
-}
-
-/* Override the earlier light-mode pill geometry while retaining inset spacing
-   so hover/selected backgrounds stay inside the popover border. */
-:root:not(.dark) .menu-item,
-:root:not(.dark) .menu-item:hover,
-:root:not(.dark) .menu-item[data-hovered="true"],
-:root:not(.dark) .list-box-item,
-:root:not(.dark) [data-slot="menu-item"],
-:root:not(.dark) [data-slot="list-box-item"] {
-  border-radius: 10px;
-}
-
 /* Resizable/collapsible session side panels */
 .session-panel-resizer {
   position: absolute;
@@ -4908,6 +4814,40 @@
   color: hsl(var(--destructive));
 }
 
+.file-viewer-media {
+  background-color: var(--synax-code-background);
+  background-image:
+    linear-gradient(
+      45deg,
+      hsl(var(--foreground-hsl) / 0.045) 25%,
+      transparent 25%
+    ),
+    linear-gradient(
+      -45deg,
+      hsl(var(--foreground-hsl) / 0.045) 25%,
+      transparent 25%
+    ),
+    linear-gradient(
+      45deg,
+      transparent 75%,
+      hsl(var(--foreground-hsl) / 0.045) 75%
+    ),
+    linear-gradient(
+      -45deg,
+      transparent 75%,
+      hsl(var(--foreground-hsl) / 0.045) 75%
+    );
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+.file-viewer-media-image {
+  filter: drop-shadow(0 8px 24px hsl(0 0% 0% / 0.12));
+}
+
 /* File viewer: gutter pins to the left, code keeps the shiki colors. */
 .code-viewer-gutter {
   border-right: 1px solid var(--synax-code-gutter-border);
@@ -5053,7 +4993,7 @@
   background: hsl(var(--secondary) / 0.72);
 }
 .session-list-item--active {
-  background: hsl(var(--secondary) / 0.9);
+  background: hsl(var(--cx-gray-150-hsl));
 }
 .dark .session-list-item {
   background: transparent;
@@ -5080,6 +5020,15 @@
   justify-content: center;
   width: 12px;
   height: 20px;
+}
+/* PixelLoader cells shrink to the 12px indicator slot (default grid is 15px). */
+.session-list-indicator > .grid {
+  grid-template-columns: repeat(3, 3px);
+  gap: 1px;
+}
+.session-list-indicator .loading-state-cell {
+  width: 3px;
+  height: 3px;
 }
 .session-list-dot {
   width: 7px;
@@ -5299,7 +5248,8 @@
 
   .workbench-header > .wh-pill {
     min-width: 0;
-    width: 100%;
+    flex: 1 1 auto;
+    width: auto;
     max-width: 100%;
     gap: 2px;
     padding-inline: 5px;
@@ -5350,9 +5300,7 @@
   }
 
   .workbench-header .wh-pill-slot {
-    position: static;
     min-width: 0;
-    width: auto;
     max-width: calc(100vw - 12px);
   }
   .workbench-header .wh-pill-slot > .wh-pill {
@@ -6654,3 +6602,82 @@
     backdrop-filter: none;
   }
 }
+
+/* Settings controls: quiet flat surfaces, with a larger, easy-to-hit switch.
+   The popover class is explicit because Select portals leave the section. */
+:root .settings-section .switch .switch__control {
+  width: 40px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--default);
+  box-shadow: none;
+}
+:root .settings-section .switch[data-selected="true"] .switch__control,
+:root .settings-section .switch[aria-checked="true"] .switch__control {
+  background: var(--accent);
+  box-shadow: none;
+}
+:root .settings-section .switch .switch__thumb {
+  width: 18px;
+  height: 18px;
+  margin-inline-start: 3px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: none;
+}
+:root .settings-section .switch[data-selected="true"] .switch__thumb,
+:root .settings-section .switch[aria-checked="true"] .switch__thumb {
+  margin-inline-start: 19px;
+  box-shadow: none;
+}
+:root .settings-section .switch:has([data-focus-visible="true"]) .switch__control {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+:root .settings-select .select__trigger {
+  align-items: center;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: none;
+}
+:root .settings-select .select__trigger:has(.select__indicator) {
+  padding-inline-end: 28px;
+}
+:root .settings-select .select__value {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-size: inherit;
+  line-height: 20px;
+}
+:root .settings-select-popover {
+  padding: 4px;
+  border-radius: 10px;
+}
+:root .settings-select-popover [data-slot="list-box-item"] {
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.settings-app-option {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+.settings-app-option img,
+.settings-app-option svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+.settings-file-opener { width: 180px; max-width: 100%; }
+.settings-opener-status { display: block; margin-top: 5px; font-size: 11px; line-height: 1.4; color: var(--muted); }

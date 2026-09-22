@@ -41,7 +41,7 @@ export interface ShellPreferences {
   defaultHome: "global-home" | "last-project";
   notifications: boolean;
   locale: "zh" | "en";
-  editor: "system" | "vscode" | "cursor" | "windsurf" | "webstorm";
+  editor: string;
   agentFontSize: number;
   wikiEnabled: boolean;
   /** Fold runs of activity-only agent turns into one work-log row. */
@@ -329,12 +329,7 @@ export function hydrateShellPreferences() {
       patch.wikiEnabled = parsed.wikiEnabled;
     if (typeof parsed.notifications === "boolean")
       patch.notifications = parsed.notifications;
-    if (
-      parsed.editor &&
-      ["system", "vscode", "cursor", "windsurf", "webstorm"].includes(
-        parsed.editor,
-      )
-    )
+    if (typeof parsed.editor === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(parsed.editor))
       patch.editor = parsed.editor;
     if (
       typeof parsed.agentFontSize === "number" &&

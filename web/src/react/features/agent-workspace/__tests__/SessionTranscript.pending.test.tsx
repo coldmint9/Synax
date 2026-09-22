@@ -15,7 +15,9 @@ vi.mock("../../../../lib/api/sessionLiveClient", () => ({
 vi.mock("../SessionNavigationPanel", () => ({
   SessionNavigationPanel: () => null,
 }));
-vi.mock("../useTranscriptScroll", () => ({ useTranscriptScroll: vi.fn() }));
+vi.mock("../useTranscriptScroll", () => ({
+  useTranscriptScroll: vi.fn(() => ({ scrollToBottom: vi.fn() })),
+}));
 vi.mock("../AgentConversationView", () => ({
   AgentConversationView: ({ messages, liveTurn }: any) => (
     <>

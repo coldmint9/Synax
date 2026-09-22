@@ -93,8 +93,9 @@ export async function measureContextComposition(input: {
     result[category] += count(JSON.stringify(definition));
   }
 
-  // Selected references share a prompt section with files/wiki. Only skill entries
-  // belong to Skills; the JSON-quoted lines are the actual injected text.
+  // File/Wiki references share a prompt section. Skills now arrive through
+  // persisted skill.load tool results; legacy callers may still provide a
+  // selected skill line, so keep its accounting classification here.
   const skillSections = input.skillsSection
     ? [{ text: input.skillsSection, used: false }]
     : [];

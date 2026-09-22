@@ -172,9 +172,9 @@ export function WebSearchSettings({
                   }))
                 }
               >
-                <Switch.Control>
+                <Switch.Content><Switch.Control>
                   <Switch.Thumb />
-                </Switch.Control>
+                </Switch.Control></Switch.Content>
               </Switch>
             </FormRow>
             <FormRow label={zh ? "远程搜索上下文" : "Remote search context"}>

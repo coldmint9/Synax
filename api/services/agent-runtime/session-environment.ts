@@ -14,9 +14,11 @@ import { patchFilePaths } from "./tools/patch-format.js";
 import { AgentNotFoundError, AgentValidationError } from "./runtime-errors.js";
 import type { AgentSessionStatus } from "./contracts.js";
 import { runCommand } from "./tools/exec-async.js";
+import { detectMediaType, getAsset } from "./media-assets.js";
 
 const MAX_BUFFER = 8 * 1024 * 1024;
 const MAX_FILE_BYTES = 1024 * 1024;
+const MAX_PREVIEW_IMAGE_BYTES = 20 * 1024 * 1024;
 
 export type EnvironmentChangeStatus =
   | "added"
@@ -52,6 +54,7 @@ export type SessionEnvironmentInputSourceKind =
   | "search"
   | "command"
   | "url"
+  | "attachment"
   | "tool";
 
 export interface SessionEnvironmentInputSource {
@@ -59,6 +62,7 @@ export interface SessionEnvironmentInputSource {
   kind: SessionEnvironmentInputSourceKind;
   label: string;
   path?: string;
+  assetId?: string;
 }
 
 export interface SessionEnvironment {
@@ -142,6 +146,13 @@ export interface SessionEnvironmentFileView {
   truncated: boolean;
 }
 
+export interface SessionEnvironmentFileMedia {
+  sessionId: string;
+  path: string;
+  mediaType: string;
+  bytes: Buffer;
+}
+
 async function git(
   workspacePath: string,
   args: string[],
@@ -178,7 +189,7 @@ function assertRelativePath(relativePath: string): string {
   return clean;
 }
 
-function resolveSafeFile(workspacePath: string, relativePath: string): string {
+export function resolveSafeFile(workspacePath: string, relativePath: string): string {
   const clean = assertRelativePath(relativePath);
   const root = path.resolve(workspacePath);
   const absolute = path.resolve(root, clean);
@@ -281,23 +292,46 @@ function readInputSources(
         });
         continue;
       } catch {
-        // Ignore paths outside this workspace member, but retain the read tool below.
+        // Ignore paths outside this workspace member; command-style reads are
+        // intentionally not listed as input sources below.
       }
     }
-    const kind: SessionEnvironmentInputSourceKind =
-      /search|grep|glob|list/i.test(call.toolId)
-        ? "search"
-        : /shell|command|exec/i.test(call.toolId)
-          ? "command"
-          : /url|web|http/i.test(call.toolId)
-            ? "url"
-            : "tool";
-    const label = call.inputSummary?.trim() || call.toolId;
-    sources.set(`${kind}:${call.toolId}:${label}`, {
-      kind,
+    // Only concrete workspace files and external web reads belong in the
+    // input source list; search, shell command and generic tool reads would
+    // only surface raw JSON summaries here.
+    if (!/url|web|http/i.test(call.toolId)) continue;
+    const label =
+      (typeof input.url === "string" && input.url.trim()) ||
+      (typeof input.query === "string" && input.query.trim()) ||
+      call.inputSummary?.trim() ||
+      call.toolId;
+    sources.set(`url:${call.toolId}:${label}`, {
+      kind: "url",
       label,
       toolCallId: call.id,
     });
+  }
+  // Files the user attached to their messages count as input sources too.
+  for (const message of agentRuntimeStore.listMessages(sessionId)) {
+    if (message.role !== "user" || !Array.isArray(message.contentParts))
+      continue;
+    for (const part of message.contentParts) {
+      if (part.type === "text") continue;
+      const assetId = (part as { assetId?: unknown }).assetId;
+      if (typeof assetId !== "string" || !assetId) continue;
+      let label = assetId;
+      try {
+        const filename = getAsset(assetId).filename;
+        if (filename) label = filename;
+      } catch {
+        // Asset metadata is gone; fall back to the raw asset id.
+      }
+      sources.set(`attachment:${assetId}`, {
+        kind: "attachment",
+        label,
+        assetId,
+      });
+    }
   }
   return [...sources.values()];
 }
@@ -650,6 +684,33 @@ export async function saveSessionEnvironmentFile(
     path: cleanPath,
     bytes: Buffer.byteLength(content, "utf8"),
   };
+}
+
+export async function getSessionEnvironmentFileMedia(
+  sessionId: string,
+  relativePath: string,
+  rootId?: string,
+): Promise<SessionEnvironmentFileMedia> {
+  const session = getSession(sessionId);
+  const workspacePath = resolveSessionRepository(
+    sessionId,
+    session.projectId,
+    rootId,
+  ).path;
+  const cleanPath = assertRelativePath(relativePath);
+  const absolutePath = resolveSafeFile(workspacePath, cleanPath);
+  if (!fs.existsSync(absolutePath))
+    throw new AgentValidationError(`File not found: ${cleanPath}`);
+  const stat = fs.statSync(absolutePath);
+  if (!stat.isFile())
+    throw new AgentValidationError(`Not a file: ${cleanPath}`);
+  if (stat.size > MAX_PREVIEW_IMAGE_BYTES)
+    throw new AgentValidationError(`Image preview exceeds 20 MB: ${cleanPath}`);
+  const bytes = fs.readFileSync(absolutePath);
+  const mediaType = detectMediaType(bytes, cleanPath);
+  if (!mediaType.startsWith("image/"))
+    throw new AgentValidationError(`Unsupported image preview: ${cleanPath}`);
+  return { sessionId, path: cleanPath, mediaType, bytes };
 }
 
 export async function getSessionEnvironmentFile(

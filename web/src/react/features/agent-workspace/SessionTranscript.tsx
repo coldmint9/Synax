@@ -11,6 +11,14 @@ import { useShallow } from "zustand/react/shallow";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { AgentConversationView } from "./AgentConversationView";
 import { SessionNavigationPanel } from "./SessionNavigationPanel";
+import type { AgentRunStatus } from "../../../lib/api/agentRuntime";
+
+const RUN_TERMINAL_STATUSES: readonly AgentRunStatus[] = [
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+];
 
 function useSessionTranscriptStatic() {
   return useAgentSessionStore(
@@ -64,10 +72,15 @@ export function SessionTranscript({
   const hasResponse = Boolean(
     projected.run &&
     (steps.some((step) => step.runId === projected.run!.id) ||
-      ["completed", "failed", "cancelled", "interrupted"].includes(
-        projected.run.status,
-      )),
+      RUN_TERMINAL_STATUSES.includes(projected.run.status)),
   );
+  const latestRunStatus = useMemo(() => {
+    if (!sessionId) return undefined;
+    for (let i = runs.length - 1; i >= 0; i -= 1) {
+      if (runs[i].sessionId === sessionId) return runs[i].status;
+    }
+    return undefined;
+  }, [runs, sessionId]);
   useEffect(() => {
     if (
       sessionId &&
@@ -77,23 +90,44 @@ export function SessionTranscript({
     )
       usePendingSubmissionStore.getState().clear(sessionId, pending.requestId);
   }, [sessionId, pending, projected.confirmed, hasResponse, streamingStepId]);
-  useLayoutEffect(() => {
-    if (pending && active && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      onReadingHistoryChange?.(false);
-    }
-  }, [pending?.requestId, active]);
-
   // Live content bridges the gap until a complete persisted transcript arrives.
   // A step/status response alone does not mean its messages are ready yet.
   const showLiveBlock = Boolean(streamingStepId);
-
-  useTranscriptScroll(
+  const { scrollToBottom } = useTranscriptScroll(
     scrollRef,
     sessionId ?? undefined,
     onReadingHistoryChange,
     active && (!loading || showLiveBlock || Boolean(pending)),
   );
+
+  // Trigger 1: a new submission lands — jump to the bottom and re-pin.
+  useLayoutEffect(() => {
+    if (pending && active) scrollToBottom(true);
+    // Only a new requestId may trigger; pending mutation (run accept) must not.
+  }, [pending?.requestId, active, scrollToBottom]);
+
+  // Trigger 2: the AI's first response for this submission starts streaming.
+  const firstResponseStepRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const prev = firstResponseStepRef.current;
+    firstResponseStepRef.current = streamingStepId;
+    if (streamingStepId && !prev) scrollToBottom(true);
+  }, [streamingStepId, scrollToBottom]);
+
+  // Trigger 3: the run reaches a terminal state (task finished).
+  const runStatusRef = useRef<AgentRunStatus | undefined>(undefined);
+  useLayoutEffect(() => {
+    const status = latestRunStatus;
+    const prev = runStatusRef.current;
+    runStatusRef.current = status;
+    if (
+      status &&
+      RUN_TERMINAL_STATUSES.includes(status) &&
+      prev &&
+      !RUN_TERMINAL_STATUSES.includes(prev)
+    )
+      scrollToBottom(true);
+  }, [latestRunStatus, scrollToBottom]);
 
   return (
     <div className="session-chat flex min-h-0 flex-1 flex-col">

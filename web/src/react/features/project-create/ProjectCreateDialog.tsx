@@ -1,4 +1,5 @@
 import { DialogOverlay } from "../../components/DialogOverlay";
+import { AppSelect } from "../../components/AppSelect";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Input, Label, TextField, Tooltip } from "@heroui/react";
@@ -281,26 +282,23 @@ function ProjectCreateForm({
                 wslSelector={
                   distributions.length > 0 ? (
                     <div className="workspace-runtime-picker">
-                      <label htmlFor="workspace-wsl-distribution">
-                        {c.wslDistribution}
-                      </label>
-                      <select
-                        id="workspace-wsl-distribution"
-                        value={distribution}
-                        disabled={submitting}
-                        onChange={(event) => {
-                          setDistribution(event.target.value);
+                      <AppSelect
+                        label={c.wslDistribution}
+                        aria-label={c.wslDistribution}
+                        value={distribution || null}
+                        isDisabled={submitting}
+                        onChange={(value) => {
+                          if (!value) return;
+                          setDistribution(value);
                           setPathInput("");
                           setMembers([]);
                           setError(null);
                         }}
-                      >
-                        {distributions.map((item) => (
-                          <option key={item.name} value={item.name}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
+                        options={distributions.map((item) => ({
+                          key: item.name,
+                          label: item.name,
+                        }))}
+                      />
                     </div>
                   ) : undefined
                 }

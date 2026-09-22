@@ -212,9 +212,9 @@ describe("ProjectCreateDialog", () => {
     fireEvent.click(wslTab);
     expect(wslTab).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "WSL2 发行版" })).toHaveValue(
-      "Ubuntu",
-    );
+    expect(
+      screen.getByRole("button", { name: /WSL2 发行版/ }),
+    ).toHaveTextContent("Ubuntu");
     fireEvent.change(screen.getByRole("textbox", { name: "项目目录路径" }), {
       target: { value: "/home/dev/app" },
     });
@@ -224,12 +224,14 @@ describe("ProjectCreateDialog", () => {
     expect(screen.getByRole("listitem")).toHaveTextContent(
       "Ubuntu · /home/dev/app",
     );
-    fireEvent.change(screen.getByRole("combobox", { name: "WSL2 发行版" }), {
-      target: { value: "Debian" },
-    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /WSL2 发行版/ }));
+    await user.click(await screen.findByRole("option", { name: "Debian" }));
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
     addPath("C:/repos/local");
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /WSL2 发行版/ }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("listitem")).toHaveTextContent("C:/repos/local");
   });
 

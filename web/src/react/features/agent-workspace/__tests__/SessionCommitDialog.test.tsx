@@ -253,6 +253,31 @@ describe("SessionCommitDialog", () => {
     expect(status.textContent).toContain("尚未推送到远端");
   });
 
+  it("sends includeUntracked:false only after clearing the checkbox", async () => {
+    commitSessionWorkspace.mockResolvedValue({
+      ...committed,
+      pushed: null,
+      upstream: null,
+    });
+    renderDialog();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "包含未跟踪的新文件" }),
+    );
+    fireEvent.change(screen.getByLabelText("提交信息"), {
+      target: { value: "fix: tracked only" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "仅提交" }));
+
+    await waitFor(() =>
+      expect(commitSessionWorkspace).toHaveBeenCalledWith("session-1", {
+        message: "fix: tracked only",
+        push: false,
+        includeUntracked: false,
+      }),
+    );
+  });
+
   it("surfaces a failed commit as an alert and keeps the form usable", async () => {
     commitSessionWorkspace.mockRejectedValue(
       new Error("remote rejected the push"),

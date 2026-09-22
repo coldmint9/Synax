@@ -531,6 +531,7 @@ export type SessionEnvironmentInputSourceKind =
   | "search"
   | "command"
   | "url"
+  | "attachment"
   | "tool";
 
 export interface SessionEnvironmentInputSource {
@@ -538,6 +539,7 @@ export interface SessionEnvironmentInputSource {
   kind: SessionEnvironmentInputSourceKind;
   label: string;
   path?: string;
+  assetId?: string;
 }
 
 export interface SessionBackgroundProcess {
@@ -691,6 +693,27 @@ export interface StreamTurnRequest {
 
 async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   return apiRequest<T>(`${BASE}${path}`, init);
+}
+
+async function requestBlob(
+  path: string,
+  init?: ApiRequestOptions,
+): Promise<Blob> {
+  const response = await apiFetch(`${BASE}${path}`, init);
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const body = (await response.json()) as {
+        error?: string;
+        message?: string;
+      };
+      message = body.error ?? body.message ?? message;
+    } catch {
+      // Keep the status fallback for non-JSON errors.
+    }
+    throw new Error(message);
+  }
+  return response.blob();
 }
 
 export interface SessionSearchResponse {
@@ -946,6 +969,14 @@ export const agentRuntimeApi = {
     request<SessionEnvironmentFileView>(
       `/sessions/${encodeURIComponent(sessionId)}/environment/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}${rootId ? `&rootId=${encodeURIComponent(rootId)}` : ""}`,
     ),
+  getSessionEnvironmentFileMedia: (
+    sessionId: string,
+    path: string,
+    rootId?: string,
+  ) =>
+    requestBlob(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/file/media?path=${encodeURIComponent(path)}${rootId ? `&rootId=${encodeURIComponent(rootId)}` : ""}`,
+    ),
   saveSessionEnvironmentFile: (
     sessionId: string,
     path: string,
@@ -971,10 +1002,22 @@ export const agentRuntimeApi = {
       message: string;
       push?: boolean;
       rootId?: string;
+      includeUntracked?: boolean;
     },
   ) =>
     request<SessionGitCommitResult>(
       `/sessions/${encodeURIComponent(sessionId)}/git/commit`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
+  restoreSessionFile: (
+    sessionId: string,
+    body: { path: string; rootId?: string },
+  ) =>
+    request<{ rootId: string; path: string; deleted: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}/git/files/restore`,
       {
         method: "POST",
         body: JSON.stringify(body),

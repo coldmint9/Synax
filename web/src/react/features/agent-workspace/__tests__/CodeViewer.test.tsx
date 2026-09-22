@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 
 const getSessionEnvironmentFile = vi.fn();
+const getSessionEnvironmentFileMedia = vi.fn();
 const getSessionInputSource = vi.fn();
 const saveSessionEnvironmentFile = vi.fn();
 const highlightCode = vi.fn();
@@ -16,6 +17,8 @@ vi.mock("../../../../lib/api/agentRuntime", () => ({
   agentRuntimeApi: {
     getSessionEnvironmentFile: (...args: unknown[]) =>
       getSessionEnvironmentFile(...args),
+    getSessionEnvironmentFileMedia: (...args: unknown[]) =>
+      getSessionEnvironmentFileMedia(...args),
     getSessionInputSource: (...args: unknown[]) =>
       getSessionInputSource(...args),
     saveSessionEnvironmentFile: (...args: unknown[]) =>
@@ -78,7 +81,9 @@ describe("CodeViewer", () => {
   beforeEach(() => {
     clearWorkspaceDraft("file:src/app.ts");
     clearWorkspaceDraft("file:src/page.html");
+    clearWorkspaceDraft("file:src/icon.svg");
     getSessionEnvironmentFile.mockReset();
+    getSessionEnvironmentFileMedia.mockReset();
     getSessionInputSource.mockReset();
     saveSessionEnvironmentFile.mockReset();
     saveSessionEnvironmentFile.mockResolvedValue({
@@ -87,6 +92,10 @@ describe("CodeViewer", () => {
       bytes: SOURCE.length,
     });
     highlightCode.mockReset();
+    vi.spyOn(URL, "createObjectURL").mockImplementation(
+      () => "blob:https://synax.test/preview",
+    );
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     highlightCode.mockResolvedValue(
       '<pre class="shiki synax-code" style="color:var(--synax-code-foreground)">' +
         '<code><span class="line"><span style="color:var(--synax-code-token-keyword)">const</span> a = 1</span>' +
@@ -290,6 +299,59 @@ describe("CodeViewer", () => {
     expect(screen.queryByRole("button", { name: "保存文件" })).toBeNull();
   });
 
+  it("loads raster images as authenticated blobs without decoding them as text", async () => {
+    const blob = new Blob([new Uint8Array([137, 80, 78, 71])], {
+      type: "image/png",
+    });
+    getSessionEnvironmentFileMedia.mockResolvedValue(blob);
+    render(
+      <CodeViewer
+        sessionId="sess-1"
+        path="assets/logo.png"
+        tabId="file:assets/logo.png"
+      />,
+    );
+
+    const image = await screen.findByRole("img", { name: "logo.png" });
+    expect(image).toHaveAttribute("src", "blob:https://synax.test/preview");
+    expect(getSessionEnvironmentFileMedia).toHaveBeenCalledWith(
+      "sess-1",
+      "assets/logo.png",
+      undefined,
+    );
+    expect(getSessionEnvironmentFile).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存文件" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "源码" })).toBeNull();
+  });
+
+  it("previews SVG as an inert image while retaining editable source", async () => {
+    getSessionEnvironmentFile.mockResolvedValue(
+      fileView(
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10" /></svg>',
+      ),
+    );
+    const { unmount } = render(
+      <CodeViewer
+        sessionId="sess-1"
+        path="src/icon.svg"
+        tabId="file:src/icon.svg"
+      />,
+    );
+
+    expect(
+      await screen.findByRole("img", { name: "icon.svg" }),
+    ).toHaveAttribute("src", "blob:https://synax.test/preview");
+    fireEvent.click(screen.getByRole("button", { name: "源码" }));
+    expect(
+      screen.getByRole("textbox", { name: "编辑文件 src/icon.svg" }),
+    ).toBeTruthy();
+    unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(
+      "blob:https://synax.test/preview",
+    );
+  });
+
   it("retains HTML preview and highlights the editable source", async () => {
     getSessionEnvironmentFile.mockResolvedValue(fileView("<h1>Hello</h1>"));
     highlightCode.mockImplementation(async (text: string) => markup(text));
@@ -300,7 +362,12 @@ describe("CodeViewer", () => {
         tabId="file:src/page.html"
       />,
     );
-    await screen.findByTitle("HTML 预览：src/page.html");
+    const preview = await screen.findByTitle("HTML 预览：src/page.html");
+    expect(preview).toHaveAttribute("sandbox", "allow-scripts");
+    expect(preview).not.toHaveAttribute(
+      "allow",
+      expect.stringContaining("same-origin"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "源码" }));
     const editor = screen.getByRole("textbox");
     fireEvent.change(editor, { target: { value: "<h1>Edited</h1>" } });

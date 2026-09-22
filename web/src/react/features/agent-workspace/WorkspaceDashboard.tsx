@@ -21,6 +21,7 @@ import {
   GitCommit,
   List,
   RefreshCw,
+  Undo2,
 } from "lucide-react";
 import type {
   EnvironmentChangeStatus,
@@ -45,6 +46,7 @@ import "../workspace/workspaceProjects.css";
 import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useLocale } from "../../../hooks/useLocale";
 import type { I18nKey } from "../../../lib/i18n";
+import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
 import { FileTypeIcon } from "./FileTypeIcon";
 import {
   openWorkspaceDiff,
@@ -266,6 +268,8 @@ function RepositoryProjectCard({
   reload,
   changedFilesView,
   onChangedFilesView,
+  onRevert,
+  revertingPaths,
 }: {
   sessionId: string;
   environment: SessionEnvironment;
@@ -274,6 +278,8 @@ function RepositoryProjectCard({
   reload: () => void | Promise<void>;
   changedFilesView: "tree" | "flat";
   onChangedFilesView: (view: "tree" | "flat") => void;
+  onRevert?: (file: SessionEnvironmentFile) => void;
+  revertingPaths?: ReadonlySet<string>;
 }) {
   const { t } = useLocale();
   const changedFiles = repository.changedFiles;
@@ -345,13 +351,20 @@ function RepositoryProjectCard({
             </div>
           )}
           {changedFilesView === "tree" ? (
-            <ChangedFileTree directory={changedFileTree} onOpen={openDiff} />
+            <ChangedFileTree
+              directory={changedFileTree}
+              onOpen={openDiff}
+              onRevert={onRevert}
+              revertingPaths={revertingPaths}
+            />
           ) : (
             changedFiles.map((file) => (
               <ChangedFileRow
                 key={`${file.status}:${file.path}`}
                 file={file}
                 onOpen={() => openDiff(file.path)}
+                onRevert={onRevert}
+                reverting={revertingPaths?.has(file.path) ?? false}
               />
             ))
           )}
@@ -414,7 +427,7 @@ function WorkspaceFilesDashboardPanel({
       outputCount={outputs.length}
       inputs={inputs.map(({ source, rootId, rootName }) => (
         <InputSourceRow
-          key={`${rootId}:${source.kind}:${source.toolCallId ?? source.label}`}
+          key={`${rootId}:${source.kind}:${source.toolCallId ?? source.assetId ?? source.label}`}
           source={source}
           rootName={rootName}
           copied={copiedPath === source.label}
@@ -491,6 +504,41 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   };
   const copiedTimer = useRef<number | null>(null);
 
+  const [revertingPaths, setRevertingPaths] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+
+  const revertFile = useCallback(
+    async (file: SessionEnvironmentFile) => {
+      if (!sessionId) return;
+      const confirmMessage = file.untracked
+        ? t("workspaceRevertUntrackedConfirm", { file: fileName(file.path) })
+        : t("workspaceRevertConfirm", { file: fileName(file.path) });
+      if (!window.confirm(confirmMessage)) return;
+      setRevertingPaths((current) => new Set(current).add(file.path));
+      try {
+        await agentRuntimeApi.restoreSessionFile(sessionId, {
+          path: file.path,
+          ...(repository ? { rootId: repository.rootId } : {}),
+        });
+        await reload();
+      } catch (error) {
+        window.alert(
+          error instanceof Error && error.message
+            ? error.message
+            : t("workspaceRevertFailed"),
+        );
+      } finally {
+        setRevertingPaths((current) => {
+          const next = new Set(current);
+          next.delete(file.path);
+          return next;
+        });
+      }
+    },
+    [sessionId, repository, reload, t],
+  );
+
   const copyPath = useCallback(async (filePath: string) => {
     // Only claim success when the write actually landed.
     if (!(await copyTextToClipboard(filePath))) return;
@@ -546,6 +594,8 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               reload={reload}
               changedFilesView={changedFilesView}
               onChangedFilesView={setChangedFilesView}
+              onRevert={(file) => void revertFile(file)}
+              revertingPaths={revertingPaths}
             />
           </DashboardPanel>
         ))}
@@ -745,6 +795,8 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                       key={repository?.rootId}
                       directory={changedFileTree}
                       onOpen={openDiff}
+                      onRevert={(file) => void revertFile(file)}
+                      revertingPaths={revertingPaths}
                     />
                   ) : (
                     changedFiles.map((file) => (
@@ -752,6 +804,8 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                         key={`${file.status}:${file.path}`}
                         file={file}
                         onOpen={() => openDiff(file.path)}
+                        onRevert={(revertTarget) => void revertFile(revertTarget)}
+                        reverting={revertingPaths.has(file.path)}
                       />
                     ))
                   )}
@@ -832,10 +886,14 @@ function ChangedFileTree({
   directory,
   onOpen,
   depth = 0,
+  onRevert,
+  revertingPaths,
 }: {
   directory: ChangedFileDirectory;
   onOpen: (path: string) => void;
   depth?: number;
+  onRevert?: (file: SessionEnvironmentFile) => void;
+  revertingPaths?: ReadonlySet<string>;
 }) {
   return (
     <>
@@ -853,6 +911,8 @@ function ChangedFileTree({
           file={file}
           depth={depth}
           onOpen={() => onOpen(file.path)}
+          onRevert={onRevert}
+          reverting={revertingPaths?.has(file.path) ?? false}
         />
       ))}
     </>
@@ -1021,10 +1081,14 @@ function ChangedFileRow({
   file,
   onOpen,
   depth = 0,
+  onRevert,
+  reverting = false,
 }: {
   file: SessionEnvironmentFile;
   onOpen: () => void;
   depth?: number;
+  onRevert?: (file: SessionEnvironmentFile) => void;
+  reverting?: boolean;
 }) {
   const { t } = useLocale();
   const meta = CHANGE_META[file.status] ?? CHANGE_META.unknown;
@@ -1032,31 +1096,50 @@ function ChangedFileRow({
   const hasStats = file.additions > 0 || file.deletions > 0;
 
   return (
-    <button
-      type="button"
+    <div
       className="ws-row"
       style={{ paddingLeft: `${6 + depth * 14}px` }}
-      title={file.path}
-      onClick={onOpen}
     >
-      <FileTypeIcon path={file.path} size={11} />
-      <span className={`ws-badge ${meta.tone}`} title={t(meta.labelKey)}>
-        {meta.letter}
-      </span>
-      <span className="ws-row-main ws-row-main--file">
-        <span className="ws-row-file">{name}</span>
-      </span>
-      {hasStats ? (
-        <span className="ws-row-diff ws-mono">
-          {file.additions > 0 ? (
-            <span className="text-success">+{file.additions}</span>
-          ) : null}
-          {file.deletions > 0 ? (
-            <span className="text-danger">-{file.deletions}</span>
-          ) : null}
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        title={file.path}
+        onClick={onOpen}
+      >
+        <FileTypeIcon path={file.path} size={11} />
+        <span className={`ws-badge ${meta.tone}`} title={t(meta.labelKey)}>
+          {meta.letter}
         </span>
+        <span className="ws-row-main ws-row-main--file">
+          <span className="ws-row-file">{name}</span>
+        </span>
+        {hasStats ? (
+          <span className="ws-row-diff ws-mono">
+            {file.additions > 0 ? (
+              <span className="text-success">+{file.additions}</span>
+            ) : null}
+            {file.deletions > 0 ? (
+              <span className="text-danger">-{file.deletions}</span>
+            ) : null}
+          </span>
+        ) : null}
+      </button>
+      {onRevert ? (
+        <button
+          type="button"
+          className="ws-icon-button"
+          aria-label={t("workspaceRevertFile")}
+          title={t("workspaceRevertFile")}
+          disabled={reverting}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRevert(file);
+          }}
+        >
+          <Undo2 size={11} className={reverting ? "animate-spin" : ""} />
+        </button>
       ) : null}
-    </button>
+    </div>
   );
 }
 
@@ -1117,7 +1200,7 @@ function InputSourceRow({
         onCopy();
       }}
     >
-      <FileTypeIcon path={source.path ?? "source"} size={11} />
+      <FileTypeIcon path={source.path ?? source.label} size={11} />
       <span className="ws-row-main ws-row-main--file">
         <span className="ws-row-file">{label}</span>
         <span className="ws-row-sub">

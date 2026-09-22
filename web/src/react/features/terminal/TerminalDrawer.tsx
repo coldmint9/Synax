@@ -17,6 +17,7 @@ import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
 import { terminalApi } from "../../../lib/api/terminal";
 import { useLocale } from "../../../hooks/useLocale";
 import { useSessionWorkspaceStore } from "../agent-workspace/state/sessionWorkspaceStore";
+import { AppSelect } from "../../components/AppSelect";
 import { TerminalViewport } from "./TerminalViewport";
 import {
   terminalChanged,
@@ -24,6 +25,11 @@ import {
   type LegacyTerminal,
 } from "./terminalStore";
 import "./terminal.css";
+
+function directoryName(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? path;
+}
 
 function LegacyTerminalView({
   legacy,
@@ -224,6 +230,17 @@ export function TerminalDrawer({
       document.removeEventListener("terminal:toggle", show);
     };
   }, [create]);
+  // An empty drawer should come up ready to type, not as a placeholder.
+  const autoCreated = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      autoCreated.current = false;
+      return;
+    }
+    if (autoCreated.current || !projectId || pending > 0 || tabs.length) return;
+    autoCreated.current = true;
+    create();
+  }, [open, projectId, pending, tabs.length, create]);
   const setNativeFocus = (focused: boolean) =>
     (window as any).electronAPI?.setTerminalFocus?.(focused);
   useEffect(() => {
@@ -348,7 +365,7 @@ export function TerminalDrawer({
                 />
                 <span>
                   {tab.terminal?.kind === "terminal"
-                    ? `${zh ? "终端" : "Terminal"} ${index + 1} · ${tab.terminal.title}`
+                    ? directoryName(tab.terminal.cwd) || tab.terminal.title
                     : (tab.terminal?.command ?? tab.legacy?.process.command)}
                 </span>
               </button>
@@ -370,21 +387,18 @@ export function TerminalDrawer({
         </div>
         <div className="terminal-drawer-actions">
           {roots.length > 1 && (
-            <select
+            <AppSelect
               aria-label={zh ? "终端项目目录" : "Terminal workspace"}
-              value={rootId}
-              onChange={(event) => setRootId(event.target.value)}
-            >
-              {roots.map((root) => (
-                <option
-                  key={root.id}
-                  value={root.id}
-                  disabled={root.status === "missing"}
-                >
-                  {root.name}
-                </option>
-              ))}
-            </select>
+              className="terminal-root-select"
+              fullWidth={false}
+              value={rootId || null}
+              onChange={(value) => value && setRootId(value)}
+              options={roots.map((root) => ({
+                key: root.id,
+                label: root.name,
+                isDisabled: root.status === "missing",
+              }))}
+            />
           )}
           <button
             type="button"
@@ -455,11 +469,6 @@ export function TerminalDrawer({
           </button>
         </div>
       </header>
-      {active?.terminal && (
-        <div className="terminal-start-directory" title={active.terminal.cwd}>
-          {zh ? "启动目录" : "Started in"} · {active.terminal.cwd}
-        </div>
-      )}
       {(error || actionError) && (
         <div className="terminal-error" role="alert">
           {error || actionError}

@@ -459,9 +459,9 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                 })
               }
             >
-              <Checkbox.Control>
+              <Checkbox.Content><Checkbox.Control>
                 <Checkbox.Indicator />
-              </Checkbox.Control>
+              </Checkbox.Control></Checkbox.Content>
             </Checkbox>
             <span>
               {text(
@@ -536,9 +536,9 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                     isDisabled={!available(item) || busy || loading}
                     onChange={(checked) => toggle(item.id, checked)}
                   >
-                    <Checkbox.Control>
+                    <Checkbox.Content><Checkbox.Control>
                       <Checkbox.Indicator />
-                    </Checkbox.Control>
+                    </Checkbox.Control></Checkbox.Content>
                   </Checkbox>
                   <button
                     className="discovery-row-detail"

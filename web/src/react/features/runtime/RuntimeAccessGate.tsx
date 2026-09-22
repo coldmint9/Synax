@@ -1,3 +1,7 @@
+import { RuntimeSkeleton } from "./RuntimeSkeleton";
+import { initApiOrigin } from "../../../lib/api/originConfig";
+import { startApiConnectivityMonitor } from "../../../lib/apiConnectivity";
+import { startProjectRecovery } from "../../state/shellStore";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   enableRuntimeAuth,
@@ -22,6 +26,7 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
     setError(null);
     setNeedsToken(false);
     try {
+      await initApiOrigin();
       await ensureRuntimeAuthentication();
       useApiConnectivityStore.getState().markSuccess();
       setReady(true);
@@ -53,7 +58,17 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
     window.addEventListener(RUNTIME_AUTH_REQUIRED, invalidated);
     return () => window.removeEventListener(RUNTIME_AUTH_REQUIRED, invalidated);
   }, [connect]);
+  useEffect(() => {
+    if (!ready) return;
+    const stopRecovery = startProjectRecovery();
+    const stopMonitor = startApiConnectivityMonitor();
+    return () => {
+      stopRecovery();
+      stopMonitor();
+    };
+  }, [ready]);
   if (ready) return children;
+  if (busy) return <RuntimeSkeleton />;
   return (
     <main className="app-viewport flex items-center justify-center bg-background p-6 text-foreground">
       <form
@@ -66,17 +81,13 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
       >
         <h1 className="text-lg font-semibold">Synax Runtime</h1>
         <p role="status" className="text-sm text-muted-foreground">
-          {busy
+          {needsToken
             ? zh
-              ? "正在连接运行服务…"
-              : "Connecting to the runtime…"
-            : needsToken
-              ? zh
-                ? "需要连接授权的运行服务。令牌仅保留在本次页面内存中。"
-                : "Connect to an authorized runtime. Tokens are kept only in this page’s memory."
-              : zh
-                ? "暂时无法连接运行服务，请重试。"
-                : "The runtime is unavailable. Please retry."}
+              ? "需要连接授权的运行服务。令牌仅保留在本次页面内存中。"
+              : "Connect to an authorized runtime. Tokens are kept only in this page’s memory."
+            : zh
+              ? "暂时无法连接运行服务，请重试。"
+              : "The runtime is unavailable. Please retry."}
         </p>
         {error && (
           <p role="alert" className="text-sm text-danger">

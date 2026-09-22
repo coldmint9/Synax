@@ -26,6 +26,11 @@ export interface SessionGitCommitInput {
   message?: string | null;
   /** Defaults to `true`. `false` commits locally without touching the remote. */
   push?: boolean | null;
+  /**
+   * Defaults to `true` (`git add -A`). `false` stages tracked changes only
+   * (`git add -u`) so untracked files stay out of the commit.
+   */
+  includeUntracked?: boolean | null;
 }
 
 export interface SessionGitCommitResult {
@@ -41,13 +46,13 @@ export interface SessionGitCommitResult {
   committedFiles: number;
 }
 
-interface GitResult {
+export interface GitResult {
   ok: boolean;
   stdout: string;
   stderr: string;
 }
 
-function formatGitFailure(result: GitResult): string {
+export function formatGitFailure(result: GitResult): string {
   const detail = (result.stderr || result.stdout)
     .trim()
     .split("\n")
@@ -57,7 +62,7 @@ function formatGitFailure(result: GitResult): string {
   return detail;
 }
 
-async function runGit(
+export async function runGit(
   workspacePath: string,
   args: string[],
   allowFailure = false,
@@ -179,9 +184,15 @@ export async function commitSessionWorkspace(
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-  if (changedFiles.length === 0) {
+  const includeUntracked = input.includeUntracked !== false;
+  const eligibleFiles = includeUntracked
+    ? changedFiles
+    : changedFiles.filter((line) => !line.startsWith("??"));
+  if (eligibleFiles.length === 0) {
     throw new AgentRuntimeError(
-      "There is nothing to commit.",
+      includeUntracked
+        ? "There is nothing to commit."
+        : "There is nothing to commit among tracked files.",
       "GIT_NOTHING_TO_COMMIT",
       409,
     );
@@ -196,7 +207,7 @@ export async function commitSessionWorkspace(
     );
   }
 
-  await runGit(workspacePath, ["add", "-A"]);
+  await runGit(workspacePath, ["add", includeUntracked ? "-A" : "-u"]);
 
   const commit = await runGit(workspacePath, ["commit", "-m", message], true);
   if (!commit.ok) {
@@ -252,7 +263,7 @@ export async function commitSessionWorkspace(
       branch,
       commitSha,
       messageGenerated: false,
-      files: changedFiles.length,
+      files: eligibleFiles.length,
       pushed,
     },
     shouldPush
@@ -268,6 +279,6 @@ export async function commitSessionWorkspace(
     messageGenerated: false,
     pushed,
     upstream,
-    committedFiles: changedFiles.length,
+    committedFiles: eligibleFiles.length,
   };
 }

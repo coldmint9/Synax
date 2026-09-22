@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { SessionListHeader } from "../SessionListHeader";
 import { useShellStore } from "../../../state/shellStore";
 
@@ -39,11 +39,32 @@ describe("SessionListHeader", () => {
     const onNewSession = vi.fn();
     renderHeader({ onNewSession });
 
-    const newChat = screen.getByRole("button", { name: /新任务/ });
+    const newChat = screen.getByRole("button", { name: "新对话" });
     expect(newChat.firstElementChild?.tagName.toLowerCase()).toBe("svg");
+    expect(newChat.querySelector(".lucide-square-pen")).toBeTruthy();
+    expect(newChat.className).toContain("text-foreground");
+    expect(newChat.className).not.toContain("text-primary");
+    fireEvent.click(newChat);
+    expect(onNewSession).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: /refresh|刷新/i })).toBeNull();
-    // Only "新任务" and the clear-inactive action remain in the header actions.
+    // Only "新对话" and the clear-inactive action remain in the header actions.
     expect(screen.getAllByRole("button")).toHaveLength(2);
+  });
+  it("disables new-chat while creating a session", () => {
+    const onNewSession = vi.fn();
+    renderHeader({ onNewSession, isCreatingSession: true });
+    const newChat = screen.getByRole("button", { name: "新对话" });
+    expect(newChat).toBeDisabled();
+    fireEvent.click(newChat);
+    expect(onNewSession).not.toHaveBeenCalled();
+  });
+
+  it("uses the localized new-chat label in English", () => {
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, locale: "en" },
+    }));
+    renderHeader();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeTruthy();
   });
 });
 

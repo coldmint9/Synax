@@ -1,9 +1,24 @@
-import { useLayoutEffect, type RefObject } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  type RefObject,
+} from "react";
 
 const positions = new Map<
   string,
   { top: number; pinned: boolean; reading: boolean }
 >();
+
+export interface TranscriptScrollController {
+  /**
+   * Scroll the transcript to the bottom. With `force` (default) the bottom pin
+   * is re-established first, so entry points like "message sent", "first AI
+   * response" and "run finished" always land on the latest content even when
+   * the user had scrolled away.
+   */
+  scrollToBottom: (force?: boolean) => void;
+}
 
 /** Follow streamed growth only while pinned; manual history browsing is a separate signal. */
 export function useTranscriptScroll(
@@ -11,20 +26,43 @@ export function useTranscriptScroll(
   sessionId?: string,
   onReadingHistoryChange?: (reading: boolean) => void,
   ready = true,
-) {
+): TranscriptScrollController {
+  const pinnedRef = useRef(true);
+  const readingRef = useRef(false);
+  const lastTopRef = useRef(0);
+
+  const scrollToBottom = useCallback(
+    (force = true) => {
+      const element = scrollRef.current;
+      if (!element) return;
+      if (force) {
+        pinnedRef.current = true;
+        if (readingRef.current) {
+          readingRef.current = false;
+          onReadingHistoryChange?.(false);
+        }
+      } else if (!pinnedRef.current) {
+        return;
+      }
+      element.scrollTop = element.scrollHeight;
+      lastTopRef.current = element.scrollTop;
+    },
+    [onReadingHistoryChange, scrollRef],
+  );
+
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element || !sessionId || !ready) return;
     const content = element.firstElementChild;
     const saved = positions.get(sessionId);
-    let pinned = saved?.pinned ?? true;
-    let readingHistory = saved?.reading ?? false;
+    pinnedRef.current = saved?.pinned ?? true;
+    readingRef.current = saved?.reading ?? false;
     let manualUntil = 0;
     let pointerDown = false;
-    let lastTop = element.scrollTop;
+    lastTopRef.current = element.scrollTop;
     const publish = (reading: boolean) => {
-      if (readingHistory === reading) return;
-      readingHistory = reading;
+      if (readingRef.current === reading) return;
+      readingRef.current = reading;
       onReadingHistoryChange?.(reading);
     };
     const markManual = () => {
@@ -56,7 +94,7 @@ export function useTranscriptScroll(
       if (!event.target.closest("summary, [aria-expanded]")) return;
       // Expanding a plan or an answer is reading, not new streamed output.
       // Release the bottom pin before ResizeObserver sees the expanded card.
-      pinned = false;
+      pinnedRef.current = false;
       publish(true);
     };
     const handleDisclosureKey = (event: KeyboardEvent) => {
@@ -65,15 +103,15 @@ export function useTranscriptScroll(
     const handleScroll = () => {
       const top = element.scrollTop;
       const distance = element.scrollHeight - top - element.clientHeight;
-      pinned = distance <= 48;
+      pinnedRef.current = distance <= 48;
       if (distance <= 32) publish(false);
       else if (
         distance >= 96 &&
-        top < lastTop - 1 &&
+        top < lastTopRef.current - 1 &&
         (pointerDown || performance.now() <= manualUntil)
       )
         publish(true);
-      lastTop = top;
+      lastTopRef.current = top;
     };
     element.addEventListener("click", inspectDisclosure, true);
     element.addEventListener("keydown", handleDisclosureKey, true);
@@ -84,25 +122,25 @@ export function useTranscriptScroll(
     element.addEventListener("keydown", handleKeyDown);
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", handlePointerUp);
-    element.scrollTop = pinned ? element.scrollHeight : saved!.top;
-    lastTop = element.scrollTop;
-    onReadingHistoryChange?.(readingHistory);
+    element.scrollTop = pinnedRef.current ? element.scrollHeight : saved!.top;
+    lastTopRef.current = element.scrollTop;
+    onReadingHistoryChange?.(readingRef.current);
     const observer =
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(() => {
-            if (pinned) {
+            if (pinnedRef.current) {
               element.scrollTop = element.scrollHeight;
-              lastTop = element.scrollTop;
+              lastTopRef.current = element.scrollTop;
             }
           });
     if (observer && content) observer.observe(content);
     return () => {
       positions.delete(sessionId);
       positions.set(sessionId, {
-        top: lastTop,
-        pinned,
-        reading: readingHistory,
+        top: lastTopRef.current,
+        pinned: pinnedRef.current,
+        reading: readingRef.current,
       });
       if (positions.size > 32) positions.delete(positions.keys().next().value!);
       element.removeEventListener("click", inspectDisclosure, true);
@@ -118,4 +156,6 @@ export function useTranscriptScroll(
       onReadingHistoryChange?.(false);
     };
   }, [scrollRef, sessionId, onReadingHistoryChange, ready]);
+
+  return { scrollToBottom };
 }

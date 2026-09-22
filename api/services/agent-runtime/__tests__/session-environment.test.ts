@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   listToolCalls: vi.fn(),
+  listMessages: vi.fn(),
   getToolCall: vi.fn(),
   resolveSessionWorkspaceRoots: vi.fn(),
 }));
@@ -14,6 +15,22 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../session-store.js", () => ({ agentRuntimeStore: mocks }));
 vi.mock("../tools/workspace.js", () => ({
   resolveSessionWorkspaceRoots: mocks.resolveSessionWorkspaceRoots,
+}));
+vi.mock("../media-assets.js", () => ({
+  detectMediaType: () => "application/octet-stream",
+  getAsset: (id: string) => {
+    if (id === "asset_" + "a".repeat(32))
+      return {
+        id,
+        projectId: "project",
+        filename: "设计稿.png",
+        mediaType: "image/png",
+        size: 1,
+        sha256: "x",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      };
+    throw new Error("MEDIA_NOT_FOUND");
+  },
 }));
 
 import {
@@ -66,6 +83,7 @@ beforeEach(() => {
     },
   ]);
   mocks.listToolCalls.mockReturnValue([]);
+  mocks.listMessages.mockReturnValue([]);
   invalidateSessionEnvironment(sessionId);
 });
 
@@ -76,7 +94,7 @@ afterEach(() => {
 });
 
 describe("session environment Git ignore filtering", () => {
-  it("provides preview references for files, native reads and directory searches", async () => {
+  it("lists only workspace file reads and external web reads as input sources", async () => {
     mocks.listToolCalls.mockReturnValue([
       {
         id: "file-read",
@@ -94,12 +112,63 @@ describe("session environment Git ignore filtering", () => {
         inputRef: { path: "src" },
       },
       {
+        id: "shell-read",
+        toolId: "bash",
+        status: "completed",
+        mutability: "read",
+        inputSummary: '{"command":"grep -n \\"function parseStat"}',
+        inputRef: { command: 'grep -n "function parseStat' },
+      },
+      {
+        id: "fetch-read",
+        toolId: "claude-code.WebFetch",
+        status: "completed",
+        mutability: "read",
+        inputRef: {
+          nativeTool: {
+            url: "https://example.com/docs",
+            prompt: "summarize",
+          },
+        },
+      },
+      {
         id: "search-read",
         toolId: "webSearch",
         status: "completed",
         mutability: "read",
-        inputSummary: "Search docs",
-        inputRef: {},
+        inputSummary: '{"query":"Synax docs"}',
+        inputRef: { query: "Synax docs" },
+      },
+      {
+        id: "text-read",
+        toolId: "grep.search",
+        status: "completed",
+        mutability: "read",
+        inputSummary: '{"query":"SessionEnvironment"}',
+        inputRef: { query: "SessionEnvironment" },
+      },
+    ]);
+    mocks.listMessages.mockReturnValue([
+      {
+        id: "msg-1",
+        sessionId,
+        role: "user",
+        content: "请看截图",
+        contentParts: [
+          { type: "text", text: "请看截图" },
+          {
+            type: "image",
+            assetId: "asset_" + "a".repeat(32),
+            detail: "auto",
+          },
+        ],
+      },
+      {
+        id: "msg-2",
+        sessionId,
+        role: "assistant",
+        content: "好的",
+        contentParts: [{ type: "text", text: "好的" }],
       },
     ]);
     const env = await getSessionEnvironment(sessionId);
@@ -110,8 +179,17 @@ describe("session environment Git ignore filtering", () => {
         path: "src/main.ts",
         toolCallId: "file-read",
       },
-      { kind: "search", label: "List src", toolCallId: "dir-read" },
-      { kind: "search", label: "Search docs", toolCallId: "search-read" },
+      {
+        kind: "url",
+        label: "https://example.com/docs",
+        toolCallId: "fetch-read",
+      },
+      { kind: "url", label: "Synax docs", toolCallId: "search-read" },
+      {
+        kind: "attachment",
+        label: "设计稿.png",
+        assetId: "asset_" + "a".repeat(32),
+      },
     ]);
   });
 

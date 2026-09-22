@@ -134,22 +134,8 @@
   opacity: 0.35;
   cursor: not-allowed;
 }
-.terminal-drawer select {
+.terminal-root-select {
   max-width: 130px;
-  padding: 4px 6px;
-  font-size: 10px;
-  border: 1px solid hsl(var(--border-hsl));
-  border-radius: 6px;
-  background: var(--terminal-bg);
-}
-.terminal-start-directory {
-  flex: 0 0 auto;
-  padding: 3px 12px;
-  color: hsl(var(--muted-foreground));
-  font: 10px/1.5 monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .terminal-drawer-content {
   position: relative;
@@ -165,23 +151,6 @@
   flex-direction: column;
   min-height: 0;
 }
-.terminal-session-tools {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 8px;
-  padding: 3px 12px 5px;
-  color: hsl(var(--muted-foreground));
-  font-size: 10px;
-}
-.terminal-session-tools input {
-  margin-left: auto;
-  width: 132px;
-  border: 1px solid hsl(var(--border-hsl) / 0.6);
-  border-radius: 5px;
-  padding: 2px 5px;
-  background: transparent;
-}
 .terminal-emulator {
   flex: 1;
   min-height: 0;
@@ -191,9 +160,6 @@
 }
 .terminal-emulator > .xterm {
   height: 100%;
-}
-.terminal-connection--connected {
-  color: var(--success);
 }
 .terminal-error {
   display: flex;

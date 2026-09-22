@@ -25,6 +25,7 @@ vi.mock('../../../lib/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(
 import {
   getSessionEnvironment,
   getSessionEnvironmentFile,
+  getSessionEnvironmentFileMedia,
   saveSessionEnvironmentFile,
   invalidateSessionEnvironment,
 } from '../session-environment.js'
@@ -140,6 +141,26 @@ describe('session workspace Git roots', () => {
       const otherRoot = root.id === primary.id ? reference : primary
       expect(diff.content).not.toContain(`${otherRoot.id} working`)
     }
+  })
+
+  it('reads validated image bytes without UTF-8 conversion', async () => {
+    const imagePath = 'assets/pixel.png'
+    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
+    const target = path.join(primary.path, imagePath)
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, bytes)
+
+    await expect(
+      getSessionEnvironmentFileMedia(sessionId, imagePath, primary.id),
+    ).resolves.toMatchObject({
+      sessionId,
+      path: imagePath,
+      mediaType: 'image/png',
+      bytes,
+    })
+    await expect(
+      getSessionEnvironmentFileMedia(sessionId, relativePath, primary.id),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
   })
 
   it('rejects an empty message without staging or generating', async () => {

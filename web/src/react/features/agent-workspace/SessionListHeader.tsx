@@ -1,4 +1,4 @@
-import { ArrowLeft, PanelLeftClose, Search, Trash2, Plus } from "lucide-react";
+import { ArrowLeft, PanelLeftClose, Search, Trash2, SquarePen } from "lucide-react";
 import { Button } from "@heroui/react";
 import { useLocale } from "../../../hooks/useLocale";
 import type { SessionListView } from "./sessionBuckets";
@@ -75,15 +75,15 @@ export function SessionListHeader({
             <Button
               size="sm"
               variant="ghost"
-              className="h-7 min-w-0 gap-1 px-2 text-[11px] font-semibold text-primary"
+              className="h-7 min-w-0 gap-2 px-2 text-[11px] font-semibold text-foreground"
               onPress={onNewSession}
               isDisabled={isCreatingSession}
             >
-              <Plus
-                size={13}
+              <SquarePen
+                size={14}
                 className={isCreatingSession ? "animate-pulse" : ""}
               />
-              {locale === "zh" ? "新任务" : "New task"}
+              {t("sessionNewChat")}
             </Button>
           ) : null}
           <Button
