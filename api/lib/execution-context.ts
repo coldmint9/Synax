@@ -24,6 +24,8 @@ export function assertDatabaseWriteAllowed(sqlite: NativeDatabase.Database, data
   const row = sqlite.prepare("SELECT json_extract(metadata_json, '$.executionLease.epoch') AS epoch, json_extract(metadata_json, '$.executionLease.closed') AS closed FROM agent_runtime_runs WHERE id = ? AND session_id = ?")
     .get(context.runId, context.sessionId) as { epoch: string | null; closed: number | null } | undefined;
   if (!row || row.epoch !== context.epoch || row.closed) throw Object.assign(new Error('Execution lease has been superseded or closed.'), { code: 'EXECUTION_SUPERSEDED' });
+  const generation=sqlite.prepare("SELECT r.version_epoch AS run_epoch,h.epoch AS session_epoch FROM agent_runtime_runs r JOIN conversation_v3_heads h ON h.session_id=r.session_id WHERE r.id=? AND r.session_id=?").get(context.runId,context.sessionId) as {run_epoch:number|null;session_epoch:number}|undefined;
+  if(generation&&generation.run_epoch!==generation.session_epoch)throw Object.assign(new Error('Execution history epoch has been superseded.'),{code:'EXECUTION_SUPERSEDED'});
 }
 
 export async function* withinExecutionContext<T>(context: RuntimeExecutionContext | undefined, source: AsyncGenerator<T>): AsyncGenerator<T> {

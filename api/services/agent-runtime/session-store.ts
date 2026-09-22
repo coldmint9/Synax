@@ -1,3 +1,9 @@
+import {
+  writeVersionEntity,
+  readVersionEntity,
+  listVersionEntities,
+  entityScope,
+} from "./checkpoints/version-runtime/entities.js";
 import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import {
   versionRepository,
@@ -1249,25 +1255,37 @@ export class AgentRuntimeStore {
   }
 
   appendRun(run: AgentRun): AgentRun {
-    getRawSqlite()
-      .prepare(
-        `INSERT OR REPLACE INTO agent_runtime_runs
-         (id, session_id, status, started_at, completed_at, trigger_message_id, current_step, stop_reason, model, metadata_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        run.id,
+    const writeControl = (): AgentRun => {
+      getRawSqlite()
+        .prepare(
+          `INSERT OR REPLACE INTO agent_runtime_runs
+         (id, session_id, status, started_at, completed_at, trigger_message_id, current_step, stop_reason, model, metadata_json,version_epoch)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT epoch FROM conversation_v3_heads WHERE session_id=?))`,
+        )
+        .run(
+          run.id,
+          run.sessionId,
+          run.status,
+          run.startedAt,
+          run.completedAt,
+          run.triggerMessageId,
+          run.currentStep,
+          run.stopReason,
+          run.model,
+          stringify(run.metadata),
+          run.sessionId,
+        );
+      return run;
+    };
+    if (run.sessionId && versionedSession(run.sessionId))
+      return writeVersionEntity(
         run.sessionId,
-        run.status,
-        run.startedAt,
-        run.completedAt,
-        run.triggerMessageId,
-        run.currentStep,
-        run.stopReason,
-        run.model,
-        stringify(run.metadata),
+        "runs",
+        run.id,
+        run,
+        writeControl,
       );
-    return run;
+    return writeControl();
   }
 
   getRun(runId: string): AgentRun {
@@ -1275,7 +1293,9 @@ export class AgentRuntimeStore {
       .prepare("SELECT * FROM agent_runtime_runs WHERE id = ?")
       .get(runId) as RunRow | undefined;
     if (!row) throw new AgentNotFoundError(runId);
-    return mapRun(row);
+    return versionedSession(row.session_id)
+      ? readVersionEntity<AgentRun>(row.session_id, "runs", runId, mapRun(row))
+      : mapRun(row);
   }
 
   updateRun(runId: string, patch: Partial<AgentRun>): AgentRun {
@@ -1285,6 +1305,11 @@ export class AgentRuntimeStore {
   }
 
   listRuns(sessionId: string): AgentRun[] {
+    if (versionedSession(sessionId))
+      return listVersionEntities<AgentRun>(sessionId, "runs").sort(
+        (a, b) =>
+          b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id),
+      );
     const rows = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_runs WHERE session_id = ? ORDER BY started_at DESC, rowid DESC",
@@ -1294,29 +1319,40 @@ export class AgentRuntimeStore {
   }
 
   appendRunStep(step: AgentRunStep): AgentRunStep {
-    getRawSqlite()
-      .prepare(
-        `INSERT INTO agent_runtime_run_steps
+    const writeControl = (): AgentRunStep => {
+      getRawSqlite()
+        .prepare(
+          `INSERT INTO agent_runtime_run_steps
          (id, run_id, session_id, step_index, status, model, started_at, completed_at, finish_reason, metadata_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            run_id=excluded.run_id, session_id=excluded.session_id, step_index=excluded.step_index,
            status=excluded.status, model=excluded.model, started_at=excluded.started_at,
            completed_at=excluded.completed_at, finish_reason=excluded.finish_reason, metadata_json=excluded.metadata_json`,
-      )
-      .run(
-        step.id,
-        step.runId,
+        )
+        .run(
+          step.id,
+          step.runId,
+          step.sessionId,
+          step.index,
+          step.status,
+          step.model,
+          step.startedAt,
+          step.completedAt,
+          step.finishReason,
+          stringify(step.metadata),
+        );
+      return step;
+    };
+    if (step.sessionId && versionedSession(step.sessionId))
+      return writeVersionEntity(
         step.sessionId,
-        step.index,
-        step.status,
-        step.model,
-        step.startedAt,
-        step.completedAt,
-        step.finishReason,
-        stringify(step.metadata),
+        "steps",
+        step.id,
+        step,
+        writeControl,
       );
-    return step;
+    return writeControl();
   }
 
   getRunStep(stepId: string): AgentRunStep {
@@ -1324,7 +1360,9 @@ export class AgentRuntimeStore {
       .prepare("SELECT * FROM agent_runtime_run_steps WHERE id = ?")
       .get(stepId) as RunStepRow | undefined;
     if (!row) throw new AgentNotFoundError(stepId);
-    return mapRunStep(row);
+    return versionedSession(row.session_id)
+      ? readVersionEntity<AgentRunStep>(row.session_id, "steps", stepId)
+      : mapRunStep(row);
   }
 
   updateRunStep(stepId: string, patch: Partial<AgentRunStep>): AgentRunStep {
@@ -1334,6 +1372,14 @@ export class AgentRuntimeStore {
   }
 
   listRunSteps(runId: string): AgentRunStep[] {
+    const owner = entityScope("runs", runId);
+    if (owner) {
+      this.getRun(runId);
+      return listVersionEntities<AgentRunStep>(owner, "steps", {
+        field: "runId",
+        value: runId,
+      }).sort((a, b) => a.index - b.index);
+    }
     const rows = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_run_steps WHERE run_id = ? ORDER BY step_index, rowid",
@@ -1343,6 +1389,8 @@ export class AgentRuntimeStore {
   }
 
   listSessionSteps(sessionId: string): AgentRunStep[] {
+    if (versionedSession(sessionId))
+      return listVersionEntities<AgentRunStep>(sessionId, "steps");
     const rows = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_run_steps WHERE session_id = ? ORDER BY rowid",
@@ -1352,28 +1400,47 @@ export class AgentRuntimeStore {
   }
 
   appendRunPart(part: AgentRunPart): AgentRunPart {
-    getRawSqlite()
-      .prepare(
-        `INSERT OR REPLACE INTO agent_runtime_run_parts
+    const writeControl = (): AgentRunPart => {
+      getRawSqlite()
+        .prepare(
+          `INSERT OR REPLACE INTO agent_runtime_run_parts
          (id, run_id, step_id, session_id, kind, sequence, content, tool_call_id, metadata_json, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        part.id,
-        part.runId,
-        part.stepId,
+        )
+        .run(
+          part.id,
+          part.runId,
+          part.stepId,
+          part.sessionId,
+          part.kind,
+          part.sequence,
+          part.content,
+          part.toolCallId,
+          stringify(part.metadata),
+          part.createdAt,
+        );
+      return part;
+    };
+    if (part.sessionId && versionedSession(part.sessionId))
+      return writeVersionEntity(
         part.sessionId,
-        part.kind,
-        part.sequence,
-        part.content,
-        part.toolCallId,
-        stringify(part.metadata),
-        part.createdAt,
+        "parts",
+        part.id,
+        part,
+        writeControl,
       );
-    return part;
+    return writeControl();
   }
 
   listRunParts(stepId: string): AgentRunPart[] {
+    const owner = entityScope("steps", stepId);
+    if (owner) {
+      this.getRunStep(stepId);
+      return listVersionEntities<AgentRunPart>(owner, "parts", {
+        field: "stepId",
+        value: stepId,
+      }).sort((a, b) => a.sequence - b.sequence);
+    }
     const rows = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_run_parts WHERE step_id = ? ORDER BY sequence, rowid",
@@ -1383,6 +1450,14 @@ export class AgentRuntimeStore {
   }
 
   nextRunPartSequence(stepId: string): number {
+    const owner = entityScope("steps", stepId);
+    if (owner)
+      return (
+        this.listRunParts(stepId).reduce(
+          (n, part) => Math.max(n, part.sequence),
+          0,
+        ) + 1
+      );
     const row = getRawSqlite()
       .prepare(
         "SELECT MAX(sequence) AS max_sequence FROM agent_runtime_run_parts WHERE step_id = ?",
@@ -1392,36 +1467,48 @@ export class AgentRuntimeStore {
   }
 
   appendToolCall(record: ToolCallRecord): ToolCallRecord {
-    if (record.contentParts) bindAssets(record.sessionId, record.contentParts);
-    getRawSqlite()
-      .prepare(
-        `INSERT OR REPLACE INTO agent_runtime_tool_calls
+    const writeControl = (): ToolCallRecord => {
+      if (record.contentParts)
+        bindAssets(record.sessionId, record.contentParts);
+      getRawSqlite()
+        .prepare(
+          `INSERT OR REPLACE INTO agent_runtime_tool_calls
          (id, session_id, run_id, step_id, model_tool_call_id, tool_id, category, mutability, args_hash, input_summary,
           input_ref_json, output_summary, output_ref_json, status, permission_decision_id, started_at, ended_at, error, content_parts_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        record.id,
+        )
+        .run(
+          record.id,
+          record.sessionId,
+          record.runId,
+          record.stepId,
+          record.modelToolCallId,
+          record.toolId,
+          record.category,
+          record.mutability,
+          record.argsHash,
+          record.inputSummary,
+          record.inputRef === null ? null : stringify(record.inputRef),
+          record.outputSummary,
+          record.outputRef === null ? null : stringify(record.outputRef),
+          record.status,
+          record.permissionDecisionId,
+          record.startedAt,
+          record.endedAt,
+          record.error,
+          record.contentParts ? stringify(record.contentParts) : null,
+        );
+      return record;
+    };
+    if (record.sessionId && versionedSession(record.sessionId))
+      return writeVersionEntity(
         record.sessionId,
-        record.runId,
-        record.stepId,
-        record.modelToolCallId,
-        record.toolId,
-        record.category,
-        record.mutability,
-        record.argsHash,
-        record.inputSummary,
-        record.inputRef === null ? null : stringify(record.inputRef),
-        record.outputSummary,
-        record.outputRef === null ? null : stringify(record.outputRef),
-        record.status,
-        record.permissionDecisionId,
-        record.startedAt,
-        record.endedAt,
-        record.error,
-        record.contentParts ? stringify(record.contentParts) : null,
+        "tools",
+        record.id,
+        record,
+        writeControl,
       );
-    return record;
+    return writeControl();
   }
 
   updateToolCall(
@@ -1441,10 +1528,14 @@ export class AgentRuntimeStore {
       )
       .get(sessionId, toolCallId) as ToolCallRow | undefined;
     if (!row) throw new AgentNotFoundError(toolCallId);
-    return mapToolCall(row);
+    return versionedSession(sessionId)
+      ? readVersionEntity<ToolCallRecord>(sessionId, "tools", toolCallId)
+      : mapToolCall(row);
   }
 
   listToolCalls(sessionId: string): ToolCallRecord[] {
+    if (versionedSession(sessionId))
+      return listVersionEntities<ToolCallRecord>(sessionId, "tools");
     const rows = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_tool_calls WHERE session_id = ? ORDER BY rowid",
@@ -1454,6 +1545,14 @@ export class AgentRuntimeStore {
   }
 
   listRunToolCalls(runId: string): ToolCallRecord[] {
+    const owner = entityScope("runs", runId);
+    if (owner) {
+      this.getRun(runId);
+      return listVersionEntities<ToolCallRecord>(owner, "tools", {
+        field: "runId",
+        value: runId,
+      });
+    }
     const rows = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_tool_calls WHERE run_id = ? ORDER BY rowid",
@@ -1463,31 +1562,42 @@ export class AgentRuntimeStore {
   }
 
   appendPermission(decision: PermissionDecision): PermissionDecision {
-    getRawSqlite()
-      .prepare(
-        `INSERT OR REPLACE INTO agent_runtime_permissions
+    const writeControl = (): PermissionDecision => {
+      getRawSqlite()
+        .prepare(
+          `INSERT OR REPLACE INTO agent_runtime_permissions
          (id, session_id, run_id, step_id, tool_call_id, coarse_category, internal_gate, action, reason,
           patterns_json, user_reply, created_at, resolved_at, resume_token, metadata_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        decision.id,
+        )
+        .run(
+          decision.id,
+          decision.sessionId,
+          decision.runId,
+          decision.stepId,
+          decision.toolCallId,
+          decision.coarseCategory,
+          decision.internalGate,
+          decision.action,
+          decision.reason,
+          stringify(decision.patterns),
+          decision.userReply,
+          decision.createdAt,
+          decision.resolvedAt,
+          decision.resumeToken,
+          stringify(decision.metadata),
+        );
+      return decision;
+    };
+    if (decision.sessionId && versionedSession(decision.sessionId))
+      return writeVersionEntity(
         decision.sessionId,
-        decision.runId,
-        decision.stepId,
-        decision.toolCallId,
-        decision.coarseCategory,
-        decision.internalGate,
-        decision.action,
-        decision.reason,
-        stringify(decision.patterns),
-        decision.userReply,
-        decision.createdAt,
-        decision.resolvedAt,
-        decision.resumeToken,
-        stringify(decision.metadata),
+        "permissions",
+        decision.id,
+        decision,
+        writeControl,
       );
-    return decision;
+    return writeControl();
   }
 
   updatePermission(
@@ -1504,6 +1614,8 @@ export class AgentRuntimeStore {
   }
 
   listPermissions(sessionId: string): PermissionDecision[] {
+    if (versionedSession(sessionId))
+      return listVersionEntities<PermissionDecision>(sessionId, "permissions");
     const rows = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_permissions WHERE session_id = ? ORDER BY rowid",
@@ -1516,6 +1628,10 @@ export class AgentRuntimeStore {
     sessionId: string,
     resumeToken: string,
   ): PermissionDecision | undefined {
+    if (versionedSession(sessionId))
+      return this.listPermissions(sessionId).find(
+        (row) => row.resumeToken === resumeToken,
+      );
     const row = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_permissions WHERE session_id = ? AND resume_token = ? ORDER BY rowid DESC LIMIT 1",
@@ -1525,27 +1641,40 @@ export class AgentRuntimeStore {
   }
 
   appendArtifact(artifact: EvidenceArtifact): EvidenceArtifact {
-    getRawSqlite()
-      .prepare(
-        `INSERT OR REPLACE INTO agent_runtime_artifacts
+    const writeControl = (): EvidenceArtifact => {
+      getRawSqlite()
+        .prepare(
+          `INSERT OR REPLACE INTO agent_runtime_artifacts
          (id, session_id, kind, title, summary, source_refs_json, risk, metadata_json, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        artifact.id,
+        )
+        .run(
+          artifact.id,
+          artifact.sessionId,
+          artifact.kind,
+          artifact.title,
+          artifact.summary,
+          stringify(artifact.sourceRefs),
+          artifact.risk,
+          stringify(artifact.metadata ?? {}),
+          artifact.createdAt,
+        );
+      return artifact;
+    };
+    if (artifact.sessionId && versionedSession(artifact.sessionId))
+      return writeVersionEntity(
         artifact.sessionId,
-        artifact.kind,
-        artifact.title,
-        artifact.summary,
-        stringify(artifact.sourceRefs),
-        artifact.risk,
-        stringify(artifact.metadata ?? {}),
-        artifact.createdAt,
+        "artifacts",
+        artifact.id,
+        artifact,
+        writeControl,
       );
-    return artifact;
+    return writeControl();
   }
 
   listArtifacts(sessionId: string): EvidenceArtifact[] {
+    if (versionedSession(sessionId))
+      return listVersionEntities<EvidenceArtifact>(sessionId, "artifacts");
     const rows = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_artifacts WHERE session_id = ? ORDER BY rowid",
@@ -1555,24 +1684,35 @@ export class AgentRuntimeStore {
   }
 
   saveContextBundle(bundle: AgentContextBundle): AgentContextBundle {
-    getRawSqlite()
-      .prepare(
-        `INSERT OR REPLACE INTO agent_runtime_context_bundles
+    const writeControl = (): AgentContextBundle => {
+      getRawSqlite()
+        .prepare(
+          `INSERT OR REPLACE INTO agent_runtime_context_bundles
          (id, project_id, session_id, node_id, profile_id, blocks_json, citations_json, warnings_json, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        bundle.id,
-        bundle.projectId,
+        )
+        .run(
+          bundle.id,
+          bundle.projectId,
+          bundle.sessionId,
+          bundle.nodeId,
+          bundle.profileId,
+          stringify(bundle.blocks),
+          stringify(bundle.citations),
+          stringify(bundle.warnings),
+          bundle.createdAt,
+        );
+      return bundle;
+    };
+    if (bundle.sessionId && versionedSession(bundle.sessionId))
+      return writeVersionEntity(
         bundle.sessionId,
-        bundle.nodeId,
-        bundle.profileId,
-        stringify(bundle.blocks),
-        stringify(bundle.citations),
-        stringify(bundle.warnings),
-        bundle.createdAt,
+        "contexts",
+        bundle.id,
+        bundle,
+        writeControl,
       );
-    return bundle;
+    return writeControl();
   }
 
   getContextBundle(id: string): AgentContextBundle {
@@ -1580,28 +1720,41 @@ export class AgentRuntimeStore {
       .prepare("SELECT * FROM agent_runtime_context_bundles WHERE id = ?")
       .get(id) as ContextBundleRow | undefined;
     if (!row) throw new AgentNotFoundError(id);
-    return mapContextBundle(row);
+    return row.session_id && versionedSession(row.session_id)
+      ? readVersionEntity<AgentContextBundle>(row.session_id, "contexts", id)
+      : mapContextBundle(row);
   }
 
   saveThinkingSummary(summary: ThinkingSummary): ThinkingSummary {
-    getRawSqlite()
-      .prepare(
-        `INSERT OR REPLACE INTO agent_runtime_thinking_summaries
+    const writeControl = (): ThinkingSummary => {
+      getRawSqlite()
+        .prepare(
+          `INSERT OR REPLACE INTO agent_runtime_thinking_summaries
          (id, session_id, mode, framing, evidence_used_json, decision, assumptions_json, risks_json, next_steps_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        summary.id,
+        )
+        .run(
+          summary.id,
+          summary.sessionId,
+          summary.mode,
+          summary.framing,
+          stringify(summary.evidenceUsed),
+          summary.decision,
+          stringify(summary.assumptions),
+          stringify(summary.risks),
+          stringify(summary.nextSteps),
+        );
+      return summary;
+    };
+    if (summary.sessionId && versionedSession(summary.sessionId))
+      return writeVersionEntity(
         summary.sessionId,
-        summary.mode,
-        summary.framing,
-        stringify(summary.evidenceUsed),
-        summary.decision,
-        stringify(summary.assumptions),
-        stringify(summary.risks),
-        stringify(summary.nextSteps),
+        "thinking",
+        summary.id,
+        summary,
+        writeControl,
       );
-    return summary;
+    return writeControl();
   }
 
   getThinkingSummary(id: string): ThinkingSummary {
@@ -1609,30 +1762,49 @@ export class AgentRuntimeStore {
       .prepare("SELECT * FROM agent_runtime_thinking_summaries WHERE id = ?")
       .get(id) as ThinkingSummaryRow | undefined;
     if (!row) throw new AgentNotFoundError(id);
-    return mapThinkingSummary(row);
+    return versionedSession(row.session_id)
+      ? readVersionEntity<ThinkingSummary>(row.session_id, "thinking", id)
+      : mapThinkingSummary(row);
   }
 
   saveCompactionRecord(record: CompactionRecord): CompactionRecord {
-    getRawSqlite()
-      .prepare(
-        `INSERT OR REPLACE INTO agent_runtime_compaction_summaries
+    const writeControl = (): CompactionRecord => {
+      getRawSqlite()
+        .prepare(
+          `INSERT OR REPLACE INTO agent_runtime_compaction_summaries
          (id, session_id, run_id, summary_text, compressed_message_count, original_token_count, compressed_token_count, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        record.id,
+        )
+        .run(
+          record.id,
+          record.sessionId,
+          record.runId,
+          record.summaryText,
+          record.compressedMessageCount,
+          record.originalTokenCount,
+          record.compressedTokenCount,
+          record.createdAt,
+        );
+      return record;
+    };
+    if (record.sessionId && versionedSession(record.sessionId))
+      return writeVersionEntity(
         record.sessionId,
-        record.runId,
-        record.summaryText,
-        record.compressedMessageCount,
-        record.originalTokenCount,
-        record.compressedTokenCount,
-        record.createdAt,
+        "compactions",
+        record.id,
+        record,
+        writeControl,
       );
-    return record;
+    return writeControl();
   }
 
   getLatestCompactionRecord(sessionId: string): CompactionRecord | null {
+    if (versionedSession(sessionId))
+      return (
+        listVersionEntities<CompactionRecord>(sessionId, "compactions").sort(
+          (a, b) => b.createdAt.localeCompare(a.createdAt),
+        )[0] ?? null
+      );
     const row = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_compaction_summaries WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",

@@ -3,7 +3,11 @@ import { getRawSqlite } from "../../../../db/index.js";
 import { VersionObjects } from "../version-store/objects.js";
 import { RuntimeVersionRepository } from "./repository.js";
 import { AgentRuntimeError } from "../../runtime-errors.js";
-import type { AgentSession, RuntimeEvent } from "../../contracts.js";
+import type {
+  AgentSession,
+  RuntimeEvent,
+  AgentContextBundle,
+} from "../../contracts.js";
 import { atomicVersionWrite } from "../version-store/transaction.js";
 
 const repositories = new WeakMap<Database.Database, RuntimeVersionRepository>();
@@ -47,6 +51,49 @@ export function versionedSession(id: string): boolean {
   }
   return Boolean(query.get(id));
 }
+export function versionRuntimeMode(
+  sessionId: string,
+): "transcript" | "native" | undefined {
+  return (
+    getRawSqlite()
+      .prepare(
+        "SELECT runtime_mode FROM conversation_v3_heads WHERE session_id=?",
+      )
+      .get(sessionId) as { runtime_mode: "transcript" | "native" } | undefined
+  )?.runtime_mode;
+}
+export function initializeVersionNative(
+  session: AgentSession,
+  events: readonly RuntimeEvent[] = [],
+  context?: AgentContextBundle,
+): void {
+  atomicVersionWrite(getRawSqlite(), () => {
+    if (
+      session.contextSnapshotId &&
+      (!context ||
+        context.id !== session.contextSnapshotId ||
+        context.sessionId !== session.id)
+    )
+      throw new AgentRuntimeError(
+        "Initial context seed is required for Native versioning.",
+        "HISTORY_MIGRATION_REQUIRED",
+        409,
+      );
+    initializeVersionTranscript(session, events);
+    if (context)
+      versionRepository().put(
+        session.id,
+        "contexts",
+        context.id,
+        context as unknown as Record<string, unknown>,
+      );
+    getRawSqlite()
+      .prepare(
+        "UPDATE conversation_v3_heads SET runtime_mode='native' WHERE session_id=?",
+      )
+      .run(session.id);
+  });
+}
 export function historySessionFields(
   session: AgentSession,
 ): Record<string, unknown> {
@@ -80,7 +127,11 @@ export function assertVersionTranscriptOperation(
   includeFiles: boolean,
   action = "rollback",
 ): void {
-  if (includeFiles || action !== "rollback")
+  if (
+    includeFiles ||
+    (action !== "rollback" &&
+      !(action === "edit" && versionRuntimeMode(sessionId) === "native"))
+  )
     throw new AgentRuntimeError(
       "Version transcript rollout does not yet support execution/edit/fork/file restoration.",
       "VERSION_RUNTIME_NOT_READY",

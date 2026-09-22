@@ -29,6 +29,9 @@ afterEach(async () => {
   const db = getRawSqlite();
   db.exec("DROP TRIGGER IF EXISTS reject_event_batch");
   if (versioned) {
+    db.prepare(
+      "DELETE FROM conversation_v3_history_requests WHERE session_id=?",
+    ).run(id);
     db.prepare("DELETE FROM conversation_v3_operations WHERE session_id=?").run(
       id,
     );

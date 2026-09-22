@@ -159,6 +159,35 @@ export async function captureCompletedReply(
   sessionId: string,
   stepId?: string,
 ): Promise<void> {
+  if (versionedSession(sessionId)) {
+    const message = versionRepository().last(
+      sessionId,
+      "messages",
+      ["id", "role", "stepId", "metadata"],
+      stepId ? { field: "stepId", value: stepId } : undefined,
+    );
+    if (
+      !message ||
+      message.role !== "assistant" ||
+      (stepId && message.stepId !== stepId) ||
+      (message.metadata as Record<string, unknown>)?.partial
+    )
+      return;
+    if (
+      message.stepId &&
+      !["completed", "blocked"].includes(
+        agentRuntimeStore.getRunStep(String(message.stepId)).status,
+      )
+    )
+      return;
+    await captureCheckpoint(
+      sessionId,
+      "reply",
+      String(message.id),
+      message.stepId ? String(message.stepId) : null,
+    );
+    return;
+  }
   if (!nativeCheckpointSession(sessionId)) return;
   const message = getRawSqlite()
     .prepare(

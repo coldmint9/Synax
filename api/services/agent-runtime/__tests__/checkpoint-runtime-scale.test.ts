@@ -128,6 +128,9 @@ it("rolls back a real 10k-event transcript through the route without history-pro
     if (id) {
       const db = getRawSqlite();
       db.prepare(
+        "DELETE FROM conversation_v3_history_requests WHERE session_id=?",
+      ).run(id);
+      db.prepare(
         "DELETE FROM conversation_v3_operations WHERE session_id=?",
       ).run(id);
       db.prepare(

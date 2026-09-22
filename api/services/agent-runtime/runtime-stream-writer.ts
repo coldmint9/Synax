@@ -62,6 +62,7 @@ export class RuntimeStreamWriter {
   }
 
   finish(): void {
+    if(!this.isCurrent()){this.abandon();return;}
     this.flush();
     if (!this.runId) return;
     runtimeTransaction(() => {

@@ -1,9 +1,9 @@
+import { applyVersionHistory } from "./version-runtime/history-operation.js";
 import {
   versionRepository,
   versionedSession,
   assertVersionTranscriptOperation,
 } from "./version-runtime/bridge.js";
-import { atomicVersionWrite } from "./version-store/transaction.js";
 import { clearSessionFileReads } from "../read-tracker.js";
 import { planFileUndo, type PreservedFile } from "./file-plan.js";
 import { committedFileReason } from "./git-boundary.js";
@@ -369,11 +369,8 @@ export async function applyHistory(
       request.includeFiles !== false,
       request.action,
     );
-    const result = atomicVersionWrite(getRawSqlite(), () => {
-      assertHistoryUnlocked(sessionId, []);
-      assertHistoryIdle(sessionId);
-      return versionRepository().rollback(sessionId, request);
-    });
+    const { result, applied } = applyVersionHistory(sessionId, request);
+    if (!applied) return result;
     clearSessionFileReads(sessionId);
     sessionLiveBus.clearBuffer(sessionId);
     invalidateSessionEnvironment(sessionId);
@@ -382,7 +379,7 @@ export async function applyHistory(
       sessionId,
       patch: { historyRevision: result.revision, historyReset: true },
     });
-    return { sessionId, revision: result.revision };
+    return result;
   }
   supported(sessionId);
   const db = getRawSqlite(),

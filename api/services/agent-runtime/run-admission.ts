@@ -1,4 +1,4 @@
-import { versionedSession } from "./checkpoints/version-runtime/bridge.js";
+import { versionRuntimeMode } from "./checkpoints/version-runtime/bridge.js";
 import {
   assertHistoryUnlocked,
   historyRevision,
@@ -56,7 +56,12 @@ export function acceptRuntimeRun(
   requestId: string,
   mode: AgentSessionStreamMode = "turn",
 ): { run: AgentRun; reused: boolean } {
-  if(versionedSession(sessionId))throw new AgentRuntimeError("Version transcript rollout is not yet ready for execution.","VERSION_RUNTIME_NOT_READY",409);
+  if (versionRuntimeMode(sessionId) === "transcript")
+    throw new AgentRuntimeError(
+      "Version transcript rollout is not yet ready for execution.",
+      "VERSION_RUNTIME_NOT_READY",
+      409,
+    );
   input = normalizeInput(input);
   if (input.contentParts && !hasInput(input))
     throw new AgentValidationError("Input is empty.");

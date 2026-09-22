@@ -8,6 +8,8 @@ import {
   writeRuntimeBatch,
   orderKey,
   eventKey,
+  scopeKey,
+  scopeFields,
   type TableState,
 } from "./batch-write.js";
 import { readVersionSnapshot } from "../version-store/read-snapshot.js";
@@ -30,6 +32,7 @@ import {
 import { RuntimeRecordCodec } from "./record-codec.js";
 
 export interface RecordPageOptions {
+  scope?: { field: string; value: string };
   limit?: number;
   maxBytes?: number;
   cursor?: string;
@@ -189,6 +192,48 @@ export class RuntimeVersionRepository {
       return this.publish(sessionId, head, roots);
     });
   }
+  remove(sessionId: string, table: string, id: string): HeadState {
+    return atomicVersionWrite(this.objects.db, () => {
+      const { head, roots } = this.roots(sessionId),
+        state = this.table(roots, table),
+        ref = this.tree.get(state.ids, id);
+      if (!ref) return head;
+      const header = this.records.header(ref),
+        fields = scopeFields(table),
+        old = this.records.read(
+          ref,
+          4096,
+          table === "events" ? ["type", ...fields] : fields,
+        );
+      state.ids = this.tree.update(state.ids, [{ key: id, value: null }]);
+      state.order = this.tree.update(state.order, [
+        { key: orderKey(header.order), value: null },
+      ]);
+      state.count--;
+      const manifest = this.objects.put(
+        "record",
+        Buffer.from(JSON.stringify(state)),
+        [state.ids, state.order].filter((ref): ref is string => ref !== null),
+      );
+      const changes: { key: string; value: string | null }[] = [
+        { key: `table/${table}`, value: manifest },
+      ];
+      const keys = fields
+        .filter((field) => typeof old[field] === "string")
+        .map((field) => scopeKey(table, field, old[field]));
+      if (table === "events") keys.push(eventKey(old.type));
+      for (const key of keys)
+        changes.push({
+          key,
+          value: this.tree.update(this.tree.get(roots.stateRoot, key) ?? null, [
+            { key: orderKey(header.order), value: null },
+          ]),
+        });
+      roots.stateRoot = this.tree.update(roots.stateRoot, changes);
+      if (table === "messages") roots.transcriptRoot = state.order;
+      return this.publish(sessionId, head, roots);
+    });
+  }
   session(sessionId: string, fields: Record<string, unknown>): HeadState {
     return atomicVersionWrite(this.objects.db, () => {
       const { head, roots } = this.roots(sessionId),
@@ -238,6 +283,27 @@ export class RuntimeVersionRepository {
       id,
     );
     return ref ? this.records.read(ref, budget) : undefined;
+  }
+  last(
+    sessionId: string,
+    table: string,
+    fields?: readonly string[],
+    scope?: { field: string; value: string },
+  ): Record<string, unknown> | undefined {
+    return readVersionSnapshot(this.objects.db, () => {
+      const { roots } = this.roots(sessionId),
+        state = this.table(roots, table);
+      const root = scope
+        ? (this.tree.get(
+            roots.stateRoot,
+            scopeKey(table, scope.field, scope.value),
+          ) ?? null)
+        : state.order;
+      const entry = this.tree.last(root);
+      return entry
+        ? this.records.read(entry.value, PAGE_BYTES, fields)
+        : undefined;
+    });
   }
   latestEvent(sessionId: string, types: readonly string[]) {
     return readVersionSnapshot(this.objects.db, () =>
@@ -374,6 +440,8 @@ export class RuntimeVersionRepository {
         if (
           cursor.version !== head.versionId ||
           cursor.table !== table ||
+          JSON.stringify(cursor.scope ?? null) !==
+            JSON.stringify(options.scope ?? null) ||
           typeof cursor.after !== "string"
         )
           stale();
@@ -383,7 +451,15 @@ export class RuntimeVersionRepository {
       }
     }
     const state = this.table(roots, table),
-      page = this.tree.page(state.order, { after, limit }),
+      page = this.tree.page(
+        options.scope
+          ? (this.tree.get(
+              roots.stateRoot,
+              scopeKey(table, options.scope.field, options.scope.value),
+            ) ?? null)
+          : state.order,
+        { after, limit },
+      ),
       items: Record<string, unknown>[] = [];
     let bytes = 512,
       last = after;
@@ -410,7 +486,12 @@ export class RuntimeVersionRepository {
       ...(more && last !== undefined
         ? {
             next: Buffer.from(
-              JSON.stringify({ version: head.versionId, table, after: last }),
+              JSON.stringify({
+                version: head.versionId,
+                table,
+                scope: options.scope,
+                after: last,
+              }),
             ).toString("base64url"),
           }
         : {}),
@@ -472,13 +553,21 @@ export class RuntimeVersionRepository {
   }
   rollback(
     sessionId: string,
-    request: { checkpointId: string; revision: number; requestId: string },
+    request: {
+      checkpointId: string;
+      revision: number;
+      requestId: string;
+      action?: "rollback" | "edit";
+      requestHash?: string;
+    },
   ): HeadState {
     const requestHash = createHash("sha256")
       .update(
         JSON.stringify({
           checkpointId: request.checkpointId,
           revision: request.revision,
+          action: request.action ?? "rollback",
+          requestHash: request.requestHash,
         }),
       )
       .digest("hex");
@@ -493,7 +582,7 @@ export class RuntimeVersionRepository {
       if (previous) return previous;
       const cp = this.checkpoint(sessionId, request.checkpointId);
       if (this.head(sessionId).revision !== request.revision) stale();
-      if (cp.kind !== "reply")
+      if (cp.kind !== (request.action === "edit" ? "input" : "reply"))
         throw new VersionStoreError(
           "HISTORY_CONFLICT",
           "Reply rollback requires a reply checkpoint boundary.",
@@ -502,7 +591,7 @@ export class RuntimeVersionRepository {
         ...common,
         targetVersionId: cp.payload.versionId,
       });
-      this.checkpointIndex.truncate(sessionId, cp);
+      this.checkpointIndex.truncate(sessionId, cp, request.action !== "edit");
       return result;
     });
   }

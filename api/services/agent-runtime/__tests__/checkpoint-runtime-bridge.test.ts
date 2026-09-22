@@ -29,6 +29,9 @@ beforeEach(async () => {
 afterEach(async () => {
   const db = getRawSqlite();
   if (id) {
+    db.prepare(
+      "DELETE FROM conversation_v3_history_requests WHERE session_id=?",
+    ).run(id);
     db.prepare("DELETE FROM conversation_v3_operations WHERE session_id=?").run(
       id,
     );

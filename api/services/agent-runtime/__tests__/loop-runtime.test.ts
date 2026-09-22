@@ -1,3 +1,4 @@
+import { clearVersionSessionFixture } from "./version-session-fixture.js";
 import { goalContinuationInput } from "../goal-continuation.js";
 import os from "node:os";
 import { applySessionPermissionUpdate } from "../session-permissions.js";
@@ -447,6 +448,293 @@ describe("agentLoopRuntime", () => {
         ),
         { flag: "wx" },
       );
+    }
+  });
+
+  it("executes Native turns on versioned history and continues on the retained branch after rollback", async () => {
+    const { initializeVersionNative } =
+      await import("../checkpoints/version-runtime/bridge.js");
+    const { getRawSqlite } = await import("../../../db/index.js");
+    const { listCheckpoints } = await import("../checkpoints/store.js");
+    const { applyHistory, previewHistory } =
+      await import("../checkpoints/operations.js");
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      workDir: process.cwd(),
+    });
+    agentRuntimeStore.updateSession(session.id, { status: "completed" });
+    try {
+      initializeVersionNative(
+        agentRuntimeStore.getSession(session.id),
+        agentRuntimeStore.listEvents(session.id),
+        session.contextSnapshotId
+          ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+          : undefined,
+      );
+      queueMockStep(makeTextStep("Retained native answer."));
+      const first = await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "First native question",
+        }),
+      );
+      expect(first.some((chunk) => chunk.type === "done")).toBe(true);
+      const checkpoint = listCheckpoints(session.id).find(
+        (cp) => cp.kind === "reply",
+      )!;
+      expect(checkpoint.payload.version).toBe(3);
+      queueMockStep(makeTextStep("Discarded native answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "Discarded native question",
+        }),
+      );
+      const discarded = agentRuntimeStore.listRuns(session.id)[0];
+      const preview = await previewHistory(session.id, checkpoint.id, false);
+      await applyHistory(session.id, {
+        checkpointId: checkpoint.id,
+        revision: preview.revision,
+        requestId: "native-undo",
+        action: "rollback",
+        includeFiles: false,
+      });
+      expect(
+        agentRuntimeStore
+          .listMessages(session.id)
+          .map((row) => row.content)
+          .join("\n"),
+      ).not.toContain("Discarded native");
+      expect(() => agentRuntimeStore.getRun(discarded.id)).toThrow(
+        /not found|resource/i,
+      );
+      queueMockStep(makeTextStep("New branch answer."));
+      const next = await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "New branch question",
+        }),
+      );
+      expect(next.some((chunk) => chunk.type === "done")).toBe(true);
+      const transcript = agentRuntimeStore
+        .listMessages(session.id)
+        .map((row) => row.content)
+        .join("\n");
+      expect(transcript).toContain("Retained native answer.");
+      expect(transcript).toContain("New branch answer.");
+      expect(transcript).not.toContain("Discarded native");
+      expect(agentRuntimeStore.listRuns(session.id)).toHaveLength(2);
+    } finally {
+      clearVersionSessionFixture(session.id);
+    }
+  });
+
+  it("uses Native admission and scoped tool/part history in a versioned read-tool turn", async () => {
+    const { initializeVersionNative } =
+      await import("../checkpoints/version-runtime/bridge.js");
+    const { getRawSqlite } = await import("../../../db/index.js");
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "synax-v3-read-tool-"),
+    );
+    fs.writeFileSync(
+      path.join(directory, "input.txt"),
+      "versioned file content",
+    );
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      workDir: directory,
+    });
+    agentRuntimeStore.updateSession(session.id, { status: "completed" });
+    try {
+      initializeVersionNative(
+        agentRuntimeStore.getSession(session.id),
+        agentRuntimeStore.listEvents(session.id),
+        session.contextSnapshotId
+          ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+          : undefined,
+      );
+      queueMockStep(
+        makeToolStep({
+          message: "Reading.",
+          toolName: "file_read",
+          toolCallId: "read-v3",
+          args: { path: "input.txt" },
+        }),
+      );
+      queueMockStep(makeTextStep("Read complete."));
+      const accepted = acceptRuntimeRun(
+        session.id,
+        { message: "Read input.txt" },
+        "admitted-v3",
+      );
+      const chunks = await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "Read input.txt",
+          acceptedRunId: accepted.run.id,
+        }),
+      );
+      expect(chunks.some((chunk) => chunk.type === "tool_result")).toBe(true);
+      expect(chunks.some((chunk) => chunk.type === "done")).toBe(true);
+      const steps = agentRuntimeStore.listRunSteps(accepted.run.id);
+      expect(steps).toHaveLength(2);
+      expect(
+        agentRuntimeStore.listRunParts(steps[0].id).map((part) => part.kind),
+      ).toEqual(["text", "tool_call", "tool_result"]);
+      expect(
+        agentRuntimeStore.listRunToolCalls(accepted.run.id)[0].status,
+      ).toBe("completed");
+      expect(agentRuntimeStore.getRun(accepted.run.id).status).toBe(
+        "completed",
+      );
+    } finally {
+      clearVersionSessionFixture(session.id);
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("runs a versioned Native turn under coordinator leases and journals its completion", async () => {
+    const { initializeVersionNative } =
+      await import("../checkpoints/version-runtime/bridge.js");
+    const { RunCoordinator } = await import("../run-coordinator.js");
+    const { runtimeJournal } = await import("../runtime-journal.js");
+    const { getRawSqlite } = await import("../../../db/index.js");
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      workDir: process.cwd(),
+    });
+    agentRuntimeStore.updateSession(session.id, { status: "completed" });
+    const coordinator = new RunCoordinator({
+      execute: (id, _mode, input, signal) =>
+        agentLoopRuntime.streamRun(id, input, signal),
+      interrupt: async () => {},
+    });
+    try {
+      initializeVersionNative(
+        agentRuntimeStore.getSession(session.id),
+        agentRuntimeStore.listEvents(session.id),
+        session.contextSnapshotId
+          ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+          : undefined,
+      );
+      queueMockStep(makeTextStep("Coordinated version answer."));
+      const accepted = coordinator.submit(
+        session.id,
+        { message: "Run with leases" },
+        "native-coordinator",
+      );
+      await coordinator.waitForIdle();
+      expect(agentRuntimeStore.getRun(accepted.run.id).status).toBe(
+        "completed",
+      );
+      expect(
+        runtimeJournal
+          .read(session.id)
+          .some((row) => row.chunk.type === "done"),
+      ).toBe(true);
+      expect(
+        agentRuntimeStore.getRun(accepted.run.id).metadata.executionLease,
+      ).toMatchObject({ closed: true });
+      expect(
+        agentRuntimeStore.listRuns(session.id)[0].metadata.executionLease,
+      ).toBeUndefined();
+    } finally {
+      await coordinator.waitForIdle();
+      clearVersionSessionFixture(session.id);
+    }
+  });
+
+  it("atomically edits the first versioned input and admits one idempotent Native replacement run", async () => {
+    const { initializeVersionNative } =
+      await import("../checkpoints/version-runtime/bridge.js");
+    const { listCheckpoints } = await import("../checkpoints/store.js");
+    const { applyHistory, previewHistory } =
+      await import("../checkpoints/operations.js");
+    const { getRawSqlite } = await import("../../../db/index.js");
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      prompt:"Original question",
+      workDir: process.cwd(),
+    });
+    agentRuntimeStore.updateSession(session.id, { status: "completed" });
+    try {
+      initializeVersionNative(
+        agentRuntimeStore.getSession(session.id),
+        agentRuntimeStore.listEvents(session.id),
+        session.contextSnapshotId
+          ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+          : undefined,
+      );
+      const original = acceptRuntimeRun(
+        session.id,
+        { message: "Original question" },
+        "original-v3",
+      );
+      queueMockStep(makeTextStep("Original answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "Original question",
+          acceptedRunId: original.run.id,
+        }),
+      );
+      const checkpoint = listCheckpoints(session.id).find(
+        (cp) => cp.kind === "input",
+      )!;
+      const preview = await previewHistory(session.id, checkpoint.id, false);
+      const request = {
+        checkpointId: checkpoint.id,
+        revision: preview.revision,
+        requestId: "edit-v3",
+        action: "edit" as const,
+        message: "Replacement question",
+        includeFiles: false,
+      };
+      const { VersionResources } =
+        await import("../checkpoints/version-store/resources.js");
+      const { versionRepository } =
+        await import("../checkpoints/version-runtime/bridge.js");
+      const resources = new VersionResources(getRawSqlite()),
+        budget = resources.metadata(),
+        before = versionRepository().head(session.id),
+        beforeRuns = agentRuntimeStore
+          .listRuns(session.id)
+          .map((run) => run.id);
+      resources.setMetadataLimit(budget.bytes + 4096);
+      await expect(
+        applyHistory(session.id, {
+          ...request,
+          requestId: "budget-failure",
+          message: "x".repeat(50000),
+        }),
+      ).rejects.toThrow(/budget/i);
+      expect(versionRepository().head(session.id)).toEqual(before);
+      expect(
+        agentRuntimeStore.listRuns(session.id).map((run) => run.id),
+      ).toEqual(beforeRuns);
+      resources.setMetadataLimit(budget.limit);
+      const edited = await applyHistory(session.id, request);
+      expect(edited.runId).toBeTruthy();
+      expect(await applyHistory(session.id, request)).toEqual(edited);
+      expect(
+        agentRuntimeStore.listRuns(session.id).map((run) => run.id),
+      ).toEqual([edited.runId]);
+      expect(agentRuntimeStore.getSession(session.id).prompt).toBe(
+        "Replacement question",
+      );
+      await expect(
+        applyHistory(session.id, { ...request, message: "Conflicting retry" }),
+      ).rejects.toThrow(/request|different/i);
+      queueMockStep(makeTextStep("Replacement answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          ...edited.input,
+          acceptedRunId: edited.runId,
+        }),
+      );
+      expect(
+        agentRuntimeStore.listMessages(session.id).map((row) => row.content),
+      ).toEqual(["Replacement question", "Replacement answer."]);
+      expect(JSON.stringify(capturedRequests.at(-1)?.messages)).not.toContain("Original question");
+      expect(JSON.stringify(capturedRequests.at(-1)?.messages)).not.toContain("Original answer.");
+      expect(await applyHistory(session.id, request)).toEqual(edited);
+    } finally {
+      clearVersionSessionFixture(session.id);
     }
   });
 

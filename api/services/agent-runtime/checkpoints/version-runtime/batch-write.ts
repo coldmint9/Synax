@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { VersionObjects } from "../version-store/objects.js";
 import { VersionTree, type TreeChange } from "../version-store/tree.js";
 import type { VersionRoots } from "../version-store/versions.js";
@@ -27,6 +28,27 @@ export function eventKey(type: unknown): string {
   return `event-type/${type}`;
 }
 
+const scopes: Record<string, readonly string[]> = {
+  messages: ["runId", "stepId"],
+  steps: ["runId"],
+  parts: ["runId", "stepId"],
+  tools: ["runId", "stepId"],
+  permissions: ["runId", "stepId"],
+  artifacts: [],
+  contexts: [],
+  compactions: ["runId"],
+  interactions: ["runId", "stepId"],
+};
+export function scopeKey(table: string, field: string, value: unknown): string {
+  if (
+    !scopes[table]?.includes(field) ||
+    typeof value !== "string" ||
+    !value.length ||
+    Buffer.byteLength(value) > 256
+  )
+    throw new VersionStoreError("VERSION_SCOPE", "Invalid execution scope.");
+  return `scope/${table}/${field}/${createHash("sha256").update(value).digest("hex")}`;
+}
 /** Caller owns a synchronous transaction. Each touched path is published once per
  * bounded change chunk, not once per event; superseded row payloads are not stored. */
 export function writeRuntimeBatch(
@@ -70,9 +92,13 @@ export function writeRuntimeBatch(
       items.push(change);
       types.set(key, items);
     };
-    for (const { write, order } of latest.values()) {
+    for (const { write, order: appendOrder } of latest.values()) {
       const previous = tree.get(state.ids, write.id),
         old = previous ? records.header(previous) : undefined;
+      const order =
+        old && table !== "events" && table !== "messages"
+          ? old.order
+          : appendOrder;
       const record = records.write(
         table,
         sessionId,
@@ -84,6 +110,23 @@ export function writeRuntimeBatch(
       if (old) orders.push({ key: orderKey(old.order), value: null });
       else state.count++;
       orders.push({ key: orderKey(order), value: record });
+      const scopeFields = scopes[table] ?? [];
+      const prior =
+        old && previous && scopeFields.length
+          ? records.read(previous, 4096, scopeFields)
+          : {};
+      for (const field of scopeFields) {
+        if (old && typeof prior[field] === "string")
+          typeChange(scopeKey(table, field, prior[field]), {
+            key: orderKey(old.order),
+            value: null,
+          });
+        if (typeof write.fields[field] === "string")
+          typeChange(scopeKey(table, field, write.fields[field]), {
+            key: orderKey(order),
+            value: record,
+          });
+      }
       if (table === "events") {
         if (old && previous)
           typeChange(eventKey(records.read(previous, 1024, ["type"]).type), {
@@ -112,4 +155,8 @@ export function writeRuntimeBatch(
     if (table === "messages") roots.transcriptRoot = state.order;
   }
   roots.stateRoot = apply(roots.stateRoot, stateChanges);
+}
+
+export function scopeFields(table: string): readonly string[] {
+  return scopes[table] ?? [];
 }

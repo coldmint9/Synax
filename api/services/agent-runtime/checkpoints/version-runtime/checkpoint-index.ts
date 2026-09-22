@@ -241,16 +241,25 @@ export class RuntimeCheckpointIndex {
     );
     return cp;
   }
-  truncate(sessionId: string, cp: RuntimeCheckpoint): void {
+  truncate(
+    sessionId: string,
+    cp: RuntimeCheckpoint,
+    includeBoundary = true,
+  ): void {
     if (this.get(sessionId, cp.id).payload.versionId !== cp.payload.versionId)
       corrupt();
     const state = this.state(sessionId),
-      root = this.tree.prefix(state.root, orderKey(cp.ordinal));
+      root = this.tree.prefix(
+        state.root,
+        orderKey(cp.ordinal - (includeBoundary ? 0 : 1)),
+      );
     // Draft pre-lookup checkpoints remain readable. No historical identity tree
     // is fabricated for them; the retained boundary itself is still deduplicated.
-    const lookup = this.tree.update(cp.payload.lookupBefore ?? null, [
-      { key: anchor(cp.kind, cp.messageId), value: this.locator(cp) },
-    ]);
+    const lookup = includeBoundary
+      ? this.tree.update(cp.payload.lookupBefore ?? null, [
+          { key: anchor(cp.kind, cp.messageId), value: this.locator(cp) },
+        ])
+      : (cp.payload.lookupBefore ?? null);
     this.update.run(
       root ? hashBytes(root) : null,
       lookup ? hashBytes(lookup) : null,
