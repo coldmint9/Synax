@@ -140,7 +140,8 @@ it("reuses old ZIP bytes, downloads only changed ranges, verifies the reconstruc
     undefined,
     { currentVersion: "0.2.0", onTransfer: transfer },
   );
-  expect(await fs.readFile(file)).toEqual(nextBytes);
+  // Compare every byte without the deep-equality overhead of a 1 MiB Buffer.
+  expect((await fs.readFile(file)).equals(nextBytes)).toBe(true);
   const last = transfer.mock.lastCall![0];
   expect(last.mode).toBe("differential");
   expect(last.downloadSize).toBeLessThan(nextBytes.length / 2);
@@ -174,7 +175,7 @@ it("keeps proxy routing and Range headers for blockmaps and changed bytes", asyn
     undefined,
     { currentVersion: "0.2.0" },
   );
-  expect(await fs.readFile(file)).toEqual(nextBytes);
+  expect((await fs.readFile(file)).equals(nextBytes)).toBe(true);
   expect(
     fetch.mock.calls.every(([url]) =>
       String(url).startsWith(
@@ -230,7 +231,7 @@ it.each([
       undefined,
       { currentVersion: "0.2.0", onTransfer: transfer },
     );
-    expect(await fs.readFile(file)).toEqual(nextBytes);
+    expect((await fs.readFile(file)).equals(nextBytes)).toBe(true);
     expect(transfer.mock.lastCall![0]).toMatchObject({
       mode: "full",
       fallback: true,
@@ -266,7 +267,7 @@ it.each(["missing-base", "damaged-base", "wrong-version", "no-key"])(
         onTransfer: transfer,
       },
     );
-    expect(await fs.readFile(file)).toEqual(nextBytes);
+    expect((await fs.readFile(file)).equals(nextBytes)).toBe(true);
     expect(transfer.mock.lastCall![0].mode).toBe("full");
     expect(fetch).toHaveBeenCalledOnce();
   },
@@ -354,7 +355,7 @@ it("uses full download when the calculated transfer would not save bandwidth", a
     undefined,
     { currentVersion: "0.2.0", onTransfer: transfer },
   );
-  expect(await fs.readFile(file)).toEqual(nextBytes);
+  expect((await fs.readFile(file)).equals(nextBytes)).toBe(true);
   expect(transfer.mock.lastCall![0].mode).toBe("full");
   expect(
     fetch.mock.calls.every(
