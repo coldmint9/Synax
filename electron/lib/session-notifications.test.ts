@@ -67,6 +67,14 @@ describe("native session notifications", () => {
     );
     service.setEnabled(true);
     expect(service.show(payload)).toBe(true);
+    expect(mocks.notices[0].options).toMatchObject(
+      process.platform === "darwin"
+        ? { actions: [{ type: "button", text: "回复" }] }
+        : { icon: "/icon.png" },
+    );
+    expect(mocks.notices[0].options).not.toHaveProperty(
+      process.platform === "darwin" ? "icon" : "actions",
+    );
     expect(service.show(payload)).toBe(false);
     mocks.notices[0].emit("click");
     await Promise.resolve();
@@ -79,6 +87,33 @@ describe("native session notifications", () => {
       "notifications:open-session",
       { projectId: "p1", sessionId: "s1", kind: "completed" },
     );
+  });
+  it("opens the session from the macOS reply button without a duplicate icon", async () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    try {
+      const window = win();
+      const service = new SessionNotifications(
+        () => window as any,
+        async () => window as any,
+        "/icon.png",
+      );
+      service.setEnabled(true);
+      service.setRendererReady(true);
+      expect(service.show(payload)).toBe(true);
+      expect(mocks.notices[0].options).toMatchObject({
+        actions: [{ type: "button", text: "回复" }],
+      });
+      expect(mocks.notices[0].options).not.toHaveProperty("icon");
+      mocks.notices[0].emit("action", {}, 0);
+      await Promise.resolve();
+      expect(window.focus).toHaveBeenCalledOnce();
+      expect(window.webContents.send).toHaveBeenCalledWith(
+        "notifications:open-session",
+        { projectId: "p1", sessionId: "s1", kind: "completed" },
+      );
+    } finally {
+      platform.mockRestore();
+    }
   });
   it("closes stale notifications on resume or opt-out and never accepts arbitrary paths", () => {
     const window = win();
