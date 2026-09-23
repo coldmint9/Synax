@@ -45,6 +45,27 @@ function makeStream(events: MockStreamEvent[]) {
   };
 }
 
+// Node's structuredClone rejects URL objects used by real media model parts.
+// Preserve their type in the fixture instead of making media turns fail in the mock.
+function cloneRequestValue<T>(value: T): T {
+  if (value instanceof URL) return new URL(value.href) as T;
+  if (Array.isArray(value))
+    return value.map((item) => cloneRequestValue(item)) as T;
+  if (
+    value &&
+    typeof value === "object" &&
+    (Object.getPrototypeOf(value) === Object.prototype ||
+      Object.getPrototypeOf(value) === null)
+  )
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        cloneRequestValue(item),
+      ]),
+    ) as T;
+  return structuredClone(value);
+}
+
 const capturedRequests: Array<{
   messages: Array<{ role: string; content: unknown }>;
   tools: string[];
@@ -175,7 +196,7 @@ async function* mockStreamLoopModelStep(input: {
   }
   if (input.request)
     capturedRequests.push({
-      messages: structuredClone(input.request.messages),
+      messages: cloneRequestValue(input.request.messages),
       reasoningEffort: input.request.reasoningEffort,
       tools: [
         ...((input.tools as { activeTools?: string[] }).activeTools ?? []),
@@ -668,15 +689,29 @@ describe("agentLoopRuntime", () => {
           ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
           : undefined,
       );
+      const { createAsset, sessionHasAsset } =
+        await import("../media-assets.js");
+      const attachment = await createAsset(
+        session.projectId,
+        "edit-note.txt",
+        Buffer.from("attached note"),
+        "text/plain",
+      );
+      const originalParts: import("../content-parts.js").RuntimeContentPart[] =
+        [
+          { type: "text", text: "Original question" },
+          { type: "file", assetId: attachment.id },
+        ];
       const original = acceptRuntimeRun(
         session.id,
-        { message: "Original question" },
+        { message: "Original question", contentParts: originalParts },
         "original-v3",
       );
       queueMockStep(makeTextStep("Original answer."));
       await collectChunks(
         agentLoopRuntime.streamRun(session.id, {
           message: "Original question",
+          contentParts: originalParts,
           acceptedRunId: original.run.id,
         }),
       );
@@ -723,6 +758,11 @@ describe("agentLoopRuntime", () => {
       resources.setMetadataLimit(budget.limit);
       const edited = await applyHistory(session.id, request);
       expect(edited.runId).toBeTruthy();
+      expect(edited.input?.contentParts).toEqual([
+        { type: "text", text: "Replacement question" },
+        { type: "file", assetId: attachment.id },
+      ]);
+      expect(sessionHasAsset(session.id, attachment.id)).toBe(true);
       expect(fs.readFileSync(file, "utf8")).toBe("before edit");
       expect(await applyHistory(session.id, request)).toEqual(edited);
       expect(
@@ -805,43 +845,66 @@ describe("agentLoopRuntime", () => {
     }
   });
 
-  it("completes a media-only response and persists its attachment for the timeline", async () => {
-    const { createAsset, readAsset } = await import("../media-assets.js");
-    const session = agentSessionRuntime.create({
-      ...executorInput,
-      workDir: process.cwd(),
-    });
-    const bytes = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
-      "base64",
-    );
-    const asset = await createAsset(
-      session.projectId,
-      "output.png",
-      bytes,
-      "image/png",
-    );
-    queueMockStep(makeTextStep(""), {
-      contentParts: [{ type: "image", assetId: asset.id }],
-    });
-    const chunks = await collectChunks(
-      agentLoopRuntime.streamRun(session.id, { message: "Generate an image." }),
-    );
-    expect(chunks.some((chunk) => chunk.type === "done")).toBe(true);
-    expect(agentRuntimeStore.listRuns(session.id)[0].status).toBe("completed");
-    expect(
-      agentRuntimeStore
-        .listMessages(session.id)
-        .some(
-          (message) =>
-            message.role === "assistant" &&
-            message.contentParts?.some(
-              (part) => part.type === "image" && part.assetId === asset.id,
+  it.each([false, true])(
+    "completes a media-only response and retains its attachment (versioned=%s)",
+    async (versioned) => {
+      const { createAsset, readAsset } = await import("../media-assets.js");
+      const session = agentSessionRuntime.create({
+        ...executorInput,
+        workDir: process.cwd(),
+      });
+      if (versioned) {
+        const { initializeVersionNative } =
+          await import("../checkpoints/version-runtime/bridge.js");
+        agentRuntimeStore.updateSession(session.id, { status: "completed" });
+        initializeVersionNative(
+          agentRuntimeStore.getSession(session.id),
+          agentRuntimeStore.listEvents(session.id),
+          session.contextSnapshotId
+            ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+            : undefined,
+        );
+      }
+      try {
+        const bytes = Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+          "base64",
+        );
+        const asset = await createAsset(
+          session.projectId,
+          "output.png",
+          bytes,
+          "image/png",
+        );
+        queueMockStep(makeTextStep(""), {
+          contentParts: [{ type: "image", assetId: asset.id }],
+        });
+        const chunks = await collectChunks(
+          agentLoopRuntime.streamRun(session.id, {
+            message: "Generate an image.",
+          }),
+        );
+        expect(chunks.some((chunk) => chunk.type === "done")).toBe(true);
+        expect(agentRuntimeStore.listRuns(session.id)[0].status).toBe(
+          "completed",
+        );
+        expect(
+          agentRuntimeStore
+            .listMessages(session.id)
+            .some(
+              (message) =>
+                message.role === "assistant" &&
+                message.contentParts?.some(
+                  (part) => part.type === "image" && part.assetId === asset.id,
+                ),
             ),
-        ),
-    ).toBe(true);
-    expect(await readAsset(asset.id)).toEqual(bytes);
-  });
+        ).toBe(true);
+        expect(await readAsset(asset.id)).toEqual(bytes);
+      } finally {
+        if (versioned) clearVersionSessionFixture(session.id);
+      }
+    },
+  );
 
   it("uses the durable accepted Run instead of allocating a second Native Run", async () => {
     queueMockStep(makeTextStep("Accepted task finished."));

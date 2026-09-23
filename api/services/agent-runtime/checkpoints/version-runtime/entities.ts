@@ -1,3 +1,5 @@
+import { retainVersionRecordAssets } from "./assets.js";
+import type { RuntimeContentPart } from "../../content-parts.js";
 import { assertBatchInput } from "./batch-input.js";
 import { getRawSqlite } from "../../../../db/index.js";
 import { AgentNotFoundError, AgentRuntimeError } from "../../runtime-errors.js";
@@ -76,7 +78,10 @@ export function writeVersionEntity<T>(
     db.prepare(
       `UPDATE ${table(kind)} SET version_epoch=? WHERE id=? AND session_id=?`,
     ).run(epoch, id, sessionId);
-    const fields = { ...(value as Record<string, unknown>), [key]: epoch };
+    const fields: Record<string, unknown> = {
+      ...(value as Record<string, unknown>),
+      [key]: epoch,
+    };
     if (kind === "runs") {
       const metadata = {
         ...((fields as Record<string, unknown>).metadata as Record<
@@ -89,6 +94,13 @@ export function writeVersionEntity<T>(
       (fields as Record<string, unknown>).metadata = metadata;
     }
     repo.put(sessionId, kind, id, fields);
+    if (Array.isArray(fields.contentParts))
+      retainVersionRecordAssets(
+        sessionId,
+        kind,
+        id,
+        fields.contentParts as RuntimeContentPart[],
+      );
     return result;
   });
 }

@@ -60,11 +60,6 @@ export function applyVersionHistory(
       : undefined;
     if (edit && !original)
       throw historyError("The original input message no longer exists.");
-    if (original?.contentParts?.some((part) => part.type !== "text"))
-      throw historyError(
-        "Versioned edit of attached assets is not integrated yet.",
-        "VERSION_RUNTIME_NOT_READY",
-      );
     repo.rollback(sessionId, { ...request, requestHash: hash });
     if (edit && checkpoint.payload.boundary.omitRunId)
       repo.remove(sessionId, "runs", checkpoint.payload.boundary.omitRunId);
@@ -103,7 +98,10 @@ export function applyVersionHistory(
       const input: StreamTurnRequest = {
         message: request.message!.trim(),
         contentParts: original!.contentParts
-          ? [{ type: "text", text: request.message!.trim() }]
+          ? [
+              { type: "text", text: request.message!.trim() },
+              ...original!.contentParts.filter((part) => part.type !== "text"),
+            ]
           : undefined,
         references: original!.metadata
           .references as StreamTurnRequest["references"],

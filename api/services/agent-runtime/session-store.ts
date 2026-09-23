@@ -1,3 +1,4 @@
+import { retainVersionRecordAssets } from "./checkpoints/version-runtime/assets.js";
 import {
   writeVersionEntity,
   readVersionEntity,
@@ -999,19 +1000,24 @@ export class AgentRuntimeStore {
 
   appendMessage(message: AgentRuntimeMessage): AgentRuntimeMessage {
     if (versionedSession(message.sessionId)) {
-      if (message.contentParts?.some((part) => part.type !== "text"))
-        throw new AgentRuntimeError(
-          "Version asset writes are not integrated yet.",
-          "VERSION_RUNTIME_NOT_READY",
-          409,
+      return getRawSqlite().transaction(() => {
+        if (message.contentParts)
+          bindAssets(message.sessionId, message.contentParts);
+        versionRepository().put(
+          message.sessionId,
+          "messages",
+          message.id,
+          message as unknown as Record<string, unknown>,
         );
-      versionRepository().put(
-        message.sessionId,
-        "messages",
-        message.id,
-        message as unknown as Record<string, unknown>,
-      );
-      return message;
+        if (message.contentParts)
+          retainVersionRecordAssets(
+            message.sessionId,
+            "messages",
+            message.id,
+            message.contentParts,
+          );
+        return message;
+      })();
     }
     const session = this.getSession(message.sessionId);
     const nextSequence = this.nextMessageSequence(message.sessionId);

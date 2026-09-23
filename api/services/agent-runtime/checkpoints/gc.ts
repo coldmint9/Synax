@@ -38,7 +38,7 @@ async function* referenceSources(): AsyncGenerator<string> {
       for (const row of rows) {
         after = row.cursor;
         const value = payload.get(after) as
-          | { value: string | null }
+          | { value: string | null; valid: number }
           | undefined;
         if (!value) continue;
         if (value.value === null)

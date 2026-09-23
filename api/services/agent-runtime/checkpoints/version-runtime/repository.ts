@@ -267,6 +267,15 @@ export class RuntimeVersionRepository {
   private countSnapshot(sessionId: string, table: string): number {
     return this.table(this.roots(sessionId).roots, table).count;
   }
+  recordReference(
+    sessionId: string,
+    table: string,
+    id: string,
+  ): string | undefined {
+    return readVersionSnapshot(this.objects.db, () =>
+      this.tree.get(this.table(this.roots(sessionId).roots, table).ids, id),
+    );
+  }
   get(sessionId: string, table: string, id: string, budget = PAGE_BYTES) {
     return readVersionSnapshot(this.objects.db, () =>
       this.getSnapshot(sessionId, table, id, budget),

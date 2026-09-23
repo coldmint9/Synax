@@ -1,3 +1,8 @@
+import { versionedSession } from "./checkpoints/version-runtime/bridge.js";
+import {
+  bindVersionAssets,
+  versionSessionHasAsset,
+} from "./checkpoints/version-runtime/assets.js";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -219,7 +224,7 @@ export async function createAsset(
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const existing = getRawSqlite()
     .prepare(
-      "SELECT * FROM agent_runtime_assets WHERE project_id=? AND sha256=? AND filename=? AND media_type=? AND EXISTS (SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=agent_runtime_assets.id) LIMIT 1",
+      "SELECT * FROM agent_runtime_assets WHERE project_id=? AND sha256=? AND filename=? AND media_type=? AND (EXISTS (SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=agent_runtime_assets.id) OR EXISTS(SELECT 1 FROM conversation_v3_asset_refs WHERE asset_id=agent_runtime_assets.id)) LIMIT 1",
     )
     .get(projectId, sha256, path.basename(filename), mediaType);
   if (existing) {
@@ -309,12 +314,17 @@ export function bindAssets(
     .get(sessionId) as { project_id: string } | undefined;
   if (!session) error("Session not found.", "NOT_FOUND", 404);
   const assets = validateAssets(parts, session!.project_id);
+  if (versionedSession(sessionId)) {
+    bindVersionAssets(sessionId, assets);
+    return;
+  }
   for (const a of assets)
     db.prepare(
       "INSERT OR IGNORE INTO agent_runtime_asset_sessions (asset_id,session_id) VALUES (?,?)",
     ).run(a.id, sessionId);
 }
 export function sessionHasAsset(sessionId: string, id: string): boolean {
+  if (versionedSession(sessionId)) return versionSessionHasAsset(sessionId, id);
   return !!getRawSqlite()
     .prepare(
       "SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=? AND session_id=?",
@@ -327,8 +337,10 @@ export async function deleteUnboundAsset(id: string): Promise<void> {
   db.transaction(() => {
     if (
       db
-        .prepare("SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=?")
-        .get(id)
+        .prepare(
+          "SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=? UNION ALL SELECT 1 FROM conversation_v3_asset_refs WHERE asset_id=? LIMIT 1",
+        )
+        .get(id, id)
     )
       error("Media is retained by a session.", "MEDIA_IN_USE", 409);
     db.prepare("DELETE FROM agent_runtime_assets WHERE id=?").run(id);
@@ -338,12 +350,19 @@ export async function deleteUnboundAsset(id: string): Promise<void> {
   });
 }
 export async function sweepAssets(): Promise<void> {
-  const rows = getRawSqlite()
-    .prepare(
-      "SELECT id FROM agent_runtime_assets WHERE created_at<? AND NOT EXISTS (SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=agent_runtime_assets.id)",
-    )
-    .all(new Date(Date.now() - 86_400_000).toISOString()) as { id: string }[];
-  for (const row of rows) await deleteUnboundAsset(row.id).catch(() => {});
+  const cutoff = new Date(Date.now() - 86_400_000).toISOString();
+  let after = "";
+  const query = getRawSqlite().prepare(
+    "SELECT id FROM agent_runtime_assets WHERE id>? AND created_at<? AND NOT EXISTS(SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=agent_runtime_assets.id) AND NOT EXISTS(SELECT 1 FROM conversation_v3_asset_refs WHERE asset_id=agent_runtime_assets.id) ORDER BY id LIMIT 64",
+  );
+  for (;;) {
+    const rows = query.all(after, cutoff) as { id: string }[];
+    if (!rows.length) return;
+    for (const row of rows) {
+      after = row.id;
+      await deleteUnboundAsset(row.id).catch(() => {});
+    }
+  }
 }
 export function modelContentParts(parts: RuntimeContentPart[]): any[] {
   return parts.flatMap((p) => {
