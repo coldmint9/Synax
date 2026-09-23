@@ -15,6 +15,7 @@ import {
   EyeOff,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Wifi,
   X,
@@ -534,7 +535,7 @@ export function LlmProviderModal({
                       <fieldset
                         key={modelId}
                         aria-label={`${modelId} ${zh ? "独立能力" : "capabilities"}`}
-                        className="min-w-0 space-y-2 rounded-lg border border-border/40 px-2.5 py-2"
+                        className="group min-w-0 space-y-2 rounded-lg border border-border/40 px-2.5 py-2"
                       >
                         <div className="flex min-w-0 items-center gap-2">
                           <span
@@ -543,10 +544,19 @@ export function LlmProviderModal({
                           >
                             {modelId}
                           </span>
-                          {isDefault && (
+                          {isDefault ? (
                             <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] text-primary">
-                              {zh ? "默认" : "Default"}
+                              {t("llmCardDefault")}
                             </span>
+                          ) : (
+                            <button
+                              type="button"
+                              aria-label={zh ? `将 ${modelId} 设为默认` : `Set ${modelId} as default`}
+                              onClick={() => handleSetDefaultModel(modelId)}
+                              className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] text-primary opacity-0 transition-opacity hover:bg-primary/20 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
+                            >
+                              {t("llmCardSetDefault")}
+                            </button>
                           )}
                           <span className="shrink-0 text-[9px] text-muted-foreground">
                             {hasOverride
@@ -757,18 +767,17 @@ export function LlmProviderModal({
                 "Changes save automatically when complete"
               )}
             </span>
-            {saveError && (
-              <Button
-                size="sm"
-                variant="secondary"
-                isDisabled={saving || !valid}
-                onPress={() => {
-                  void flush();
-                }}
-              >
-                {zh ? "重试保存" : "Retry save"}
-              </Button>
-            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              isDisabled={saving || !valid}
+              onPress={() => {
+                void flush();
+              }}
+            >
+              <Save size={12} />
+              {saveError ? (zh ? "重试保存" : "Retry save") : t("commonSave")}
+            </Button>
             <Button
               variant="ghost"
               size="sm"

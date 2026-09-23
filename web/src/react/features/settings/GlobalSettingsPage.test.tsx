@@ -766,6 +766,64 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     expect(mocks.updateGlobalConfig).not.toHaveBeenCalled();
   });
 
+  it("saves current provider edits immediately without closing the dialog", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    const card = screen.getByText("OpenAI").closest(".settings-item")!;
+    await user.click(within(card).getByRole("button", { name: /OpenAI/ }));
+    await user.click(
+      within(card).getByRole("button", { name: "编辑", exact: true }),
+    );
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(screen.getByPlaceholderText("输入模型 ID"), {
+      target: { value: "new-model" },
+    });
+    expect(mocks.updateGlobalConfig).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(dialog.getByRole("button", { name: "保存", exact: true }));
+    });
+    expect(mocks.updateGlobalConfig).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.updateGlobalConfig.mock.calls[0][0].providerConnections.openai.extra.model,
+    ).toBe("new-model");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("sets a selected model as default from its capability card", async () => {
+    const user = userEvent.setup();
+    const openaiProvider = mocks.state.globalConfig!.providers.find(
+      (p) => p.id === "openai",
+    )!;
+    openaiProvider.models.push({ id: "gpt-4o", label: "gpt-4o" });
+    await renderPage();
+    const card = screen.getByText("OpenAI").closest(".settings-item")!;
+    await user.click(within(card).getByRole("button", { name: /OpenAI/ }));
+    await user.click(
+      within(card).getByRole("button", { name: "编辑", exact: true }),
+    );
+
+    const dialog = within(screen.getByRole("dialog"));
+    const alternative = dialog.getByRole("group", { name: "gpt-4o 独立能力" });
+    const setDefault = within(alternative).getByRole("button", {
+      name: "将 gpt-4o 设为默认",
+    });
+    expect(setDefault).toHaveClass(
+      "group-hover:opacity-100",
+      "focus-visible:opacity-100",
+    );
+    expect(within(alternative).queryByText("默认")).not.toBeInTheDocument();
+    await user.click(setDefault);
+    expect(within(alternative).getByText("默认")).toBeInTheDocument();
+    expect(dialog.getByRole("textbox", { name: "模型" })).toHaveValue("gpt-4o");
+    await waitFor(() => {
+      expect(
+        mocks.updateGlobalConfig.mock.calls.at(-1)?.[0].providerConnections.openai.extra.model,
+      ).toBe("gpt-4o");
+    });
+  });
+
   it("flushes edits on explicit close and preserves the dialog on save failure for retry", async () => {
     const user = userEvent.setup();
     await renderPage();
