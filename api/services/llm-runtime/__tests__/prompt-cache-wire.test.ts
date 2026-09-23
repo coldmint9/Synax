@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyPromptCachePolicy,
   createHistoryCacheAnchor,
+  inspectHistoryCacheAnchor,
   type HistoryCacheAnchor,
 } from "../cache-policy.js";
 import { toModelPrompt } from "../prompt.js";
@@ -1009,4 +1010,32 @@ describe("prompt cache policy actual SDK wire", () => {
     expect(result.messages[2].providerOptions).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain("previous history end");
   });
+});
+
+
+it("keeps system-role runtime reminders out of user turns and recognizes replayed history anchors", () => {
+  const runtime = (id: string): LlmGatewayMessage => ({
+    role: "system", content: `<system-reminder>\n${id}\n</system-reminder>`,
+  });
+  const first: LlmGatewayMessage[] = [
+    { role: "system", content: "Instructions" },
+    { role: "user", content: "蓝色自行车" },
+    runtime("step 1"),
+  ];
+  const next: LlmGatewayMessage[] = [
+    ...first,
+    { role: "assistant", content: "记住了" },
+    { role: "user", content: "我上一轮说了啥" },
+    runtime("step 2"),
+  ];
+  expect(inspectHistoryCacheAnchor(next, createHistoryCacheAnchor(first)).historyAnchorStatus).toBe("matched");
+  const wire = toModelPrompt(next);
+  expect(wire.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+  expect(wire.messages.map((message) => message.content)).toEqual(["蓝色自行车", "记住了", "我上一轮说了啥"]);
+  expect(JSON.stringify(wire.system)).toContain("step 2");
+  const processed = applyPromptCachePolicy(next.map((message, index) =>
+    index === next.length - 1 ? { ...message, providerOptions: cached } : message,
+  ), { selection: selection(), cacheControl: true });
+  expect(processed.messages[0].providerOptions?.anthropic?.cacheControl).toEqual(marker);
+  expect(processed.messages.at(-1)?.providerOptions?.anthropic?.cacheControl).toBeUndefined();
 });

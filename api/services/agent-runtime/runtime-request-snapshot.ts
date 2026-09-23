@@ -1,3 +1,4 @@
+import type { SystemModelMessage } from "@ai-sdk/provider-utils";
 import type { HistoryCacheAnchor } from "../llm-runtime/cache-policy.js";
 import { createHash } from "node:crypto";
 
@@ -43,4 +44,11 @@ export function snapshotRuntimeReminder(
     fingerprint: createHash("sha256").update(content).digest("hex"),
     queuedInputIds: [...queuedInputIds],
   };
+}
+
+/** Runtime state is not a human turn, including when replaying persisted snapshots. */
+export function runtimeReminderMessage(
+  reminder: Pick<RuntimeReminderSnapshot, "content">,
+): SystemModelMessage {
+  return { role: "system", content: reminder.content };
 }

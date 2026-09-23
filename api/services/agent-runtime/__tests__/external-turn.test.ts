@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { acceptRuntimeRun } from '../run-admission.js';
 import { ExternalTurn } from '../backends/external-turn.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { agentRuntimeStore } from '../session-store.js';
@@ -73,5 +74,16 @@ it('a native Continue control does not replay the original session task prompt',
   expect(turn.message).toMatch(/^Continue the existing task/);
   expect(turn.message).not.toContain('Create an initial delivery artifact');
   expect(agentRuntimeStore.listMessages(session.id).at(-1)?.metadata.source).toBe('codex_continue');
+  await turn.finish();
+});
+
+it('attaches the admitted request identity before emitting an external input', async () => {
+  const session = create();
+  const input = { message: '同一条输入' };
+  const accepted = acceptRuntimeRun(session.id, input, 'external-identity');
+  const turn = new ExternalTurn(session.id, 'codex', { ...input, acceptedRunId: accepted.run.id });
+  const user = agentRuntimeStore.listMessages(session.id).find((message) => message.role === 'user');
+  expect(user?.metadata.requestId).toBe('external-identity');
+  expect(user?.runId).toBe(accepted.run.id);
   await turn.finish();
 });

@@ -411,6 +411,45 @@ describe("agentLoopRuntime", () => {
     fs.writeFileSync(API_SESSION_LOG_FILE, "", "utf8");
   });
 
+  it("persists the accepted request identity before yielding the user message", async () => {
+    const session = agentSessionRuntime.create({ ...executorInput, workDir: process.cwd() });
+    const input = { message: "我上一轮说了啥" };
+    const accepted = acceptRuntimeRun(session.id, input, "message-identity", "turn");
+    queueMockStep(makeTextStep("Answer"));
+    const stream = agentLoopRuntime.streamRun(session.id, { ...input, acceptedRunId: accepted.run.id });
+    let found = false;
+    for await (const chunk of stream) {
+      if (chunk.type !== "message" || chunk.message.role !== "user") continue;
+      found = true;
+      expect(chunk.message.metadata.requestId).toBe("message-identity");
+      expect(chunk.message.runId).toBe(accepted.run.id);
+      expect(agentRuntimeStore.getMessage(session.id, chunk.message.id)?.metadata.requestId).toBe("message-identity");
+    }
+    expect(found).toBe(true);
+    expect(agentRuntimeStore.listMessages(session.id).filter((m) => m.role === "user")).toHaveLength(1);
+  });
+
+  it("keeps real user turns in order without a runtime reminder posing as another user", async () => {
+    const session = agentSessionRuntime.create({ ...executorInput, workDir: process.cwd() });
+    const previous = "记住：上一轮我说的是蓝色自行车。";
+    const current = "我上一轮说了啥";
+    queueMockStep(makeTextStep("好的，我记住蓝色自行车了。"));
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: previous }));
+    const before = capturedRequests.length;
+    queueMockStep(makeTextStep("你上一轮说的是蓝色自行车。"));
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: current }));
+    expect(capturedRequests.length).toBe(before + 1);
+    const request = capturedRequests.at(-1)!;
+    const userMessages = request.messages.filter((message) => message.role === "user");
+    expect(userMessages.map((message) => message.content)).toEqual([previous, current]);
+    const previousIndex = request.messages.findIndex((message) => message.content === previous);
+    const currentIndex = request.messages.findIndex((message) => message.content === current);
+    expect(request.messages.slice(previousIndex + 1, currentIndex).some((message) =>
+      message.role === "assistant" && JSON.stringify(message.content).includes("蓝色自行车"),
+    )).toBe(true);
+    expect(request.messages.filter((message) => message.content === current)).toHaveLength(1);
+  });
+
   it("persists bounded delta bursts instead of one event and undo entry per provider token", async () => {
     const session = agentSessionRuntime.create({
       ...executorInput,

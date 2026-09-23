@@ -21,6 +21,7 @@ import {
 } from "../llm-runtime/cache-diagnostics.js";
 import {
   readRuntimeReminder,
+  runtimeReminderMessage,
   snapshotRuntimeReminder,
 } from "./runtime-request-snapshot.js";
 import { measureContextComposition } from "./context-composition.js";
@@ -39,6 +40,7 @@ import { runtimeTransaction } from "./runtime-transaction.js";
 import type { AgentSession } from "./contracts.js";
 import {
   activateAcceptedRun,
+  acceptedInputRequestId,
   type AcceptedRuntimeInput,
 } from "./run-admission.js";
 import { isWorkContinuation } from "./work-intent.js";
@@ -551,12 +553,13 @@ export class AgentLoopRuntime {
         const userMessage = this.store.appendMessage({
           id: inputMessageId,
           sessionId,
-          runId: null,
+          runId: input.acceptedRunId ?? null,
           stepId: null,
           role: "user",
           content: prompt,
           contentParts: input.contentParts,
           metadata: {
+            requestId: acceptedInputRequestId(sessionId, input.acceptedRunId),
             references: input.references,
             source:
               input.messageSource === "system_injection"
@@ -2698,7 +2701,7 @@ export class AgentLoopRuntime {
         .map((message) => message.id),
     );
     const reminderTokens = countMessagesTokens(
-      [{ role: "user", content: reminder.content }],
+      [runtimeReminderMessage(reminder)],
       input.input.model ?? undefined,
     );
     const toolComposition = await measureContextComposition({
@@ -2862,7 +2865,7 @@ export class AgentLoopRuntime {
           content: systemPromptContent,
         },
         ...conversationMessages,
-        { role: "user" as const, content: reminder.content },
+        runtimeReminderMessage(reminder),
       ],
       temperature: input.input.temperature,
       maxTokens: input.input.maxTokens,

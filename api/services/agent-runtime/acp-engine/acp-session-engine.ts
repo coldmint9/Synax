@@ -4,7 +4,7 @@ import { hasInlineMedia, normalizeMediaPayload } from '../media-tool-content.js'
 import { acpMediaInput } from '../media-backend-input.js';
 import { normalizeInput, hasInput, type RuntimeContentPart } from '../content-parts.js';
 import { withDeadline } from '../managed-process.js';
-import { activateAcceptedRun } from '../run-admission.js';
+import { activateAcceptedRun, acceptedInputRequestId } from '../run-admission.js';
 import type { AgentSessionStreamMode } from '../../../lib/ipc/agent-session-protocol.js';
 import { logger } from '../../../lib/logger.js';
 import {
@@ -218,12 +218,12 @@ class AcpSessionEngine {
       const userMessage = agentRuntimeStore.appendMessage({
         id: makeRuntimeId('msg'),
         sessionId,
-        runId: null,
+        runId: acceptedRunId ?? null,
         stepId: null,
         role: 'user',
         content: prompt,
         contentParts,
-        metadata: { source: 'acp_turn' },
+        metadata: { source: 'acp_turn', requestId: acceptedInputRequestId(sessionId, acceptedRunId) },
         createdAt: nowIso(),
       });
       queue.push({ kind: 'chunk', chunk: { type: 'message', message: userMessage } });

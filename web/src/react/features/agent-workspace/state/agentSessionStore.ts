@@ -1630,6 +1630,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           content: body.message,
           contentParts: body.contentParts,
           metadata: {
+            requestId,
             source: body.messageSource ?? "user",
             references: body.references,
           },
