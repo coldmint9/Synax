@@ -80,9 +80,9 @@
         const svg = template.content.firstElementChild;
         for (const attr of placeholder.attributes) {
           if (
-            ["class", "aria-label", "aria-hidden", "role", "id"].includes(
-              attr.name,
-            )
+            ["class", "role", "id", "hidden"].includes(attr.name) ||
+            attr.name.startsWith("aria-") ||
+            (attr.name.startsWith("data-") && attr.name !== "data-lucide")
           )
             svg.setAttribute(attr.name, attr.value);
         }
@@ -107,7 +107,19 @@
   );
   document.addEventListener("submit", (event) => event.preventDefault(), true);
   window.addEventListener("pagehide", () => post("exit"));
-  window.addEventListener("error", () => post("error"));
+  window.addEventListener("error", (event) => {
+    // Chromium defers ResizeObserver notifications during normal responsive reflow.
+    // This is not an exception in the generated script and must not destroy the preview.
+    if (
+      !event.error &&
+      [
+        "ResizeObserver loop completed with undelivered notifications.",
+        "ResizeObserver loop limit exceeded",
+      ].includes(event.message)
+    )
+      return;
+    post("error");
+  });
   window.addEventListener("unhandledrejection", () => post("error"));
   let scheduled = false;
   let previousHeight = 0;

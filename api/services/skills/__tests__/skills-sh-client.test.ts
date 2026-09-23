@@ -20,9 +20,10 @@ describe('skills-sh client', () => {
     delete process.env.SKILLS_SH_BEARER_TOKEN;
   });
 
-  it('uses v1 search only when query is at least 2 characters', () => {
+  it('preserves every non-empty search rather than returning recommendations', () => {
     expect(resolveSkillsShSearchQuery('')).toBeUndefined();
-    expect(resolveSkillsShSearchQuery('r')).toBeUndefined();
+    expect(resolveSkillsShSearchQuery('r')).toBe('r');
+    expect(resolveSkillsShSearchQuery('  中文  ')).toBe('中文');
     expect(resolveSkillsShSearchQuery('react')).toBe('react');
   });
 
@@ -42,6 +43,7 @@ describe('skills-sh client', () => {
     expect(summary.name).toBe('find-skills');
     expect(summary.remoteUrl).toBe(skillsShDetailUrl('vercel-labs/skills/find-skills'));
     expect(summary.installCount).toBe(1000);
+    expect(summary.version).toBe('');
   });
 
   it('uses v1 leaderboard pagination totals', async () => {
@@ -138,5 +140,58 @@ describe('skills-sh client', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(page.items[0]?.name).toBe('one');
+    expect(new URL(String(fetchMock.mock.calls[1]![0])).searchParams.get('q')).toBe('code');
+  });
+});
+
+
+describe('search and version fidelity', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const hit = (index: number) => ({ id: `owner/repo/skill-${index}`, slug: `skill-${index}`, name: `Skill ${index}`, source: 'owner/repo', installs: 1, sourceType: 'github', installUrl: null, url: '' });
+
+  it('shows a version only when upstream explicitly supplies it', () => {
+    expect(mapSkillsShHitToSummary('remote', { ...hit(1), version: '2.4.0' }, new Set()).version).toBe('2.4.0');
+    expect(mapSkillsShHitToSummary('remote', hit(1), new Set()).version).toBe('');
+  });
+
+  it('reports the upstream minimum length instead of returning recommendations', async () => {
+    await expect(listSkillsSh({ sourceId: 'remote', q: 'r', limit: 24, offset: 0, installedNames: new Set() })).rejects.toThrow('at least 2 characters');
+  });
+
+  it('sends the actual trimmed keyword and paginates search results', async () => {
+    vi.spyOn(skillHttp, 'assertSafeSkillUrl').mockImplementation(async (url) => new URL(url));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [hit(0), hit(1), hit(2)] })));
+    const result = await listSkillsSh({ sourceId: 'remote', q: '  react  ', limit: 2, offset: 2, installedNames: new Set() });
+    const url = new URL(String(fetchMock.mock.calls[0]![0]));
+    expect(url.pathname).toBe('/api/v1/skills/search');
+    expect(url.searchParams.get('q')).toBe('react');
+    expect(result.items.map((item) => item.name)).toEqual(['skill-2']);
+    expect(result.hasMore).toBe(false);
+  });
+
+  it('does not turn a search failure into recommendations', async () => {
+    vi.spyOn(skillHttp, 'assertSafeSkillUrl').mockImplementation(async (url) => new URL(url));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ message: 'Unavailable' }), { status: 503 }));
+    await expect(listSkillsSh({ sourceId: 'remote', q: 'react', limit: 24, offset: 0, installedNames: new Set() })).rejects.toThrow('Unavailable');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles a remote offset shifted by local results without repeating rows', async () => {
+    vi.spyOn(skillHttp, 'assertSafeSkillUrl').mockImplementation(async (url) => new URL(url));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (raw) => {
+      const url = new URL(String(raw));
+      const page = Number(url.searchParams.get('page'));
+      return new Response(JSON.stringify({ data: [hit(page * 2), hit(page * 2 + 1)], pagination: { total: 10, hasMore: true } }));
+    });
+    const result = await listSkillsSh({ sourceId: 'remote', limit: 2, offset: 1, installedNames: new Set() });
+    expect(result.items.map((item) => item.name)).toEqual(['skill-1', 'skill-2']);
+  });
+
+  it('stops at the search endpoint result cap rather than advertising empty pages', async () => {
+    vi.spyOn(skillHttp, 'assertSafeSkillUrl').mockImplementation(async (url) => new URL(url));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: Array.from({ length: 200 }, (_, index) => hit(index)) })));
+    const result = await listSkillsSh({ sourceId: 'remote', q: 'react', limit: 24, offset: 192, installedNames: new Set() });
+    expect(result.items).toHaveLength(8);
+    expect(result.hasMore).toBe(false);
   });
 });

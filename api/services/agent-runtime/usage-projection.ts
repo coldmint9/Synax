@@ -7,7 +7,6 @@ import {
   projectCacheUsage,
   type SessionCacheUsage,
 } from "./cache-usage.js";
-import type { ContextComposition } from "./context-composition.js";
 import { getRawSqlite } from "../../db/index.js";
 import { readUsageContextWindowSize } from "./acp-engine/acp-usage.js";
 import {
@@ -44,13 +43,14 @@ type Groups<T> = { self: T; tree: T };
 export interface SessionUsageProjection {
   context: {
     inputTokens: number | null;
-    source: "provider" | "estimate" | null;
+    source: "provider" | null;
     stale: boolean;
     requestId: string | null;
     measuredAt: string | null;
     latestRequestUsageAvailable: boolean;
   };
-  contextComposition: ContextComposition | null;
+  // Compatibility field: local composition estimates are internal budget data only.
+  contextComposition: null;
   cache: SessionCacheUsage;
   // self/tree retain cumulative compatibility, including auxiliary calls. The
   // explicit subgroups distinguish model steps from non-step auxiliary calls.
@@ -110,27 +110,6 @@ function hasUsage(u: NormalizedUsage | undefined): boolean {
       ).some((key) => u.normalization[key].status === "known"))
   );
 }
-function readComposition(value: unknown): ContextComposition | null {
-  if (!value || typeof value !== "object") return null;
-  const c = value as ContextComposition;
-  const values = [c.tools, c.mcp, c.skills, c.messages, c.system ?? 0];
-  if (c.version === 2 && !isTokenCount(c.system)) return null;
-  if (!values.every(isTokenCount) || typeof c.measuredAt !== "string")
-    return null;
-  const total = values.reduce((sum, tokens) => sum + tokens, 0);
-  if (!isTokenCount(total)) return null;
-  if (
-    c.usage &&
-    !(["tools", "mcp", "skills"] as const).every(
-      (key) => isTokenCount(c.usage![key]) && c.usage![key] <= c[key],
-    )
-  ) {
-    const { usage: _invalid, ...rest } = c;
-    return { ...rest, total };
-  }
-  return { ...c, total };
-}
-
 export function projectSessionUsage(
   sessionId: string,
   treeIds: string[],
@@ -284,17 +263,17 @@ export function projectSessionUsage(
             ? Date.now()
             : start) - start,
       ) || 0;
+    // Cumulative usage and cache samples include all executed steps, including
+    // abandoned branches. Only the *current context* follows visible history.
     if (boundary && !diagnosticVisible(sessionId, "steps", row.id)) continue;
-    // Keep totals and category estimates on the same request. A new request's
-    // estimate supersedes old provider usage, including after compaction.
-    const composition = readComposition(metadata?.contextComposition);
+    // Missing usage must never replace a provider sample with a local estimate.
+    // Preserve the last measured request, explicitly marked stale.
     result.context.stale = result.context.inputTokens !== null;
     result.context.latestRequestUsageAvailable =
       contextUsage?.normalization.input.status === "known";
     if (result.context.latestRequestUsageAvailable) {
       result.context.source = "provider";
       result.context.stale = false;
-      result.contextComposition = composition;
       result.context.inputTokens = contextUsage!.normalization.input.value!;
       result.context.requestId =
         typeof contextUsage!.requestId === "string"
@@ -304,16 +283,6 @@ export function projectSessionUsage(
         typeof contextUsage!.measuredAt === "string"
           ? contextUsage!.measuredAt
           : (row.completed_at ?? row.started_at);
-    } else if (composition) {
-      result.context = {
-        inputTokens: composition.total,
-        source: "estimate",
-        stale: false,
-        requestId: row.id,
-        measuredAt: composition.measuredAt,
-        latestRequestUsageAvailable: false,
-      };
-      result.contextComposition = composition;
     }
     if (contextUsage)
       result.reportedWindow =

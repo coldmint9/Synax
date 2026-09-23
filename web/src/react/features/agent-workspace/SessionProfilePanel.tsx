@@ -61,16 +61,20 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
     typeof count === "number" && Number.isFinite(count) && count >= 0
       ? count
       : null;
-  const tokenLabel = summary.available
-    ? `${summary.reported ? "" : "≈"}${formatTokenCount(summary.total)}`
-    : "—";
+  const tokenLabel = summary.available ? formatTokenCount(summary.total) : "—";
   const percentLabel =
     summary.percent === null ? null : `${Number(summary.percent.toFixed(1))}%`;
   const backend = session ? readSessionBackendId(session) : null;
   const description = [
     model,
     summary.label,
-    zh ? "上下文" : "Context",
+    summary.stale
+      ? zh
+        ? "上次上下文"
+        : "Last context"
+      : zh
+        ? "上下文"
+        : "Context",
     tokenLabel,
     summary.limit !== null ? `/ ${formatContextLimit(summary.limit)}` : "",
     calls !== null ? `${calls} ${zh ? "次调用" : "calls"}` : "",
@@ -131,11 +135,11 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
                 title={
                   summary.reported
                     ? zh
-                      ? "最近请求的完整输入 Token（含缓存），不是会话累计用量"
-                      : "Latest request input tokens including cache, not cumulative usage"
+                      ? "最近一次供应商返回的完整输入 Token（含缓存），不是会话累计用量"
+                      : "Last provider-reported input tokens including cache, not cumulative usage"
                     : zh
-                      ? "本地估算，非服务商实测"
-                      : "Local estimate, not provider reported"
+                      ? "暂无供应商数据"
+                      : "No provider usage available"
                 }
               >
                 <span className="runtime-profile-value">
@@ -209,7 +213,6 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
                   <>
                     <div className="runtime-profile-context">
                       <ContextCompositionBar
-                        composition={stats.contextComposition}
                         context={stats.context}
                         contextLimit={stats.contextLimit}
                         contextLimitKnown={stats.contextLimitKnown !== false}

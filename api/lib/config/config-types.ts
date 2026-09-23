@@ -46,6 +46,9 @@ export interface ProviderConnection {
 }
 
 export interface McpServerConfig {
+  transport?: "stdio" | "http";
+  url?: string;
+  headers?: Record<string, string>;
   id: string;
   name: string;
   command: string;
@@ -120,6 +123,8 @@ export interface McpDiscoveryResponse {
 export interface GlobalConfig {
   terminalShellPath?: string;
   wikiModel?: string;
+  /** Empty means follow the model currently selected in the composer. */
+  inputOptimizationModel?: string;
   version: number;
   providers: ProviderDef[];
   defaultProviderId: string;
@@ -175,6 +180,8 @@ export interface AnalyzerLlmConfig {
 export interface UpdateGlobalConfigRequest {
   terminalShellPath?: string;
   wikiModel?: string;
+  /** Empty means follow the model currently selected in the composer. */
+  inputOptimizationModel?: string;
   providers?: ProviderDef[];
   defaultProviderId?: string;
   defaultApiProviderId?: string;

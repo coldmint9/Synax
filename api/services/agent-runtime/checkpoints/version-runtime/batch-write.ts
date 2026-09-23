@@ -96,7 +96,7 @@ export function writeRuntimeBatch(
       const previous = tree.get(state.ids, write.id),
         old = previous ? records.header(previous) : undefined;
       const order =
-        old && table !== "events" && table !== "messages"
+        old && table !== "events" && (table !== "messages" || write.preserveOrder)
           ? old.order
           : appendOrder;
       if (write.copyFrom && table !== "messages") throw new VersionStoreError("VERSION_COPY_KIND", "Only messages can be copied.");

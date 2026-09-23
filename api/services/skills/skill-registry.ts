@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { extensionStore } from '../extensions/extension-store.js';
 import path from 'node:path';
 import type { AgentProfileKind } from '../agent-runtime/contracts.js';
 import { profileService } from '../agent-runtime/profile-service.js';
@@ -7,6 +8,7 @@ import { resolveProjectWorkDir } from '../agent-runtime/tools/workspace.js';
 import { scanSkillsDirectory } from './skill-scanner.js';
 import { parseSkillFile } from './skill-parser.js';
 import { skillIndexService } from './skill-index-service.js';
+import { skillPreferences } from './skill-preferences.js';
 import { skillInstallService } from './skill-install-service.js';
 import { skillSourceService } from './skill-source-service.js';
 import { listSkillsSh, skillsShDetailUrl } from './skills-sh-client.js';
@@ -42,7 +44,7 @@ function toSummaryFromParsed(source: SkillSourceRecord, parsed: ParsedSkillFile,
     permissionHints: parsed.permissionHints,
     status: 'available',
     installPath: parsed.installPath,
-    installed: sourceKind === 'local' || sourceKind === 'project' || source.id === 'local',
+    installed: sourceKind !== 'remote',
     ...overrides,
   };
 }
@@ -95,7 +97,29 @@ function matchesQuery(skill: SkillSummary, query?: string): boolean {
   );
 }
 
-function collectLocalSummaries(input: SkillListQuery = {}): SkillSummary[] {
+function applyManagementState(items: SkillSummary[], input: SkillListQuery): SkillSummary[] {
+  const installs = skillInstallService.listInstalls();
+  const disabledIds = skillPreferences.disabledIds(input.projectId);
+  return items.flatMap((skill) => {
+    const install = installs.find((item) => skill.sourceKind === 'remote'
+      ? item.sourceId === skill.sourceId && item.name === skill.name
+      : item.installPath === skill.installPath);
+    const disabled = install ? install.status === 'disabled' : disabledIds.has(skill.id);
+    const previouslyInstalled = skill.sourceKind === 'remote' ? Boolean(install) : Boolean(skill.installed);
+    const projectManaged = Boolean(install && extensionStore.isSkillPackage(install.id));
+    const state = extensionStore.state(input.projectId, 'skill', install?.id ?? skill.id, { installed: previouslyInstalled && !projectManaged, enabled: !disabled });
+    if (previouslyInstalled && !state.installed && !input.includeUnmounted) return [];
+    const summary = {
+      ...skill,
+      installed: state.installed,
+      installationId: install?.id,
+      status: !state.enabled && previouslyInstalled ? 'disabled' as const : skill.status === 'disabled' && state.enabled ? 'available' as const : skill.status,
+    };
+    return summary.status !== 'invalid' && (input.includeDisabled || summary.status !== 'disabled') ? [summary] : [];
+  });
+}
+
+function collectLocalSummaries(input: SkillListQuery = {}, exactId?: string): SkillSummary[] {
   skillSourceService.ensureDefaultSources();
   const sources = skillSourceService.listSources().filter((source) => source.enabled);
   const collected: CollectedSkill[] = [];
@@ -113,7 +137,7 @@ function collectLocalSummaries(input: SkillListQuery = {}): SkillSummary[] {
             description: entry.description,
             sourceId: source.id,
             sourceKind: 'remote',
-            version: entry.version ?? '0.0.0',
+            version: entry.version ?? '',
             appliesTo: [],
             requiredCapabilities: [],
             permissionHints: [],
@@ -138,7 +162,7 @@ function collectLocalSummaries(input: SkillListQuery = {}): SkillSummary[] {
       collected.push({
         priority: source.priority,
         skill: toSummaryFromParsed(source, parsed, {
-          installed: source.id === 'local' || source.id === 'project' || installedNames.has(parsed.name),
+          installed: true,
         }),
       });
     }
@@ -152,8 +176,19 @@ function collectLocalSummaries(input: SkillListQuery = {}): SkillSummary[] {
     }
   }
 
+  if (input.projectId) {
+    for (const definition of extensionStore.definitions(input.projectId, 'skill')) {
+      if (!definition.skillPath || !fs.existsSync(definition.skillPath)) continue;
+      try {
+        const parsed = parseSkillFile(definition.skillPath);
+        collected.push({ priority: 115, skill: toSummaryFromParsed({ id: 'custom', type: 'local', readOnly: false } as SkillSourceRecord, parsed, {
+          id: definition.id, name: definition.name, label: definition.name, description: definition.description, sourceId: definition.sourceId, version: parsed.version || definition.version || '', installed: true,
+        }) });
+      } catch { /* Broken custom content is not advertised to the agent. */ }
+    }
+  }
+
   for (const install of skillInstallService.listInstalls()) {
-    if (install.status === 'disabled') continue;
     if (!fs.existsSync(install.installPath)) continue;
     try {
       const parsed = parseSkillFile(install.installPath);
@@ -166,13 +201,14 @@ function collectLocalSummaries(input: SkillListQuery = {}): SkillSummary[] {
           description: parsed.description,
           sourceId: install.sourceId,
           sourceKind: 'local',
-          version: parsed.version,
+          version: parsed.version || (install.version !== '0.0.0' ? install.version ?? '' : ''),
           appliesTo: parsed.appliesTo,
           profileIds: parsed.profileIds,
           injection: parsed.injection,
           requiredCapabilities: parsed.requiredCapabilities,
           permissionHints: parsed.permissionHints,
-          status: install.status === 'update_available' ? 'update_available' : 'available',
+          status: install.status === 'disabled' ? 'disabled' : install.status === 'update_available' ? 'update_available' : 'available',
+          installationId: install.id,
           installPath: install.installPath,
           contentDigest: install.contentDigest,
           installed: true,
@@ -183,15 +219,18 @@ function collectLocalSummaries(input: SkillListQuery = {}): SkillSummary[] {
     }
   }
 
-  collected.sort((a, b) => b.priority - a.priority);
+  // Scope before deduplication: a higher priority source must not hide another source's search results.
+  const scoped = collected.filter(({ skill }) => (!input.sourceId || skill.sourceId === input.sourceId) && (!exactId || skill.id === exactId));
+  scoped.sort((a, b) => b.priority - a.priority);
   const winners = new Map<string, SkillSummary>();
-  for (const entry of collected) {
-    if (!winners.has(entry.skill.name)) {
-      winners.set(entry.skill.name, entry.skill);
+  for (const entry of scoped) {
+    const key = input.includeUnmounted ? entry.skill.installPath ?? entry.skill.id : entry.skill.name;
+    if (!winners.has(key)) {
+      winners.set(key, entry.skill);
     }
   }
 
-  let items = [...winners.values()].filter((skill) => skill.status !== 'disabled' && skill.status !== 'invalid');
+  let items = applyManagementState([...winners.values()], input);
 
   if (input.sourceId) {
     items = items.filter((skill) => skill.sourceId === input.sourceId);
@@ -214,6 +253,7 @@ function paginateItems(items: SkillSummary[], input: SkillListQuery): SkillListR
     items: page,
     total: items.length,
     hasMore: offset + page.length < items.length,
+    totalExact: true,
   };
 }
 
@@ -231,7 +271,7 @@ async function listSkillsShSummaries(input: SkillListQuery, source: SkillSourceR
     installedNames,
   });
 
-  let items = result.items;
+  let items = applyManagementState(result.items, input);
   if (input.installedOnly) {
     items = items.filter((skill) => skill.installed);
   }
@@ -252,7 +292,7 @@ async function listWithTotal(input: SkillListQuery = {}): Promise<SkillListResul
 
   if (input.sourceId) {
     const selected = sources.find((source) => source.id === input.sourceId);
-    if (selected?.type === 'skills-sh') {
+    if (selected?.type === 'skills-sh' && !input.installedOnly) {
       return listSkillsShSummaries(input, selected);
     }
   }
@@ -293,7 +333,7 @@ async function listWithTotal(input: SkillListQuery = {}): Promise<SkillListResul
     });
 
     return {
-      items: [...localPage, ...remote.items],
+      items: [...localPage, ...applyManagementState(remote.items, input)],
       total: localItems.length + remote.total,
       hasMore: remote.hasMore || offset + localPage.length < localItems.length,
       totalExact: remote.totalExact,
@@ -340,7 +380,7 @@ function findSkillsShSummary(skillId: string): SkillSummary | null {
     description: skillsShPath,
     sourceId,
     sourceKind: 'remote',
-    version: '0.0.0',
+    version: '',
     appliesTo: [],
     requiredCapabilities: [],
     permissionHints: [],
@@ -350,11 +390,15 @@ function findSkillsShSummary(skillId: string): SkillSummary | null {
   };
 }
 
-function findSummary(skillId: string, projectId?: string): SkillSummary {
+function findSummary(skillId: string, projectId?: string, includeDisabled = false, includeUnmounted = false): SkillSummary {
   const skillsSh = findSkillsShSummary(skillId);
-  if (skillsSh) return skillsSh;
+  if (skillsSh) {
+    const item = applyManagementState([skillsSh], { projectId, includeDisabled, includeUnmounted })[0];
+    if (!item) throw new AgentNotFoundError(skillId);
+    return item;
+  }
 
-  const match = collectSummaries({ projectId }).find((skill) => skill.id === skillId);
+  const match = collectLocalSummaries({ projectId, includeDisabled, includeUnmounted }, skillId).find((skill) => skill.id === skillId);
   if (!match) throw new AgentNotFoundError(skillId);
   return match;
 }
@@ -368,8 +412,19 @@ export class SkillRegistry {
     return listWithTotal(input);
   }
 
-  getSummary(skillId: string, projectId?: string): SkillSummary {
-    return findSummary(skillId, projectId);
+  getSummary(skillId: string, projectId?: string, includeDisabled = false, includeUnmounted = false): SkillSummary {
+    return findSummary(skillId, projectId, includeDisabled, includeUnmounted);
+  }
+
+  setEnabled(skillId: string, enabled: boolean, projectId?: string): SkillSummary {
+    const skill = findSummary(skillId, projectId, true);
+    if (!skill.installed) throw new Error('Install the skill before enabling it');
+    if (skill.installationId) {
+      skillInstallService.setStatus(skill.installationId, enabled ? 'installed' : 'disabled');
+    } else {
+      skillPreferences.setEnabled(skill.id, enabled, projectId);
+    }
+    return findSummary(skillId, projectId, true);
   }
 
   loadDetail(input: { skillId: string; projectId?: string }): SkillDetail {

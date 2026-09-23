@@ -1,0 +1,251 @@
+<div id="panda-kin-root">
+  <h2>曲柄一圈内的腿部运动学</h2>
+
+  <div class="pk-grid">
+    <div class="pk-diagram">
+      <svg id="pk-scene" viewBox="240 234 432 332" role="img" aria-labelledby="pk-scene-title pk-scene-desc">
+        <title id="pk-scene-title">骑车熊猫的腿部连杆解算</title>
+        <desc id="pk-scene-desc">髋关节固定在车座，脚踝绑在曲柄末端沿圆周运动，膝由两段定长连杆反解得出。</desc>
+
+        <line x1="240" y1="556" x2="672" y2="556" stroke="var(--viz-border)" stroke-width="2"/>
+        <circle cx="330" cy="476" r="80" fill="none" stroke="var(--viz-border)" stroke-width="1.5"/>
+        <circle cx="570" cy="476" r="80" fill="none" stroke="var(--viz-border)" stroke-width="1.5"/>
+        <circle cx="426" cy="493" r="41" fill="none" stroke="var(--viz-muted)" stroke-width="1.5" stroke-dasharray="5 5"/>
+        <text x="370" y="447" text-anchor="end" font-size="12" fill="var(--viz-muted)">曲柄 r=41</text>
+
+        <g stroke="var(--viz-muted)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.4">
+          <line id="pk-far-thigh" x1="378" y1="332" x2="378" y2="332"/>
+          <line id="pk-far-shank" x1="378" y1="332" x2="378" y2="332"/>
+          <line id="pk-far-crank" x1="426" y1="493" x2="426" y2="493"/>
+        </g>
+        <circle id="pk-far-knee" cx="378" cy="332" r="4.5" fill="var(--viz-muted)" opacity="0.4"/>
+        <circle id="pk-far-ankle" cx="378" cy="332" r="4" fill="var(--viz-muted)" opacity="0.4"/>
+
+        <g stroke="var(--viz-muted)" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.55">
+          <line id="pk-upper" x1="476" y1="244" x2="476" y2="244"/>
+          <line id="pk-fore" x1="476" y1="244" x2="558" y2="326"/>
+        </g>
+        <circle id="pk-elbow" cx="476" cy="244" r="4.5" fill="var(--viz-muted)"/>
+        <circle cx="558" cy="326" r="7" fill="var(--viz-text)"/>
+
+        <g stroke="var(--viz-series-1)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <line id="pk-near-thigh" x1="378" y1="332" x2="378" y2="332"/>
+          <line id="pk-near-shank" x1="378" y1="332" x2="378" y2="332"/>
+          <line id="pk-crank" x1="426" y1="493" x2="426" y2="493"/>
+        </g>
+        <circle id="pk-pedal" cx="426" cy="493" r="6.5" fill="var(--viz-series-1)"/>
+        <circle id="pk-knee" cx="378" cy="332" r="5.5" fill="var(--viz-series-1)"/>
+        <circle id="pk-ankle" cx="378" cy="332" r="4.5" fill="var(--viz-series-1)"/>
+        <circle cx="378" cy="332" r="7" fill="var(--viz-text)"/>
+        <circle cx="426" cy="493" r="3.5" fill="var(--viz-text)"/>
+
+        <text x="360" y="326" text-anchor="end" font-size="12" fill="var(--viz-text)">髋（固定）</text>
+        <text x="566" y="322" font-size="12" fill="var(--viz-text)">手（固定）</text>
+      </svg>
+      <p class="text-small pk-note pk-legend"><span class="pk-key pk-k1">近侧腿</span><span class="pk-key pk-k2">远侧腿（差 180°）</span><span class="pk-key pk-k3">曲柄圆周</span></p>
+      <p class="text-small pk-note">髋与手把全程不动；脚踝始终落在曲柄末端的圆周上。</p>
+    </div>
+
+    <div class="pk-panel">
+      <div class="pk-read">
+        <div><b class="tabular-nums" id="pk-reach">—</b><span>髋-踝 / 腿总长</span></div>
+        <div><b class="tabular-nums" id="pk-thigh">100.00</b><span>大腿长 px</span></div>
+        <div><b class="tabular-nums" id="pk-shank">101.00</b><span>小腿长 px</span></div>
+      </div>
+      <svg id="pk-chart" viewBox="0 0 360 132" role="img" aria-labelledby="pk-chart-title pk-chart-desc">
+        <title id="pk-chart-title">伸展率随曲柄相位的变化</title>
+        <desc id="pk-chart-desc">整圈中髋到踝的距离与腿总长之比始终低于 1，说明腿不会被拉断。</desc>
+        <line x1="42" y1="20" x2="350" y2="20" stroke="var(--destructive)" stroke-width="1.5" stroke-dasharray="4 4"/>
+        <text x="42" y="15" font-size="12" fill="var(--destructive)">腿长上限 1.00</text>
+        <path id="pk-curve" fill="none" stroke="var(--viz-series-1)" stroke-width="2"/>
+        <line id="pk-marker" x1="42" y1="20" x2="42" y2="104" stroke="var(--viz-muted)" stroke-width="1"/>
+        <circle id="pk-dot" cx="42" cy="20" r="4" fill="var(--viz-series-1)"/>
+        <line x1="42" y1="104" x2="350" y2="104" stroke="var(--viz-border)" stroke-width="1"/>
+        <text x="38" y="24" text-anchor="end" font-size="12" fill="var(--viz-muted)">1.05</text>
+        <text x="38" y="108" text-anchor="end" font-size="12" fill="var(--viz-muted)">0.40</text>
+        <text x="42" y="126" font-size="12" fill="var(--viz-muted)">0°</text>
+        <text x="196" y="126" text-anchor="middle" font-size="12" fill="var(--viz-muted)">曲柄相位</text>
+        <text x="350" y="126" text-anchor="end" font-size="12" fill="var(--viz-muted)">360°</text>
+      </svg>
+      <p class="text-small pk-note" id="pk-status" aria-live="polite">—</p>
+    </div>
+  </div>
+
+  <div class="pk-bar">
+    <label for="pk-phase">曲柄相位</label>
+    <input id="pk-phase" type="range" min="0" max="359" step="1" value="0">
+    <output id="pk-phase-out" class="tabular-nums">0°</output>
+    <label for="pk-ratio">传动比</label>
+    <input id="pk-ratio" type="range" min="100" max="340" step="5" value="160">
+    <output id="pk-ratio-out" class="tabular-nums">1.60</output>
+  </div>
+
+  <div class="pk-chain">
+    <div><span>曲柄一圈</span><b class="tabular-nums" id="pk-t">—</b></div>
+    <div><span>车轮转数</span><b class="tabular-nums" id="pk-rev">—</b></div>
+    <div><span>轮面线速度</span><b class="tabular-nums" id="pk-wheelv">—</b></div>
+    <div><span>地面滚动速度</span><b class="tabular-nums" id="pk-groundv">—</b></div>
+    <div><span>两速之比</span><b class="tabular-nums" id="pk-diff">—</b></div>
+  </div>
+  <p class="text-small pk-note">地面层周期系数 1.48014 = 744 / (2π·80)，与车轮半径同源；轮子转一圈，地面恰好滚过等长弧线。</p>
+</div>
+
+<style>
+#panda-kin-root{font-size:var(--font-size-base);color:var(--foreground);display:flex;flex-direction:column;gap:14px}
+#panda-kin-root h2{margin:0}
+#panda-kin-root .pk-grid{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+#panda-kin-root .pk-diagram{flex:1 1 320px;min-width:280px}
+#panda-kin-root .pk-diagram svg,#panda-kin-root .pk-panel svg{display:block;width:100%;height:auto}
+#panda-kin-root .pk-panel{flex:1 1 300px;min-width:260px;display:flex;flex-direction:column;gap:12px}
+#panda-kin-root .pk-read{display:flex;gap:10px;flex-wrap:wrap}
+#panda-kin-root .pk-read>div{flex:1 1 88px;background:var(--muted);border-radius:var(--radius-md);padding:8px 10px}
+#panda-kin-root .pk-read b{display:block;font-weight:500}
+#panda-kin-root .pk-read span{color:var(--muted-foreground);font-size:var(--font-size-small)}
+#panda-kin-root .pk-note{margin:0;color:var(--muted-foreground)}
+#panda-kin-root .pk-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+#panda-kin-root .pk-key{display:inline-flex;align-items:center;gap:6px;color:var(--muted-foreground)}
+#panda-kin-root .pk-key::before{content:"";width:22px;height:0;border-top-width:4px;border-top-style:solid;border-radius:2px}
+#panda-kin-root .pk-k1::before{border-color:var(--viz-series-1)}
+#panda-kin-root .pk-k2::before{border-color:var(--viz-muted);opacity:.55}
+#panda-kin-root .pk-k3::before{border-top-width:2px;border-top-style:dashed;border-color:var(--viz-muted)}
+#panda-kin-root .pk-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#panda-kin-root .pk-bar label{color:var(--muted-foreground)}
+#panda-kin-root .pk-bar input[type=range]{flex:1 1 140px;min-width:120px;accent-color:var(--viz-series-1)}
+#panda-kin-root .pk-bar output{min-width:56px;text-align:right}
+#panda-kin-root .pk-chain{display:flex;gap:10px;flex-wrap:wrap}
+#panda-kin-root .pk-chain>div{flex:1 1 120px;background:var(--card);border-radius:var(--radius-md);padding:8px 10px}
+#panda-kin-root .pk-chain span{display:block;color:var(--muted-foreground);font-size:var(--font-size-small)}
+#panda-kin-root .pk-chain b{font-weight:500}
+</style>
+
+<script>
+(function(){
+  "use strict";
+  var root = document.getElementById("panda-kin-root");
+  if (!root) return;
+
+  var BB = {x:426, y:493}, CRANK = 41, HIP = {x:378, y:332};
+  var THIGH = 100, SHANK = 101, ANK = 13;
+  var SHOULDER = {x:476.09, y:243.67}, GRIP = {x:558, y:326};
+  var UP = 71, FORE = 66;
+  var R = 80, TILE = 744, TILE_COEF = 1.48014, CADENCE = 112;
+
+  function sub(a,b){ return {x:a.x-b.x, y:a.y-b.y}; }
+  function add(a,b){ return {x:a.x+b.x, y:a.y+b.y}; }
+  function len(a){ return Math.hypot(a.x, a.y); }
+  function rot(a,t){ return {x:a.x*Math.cos(t)-a.y*Math.sin(t), y:a.x*Math.sin(t)+a.y*Math.cos(t)}; }
+  function solve(p1,p2,l1,l2,side){
+    var v = sub(p2,p1), raw = len(v);
+    var d = Math.min(Math.max(raw, Math.abs(l1-l2)+1e-3), l1+l2-1e-3);
+    var u = raw > 1e-9 ? {x:v.x/raw, y:v.y/raw} : {x:1,y:0};
+    var a = (d*d + l1*l1 - l2*l2)/(2*d);
+    var h = Math.sqrt(Math.max(0, l1*l1 - a*a));
+    var perp = side >= 0 ? {x:u.y, y:-u.x} : {x:-u.y, y:u.x};
+    return {x:p1.x + u.x*a + perp.x*h, y:p1.y + u.y*a + perp.y*h};
+  }
+  function legAt(deg){
+    var f = deg*Math.PI/180;
+    var pedal = {x:BB.x + CRANK*Math.cos(f), y:BB.y + CRANK*Math.sin(f)};
+    var beta = 5*Math.sin(f)*Math.PI/180;
+    var ankle = add(pedal, rot({x:0, y:-ANK}, beta));
+    var knee = solve(HIP, ankle, THIGH, SHANK, +1);
+    return {pedal:pedal, ankle:ankle, knee:knee, reach:len(sub(ankle,HIP))/(THIGH+SHANK)};
+  }
+
+  var ids = ["pk-far-thigh","pk-far-shank","pk-far-crank","pk-far-knee","pk-far-ankle",
+             "pk-upper","pk-fore","pk-elbow","pk-near-thigh","pk-near-shank","pk-crank",
+             "pk-pedal","pk-knee","pk-ankle","pk-reach","pk-curve","pk-marker","pk-dot",
+             "pk-status","pk-phase","pk-phase-out","pk-ratio","pk-ratio-out","pk-t",
+             "pk-rev","pk-wheelv","pk-groundv","pk-diff"];
+  var el = {};
+  var missing = [];
+  ids.forEach(function(id){
+    el[id] = document.getElementById(id);
+    if (!el[id]) missing.push(id);
+  });
+  if (missing.length){
+    root.setAttribute("data-missing", missing.join(","));
+    return;
+  }
+
+  function line(node, a, b){
+    node.setAttribute("x1", a.x.toFixed(2)); node.setAttribute("y1", a.y.toFixed(2));
+    node.setAttribute("x2", b.x.toFixed(2)); node.setAttribute("y2", b.y.toFixed(2));
+  }
+  function point(node, p){
+    node.setAttribute("cx", p.x.toFixed(2)); node.setAttribute("cy", p.y.toFixed(2));
+  }
+
+  var elbow = solve(SHOULDER, GRIP, UP, FORE, -1);
+  line(el["pk-upper"], SHOULDER, elbow);
+  line(el["pk-fore"], elbow, GRIP);
+  point(el["pk-elbow"], elbow);
+
+  var CHART = {x0:42, x1:350, yTop:20, yBot:104}, VMIN = 0.40, VMAX = 1.05;
+  function chartX(deg){ return CHART.x0 + (deg/360)*(CHART.x1 - CHART.x0); }
+  function chartY(v){
+    var t = (v - VMIN)/(VMAX - VMIN);
+    return CHART.yBot - Math.max(0, Math.min(1, t))*(CHART.yBot - CHART.yTop);
+  }
+
+  var samples = [], peak = 0;
+  for (var i = 0; i <= 180; i++){
+    var v = legAt(i*2).reach;
+    samples.push({deg:i*2, v:v});
+    if (v > peak) peak = v;
+  }
+  var d = "";
+  for (var j = 0; j < samples.length; j++){
+    d += (j ? " L" : "M") + chartX(samples[j].deg).toFixed(2) + " " + chartY(samples[j].v).toFixed(2);
+  }
+  el["pk-curve"].setAttribute("d", d);
+  el["pk-status"].textContent = "伸展率 ——，整圈峰值 " + peak.toFixed(3);
+
+  function draw(deg){
+    var near = legAt(deg);
+    var far = legAt((deg + 180) % 360);
+    line(el["pk-near-thigh"], HIP, near.knee);
+    line(el["pk-near-shank"], near.knee, near.ankle);
+    line(el["pk-crank"], BB, near.pedal);
+    point(el["pk-knee"], near.knee);
+    point(el["pk-ankle"], near.ankle);
+    point(el["pk-pedal"], near.pedal);
+
+    line(el["pk-far-thigh"], HIP, far.knee);
+    line(el["pk-far-shank"], far.knee, far.ankle);
+    line(el["pk-far-crank"], BB, far.pedal);
+    point(el["pk-far-knee"], far.knee);
+    point(el["pk-far-ankle"], far.ankle);
+
+    el["pk-reach"].textContent = near.reach.toFixed(3);
+    var px = chartX(deg), py = chartY(near.reach);
+    el["pk-marker"].setAttribute("x1", px.toFixed(2));
+    el["pk-marker"].setAttribute("x2", px.toFixed(2));
+    point(el["pk-dot"], {x:px, y:py});
+    el["pk-status"].textContent = "伸展率 " + near.reach.toFixed(3) + "，整圈峰值 " + peak.toFixed(3);
+  }
+
+  function drivetrain(ratio){
+    var T = 60/CADENCE;
+    var wheelV = 2*Math.PI*R*ratio/T;
+    var groundV = TILE*ratio/(TILE_COEF*T);
+    el["pk-t"].textContent = T.toFixed(4) + " s";
+    el["pk-rev"].textContent = ratio.toFixed(2) + " 圈";
+    el["pk-wheelv"].textContent = wheelV.toFixed(1) + " px/s";
+    el["pk-groundv"].textContent = groundV.toFixed(1) + " px/s";
+    el["pk-diff"].textContent = (wheelV/groundV).toFixed(4);
+  }
+
+  function sync(){
+    var deg = Number(el["pk-phase"].value);
+    var ratio = Number(el["pk-ratio"].value)/100;
+    el["pk-phase-out"].textContent = deg + "\u00b0";
+    el["pk-ratio-out"].textContent = ratio.toFixed(2);
+    draw(deg);
+    drivetrain(ratio);
+  }
+  el["pk-phase"].addEventListener("input", sync);
+  el["pk-ratio"].addEventListener("input", sync);
+  sync();
+})();
+</script>

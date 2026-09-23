@@ -228,3 +228,20 @@ it("rejects an oversized file reservation before allocating or writing it", asyn
     ),
   ).rejects.toThrow(/budget/);
 });
+it("keeps message order and media retention when annotating a versioned visualization", async () => {
+  const { createAsset, sessionHasAsset } = await import("../media-assets.js");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64");
+  const asset = await createAsset(plannerSessionInput.projectId, "tiny.png", png, "image/png");
+  const first = store.appendMessage({
+    id: "visual-first", sessionId: id, runId: null, stepId: null,
+    role: "assistant", content: "Preview", contentParts: [{ type: "image", assetId: asset.id }],
+    metadata: {}, createdAt: "2026-09-23T00:00:00Z",
+  });
+  message("visual-second");
+  const annotated = store.attachVisualizationMetadata(first, { source: "inline_visualization", visualization: { title: "Preview" } });
+  expect(annotated?.metadata.source).toBe("inline_visualization");
+  expect(store.listMessages(id).map(row => row.id)).toEqual(["visual-first", "visual-second"]);
+  expect(sessionHasAsset(id, asset.id)).toBe(true);
+  const ref = versionRepository().recordReference(id, "messages", first.id)!;
+  expect(getRawSqlite().prepare("SELECT 1 FROM conversation_v3_asset_refs WHERE object_hash=? AND asset_id=?").get(Buffer.from(ref, "hex"), asset.id)).toBeTruthy();
+});

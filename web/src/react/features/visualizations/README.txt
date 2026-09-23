@@ -1,10 +1,14 @@
 Inline visualizations (2026-09-22)
 
 Authoring: api/skills/builtin/visualize/SKILL.md.
-The assistant emits one self-contained synax-visualize HTML fence, not a file path.
-Successful finalizers persist the original fragment plus its message offsets in
-assistant metadata. No publish tool, source read, React compilation, job, revision,
-state endpoint, dedicated preview server or artifact table is involved.
+The visualize skill writes a self-contained HTML fragment in an authorized session
+workspace and emits a standalone visualize file reference (optional title/wide mode).
+Existing synax-visualize HTML fences are also supported. A single bounded HTML read
+validates canonical root containment, file type, size and file stability before
+freezing the fragment in message metadata. No compiler, job or artifact API returns.
+Successful run replies missed by an older finalizer are hydrated once when listed;
+failed/interrupted/running replies and reasoning never qualify. Missing files show
+an explicit diagnostic. Once saved, source edits/deletion do not change the preview.
 
 The transcript renders the preview at its original position between paragraphs.
 Completed previews stay outside collapsed work logs, including preview-only and
@@ -43,3 +47,9 @@ Verification:
   Native sandbox smoke using the real preview component and production preload;
   not full packaged-application acceptance. Optional SYNAX_ELECTRON_PATH selects an
   existing Electron runtime; SYNAX_CHROME_PATH similarly selects Chromium.
+
+Regression for project/visualize's actual file-reference output:
+SYNAX_VISUALIZATION_REFERENCE=1 npm run test:visualize:web
+Uses reported-navbar.html as immutable test data; the user workspace and live DB
+are not changed. Checks a step-less work_result that lacks metadata, restores via
+GET /messages, then deletes the file and verifies stable reload.

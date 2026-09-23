@@ -1114,11 +1114,29 @@ export class AgentRuntimeStore {
         return undefined;
       if (current.metadata.source === "inline_visualization") return current;
       const metadata = { ...current.metadata, ...additions };
-      sqlite
-        .prepare(
-          "UPDATE agent_runtime_messages SET metadata_json = ? WHERE id = ? AND session_id = ?",
-        )
-        .run(stringify(metadata), message.id, message.sessionId);
+      if (versionedSession(message.sessionId)) {
+        versionRepository().putBatch(message.sessionId, [
+          {
+            table: "messages",
+            id: message.id,
+            fields: { ...current, metadata } as unknown as Record<string, unknown>,
+            preserveOrder: true,
+          },
+        ]);
+        if (current.contentParts?.length)
+          retainVersionRecordAssets(
+            message.sessionId,
+            "messages",
+            message.id,
+            current.contentParts,
+          );
+      } else {
+        sqlite
+          .prepare(
+            "UPDATE agent_runtime_messages SET metadata_json = ? WHERE id = ? AND session_id = ?",
+          )
+          .run(stringify(metadata), message.id, message.sessionId);
+      }
       return { ...current, metadata };
     })();
   }

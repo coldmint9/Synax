@@ -21,6 +21,7 @@ export interface SkillSummary {
   permissionHints: string[]
   status: SkillStatus
   installPath?: string
+  installationId?: string
   installed?: boolean
   updateAvailable?: boolean
   remoteUrl?: string
@@ -63,6 +64,7 @@ export const skillsApi = {
     q?: string
     sourceId?: string
     installedOnly?: boolean
+    includeDisabled?: boolean
     limit?: number
     offset?: number
   } = {}) => {
@@ -83,6 +85,10 @@ export const skillsApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  setEnabled: (skillId: string, enabled: boolean, projectId?: string) => {
+    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
+    return apiRequest(`${SKILLS_BASE}/${encodeURIComponent(skillId)}/${enabled ? 'enable' : 'disable'}${qs}`, { method: 'POST' })
+  },
   uninstall: (skillId: string) =>
     apiRequest<{ ok: boolean }>(`${SKILLS_BASE}/${encodeURIComponent(skillId)}`, { method: 'DELETE' }),
   sync: (sourceId?: string) =>

@@ -154,6 +154,7 @@ const globalConfigPatchSchema = z
   .object({
     terminalShellPath: z.string().trim().max(4096).optional(),
     wikiModel: z.string().trim().max(512).optional(),
+    inputOptimizationModel: z.string().trim().max(512).optional(),
     providers: z.array(providerDefSchema).optional(),
     defaultProviderId: z.enum(ACP_PROVIDER_IDS).optional(),
     defaultApiProviderId: z.string().min(1).optional(),
@@ -487,10 +488,14 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
   const providerMap = new Map(
     nextProviders.map((provider) => [provider.id, provider]),
   );
-  if (patch.wikiModel) {
-    const separator = patch.wikiModel.indexOf("/");
-    const providerId = patch.wikiModel.slice(0, separator);
-    const modelId = patch.wikiModel.slice(separator + 1);
+  for (const [label, model] of [
+    ["Wiki", patch.wikiModel],
+    ["输入优化 / Input optimization", patch.inputOptimizationModel],
+  ] as const) {
+    if (!model) continue;
+    const separator = model.indexOf("/");
+    const providerId = model.slice(0, separator);
+    const modelId = model.slice(separator + 1);
     const provider = providerMap.get(providerId);
     if (
       separator <= 0 ||
@@ -500,7 +505,7 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
       !provider.models.some((model) => model.id === modelId)
     ) {
       throw new Error(
-        "Wiki 模型必须是已配置的 API Provider / Model / Select a configured API provider/model for Wiki.",
+        `${label} 模型必须是已配置的 API Provider / Model / Select a configured API provider/model in Settings.`,
       );
     }
   }

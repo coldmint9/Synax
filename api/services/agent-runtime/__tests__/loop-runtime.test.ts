@@ -2322,6 +2322,26 @@ describe("cooperative closing incident replay", () => {
     }
   });
 
+  it("persists a visualize file reference through the real work completion finalizer", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "visualize-work-result-"));
+    try {
+      const file = path.join(workspace, "demo.html");
+      fs.writeFileSync(file, '<button id="demo">Workspace</button>');
+      const reply = `Preview\n\nvisualize${JSON.stringify({path:file,title:"Navigation",mode:"wide"})}`;
+      queueMockStep(makeTextStep(reply));
+      const session = agentSessionRuntime.create({...executorInput, workDir:workspace});
+      const chunks = await collectChunks(agentLoopRuntime.streamRun(session.id, {message:"Show an interactive navigation demo without editing project sources."}));
+      const messages = agentRuntimeStore.listMessages(session.id).filter((m)=>m.role==="assistant" && m.metadata.type!=="thinking");
+      expect(messages.some((m)=>m.metadata.source==="inline_visualization")).toBe(true);
+      const visual = messages.find((m)=>m.metadata.source==="inline_visualization")!;
+      expect(visual.metadata.visualization).toMatchObject({html:'<button id="demo">Workspace</button>',title:"Navigation",mode:"wide"});
+      expect(visual.content).toBe(reply);
+      expect(JSON.stringify(chunks)).toContain("inline_visualization");
+      fs.unlinkSync(file);
+      expect(agentLoopRuntime.listMessages(session.id).find((m)=>m.id===visual.id)?.metadata).toEqual(visual.metadata);
+    } finally { fs.rmSync(workspace, {recursive:true,force:true}); }
+  });
+
   it("does not reopen completed work on a continue request", async () => {
     queueMockStep(makeTextStep("The investigation is complete."));
     const session = agentSessionRuntime.create(executorInput);

@@ -7,6 +7,8 @@ import {
 export interface RuntimeWrite {
   /** Trusted repository-only copy of immutable field payloads. */
   copyFrom?: string;
+  /** Metadata-only message updates preserve the original transcript position. */
+  preserveOrder?: boolean;
   table: string;
   id: string;
   fields: Record<string, unknown>;

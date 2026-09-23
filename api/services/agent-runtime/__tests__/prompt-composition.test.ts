@@ -263,3 +263,18 @@ it("keeps mode rules identical when only saved plan and goal status change", () 
   expect(buildSynaxRuntimeState(later)).toContain("New criterion");
   expect(buildSynaxRuntimeState(later)).toContain("Saved, not executing");
 });
+
+it("advertises the real visualization protocol even when Synax clears all profile hints", () => {
+  const prompt = buildLoopSystemPrompt({
+    ...base,
+    loopHintsOverride: [],
+    skillsSection: '{"id":"project/visualize","name":"visualize"}',
+    availableToolIds: ["skill.load"],
+  });
+  expect(prompt).toContain("visualize");
+  expect(prompt).toContain("HTML fragment");
+  expect(prompt).not.toContain("No file reference");
+  expect(
+    buildLoopSystemPrompt({ ...base, specializedOutput: true }),
+  ).not.toContain("Inline visualization host contract");
+});

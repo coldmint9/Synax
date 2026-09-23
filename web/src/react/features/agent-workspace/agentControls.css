@@ -640,20 +640,20 @@ textarea.agent-request-input {
 .agent-session-controls
   .agent-dock-composer[data-session-controls]
   .agent-dock-composer-actions
-  > button {
+  > :is(.agent-dock-composer-send, .agent-dock-composer-stop) {
   background: hsl(var(--foreground-hsl));
   color: var(--background);
 }
 .agent-session-controls
   .agent-dock-composer[data-session-controls]
   .agent-dock-composer-actions
-  > button:not(:disabled):hover {
+  > :is(.agent-dock-composer-send, .agent-dock-composer-stop):not(:disabled):hover {
   background: hsl(var(--foreground-hsl) / 0.85);
 }
 .agent-session-controls
   .agent-dock-composer[data-session-controls]
   .agent-dock-composer-actions
-  > button:disabled {
+  > :is(.agent-dock-composer-send, .agent-dock-composer-stop):disabled {
   border-color: transparent;
   background: hsl(var(--foreground-hsl) / 0.06);
   color: hsl(var(--muted-foreground) / 0.45);

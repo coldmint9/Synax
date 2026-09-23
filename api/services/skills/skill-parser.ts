@@ -108,6 +108,8 @@ export function parseSkillFile(installPath: string): ParsedSkillFile {
   const raw = fs.readFileSync(installPath, 'utf8');
   const { frontmatter, body } = parseSkillMarkdown(raw);
   const synax = (frontmatter.synax ?? {}) as Record<string, unknown>;
+  const metadata = (frontmatter.metadata ?? {}) as Record<string, unknown>;
+  const version = frontmatter.version ?? metadata.version;
   const directoryName = path.basename(path.dirname(installPath));
   const name = typeof frontmatter.name === 'string' && frontmatter.name.trim()
     ? frontmatter.name.trim()
@@ -121,7 +123,7 @@ export function parseSkillFile(installPath: string): ParsedSkillFile {
     name,
     label: typeof frontmatter.label === 'string' && frontmatter.label.trim() ? frontmatter.label.trim() : name,
     description,
-    version: typeof frontmatter.version === 'string' && frontmatter.version.trim() ? frontmatter.version.trim() : '0.0.0',
+    version: typeof version === 'string' ? version.trim() : '',
     appliesTo: asProfileKinds(synax['applies-to'] ?? synax.appliesTo),
     profileIds: asStringArray(synax['profile-ids'] ?? synax.profileIds),
     injection: asInjectionMode(synax.injection),

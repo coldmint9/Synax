@@ -1,0 +1,722 @@
+<div id="synax-navbar-demo">
+  <style>
+    #synax-navbar-demo {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #synax-navbar-demo *,
+    #synax-navbar-demo *::before,
+    #synax-navbar-demo *::after {
+      box-sizing: border-box;
+    }
+    #synax-navbar-demo [hidden] {
+      display: none !important;
+    }
+    #synax-navbar-demo button {
+      font: inherit;
+      cursor: pointer;
+    }
+
+    #synax-navbar-demo .sx-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    #synax-navbar-demo .sx-seg {
+      display: flex;
+      gap: 2px;
+      padding: 2px;
+      border-radius: 999px;
+      background: color-mix(in oklab, var(--foreground) 7%, transparent);
+    }
+    #synax-navbar-demo .sx-seg-btn {
+      border: 0;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      line-height: 1.2;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted-foreground);
+      background: transparent;
+    }
+    #synax-navbar-demo .sx-seg-btn:hover {
+      color: var(--foreground);
+    }
+    #synax-navbar-demo .sx-seg-btn.is-on {
+      color: var(--primary-foreground);
+      background: var(--primary);
+    }
+    #synax-navbar-demo .sx-seg-btn:focus-visible,
+    #synax-navbar-demo .sx-tab:focus-visible,
+    #synax-navbar-demo .sx-btn:focus-visible,
+    #synax-navbar-demo .sx-proj:focus-visible,
+    #synax-navbar-demo .sx-menu-item:focus-visible,
+    #synax-navbar-demo .sx-search-input:focus-visible {
+      outline: 2px solid var(--ring);
+      outline-offset: 1px;
+    }
+
+    #synax-navbar-demo .sx-stage {
+      container-type: inline-size;
+      width: min(var(--stage-w, 1024px), 100%);
+      margin-inline: auto;
+      padding: 10px;
+      border-radius: 14px;
+      background: var(--background);
+      outline: 1px solid var(--border);
+    }
+
+    #synax-navbar-demo .sx-bar {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    #synax-navbar-demo .sx-pill {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      max-width: 100%;
+      height: 36px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: color-mix(in oklab, var(--card) 92%, transparent);
+      backdrop-filter: blur(28px) saturate(1.4);
+      -webkit-backdrop-filter: blur(28px) saturate(1.4);
+      box-shadow:
+        inset 0 1px 0 color-mix(in oklab, var(--foreground) 7%, transparent),
+        0 1px 2px color-mix(in oklab, var(--foreground) 8%, transparent),
+        0 8px 24px color-mix(in oklab, var(--foreground) 10%, transparent);
+    }
+
+    #synax-navbar-demo .sx-div {
+      flex: 0 0 auto;
+      width: 1px;
+      height: 14px;
+      margin: 0 4px;
+      background: color-mix(in oklab, var(--border) 70%, transparent);
+    }
+
+    #synax-navbar-demo .sx-proj-wrap {
+      position: relative;
+      min-width: 0;
+    }
+    #synax-navbar-demo .sx-proj {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 26px;
+      max-width: 100%;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--foreground);
+      background: transparent;
+    }
+    #synax-navbar-demo .sx-proj:hover {
+      background: var(--secondary);
+    }
+    #synax-navbar-demo .sx-proj-label {
+      display: block;
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #synax-navbar-demo .sx-dot {
+      flex: 0 0 auto;
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--muted-foreground);
+    }
+    #synax-navbar-demo .sx-dot[data-state="running"] {
+      background: var(--green);
+    }
+    #synax-navbar-demo .sx-dot[data-state="queued"] {
+      background: var(--orange);
+    }
+
+    #synax-navbar-demo .sx-menu {
+      position: absolute;
+      z-index: 5;
+      top: calc(100% + 8px);
+      left: 0;
+      min-width: 208px;
+      max-width: calc(100cqw - 28px);
+      padding: 4px;
+      border-radius: 12px;
+      background: var(--popover);
+      color: var(--popover-foreground);
+      box-shadow:
+        0 0 0 1px color-mix(in oklab, var(--foreground) 9%, transparent),
+        0 12px 32px color-mix(in oklab, var(--foreground) 16%, transparent);
+    }
+    #synax-navbar-demo .sx-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 8px;
+      font-size: 12px;
+      text-align: left;
+      color: inherit;
+      background: transparent;
+    }
+    #synax-navbar-demo .sx-menu-item:hover {
+      background: color-mix(in oklab, var(--foreground) 7%, transparent);
+    }
+    #synax-navbar-demo .sx-menu-item.is-current {
+      color: var(--primary);
+    }
+    #synax-navbar-demo .sx-menu-item .sx-menu-name {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #synax-navbar-demo .sx-menu hr {
+      margin: 4px 2px;
+    }
+
+    #synax-navbar-demo .sx-tabs {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 2px;
+    }
+    #synax-navbar-demo .sx-tab {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 26px;
+      min-width: 0;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted-foreground);
+      background: transparent;
+    }
+    #synax-navbar-demo .sx-tab:hover {
+      color: var(--foreground);
+      background: var(--secondary);
+    }
+    #synax-navbar-demo .sx-tab.is-on {
+      color: var(--primary);
+      background: color-mix(in oklab, var(--primary) 12%, transparent);
+    }
+    #synax-navbar-demo .sx-tab > span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #synax-navbar-demo .sx-actions {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      min-width: 0;
+    }
+    #synax-navbar-demo .sx-actions.is-searching > *:not([data-search-wrap]) {
+      display: none;
+    }
+    #synax-navbar-demo .sx-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted-foreground);
+      background: transparent;
+    }
+    #synax-navbar-demo .sx-btn:hover {
+      color: var(--foreground);
+      background: var(--secondary);
+    }
+    #synax-navbar-demo .sx-btn[aria-pressed="true"] {
+      color: var(--primary);
+      background: color-mix(in oklab, var(--primary) 14%, transparent);
+    }
+    #synax-navbar-demo .sx-search {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      padding: 0 4px;
+    }
+    #synax-navbar-demo .sx-search-input {
+      width: clamp(66px, 30cqw, 140px);
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      font-size: 12px;
+      color: var(--foreground);
+      background: transparent;
+      outline: none;
+    }
+    #synax-navbar-demo .sx-search-input::placeholder {
+      color: var(--muted-foreground);
+    }
+    #synax-navbar-demo .sx-kbd {
+      font-family: var(--font-mono, monospace);
+      font-size: 11px;
+      line-height: 1;
+      color: var(--muted-foreground);
+    }
+
+    #synax-navbar-demo .sx-canvas {
+      position: relative;
+      z-index: 1;
+      margin-top: 12px;
+      min-width: 0;
+    }
+    #synax-navbar-demo .sx-crumb {
+      margin: 0 0 14px;
+      font-size: 12px;
+      line-height: 16px;
+      color: var(--muted-foreground);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #synax-navbar-demo h3 {
+      margin: 0 0 2px;
+    }
+    #synax-navbar-demo .sx-sub {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: var(--muted-foreground);
+    }
+    #synax-navbar-demo .sx-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      padding: 7px 8px;
+      border-radius: 10px;
+      font-size: 14px;
+    }
+    #synax-navbar-demo .sx-row-name {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #synax-navbar-demo .sx-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex: 0 0 auto;
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 18px;
+      color: var(--muted-foreground);
+      background: color-mix(in oklab, var(--foreground) 8%, transparent);
+    }
+    #synax-navbar-demo .sx-empty {
+      padding: 7px 8px;
+      font-size: 12px;
+      color: var(--muted-foreground);
+    }
+
+    @container (max-width: 760px) {
+      #synax-navbar-demo .sx-pill {
+        gap: 4px;
+        padding: 0 8px;
+      }
+      #synax-navbar-demo .sx-proj-label {
+        max-width: 112px;
+      }
+      #synax-navbar-demo .sx-tab {
+        padding: 0 6px;
+        font-size: 11px;
+      }
+      #synax-navbar-demo .sx-div {
+        margin: 0 1px;
+      }
+      #synax-navbar-demo .sx-btn {
+        width: 24px;
+        height: 24px;
+      }
+    }
+
+    @container (max-width: 560px) {
+      #synax-navbar-demo .sx-proj-label {
+        max-width: 82px;
+      }
+      #synax-navbar-demo .sx-tab {
+        padding: 0 5px;
+      }
+      #synax-navbar-demo .sx-tab > svg {
+        display: none;
+      }
+      #synax-navbar-demo .sx-btn {
+        width: 22px;
+        height: 22px;
+      }
+      #synax-navbar-demo .sx-search-input {
+        width: clamp(56px, 26cqw, 120px);
+      }
+    }
+
+    @container (max-width: 420px) {
+      #synax-navbar-demo .sx-proj-label {
+        display: none;
+      }
+      #synax-navbar-demo .sx-proj {
+        padding: 0 6px;
+      }
+      #synax-navbar-demo .sx-menu {
+        min-width: 0;
+      }
+      #synax-navbar-demo .sx-tab {
+        padding: 0 6px;
+      }
+    }
+  </style>
+
+  <div class="sx-controls">
+    <span class="text-small">视口宽度 <strong class="tabular-nums" data-width-live>1024px</strong></span>
+    <div class="sx-seg" role="group" aria-label="视口宽度">
+      <button type="button" class="sx-seg-btn" data-width="320" aria-pressed="false">320</button>
+      <button type="button" class="sx-seg-btn" data-width="560" aria-pressed="false">560</button>
+      <button type="button" class="sx-seg-btn" data-width="760" aria-pressed="false">760</button>
+      <button type="button" class="sx-seg-btn is-on" data-width="1024" aria-pressed="true">1024</button>
+    </div>
+  </div>
+
+  <div class="sx-stage">
+    <div class="sx-bar">
+      <nav class="sx-pill" aria-label="工作区导航">
+        <div class="sx-proj-wrap">
+          <button type="button" class="sx-proj" id="sx-proj-btn" aria-haspopup="menu" aria-expanded="false" aria-label="切换工作区，当前 synax-web">
+            <span class="sx-dot" data-state="running" aria-hidden="true"></span>
+            <i data-lucide="folder" aria-hidden="true"></i>
+            <span class="sx-proj-label">synax-web</span>
+          </button>
+          <div class="sx-menu" id="sx-proj-menu" role="menu" aria-label="切换工作区" hidden>
+            <button type="button" class="sx-menu-item is-current" role="menuitemradio" aria-checked="true" data-name="synax-web">
+              <span class="sx-dot" data-state="running" aria-hidden="true"></span>
+              <span class="sx-menu-name">synax-web</span>
+              <span class="sx-chip">1 运行中</span>
+            </button>
+            <button type="button" class="sx-menu-item" role="menuitemradio" aria-checked="false" data-name="synax-docs">
+              <span class="sx-dot" aria-hidden="true"></span>
+              <span class="sx-menu-name">synax-docs</span>
+            </button>
+            <button type="button" class="sx-menu-item" role="menuitemradio" aria-checked="false" data-name="agent-runtime">
+              <span class="sx-dot" data-state="queued" aria-hidden="true"></span>
+              <span class="sx-menu-name">agent-runtime</span>
+              <span class="sx-chip">2 未读</span>
+            </button>
+            <hr />
+            <button type="button" class="sx-menu-item" role="menuitem" data-action="import">
+              <i data-lucide="plus" aria-hidden="true"></i>
+              <span class="sx-menu-name">导入工作区</span>
+            </button>
+          </div>
+        </div>
+
+        <span class="sx-div" aria-hidden="true"></span>
+
+        <div class="sx-tabs" role="tablist" aria-label="工作区主导航">
+          <button type="button" class="sx-tab is-on" id="sx-tab-work" role="tab" aria-selected="true" aria-controls="sx-panel-work" data-tab="work" tabindex="0">
+            <i data-lucide="bot" aria-hidden="true"></i>
+            <span>Work</span>
+          </button>
+          <button type="button" class="sx-tab" id="sx-tab-wiki" role="tab" aria-selected="false" aria-controls="sx-panel-wiki" data-tab="wiki" tabindex="-1">
+            <i data-lucide="book-open" aria-hidden="true"></i>
+            <span>Wiki</span>
+          </button>
+        </div>
+
+        <span class="sx-div" aria-hidden="true"></span>
+
+        <div class="sx-actions">
+          <button type="button" class="sx-btn" data-search-btn data-tooltip="搜索" aria-label="搜索">
+            <i data-lucide="search" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="sx-btn" data-tooltip="终端" aria-label="终端">
+            <i data-lucide="terminal" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="sx-btn" data-tooltip="设置" aria-label="设置">
+            <i data-lucide="settings-2" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="sx-btn" data-theme-btn data-tooltip="切换主题" aria-label="切换到深色模式" aria-pressed="false">
+            <i data-lucide="moon" data-theme-icon="moon" aria-hidden="true"></i>
+            <i data-lucide="sun" data-theme-icon="sun" aria-hidden="true" hidden></i>
+          </button>
+          <span class="sx-search" data-search-wrap hidden>
+            <i data-lucide="search" aria-hidden="true"></i>
+            <input class="sx-search-input" type="search" data-search-input placeholder="搜索当前工作区" aria-label="搜索当前工作区" />
+            <button type="button" class="sx-btn" data-search-close data-tooltip="关闭搜索" aria-label="关闭搜索">
+              <span class="sx-kbd">ESC</span>
+            </button>
+          </span>
+        </div>
+      </nav>
+
+      <nav class="sx-pill" id="sx-toolbar" aria-label="Wiki 工具" hidden>
+        <button type="button" class="sx-tab is-on" aria-pressed="true">文档</button>
+        <button type="button" class="sx-tab" aria-pressed="false">规划</button>
+      </nav>
+    </div>
+
+    <div class="sx-canvas">
+      <p class="sx-crumb">synax-web / Work / 会话</p>
+
+      <div class="sx-panel" id="sx-panel-work" role="tabpanel" aria-labelledby="sx-tab-work">
+        <h3>Work</h3>
+        <p class="sx-sub">3 个会话 · 1 个运行中</p>
+        <div class="sx-row">
+          <span class="sx-dot" data-state="running" aria-hidden="true"></span>
+          <span class="sx-row-name">重构会话面板折叠逻辑</span>
+          <span class="sx-chip">运行中</span>
+        </div>
+        <div class="sx-row">
+          <span class="sx-dot" aria-hidden="true"></span>
+          <span class="sx-row-name">修复 Wiki 搜索高亮抖动</span>
+          <span class="sx-chip">已完成</span>
+        </div>
+        <div class="sx-row">
+          <span class="sx-dot" aria-hidden="true"></span>
+          <span class="sx-row-name">补齐导航栏键盘可达性</span>
+          <span class="sx-chip">已归档</span>
+        </div>
+        <p class="sx-empty" data-empty hidden>没有匹配的会话</p>
+      </div>
+
+      <div class="sx-panel" id="sx-panel-wiki" role="tabpanel" aria-labelledby="sx-tab-wiki" hidden>
+        <h3>Wiki</h3>
+        <p class="sx-sub">文档 12 · 规划 3</p>
+        <div class="sx-row">
+          <i data-lucide="file-text" aria-hidden="true"></i>
+          <span class="sx-row-name">项目概览</span>
+          <span class="sx-chip">已同步</span>
+        </div>
+        <div class="sx-row">
+          <i data-lucide="file-text" aria-hidden="true"></i>
+          <span class="sx-row-name">架构说明</span>
+          <span class="sx-chip">已同步</span>
+        </div>
+        <div class="sx-row">
+          <i data-lucide="file-text" aria-hidden="true"></i>
+          <span class="sx-row-name">模块索引</span>
+          <span class="sx-chip">待生成</span>
+        </div>
+        <p class="sx-empty" data-empty hidden>没有匹配的文档</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="sr-only" aria-live="polite" data-live></p>
+</div>
+
+<script>
+  (() => {
+    const root = document.getElementById("synax-navbar-demo");
+    if (!root) return;
+
+    const stage = root.querySelector(".sx-stage");
+    const widthLive = root.querySelector("[data-width-live]");
+    const announce = root.querySelector("[data-live]");
+    const toolbar = root.querySelector("#sx-toolbar");
+    const themeBtn = root.querySelector("[data-theme-btn]");
+    const projBtn = root.querySelector("#sx-proj-btn");
+    const projMenu = root.querySelector("#sx-proj-menu");
+    const projLabel = root.querySelector(".sx-proj-label");
+    const crumb = root.querySelector(".sx-crumb");
+    const actions = root.querySelector(".sx-actions");
+    const tabs = Array.from(root.querySelectorAll(".sx-tab[role='tab']"));
+    const panels = {
+      work: root.querySelector("#sx-panel-work"),
+      wiki: root.querySelector("#sx-panel-wiki"),
+    };
+    const sectionLabel = { work: "Work", wiki: "Wiki" };
+    let activeTab = "work";
+
+    const closeMenu = () => {
+      projMenu.hidden = true;
+      projBtn.setAttribute("aria-expanded", "false");
+    };
+
+    const syncChrome = () => {
+      const width = Math.round(stage.getBoundingClientRect().width);
+      widthLive.textContent = width + "px";
+      toolbar.hidden = !(activeTab === "wiki" && width >= 640);
+    };
+
+    root.querySelectorAll(".sx-seg-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        stage.style.setProperty("--stage-w", btn.dataset.width + "px");
+        root.querySelectorAll(".sx-seg-btn").forEach((other) => {
+          const on = other === btn;
+          other.classList.toggle("is-on", on);
+          other.setAttribute("aria-pressed", String(on));
+        });
+      });
+    });
+
+    const selectTab = (id, focus) => {
+      activeTab = id;
+      tabs.forEach((tab) => {
+        const on = tab.dataset.tab === id;
+        tab.classList.toggle("is-on", on);
+        tab.setAttribute("aria-selected", String(on));
+        tab.tabIndex = on ? 0 : -1;
+        if (on && focus) tab.focus();
+      });
+      Object.entries(panels).forEach(([key, panel]) => {
+        panel.hidden = key !== id;
+      });
+      crumb.textContent = (projLabel.textContent || "synax-web") + " / " + sectionLabel[id] + (id === "wiki" ? " / 文档" : " / 会话");
+      syncChrome();
+      announce.textContent = "已切换到 " + sectionLabel[id];
+    };
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => selectTab(tab.dataset.tab, false));
+      tab.addEventListener("keydown", (event) => {
+        const index = tabs.indexOf(tab);
+        let next = -1;
+        if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+        else if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = tabs.length - 1;
+        if (next < 0) return;
+        event.preventDefault();
+        selectTab(tabs[next].dataset.tab, true);
+      });
+    });
+
+    projBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const open = projMenu.hidden;
+      projMenu.hidden = !open;
+      projBtn.setAttribute("aria-expanded", String(open));
+      if (open) projMenu.querySelector(".sx-menu-item").focus();
+    });
+
+    projMenu.addEventListener("click", (event) => event.stopPropagation());
+    root.addEventListener("click", closeMenu);
+    projMenu.querySelectorAll(".sx-menu-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        if (item.dataset.action === "import") {
+          closeMenu();
+          announce.textContent = "导入工作区";
+          return;
+        }
+        projMenu.querySelectorAll(".sx-menu-item").forEach((other) => {
+          const current = other === item;
+          other.classList.toggle("is-current", current);
+          if (other.getAttribute("role") === "menuitemradio") {
+            other.setAttribute("aria-checked", String(current));
+          }
+        });
+        projLabel.textContent = item.dataset.name;
+        closeMenu();
+        projBtn.focus();
+        crumb.textContent = item.dataset.name + " / " + sectionLabel[activeTab] + (activeTab === "wiki" ? " / 文档" : " / 会话");
+        announce.textContent = "已切换到工作区 " + item.dataset.name;
+      });
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !projMenu.hidden) {
+        closeMenu();
+        projBtn.focus();
+      }
+    });
+
+    const searchBtn = root.querySelector("[data-search-btn]");
+    const searchWrap = root.querySelector("[data-search-wrap]");
+    const searchInput = root.querySelector("[data-search-input]");
+    const searchClose = root.querySelector("[data-search-close]");
+    const empty = root.querySelectorAll("[data-empty]");
+
+    const applyFilter = (query) => {
+      const needle = query.trim().toLowerCase();
+      let shown = 0;
+      let total = 0;
+      Object.values(panels).forEach((panel) => {
+        let panelShown = 0;
+        panel.querySelectorAll(".sx-row").forEach((row) => {
+          total += 1;
+          const hit = needle === "" || row.textContent.toLowerCase().includes(needle);
+          row.hidden = !hit;
+          if (hit) panelShown += 1;
+        });
+        const note = panel.querySelector("[data-empty]");
+        if (note) note.hidden = panelShown > 0;
+        if (!panel.hidden) shown = panelShown;
+      });
+      announce.textContent = needle === "" ? "已清除筛选，共 " + total + " 条" : "匹配 " + shown + " 条";
+    };
+
+    const setSearching = (open) => {
+      actions.classList.toggle("is-searching", open);
+      searchWrap.hidden = !open;
+      if (open) {
+        searchInput.focus();
+      } else {
+        searchInput.value = "";
+        applyFilter("");
+        searchBtn.focus();
+      }
+    };
+
+    searchBtn.addEventListener("click", () => setSearching(true));
+    searchClose.addEventListener("click", () => setSearching(false));
+    searchInput.addEventListener("input", () => applyFilter(searchInput.value));
+    searchWrap.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setSearching(false);
+      }
+    });
+
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(syncChrome).observe(stage);
+    }
+    themeBtn.addEventListener("click", () => {
+      const dark = document.documentElement.style.colorScheme !== "dark";
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      themeBtn.setAttribute("aria-pressed", String(dark));
+      // SVG elements have no `hidden` IDL property, so toggle the attribute.
+      themeBtn
+        .querySelector("[data-theme-icon='moon']")
+        .toggleAttribute("hidden", dark);
+      themeBtn
+        .querySelector("[data-theme-icon='sun']")
+        .toggleAttribute("hidden", !dark);
+      const label = dark ? "切换到浅色模式" : "切换到深色模式";
+      themeBtn.setAttribute("aria-label", label);
+      themeBtn.dataset.tooltip = label;
+      announce.textContent = dark ? "已切换到深色模式" : "已切换到浅色模式";
+    });
+    syncChrome();
+    applyFilter("");
+  })();
+</script>

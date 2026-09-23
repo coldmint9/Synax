@@ -128,7 +128,12 @@ function normalizeServer(
   if (!record) return null;
 
   const type = typeof record.type === "string" ? record.type.toLowerCase() : "";
-  if (["http", "sse", "remote", "streamable-http"].includes(type)) return null;
+  if (type === 'sse') return null;
+  if (typeof record.url === 'string') {
+    const url = new URL(record.url);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+    return { name: name.trim() || url.hostname, command: '', transport: 'http', url: url.toString(), headers: stringMap(record.headers ?? record.http_headers), enabled: record.enabled !== false && record.disabled !== true };
+  }
 
   let command = "";
   let args: string[] = [];
@@ -192,6 +197,7 @@ function serverFingerprint(
   return createHash("sha256")
     .update(
       JSON.stringify({
+        ...(server.transport === "http" ? { transport: "http", url: server.url, headers: Object.fromEntries(Object.entries(server.headers ?? {}).sort()) } : {}),
         command: server.command,
         args: server.args ?? [],
         env: sortedEnv ?? {},
@@ -647,7 +653,7 @@ export function discoverLocalMcpServers(
               scope: group.scope,
               name,
               reason: asRecord(value)?.url
-                ? "HTTP / SSE transport is not supported yet"
+                ? "Use a Streamable HTTP MCP endpoint; legacy SSE or an invalid URL is not supported"
                 : "Missing or unsupported launch command",
             });
             continue;

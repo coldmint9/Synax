@@ -1,4 +1,7 @@
-import { fromMarkdown } from "mdast-util-from-markdown";
+import {
+  hasVisualization,
+  visualizationBlocks,
+} from "../../../../../api/services/agent-runtime/visualization-protocol";
 import type { AgentRuntimeMessage } from "../../../lib/api/agentRuntime";
 import type { InlineVisualizationReference } from "../visualizations/InlineVisualization";
 export type { InlineVisualizationReference } from "../visualizations/InlineVisualization";
@@ -16,17 +19,14 @@ export function hideVisualizationSource(
   content: string,
   pending = false,
 ): string {
-  if (!content.includes("synax-visualize")) return content;
-  const blocks = fromMarkdown(content).children.filter(
-    (node) =>
-      node.type === "code" && node.lang === "synax-visualize" && node.position,
-  );
+  if (!hasVisualization(content)) return content;
+  const blocks = visualizationBlocks(content, true);
   let text = content;
   for (const block of blocks.reverse()) {
     text =
-      text.slice(0, block.position!.start.offset) +
+      text.slice(0, block.start) +
       (pending ? "正在生成交互预览…" : "交互预览未生成，请让助手重新生成。") +
-      text.slice(block.position!.end.offset);
+      text.slice(block.end);
   }
   return text;
 }
@@ -61,6 +61,10 @@ export function visualizationReplyParts(
     return fallback();
   const reference: InlineVisualizationReference = {
     id: item.id,
+    ...(typeof item.title === "string"
+      ? { title: item.title.slice(0, 250) }
+      : {}),
+    ...(item.mode === "wide" ? { mode: "wide" as const } : {}),
     ...(typeof item.html === "string" &&
     new TextEncoder().encode(item.html).length <= 1_000_000
       ? { html: item.html }

@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import WorkbenchLayout from "./layouts/WorkbenchLayout";
 import { WelcomeView } from "./layouts/WelcomeView";
 import AgentLoopTestPage from "./pages/AgentLoopTestPage";
+import GitWorkbenchPage from "./features/git/GitWorkbenchPage";
 import AboutPage from "./pages/AboutPage";
 import GlobalSettingsPage from "./features/settings/GlobalSettingsPage";
 import ProjectSettingsPage from "./features/settings/ProjectSettingsPage";
@@ -46,6 +47,14 @@ export default function App() {
               <Route
                 path="/projects/:projectId"
                 element={<Navigate to="sessions" replace />}
+              />
+              <Route
+                path="/projects/:projectId/git"
+                element={<GitWorkbenchPage />}
+              />
+              <Route
+                path="/projects/:projectId/git/mr/:mrId"
+                element={<GitWorkbenchPage />}
               />
               {/* wiki/sessions 由 WorkbenchLayout keep-alive 块渲染，路由仅用于 URL 匹配 */}
               <Route path="/projects/:projectId/wiki" element={null} />

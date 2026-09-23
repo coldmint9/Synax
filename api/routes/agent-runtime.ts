@@ -1,7 +1,11 @@
 import { getRawSqlite } from "../db/index.js";
 import { upgradeHistory } from "../services/agent-runtime/checkpoints/version-runtime/migrate.js";
 import { readHistoryWindow } from "../services/agent-runtime/checkpoints/version-runtime/window.js";
-import { boundaryOnlySession,versionRepository,versionedSession } from "../services/agent-runtime/checkpoints/version-runtime/bridge.js";
+import { boundaryOnlySession, versionRepository, versionedSession } from "../services/agent-runtime/checkpoints/version-runtime/bridge.js";
+import {
+  optimizeInput,
+  MAX_OPTIMIZATION_INPUT_CHARS,
+} from "../services/agent-runtime/input-optimization.js";
 import { visitConversation } from "../services/agent-runtime/checkpoints/retention.js";
 import {
   checkpointSummary,
@@ -158,6 +162,26 @@ function runtimeError(c: Context, error: unknown) {
     mapped.status as 400 | 401 | 403 | 404 | 409 | 500,
   );
 }
+
+const inputOptimizationSchema = z.object({
+  projectId: z.string().trim().min(1).max(256),
+  text: z.string().min(1).max(MAX_OPTIMIZATION_INPUT_CHARS)
+    .refine((text) => Boolean(text.trim())),
+  model: z.string().trim().min(1).max(512).optional(),
+  backendId: backendIdSchema.optional(),
+}).strict();
+
+agentRuntimeRoutes.post("/input/optimize", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = inputOptimizationSchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    return c.json(await optimizeInput(parsed.data, c.req.raw.signal));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
 
 function withSessionPayload(sessionId: string) {
   const session = projectSessionState(agentSessionRuntime.get(sessionId));

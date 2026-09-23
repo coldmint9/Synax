@@ -1,4 +1,8 @@
-import { fromMarkdown } from "mdast-util-from-markdown";
+import { z } from "zod";
+import {
+  hasVisualization,
+  visualizationBlocks,
+} from "./visualization-protocol.js";
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
 
 export const MAX_VISUALIZATION_BYTES = 1_000_000;
@@ -16,13 +20,16 @@ const FORBIDDEN_TAGS = new Set([
 
 export interface VisualizationDeclaration {
   html?: string;
+  sourcePath?: string;
+  title?: string;
+  mode?: "wide";
   error?: string;
   start: number;
   end: number;
 }
 
 /** Syntax validation is not a sandbox. The renderer enforces CSP and an opaque origin. */
-function fragmentError(html: string): string | undefined {
+export function fragmentError(html: string): string | undefined {
   if (!html.trim()) return "预览内容为空，请重新生成。";
   if (
     Buffer.byteLength(html) > MAX_VISUALIZATION_BYTES ||
@@ -50,49 +57,49 @@ function fragmentError(html: string): string | undefined {
   return undefined;
 }
 
-/** Only complete top-level fences in a successful assistant reply are declarations. */
+const referenceSchema = z
+  .object({
+    path: z
+      .string()
+      .min(1)
+      .max(4096)
+      .refine((value) => !value.includes("\0")),
+    title: z.string().trim().min(1).max(250).optional(),
+    mode: z.literal("wide").optional(),
+  })
+  .strict();
+
+/** Recognize the actual visualize skill output, while retaining existing inline replies. */
 export function parseVisualization(
   content: string,
 ): VisualizationDeclaration | null {
   if (
-    !content.includes("synax-visualize") ||
+    !hasVisualization(content) ||
     Buffer.byteLength(content) > MAX_REPLY_BYTES
   )
     return null;
-  const lines = content.split(/\r?\n/);
-  const blocks = fromMarkdown(content).children.filter((node) => {
-    if (
-      node.type !== "code" ||
-      node.lang !== "synax-visualize" ||
-      node.meta ||
-      !node.position
-    )
-      return false;
-    const { start, end } = node.position;
-    const opening = /^ {0,3}(`{3,}|~{3,})synax-visualize\s*$/.exec(
-      lines[start.line - 1],
-    );
-    return (
-      opening &&
-      end.line > start.line &&
-      new RegExp(`^ {0,3}${opening[1][0]}{${opening[1].length},}\\s*$`).test(
-        lines[end.line - 1],
-      )
-    );
-  });
+  const blocks = visualizationBlocks(content);
   const first = blocks[0];
-  if (!first || first.type !== "code") return null;
-  const html = first.value.trim();
-  const error =
-    blocks.length > 1
-      ? "每条回复只能包含一个交互预览，请重新生成。"
-      : fragmentError(html);
-  return {
-    ...(error ? { error } : { html }),
-    start: first.position!.start.offset!,
-    end: first.position!.end.offset!,
-  };
+  if (!first) return null;
+  const position = { start: first.start, end: first.end };
+  if (blocks.length > 1)
+    return { ...position, error: "每条回复只能包含一个交互预览，请重新生成。" };
+  if (first.kind === "reference") {
+    try {
+      const reference = referenceSchema.parse(JSON.parse(first.payload));
+      return {
+        ...position,
+        sourcePath: reference.path,
+        ...(reference.title ? { title: reference.title } : {}),
+        ...(reference.mode ? { mode: reference.mode } : {}),
+      };
+    } catch {
+      return { ...position, error: "预览引用格式不正确，请重新生成。" };
+    }
+  }
+  const html = first.payload.trim();
+  const error = fragmentError(html);
+  return { ...position, ...(error ? { error } : { html }) };
 }
 
-// Keep detailed design guidance in the discoverable skill, not duplicated in every turn.
-export const VISUALIZATION_AUTHORING_INSTRUCTIONS = `For a requested inline prototype or visualization, load the builtin visualize skill when available. Emit at most one complete top-level synax-visualize fenced block containing a self-contained HTML/CSS/JavaScript fragment. No file reference, React compilation or publishing step. Do not use this protocol for ordinary source-code examples. The host renders only successful completed assistant replies in an isolated, offline preview.`;
+export const VISUALIZATION_AUTHORING_INSTRUCTIONS = `Inline previews support visualize{"path":"/workspace/demo.html","mode":"wide"} (optional title). Use the visualize skill: one self-contained HTML fragment, ≤1 MB, inside authorized roots; no CDN/network or host-only APIs.`;

@@ -47,6 +47,7 @@ export const localDiscoveryApi = {
 }
 export function mcpSignature(server: McpServerConfig): string {
   return JSON.stringify({
+    ...(server.transport === "http" ? { transport: server.transport, url: server.url, headers: Object.entries(server.headers ?? {}).sort() } : {}),
     command: server.command,
     args: server.args ?? [],
     env: Object.entries(server.env ?? {}).sort(([a], [b]) =>

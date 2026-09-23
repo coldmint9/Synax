@@ -1,4 +1,7 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, afterEach, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   resetAgentRuntimeFixtures,
   plannerSessionInput,
@@ -10,11 +13,18 @@ import { getRawSqlite } from "../../../db/index.js";
 import { agentRuntimeRoutes } from "../../../routes/agent-runtime.js";
 import { skillRegistry } from "../../skills/skill-registry.js";
 import type { AgentRuntimeMessage } from "../contracts.js";
-let sessionId: string;
+let sessionId: string, workspace: string;
 beforeEach(() => {
   resetAgentRuntimeFixtures();
-  sessionId = agentSessionRuntime.create(plannerSessionInput).id;
+  workspace = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "visualize-integration-")),
+  );
+  sessionId = agentSessionRuntime.create({
+    ...plannerSessionInput,
+    workDir: workspace,
+  }).id;
 });
+afterEach(() => fs.rmSync(workspace, { recursive: true, force: true }));
 function message(overrides: Partial<AgentRuntimeMessage> = {}) {
   return store.appendMessage({
     id: "reply",
@@ -113,4 +123,96 @@ it("discovers the new skill and does not mount retired platform APIs", async () 
     (await agentRuntimeRoutes.request(`/sessions/${sessionId}/artifacts`))
       .status,
   ).toBe(200); // Ordinary evidence remains.
+});
+
+function reference(file: string) {
+  return `visualize${JSON.stringify({ path: file, title: "导航栏 Demo", mode: "wide" })}`;
+}
+it("resolves the actual skill file reference once, without a build, and preserves title/wide mode", () => {
+  const file = path.join(workspace, "navbar-demo.html");
+  fs.writeFileSync(file, '<button id="navbar">Work</button>');
+  const m = message({ content: `Before\n\n${reference(file)}\n\nAfter` });
+  persistInlineVisualization(m);
+  expect(m.metadata.visualization).toMatchObject({
+    html: '<button id="navbar">Work</button>',
+    title: "导航栏 Demo",
+    mode: "wide",
+  });
+  fs.unlinkSync(file);
+  const stale = { ...m, metadata: {} };
+  persistInlineVisualization(stale);
+  expect(stale.metadata).toEqual(m.metadata);
+});
+it("rehydrates the reported completed, step-less work_result via the messages API", async () => {
+  const file = path.join(workspace, "navbar-demo.html");
+  fs.writeFileSync(file, "<button>Saved navigation</button>");
+  const run = store.appendRun({
+    id: "completed-visual-run",
+    sessionId,
+    status: "completed",
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    triggerMessageId: null,
+    currentStep: 1,
+    stopReason: "work_completed",
+    model: null,
+    metadata: {},
+  });
+  const m = message({
+    runId: run.id,
+    stepId: null,
+    metadata: { purpose: "work_result" },
+    content: reference(file),
+  });
+  const reply = await agentRuntimeRoutes.request(
+    `/sessions/${sessionId}/messages`,
+  );
+  expect(reply.status).toBe(200);
+  const data = (await reply.json()) as { items: AgentRuntimeMessage[] };
+  expect(data.items[0].metadata.visualization).toMatchObject({
+    html: "<button>Saved navigation</button>",
+  });
+  fs.unlinkSync(file);
+  const again = (await (
+    await agentRuntimeRoutes.request(`/sessions/${sessionId}/messages`)
+  ).json()) as { items: AgentRuntimeMessage[] };
+  expect(again.items[0].metadata).toEqual(data.items[0].metadata);
+  expect(store.getMessage(sessionId, m.id)?.content).toBe(m.content);
+});
+it.each(["running", "failed", "cancelled", "interrupted"] as const)(
+  "does not rehydrate a %s run even if it contains a complete reference",
+  async (status) => {
+    const file = path.join(workspace, "never.html");
+    fs.writeFileSync(file, "<button>Do not run</button>");
+    store.appendRun({
+      id: "unsafe-run",
+      sessionId,
+      status,
+      startedAt: "",
+      completedAt: null,
+      triggerMessageId: null,
+      currentStep: 1,
+      stopReason: null,
+      model: null,
+      metadata: {},
+    });
+    const m = message({ runId: "unsafe-run", content: reference(file) });
+    await agentRuntimeRoutes.request(`/sessions/${sessionId}/messages`);
+    expect(
+      store.getMessage(sessionId, m.id)?.metadata.visualization,
+    ).toBeUndefined();
+  },
+);
+it("returns a light diagnostic rather than a raw reference for missing or unauthorized HTML", () => {
+  for (const file of [
+    path.join(workspace, "missing.html"),
+    path.join(os.tmpdir(), "outside.html"),
+  ]) {
+    const m = message({ content: reference(file) });
+    persistInlineVisualization(m);
+    expect(m.metadata.visualization).toMatchObject({
+      error: expect.any(String),
+    });
+    expect(JSON.stringify(m.metadata.visualization)).not.toContain(workspace);
+  }
 });

@@ -4,7 +4,7 @@ import { skillRegistry } from '../services/skills/skill-registry.js';
 import { skillInstallService } from '../services/skills/skill-install-service.js';
 import { skillIndexService } from '../services/skills/skill-index-service.js';
 import { fetchSkillText } from '../services/skills/skill-http.js';
-import { fetchSkillsShSkillContent } from '../services/skills/skills-sh-client.js';
+import { SkillsShApiError, fetchSkillsShSkillContent } from '../services/skills/skills-sh-client.js';
 import { skillSourceService } from '../services/skills/skill-source-service.js';
 
 export const skillsRoutes = new Hono();
@@ -15,6 +15,7 @@ const listSkillsQuerySchema = z.object({
   q: z.string().max(256).optional(),
   sourceId: z.string().min(1).max(128).optional(),
   installedOnly: z.enum(['true', 'false']).optional(),
+  includeDisabled: z.enum(['true', 'false']).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).optional(),
 });
@@ -36,17 +37,24 @@ skillsRoutes.get('/', async (c) => {
     return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
   }
 
-  const result = await skillRegistry.listWithTotal({
-    profileId: parsed.data.profileId,
-    projectId: parsed.data.projectId,
-    q: parsed.data.q,
-    sourceId: parsed.data.sourceId,
-    installedOnly: parsed.data.installedOnly === 'true',
-    limit: parsed.data.limit,
-    offset: parsed.data.offset,
-  });
+  try {
+    const result = await skillRegistry.listWithTotal({
+      profileId: parsed.data.profileId,
+      projectId: parsed.data.projectId,
+      q: parsed.data.q,
+      sourceId: parsed.data.sourceId,
+      installedOnly: parsed.data.installedOnly === 'true',
+      includeDisabled: parsed.data.includeDisabled === 'true',
+      limit: parsed.data.limit,
+      offset: parsed.data.offset,
+    });
 
-  return c.json(result);
+    return c.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to search skills';
+    const status = err instanceof SkillsShApiError && err.code === 'query_too_short' ? 400 : 502;
+    return c.json({ error: message }, status);
+  }
 });
 
 skillsRoutes.post('/install', async (c) => {
@@ -86,8 +94,8 @@ skillsRoutes.post('/sync', async (c) => {
 skillsRoutes.post('/:skillId/enable', (c) => {
   const skillId = decodeURIComponent(c.req.param('skillId'));
   try {
-    const install = skillInstallService.enable(skillId);
-    return c.json({ skill: skillRegistry.getSummary(install.id) });
+    const skill = skillRegistry.setEnabled(skillId, true, c.req.query('projectId'));
+    return c.json({ skill });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return c.json({ error: message }, 404);
@@ -97,7 +105,7 @@ skillsRoutes.post('/:skillId/enable', (c) => {
 skillsRoutes.post('/:skillId/disable', (c) => {
   const skillId = decodeURIComponent(c.req.param('skillId'));
   try {
-    skillInstallService.disable(skillId);
+    skillRegistry.setEnabled(skillId, false, c.req.query('projectId'));
     return c.json({ ok: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

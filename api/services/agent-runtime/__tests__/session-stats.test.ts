@@ -478,7 +478,7 @@ describe("status context measurement selection", () => {
     total: 1000,
     measuredAt: "2026-09-15T10:00:00Z",
   };
-  it("preserves the new system category and includes it in the request total", () => {
+  it("does not expose internal category estimates as usage when the provider is silent", () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
     addUsageStep(session.id, "new-categories", undefined, {
       contextComposition: {
@@ -490,17 +490,17 @@ describe("status context measurement selection", () => {
       },
     });
     const stats = agentRuntimeStore.getSessionStats(session.id);
-    expect(stats.contextComposition).toMatchObject({
-      version: 2,
-      messages: 400,
-      system: 500,
-      total: 1500,
-      usage: { tools: 40, mcp: 100, skills: 200 },
-    });
+    expect(stats.contextComposition).toBeNull();
     expect(stats.context).toMatchObject({
-      inputTokens: 1500,
-      source: "estimate",
+      inputTokens: null,
+      source: null,
+      stale: false,
+      requestId: null,
+      measuredAt: null,
+      latestRequestUsageAvailable: false,
     });
+    expect(stats.usage.self.input).toBe(0);
+    expect(stats.coverage.self.missing).toBe(1);
   });
 
   it("uses inclusive provider input rather than text estimates or cumulative usage", () => {
@@ -526,12 +526,13 @@ describe("status context measurement selection", () => {
       source: "provider",
       stale: false,
     });
-    expect(stats.contextComposition).toEqual(composition);
+    expect(stats.contextComposition).toBeNull();
+    expect(stats.usage.steps.self.input).toBe(101000);
     expect(stats.contextUsedPercent).toBe(10);
     expect(stats.usage.steps.self.cacheReadRatio).toBe(0.6);
   });
 
-  it("uses the new request estimate until usage arrives, then replaces it", () => {
+  it("preserves the last provider sample until new usage arrives, ignoring estimates", () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
     addUsageStep(session.id, "old", { inputTokens: 90000 });
     addUsageStep(session.id, "pending", undefined, {
@@ -539,9 +540,10 @@ describe("status context measurement selection", () => {
     });
     expect(agentRuntimeStore.getSessionStats(session.id).context).toMatchObject(
       {
-        inputTokens: 1000,
-        source: "estimate",
-        stale: false,
+        inputTokens: 90000,
+        source: "provider",
+        stale: true,
+        requestId: "step-old",
         latestRequestUsageAvailable: false,
       },
     );
@@ -554,11 +556,57 @@ describe("status context measurement selection", () => {
     expect(agentRuntimeStore.getSessionStats(session.id).context).toMatchObject(
       {
         inputTokens: 1200,
+        requestId: "step-pending",
         source: "provider",
         stale: false,
         latestRequestUsageAvailable: true,
       },
     );
+  });
+
+  it("accepts provider-reported zero without falling back to estimates", () => {
+    const session = agentSessionRuntime.create(explorerSessionInput);
+    addUsageStep(session.id, "old", { inputTokens: 90000 });
+    addUsageStep(
+      session.id,
+      "zero",
+      { inputTokens: 0 },
+      {
+        contextComposition: composition,
+      },
+    );
+    expect(agentRuntimeStore.getSessionStats(session.id).context).toMatchObject(
+      {
+        inputTokens: 0,
+        source: "provider",
+        stale: false,
+        requestId: "step-zero",
+        latestRequestUsageAvailable: true,
+      },
+    );
+  });
+
+  it("does not treat output-only usage as a new input measurement", () => {
+    const session = agentSessionRuntime.create(explorerSessionInput);
+    addUsageStep(session.id, "old", { inputTokens: 1234 });
+    addUsageStep(
+      session.id,
+      "output-only",
+      { outputTokens: 42 },
+      {
+        contextComposition: composition,
+      },
+    );
+    const stats = agentRuntimeStore.getSessionStats(session.id);
+    expect(stats.context).toMatchObject({
+      inputTokens: 1234,
+      source: "provider",
+      stale: true,
+      requestId: "step-old",
+      latestRequestUsageAvailable: false,
+    });
+    expect(stats.usage.self.output).toBe(42);
+    expect(stats.contextComposition).toBeNull();
   });
 
   it("keeps stale records explicit and never pairs a newer total with old categories", () => {

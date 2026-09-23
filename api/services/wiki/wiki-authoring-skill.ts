@@ -3,9 +3,10 @@
  *
  * Order: project override → global override → inlined baseline. The first two are
  * best-effort filesystem reads; the baseline is a compile-time constant, so the
- * guide can never silently resolve to nothing.
+ * guide remains available unless the user explicitly detaches it from this project.
  */
 import fs from 'node:fs';
+import { extensionStore } from '../extensions/extension-store.js';
 import path from 'node:path';
 import { logger } from '../../lib/logger.js';
 import { parseSkillMarkdown } from '../skills/skill-parser.js';
@@ -14,7 +15,7 @@ import { WIKI_AUTHORING_BUILTIN_BODY } from './generated/wiki-authoring-builtin.
 
 const SKILL_DIR_NAME = 'wiki-authoring';
 
-export type WikiAuthoringOrigin = 'project' | 'global' | 'builtin';
+export type WikiAuthoringOrigin = 'project' | 'global' | 'builtin' | 'disabled';
 
 export interface WikiAuthoringGuide {
   body: string;
@@ -50,10 +51,11 @@ export function resolveWikiAuthoringGuide(
   const projectBody = readOverride(
     resolveProjectSkillsRoot(input.projectId ?? '', input.workDir ?? null),
   );
-  if (projectBody) return { body: projectBody, origin: 'project' };
+  if (projectBody && extensionStore.active(input.projectId, 'skill', 'project/wiki-authoring')) return { body: projectBody, origin: 'project' };
 
   const globalBody = readOverride(resolveGlobalSkillsRoot());
-  if (globalBody) return { body: globalBody, origin: 'global' };
+  if (globalBody && extensionStore.active(input.projectId, 'skill', 'local/wiki-authoring')) return { body: globalBody, origin: 'global' };
 
+  if (!extensionStore.active(input.projectId, 'skill', 'synax-builtin/wiki-authoring')) return { body: '', origin: 'disabled' };
   return { body: WIKI_AUTHORING_BUILTIN_BODY, origin: 'builtin' };
 }

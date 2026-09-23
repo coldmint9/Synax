@@ -90,6 +90,8 @@ export interface SkillSummary {
   tags?: string[];
   installCount?: number;
   installed?: boolean;
+  /** Canonical managed installation id; absent for source-owned files. */
+  installationId?: string;
   updateAvailable?: boolean;
 }
 
@@ -117,6 +119,9 @@ export interface SkillListQuery {
   q?: string;
   sourceId?: string;
   installedOnly?: boolean;
+  /** Management lists retain disabled entries; runtime lists exclude them. */
+  includeDisabled?: boolean;
+  includeUnmounted?: boolean;
   limit?: number;
   offset?: number;
 }

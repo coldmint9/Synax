@@ -770,6 +770,7 @@ export function SessionComposer({
 
   const composer = (
     <AgentComposer
+      optimizationScope={viewKey}
       media={media}
       sessionId={sessionId ?? undefined}
       inputModel={
