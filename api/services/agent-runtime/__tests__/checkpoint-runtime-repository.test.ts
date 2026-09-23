@@ -112,6 +112,27 @@ describe("runtime version repository", () => {
     for (let n = 0; n < 100 && gc.collect().remaining; n++);
     expect(repo.capture("s", "reply", "b", null, 0)).toEqual(replacement);
   });
+  it("keeps a conservative file retention floor until its checkpoint prefix is empty", () => {
+    const floor = () =>
+      db
+        .prepare(
+          "SELECT file_retention_floor AS value FROM conversation_v3_heads WHERE session_id='s'",
+        )
+        .get() as { value: number | null };
+    expect(floor()).toMatchObject({ value: null });
+    const first = repo.capture("s", "input", "first-input", null, 10);
+    repo.capture("s", "reply", "later", null, 20);
+    expect(floor()).toMatchObject({ value: 10 });
+    repo.rollback("s", {
+      checkpointId: first.id,
+      revision: repo.head("s").revision,
+      requestId: "edit-floor",
+      action: "edit",
+    });
+    expect(floor()).toMatchObject({ value: null });
+    repo.capture("s", "reply", "new-branch", null, 30);
+    expect(floor()).toMatchObject({ value: 30 });
+  });
   it("paginates a fixed version and rejects unpinned stale page versions", () => {
     for (let n = 0; n < 20; n++)
       repo.put("s", "messages", String(n), message(String(n)));

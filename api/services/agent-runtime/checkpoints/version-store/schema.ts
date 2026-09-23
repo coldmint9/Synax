@@ -7,4 +7,5 @@ export const VERSION_SCHEMA_MIGRATIONS = [
   "0056_conversation_checkpoint_identity.sql",
   "0057_conversation_native_mode.sql",
   "0060_conversation_history_results.sql",
+  "0063_conversation_file_retention_floor.sql",
 ] as const;

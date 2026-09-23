@@ -27,6 +27,7 @@ export interface RuntimeCheckpoint {
   };
 }
 interface CheckpointState {
+  floor: number | null;
   root: string | null;
   lookup: string | null;
   next: number;
@@ -68,12 +69,12 @@ export class RuntimeCheckpointIndex {
   constructor(private readonly objects: VersionObjects) {
     this.tree = new VersionTree(objects);
     this.stateQuery = objects.db.prepare<[string]>(
-      "SELECT CASE WHEN checkpoint_root IS NULL THEN NULL ELSE lower(hex(checkpoint_root)) END AS root,CASE WHEN checkpoint_identity_root IS NULL THEN NULL ELSE lower(hex(checkpoint_identity_root)) END AS lookup,next_checkpoint AS next FROM conversation_v3_heads WHERE session_id=?",
+      "SELECT CASE WHEN checkpoint_root IS NULL THEN NULL ELSE lower(hex(checkpoint_root)) END AS root,CASE WHEN checkpoint_identity_root IS NULL THEN NULL ELSE lower(hex(checkpoint_identity_root)) END AS lookup,next_checkpoint AS next,file_retention_floor AS floor FROM conversation_v3_heads WHERE session_id=?",
     );
     this.update = objects.db.prepare<
-      [Uint8Array | null, Uint8Array | null, number, string]
+      [Uint8Array | null, Uint8Array | null, number, number | null, string]
     >(
-      "UPDATE conversation_v3_heads SET checkpoint_root=?,checkpoint_identity_root=?,next_checkpoint=? WHERE session_id=?",
+      "UPDATE conversation_v3_heads SET checkpoint_root=?,checkpoint_identity_root=?,next_checkpoint=?,file_retention_floor=? WHERE session_id=?",
     );
   }
   private state(sessionId: string): CheckpointState {
@@ -237,6 +238,7 @@ export class RuntimeCheckpointIndex {
       root ? hashBytes(root) : null,
       lookup ? hashBytes(lookup) : null,
       state.next + 1,
+      Math.min(state.floor ?? input.mutationCursor, input.mutationCursor),
       input.sessionId,
     );
     return cp;
@@ -264,6 +266,7 @@ export class RuntimeCheckpointIndex {
       root ? hashBytes(root) : null,
       lookup ? hashBytes(lookup) : null,
       state.next,
+      root ? (state.floor ?? 0) : null,
       sessionId,
     );
   }

@@ -105,14 +105,16 @@ async function recordMutation<T>(
       .all() as { roots_json: string; paths_json: string }[];
     for (const writer of writers) {
       const other = JSON.parse(writer.paths_json) as Target[];
-      const overlap = !targets.length && !other.length ? false :
-        !targets.length || !other.length
-          ? (JSON.parse(writer.roots_json) as string[]).some((a) =>
-              roots.some((b) => rootsOverlap(a, b)),
-            )
-          : other.some((t) =>
-              absoluteTargets.includes(path.join(t.root, t.path)),
-            );
+      const overlap =
+        !targets.length && !other.length
+          ? false
+          : !targets.length || !other.length
+            ? (JSON.parse(writer.roots_json) as string[]).some((a) =>
+                roots.some((b) => rootsOverlap(a, b)),
+              )
+            : other.some((t) =>
+                absoluteTargets.includes(path.join(t.root, t.path)),
+              );
       if (overlap)
         throw historyError(
           "Another operation may be writing the same file. Retry after it finishes.",
@@ -179,7 +181,10 @@ async function recordMutation<T>(
     failed = false;
   try {
     const value = action();
-    result = value && typeof (value as { then?: unknown }).then === "function" ? await value : value as T;
+    result =
+      value && typeof (value as { then?: unknown }).then === "function"
+        ? await value
+        : (value as T);
   } catch (e) {
     failed = true;
     error = e;
@@ -188,8 +193,13 @@ async function recordMutation<T>(
   // yields to another application writer. Late changes never get attributed.
   const afterStamps = new Map<string, string | null>();
   try {
-    for (const target of targets) { const key=path.join(target.root,target.path);afterStamps.set(key,statStamp(key)); }
-  } catch { uncertain=true; }
+    for (const target of targets) {
+      const key = path.join(target.root, target.path);
+      afterStamps.set(key, statStamp(key));
+    }
+  } catch {
+    uncertain = true;
+  }
   const recorded: FileChange[] = [];
   try {
     for (const change of changes) {
@@ -212,7 +222,17 @@ async function recordMutation<T>(
     "UPDATE conversation_mutations SET state='closed',changes_json=?,paths_json=?,uncertain=?,warning=COALESCE(?,warning) WHERE id=?",
   ).run(
     JSON.stringify(uncertain ? [] : recorded),
-    JSON.stringify(uncertain ? targets : external ? targets.filter(t => beforeStamps.get(path.join(t.root,t.path)) !== afterStamps.get(path.join(t.root,t.path))) : recorded.map(c => ({root:c.root,path:c.path}))),
+    JSON.stringify(
+      uncertain
+        ? targets
+        : external
+          ? targets.filter(
+              (t) =>
+                beforeStamps.get(path.join(t.root, t.path)) !==
+                afterStamps.get(path.join(t.root, t.path)),
+            )
+          : recorded.map((c) => ({ root: c.root, path: c.path })),
+    ),
     uncertain ? 1 : 0,
     uncertain
       ? "A concurrent file change could not be attributed; it will be preserved."
@@ -223,20 +243,37 @@ async function recordMutation<T>(
   return result as T;
 }
 export function recoverOrphanedCheckpointWriters(): void {
-  const db = getRawSqlite();
-  for (const row of db
-    .prepare(
-      "SELECT id,owner_pid FROM conversation_mutations WHERE state='open'",
-    )
-    .all() as { id: string; owner_pid: number | null }[]) {
-    if (!row.owner_pid) continue;
-    try {
-      process.kill(row.owner_pid, 0);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ESRCH")
-        db.prepare(
-          "UPDATE conversation_mutations SET state='closed',uncertain=1,warning='Interrupted writer: file ownership could not be verified.' WHERE id=? AND state='open'",
-        ).run(row.id);
+  const db = getRawSqlite(),
+    through = (
+      db
+        .prepare(
+          "SELECT COALESCE(MAX(sequence),0) AS cursor FROM conversation_mutations WHERE state='open'",
+        )
+        .get() as { cursor: number }
+    ).cursor;
+  const query = db.prepare(
+    "SELECT sequence,id,owner_pid FROM conversation_mutations WHERE state='open' AND sequence>? AND sequence<=? ORDER BY sequence LIMIT 64",
+  );
+  const close = db.prepare(
+    "UPDATE conversation_mutations SET state='closed',uncertain=1,warning='Interrupted writer: file ownership could not be verified.' WHERE id=? AND state='open'",
+  );
+  let after = 0;
+  for (;;) {
+    const rows = query.all(after, through) as {
+      sequence: number;
+      id: string;
+      owner_pid: number | null;
+    }[];
+    if (!rows.length) return;
+    for (const row of rows) {
+      after = row.sequence;
+      if (!row.owner_pid || row.owner_pid < 1) continue;
+      try {
+        process.kill(row.owner_pid, 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH")
+          close.run(row.id);
+      }
     }
   }
 }
