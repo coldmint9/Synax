@@ -3,6 +3,7 @@ import {
   persistInlineVisualization,
   hydrateCompletedVisualizations,
 } from "./visualization-integration.js";
+import { isVisualizationIntent } from "./visualization-intent.js";
 import { filterHistoryFileReads } from "./checkpoints/state.js";
 import {
   captureCheckpoint,
@@ -2543,6 +2544,7 @@ export class AgentLoopRuntime {
     }
 
     const selectedReferences = activeTurnReferences(input.sessionId);
+    const visualizationIntent = isVisualizationIntent(userRequest);
     const turnSkillIds = [
       ...new Set([
         ...session.skillIds,
@@ -2554,13 +2556,26 @@ export class AgentLoopRuntime {
       projectId: session.projectId,
       activeSkillIds: turnSkillIds,
     });
+    const autoVisualizeSkill = visualizationIntent
+      ? skillCandidates.find(
+          (skill) =>
+            skill.name.toLowerCase() === "visualize" ||
+            skill.id.toLowerCase().endsWith("/visualize"),
+        )
+      : undefined;
     const activeSkillIds = new Set(turnSkillIds);
+    if (autoVisualizeSkill) activeSkillIds.add(autoVisualizeSkill.id);
     const skillsSection =
       allowedTools.some((tool) => tool.id === "skill.load") &&
       skillCandidates.length > 0
         ? [
             "## Available skills",
-            "Skills selected for this turn are loaded by the runtime through skill.load; check their tool results for success or failure. For other selected skills, or when a description matches the task, call skill.load as needed. Full instructions arrive as tool results. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
+            "Skills selected for this turn must be loaded with skill.load before authoring. Check the tool result for success or failure. Other skills may be loaded when their descriptions match the task. Full instructions arrive as tool results. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
+            ...(visualizationIntent
+              ? [
+                  `Visual preview intent detected. Load ${autoVisualizeSkill?.id ?? "the visualize skill"} now, then produce one conversation preview instead of only describing it. Do not implement production files unless the user separately asks for that.`,
+                ]
+              : []),
             ...skillCandidates.map((skill) => {
               return JSON.stringify({
                 id: skill.id,
@@ -2619,6 +2634,7 @@ export class AgentLoopRuntime {
       projectRulesSection,
       skillsSection,
       selectedReferencesSection: selectedReferences?.content,
+      visualizationIntent,
     });
 
     // Static instructions/reference preview; the complete request also contains historical and latest reminders

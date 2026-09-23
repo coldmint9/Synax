@@ -30,6 +30,12 @@ const outputSchema = z.object({
 export function webSearchQuery(inputSummary: string): string {
   try {
     const input = JSON.parse(inputSummary);
+    if (
+      Array.isArray(input?.queries) &&
+      input.queries.every((query: unknown) => typeof query === "string")
+    ) {
+      return input.queries.join(" / ");
+    }
     return typeof input?.query === "string" ? input.query : inputSummary;
   } catch {
     return inputSummary;
