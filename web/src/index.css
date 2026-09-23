@@ -3710,6 +3710,16 @@
 }
 .agent-dock-composer-inline {
   width: 100%;
+  container: composer-inline / inline-size;
+}
+/* Leave room for draft text and the optimization action in narrow input pills. */
+@container composer-inline (max-width: 32rem) {
+  .agent-permission-cycle > span {
+    display: none;
+  }
+  .agent-model-picker-trigger {
+    max-width: 6rem;
+  }
 }
 .agent-dock-composer-inline .agent-dock-composer-input {
   box-sizing: border-box;

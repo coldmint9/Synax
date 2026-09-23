@@ -1,3 +1,4 @@
+import { InputOptimizationSettings } from "./components/InputOptimizationSettings";
 import { useEffect } from "react";
 import { ScrollShadow, Spinner, Typography } from "@heroui/react";
 import { useConfig } from "./useConfig";
@@ -57,6 +58,10 @@ export default function GlobalSettingsPage() {
               providers={providers}
               onUpdate={updateGlobalConfig}
               onReload={reload}
+            />
+            <InputOptimizationSettings
+              config={globalConfig}
+              onUpdate={updateGlobalConfig}
             />
             <WikiModelSettings
               config={globalConfig}

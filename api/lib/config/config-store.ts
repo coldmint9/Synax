@@ -482,6 +482,7 @@ function splitMergedGlobalConfig(config: GlobalConfig): ConfigLayers {
       ...globalBase,
       terminalShellPath: config.terminalShellPath ?? "",
       wikiModel: config.wikiModel ?? "",
+      inputOptimizationModel: config.inputOptimizationModel ?? "",
       version: config.version,
       providers: userProviders,
       providerConnections: normalizeConnections(userConnections, true),
@@ -603,6 +604,7 @@ function mergeGlobalConfigLayers(
     version: Math.max(template.version ?? 1, global.version ?? 1),
     terminalShellPath: global.terminalShellPath ?? "",
     wikiModel: global.wikiModel ?? "",
+    inputOptimizationModel: global.inputOptimizationModel ?? "",
     providers,
     defaultProviderId: normalizeAcpProviderId(
       global.defaultProviderId ?? template.defaultProviderId,
@@ -685,6 +687,7 @@ function applyGlobalConfigPatch(
 
   const globalTouched =
     patch.wikiModel !== undefined ||
+    patch.inputOptimizationModel !== undefined ||
     patch.terminalShellPath !== undefined ||
     Boolean(patch.defaultProviderId) ||
     Boolean(patch.defaultApiProviderId) ||
@@ -726,6 +729,8 @@ function applyGlobalConfigPatch(
   const nextGlobal: GlobalConfig = {
     ...layers.global,
     wikiModel: patch.wikiModel ?? current.wikiModel ?? "",
+    inputOptimizationModel:
+      patch.inputOptimizationModel ?? current.inputOptimizationModel ?? "",
     terminalShellPath:
       patch.terminalShellPath ?? current.terminalShellPath ?? "",
     providers: nextGlobalProviders,
