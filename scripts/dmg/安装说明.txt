@@ -1,0 +1,11 @@
+Synax macOS 安装说明
+
+1. 先将 Synax.app 拖到旁边的“应用程序”（Applications）文件夹，等待复制完成。
+2. 确认 /Applications/Synax.app 已存在，然后双击本安装包中的“安装后运行.command”。
+3. 终端可能要求输入管理员密码；输入时不会显示字符。执行完成后再打开 Synax。
+
+此脚本只会手动移除 /Applications/Synax.app 的 macOS 下载隔离标记，不会在复制应用时自动运行。
+移除隔离标记会绕过 macOS 的一项安全检查，请仅在信任此安装包来源时执行。
+
+如果无法双击脚本，也可以在安装完成后打开“终端”，手动执行：
+sudo xattr -rd com.apple.quarantine /Applications/Synax.app

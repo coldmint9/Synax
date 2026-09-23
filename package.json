@@ -52,7 +52,7 @@
     "build:desktop": "npm run build && npm run web:build && npm run build:electron && electron-forge package",
     "make:desktop": "npm run build && npm run web:build && npm run build:electron && electron-forge make",
     "start:desktop": "electron-forge start",
-    "test:desktop": "vitest run electron/desktop.test.ts scripts/desktop-branding.test.ts scripts/prepare-dmg-native.test.ts",
+    "test:desktop": "vitest run electron/desktop.test.ts scripts/desktop-branding.test.ts scripts/prepare-dmg-native.test.ts scripts/dmg-install-help.test.ts",
     "test:desktop:smoke": "tsx scripts/desktop-smoke.ts",
     "test:desktop:workbench": "tsx scripts/desktop-workbench-e2e.ts",
     "test:desktop:terminal": "cross-env SYNAX_E2E_TERMINAL=1 tsx scripts/desktop-workbench-e2e.ts",
