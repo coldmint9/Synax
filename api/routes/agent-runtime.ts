@@ -97,6 +97,7 @@ import {
   deleteSessionBackgroundProcess,
   listSessionBackgroundProcesses,
   stopSessionBackgroundProcess,
+  stopSessionBackgroundProcesses,
 } from "../services/agent-runtime/session-background-processes.js";
 import {
   getSessionEnvironment,
@@ -179,6 +180,33 @@ function runtimeError(c: Context, error: unknown) {
     mapped.body,
     mapped.status as 400 | 401 | 403 | 404 | 409 | 500,
   );
+}
+
+async function deleteSessionAfterShutdown(
+  sessionId: string,
+  expectedRunId?: string,
+): Promise<{ deletedSessionIds: string[]; parentId: string | null }> {
+  const parentId = agentRuntimeStore.getSession(sessionId).parentSessionId;
+  const sessionIds = agentSessionRuntime
+    .listSessionTree(sessionId)
+    .map((session) => session.id);
+
+  // Deletion is a lifecycle operation, not just a history mutation. Stop the
+  // active runtime, ACP sessions, and every owned background process first;
+  // then mark the whole subtree stopped so history deletion guards can never
+  // turn cleanup into a manual recovery task for the user.
+  await runCoordinator.interrupt(
+    sessionId,
+    "Session deleted by user.",
+    undefined,
+    expectedRunId,
+  );
+  await closeAcpAgentSessions(sessionIds);
+  await stopSessionBackgroundProcesses(sessionIds);
+  agentSessionRuntime.cancel(sessionId);
+
+  const deletedSessionIds = agentSessionRuntime.delete(sessionId);
+  return { deletedSessionIds, parentId };
 }
 
 const inputOptimizationSchema = z.object({
@@ -510,20 +538,14 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
 agentRuntimeRoutes.delete("/sessions/:sessionId", async (c) => {
   try {
     const id = c.req.param("sessionId");
-    const parentId = agentRuntimeStore.getSession(id).parentSessionId;
     const control = await readControl(c);
-    let deletedSessionIds: string[] = [];
-    await runCoordinator.interrupt(
+    const { deletedSessionIds, parentId } = await deleteSessionAfterShutdown(
       id,
-      "Session deleted by user.",
-      () => {
-        deletedSessionIds = agentSessionRuntime.delete(id);
-        for (const deletedId of deletedSessionIds)
-          invalidateSessionEnvironment(deletedId);
-        if (parentId) invalidateSessionEnvironment(parentId);
-      },
       control.runId,
     );
+    for (const deletedId of deletedSessionIds)
+      invalidateSessionEnvironment(deletedId);
+    if (parentId) invalidateSessionEnvironment(parentId);
     return c.json({ ok: true, deletedSessionIds });
   } catch (error) {
     return runtimeError(c, error);
@@ -574,13 +596,11 @@ agentRuntimeRoutes.post("/sessions/clear-inactive", async (c) => {
         )
       )
         continue;
-      await runCoordinator.interrupt(
-        root.id,
-        "Inactive session cleared.",
-        () => {
-          deletedIds.push(...agentSessionRuntime.delete(root.id));
-        },
-      );
+      const deleted = await deleteSessionAfterShutdown(root.id);
+      deletedIds.push(...deleted.deletedSessionIds);
+      for (const deletedId of deleted.deletedSessionIds)
+        invalidateSessionEnvironment(deletedId);
+      if (deleted.parentId) invalidateSessionEnvironment(deleted.parentId);
     }
 
     return c.json({
