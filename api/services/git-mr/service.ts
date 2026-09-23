@@ -1,3 +1,4 @@
+import { loadSourcePolicy } from "./branch-policy.js";
 import { reconcile } from "./recovery.js";
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
@@ -122,50 +123,13 @@ export class GitMrService {
       mr.target,
       mr.steps.map((step) => step.branch),
     );
-    if (!/^(feature(?:\/|$)|codex\/)/.test(mr.target)) return;
-    let production: string | undefined;
-    for (const name of ["master", "main"]) {
-      try {
-        production = await branchOid(mr, name);
-        break;
-      } catch {
-        /* absent production alias */
-      }
-    }
-    if (!production)
-      throw new GitMrError(
-        "A production master/main branch is required to verify feature branch provenance.",
-        "BRANCH_POLICY",
-      );
-    const forbidden = new Set<string>();
-    for (const branch of ["test", "beta"]) {
-      const ref = await git(
-        mr,
-        ["rev-parse", "--verify", `refs/heads/${branch}`],
-        { allowFailure: true },
-      );
-      if (ref.status !== 0) continue;
-      const unique = (
-        await git(mr, ["rev-list", ref.stdout.trim(), "--not", production])
-      ).stdout
-        .trim()
-        .split("\n")
-        .filter(Boolean);
-      unique.forEach((commit) => forbidden.add(commit));
-    }
+    const policy = await loadSourcePolicy(mr, mr.target);
     for (const step of mr.steps) {
-      const commits = (
-        await git(mr, ["rev-list", step.oid, "--not", production])
-      ).stdout
-        .trim()
-        .split("\n");
-      if (commits.some((commit) => forbidden.has(commit)))
-        throw new GitMrError(
-          `Source ${step.branch} contains test/beta-only history and cannot enter a feature branch.`,
-          "BRANCH_POLICY",
-        );
+      const reason = await policy(step.branch, step.oid);
+      if (reason) throw new GitMrError(reason, "BRANCH_POLICY");
     }
   }
+
   private async current(mr: MergeRequest) {
     if ((await branchOid(mr, mr.target)) !== mr.targetOid)
       throw new GitMrError(

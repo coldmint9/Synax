@@ -62,3 +62,23 @@ it("resumes an interrupted run with the viewed execution version", async () => {
     },
   );
 });
+
+it("requests branch ancestry and eligibility without exposing repository paths", async () => {
+  const input = {
+    rootId: "root",
+    target: "feature/target",
+    strategy: "ff_only" as const,
+    sources: ["feature/a"],
+  };
+  const controller = new AbortController();
+  await gitMrApi.branchOptions("project/a", input, controller.signal);
+  expect(apiRequest).toHaveBeenLastCalledWith(
+    "/api/projects/project%2Fa/git/mr/branch-options",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      silent: true,
+      signal: controller.signal,
+    },
+  );
+});

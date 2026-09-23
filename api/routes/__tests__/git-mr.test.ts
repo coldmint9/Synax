@@ -1,3 +1,9 @@
+vi.mock("../../services/git-mr/branch-options.js", () => ({
+  inspectMergeBranches: vi
+    .fn()
+    .mockResolvedValue({ target: "main", branches: [] }),
+}));
+import { inspectMergeBranches } from "../../services/git-mr/branch-options.js";
 import { Hono } from "hono";
 import { describe, it, expect, vi } from "vitest";
 import { createGitMrRoutes } from "../git-mr.js";
@@ -125,4 +131,32 @@ describe("MR HTTP contracts", () => {
     ).toBe(200);
     expect(service.resume).toHaveBeenCalledWith("p", "m", 3);
   });
+});
+
+it("provides read-only branch options with root, target and ordered strategy scope", async () => {
+  const { app, service } = fixture();
+  const input = {
+    rootId: "root",
+    target: "main",
+    strategy: "ff_only",
+    sources: ["feature/a"],
+  };
+  const response = await app.request(
+    "/api/projects/p/git/mr/branch-options",
+    json(input),
+  );
+  expect(response.status).toBe(200);
+  expect(inspectMergeBranches).toHaveBeenCalledWith(
+    { kind: "host", path: "/repo" },
+    input,
+  );
+  expect(service.create).not.toHaveBeenCalled();
+  expect(
+    (
+      await app.request(
+        "/api/projects/p/git/mr/branch-options",
+        json({ ...input, sources: ["a", "a"] }),
+      )
+    ).status,
+  ).toBe(400);
 });

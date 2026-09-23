@@ -124,3 +124,42 @@ export interface MergeProposal {
   rationale: string;
   createdAt: string;
 }
+
+export interface MergeBranchAncestor {
+  branch?: string;
+  oid?: string;
+  evidence: "creation_record" | "merge_base" | "unknown";
+}
+export type MergeBranchBlockReason =
+  | "same_branch"
+  | "already_included"
+  | "branch_policy"
+  | "unrelated_histories"
+  | "not_fast_forward"
+  | "invalid_queue";
+export interface MergeBranchCandidate {
+  name: string;
+  oid: string;
+  ancestor: MergeBranchAncestor;
+  mergeBaseOids: string[];
+  enabled: boolean;
+  reason?: MergeBranchBlockReason;
+  detail?: string;
+}
+export interface MergeBranchOptionsInput {
+  rootId?: string;
+  target: string;
+  strategy: MergeStrategy;
+  sources: string[];
+}
+export interface MergeBranchOptions {
+  target: string;
+  targetOid: string;
+  comparisonBranch: string;
+  branches: MergeBranchCandidate[];
+  invalidSources: {
+    name: string;
+    reason: MergeBranchBlockReason;
+    detail: string;
+  }[];
+}

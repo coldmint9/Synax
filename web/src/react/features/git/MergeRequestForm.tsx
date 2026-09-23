@@ -1,13 +1,27 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Plus, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowRight,
+  GitBranch,
+  Plus,
+  X,
+} from "lucide-react";
 import type {
   GitWorkspaceSummary,
   ProjectWorkspaceRoot,
 } from "../../../lib/api/project";
-import type { MergeRequestInput, MergeStrategy } from "../../../lib/api/gitMr";
+import {
+  gitMrApi,
+  type MergeBranchOptions,
+  type MergeRequestInput,
+  type MergeStrategy,
+} from "../../../lib/api/gitMr";
+import { BranchSourcePicker, ancestorLabel } from "./BranchSourcePicker";
 import { DialogOverlay } from "../../components/DialogOverlay";
 import { moveSource, validateInput } from "./mergeUi";
 interface Props {
+  projectId: string;
   roots: ProjectWorkspaceRoot[];
   rootId: string;
   workspace: GitWorkspaceSummary | null;
@@ -16,6 +30,7 @@ interface Props {
   onSubmit: (input: MergeRequestInput, presetName?: string) => Promise<void>;
 }
 export function MergeRequestForm({
+  projectId,
   roots,
   rootId,
   workspace,
@@ -23,6 +38,15 @@ export function MergeRequestForm({
   onClose,
   onSubmit,
 }: Props) {
+  const [branchOptions, setBranchOptions] = useState<{
+    key: string;
+    data: MergeBranchOptions;
+  } | null>(null);
+  const [branchError, setBranchError] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
+  const [retry, setRetry] = useState(0);
   const [title, setTitle] = useState("");
   const [target, setTarget] = useState("");
   const [sources, setSources] = useState<string[]>([]);
@@ -77,6 +101,77 @@ export function MergeRequestForm({
   }, []);
   const branches = workspace?.branches ?? [];
   const selectedTarget = branches.find((branch) => branch.name === target);
+  const queryKey = JSON.stringify([
+    projectId,
+    rootId,
+    target,
+    strategy,
+    strategy === "ff_only" ? sources : [],
+    branches.map((branch) => [branch.name, branch.head]),
+  ]);
+  const context = branchOptions?.key === queryKey ? branchOptions.data : null;
+  const eligibilityError =
+    branchError?.key === queryKey ? branchError.message : "";
+  const checkingBranches = !!target && !context && !eligibilityError;
+  useEffect(() => {
+    if (!target || !workspace) return;
+    const controller = new AbortController();
+    setBranchError(null);
+    void gitMrApi
+      .branchOptions(
+        projectId,
+        {
+          rootId: rootId || undefined,
+          target,
+          strategy,
+          sources: strategy === "ff_only" ? sources : [],
+        },
+        controller.signal,
+      )
+      .then((data) => {
+        if (!controller.signal.aborted)
+          setBranchOptions({ key: queryKey, data });
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted)
+          setBranchError({
+            key: queryKey,
+            message: err instanceof Error ? err.message : String(err),
+          });
+      });
+    return () => controller.abort();
+  }, [queryKey, retry, !!workspace]);
+  // In merge/squash mode appending a source does not require another ancestry fetch.
+  // FF eligibility does depend on the ordered prefix, and is rechecked above.
+  const invalidSources = context
+    ? sources.flatMap((name) => {
+        const explicit = context.invalidSources.find(
+          (item) => item.name === name,
+        );
+        if (explicit) return [explicit];
+        const candidate = context.branches.find((item) => item.name === name);
+        return candidate?.enabled
+          ? []
+          : [
+              {
+                name,
+                reason: candidate?.reason ?? ("invalid_queue" as const),
+                detail: candidate?.detail ?? "分支已不存在，请刷新仓库",
+              },
+            ];
+      })
+    : [];
+  const availableBranches =
+    context?.branches ??
+    branches.map((branch) => ({
+      name: branch.name,
+      oid: branch.head,
+      ancestor: { evidence: "unknown" as const },
+      mergeBaseOids: [],
+      enabled: false,
+      detail: "正在核验",
+    }));
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
@@ -120,6 +215,10 @@ export function MergeRequestForm({
       };
       const validation = validateInput(input);
       if (validation) throw new Error(validation);
+      if (!context)
+        throw new Error(eligibilityError || "分支规则正在核验，请稍候。");
+      if (invalidSources.length)
+        throw new Error("请移除不可合入的源分支，或调整目标、顺序与合并策略。");
       if (savePreset && !presetName.trim()) throw new Error("请填写预设名称。");
       setBusy(true);
       await onSubmit(input, savePreset ? presetName.trim() : undefined);
@@ -188,110 +287,181 @@ export function MergeRequestForm({
                 ))}
               </select>
             </label>
-            <div className="mr-form-columns">
-              <label>
-                目标分支
-                <select
-                  value={target}
-                  required
-                  onChange={(e) => {
-                    setTarget(e.target.value);
-                    setSources(
-                      sources.filter((source) => source !== e.target.value),
+            <div
+              className="mr-merge-flow"
+              role="group"
+              aria-label="源分支合入目标分支"
+            >
+              <div className="mr-flow-source">
+                <div className="mr-flow-heading">
+                  <GitBranch size={16} aria-hidden />
+                  <strong>源分支</strong>
+                  <span>
+                    {sources.length
+                      ? `${sources.length} 个，按顺序合入`
+                      : "待合入的改动"}
+                  </span>
+                </div>
+                {!sources.length && (
+                  <p className="mr-flow-placeholder">
+                    {target ? "添加一个或多个源分支" : "先选择目标分支"}
+                  </p>
+                )}
+                <ol className="mr-sources">
+                  {sources.map((source, index) => {
+                    const metadata = context?.branches.find(
+                      (branch) => branch.name === source,
                     );
-                    setAllowCheckedOutTarget(false);
+                    const invalid = invalidSources.find(
+                      (branch) => branch.name === source,
+                    );
+                    return (
+                      <li key={source} data-invalid={!!invalid}>
+                        <span className="mr-source-number">{index + 1}</span>
+                        <div className="mr-selected-source">
+                          <code>{source}</code>
+                          <small>
+                            {metadata
+                              ? ancestorLabel(metadata)
+                              : "正在核验祖先…"}
+                          </small>
+                          {invalid && (
+                            <small className="mr-source-invalid">
+                              {invalid.detail}
+                            </small>
+                          )}
+                        </div>
+                        <div className="mr-actions">
+                          <button
+                            type="button"
+                            aria-label={`上移 ${source}`}
+                            disabled={index === 0}
+                            onClick={() =>
+                              setSources(moveSource(sources, index, -1))
+                            }
+                          >
+                            <ArrowUp size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`下移 ${source}`}
+                            disabled={index === sources.length - 1}
+                            onClick={() =>
+                              setSources(moveSource(sources, index, 1))
+                            }
+                          >
+                            <ArrowDown size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`移除 ${source}`}
+                            onClick={() =>
+                              setSources(
+                                sources.filter((item) => item !== source),
+                              )
+                            }
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+                <BranchSourcePicker
+                  branches={availableBranches}
+                  selected={sources}
+                  loading={checkingBranches}
+                  disabled={!target || sources.length >= 30}
+                  error={eligibilityError}
+                  onRetry={() => setRetry((value) => value + 1)}
+                  onAdd={(name) => {
+                    if (
+                      context?.branches.find((branch) => branch.name === name)
+                        ?.enabled &&
+                      !sources.includes(name)
+                    )
+                      setSources([...sources, name]);
                   }}
-                >
-                  <option value="">选择目标分支</option>
-                  {branches.map((branch) => (
-                    <option key={branch.name} value={branch.name}>
-                      {branch.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                合并策略
-                <select
-                  value={strategy}
-                  onChange={(e) => setStrategy(e.target.value as MergeStrategy)}
-                >
-                  <option value="merge_commit">Merge commit</option>
-                  <option value="squash">Squash</option>
-                  <option value="ff_only">Fast-forward only</option>
-                </select>
-              </label>
+                />
+              </div>
+              <div className="mr-flow-arrow" aria-label="合入">
+                <ArrowRight size={24} aria-hidden />
+                <span>合入</span>
+              </div>
+              <div className="mr-flow-target">
+                <label>
+                  目标分支
+                  <select
+                    aria-label="目标分支"
+                    value={target}
+                    required
+                    onChange={(event) => {
+                      setTarget(event.target.value);
+                      setAllowCheckedOutTarget(false);
+                    }}
+                  >
+                    <option value="">选择接收改动的分支</option>
+                    {branches.map((branch) => (
+                      <option key={branch.name} value={branch.name}>
+                        {branch.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="mr-flow-caption">接收所选源分支的累计结果</p>
+                {selectedTarget && (
+                  <code className="mr-target-oid">
+                    {(context?.targetOid ?? selectedTarget.head).slice(0, 8)}
+                  </code>
+                )}
+              </div>
             </div>
-            <p className="mr-muted">
-              {
-                {
-                  merge_commit: "保留源分支历史，为每个源分支生成合并提交。",
-                  squash: "将每个源分支的变更压缩为一个提交，按下方顺序累积。",
-                  ff_only: "仅允许快进；目标与源分支出现分叉时停止。",
-                }[strategy]
-              }
-            </p>
+            {checkingBranches && (
+              <p className="mr-muted" role="status">
+                正在核验源分支可用性…
+              </p>
+            )}
+            {eligibilityError && (
+              <p className="mr-notice" role="alert">
+                {eligibilityError}
+                <button
+                  type="button"
+                  onClick={() => setRetry((value) => value + 1)}
+                >
+                  重新核验
+                </button>
+              </p>
+            )}
+            {!!invalidSources.length && (
+              <p className="mr-notice" role="alert">
+                有 {invalidSources.length}{" "}
+                个已选分支不能合入；请移除，或调整目标、顺序与策略。
+              </p>
+            )}
             <label>
-              添加源分支
+              合并策略
               <select
-                value=""
-                disabled={!target || sources.length >= 30}
-                onChange={(e) => {
-                  if (e.target.value) setSources([...sources, e.target.value]);
-                }}
+                aria-label="合并策略"
+                value={strategy}
+                onChange={(event) =>
+                  setStrategy(event.target.value as MergeStrategy)
+                }
               >
-                <option value="">按执行顺序添加分支</option>
-                {branches
-                  .filter(
-                    (branch) =>
-                      branch.name !== target && !sources.includes(branch.name),
-                  )
-                  .map((branch) => (
-                    <option key={branch.name} value={branch.name}>
-                      {branch.name}
-                    </option>
-                  ))}
+                <option value="merge_commit">
+                  Merge commit · 保留分支历史
+                </option>
+                <option value="squash">Squash · 压缩每个源分支</option>
+                <option value="ff_only">Fast-forward only · 仅快进</option>
               </select>
             </label>
             <p className="mr-muted">
-              各源分支按下方顺序依次合入目标的累计结果。后续分支在前序完成后评估。
+              {strategy === "merge_commit"
+                ? "按左侧顺序累积合并，为每个源分支保留合并提交。"
+                : strategy === "squash"
+                  ? "按左侧顺序累积合并，将每个源分支的变更压缩为一个提交。"
+                  : `按左侧顺序连续快进，新增分支需可从 ${context?.comparisonBranch ?? target ?? "目标"} 快进。`}
             </p>
-            <ol className="mr-sources">
-              {sources.map((source, index) => (
-                <li key={source}>
-                  <span>
-                    {index + 1}. <code>{source}</code>
-                  </span>
-                  <div className="mr-actions">
-                    <button
-                      type="button"
-                      aria-label={`上移 ${source}`}
-                      disabled={index === 0}
-                      onClick={() => setSources(moveSource(sources, index, -1))}
-                    >
-                      <ArrowUp size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`下移 ${source}`}
-                      disabled={index === sources.length - 1}
-                      onClick={() => setSources(moveSource(sources, index, 1))}
-                    >
-                      <ArrowDown size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`移除 ${source}`}
-                      onClick={() =>
-                        setSources(sources.filter((item) => item !== source))
-                      }
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ol>
             {selectedTarget?.checkedOutPath && (
               <p className="mr-notice">
                 目标当前检出于 <code>{selectedTarget.checkedOutPath}</code>
@@ -438,7 +608,9 @@ export function MergeRequestForm({
             <button
               className="mr-primary"
               type="submit"
-              disabled={busy || !workspace}
+              disabled={
+                busy || !workspace || !context || invalidSources.length > 0
+              }
             >
               {busy ? "正在创建…" : "创建并准备合并"}
             </button>

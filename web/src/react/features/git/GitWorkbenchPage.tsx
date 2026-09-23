@@ -500,6 +500,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
       )}
       {createOpen && (
         <MergeRequestForm
+          projectId={projectId}
           roots={roots}
           rootId={rootId ?? ""}
           workspace={workspace}

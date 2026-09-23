@@ -1,3 +1,4 @@
+import { inspectMergeBranches } from "../services/git-mr/branch-options.js";
 import { Hono } from "hono";
 import * as z from "zod/v4";
 import type { WorkspaceLocation } from "../services/workspace-location.js";
@@ -106,6 +107,26 @@ export function createGitMrRoutes(
         input,
       ),
       201,
+    );
+  });
+  routes.post("/branch-options", async (c) => {
+    const input = z
+      .object({
+        rootId: z.string().max(100).optional(),
+        target: z.string().min(1).max(250),
+        strategy: z.enum(["merge_commit", "squash", "ff_only"]),
+        sources: z
+          .array(z.string().min(1).max(250))
+          .max(30)
+          .refine((names) => new Set(names).size === names.length),
+      })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(
+      await inspectMergeBranches(
+        resolveRoot(c.req.param("projectId")!, input.rootId),
+        input,
+      ),
     );
   });
   routes.get("/presets", async (c) =>
