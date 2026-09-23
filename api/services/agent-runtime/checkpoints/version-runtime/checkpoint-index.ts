@@ -166,6 +166,9 @@ export class RuntimeCheckpointIndex {
     if (cp.kind !== kind || cp.messageId !== messageId) corrupt();
     return cp;
   }
+  findExisting(sessionId: string, kind: "input" | "reply", messageId: string): RuntimeCheckpoint | undefined {
+    return this.existing(sessionId, this.state(sessionId), kind, messageId);
+  }
   private locator(cp: RuntimeCheckpoint): string {
     return this.objects.put(
       "record",
@@ -215,7 +218,6 @@ export class RuntimeCheckpointIndex {
       payload: {
         version: 3,
         versionId: input.versionId,
-        lookupBefore: state.lookup,
         boundary: {
           cursor: 0,
           sessionIds: [input.sessionId],
@@ -226,7 +228,6 @@ export class RuntimeCheckpointIndex {
     };
     const ref = this.objects.put("record", Buffer.from(JSON.stringify(cp)), [
       input.versionId,
-      ...(state.lookup ? [state.lookup] : []),
     ]);
     const root = this.tree.update(state.root, [
       { key: orderKey(cp.ordinal), value: ref },
@@ -241,6 +242,7 @@ export class RuntimeCheckpointIndex {
       Math.min(state.floor ?? input.mutationCursor, input.mutationCursor),
       input.sessionId,
     );
+    this.trim(input.sessionId);
     return cp;
   }
   truncate(
@@ -255,24 +257,38 @@ export class RuntimeCheckpointIndex {
         state.root,
         orderKey(cp.ordinal - (includeBoundary ? 0 : 1)),
       );
-    // Draft pre-lookup checkpoints remain readable. No historical identity tree
-    // is fabricated for them; the retained boundary itself is still deduplicated.
-    const lookup = includeBoundary
-      ? this.tree.update(cp.payload.lookupBefore ?? null, [
-          { key: anchor(cp.kind, cp.messageId), value: this.locator(cp) },
-        ])
-      : (cp.payload.lookupBefore ?? null);
+    // Rebuild at most the retained window. New checkpoints deliberately do not
+    // pin historical identity roots, which otherwise retain locator history forever.
+    const retained = this.tree.page(root, { reverse: true, limit: 128 }).entries;
+    const boundedRoot = this.tree.update(null, retained.map(entry => ({ key: entry.key, value: entry.value })));
+    const lookup = this.tree.update(null, retained.map(entry => {
+      const item = this.read(entry.value, sessionId);
+      return { key: anchor(item.kind, item.messageId), value: this.locator(item) };
+    }));
     this.update.run(
-      root ? hashBytes(root) : null,
+      boundedRoot ? hashBytes(boundedRoot) : null,
       lookup ? hashBytes(lookup) : null,
       state.next,
       root ? (state.floor ?? 0) : null,
       sessionId,
     );
   }
+  /** Retain 128 rollback boundaries, not an unbounded set of old branches. */
+  trim(sessionId: string): void {
+    const state = this.state(sessionId);
+    if (this.tree.size(state.root) <= 128) return;
+    const retained = this.tree.page(state.root, { reverse: true, limit: 128 }).entries;
+    const root = this.tree.update(null, retained.map(entry => ({ key: entry.key, value: entry.value })));
+    const lookup = this.tree.update(null, retained.map(entry => {
+      const cp = this.read(entry.value, sessionId);
+      return { key: anchor(cp.kind, cp.messageId), value: this.locator(cp) };
+    }));
+    const floor = Math.min(...retained.map(entry => this.read(entry.value, sessionId).mutationCursor));
+    this.update.run(root ? hashBytes(root) : null, lookup ? hashBytes(lookup) : null, state.next, floor, sessionId);
+  }
   page(
     sessionId: string,
-    options: { after?: string; limit?: number } = {},
+    options: { after?: string; limit?: number; reverse?: boolean } = {},
   ): { items: RuntimeCheckpoint[]; next?: string } {
     const page = this.tree.page(this.state(sessionId).root, options);
     return {

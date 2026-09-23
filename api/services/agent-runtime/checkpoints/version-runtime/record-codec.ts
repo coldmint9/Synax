@@ -312,6 +312,36 @@ export class RuntimeRecordCodec {
     }
   }
 
+  /** Display/context projection. Never materialize a large JSON field just to
+   * truncate it afterwards. Callers must expose the omitted-field marker. */
+  preview(id: string, projection?: readonly string[]): Record<string, unknown> {
+    const header = this.header(id);
+    const result: Record<string, unknown> = Object.create(null);
+    const omitted: string[] = [];
+    let remaining = 24 * 1024;
+    for (const [name, field] of Object.entries(header.fields)) {
+      if (projection && !projection.includes(name)) continue;
+      const bytes = "inline" in field ? Buffer.byteLength(JSON.stringify(field.inline)) : field.jsonBytes;
+      if (bytes <= remaining) {
+        result[name] = this.read(id, 32 * 1024, [name])[name];
+        remaining -= bytes;
+      } else {
+        omitted.push(name);
+        if (!("inline" in field) && field.encoding === "text") {
+          // A text page reads at most one 64KiB chunk, independent of total size.
+          const text = this.text.page(field.ref).text;
+          const chars = Math.min(2048, Math.floor(remaining / 6));
+          result[name] = text.slice(0, chars) + "\n[content truncated; load content pages for the full value]";
+          remaining = Math.max(0, remaining - chars * 6 - 128);
+        } else {
+          result[name] = ["contentParts", "toolCallIds", "files", "citations"].includes(name) ? [] : {};
+        }
+      }
+    }
+    if (omitted.length) result.historyProjection = { omittedFields: omitted };
+    return result;
+  }
+
   read(
     id: string,
     maxBytes: number,

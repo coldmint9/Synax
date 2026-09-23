@@ -241,6 +241,7 @@ export interface RuntimeEvent {
 }
 
 export interface AgentRuntimeMessage {
+  historyProjection?: { omittedFields: string[] };
   contentParts?: RuntimeContentPart[];
   id: string;
   sessionId: string;
@@ -721,6 +722,25 @@ export interface SessionSearchResponse {
   hasMore: boolean;
 }
 
+export interface HistoryWindowState {
+  revision: number;
+  epoch: number;
+  cursor?: string;
+  olderCursor?: string;
+  hasEarlier: boolean;
+  latest: boolean;
+  detailsTruncated: boolean;
+}
+export interface HistoryWindowResponse {
+  messages: AgentRuntimeMessage[];
+  runs: AgentRun[];
+  steps: AgentRunStep[];
+  toolCalls: ToolCallRecord[];
+  events: RuntimeEvent[];
+  permissions: PermissionDecision[];
+  historyWindow: HistoryWindowState;
+}
+
 export const agentRuntimeApi = {
   compactContext: (sessionId: string) =>
     request<{
@@ -861,6 +881,14 @@ export const agentRuntimeApi = {
       `/sessions/clear-inactive`,
       { method: "POST", body: JSON.stringify({ projectId }) },
     ),
+  messageContentPage: (sessionId: string, messageId: string, cursor = 0, revision?: number) =>
+    request<{ text: string; next?: number; revision: number }>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/content?cursor=${cursor}${revision === undefined ? "" : `&revision=${revision}`}`),
+  historyWindow: (sessionId: string, cursor?: string) =>
+    request<HistoryWindowResponse>(`/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
+  upgradeHistory: (sessionId: string) =>
+    request<{ upgraded: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/history/upgrade`, {
+      method: "POST", body: JSON.stringify({ acknowledgeCheckpointReset: true }),
+    }),
   listMessages: (sessionId: string) =>
     request<{ items: AgentRuntimeMessage[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,

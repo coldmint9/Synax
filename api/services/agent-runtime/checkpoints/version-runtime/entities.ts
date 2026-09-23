@@ -1,9 +1,12 @@
+import { admitVersionGrowth } from "../resource-admission.js";
+import { diagnosticPage, isDiagnostic, readDiagnostic, trackDiagnostic } from "./diagnostics.js";
 import { retainVersionRecordAssets } from "./assets.js";
 import type { RuntimeContentPart } from "../../content-parts.js";
 import { assertBatchInput } from "./batch-input.js";
 import { getRawSqlite } from "../../../../db/index.js";
 import { AgentNotFoundError, AgentRuntimeError } from "../../runtime-errors.js";
 import {
+  boundaryOnlySession,
   versionRepository,
   versionedSession,
   versionRuntimeMode,
@@ -74,10 +77,23 @@ export function writeVersionEntity<T>(
         "EXECUTION_SUPERSEDED",
         409,
       );
+    if (boundaryOnlySession(sessionId) && isDiagnostic(kind))
+      admitVersionGrowth(db, Buffer.byteLength(JSON.stringify(value)));
     const result = writeControl();
     db.prepare(
       `UPDATE ${table(kind)} SET version_epoch=? WHERE id=? AND session_id=?`,
     ).run(epoch, id, sessionId);
+    if (boundaryOnlySession(sessionId) && isDiagnostic(kind)) {
+      trackDiagnostic(sessionId, kind, id);
+      // Raw tool evidence retains its media until session deletion. It is not
+      // snapshotted and cannot grant access to a discarded branch's tool input.
+      const parts = (value as Record<string, unknown>).contentParts;
+      if (Array.isArray(parts)) for (const part of parts) {
+        if (part?.type !== "text" && typeof part?.assetId === "string")
+          db.prepare("INSERT OR IGNORE INTO agent_runtime_asset_sessions(asset_id,session_id) VALUES(?,?)").run(part.assetId, sessionId);
+      }
+      return result;
+    }
     const fields: Record<string, unknown> = {
       ...(value as Record<string, unknown>),
       [key]: epoch,
@@ -129,7 +145,7 @@ function currentControl(
   delete result._metadata;
   return result;
 }
-function normalize(
+export function normalizeVersionEntity(
   kind: string,
   row: Record<string, unknown>,
   epoch: number,
@@ -188,10 +204,10 @@ export function readVersionEntity<T>(
   return readVersionSnapshot(getRawSqlite(), () => {
     const repo = versionRepository(),
       head = repo.head(sessionId),
-      row = repo.get(sessionId, kind, id);
+      row = boundaryOnlySession(sessionId) && isDiagnostic(kind) ? readDiagnostic(sessionId, kind, id) : repo.get(sessionId, kind, id);
     if (!row) throw new AgentNotFoundError(id);
     const result = {
-      ...normalize(kind, row, head.epoch),
+      ...normalizeVersionEntity(kind, row, head.epoch),
       ...(row[key] === head.epoch
         ? currentControl(sessionId, kind, id, head.epoch)
         : {}),
@@ -218,7 +234,9 @@ export function listVersionEntities<T>(
   return readVersionSnapshot(getRawSqlite(), () => {
     const repo = versionRepository(),
       head = repo.head(sessionId),
-      page = repo.page(sessionId, kind, { limit: 256, scope });
+      page = boundaryOnlySession(sessionId) && isDiagnostic(kind)
+        ? { ...diagnosticPage(sessionId, kind, { limit: 256, scope }), next: undefined }
+        : repo.page(sessionId, kind, { limit: 256, scope });
     if (page.next)
       throw new AgentRuntimeError(
         "Execution history requires pagination.",
@@ -226,7 +244,7 @@ export function listVersionEntities<T>(
         413,
       );
     return page.items.map((row) => ({
-      ...normalize(kind, row, head.epoch),
+      ...normalizeVersionEntity(kind, row, head.epoch),
       ...(row[key] === head.epoch
         ? currentControl(sessionId, kind, String(row.id), head.epoch)
         : {}),

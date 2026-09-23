@@ -29,6 +29,7 @@ import { useAgentSessionStore } from "./state/agentSessionStore";
 interface ContextValue {
   reason: string | null;
   busy: boolean;
+  error: string | null;
   checkpoint: (
     messageId?: string,
     stepId?: string,
@@ -132,18 +133,70 @@ export function SessionHistoryProvider({
       checkpoint: MessageCheckpoint,
       message?: string,
     ): Promise<boolean> => {
-      if (!sessionId || resolver.current) return false;
+      if (!sessionId) return false;
       const epoch = ++requestEpoch.current;
+      const requestId = crypto.randomUUID();
       setIncludeFiles(true);
       setPending({
         action,
         checkpoint,
         message,
-        requestId: crypto.randomUUID(),
+        requestId,
         sessionId,
       });
       setPreview(null);
       setError(null);
+
+      // Editing an already sent user message is intentionally a one-step,
+      // conversation-only operation. The inline editor owns the warning and
+      // retry state; file restoration remains opt-in through the full rollback
+      // dialog, so an edit cannot silently overwrite workspace files.
+      if (action === "edit") {
+        setExecuting(true);
+        try {
+          const value = await conversationHistoryApi.preview(
+            sessionId,
+            checkpoint.id,
+            action,
+            false,
+          );
+          if (epoch !== requestEpoch.current) return false;
+          setPreview(value);
+          if (!value.canApply) {
+            const conflict = value.conflicts[0];
+            throw new Error(
+              conflict
+                ? `${conflict.path}: ${conflict.reason}`
+                : zh
+                  ? "当前会话状态已变化，请重试"
+                  : "The conversation changed; please retry.",
+            );
+          }
+          await conversationHistoryApi.apply(
+            sessionId,
+            action,
+            {
+              checkpointId: checkpoint.id,
+              revision: value.revision,
+              requestId,
+              message,
+              includeFiles: false,
+            },
+          );
+          const store = useAgentSessionStore.getState();
+          store.resetConversationHistory(sessionId);
+          await Promise.all([store.refreshSessions(), store.refreshDetail()]);
+          close(true);
+          void refresh();
+          return true;
+        } catch (e) {
+          if (epoch === requestEpoch.current) setError((e as Error).message);
+          return false;
+        } finally {
+          setExecuting(false);
+        }
+      }
+
       const result = new Promise<boolean>((resolve) => {
         resolver.current = resolve;
       });
@@ -157,7 +210,7 @@ export function SessionHistoryProvider({
         });
       return result;
     },
-    [sessionId],
+    [sessionId, zh, close, refresh],
   );
   const changeFilePolicy = (value: boolean) => {
     if (!pending || executing) return;
@@ -225,19 +278,24 @@ export function SessionHistoryProvider({
             : loadError ||
               (zh ? "正在检查会话边界" : "Checking conversation checkpoints"),
       busy: Boolean(pending),
+      error,
       request,
       checkpoint: (messageId, stepId) => {
         if (!summary || summary.sessionId !== sessionId) return undefined;
         if (messageId?.startsWith("user-input-"))
           return summary.checkpoints.find((c) => c.initialInput);
-        return summary.checkpoints.find((c) =>
+        const found = summary.checkpoints.find((c) =>
           messageId
             ? c.messageId === messageId
             : stepId && c.kind === "reply" && c.stepId === stepId,
         );
+        const projected = messages.find(message => message.id === found?.messageId)?.historyProjection;
+        return found?.kind === "input" && projected
+          ? { ...found, available: false, reason: zh ? "这是长消息预览，请勿用截断内容覆盖原消息" : "This is a long-message preview; editing it would overwrite omitted content" }
+          : found;
       },
     }),
-    [session, sessionId, summary, loadError, pending, request, zh],
+    [session, sessionId, summary, loadError, pending, error, request, zh, messages],
   );
   const fork = pending?.action === "fork",
     edit = pending?.action === "edit";
@@ -288,7 +346,7 @@ export function SessionHistoryProvider({
       )}
       {children}
       <Modal.Backdrop
-        isOpen={Boolean(pending)}
+        isOpen={Boolean(pending && pending.action !== "edit")}
         onOpenChange={(open) => {
           if (!open && !executing) close();
         }}

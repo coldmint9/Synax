@@ -1,3 +1,4 @@
+import { versionedSession, versionRepository } from "./checkpoints/version-runtime/bridge.js";
 import { historyEpoch } from "./checkpoints/guards.js";
 import { getRawSqlite } from '../../db/index.js';
 import { agentRuntimeStore } from './session-store.js';
@@ -24,7 +25,7 @@ export class RuntimeStreamWriter {
       if ('run' in chunk) this.runId = chunk.run.id;
       else if ('runId' in chunk) this.runId = chunk.runId;
       else if (chunk.type === 'step_started') this.runId = chunk.step.runId;
-      if (!this.runId) { this.pending.push(chunk); return; }
+      if (!this.runId) { if (this.pending.length >= 64) throw new Error("Run identity was not established before the bounded stream queue filled."); this.pending.push(chunk); return; }
       commit.push(...this.pending);
       this.pending = [];
     }
@@ -71,15 +72,15 @@ export class RuntimeStreamWriter {
       const step = agentRuntimeStore.listRunSteps(run.id).at(-1);
       if (!step) return;
       const db = getRawSqlite();
-      const existing = db.prepare("SELECT id FROM agent_runtime_messages WHERE run_id = ? AND step_id = ? AND role = 'assistant' LIMIT 1").get(run.id, step.id);
+      const existing = versionedSession(this.sessionId) ? versionRepository().last(this.sessionId, "messages", ["id"], { field: "stepId", value: step.id }) : db.prepare("SELECT id FROM agent_runtime_messages WHERE run_id = ? AND step_id = ? AND role = 'assistant' LIMIT 1").get(run.id, step.id);
       if (existing) return;
       const records = db.prepare(`SELECT chunk_json FROM agent_runtime_stream_records WHERE run_id = ? AND kind = 'message_delta'
         AND json_extract(chunk_json, '$.chunk.stepId') = ?
         AND sequence > COALESCE((SELECT MAX(sequence) FROM agent_runtime_stream_records
           WHERE run_id = ? AND kind = 'retry_status' AND json_extract(chunk_json, '$.chunk.stepId') = ?
           AND json_extract(chunk_json, '$.chunk.retry.phase') IN ('waiting', 'group_wait')), 0)
-        ORDER BY sequence`).all(run.id, step.id, run.id, step.id) as Array<{ chunk_json: string }>;
-      const content = records.map(row => (JSON.parse(row.chunk_json) as { chunk: { delta: string } }).chunk.delta).join('');
+        AND length(CAST(chunk_json AS BLOB))<=65536 ORDER BY sequence DESC LIMIT 128`).all(run.id, step.id, run.id, step.id) as Array<{ chunk_json: string }>;
+      const content = records.reverse().map(row => (JSON.parse(row.chunk_json) as { chunk: { delta: string } }).chunk.delta).join('');
       if (!content) return;
       agentRuntimeStore.appendMessage({ id: makeRuntimeId('msg'), sessionId: this.sessionId, runId: run.id, stepId: step.id,
         role: 'assistant', content, createdAt: nowIso(), metadata: { source: 'runtime_partial', partial: true, runId: run.id, stepId: step.id } });

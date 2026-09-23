@@ -1,4 +1,7 @@
-import { versionRepository,versionedSession } from "../services/agent-runtime/checkpoints/version-runtime/bridge.js";
+import { getRawSqlite } from "../db/index.js";
+import { upgradeHistory } from "../services/agent-runtime/checkpoints/version-runtime/migrate.js";
+import { readHistoryWindow } from "../services/agent-runtime/checkpoints/version-runtime/window.js";
+import { boundaryOnlySession,versionRepository,versionedSession } from "../services/agent-runtime/checkpoints/version-runtime/bridge.js";
 import { visitConversation } from "../services/agent-runtime/checkpoints/retention.js";
 import { planFileUndo } from "../services/agent-runtime/checkpoints/file-plan.js";
 import {
@@ -130,6 +133,15 @@ import {
 } from "../services/git-workspaces.js";
 
 export const agentRuntimeRoutes = new Hono();
+for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
+  agentRuntimeRoutes.use(route, async (c, next) => {
+    const id = c.req.param("sessionId");
+    if (id && getRawSqlite().prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?").get(id))
+      return c.json({ error: "Session has been deleted.", code: "NOT_FOUND" }, 404);
+    await next();
+  });
+}
+
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
 
 async function readJson(c: Context) {
@@ -544,10 +556,28 @@ agentRuntimeRoutes.post("/sessions/clear-inactive", async (c) => {
   }
 });
 
+agentRuntimeRoutes.post("/sessions/:sessionId/history/upgrade", async (c) => {
+  try {
+    const body = await c.req.json();
+    if (body?.acknowledgeCheckpointReset !== true)
+      throw new AgentRuntimeError("Explicit acknowledgement of legacy checkpoint retirement is required.", "VALIDATION_ERROR", 400);
+    return c.json(await upgradeHistory(c.req.param("sessionId")));
+  } catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/history-window", (c) => {
+  try {
+    const id = c.req.param("sessionId");
+    agentRuntimeStore.getSession(id);
+    if (!versionedSession(id)) throw new AgentRuntimeError("Upgrade history before using version windows.", "HISTORY_MIGRATION_REQUIRED", 409);
+    return c.json(readHistoryWindow(id, c.req.query("cursor")));
+  } catch (error) { return runtimeError(c, error); }
+});
+
 agentRuntimeRoutes.get("/sessions/:sessionId/messages", (c) => {
   try {
     const sessionId=c.req.param("sessionId");
-    if(versionedSession(sessionId))return c.json(versionRepository().page(sessionId,"messages",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),fields:c.req.query("fields")?.split(",")}));
+    if(versionedSession(sessionId))return c.json(versionRepository().page(sessionId,"messages",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),reverse:c.req.query("reverse")==="true",preview:c.req.query("preview")==="true",fields:c.req.query("fields")?.split(",")}));
     return c.json({
       items: agentLoopRuntime.listMessages(c.req.param("sessionId")),
     });
@@ -791,10 +821,10 @@ agentRuntimeRoutes.post("/sessions/:sessionId/turns/stream", async (c) => {
 });
 
 agentRuntimeRoutes.get("/sessions/:sessionId/events", (c) => {
-  if(versionedSession(c.req.param("sessionId"))){
+  if(versionedSession(c.req.param("sessionId")) && !boundaryOnlySession(c.req.param("sessionId"))){
     try{
       if(c.req.query("after"))return c.json({error:"Use the versioned event cursor instead of a legacy event id.",code:"HISTORY_PAGE_REQUIRED"},409);
-      return c.json(versionRepository().page(c.req.param("sessionId"),"events",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),fields:c.req.query("fields")?.split(",")}));
+      return c.json(versionRepository().page(c.req.param("sessionId"),"events",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),reverse:c.req.query("reverse")==="true",preview:c.req.query("preview")==="true",fields:c.req.query("fields")?.split(",")}));
     }catch(error){return runtimeError(c,error);}
   }
   const parsed = listEventsQuerySchema.safeParse(

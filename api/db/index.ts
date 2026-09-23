@@ -194,8 +194,17 @@ function configureSqlite(sqlite: NativeDatabase.Database): void {
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
     PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 5000;
+    PRAGMA busy_timeout = 1000;
+    PRAGMA cache_size = -32768;
+    PRAGMA mmap_size = 0;
+    PRAGMA temp_store = FILE;
+    PRAGMA wal_autocheckpoint = 256;
+    PRAGMA journal_size_limit = 33554432;
   `);
+  const pageSize = (sqlite.prepare("PRAGMA page_size").get() as { page_size: number }).page_size;
+  // Existing oversized databases are never truncated; SQLite clamps to their
+  // current page count and disallows further allocation until pages are freed.
+  sqlite.exec(`PRAGMA max_page_count = ${Math.floor(4 * 1024 ** 3 / pageSize)}`);
 }
 
 function ensureMigrationsTable(sqlite: NativeDatabase.Database): void {

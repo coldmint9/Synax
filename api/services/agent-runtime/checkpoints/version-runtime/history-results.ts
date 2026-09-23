@@ -52,6 +52,10 @@ export class VersionHistoryResults {
     this.validate(sessionId, requestId);
     assertBatchInput(result);
     atomicVersionWrite(this.db, () => {
+      // Never silently forget an idempotency key. Fail closed at a bounded
+      // ledger size rather than evicting keys and accidentally replaying edits.
+      if (this.db.prepare("SELECT 1 FROM conversation_v3_history_requests WHERE session_id=? LIMIT 1 OFFSET 4095").get(sessionId))
+        throw new VersionStoreError("VERSION_METADATA_BUDGET", "This session reached its retained history-operation budget.");
       this.insert.run(
         sessionId,
         requestId,

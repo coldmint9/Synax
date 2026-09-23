@@ -1,3 +1,5 @@
+import { queueHistoryDeletion } from "./checkpoints/version-runtime/deletion.js";
+import { diagnosticPage, trackDiagnostic, trimDiagnosticEvents } from "./checkpoints/version-runtime/diagnostics.js";
 import { retainVersionRecordAssets } from "./checkpoints/version-runtime/assets.js";
 import {
   writeVersionEntity,
@@ -7,6 +9,7 @@ import {
 } from "./checkpoints/version-runtime/entities.js";
 import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import {
+  boundaryOnlySession,
   versionRepository,
   versionedSession,
   versionSessionView,
@@ -548,6 +551,29 @@ function mapRunPart(row: RunPartRow): AgentRunPart {
   };
 }
 
+/** Reuse the live row codecs for the bounded, explicit v2 upgrade. */
+export function mapLegacyHistoryRow(table: string, row: Record<string, unknown>): Record<string, unknown> {
+  const codecs: Record<string, (row: never) => unknown> = {
+    agent_runtime_messages: mapMessage, agent_runtime_events: mapEvent,
+    agent_runtime_runs: mapRun, agent_runtime_run_steps: mapRunStep,
+    agent_runtime_run_parts: mapRunPart, agent_runtime_tool_calls: mapToolCall,
+    agent_runtime_permissions: mapPermission, agent_runtime_artifacts: mapArtifact,
+    agent_runtime_context_bundles: mapContextBundle, agent_runtime_thinking_summaries: mapThinkingSummary,
+  };
+  if (codecs[table]) return codecs[table](row as never) as Record<string, unknown>;
+  if (table === "agent_runtime_work") {
+    const work = JSON.parse(String(row.payload_json));
+    return { ledger: [], noProgressSteps: 0, decisionFailures: 0, ...work };
+  }
+  const value: Record<string, unknown> = {};
+  for (const [key, field] of Object.entries(row)) {
+    if (["_rowid", "version_epoch", "_metadata"].includes(key)) continue;
+    const name = key.replace(/_json$/, "").replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    value[name] = key.endsWith("_json") && typeof field === "string" ? JSON.parse(field) : field;
+  }
+  return value;
+}
+
 export class AgentRuntimeStore {
   createSession(session: AgentSession): AgentSession {
     this.upsertSession(session);
@@ -564,6 +590,7 @@ export class AgentRuntimeStore {
   }
 
   getSession(id: string): AgentSession {
+    if (getRawSqlite().prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?").get(id)) throw new AgentNotFoundError(id);
     const row = getRawSqlite()
       .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ?")
       .get(id) as SessionRow | undefined;
@@ -572,6 +599,7 @@ export class AgentRuntimeStore {
   }
 
   tryGetSession(id: string): AgentSession | undefined {
+    if (getRawSqlite().prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?").get(id)) return undefined;
     const row = getRawSqlite()
       .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ?")
       .get(id) as SessionRow | undefined;
@@ -652,7 +680,7 @@ export class AgentRuntimeStore {
     const placeholders = projectIds.map(() => "?").join(",");
     const rows = getRawSqlite()
       .prepare(
-        `SELECT id, project_id, status, updated_at FROM agent_runtime_sessions WHERE project_id IN (${placeholders})`,
+        `SELECT id, project_id, status, updated_at FROM agent_runtime_sessions WHERE project_id IN (${placeholders}) AND NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)`,
       )
       .all(...projectIds) as Array<{
       id: string;
@@ -680,7 +708,7 @@ export class AgentRuntimeStore {
     } = {},
   ): AgentSession[] {
     const db = getRawSqlite();
-    const conditions: string[] = [];
+    const conditions: string[] = ["NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)"];
     const params: string[] = [];
     // Truthiness matches the previous `!filter.x || ...` JS guards, which also
     // skipped empty-string filters.
@@ -733,7 +761,7 @@ export class AgentRuntimeStore {
     countByStatus: Record<string, number>;
   } {
     const db = getRawSqlite();
-    const conditions: string[] = [];
+    const conditions: string[] = ["NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)"];
     const baseParams: string[] = [];
     if (filter.projectId) {
       conditions.push("project_id = ?");
@@ -797,6 +825,7 @@ export class AgentRuntimeStore {
   // by the same updated_at DESC stream the old full-table query used, then the
   // in-memory visit() replays the exact child ordering.
   listSessionTree(sessionId: string): AgentSession[] {
+    this.getSession(sessionId);
     const rows = getRawSqlite()
       .prepare(
         `${SESSION_TREE_CTE}
@@ -841,12 +870,11 @@ export class AgentRuntimeStore {
   }
 
   deleteSessionTree(sessionId: string): string[] {
-    if (versionedSession(sessionId))
-      throw new AgentRuntimeError(
-        "Versioned session deletion is not integrated yet.",
-        "VERSION_RUNTIME_NOT_READY",
-        409,
-      );
+    const session = this.getSession(sessionId);
+    if (!session.parentSessionId && !session.childSessionIds.length) {
+      queueHistoryDeletion(sessionId);
+      return [sessionId];
+    }
     const sessionsToDelete = this.listSessionTree(sessionId);
     const deleteIds = sessionsToDelete.map((session) => session.id);
     const deleteSet = new Set(deleteIds);
@@ -1094,6 +1122,22 @@ export class AgentRuntimeStore {
     })();
   }
 
+  /** Model context is a bounded recent window; archival APIs remain explicit. */
+  listRecentMessages(sessionId: string): AgentRuntimeMessage[] {
+    if (!versionedSession(sessionId)) return this.listMessages(sessionId);
+    const page = versionRepository().page(sessionId, "messages", { reverse: true, preview: true, limit: 64 });
+    const items = page.items.reverse() as unknown as AgentRuntimeMessage[];
+    if (page.next && items[0]) items[0] = { ...items[0], metadata: { ...items[0].metadata, historyWindowTruncated: true } };
+    return items;
+  }
+
+  listRecentToolCalls(sessionId: string): ToolCallRecord[] {
+    if (!versionedSession(sessionId)) return this.listToolCalls(sessionId);
+    if (boundaryOnlySession(sessionId)) return diagnosticPage(sessionId, "tools", { limit: 64, preview: true }).items as unknown as ToolCallRecord[];
+    return versionRepository().page(sessionId, "tools", { reverse: true, preview: true, limit: 64 })
+      .items.reverse() as unknown as ToolCallRecord[];
+  }
+
   listMessages(sessionId: string): AgentRuntimeMessage[] {
     if (versionedSession(sessionId))
       return versionedList<AgentRuntimeMessage>(sessionId, "messages");
@@ -1124,7 +1168,7 @@ export class AgentRuntimeStore {
       );
     return getRawSqlite().transaction(() => {
       this.getSession(sessionId);
-      if (versionedSession(sessionId)) {
+      if (versionedSession(sessionId) && !boundaryOnlySession(sessionId)) {
         versionRepository().putBatch(
           sessionId,
           events.map((event) => ({
@@ -1137,7 +1181,7 @@ export class AgentRuntimeStore {
         const insert = getRawSqlite().prepare(
           "INSERT OR REPLACE INTO agent_runtime_events(id,session_id,type,timestamp,visibility,summary,payload_json) VALUES(?,?,?,?,?,?,?)",
         );
-        for (const event of events)
+        for (const event of events) {
           insert.run(
             event.id,
             event.sessionId,
@@ -1147,12 +1191,16 @@ export class AgentRuntimeStore {
             event.summary,
             stringify(event.payload),
           );
+          if (boundaryOnlySession(sessionId)) trackDiagnostic(sessionId, "events", event.id);
+        }
+        if (boundaryOnlySession(sessionId)) trimDiagnosticEvents(sessionId);
       }
       return [...events];
     })();
   }
 
   appendEvent(event: RuntimeEvent): RuntimeEvent {
+    if (boundaryOnlySession(event.sessionId)) return this.appendEvents([event])[0];
     if (versionedSession(event.sessionId)) {
       versionRepository().put(
         event.sessionId,
@@ -1181,6 +1229,10 @@ export class AgentRuntimeStore {
   }
 
   listEvents(sessionId: string, after?: string): RuntimeEvent[] {
+    if (boundaryOnlySession(sessionId)) {
+      const items = diagnosticPage(sessionId, "events", { limit: 64, preview: true }).items as unknown as RuntimeEvent[];
+      return after ? items.slice(Math.max(0, items.findIndex(item => item.id === after) + 1)) : items;
+    }
     if (versionedSession(sessionId)) {
       const items = versionedList<RuntimeEvent>(sessionId, "events");
       return after
@@ -1225,6 +1277,7 @@ export class AgentRuntimeStore {
     types: RuntimeEvent["type"][],
   ): RuntimeEvent | null {
     if (types.length === 0) return null;
+    if (boundaryOnlySession(sessionId)) return diagnosticPage(sessionId, "events", { limit: 1, types }).items[0] as unknown as RuntimeEvent ?? null;
     if (versionedSession(sessionId))
       return versionRepository().latestEvent(
         sessionId,
@@ -1248,6 +1301,10 @@ export class AgentRuntimeStore {
     eventId: string,
     type: RuntimeEvent["type"],
   ): number {
+    if (boundaryOnlySession(sessionId)) {
+      const items = diagnosticPage(sessionId, "events", { limit: 256, preview: true }).items;
+      return items.slice(Math.max(0, items.findIndex(item => item.id === eventId) + 1)).filter(item => item.type === type).length;
+    }
     if (versionedSession(sessionId))
       return versionRepository().countEventsAfter(sessionId, eventId, type);
     const row = getRawSqlite()
@@ -1805,12 +1862,10 @@ export class AgentRuntimeStore {
   }
 
   getLatestCompactionRecord(sessionId: string): CompactionRecord | null {
-    if (versionedSession(sessionId))
-      return (
-        listVersionEntities<CompactionRecord>(sessionId, "compactions").sort(
-          (a, b) => b.createdAt.localeCompare(a.createdAt),
-        )[0] ?? null
-      );
+    if (versionedSession(sessionId)) {
+      const latest = versionRepository().last(sessionId, "compactions", ["id"]);
+      return latest ? readVersionEntity<CompactionRecord>(sessionId, "compactions", String(latest.id)) : null;
+    }
     const row = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_compaction_summaries WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",

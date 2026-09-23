@@ -85,6 +85,7 @@ export function retainVersionRecordAssets(
   table: string,
   id: string,
   parts: readonly RuntimeContentPart[],
+  authoritySessionId = sessionId,
 ): void {
   const ids = [
     ...new Set(
@@ -106,7 +107,7 @@ export function retainVersionRecordAssets(
     if (!ref) throw new Error("Media-bearing record is not published.");
     const project = db
       .prepare("SELECT project_id FROM agent_runtime_sessions WHERE id=?")
-      .get(sessionId) as { project_id: string } | undefined;
+      .get(authoritySessionId) as { project_id: string } | undefined;
     if (!project)
       throw new AgentRuntimeError("Session not found.", "NOT_FOUND", 404);
     const asset = db.prepare(

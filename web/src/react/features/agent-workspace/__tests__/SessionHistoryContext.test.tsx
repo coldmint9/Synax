@@ -10,7 +10,7 @@ vi.mock('../../../../lib/api/runtimeEventBus',()=>({subscribe:()=>()=>{}}));
 vi.mock('../../../../lib/api/conversationHistory',()=>({conversationHistoryApi:{list:vi.fn(),preview:vi.fn(),apply:vi.fn()}}));
 const cp={id:'cp',kind:'reply' as const,messageId:'msg',stepId:null,available:true,reason:null,hasLaterHistory:true,initialInput:false};
 const session={id:'s',status:'completed',sessionMetadata:{backend:{id:'native'}}} as unknown as AgentSession;
-function Trigger(){const history=useSessionHistory();return <button onClick={()=>void history?.request('rollback',cp)}>Open</button>;}
+function Trigger({action='rollback' as const}){const history=useSessionHistory();return <button onClick={()=>void history?.request(action,cp,'Edited')}>Open</button>;}
 beforeEach(()=>{
  vi.clearAllMocks();useShellStore.setState(s=>({preferences:{...s.preferences,locale:'zh'}}));
  vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,checkpoints:[cp]});
@@ -30,6 +30,12 @@ describe('history impact confirmation',()=>{
    await waitFor(()=>expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled());
    fireEvent.click(screen.getByRole('button',{name:'回滚到此处'}));
    await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
+ });
+ it('submits edits without opening a confirmation modal',async()=>{
+   render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="edit"/></SessionHistoryProvider>);
+   fireEvent.click(screen.getByRole('button',{name:'Open'}));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','edit',expect.objectContaining({includeFiles:false})));
+   expect(screen.queryByText('编辑并重新发送')).not.toBeInTheDocument();
  });
  it('states the expiry rule and distinguishes expired file history from missing chat history',async()=>{
    vi.mocked(conversationHistoryApi.preview).mockResolvedValue({checkpointId:'cp',revision:0,removedMessages:2,files:[],conflicts:[],exclusions:'',warnings:[],preservedFiles:[{root:'/project',path:'expired.ts',kind:'expired',reason:'Expired'}],canApply:true});

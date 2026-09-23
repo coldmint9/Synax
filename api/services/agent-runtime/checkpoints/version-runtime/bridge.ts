@@ -1,3 +1,4 @@
+import { admitVersionGrowth } from "../resource-admission.js";
 import type Database from "libsql";
 import { getRawSqlite } from "../../../../db/index.js";
 import { VersionObjects } from "../version-store/objects.js";
@@ -25,6 +26,7 @@ const LIVE_METADATA = [
   "pendingResume",
   "turnReferences",
   "historyRevision",
+  "latestSystemPrompt",
 ];
 export function versionRepository(): RuntimeVersionRepository {
   const db = getRawSqlite();
@@ -34,7 +36,7 @@ export function versionRepository(): RuntimeVersionRepository {
       new VersionObjects(db, {
         maxBytes: 1024 * 1024 * 1024,
         maxObjects: 2000000,
-      }),
+      }, bytes => admitVersionGrowth(db, bytes)),
     );
     repositories.set(db, repo);
   }
@@ -51,6 +53,9 @@ export function versionedSession(id: string): boolean {
   }
   return Boolean(query.get(id));
 }
+export function boundaryOnlySession(sessionId: string): boolean {
+  return Boolean((getRawSqlite().prepare("SELECT boundary_only FROM conversation_v3_heads WHERE session_id=?").get(sessionId) as { boundary_only: number } | undefined)?.boundary_only);
+}
 export function versionRuntimeMode(
   sessionId: string,
 ): "transcript" | "native" | undefined {
@@ -62,6 +67,16 @@ export function versionRuntimeMode(
       .get(sessionId) as { runtime_mode: "transcript" | "native" } | undefined
   )?.runtime_mode;
 }
+/** Only called inside the fresh-session creation transaction, before any
+ * event, context, run or user input can be published. Existing rows never opt in. */
+export function initializeFreshVersionNative(session: AgentSession): void {
+  const db = getRawSqlite();
+  if (!db.inTransaction || session.parentSessionId || session.activeRunId || session.contextSnapshotId)
+    throw new AgentRuntimeError("Fresh root initialization requires its creation transaction.", "HISTORY_SESSION_BUSY", 409);
+  versionRepository().create(session.id, historySessionFields(session));
+  db.prepare("UPDATE conversation_v3_heads SET runtime_mode='native',boundary_only=1 WHERE session_id=?").run(session.id);
+}
+
 export function initializeVersionNative(
   session: AgentSession,
   events: readonly RuntimeEvent[] = [],
@@ -119,7 +134,7 @@ export function versionSessionView(current: AgentSession): AgentSession {
     prompt: history.prompt as string,
     resultSummary: history.resultSummary as string | null,
     contextSnapshotId: history.contextSnapshotId as string | null,
-    sessionMetadata: metadata,
+    sessionMetadata: { ...metadata, historyStorage: 3 },
   };
 }
 export function assertVersionTranscriptOperation(

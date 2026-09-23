@@ -142,6 +142,22 @@ export function writeRuntimeBatch(
     state.ids = apply(state.ids, ids);
     state.order = apply(state.order, orders);
     state.next += rows.length;
+    // Transient runtime events are diagnostics, not the authoritative transcript.
+    // Prune in the same path-copy publication so a burst cannot outrun GC/retention.
+    if (table === "events" && state.count > 2048) {
+      const expired = tree.page(state.order, { limit: Math.min(PAGE_ROWS, state.count - 2048) }).entries;
+      const dropIds: TreeChange[] = [], dropOrders: TreeChange[] = [];
+      for (const entry of expired) {
+        const header = records.header(entry.value);
+        dropIds.push({ key: header.id, value: null });
+        dropOrders.push({ key: entry.key, value: null });
+        typeChange(eventKey(records.read(entry.value, 1024, ["type"]).type), { key: entry.key, value: null });
+      }
+      state.ids = apply(state.ids, dropIds);
+      state.order = apply(state.order, dropOrders);
+      state.count -= expired.length;
+    }
+
     const manifest = objects.put("record", Buffer.from(JSON.stringify(state)), [
       state.ids!,
       state.order!,

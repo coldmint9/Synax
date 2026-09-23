@@ -301,6 +301,10 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   scrollRootRef,
 }: Props) {
   const { t } = useLocale();
+  const historyWindow = useAgentSessionStore(s => session ? s.sessionDetailCache[session.id]?.historyWindow : undefined);
+  const includeInitialPrompt = !historyWindow?.hasEarlier;
+  const browsingHistory = historyWindow?.latest === false;
+
   const interactions = useAgentSessionStore((s) =>
     s.interactionState?.sessionId === session?.id
       ? s.interactionState?.items
@@ -308,10 +312,10 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   );
   const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns);
   const snapshots = useAgentSessionStore((s) =>
-    unifiedLive ? s.streamingCompletedSteps : null,
+    unifiedLive && !browsingHistory ? s.streamingCompletedSteps : null,
   );
   const liveId = useAgentSessionStore((s) =>
-    unifiedLive ? s.streamingStepId : null,
+    unifiedLive && !browsingHistory ? s.streamingStepId : null,
   );
   const showLive = Boolean(liveId && excludeStepId === liveId);
   const timeline = useMemo(() => {
@@ -334,7 +338,8 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
         excludeStepId,
         session,
         foldWorkRuns,
-        interactions,
+        includeInitialPrompt,
+        interactions: browsingHistory ? undefined : interactions,
       },
     );
     for (const snapshot of pendingSnapshots) {
@@ -371,6 +376,8 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
     excludeStepId,
     session,
     foldWorkRuns,
+    includeInitialPrompt,
+    browsingHistory,
     snapshots,
     interactions,
   ]);

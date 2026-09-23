@@ -34,7 +34,7 @@ class WorkRuntime {
   attach(sessionId: string, run: AgentRun): WorkRecord {
     let work = workStore.current(sessionId);
     const session = store.getSession(sessionId);
-    const trigger = store.listMessages(sessionId).find(m => m.id === run.triggerMessageId);
+    const trigger = run.triggerMessageId ? store.getMessage(sessionId, run.triggerMessageId) : undefined;
     const text = resolveSessionUserRequest(session, trigger?.content ?? '');
     const user = trigger?.metadata.source !== 'system_injection';
     const hasMedia = Boolean(trigger?.contentParts?.some(part => part.type !== 'text'));
@@ -54,9 +54,9 @@ class WorkRuntime {
         store.updateSessionMetadata(sessionId, { plan: null, goal: session.sessionMetadata?.mode === 'goal' ? { objective: text || 'Media input', status: 'planning' } : null });
       }
       const old = store.listRuns(sessionId).some(r => r.id !== run.id);
-      const previousMessages = store.listMessages(sessionId).filter(m => m.role === 'user' && m.metadata.source !== 'system_injection' && !isWorkContinuation(m.content));
+      const previousMessages = store.listRecentMessages(sessionId).filter(m => m.role === 'user' && m.metadata.source !== 'system_injection' && !isWorkContinuation(m.content));
       const savedPlan = session.sessionMetadata?.plan as { objective?: string } | undefined;
-      const lastProposal = old ? store.listToolCalls(sessionId).filter(c => c.toolId === 'plan.propose').at(-1)?.inputRef as { objective?: string } | undefined : undefined;
+      const lastProposal = old ? store.listRecentToolCalls(sessionId).filter(c => c.toolId === 'plan.propose').at(-1)?.inputRef as { objective?: string } | undefined : undefined;
       const objective = continuing ? savedPlan?.objective ?? historicalGoal?.objective ?? lastProposal?.objective ?? previousMessages.at(-1)?.content ?? session.prompt : text || (hasMedia ? 'Media input' : session.prompt);
       work = workStore.create(sessionId, objective, old);
       if (old) work.requirements = previousMessages.map(m => ({ messageId: m.id, text: m.content, ...(m.contentParts ? { contentParts: m.contentParts } : {}) }));

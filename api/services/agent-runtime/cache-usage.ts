@@ -91,3 +91,26 @@ export function projectCacheUsage(samples: CacheUsageSample[], pending = 0): Ses
     pending,
   };
 }
+
+/** Streaming equivalent of projectCacheUsage: cumulative accounting is exact,
+ * while only the ten display samples are retained in memory. */
+export class CacheUsageAccumulator {
+  private readonly total = summarize([]);
+  private readonly recent: CacheUsageSample[] = [];
+  private sumRatios = 0;
+  push(sample: CacheUsageSample): void {
+    this.recent.push(sample);
+    if (this.recent.length > 10) this.recent.shift();
+    const one = summarize([sample]);
+    for (const key of ["inputTokens", "cacheReadTokens", "empty", "aggregated", "samples", "matched", "missing", "invalid"] as const)
+      this.total[key] += one[key];
+    if (sample.unit !== "external-turn" && sample.status === "reported") this.sumRatios += sample.ratio!;
+  }
+  result(pending: number): SessionCacheUsage {
+    return { ...projectCacheUsage(this.recent, pending), session: {
+      ...this.total,
+      ratio: this.total.matched ? this.sumRatios / this.total.matched : null,
+      weightedRatio: this.total.inputTokens ? this.total.cacheReadTokens / this.total.inputTokens : null,
+    } };
+  }
+}

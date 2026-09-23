@@ -1,3 +1,6 @@
+import { projectReplayChunk } from "./runtime-stream-projection.js";
+import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
+import { admitVersionGrowth } from "./checkpoints/resource-admission.js";
 import { versionedSession } from "./checkpoints/version-runtime/bridge.js";
 import {
   normalizeAgentSessionStatus,
@@ -73,6 +76,9 @@ class RuntimeJournal {
     chunks: AgentRunStreamChunk[],
   ): RuntimeStreamRecord[] {
     if (chunks.length === 0) return [];
+    if (chunks.length > 256) throw new AgentValidationError("Replay burst limit exceeded.");
+    chunks = chunks.map(projectReplayChunk);
+    assertBatchInput(chunks);
     const records = getRawSqlite().transaction(() => {
       const run = agentRuntimeStore.getRun(runId);
       if (run.sessionId !== sessionId)
@@ -92,17 +98,25 @@ class RuntimeJournal {
       const insert = getRawSqlite()
         .prepare(`INSERT INTO agent_runtime_stream_records
         (session_id, run_id, kind, chunk_json, created_at,version_epoch) VALUES (?, ?, ?, ?, ?, (SELECT epoch FROM conversation_v3_heads WHERE session_id=?)) RETURNING sequence`);
-      return chunks.map((chunk) => {
+      const records = chunks.map((chunk) => {
+        const encoded = JSON.stringify({ chunk, state });
+        if (Buffer.byteLength(encoded) > 64 * 1024) throw new AgentValidationError("Replay record exceeds its byte budget.");
+        admitVersionGrowth(getRawSqlite(), Buffer.byteLength(encoded));
         const [row] = insert.all(
           sessionId,
           runId,
           chunk.type,
-          JSON.stringify({ chunk, state }),
+          encoded,
           nowIso(),
           sessionId,
         ) as Array<{ sequence: number }>;
         return { sequence: row.sequence, sessionId, runId, chunk, state };
       });
+      // A bounded diagnostic ring, independent of checkpoints and billing.
+      const db = getRawSqlite();
+      const cutoff = db.prepare("SELECT sequence FROM agent_runtime_stream_records WHERE session_id=? ORDER BY sequence DESC LIMIT 1 OFFSET 1024").get(sessionId) as { sequence: number } | undefined;
+      if (cutoff) db.prepare("DELETE FROM agent_runtime_stream_records WHERE sequence IN (SELECT sequence FROM agent_runtime_stream_records WHERE session_id=? AND sequence<=? ORDER BY sequence LIMIT 256)").run(sessionId, cutoff.sequence);
+      return records;
     })();
     for (const wake of [...(this.waiters.get(sessionId) ?? [])]) wake();
     return records;
@@ -133,12 +147,12 @@ class RuntimeJournal {
     limit = 256,
     runId?: string,
   ): RuntimeStreamRecord[] {
-    if (!Number.isSafeInteger(after) || after < 0)
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 256 || !Number.isSafeInteger(after) || after < 0)
       throw new AgentValidationError("Invalid stream cursor.");
     const versioned = versionedSession(sessionId);
     const rows = getRawSqlite()
       .prepare(
-        `SELECT sequence, session_id, run_id, chunk_json FROM agent_runtime_stream_records
+        `SELECT sequence, length(CAST(chunk_json AS BLOB)) AS bytes FROM agent_runtime_stream_records
       WHERE session_id = ? AND sequence > ? ${versioned ? "AND version_epoch=(SELECT epoch FROM conversation_v3_heads WHERE session_id=?)" : ""} ${runId ? "AND run_id = ?" : ""} ORDER BY sequence LIMIT ?`,
       )
       .all(
@@ -147,8 +161,17 @@ class RuntimeJournal {
         ...(versioned ? [sessionId] : []),
         ...(runId ? [runId] : []),
         limit,
-      ) as JournalRow[];
-    return rows.map(mapRow);
+      ) as { sequence: number; bytes: number }[];
+    const result: RuntimeStreamRecord[] = [];
+    let bytes = 0;
+    for (const row of rows) {
+      if (row.bytes > 1024 * 1024) throw new AgentValidationError("Stored replay record exceeds its read budget.");
+      if (bytes + row.bytes > 1024 * 1024) break;
+      bytes += row.bytes;
+      const full = getRawSqlite().prepare("SELECT sequence,session_id,run_id,chunk_json FROM agent_runtime_stream_records WHERE sequence=?").get(row.sequence) as JournalRow;
+      result.push(mapRow(full));
+    }
+    return result;
   }
 
   async *observe(
@@ -216,10 +239,10 @@ class RuntimeJournal {
           const rows = getRawSqlite()
             .prepare(
               `SELECT sequence, session_id, run_id, chunk_json FROM agent_runtime_stream_records
-            WHERE run_id = ? AND sequence > ? AND sequence <= ? ORDER BY sequence`,
+            WHERE run_id = ? AND sequence > ? AND sequence <= ? AND length(CAST(chunk_json AS BLOB))<=65536 ORDER BY sequence DESC LIMIT 128`,
             )
             .all(run.id, start.sequence, cursor) as JournalRow[];
-          for (const row of rows) {
+          for (const row of rows.reverse()) {
             const chunk = mapRow(row).chunk;
             if ("stepId" in chunk && chunk.stepId === current.id) {
               if (

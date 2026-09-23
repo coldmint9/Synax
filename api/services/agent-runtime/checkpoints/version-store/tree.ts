@@ -31,6 +31,7 @@ export interface TreePage {
   next?: string;
 }
 export interface TreePageOptions {
+  reverse?: boolean;
   after?: string;
   limit?: number;
   maxBytes?: number;
@@ -272,7 +273,7 @@ export class VersionTree {
     const entries: TreeItem[] = [];
     if (root === null) return { entries };
     let bytes = EMPTY_PAGE_BYTES;
-    for (const [key, value] of this.walk(root, after)) {
+    for (const [key, value] of this.walk(root, after, undefined, options.reverse)) {
       const item = { key, value };
       const addition =
         Buffer.byteLength(JSON.stringify(item)) + (entries.length ? 1 : 0);
@@ -297,8 +298,23 @@ export class VersionTree {
     hash: string,
     after?: string,
     expected?: NodeRef,
+    reverse = false,
   ): Generator<Entry> {
     const node = readNode(this.objects, hash, expected);
+    if (reverse) {
+      if ("entries" in node) {
+        let start = after === undefined ? node.entries.length - 1 : upperBound(node.entries, after) - 1;
+        if (start >= 0 && node.entries[start][0] === after) start--;
+        for (let i = start; i >= 0; i--) yield node.entries[i];
+      } else {
+        const start = after === undefined ? node.children.length - 1 : upperBound(node.children, after) - 1;
+        for (let i = start; i >= 0; i--) {
+          const child = childRef(node.children[i], node.height);
+          yield* this.walk(child.hash, after, child, true);
+        }
+      }
+      return;
+    }
     if ("entries" in node) {
       const start = after === undefined ? 0 : upperBound(node.entries, after);
       for (let i = start; i < node.entries.length; i++) yield node.entries[i];

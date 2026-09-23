@@ -16,7 +16,7 @@ const SOURCES = [
 ] as const;
 
 /** Only fixed schema identifiers enter this query; callers cannot supply SQL. */
-async function* referenceSources(): AsyncGenerator<string> {
+async function* referenceSources(checkBudget: () => void): AsyncGenerator<string> {
   const db = getRawSqlite();
   for (const { table, column } of SOURCES) {
     let after = 0;
@@ -36,6 +36,7 @@ async function* referenceSources(): AsyncGenerator<string> {
       const rows = ids.all(after, bound) as { cursor: number }[];
       if (!rows.length) break;
       for (const row of rows) {
+        checkBudget();
         after = row.cursor;
         const value = payload.get(after) as
           | { value: string | null; valid: number }
@@ -57,7 +58,7 @@ async function* referenceSources(): AsyncGenerator<string> {
     }
   }
 }
-async function retireUnusedEvidence(): Promise<void> {
+async function retireUnusedEvidence(checkBudget: () => void): Promise<void> {
   const db = getRawSqlite();
   const row = db
     .prepare(
@@ -73,6 +74,7 @@ async function retireUnusedEvidence(): Promise<void> {
           "DELETE FROM conversation_mutations WHERE sequence IN (SELECT sequence FROM conversation_mutations WHERE state<>'open' AND sequence<=? ORDER BY sequence LIMIT 128)",
         );
   for (;;) {
+    checkBudget();
     const changed = Number(
       row.cursor === null
         ? remove.run().changes
@@ -100,6 +102,7 @@ async function retireUnusedEvidence(): Promise<void> {
     const rows = ids.all(after) as { id: string }[];
     if (!rows.length) break;
     for (const row of rows) {
+      checkBudget();
       after = row.id;
       const data = read.get(row.id) as
         | { value: string | null; valid: number; is_fork: number | null }
@@ -133,20 +136,25 @@ async function* entries(directory: string) {
 
 /** Mark completely before deleting any blob. The exclusive snapshot lease keeps
  * managed file writers/forks out of this cycle. No whole-history JS hash set. */
-export async function pruneCheckpointBlobs(): Promise<number> {
+export async function pruneCheckpointBlobs(maxMs = 150): Promise<number> {
   await expireFileUndoCooperatively();
   const lease = beginSnapshotPrune();
   if (!lease) return 0;
+  const deadline = performance.now() + maxMs;
+  const checkBudget = () => {
+    if (performance.now() >= deadline) throw historyError("File maintenance yielded to foreground work.", "SNAPSHOT_MAINTENANCE_YIELD");
+  };
   let marks: BlobMarks | undefined;
   try {
-    await retireUnusedEvidence();
+    await retireUnusedEvidence(checkBudget);
     marks = await BlobMarks.create(checkpointFiles.directory);
-    for await (const value of referenceSources()) await marks.mark(value);
+    for await (const value of referenceSources(checkBudget)) { checkBudget(); await marks.mark(value); }
     marks.seal();
     let removed = 0,
       visited = 0;
     const directory = path.join(checkpointFiles.directory, "blobs");
     for await (const prefix of entries(directory)) {
+      if (performance.now() >= deadline) return removed;
       if (prefix.isFile() && /^\.pending-[0-9a-f-]{36}$/.test(prefix.name)) {
         await fs.unlink(path.join(directory, prefix.name));
         removed++;
@@ -162,6 +170,7 @@ export async function pruneCheckpointBlobs(): Promise<number> {
         info = await fs.lstat(folder);
       if (!info.isDirectory() || info.isSymbolicLink()) continue;
       for await (const entry of entries(folder)) {
+        if (performance.now() >= deadline) return removed;
         if (++visited % 128 === 0) await yieldNow();
         if (!entry.isFile() || entry.isSymbolicLink()) continue;
         const temporary = /^[a-f0-9]{62}\.[0-9a-f-]{36}\.tmp$/.test(entry.name);
@@ -176,6 +185,9 @@ export async function pruneCheckpointBlobs(): Promise<number> {
       }
     }
     return removed;
+  } catch (error) {
+    if ((error as { code?: string }).code === "SNAPSHOT_MAINTENANCE_YIELD") return 0;
+    throw error;
   } finally {
     try {
       await marks?.close();

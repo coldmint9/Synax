@@ -32,6 +32,8 @@ import {
 import { RuntimeRecordCodec } from "./record-codec.js";
 
 export interface RecordPageOptions {
+  reverse?: boolean;
+  preview?: boolean;
   scope?: { field: string; value: string };
   limit?: number;
   maxBytes?: number;
@@ -276,6 +278,10 @@ export class RuntimeVersionRepository {
       this.tree.get(this.table(this.roots(sessionId).roots, table).ids, id),
     );
   }
+  previewRecord(sessionId: string, table: string, id: string): Record<string, unknown> | undefined {
+    const ref = this.recordReference(sessionId, table, id);
+    return ref ? this.records.preview(ref) : undefined;
+  }
   get(sessionId: string, table: string, id: string, budget = PAGE_BYTES) {
     return readVersionSnapshot(this.objects.db, () =>
       this.getSnapshot(sessionId, table, id, budget),
@@ -439,6 +445,10 @@ export class RuntimeVersionRepository {
         "VERSION_PAGE_BUDGET",
         "Invalid runtime page limit/budget.",
       );
+    const state = this.table(roots, table);
+    const orderRoot = options.scope
+      ? (this.tree.get(roots.stateRoot, scopeKey(table, options.scope.field, options.scope.value)) ?? null)
+      : state.order;
     let after: string | undefined;
     if (options.cursor) {
       if (options.cursor.length > 2048) stale();
@@ -447,8 +457,10 @@ export class RuntimeVersionRepository {
           Buffer.from(options.cursor, "base64url").toString(),
         );
         if (
-          cursor.version !== head.versionId ||
+          cursor.version !== orderRoot ||
+          cursor.epoch !== head.epoch ||
           cursor.table !== table ||
+          Boolean(cursor.reverse) !== Boolean(options.reverse) ||
           JSON.stringify(cursor.scope ?? null) !==
             JSON.stringify(options.scope ?? null) ||
           typeof cursor.after !== "string"
@@ -459,23 +471,18 @@ export class RuntimeVersionRepository {
         stale();
       }
     }
-    const state = this.table(roots, table),
-      page = this.tree.page(
-        options.scope
-          ? (this.tree.get(
-              roots.stateRoot,
-              scopeKey(table, options.scope.field, options.scope.value),
-            ) ?? null)
-          : state.order,
-        { after, limit },
-      ),
-      items: Record<string, unknown>[] = [];
+    const page = this.tree.page(orderRoot, { after, limit, reverse: options.reverse });
+    const items: Record<string, unknown>[] = [];
     let bytes = 512,
       last = after;
     for (const entry of page.entries) {
       let item: Record<string, unknown>;
       try {
-        item = this.records.read(entry.value, maxBytes - bytes, options.fields);
+        item = options.preview
+          ? this.records.preview(entry.value, options.fields)
+          : this.records.read(entry.value, maxBytes - bytes, options.fields);
+        if (Buffer.byteLength(JSON.stringify(item)) + bytes + 1 > maxBytes)
+          throw new VersionStoreError("VERSION_RECORD_BUDGET", "Page preview budget exceeded.");
       } catch (error) {
         if (
           items.length &&
@@ -496,9 +503,11 @@ export class RuntimeVersionRepository {
         ? {
             next: Buffer.from(
               JSON.stringify({
-                version: head.versionId,
+                version: orderRoot,
+                epoch: head.epoch,
                 table,
                 scope: options.scope,
+                reverse: options.reverse,
                 after: last,
               }),
             ).toString("base64url"),
@@ -506,6 +515,21 @@ export class RuntimeVersionRepository {
         : {}),
       revision: head.revision,
     };
+  }
+  /** Boundary map is updated only at checkpoint capture, not on every delta or
+   * tool write. It is a branch-specific epoch -> audit sequence upper bound. */
+  runtimeVisibility(sessionId: string, epoch: number): number | undefined {
+    const { head, roots } = this.roots(sessionId);
+    if (epoch === head.epoch) return Number.MAX_SAFE_INTEGER;
+    const ref = this.tree.get(roots.aggregateRoot, orderKey(epoch));
+    return ref ? Number(JSON.parse(this.objects.get(ref, "record").bytes.toString()).through) : undefined;
+  }
+  runtimeEpochs(sessionId: string): { epoch: number; through: number }[] {
+    const { head, roots } = this.roots(sessionId);
+    return [{ epoch: head.epoch, through: Number.MAX_SAFE_INTEGER },
+      ...this.tree.page(roots.aggregateRoot, { reverse: true, limit: 128 }).entries.map(entry => ({
+        epoch: Number(entry.key), through: Number(JSON.parse(this.objects.get(entry.value, "record").bytes.toString()).through),
+      })).filter(entry => entry.epoch !== head.epoch)];
   }
   capture(
     sessionId: string,
@@ -516,7 +540,15 @@ export class RuntimeVersionRepository {
     omitRunId?: string,
   ): RuntimeCheckpoint {
     return atomicVersionWrite(this.objects.db, () => {
-      const { head, roots } = this.roots(sessionId);
+      const previous = this.checkpointIndex.findExisting(sessionId, kind, messageId);
+      if (previous) return previous;
+      let { head, roots } = this.roots(sessionId);
+      const mode = this.objects.db.prepare("SELECT boundary_only,runtime_sequence FROM conversation_v3_heads WHERE session_id=?").get(sessionId) as { boundary_only: number; runtime_sequence: number };
+      if (mode.boundary_only) {
+        const record = this.objects.put("record", Buffer.from(JSON.stringify({ through: mode.runtime_sequence })));
+        roots.aggregateRoot = this.tree.update(roots.aggregateRoot, [{ key: orderKey(head.epoch), value: record }]);
+        head = this.publish(sessionId, head, roots);
+      }
       return this.checkpointIndex.capture({
         sessionId,
         kind,
@@ -536,7 +568,7 @@ export class RuntimeVersionRepository {
   }
   checkpoints(
     sessionId: string,
-    options: { after?: string; limit?: number } = {},
+    options: { after?: string; limit?: number; reverse?: boolean } = {},
   ): { items: RuntimeCheckpoint[]; next?: string } {
     return readVersionSnapshot(this.objects.db, () =>
       this.checkpointIndex.page(sessionId, options),

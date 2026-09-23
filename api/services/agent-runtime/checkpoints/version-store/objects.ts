@@ -38,7 +38,7 @@ export class VersionObjects {
   private readonly remove;
   private readonly release;
 
-  constructor(readonly db: Database.Database, budget: ObjectBudget) {
+  constructor(readonly db: Database.Database, budget: ObjectBudget, private readonly beforeGrow?: (bytes: number) => void) {
     for (const value of [budget.maxBytes, budget.maxObjects]) {
       if (!Number.isSafeInteger(value) || value < 1)
         throw new VersionStoreError("VERSION_BUDGET_INVALID", "Object budget must be a positive safe integer.");
@@ -84,6 +84,7 @@ export class VersionObjects {
     return atomicVersionWrite(this.db, () => {
       const binary = hashBytes(hash);
       if (this.exists.get({ hash: binary })) return hash;
+      this.beforeGrow?.(cost);
       if (cost > this.budget.maxBytes || !this.reserve.run(
         cost, this.budget.maxBytes - cost, this.budget.maxObjects,
       ).changes)

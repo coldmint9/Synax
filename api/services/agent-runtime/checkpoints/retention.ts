@@ -1,3 +1,4 @@
+import { startVersionHistoryMaintenance } from "./version-runtime/maintenance.js";
 import { setImmediate as yieldNow } from "node:timers/promises";
 import { recoverOrphanedCheckpointWriters } from "./mutations.js";
 import { logger } from "../../../lib/logger.js";
@@ -69,13 +70,12 @@ function expireOwner(now: number, sessionId?: string): number {
       count += Number(
         db
           .prepare(
-            "UPDATE conversation_mutations SET state='expired',changes_json='[]',warning='File undo expired after 24 hours without an active visit.' WHERE owner_session_id=? AND sequence<=? AND state NOT IN ('open','expired','reverted')",
+            "UPDATE conversation_mutations SET state='expired',changes_json='[]',warning='File undo expired after 24 hours without an active visit.' WHERE sequence IN (SELECT sequence FROM conversation_mutations WHERE owner_session_id=? AND sequence<=? AND state NOT IN ('open','expired','reverted') ORDER BY sequence LIMIT 64)",
           )
           .run(id, cutoff).changes,
       );
-      db.prepare(
-        "UPDATE conversation_history_access SET expire_through=0 WHERE session_id=?",
-      ).run(id);
+      if (!db.prepare("SELECT 1 FROM conversation_mutations WHERE owner_session_id=? AND sequence<=? AND state NOT IN ('open','expired','reverted') LIMIT 1").get(id, cutoff))
+        db.prepare("UPDATE conversation_history_access SET expire_through=0 WHERE session_id=?").run(id);
     }
     return count;
   })();
@@ -116,21 +116,28 @@ export function visitConversation(sessionId: string, now = Date.now()): void {
 let timer: ReturnType<typeof setInterval> | undefined;
 export function startFileUndoRetention(): () => void {
   if (timer) return () => {};
+  const stopVersions = startVersionHistoryMaintenance();
+  let sweeping = false;
   const sweep = () => {
+    if (sweeping) return;
+    sweeping = true;
     try {
       recoverOrphanedCheckpointWriters();
     } catch (error) {
       logger.warn({ error }, "file undo cleanup failed");
+      sweeping = false;
       return;
     }
     void import("./gc.js")
       .then((m) => m.pruneCheckpointBlobs())
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { sweeping = false; });
   };
   sweep();
   timer = setInterval(sweep, 60_000);
   timer.unref?.();
   return () => {
+    stopVersions();
     if (timer) clearInterval(timer);
     timer = undefined;
   };

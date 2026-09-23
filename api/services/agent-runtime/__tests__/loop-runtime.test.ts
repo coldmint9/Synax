@@ -472,7 +472,8 @@ describe("agentLoopRuntime", () => {
     }
   });
 
-  it("executes Native turns on versioned history and continues on the retained branch after rollback", async () => {
+  it.each(["full", "boundary"])("executes Native turns on versioned history and continues on the retained branch after rollback (%s)", async (mode) => {
+    vi.stubEnv("SYNAX_VERSION_HISTORY", mode === "full" ? "legacy" : "boundary");
     const { initializeVersionNative } =
       await import("../checkpoints/version-runtime/bridge.js");
     const { getRawSqlite } = await import("../../../db/index.js");
@@ -485,7 +486,7 @@ describe("agentLoopRuntime", () => {
     });
     agentRuntimeStore.updateSession(session.id, { status: "completed" });
     try {
-      initializeVersionNative(
+      if (mode === "full") initializeVersionNative(
         agentRuntimeStore.getSession(session.id),
         agentRuntimeStore.listEvents(session.id),
         session.contextSnapshotId
@@ -544,6 +545,7 @@ describe("agentLoopRuntime", () => {
       expect(agentRuntimeStore.listRuns(session.id)).toHaveLength(2);
     } finally {
       clearVersionSessionFixture(session.id);
+      vi.unstubAllEnvs();
     }
   });
 

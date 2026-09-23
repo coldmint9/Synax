@@ -1,3 +1,4 @@
+import { reserveExternalBytes } from "./checkpoints/resource-admission.js";
 import { versionedSession } from "./checkpoints/version-runtime/bridge.js";
 import {
   bindVersionAssets,
@@ -249,12 +250,14 @@ export async function createAsset(
     sha256,
     createdAt: new Date().toISOString(),
   };
-  await fsp.mkdir(root(), { recursive: true, mode: 0o700 });
+  const release = await reserveExternalBytes(root(), bytes.length);
+  let committed = false;
+  try {
+    await fsp.mkdir(root(), { recursive: true, mode: 0o700 });
   await fsp.writeFile(path.join(root(), asset.id), bytes, {
     flag: "wx",
     mode: 0o600,
   });
-  try {
     getRawSqlite()
       .prepare(
         "INSERT INTO agent_runtime_assets (id,project_id,filename,media_type,size,sha256,created_at) VALUES (?,?,?,?,?,?,?)",
@@ -268,10 +271,11 @@ export async function createAsset(
         asset.sha256,
         asset.createdAt,
       );
+    committed = true;
   } catch (e) {
-    await fsp.unlink(path.join(root(), asset.id));
+    await fsp.unlink(path.join(root(), asset.id)).catch(() => {});
     throw e;
-  }
+  } finally { release(committed); }
   return asset;
 }
 export function validateAssets(

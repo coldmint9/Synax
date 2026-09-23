@@ -78,10 +78,18 @@ export const UserMessageBlock = memo(function UserMessageBlock({
           />
           <MediaParts parts={contentParts?.filter((p) => p.type !== "text")} />
           <div className="message-inline-editor-footer">
-            <span className="message-inline-editor-hint">
-              {zh
-                ? "重新发送会截断此处之后的对话"
-                : "Resending replaces the conversation from here"}
+            <span
+              className={
+                history?.error
+                  ? "message-inline-editor-hint text-danger"
+                  : "message-inline-editor-hint"
+              }
+              role={history?.error ? "alert" : undefined}
+            >
+              {history?.error ||
+                (zh
+                  ? "重新发送会截断此处之后的对话；不会自动修改工作区文件"
+                  : "Resending replaces the conversation from here; workspace files are not changed automatically")}
             </span>
             <Button
               size="sm"

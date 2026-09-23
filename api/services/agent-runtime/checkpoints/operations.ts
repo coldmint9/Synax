@@ -93,6 +93,14 @@ function supported(sessionId: string): void {
     );
 }
 function assertCheckpoint(checkpoint: ConversationCheckpoint): void {
+  // Legacy compatibility must not reintroduce the original event-loop stall.
+  // Check bounded identities only; never load the undo bodies before admission.
+  const ids = checkpoint.payload.boundary?.sessionIds ?? [checkpoint.sessionId];
+  if (ids.length > 64) throw historyError("Legacy history exceeds the bounded rollback budget. Upgrade the inactive conversation first.", "HISTORY_MIGRATION_REQUIRED");
+  if (ids.length && getRawSqlite().prepare(`SELECT 1 FROM conversation_history_journal WHERE session_id IN (${ids.map(() => "?").join(",")}) AND sequence>? LIMIT 1 OFFSET 1024`)
+      .get(...ids, checkpoint.payload.boundary?.cursor ?? 0))
+    throw historyError("Legacy rollback would replay too many undo records. Stop the conversation and use Upgrade history; its current messages will be preserved.", "HISTORY_MIGRATION_REQUIRED");
+
   if (
     checkpoint.payload.version !== 2 ||
     !checkpoint.payload.boundary ||
@@ -109,7 +117,7 @@ export function checkpointSummary(sessionId: string) {
   if (versionedSession(sessionId)) {
     const repo = versionRepository(),
       head = repo.head(sessionId),
-      page = repo.checkpoints(sessionId);
+      page = repo.checkpoints(sessionId, { limit: 128, reverse: true });
     let reason: string | null = null;
     try {
       supported(sessionId);

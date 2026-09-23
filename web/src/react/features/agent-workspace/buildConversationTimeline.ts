@@ -151,6 +151,7 @@ function userTimelineEntry(
 export function buildUserMessageEntries(
   messages: AgentRuntimeMessage[],
   session?: AgentSession,
+  includeInitialPrompt = true,
 ): UserMessageTimelineEntry[] {
   const fromMessages = messages
     .filter(isTimelineUserMessage)
@@ -159,6 +160,7 @@ export function buildUserMessageEntries(
 
   const userInput = extractSessionUserInput(session);
   if (!userInput || !session) return fromMessages;
+  if (!includeInitialPrompt) return fromMessages;
 
   const alreadyShown = fromMessages.some(
     (entry) => entry.content.trim() === userInput,
@@ -512,6 +514,7 @@ export function buildConversationTimeline(
     excludeStepId?: string | null;
     session?: AgentSession;
     foldWorkRuns?: boolean;
+    includeInitialPrompt?: boolean;
     interactions?: AgentInteraction[];
   },
 ): ConversationTimelineEntry[] {
@@ -536,7 +539,7 @@ export function buildConversationTimeline(
     messages,
     childSessions,
   ).filter((turn) => !failedStepIds.has(turn.stepId) || turn.blocks.length > 0);
-  const userEntries = buildUserMessageEntries(messages, options?.session);
+  const userEntries = buildUserMessageEntries(messages, options?.session, options?.includeInitialPrompt);
 
   const items = buildTimelineItems(filteredSteps, agentTurns, userEntries);
   // Completed replies with no surviving step still belong to their message, not a synthetic artifact event.

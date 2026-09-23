@@ -51,17 +51,28 @@ export function createLoopHistoryReader(
     memoized.set(key, value);
     return value;
   };
+  let remainingBytes = 2 * 1024 * 1024;
+  const bounded = <T>(rows: T[]): T[] => {
+    const selected: T[] = [];
+    for (let i = rows.length - 1; i >= 0 && selected.length < 128; i--) {
+      const bytes = JSON.stringify(rows[i]).length * 2;
+      if (bytes > remainingBytes) break;
+      remainingBytes -= bytes;
+      selected.push(rows[i]);
+    }
+    return selected.reverse();
+  };
   return {
-    listMessages: () => (messages ??= store.listMessages(sessionId)),
-    listRuns: () => (runs ??= store.listRuns(sessionId)),
+    listMessages: () => (messages ??= bounded(store.listRecentMessages(sessionId))),
+    listRuns: () => (runs ??= bounded(store.listRuns(sessionId).slice(0, 32))),
     listRunSteps: (runId) => {
       const cached = stepsByRun.get(runId);
       if (cached) return cached;
-      const steps = store.listRunSteps(runId);
+      const steps = bounded(store.listRunSteps(runId));
       stepsByRun.set(runId, steps);
       return steps;
     },
-    listToolCalls: () => (toolCalls ??= store.listToolCalls(sessionId)),
+    listToolCalls: () => (toolCalls ??= bounded(store.listRecentToolCalls(sessionId))),
     listRunToolCalls: (runId) => {
       const cached = callsByRun?.get(runId);
       if (cached) return cached;
@@ -69,7 +80,7 @@ export function createLoopHistoryReader(
       // rescanning it per run.
       if (!callsByRun) {
         callsByRun = new Map();
-        for (const call of (toolCalls ??= store.listToolCalls(sessionId))) {
+        for (const call of (toolCalls ??= bounded(store.listRecentToolCalls(sessionId)))) {
           if (!call.runId) continue;
           const grouped = callsByRun.get(call.runId);
           if (grouped) grouped.push(call);
@@ -83,7 +94,7 @@ export function createLoopHistoryReader(
     listRunParts: (stepId) => {
       const cached = partsByStep.get(stepId);
       if (cached) return cached;
-      const parts = store.listRunParts(stepId);
+      const parts = bounded(store.listRunParts(stepId));
       partsByStep.set(stepId, parts);
       return parts;
     },

@@ -1,3 +1,4 @@
+import type { HistoryWindowState } from "../../../../lib/api/agentRuntime";
 import type { RuntimeContentPart } from "../../../../lib/api/runtimeMedia";
 import type { TurnReference } from "../../../../lib/api/agentRuntime";
 import type { BackendId } from "../../../../lib/api/agentRuntime";
@@ -181,6 +182,7 @@ export interface SessionDetailCacheEntry {
   sessionTodos: TodoItem[];
   sessionInvocationUsage: SessionInvocationUsageResponse | null;
   cachedAt: number;
+  historyWindow?: HistoryWindowState;
 }
 
 let activeSessionsRefresh: {
@@ -207,13 +209,29 @@ let interactionRefreshVersion = 0;
 function trimSessionDetailCache(
   cache: Record<string, SessionDetailCacheEntry>,
 ): Record<string, SessionDetailCacheEntry> {
-  const keys = Object.keys(cache);
-  if (keys.length <= SESSION_DETAIL_CACHE_LIMIT) return cache;
-  const drop = keys
-    .sort((a, b) => cache[a].cachedAt - cache[b].cachedAt)
-    .slice(0, keys.length - SESSION_DETAIL_CACHE_LIMIT);
-  const next = { ...cache };
-  for (const key of drop) delete next[key];
+  // Account UTF-16 retained payload without allocating JSON copies. Shared
+  // objects may be over-counted across entries: conservative is preferable.
+  const measure = (value: unknown, budget: number, seen = new WeakSet<object>()): number => {
+    if (typeof value === "string") return value.length * 2 + 16;
+    if (!value || typeof value !== "object") return 16;
+    if (seen.has(value)) return 0;
+    seen.add(value);
+    let bytes = 32;
+    for (const key in value) {
+      bytes += key.length * 2 + measure((value as Record<string, unknown>)[key], budget - bytes, seen);
+      if (bytes > budget) break;
+    }
+    return bytes;
+  };
+  const next: Record<string, SessionDetailCacheEntry> = {};
+  let remaining = 16 * 1024 * 1024;
+  for (const key of Object.keys(cache).reverse().sort((a, b) => cache[b].cachedAt - cache[a].cachedAt)) {
+    if (Object.keys(next).length >= SESSION_DETAIL_CACHE_LIMIT) break;
+    const size = measure(cache[key], remaining);
+    if (size > remaining) continue;
+    next[key] = cache[key];
+    remaining -= size;
+  }
   return next;
 }
 
@@ -396,7 +414,7 @@ function clearInvocationUsageRefresh(): void {
 
 function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
   const index = items.findIndex((item) => item.id === next.id);
-  if (index === -1) return [...items, next];
+  if (index === -1) return [...items, next].slice(-128);
   if (items[index] === next) return items;
   const replaced = [...items];
   replaced[index] = next;
@@ -408,6 +426,7 @@ function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
 // behind a tool or disappears when a fast model starts its next step.
 const STREAM_FLUSH_MS = 32;
 let deltaBuffer: Array<{ type: "text" | "thinking"; delta: string }> = [];
+let bufferedDeltaChars = 0;
 let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 function flushStreamingDeltas(): void {
@@ -416,6 +435,7 @@ function flushStreamingDeltas(): void {
   if (deltaBuffer.length === 0) return;
   const pending = deltaBuffer;
   deltaBuffer = [];
+  bufferedDeltaChars = 0;
   useAgentSessionStore.setState((state) => {
     let streamingLive = state.streamingLive;
     for (const item of pending) {
@@ -430,9 +450,12 @@ function flushStreamingDeltas(): void {
 
 function bufferStreamingDelta(type: "text" | "thinking", delta: string): void {
   if (!delta) return;
+  delta = delta.slice(0, 64 * 1024);
+  bufferedDeltaChars += delta.length;
   const last = deltaBuffer[deltaBuffer.length - 1];
   if (last?.type === type) last.delta += delta;
   else deltaBuffer.push({ type, delta });
+  if (bufferedDeltaChars >= 64 * 1024 || deltaBuffer.length >= 64) flushStreamingDeltas();
   // Timers also work when an Electron window is hidden; no parallel rAF and
   // interval loops, artificial typewriter backlog, or permanently idle timers.
   if (deltaFlushTimer === null)
@@ -509,6 +532,7 @@ export interface AgentSessionStoreState {
   ) => void;
   openPanel: (sessionId: string) => void;
   closePanel: () => void;
+  navigateHistory: (cursor?: string) => Promise<void>;
   refreshDetail: (options?: { joinPending?: boolean }) => Promise<void>;
   fetchChildSessions: (parentId: string) => Promise<void>;
   resumeSession: (sessionId: string, message?: string) => Promise<void>;
@@ -1136,6 +1160,32 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
      * was committed in a single batch, so one slow query (the event log can take
      * seconds on long runs) froze the whole side panel.
      */
+    navigateHistory: async (cursor) => {
+      const sessionId = get().selectedSessionId;
+      if (!sessionId) return;
+      const epoch = ++detailRefreshEpoch;
+      set({ detailLoading: true });
+      try {
+        const window = await agentRuntimeApi.historyWindow(sessionId, cursor).catch(error => {
+          if ((error as { code?: string }).code !== "HISTORY_STALE") throw error;
+          return agentRuntimeApi.historyWindow(sessionId);
+        });
+        if (get().selectedSessionId !== sessionId || detailRefreshEpoch !== epoch) return;
+        const entry: SessionDetailCacheEntry = {
+          ...window, sessionStats: get().sessionStats, sessionTodos: get().sessionTodos,
+          sessionInvocationUsage: get().sessionInvocationUsage, cachedAt: Date.now(),
+        };
+        set(state => ({
+          runs: entry.runs, steps: entry.steps, events: entry.events, messages: entry.messages,
+          toolCalls: entry.toolCalls, permissions: entry.permissions,
+          detailLoading: false, detailError: null,
+          sessionDetailCache: trimSessionDetailCache({ ...state.sessionDetailCache, [sessionId]: entry }),
+        }));
+      } catch (error) {
+        if (get().selectedSessionId === sessionId && detailRefreshEpoch === epoch)
+          set({ detailLoading: false, detailError: String(error) });
+      }
+    },
     refreshDetail: async (options) => {
       const targetSessionId = get().selectedSessionId;
       const targetProjectId = get().projectId;
@@ -1175,7 +1225,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               detailRefreshEpoch === epoch &&
               !refresh.again;
             const cachedEntry = get().sessionDetailCache[targetSessionId];
-            const knownEventId = cachedEntry?.events?.length
+            const versioned = get().sessions.find(session => session.id === targetSessionId)?.sessionMetadata?.historyStorage === 3;
+            const knownEventId = !versioned && cachedEntry?.events?.length
               ? cachedEntry.events[cachedEntry.events.length - 1].id
               : undefined;
 
@@ -1262,10 +1313,21 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               "waiting_input",
             ].includes(polledStatus ?? "");
             const toolCallsSource =
-              sessionActive && cachedEntry?.cachedAt
+              versioned ? Promise.resolve({ items: [] }) : sessionActive && cachedEntry?.cachedAt
                 ? Promise.resolve({ items: get().toolCalls })
                 : agentRuntimeApi.listToolCalls(targetSessionId);
-            const transcriptTask = Promise.all([
+            const transcriptSource = versioned
+              ? agentRuntimeApi.historyWindow(targetSessionId, cachedEntry?.historyWindow?.cursor)
+                  .catch(error => {
+                    if ((error as { code?: string }).code !== "HISTORY_STALE") throw error;
+                    return agentRuntimeApi.historyWindow(targetSessionId);
+                  })
+                  .then(window => [
+                    { items: window.steps }, { items: window.runs }, { items: window.events },
+                    { items: window.messages, historyWindow: window.historyWindow },
+                    { items: window.toolCalls }, { items: window.permissions },
+                  ] as const)
+              : Promise.all([
               // Steps and their messages must become visible together. A
               // completed step alone would hide its still-visible live answer.
               agentRuntimeApi.listSessionSteps(targetSessionId),
@@ -1274,7 +1336,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               agentRuntimeApi.listMessages(targetSessionId),
               toolCallsSource,
               agentRuntimeApi.listPermissions(targetSessionId),
-            ])
+            ]);
+            const transcriptTask = transcriptSource
               .then(
                 ([
                   stepsRes,
@@ -1287,7 +1350,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                   if (!isCurrent()) return;
                   const events =
                     knownEventId && cachedEntry
-                      ? [...cachedEntry.events, ...eventsRes.items]
+                      ? [...cachedEntry.events, ...eventsRes.items].slice(-256)
                       : eventsRes.items;
                   // A response requested before completion may lack the final
                   // message. Only a refresh started after completion can retire
@@ -1314,6 +1377,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     sessionTodos: get().sessionTodos,
                     sessionInvocationUsage: get().sessionInvocationUsage,
                     cachedAt: Date.now(),
+                    historyWindow: "historyWindow" in messagesRes ? messagesRes.historyWindow : undefined,
                   };
 
                   set((s) => ({
@@ -1671,7 +1735,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             streamingRetry: null,
             streamingStepId: event.stepId,
             streamingLive: EMPTY_STREAMING_BUFFERS,
-            streamingCompletedSteps: completedSteps,
+            streamingCompletedSteps: completedSteps.slice(-8),
             ...(event.step ? { steps: upsertById(s.steps, event.step) } : {}),
           });
           break;

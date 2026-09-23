@@ -1,5 +1,6 @@
 import { activeWorkspaceSessions, openWriterRoots } from "./lock-pages.js";
 import {
+  boundaryOnlySession,
   versionRepository,
   versionedSession,
 } from "./version-runtime/bridge.js";
@@ -74,6 +75,9 @@ export function assertHistoryUnlocked(
   rootsOverride?: string[],
 ): void {
   const db = getRawSqlite();
+  if (db.prepare("SELECT 1 FROM conversation_v3_migrations WHERE session_id=? AND state='copying'").get(sessionId))
+    throw historyError("History upgrade is in progress. Resume the upgrade before running or editing.", "HISTORY_MIGRATION_BUSY");
+
   if (
     db
       .prepare(
@@ -113,7 +117,7 @@ export function assertHistoryIdle(sessionId: string): void {
       session.sessionMetadata?.runtimeControl ||
       db
         .prepare(
-          "SELECT id FROM agent_runtime_runs WHERE session_id=? AND (status IN ('queued','running') OR json_extract(metadata_json,'$.executionLease.closed')=0)",
+          `SELECT id FROM agent_runtime_runs WHERE session_id=? ${boundaryOnlySession(session.id) ? "AND version_epoch=(SELECT epoch FROM conversation_v3_heads WHERE session_id=agent_runtime_runs.session_id)" : ""} AND (status IN ('queued','running') OR json_extract(metadata_json,'$.executionLease.closed')=0) LIMIT 1`,
         )
         .get(session.id)
     )
