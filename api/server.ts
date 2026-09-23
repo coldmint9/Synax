@@ -50,6 +50,7 @@ import { registerSessionTitleHooks } from "./services/agent-runtime/session-titl
 import { wikiWriteQueue } from "./services/wiki/wiki-write-queue-service.js";
 import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
 import { startPermissionTimeoutSweeper } from "./services/agent-runtime/permission-timeout-sweeper.js";
+import { startSessionArchiveRetention } from "./services/agent-runtime/session-archive-retention.js";
 import { closeAllBrowserSessions } from "./services/agent-runtime/tools/browser/browser-manager.js";
 
 export const app = new Hono();
@@ -136,6 +137,7 @@ let closeTerminalSockets: (() => void) | undefined;
 let shuttingDown = false;
 
 let stopFileUndoRetention = () => {};
+let stopSessionArchiveRetention = () => {};
 async function startRuntime(): Promise<void> {
   const recovery = await recoverRuntime(runtimeHost.hostId);
   if (recovery.reviewed)
@@ -191,6 +193,7 @@ async function startRuntime(): Promise<void> {
 
   startPermissionTimeoutSweeper();
   stopFileUndoRetention = startFileUndoRetention();
+  stopSessionArchiveRetention = startSessionArchiveRetention();
   startInteractionRecovery();
 
   if (!shuttingDown) startServer(recovery.resumable);
@@ -221,6 +224,7 @@ function startServer(resumable: string[]): void {
 
 async function shutdownRuntime(): Promise<void> {
   stopFileUndoRetention();
+  stopSessionArchiveRetention();
   if (shuttingDown) return;
   shuttingDown = true;
   closeTerminalSockets?.();

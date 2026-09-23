@@ -137,7 +137,7 @@ async function* observeBackgroundRun(
 }
 
 export function recoverAnsweredInteractions(): void {
-  const rows = getRawSqlite().prepare("SELECT DISTINCT i.session_id FROM agent_runtime_interactions i JOIN agent_runtime_sessions s ON s.id=i.session_id WHERE i.consumed_at IS NULL AND i.response_json IS NOT NULL AND s.status='waiting_input' LIMIT 100").all() as Array<{session_id:string}>;
+  const rows = getRawSqlite().prepare("SELECT DISTINCT i.session_id FROM agent_runtime_interactions i JOIN agent_runtime_sessions s ON s.id=i.session_id WHERE i.consumed_at IS NULL AND i.response_json IS NOT NULL AND s.archived_at IS NULL AND s.status='waiting_input' LIMIT 100").all() as Array<{session_id:string}>;
   for(const row of rows)if(interactionService.ready(row.session_id))resumeAgentSessionInBackground(row.session_id);
 }
 export function startInteractionRecovery(): () => void {

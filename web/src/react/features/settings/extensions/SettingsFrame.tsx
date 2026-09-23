@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
-import { Compass, Plug, Settings2, Sparkles, Wrench } from 'lucide-react'
+import { Archive, Compass, Plug, Settings2, Sparkles, Wrench } from 'lucide-react'
 import { useExtensionCopy } from './extension-copy'
 import type { ExtensionKind } from '../../../../lib/api/extensions'
 import './extensions.css'
-export type SettingsSection = 'general' | ExtensionKind | 'market'
+export type SettingsSection = 'general' | 'archive' | ExtensionKind | 'market'
 export function SettingsFrame({
   section,
   onSelect,
@@ -31,6 +31,17 @@ export function SettingsFrame({
           <Settings2 size={16} />
           {projectMode ? copy.project : copy.general}
         </button>
+        {!projectMode && (
+          <button
+            type="button"
+            className={section === 'archive' ? 'is-selected' : ''}
+            aria-current={section === 'archive' ? 'page' : undefined}
+            onClick={() => onSelect('archive')}
+          >
+            <Archive size={16} />
+            {copy.archive}
+          </button>
+        )}
         <p className="extension-nav-group">{copy.extensions}</p>
         {(
           [

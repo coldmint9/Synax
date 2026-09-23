@@ -132,6 +132,7 @@ export interface GlobalConfig {
   providerConnections: Record<string, ProviderConnection>;
   mcpServers: McpServerConfig[];
   webSearch: WebSearchConfig;
+  sessionArchiveRetentionDays?: number | null;
   limits: {
     maxAgentsPerProject: number;
     agentTimeoutMs: number;
@@ -179,6 +180,7 @@ export interface UpdateGlobalConfigRequest {
   providerConnections?: Record<string, ProviderConnection>;
   mcpServers?: McpServerConfig[];
   webSearch?: WebSearchConfig;
+  sessionArchiveRetentionDays?: number | null;
   limits?: GlobalConfig["limits"];
   features?: GlobalConfig["features"];
 }

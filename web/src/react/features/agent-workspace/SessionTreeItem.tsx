@@ -116,7 +116,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
       } },
       ...(onDelete ? [
         { type: "separator" } as const,
-        { type: "action", id: "delete", label: t("sessionDelete"), danger: true, restoreFocus: false, run: () => onDelete(session.id) } as const,
+        { type: "action", id: "archive", label: t("sessionDelete"), restoreFocus: false, run: () => onDelete(session.id) } as const,
       ] : []),
     ],
   }));

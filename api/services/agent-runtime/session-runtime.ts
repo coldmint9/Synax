@@ -369,6 +369,12 @@ export class AgentSessionRuntime {
     void sessionHooks.emit({ type: "session:deleted", sessionId });
     return this.store.deleteSessionTree(sessionId);
   }
+
+  archive(sessionId: string) {
+    assertHistoryUnlocked(sessionId);
+    void sessionHooks.emit({ type: "session:deleted", sessionId });
+    return this.store.archiveSessionTree(sessionId);
+  }
 }
 
 export const agentSessionRuntime = new AgentSessionRuntime();

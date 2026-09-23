@@ -179,6 +179,9 @@ const globalConfigPatchSchema = z
       .max(64)
       .optional(),
     webSearch: webSearchConfigSchema.optional(),
+    sessionArchiveRetentionDays: z
+      .union([z.number().int().min(1).max(3650), z.null()])
+      .optional(),
     limits: z
       .object({
         maxAgentsPerProject: z.number().int().positive(),
@@ -241,6 +244,12 @@ configRoutes.put("/global", async (c) => {
 
   try {
     const config = updateGlobalConfig(parsed, updatedBy);
+    if (parsed.sessionArchiveRetentionDays !== undefined)
+      void import("../services/agent-runtime/session-archive-retention.js")
+        .then(({ runSessionArchiveRetention }) => runSessionArchiveRetention())
+        .catch((error) =>
+          logger.warn({ error }, "[config] archive retention cleanup failed"),
+        );
     logger.info({ updatedBy }, "[config] global config updated");
     return c.json({ config });
   } catch (err) {

@@ -79,6 +79,24 @@ interface SessionRow {
   active_run_id: string | null;
   pending_resume_token: string | null;
   session_metadata_json: string | null;
+  archived_at: string | null;
+  archive_batch_id: string | null;
+}
+
+export interface SessionArchiveBatch {
+  archiveBatchId: string;
+  rootSessionId: string;
+  title: string | null;
+  prompt: string;
+  projectId: string;
+  archivedAt: string;
+  sessionCount: number;
+}
+
+export interface SessionArchiveResult {
+  archiveBatchId: string;
+  archivedAt: string;
+  archivedSessionIds: string[];
 }
 
 interface MessageRow {
@@ -594,7 +612,7 @@ export class AgentRuntimeStore {
   getSession(id: string): AgentSession {
     if (getRawSqlite().prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?").get(id)) throw new AgentNotFoundError(id);
     const row = getRawSqlite()
-      .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ?")
+      .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ? AND archived_at IS NULL")
       .get(id) as SessionRow | undefined;
     if (!row) throw new AgentNotFoundError(id);
     return mapSession(row);
@@ -603,7 +621,7 @@ export class AgentRuntimeStore {
   tryGetSession(id: string): AgentSession | undefined {
     if (getRawSqlite().prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?").get(id)) return undefined;
     const row = getRawSqlite()
-      .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ?")
+      .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ? AND archived_at IS NULL")
       .get(id) as SessionRow | undefined;
     return row ? mapSession(row) : undefined;
   }
@@ -682,7 +700,7 @@ export class AgentRuntimeStore {
     const placeholders = projectIds.map(() => "?").join(",");
     const rows = getRawSqlite()
       .prepare(
-        `SELECT id, project_id, status, updated_at FROM agent_runtime_sessions WHERE project_id IN (${placeholders}) AND NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)`,
+        `SELECT id, project_id, status, updated_at FROM agent_runtime_sessions WHERE archived_at IS NULL AND project_id IN (${placeholders}) AND NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)`,
       )
       .all(...projectIds) as Array<{
       id: string;
@@ -710,7 +728,7 @@ export class AgentRuntimeStore {
     } = {},
   ): AgentSession[] {
     const db = getRawSqlite();
-    const conditions: string[] = ["NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)"];
+    const conditions: string[] = ["archived_at IS NULL", "NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)"];
     const params: string[] = [];
     // Truthiness matches the previous `!filter.x || ...` JS guards, which also
     // skipped empty-string filters.
@@ -763,7 +781,7 @@ export class AgentRuntimeStore {
     countByStatus: Record<string, number>;
   } {
     const db = getRawSqlite();
-    const conditions: string[] = ["NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)"];
+    const conditions: string[] = ["archived_at IS NULL", "NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)"];
     const baseParams: string[] = [];
     if (filter.projectId) {
       conditions.push("project_id = ?");
@@ -832,7 +850,7 @@ export class AgentRuntimeStore {
       .prepare(
         `${SESSION_TREE_CTE}
          SELECT s.* FROM session_tree t CROSS JOIN agent_runtime_sessions s
-         WHERE s.id = t.id
+         WHERE s.id = t.id AND s.archived_at IS NULL
          ORDER BY s.updated_at DESC`,
       )
       .all(sessionId) as SessionRow[];
@@ -871,13 +889,166 @@ export class AgentRuntimeStore {
     return ordered;
   }
 
-  deleteSessionTree(sessionId: string): string[] {
-    const session = this.getSession(sessionId);
+  archiveSessionTree(sessionId: string): SessionArchiveResult {
+    const root = this.getSession(sessionId);
+    const db = getRawSqlite();
+    const rows = db
+      .prepare(
+        `${SESSION_TREE_CTE}
+         SELECT s.* FROM session_tree t CROSS JOIN agent_runtime_sessions s
+         WHERE s.id = t.id
+         ORDER BY s.updated_at DESC`,
+      )
+      .all(sessionId) as SessionRow[];
+    if (!rows.length) throw new AgentNotFoundError(sessionId);
+
+    const archivedAt = nowIso();
+    const archivedSessionIds = rows.map((row) => row.id);
+    db.transaction(() => {
+      const archive = db.prepare(
+        "UPDATE agent_runtime_sessions SET archived_at = ?, archive_batch_id = ? WHERE id = ?",
+      );
+      for (const id of archivedSessionIds) archive.run(archivedAt, root.id, id);
+    })();
+    for (const id of archivedSessionIds)
+      emitRuntimeBusEvent({ type: "session_deleted", sessionId: id });
+    return { archiveBatchId: root.id, archivedAt, archivedSessionIds };
+  }
+
+  listArchivedBatches(
+    filter: { projectId?: string; query?: string } = {},
+    page: { limit: number; offset: number } = { limit: 50, offset: 0 },
+  ): { items: SessionArchiveBatch[]; totalCount: number } {
+    const conditions = [
+      "root.archived_at IS NOT NULL",
+      "root.id = root.archive_batch_id",
+      "NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id = root.id)",
+    ];
+    const params: Array<string | number> = [];
+    if (filter.projectId) {
+      conditions.push("root.project_id = ?");
+      params.push(filter.projectId);
+    }
+    const query = filter.query?.trim();
+    if (query) {
+      conditions.push(
+        "(instr(lower(coalesce(root.title, '')), lower(?)) > 0 OR instr(lower(root.prompt), lower(?)) > 0)",
+      );
+      params.push(query, query);
+    }
+    const where = conditions.join(" AND ");
+    const db = getRawSqlite();
+    const totalCount = (
+      db
+        .prepare(`SELECT COUNT(*) AS count FROM agent_runtime_sessions root WHERE ${where}`)
+        .get(...params) as { count: number }
+    ).count;
+    const limit = Math.max(1, Math.min(100, Math.trunc(page.limit)));
+    const offset = Math.max(0, Math.trunc(page.offset));
+    const rows = db
+      .prepare(
+        `SELECT root.archive_batch_id, root.id, root.title, root.prompt,
+                root.project_id, root.archived_at, COUNT(member.id) AS session_count
+           FROM agent_runtime_sessions root
+           JOIN agent_runtime_sessions member
+             ON member.archive_batch_id = root.archive_batch_id
+          WHERE ${where}
+          GROUP BY root.archive_batch_id, root.id, root.title, root.prompt,
+                   root.project_id, root.archived_at
+          ORDER BY root.archived_at DESC, root.id
+          LIMIT ? OFFSET ?`,
+      )
+      .all(...params, limit, offset) as Array<{
+      archive_batch_id: string;
+      id: string;
+      title: string | null;
+      prompt: string;
+      project_id: string;
+      archived_at: string;
+      session_count: number;
+    }>;
+    return {
+      items: rows.map((row) => ({
+        archiveBatchId: row.archive_batch_id,
+        rootSessionId: row.id,
+        title: row.title,
+        prompt: row.prompt,
+        projectId: row.project_id,
+        archivedAt: row.archived_at,
+        sessionCount: row.session_count,
+      })),
+      totalCount,
+    };
+  }
+
+  restoreArchivedBatch(batchId: string): string[] {
+    const db = getRawSqlite();
+    const rows = db
+      .prepare(
+        `SELECT id FROM agent_runtime_sessions
+          WHERE archive_batch_id = ? AND archived_at IS NOT NULL
+            AND NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id = agent_runtime_sessions.id)
+          ORDER BY id`,
+      )
+      .all(batchId) as Array<{ id: string }>;
+    if (!rows.some((row) => row.id === batchId))
+      throw new AgentNotFoundError(batchId);
+    const restoredAt = nowIso();
+    db.prepare(
+      `UPDATE agent_runtime_sessions
+          SET archived_at = NULL, archive_batch_id = NULL, updated_at = ?
+        WHERE archive_batch_id = ? AND archived_at IS NOT NULL`,
+    ).run(restoredAt, batchId);
+    return rows.map((row) => row.id);
+  }
+
+  listExpiredArchiveBatchIds(cutoff: string): string[] {
+    return (
+      getRawSqlite()
+        .prepare(
+          `SELECT id FROM agent_runtime_sessions
+            WHERE id = archive_batch_id AND archived_at IS NOT NULL AND archived_at <= ?
+              AND NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id = agent_runtime_sessions.id)
+            ORDER BY archived_at, id`,
+        )
+        .all(cutoff) as Array<{ id: string }>
+    ).map((row) => row.id);
+  }
+
+  deleteArchivedBatch(batchId: string): string[] {
+    const row = getRawSqlite()
+      .prepare(
+        `SELECT 1 FROM agent_runtime_sessions
+          WHERE id = ? AND archive_batch_id = ? AND archived_at IS NOT NULL`,
+      )
+      .get(batchId, batchId);
+    if (!row) throw new AgentNotFoundError(batchId);
+    return this.deleteSessionTree(batchId, batchId);
+  }
+
+  deleteSessionTree(sessionId: string, archivedBatchId?: string): string[] {
+    const session = archivedBatchId
+      ? mapSession(
+          getRawSqlite()
+            .prepare(
+              "SELECT * FROM agent_runtime_sessions WHERE id = ? AND archive_batch_id = ? AND archived_at IS NOT NULL",
+            )
+            .get(sessionId, archivedBatchId) as SessionRow,
+        )
+      : this.getSession(sessionId);
     if (!session.parentSessionId && !session.childSessionIds.length) {
       queueHistoryDeletion(sessionId);
       return [sessionId];
     }
-    const sessionsToDelete = this.listSessionTree(sessionId);
+    const sessionsToDelete = archivedBatchId
+      ? (
+          getRawSqlite()
+            .prepare(
+              "SELECT * FROM agent_runtime_sessions WHERE archive_batch_id = ? AND archived_at IS NOT NULL ORDER BY updated_at DESC",
+            )
+            .all(archivedBatchId) as SessionRow[]
+        ).map(mapSession)
+      : this.listSessionTree(sessionId);
     const deleteIds = sessionsToDelete.map((session) => session.id);
     const deleteSet = new Set(deleteIds);
     const contextBundleIds = new Set(
@@ -1143,6 +1314,7 @@ export class AgentRuntimeStore {
   }
 
   listMessages(sessionId: string): AgentRuntimeMessage[] {
+    this.getSession(sessionId);
     if (versionedSession(sessionId))
       return versionedList<AgentRuntimeMessage>(sessionId, "messages");
     const rows = getRawSqlite()
@@ -1233,6 +1405,7 @@ export class AgentRuntimeStore {
   }
 
   listEvents(sessionId: string, after?: string): RuntimeEvent[] {
+    this.getSession(sessionId);
     if (boundaryOnlySession(sessionId)) {
       const items = diagnosticPage(sessionId, "events", { limit: 64, preview: true }).items as unknown as RuntimeEvent[];
       return after ? items.slice(Math.max(0, items.findIndex(item => item.id === after) + 1)) : items;
@@ -1379,6 +1552,7 @@ export class AgentRuntimeStore {
   }
 
   listRuns(sessionId: string): AgentRun[] {
+    this.getSession(sessionId);
     if (versionedSession(sessionId))
       return listVersionEntities<AgentRun>(sessionId, "runs").sort(
         (a, b) =>
@@ -1608,6 +1782,7 @@ export class AgentRuntimeStore {
   }
 
   listToolCalls(sessionId: string): ToolCallRecord[] {
+    this.getSession(sessionId);
     if (versionedSession(sessionId))
       return listVersionEntities<ToolCallRecord>(sessionId, "tools");
     const rows = getRawSqlite()
@@ -1688,6 +1863,7 @@ export class AgentRuntimeStore {
   }
 
   listPermissions(sessionId: string): PermissionDecision[] {
+    this.getSession(sessionId);
     if (versionedSession(sessionId))
       return listVersionEntities<PermissionDecision>(sessionId, "permissions");
     const rows = getRawSqlite()
@@ -1747,6 +1923,7 @@ export class AgentRuntimeStore {
   }
 
   listArtifacts(sessionId: string): EvidenceArtifact[] {
+    this.getSession(sessionId);
     if (versionedSession(sessionId))
       return listVersionEntities<EvidenceArtifact>(sessionId, "artifacts");
     const rows = getRawSqlite()

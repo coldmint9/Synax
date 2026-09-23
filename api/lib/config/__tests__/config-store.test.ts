@@ -31,6 +31,15 @@ afterEach(async () => {
 });
 
 describe("config-store migration and overrides", () => {
+  it("defaults archive cleanup to seven days and preserves custom or disabled values", async () => {
+    const { getGlobalConfig, updateGlobalConfig } = await import("../config-store.js");
+    expect(getGlobalConfig().sessionArchiveRetentionDays).toBe(7);
+    updateGlobalConfig({ sessionArchiveRetentionDays: 30 }, "tester");
+    expect(getGlobalConfig().sessionArchiveRetentionDays).toBe(30);
+    updateGlobalConfig({ sessionArchiveRetentionDays: null }, "tester");
+    expect(getGlobalConfig().sessionArchiveRetentionDays).toBeNull();
+  });
+
   it("encrypts web-search API and OAuth secrets while exposing masks to settings", async () => {
     const { getGlobalConfig, getGlobalConfigForRuntime, updateGlobalConfig } =
       await import("../config-store.js");

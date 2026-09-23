@@ -1,4 +1,4 @@
-import { ArrowLeft, PanelLeftClose, Search, Trash2, SquarePen } from "lucide-react";
+import { Archive, ArrowLeft, PanelLeftClose, Search, SquarePen } from "lucide-react";
 import { Button } from "@heroui/react";
 import { useLocale } from "../../../hooks/useLocale";
 import type { SessionListView } from "./sessionBuckets";
@@ -90,11 +90,11 @@ export function SessionListHeader({
             isIconOnly
             variant="ghost"
             size="sm"
-            className="h-7 w-7 min-w-0 text-muted-foreground hover:text-danger"
+            className="h-7 w-7 min-w-0 text-muted-foreground hover:text-foreground"
             onPress={onClearInactive}
             aria-label={t("sessionClearInactive")}
           >
-            <Trash2 size={14} />
+            <Archive size={14} />
           </Button>
         </div>
       </div>

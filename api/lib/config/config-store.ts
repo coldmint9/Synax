@@ -624,6 +624,7 @@ function mergeGlobalConfigLayers(
       global.webSearch ?? template.webSearch,
       includeSecrets,
     ),
+    sessionArchiveRetentionDays: global.sessionArchiveRetentionDays,
     limits: global.limits ?? template.limits,
     features: global.features ?? template.features,
     updatedAt: latest.updatedAt,
@@ -689,6 +690,7 @@ function applyGlobalConfigPatch(
     patch.wikiModel !== undefined ||
     patch.inputOptimizationModel !== undefined ||
     patch.terminalShellPath !== undefined ||
+    patch.sessionArchiveRetentionDays !== undefined ||
     Boolean(patch.defaultProviderId) ||
     Boolean(patch.defaultApiProviderId) ||
     Boolean(patch.enabledAcpProviderIds) ||
@@ -745,6 +747,10 @@ function applyGlobalConfigPatch(
     webSearch: patch.webSearch
       ? mergeWebSearchConfig(current.webSearch, patch.webSearch)
       : current.webSearch,
+    sessionArchiveRetentionDays:
+      patch.sessionArchiveRetentionDays !== undefined
+        ? patch.sessionArchiveRetentionDays
+        : current.sessionArchiveRetentionDays,
     limits: patch.limits
       ? { ...current.limits, ...patch.limits }
       : current.limits,

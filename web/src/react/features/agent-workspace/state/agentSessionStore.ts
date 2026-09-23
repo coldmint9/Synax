@@ -1006,7 +1006,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       markRuntimeResourcePendingRemoval(sessionId);
       let deletedSessionIds: string[];
       try {
-        ({ deletedSessionIds } =
+        ({ archivedSessionIds: deletedSessionIds } =
           await agentRuntimeApi.deleteSession(sessionId));
       } catch (err) {
         clearRuntimeResourcePendingRemoval(sessionId);

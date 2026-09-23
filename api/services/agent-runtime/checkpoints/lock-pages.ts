@@ -6,7 +6,7 @@ import { historyError } from "./guards.js";
 export function* activeWorkspaceSessions(): Generator<string> {
   const db = getRawSqlite(),
     query = db.prepare(
-      "SELECT id FROM agent_runtime_sessions s WHERE id>? AND (status IN ('running','queued','stopping','waiting_permission','waiting_input') OR EXISTS(SELECT 1 FROM agent_runtime_processes p WHERE p.session_id=s.id AND p.state<>'closed')) ORDER BY id LIMIT 64",
+      "SELECT id FROM agent_runtime_sessions s WHERE id>? AND archived_at IS NULL AND (status IN ('running','queued','stopping','waiting_permission','waiting_input') OR EXISTS(SELECT 1 FROM agent_runtime_processes p WHERE p.session_id=s.id AND p.state<>'closed')) ORDER BY id LIMIT 64",
     );
   let after = "";
   for (;;) {

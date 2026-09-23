@@ -86,12 +86,14 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
       </div>
     );
   }
+  const extensionSection =
+    section === "general" || section === "archive" ? null : section;
 
   return (
     <ScrollShadow className="settings-scroll-viewport">
       <div className="settings-scroll-content">
         <SettingsFrame section={section} onSelect={select} projectId={projectId} projectMode>
-          {section !== "general" ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <>
+          {extensionSection ? <ExtensionCenter key={`${projectId}:${extensionSection}`} projectId={projectId} section={extensionSection} onNavigate={select} /> : <>
           <div className="flex items-start justify-between gap-3 mb-8">
             <div>
               <Typography type="h5">{t("settingsProjectTitle")}</Typography>

@@ -38,7 +38,7 @@ export function recentWorkspaceReadPaths(roots: string[]): string[] {
            s.project_id, s.session_metadata_json
     FROM agent_runtime_tool_calls t
     JOIN agent_runtime_sessions s ON s.id = t.session_id
-    WHERE t.status = 'completed' AND (
+    WHERE s.archived_at IS NULL AND t.status = 'completed' AND (
       t.tool_id = 'file.read' OR lower(t.tool_id) GLOB '*.read'
       OR lower(t.tool_id) GLOB '*read_file' OR lower(t.tool_id) GLOB '*read_text_file'
       OR t.tool_id = 'bash' OR lower(t.tool_id) GLOB '*.bash'

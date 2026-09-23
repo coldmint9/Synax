@@ -91,6 +91,7 @@ import { ensureSessionTitleGenerated } from "../services/agent-runtime/session-t
 import { runtimeBus } from "../services/agent-runtime/runtime-bus.js";
 import { sessionLiveBus } from "../services/agent-runtime/session-live-bus.js";
 import { logger } from "../lib/logger.js";
+import { getGlobalConfig } from "../lib/config/config-store.js";
 import { SseEventType } from "../lib/sse-events.js";
 import { assertLlmProviderConfigured } from "../services/llm-runtime/provider-check.js";
 import {
@@ -157,7 +158,17 @@ agentRuntimeRoutes.delete("/projects/:projectId/tool-grants/:toolId", (c) => {
 for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
   agentRuntimeRoutes.use(route, async (c, next) => {
     const id = c.req.param("sessionId");
-    if (id && getRawSqlite().prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?").get(id))
+    if (
+      id &&
+      (getRawSqlite()
+        .prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?")
+        .get(id) ||
+        getRawSqlite()
+          .prepare(
+            "SELECT 1 FROM agent_runtime_sessions WHERE id=? AND archived_at IS NOT NULL",
+          )
+          .get(id))
+    )
       return c.json({ error: "Session has been deleted.", code: "NOT_FOUND" }, 404);
     await next();
   });
@@ -185,22 +196,26 @@ function runtimeError(c: Context, error: unknown) {
   );
 }
 
-async function deleteSessionAfterShutdown(
+async function archiveSessionAfterShutdown(
   sessionId: string,
   expectedRunId?: string,
-): Promise<{ deletedSessionIds: string[]; parentId: string | null }> {
+): Promise<{
+  archiveBatchId: string;
+  archivedAt: string;
+  archivedSessionIds: string[];
+  parentId: string | null;
+}> {
   const parentId = agentRuntimeStore.getSession(sessionId).parentSessionId;
   const sessionIds = agentSessionRuntime
     .listSessionTree(sessionId)
     .map((session) => session.id);
 
-  // Deletion is a lifecycle operation, not just a history mutation. Stop the
+  // Archiving is a lifecycle operation, not just a visibility mutation. Stop the
   // active runtime, ACP sessions, and every owned background process first;
-  // then mark the whole subtree stopped so history deletion guards can never
-  // turn cleanup into a manual recovery task for the user.
+  // then mark the whole subtree stopped before hiding it.
   await runCoordinator.interrupt(
     sessionId,
-    "Session deleted by user.",
+    "Session archived by user.",
     undefined,
     expectedRunId,
   );
@@ -208,8 +223,7 @@ async function deleteSessionAfterShutdown(
   await stopSessionBackgroundProcesses(sessionIds);
   agentSessionRuntime.cancel(sessionId);
 
-  const deletedSessionIds = agentSessionRuntime.delete(sessionId);
-  return { deletedSessionIds, parentId };
+  return { ...agentSessionRuntime.archive(sessionId), parentId };
 }
 
 const inputOptimizationSchema = z.object({
@@ -505,6 +519,70 @@ agentRuntimeRoutes.get("/sessions/:sessionId", (c) => {
   }
 });
 
+const listArchivesQuerySchema = z.object({
+  projectId: z.string().trim().min(1).max(256).optional(),
+  q: z.string().trim().max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+agentRuntimeRoutes.get("/session-archives", (c) => {
+  const parsed = listArchivesQuerySchema.safeParse(
+    Object.fromEntries(new URL(c.req.url).searchParams),
+  );
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const { projectId, q, limit, offset } = parsed.data;
+    const result = agentRuntimeStore.listArchivedBatches(
+      { projectId, query: q },
+      { limit, offset },
+    );
+    const configuredRetentionDays =
+      getGlobalConfig().sessionArchiveRetentionDays;
+    const retentionDays =
+      configuredRetentionDays === undefined ? 7 : configuredRetentionDays;
+    return c.json({
+      ...result,
+      items: result.items.map((item) => ({
+        ...item,
+        scheduledDeletionAt:
+          retentionDays === null
+            ? null
+            : new Date(
+                Date.parse(item.archivedAt) + retentionDays * 86_400_000,
+              ).toISOString(),
+      })),
+    });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/session-archives/:batchId/restore", (c) => {
+  try {
+    return c.json({
+      ok: true,
+      restoredSessionIds: agentRuntimeStore.restoreArchivedBatch(
+        c.req.param("batchId"),
+      ),
+    });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.delete("/session-archives/:batchId", (c) => {
+  try {
+    const deletedSessionIds = agentRuntimeStore.deleteArchivedBatch(
+      c.req.param("batchId"),
+    );
+    for (const id of deletedSessionIds) invalidateSessionEnvironment(id);
+    return c.json({ ok: true, deletedSessionIds });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 async function readControl(c: Context) {
   try {
     const text = await c.req.text();
@@ -519,6 +597,7 @@ async function readControl(c: Context) {
 agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
   try {
     const id = c.req.param("sessionId");
+    if (!id) throw new AgentValidationError("Session id is required.");
     const parentId = agentRuntimeStore.getSession(id).parentSessionId;
     const control = await readControl(c);
     await runCoordinator.interrupt(
@@ -538,24 +617,35 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
   }
 });
 
-agentRuntimeRoutes.delete("/sessions/:sessionId", async (c) => {
+async function archiveSessionRoute(c: Context) {
   try {
     const id = c.req.param("sessionId");
+    if (!id) throw new AgentValidationError("Session id is required.");
     const control = await readControl(c);
-    const { deletedSessionIds, parentId } = await deleteSessionAfterShutdown(
+    const result = await archiveSessionAfterShutdown(
       id,
       control.runId,
     );
-    for (const deletedId of deletedSessionIds)
-      invalidateSessionEnvironment(deletedId);
-    if (parentId) invalidateSessionEnvironment(parentId);
-    return c.json({ ok: true, deletedSessionIds });
+    for (const archivedId of result.archivedSessionIds)
+      invalidateSessionEnvironment(archivedId);
+    if (result.parentId) invalidateSessionEnvironment(result.parentId);
+    return c.json({
+      ok: true,
+      ...result,
+      ...(c.req.method === "DELETE"
+        ? { deletedSessionIds: result.archivedSessionIds }
+        : {}),
+    });
   } catch (error) {
     return runtimeError(c, error);
   }
-});
+}
 
-agentRuntimeRoutes.post("/sessions/clear-inactive", async (c) => {
+agentRuntimeRoutes.post("/sessions/:sessionId/archive", archiveSessionRoute);
+// Compatibility: old clients must archive, never physically delete.
+agentRuntimeRoutes.delete("/sessions/:sessionId", archiveSessionRoute);
+
+async function archiveInactiveSessionsRoute(c: Context) {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
   const parsed = clearInactiveSessionsBodySchema.safeParse(body.data);
@@ -574,20 +664,20 @@ agentRuntimeRoutes.post("/sessions/clear-inactive", async (c) => {
       projectId,
       limit: Number.MAX_SAFE_INTEGER,
     });
-    const toDelete = allSessions.filter(
+    const toArchive = allSessions.filter(
       (s) =>
         !keep.has(s.status) &&
         !s.sessionMetadata?.runtimeControl &&
         !runCoordinator.isActive(s.id),
     );
 
-    const toDeleteIds = new Set(toDelete.map((s) => s.id));
-    // Only delete roots (sessions whose parent is not also being deleted)
-    const roots = toDelete.filter(
-      (s) => !s.parentSessionId || !toDeleteIds.has(s.parentSessionId),
+    const toArchiveIds = new Set(toArchive.map((s) => s.id));
+    const roots = toArchive.filter(
+      (s) => !s.parentSessionId || !toArchiveIds.has(s.parentSessionId),
     );
 
-    const deletedIds: string[] = [];
+    const archivedIds: string[] = [];
+    let archivedBatchCount = 0;
     for (const root of roots) {
       const currentTree = agentSessionRuntime.listSessionTree(root.id);
       if (
@@ -599,22 +689,27 @@ agentRuntimeRoutes.post("/sessions/clear-inactive", async (c) => {
         )
       )
         continue;
-      const deleted = await deleteSessionAfterShutdown(root.id);
-      deletedIds.push(...deleted.deletedSessionIds);
-      for (const deletedId of deleted.deletedSessionIds)
-        invalidateSessionEnvironment(deletedId);
-      if (deleted.parentId) invalidateSessionEnvironment(deleted.parentId);
+      const archived = await archiveSessionAfterShutdown(root.id);
+      archivedBatchCount += 1;
+      archivedIds.push(...archived.archivedSessionIds);
+      for (const archivedId of archived.archivedSessionIds)
+        invalidateSessionEnvironment(archivedId);
+      if (archived.parentId) invalidateSessionEnvironment(archived.parentId);
     }
 
     return c.json({
       ok: true,
-      deletedCount: deletedIds.length,
-      deletedSessionIds: deletedIds,
+      archivedBatchCount,
+      archivedCount: archivedIds.length,
+      archivedSessionIds: archivedIds,
     });
   } catch (error) {
     return runtimeError(c, error);
   }
-});
+}
+
+agentRuntimeRoutes.post("/sessions/archive-inactive", archiveInactiveSessionsRoute);
+agentRuntimeRoutes.post("/sessions/clear-inactive", archiveInactiveSessionsRoute);
 
 agentRuntimeRoutes.post("/sessions/:sessionId/history/upgrade", async (c) => {
   try {
