@@ -16,6 +16,8 @@ const render: typeof testingRender = (ui, options) => testingRender(ui, {
   ...options,
 });
 import { agentRuntimeApi, type SessionEnvironment } from "../../../../lib/api/agentRuntime";
+import { configApi } from "../../../../lib/api/config";
+import { useShellStore } from "../../../state/shellStore";
 import { WorkspaceDashboard } from "../WorkspaceDashboard";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
@@ -120,7 +122,14 @@ describe("WorkspaceDashboard", () => {
     });
   });
 
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, editor: "system" },
+    }));
+  });
 
   it("divides the snapshot into one card per component group", () => {
     const { container } = renderDashboard();
@@ -253,6 +262,19 @@ describe("WorkspaceDashboard", () => {
         },
       ],
     });
+  });
+
+  it("shows the saved file opener in the file menu and launches the selected app", async () => {
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, editor: "cursor", locale: "zh" },
+    }));
+    const openFile = vi.spyOn(configApi, "openFile").mockResolvedValue();
+    renderDashboard();
+    fireEvent.contextMenu(screen.getByText("toolDisplay.js"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "用Cursor打开" }));
+    await waitFor(() => expect(openFile).toHaveBeenCalledExactlyOnceWith(
+      `${environment.workspacePath}/src/views/cli_chat/utils/toolDisplay.js`,
+    ));
   });
 
   it("opens diff, file, and subagent tabs from the card rows", () => {
