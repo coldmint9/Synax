@@ -153,12 +153,13 @@ export const configApi = {
     );
   },
 
-  async testMcpServer(config: McpServerConfig): Promise<{
+  async testMcpServer(config: McpServerConfig, projectId?: string): Promise<{
     ok: boolean;
     tools: Array<{ name: string; description?: string }>;
     error?: string;
   }> {
-    const resp = await apiFetch("/api/mcp/test", {
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    const resp = await apiFetch(`/api/mcp/test${query}`, {
       headers: { "Content-Type": "application/json" },
       method: "POST",
       body: JSON.stringify(config),

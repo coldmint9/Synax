@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveWikiAuthoringGuide } from '../wiki-authoring-skill.js';
+import { extensionStore } from '../../extensions/extension-store.js';
 import { WIKI_AUTHORING_BUILTIN_BODY } from '../generated/wiki-authoring-builtin.js';
 
 const tempDirs: string[] = [];
@@ -34,6 +35,12 @@ const VALID_FRONTMATTER = [
 ].join('\n');
 
 describe('resolveWikiAuthoringGuide', () => {
+  it('honors explicit project removal even for deterministically injected builtin skills', () => {
+    extensionStore.setState('wiki-ext-test', 'skill', 'synax-builtin/wiki-authoring', { installed: false, enabled: false });
+    expect(resolveWikiAuthoringGuide({ projectId: 'wiki-ext-test' })).toEqual({ origin: 'disabled', body: '' });
+    extensionStore.setState('wiki-ext-test', 'skill', 'synax-builtin/wiki-authoring', { installed: true, enabled: true });
+    expect(resolveWikiAuthoringGuide({ projectId: 'wiki-ext-test' }).origin).toBe('builtin');
+  });
   it('falls back to the inlined baseline when no override exists', () => {
     const guide = resolveWikiAuthoringGuide({ workDir: makeWorkDir() });
     expect(guide.origin).toBe('builtin');

@@ -77,11 +77,13 @@ describe("discoverLocalMcpServers", () => {
 
     expect(result.scannedFiles).toBe(4);
     expect(result.warnings).toEqual([]);
-    expect(result.servers).toHaveLength(3);
+    expect(result.servers.find(item => item.server.transport === "http")?.server.url).toBe("https://example.test/mcp");
+    expect(result.servers).toHaveLength(4);
     expect(result.servers.map((item) => item.server.name)).toEqual([
       "browser",
       "filesystem",
       "github",
+      "remote-only",
     ]);
     expect(
       result.servers.find((item) => item.server.name === "filesystem")?.sources,

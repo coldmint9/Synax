@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { extensionStore } from '../extensions/extension-store.js';
 import path from 'node:path';
 import type { AgentProfileKind } from '../agent-runtime/contracts.js';
 import { profileService } from '../agent-runtime/profile-service.js';
@@ -99,18 +100,23 @@ function matchesQuery(skill: SkillSummary, query?: string): boolean {
 function applyManagementState(items: SkillSummary[], input: SkillListQuery): SkillSummary[] {
   const installs = skillInstallService.listInstalls();
   const disabledIds = skillPreferences.disabledIds(input.projectId);
-  return items.map((skill) => {
+  return items.flatMap((skill) => {
     const install = installs.find((item) => skill.sourceKind === 'remote'
       ? item.sourceId === skill.sourceId && item.name === skill.name
       : item.installPath === skill.installPath);
     const disabled = install ? install.status === 'disabled' : disabledIds.has(skill.id);
-    return {
+    const previouslyInstalled = skill.sourceKind === 'remote' ? Boolean(install) : Boolean(skill.installed);
+    const projectManaged = Boolean(install && extensionStore.isSkillPackage(install.id));
+    const state = extensionStore.state(input.projectId, 'skill', install?.id ?? skill.id, { installed: previouslyInstalled && !projectManaged, enabled: !disabled });
+    if (previouslyInstalled && !state.installed && !input.includeUnmounted) return [];
+    const summary = {
       ...skill,
-      installed: skill.sourceKind === 'remote' ? Boolean(install) : skill.installed,
+      installed: state.installed,
       installationId: install?.id,
-      status: disabled ? 'disabled' as const : skill.status,
+      status: !state.enabled && previouslyInstalled ? 'disabled' as const : skill.status === 'disabled' && state.enabled ? 'available' as const : skill.status,
     };
-  }).filter((skill) => skill.status !== 'invalid' && (input.includeDisabled || skill.status !== 'disabled'));
+    return summary.status !== 'invalid' && (input.includeDisabled || summary.status !== 'disabled') ? [summary] : [];
+  });
 }
 
 function collectLocalSummaries(input: SkillListQuery = {}, exactId?: string): SkillSummary[] {
@@ -170,6 +176,18 @@ function collectLocalSummaries(input: SkillListQuery = {}, exactId?: string): Sk
     }
   }
 
+  if (input.projectId) {
+    for (const definition of extensionStore.definitions(input.projectId, 'skill')) {
+      if (!definition.skillPath || !fs.existsSync(definition.skillPath)) continue;
+      try {
+        const parsed = parseSkillFile(definition.skillPath);
+        collected.push({ priority: 115, skill: toSummaryFromParsed({ id: 'custom', type: 'local', readOnly: false } as SkillSourceRecord, parsed, {
+          id: definition.id, name: definition.name, label: definition.name, description: definition.description, sourceId: definition.sourceId, version: parsed.version || definition.version || '', installed: true,
+        }) });
+      } catch { /* Broken custom content is not advertised to the agent. */ }
+    }
+  }
+
   for (const install of skillInstallService.listInstalls()) {
     if (!fs.existsSync(install.installPath)) continue;
     try {
@@ -206,8 +224,9 @@ function collectLocalSummaries(input: SkillListQuery = {}, exactId?: string): Sk
   scoped.sort((a, b) => b.priority - a.priority);
   const winners = new Map<string, SkillSummary>();
   for (const entry of scoped) {
-    if (!winners.has(entry.skill.name)) {
-      winners.set(entry.skill.name, entry.skill);
+    const key = input.includeUnmounted ? entry.skill.installPath ?? entry.skill.id : entry.skill.name;
+    if (!winners.has(key)) {
+      winners.set(key, entry.skill);
     }
   }
 
@@ -371,15 +390,15 @@ function findSkillsShSummary(skillId: string): SkillSummary | null {
   };
 }
 
-function findSummary(skillId: string, projectId?: string, includeDisabled = false): SkillSummary {
+function findSummary(skillId: string, projectId?: string, includeDisabled = false, includeUnmounted = false): SkillSummary {
   const skillsSh = findSkillsShSummary(skillId);
   if (skillsSh) {
-    const item = applyManagementState([skillsSh], { projectId, includeDisabled })[0];
+    const item = applyManagementState([skillsSh], { projectId, includeDisabled, includeUnmounted })[0];
     if (!item) throw new AgentNotFoundError(skillId);
     return item;
   }
 
-  const match = collectLocalSummaries({ projectId, includeDisabled }, skillId).find((skill) => skill.id === skillId);
+  const match = collectLocalSummaries({ projectId, includeDisabled, includeUnmounted }, skillId).find((skill) => skill.id === skillId);
   if (!match) throw new AgentNotFoundError(skillId);
   return match;
 }
@@ -393,8 +412,8 @@ export class SkillRegistry {
     return listWithTotal(input);
   }
 
-  getSummary(skillId: string, projectId?: string, includeDisabled = false): SkillSummary {
-    return findSummary(skillId, projectId, includeDisabled);
+  getSummary(skillId: string, projectId?: string, includeDisabled = false, includeUnmounted = false): SkillSummary {
+    return findSummary(skillId, projectId, includeDisabled, includeUnmounted);
   }
 
   setEnabled(skillId: string, enabled: boolean, projectId?: string): SkillSummary {
