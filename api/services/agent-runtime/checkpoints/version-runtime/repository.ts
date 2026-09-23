@@ -421,6 +421,28 @@ export class RuntimeVersionRepository {
       revision: head.revision,
     };
   }
+  /** Complete execution history. Page limits bound each read, never the result.
+   * UI callers use page() instead; execution must never consume a preview. */
+  list(
+    sessionId: string,
+    table: string,
+    scope?: RecordPageOptions["scope"],
+  ): Record<string, unknown>[] {
+    return readVersionSnapshot(this.objects.db, () => {
+      const items: Record<string, unknown>[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = this.pageSnapshot(sessionId, table, {
+          limit: PAGE_ROWS,
+          scope,
+          cursor,
+        });
+        items.push(...page.items);
+        cursor = page.next;
+      } while (cursor);
+      return items;
+    });
+  }
   page(sessionId: string, table: string, options: RecordPageOptions = {}) {
     return readVersionSnapshot(this.objects.db, () =>
       this.pageSnapshot(sessionId, table, options),
@@ -525,11 +547,31 @@ export class RuntimeVersionRepository {
     return ref ? Number(JSON.parse(this.objects.get(ref, "record").bytes.toString()).through) : undefined;
   }
   runtimeEpochs(sessionId: string): { epoch: number; through: number }[] {
-    const { head, roots } = this.roots(sessionId);
-    return [{ epoch: head.epoch, through: Number.MAX_SAFE_INTEGER },
-      ...this.tree.page(roots.aggregateRoot, { reverse: true, limit: 128 }).entries.map(entry => ({
-        epoch: Number(entry.key), through: Number(JSON.parse(this.objects.get(entry.value, "record").bytes.toString()).through),
-      })).filter(entry => entry.epoch !== head.epoch)];
+    return readVersionSnapshot(this.objects.db, () => {
+      const { head, roots } = this.roots(sessionId);
+      const epochs = [{ epoch: head.epoch, through: Number.MAX_SAFE_INTEGER }];
+      let after: string | undefined;
+      do {
+        const page = this.tree.page(roots.aggregateRoot, {
+          reverse: true,
+          limit: PAGE_ROWS,
+          after,
+        });
+        for (const entry of page.entries) {
+          if (Number(entry.key) === head.epoch) continue;
+          epochs.push({
+            epoch: Number(entry.key),
+            through: Number(
+              JSON.parse(
+                this.objects.get(entry.value, "record").bytes.toString(),
+              ).through,
+            ),
+          });
+        }
+        after = page.next;
+      } while (after);
+      return epochs;
+    });
   }
   capture(
     sessionId: string,

@@ -753,7 +753,7 @@ export class AgentLoopRuntime {
           sessionId,
           filterHistoryFileReads(
             sessionId,
-            this.store.listRecentToolCalls(sessionId),
+            this.store.listToolCalls(sessionId),
           ),
         );
 
@@ -846,7 +846,7 @@ export class AgentLoopRuntime {
           }
 
           const history = this.store
-            .listRecentMessages(sessionId)
+            .listMessages(sessionId)
             .filter(
               (message) =>
                 message.role === "user" || message.role === "assistant",
@@ -2105,7 +2105,7 @@ export class AgentLoopRuntime {
     getRawSqlite().transaction(() => {
       workRuntime.persistTerminal(work, run.id);
       message = this.store
-        .listRecentMessages(sessionId)
+        .listMessages(sessionId)
         .find(
           (m) =>
             m.metadata.purpose === "work_result" &&
@@ -2674,9 +2674,6 @@ export class AgentLoopRuntime {
       mode: workflowMode(session),
     });
     const tailReminders = [
-      input.history.some(message => message.metadata.historyWindowTruncated)
-        ? "Earlier conversation is outside the bounded context window. Do not assume it was empty; consult the retained work summary or context references when needed."
-        : "",
       buildRuntimeEnvironment(input.sessionId, session.projectId),
       workRuntime.prompt(input.sessionId) ?? "",
       synaxAgent.buildRuntimeStateSection(session) ?? "",
@@ -2691,7 +2688,7 @@ export class AgentLoopRuntime {
       currentStep.metadata,
       tailReminders,
       this.store
-        .listRecentMessages(input.sessionId)
+        .listMessages(input.sessionId)
         .filter(
           (message) =>
             message.runId === currentStep.runId &&
@@ -2751,7 +2748,7 @@ export class AgentLoopRuntime {
     projection.systemMessageContents.add(reminder.content);
     const compositionSources = {
       systemMessageContents: projection.systemMessageContents,
-      toolCalls: this.store.listRecentToolCalls(input.sessionId),
+      toolCalls: this.store.listToolCalls(input.sessionId),
     };
     if (projection.compacted)
       yield {

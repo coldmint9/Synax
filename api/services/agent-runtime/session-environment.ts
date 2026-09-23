@@ -265,7 +265,7 @@ function readInputSources(
   primaryPath: string,
 ): SessionEnvironmentInputSource[] {
   const sources = new Map<string, SessionEnvironmentInputSource>();
-  for (const call of agentRuntimeStore.listRecentToolCalls(sessionId)) {
+  for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
     if (call.status !== "completed" || call.mutability !== "read") continue;
     const envelope =
       call.inputRef && typeof call.inputRef === "object"
@@ -313,7 +313,7 @@ function readInputSources(
     });
   }
   // Files the user attached to their messages count as input sources too.
-  for (const message of agentRuntimeStore.listRecentMessages(sessionId)) {
+  for (const message of agentRuntimeStore.listMessages(sessionId)) {
     if (message.role !== "user" || !Array.isArray(message.contentParts))
       continue;
     for (const part of message.contentParts) {
@@ -359,7 +359,7 @@ function readAgentEditedPaths(
       /* Ignore paths outside this workspace member. */
     }
   };
-  for (const call of agentRuntimeStore.listRecentToolCalls(sessionId)) {
+  for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
     if (call.status !== "completed") continue;
     const raw = call.inputRef;
     if (!raw || typeof raw !== "object") continue;

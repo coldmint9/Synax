@@ -47,22 +47,22 @@ class WorkRuntime {
       work.result = historicalGoal.reason ?? session.resultSummary ?? 'Previously accepted work.';
       this.syncPlan(work); workStore.save(work);
       for (const previous of store.listRuns(sessionId).filter(r => r.id !== run.id && !r.metadata.workId))
-        store.updateRun(previous.id, { metadata: { ...previous.metadata, workId: work.id } });
+        store.updateRun(previous.id, { metadata: { workId: work.id } });
     }
     if (!work || (TERMINAL.has(work.status) && user && hasContent && !continuing)) {
       if (work && TERMINAL.has(work.status)) {
         store.updateSessionMetadata(sessionId, { plan: null, goal: session.sessionMetadata?.mode === 'goal' ? { objective: text || 'Media input', status: 'planning' } : null });
       }
       const old = store.listRuns(sessionId).some(r => r.id !== run.id);
-      const previousMessages = store.listRecentMessages(sessionId).filter(m => m.role === 'user' && m.metadata.source !== 'system_injection' && !isWorkContinuation(m.content));
+      const previousMessages = store.listMessages(sessionId).filter(m => m.role === 'user' && m.metadata.source !== 'system_injection' && !isWorkContinuation(m.content));
       const savedPlan = session.sessionMetadata?.plan as { objective?: string } | undefined;
-      const lastProposal = old ? store.listRecentToolCalls(sessionId).filter(c => c.toolId === 'plan.propose').at(-1)?.inputRef as { objective?: string } | undefined : undefined;
+      const lastProposal = old ? store.listToolCalls(sessionId).filter(c => c.toolId === 'plan.propose').at(-1)?.inputRef as { objective?: string } | undefined : undefined;
       const objective = continuing ? savedPlan?.objective ?? historicalGoal?.objective ?? lastProposal?.objective ?? previousMessages.at(-1)?.content ?? session.prompt : text || (hasMedia ? 'Media input' : session.prompt);
       work = workStore.create(sessionId, objective, old);
       if (old) work.requirements = previousMessages.map(m => ({ messageId: m.id, text: m.content, ...(m.contentParts ? { contentParts: m.contentParts } : {}) }));
       // Legacy transcripts remain unmodified; binding establishes their provenance, not successful acceptance.
       if (old) for (const r of store.listRuns(sessionId)) {
-        if (!r.metadata.workId) store.updateRun(r.id, { metadata: { ...r.metadata, workId: work.id } });
+        if (!r.metadata.workId) store.updateRun(r.id, { metadata: { workId: work.id } });
       }
     }
     if (trigger && user && hasContent) {
@@ -84,7 +84,7 @@ class WorkRuntime {
       if (work.reason === 'awaiting_input') { work.progressVersion++; work.noProgressSteps = 0; }
     }
     this.syncPlan(work);
-    store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, workId: work.id } });
+    store.updateRun(run.id, { metadata: { workId: work.id } });
     return workStore.save(work);
   }
 

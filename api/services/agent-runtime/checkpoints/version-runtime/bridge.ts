@@ -278,12 +278,5 @@ export function initializeVersionTranscript(
 }
 
 export function versionedList<T>(sessionId: string, table: string): T[] {
-  const result = versionRepository().page(sessionId, table, { limit: 256 });
-  if (result.next)
-    throw new AgentRuntimeError(
-      "History exceeds the bounded compatibility list. Use paginated reads.",
-      "HISTORY_PAGE_REQUIRED",
-      413,
-    );
-  return result.items as T[];
+  return versionRepository().list(sessionId, table) as T[];
 }
