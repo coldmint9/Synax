@@ -7,6 +7,8 @@ import type {
   MergeFileSummary,
   MergePreset,
   MergeProposal,
+  MergeBranchOptions,
+  MergeBranchOptionsInput,
 } from "../../../../api/services/git-mr/contracts";
 export type {
   MergeRequest,
@@ -16,6 +18,8 @@ export type {
   MergeFileSummary,
   MergePreset,
   MergeProposal,
+  MergeBranchOptions,
+  MergeBranchOptionsInput,
   MergeStatus,
   MergeStrategy,
   MergeCheckConfig,
@@ -37,6 +41,15 @@ const json = (body: unknown, method = "POST") => ({
   silent: true,
 });
 export const gitMrApi = {
+  branchOptions: (
+    projectId: string,
+    input: MergeBranchOptionsInput,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<MergeBranchOptions>(`${base(projectId)}/branch-options`, {
+      ...json(input),
+      signal,
+    }),
   list: (projectId: string) =>
     apiRequest<MergeRequest[]>(base(projectId), { silent: true }),
   create: (projectId: string, input: MergeRequestInput) =>
