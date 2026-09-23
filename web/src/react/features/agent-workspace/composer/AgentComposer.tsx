@@ -1,3 +1,4 @@
+import { useInputOptimization } from "./useInputOptimization";
 import { useInputCapability } from "../../media/useInputCapability";
 import {
   MediaAttachButton,
@@ -14,7 +15,14 @@ import {
   type RefObject,
   type KeyboardEvent,
 } from "react";
-import { Square, ArrowUp, Play } from "lucide-react";
+import {
+  Square,
+  ArrowUp,
+  Play,
+  Sparkles,
+  LoaderCircle,
+  Undo2,
+} from "lucide-react";
 import type { ProviderDef } from "../../../../lib/contracts/config";
 import type { GlobalConfig } from "../../../../lib/contracts/config";
 import type { ReasoningEffort } from "../../../../lib/contracts/config";
@@ -27,7 +35,10 @@ import {
   type ComposerReasoningEffort,
 } from "./ComposerEffortPicker";
 import { ComposerPermissionPicker } from "./ComposerPermissionPicker";
-import type { AgentModelSelection } from "./modelSelection";
+import {
+  formatModelReference,
+  type AgentModelSelection,
+} from "./modelSelection";
 import type { SynaxPermissionTier, SynaxWikiAttachMode } from "./composerTypes";
 
 export interface ComposerCommands {
@@ -43,6 +54,7 @@ export interface ComposerCommands {
 }
 
 interface Props {
+  optimizationScope?: string;
   media?: MediaDraft;
   sessionId?: string;
   inputModel?: string;
@@ -90,6 +102,7 @@ interface Props {
 }
 
 export function AgentComposer({
+  optimizationScope,
   commands,
   modelControl,
   backendId,
@@ -146,6 +159,14 @@ export function AgentComposer({
     media,
     globalConfig?.updatedAt,
   );
+  const optimization = useInputOptimization({
+    scope: optimizationScope ?? JSON.stringify([projectId, sessionId ?? null]),
+    projectId,
+    content,
+    model: formatModelReference(providerId, modelId),
+    backendId: backendId ?? "native",
+    onContentChange,
+  });
   const localTextareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = commands?.inputRef ?? localTextareaRef;
   const isComposingRef = useRef(false);
@@ -305,6 +326,54 @@ export function AgentComposer({
     </button>
   );
 
+  const optimizeLabel =
+    locale === "zh" ? "澄清并优化输入" : "Clarify and optimize input";
+  const undoLabel = locale === "zh" ? "撤销优化" : "Undo optimization";
+  const optimizationButtons = (
+    <>
+      {optimization.canUndo && (
+        <button
+          type="button"
+          aria-label={undoLabel}
+          title={undoLabel}
+          onClick={() => {
+            optimization.undo();
+            textareaRef.current?.focus();
+          }}
+          disabled={disabled && !queueWhileGenerating}
+          className="agent-dock-composer-chip inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+        >
+          <Undo2 size={15} />
+        </button>
+      )}
+      <button
+        type="button"
+        aria-label={optimizeLabel}
+        title={
+          optimization.pending
+            ? locale === "zh"
+              ? "正在优化…"
+              : "Optimizing…"
+            : optimizeLabel
+        }
+        aria-busy={optimization.pending}
+        disabled={
+          !content.trim() ||
+          optimization.pending ||
+          Boolean(disabled && !queueWhileGenerating)
+        }
+        onClick={() => void optimization.optimize()}
+        className="agent-dock-composer-chip inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {optimization.pending ? (
+          <LoaderCircle size={15} className="animate-spin" />
+        ) : (
+          <Sparkles size={15} />
+        )}
+      </button>
+    </>
+  );
+
   const toolbar = (
     <>
       <div className="agent-dock-composer-leading contents">
@@ -362,7 +431,10 @@ export function AgentComposer({
           onOverlayOpenChange={onOverlayOpenChange}
         />
       </div>
-      <div className="agent-dock-composer-actions contents">{actionButton}</div>
+      <div className="agent-dock-composer-actions contents">
+        {optimizationButtons}
+        {actionButton}
+      </div>
     </>
   );
 
@@ -533,8 +605,24 @@ export function AgentComposer({
             disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}
           />
+          {optimizationButtons}
           {actionButton}
         </div>
+      )}
+      {optimization.error && (
+        <p role="alert" className="px-3 py-1 text-xs text-danger">
+          {optimization.error}
+        </p>
+      )}
+      {optimization.notice && (
+        <p role="status" className="px-3 py-1 text-xs text-muted-foreground">
+          {optimization.notice}
+        </p>
+      )}
+      {optimization.pending && (
+        <span role="status" className="sr-only">
+          {locale === "zh" ? "正在优化输入…" : "Optimizing input…"}
+        </span>
       )}
       {separateKeyboardHints && (
         <span id={keyboardHintId} className="sr-only">
