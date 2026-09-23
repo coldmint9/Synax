@@ -197,9 +197,10 @@ export function TurnBody({
           role="assistant"
           text={text}
           disabledReason={history?.reason || checkpoint?.reason || undefined}
-          rollbackDisabled={checkpoint ? checkpoint.canRollback === false || !checkpoint.hasLaterHistory : false}
+          forkDisabledReason={history?.forkReason || checkpoint?.reason || null}
+          rollbackDisabled={checkpoint ? checkpoint.canRollback === false || (!checkpoint.hasLaterHistory && !history?.running) : false}
           rollbackDisabledReason={checkpoint?.canRollback === false ? "分叉会话不支持回滚 / Forked conversations are append-only" : undefined}
-          busy={history?.busy || isStreaming || isWorking}
+          busy={history?.busy}
           onFork={
             checkpoint?.available
               ? () => {

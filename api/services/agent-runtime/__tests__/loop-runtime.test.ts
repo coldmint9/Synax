@@ -551,6 +551,7 @@ describe("agentLoopRuntime", () => {
 
   it("continues a shared-worktree fork without creating rollback checkpoints", async () => {
     const { forkSimpleConversation } = await import("../checkpoints/simple-fork.js");
+    const { historyEpoch } = await import("../checkpoints/guards.js");
     const { versionRepository } = await import("../checkpoints/version-runtime/bridge.js");
     const session = agentSessionRuntime.create({ ...executorInput, workDir: process.cwd() });
     let forkId: string | undefined;
@@ -559,7 +560,7 @@ describe("agentLoopRuntime", () => {
       await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Source question" }));
       const repo = versionRepository();
       const cp = repo.checkpoints(session.id).items.find(cp => cp.kind === "reply")!;
-      const result = await forkSimpleConversation(session.id, cp.id, repo.head(session.id).revision, "continue-fork", "reuse_worktree");
+      const result = await forkSimpleConversation(session.id, cp.id, historyEpoch(session.id), "continue-fork", "reuse_worktree");
       forkId = result.sessionId;
       queueMockStep(makeTextStep("Fork answer."));
       const chunks = await collectChunks(agentLoopRuntime.streamRun(forkId, { message: "Continue in the fork" }));

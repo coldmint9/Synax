@@ -29,6 +29,8 @@ import { useAgentSessionStore } from "./state/agentSessionStore";
 
 interface ContextValue {
   reason: string | null;
+  forkReason: string | null;
+  running: boolean;
   busy: boolean;
   error: string | null;
   checkpoint: (
@@ -42,6 +44,12 @@ interface ContextValue {
   ) => Promise<boolean>;
 }
 const HistoryContext = createContext<ContextValue | null>(null);
+const ACTIVE_STATUSES = new Set<AgentSession["status"]>([
+  "running",
+  "queued",
+  "waiting_permission",
+  "waiting_input",
+]);
 export const useSessionHistory = () => useContext(HistoryContext);
 interface Pending {
   action: HistoryAction;
@@ -161,6 +169,25 @@ export function SessionHistoryProvider({
       setPreview(null);
       setError(null);
 
+      const stopIfRunning = async () => {
+        const store = useAgentSessionStore.getState();
+        const current = store.sessions.find((entry) => entry.id === sessionId);
+        if (!ACTIVE_STATUSES.has(current?.status ?? session?.status ?? "completed"))
+          return;
+        await store.cancelSessionRun(sessionId);
+        if (epoch !== requestEpoch.current) return;
+        const updated = await conversationHistoryApi.list(sessionId);
+        if (epoch !== requestEpoch.current) return;
+        setSummary(updated);
+        const selected = updated.checkpoints.find((item) => item.id === checkpoint.id);
+        if (selected && !selected.available)
+          throw new Error(
+            zh
+              ? "检查点已变化，请重新选择消息"
+              : "Checkpoint changed; select the message again.",
+          );
+      };
+
       // Editing an already sent user message is intentionally a one-step,
       // conversation-only operation. The inline editor owns the warning and
       // retry state; file restoration remains opt-in through the full rollback
@@ -168,6 +195,8 @@ export function SessionHistoryProvider({
       if (action === "edit") {
         setExecuting(true);
         try {
+          await stopIfRunning();
+          if (epoch !== requestEpoch.current) return false;
           const value = await conversationHistoryApi.preview(
             sessionId,
             checkpoint.id,
@@ -211,14 +240,23 @@ export function SessionHistoryProvider({
         resolver.current = resolve;
       });
       if (action === "fork") return result;
-      void conversationHistoryApi
-        .preview(sessionId, checkpoint.id, action)
-        .then((value) => {
+      void (async () => {
+        try {
+          setExecuting(true);
+          await stopIfRunning();
+          if (epoch !== requestEpoch.current) return;
+          const value = await conversationHistoryApi.preview(
+            sessionId,
+            checkpoint.id,
+            action,
+          );
           if (epoch === requestEpoch.current) setPreview(value);
-        })
-        .catch((e) => {
+        } catch (e) {
           if (epoch === requestEpoch.current) setError((e as Error).message);
-        });
+        } finally {
+          setExecuting(false);
+        }
+      })();
       return result;
     },
     [sessionId, session, executing, zh, close, refresh],
@@ -297,21 +335,20 @@ export function SessionHistoryProvider({
   const value = useMemo<ContextValue>(
     () => ({
       reason:
-        session &&
-        [
-          "running",
-          "queued",
-          "stopping",
-          "waiting_permission",
-          "waiting_input",
-        ].includes(session.status)
-          ? zh
-            ? "请先停止当前运行及后台写进程"
-            : "Stop the active execution and background writers first"
-          : summary && summary.sessionId === sessionId
-            ? summary.reason
-            : loadError ||
-              (zh ? "正在检查会话边界" : "Checking conversation checkpoints"),
+        summary && summary.sessionId === sessionId
+          ? summary.stopRequired && session && ACTIVE_STATUSES.has(session.status)
+            ? null
+            : summary.reason
+          : loadError ||
+            (zh ? "正在检查会话边界" : "Checking conversation checkpoints"),
+      forkReason:
+        summary && summary.sessionId === sessionId
+          ? summary.forkReason !== undefined
+            ? summary.forkReason
+            : summary.reason
+          : loadError ||
+            (zh ? "正在检查会话边界" : "Checking conversation checkpoints"),
+      running: Boolean(session && ACTIVE_STATUSES.has(session.status)),
       busy: Boolean(pending),
       error,
       request,
@@ -444,8 +481,8 @@ export function SessionHistoryProvider({
               <p>
                 {fork
                   ? zh
-                    ? "复制到选中回复为止的会话历史。请选择工作树方式；新会话不支持回滚或编辑旧消息。"
-                    : "Copy the conversation through this reply. Choose a worktree mode; the new conversation is append-only."
+                    ? "复制到选中回复为止的会话历史，不会停止源会话。请选择工作树方式；新会话不支持回滚或编辑旧消息。"
+                    : "Copy the conversation through this reply without stopping the source. Choose a worktree mode; the new conversation is append-only."
                   : zh
                     ? "后续消息将被裁剪。文件撤销仅针对本会话明确记录、尚未提交且未过期的变更；其他文件不会改动。"
                     : "Later conversation records will be trimmed. File undo only affects this session’s recorded, uncommitted, unexpired changes; unrelated files are preserved."}

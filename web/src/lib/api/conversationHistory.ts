@@ -18,6 +18,8 @@ export interface HistorySummary {
   rollbackEnabled?: boolean;
   recoveryRequired?: boolean;
   reason: string | null;
+  forkReason?: string | null;
+  stopRequired?: boolean;
   checkpoints: MessageCheckpoint[];
 }
 export interface HistoryPreview {

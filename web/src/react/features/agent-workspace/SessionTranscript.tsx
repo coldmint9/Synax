@@ -1,5 +1,6 @@
 import { useLocale } from "../../../hooks/useLocale";
 import { useTranscriptScroll } from "./useTranscriptScroll";
+import { useOlderTranscriptHistory } from "./useOlderTranscriptHistory";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   projectPendingSubmission,
@@ -100,6 +101,8 @@ export function SessionTranscript({
     active && (!loading || showLiveBlock || Boolean(pending)),
   );
 
+  const olderHistory = useOlderTranscriptHistory(scrollRef, sessionId, active);
+
   // Trigger 1: a new submission lands — jump to the bottom and re-pin.
   useLayoutEffect(() => {
     if (pending && active) scrollToBottom(true);
@@ -137,9 +140,22 @@ export function SessionTranscript({
           tabIndex={0}
           aria-label={locale === "zh" ? "对话记录" : "Conversation history"}
           className="session-chat-scroll h-full overflow-y-auto"
-          aria-busy={loading}
+          aria-busy={loading || olderHistory.loading}
         >
           <div className="session-transcript-body">
+            {olderHistory.loading && (
+              <div role="status" className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm">
+                {locale === "zh" ? "正在加载更早消息…" : "Loading earlier messages…"}
+              </div>
+            )}
+            {olderHistory.error && (
+              <div role="alert" className="absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background px-3 py-1 text-xs text-danger shadow-sm">
+                {locale === "zh" ? "加载更早消息失败。" : "Could not load earlier messages."}{" "}
+                <button type="button" className="underline" onClick={() => void olderHistory.retry()}>
+                  {locale === "zh" ? "重试" : "Retry"}
+                </button>
+              </div>
+            )}
             {loading && projected.messages.length === 0 && !showLiveBlock ? (
               <div
                 role="status"

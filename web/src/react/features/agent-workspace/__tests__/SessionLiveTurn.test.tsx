@@ -75,7 +75,7 @@ describe("SessionLiveTurn", () => {
     expect(
       screen.queryByText("bui-tool|bui-activity|StreamingTextBlock"),
     ).toBeNull();
-    expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
     expect(screen.getByRole("status")).toHaveAccessibleName();
   });
 

@@ -29,10 +29,9 @@ import { hashBytes } from "./version-store/hash-codec.js";
 import { getCheckpoint } from "./store.js";
 import {
   activeHistoryOperations,
-  assertHistoryIdle,
   assertHistoryUnlocked,
   historyError,
-  historyRevision,
+  historyEpoch,
   sessionRoots,
 } from "./guards.js";
 import {
@@ -129,9 +128,10 @@ export async function previewSimpleFork(
   mode: ForkWorkspaceMode,
 ) {
   assertHistoryUnlocked(sessionId, []);
-  assertHistoryIdle(sessionId);
   const source = resolveSource(sessionId, checkpointId);
-  const revision = historyRevision(sessionId);
+  // A selected completed reply has a stable snapshot/anchor. New live output
+  // must not invalidate a fork preview for that reply.
+  const revision = historyEpoch(sessionId);
   if (mode === "new_worktree") {
     if (inspecting)
       throw historyError(
@@ -376,8 +376,7 @@ export async function forkSimpleConversation(
   activeHistoryOperations.add(operationId);
   try {
     assertHistoryUnlocked(sessionId, []);
-    assertHistoryIdle(sessionId);
-    if (historyRevision(sessionId) !== revision)
+    if (historyEpoch(sessionId) !== revision)
       throw historyError(
         "Conversation changed. Refresh the preview.",
         "HISTORY_STALE",

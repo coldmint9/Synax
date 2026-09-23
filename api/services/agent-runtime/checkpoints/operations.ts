@@ -114,19 +114,39 @@ function assertCheckpoint(checkpoint: ConversationCheckpoint): void {
     );
 }
 
+function historyAvailability(sessionId: string) {
+  let reason: string | null = null;
+  let forkReason: string | null = null;
+  let stopRequired = false;
+  try {
+    supported(sessionId);
+    assertHistoryUnlocked(sessionId, []);
+  } catch (error) {
+    forkReason = (error as Error).message;
+    reason = forkReason;
+  }
+  if (!reason) {
+    try {
+      // Legacy history mutations inspect workspace locks as well; forking
+      // copies a reply snapshot and does not restore files in the source.
+      if (!versionedSession(sessionId)) assertHistoryUnlocked(sessionId);
+      assertHistoryIdle(sessionId);
+    } catch (error) {
+      reason = (error as Error).message;
+      stopRequired = ["HISTORY_SESSION_BUSY", "HISTORY_PROCESS_ACTIVE"].includes(
+        (error as { code?: string }).code ?? "",
+      );
+    }
+  }
+  return { reason, forkReason, stopRequired };
+}
+
 export function checkpointSummary(sessionId: string) {
   if (versionedSession(sessionId)) {
     const repo = versionRepository(),
       head = repo.head(sessionId),
       page = repo.checkpoints(sessionId, { limit: 128, reverse: true });
-    let reason: string | null = null;
-    try {
-      supported(sessionId);
-      assertHistoryUnlocked(sessionId, []);
-      assertHistoryIdle(sessionId);
-    } catch (error) {
-      reason = (error as Error).message;
-    }
+    const availability = historyAvailability(sessionId);
     return {
       sessionId,
       revision: head.revision,
@@ -137,7 +157,7 @@ export function checkpointSummary(sessionId: string) {
           )
           .get(sessionId),
       ),
-      reason,
+      ...availability,
       rollbackEnabled: !appendOnlySession(sessionId),
       checkpoints: appendOnlySession(sessionId) ? []
         : page.items.map((cp) => ({
@@ -157,14 +177,7 @@ export function checkpointSummary(sessionId: string) {
   }
   const session = agentRuntimeStore.getSession(sessionId);
   recoverOrphanedCheckpointWriters();
-  let reason: string | null = null;
-  try {
-    supported(sessionId);
-    assertHistoryUnlocked(sessionId);
-    assertHistoryIdle(sessionId);
-  } catch (error) {
-    reason = (error as Error).message;
-  }
+  const availability = historyAvailability(sessionId);
   const db = getRawSqlite();
   // Do not materialize every historical transcript/manifest merely to render toolbar capabilities.
   const checkpoints = db
@@ -207,7 +220,7 @@ export function checkpointSummary(sessionId: string) {
         )
         .get(sessionId),
     ),
-    reason,
+    ...availability,
     checkpoints: checkpoints
       .filter((c) => c.messageId && messageIds.has(c.messageId))
       .map((c) => ({

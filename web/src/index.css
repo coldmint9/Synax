@@ -86,7 +86,6 @@
   --animate-ripple-pulse: ripple-pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
   --animate-origin-breathe: origin-breathe 3s ease-in-out infinite;
   --animate-wave-ripple: wave-ripple 1.5s cubic-bezier(0, 0.2, 0.8, 1) forwards;
-  --animate-thinking-bounce: thinking-bounce 0.9s ease-in-out infinite;
   --animate-bot-glow: bot-glow 2s ease-in-out infinite;
 }
 
@@ -304,19 +303,6 @@
     opacity: 0.8;
   }
 }
-@keyframes thinking-dots {
-  0%,
-  20% {
-    content: "·";
-  }
-  40% {
-    content: "··";
-  }
-  60%,
-  100% {
-    content: "···";
-  }
-}
 @keyframes node-shake {
   0%,
   100% {
@@ -416,17 +402,6 @@
     opacity: 0;
   }
   to {
-    opacity: 1;
-  }
-}
-@keyframes thinking-bounce {
-  0%,
-  40% {
-    transform: translateY(0);
-    opacity: 0.3;
-  }
-  20% {
-    transform: translateY(-6px);
     opacity: 1;
   }
 }

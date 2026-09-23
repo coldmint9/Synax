@@ -9,6 +9,7 @@ interface Props {
   role: "user" | "assistant";
   text: string;
   disabledReason?: string | null;
+  forkDisabledReason?: string | null;
   rollbackDisabled?: boolean;
   rollbackDisabledReason?: string;
   busy?: boolean;
@@ -20,6 +21,7 @@ export function MessageActionToolbar({
   role,
   text,
   disabledReason,
+  forkDisabledReason = disabledReason,
   rollbackDisabled,
   rollbackDisabledReason,
   busy,
@@ -105,7 +107,8 @@ export function MessageActionToolbar({
             zh ? "从此处分叉" : "Fork from here",
             <GitFork size={15} />,
             onFork,
-            Boolean(disabledReason || busy || !onFork),
+            Boolean(forkDisabledReason || busy || !onFork),
+            forkDisabledReason || unavailable,
           )}
           {button(
             zh ? "回滚到此处" : "Roll back to here",
