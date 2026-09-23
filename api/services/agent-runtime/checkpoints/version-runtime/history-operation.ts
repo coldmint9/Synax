@@ -15,14 +15,9 @@ import { versionRepository } from "./bridge.js";
 import { VersionHistoryResults } from "./history-results.js";
 import { assertBatchInput } from "./batch-input.js";
 
-/** No file writes here. Restore, input adjustment, admission and the final retry
- * result are atomic; execution is launched only by the caller after commit. */
-export function applyVersionHistory(
-  sessionId: string,
-  request: HistoryRequest,
-): { result: HistoryResult; applied: boolean } {
+export function versionHistoryRequestHash(request: HistoryRequest): string {
   assertBatchInput(request);
-  const hash = createHash("sha256")
+  return createHash("sha256")
     .update(
       JSON.stringify({
         checkpointId: request.checkpointId,
@@ -33,6 +28,15 @@ export function applyVersionHistory(
       }),
     )
     .digest("hex");
+}
+
+/** No file writes here. Restore, input adjustment, admission and the final retry
+ * result are atomic; execution is launched only by the caller after commit. */
+export function applyVersionHistory(
+  sessionId: string,
+  request: HistoryRequest,
+): { result: HistoryResult; applied: boolean } {
+  const hash = versionHistoryRequestHash(request);
   const db = getRawSqlite(),
     cache = new VersionHistoryResults(db),
     repo = versionRepository();
@@ -113,6 +117,9 @@ export function applyVersionHistory(
         input,
       };
     }
+    db.prepare(
+      "UPDATE conversation_mutations SET state='reverted',changes_json='[]' WHERE owner_session_id=? AND sequence>? AND state NOT IN ('reverted','open')",
+    ).run(sessionId, checkpoint.mutationCursor);
     cache.save(sessionId, request.requestId, hash, result);
     return { result, applied: true };
   });

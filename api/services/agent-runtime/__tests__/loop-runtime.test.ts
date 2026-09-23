@@ -647,10 +647,17 @@ describe("agentLoopRuntime", () => {
     const { applyHistory, previewHistory } =
       await import("../checkpoints/operations.js");
     const { getRawSqlite } = await import("../../../db/index.js");
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "synax-edit-files-"),
+    );
+    const file = path.join(directory, "edited.txt");
+    fs.writeFileSync(file, "before edit");
+    const { withCheckpointMutation } =
+      await import("../checkpoints/mutations.js");
     const session = agentSessionRuntime.create({
       ...executorInput,
       prompt: "Original question",
-      workDir: process.cwd(),
+      workDir: directory,
     });
     agentRuntimeStore.updateSession(session.id, { status: "completed" });
     try {
@@ -673,6 +680,12 @@ describe("agentLoopRuntime", () => {
           acceptedRunId: original.run.id,
         }),
       );
+      await withCheckpointMutation(
+        session.id,
+        () => fs.promises.writeFile(file, "original branch write"),
+        false,
+        [file],
+      );
       const checkpoint = listCheckpoints(session.id).find(
         (cp) => cp.kind === "input",
       )!;
@@ -683,7 +696,7 @@ describe("agentLoopRuntime", () => {
         requestId: "edit-v3",
         action: "edit" as const,
         message: "Replacement question",
-        includeFiles: false,
+        includeFiles: true,
       };
       const { VersionResources } =
         await import("../checkpoints/version-store/resources.js");
@@ -710,6 +723,7 @@ describe("agentLoopRuntime", () => {
       resources.setMetadataLimit(budget.limit);
       const edited = await applyHistory(session.id, request);
       expect(edited.runId).toBeTruthy();
+      expect(fs.readFileSync(file, "utf8")).toBe("before edit");
       expect(await applyHistory(session.id, request)).toEqual(edited);
       expect(
         agentRuntimeStore.listRuns(session.id).map((run) => run.id),
@@ -739,6 +753,7 @@ describe("agentLoopRuntime", () => {
       expect(await applyHistory(session.id, request)).toEqual(edited);
     } finally {
       clearVersionSessionFixture(session.id);
+      fs.rmSync(directory, { recursive: true, force: true });
     }
   });
 

@@ -1,3 +1,9 @@
+import {
+  writeFileJournal as writeJournal,
+  FILE_JOURNAL_BYTES,
+  type JournalPayload,
+} from "./file-journal.js";
+import { applyVersionFileHistory } from "./version-runtime/file-operation.js";
 import { applyVersionHistory } from "./version-runtime/history-operation.js";
 import {
   versionRepository,
@@ -73,12 +79,6 @@ interface Mutation {
   uncertain: number;
   state: string;
 }
-interface JournalPayload {
-  changes: FileChange[];
-  ownerPid: number;
-  applied: number;
-  request: HistoryRequest;
-}
 const operationId = (sessionId: string, requestId: string) =>
   `history_${createHash("sha256").update(`${sessionId}:${requestId}`).digest("hex")}`;
 function supported(sessionId: string): void {
@@ -121,7 +121,13 @@ export function checkpointSummary(sessionId: string) {
     return {
       sessionId,
       revision: head.revision,
-      recoveryRequired: false,
+      recoveryRequired: Boolean(
+        getRawSqlite()
+          .prepare(
+            "SELECT id FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required','fork_preparing') LIMIT 1",
+          )
+          .get(sessionId),
+      ),
       reason,
       checkpoints: page.items.map((cp) => ({
         id: cp.id,
@@ -220,14 +226,21 @@ export async function previewHistory(
     assertVersionTranscriptOperation(sessionId, includeFiles);
     assertHistoryUnlocked(sessionId, []);
     assertHistoryIdle(sessionId);
+    const plan = includeFiles
+      ? await planFileUndo(getCheckpoint(sessionId, checkpointId), true)
+      : { changes: [], conflicts: [], warnings: [], preservedFiles: [] };
     return {
       checkpointId,
       ...versionRepository().preview(sessionId, checkpointId),
-      files: [],
-      conflicts: [],
-      canApply: true,
-      warnings: [],
-      preservedFiles: [],
+      files: plan.changes.map((c) => ({
+        root: c.root,
+        path: c.path,
+        action: c.before ? ("restore" as const) : ("delete" as const),
+      })),
+      conflicts: plan.conflicts,
+      canApply: plan.conflicts.length === 0,
+      warnings: plan.warnings,
+      preservedFiles: plan.preservedFiles,
       exclusions: SNAPSHOT_EXCLUSIONS,
     };
   }
@@ -264,17 +277,6 @@ export async function previewHistory(
   };
 }
 
-function writeJournal(
-  id: string,
-  state: string,
-  payload: JournalPayload,
-): void {
-  getRawSqlite()
-    .prepare(
-      "UPDATE conversation_history_operations SET state=?,payload_json=? WHERE id=?",
-    )
-    .run(state, JSON.stringify(payload), id);
-}
 /** Compensate only known before/after versions; never overwrite intervening edits. */
 export async function recoverHistoryOperation(
   sessionId: string,
@@ -284,12 +286,17 @@ export async function recoverHistoryOperation(
   recoverOrphanedCheckpointWriters();
   const operation = db
     .prepare(
-      "SELECT id,state,payload_json FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required','fork_preparing') ORDER BY created_at LIMIT 1",
+      `SELECT id,state,CASE WHEN length(CAST(payload_json AS BLOB))<=${FILE_JOURNAL_BYTES} THEN payload_json ELSE NULL END AS payload_json FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required','fork_preparing') ORDER BY created_at LIMIT 1`,
     )
     .get(sessionId) as
     | { id: string; state: string; payload_json: string }
     | undefined;
   if (!operation) return;
+  if (operation.payload_json === null)
+    throw historyError(
+      "Recovery metadata exceeds its bounded parser budget; explicit migration/recovery is required.",
+      "HISTORY_PLAN_LIMIT",
+    );
   const rawPayload = JSON.parse(operation.payload_json);
   if (rawPayload.kind === "fork") {
     await recoverForkOperation(operation.id, internal);
@@ -369,7 +376,10 @@ export async function applyHistory(
       request.includeFiles !== false,
       request.action,
     );
-    const { result, applied } = applyVersionHistory(sessionId, request);
+    const { result, applied } =
+      request.includeFiles !== false
+        ? await applyVersionFileHistory(sessionId, request)
+        : applyVersionHistory(sessionId, request);
     if (!applied) return result;
     clearSessionFileReads(sessionId);
     sessionLiveBus.clearBuffer(sessionId);

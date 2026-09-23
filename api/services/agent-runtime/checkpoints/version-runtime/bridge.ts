@@ -128,7 +128,7 @@ export function assertVersionTranscriptOperation(
   action = "rollback",
 ): void {
   if (
-    includeFiles ||
+    (includeFiles && versionRuntimeMode(sessionId) !== "native") ||
     (action !== "rollback" &&
       !(action === "edit" && versionRuntimeMode(sessionId) === "native"))
   )

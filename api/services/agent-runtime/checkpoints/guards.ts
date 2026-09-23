@@ -1,3 +1,4 @@
+import { activeWorkspaceSessions, openWriterRoots } from "./lock-pages.js";
 import {
   versionRepository,
   versionedSession,
@@ -145,27 +146,11 @@ export function acquireHistoryLocks(
     const ownTree = new Set(
       agentRuntimeStore.listSessionTree(sessionId).map((s) => s.id),
     );
-    for (const other of agentRuntimeStore.listSessions({
-      limit: Number.MAX_SAFE_INTEGER,
-    })) {
-      if (ownTree.has(other.id)) continue;
-      const active =
-        [
-          "running",
-          "queued",
-          "stopping",
-          "waiting_permission",
-          "waiting_input",
-        ].includes(other.status) ||
-        db
-          .prepare(
-            "SELECT id FROM agent_runtime_processes WHERE session_id=? AND state<>'closed'",
-          )
-          .get(other.id);
-      if (!active) continue;
+    for (const otherId of activeWorkspaceSessions()) {
+      if (ownTree.has(otherId)) continue;
       let otherRoots: string[];
       try {
-        otherRoots = sessionRoots(other.id);
+        otherRoots = sessionRoots(otherId);
       } catch {
         continue;
       }
@@ -175,22 +160,13 @@ export function acquireHistoryLocks(
           "HISTORY_WORKSPACE_BUSY",
         );
     }
-    const writers = db
-      .prepare(
-        "SELECT roots_json FROM conversation_mutations WHERE state='open'",
-      )
-      .all() as { roots_json: string }[];
-    if (
-      writers.some((w) =>
-        (JSON.parse(w.roots_json) as string[]).some((a) =>
-          roots.some((b) => rootsOverlap(a, b)),
-        ),
-      )
-    )
-      throw historyError(
-        "Another execution may still be writing this workspace.",
-        "HISTORY_WORKSPACE_BUSY",
-      );
+    for (const writerRoots of openWriterRoots()) {
+      if (writerRoots.some((a) => roots.some((b) => rootsOverlap(a, b))))
+        throw historyError(
+          "Another execution may still be writing this workspace.",
+          "HISTORY_WORKSPACE_BUSY",
+        );
+    }
     for (const root of roots)
       db.prepare(
         "INSERT INTO conversation_workspace_locks(root,operation_id) VALUES (?,?)",

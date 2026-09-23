@@ -1,3 +1,8 @@
+import {
+  mutationPages,
+  mutationHighWater,
+  FilePlanBudget,
+} from "./mutation-pages.js";
 import path from "node:path";
 import { getRawSqlite } from "../../../db/index.js";
 import {
@@ -22,18 +27,6 @@ export interface FileUndoPlan {
   warnings: string[];
   preservedFiles: PreservedFile[];
 }
-interface Mutation {
-  id: string;
-  sequence: number;
-  owner_session_id: string;
-  roots_json: string;
-  paths_json: string;
-  changes_json: string;
-  state: string;
-  uncertain: number;
-  format_version: number;
-  warning: string | null;
-}
 /** Only declared session writes participate. Unrelated directory changes are never scanned. */
 export async function planFileUndo(
   checkpoint: ConversationCheckpoint,
@@ -41,16 +34,36 @@ export async function planFileUndo(
 ): Promise<FileUndoPlan> {
   const db = getRawSqlite(),
     owner = rootOwner(checkpoint.sessionId);
-  expireFileUndo();
-  const records = db
-    .prepare(
-      "SELECT * FROM conversation_mutations WHERE sequence>? AND state<>'reverted' ORDER BY sequence",
-    )
-    .all(checkpoint.mutationCursor) as Mutation[];
-  const ours = records.filter((r) => r.owner_session_id === owner);
-  const warnings = new Set<string>(),
-    preservedFiles: PreservedFile[] = [],
-    conflicts: FileConflict[] = [];
+  expireFileUndo(Date.now(), checkpoint.sessionId);
+  const highWater = mutationHighWater(),
+    budget = new FilePlanBudget();
+  const warningValues = new Set<string>(),
+    preservedValues = new Map<string, PreservedFile>(),
+    conflictValues = new Map<string, FileConflict>();
+  const warnings = {
+    add(value: string) {
+      if (!warningValues.has(value)) {
+        budget.replace(undefined, value);
+        warningValues.add(value);
+      }
+    },
+  };
+  const preservedFiles = {
+    push(value: PreservedFile) {
+      const key = JSON.stringify([value.root, value.path, value.kind]);
+      budget.replace(preservedValues.get(key), value);
+      preservedValues.set(key, value);
+    },
+  };
+  const conflicts = {
+    push(...values: FileConflict[]) {
+      for (const value of values) {
+        const key = JSON.stringify([value.root, value.path, value.reason]);
+        budget.replace(conflictValues.get(key), value);
+        conflictValues.set(key, value);
+      }
+    },
+  };
   if (checkpoint.payload.boundary.legacy)
     warnings.add(
       "This older checkpoint has a transcript boundary only. Historical file changes that were not reliably recorded are preserved.",
@@ -64,7 +77,12 @@ export async function planFileUndo(
       /* Transcript trimming does not require an accessible project directory. */
     }
   const gitChecks = new Map<string, Promise<GitPreservation | null>>();
-  for (const row of ours) {
+  let gitCacheBytes = 0;
+  for await (const row of mutationPages(
+    owner,
+    checkpoint.mutationCursor,
+    highWater,
+  )) {
     const entries = JSON.parse(row.changes_json) as FileChange[];
     const paths = JSON.parse(row.paths_json) as {
       root: string;
@@ -84,7 +102,9 @@ export async function planFileUndo(
           : "File ownership was not reliably recorded; the file is preserved.";
       warnings.add(reason);
       for (const file of paths.length ? paths : entries) {
-        byPath.delete(JSON.stringify([file.root, file.path]));
+        const key = JSON.stringify([file.root, file.path]);
+        budget.replace(byPath.get(key), undefined);
+        byPath.delete(key);
         preservedFiles.push({ ...file, kind, reason });
       }
       continue;
@@ -106,7 +126,19 @@ export async function planFileUndo(
       let commit = gitChecks.get(gitKey);
       if (!commit) {
         commit = fileGitPreservation(c);
-        gitChecks.set(gitKey, commit);
+        const size = Buffer.byteLength(gitKey);
+        while (
+          gitChecks.size &&
+          (gitChecks.size >= 128 || gitCacheBytes + size > 128 * 1024)
+        ) {
+          const oldest = gitChecks.keys().next().value!;
+          gitChecks.delete(oldest);
+          gitCacheBytes -= Buffer.byteLength(oldest);
+        }
+        if (size <= 128 * 1024) {
+          gitChecks.set(gitKey, commit);
+          gitCacheBytes += size;
+        }
       }
       const preservation = await commit;
       if (preservation) {
@@ -117,6 +149,7 @@ export async function planFileUndo(
         });
         // Once observed committed, it is a permanent file-undo boundary. Later
         // checkouts cannot resurrect old before-images as uncommitted changes.
+        budget.replace(byPath.get(key), undefined);
         byPath.delete(key);
         if (preservation.kind === "committed") {
           c.before = null;
@@ -143,7 +176,9 @@ export async function planFileUndo(
           path: c.path,
           reason: "Independent changes occurred between these writes.",
         });
-      byPath.set(key, previous ? { ...previous, after: c.after } : c);
+      const next = previous ? { ...previous, after: c.after } : c;
+      budget.replace(previous, next);
+      byPath.set(key, next);
     }
     if (changed)
       db.prepare(
@@ -155,40 +190,37 @@ export async function planFileUndo(
   );
   // Other sessions and the human editor have separate ownership. Even an
   // identical-content write is not permission to undo their work.
-  for (const foreign of records.filter((r) => r.owner_session_id !== owner)) {
-    const paths = JSON.parse(foreign.paths_json) as {
-      root: string;
-      path: string;
-    }[];
-    const files = paths.length
-      ? paths
-      : (JSON.parse(foreign.changes_json) as FileChange[]);
-    for (const other of files)
-      if (
-        changes.some(
-          (c) =>
-            path.join(c.root, c.path) === path.join(other.root, other.path),
-        )
-      )
-        conflicts.push({
-          root: other.root,
-          path: other.path,
-          reason: "Another session or the user also wrote this file.",
-        });
-  }
+  const changedPaths = new Set(changes.map((c) => path.join(c.root, c.path)));
+  if (changes.length)
+    for await (const foreign of mutationPages(
+      owner,
+      checkpoint.mutationCursor,
+      highWater,
+      true,
+    )) {
+      const paths = JSON.parse(foreign.paths_json) as {
+        root: string;
+        path: string;
+      }[];
+      const files = paths.length
+        ? paths
+        : (JSON.parse(foreign.changes_json) as FileChange[]);
+      for (const other of files)
+        if (changedPaths.has(path.join(other.root, other.path)))
+          conflicts.push({
+            root: other.root,
+            path: other.path,
+            reason: "Another session or the user also wrote this file.",
+          });
+    }
   if (includeFiles)
     conflicts.push(...(await checkpointFiles.verify(changes, "after")));
   return {
     changes,
-    conflicts,
-    warnings: [...warnings],
-    preservedFiles: [
-      ...new Map(
-        preservedFiles.map((f) => [
-          `${f.root}/${f.path}:${f.kind}`,
-          { root: f.root, path: f.path, kind: f.kind, reason: f.reason },
-        ]),
-      ).values(),
-    ],
+    conflicts: [...conflictValues.values()],
+    warnings: [...warningValues],
+    preservedFiles: [...preservedValues.values()].map(
+      ({ root, path, kind, reason }) => ({ root, path, kind, reason }),
+    ),
   };
 }
