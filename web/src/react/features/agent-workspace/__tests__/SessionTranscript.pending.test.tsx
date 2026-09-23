@@ -101,6 +101,98 @@ it("shows one real message when it arrives before the run-start linkage and HTTP
   expect(screen.getAllByText("我上一轮说了啥")).toHaveLength(1);
 });
 
+it("keeps the dot matrix through tool-only work and removes it at the first assistant line", async () => {
+  let finish!: (result: { run: AgentRun; reused: boolean }) => void;
+  vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const { container } = render(<SessionTranscript />);
+  let sending!: Promise<void>;
+  act(() => {
+    sending = useAgentSessionStore
+      .getState()
+      .sendSessionMessage("s1", { message: "Generate a reply" });
+  });
+  const pending = usePendingSubmissionStore.getState().items.s1;
+  const runningRun = {
+    ...run,
+    status: "running" as const,
+    metadata: { runtime: { requestId: pending.requestId } },
+  };
+  const toolCall = {
+    id: "tool-1",
+    sessionId: "s1",
+    runId: runningRun.id,
+    stepId: "step-1",
+    toolId: "search",
+    category: "read",
+    mutability: "read" as const,
+    inputSummary: "",
+    outputSummary: null,
+    status: "running" as const,
+    startedAt: "",
+    endedAt: null,
+    error: null,
+  };
+  act(() =>
+    useAgentSessionStore.setState({
+      detailLoading: false,
+      runs: [runningRun],
+      messages: [
+        {
+          ...pending.message,
+          id: "persisted-user",
+          metadata: { requestId: pending.requestId },
+        },
+      ],
+      streamingStepId: "step-1",
+      streamingLive: {
+        blocks: [],
+        pendingThinking: "",
+        pendingText: "",
+        pendingToolCalls: [toolCall],
+      },
+    }),
+  );
+
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+
+  act(() =>
+    useAgentSessionStore.setState({
+      messages: [
+        {
+          ...pending.message,
+          id: "persisted-user",
+          metadata: { requestId: pending.requestId },
+        },
+        {
+          id: "assistant-1",
+          sessionId: "s1",
+          runId: runningRun.id,
+          stepId: "step-1",
+          role: "assistant",
+          content: "第一行内容",
+          metadata: {},
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }),
+  );
+
+  await waitFor(() => {
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
+  });
+  expect(usePendingSubmissionStore.getState().items.s1).toBeUndefined();
+
+  await act(async () => {
+    finish({ run: runningRun, reused: false });
+    await sending;
+  });
+});
+
 it("deduplicates an SSE confirmation arriving before the POST response and keeps identical earlier messages", async () => {
   let finish!: (result: { run: AgentRun; reused: boolean }) => void;
   vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(

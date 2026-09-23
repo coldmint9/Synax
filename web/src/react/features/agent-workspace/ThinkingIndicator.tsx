@@ -1,7 +1,7 @@
 import { useLocale } from "../../../hooks/useLocale";
 import { PixelLoader } from "./LoadingState";
 
-export function ThinkingIndicator() {
+export function ThinkingIndicator({ showLabel = true }: { showLabel?: boolean }) {
   const { t } = useLocale();
   const label = t("sessionPendingThinking");
   return (
@@ -11,7 +11,7 @@ export function ThinkingIndicator() {
       className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground"
     >
       <PixelLoader variant="Thinking" />
-      <span>{label}</span>
+      <span className={showLabel ? undefined : "sr-only"}>{label}</span>
     </div>
   );
 }

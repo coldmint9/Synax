@@ -7,6 +7,7 @@ import {
   usePendingSubmissionStore,
 } from "./state/pendingSubmissionStore";
 import { ThinkingIndicator } from "./ThinkingIndicator";
+import { hasStreamingContent, hasStreamingText } from "./streamingLiveBlocks";
 import { Skeleton } from "@heroui/react";
 import { useShallow } from "zustand/react/shallow";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -36,6 +37,8 @@ function useSessionTranscriptStatic() {
         messages: s.messages,
         childSessions: id ? s.childSessions[id] : undefined,
         streamingStepId: s.streamingStepId,
+        streamingLive: s.streamingLive,
+        streamingCompletedSteps: s.streamingCompletedSteps,
       };
     }),
   );
@@ -62,6 +65,8 @@ export function SessionTranscript({
     messages,
     childSessions,
     streamingStepId,
+    streamingLive,
+    streamingCompletedSteps,
   } = useSessionTranscriptStatic();
   const pending = usePendingSubmissionStore((state) =>
     sessionId ? state.items[sessionId] : undefined,
@@ -70,10 +75,34 @@ export function SessionTranscript({
     () => projectPendingSubmission(pending, runs, messages),
     [pending, runs, messages],
   );
-  const hasResponse = Boolean(
-    projected.run &&
-    (steps.some((step) => step.runId === projected.run!.id) ||
-      RUN_TERMINAL_STATUSES.includes(projected.run.status)),
+  const hasAssistantText = useMemo(() => {
+    const responseStepIds = new Set(
+      projected.run
+        ? steps
+            .filter((step) => step.runId === projected.run!.id)
+            .map((step) => step.id)
+        : [],
+    );
+    const persistedResponse = Boolean(
+      projected.run &&
+        messages.some(
+          (message) =>
+            message.role === "assistant" &&
+            Boolean(message.content.trim()) &&
+            (message.runId === projected.run!.id ||
+              (message.stepId !== null && responseStepIds.has(message.stepId)) ||
+              message.metadata.requestId === pending?.requestId),
+        ),
+    );
+    const completedResponse = streamingCompletedSteps.some((step) =>
+      step.blocks.some(
+        (block) => block.type === "text" && Boolean(block.content.trim()),
+      ),
+    );
+    return persistedResponse || hasStreamingText(streamingLive) || completedResponse;
+  }, [messages, pending?.requestId, projected.run, steps, streamingCompletedSteps, streamingLive]);
+  const runFinished = Boolean(
+    projected.run && RUN_TERMINAL_STATUSES.includes(projected.run.status),
   );
   const latestRunStatus = useMemo(() => {
     if (!sessionId) return undefined;
@@ -87,10 +116,10 @@ export function SessionTranscript({
       sessionId &&
       pending &&
       projected.confirmed &&
-      (hasResponse || streamingStepId)
+      (hasAssistantText || runFinished)
     )
       usePendingSubmissionStore.getState().clear(sessionId, pending.requestId);
-  }, [sessionId, pending, projected.confirmed, hasResponse, streamingStepId]);
+  }, [sessionId, pending, projected.confirmed, hasAssistantText, runFinished]);
   // Live content bridges the gap until a complete persisted transcript arrives.
   // A step/status response alone does not mean its messages are ready yet.
   const showLiveBlock = Boolean(streamingStepId);
@@ -203,8 +232,9 @@ export function SessionTranscript({
                 submitting={Boolean(pending)}
                 scrollRootRef={scrollRef}
                 liveTurn={
-                  pending && !showLiveBlock && !hasResponse ? (
-                    <ThinkingIndicator />
+                  pending && !hasAssistantText && !runFinished &&
+                  (!showLiveBlock || hasStreamingContent(streamingLive)) ? (
+                    <ThinkingIndicator showLabel={false} />
                   ) : undefined
                 }
               />

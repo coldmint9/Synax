@@ -115,6 +115,14 @@ export function snapshotStreamingBuffers(
   return next.blocks;
 }
 
+export function hasStreamingText(state: StreamingLiveBuffers): boolean {
+  return (
+    state.blocks.some(
+      (block) => block.type === "text" && Boolean(block.content.trim()),
+    ) || Boolean(state.pendingText.trim())
+  );
+}
+
 export function hasStreamingContent(state: StreamingLiveBuffers): boolean {
   return (
     state.blocks.length > 0 ||
