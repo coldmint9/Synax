@@ -775,3 +775,47 @@
     padding: 12px;
   }
 }
+
+/* Keep the default MR path short; advanced controls stay available without competing with branch selection. */
+.mr-advanced-settings {
+  margin-top: 18px;
+  border-top: 1px solid var(--border, #d9dce3);
+  padding-top: 12px;
+}
+.mr-advanced-settings > summary {
+  cursor: pointer;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 500;
+  list-style-position: inside;
+}
+.mr-advanced-settings > summary span {
+  color: var(--muted, #7b8090);
+  font-weight: 400;
+  margin-left: 6px;
+}
+.mr-advanced-body {
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
+}
+.mr-repository-select {
+  margin-bottom: 8px;
+}
+.mr-strategy-field {
+  margin-top: 14px;
+}
+.mr-strategy-field select {
+  max-width: none;
+}
+.mr-strategy-hint {
+  margin-top: 6px !important;
+  margin-bottom: 0 !important;
+}
+.mr-preset-options {
+  display: grid;
+  gap: 12px;
+  padding-left: 22px;
+  border-left: 2px solid
+    color-mix(in srgb, var(--primary, #3569d4) 20%, transparent);
+}

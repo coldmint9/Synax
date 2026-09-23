@@ -52,7 +52,8 @@ async function setup(onSubmit = vi.fn().mockResolvedValue(undefined)) {
       onSubmit={onSubmit}
     />,
   );
-  fireEvent.change(screen.getByLabelText("标题"), {
+  fireEvent.click(screen.getByText("更多设置"));
+  fireEvent.change(screen.getByLabelText(/标题/), {
     target: { value: "Ordered merge" },
   });
   fireEvent.change(screen.getByLabelText("目标分支"), {
@@ -91,9 +92,7 @@ describe("MR creation", () => {
     fireEvent.change(screen.getByLabelText("预设名称"), {
       target: { value: "weekly" },
     });
-    fireEvent.click(
-      screen.getByLabelText("预设运行时，检查通过后自动更新本地目标"),
-    );
+    fireEvent.click(screen.getByLabelText("检查通过后自动合入"));
     fireEvent.click(screen.getByRole("button", { name: "创建并准备合并" }));
     await waitFor(() =>
       expect(submit).toHaveBeenCalledWith(
@@ -159,7 +158,7 @@ it("shows the merge direction, disables impossible sources with ancestry and ret
     target: { value: "feature/a" },
   });
   expect(screen.getByRole("button", { name: "创建并准备合并" })).toBeDisabled();
-  await screen.findByText(/有 2 个已选分支不能合入/);
+  await screen.findAllByText("包含 beta 提交");
   expect(screen.getByRole("button", { name: "添加 feature/b" })).toBeDisabled();
   expect(screen.getAllByText("包含 beta 提交").length).toBeGreaterThan(0);
 });

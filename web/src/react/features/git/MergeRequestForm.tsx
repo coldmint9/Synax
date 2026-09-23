@@ -177,7 +177,7 @@ export function MergeRequestForm({
     setError("");
     try {
       const input: MergeRequestInput = {
-        title: title.trim(),
+        title: title.trim() || `${sources.join("、")} → ${target}`,
         rootId: rootId || undefined,
         target,
         sources,
@@ -253,40 +253,30 @@ export function MergeRequestForm({
         </p>
         <form onSubmit={submit} className="mr-form">
           <fieldset disabled={busy}>
-            <label>
-              标题
-              <input
-                autoFocus
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="例如：合入本周功能"
-                maxLength={200}
-                required
-              />
-            </label>
-            <label>
-              仓库
-              <select
-                value={rootId}
-                onChange={(e) => {
-                  onRootChange(e.target.value);
-                  setTarget("");
-                  setSources([]);
-                  setAllowCheckedOutTarget(false);
-                }}
-              >
-                {!roots.length && <option value="">项目默认仓库</option>}
-                {roots.map((root) => (
-                  <option
-                    key={root.id}
-                    value={root.id}
-                    disabled={root.status !== "available"}
-                  >
-                    {root.name} · {root.path}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {roots.length > 1 && (
+              <label className="mr-repository-select">
+                仓库
+                <select
+                  value={rootId}
+                  onChange={(e) => {
+                    onRootChange(e.target.value);
+                    setTarget("");
+                    setSources([]);
+                    setAllowCheckedOutTarget(false);
+                  }}
+                >
+                  {roots.map((root) => (
+                    <option
+                      key={root.id}
+                      value={root.id}
+                      disabled={root.status !== "available"}
+                    >
+                      {root.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div
               className="mr-merge-flow"
               role="group"
@@ -298,13 +288,13 @@ export function MergeRequestForm({
                   <strong>源分支</strong>
                   <span>
                     {sources.length
-                      ? `${sources.length} 个，按顺序合入`
-                      : "待合入的改动"}
+                      ? `${sources.length} 个`
+                      : "先选择要合入的改动"}
                   </span>
                 </div>
                 {!sources.length && (
                   <p className="mr-flow-placeholder">
-                    {target ? "添加一个或多个源分支" : "先选择目标分支"}
+                    选择目标后，从列表添加源分支
                   </p>
                 )}
                 <ol className="mr-sources">
@@ -320,11 +310,7 @@ export function MergeRequestForm({
                         <span className="mr-source-number">{index + 1}</span>
                         <div className="mr-selected-source">
                           <code>{source}</code>
-                          <small>
-                            {metadata
-                              ? ancestorLabel(metadata)
-                              : "正在核验祖先…"}
-                          </small>
+                          {metadata && <small>{ancestorLabel(metadata)}</small>}
                           {invalid && (
                             <small className="mr-source-invalid">
                               {invalid.detail}
@@ -398,10 +384,11 @@ export function MergeRequestForm({
                     required
                     onChange={(event) => {
                       setTarget(event.target.value);
+                      setSources([]);
                       setAllowCheckedOutTarget(false);
                     }}
                   >
-                    <option value="">选择接收改动的分支</option>
+                    <option value="">选择目标分支</option>
                     {branches.map((branch) => (
                       <option key={branch.name} value={branch.name}>
                         {branch.name}
@@ -412,6 +399,7 @@ export function MergeRequestForm({
                 <p className="mr-flow-caption">接收所选源分支的累计结果</p>
                 {selectedTarget && (
                   <code className="mr-target-oid">
+                    目标 HEAD ·{" "}
                     {(context?.targetOid ?? selectedTarget.head).slice(0, 8)}
                   </code>
                 )}
@@ -419,7 +407,7 @@ export function MergeRequestForm({
             </div>
             {checkingBranches && (
               <p className="mr-muted" role="status">
-                正在核验源分支可用性…
+                正在核验源分支…
               </p>
             )}
             {eligibilityError && (
@@ -429,17 +417,16 @@ export function MergeRequestForm({
                   type="button"
                   onClick={() => setRetry((value) => value + 1)}
                 >
-                  重新核验
+                  重试
                 </button>
               </p>
             )}
             {!!invalidSources.length && (
               <p className="mr-notice" role="alert">
-                有 {invalidSources.length}{" "}
-                个已选分支不能合入；请移除，或调整目标、顺序与策略。
+                请移除不可合入的源分支。
               </p>
             )}
-            <label>
+            <label className="mr-strategy-field">
               合并策略
               <select
                 aria-label="合并策略"
@@ -448,153 +435,174 @@ export function MergeRequestForm({
                   setStrategy(event.target.value as MergeStrategy)
                 }
               >
-                <option value="merge_commit">
-                  Merge commit · 保留分支历史
-                </option>
-                <option value="squash">Squash · 压缩每个源分支</option>
-                <option value="ff_only">Fast-forward only · 仅快进</option>
+                <option value="merge_commit">Merge commit</option>
+                <option value="squash">Squash</option>
+                <option value="ff_only">Fast-forward only</option>
               </select>
             </label>
-            <p className="mr-muted">
+            <p className="mr-muted mr-strategy-hint">
               {strategy === "merge_commit"
-                ? "按左侧顺序累积合并，为每个源分支保留合并提交。"
+                ? "保留每个源分支的历史。"
                 : strategy === "squash"
-                  ? "按左侧顺序累积合并，将每个源分支的变更压缩为一个提交。"
-                  : `按左侧顺序连续快进，新增分支需可从 ${context?.comparisonBranch ?? target ?? "目标"} 快进。`}
+                  ? "每个源分支压缩为一个提交。"
+                  : "只有可以连续快进的分支才能合入。"}
             </p>
-            {selectedTarget?.checkedOutPath && (
-              <p className="mr-notice">
-                目标当前检出于 <code>{selectedTarget.checkedOutPath}</code>
-                。完成时需要明确允许更新，并通过工作树状态检查。
-              </p>
-            )}
-            <label className="mr-check">
-              <input
-                type="checkbox"
-                checked={allowCheckedOutTarget}
-                onChange={(e) => setAllowCheckedOutTarget(e.target.checked)}
-              />
-              允许更新已检出的目标分支（工作树必须干净）
-            </label>
-            <div className="mr-row">
-              <h3>验证检查</h3>
-              <button
-                type="button"
-                disabled={checks.length >= 10}
-                onClick={() =>
-                  setChecks([
-                    ...checks,
-                    {
-                      id: crypto.randomUUID(),
-                      executable: "",
-                      args: "[]",
-                      timeout: "300",
-                    },
-                  ])
-                }
-              >
-                <Plus size={14} />
-                添加检查
-              </button>
-            </div>
-            <p className="mr-muted">
-              程序会在候选工作树中直接执行；参数逐项传入。
-            </p>
-            {checks.map((check, index) => (
-              <div className="mr-check-config" key={check.id}>
+            <details className="mr-advanced-settings">
+              <summary>
+                更多设置 <span>标题、检查和自动化</span>
+              </summary>
+              <div className="mr-advanced-body">
                 <label>
-                  程序 {index + 1}
+                  标题（可选）
                   <input
-                    value={check.executable}
-                    placeholder="npm"
-                    required
-                    onChange={(e) =>
-                      setChecks(
-                        checks.map((item) =>
-                          item.id === check.id
-                            ? { ...item, executable: e.target.value }
-                            : item,
-                        ),
-                      )
+                    autoFocus={!title}
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder={
+                      sources.length && target
+                        ? `${sources.join("、")} → ${target}`
+                        : "合并请求标题"
                     }
+                    maxLength={200}
                   />
                 </label>
-                <label>
-                  参数（JSON 数组）
-                  <input
-                    value={check.args}
-                    placeholder={'["test"]'}
-                    required
-                    onChange={(e) =>
-                      setChecks(
-                        checks.map((item) =>
-                          item.id === check.id
-                            ? { ...item, args: e.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  超时（秒）
-                  <input
-                    type="number"
-                    min="1"
-                    max="600"
-                    value={check.timeout}
-                    required
-                    onChange={(e) =>
-                      setChecks(
-                        checks.map((item) =>
-                          item.id === check.id
-                            ? { ...item, timeout: e.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                  />
-                </label>
-                <button
-                  type="button"
-                  aria-label={`移除检查 ${index + 1}`}
-                  onClick={() =>
-                    setChecks(checks.filter((item) => item.id !== check.id))
-                  }
-                >
-                  <X size={15} />
-                </button>
-              </div>
-            ))}
-            <label className="mr-check">
-              <input
-                type="checkbox"
-                checked={savePreset}
-                onChange={(e) => setSavePreset(e.target.checked)}
-              />
-              保存为一键预设
-            </label>
-            {savePreset && (
-              <>
-                <label>
-                  预设名称
-                  <input
-                    value={presetName}
-                    onChange={(e) => setPresetName(e.target.value)}
-                    maxLength={120}
-                    required
-                  />
-                </label>
+                {selectedTarget?.checkedOutPath && (
+                  <p className="mr-notice">
+                    目标当前检出于 <code>{selectedTarget.checkedOutPath}</code>
+                    。
+                  </p>
+                )}
                 <label className="mr-check">
                   <input
                     type="checkbox"
-                    checked={autoFinalize}
-                    onChange={(e) => setAutoFinalize(e.target.checked)}
+                    checked={allowCheckedOutTarget}
+                    onChange={(e) => setAllowCheckedOutTarget(e.target.checked)}
                   />
-                  预设运行时，检查通过后自动更新本地目标
+                  允许更新已检出的目标分支
                 </label>
-              </>
-            )}
+                <div className="mr-row">
+                  <h3>
+                    验证检查 <span className="mr-muted">可选</span>
+                  </h3>
+                  <button
+                    type="button"
+                    disabled={checks.length >= 10}
+                    onClick={() =>
+                      setChecks([
+                        ...checks,
+                        {
+                          id: crypto.randomUUID(),
+                          executable: "",
+                          args: "[]",
+                          timeout: "300",
+                        },
+                      ])
+                    }
+                  >
+                    <Plus size={14} />
+                    添加检查
+                  </button>
+                </div>
+                <p className="mr-muted">
+                  检查会在候选工作树中执行，全部通过后才能自动更新目标。
+                </p>
+                {checks.map((check, index) => (
+                  <div className="mr-check-config" key={check.id}>
+                    <label>
+                      程序 {index + 1}
+                      <input
+                        value={check.executable}
+                        placeholder="npm"
+                        required
+                        onChange={(e) =>
+                          setChecks(
+                            checks.map((item) =>
+                              item.id === check.id
+                                ? { ...item, executable: e.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      参数（JSON 数组）
+                      <input
+                        value={check.args}
+                        placeholder={'["test"]'}
+                        required
+                        onChange={(e) =>
+                          setChecks(
+                            checks.map((item) =>
+                              item.id === check.id
+                                ? { ...item, args: e.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      超时（秒）
+                      <input
+                        type="number"
+                        min="1"
+                        max="600"
+                        value={check.timeout}
+                        required
+                        onChange={(e) =>
+                          setChecks(
+                            checks.map((item) =>
+                              item.id === check.id
+                                ? { ...item, timeout: e.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      aria-label={`移除检查 ${index + 1}`}
+                      onClick={() =>
+                        setChecks(checks.filter((item) => item.id !== check.id))
+                      }
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                ))}
+                <label className="mr-check">
+                  <input
+                    type="checkbox"
+                    checked={savePreset}
+                    onChange={(e) => setSavePreset(e.target.checked)}
+                  />
+                  保存为一键预设
+                </label>
+                {savePreset && (
+                  <div className="mr-preset-options">
+                    <label>
+                      预设名称
+                      <input
+                        value={presetName}
+                        onChange={(e) => setPresetName(e.target.value)}
+                        maxLength={120}
+                        required
+                      />
+                    </label>
+                    <label className="mr-check">
+                      <input
+                        type="checkbox"
+                        checked={autoFinalize}
+                        onChange={(e) => setAutoFinalize(e.target.checked)}
+                      />
+                      检查通过后自动合入
+                    </label>
+                  </div>
+                )}
+              </div>
+            </details>
           </fieldset>
           {error && (
             <p role="alert" className="mr-error">
