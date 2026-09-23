@@ -53,6 +53,9 @@ export function versionedSession(id: string): boolean {
   }
   return Boolean(query.get(id));
 }
+export function appendOnlySession(sessionId: string): boolean {
+  return (getRawSqlite().prepare("SELECT rollback_enabled FROM conversation_v3_heads WHERE session_id=?").get(sessionId) as { rollback_enabled: number } | undefined)?.rollback_enabled === 0;
+}
 export function boundaryOnlySession(sessionId: string): boolean {
   return Boolean((getRawSqlite().prepare("SELECT boundary_only FROM conversation_v3_heads WHERE session_id=?").get(sessionId) as { boundary_only: number } | undefined)?.boundary_only);
 }
@@ -134,7 +137,7 @@ export function versionSessionView(current: AgentSession): AgentSession {
     prompt: history.prompt as string,
     resultSummary: history.resultSummary as string | null,
     contextSnapshotId: history.contextSnapshotId as string | null,
-    sessionMetadata: { ...metadata, historyStorage: 3 },
+    sessionMetadata: { ...metadata, historyStorage: 3, historyRollbackEnabled: !appendOnlySession(current.id) },
   };
 }
 export function assertVersionTranscriptOperation(
@@ -142,6 +145,7 @@ export function assertVersionTranscriptOperation(
   includeFiles: boolean,
   action = "rollback",
 ): void {
+  if (appendOnlySession(sessionId)) throw new AgentRuntimeError("Forked conversations are append-only; rollback and editing previous messages are disabled.", "HISTORY_APPEND_ONLY", 409);
   if (
     (includeFiles && versionRuntimeMode(sessionId) !== "native") ||
     (action !== "rollback" &&

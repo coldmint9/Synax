@@ -6,6 +6,7 @@ import {
 import { applyVersionFileHistory } from "./version-runtime/file-operation.js";
 import { applyVersionHistory } from "./version-runtime/history-operation.js";
 import {
+  appendOnlySession,
   versionRepository,
   versionedSession,
   assertVersionTranscriptOperation,
@@ -137,7 +138,9 @@ export function checkpointSummary(sessionId: string) {
           .get(sessionId),
       ),
       reason,
-      checkpoints: page.items.map((cp) => ({
+      rollbackEnabled: !appendOnlySession(sessionId),
+      checkpoints: appendOnlySession(sessionId) ? []
+        : page.items.map((cp) => ({
         id: cp.id,
         kind: cp.kind,
         messageId: cp.messageId,
@@ -306,6 +309,11 @@ export async function recoverHistoryOperation(
       "HISTORY_PLAN_LIMIT",
     );
   const rawPayload = JSON.parse(operation.payload_json);
+  if (rawPayload.kind === "simple-fork") {
+    const { recoverSimpleFork } = await import("./simple-fork.js");
+    await recoverSimpleFork(operation.id, internal);
+    return;
+  }
   if (rawPayload.kind === "fork") {
     await recoverForkOperation(operation.id, internal);
     return;

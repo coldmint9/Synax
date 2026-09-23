@@ -15,6 +15,7 @@ import { GitFork, RotateCcw, AlertTriangle } from "lucide-react";
 import {
   conversationHistoryApi,
   type HistoryAction,
+  type ForkWorkspaceMode,
   type HistoryPreview,
   type HistorySummary,
   type MessageCheckpoint,
@@ -71,6 +72,7 @@ export function SessionHistoryProvider({
   const sessionId = session?.id;
   useConversationHistoryVisit(sessionId);
   const [includeFiles, setIncludeFiles] = useState(true);
+  const [forkMode, setForkMode] = useState<ForkWorkspaceMode>();
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       if (!sessionId) return;
@@ -133,10 +135,22 @@ export function SessionHistoryProvider({
       checkpoint: MessageCheckpoint,
       message?: string,
     ): Promise<boolean> => {
-      if (!sessionId) return false;
+      if (!sessionId || executing || resolver.current) return false;
+      if (
+        action !== "fork" &&
+        session?.sessionMetadata?.historyRollbackEnabled === false
+      ) {
+        setError(
+          zh
+            ? "分叉会话只追加历史，不支持回滚或编辑重发"
+            : "Forked conversations are append-only; rollback and history editing are disabled.",
+        );
+        return false;
+      }
       const epoch = ++requestEpoch.current;
       const requestId = crypto.randomUUID();
-      setIncludeFiles(true);
+      setIncludeFiles(action !== "fork");
+      setForkMode(undefined);
       setPending({
         action,
         checkpoint,
@@ -172,17 +186,13 @@ export function SessionHistoryProvider({
                   : "The conversation changed; please retry.",
             );
           }
-          await conversationHistoryApi.apply(
-            sessionId,
-            action,
-            {
-              checkpointId: checkpoint.id,
-              revision: value.revision,
-              requestId,
-              message,
-              includeFiles: false,
-            },
-          );
+          await conversationHistoryApi.apply(sessionId, action, {
+            checkpointId: checkpoint.id,
+            revision: value.revision,
+            requestId,
+            message,
+            includeFiles: false,
+          });
           const store = useAgentSessionStore.getState();
           store.resetConversationHistory(sessionId);
           await Promise.all([store.refreshSessions(), store.refreshDetail()]);
@@ -200,6 +210,7 @@ export function SessionHistoryProvider({
       const result = new Promise<boolean>((resolve) => {
         resolver.current = resolve;
       });
+      if (action === "fork") return result;
       void conversationHistoryApi
         .preview(sessionId, checkpoint.id, action)
         .then((value) => {
@@ -210,7 +221,7 @@ export function SessionHistoryProvider({
         });
       return result;
     },
-    [sessionId, zh, close, refresh],
+    [sessionId, session, executing, zh, close, refresh],
   );
   const changeFilePolicy = (value: boolean) => {
     if (!pending || executing) return;
@@ -227,8 +238,31 @@ export function SessionHistoryProvider({
         if (epoch === requestEpoch.current) setError((error as Error).message);
       });
   };
+  const chooseForkMode = (mode: ForkWorkspaceMode) => {
+    if (!pending || pending.action !== "fork" || executing) return;
+    setForkMode(mode);
+    setPreview(null);
+    setError(null);
+    setPending({ ...pending, requestId: crypto.randomUUID() });
+    const epoch = ++requestEpoch.current;
+    void conversationHistoryApi
+      .preview(pending.sessionId, pending.checkpoint.id, "fork", false, mode)
+      .then((value) => {
+        if (epoch === requestEpoch.current) setPreview(value);
+      })
+      .catch((error) => {
+        if (epoch === requestEpoch.current) setError((error as Error).message);
+      });
+  };
   const confirm = async () => {
-    if (!pending || !preview || executing || !preview.canApply) return;
+    if (
+      !pending ||
+      !preview ||
+      executing ||
+      !preview.canApply ||
+      (pending.action === "fork" && !forkMode)
+    )
+      return;
     setExecuting(true);
     setError(null);
     try {
@@ -240,7 +274,8 @@ export function SessionHistoryProvider({
           revision: preview.revision,
           requestId: pending.requestId,
           message: pending.message,
-          includeFiles,
+          includeFiles: pending.action === "fork" ? false : includeFiles,
+          ...(pending.action === "fork" ? { workspaceMode: forkMode } : {}),
         },
       );
       const store = useAgentSessionStore.getState();
@@ -289,13 +324,48 @@ export function SessionHistoryProvider({
             ? c.messageId === messageId
             : stepId && c.kind === "reply" && c.stepId === stepId,
         );
-        const projected = messages.find(message => message.id === found?.messageId)?.historyProjection;
+        if (!found && summary.rollbackEnabled === false) {
+          const reply = messages.find((message) =>
+            messageId ? message.id === messageId : message.stepId === stepId,
+          );
+          if (reply?.role === "assistant" && !reply.metadata?.partial)
+            return {
+              id: `message:${reply.id}`,
+              kind: "reply",
+              messageId: reply.id,
+              stepId: reply.stepId,
+              available: true,
+              reason: null,
+              canRollback: false,
+              hasLaterHistory: false,
+              initialInput: false,
+            };
+        }
+        const projected = messages.find(
+          (message) => message.id === found?.messageId,
+        )?.historyProjection;
         return found?.kind === "input" && projected
-          ? { ...found, available: false, reason: zh ? "这是长消息预览，请勿用截断内容覆盖原消息" : "This is a long-message preview; editing it would overwrite omitted content" }
+          ? {
+              ...found,
+              available: false,
+              reason: zh
+                ? "这是长消息预览，请勿用截断内容覆盖原消息"
+                : "This is a long-message preview; editing it would overwrite omitted content",
+            }
           : found;
       },
     }),
-    [session, sessionId, summary, loadError, pending, error, request, zh, messages],
+    [
+      session,
+      sessionId,
+      summary,
+      loadError,
+      pending,
+      error,
+      request,
+      zh,
+      messages,
+    ],
   );
   const fork = pending?.action === "fork",
     edit = pending?.action === "edit";
@@ -344,6 +414,16 @@ export function SessionHistoryProvider({
           {loadError && <span className="text-danger">{loadError}</span>}
         </div>
       )}
+      {session?.sessionMetadata?.historyRollbackEnabled === false && (
+        <p
+          className="mx-auto max-w-3xl px-4 text-xs text-muted-foreground"
+          role="note"
+        >
+          {zh
+            ? "分叉会话：只追加历史，不支持回滚或编辑旧消息；可继续对话或再次分叉。"
+            : "Forked conversation: append-only; no rollback or editing earlier messages. Continue chatting or fork again."}
+        </p>
+      )}
       {children}
       <Modal.Backdrop
         isOpen={Boolean(pending && pending.action !== "edit")}
@@ -364,34 +444,86 @@ export function SessionHistoryProvider({
               <p>
                 {fork
                   ? zh
-                    ? "在独立目录中继续选中的会话历史。工作目录按需复制，非本会话产出的文件保留当前版本，原会话不变。"
-                    : "Continue this conversation prefix in an isolated copy of the current workspace. Unrelated files keep their current versions; the source stays unchanged."
+                    ? "复制到选中回复为止的会话历史。请选择工作树方式；新会话不支持回滚或编辑旧消息。"
+                    : "Copy the conversation through this reply. Choose a worktree mode; the new conversation is append-only."
                   : zh
                     ? "后续消息将被裁剪。文件撤销仅针对本会话明确记录、尚未提交且未过期的变更；其他文件不会改动。"
                     : "Later conversation records will be trimmed. File undo only affects this session’s recorded, uncommitted, unexpired changes; unrelated files are preserved."}
               </p>
-              <label className="flex items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={includeFiles}
-                  disabled={executing}
-                  onChange={(event) => changeFilePolicy(event.target.checked)}
-                  className="mt-1 accent-[var(--accent)]"
-                />
-                <span>
-                  {zh
-                    ? "同时撤销本会话记录的未提交文件变更"
-                    : "Also undo this session’s recorded uncommitted file changes"}
-                </span>
-              </label>
-              {!includeFiles && (
-                <p className="text-xs text-muted-foreground">
-                  {zh
-                    ? "仅裁剪会话历史，已有工作目录中的文件保持不变。"
-                    : "Trim conversation only; files in the existing workspace remain unchanged."}
-                </p>
+              {fork ? (
+                <fieldset className="flex flex-col gap-3" disabled={executing}>
+                  <legend className="mb-2 font-medium">
+                    {zh ? "工作树方式（必选）" : "Worktree mode (required)"}
+                  </legend>
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="radio"
+                      name="fork-workspace-mode"
+                      value="new_worktree"
+                      checked={forkMode === "new_worktree"}
+                      onChange={() => chooseForkMode("new_worktree")}
+                    />
+                    <span>
+                      <strong>
+                        {zh ? "新建工作树" : "Create a new worktree"}
+                      </strong>
+                      <br />
+                      <span className="text-xs text-muted-foreground">
+                        {zh
+                          ? "从当前 Git 提交建立独立工作目录；不复制未提交修改、忽略文件或依赖环境。"
+                          : "Independent directory at the current Git commit; uncommitted changes, ignored files and dependencies are not copied."}
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="radio"
+                      name="fork-workspace-mode"
+                      value="reuse_worktree"
+                      checked={forkMode === "reuse_worktree"}
+                      onChange={() => chooseForkMode("reuse_worktree")}
+                    />
+                    <span>
+                      <strong>
+                        {zh ? "维持原工作树" : "Keep the existing worktree"}
+                      </strong>
+                      <br />
+                      <span className="text-xs text-warning">
+                        {zh
+                          ? "仅复制会话，不复制目录。两份会话会修改同一份文件。"
+                          : "Copy the conversation only. Both conversations can change the same files."}
+                      </span>
+                    </span>
+                  </label>
+                </fieldset>
+              ) : (
+                <>
+                  <label className="flex items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={includeFiles}
+                      disabled={executing}
+                      onChange={(event) =>
+                        changeFilePolicy(event.target.checked)
+                      }
+                      className="mt-1 accent-[var(--accent)]"
+                    />
+                    <span>
+                      {zh
+                        ? "同时撤销本会话记录的未提交文件变更"
+                        : "Also undo this session’s recorded uncommitted file changes"}
+                    </span>
+                  </label>
+                  {!includeFiles && (
+                    <p className="text-xs text-muted-foreground">
+                      {zh
+                        ? "仅裁剪会话历史，已有工作目录中的文件保持不变。"
+                        : "Trim conversation only; files in the existing workspace remain unchanged."}
+                    </p>
+                  )}
+                </>
               )}
-              {!preview && !error && (
+              {!preview && !error && (!fork || forkMode) && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Spinner size="sm" />
                   {zh ? "正在检查消息和文件…" : "Checking messages and files…"}
@@ -402,8 +534,8 @@ export function SessionHistoryProvider({
                   <p className="text-muted-foreground">
                     {fork
                       ? zh
-                        ? `隔离工作区 · 撤销 ${preview.files.length} 项已记录变更`
-                        : `Isolated workspace · ${preview.files.length} recorded changes to undo`
+                        ? `${forkMode === "new_worktree" ? "新建工作树" : "维持原工作树"} · 新会话不支持回滚`
+                        : `${forkMode === "new_worktree" ? "New worktree" : "Existing worktree"} · append-only conversation`
                       : zh
                         ? `截断 ${preview.removedMessages} 条消息 · 恢复 ${preview.files.length} 个文件`
                         : `Remove ${preview.removedMessages} messages · restore ${preview.files.length} files`}
@@ -486,10 +618,12 @@ export function SessionHistoryProvider({
                     </div>
                   )}
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    {zh
-                      ? "24 小时未主动访问会话后，文件撤销记录自动清理，聊天历史保留。Git 已提交的变更、外部数据库与网络操作不会被撤销。"
-                      : "File undo expires after 24 hours without an active visit; conversation history remains. Git commits, external databases and network effects are preserved."}
+                    {!fork &&
+                      (zh
+                        ? "24 小时未主动访问会话后，文件撤销记录自动清理，聊天历史保留。Git 已提交的变更、外部数据库与网络操作不会被撤销。"
+                        : "File undo expires after 24 hours without an active visit; conversation history remains. Git commits, external databases and network effects are preserved.")}
                     {fork &&
+                      forkMode === "new_worktree" &&
                       (zh
                         ? " 新工作目录可能需要重新准备环境。"
                         : " The new workspace may need environment setup.")}
@@ -515,7 +649,9 @@ export function SessionHistoryProvider({
                 size="sm"
                 variant={fork ? "primary" : "danger"}
                 isPending={executing}
-                isDisabled={!preview?.canApply || executing}
+                isDisabled={
+                  !preview?.canApply || executing || (fork && !forkMode)
+                }
                 onPress={() => void confirm()}
               >
                 {title}

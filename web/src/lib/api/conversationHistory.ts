@@ -1,4 +1,5 @@
 import { apiRequest } from "./origin";
+export type ForkWorkspaceMode = "new_worktree" | "reuse_worktree";
 export type HistoryAction = "edit" | "rollback" | "fork";
 export interface MessageCheckpoint {
   id: string;
@@ -7,12 +8,14 @@ export interface MessageCheckpoint {
   stepId: string | null;
   available: boolean;
   reason: string | null;
+  canRollback?: boolean;
   hasLaterHistory: boolean;
   initialInput: boolean;
 }
 export interface HistorySummary {
   sessionId: string;
   revision: number;
+  rollbackEnabled?: boolean;
   recoveryRequired?: boolean;
   reason: string | null;
   checkpoints: MessageCheckpoint[];
@@ -53,11 +56,13 @@ export const conversationHistoryApi = {
     checkpointId: string,
     action: HistoryAction,
     includeFiles = true,
+    workspaceMode?: ForkWorkspaceMode,
   ) =>
     post<HistoryPreview>(sessionId, "preview", {
       checkpointId,
       action,
       includeFiles,
+      workspaceMode,
     }),
   apply: (
     sessionId: string,
@@ -68,6 +73,7 @@ export const conversationHistoryApi = {
       requestId: string;
       message?: string;
       includeFiles?: boolean;
+      workspaceMode?: ForkWorkspaceMode;
     },
   ) =>
     post<{ sessionId: string; revision?: number; runId?: string }>(

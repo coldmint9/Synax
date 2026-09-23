@@ -99,7 +99,8 @@ export function writeRuntimeBatch(
         old && table !== "events" && table !== "messages"
           ? old.order
           : appendOrder;
-      const record = records.write(
+      if (write.copyFrom && table !== "messages") throw new VersionStoreError("VERSION_COPY_KIND", "Only messages can be copied.");
+      const record = write.copyFrom ? records.copyMessage(write.copyFrom, sessionId, write.id, order, write.fields) : records.write(
         table,
         sessionId,
         write.id,

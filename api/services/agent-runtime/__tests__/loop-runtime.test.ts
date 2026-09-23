@@ -549,6 +549,31 @@ describe("agentLoopRuntime", () => {
     }
   });
 
+  it("continues a shared-worktree fork without creating rollback checkpoints", async () => {
+    const { forkSimpleConversation } = await import("../checkpoints/simple-fork.js");
+    const { versionRepository } = await import("../checkpoints/version-runtime/bridge.js");
+    const session = agentSessionRuntime.create({ ...executorInput, workDir: process.cwd() });
+    let forkId: string | undefined;
+    try {
+      queueMockStep(makeTextStep("Source answer."));
+      await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Source question" }));
+      const repo = versionRepository();
+      const cp = repo.checkpoints(session.id).items.find(cp => cp.kind === "reply")!;
+      const result = await forkSimpleConversation(session.id, cp.id, repo.head(session.id).revision, "continue-fork", "reuse_worktree");
+      forkId = result.sessionId;
+      queueMockStep(makeTextStep("Fork answer."));
+      const chunks = await collectChunks(agentLoopRuntime.streamRun(forkId, { message: "Continue in the fork" }));
+      expect(chunks.some(chunk => chunk.type === "done")).toBe(true);
+      expect(agentRuntimeStore.listMessages(forkId).map(message => message.content).join("\n")).toContain("Fork answer.");
+      expect(repo.checkpoints(forkId).items).toEqual([]);
+      expect(repo.count(forkId, "work")).toBe(0);
+      expect(agentRuntimeStore.listMessages(session.id).map(message => message.content).join("\n")).not.toContain("Fork answer.");
+    } finally {
+      if (forkId) clearVersionSessionFixture(forkId);
+      clearVersionSessionFixture(session.id);
+    }
+  });
+
   it("uses Native admission and scoped tool/part history in a versioned read-tool turn", async () => {
     const { initializeVersionNative } =
       await import("../checkpoints/version-runtime/bridge.js");

@@ -9,6 +9,7 @@ import {
 } from "./checkpoints/version-runtime/entities.js";
 import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import {
+  appendOnlySession,
   boundaryOnlySession,
   versionRepository,
   versionedSession,
@@ -1862,6 +1863,7 @@ export class AgentRuntimeStore {
   }
 
   getLatestCompactionRecord(sessionId: string): CompactionRecord | null {
+    if (appendOnlySession(sessionId)) return diagnosticPage(sessionId, "compactions", { limit: 1 }).items[0] as unknown as CompactionRecord ?? null;
     if (versionedSession(sessionId)) {
       const latest = versionRepository().last(sessionId, "compactions", ["id"]);
       return latest ? readVersionEntity<CompactionRecord>(sessionId, "compactions", String(latest.id)) : null;

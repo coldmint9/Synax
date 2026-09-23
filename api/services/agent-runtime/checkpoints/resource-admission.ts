@@ -80,8 +80,8 @@ interface ExternalUsage {
 }
 const external = new Map<string, ExternalUsage>();
 /** Stream directory entries; never recursively build an array of filenames. */
-async function directoryBytes(directory: string, depth = 0): Promise<number> {
-  if (depth > 4)
+async function directoryBytes(directory: string, depth = 0, maxDepth = 4): Promise<number> {
+  if (depth > maxDepth)
     fail("Unexpected depth in history storage; refusing unaccounted writes.");
   let dir: Awaited<ReturnType<typeof fsp.opendir>>;
   try {
@@ -93,10 +93,11 @@ async function directoryBytes(directory: string, depth = 0): Promise<number> {
   let bytes = 0;
   for await (const entry of dir) {
     const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) bytes += await directoryBytes(file, depth + 1);
-    else if (entry.isFile()) {
+    if (entry.isDirectory()) bytes += 4096 + await directoryBytes(file, depth + 1, maxDepth);
+    else if (entry.isFile() || entry.isSymbolicLink()) {
       try {
-        bytes += (await fsp.stat(file)).size;
+        const stat = await fsp.lstat(file);
+        bytes += Math.max(stat.size, stat.blocks * 512) + 4096;
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
       }
@@ -108,7 +109,9 @@ async function directoryBytes(directory: string, depth = 0): Promise<number> {
 export async function reserveExternalBytes(
   directory: string,
   bytes: number,
+  maxDepth = 4,
 ): Promise<(committed?: boolean) => void> {
+  if (!Number.isSafeInteger(maxDepth) || maxDepth < 1 || maxDepth > 64) fail("Invalid storage scan depth.");
   if (
     !Number.isSafeInteger(bytes) ||
     bytes < 0 ||
@@ -150,7 +153,7 @@ export async function reserveExternalBytes(
     if (!usage.at || Date.now() - usage.at > 30_000) {
       if (!usage.scan) {
         const before = usage.added;
-        usage.scan = directoryBytes(key)
+        usage.scan = directoryBytes(key, 0, maxDepth)
           .then((total) => {
             usage!.bytes = total + usage!.added - before;
             usage!.added = 0;

@@ -252,6 +252,20 @@ export class RuntimeRecordCodec {
     });
   }
 
+  /** Copy a message header while sharing immutable text/media descriptors.
+   * Large text never crosses JS just to change its session/message identity. */
+  copyMessage(source: string, scope: string, id: string, order: number, overrides: Record<string, unknown>): string {
+    const original = this.header(source);
+    if (original.table !== "messages") throw new VersionStoreError("VERSION_COPY_KIND", "Only message records may use transcript copying.");
+    const replacement = this.header(this.write("messages", scope, id, order, overrides));
+    const fields = { ...original.fields, ...replacement.fields };
+    const entries = Object.entries(fields);
+    if (entries.length > 64) throw new VersionStoreError("VERSION_RECORD_BUDGET", "Copied message has too many fields.");
+    const jsonBytes = 2 + Math.max(0, entries.length - 1) + entries.reduce((n, [name, field]) => n + Buffer.byteLength(JSON.stringify(name)) + 1 + ("inline" in field ? Buffer.byteLength(JSON.stringify(field.inline)) : field.jsonBytes), 0);
+    const references = [...new Set(entries.flatMap(([, field]) => "ref" in field ? [field.ref] : []))];
+    return this.objects.put("record", Buffer.from(JSON.stringify({ ...replacement, fields, jsonBytes })), references);
+  }
+
   header(id: string): RecordHeader {
     const stored = this.objects.get(id, "record");
     try {

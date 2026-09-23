@@ -7,6 +7,7 @@ import { readVersionSnapshot } from "../version-store/read-snapshot.js";
 import { admitVersionGrowth } from "../resource-admission.js";
 
 export const diagnosticTables: Record<string, string> = {
+  work: "agent_runtime_work", contexts: "agent_runtime_context_bundles", compactions: "agent_runtime_compaction_summaries",
   events: "agent_runtime_events",
   runs: "agent_runtime_runs",
   steps: "agent_runtime_run_steps",
@@ -18,7 +19,7 @@ export const diagnosticTables: Record<string, string> = {
   interactions: "agent_runtime_interactions",
 };
 export const isDiagnostic = (kind: string): boolean =>
-  Object.hasOwn(diagnosticTables, kind);
+  Object.hasOwn(diagnosticTables, kind) && !["work", "contexts", "compactions"].includes(kind);
 const projections = new WeakMap<Database.Database, Map<string, string>>();
 function table(kind: string): string {
   const value = diagnosticTables[kind];

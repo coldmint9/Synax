@@ -1,4 +1,5 @@
 import {
+  appendOnlySession,
   versionRepository,
   versionedSession,
 } from "./version-runtime/bridge.js";
@@ -97,6 +98,7 @@ export function mutationCursor(): number {
 }
 export function nativeCheckpointSession(sessionId: string): boolean {
   const session = agentRuntimeStore.getSession(sessionId);
+  if (appendOnlySession(sessionId)) return false;
   const backend = session.sessionMetadata?.backend as
     | { id?: string }
     | undefined;
@@ -159,6 +161,7 @@ export async function captureCompletedReply(
   sessionId: string,
   stepId?: string,
 ): Promise<void> {
+  if (appendOnlySession(sessionId)) return;
   if (versionedSession(sessionId)) {
     const message = versionRepository().last(
       sessionId,

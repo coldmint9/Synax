@@ -68,6 +68,16 @@ export function maintainVersionHistory(): void {
         ).run(id);
       }
     });
+  // Reader aliases are internal, contain no session row and are created in the
+  // same transaction as their operation. Reap committed/orphaned readers even
+  // if the process died immediately after publishing the fork.
+  const reader = db.prepare(`SELECT session_id FROM conversation_v3_heads h WHERE session_id GLOB 'forkview_fork_*'
+    AND NOT EXISTS(SELECT 1 FROM conversation_history_operations o WHERE o.id=substr(h.session_id,10) AND o.state NOT IN ('committed','aborted')) LIMIT 1`).get() as { session_id: string } | undefined;
+  if (reader) {
+    db.prepare("DELETE FROM conversation_v3_owned_versions WHERE session_id=? AND version_id IN (SELECT version_id FROM conversation_v3_owned_versions WHERE session_id=? LIMIT 64)").run(reader.session_id, reader.session_id);
+    if (!db.prepare("SELECT 1 FROM conversation_v3_owned_versions WHERE session_id=? LIMIT 1").get(reader.session_id))
+      db.prepare("DELETE FROM conversation_v3_heads WHERE session_id=?").run(reader.session_id);
+  }
   collectDeletedHistory();
   new VersionCollector(repo.objects).collect({
     maxObjects: 128,

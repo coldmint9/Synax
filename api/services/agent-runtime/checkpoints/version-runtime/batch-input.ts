@@ -5,6 +5,8 @@ import {
 } from "../version-store/limits.js";
 
 export interface RuntimeWrite {
+  /** Trusted repository-only copy of immutable field payloads. */
+  copyFrom?: string;
   table: string;
   id: string;
   fields: Record<string, unknown>;

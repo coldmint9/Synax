@@ -81,7 +81,7 @@ export function assertHistoryUnlocked(
   if (
     db
       .prepare(
-        "SELECT id FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required')",
+        "SELECT id FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required','fork_preparing')",
       )
       .get(rootOwner(sessionId))
   )

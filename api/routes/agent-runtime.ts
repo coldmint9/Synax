@@ -3,7 +3,6 @@ import { upgradeHistory } from "../services/agent-runtime/checkpoints/version-ru
 import { readHistoryWindow } from "../services/agent-runtime/checkpoints/version-runtime/window.js";
 import { boundaryOnlySession,versionRepository,versionedSession } from "../services/agent-runtime/checkpoints/version-runtime/bridge.js";
 import { visitConversation } from "../services/agent-runtime/checkpoints/retention.js";
-import { planFileUndo } from "../services/agent-runtime/checkpoints/file-plan.js";
 import {
   checkpointSummary,
   previewHistory,
@@ -11,14 +10,10 @@ import {
   recoverHistoryOperation,
   editRunRequestId,
 } from "../services/agent-runtime/checkpoints/operations.js";
-import { forkCheckpoint } from "../services/agent-runtime/checkpoints/fork.js";
-import { getCheckpoint } from "../services/agent-runtime/checkpoints/store.js";
+import { forkSimpleConversation, previewSimpleFork } from "../services/agent-runtime/checkpoints/simple-fork.js";
 import {
-  assertHistoryIdle,
-  assertHistoryUnlocked,
   historyRevision,
 } from "../services/agent-runtime/checkpoints/guards.js";
-import { SNAPSHOT_EXCLUSIONS } from "../services/agent-runtime/checkpoints/files.js";
 import { workRuntime } from "../services/agent-runtime/work-runtime.js";
 import { workflowMode } from "../services/agent-runtime/workflow-mode.js";
 import { compactSessionContext } from "../services/agent-runtime/manual-context-compaction.js";
@@ -1712,7 +1707,9 @@ const historyActionSchema = z.object({
   requestId: z.string().min(1).max(128),
   message: z.string().trim().min(1).max(100_000).optional(),
   includeFiles: z.boolean().default(true),
+  workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
 });
+const forkActionSchema = historyActionSchema.extend({ includeFiles: z.literal(false).default(false), workspaceMode: z.enum(["new_worktree", "reuse_worktree"]) });
 agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", (c) => {
   try {
     return c.json(checkpointSummary(c.req.param("sessionId")));
@@ -1727,6 +1724,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
     .object({
       checkpointId: z.string().min(1),
       action: z.enum(["rollback", "edit", "fork"]),
+      workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
       includeFiles: z.boolean().default(true),
     })
     .safeParse(body.data);
@@ -1735,15 +1733,8 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
     const sessionId = c.req.param("sessionId");
     if (parsed.data.action !== "fork")
       return c.json(await previewHistory(sessionId, parsed.data.checkpointId, parsed.data.includeFiles));
-    assertHistoryUnlocked(sessionId);
-    assertHistoryIdle(sessionId);
-    const checkpoint = getCheckpoint(sessionId, parsed.data.checkpointId);
-    if (checkpoint.kind !== "reply" || checkpoint.payload.version !== 2) throw new AgentValidationError("A reply boundary is required.");
-    const plan = await planFileUndo(checkpoint, parsed.data.includeFiles);
-    return c.json({ checkpointId: checkpoint.id, revision: historyRevision(sessionId), removedMessages: 0,
-      files: plan.changes.map(c => ({root:c.root,path:c.path,action:c.before ? "restore" : "delete"})),
-      conflicts: plan.conflicts, warnings: [...plan.warnings, "Fork copies the current workspace on demand; unrelated files retain their current versions."], preservedFiles: plan.preservedFiles,
-      exclusions: SNAPSHOT_EXCLUSIONS, canApply: !plan.conflicts.length });
+    if (!parsed.data.workspaceMode) throw new AgentValidationError("Choose a new worktree or the existing worktree before forking.");
+    return c.json(await previewSimpleFork(sessionId, parsed.data.checkpointId, parsed.data.workspaceMode));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1754,19 +1745,19 @@ for (const action of ["rollback", "edit", "fork"] as const) {
     async (c) => {
       const body = await readJson(c);
       if (!body.ok) return c.json({ error: body.error }, 400);
-      const parsed = historyActionSchema.safeParse(body.data);
+      const parsed = (action === "fork" ? forkActionSchema : historyActionSchema).safeParse(body.data);
       if (!parsed.success) return validationError(c, parsed.error);
       try {
         const sessionId = c.req.param("sessionId"),
           input = parsed.data;
         if (action === "fork")
           return c.json(
-            await forkCheckpoint(
+            await forkSimpleConversation(
               sessionId,
               input.checkpointId,
               input.revision,
               input.requestId,
-              input.includeFiles,
+              input.workspaceMode!,
             ),
             201,
           );

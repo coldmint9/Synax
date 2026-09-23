@@ -6,6 +6,7 @@ import { assertBatchInput } from "./batch-input.js";
 import { getRawSqlite } from "../../../../db/index.js";
 import { AgentNotFoundError, AgentRuntimeError } from "../../runtime-errors.js";
 import {
+  appendOnlySession,
   boundaryOnlySession,
   versionRepository,
   versionedSession,
@@ -77,13 +78,13 @@ export function writeVersionEntity<T>(
         "EXECUTION_SUPERSEDED",
         409,
       );
-    if (boundaryOnlySession(sessionId) && isDiagnostic(kind))
+    if (boundaryOnlySession(sessionId) && (isDiagnostic(kind) || appendOnlySession(sessionId)))
       admitVersionGrowth(db, Buffer.byteLength(JSON.stringify(value)));
     const result = writeControl();
     db.prepare(
       `UPDATE ${table(kind)} SET version_epoch=? WHERE id=? AND session_id=?`,
     ).run(epoch, id, sessionId);
-    if (boundaryOnlySession(sessionId) && isDiagnostic(kind)) {
+    if (boundaryOnlySession(sessionId) && (isDiagnostic(kind) || appendOnlySession(sessionId))) {
       trackDiagnostic(sessionId, kind, id);
       // Raw tool evidence retains its media until session deletion. It is not
       // snapshotted and cannot grant access to a discarded branch's tool input.
@@ -204,7 +205,7 @@ export function readVersionEntity<T>(
   return readVersionSnapshot(getRawSqlite(), () => {
     const repo = versionRepository(),
       head = repo.head(sessionId),
-      row = boundaryOnlySession(sessionId) && isDiagnostic(kind) ? readDiagnostic(sessionId, kind, id) : repo.get(sessionId, kind, id);
+      row = boundaryOnlySession(sessionId) && (isDiagnostic(kind) || appendOnlySession(sessionId)) ? readDiagnostic(sessionId, kind, id) : repo.get(sessionId, kind, id);
     if (!row) throw new AgentNotFoundError(id);
     const result = {
       ...normalizeVersionEntity(kind, row, head.epoch),
@@ -234,7 +235,7 @@ export function listVersionEntities<T>(
   return readVersionSnapshot(getRawSqlite(), () => {
     const repo = versionRepository(),
       head = repo.head(sessionId),
-      page = boundaryOnlySession(sessionId) && isDiagnostic(kind)
+      page = boundaryOnlySession(sessionId) && (isDiagnostic(kind) || appendOnlySession(sessionId))
         ? { ...diagnosticPage(sessionId, kind, { limit: 256, scope }), next: undefined }
         : repo.page(sessionId, kind, { limit: 256, scope });
     if (page.next)

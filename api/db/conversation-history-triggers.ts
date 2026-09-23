@@ -44,6 +44,11 @@ export function installConversationHistoryTriggers(
       db.exec(`CREATE TRIGGER ${trigger} BEFORE ${operation} ON ${table}
         WHEN EXISTS(SELECT 1 FROM conversation_v3_migrations WHERE session_id=${session(alias)} AND state='copying')
         BEGIN SELECT RAISE(ABORT,'HISTORY_MIGRATION_BUSY'); END;`);
+      const forkCopy = `conversation_fork_copy_${table}_${operation.toLowerCase()}`;
+      db.exec(`DROP TRIGGER IF EXISTS ${forkCopy}`);
+      db.exec(`CREATE TRIGGER ${forkCopy} BEFORE ${operation} ON ${table}
+        WHEN EXISTS(SELECT 1 FROM conversation_history_operations WHERE session_id=${session(alias)} AND state='fork_preparing' AND json_extract(payload_json,'$.kind')='simple-fork')
+        BEGIN SELECT RAISE(ABORT,'HISTORY_FORK_BUSY'); END;`);
       if (operation !== "DELETE") {
         const deleting = `conversation_deleting_${table}_${operation.toLowerCase()}`;
         db.exec(`DROP TRIGGER IF EXISTS ${deleting}`);

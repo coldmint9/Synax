@@ -1,3 +1,4 @@
+import { appendOnlySession } from "./version-runtime/bridge.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -55,7 +56,7 @@ export async function withCheckpointMutation<T>(
   paths?: string[],
 ): Promise<T> {
   return withSnapshotLease(() =>
-    recordMutation(sessionId, action, external, paths),
+    recordMutation(sessionId, action, external || appendOnlySession(sessionId), paths),
   );
 }
 async function recordMutation<T>(

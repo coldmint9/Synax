@@ -167,9 +167,10 @@ export function buildUserMessageEntries(
   );
   if (alreadyShown) return fromMessages;
 
+  const forkCreatedAt = (session.sessionMetadata?.fork as { sourceCreatedAt?: string } | undefined)?.sourceCreatedAt;
   const initial: UserMessageTimelineEntry = {
     id: sessionUserInputEntryId(session.id),
-    createdAt: session.createdAt,
+    createdAt: messages.find(isSessionPromptUserMessage)?.createdAt ?? forkCreatedAt ?? session.createdAt,
     label: truncate(userInput),
     content: userInput,
   };

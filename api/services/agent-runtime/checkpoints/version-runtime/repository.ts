@@ -539,6 +539,7 @@ export class RuntimeVersionRepository {
     mutationCursor: number,
     omitRunId?: string,
   ): RuntimeCheckpoint {
+    this.assertRollbackEnabled(sessionId);
     return atomicVersionWrite(this.objects.db, () => {
       const previous = this.checkpointIndex.findExisting(sessionId, kind, messageId);
       if (previous) return previous;
@@ -592,6 +593,10 @@ export class RuntimeVersionRepository {
       ),
     };
   }
+  private assertRollbackEnabled(sessionId: string): void {
+    if ((this.objects.db.prepare("SELECT rollback_enabled FROM conversation_v3_heads WHERE session_id=?").get(sessionId) as { rollback_enabled: number } | undefined)?.rollback_enabled === 0)
+      throw new VersionStoreError("HISTORY_APPEND_ONLY", "Forked conversations do not support checkpoints, rollback or history editing.");
+  }
   rollback(
     sessionId: string,
     request: {
@@ -602,6 +607,7 @@ export class RuntimeVersionRepository {
       requestHash?: string;
     },
   ): HeadState {
+    this.assertRollbackEnabled(sessionId);
     const requestHash = createHash("sha256")
       .update(
         JSON.stringify({
