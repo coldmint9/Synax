@@ -3,6 +3,7 @@ import { generateGatewayTextResult } from "../llm-runtime/gateway.js";
 import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 
 export const MAX_OPTIMIZATION_INPUT_CHARS = 32_000;
+export const INPUT_OPTIMIZATION_TIMEOUT_MS = 20_000;
 export interface InputOptimizationRequest {
   projectId: string;
   text: string;
@@ -80,7 +81,7 @@ export async function optimizeInput(
     );
   const abortSignal = AbortSignal.any([
     ...(signal ? [signal] : []),
-    AbortSignal.timeout(90_000),
+    AbortSignal.timeout(INPUT_OPTIMIZATION_TIMEOUT_MS),
   ]);
   abortSignal.throwIfAborted();
   const generateRewrite = (systemPrompt: string) =>

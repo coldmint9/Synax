@@ -6,7 +6,10 @@ vi.mock("../../../lib/config/config-store.js", () => ({
 vi.mock("../../llm-runtime/gateway.js", () => ({
   generateGatewayTextResult: mocks.generate,
 }));
-import { optimizeInput } from "../input-optimization.js";
+import {
+  INPUT_OPTIMIZATION_TIMEOUT_MS,
+  optimizeInput,
+} from "../input-optimization.js";
 const input = {
   projectId: "p1",
   text: "  整理我的需求  ",
@@ -23,6 +26,10 @@ beforeEach(() => {
     text: "我希望把当前的需求梳理清楚，明确需要完成的事情和最终想达到的效果。",
     finishReason: "stop",
   });
+});
+
+it("limits input optimization to 20 seconds", () => {
+  expect(INPUT_OPTIMIZATION_TIMEOUT_MS).toBe(20_000);
 });
 it("follows the explicit current model and never supplies tools", async () => {
   expect(await optimizeInput(input)).toEqual({

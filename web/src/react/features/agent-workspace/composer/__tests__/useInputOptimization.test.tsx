@@ -1,7 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { useInputOptimization } from "../useInputOptimization";
+import {
+  INPUT_OPTIMIZATION_TIMEOUT_MS,
+  useInputOptimization,
+} from "../useInputOptimization";
 const mocks = vi.hoisted(() => ({ optimize: vi.fn() }));
 vi.mock("../../../../../lib/api/inputOptimization", () => ({
   optimizeInput: mocks.optimize,
@@ -31,6 +34,10 @@ function setup() {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+it("limits input optimization to 20 seconds", () => {
+  expect(INPUT_OPTIMIZATION_TIMEOUT_MS).toBe(20_000);
 });
 it("fills the draft without submitting and supports a one-step undo", async () => {
   mocks.optimize.mockResolvedValue({ text: "优化的需求" });

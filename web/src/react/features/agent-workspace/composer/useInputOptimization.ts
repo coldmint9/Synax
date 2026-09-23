@@ -2,6 +2,8 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { optimizeInput } from "../../../../lib/api/inputOptimization";
 import { useLocale } from "../../../../hooks/useLocale";
 
+export const INPUT_OPTIMIZATION_TIMEOUT_MS = 20_000;
+
 interface Options {
   scope: string;
   projectId: string;
@@ -79,7 +81,10 @@ export function useInputOptimization(options: Options) {
           model: initial.model,
           backendId: initial.backendId,
         },
-        AbortSignal.any([controller.signal, AbortSignal.timeout(95_000)]),
+        AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(INPUT_OPTIMIZATION_TIMEOUT_MS),
+        ]),
       );
       if (request.current !== controller || controller.signal.aborted) return;
       // Clear the in-flight request before updating the draft: our own edit is not cancellation.
