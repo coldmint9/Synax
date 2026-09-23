@@ -640,6 +640,13 @@ export interface SessionInvocationUsageResponse {
   totalCalls: number;
 }
 
+export interface ProjectToolGrant {
+  projectId: string;
+  toolId: string;
+  permissionId: string;
+  createdAt: string;
+}
+
 export interface SessionCapabilities {
   backend?: {
     id: BackendId;
@@ -914,6 +921,15 @@ export const agentRuntimeApi = {
   listEvents: (sessionId: string, after?: string) =>
     request<{ items: RuntimeEvent[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/events${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+    ),
+  listProjectToolGrants: (projectId: string) =>
+    request<{ items: ProjectToolGrant[] }>(
+      `/projects/${encodeURIComponent(projectId)}/tool-grants`,
+    ),
+  revokeProjectToolGrant: (projectId: string, toolId: string) =>
+    request<{ revoked: boolean }>(
+      `/projects/${encodeURIComponent(projectId)}/tool-grants/${encodeURIComponent(toolId)}`,
+      { method: "DELETE" },
     ),
   listPermissions: (sessionId: string) =>
     request<{ items: PermissionDecision[] }>(

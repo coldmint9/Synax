@@ -244,7 +244,7 @@ export function executeBash(
   // 2. Block file redirects unless the session is unrestricted
   if (
     !isUnrestrictedSession(input.sessionId) &&
-    !hasToolApproval(input.sessionId)
+    !hasToolApproval(input.sessionId, input.toolId)
   ) {
     const redirectError = checkFileRedirects(command);
     if (redirectError) {

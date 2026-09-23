@@ -1,3 +1,4 @@
+import { revokeAllProjectToolGrants } from "../services/agent-runtime/project-tool-grants.js";
 import { Hono } from "hono";
 import * as z from "zod/v4";
 import {
@@ -227,6 +228,7 @@ projectSettingsRoutes.patch("/:projectId/settings/:section", async (c) => {
 projectSettingsRoutes.delete("/:projectId/settings", (c) => {
   const projectId = c.req.param("projectId");
   const deleted = deleteProjectSettings(projectId);
+  revokeAllProjectToolGrants(projectId);
   return c.json({ ok: true, deleted });
 });
 

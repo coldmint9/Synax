@@ -2,6 +2,7 @@ export {
   SandboxPolicy,
   sandboxPolicy,
   withSandboxApproval,
+  withProjectToolApproval,
   hasToolApproval,
 } from "./sandbox-policy.js";
 export {

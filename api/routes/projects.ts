@@ -33,6 +33,7 @@ import { logger } from "../lib/logger.js";
 import { DATA_ROOT } from "../lib/env.js";
 import { contextService } from "../services/context/context-service.js";
 import { getRawSqlite } from "../db/index.js";
+import { revokeAllProjectToolGrants } from "../services/agent-runtime/project-tool-grants.js";
 import { agentRuntimeStore } from "../services/agent-runtime/session-store.js";
 import {
   createGitWorktree,
@@ -1140,6 +1141,7 @@ projectRoutes.delete("/:id", async (c) => {
   // Remove from memory and disk
   projects.delete(id);
   saveProjectsToDisk();
+  revokeAllProjectToolGrants(id);
   logger.info(
     { projectId: id, gitCleaned: cleanupResult.cleaned },
     "[projects] deleted",
