@@ -10,10 +10,9 @@ const planPlannerBase: Omit<AgentProfile, 'id' | 'label'> = {
   description: 'Decompose user Goals into an executable Plan DAG for Synax plan_node execution.',
   defaultThinkingMode: 'deep',
   allowedCapabilities: [
-    'file.glob',
+    'rg',
     'file.list',
     'file.read',
-    'grep.search',
     'plan.read_wiki_document',
     'plan.submit_node',
   ],

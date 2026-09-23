@@ -81,11 +81,11 @@ describe('detectDoomLoop', () => {
     // Each step has one real call + one dedup — signature based only on real calls
     const calls = [
       makeRecord('file.read', 'step-1', { status: 'completed', outputRef: { x: 1 }, argsHash: 'hash-a' }),
-      makeRecord('grep.search', 'step-1', { status: 'compacted', outputRef: null, argsHash: 'hash-b' }),
+      makeRecord('rg', 'step-1', { status: 'compacted', outputRef: null, argsHash: 'hash-b' }),
       makeRecord('file.read', 'step-2', { status: 'completed', outputRef: { x: 1 }, argsHash: 'hash-a' }),
-      makeRecord('grep.search', 'step-2', { status: 'compacted', outputRef: null, argsHash: 'hash-b' }),
+      makeRecord('rg', 'step-2', { status: 'compacted', outputRef: null, argsHash: 'hash-b' }),
       makeRecord('file.read', 'step-3', { status: 'completed', outputRef: { x: 1 }, argsHash: 'hash-a' }),
-      makeRecord('grep.search', 'step-3', { status: 'compacted', outputRef: null, argsHash: 'hash-b' }),
+      makeRecord('rg', 'step-3', { status: 'compacted', outputRef: null, argsHash: 'hash-b' }),
     ];
     // Only file.read:hash-a is real in each step — same signature → triggers
     expect(detectDoomLoop(calls)).not.toBeNull();

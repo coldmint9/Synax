@@ -154,9 +154,9 @@ export async function* generatePlanStream(
           const toolId = chunk.toolCall?.toolId ?? ''
           if (toolId === 'plan.read_wiki_document') {
             yield { type: 'tool_call', tool: 'read_wiki_document', summary: chunk.toolCall?.inputSummary ?? '' }
-          } else if (toolId === 'grep.search') {
+          } else if (toolId === 'rg') {
             yield { type: 'phase', phase: 'reading_source' }
-            yield { type: 'tool_call', tool: 'grep_search', summary: chunk.toolCall?.inputSummary ?? '' }
+            yield { type: 'tool_call', tool: 'rg', summary: chunk.toolCall?.inputSummary ?? '' }
           } else if (toolId === 'file.read') {
             yield { type: 'phase', phase: 'reading_source' }
             yield { type: 'tool_call', tool: 'file_read', summary: chunk.toolCall?.inputSummary ?? '' }

@@ -32,7 +32,7 @@ const blocks: TurnContentBlock[] = [
     type: "tool_call",
     call: {
       id: "call-1",
-      toolId: "grep.search",
+      toolId: "rg",
       inputSummary: "bui-tool|bui-activity|StreamingTextBlock",
       outputSummary: "Found matches",
       status: "completed",

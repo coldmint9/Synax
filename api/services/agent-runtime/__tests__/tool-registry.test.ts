@@ -9,8 +9,9 @@ describe('toolRegistry', () => {
 
   it('registers progressively described core tools', () => {
     const tools = toolRegistry.list();
-    expect(tools.map((tool) => tool.id)).toEqual(expect.arrayContaining(['file.list', 'file.read', 'grep.search']));
-    for (const id of ['file.read', 'file.list', 'grep.search', 'bash', 'file.write', 'edit']) {
+    expect(tools.map((tool) => tool.id)).toEqual(expect.arrayContaining(['file.list', 'file.read', 'rg']));
+    expect(tools.some((tool) => ['file.glob', 'grep.search'].includes(tool.id))).toBe(false);
+    for (const id of ['file.read', 'file.list', 'rg', 'bash', 'file.write', 'edit']) {
       const tool = tools.find((candidate) => candidate.id === id);
       expect(typeof tool?.progressiveDetails).toBe('string');
     }
@@ -18,7 +19,7 @@ describe('toolRegistry', () => {
 
   it('executes allowed read tools and records calls', async () => {
     const session = agentSessionRuntime.create(explorerSessionInput);
-    const call = await toolRegistry.execute(session.id, 'file.glob', { pattern: 'package.json', limit: 5 });
+    const call = await toolRegistry.execute(session.id, 'rg', { mode: 'files', pattern: 'package.json', limit: 5 });
 
     expect(['completed', 'compacted']).toContain(call.record.status);
     expect(agentRuntimeStore.listToolCalls(session.id)).toHaveLength(1);

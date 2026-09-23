@@ -64,7 +64,6 @@ import { skillAgentBridge } from "../skills/agent-bridge.js";
 import { mcpSessionToolProvider } from "../mcp/mcp-session-tool-provider.js";
 import { INVALID_TOOL, INVALID_TOOL_ID } from "./tool-invalid.js";
 import { diffReadTool } from "./tools/diff-read.js";
-import { fileGlobTool } from "./tools/file-glob.js";
 import { fileListTool } from "./tools/file-list.js";
 import { editTool } from "./tools/edit.js";
 import { patchTool } from "./tools/patch.js";
@@ -72,7 +71,7 @@ import { bashTool } from "./tools/bash.js";
 import { fileReadTool } from "./tools/file-read.js";
 import { fileDeleteTool } from "./tools/file-delete.js";
 import { fileWriteTool } from "./tools/file-write.js";
-import { grepSearchTool } from "./tools/grep-search.js";
+import { rgTool } from "./tools/rg.js";
 import { webSearchTool } from "./tools/web-search.js";
 import {
   buildExplorerSubagentPrompt,
@@ -138,8 +137,7 @@ export class ToolRegistry {
       mediaGenerateTool,
       ...mediaAudioVideoTools,
       fileListTool,
-      fileGlobTool,
-      grepSearchTool,
+      rgTool,
       webSearchTool,
       diffReadTool,
       fileWriteTool,

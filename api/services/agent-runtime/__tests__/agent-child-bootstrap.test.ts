@@ -94,7 +94,7 @@ describe('bootstrapAgentChildForSession', () => {
     tryGetSession.mockReturnValue({ id: 'ars_3', profileId: 'reviewer', projectId: 'p1' });
     maybeGet.mockReturnValue({
       id: 'reviewer',
-      allowedCapabilities: ['bash', 'grep.search'],
+      allowedCapabilities: ['bash', 'rg'],
     });
 
     bootstrapAgentChildForSession('ars_3');

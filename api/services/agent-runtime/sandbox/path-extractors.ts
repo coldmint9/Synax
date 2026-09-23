@@ -6,9 +6,8 @@ export const PATH_EXTRACTORS: Record<string, (args: unknown) => string[]> = {
   edit: (a) => [(a as any)?.path].filter(Boolean),
   'file.patch':  (a) => patchFilePaths((a as any)?.patch),
   'file.delete': (a) => [(a as any)?.path].filter(Boolean),
-  'file.glob':   (a) => [(a as any)?.path ?? '.'].filter(Boolean),
-  'file.list':   (a) => [(a as any)?.path ?? '.'].filter(Boolean),
-  'grep.search': (a) => [(a as any)?.path ?? '.'].filter(Boolean),
+  'rg': (a) => [(a as any)?.path ?? '.'].filter(Boolean),
+  'file.list': (a) => [(a as any)?.path ?? '.'].filter(Boolean),
   'diff.read':   (a) => ['.'],
   'bash':        (a) => {
     const args = a as any;

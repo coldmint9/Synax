@@ -66,7 +66,7 @@ function buildExecutionSection(availableToolIds: string[]): string {
     "## Execution",
     "Use the supplied tool schemas for names, arguments and availability. Batch independent operations; wait for dependencies. Take the next useful action instead of restating the plan.",
   ];
-  if (["file.read", "grep.search", "file.glob"].some((id) => tools.has(id)))
+  if (["file.read", "rg"].some((id) => tools.has(id)))
     lines.push(
       "Prefer available file/search tools for bounded inspection. Read an existing file before editing it.",
     );

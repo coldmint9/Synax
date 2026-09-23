@@ -9,13 +9,12 @@ export const planExecutorProfile: AgentProfile = {
   description: 'Execute a single plan node: read code, apply patches, land Goal changes.',
   defaultThinkingMode: 'standard',
   allowedCapabilities: [
-    'file.glob',
+    'rg',
     'file.list',
     'file.read',
     'file.write',
     'edit',
     'file.delete',
-    'grep.search',
     'diff.read',
   ],
   permissionDefaults: [
