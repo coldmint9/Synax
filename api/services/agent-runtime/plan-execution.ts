@@ -115,7 +115,7 @@ export function getUserInstructionText(sessionId: string, runId: string): string
   const run = store.getRun(runId);
   const messages = store.listMessages(sessionId);
   const queued = messages.filter(item => item.runId === runId && item.role === 'user' && item.metadata.source === 'input_queue').at(-1);
-  const message = queued ?? (run.triggerMessageId ? messages.find((item) => item.id === run.triggerMessageId) : null);
+  const message = queued ?? (run.triggerMessageId ? store.getMessage(sessionId, run.triggerMessageId) : null);
   if (!message || message.metadata.source === 'system_injection') return null;
   return message.content;
 }

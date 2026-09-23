@@ -174,7 +174,7 @@ export const bashTool: RegisteredTool = {
   id: "bash",
   label: "Bash",
   description:
-    "Executes a bash command in the workspace. Permission is enforced per command and subcommand (e.g. git:diff vs git:push). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr unless the session is unrestricted. Prefer dedicated tools (file.read, grep.search, file.glob, file.list) when possible.",
+    "Executes a bash command in the workspace. Permission is enforced per command and subcommand (e.g. git:diff vs git:push). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr unless the session is unrestricted. Prefer dedicated tools (file.read, rg, file.list) when possible.",
   category: "shell",
   internalGate: "shell",
   mutability: "read",
@@ -244,7 +244,7 @@ export function executeBash(
   // 2. Block file redirects unless the session is unrestricted
   if (
     !isUnrestrictedSession(input.sessionId) &&
-    !hasToolApproval(input.sessionId)
+    !hasToolApproval(input.sessionId, input.toolId)
   ) {
     const redirectError = checkFileRedirects(command);
     if (redirectError) {
@@ -440,7 +440,7 @@ async function executeBashCommand(
   // 8. Command-not-found detection
   const { notFound, commandName } = detectCommandNotFound(stderr, command);
   if (notFound) {
-    const fallbackHint = `Command '${commandName}' not found. Use dedicated tools instead: file.glob, file.list, grep.search, file.read.`;
+    const fallbackHint = `Command '${commandName}' not found. Use dedicated tools instead: rg, file.list, file.read.`;
     const finalStderr = truncatedStderr
       ? truncatedStderr + "\n" + fallbackHint
       : fallbackHint;

@@ -12,10 +12,12 @@ import {
 } from "./sandbox-config.js";
 import { SandboxAuditLog, sandboxAuditLog } from "./sandbox-audit.js";
 import { PATH_EXTRACTORS } from "./path-extractors.js";
+import { hasProjectToolGrant } from "../project-tool-grants.js";
 
 const approvals = new AsyncLocalStorage<{
   sessionId: string;
   paths: string[];
+  toolId?: string;
 }>();
 
 /** Approval is scoped to one execution, never persisted as a sandbox bypass. */
@@ -26,8 +28,18 @@ export function withSandboxApproval<T>(
 ): T {
   return approvals.run({ sessionId, paths }, action);
 }
-export function hasToolApproval(sessionId: string): boolean {
-  return approvals.getStore()?.sessionId === sessionId;
+export function withProjectToolApproval<T>(
+  sessionId: string, toolId: string, action: () => T,
+): T {
+  return approvals.run({ sessionId, toolId, paths: [] }, action);
+}
+
+export function hasToolApproval(sessionId: string, toolId?: string): boolean {
+  const scope = approvals.getStore();
+  if (scope?.sessionId !== sessionId) return false;
+  return scope.toolId
+    ? scope.toolId === toolId && hasProjectToolGrant(sessionId, scope.toolId)
+    : true;
 }
 
 export class SandboxPolicy {
@@ -62,8 +74,11 @@ export class SandboxPolicy {
     if (config.resolveSymlinks) realPath = this.resolveReal(resolved);
     if (config.unrestricted) return realPath;
     const approval = approvals.getStore();
-    if (approval?.sessionId === sessionId && approval.paths.includes(realPath))
-      return realPath;
+    if (approval?.sessionId === sessionId &&
+        ((approval.toolId !== undefined &&
+          (approval.toolId === toolId || toolId === "workspace") &&
+          hasProjectToolGrant(sessionId, approval.toolId)) ||
+         approval.paths.includes(realPath))) return realPath;
 
     let normalizedRoot = path.resolve(workspaceRoot);
     if (config.resolveSymlinks) {

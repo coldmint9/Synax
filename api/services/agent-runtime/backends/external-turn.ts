@@ -6,7 +6,7 @@ import { AsyncQueue } from '../../acp/protocol/async-queue.js';
 import { captureFileChangeBaseline, captureFileChanges, type FileChangeBaseline } from '../../acp/file-change-capture.js';
 import { agentRuntimeStore as store } from '../session-store.js';
 import { agentEventService as events } from '../event-service.js';
-import { activateAcceptedRun } from '../run-admission.js';
+import { activateAcceptedRun, acceptedInputRequestId } from '../run-admission.js';
 import { makeRuntimeId, nowIso } from '../runtime-ids.js';
 import { interactionService } from '../interaction-service.js';
 import { validateBackendTurnInput } from './backend-binding.js';
@@ -44,7 +44,7 @@ export class ExternalTurn {
       ? 'Continue the existing task from the current native session state. Check unfinished work and prior tool outcomes first. Do not replay completed actions.'
       : session.prompt);
     const user = store.appendMessage({ id: makeRuntimeId('msg'), sessionId, runId: input.acceptedRunId ?? null, stepId: null,
-      role: 'user', content: this.message, contentParts: input.contentParts, metadata: { source: input.messageSource ?? (continuesNative && !hasInput(input) ? `${backendId}_continue` : `${backendId}_turn`) }, createdAt: nowIso() });
+      role: 'user', content: this.message, contentParts: input.contentParts, metadata: { requestId: acceptedInputRequestId(sessionId, input.acceptedRunId), source: input.messageSource ?? (continuesNative && !hasInput(input) ? `${backendId}_continue` : `${backendId}_turn`) }, createdAt: nowIso() });
     this.run = input.acceptedRunId ? activateAcceptedRun(sessionId, input.acceptedRunId, user.id, input.model ?? null)
       : store.appendRun({ id: makeRuntimeId('run'), sessionId, status: 'running', startedAt: nowIso(), completedAt: null,
         triggerMessageId: user.id, currentStep: 1, stopReason: null, model: input.model ?? null, metadata: { backendId } });

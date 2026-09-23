@@ -121,6 +121,7 @@ export interface SkillListQuery {
   installedOnly?: boolean;
   /** Management lists retain disabled entries; runtime lists exclude them. */
   includeDisabled?: boolean;
+  includeUnmounted?: boolean;
   limit?: number;
   offset?: number;
 }

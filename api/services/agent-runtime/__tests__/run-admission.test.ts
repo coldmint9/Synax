@@ -7,7 +7,7 @@ import {
   resetAgentRuntimeFixtures,
   plannerSessionInput,
 } from "./agent-runtime-fixtures.js";
-import { acceptRuntimeRun, activateAcceptedRun } from "../run-admission.js";
+import { acceptRuntimeRun, activateAcceptedRun, acceptedInputRequestId } from "../run-admission.js";
 import { getRawSqlite } from "../../../db/index.js";
 
 beforeEach(resetAgentRuntimeFixtures);
@@ -163,4 +163,13 @@ describe("durable Run admission", () => {
     ).toThrow(/workspace|directory/i);
     expect(agentRuntimeStore.listRuns(session.id)).toHaveLength(0);
   });
+});
+
+it("resolves input identity only from an admitted run in the same session", () => {
+  const session = create();
+  const other = create();
+  const { run } = acceptRuntimeRun(session.id, { message: "Hello" }, "identity");
+  expect(acceptedInputRequestId(session.id, run.id)).toBe("identity");
+  expect(acceptedInputRequestId(session.id)).toBeUndefined();
+  expect(() => acceptedInputRequestId(other.id, run.id)).toThrow("another session");
 });

@@ -15,7 +15,7 @@ const TOOLS: Record<string, { label: I18nKey; icon: typeof Wrench }> = {
   "file.write": { label: "activityToolWrite", icon: FileEdit },
   "file.edit": { label: "activityToolEdit", icon: FileEdit },
   "file.list": { label: "activityToolList", icon: FolderOpen },
-  "grep.search": { label: "activityToolSearch", icon: Search },
+  "rg": { label: "activityToolSearch", icon: Search },
   "file.search": { label: "activityToolSearch", icon: Search },
   bash: { label: "activityToolRun", icon: Terminal },
   "verification.run": { label: "activityToolVerify", icon: Terminal },

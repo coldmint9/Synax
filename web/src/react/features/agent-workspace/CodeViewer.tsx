@@ -8,7 +8,7 @@ import {
 import { runtimeMedia } from "../../../lib/api/runtimeMedia";
 import { highlightCode, languageForPath } from "./codeHighlight";
 import { FileTypeIcon } from "./FileTypeIcon";
-import { HighlightedCodeEditor } from "./HighlightedCodeEditor";
+import { FileViewer } from "../../components/file-viewer/FileViewer";
 import { WikiMarkdown } from "../wiki/WikiMarkdown";
 import "../wiki/wiki-theme.css";
 import {
@@ -38,23 +38,6 @@ function previewKindForPath(path: string): FilePreviewKind {
   if (extension === "html" || extension === "htm") return "html";
   if (extension === "md" || extension === "markdown") return "markdown";
   return "text";
-}
-
-function LineNumbers({ count }: { count: number }) {
-  const lines = useMemo(
-    () => Array.from({ length: count }, (_, i) => i + 1),
-    [count],
-  );
-  return (
-    <div
-      aria-hidden
-      className="code-viewer-line-numbers select-none text-right font-mono text-[11px] leading-[1.5]"
-    >
-      {lines.map((line) => (
-        <div key={line}>{line}</div>
-      ))}
-    </div>
-  );
 }
 
 export const CodeViewer = memo(function CodeViewer({
@@ -442,28 +425,15 @@ export const CodeViewer = memo(function CodeViewer({
               </div>
             </article>
           )
-        ) : editable ? (
-          <HighlightedCodeEditor
+        ) : (
+          <FileViewer
+            mode="text"
             key={`${sessionId}:${rootId ?? ""}:${path}`}
             path={path}
             content={content}
             html={html}
-            onChange={updateContent}
-            gutter={<LineNumbers count={Math.max(1, lineCount)} />}
+            onChange={editable ? updateContent : undefined}
           />
-        ) : (
-          <div className="flex min-w-max items-stretch">
-            <div className="code-viewer-gutter sticky left-0 z-10 px-2 py-2">
-              <LineNumbers count={lineCount} />
-            </div>
-            <div className="code-viewer-content min-w-max px-3 py-2 font-mono text-[11px] leading-[1.5]">
-              {html === undefined ? (
-                <pre>{content}</pre>
-              ) : (
-                <div dangerouslySetInnerHTML={{ __html: html }} />
-              )}
-            </div>
-          </div>
         )}
       </div>
     </div>

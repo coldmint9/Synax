@@ -1,3 +1,16 @@
+import {
+  writeFileJournal as writeJournal,
+  FILE_JOURNAL_BYTES,
+  type JournalPayload,
+} from "./file-journal.js";
+import { applyVersionFileHistory } from "./version-runtime/file-operation.js";
+import { applyVersionHistory } from "./version-runtime/history-operation.js";
+import {
+  appendOnlySession,
+  versionRepository,
+  versionedSession,
+  assertVersionTranscriptOperation,
+} from "./version-runtime/bridge.js";
 import { clearSessionFileReads } from "../read-tracker.js";
 import { planFileUndo, type PreservedFile } from "./file-plan.js";
 import { committedFileReason } from "./git-boundary.js";
@@ -67,12 +80,6 @@ interface Mutation {
   uncertain: number;
   state: string;
 }
-interface JournalPayload {
-  changes: FileChange[];
-  ownerPid: number;
-  applied: number;
-  request: HistoryRequest;
-}
 const operationId = (sessionId: string, requestId: string) =>
   `history_${createHash("sha256").update(`${sessionId}:${requestId}`).digest("hex")}`;
 function supported(sessionId: string): void {
@@ -87,6 +94,14 @@ function supported(sessionId: string): void {
     );
 }
 function assertCheckpoint(checkpoint: ConversationCheckpoint): void {
+  // Legacy compatibility must not reintroduce the original event-loop stall.
+  // Check bounded identities only; never load the undo bodies before admission.
+  const ids = checkpoint.payload.boundary?.sessionIds ?? [checkpoint.sessionId];
+  if (ids.length > 64) throw historyError("Legacy history exceeds the bounded rollback budget. Upgrade the inactive conversation first.", "HISTORY_MIGRATION_REQUIRED");
+  if (ids.length && getRawSqlite().prepare(`SELECT 1 FROM conversation_history_journal WHERE session_id IN (${ids.map(() => "?").join(",")}) AND sequence>? LIMIT 1 OFFSET 1024`)
+      .get(...ids, checkpoint.payload.boundary?.cursor ?? 0))
+    throw historyError("Legacy rollback would replay too many undo records. Stop the conversation and use Upgrade history; its current messages will be preserved.", "HISTORY_MIGRATION_REQUIRED");
+
   if (
     checkpoint.payload.version !== 2 ||
     !checkpoint.payload.boundary ||
@@ -99,17 +114,70 @@ function assertCheckpoint(checkpoint: ConversationCheckpoint): void {
     );
 }
 
-export function checkpointSummary(sessionId: string) {
-  const session = agentRuntimeStore.getSession(sessionId);
-  recoverOrphanedCheckpointWriters();
+function historyAvailability(sessionId: string) {
   let reason: string | null = null;
+  let forkReason: string | null = null;
+  let stopRequired = false;
   try {
     supported(sessionId);
-    assertHistoryUnlocked(sessionId);
-    assertHistoryIdle(sessionId);
+    assertHistoryUnlocked(sessionId, []);
   } catch (error) {
-    reason = (error as Error).message;
+    forkReason = (error as Error).message;
+    reason = forkReason;
   }
+  if (!reason) {
+    try {
+      // Legacy history mutations inspect workspace locks as well; forking
+      // copies a reply snapshot and does not restore files in the source.
+      if (!versionedSession(sessionId)) assertHistoryUnlocked(sessionId);
+      assertHistoryIdle(sessionId);
+    } catch (error) {
+      reason = (error as Error).message;
+      stopRequired = ["HISTORY_SESSION_BUSY", "HISTORY_PROCESS_ACTIVE"].includes(
+        (error as { code?: string }).code ?? "",
+      );
+    }
+  }
+  return { reason, forkReason, stopRequired };
+}
+
+export function checkpointSummary(sessionId: string) {
+  if (versionedSession(sessionId)) {
+    const repo = versionRepository(),
+      head = repo.head(sessionId),
+      page = repo.checkpoints(sessionId, { limit: 128, reverse: true });
+    const availability = historyAvailability(sessionId);
+    return {
+      sessionId,
+      revision: head.revision,
+      recoveryRequired: Boolean(
+        getRawSqlite()
+          .prepare(
+            "SELECT id FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required','fork_preparing') LIMIT 1",
+          )
+          .get(sessionId),
+      ),
+      ...availability,
+      rollbackEnabled: !appendOnlySession(sessionId),
+      checkpoints: appendOnlySession(sessionId) ? []
+        : page.items.map((cp) => ({
+        id: cp.id,
+        kind: cp.kind,
+        messageId: cp.messageId,
+        stepId: cp.stepId,
+        available: true,
+        reason: null,
+        hasLaterHistory:
+          cp.kind === "input" || cp.payload.versionId !== head.versionId,
+        initialInput:
+          cp.kind === "input" && cp.payload.boundary.messageCount === 0,
+      })),
+      ...(page.next ? { next: page.next } : {}),
+    };
+  }
+  const session = agentRuntimeStore.getSession(sessionId);
+  recoverOrphanedCheckpointWriters();
+  const availability = historyAvailability(sessionId);
   const db = getRawSqlite();
   // Do not materialize every historical transcript/manifest merely to render toolbar capabilities.
   const checkpoints = db
@@ -152,7 +220,7 @@ export function checkpointSummary(sessionId: string) {
         )
         .get(sessionId),
     ),
-    reason,
+    ...availability,
     checkpoints: checkpoints
       .filter((c) => c.messageId && messageIds.has(c.messageId))
       .map((c) => ({
@@ -177,6 +245,29 @@ export async function previewHistory(
   checkpointId: string,
   includeFiles = true,
 ): Promise<HistoryPreview> {
+  if (versionedSession(sessionId)) {
+    supported(sessionId);
+    assertVersionTranscriptOperation(sessionId, includeFiles);
+    assertHistoryUnlocked(sessionId, []);
+    assertHistoryIdle(sessionId);
+    const plan = includeFiles
+      ? await planFileUndo(getCheckpoint(sessionId, checkpointId), true)
+      : { changes: [], conflicts: [], warnings: [], preservedFiles: [] };
+    return {
+      checkpointId,
+      ...versionRepository().preview(sessionId, checkpointId),
+      files: plan.changes.map((c) => ({
+        root: c.root,
+        path: c.path,
+        action: c.before ? ("restore" as const) : ("delete" as const),
+      })),
+      conflicts: plan.conflicts,
+      canApply: plan.conflicts.length === 0,
+      warnings: plan.warnings,
+      preservedFiles: plan.preservedFiles,
+      exclusions: SNAPSHOT_EXCLUSIONS,
+    };
+  }
   supported(sessionId);
   assertHistoryUnlocked(sessionId, []);
   assertHistoryIdle(sessionId);
@@ -210,17 +301,6 @@ export async function previewHistory(
   };
 }
 
-function writeJournal(
-  id: string,
-  state: string,
-  payload: JournalPayload,
-): void {
-  getRawSqlite()
-    .prepare(
-      "UPDATE conversation_history_operations SET state=?,payload_json=? WHERE id=?",
-    )
-    .run(state, JSON.stringify(payload), id);
-}
 /** Compensate only known before/after versions; never overwrite intervening edits. */
 export async function recoverHistoryOperation(
   sessionId: string,
@@ -230,13 +310,23 @@ export async function recoverHistoryOperation(
   recoverOrphanedCheckpointWriters();
   const operation = db
     .prepare(
-      "SELECT id,state,payload_json FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required','fork_preparing') ORDER BY created_at LIMIT 1",
+      `SELECT id,state,CASE WHEN length(CAST(payload_json AS BLOB))<=${FILE_JOURNAL_BYTES} THEN payload_json ELSE NULL END AS payload_json FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required','fork_preparing') ORDER BY created_at LIMIT 1`,
     )
     .get(sessionId) as
     | { id: string; state: string; payload_json: string }
     | undefined;
   if (!operation) return;
+  if (operation.payload_json === null)
+    throw historyError(
+      "Recovery metadata exceeds its bounded parser budget; explicit migration/recovery is required.",
+      "HISTORY_PLAN_LIMIT",
+    );
   const rawPayload = JSON.parse(operation.payload_json);
+  if (rawPayload.kind === "simple-fork") {
+    const { recoverSimpleFork } = await import("./simple-fork.js");
+    await recoverSimpleFork(operation.id, internal);
+    return;
+  }
   if (rawPayload.kind === "fork") {
     await recoverForkOperation(operation.id, internal);
     return;
@@ -308,6 +398,28 @@ export async function applyHistory(
   sessionId: string,
   request: HistoryRequest,
 ): Promise<HistoryResult> {
+  if (versionedSession(sessionId)) {
+    supported(sessionId);
+    assertVersionTranscriptOperation(
+      sessionId,
+      request.includeFiles !== false,
+      request.action,
+    );
+    const { result, applied } =
+      request.includeFiles !== false
+        ? await applyVersionFileHistory(sessionId, request)
+        : applyVersionHistory(sessionId, request);
+    if (!applied) return result;
+    clearSessionFileReads(sessionId);
+    sessionLiveBus.clearBuffer(sessionId);
+    invalidateSessionEnvironment(sessionId);
+    emitRuntimeBusEvent({
+      type: "session_changed",
+      sessionId,
+      patch: { historyRevision: result.revision, historyReset: true },
+    });
+    return result;
+  }
   supported(sessionId);
   const db = getRawSqlite(),
     id = operationId(sessionId, request.requestId);
@@ -342,8 +454,11 @@ export async function applyHistory(
     throw historyError("Wrong checkpoint boundary for this operation.");
   if (request.action === "edit" && !request.message?.trim())
     throw historyError("The edited message cannot be empty.");
-  const original = checkpoint.messageId ? agentRuntimeStore.getMessage(sessionId, checkpoint.messageId) : undefined;
-  if (!original && request.action === "edit") throw historyError("The checkpoint message no longer exists.");
+  const original = checkpoint.messageId
+    ? agentRuntimeStore.getMessage(sessionId, checkpoint.messageId)
+    : undefined;
+  if (!original && request.action === "edit")
+    throw historyError("The checkpoint message no longer exists.");
   const initialPlan = await planFileUndo(
     checkpoint,
     request.includeFiles !== false,
@@ -465,7 +580,7 @@ export async function applyHistory(
         "UPDATE conversation_history_operations SET result_json=? WHERE id=?",
       ).run(JSON.stringify(result), id);
     })();
-    for(const id of originalTree) clearSessionFileReads(id);
+    for (const id of originalTree) clearSessionFileReads(id);
     const restoredIds = new Set(
       agentRuntimeStore.listSessionTree(sessionId).map((row) => row.id),
     );

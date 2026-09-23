@@ -1,3 +1,5 @@
+import { assertGitMrBinding } from './git/binding.js';
+import { GIT_MANAGER_TOOL_IDS } from './git/constants.js';
 import type { AgentProfile, AgentSession } from './contracts.js';
 import { WIKI_AGENT_READ_TOOL_IDS } from '../wiki/wiki-agent-tool-provider.js';
 import { controlRoot, workflowMode } from './workflow-mode.js';
@@ -37,7 +39,8 @@ export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): 
  * unmounted tool must not be advertised to the model or capability UI at all.
  */
 const PLAN_TOOLS = new Set([
-  'context.read', 'file.read', 'file.list', 'file.glob', 'grep.search', 'diff.read',
+  'context.read', 'file.read', 'file.list', 'rg', 'diff.read',
+  'webSearch',
   ...WIKI_AGENT_READ_TOOL_IDS,
   'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'agent.adapt',
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',
@@ -48,6 +51,10 @@ export function isPlanningReadTool(toolId: string): boolean {
 }
 
 export function isToolMountedForSession(session: AgentSession, tool: { id: string }): boolean {
+  if (session.profileId === 'git-manager') {
+    try { assertGitMrBinding(session.id); } catch { return false; }
+    return (GIT_MANAGER_TOOL_IDS as readonly string[]).includes(tool.id);
+  }
   const root = controlRoot(session);
   const mode = workflowMode(session);
   if (['work.checkpoint', 'goal.finish', 'verification.run'].includes(tool.id)) {

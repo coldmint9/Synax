@@ -24,7 +24,7 @@ let parentProfile: AgentProfile;
 function spec(overrides: Partial<SpecialistSpec> = {}): SpecialistSpec {
   return {
     name: 'Backend reviewer', role: 'Review backend security', instructions: 'Report concrete evidence.',
-    capabilities: ['file.read', 'grep.search', 'task.create', 'task.update', 'skill.load'],
+    capabilities: ['file.read', 'rg', 'task.create', 'task.update', 'skill.load'],
     skillIds: ['security-review'], ...overrides,
   };
 }

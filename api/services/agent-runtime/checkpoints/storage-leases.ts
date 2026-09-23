@@ -3,17 +3,24 @@ import { setTimeout as delay } from "node:timers/promises";
 import { getRawSqlite } from "../../../db/index.js";
 
 function reap(): void {
-  const db = getRawSqlite();
-  for (const row of db
-    .prepare("SELECT id,owner_pid FROM conversation_snapshot_leases")
-    .all() as { id: string; owner_pid: number }[]) {
-    try {
-      process.kill(row.owner_pid, 0);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ESRCH")
-        db.prepare("DELETE FROM conversation_snapshot_leases WHERE id=?").run(
-          row.id,
-        );
+  const db = getRawSqlite(),
+    query = db.prepare(
+      "SELECT id,owner_pid FROM conversation_snapshot_leases WHERE id>? ORDER BY id LIMIT 64",
+    ),
+    remove = db.prepare("DELETE FROM conversation_snapshot_leases WHERE id=?");
+  let after = "";
+  for (;;) {
+    const rows = query.all(after) as { id: string; owner_pid: number }[];
+    if (!rows.length) return;
+    for (const row of rows) {
+      after = row.id;
+      if (!Number.isSafeInteger(row.owner_pid) || row.owner_pid < 1) continue;
+      try {
+        process.kill(row.owner_pid, 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH")
+          remove.run(row.id);
+      }
     }
   }
 }

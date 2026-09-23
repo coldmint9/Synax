@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { PermissionRequestInput } from "./permission-policy.js";
+import { grantedToolId } from "./project-tool-grants.js";
 import type { InternalGate, PermissionAction } from "./contracts.js";
 import { permissionTierFromRules } from "./permission-tiers.js";
 import {
@@ -110,7 +111,7 @@ export function reviewOperation(
   input: PermissionRequestInput,
 ): OperationReview | null {
   const mode = permissionTierFromRules(input.rules ?? []);
-  if (!mode || mode === "unrestricted") return null;
+  if (!mode || mode === "unrestricted" || grantedToolId(input)) return null;
   const toolId =
     typeof input.metadata?.toolId === "string" ? input.metadata.toolId : "";
   const args = (input.metadata?.args ?? {}) as Record<string, unknown>;

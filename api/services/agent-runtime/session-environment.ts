@@ -1,5 +1,6 @@
 import { withCheckpointMutation } from "./checkpoints/mutations.js";
 import fs from "node:fs";
+import { openSystemTerminal } from "../file-openers/index.js";
 import path from "node:path";
 import { agentRuntimeStore } from "./session-store.js";
 import { resolveSessionWorkspaceRoots } from "./tools/workspace.js";
@@ -651,6 +652,112 @@ export function getSessionInputSourceContent(
     content: bytes.subarray(0, MAX_FILE_BYTES).toString("utf8"),
     truncated: bytes.length > MAX_FILE_BYTES,
   };
+}
+
+export async function openSessionFileInSystemTerminal(
+  sessionId: string,
+  relativePath: string,
+  rootId?: string,
+): Promise<void> {
+  const session = getSession(sessionId);
+  const workspacePath = resolveSessionRepository(sessionId, session.projectId, rootId, true).path;
+  const absolute = resolveSafeFile(workspacePath, relativePath);
+  if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+    throw new AgentValidationError("File not found in the workspace.");
+  }
+  await openSystemTerminal(path.dirname(absolute));
+}
+
+const FILE_MUTATION_BLOCKED_STATUSES = new Set<AgentSessionStatus>([
+  "queued",
+  "running",
+  "stopping",
+  "waiting_permission",
+  "waiting_input",
+]);
+
+function assertInteractiveFileMutationAllowed(sessionId: string): void {
+  const active = agentRuntimeStore.listSessionTree(sessionId).some((session) =>
+    FILE_MUTATION_BLOCKED_STATUSES.has(session.status),
+  );
+  if (active) {
+    throw new AgentValidationError(
+      "File rename/delete is unavailable while this session's agent is running.",
+    );
+  }
+}
+
+function assertExistingMenuFile(workspacePath: string, relativePath: string): string {
+  const absolute = resolveSafeFile(workspacePath, relativePath);
+  if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+    throw new AgentValidationError(`File not found: ${relativePath}`);
+  }
+  if (fs.lstatSync(absolute).isSymbolicLink()) {
+    throw new AgentValidationError("Symbolic-link files cannot be modified from the workspace menu.");
+  }
+  return absolute;
+}
+
+function assertSafeFileName(name: string): string {
+  const clean = name.trim();
+  if (!clean || clean === "." || clean === ".." || clean.includes("/") || clean.includes("\\") || clean.includes("\0") || /[\u0000-\u001f\u007f]/.test(clean)) {
+    throw new AgentValidationError("A file name must be a single safe path segment.");
+  }
+  return clean;
+}
+
+export async function renameSessionEnvironmentFile(
+  sessionId: string,
+  relativePath: string,
+  newName: string,
+  rootId?: string,
+): Promise<{ sessionId: string; path: string; previousPath: string }> {
+  assertInteractiveFileMutationAllowed(sessionId);
+  const session = agentRuntimeStore.getSession(sessionId);
+  const workspacePath = resolveSessionRepository(sessionId, session.projectId, rootId, true).path;
+  const cleanPath = assertRelativePath(relativePath);
+  if (cleanPath.split("/").includes(".git")) throw new AgentValidationError("Git metadata cannot be renamed.");
+  const safeName = assertSafeFileName(newName);
+  const source = assertExistingMenuFile(workspacePath, cleanPath);
+  const nextPath = path.posix.join(path.posix.dirname(cleanPath), safeName);
+  if (nextPath === cleanPath) return { sessionId, path: cleanPath, previousPath: cleanPath };
+  const target = resolveSafeFile(workspacePath, nextPath);
+  if (fs.existsSync(target)) throw new AgentValidationError(`A file already exists at: ${nextPath}`);
+  await withCheckpointMutation(
+    sessionId,
+    () => {
+      assertInteractiveFileMutationAllowed(sessionId);
+      assertExistingMenuFile(workspacePath, cleanPath);
+      fs.linkSync(source, target); // EEXIST fails instead of replacing a file created after validation.
+      try { fs.unlinkSync(source); }
+      catch (error) { fs.unlinkSync(target); throw error; }
+    },
+    true,
+    [source, target],
+  );
+  invalidateSessionEnvironment(sessionId);
+  return { sessionId, path: nextPath, previousPath: cleanPath };
+}
+
+export async function trashSessionEnvironmentFile(
+  sessionId: string,
+  relativePath: string,
+  rootId?: string,
+): Promise<{ sessionId: string; path: string; trashed: true }> {
+  assertInteractiveFileMutationAllowed(sessionId);
+  const session = agentRuntimeStore.getSession(sessionId);
+  const workspacePath = resolveSessionRepository(sessionId, session.projectId, rootId, true).path;
+  const cleanPath = assertRelativePath(relativePath);
+  if (cleanPath.split("/").includes(".git")) throw new AgentValidationError("Git metadata cannot be trashed.");
+  const target = assertExistingMenuFile(workspacePath, cleanPath);
+  await withCheckpointMutation(sessionId, async () => {
+    assertInteractiveFileMutationAllowed(sessionId);
+    const { default: trash } = await import("trash");
+    assertExistingMenuFile(workspacePath, cleanPath);
+    await trash(target, { glob: false });
+  }, true, [target]);
+  invalidateSessionEnvironment(sessionId);
+  return { sessionId, path: cleanPath, trashed: true };
 }
 
 export async function saveSessionEnvironmentFile(

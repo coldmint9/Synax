@@ -1,5 +1,10 @@
 import { InputOptimizationSettings } from "./components/InputOptimizationSettings";
 import { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useShellStore } from "../../state/shellStore";
+import { SettingsFrame, type SettingsSection } from "./extensions/SettingsFrame";
+import { ExtensionCenter } from "./extensions/ExtensionCenter";
+import { useExtensionCopy } from "./extensions/extension-copy";
 import { ScrollShadow, Spinner, Typography } from "@heroui/react";
 import { useConfig } from "./useConfig";
 import { useLocale } from "../../../hooks/useLocale";
@@ -9,13 +14,18 @@ import { TerminalSettings } from "./components/TerminalSettings";
 import { LlmProviderSection } from "./components/LlmProviderSection";
 import { WikiModelSettings } from "./components/WikiModelSettings";
 import { OpenConfigFile } from "./components/OpenConfigFile";
-import { ProjectIntegrationsSection } from "./components/ProjectIntegrationsSection";
 import { WebSearchSettings } from "./components/WebSearchSettings";
 import { UpdateSettings } from "./components/UpdateSettings";
 
 export default function GlobalSettingsPage() {
   const { globalConfig, providers, reload, updateGlobalConfig } = useConfig();
   const { t } = useLocale();
+  const copy = useExtensionCopy();
+  const projectId = useShellStore(state => state.currentProjectId);
+  const [params, setParams] = useSearchParams();
+  const selected = params.get('section') ?? 'general';
+  const section: SettingsSection = ['tool', 'skill', 'mcp', 'market'].includes(selected) ? selected as SettingsSection : 'general';
+  const select = (value: SettingsSection) => setParams(previous => { const next = new URLSearchParams(previous); next.set('section', value); return next; });
 
   useEffect(() => {
     const handler = () => {
@@ -37,7 +47,8 @@ export default function GlobalSettingsPage() {
   return (
     <ScrollShadow className="settings-scroll-viewport">
       <div className="settings-scroll-content">
-        <div className="mx-auto max-w-5xl px-6 pt-16 pb-16">
+        <SettingsFrame section={section} onSelect={select} projectId={projectId}>
+          {section !== "general" ? (projectId ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <p className="extension-project-hint">{copy.pickProject}</p>) : <>
           <div className="mb-8">
             <Typography type="h5">{t("settingsSystemConfig")}</Typography>
             <Typography type="body-sm" color="muted" className="mt-1">
@@ -73,9 +84,9 @@ export default function GlobalSettingsPage() {
               onReload={reload}
             />
           </div>
-          <ProjectIntegrationsSection />
           <OpenConfigFile />
-        </div>
+          </>}
+        </SettingsFrame>
       </div>
     </ScrollShadow>
   );

@@ -268,7 +268,7 @@ describe("durable cooperative work runtime", () => {
         runId: run.id,
         stepId,
         modelToolCallId: null,
-        toolId: "grep.search",
+        toolId: "rg",
         category: "read",
         mutability: "read",
         argsHash: `hash-${n}`,

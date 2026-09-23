@@ -34,7 +34,7 @@ class WorkRuntime {
   attach(sessionId: string, run: AgentRun): WorkRecord {
     let work = workStore.current(sessionId);
     const session = store.getSession(sessionId);
-    const trigger = store.listMessages(sessionId).find(m => m.id === run.triggerMessageId);
+    const trigger = run.triggerMessageId ? store.getMessage(sessionId, run.triggerMessageId) : undefined;
     const text = resolveSessionUserRequest(session, trigger?.content ?? '');
     const user = trigger?.metadata.source !== 'system_injection';
     const hasMedia = Boolean(trigger?.contentParts?.some(part => part.type !== 'text'));
@@ -47,7 +47,7 @@ class WorkRuntime {
       work.result = historicalGoal.reason ?? session.resultSummary ?? 'Previously accepted work.';
       this.syncPlan(work); workStore.save(work);
       for (const previous of store.listRuns(sessionId).filter(r => r.id !== run.id && !r.metadata.workId))
-        store.updateRun(previous.id, { metadata: { ...previous.metadata, workId: work.id } });
+        store.updateRun(previous.id, { metadata: { workId: work.id } });
     }
     if (!work || (TERMINAL.has(work.status) && user && hasContent && !continuing)) {
       if (work && TERMINAL.has(work.status)) {
@@ -62,7 +62,7 @@ class WorkRuntime {
       if (old) work.requirements = previousMessages.map(m => ({ messageId: m.id, text: m.content, ...(m.contentParts ? { contentParts: m.contentParts } : {}) }));
       // Legacy transcripts remain unmodified; binding establishes their provenance, not successful acceptance.
       if (old) for (const r of store.listRuns(sessionId)) {
-        if (!r.metadata.workId) store.updateRun(r.id, { metadata: { ...r.metadata, workId: work.id } });
+        if (!r.metadata.workId) store.updateRun(r.id, { metadata: { workId: work.id } });
       }
     }
     if (trigger && user && hasContent) {
@@ -84,7 +84,7 @@ class WorkRuntime {
       if (work.reason === 'awaiting_input') { work.progressVersion++; work.noProgressSteps = 0; }
     }
     this.syncPlan(work);
-    store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, workId: work.id } });
+    store.updateRun(run.id, { metadata: { workId: work.id } });
     return workStore.save(work);
   }
 

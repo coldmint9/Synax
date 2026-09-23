@@ -88,7 +88,7 @@ export function AgentQuickApprovalActions({
             {!isMini && t("permAllowOnce")}
           </button>
         )}
-        {!isMini && supports("always") && (
+        {supports("always") && (
           <button
             type="button"
             className="bui-approval-button"
@@ -104,7 +104,8 @@ export function AgentQuickApprovalActions({
                 aria-hidden
               />
             )}
-            {t("permAlwaysAllow")}
+            {!isMini && t("permAlwaysAllow")}
+            {isMini && <ShieldCheck size={14} aria-hidden />}
           </button>
         )}
         {supports("reject") && (

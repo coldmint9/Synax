@@ -3,11 +3,21 @@ import {
   act,
   cleanup,
   fireEvent,
-  render,
+  render as testingRender,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
-import type { SessionEnvironment } from "../../../../lib/api/agentRuntime";
+import { MemoryRouter } from "react-router-dom";
+import { ContextMenuProvider } from "../../../components/context-menu/ContextMenuProvider";
+
+const render: typeof testingRender = (ui, options) => testingRender(ui, {
+  wrapper: ({ children }) => <MemoryRouter><ContextMenuProvider>{children}</ContextMenuProvider></MemoryRouter>,
+  ...options,
+});
+import { agentRuntimeApi, type SessionEnvironment } from "../../../../lib/api/agentRuntime";
+import { configApi } from "../../../../lib/api/config";
+import { useShellStore } from "../../../state/shellStore";
 import { WorkspaceDashboard } from "../WorkspaceDashboard";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
@@ -112,7 +122,14 @@ describe("WorkspaceDashboard", () => {
     });
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, editor: "system" },
+    }));
+  });
 
   it("divides the snapshot into one card per component group", () => {
     const { container } = renderDashboard();
@@ -245,6 +262,19 @@ describe("WorkspaceDashboard", () => {
         },
       ],
     });
+  });
+
+  it("shows the saved file opener in the file menu and launches the selected app", async () => {
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, editor: "cursor", locale: "zh" },
+    }));
+    const openFile = vi.spyOn(configApi, "openFile").mockResolvedValue();
+    renderDashboard();
+    fireEvent.contextMenu(screen.getByText("toolDisplay.js"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "用Cursor打开" }));
+    await waitFor(() => expect(openFile).toHaveBeenCalledExactlyOnceWith(
+      `${environment.workspacePath}/src/views/cli_chat/utils/toolDisplay.js`,
+    ));
   });
 
   it("opens diff, file, and subagent tabs from the card rows", () => {
@@ -470,6 +500,9 @@ describe("WorkspaceDashboard", () => {
 
     fireEvent.click(screen.getByLabelText("刷新工作区"));
     expect(reload).toHaveBeenCalledTimes(1);
+    fireEvent.contextMenu(screen.getByLabelText("刷新工作区").closest(".ws-card--repo")!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "刷新工作区" }));
+    expect(reload).toHaveBeenCalledTimes(2);
   });
 
   it("gives each repository its own collapsible project and keeps file tabs isolated", () => {
@@ -543,6 +576,24 @@ describe("WorkspaceDashboard", () => {
     expect(
       within(goneCard).getByRole("button", { name: "提交并推送" }),
     ).toBeDisabled();
+  });
+
+  it("restores the clicked Git file in its own repository in tree view", async () => {
+    const restore = vi.spyOn(agentRuntimeApi, "restoreSessionFile")
+      .mockResolvedValue({ rootId: "web", path: "notes.md", deleted: false });
+    const confirm = vi.fn().mockReturnValue(true);
+    vi.stubGlobal("confirm", confirm);
+    renderDashboard({ repositories: [
+      { ...environment, rootId: "api", name: "API", role: "primary", status: "ready", workspacePath: "/repos/api" },
+      { ...environment, rootId: "web", name: "Web", role: "reference", status: "ready", workspacePath: "/repos/web" },
+    ] });
+    fireEvent.click(screen.getAllByRole("button", { name: "目录视图" })[1]);
+    const webCard = screen.getByRole("button", { name: /^Web/ }).closest(".ws-project-card")!;
+    fireEvent.contextMenu(within(webCard).getByText("notes.md"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "回滚该文件的变更" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledWith("session-1", { path: "notes.md", rootId: "web" }));
+    expect(confirm).toHaveBeenCalledOnce();
+    restore.mockRestore();
   });
 
   it("remembers project folds after the workspace is reopened", () => {

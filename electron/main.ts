@@ -12,8 +12,12 @@ import {
   protocol,
   net,
   nativeTheme,
+  Menu,
+  shell,
 } from "electron";
 import path from "node:path";
+import { nativeTemplate, parseContextMenu, resolveRevealTarget, textContextTemplate } from "./lib/context-menu.js";
+import { copyFileToSystemClipboard } from "./lib/file-clipboard.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startSidecar, stopSidecar } from "./lib/node-sidecar.js";
 import { getDataRoot, getResourcePath } from "./lib/data-paths.js";
@@ -134,6 +138,11 @@ function createWindow(): BrowserWindow {
   );
   win.on("closed", () => sessionNotifications.setRendererReady(false));
 
+  win.webContents.on("context-menu", (_event, params) => {
+    const template = textContextTemplate(params.isEditable, Boolean(params.selectionText));
+    if (template) Menu.buildFromTemplate(template).popup({ window: win, frame: params.frame ?? undefined });
+  });
+
   win.webContents.on("before-input-event", (_event, input) => {
     win.webContents.setIgnoreMenuShortcuts(
       terminalFocused && !isTerminalSystemShortcut(input),
@@ -225,6 +234,46 @@ function registerIPC(): void {
   ipcMain.on("notifications:dismiss", (event, sessionId) => {
     if (trustedNotificationSender(event) && typeof sessionId === "string")
       sessionNotifications.dismiss(sessionId);
+  });
+  let activeContextMenu: Electron.Menu | null = null;
+  ipcMain.handle("context-menu:show", (event, raw: unknown) => {
+    if (!trustedNotificationSender(event) || !mainWindow) return false;
+    const request = parseContextMenu(raw);
+    if (!request) return false;
+    activeContextMenu?.closePopup(mainWindow);
+    const window = mainWindow;
+    let selectedAction: string | null = null;
+    const menu = Menu.buildFromTemplate(nativeTemplate(request.entries, (id) => {
+      selectedAction = id;
+    }));
+    activeContextMenu = menu;
+    const { width, height } = window.getContentBounds();
+    menu.popup({
+      window,
+      x: Math.min(Math.max(0, Math.round(request.x)), Math.max(0, width - 1)),
+      y: Math.min(Math.max(0, Math.round(request.y)), Math.max(0, height - 1)),
+      callback: () => {
+        if (activeContextMenu === menu) activeContextMenu = null;
+        if (window.isDestroyed()) return;
+        if (selectedAction) window.webContents.send("context-menu:action", request.requestId, selectedAction);
+        window.webContents.send("context-menu:closed", request.requestId);
+      },
+    });
+    return true;
+  });
+  ipcMain.handle("context-menu:reveal", (event, value: unknown) => {
+    if (!trustedNotificationSender(event)) return false;
+    const target = resolveRevealTarget(value);
+    if (!target) return false;
+    shell.showItemInFolder(target);
+    return true;
+  });
+  ipcMain.handle("context-menu:copy-file", async (event, value: unknown) => {
+    if (!trustedNotificationSender(event)) return false;
+    const target = resolveRevealTarget(value);
+    if (!target) return false;
+    await copyFileToSystemClipboard(target);
+    return true;
   });
   ipcMain.handle("dialog:open", (_e, options) =>
     dialog.showOpenDialog(options),

@@ -40,6 +40,16 @@ function needsParagraphRewrite(source: string, output: string): boolean {
   return hasListFormatting || punctuationOnly || suspiciouslyShort;
 }
 
+const CONFIRMATION_MARKER_PATTERN =
+  /待确认|需确认|需要确认|请确认|待补充|需要补充|to be confirmed|needs clarification|clarification needed|\bTBD\b/i;
+
+function addsUnrequestedConfirmationContent(original: string, revised: string) {
+  return (
+    !CONFIRMATION_MARKER_PATTERN.test(original) &&
+    CONFIRMATION_MARKER_PATTERN.test(revised)
+  );
+}
+
 /** A tool-free, isolated request: never appends a turn or runs workspace actions. */
 export async function optimizeInput(
   input: InputOptimizationRequest,
@@ -112,5 +122,9 @@ export async function optimizeInput(
       "INPUT_OPTIMIZATION_INCOMPLETE",
       422,
     );
+  // A prompt should prevent this, but keep the editor from turning a short
+  // request into a confirmation template if a provider ignores the contract.
+  if (addsUnrequestedConfirmationContent(input.text, text))
+    return { text: input.text.trim() };
   return { text };
 }

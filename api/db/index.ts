@@ -1,3 +1,4 @@
+import { assertTransactionSafe, rollbackAfterError } from "./transaction-safety.js";
 import { installConversationHistoryTriggers } from "./conversation-history-triggers.js";
 import { assertDatabaseWriteAllowed } from "../lib/execution-context.js";
 
@@ -59,6 +60,7 @@ function createTransaction(sqlite: NativeDatabase.Database): SqliteTransaction {
     fn: (...args: Args) => Result,
   ) {
     return (...args: Args): Result => {
+      assertTransactionSafe(sqlite);
       const state = getTransactionState(sqlite);
       const useSavepoint = state.depth > 0 || sqliteIsInTransaction(sqlite);
 
@@ -68,30 +70,28 @@ function createTransaction(sqlite: NativeDatabase.Database): SqliteTransaction {
         state.depth++;
         try {
           const result = fn(...args);
+          assertTransactionSafe(sqlite);
           sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
           return result;
         } catch (err) {
-          try {
-            sqlite.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-          } finally {
-            sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
-          }
+          rollbackAfterError(sqlite, err, savepoint);
           throw err;
         } finally {
           state.depth--;
         }
       }
 
-      // Runtime checkpoints read before writing; reserve the writer before that read so
-      // another process cannot invalidate a deferred transaction's snapshot upgrade.
+      // Reserve the writer before reading checkpoint state, avoiding a deferred
+      // snapshot upgrade race with another process.
       sqlite.exec("BEGIN IMMEDIATE");
       state.depth++;
       try {
         const result = fn(...args);
+        assertTransactionSafe(sqlite);
         sqlite.exec("COMMIT");
         return result;
       } catch (err) {
-        sqlite.exec("ROLLBACK");
+        rollbackAfterError(sqlite, err);
         throw err;
       } finally {
         state.depth--;
@@ -194,8 +194,17 @@ function configureSqlite(sqlite: NativeDatabase.Database): void {
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
     PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 5000;
+    PRAGMA busy_timeout = 1000;
+    PRAGMA cache_size = -32768;
+    PRAGMA mmap_size = 0;
+    PRAGMA temp_store = FILE;
+    PRAGMA wal_autocheckpoint = 256;
+    PRAGMA journal_size_limit = 33554432;
   `);
+  const pageSize = (sqlite.prepare("PRAGMA page_size").get() as { page_size: number }).page_size;
+  // Existing oversized databases are never truncated; SQLite clamps to their
+  // current page count and disallows further allocation until pages are freed.
+  sqlite.exec(`PRAGMA max_page_count = ${Math.floor(4 * 1024 ** 3 / pageSize)}`);
 }
 
 function ensureMigrationsTable(sqlite: NativeDatabase.Database): void {

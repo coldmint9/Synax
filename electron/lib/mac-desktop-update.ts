@@ -11,6 +11,27 @@ import {
 import { validateMacUpdateArchive } from "./mac-update-archive.js";
 
 const run = promisify(execFile);
+const TEMPORARY_CLEANUP_OPTIONS = {
+  recursive: true,
+  force: true,
+  maxRetries: 8,
+  retryDelay: 250,
+} as const;
+
+async function removeTemporaryDirectory(
+  directory: string,
+  ignoreFailure = false,
+): Promise<void> {
+  try {
+    await fs.rm(directory, TEMPORARY_CLEANUP_OPTIONS);
+  } catch (error) {
+    if (!ignoreFailure) throw error;
+    console.warn(
+      `[desktop-update] temporary cleanup failed for ${directory}`,
+      error,
+    );
+  }
+}
 
 // All paths are positional arguments, never interpolated into shell source.
 // Keep the old bundle until the new app reports that its API and UI are ready.
@@ -200,17 +221,22 @@ export async function prepareMacInstallation(
     });
     return { version: manifest.version, target, workspace };
   } catch (error) {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await removeTemporaryDirectory(workspace, true);
     throw error;
   } finally {
-    if (mounted)
-      await run("/usr/bin/hdiutil", ["detach", mount]).catch((error) =>
-        console.error("[desktop-update] detach failed", error),
-      );
-    // Do not recursively remove a mount point if detach failed.
-    if (manifest.updateArchive)
-      await fs.rm(mount, { recursive: true, force: true });
-    else await fs.rmdir(mount).catch(() => {});
+    let detached = !mounted;
+    if (mounted) {
+      try {
+        await run("/usr/bin/hdiutil", ["detach", mount]);
+        detached = true;
+      } catch (error) {
+        console.error("[desktop-update] detach failed", error);
+      }
+    }
+    // Do not recursively remove a mount point if detach failed. For extracted
+    // ZIPs, cleanup is best-effort: a transient macOS ENOTEMPTY must not turn a
+    // fully prepared update into a failed installation.
+    if (detached) await removeTemporaryDirectory(mount, true);
   }
 }
 
@@ -278,6 +304,6 @@ export async function finishMacInstallation(
     (await fs.realpath(pending.workspace)) !== pending.workspace
   )
     throw new Error("Invalid pending desktop installation path");
-  await fs.rm(pending.workspace, { recursive: true, force: true });
+  await fs.rm(pending.workspace, TEMPORARY_CLEANUP_OPTIONS);
   await fs.rm(file, { force: true });
 }

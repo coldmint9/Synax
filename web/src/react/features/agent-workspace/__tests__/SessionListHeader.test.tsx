@@ -66,22 +66,22 @@ describe("SessionListHeader", () => {
     renderHeader();
     expect(screen.getByRole("button", { name: "New chat" })).toBeTruthy();
   });
-});
 
-it("never uses pagination as proof that a Wiki exists", () => {
-  renderHeader({
-    workflowCount: 0,
-    hasMoreSessions: true,
-    onOpenWorkflows: noop,
+  it("never uses pagination as proof that a Wiki exists", () => {
+    renderHeader({
+      workflowCount: 0,
+      hasMoreSessions: true,
+      onOpenWorkflows: noop,
+    });
+    expect(screen.queryByRole("button", { name: /Workflow/ })).toBeNull();
   });
-  expect(screen.queryByRole("button", { name: /Workflow/ })).toBeNull();
-});
 
-it("shows workflows only after the current project has generated Wiki content", () => {
-  renderHeader({
-    hasGeneratedWiki: true,
-    workflowCount: 0,
-    onOpenWorkflows: noop,
+  it("shows workflows only after the current project has generated Wiki content", () => {
+    renderHeader({
+      hasGeneratedWiki: true,
+      workflowCount: 0,
+      onOpenWorkflows: noop,
+    });
+    expect(screen.getByRole("button", { name: /Workflow/ })).toBeTruthy();
   });
-  expect(screen.getByRole("button", { name: /Workflow/ })).toBeTruthy();
 });

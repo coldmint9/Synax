@@ -1,29 +1,17 @@
 import { useLocale } from "../../../hooks/useLocale";
+import { PixelLoader } from "./LoadingState";
 
-export function ThinkingIndicator() {
+export function ThinkingIndicator({ showLabel = true }: { showLabel?: boolean }) {
   const { t } = useLocale();
+  const label = t("sessionPendingThinking");
   return (
     <div
       role="status"
-      aria-label={t("sessionActivityThinking")}
-      className="flex items-center gap-1.5 px-1 py-2"
+      aria-label={label}
+      className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground"
     >
-      <span className="flex items-center gap-1" aria-hidden="true">
-        <span
-          data-thinking-dot
-          className="inline-block h-1 w-1 rounded-full bg-muted-foreground/40 animate-thinking-bounce"
-        />
-        <span
-          data-thinking-dot
-          className="inline-block h-1 w-1 rounded-full bg-muted-foreground/40 animate-thinking-bounce"
-          style={{ animationDelay: "200ms" }}
-        />
-        <span
-          data-thinking-dot
-          className="inline-block h-1 w-1 rounded-full bg-muted-foreground/40 animate-thinking-bounce"
-          style={{ animationDelay: "400ms" }}
-        />
-      </span>
+      <PixelLoader variant="Thinking" />
+      <span className={showLabel ? undefined : "sr-only"}>{label}</span>
     </div>
   );
 }

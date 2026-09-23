@@ -9,7 +9,9 @@ interface Props {
   role: "user" | "assistant";
   text: string;
   disabledReason?: string | null;
+  forkDisabledReason?: string | null;
   rollbackDisabled?: boolean;
+  rollbackDisabledReason?: string;
   busy?: boolean;
   onEdit?: () => void;
   onFork?: () => void;
@@ -19,7 +21,9 @@ export function MessageActionToolbar({
   role,
   text,
   disabledReason,
+  forkDisabledReason = disabledReason,
   rollbackDisabled,
+  rollbackDisabledReason,
   busy,
   onEdit,
   onFork,
@@ -103,18 +107,20 @@ export function MessageActionToolbar({
             zh ? "从此处分叉" : "Fork from here",
             <GitFork size={15} />,
             onFork,
-            Boolean(disabledReason || busy || !onFork),
+            Boolean(forkDisabledReason || busy || !onFork),
+            forkDisabledReason || unavailable,
           )}
           {button(
             zh ? "回滚到此处" : "Roll back to here",
             <RotateCcw size={15} />,
             onRollback,
             Boolean(disabledReason || busy || !onRollback || rollbackDisabled),
-            rollbackDisabled && !disabledReason
-              ? zh
-                ? "已经位于此处，没有后续内容"
-                : "Already at this checkpoint"
-              : unavailable,
+            rollbackDisabledReason ??
+              (rollbackDisabled && !disabledReason
+                ? zh
+                  ? "已经位于此处，没有后续内容"
+                  : "Already at this checkpoint"
+                : unavailable),
           )}
         </>
       )}

@@ -114,6 +114,54 @@ it("tracks a real service, isolates sessions, and terminates its process tree", 
   }
 }, 15000);
 
+it("stops session-owned background processes when deleting the session", async () => {
+  const owner = session();
+  const command = `${quote(process.execPath)} -e ${quote(
+    "setInterval(() => {}, 1000)",
+  )}`;
+  const child = spawnOwnedProcess(command, [], {
+    shell: true,
+    background: true,
+    sessionId: owner.id,
+    stdin: "ignore",
+    commandLabel: command,
+  });
+  child.stdout?.resume();
+  child.stderr?.resume();
+  await new Promise<void>((resolve, reject) => {
+    child.on("message", (message: any) => {
+      if (message?.type === "started") resolve();
+    });
+    child.once("error", reject);
+  });
+  const { agentRuntimeRoutes } =
+    await import("../../../routes/agent-runtime.js");
+
+  try {
+    const response = await agentRuntimeRoutes.request(
+      `/sessions/${owner.id}`,
+      { method: "DELETE" },
+    );
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(alive(child.pid!)).toBe(false), {
+      timeout: 5000,
+    });
+    expect(
+      getRawSqlite()
+        .prepare("SELECT state, session_id FROM agent_runtime_processes WHERE id=?")
+        .get(child.ownedProcessId),
+    ).toMatchObject({ state: "closed" });
+  } finally {
+    if (alive(child.pid!)) {
+      try {
+        process.kill(-child.pid!, "SIGKILL");
+      } catch {
+        /* the process may have exited between the liveness check and kill */
+      }
+    }
+  }
+});
+
 it("records natural exits and never kills a reused or unrelated PID", async () => {
   const owner = session();
   const started = await runBackgroundShellCommand(owner.id, "printf ready");

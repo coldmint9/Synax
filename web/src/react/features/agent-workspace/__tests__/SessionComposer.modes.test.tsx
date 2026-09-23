@@ -214,13 +214,13 @@ it("shows an optimistic draft immediately and restores its text if creation fail
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   expect(screen.getByText("Keep my message")).toBeVisible();
   expect(input).toHaveValue("");
-  expect(document.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+  expect(document.querySelectorAll(".loading-state-cell")).toHaveLength(9);
   expect(input).toBeDisabled();
   await act(async () => reject(new Error("Creation failed")));
   expect(input).toHaveValue("Keep my message");
   expect(input).toBeEnabled();
   expect(await screen.findByRole("alert")).toHaveTextContent("Creation failed");
-  expect(document.querySelectorAll("[data-thinking-dot]")).toHaveLength(0);
+  expect(document.querySelectorAll(".loading-state-cell")).toHaveLength(0);
 });
 
 async function selectMode(mode: "plan" | "goal", prefix = "") {
@@ -663,7 +663,7 @@ it("finishes an old draft in the background without navigating away or clearing 
     expect(agentRuntimeApi.createSession).toHaveBeenCalledTimes(1),
   );
   expect(screen.getByText("First request")).toBeVisible();
-  expect(document.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+  expect(document.querySelectorAll(".loading-state-cell")).toHaveLength(9);
   expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
   await userEvent.click(
     screen.getByRole("button", { name: "Open other conversation" }),

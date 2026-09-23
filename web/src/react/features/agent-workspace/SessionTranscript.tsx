@@ -1,11 +1,13 @@
 import { useLocale } from "../../../hooks/useLocale";
 import { useTranscriptScroll } from "./useTranscriptScroll";
+import { useOlderTranscriptHistory } from "./useOlderTranscriptHistory";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   projectPendingSubmission,
   usePendingSubmissionStore,
 } from "./state/pendingSubmissionStore";
 import { ThinkingIndicator } from "./ThinkingIndicator";
+import { hasStreamingContent, hasStreamingText } from "./streamingLiveBlocks";
 import { Skeleton } from "@heroui/react";
 import { useShallow } from "zustand/react/shallow";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -35,6 +37,8 @@ function useSessionTranscriptStatic() {
         messages: s.messages,
         childSessions: id ? s.childSessions[id] : undefined,
         streamingStepId: s.streamingStepId,
+        streamingLive: s.streamingLive,
+        streamingCompletedSteps: s.streamingCompletedSteps,
       };
     }),
   );
@@ -61,6 +65,8 @@ export function SessionTranscript({
     messages,
     childSessions,
     streamingStepId,
+    streamingLive,
+    streamingCompletedSteps,
   } = useSessionTranscriptStatic();
   const pending = usePendingSubmissionStore((state) =>
     sessionId ? state.items[sessionId] : undefined,
@@ -69,10 +75,34 @@ export function SessionTranscript({
     () => projectPendingSubmission(pending, runs, messages),
     [pending, runs, messages],
   );
-  const hasResponse = Boolean(
-    projected.run &&
-    (steps.some((step) => step.runId === projected.run!.id) ||
-      RUN_TERMINAL_STATUSES.includes(projected.run.status)),
+  const hasAssistantText = useMemo(() => {
+    const responseStepIds = new Set(
+      projected.run
+        ? steps
+            .filter((step) => step.runId === projected.run!.id)
+            .map((step) => step.id)
+        : [],
+    );
+    const persistedResponse = Boolean(
+      projected.run &&
+        messages.some(
+          (message) =>
+            message.role === "assistant" &&
+            Boolean(message.content.trim()) &&
+            (message.runId === projected.run!.id ||
+              (message.stepId !== null && responseStepIds.has(message.stepId)) ||
+              message.metadata.requestId === pending?.requestId),
+        ),
+    );
+    const completedResponse = streamingCompletedSteps.some((step) =>
+      step.blocks.some(
+        (block) => block.type === "text" && Boolean(block.content.trim()),
+      ),
+    );
+    return persistedResponse || hasStreamingText(streamingLive) || completedResponse;
+  }, [messages, pending?.requestId, projected.run, steps, streamingCompletedSteps, streamingLive]);
+  const runFinished = Boolean(
+    projected.run && RUN_TERMINAL_STATUSES.includes(projected.run.status),
   );
   const latestRunStatus = useMemo(() => {
     if (!sessionId) return undefined;
@@ -86,10 +116,10 @@ export function SessionTranscript({
       sessionId &&
       pending &&
       projected.confirmed &&
-      (hasResponse || streamingStepId)
+      (hasAssistantText || runFinished)
     )
       usePendingSubmissionStore.getState().clear(sessionId, pending.requestId);
-  }, [sessionId, pending, projected.confirmed, hasResponse, streamingStepId]);
+  }, [sessionId, pending, projected.confirmed, hasAssistantText, runFinished]);
   // Live content bridges the gap until a complete persisted transcript arrives.
   // A step/status response alone does not mean its messages are ready yet.
   const showLiveBlock = Boolean(streamingStepId);
@@ -99,6 +129,8 @@ export function SessionTranscript({
     onReadingHistoryChange,
     active && (!loading || showLiveBlock || Boolean(pending)),
   );
+
+  const olderHistory = useOlderTranscriptHistory(scrollRef, sessionId, active);
 
   // Trigger 1: a new submission lands — jump to the bottom and re-pin.
   useLayoutEffect(() => {
@@ -137,9 +169,22 @@ export function SessionTranscript({
           tabIndex={0}
           aria-label={locale === "zh" ? "对话记录" : "Conversation history"}
           className="session-chat-scroll h-full overflow-y-auto"
-          aria-busy={loading}
+          aria-busy={loading || olderHistory.loading}
         >
           <div className="session-transcript-body">
+            {olderHistory.loading && (
+              <div role="status" className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm">
+                {locale === "zh" ? "正在加载更早消息…" : "Loading earlier messages…"}
+              </div>
+            )}
+            {olderHistory.error && (
+              <div role="alert" className="absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background px-3 py-1 text-xs text-danger shadow-sm">
+                {locale === "zh" ? "加载更早消息失败。" : "Could not load earlier messages."}{" "}
+                <button type="button" className="underline" onClick={() => void olderHistory.retry()}>
+                  {locale === "zh" ? "重试" : "Retry"}
+                </button>
+              </div>
+            )}
             {loading && projected.messages.length === 0 && !showLiveBlock ? (
               <div
                 role="status"
@@ -187,8 +232,9 @@ export function SessionTranscript({
                 submitting={Boolean(pending)}
                 scrollRootRef={scrollRef}
                 liveTurn={
-                  pending && !showLiveBlock && !hasResponse ? (
-                    <ThinkingIndicator />
+                  pending && !hasAssistantText && !runFinished &&
+                  (!showLiveBlock || hasStreamingContent(streamingLive)) ? (
+                    <ThinkingIndicator showLabel={false} />
                   ) : undefined
                 }
               />

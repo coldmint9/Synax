@@ -1,5 +1,13 @@
-import { cpSync, mkdirSync, readdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  rmSync,
+} from "node:fs";
+import { join, sep } from "node:path";
 
 const root = join(import.meta.dirname, "..");
 const serverDist = join(root, "server-dist");
@@ -36,6 +44,15 @@ for (const scope of libsqlPlatforms) {
   console.log(`  copied ${scope}`);
 }
 
+// Synax owns ripgrep; copy the universal package so both the CLI and desktop
+// server can resolve the binary without depending on the host machine.
+const ripgrepPackage = "@vscode/ripgrep-universal";
+mkdirSync(join(dest, "@vscode"), { recursive: true });
+cpSync(join(src, ripgrepPackage), join(dest, ripgrepPackage), {
+  recursive: true,
+});
+console.log(`  copied ${ripgrepPackage}`);
+
 // Copy libsql main package
 for (const pkg of libsqlPackages) {
   cpSync(join(src, pkg), join(dest, pkg), { recursive: true });
@@ -60,6 +77,43 @@ for (const pkg of [...dynamicPackages, ...treeSitterLangs]) {
   cpSync(join(src, pkg), join(dest, pkg), { recursive: true });
   console.log(`  copied ${pkg}`);
 }
+
+// Trash ships platform binaries and uses package-relative URLs. Keep the package
+// and its runtime dependency tree intact instead of bundling it into a CJS file.
+const copiedRuntime = new Set<string>();
+function copyRuntimePackage(
+  name: string,
+  sourceParent = src,
+  destParent = dest,
+): void {
+  const sourceDir = join(sourceParent, name);
+  const targetDir = join(destParent, name);
+  if (copiedRuntime.has(targetDir)) return;
+  if (!existsSync(sourceDir))
+    throw new Error(`Missing packaged runtime dependency: ${sourceDir}`);
+  copiedRuntime.add(targetDir);
+  mkdirSync(destParent, { recursive: true });
+  cpSync(sourceDir, targetDir, {
+    recursive: true,
+    filter: (source) =>
+      !source.startsWith(`${join(sourceDir, "node_modules")}${sep}`) &&
+      source !== join(sourceDir, "node_modules"),
+  });
+  const manifest = JSON.parse(
+    readFileSync(join(sourceDir, "package.json"), "utf8"),
+  ) as { dependencies?: Record<string, string> };
+  for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+    const nested = join(sourceDir, "node_modules", dependency);
+    if (existsSync(nested))
+      copyRuntimePackage(
+        dependency,
+        join(sourceDir, "node_modules"),
+        join(targetDir, "node_modules"),
+      );
+    else copyRuntimePackage(dependency);
+  }
+}
+copyRuntimePackage("trash");
 
 // Drop stale packaged skills when upgrading from the retired prototype platform.
 rmSync(join(serverDist, "skills/builtin"), { recursive: true, force: true });

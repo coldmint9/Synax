@@ -4,12 +4,15 @@ import { useEffect } from "react";
 import WorkbenchLayout from "./layouts/WorkbenchLayout";
 import { WelcomeView } from "./layouts/WelcomeView";
 import AgentLoopTestPage from "./pages/AgentLoopTestPage";
+import GitWorkbenchPage from "./features/git/GitWorkbenchPage";
 import AboutPage from "./pages/AboutPage";
 import GlobalSettingsPage from "./features/settings/GlobalSettingsPage";
 import ProjectSettingsPage from "./features/settings/ProjectSettingsPage";
 import { useElectronMenu } from "../lib/electron-menu";
 import { useWikiStore } from "./state/wikiStore";
 import { useTabKeyBehavior } from "../hooks/useTabKeyBehavior";
+import { WorkspaceFileMutationHost } from "./features/agent-workspace/WorkspaceFileMutationHost";
+import { ContextMenuProvider } from "./components/context-menu/ContextMenuProvider";
 import { DesktopUpdateProvider } from "./features/updates/DesktopUpdateProvider";
 import { DesktopUpdatePanel } from "./features/updates/DesktopUpdateStatus";
 
@@ -33,6 +36,8 @@ export default function App() {
   const draftPreviewActive = useWikiStore((s) => s.draftPreviewActive);
 
   return (
+    <ContextMenuProvider>
+    <WorkspaceFileMutationHost />
     <DesktopUpdateProvider>
       <GlobalSessionSearch />
       <DesktopUpdatePanel />
@@ -46,6 +51,14 @@ export default function App() {
               <Route
                 path="/projects/:projectId"
                 element={<Navigate to="sessions" replace />}
+              />
+              <Route
+                path="/projects/:projectId/git"
+                element={<GitWorkbenchPage />}
+              />
+              <Route
+                path="/projects/:projectId/git/mr/:mrId"
+                element={<GitWorkbenchPage />}
               />
               {/* wiki/sessions 由 WorkbenchLayout keep-alive 块渲染，路由仅用于 URL 匹配 */}
               <Route path="/projects/:projectId/wiki" element={null} />
@@ -85,5 +98,6 @@ export default function App() {
         />
       </div>
     </DesktopUpdateProvider>
+    </ContextMenuProvider>
   );
 }

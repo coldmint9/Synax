@@ -117,6 +117,27 @@ function ownedRow(
   if (!row) throw new AgentNotFoundError(processId);
   return row;
 }
+export async function stopSessionBackgroundProcesses(
+  sessionIds: Iterable<string>,
+): Promise<void> {
+  const ids = [...new Set(sessionIds)];
+  const db = getRawSqlite();
+  for (const sessionId of ids) {
+    const processes = db
+      .prepare(
+        `SELECT p.id
+         FROM agent_runtime_processes p
+         LEFT JOIN terminal_sessions t ON t.id = p.id
+         WHERE p.state <> 'closed'
+           AND (p.session_id = ? OR t.owner_session_id = ?)`,
+      )
+      .all(sessionId, sessionId) as Array<{ id: string }>;
+    for (const process of processes) {
+      await stopSessionBackgroundProcess(sessionId, process.id);
+    }
+  }
+}
+
 export async function stopSessionBackgroundProcess(
   sessionId: string,
   processId: string,

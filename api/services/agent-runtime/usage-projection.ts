@@ -1,10 +1,12 @@
+import { boundaryOnlySession } from "./checkpoints/version-runtime/bridge.js";
+import { diagnosticVisible } from "./checkpoints/version-runtime/diagnostics.js";
+import { AgentRuntimeError } from "./runtime-errors.js";
 import {
+  CacheUsageAccumulator,
   cacheUsageSample,
   projectCacheUsage,
-  type CacheUsageSample,
   type SessionCacheUsage,
 } from "./cache-usage.js";
-import type { ContextComposition } from "./context-composition.js";
 import { getRawSqlite } from "../../db/index.js";
 import { readUsageContextWindowSize } from "./acp-engine/acp-usage.js";
 import {
@@ -41,13 +43,14 @@ type Groups<T> = { self: T; tree: T };
 export interface SessionUsageProjection {
   context: {
     inputTokens: number | null;
-    source: "provider" | "estimate" | null;
+    source: "provider" | null;
     stale: boolean;
     requestId: string | null;
     measuredAt: string | null;
     latestRequestUsageAvailable: boolean;
   };
-  contextComposition: ContextComposition | null;
+  // Compatibility field: local composition estimates are internal budget data only.
+  contextComposition: null;
   cache: SessionCacheUsage;
   // self/tree retain cumulative compatibility, including auxiliary calls. The
   // explicit subgroups distinguish model steps from non-step auxiliary calls.
@@ -107,27 +110,6 @@ function hasUsage(u: NormalizedUsage | undefined): boolean {
       ).some((key) => u.normalization[key].status === "known"))
   );
 }
-function readComposition(value: unknown): ContextComposition | null {
-  if (!value || typeof value !== "object") return null;
-  const c = value as ContextComposition;
-  const values = [c.tools, c.mcp, c.skills, c.messages, c.system ?? 0];
-  if (c.version === 2 && !isTokenCount(c.system)) return null;
-  if (!values.every(isTokenCount) || typeof c.measuredAt !== "string")
-    return null;
-  const total = values.reduce((sum, tokens) => sum + tokens, 0);
-  if (!isTokenCount(total)) return null;
-  if (
-    c.usage &&
-    !(["tools", "mcp", "skills"] as const).every(
-      (key) => isTokenCount(c.usage![key]) && c.usage![key] <= c[key],
-    )
-  ) {
-    const { usage: _invalid, ...rest } = c;
-    return { ...rest, total };
-  }
-  return { ...c, total };
-}
-
 export function projectSessionUsage(
   sessionId: string,
   treeIds: string[],
@@ -135,11 +117,14 @@ export function projectSessionUsage(
   const ids = [...new Set([sessionId, ...treeIds])];
   const db = getRawSqlite();
   const slots = ids.map(() => "?").join(",");
+  const boundary = boundaryOnlySession(sessionId);
+  const usageFields = ["usage", "providerMetadata", "backendId", "engine", "externalTurn", "contextUsage", "contextComposition"];
+  const usageMetadata = `CASE WHEN length(CAST(s.metadata_json AS BLOB))<=1048576 THEN json_object(${usageFields.map(key => `'${key}',json_extract(s.metadata_json,'$.${key}')`).join(",")}) ELSE '{"historyBudgetExceeded":true}' END AS metadata_json`;
   const rows = db
     .prepare(
-      `SELECT s.rowid AS sequence, s.id, s.model, s.session_id, s.started_at, s.completed_at, s.status, s.metadata_json, r.completed_at AS run_ended_at FROM agent_runtime_run_steps s JOIN agent_runtime_runs r ON r.id=s.run_id WHERE s.session_id IN (${slots}) ORDER BY s.started_at, r.started_at, s.step_index, s.rowid`,
+      `SELECT s.rowid AS sequence, s.id, s.model, s.session_id, s.started_at, s.completed_at, s.status, ${usageMetadata}, r.completed_at AS run_ended_at FROM agent_runtime_run_steps s JOIN agent_runtime_runs r ON r.id=s.run_id WHERE s.session_id IN (${slots}) ORDER BY s.started_at, r.started_at, s.step_index, s.rowid`,
     )
-    .all(...ids) as Array<{
+    .iterate(...ids) as Iterable<{
     sequence: number;
     model: string | null;
     id: string;
@@ -154,7 +139,7 @@ export function projectSessionUsage(
     .prepare(
       `SELECT * FROM agent_runtime_aux_usage WHERE session_id IN (${slots})`,
     )
-    .all(...ids) as Array<{ session_id: string; usage_json: string | null }>;
+    .iterate(...ids) as Iterable<{ session_id: string; usage_json: string | null }>;
   const result: SessionUsageProjection = {
     context: {
       inputTokens: null,
@@ -223,10 +208,11 @@ export function projectSessionUsage(
       }
     }
   };
-  const cacheSamples: CacheUsageSample[] = [];
+  const cacheSamples = new CacheUsageAccumulator();
   let pendingCacheSamples = 0;
   for (const row of rows) {
     const metadata = parse(row.metadata_json);
+    if (metadata?.historyBudgetExceeded) throw new AgentRuntimeError("An accounting record exceeds its bounded read budget; totals were not silently truncated.", "HISTORY_PAGE_REQUIRED", 413);
     const context: UsageContext = {
       providerMetadata: metadata?.providerMetadata,
     };
@@ -277,16 +263,17 @@ export function projectSessionUsage(
             ? Date.now()
             : start) - start,
       ) || 0;
-    // Keep totals and category estimates on the same request. A new request's
-    // estimate supersedes old provider usage, including after compaction.
-    const composition = readComposition(metadata?.contextComposition);
+    // Cumulative usage and cache samples include all executed steps, including
+    // abandoned branches. Only the *current context* follows visible history.
+    if (boundary && !diagnosticVisible(sessionId, "steps", row.id)) continue;
+    // Missing usage must never replace a provider sample with a local estimate.
+    // Preserve the last measured request, explicitly marked stale.
     result.context.stale = result.context.inputTokens !== null;
     result.context.latestRequestUsageAvailable =
       contextUsage?.normalization.input.status === "known";
     if (result.context.latestRequestUsageAvailable) {
       result.context.source = "provider";
       result.context.stale = false;
-      result.contextComposition = composition;
       result.context.inputTokens = contextUsage!.normalization.input.value!;
       result.context.requestId =
         typeof contextUsage!.requestId === "string"
@@ -296,22 +283,12 @@ export function projectSessionUsage(
         typeof contextUsage!.measuredAt === "string"
           ? contextUsage!.measuredAt
           : (row.completed_at ?? row.started_at);
-    } else if (composition) {
-      result.context = {
-        inputTokens: composition.total,
-        source: "estimate",
-        stale: false,
-        requestId: row.id,
-        measuredAt: composition.measuredAt,
-        latestRequestUsageAvailable: false,
-      };
-      result.contextComposition = composition;
     }
     if (contextUsage)
       result.reportedWindow =
         readUsageContextWindowSize(contextUsage) ?? result.reportedWindow;
   }
-  result.cache = projectCacheUsage(cacheSamples, pendingCacheSamples);
+  result.cache = cacheSamples.result(pendingCacheSamples);
   for (const row of auxiliary)
     add(row.session_id, normalizeUsage(parse(row.usage_json)), "auxiliary");
   return result;

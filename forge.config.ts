@@ -1,5 +1,6 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ensureDmgNative } from "./scripts/prepare-dmg-native.js";
 import {
   desktopProduct,
@@ -11,6 +12,7 @@ import {
 
 const icon = desktopIcon(process.platform);
 const windowsIcon = desktopIcon("win32");
+const dmgInstallHelp = fileURLToPath(new URL("./scripts/dmg/", import.meta.url));
 
 const config: ForgeConfig = {
   hooks: {
@@ -59,6 +61,22 @@ const config: ForgeConfig = {
       platforms: ["darwin"],
       config: (arch: string) => ({
         format: "ULFO",
+        contents: (options) => [
+          { x: 192, y: 344, type: "file", path: options.appPath },
+          { x: 448, y: 344, type: "link", path: "/Applications" },
+          {
+            x: 192,
+            y: 128,
+            type: "file",
+            path: path.join(dmgInstallHelp, "安装说明.txt"),
+          },
+          {
+            x: 448,
+            y: 128,
+            type: "file",
+            path: path.join(dmgInstallHelp, "安装后运行.command"),
+          },
+        ],
         name: path.basename(
           desktopDownloadName(desktopProduct.version, "darwin", arch, "dmg"),
           ".dmg",

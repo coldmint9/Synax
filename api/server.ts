@@ -1,3 +1,4 @@
+import { ensureGitMrProfileRegistered } from './services/agent-runtime/git/profile.js';
 import { startFileUndoRetention } from "./services/agent-runtime/checkpoints/retention.js";
 import { attachTerminalSockets } from "./services/terminals/terminal-socket.js";
 import { terminalRoutes } from "./routes/terminals.js";
@@ -25,6 +26,7 @@ import { configRoutes } from "./routes/config.js";
 import { mcpRoutes } from "./routes/mcp.js";
 import { llmRoutes } from "./routes/llm.js";
 import { agentRuntimeRoutes } from "./routes/agent-runtime.js";
+import { extensionRoutes } from "./routes/extensions.js";
 import { skillsRoutes, skillSourcesRoutes } from "./routes/skills.js";
 import { wikiRoutes } from "./routes/wiki.js";
 import { logRoutes } from "./routes/logs.js";
@@ -78,6 +80,7 @@ app.use("*", async (c, next) => {
 // --- 路由 ---
 app.route("/api/projects", projectRoutes);
 app.route("/api/projects", projectSettingsRoutes);
+app.route("/api/projects", extensionRoutes);
 app.route("/api/acp", acpRoutes);
 app.route("/api/context", contextRoutes);
 app.route("/api/config", configRoutes);
@@ -121,6 +124,7 @@ try {
 
 // --- 提前注册 wiki / plan profiles，确保服务重启后能恢复 session 并响应 skills 查询 ---
 ensureWikiProfileRegistered();
+ensureGitMrProfileRegistered();
 ensurePlanProfileRegistered();
 ensureRefreshProfileRegistered();
 ensureSynaxAgentRegistered();

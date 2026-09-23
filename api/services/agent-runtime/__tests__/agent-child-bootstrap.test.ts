@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const ensureGitMrProfileRegistered = vi.fn();
 const ensureWikiProfileRegistered = vi.fn();
 const ensurePlanProfileRegistered = vi.fn();
 const ensureRefreshProfileRegistered = vi.fn();
 const ensureLegacyGoalProfileRegistered = vi.fn();
 const tryGetSession = vi.fn();
 const maybeGet = vi.fn();
+
+vi.mock('../git/profile.js', () => ({ ensureGitMrProfileRegistered: (...args: unknown[]) => ensureGitMrProfileRegistered(...args) }));
 
 vi.mock('../session-store.js', () => ({
   agentRuntimeStore: {
@@ -54,6 +57,13 @@ describe('bootstrapAgentChildForSession', () => {
     vi.clearAllMocks();
   });
 
+  it('registers Git manager tools on worker resume', () => {
+    tryGetSession.mockReturnValue({ id: 'git_session', profileId: 'git-manager', projectId: 'p1' });
+    maybeGet.mockReturnValue({ id: 'git-manager', allowedCapabilities: [] });
+    bootstrapAgentChildForSession('git_session');
+    expect(ensureGitMrProfileRegistered).toHaveBeenCalledOnce();
+  });
+
   it('registers wiki tool provider for synax sessions that allow wiki tools', () => {
     tryGetSession.mockReturnValue({ id: 'ars_1', profileId: 'synax', projectId: 'p1' });
     maybeGet.mockReturnValue({
@@ -84,7 +94,7 @@ describe('bootstrapAgentChildForSession', () => {
     tryGetSession.mockReturnValue({ id: 'ars_3', profileId: 'reviewer', projectId: 'p1' });
     maybeGet.mockReturnValue({
       id: 'reviewer',
-      allowedCapabilities: ['bash', 'grep.search'],
+      allowedCapabilities: ['bash', 'rg'],
     });
 
     bootstrapAgentChildForSession('ars_3');

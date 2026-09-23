@@ -1,5 +1,5 @@
 import { resolveContextInputOwners } from "./context-input-boundaries.js";
-import { readRuntimeReminder } from "./runtime-request-snapshot.js";
+import { readRuntimeReminder, runtimeReminderMessage } from "./runtime-request-snapshot.js";
 import type { RuntimeContentPart } from "./content-parts.js";
 import { modelContentParts } from "./media-assets.js";
 import type { ModelMessage, ToolResultOutput } from "@ai-sdk/provider-utils";
@@ -331,8 +331,10 @@ function buildRunMessages(
     }
     inputs.forEach(appendInput);
     if (step.id === currentStepId) continue;
-    if (reminder)
-      messages.push(systemMessage(reminder.content, systemMessageContents));
+    if (reminder) {
+      systemMessageContents?.add(reminder.content);
+      messages.push(runtimeReminderMessage(reminder));
+    }
     const stepParts = history.listRunParts(step.id);
     const assistantContent: NonNullable<
       Extract<ModelMessage, { role: "assistant" }>["content"]

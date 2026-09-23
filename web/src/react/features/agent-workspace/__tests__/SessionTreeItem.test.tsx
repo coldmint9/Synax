@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render as testingRender } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { ContextMenuProvider } from "../../../components/context-menu/ContextMenuProvider";
+
+const render: typeof testingRender = (ui, options) => testingRender(ui, {
+  wrapper: ({ children }) => <MemoryRouter><ContextMenuProvider>{children}</ContextMenuProvider></MemoryRouter>,
+  ...options,
+});
 import type {
   AgentRuntimeMessage,
   AgentSession,
@@ -51,7 +58,7 @@ describe("SessionTreeItem", () => {
     });
   });
 
-  it("shows a spinning loader before the title without an empty expand control", () => {
+  it("shows the animated pixel loader before the title without an empty expand control", () => {
     const { container } = render(
       <SessionTreeItem
         node={makeNode(makeSession({ status: "running" }))}
@@ -61,11 +68,13 @@ describe("SessionTreeItem", () => {
       />,
     );
 
-    const indicator = container.querySelector(".animate-spin");
+    const indicator = container.querySelector(".session-list-indicator > span");
+    const cells = indicator?.querySelectorAll(".loading-state-cell");
     const expandControl = container.querySelector(".session-list-expand");
     const title = container.querySelector(".session-list-title");
 
-    expect(indicator?.classList.contains("animate-spin")).toBe(true);
+    expect(cells).toHaveLength(9);
+    expect(cells?.[0].getAttribute("style")).toContain("pixel-on");
     expect(indicator?.classList.contains("shrink-0")).toBe(true);
     expect(expandControl).toBeNull();
     expect(title).toBeTruthy();
@@ -85,10 +94,10 @@ describe("SessionTreeItem", () => {
       />,
     );
 
-    expect(container.querySelector(".animate-spin")).toBeNull();
+    expect(container.querySelector(".loading-state-cell")).toBeNull();
   });
 
-  it("shows a spinner on running child sessions too", () => {
+  it("shows the pixel loader on running child sessions too", () => {
     const { container } = render(
       <SessionTreeItem
         node={makeNode(makeSession({ status: "running" }), 1)}
@@ -98,9 +107,10 @@ describe("SessionTreeItem", () => {
       />,
     );
 
-    const spinner = container.querySelector(".animate-spin");
+    const loader = container.querySelector(".session-list-indicator > span");
 
-    expect(spinner?.classList.contains("shrink-0")).toBe(true);
+    expect(loader?.classList.contains("shrink-0")).toBe(true);
+    expect(loader?.querySelectorAll(".loading-state-cell")).toHaveLength(9);
   });
 
   it("keeps completed sessions quiet by default and shows a dot after a new update", () => {
@@ -156,7 +166,7 @@ describe("SessionTreeItem", () => {
       />,
     );
     fireEvent.click(container.querySelector(".session-list-select")!);
-    expect(container.querySelector(".animate-spin")).not.toBeNull();
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
   });
 
   it("keeps selection separate from expand and delete actions", () => {
@@ -176,6 +186,7 @@ describe("SessionTreeItem", () => {
     );
     fireEvent.click(container.querySelector(".session-list-expand")!);
     fireEvent.click(container.querySelector(".session-list-delete")!);
+    fireEvent.click(document.querySelector('[role="menuitem"][data-key="delete"]')!);
     expect(onToggleExpand).toHaveBeenCalledWith("sess-1");
     expect(onDelete).toHaveBeenCalledWith("sess-1");
     expect(onSelect).not.toHaveBeenCalled();

@@ -74,6 +74,10 @@ describe("buildLoopModelMessages", () => {
     expect(systemMessageContents).toEqual(
       new Set([messages[0].content, runtimeReminder.content]),
     );
+    expect(messages.filter((message) => message.content === runtimeReminder.content)).toEqual([
+      { role: "system", content: runtimeReminder.content },
+    ]);
+    expect(messages.find((message) => message.content === userText)?.role).toBe("user");
     expect(systemMessageContents.has(userText)).toBe(false);
     expect(systemMessageContents.has("Answer")).toBe(false);
   });

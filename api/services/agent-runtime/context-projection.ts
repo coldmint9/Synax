@@ -607,8 +607,8 @@ export const contextReferenceTool: RegisteredTool = {
         .find((c) => c.id === args.id);
     else if (args.kind === "message")
       value = sessions
-        .flatMap((s) => store.listMessages(s.id))
-        .find((m) => m.id === args.id);
+        .map((s) => args.id ? store.getMessage(s.id, args.id) : undefined)
+        .find(Boolean);
     else if (args.kind === "work" && args.id) {
       const work = workStore.get(args.id);
       value = work && allowed.has(work.sessionId) ? work : undefined;

@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import css from "../../../index.css?raw";
 import workPageCss from "../../features/agent-workspace/workPage.css?raw";
 import layoutSource from "../WorkbenchLayout.tsx?raw";
+import headerSource from "../WorkbenchHeader.tsx?raw";
+import gitWorkbenchCss from "../../features/git/gitWorkbench.css?raw";
 
 const stylesheet = postcss.parse(css);
 const workPageStylesheet = postcss.parse(workPageCss);
+const gitStylesheet = postcss.parse(gitWorkbenchCss);
 
 function declaration(selector: string, property: string, root = stylesheet) {
   let value: string | undefined;
@@ -20,14 +23,14 @@ function declaration(selector: string, property: string, root = stylesheet) {
 }
 
 describe("settings island layout", () => {
-  it("marks the active route and removes the session-sidebar offset on settings", () => {
+  it("marks the active route and removes the session-sidebar offset on Git and Settings", () => {
     expect(layoutSource).toContain(
       "data-active-panel={activePanel ?? undefined}",
     );
-    const settingsHeader =
-      '.workbench-shell[data-active-panel="settings"] .workbench-header';
-    expect(declaration(settingsHeader, "--island-center-offset")).toBe("0px");
-    expect(declaration(settingsHeader, "top")).toBe(
+    const fullWidthHeader =
+      '.workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"]) .workbench-header';
+    expect(declaration(fullWidthHeader, "--island-center-offset")).toBe("0px");
+    expect(declaration(fullWidthHeader, "top")).toBe(
       declaration(
         ".workspace-island-slot--conversation",
         "top",
@@ -80,7 +83,7 @@ describe("Wiki and Work island alignment", () => {
     for (const selector of [
       ".workbench-header",
       ".electron-macos .workbench-header",
-      '.workbench-shell[data-active-panel="settings"] .workbench-header',
+      '.workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"]) .workbench-header',
     ]) {
       expect(declaration(selector, "top")).toBe("var(--workbench-island-top)");
     }
@@ -100,10 +103,39 @@ describe("Wiki and Work island alignment", () => {
 });
 
 
-it("leaves vertical room for the navigation pill shadow without shifting the header", () => {
-  const scroller = ".wh-tabs .tabs__list-container__scroller";
-  expect(declaration(scroller, "padding-block")).toBe("6px");
-  expect(declaration(scroller, "margin-block")).toBe("-6px");
+it("does not render an overflow chevron over the Git tab during Wiki/Git switches", () => {
+  expect(headerSource).toContain(
+    '<Tabs.List aria-label={t("workspaceMainNav")}',
+  );
+  const mainNav = headerSource
+    .split("function MainNavTabs(")[1]
+    .split("function WikiToolbar(")[0];
+  expect(mainNav).not.toContain("<Tabs.ListContainer>");
   expect(declaration(".wh-tabs .tabs__tab", "height")).toBe("26px");
-  expect(declaration(scroller, "overflow")).toBeUndefined();
+});
+
+it("places the Git workbench title and actions below the navigation island", () => {
+  expect(declaration(".git-workbench", "padding", gitStylesheet)).toBe(
+    "56px 32px 28px",
+  );
+  let narrowPadding: string | undefined;
+  gitStylesheet.walkAtRules("media", (media) => {
+    if (media.params !== "(max-width: 850px)") return;
+    media.walkRules(".git-workbench", (rule) => {
+      narrowPadding = rule.nodes.find(
+        (node) => node.type === "decl" && node.prop === "padding",
+      )?.value;
+    });
+  });
+  expect(narrowPadding).toBe("56px 16px 20px");
+});
+
+
+describe("Git secondary island", () => {
+  it("mounts the toolbar beside the primary island only on the Git overview", () => {
+    expect(layoutSource).toContain("<GitToolbarProvider>");
+    expect(headerSource).toContain('activePanel === "git" && !location.pathname.includes("/git/mr/")');
+    expect(headerSource).toContain("<ToolbarPill visible={gitToolbarVisible}>");
+    expect(headerSource).toContain("<GitToolbarTarget />");
+  });
 });

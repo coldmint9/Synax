@@ -5,10 +5,7 @@ import { SessionTodoPanel } from "./SessionTodoPanel";
 import { SessionCacheCard } from "./SessionCacheCard";
 import { ContextCompositionBar, contextUsage } from "./ContextCompositionBar";
 import { formatTokenCount } from "../../../lib/formatTokens";
-import {
-  formatModelDisplayName,
-  useProviderNames,
-} from "./useProviderNames";
+import { formatModelDisplayName, useProviderNames } from "./useProviderNames";
 import {
   ChevronRight,
   Target,
@@ -76,22 +73,31 @@ export function SessionRuntimeStatus({
 
   const badgeClass =
     STATUS_BADGE[currentStatus] ?? "bg-secondary/70 text-foreground/80";
-  const contextTokens = contextUsage(
-    stats?.contextComposition,
-    stats?.context,
-  );
-  const contextTokensLabel =
-    contextTokens.available && contextTokens.total > 0
-      ? formatTokenCount(contextTokens.total)
-      : null;
+  const contextTokens = contextUsage(stats?.context);
+  const contextTokensLabel = contextTokens.available
+    ? formatTokenCount(contextTokens.total)
+    : null;
 
   return (
     <span className="runtime-session-status inline-flex items-center gap-1.5">
       {contextTokensLabel && (
         <span
           className="tabular-nums text-[9px] text-muted-foreground/70"
-          title={locale === "zh" ? "当前上下文 Token" : "Context tokens"}
+          title={
+            stats?.context?.stale
+              ? locale === "zh"
+                ? "上次请求上下文 Token"
+                : "Last request context tokens"
+              : locale === "zh"
+                ? "最近请求上下文 Token"
+                : "Latest request context tokens"
+          }
         >
+          {stats?.context?.stale
+            ? locale === "zh"
+              ? "上次 · "
+              : "Last · "
+            : ""}
           {contextTokensLabel}
         </span>
       )}
@@ -146,7 +152,6 @@ export function SessionStatusCard({
         </span>
       </div>
       <ContextCompositionBar
-        composition={stats.contextComposition}
         context={stats.context}
         contextLimit={stats.contextLimit}
         contextLimitKnown={stats.contextLimitKnown !== false}

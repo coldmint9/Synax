@@ -1,3 +1,4 @@
+import { createGitMrRoutes } from "./git-mr.js";
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
 import path, { basename } from "node:path";
@@ -32,6 +33,7 @@ import { logger } from "../lib/logger.js";
 import { DATA_ROOT } from "../lib/env.js";
 import { contextService } from "../services/context/context-service.js";
 import { getRawSqlite } from "../db/index.js";
+import { revokeAllProjectToolGrants } from "../services/agent-runtime/project-tool-grants.js";
 import { agentRuntimeStore } from "../services/agent-runtime/session-store.js";
 import {
   createGitWorktree,
@@ -422,6 +424,11 @@ function gitWorkspaceRouteError(c: Context, error: unknown) {
 // ---------------------------------------------------------------------------
 
 export const projectRoutes = new Hono();
+projectRoutes.route('/:projectId/git/mr', createGitMrRoutes((projectId, rootId) => {
+  const project = projects.get(projectId);
+  if (!project) throw new GitWorkspaceError('Project not found.', 404);
+  return projectGitRoot(project, rootId).location;
+}));
 
 const workspaceLocationSchema = z.discriminatedUnion("kind", [
   z
@@ -1134,6 +1141,7 @@ projectRoutes.delete("/:id", async (c) => {
   // Remove from memory and disk
   projects.delete(id);
   saveProjectsToDisk();
+  revokeAllProjectToolGrants(id);
   logger.info(
     { projectId: id, gitCleaned: cleanupResult.cleaned },
     "[projects] deleted",

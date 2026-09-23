@@ -1,4 +1,6 @@
 import { ToolbarPill } from "./ToolbarPill";
+import { GitToolbarTarget } from "../features/git/GitToolbarPortal";
+import { useLocation } from "react-router-dom";
 import { Terminal as TerminalIcon } from "lucide-react";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useTerminalStore } from "../features/terminal/terminalStore";
@@ -11,6 +13,7 @@ import {
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from "@heroui/react";
 import {
   BookOpen,
+  GitMerge,
   Bot,
   Folder,
   Search,
@@ -63,6 +66,7 @@ interface WorkbenchHeaderProps {
 const navTabs: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
   { id: "sessions", icon: Bot, label: "Work" },
   { id: "wiki", icon: BookOpen, label: "Wiki" },
+  { id: "git", icon: GitMerge, label: "Git" },
 ];
 
 function ProjectSessionBadgeMark({
@@ -258,40 +262,38 @@ function MainNavTabs({
       onSelectionChange={(key) => onPanelToggle(key as ActivityPanel)}
       className={`wh-tabs ${iconOnly ? "wh-tabs--icon-only" : ""}`}
     >
-      <Tabs.ListContainer>
-        <Tabs.List aria-label={t("workspaceMainNav")} className="wh-tabs-list">
-          {navTabs
-            .filter((tab) => tab.id !== "wiki" || wikiEnabled)
-            .map((tab, i) => {
-              const Icon = tab.icon;
-              return (
-                <Tabs.Tab
-                  key={tab.id}
-                  id={tab.id}
-                  isDisabled={!hasProject}
-                  onPress={() => {
-                    if (activePanel === tab.id) onPanelToggle(tab.id);
-                  }}
-                  aria-label={tab.label}
-                  className={`wh-tab wh-tab--${tab.id}`}
-                >
-                  {i > 0 && <Tabs.Separator />}
-                  {iconOnly ? (
-                    <span className="inline-flex" title={tab.label}>
-                      <Icon size={13} />
-                    </span>
-                  ) : (
-                    <>
-                      <Icon size={13} />
-                      <span>{tab.label}</span>
-                    </>
-                  )}
-                  <Tabs.Indicator />
-                </Tabs.Tab>
-              );
-            })}
-        </Tabs.List>
-      </Tabs.ListContainer>
+      <Tabs.List aria-label={t("workspaceMainNav")} className="wh-tabs-list">
+        {navTabs
+          .filter((tab) => tab.id !== "wiki" || wikiEnabled)
+          .map((tab, i) => {
+            const Icon = tab.icon;
+            return (
+              <Tabs.Tab
+                key={tab.id}
+                id={tab.id}
+                isDisabled={!hasProject}
+                onPress={() => {
+                  if (activePanel === tab.id) onPanelToggle(tab.id);
+                }}
+                aria-label={tab.label}
+                className={`wh-tab wh-tab--${tab.id}`}
+              >
+                {i > 0 && <Tabs.Separator />}
+                {iconOnly ? (
+                  <span className="inline-flex" title={tab.label}>
+                    <Icon size={13} />
+                  </span>
+                ) : (
+                  <>
+                    <Icon size={13} />
+                    <span>{tab.label}</span>
+                  </>
+                )}
+                <Tabs.Indicator />
+              </Tabs.Tab>
+            );
+          })}
+      </Tabs.List>
     </Tabs>
   );
 }
@@ -531,6 +533,9 @@ export function WorkbenchHeader({
   onRemoveProject,
 }: WorkbenchHeaderProps) {
   const { t } = useLocale();
+  const location = useLocation();
+  const gitToolbarVisible =
+    activePanel === "git" && !location.pathname.includes("/git/mr/");
   const confirmState = useOverlayState();
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -654,6 +659,9 @@ export function WorkbenchHeader({
             </div>
 
             <WikiToolbarPill visible={activePanel === "wiki"} />
+            <ToolbarPill visible={gitToolbarVisible}>
+              <GitToolbarTarget />
+            </ToolbarPill>
           </>
 
           {/* Remove project confirmation modal */}

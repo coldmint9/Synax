@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -293,4 +293,25 @@ export async function resolveFileOpener(
     command: openerCommand(filePath, line, app, process.platform, directory),
     fallback: !app,
   };
+}
+
+/** Opens a host terminal at the file's directory, without interpolating a shell command. */
+export function systemTerminalCommand(directory: string, platform = process.platform): { bin: string; args: string[]; cwd: string } {
+  if (platform === "darwin") return { bin: "/usr/bin/open", args: ["-a", "Terminal", directory], cwd: directory };
+  if (platform === "win32") return { bin: "cmd.exe", args: ["/K"], cwd: directory };
+  return { bin: "x-terminal-emulator", args: [], cwd: directory };
+}
+
+export async function openSystemTerminal(directory: string): Promise<void> {
+  const options = systemTerminalCommand(directory);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(options.bin, options.args, {
+      cwd: options.cwd,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+    });
+    child.once("error", reject);
+    child.once("spawn", () => { child.unref(); resolve(); });
+  });
 }

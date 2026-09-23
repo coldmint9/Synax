@@ -32,7 +32,7 @@ const blocks: TurnContentBlock[] = [
     type: "tool_call",
     call: {
       id: "call-1",
-      toolId: "grep.search",
+      toolId: "rg",
       inputSummary: "bui-tool|bui-activity|StreamingTextBlock",
       outputSummary: "Found matches",
       status: "completed",
@@ -75,7 +75,7 @@ describe("SessionLiveTurn", () => {
     expect(
       screen.queryByText("bui-tool|bui-activity|StreamingTextBlock"),
     ).toBeNull();
-    expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
     expect(screen.getByRole("status")).toHaveAccessibleName();
   });
 

@@ -141,7 +141,7 @@ describe("session environment Git ignore filtering", () => {
       },
       {
         id: "text-read",
-        toolId: "grep.search",
+        toolId: "rg",
         status: "completed",
         mutability: "read",
         inputSummary: '{"query":"SessionEnvironment"}',

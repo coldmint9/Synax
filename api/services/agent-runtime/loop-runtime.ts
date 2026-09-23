@@ -1,7 +1,9 @@
+import { coalesceLoopDeltas } from "./loop-delta-bursts.js";
 import {
   persistInlineVisualization,
   hydrateCompletedVisualizations,
 } from "./visualization-integration.js";
+import { isVisualizationIntent } from "./visualization-intent.js";
 import { filterHistoryFileReads } from "./checkpoints/state.js";
 import {
   captureCheckpoint,
@@ -19,6 +21,7 @@ import {
 } from "../llm-runtime/cache-diagnostics.js";
 import {
   readRuntimeReminder,
+  runtimeReminderMessage,
   snapshotRuntimeReminder,
 } from "./runtime-request-snapshot.js";
 import { measureContextComposition } from "./context-composition.js";
@@ -37,6 +40,7 @@ import { runtimeTransaction } from "./runtime-transaction.js";
 import type { AgentSession } from "./contracts.js";
 import {
   activateAcceptedRun,
+  acceptedInputRequestId,
   type AcceptedRuntimeInput,
 } from "./run-admission.js";
 import { isWorkContinuation } from "./work-intent.js";
@@ -549,12 +553,13 @@ export class AgentLoopRuntime {
         const userMessage = this.store.appendMessage({
           id: inputMessageId,
           sessionId,
-          runId: null,
+          runId: input.acceptedRunId ?? null,
           stepId: null,
           role: "user",
           content: prompt,
           contentParts: input.contentParts,
           metadata: {
+            requestId: acceptedInputRequestId(sessionId, input.acceptedRunId),
             references: input.references,
             source:
               input.messageSource === "system_injection"
@@ -744,7 +749,13 @@ export class AgentLoopRuntime {
           pendingResume = null;
         }
 
-        rebuildSessionFileReads(sessionId, filterHistoryFileReads(sessionId, this.store.listToolCalls(sessionId)));
+        rebuildSessionFileReads(
+          sessionId,
+          filterHistoryFileReads(
+            sessionId,
+            this.store.listToolCalls(sessionId),
+          ),
+        );
 
         let clearingActivated = false;
 
@@ -858,28 +869,32 @@ export class AgentLoopRuntime {
             runId: run.id,
             stepIndex: step.index,
           });
-          for await (const event of this.generateStep({
-            sessionId,
-            stepId: step.id,
-            prompt: currentPrompt,
-            input,
-            profile,
-            context,
-            history,
-            previousParts: previousStepParts,
-            previousToolCalls,
-            stepIndex: step.index,
-            maxSteps: convergenceThreshold,
-            converging: shouldConverge(step.index, convergenceThreshold),
-            blockedByPermission: pendingPermission?.userReply === "reject",
-            previousStepUsage: previousStep?.metadata?.usage as
-              | Record<string, unknown>
-              | undefined,
-            abortSignal: runAbortSignal,
-            clearingActivated,
-            contextLimit: runContextLimit,
-            outputReserve: runOutputReserve,
-          })) {
+          for await (const event of coalesceLoopDeltas(
+            (stepSignal) =>
+              this.generateStep({
+                sessionId,
+                stepId: step.id,
+                prompt: currentPrompt,
+                input,
+                profile,
+                context,
+                history,
+                previousParts: previousStepParts,
+                previousToolCalls,
+                stepIndex: step.index,
+                maxSteps: convergenceThreshold,
+                converging: shouldConverge(step.index, convergenceThreshold),
+                blockedByPermission: pendingPermission?.userReply === "reject",
+                previousStepUsage: previousStep?.metadata?.usage as
+                  | Record<string, unknown>
+                  | undefined,
+                abortSignal: stepSignal,
+                clearingActivated,
+                contextLimit: runContextLimit,
+                outputReserve: runOutputReserve,
+              }),
+            runAbortSignal,
+          )) {
             if (inputQueueService.getForceInjectId(sessionId)) {
               stepForceInjectRequested = true;
               break;
@@ -2106,7 +2121,8 @@ export class AgentLoopRuntime {
           "work_result",
         );
     })();
-    if(work.status === "completed" && message) persistInlineVisualization(message);
+    if (work.status === "completed" && message)
+      persistInlineVisualization(message);
     const terminalRun = this.store.getRun(run.id);
     const eventType =
       work.status === "completed" ? "run_completed" : "run_failed";
@@ -2218,7 +2234,7 @@ export class AgentLoopRuntime {
       metadata: { goalStatus: goal?.status },
       createdAt: nowIso(),
     });
-    if(completed)persistInlineVisualization(message);
+    if (completed) persistInlineVisualization(message);
     yield { type: "message", message };
     yield completed
       ? { type: "run_completed", run: finished, message }
@@ -2524,12 +2540,14 @@ export class AgentLoopRuntime {
     let projectRulesSection: string | null = null;
     try {
       const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
-      projectRulesSection = loadProjectRulesSection(workDir);
+      // MR repository files are evidence, never authority over the pinned Git contract.
+      if (session.profileId !== 'git-manager') projectRulesSection = loadProjectRulesSection(workDir);
     } catch {
       projectRulesSection = null;
     }
 
     const selectedReferences = activeTurnReferences(input.sessionId);
+    const visualizationIntent = isVisualizationIntent(userRequest);
     const turnSkillIds = [
       ...new Set([
         ...session.skillIds,
@@ -2541,13 +2559,26 @@ export class AgentLoopRuntime {
       projectId: session.projectId,
       activeSkillIds: turnSkillIds,
     });
+    const autoVisualizeSkill = visualizationIntent
+      ? skillCandidates.find(
+          (skill) =>
+            skill.name.toLowerCase() === "visualize" ||
+            skill.id.toLowerCase().endsWith("/visualize"),
+        )
+      : undefined;
     const activeSkillIds = new Set(turnSkillIds);
+    if (autoVisualizeSkill) activeSkillIds.add(autoVisualizeSkill.id);
     const skillsSection =
       allowedTools.some((tool) => tool.id === "skill.load") &&
       skillCandidates.length > 0
         ? [
             "## Available skills",
-            "Skills selected for this turn are loaded by the runtime through skill.load; check their tool results for success or failure. For other selected skills, or when a description matches the task, call skill.load as needed. Full instructions arrive as tool results. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
+            "Skills selected for this turn must be loaded with skill.load before authoring. Check the tool result for success or failure. Other skills may be loaded when their descriptions match the task. Full instructions arrive as tool results. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
+            ...(visualizationIntent
+              ? [
+                  `Visual preview intent detected. Load ${autoVisualizeSkill?.id ?? "the visualize skill"} now, then produce one conversation preview instead of only describing it. Do not implement production files unless the user separately asks for that.`,
+                ]
+              : []),
             ...skillCandidates.map((skill) => {
               return JSON.stringify({
                 id: skill.id,
@@ -2606,6 +2637,7 @@ export class AgentLoopRuntime {
       projectRulesSection,
       skillsSection,
       selectedReferencesSection: selectedReferences?.content,
+      visualizationIntent,
     });
 
     // Static instructions/reference preview; the complete request also contains historical and latest reminders
@@ -2666,7 +2698,7 @@ export class AgentLoopRuntime {
         .map((message) => message.id),
     );
     const reminderTokens = countMessagesTokens(
-      [{ role: "user", content: reminder.content }],
+      [runtimeReminderMessage(reminder)],
       input.input.model ?? undefined,
     );
     const toolComposition = await measureContextComposition({
@@ -2830,7 +2862,7 @@ export class AgentLoopRuntime {
           content: systemPromptContent,
         },
         ...conversationMessages,
-        { role: "user" as const, content: reminder.content },
+        runtimeReminderMessage(reminder),
       ],
       temperature: input.input.temperature,
       maxTokens: input.input.maxTokens,

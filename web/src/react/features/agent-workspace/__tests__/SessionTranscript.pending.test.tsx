@@ -53,7 +53,7 @@ beforeEach(() => {
   });
 });
 
-it("renders a sent message and three waiting dots before the request completes, without waiting for history", async () => {
+it("renders a sent message and the thinking grid before the request completes, without waiting for history", async () => {
   let finish!: (result: { run: AgentRun; reused: boolean }) => void;
   vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(
     () =>
@@ -69,13 +69,128 @@ it("renders a sent message and three waiting dots before the request completes, 
       .sendSessionMessage("s1", { message: "Immediate message" });
   });
   expect(screen.getByText("Immediate message")).toBeVisible();
-  expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
   await act(async () => {
     finish({ run, reused: false });
     await sending;
   });
   expect(screen.getByText("Immediate message")).toBeVisible();
-  expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+});
+
+it("shows one real message when it arrives before the run-start linkage and HTTP response", async () => {
+  let finish!: (result: { run: AgentRun; reused: boolean }) => void;
+  vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  render(<SessionTranscript />);
+  let sending!: Promise<void>;
+  act(() => {
+    sending = useAgentSessionStore.getState().sendSessionMessage("s1", { message: "我上一轮说了啥" });
+  });
+  const pending = usePendingSubmissionStore.getState().items.s1;
+  act(() => useAgentSessionStore.setState({
+    detailLoading: false,
+    messages: [{ ...pending.message, id: "persisted", runId: null, metadata: { requestId: pending.requestId } }],
+    runs: [],
+  }));
+  expect(screen.getAllByText("我上一轮说了啥")).toHaveLength(1);
+  expect(screen.getByRole("status")).toHaveTextContent("正在思考");
+  await act(async () => {
+    finish({ run, reused: false });
+    await sending;
+  });
+  expect(screen.getAllByText("我上一轮说了啥")).toHaveLength(1);
+});
+
+it("keeps the dot matrix through tool-only work and removes it at the first assistant line", async () => {
+  let finish!: (result: { run: AgentRun; reused: boolean }) => void;
+  vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const { container } = render(<SessionTranscript />);
+  let sending!: Promise<void>;
+  act(() => {
+    sending = useAgentSessionStore
+      .getState()
+      .sendSessionMessage("s1", { message: "Generate a reply" });
+  });
+  const pending = usePendingSubmissionStore.getState().items.s1;
+  const runningRun = {
+    ...run,
+    status: "running" as const,
+    metadata: { runtime: { requestId: pending.requestId } },
+  };
+  const toolCall = {
+    id: "tool-1",
+    sessionId: "s1",
+    runId: runningRun.id,
+    stepId: "step-1",
+    toolId: "search",
+    category: "read",
+    mutability: "read" as const,
+    inputSummary: "",
+    outputSummary: null,
+    status: "running" as const,
+    startedAt: "",
+    endedAt: null,
+    error: null,
+  };
+  act(() =>
+    useAgentSessionStore.setState({
+      detailLoading: false,
+      runs: [runningRun],
+      messages: [
+        {
+          ...pending.message,
+          id: "persisted-user",
+          metadata: { requestId: pending.requestId },
+        },
+      ],
+      streamingStepId: "step-1",
+      streamingLive: {
+        blocks: [],
+        pendingThinking: "",
+        pendingText: "",
+        pendingToolCalls: [toolCall],
+      },
+    }),
+  );
+
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+
+  act(() =>
+    useAgentSessionStore.setState({
+      messages: [
+        {
+          ...pending.message,
+          id: "persisted-user",
+          metadata: { requestId: pending.requestId },
+        },
+        {
+          id: "assistant-1",
+          sessionId: "s1",
+          runId: runningRun.id,
+          stepId: "step-1",
+          role: "assistant",
+          content: "第一行内容",
+          metadata: {},
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }),
+  );
+
+  await waitFor(() => {
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
+  });
+  expect(usePendingSubmissionStore.getState().items.s1).toBeUndefined();
+
+  await act(async () => {
+    finish({ run: runningRun, reused: false });
+    await sending;
+  });
 });
 
 it("deduplicates an SSE confirmation arriving before the POST response and keeps identical earlier messages", async () => {

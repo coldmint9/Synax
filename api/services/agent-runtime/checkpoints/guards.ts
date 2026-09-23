@@ -1,3 +1,9 @@
+import { activeWorkspaceSessions, openWriterRoots } from "./lock-pages.js";
+import {
+  boundaryOnlySession,
+  versionRepository,
+  versionedSession,
+} from "./version-runtime/bridge.js";
 import fs from "node:fs";
 import path from "node:path";
 import { getRawSqlite } from "../../../db/index.js";
@@ -10,6 +16,8 @@ export const activeHistoryOperations = new Set<string>();
 export const historyError = (message: string, code = "HISTORY_CONFLICT") =>
   new AgentRuntimeError(message, code, 409);
 export function historyRevision(sessionId: string): number {
+  if (versionedSession(sessionId))
+    return versionRepository().head(sessionId).revision;
   return (
     (
       getRawSqlite()
@@ -19,6 +27,11 @@ export function historyRevision(sessionId: string): number {
         .get(sessionId) as { revision: number } | undefined
     )?.revision ?? 0
   );
+}
+export function historyEpoch(sessionId: string): number {
+  return versionedSession(sessionId)
+    ? versionRepository().head(sessionId).epoch
+    : historyRevision(sessionId);
 }
 export function rootOwner(sessionId: string): string {
   const seen = new Set<string>();
@@ -57,12 +70,18 @@ export function rootsOverlap(a: string, b: string): boolean {
     !p || (!p.startsWith(`..${path.sep}`) && p !== ".." && !path.isAbsolute(p));
   return inside(relative) || inside(reverse);
 }
-export function assertHistoryUnlocked(sessionId: string, rootsOverride?: string[]): void {
+export function assertHistoryUnlocked(
+  sessionId: string,
+  rootsOverride?: string[],
+): void {
   const db = getRawSqlite();
+  if (db.prepare("SELECT 1 FROM conversation_v3_migrations WHERE session_id=? AND state='copying'").get(sessionId))
+    throw historyError("History upgrade is in progress. Resume the upgrade before running or editing.", "HISTORY_MIGRATION_BUSY");
+
   if (
     db
       .prepare(
-        "SELECT id FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required')",
+        "SELECT id FROM conversation_history_operations WHERE session_id=? AND state IN ('prepared','applying','recovery_required','fork_preparing')",
       )
       .get(rootOwner(sessionId))
   )
@@ -98,7 +117,7 @@ export function assertHistoryIdle(sessionId: string): void {
       session.sessionMetadata?.runtimeControl ||
       db
         .prepare(
-          "SELECT id FROM agent_runtime_runs WHERE session_id=? AND (status IN ('queued','running') OR json_extract(metadata_json,'$.executionLease.closed')=0)",
+          `SELECT id FROM agent_runtime_runs WHERE session_id=? ${boundaryOnlySession(session.id) ? "AND version_epoch=(SELECT epoch FROM conversation_v3_heads WHERE session_id=agent_runtime_runs.session_id)" : ""} AND (status IN ('queued','running') OR json_extract(metadata_json,'$.executionLease.closed')=0) LIMIT 1`,
         )
         .get(session.id)
     )
@@ -131,27 +150,11 @@ export function acquireHistoryLocks(
     const ownTree = new Set(
       agentRuntimeStore.listSessionTree(sessionId).map((s) => s.id),
     );
-    for (const other of agentRuntimeStore.listSessions({
-      limit: Number.MAX_SAFE_INTEGER,
-    })) {
-      if (ownTree.has(other.id)) continue;
-      const active =
-        [
-          "running",
-          "queued",
-          "stopping",
-          "waiting_permission",
-          "waiting_input",
-        ].includes(other.status) ||
-        db
-          .prepare(
-            "SELECT id FROM agent_runtime_processes WHERE session_id=? AND state<>'closed'",
-          )
-          .get(other.id);
-      if (!active) continue;
+    for (const otherId of activeWorkspaceSessions()) {
+      if (ownTree.has(otherId)) continue;
       let otherRoots: string[];
       try {
-        otherRoots = sessionRoots(other.id);
+        otherRoots = sessionRoots(otherId);
       } catch {
         continue;
       }
@@ -161,22 +164,13 @@ export function acquireHistoryLocks(
           "HISTORY_WORKSPACE_BUSY",
         );
     }
-    const writers = db
-      .prepare(
-        "SELECT roots_json FROM conversation_mutations WHERE state='open'",
-      )
-      .all() as { roots_json: string }[];
-    if (
-      writers.some((w) =>
-        (JSON.parse(w.roots_json) as string[]).some((a) =>
-          roots.some((b) => rootsOverlap(a, b)),
-        ),
-      )
-    )
-      throw historyError(
-        "Another execution may still be writing this workspace.",
-        "HISTORY_WORKSPACE_BUSY",
-      );
+    for (const writerRoots of openWriterRoots()) {
+      if (writerRoots.some((a) => roots.some((b) => rootsOverlap(a, b))))
+        throw historyError(
+          "Another execution may still be writing this workspace.",
+          "HISTORY_WORKSPACE_BUSY",
+        );
+    }
     for (const root of roots)
       db.prepare(
         "INSERT INTO conversation_workspace_locks(root,operation_id) VALUES (?,?)",

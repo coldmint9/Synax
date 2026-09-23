@@ -1,3 +1,5 @@
+import { getRawSqlite } from "../../db/index.js";
+import { initializeFreshVersionNative, versionedSession } from "./checkpoints/version-runtime/bridge.js";
 import { assertHistoryUnlocked } from "./checkpoints/guards.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
 import { normalizeSessionPromptMetadata } from "./session-metadata.js";
@@ -51,6 +53,8 @@ export class AgentSessionRuntime {
     const parent = input.parentSessionId
       ? this.store.getSession(input.parentSessionId)
       : undefined;
+    if (parent && versionedSession(parent.id))
+      throw new AgentValidationError("Subagents are not yet supported by versioned history. Use a separate session instead.");
     const seenAncestors = new Set<string>();
     for (
       let ancestor = parent;
@@ -67,6 +71,9 @@ export class AgentSessionRuntime {
         throw new AgentValidationError(
           "Cannot create a subagent while its ancestor is stopped or stopping.",
         );
+    }
+    if (input.profileId === 'git-manager' && input.backendId && input.backendId !== 'native') {
+      throw new AgentValidationError('Git manager requires the scoped native tool runtime.');
     }
     validateBackendTurnInput(input.backendId ?? "native", input);
     const profile = this.profiles.assertCanStart(input.profileId, {
@@ -199,7 +206,12 @@ export class AgentSessionRuntime {
         profile.permissionDefaults,
       ),
     };
-    const saved = this.store.createSession(session);
+    const saved = getRawSqlite().transaction(() => {
+      const saved = this.store.createSession(session);
+      if (!parent && (!input.backendId || input.backendId === "native") && process.env.SYNAX_VERSION_HISTORY !== "legacy")
+        initializeFreshVersionNative(saved);
+      return saved;
+    })();
     const bundle = agentContextBuilder.build(input.projectId, {
       nodeId: input.nodeId ?? undefined,
       profileId: profile.id,

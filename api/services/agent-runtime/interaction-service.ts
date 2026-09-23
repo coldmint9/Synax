@@ -1,3 +1,13 @@
+import { readVersionSnapshot } from "./checkpoints/version-store/read-snapshot.js";
+import { versionedSession } from "./checkpoints/version-runtime/bridge.js";
+import { listVersionEntities } from "./checkpoints/version-runtime/entities.js";
+import {
+  currentVersionInteraction,
+  persistInteraction,
+  pendingVersionInteraction,
+  readyVersionInteraction,
+  cancelVersionInteractions,
+} from "./checkpoints/version-runtime/interaction-control.js";
 import { isDeepStrictEqual } from "node:util";
 import { getRawSqlite } from "../../db/index.js";
 import { agentRuntimeStore as store } from "./session-store.js";
@@ -49,6 +59,8 @@ const conflict = (message: string): never => {
 export const interactionService = {
   list(sessionId: string): AgentInteraction[] {
     store.getSession(sessionId);
+    if (versionedSession(sessionId))
+      return listVersionEntities<AgentInteraction>(sessionId, "interactions");
     return (
       getRawSqlite()
         .prepare(
@@ -58,6 +70,10 @@ export const interactionService = {
     ).map(map);
   },
   pending(sessionId: string): AgentInteraction | null {
+    if (versionedSession(sessionId))
+      return readVersionSnapshot(getRawSqlite(), () =>
+        pendingVersionInteraction(sessionId),
+      );
     const row = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_interactions WHERE session_id = ? AND status = 'pending'",
@@ -66,6 +82,13 @@ export const interactionService = {
     return row ? map(row) : null;
   },
   ready(sessionId: string): AgentInteraction | null {
+    if (versionedSession(sessionId))
+      return readVersionSnapshot(getRawSqlite(), () => {
+        const session = store.getSession(sessionId);
+        return session.status === "waiting_input" && session.activeRunId
+          ? readyVersionInteraction(sessionId, session.activeRunId)
+          : null;
+      });
     const row = getRawSqlite()
       .prepare(
         "SELECT * FROM agent_runtime_interactions WHERE session_id = ? AND status != 'pending' AND response_json IS NOT NULL AND consumed_at IS NULL ORDER BY rowid DESC LIMIT 1",
@@ -99,7 +122,8 @@ export const interactionService = {
       if (
         session.parentSessionId ||
         (!["synax", "goal"].includes(session.profileId) &&
-          ((session.sessionMetadata?.backend as { id?: string } | undefined)?.id ?? 'native') === 'native')
+          ((session.sessionMetadata?.backend as { id?: string } | undefined)
+            ?.id ?? "native") === "native")
       )
         throw new AgentValidationError(
           "Only the primary Synax agent can ask the user.",
@@ -133,7 +157,11 @@ export const interactionService = {
       const revision =
         input.kind === "plan_approval" ? (oldPlan?.revision ?? 0) + 1 : 1;
       const i: AgentInteraction = {
-        ...input,
+        sessionId: input.sessionId,
+        runId: input.runId,
+        stepId: input.stepId,
+        toolCallId: input.toolCallId,
+        kind: input.kind,
         request,
         revision,
         id: makeRuntimeId("hitl"),
@@ -142,28 +170,34 @@ export const interactionService = {
         createdAt: nowIso(),
         resolvedAt: null,
       };
-      getRawSqlite()
-        .prepare(
-          "INSERT INTO agent_runtime_interactions (id,session_id,run_id,step_id,tool_call_id,kind,revision,status,request_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        )
-        .run(
-          i.id,
-          i.sessionId,
-          i.runId,
-          i.stepId,
-          i.toolCallId,
-          i.kind,
-          i.revision,
-          i.status,
-          JSON.stringify(i.request),
-          i.createdAt,
-        );
+      persistInteraction(i, () => {
+        getRawSqlite()
+          .prepare(
+            "INSERT INTO agent_runtime_interactions (id,session_id,run_id,step_id,tool_call_id,kind,revision,status,request_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            i.id,
+            i.sessionId,
+            i.runId,
+            i.stepId,
+            i.toolCallId,
+            i.kind,
+            i.revision,
+            i.status,
+            JSON.stringify(i.request),
+            i.createdAt,
+          );
+      });
       if ("plan" in request) {
         store.updateSessionMetadata(i.sessionId, {
           plan: { ...request.plan, revision, status: "draft" },
         });
         const goal = session.sessionMetadata?.goal;
-        if (session.sessionMetadata?.mode === "goal" && goal && typeof goal === "object")
+        if (
+          session.sessionMetadata?.mode === "goal" &&
+          goal &&
+          typeof goal === "object"
+        )
           store.updateSessionMetadata(i.sessionId, {
             goal: { ...goal, status: "planning" },
           });
@@ -226,7 +260,9 @@ export const interactionService = {
         .get(id, sessionId) as Row | undefined;
       if (!row)
         throw new AgentRuntimeError("Interaction not found.", "NOT_FOUND", 404);
-      const i = map(row),
+      const i = versionedSession(sessionId)
+          ? currentVersionInteraction(sessionId, id)
+          : map(row),
         session = store.getSession(sessionId);
       if (reply.revision !== i.revision)
         conflict("The form is stale. Reload it before submitting.");
@@ -301,11 +337,13 @@ export const interactionService = {
             ? "declined"
             : "answered";
       const resolvedAt = nowIso();
-      getRawSqlite()
-        .prepare(
-          "UPDATE agent_runtime_interactions SET status=?, response_json=?,resolved_at=? WHERE id=? AND status='pending'",
-        )
-        .run(status, JSON.stringify(reply), resolvedAt, id);
+      persistInteraction({ ...i, status, response: reply, resolvedAt }, () => {
+        getRawSqlite()
+          .prepare(
+            "UPDATE agent_runtime_interactions SET status=?, response_json=?,resolved_at=? WHERE id=? AND status='pending'",
+          )
+          .run(status, JSON.stringify(reply), resolvedAt, id);
+      });
       events.append({
         sessionId,
         type: "interaction_resolved",
@@ -318,10 +356,15 @@ export const interactionService = {
   deferPlan(sessionId: string, id: string): AgentInteraction {
     return getRawSqlite().transaction(() => {
       const row = getRawSqlite()
-        .prepare("SELECT * FROM agent_runtime_interactions WHERE id = ? AND session_id = ?")
+        .prepare(
+          "SELECT * FROM agent_runtime_interactions WHERE id = ? AND session_id = ?",
+        )
         .get(id, sessionId) as Row | undefined;
-      if (!row) throw new AgentRuntimeError("Interaction not found.", "NOT_FOUND", 404);
-      const i = map(row);
+      if (!row)
+        throw new AgentRuntimeError("Interaction not found.", "NOT_FOUND", 404);
+      const i = versionedSession(sessionId)
+        ? currentVersionInteraction(sessionId, id)
+        : map(row);
       if (i.kind !== "plan_approval")
         throw new AgentValidationError("Only a plan approval can be deferred.");
       if (i.status !== "pending")
@@ -329,18 +372,26 @@ export const interactionService = {
       const session = store.getSession(sessionId);
       if (session.status !== "waiting_input" || session.activeRunId !== i.runId)
         conflict("This run no longer accepts input.");
-      const plan = session.sessionMetadata?.plan as { revision?: number } | undefined;
-      if (plan?.revision !== i.revision)
-        conflict("The plan revision changed.");
+      const plan = session.sessionMetadata?.plan as
+        | { revision?: number }
+        | undefined;
+      if (plan?.revision !== i.revision) conflict("The plan revision changed.");
       store.updateSessionMetadata(sessionId, {
         mode: session.sessionMetadata?.mode === "goal" ? "goal" : "plan",
         plan: { ...i.request.plan!, revision: i.revision, status: "saved" },
       });
       const reply: InteractionReply = { revision: i.revision, action: "save" };
       const resolvedAt = nowIso();
-      getRawSqlite()
-        .prepare("UPDATE agent_runtime_interactions SET status='answered',response_json=?,resolved_at=? WHERE id=? AND status='pending'")
-        .run(JSON.stringify(reply), resolvedAt, id);
+      persistInteraction(
+        { ...i, status: "answered", response: reply, resolvedAt },
+        () => {
+          getRawSqlite()
+            .prepare(
+              "UPDATE agent_runtime_interactions SET status='answered',response_json=?,resolved_at=? WHERE id=? AND status='pending'",
+            )
+            .run(JSON.stringify(reply), resolvedAt, id);
+        },
+      );
       events.append({
         sessionId,
         type: "interaction_resolved",
@@ -386,11 +437,13 @@ export const interactionService = {
         completedAt: nowIso(),
         finishReason: "human_input_resolved",
       });
-      getRawSqlite()
-        .prepare(
-          "UPDATE agent_runtime_interactions SET consumed_at=? WHERE id=? AND consumed_at IS NULL",
-        )
-        .run(nowIso(), i.id);
+      persistInteraction(i, () => {
+        getRawSqlite()
+          .prepare(
+            "UPDATE agent_runtime_interactions SET consumed_at=? WHERE id=? AND consumed_at IS NULL",
+          )
+          .run(nowIso(), i.id);
+      });
       store.updateRun(i.runId, {
         status: "running",
         completedAt: null,
@@ -405,6 +458,10 @@ export const interactionService = {
     })();
   },
   cancel(sessionId: string): void {
+    if (versionedSession(sessionId)) {
+      cancelVersionInteractions(sessionId, nowIso());
+      return;
+    }
     getRawSqlite()
       .prepare(
         "UPDATE agent_runtime_interactions SET status='cancelled',resolved_at=?,consumed_at=? WHERE session_id=? AND consumed_at IS NULL",

@@ -1,8 +1,14 @@
+import { versionedSession } from "./checkpoints/version-runtime/bridge.js";
+import {
+  entityScope,
+  readVersionEntity,
+  writeVersionEntity,
+} from "./checkpoints/version-runtime/entities.js";
 import type { ContextMemorySnapshot } from "./context-memory.js";
-import type { RuntimeContentPart } from './content-parts.js';
-import { getRawSqlite } from '../../db/index.js';
-import { agentRuntimeStore as store } from './session-store.js';
-import { makeRuntimeId, nowIso } from './runtime-ids.js';
+import type { RuntimeContentPart } from "./content-parts.js";
+import { getRawSqlite } from "../../db/index.js";
+import { agentRuntimeStore as store } from "./session-store.js";
+import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 
 export interface WorkEvidence {
   criterion: string;
@@ -28,7 +34,7 @@ export interface VerificationRecord {
   scope: string[];
   fingerprint: string;
   changeVersion: number;
-  status: 'success' | 'failed' | 'interrupted';
+  status: "success" | "failed" | "interrupted";
   startedAt: string;
   completedAt: string;
   external: boolean;
@@ -47,8 +53,12 @@ export interface WorkRecord {
   sessionId: string;
   parentWorkId: string | null;
   objective: string;
-  requirements: Array<{ messageId: string; text: string; contentParts?: RuntimeContentPart[] }>;
-  status: 'active' | 'waiting' | 'closing' | 'completed' | 'cancelled';
+  requirements: Array<{
+    messageId: string;
+    text: string;
+    contentParts?: RuntimeContentPart[];
+  }>;
+  status: "active" | "waiting" | "closing" | "completed" | "cancelled";
   planRevision: number | null;
   planSnapshot?: Record<string, unknown>;
   acceptanceCriteria: string[];
@@ -75,38 +85,86 @@ export interface WorkRecord {
 
 export const workStore = {
   get(id: string): WorkRecord | null {
-    const row = getRawSqlite().prepare('SELECT payload_json FROM agent_runtime_work WHERE id = ?').get(id) as { payload_json: string } | undefined;
+    const owner = entityScope("work", id);
+    if (owner) {
+      try {
+        return readVersionEntity<WorkRecord>(owner, "work", id);
+      } catch (error) {
+        if ((error as { code?: string }).code === "NOT_FOUND") return null;
+        throw error;
+      }
+    }
+    const row = getRawSqlite()
+      .prepare("SELECT payload_json FROM agent_runtime_work WHERE id = ?")
+      .get(id) as { payload_json: string } | undefined;
     if (!row) return null;
     const work = JSON.parse(row.payload_json) as WorkRecord;
     // Records persisted before the action ledger existed carry no novelty history.
     if (!Array.isArray(work.ledger)) work.ledger = [];
-    if (typeof work.noProgressSteps !== 'number') work.noProgressSteps = 0;
-    if (typeof work.decisionFailures !== 'number') work.decisionFailures = 0;
+    if (typeof work.noProgressSteps !== "number") work.noProgressSteps = 0;
+    if (typeof work.decisionFailures !== "number") work.decisionFailures = 0;
     // The self-dead 'blocked' status was replaced by waiting + an interaction.
-    if ((work.status as string) === 'blocked') work.status = 'waiting';
+    if ((work.status as string) === "blocked") work.status = "waiting";
     return work;
   },
   current(sessionId: string): WorkRecord | null {
     const id = store.getSession(sessionId).sessionMetadata?.activeWorkId;
-    const work = typeof id === 'string' ? this.get(id) : null;
+    const work = typeof id === "string" ? this.get(id) : null;
     return work?.sessionId === sessionId ? work : null;
   },
   save(work: WorkRecord): WorkRecord {
-    work.updatedAt = nowIso();
-    getRawSqlite().prepare('INSERT INTO agent_runtime_work (id, session_id, payload_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at')
-      .run(work.id, work.sessionId, JSON.stringify(work), work.updatedAt);
-    return work;
+    const writeControl = () => {
+      work.updatedAt = nowIso();
+      getRawSqlite()
+        .prepare(
+          "INSERT INTO agent_runtime_work (id, session_id, payload_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at",
+        )
+        .run(work.id, work.sessionId, JSON.stringify(work), work.updatedAt);
+      return work;
+    };
+    if (versionedSession(work.sessionId))
+      return writeVersionEntity(
+        work.sessionId,
+        "work",
+        work.id,
+        work,
+        writeControl,
+      );
+    return writeControl();
   },
   create(sessionId: string, objective: string, legacy = false): WorkRecord {
     const session = store.getSession(sessionId);
-    const parent = session.parentSessionId ? this.current(session.parentSessionId) : null;
+    const parent = session.parentSessionId
+      ? this.current(session.parentSessionId)
+      : null;
     const work: WorkRecord = {
-      id: makeRuntimeId('work'), sessionId, parentWorkId: parent?.id ?? null, objective,
-      requirements: [], status: 'active', planRevision: null, acceptanceCriteria: [], evidence: [], remaining: [],
-      nextAction: null, expectedEvidence: null, progressVersion: 0, changeVersion: 0,
-      ledger: [], observedSteps: [], noProgressSteps: 0, decisionFailures: 0,
-      checkpoint: null, verifications: [], changedPaths: [], hasChanges: false, legacyEvidenceIncomplete: legacy,
-      result: null, reason: null, createdAt: nowIso(), updatedAt: nowIso(),
+      id: makeRuntimeId("work"),
+      sessionId,
+      parentWorkId: parent?.id ?? null,
+      objective,
+      requirements: [],
+      status: "active",
+      planRevision: null,
+      acceptanceCriteria: [],
+      evidence: [],
+      remaining: [],
+      nextAction: null,
+      expectedEvidence: null,
+      progressVersion: 0,
+      changeVersion: 0,
+      ledger: [],
+      observedSteps: [],
+      noProgressSteps: 0,
+      decisionFailures: 0,
+      checkpoint: null,
+      verifications: [],
+      changedPaths: [],
+      hasChanges: false,
+      legacyEvidenceIncomplete: legacy,
+      result: null,
+      reason: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
     };
     this.save(work);
     store.updateSessionMetadata(sessionId, { activeWorkId: work.id });

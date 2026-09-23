@@ -15,7 +15,7 @@ const toolCall = (id: string): ToolCallRecord => ({
   sessionId: "sess-1",
   runId: "run-1",
   stepId: "step-1",
-  toolId: "grep.search",
+  toolId: "rg",
   category: "read",
   mutability: "read",
   inputSummary: "pattern",

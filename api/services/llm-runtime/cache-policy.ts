@@ -77,7 +77,8 @@ function mark(
 }
 
 function isRuntimeReminder(message: LlmGatewayMessage): boolean {
-  if (message.role !== "user") return false;
+  // Legacy snapshots used user; new snapshots carry runtime state as system.
+  if (message.role !== "user" && message.role !== "system") return false;
   const text =
     typeof message.content === "string"
       ? message.content
@@ -275,6 +276,7 @@ export function applyPromptCachePolicy(
   const candidates: Array<{ target: MetadataCarrier; index: number }> = [];
   const existing: Array<{ target: MetadataCarrier; value: CacheControl }> = [];
   const systems: MetadataCarrier[] = [];
+  const staticSystems: MetadataCarrier[] = [];
   const toolTargets: MetadataCarrier[] = [];
 
   const copied = messages.map((message, index): LlmGatewayMessage => {
@@ -285,6 +287,7 @@ export function applyPromptCachePolicy(
     if (message.role === "system") {
       if (message.content.length > 0) {
         systems.push(result);
+        if (!isRuntimeReminder(message)) staticSystems.push(result);
         const value = cacheControl(message.providerOptions);
         if (value) existing.push({ target: result, value });
       }
@@ -398,12 +401,18 @@ export function applyPromptCachePolicy(
       options.previousHistoryAnchor.version === 1 &&
       options.previousHistoryAnchor.fingerprint ===
         createHistoryCacheAnchor(messages, previous).fingerprint);
-  add(systems.at(-1));
+  add(staticSystems.at(-1));
   if (oldAnchorMatches) add(oldTarget);
   add(before(latest));
   for (const item of existing) {
     if (!oldAnchorMatches && item.target === oldTarget) continue;
-    // Do not retain caller-supplied markers on the latest runtime reminder/tail.
+    // Do not retain caller-supplied markers on the latest runtime reminder/tail,
+    // even when the Native reminder is a system block rather than a user block.
+    if (
+      latest >= 0 &&
+      item.target === copied[latest] &&
+      isRuntimeReminder(messages[latest])
+    ) continue;
     const candidate = candidates.find(
       (candidate) => candidate.target === item.target,
     );

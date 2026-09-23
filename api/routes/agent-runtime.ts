@@ -1,9 +1,12 @@
+import { getRawSqlite } from "../db/index.js";
+import { upgradeHistory } from "../services/agent-runtime/checkpoints/version-runtime/migrate.js";
+import { readHistoryWindow } from "../services/agent-runtime/checkpoints/version-runtime/window.js";
+import { boundaryOnlySession, versionRepository, versionedSession } from "../services/agent-runtime/checkpoints/version-runtime/bridge.js";
 import {
   optimizeInput,
   MAX_OPTIMIZATION_INPUT_CHARS,
 } from "../services/agent-runtime/input-optimization.js";
 import { visitConversation } from "../services/agent-runtime/checkpoints/retention.js";
-import { planFileUndo } from "../services/agent-runtime/checkpoints/file-plan.js";
 import {
   checkpointSummary,
   previewHistory,
@@ -11,14 +14,10 @@ import {
   recoverHistoryOperation,
   editRunRequestId,
 } from "../services/agent-runtime/checkpoints/operations.js";
-import { forkCheckpoint } from "../services/agent-runtime/checkpoints/fork.js";
-import { getCheckpoint } from "../services/agent-runtime/checkpoints/store.js";
+import { forkSimpleConversation, previewSimpleFork } from "../services/agent-runtime/checkpoints/simple-fork.js";
 import {
-  assertHistoryIdle,
-  assertHistoryUnlocked,
   historyRevision,
 } from "../services/agent-runtime/checkpoints/guards.js";
-import { SNAPSHOT_EXCLUSIONS } from "../services/agent-runtime/checkpoints/files.js";
 import { workRuntime } from "../services/agent-runtime/work-runtime.js";
 import { workflowMode } from "../services/agent-runtime/workflow-mode.js";
 import { compactSessionContext } from "../services/agent-runtime/manual-context-compaction.js";
@@ -98,12 +97,16 @@ import {
   deleteSessionBackgroundProcess,
   listSessionBackgroundProcesses,
   stopSessionBackgroundProcess,
+  stopSessionBackgroundProcesses,
 } from "../services/agent-runtime/session-background-processes.js";
 import {
   getSessionEnvironment,
   getSessionEnvironmentFile,
   getSessionEnvironmentFileMedia,
   saveSessionEnvironmentFile,
+  renameSessionEnvironmentFile,
+  trashSessionEnvironmentFile,
+  openSessionFileInSystemTerminal,
   getSessionInputSourceContent,
   invalidateSessionEnvironment,
 } from "../services/agent-runtime/session-environment.js";
@@ -132,7 +135,34 @@ import {
   resolveGitWorkspaceSelection,
 } from "../services/git-workspaces.js";
 
+import { listProjectToolGrants, revokeProjectToolGrant } from "../services/agent-runtime/project-tool-grants.js";
+
 export const agentRuntimeRoutes = new Hono();
+agentRuntimeRoutes.get("/projects/:projectId/tool-grants", (c) => {
+  try {
+    return c.json({ items: listProjectToolGrants(c.req.param("projectId")) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+agentRuntimeRoutes.delete("/projects/:projectId/tool-grants/:toolId", (c) => {
+  try {
+    const removed = revokeProjectToolGrant(c.req.param("projectId"), c.req.param("toolId"));
+    return removed ? c.json({ revoked: true }) : c.json({ error: "Tool grant not found." }, 404);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
+  agentRuntimeRoutes.use(route, async (c, next) => {
+    const id = c.req.param("sessionId");
+    if (id && getRawSqlite().prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?").get(id))
+      return c.json({ error: "Session has been deleted.", code: "NOT_FOUND" }, 404);
+    await next();
+  });
+}
+
 const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
 
 async function readJson(c: Context) {
@@ -153,6 +183,33 @@ function runtimeError(c: Context, error: unknown) {
     mapped.body,
     mapped.status as 400 | 401 | 403 | 404 | 409 | 500,
   );
+}
+
+async function deleteSessionAfterShutdown(
+  sessionId: string,
+  expectedRunId?: string,
+): Promise<{ deletedSessionIds: string[]; parentId: string | null }> {
+  const parentId = agentRuntimeStore.getSession(sessionId).parentSessionId;
+  const sessionIds = agentSessionRuntime
+    .listSessionTree(sessionId)
+    .map((session) => session.id);
+
+  // Deletion is a lifecycle operation, not just a history mutation. Stop the
+  // active runtime, ACP sessions, and every owned background process first;
+  // then mark the whole subtree stopped so history deletion guards can never
+  // turn cleanup into a manual recovery task for the user.
+  await runCoordinator.interrupt(
+    sessionId,
+    "Session deleted by user.",
+    undefined,
+    expectedRunId,
+  );
+  await closeAcpAgentSessions(sessionIds);
+  await stopSessionBackgroundProcesses(sessionIds);
+  agentSessionRuntime.cancel(sessionId);
+
+  const deletedSessionIds = agentSessionRuntime.delete(sessionId);
+  return { deletedSessionIds, parentId };
 }
 
 const inputOptimizationSchema = z.object({
@@ -484,20 +541,14 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
 agentRuntimeRoutes.delete("/sessions/:sessionId", async (c) => {
   try {
     const id = c.req.param("sessionId");
-    const parentId = agentRuntimeStore.getSession(id).parentSessionId;
     const control = await readControl(c);
-    let deletedSessionIds: string[] = [];
-    await runCoordinator.interrupt(
+    const { deletedSessionIds, parentId } = await deleteSessionAfterShutdown(
       id,
-      "Session deleted by user.",
-      () => {
-        deletedSessionIds = agentSessionRuntime.delete(id);
-        for (const deletedId of deletedSessionIds)
-          invalidateSessionEnvironment(deletedId);
-        if (parentId) invalidateSessionEnvironment(parentId);
-      },
       control.runId,
     );
+    for (const deletedId of deletedSessionIds)
+      invalidateSessionEnvironment(deletedId);
+    if (parentId) invalidateSessionEnvironment(parentId);
     return c.json({ ok: true, deletedSessionIds });
   } catch (error) {
     return runtimeError(c, error);
@@ -548,13 +599,11 @@ agentRuntimeRoutes.post("/sessions/clear-inactive", async (c) => {
         )
       )
         continue;
-      await runCoordinator.interrupt(
-        root.id,
-        "Inactive session cleared.",
-        () => {
-          deletedIds.push(...agentSessionRuntime.delete(root.id));
-        },
-      );
+      const deleted = await deleteSessionAfterShutdown(root.id);
+      deletedIds.push(...deleted.deletedSessionIds);
+      for (const deletedId of deleted.deletedSessionIds)
+        invalidateSessionEnvironment(deletedId);
+      if (deleted.parentId) invalidateSessionEnvironment(deleted.parentId);
     }
 
     return c.json({
@@ -567,14 +616,45 @@ agentRuntimeRoutes.post("/sessions/clear-inactive", async (c) => {
   }
 });
 
+agentRuntimeRoutes.post("/sessions/:sessionId/history/upgrade", async (c) => {
+  try {
+    const body = await c.req.json();
+    if (body?.acknowledgeCheckpointReset !== true)
+      throw new AgentRuntimeError("Explicit acknowledgement of legacy checkpoint retirement is required.", "VALIDATION_ERROR", 400);
+    return c.json(await upgradeHistory(c.req.param("sessionId")));
+  } catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/history-window", (c) => {
+  try {
+    const id = c.req.param("sessionId");
+    agentRuntimeStore.getSession(id);
+    if (!versionedSession(id)) throw new AgentRuntimeError("Upgrade history before using version windows.", "HISTORY_MIGRATION_REQUIRED", 409);
+    return c.json(readHistoryWindow(id, c.req.query("cursor")));
+  } catch (error) { return runtimeError(c, error); }
+});
+
 agentRuntimeRoutes.get("/sessions/:sessionId/messages", (c) => {
   try {
+    const sessionId=c.req.param("sessionId");
+    if(versionedSession(sessionId))return c.json(versionRepository().page(sessionId,"messages",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),reverse:c.req.query("reverse")==="true",preview:c.req.query("preview")==="true",fields:c.req.query("fields")?.split(",")}));
     return c.json({
       items: agentLoopRuntime.listMessages(c.req.param("sessionId")),
     });
   } catch (error) {
     return runtimeError(c, error);
   }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/messages/:messageId/content",(c)=>{
+  try{
+    const sessionId=c.req.param("sessionId");
+    if(!versionedSession(sessionId))return c.json({error:"Content paging requires a versioned session."},409);
+    const repo=versionRepository();
+    if(Number(c.req.query("cursor")??0)>0&&c.req.query("revision")===undefined)return c.json({error:"Content continuation requires the original revision.",code:"HISTORY_STALE"},409);
+    if(c.req.query("revision")!==undefined&&Number(c.req.query("revision"))!==repo.head(sessionId).revision)return c.json({error:"Conversation changed.",code:"HISTORY_STALE"},409);
+    return c.json(repo.content(sessionId,"messages",c.req.param("messageId"),"content",Number(c.req.query("cursor")??0),c.req.query("revision")===undefined?undefined:Number(c.req.query("revision"))));
+  }catch(error){return runtimeError(c,error);}
 });
 
 agentRuntimeRoutes.get("/sessions/:sessionId/runs", (c) => {
@@ -801,6 +881,12 @@ agentRuntimeRoutes.post("/sessions/:sessionId/turns/stream", async (c) => {
 });
 
 agentRuntimeRoutes.get("/sessions/:sessionId/events", (c) => {
+  if(versionedSession(c.req.param("sessionId")) && !boundaryOnlySession(c.req.param("sessionId"))){
+    try{
+      if(c.req.query("after"))return c.json({error:"Use the versioned event cursor instead of a legacy event id.",code:"HISTORY_PAGE_REQUIRED"},409);
+      return c.json(versionRepository().page(c.req.param("sessionId"),"events",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),reverse:c.req.query("reverse")==="true",preview:c.req.query("preview")==="true",fields:c.req.query("fields")?.split(",")}));
+    }catch(error){return runtimeError(c,error);}
+  }
   const parsed = listEventsQuerySchema.safeParse(
     Object.fromEntries(new URL(c.req.url).searchParams),
   );
@@ -948,6 +1034,46 @@ agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
         parsed.data.rootId,
       ),
     );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/environment/file/system-terminal", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z.object({ path: z.string().min(1).max(1024), rootId: z.string().min(1).optional() }).safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid file payload" }, 400);
+  try {
+    await openSessionFileInSystemTerminal(c.req.param("sessionId"), parsed.data.path, parsed.data.rootId);
+    return c.json({ ok: true });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/environment/file/trash", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z.object({ path: z.string().min(1).max(1024), rootId: z.string().min(1).optional() }).safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid trash payload" }, 400);
+  try {
+    return c.json(await trashSessionEnvironmentFile(c.req.param("sessionId"), parsed.data.path, parsed.data.rootId));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/environment/file/rename", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z.object({
+    path: z.string().min(1).max(1024),
+    newName: z.string().min(1).max(255),
+    rootId: z.string().min(1).optional(),
+  }).safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid rename payload" }, 400);
+  try {
+    return c.json(await renameSessionEnvironmentFile(
+      c.req.param("sessionId"), parsed.data.path, parsed.data.newName, parsed.data.rootId,
+    ));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1686,7 +1812,9 @@ const historyActionSchema = z.object({
   requestId: z.string().min(1).max(128),
   message: z.string().trim().min(1).max(100_000).optional(),
   includeFiles: z.boolean().default(true),
+  workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
 });
+const forkActionSchema = historyActionSchema.extend({ includeFiles: z.literal(false).default(false), workspaceMode: z.enum(["new_worktree", "reuse_worktree"]) });
 agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", (c) => {
   try {
     return c.json(checkpointSummary(c.req.param("sessionId")));
@@ -1701,6 +1829,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
     .object({
       checkpointId: z.string().min(1),
       action: z.enum(["rollback", "edit", "fork"]),
+      workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
       includeFiles: z.boolean().default(true),
     })
     .safeParse(body.data);
@@ -1709,15 +1838,8 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
     const sessionId = c.req.param("sessionId");
     if (parsed.data.action !== "fork")
       return c.json(await previewHistory(sessionId, parsed.data.checkpointId, parsed.data.includeFiles));
-    assertHistoryUnlocked(sessionId);
-    assertHistoryIdle(sessionId);
-    const checkpoint = getCheckpoint(sessionId, parsed.data.checkpointId);
-    if (checkpoint.kind !== "reply" || checkpoint.payload.version !== 2) throw new AgentValidationError("A reply boundary is required.");
-    const plan = await planFileUndo(checkpoint, parsed.data.includeFiles);
-    return c.json({ checkpointId: checkpoint.id, revision: historyRevision(sessionId), removedMessages: 0,
-      files: plan.changes.map(c => ({root:c.root,path:c.path,action:c.before ? "restore" : "delete"})),
-      conflicts: plan.conflicts, warnings: [...plan.warnings, "Fork copies the current workspace on demand; unrelated files retain their current versions."], preservedFiles: plan.preservedFiles,
-      exclusions: SNAPSHOT_EXCLUSIONS, canApply: !plan.conflicts.length });
+    if (!parsed.data.workspaceMode) throw new AgentValidationError("Choose a new worktree or the existing worktree before forking.");
+    return c.json(await previewSimpleFork(sessionId, parsed.data.checkpointId, parsed.data.workspaceMode));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1728,19 +1850,19 @@ for (const action of ["rollback", "edit", "fork"] as const) {
     async (c) => {
       const body = await readJson(c);
       if (!body.ok) return c.json({ error: body.error }, 400);
-      const parsed = historyActionSchema.safeParse(body.data);
+      const parsed = (action === "fork" ? forkActionSchema : historyActionSchema).safeParse(body.data);
       if (!parsed.success) return validationError(c, parsed.error);
       try {
         const sessionId = c.req.param("sessionId"),
           input = parsed.data;
         if (action === "fork")
           return c.json(
-            await forkCheckpoint(
+            await forkSimpleConversation(
               sessionId,
               input.checkpointId,
               input.revision,
               input.requestId,
-              input.includeFiles,
+              input.workspaceMode!,
             ),
             201,
           );

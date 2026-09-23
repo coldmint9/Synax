@@ -32,6 +32,12 @@ describe("native approval capability UI", () => {
     );
     expect(onReply).toHaveBeenCalledWith("p1", "once");
   });
+  it("offers an accessible always button in compact approvals when supported", async () => {
+    const onReply = vi.fn();
+    render(<AgentQuickApproval variant="mini" permissions={[permission(["once", "always", "reject"])]} onReply={onReply} />);
+    await userEvent.click(screen.getByRole("button", { name: "permAlwaysAllow" }));
+    expect(onReply).toHaveBeenCalledWith("p1", "always");
+  });
   it("retains legacy Native approval choices and explicit session approval support", () => {
     const view = render(
       <AgentQuickApproval permissions={[permission()]} onReply={vi.fn()} />,

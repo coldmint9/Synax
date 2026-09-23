@@ -1,7 +1,10 @@
 import { SearchHighlight } from "./SearchHighlight";
 import { PixelLoader } from "./LoadingState";
 import { memo } from "react";
-import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
+import { copyTextToClipboard } from "../../../lib/clipboard";
+import { useNotificationStore } from "../../state/notificationStore";
+import { useContextMenu } from "../../components/context-menu/ContextMenuProvider";
 import { useLocale } from "../../../hooks/useLocale";
 import type { SessionTreeNode } from "./useSessionList";
 import {
@@ -103,12 +106,28 @@ export const SessionTreeItem = memo(function SessionTreeItem({
     isSessionUnread(session, state.readSessionMarkers),
   );
   const showStatusDot = session.status !== "completed" || unread;
+  const menu = useContextMenu(() => ({
+    label: title,
+    entries: [
+      { type: "action", id: "open", label: t("contextOpen"), run: () => onSelect(session.id) },
+      { type: "action", id: "copy-id", label: t("contextCopySessionId"), run: async () => {
+        if (!await copyTextToClipboard(session.id)) throw new Error(t("contextCopyFailed"));
+        useNotificationStore.getState().push({ type: "success", message: t("contextCopied"), duration: 1800 });
+      } },
+      ...(onDelete ? [
+        { type: "separator" } as const,
+        { type: "action", id: "delete", label: t("sessionDelete"), danger: true, restoreFocus: false, run: () => onDelete(session.id) } as const,
+      ] : []),
+    ],
+  }));
 
   return (
     <div
       className={`session-list-item${isSelected ? " session-list-item--active" : ""}${depth > 0 ? " session-list-item--child" : ""}`}
       style={{ marginLeft: `${Math.min(depth, 4) * 12}px` }}
       data-unread={unread || undefined}
+      onContextMenu={menu.onContextMenu}
+      onKeyDown={menu.onKeyDown}
     >
       {hasKids && (
         <button
@@ -164,16 +183,15 @@ export const SessionTreeItem = memo(function SessionTreeItem({
           <SessionPreview session={session} />
         )}
       </button>
-      {onDelete && (
-        <button
-          type="button"
-          className="session-list-delete"
-          aria-label={t("sessionDelete")}
-          onClick={() => onDelete(session.id)}
-        >
-          <Trash2 size={13} />
-        </button>
-      )}
+      <button
+        type="button"
+        className="session-list-delete"
+        aria-label={t("contextMoreActions")}
+        aria-haspopup="menu"
+        onClick={(event) => menu.openFromAnchor(event.currentTarget)}
+      >
+        <MoreHorizontal size={13} />
+      </button>
     </div>
   );
 });
