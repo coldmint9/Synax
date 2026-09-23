@@ -103,6 +103,9 @@ import {
   getSessionEnvironmentFile,
   getSessionEnvironmentFileMedia,
   saveSessionEnvironmentFile,
+  renameSessionEnvironmentFile,
+  trashSessionEnvironmentFile,
+  openSessionFileInSystemTerminal,
   getSessionInputSourceContent,
   invalidateSessionEnvironment,
 } from "../services/agent-runtime/session-environment.js";
@@ -993,6 +996,46 @@ agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
         parsed.data.rootId,
       ),
     );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/environment/file/system-terminal", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z.object({ path: z.string().min(1).max(1024), rootId: z.string().min(1).optional() }).safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid file payload" }, 400);
+  try {
+    await openSessionFileInSystemTerminal(c.req.param("sessionId"), parsed.data.path, parsed.data.rootId);
+    return c.json({ ok: true });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/environment/file/trash", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z.object({ path: z.string().min(1).max(1024), rootId: z.string().min(1).optional() }).safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid trash payload" }, 400);
+  try {
+    return c.json(await trashSessionEnvironmentFile(c.req.param("sessionId"), parsed.data.path, parsed.data.rootId));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/environment/file/rename", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z.object({
+    path: z.string().min(1).max(1024),
+    newName: z.string().min(1).max(255),
+    rootId: z.string().min(1).optional(),
+  }).safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid rename payload" }, 400);
+  try {
+    return c.json(await renameSessionEnvironmentFile(
+      c.req.param("sessionId"), parsed.data.path, parsed.data.newName, parsed.data.rootId,
+    ));
   } catch (error) {
     return runtimeError(c, error);
   }

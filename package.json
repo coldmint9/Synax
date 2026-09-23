@@ -113,6 +113,7 @@
     "react-dom": "19.2.6",
     "shiki": "^4.4.3",
     "smol-toml": "^1.8.0",
+    "trash": "^10.1.1",
     "tree-sitter": "^0.25.0",
     "tree-sitter-c": "^0.24.1",
     "tree-sitter-c-sharp": "^0.23.5",

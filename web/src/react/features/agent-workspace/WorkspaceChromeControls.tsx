@@ -54,7 +54,7 @@ function WorkspaceTabItem({ tab, active, sessionId, activeRef, environment, acti
     { type: "action", id: "close", label: t("contextCloseTab"), restoreFocus: false, run: close },
     ...(canCloseOthers ? [{ type: "action" as const, id: "close-others", label: t("contextCloseOthers"), restoreFocus: false, run: closeOthers }] : []),
     ...(tab.path && (tab.kind === "file" || tab.kind === "diff")
-      ? [{ type: "separator" as const }, ...fileContextEntries({ t, path: tab.path, workspacePath, canOpenFile: fileExists })]
+      ? [{ type: "separator" as const }, ...fileContextEntries({ t, path: tab.path, workspacePath, sessionId, rootId: tab.rootId, canOpenFile: fileExists })]
       : []),
   ] }));
   return <div ref={active ? activeRef : undefined} className={`workspace-tab-item ${active ? "workspace-tab-item--active" : ""}`} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown}>

@@ -17,6 +17,7 @@ import {
 } from "electron";
 import path from "node:path";
 import { nativeTemplate, parseContextMenu, resolveRevealTarget, textContextTemplate } from "./lib/context-menu.js";
+import { copyFileToSystemClipboard } from "./lib/file-clipboard.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startSidecar, stopSidecar } from "./lib/node-sidecar.js";
 import { getDataRoot, getResourcePath } from "./lib/data-paths.js";
@@ -265,6 +266,13 @@ function registerIPC(): void {
     const target = resolveRevealTarget(value);
     if (!target) return false;
     shell.showItemInFolder(target);
+    return true;
+  });
+  ipcMain.handle("context-menu:copy-file", async (event, value: unknown) => {
+    if (!trustedNotificationSender(event)) return false;
+    const target = resolveRevealTarget(value);
+    if (!target) return false;
+    await copyFileToSystemClipboard(target);
     return true;
   });
   ipcMain.handle("dialog:open", (_e, options) =>
