@@ -11,6 +11,7 @@ import {
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from "@heroui/react";
 import {
   BookOpen,
+  GitMerge,
   Bot,
   Folder,
   Search,
@@ -63,6 +64,7 @@ interface WorkbenchHeaderProps {
 const navTabs: { id: ActivityPanel; icon: typeof BookOpen; label: string }[] = [
   { id: "sessions", icon: Bot, label: "Work" },
   { id: "wiki", icon: BookOpen, label: "Wiki" },
+  { id: "git", icon: GitMerge, label: "Git" },
 ];
 
 function ProjectSessionBadgeMark({

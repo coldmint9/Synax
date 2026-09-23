@@ -175,7 +175,7 @@ export function buildLoopSystemPrompt(
       : "",
     input.skillsSection ? `\n${input.skillsSection}` : "",
     input.selectedReferencesSection,
-    input.projectRulesSection
+    input.profile.id !== 'git-manager' && input.projectRulesSection
       ? `[Project Rules]\nFollow these repository instruction files:\n\n${input.projectRulesSection}`
       : "",
     "",

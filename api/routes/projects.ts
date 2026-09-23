@@ -1,3 +1,4 @@
+import { createGitMrRoutes } from "./git-mr.js";
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
 import path, { basename } from "node:path";
@@ -422,6 +423,11 @@ function gitWorkspaceRouteError(c: Context, error: unknown) {
 // ---------------------------------------------------------------------------
 
 export const projectRoutes = new Hono();
+projectRoutes.route('/:projectId/git/mr', createGitMrRoutes((projectId, rootId) => {
+  const project = projects.get(projectId);
+  if (!project) throw new GitWorkspaceError('Project not found.', 404);
+  return projectGitRoot(project, rootId).location;
+}));
 
 const workspaceLocationSchema = z.discriminatedUnion("kind", [
   z

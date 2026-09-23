@@ -1,3 +1,4 @@
+import { ensureGitMrProfileRegistered } from './services/agent-runtime/git/profile.js';
 import { startFileUndoRetention } from "./services/agent-runtime/checkpoints/retention.js";
 import { attachTerminalSockets } from "./services/terminals/terminal-socket.js";
 import { terminalRoutes } from "./routes/terminals.js";
@@ -121,6 +122,7 @@ try {
 
 // --- 提前注册 wiki / plan profiles，确保服务重启后能恢复 session 并响应 skills 查询 ---
 ensureWikiProfileRegistered();
+ensureGitMrProfileRegistered();
 ensurePlanProfileRegistered();
 ensureRefreshProfileRegistered();
 ensureSynaxAgentRegistered();
