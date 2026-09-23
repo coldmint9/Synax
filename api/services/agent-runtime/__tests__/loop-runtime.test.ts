@@ -649,7 +649,7 @@ describe("agentLoopRuntime", () => {
     const { getRawSqlite } = await import("../../../db/index.js");
     const session = agentSessionRuntime.create({
       ...executorInput,
-      prompt:"Original question",
+      prompt: "Original question",
       workDir: process.cwd(),
     });
     agentRuntimeStore.updateSession(session.id, { status: "completed" });
@@ -730,8 +730,12 @@ describe("agentLoopRuntime", () => {
       expect(
         agentRuntimeStore.listMessages(session.id).map((row) => row.content),
       ).toEqual(["Replacement question", "Replacement answer."]);
-      expect(JSON.stringify(capturedRequests.at(-1)?.messages)).not.toContain("Original question");
-      expect(JSON.stringify(capturedRequests.at(-1)?.messages)).not.toContain("Original answer.");
+      expect(JSON.stringify(capturedRequests.at(-1)?.messages)).not.toContain(
+        "Original question",
+      );
+      expect(JSON.stringify(capturedRequests.at(-1)?.messages)).not.toContain(
+        "Original answer.",
+      );
       expect(await applyHistory(session.id, request)).toEqual(edited);
     } finally {
       clearVersionSessionFixture(session.id);
@@ -1628,84 +1632,107 @@ describe("agentLoopRuntime", () => {
       ).toBe(forced);
     },
   );
-  it("suspends for a form, resumes, then offers a one-time execute-or-cancel plan choice", async () => {
-    ensureSynaxAgentRegistered();
-    const questions = [
-      { id: "scope", type: "text", label: "Scope?", required: true },
-    ];
-    const plan = {
-      title: "Small plan",
-      objective: "Implement a bounded change",
-      steps: [
-        {
-          id: "s1",
-          title: "Implement",
-          description: "Do the approved work",
-          dependsOn: [],
-          expectedFiles: [],
-        },
-      ],
-      acceptanceCriteria: ["The behavior is verified"],
-      assumptions: [],
-      risks: [],
-    };
-    queueMockStep(
-      makeToolStep({
-        toolName: "human_ask",
-        toolCallId: "ask-1",
-        args: { title: "Clarify scope", questions },
-      }),
-    );
-    queueMockStep(
-      makeToolStep({
-        toolName: "plan_propose",
-        toolCallId: "plan-1",
-        args: plan,
-      }),
-    );
-    const session = agentSessionRuntime.create({
-      projectId: "project-alpha",
-      profileId: "synax",
-      prompt: "Plan a bounded implementation",
-      sessionMetadata: { mode: "plan" },
-    });
-    await collectChunks(agentLoopRuntime.streamRun(session.id, {}));
-    const [run] = agentLoopRuntime.listRuns(session.id);
-    expect(run.status).toBe("waiting_input");
-    const first = interactionService.pending(session.id)!;
-    expect(first.kind).toBe("clarification");
-    interactionService.reply(session.id, first.id, {
-      revision: first.revision,
-      action: "submit",
-      answers: { scope: "Only the API" },
-    });
-    await agentLoopRuntime.resumeRun(session.id);
-    expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
-    expect(
-      agentRuntimeStore.getToolCall(session.id, first.toolCallId).outputRef,
-    ).toMatchObject({ answers: { scope: "Only the API" } });
-    const parts = agentRuntimeStore.listRunParts(first.stepId);
-    expect(
-      parts.filter(
-        (p) => p.kind === "tool_result" && p.toolCallId === first.toolCallId,
-      ),
-    ).toHaveLength(1);
-    const approval = interactionService.pending(session.id)!;
-    expect(approval.kind).toBe("plan_approval");
-    expect(
-      agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
-    ).toEqual(["human.ask", "plan.propose"]);
-    interactionService.reply(session.id, approval.id, {
-      revision: approval.revision,
-      action: "cancel",
-    });
-    await agentLoopRuntime.resumeRun(session.id);
-    expect(interactionService.pending(session.id)).toBeNull();
-    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
-      status: "completed",
-      sessionMetadata: { mode: "plan", plan: { status: "saved", revision: 1 } },
-    });
-  });
+  it.each([false, true])(
+    "suspends for a form and resumes a one-time plan choice (versioned=%s)",
+    async (versioned) => {
+      ensureSynaxAgentRegistered();
+      const questions = [
+        { id: "scope", type: "text", label: "Scope?", required: true },
+      ];
+      const plan = {
+        title: "Small plan",
+        objective: "Implement a bounded change",
+        steps: [
+          {
+            id: "s1",
+            title: "Implement",
+            description: "Do the approved work",
+            dependsOn: [],
+            expectedFiles: [],
+          },
+        ],
+        acceptanceCriteria: ["The behavior is verified"],
+        assumptions: [],
+        risks: [],
+      };
+      queueMockStep(
+        makeToolStep({
+          toolName: "human_ask",
+          toolCallId: "ask-1",
+          args: { title: "Clarify scope", questions },
+        }),
+      );
+      queueMockStep(
+        makeToolStep({
+          toolName: "plan_propose",
+          toolCallId: "plan-1",
+          args: plan,
+        }),
+      );
+      const session = agentSessionRuntime.create({
+        projectId: "project-alpha",
+        profileId: "synax",
+        prompt: "Plan a bounded implementation",
+        sessionMetadata: { mode: "plan" },
+      });
+      if (versioned) {
+        const { initializeVersionNative } =
+          await import("../checkpoints/version-runtime/bridge.js");
+        agentRuntimeStore.updateSession(session.id, { status: "completed" });
+        initializeVersionNative(
+          agentRuntimeStore.getSession(session.id),
+          agentRuntimeStore.listEvents(session.id),
+          session.contextSnapshotId
+            ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+            : undefined,
+        );
+      }
+      try {
+        await collectChunks(agentLoopRuntime.streamRun(session.id, {}));
+        const [run] = agentLoopRuntime.listRuns(session.id);
+        expect(run.status).toBe("waiting_input");
+        const first = interactionService.pending(session.id)!;
+        expect(first.kind).toBe("clarification");
+        interactionService.reply(session.id, first.id, {
+          revision: first.revision,
+          action: "submit",
+          answers: { scope: "Only the API" },
+        });
+        await agentLoopRuntime.resumeRun(session.id);
+        expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
+        expect(
+          agentRuntimeStore.getToolCall(session.id, first.toolCallId).outputRef,
+        ).toMatchObject({ answers: { scope: "Only the API" } });
+        const parts = agentRuntimeStore.listRunParts(first.stepId);
+        expect(
+          parts.filter(
+            (p) =>
+              p.kind === "tool_result" && p.toolCallId === first.toolCallId,
+          ),
+        ).toHaveLength(1);
+        const approval = interactionService.pending(session.id)!;
+        expect(approval.kind).toBe("plan_approval");
+        expect(
+          agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
+        ).toEqual(["human.ask", "plan.propose"]);
+        interactionService.reply(session.id, approval.id, {
+          revision: approval.revision,
+          action: "cancel",
+        });
+        await agentLoopRuntime.resumeRun(session.id);
+        expect(interactionService.pending(session.id)).toBeNull();
+        expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
+          status: "completed",
+          sessionMetadata: {
+            mode: "plan",
+            plan: { status: "saved", revision: 1 },
+          },
+        });
+      } finally {
+        if (versioned) clearVersionSessionFixture(session.id);
+      }
+    },
+  );
 
   it("rejects an entire mixed interaction batch before a write can execute", async () => {
     ensureSynaxAgentRegistered();

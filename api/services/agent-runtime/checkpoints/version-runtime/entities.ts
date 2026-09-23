@@ -10,6 +10,7 @@ import { atomicVersionWrite } from "../version-store/transaction.js";
 import { readVersionSnapshot } from "../version-store/read-snapshot.js";
 
 const physical: Record<string, string> = {
+  interactions: "agent_runtime_interactions",
   work: "agent_runtime_work",
   runs: "agent_runtime_runs",
   steps: "agent_runtime_run_steps",
@@ -92,6 +93,7 @@ export function writeVersionEntity<T>(
   });
 }
 const liveColumns: Record<string, string> = {
+  interactions: "status,resolved_at AS resolvedAt",
   runs: "status,completed_at AS completedAt,stop_reason AS stopReason,current_step AS currentStep",
   steps: "status,completed_at AS completedAt,finish_reason AS finishReason",
   tools: "status,ended_at AS endedAt,error",
@@ -161,6 +163,8 @@ function normalize(
     value.userReply = "reject";
     value.resumeToken = null;
   }
+  if (historical && kind === "interactions" && value.status === "pending")
+    value.status = "cancelled";
   return value;
 }
 export function readVersionEntity<T>(
