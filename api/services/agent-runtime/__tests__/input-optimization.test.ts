@@ -20,12 +20,14 @@ beforeEach(() => {
     providers: [{ id: "codex-acp", kind: "acp" }],
   });
   mocks.generate.mockResolvedValue({
-    text: "优化后的需求",
+    text: "我希望把当前的需求梳理清楚，明确需要完成的事情和最终想达到的效果。",
     finishReason: "stop",
   });
 });
 it("follows the explicit current model and never supplies tools", async () => {
-  expect(await optimizeInput(input)).toEqual({ text: "优化后的需求" });
+  expect(await optimizeInput(input)).toEqual({
+    text: "我希望把当前的需求梳理清楚，明确需要完成的事情和最终想达到的效果。",
+  });
   const [request, signal] = mocks.generate.mock.calls[0];
   expect(request).toMatchObject({
     projectId: "p1",
@@ -34,27 +36,56 @@ it("follows the explicit current model and never supplies tools", async () => {
   });
   expect(request.tools).toBeUndefined();
   expect(request.messages[0]).toMatchObject({ role: "system" });
+  expect(request.messages[0].content).toContain(
+    "Your only job is to clarify and rewrite the user's draft",
+  );
+  expect(request.messages[0].content).toContain(
+    "Never ask the user a question",
+  );
+  expect(request.messages[0].content).toContain(
+    "Output only the rewritten paragraph",
+  );
   expect(request.messages[1]).toEqual({ role: "user", content: input.text });
   expect(signal).toBeInstanceOf(AbortSignal);
 });
-// These are prompt-contract tests, not live model quality evaluations.
-it("constrains short drafts to faithful copy-editing", async () => {
-  const draft = "做成可视化动态交互的页面";
-  await optimizeInput({ ...input, text: draft });
-  const { messages } = mocks.generate.mock.calls[0][0];
-  expect(messages).toHaveLength(2);
-  expect(messages[1]).toEqual({ role: "user", content: draft });
-  const prompt = messages[0].content;
-  expect(prompt).toContain("Make the smallest useful wording changes");
-  expect(prompt).toContain("Do not assess whether the task is ready to execute");
-  expect(prompt).toContain("Missing context is not missing user input");
+it("requires a substantive single-paragraph rewrite without a fixed template", async () => {
+  await optimizeInput(input);
+  const prompt = mocks.generate.mock.calls[0][0].messages[0].content;
+  expect(prompt).toContain("one natural, coherent paragraph");
+  expect(prompt).toContain("Do not use a fixed template, headings, labels");
+  expect(prompt).toContain("Do more than fix punctuation");
+  expect(prompt).toContain("make the intended purpose explicit");
+});
+it("frames optimization as rewriting rather than answering", async () => {
+  await optimizeInput(input);
+  const prompt = mocks.generate.mock.calls[0][0].messages[0].content;
   expect(prompt).toContain(
-    "Do not add clarification questions, confirmation checklists, or placeholders",
+    "Do not answer, solve, explain, recommend, plan, execute",
   );
   expect(prompt).toContain(
-    "Preserve questions, uncertainties, placeholders, and requests for clarification already present in the draft",
+    "without inventing details or turning it into a question",
   );
-  expect(prompt).not.toContain("Mark genuinely missing essential information");
+  expect(prompt).not.toContain("items to confirm");
+});
+it("retries a punctuation-only result with a paragraph rewrite correction", async () => {
+  mocks.generate
+    .mockResolvedValueOnce({ text: "只是改了标点。", finishReason: "stop" })
+    .mockResolvedValueOnce({
+      text: "我希望把项目需求梳理清楚，明确目标、约束以及最终希望达到的效果。",
+      finishReason: "stop",
+    });
+  expect(
+    await optimizeInput({
+      ...input,
+      text: "我想把项目需求整理清楚，重点说明目标和约束。",
+    }),
+  ).toEqual({
+    text: "我希望把项目需求梳理清楚，明确目标、约束以及最终希望达到的效果。",
+  });
+  expect(mocks.generate).toHaveBeenCalledTimes(2);
+  expect(mocks.generate.mock.calls[1][0].messages[0].content).toContain(
+    "one natural, coherent paragraph",
+  );
 });
 it("does not add confirmation templates to a short draft", async () => {
   const draft = "做成可视化动态交互的页面";
