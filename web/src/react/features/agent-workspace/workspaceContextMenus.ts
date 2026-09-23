@@ -3,6 +3,7 @@ import { configApi } from "../../../lib/api/config";
 import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
 import { fileMutationBlockReason, requestFileMutation } from "./fileContextMutations";
 import { useNotificationStore } from "../../state/notificationStore";
+import { useShellStore } from "../../state/shellStore";
 import type { ContextMenuEntry } from "../../components/context-menu/types";
 import type { useLocale } from "../../../hooks/useLocale";
 
@@ -12,6 +13,29 @@ interface RevealApi {
   copyWorkspaceFile?: (root: string, path: string) => Promise<boolean>;
 }
 const desktop = () => (window as Window & { electronAPI?: RevealApi }).electronAPI;
+
+// Matches the opener IDs displayed in Settings. Unknown stored IDs remain
+// visible by their ID, as in FileOpenerSelect, instead of implying "system".
+const openerNames: Record<string, string> = {
+  vscode: "VS Code",
+  cursor: "Cursor",
+  windsurf: "Windsurf",
+  zed: "Zed",
+  xcode: "Xcode",
+  idea: "IntelliJ IDEA",
+  webstorm: "WebStorm",
+  pycharm: "PyCharm",
+  sublime: "Sublime Text",
+  finder: "Finder",
+  terminal: "Terminal",
+};
+
+function configuredOpenerName(t: Translate): string {
+  const selected = useShellStore.getState().preferences.editor;
+  return selected === "system"
+    ? t("contextSystemDefaultApp")
+    : openerNames[selected] ?? selected;
+}
 
 export function absoluteWorkspacePath(root: string, relative: string): string {
   const separator = root.includes("\\") ? "\\" : "/";
@@ -42,6 +66,14 @@ export function fileContextEntries({
   const items: ContextMenuEntry[] = [];
   if (onDiff) items.push({ type: "action", id: "diff", label: t("contextOpenDiff"), run: onDiff });
   if (onOpen && canOpenFile) items.push({ type: "action", id: "open", label: t("contextOpenFile"), run: onOpen });
+  if (workspacePath && canOpenFile) {
+    items.push({
+      type: "action",
+      id: "open-configured",
+      label: t("contextOpenConfigured", { app: configuredOpenerName(t) }),
+      run: () => configApi.openFile(absoluteWorkspacePath(workspacePath, path)),
+    });
+  }
   if (items.length) items.push({ type: "separator" });
   items.push({ type: "action", id: "copy-relative", label: t("contextCopyRelativePath"), run: () => copy(path, t) });
   if (workspacePath) items.push({ type: "action", id: "copy-absolute", label: t("contextCopyAbsolutePath"), run: () => copy(absoluteWorkspacePath(workspacePath, path), t) });
@@ -52,7 +84,6 @@ export function fileContextEntries({
     } });
   }
   if (workspacePath && canOpenFile) {
-    items.push({ type: "action", id: "open-configured", label: t("contextOpenConfigured"), run: () => configApi.openFile(absoluteWorkspacePath(workspacePath, path)) });
     if (sessionId) {
       items.push({ type: "action", id: "open-terminal", label: t("contextOpenTerminal"), run: async () => { await agentRuntimeApi.openSessionFileInSystemTerminal(sessionId, { path, rootId }); } });
     }
